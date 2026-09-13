@@ -1310,3 +1310,59 @@ the screen rendered "No countries yet" over 25 rows that were there all along.
 The DTO now accepts it and documents that it is not applied: `country_master`
 has no `company_id`, because countries are tenant-wide reference data, the same
 list for every company under the tenant.
+
+---
+
+## arun_new is merged: scheduler per batch and stage, plus the activity master
+*Merged 2026-09-13.*
+
+Rishi's data-entry spec — a scheduler per batch and stage, activities carrying a
+default item and quantity the operator edits — is the model already built on
+`arun_new`. A dry-run merge in a throwaway worktree measured the cost: **7
+conflicted files, of which 3 are generated drizzle metadata, leaving 13 hunks
+and 138 lines of hand-resolution** — against roughly 3,300 lines to rebuild the
+same schema and UI, with the same collision still to come. So his work is the
+foundation.
+
+`scheduler_master` and `scheduler_parameter_line` are gone, replaced by
+`scheduler_header` (with `batch_id` and `stage_id` NOT NULL) and
+`scheduler_line`. `activity_master` arrives with them — 58 seeded activities,
+each carrying the default item, resource, occurrence and quantity basis that a
+scheduler line copies when created. Note the copy: `scheduler_line` has no
+`activity_id`, so renaming an activity later does not touch existing lines.
+
+**His four migrations are kept as written, renumbered 0088-0091** to follow our
+already-applied 0086/0087. Not regenerated: they encode column *renames*
+(`spl_id` → `line_id`, `parameter_name` → `activity_name`) which drizzle-kit can
+only resolve by asking a human, and a regenerated migration would drop and
+recreate those columns instead, losing what is in them.
+
+**His branch never had a working snapshot chain.** All five of his snapshots
+still describe `scheduler_master` and know nothing of `scheduler_header` or
+`activity_master` — those migrations were hand-written and the chain was never
+regenerated. Ours therefore ends at `0087` and is stale for 0088-0091. The next
+`drizzle-kit generate` must be run in a real terminal so the rename prompts can
+be answered; run headless it simply fails.
+
+Three conflicts were resolved against his side, each for a reason:
+
+- **`itemType=LIVING_ASSET`** on Animal Register's Item picker. No such item
+  type exists here — the ten seeded types are BY_PRODUCT..VACCINE and zero items
+  carry it — so that required picker would have been permanently empty. Ours
+  (`LIVESTOCK`) stands, along with the `visibleWhen`/`requiredWhen` pairs that
+  stop a born-on-farm piglet being asked for a goods receipt.
+- **A plain `<select>`** in place of `EntityLookupField`. Ours already opens a
+  searchable picker, so a long catalog stays usable without anyone marking the
+  field `searchable` first. His `searchable` branch is kept for fields that set
+  it, and his `SearchableEntitySelect` with it.
+- **The company nav order.** His edit re-listed the spine in the old order to
+  slot Schedulers in; ours is what `nav-scope-consistency.spec.ts` enforces.
+  Schedulers is kept, placed next to Batches in both scopes — which is now
+  literally true of the data, since a scheduler belongs to a batch and a stage.
+
+`activity_master`'s own list was wired into the shared contract after the merge:
+it answered no `total` and rejected `filter[column]`, being older than that work.
+
+**Measure a merge before arguing about it.** The estimate from reading the file
+list was 17 conflicts; the dry run found 7, and most of those were generated
+files nobody hand-edits.

@@ -1,6 +1,7 @@
 import { PartialType, OmitType } from '@nestjs/swagger';
 import { IsBoolean, IsIn, IsInt, IsNotEmpty, IsOptional, IsString, IsUUID, Matches, Max, MaxLength, Min } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
+import { MasterListQueryDto } from '../../../common/master-list-query';
 
 export const LINE_TYPES = ['CONSUMPTION', 'OUTPUT', 'DESCRIPTIVE', 'OVERHEAD', 'RESOURCE', 'TRANSFER'] as const;
 export const OCCURRENCES = ['DAILY', 'WEEKLY', 'MONTHLY', 'ONCE', 'CUSTOM'] as const;
@@ -42,13 +43,11 @@ export class CreateActivityDto {
 
 export class UpdateActivityDto extends PartialType(OmitType(CreateActivityDto, ['activity_code'] as const)) {}
 
-export class QueryActivityDto {
+export class QueryActivityDto extends MasterListQueryDto {
   @IsOptional() @IsUUID() companyId?: string;
   @IsOptional() @IsUUID() nobId?: string;
   @IsOptional() @IsUUID() lobId?: string;
   @IsOptional() @IsIn(LINE_TYPES) lineType?: (typeof LINE_TYPES)[number];
   @IsOptional() @IsString() @MaxLength(200) search?: string;
   @IsOptional() @Transform(({ value }) => value === 'true' ? true : value === 'false' ? false : value) @IsBoolean() isActive?: boolean;
-  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(10000) limit?: number;
-  @IsOptional() @Type(() => Number) @IsInt() @Min(0) offset?: number;
 }

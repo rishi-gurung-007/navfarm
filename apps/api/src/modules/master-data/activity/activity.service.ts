@@ -8,6 +8,7 @@ import { masterScopeConditions, MasterScope } from '../../../common/master-data-
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NobLobResolutionService } from '../../core/operational-area/nob-lob-resolution.service';
 import { CreateActivityDto, QueryActivityDto, UpdateActivityDto } from './activity.dto';
+import { listFilterConditions, runMasterList } from '../../../common/master-list-query';
 
 const table = schema.activityMaster;
 const toMysqlTimestamp = (date: Date = new Date()) => date.toISOString().slice(0, 19).replace('T', ' ');
@@ -38,7 +39,10 @@ export class ActivityService {
     if (query.lineType) conditions.push(eq(table.line_type, query.lineType));
     if (query.isActive !== undefined) conditions.push(eq(table.is_active, query.isActive));
     if (query.search) conditions.push(or(like(table.activity_code, `%${query.search}%`), like(table.activity_name, `%${query.search}%`))!);
-    return this.db.select().from(table).where(and(...conditions)).orderBy(table.activity_name).limit(query.limit || 100).offset(query.offset || 0);
+    conditions.push(...listFilterConditions(table, query.filter));
+    // Rows and their count together, ordered by activity_code so the sequence
+    // is stable — the shared contract every other master list answers.
+    return runMasterList(this.db, table, conditions, query, table.activity_code);
   }
 
   private async log(action: string, row: typeof table.$inferSelect, user: any, oldValues?: unknown) {

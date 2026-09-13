@@ -12,7 +12,12 @@ import { ActivityService } from './activity.service';
 export class ActivityController {
   constructor(private readonly activities: ActivityService) {}
   @Get() @RequirePermission('MASTER_DATA', 'ACTIVITY', 'view')
-  async list(@Query() query: QueryActivityDto, @Req() req: any) { return { data: await this.activities.findAll(query, req.user.tenantId) }; }
+  async list(@Query() query: QueryActivityDto, @Req() req: any) {
+    // `data` stays the array callers already read; total/limit/offset are the
+    // siblings the master list screen pages on.
+    const result = await this.activities.findAll(query, req.user.tenantId);
+    return { data: result.data, total: result.total, limit: result.limit, offset: result.offset };
+  }
   @Get(':id') @RequirePermission('MASTER_DATA', 'ACTIVITY', 'view')
   async get(@Param('id') id: string, @Req() req: any) { return { data: await this.activities.findOne(id, req.user.tenantId) }; }
   @Post() @RequirePermission('MASTER_DATA', 'ACTIVITY', 'create')
