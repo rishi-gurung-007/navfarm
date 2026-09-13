@@ -2,6 +2,7 @@ import { Controller, Get, Post, Param, Body, Query, Req, UseGuards } from '@nest
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiParam, ApiQuery } from '@nestjs/swagger';
 import { BatchDailyDataService } from './batch-daily-data.service';
 import { CreateBatchDailyDataDto } from './dto/batch-daily-data.dto';
+import { CreateUnscheduledHealthDto, RejectUnscheduledHealthDto } from './dto/unscheduled-health.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
@@ -54,6 +55,62 @@ export class BatchDailyDataController {
     const data = await this.batchDailyDataService.pendingDays(batchId, upTo, tenantId);
     // oldest is what the screen opens on, so it is named rather than implied.
     return { success: true, message: 'Pending days retrieved.', data, oldest: data[0] ?? null };
+  }
+
+  @Post('unscheduled-health')
+  @RequirePermission('PRODUCTION', 'BATCH_ENTRY', 'create')
+  @ApiOperation({ summary: "Report a health event the schedule did not call for — recorded at once as a pending request; its stock and cost wait for approval" })
+  @ApiParam({ name: 'batchId', description: 'Batch UUID' })
+  async recordUnscheduledHealth(
+    @Param('batchId') batchId: string,
+    @Body() dto: CreateUnscheduledHealthDto,
+    @Req() req: any,
+  ) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const data = await this.batchDailyDataService.recordUnscheduledHealth(batchId, dto, tenantId, req.user);
+    return { success: true, message: 'Health event reported and sent for approval.', data };
+  }
+
+  @Get('unscheduled-health')
+  @RequirePermission('PRODUCTION', 'BATCH_ENTRY', 'view')
+  @ApiOperation({ summary: 'Health events raised against this batch outside the schedule' })
+  @ApiParam({ name: 'batchId', description: 'Batch UUID' })
+  @ApiQuery({ name: 'status', description: 'PENDING, APPROVED or REJECTED', required: false })
+  async listUnscheduledHealth(@Param('batchId') batchId: string, @Req() req: any, @Query('status') status?: string) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const data = await this.batchDailyDataService.listUnscheduledHealth(batchId, tenantId, status);
+    return { success: true, message: 'Health events retrieved.', data };
+  }
+
+  @Post('unscheduled-health/:requestId/approve')
+  @RequirePermission('PRODUCTION', 'BATCH_ENTRY', 'approve')
+  @ApiOperation({ summary: "Approve a health event — issues the medicine against the batch, then records the decision" })
+  @ApiParam({ name: 'batchId', description: 'Batch UUID' })
+  @ApiParam({ name: 'requestId', description: 'Approval request UUID' })
+  async approveUnscheduledHealth(
+    @Param('batchId') batchId: string,
+    @Param('requestId') requestId: string,
+    @Req() req: any,
+  ) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const data = await this.batchDailyDataService.approveUnscheduledHealth(batchId, requestId, tenantId, req.user);
+    return { success: true, message: 'Health event approved and posted.', data };
+  }
+
+  @Post('unscheduled-health/:requestId/reject')
+  @RequirePermission('PRODUCTION', 'BATCH_ENTRY', 'approve')
+  @ApiOperation({ summary: 'Reject a health event — nothing is posted and the record stays as part of the trail' })
+  @ApiParam({ name: 'batchId', description: 'Batch UUID' })
+  @ApiParam({ name: 'requestId', description: 'Approval request UUID' })
+  async rejectUnscheduledHealth(
+    @Param('batchId') batchId: string,
+    @Param('requestId') requestId: string,
+    @Body() dto: RejectUnscheduledHealthDto,
+    @Req() req: any,
+  ) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const data = await this.batchDailyDataService.rejectUnscheduledHealth(batchId, requestId, dto.rejection_reason, tenantId, req.user);
+    return { success: true, message: 'Health event rejected.', data };
   }
 
   @Get('form')

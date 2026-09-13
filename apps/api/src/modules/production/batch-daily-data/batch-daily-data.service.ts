@@ -5,6 +5,7 @@ import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
 import { CreateBatchDailyDataDto } from './dto/batch-daily-data.dto';
+import { CreateUnscheduledHealthDto } from './dto/unscheduled-health.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { BatchService, type UserContext } from '../batch/batch.service';
 import { BatchTransferService } from '../batch/batch-transfer.service';
@@ -12,6 +13,10 @@ import { GlPostingService } from '../../finance/journal/gl-posting.service';
 import { DueLine, stageDayStatus, pendingDays, isLineDue, StageDayStatus } from './day-completeness';
 import { entryVerdict, todayIn, todayAtOffset } from './entry-window';
 import { userHasPermission } from '../../../common/permissions';
+import { ApprovalService } from '../approval/approval.service';
+
+/** approval_request.doc_type for a health event outside the schedule. */
+export const UNSCHEDULED_HEALTH = 'UNSCHEDULED_HEALTH';
 
 const toMysqlTimestamp = (date: Date = new Date()) => date.toISOString().slice(0, 19).replace('T', ' ');
 
@@ -30,6 +35,7 @@ export class BatchDailyDataService {
     private readonly batchService: BatchService,
     private readonly batchTransferService: BatchTransferService,
     private readonly glPostingService: GlPostingService,
+    private readonly approvalService: ApprovalService,
   ) {}
 
   /**
@@ -327,6 +333,190 @@ export class BatchDailyDataService {
       lines: formLines,
       complete: stages.some((s) => s.scheduled) && stages.every((s) => s.complete),
     };
+  }
+
+  /* ──────────────────────────────────────────────────────────────────────
+   * Health events the schedule did not call for.
+   *
+   * The schedule is what a worker may enter, and that is deliberate: a feed or
+   * overhead line invented on the floor is the batch's cost invented on the
+   * floor. Health is the exception the farm asked for, because a sick animal
+   * will not wait for a schedule to be redesigned.
+   *
+   * These live in approval_request rather than batch_daily_data. Every row in
+   * batch_daily_data answers a scheduler_line — that is what its NOT NULL
+   * line_id and its unique (line_id, entry_date) mean — and an event with no
+   * line has no honest place there. approval_request already carries a batch, a
+   * date, a quantity, a justification and a decision, which is the whole of
+   * what an unscheduled event is until someone approves it.
+   *
+   * The observation is recorded the instant it is raised. What waits for a
+   * supervisor is the stock movement and the cost.
+   * ────────────────────────────────────────────────────────────────────── */
+
+  async recordUnscheduledHealth(
+    batchId: string,
+    dto: CreateUnscheduledHealthDto,
+    tenantId: string,
+    userPayload?: UserContext,
+  ) {
+    const [batch] = await this.db.select().from(schema.batchHeader)
+      .where(and(eq(schema.batchHeader.batch_id, batchId), eq(schema.batchHeader.tenant_id, tenantId)))
+      .limit(1);
+    if (!batch) throw new NotFoundException('Batch not found.');
+
+    // A day that has not happened cannot have been observed. The rest of the
+    // entry window does not apply: this is precisely the case the schedule did
+    // not foresee, so a backlog must not stop someone reporting a sick animal.
+    const today = await this.companyToday(batch.company_id);
+    if (dto.entry_date > today) {
+      throw new BadRequestException(`${dto.entry_date} has not happened yet — an event cannot be reported in advance.`);
+    }
+
+    let medicine: { item_id: string; item_name: string; uom: string } | null = null;
+    if (dto.item_id) {
+      const [item] = await this.db.select({
+        item_id: schema.itemMaster.item_id,
+        item_name: schema.itemMaster.item_name,
+        uom: schema.itemMaster.uom_primary,
+      }).from(schema.itemMaster).where(and(
+        eq(schema.itemMaster.item_id, dto.item_id),
+        eq(schema.itemMaster.tenant_id, tenantId),
+      )).limit(1);
+      if (!item) throw new NotFoundException('That medicine is not in the Item Master.');
+      medicine = { ...item, uom: item.uom ?? 'PCS' };
+    }
+
+    let disease: string | null = null;
+    if (dto.disease_id) {
+      const [row] = await this.db.select({ name: schema.diseaseMaster.disease_name })
+        .from(schema.diseaseMaster).where(and(
+          eq(schema.diseaseMaster.disease_id, dto.disease_id),
+          eq(schema.diseaseMaster.tenant_id, tenantId),
+        )).limit(1);
+      if (!row) throw new NotFoundException('That disease is not in the Disease Master.');
+      disease = row.name;
+    }
+
+    // The decided fields are packed into justification because approval_request
+    // is a generic queue: giving it an item_id column for this one case would
+    // make every other request carry a column it has no use for.
+    const detail = [
+      `Observed: ${dto.observation}`,
+      disease ? `Suspected: ${disease}` : null,
+      medicine ? `Treatment: ${medicine.item_name}${dto.quantity != null ? ` — ${dto.quantity} ${medicine.uom}` : ''}` : null,
+      dto.animals_affected != null ? `Animals affected: ${dto.animals_affected}` : null,
+      `Date: ${dto.entry_date}`,
+      dto.remarks || null,
+    ].filter(Boolean).join('\n');
+
+    const request = await this.approvalService.create({
+      company_id: batch.company_id,
+      doc_type: UNSCHEDULED_HEALTH,
+      title: `${batch.batch_no}: ${dto.observation}`.slice(0, 200),
+      batch_id: batchId,
+      urgency: dto.urgency || 'HIGH',
+      item_or_stage: medicine?.item_name ?? disease ?? 'Health event',
+      requested_qty: dto.quantity != null ? String(dto.quantity) : undefined,
+      uom: medicine?.uom,
+      justification: detail,
+    } as any, tenantId, userPayload);
+
+    await this.auditService.log({
+      tenantId,
+      companyId: batch.company_id,
+      userId: userPayload?.userId,
+      action: 'CREATE',
+      entityName: 'unscheduled_health_event',
+      entityId: (request as any).request_id,
+      newValues: { batch_id: batchId, entry_date: dto.entry_date, item_id: dto.item_id ?? null },
+    });
+
+    return request;
+  }
+
+  /** Health events raised against this batch, newest first. */
+  async listUnscheduledHealth(batchId: string, tenantId: string, status?: string) {
+    return this.approvalService.findAll({
+      doc_type: UNSCHEDULED_HEALTH,
+      status,
+    } as any, tenantId).then((res: any) => ({
+      ...res,
+      data: (res.data ?? res).filter((r: any) => r.batch_id === batchId),
+    }));
+  }
+
+  /**
+   * Approve a health event and let its cost reach the batch.
+   *
+   * Approval is what moves the stock, so it runs before the decision is
+   * recorded: if the medicine cannot be issued — none on hand, no rate — the
+   * request stays PENDING rather than being marked approved against a posting
+   * that never happened.
+   */
+  async approveUnscheduledHealth(
+    batchId: string,
+    requestId: string,
+    tenantId: string,
+    userPayload?: UserContext,
+  ) {
+    const request: any = await this.approvalService.findOne(requestId, tenantId);
+    if (request.doc_type !== UNSCHEDULED_HEALTH) {
+      throw new BadRequestException('That request is not an unscheduled health event.');
+    }
+    if (request.batch_id !== batchId) {
+      throw new BadRequestException('That request does not belong to this batch.');
+    }
+    if (request.status !== 'PENDING') {
+      throw new ConflictException(`This event was already ${String(request.status).toLowerCase()}.`);
+    }
+
+    // The treatment line is optional — an observation with no medicine is a
+    // real thing to record, and there is simply nothing to post for it.
+    const medicineName = request.item_or_stage as string | null;
+    const quantity = request.requested_qty != null ? Number(request.requested_qty) : null;
+    if (medicineName && quantity != null && !Number.isNaN(quantity) && quantity > 0) {
+      const [item] = await this.db.select({
+        item_id: schema.itemMaster.item_id,
+        uom: schema.itemMaster.uom_primary,
+      }).from(schema.itemMaster).where(and(
+        eq(schema.itemMaster.item_name, medicineName),
+        eq(schema.itemMaster.tenant_id, tenantId),
+      )).limit(1);
+
+      if (item) {
+        await this.batchService.addTransaction(batchId, {
+          transaction_date: this.dateFromJustification(request.justification) ?? String(request.submitted_at).slice(0, 10),
+          transaction_type: 'CONSUMPTION',
+          item_id: item.item_id,
+          quantity,
+          uom: item.uom || 'PCS',
+          remarks: `${request.doc_no} — unscheduled health event`,
+        } as any, tenantId, userPayload as any);
+      }
+    }
+
+    return this.approvalService.approve(requestId, tenantId, userPayload);
+  }
+
+  async rejectUnscheduledHealth(
+    batchId: string,
+    requestId: string,
+    reason: string | undefined,
+    tenantId: string,
+    userPayload?: UserContext,
+  ) {
+    const request: any = await this.approvalService.findOne(requestId, tenantId);
+    if (request.doc_type !== UNSCHEDULED_HEALTH || request.batch_id !== batchId) {
+      throw new BadRequestException('That request is not an unscheduled health event on this batch.');
+    }
+    return this.approvalService.reject(requestId, { rejection_reason: reason } as any, tenantId, userPayload);
+  }
+
+  /** The event's own date, written into the justification when it was raised. */
+  private dateFromJustification(justification: string | null): string | null {
+    const match = /^Date: (\d{4}-\d{2}-\d{2})$/m.exec(justification ?? '');
+    return match ? match[1] : null;
   }
 
   /** The dates this batch has anything recorded on, newest first. */

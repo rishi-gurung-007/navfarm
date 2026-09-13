@@ -1,11 +1,12 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { ConflictException, ForbiddenException, BadRequestException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, BadRequestException, NotFoundException } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
 import { BatchDailyDataService } from './batch-daily-data.service';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { BatchService } from '../batch/batch.service';
 import { BatchTransferService } from '../batch/batch-transfer.service';
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
+import { ApprovalService } from '../approval/approval.service';
 import * as schema from '../../../core/database/schema';
 
 /**
@@ -23,6 +24,14 @@ describe('BatchDailyDataService', () => {
   const mockDbInsert = jest.fn();
   const mockDbUpdate = jest.fn();
   const mockDb = { select: mockDbSelect, insert: mockDbInsert, update: mockDbUpdate };
+
+  const approvalService = {
+    create: jest.fn(),
+    findOne: jest.fn(),
+    findAll: jest.fn(),
+    approve: jest.fn(),
+    reject: jest.fn(),
+  };
 
   /** Awaitable at any point, so .where(), .limit() and .orderBy() all resolve. */
   const chain = (result: unknown[]) => {
@@ -54,6 +63,8 @@ describe('BatchDailyDataService', () => {
     mockDbSelect.mockReset();
     mockDbInsert.mockReset();
     mockDbUpdate.mockReset();
+    Object.values(approvalService).forEach((fn) => fn.mockReset());
+    approvalService.create.mockResolvedValue({ request_id: 'req-1', doc_no: 'HLT-UNS-2026-0001' });
     mockDbSelect.mockImplementation(() => ({ from: (table: unknown) => chain(rows.get(table) ?? []) }));
     mockDbInsert.mockReturnValue({ values: jest.fn().mockReturnValue({ onDuplicateKeyUpdate: jest.fn().mockResolvedValue({}) }) });
     mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) }) });
@@ -66,6 +77,7 @@ describe('BatchDailyDataService', () => {
         { provide: BatchService, useValue: { addTransaction: jest.fn() } },
         { provide: BatchTransferService, useValue: { create: jest.fn() } },
         { provide: GlPostingService, useValue: {} },
+        { provide: ApprovalService, useValue: approvalService },
       ],
     }).compile();
 
@@ -149,6 +161,121 @@ describe('BatchDailyDataService', () => {
       await expect(
         service.postEntry('batch-1', { line_id: 'line-1', entry_date: '2099-01-01', entered_value: 1 } as any, 'tenant-123'),
       ).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  describe('unscheduled health events', () => {
+    // The schedule is what a worker may enter. Health is the one exception,
+    // because a sick animal will not wait for a schedule to be redesigned.
+    it('records the observation at once, as a request awaiting approval', async () => {
+      rows.set(schema.itemMaster, [{ item_id: 'med-1', item_name: 'Oxytetracycline', uom: 'ML' }]);
+
+      await service.recordUnscheduledHealth('batch-1', {
+        entry_date: ENTRY_DATE, observation: 'Lame gilt, pen 4', item_id: 'med-1', quantity: 12,
+      } as any, 'tenant-123', { userId: 'u' });
+
+      expect(approvalService.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          doc_type: 'UNSCHEDULED_HEALTH',
+          batch_id: 'batch-1',
+          requested_qty: '12',
+          uom: 'ML',
+          urgency: 'HIGH',
+        }),
+        'tenant-123',
+        { userId: 'u' },
+      );
+      // The event itself is the request; nothing was written to the day's
+      // entries, which only ever answer a scheduler line.
+      expect(mockDbInsert).not.toHaveBeenCalled();
+    });
+
+    // The backlog gate deliberately does not apply here: it would stop someone
+    // reporting a sick animal because a feed record from last Tuesday is
+    // missing, which is exactly backwards.
+    it('is not held back by a backlog', async () => {
+      rows.set(schema.batchDailyData, []);
+      await expect(service.recordUnscheduledHealth('batch-1', {
+        entry_date: '2026-09-01', observation: 'Scouring piglets',
+      } as any, 'tenant-123')).resolves.toBeDefined();
+    });
+
+    it('refuses an event dated in the future', async () => {
+      await expect(service.recordUnscheduledHealth('batch-1', {
+        entry_date: '2099-01-01', observation: 'Lame gilt',
+      } as any, 'tenant-123')).rejects.toThrow(BadRequestException);
+    });
+
+    it('refuses a medicine that is not in the Item Master', async () => {
+      rows.set(schema.itemMaster, []);
+      await expect(service.recordUnscheduledHealth('batch-1', {
+        entry_date: ENTRY_DATE, observation: 'Lame gilt', item_id: 'nope',
+      } as any, 'tenant-123')).rejects.toThrow(NotFoundException);
+    });
+
+    // Posting runs before the decision is recorded, so a medicine that cannot
+    // be issued leaves the request PENDING rather than approved against a
+    // posting that never happened.
+    it('issues the medicine against the batch before approving', async () => {
+      approvalService.findOne.mockResolvedValue({
+        request_id: 'req-1', doc_no: 'HLT-UNS-2026-0001', doc_type: 'UNSCHEDULED_HEALTH',
+        batch_id: 'batch-1', status: 'PENDING', item_or_stage: 'Oxytetracycline',
+        requested_qty: '12', justification: `Observed: Lame gilt\nDate: ${ENTRY_DATE}`,
+        submitted_at: `${ENTRY_DATE} 08:00:00`,
+      });
+      rows.set(schema.itemMaster, [{ item_id: 'med-1', uom: 'ML' }]);
+      (batchService.addTransaction as jest.Mock).mockResolvedValue({ transactions: [] });
+
+      await service.approveUnscheduledHealth('batch-1', 'req-1', 'tenant-123', { userId: 'u' });
+
+      expect(batchService.addTransaction).toHaveBeenCalledWith(
+        'batch-1',
+        expect.objectContaining({
+          transaction_type: 'CONSUMPTION', item_id: 'med-1', quantity: 12,
+          uom: 'ML', transaction_date: ENTRY_DATE,
+        }),
+        'tenant-123',
+        { userId: 'u' },
+      );
+      expect(approvalService.approve).toHaveBeenCalledWith('req-1', 'tenant-123', { userId: 'u' });
+    });
+
+    it('leaves the request pending when the posting throws', async () => {
+      approvalService.findOne.mockResolvedValue({
+        request_id: 'req-1', doc_type: 'UNSCHEDULED_HEALTH', batch_id: 'batch-1', status: 'PENDING',
+        item_or_stage: 'Oxytetracycline', requested_qty: '12', justification: '', submitted_at: `${ENTRY_DATE} 08:00:00`,
+      });
+      rows.set(schema.itemMaster, [{ item_id: 'med-1', uom: 'ML' }]);
+      (batchService.addTransaction as jest.Mock).mockRejectedValue(new Error('No stock on hand'));
+
+      await expect(service.approveUnscheduledHealth('batch-1', 'req-1', 'tenant-123')).rejects.toThrow('No stock on hand');
+      expect(approvalService.approve).not.toHaveBeenCalled();
+    });
+
+    // An observation with no treatment is a real thing to record, and there is
+    // simply nothing to post for it.
+    it('approves an observation with no medicine without posting anything', async () => {
+      approvalService.findOne.mockResolvedValue({
+        request_id: 'req-2', doc_type: 'UNSCHEDULED_HEALTH', batch_id: 'batch-1', status: 'PENDING',
+        item_or_stage: 'Health event', requested_qty: null, justification: '', submitted_at: `${ENTRY_DATE} 08:00:00`,
+      });
+      await service.approveUnscheduledHealth('batch-1', 'req-2', 'tenant-123');
+      expect(batchService.addTransaction).not.toHaveBeenCalled();
+      expect(approvalService.approve).toHaveBeenCalled();
+    });
+
+    it('refuses to decide the same event twice', async () => {
+      approvalService.findOne.mockResolvedValue({
+        request_id: 'req-1', doc_type: 'UNSCHEDULED_HEALTH', batch_id: 'batch-1', status: 'APPROVED',
+      });
+      await expect(service.approveUnscheduledHealth('batch-1', 'req-1', 'tenant-123')).rejects.toThrow(ConflictException);
+    });
+
+    it('refuses a request belonging to a different batch', async () => {
+      approvalService.findOne.mockResolvedValue({
+        request_id: 'req-1', doc_type: 'UNSCHEDULED_HEALTH', batch_id: 'other-batch', status: 'PENDING',
+      });
+      await expect(service.approveUnscheduledHealth('batch-1', 'req-1', 'tenant-123')).rejects.toThrow(BadRequestException);
     });
   });
 });

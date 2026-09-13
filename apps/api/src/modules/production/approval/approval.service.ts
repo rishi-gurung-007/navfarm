@@ -19,6 +19,7 @@ const DOC_PREFIX: Record<string, string> = {
   STOCK_TRANSFER: 'TRF-APR',
   STAGE_CLOSE: 'STG-CLS',
   VET_DISPOSAL: 'VET-DISP',
+  UNSCHEDULED_HEALTH: 'HLT-UNS',
 };
 
 /**
