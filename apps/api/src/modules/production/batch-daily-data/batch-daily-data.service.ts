@@ -9,6 +9,7 @@ import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { BatchService, type UserContext } from '../batch/batch.service';
 import { BatchTransferService } from '../batch/batch-transfer.service';
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
+import { DueLine, stageDayStatus, pendingDays, StageDayStatus } from './day-completeness';
 
 const toMysqlTimestamp = (date: Date = new Date()) => date.toISOString().slice(0, 19).replace('T', ' ');
 
@@ -28,6 +29,109 @@ export class BatchDailyDataService {
     private readonly batchTransferService: BatchTransferService,
     private readonly glPostingService: GlPostingService,
   ) {}
+
+  /**
+   * Everything the entry screen needs to draw its stage list for one date:
+   * which stages have work, how many animals are in each, and whether the
+   * mandatory lines have been answered.
+   *
+   * A batch can carry more than one scheduler (one per stage), so the lines are
+   * grouped by their own scheduler's `effective_from` — day 3 of farrowing is
+   * not day 3 of gestation.
+   */
+  async dayStatus(batchId: string, date: string, tenantId: string) {
+    const [batch] = await this.db.select().from(schema.batchHeader)
+      .where(and(eq(schema.batchHeader.batch_id, batchId), eq(schema.batchHeader.tenant_id, tenantId)))
+      .limit(1);
+    if (!batch) throw new NotFoundException('Batch not found.');
+
+    const headers = await this.db.select().from(schema.schedulerHeader)
+      .where(and(eq(schema.schedulerHeader.batch_id, batchId), eq(schema.schedulerHeader.tenant_id, tenantId)));
+    if (!headers.length) {
+      return { batch_id: batchId, date, animal_tracking: batch.animal_tracking, stages: [], hasScheduler: false };
+    }
+
+    const lines = await this.db.select().from(schema.schedulerLine)
+      .where(inArray(schema.schedulerLine.scheduler_id, headers.map((h) => h.scheduler_id)));
+
+    const entered = new Set((await this.db.select({ line_id: schema.batchDailyData.line_id })
+      .from(schema.batchDailyData)
+      .where(and(
+        eq(schema.batchDailyData.batch_id, batchId),
+        eq(schema.batchDailyData.entry_date, date),
+      ))).map((r) => r.line_id as string));
+
+    // Per scheduler, because each has its own start date.
+    const stages: (StageDayStatus & { animal_count: number | null; scheduler_id: string })[] = [];
+    for (const header of headers) {
+      const own = lines.filter((l) => l.scheduler_id === header.scheduler_id).map(this.toDueLine);
+      const from = String(header.effective_from).slice(0, 10);
+      for (const status of stageDayStatus(own, from, date, entered)) {
+        stages.push({
+          ...status,
+          stage_id: status.stage_id ?? header.stage_id,
+          // decimal(14,4) reaches here as a string; a headcount is a number.
+          animal_count: header.animal_count == null ? null : Number(header.animal_count),
+          scheduler_id: header.scheduler_id,
+        });
+      }
+    }
+
+    return {
+      batch_id: batchId, date, animal_tracking: batch.animal_tracking,
+      hasScheduler: true, stages,
+      complete: stages.every((s) => s.complete),
+    };
+  }
+
+  /**
+   * The days from the batch's start up to `upTo` that still have an unanswered
+   * mandatory line, oldest first — the backlog the worker must clear before
+   * today can be entered.
+   */
+  async pendingDays(batchId: string, upTo: string, tenantId: string): Promise<string[]> {
+    const [batch] = await this.db.select().from(schema.batchHeader)
+      .where(and(eq(schema.batchHeader.batch_id, batchId), eq(schema.batchHeader.tenant_id, tenantId)))
+      .limit(1);
+    if (!batch) throw new NotFoundException('Batch not found.');
+
+    const headers = await this.db.select().from(schema.schedulerHeader)
+      .where(and(eq(schema.schedulerHeader.batch_id, batchId), eq(schema.schedulerHeader.tenant_id, tenantId)));
+    if (!headers.length) return [];
+
+    const lines = await this.db.select().from(schema.schedulerLine)
+      .where(inArray(schema.schedulerLine.scheduler_id, headers.map((h) => h.scheduler_id)));
+
+    const rows = await this.db.select({
+      line_id: schema.batchDailyData.line_id, entry_date: schema.batchDailyData.entry_date,
+    }).from(schema.batchDailyData).where(eq(schema.batchDailyData.batch_id, batchId));
+    const enteredByDate = new Map<string, Set<string>>();
+    for (const r of rows) {
+      const key = String(r.entry_date).slice(0, 10);
+      (enteredByDate.get(key) ?? enteredByDate.set(key, new Set()).get(key)!).add(r.line_id as string);
+    }
+
+    // A day is pending if ANY of the batch's schedulers still wants something
+    // that day, so the union across schedulers is what the worker must clear.
+    const batchStart = String(batch.start_date).slice(0, 10);
+    const all = new Set<string>();
+    for (const header of headers) {
+      const own = lines.filter((l) => l.scheduler_id === header.scheduler_id).map(this.toDueLine);
+      const from = String(header.effective_from).slice(0, 10);
+      for (const d of pendingDays(own, from, batchStart, upTo, enteredByDate)) all.add(d);
+    }
+    return [...all].sort();
+  }
+
+  private toDueLine = (l: typeof schema.schedulerLine.$inferSelect): DueLine => ({
+    line_id: l.line_id,
+    stage_id: l.stage_id ?? null,
+    occurrence: l.occurrence ?? null,
+    start_day: l.start_day ?? null,
+    end_day: l.end_day ?? null,
+    day_of_week: l.day_of_week ?? null,
+    is_mandatory: !!l.is_mandatory,
+  });
 
   private get db(): MySql2Database<typeof schema> {
     const tenantDb = this.cls.get<MySql2Database<typeof schema>>('tenantDb');

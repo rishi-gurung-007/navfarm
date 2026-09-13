@@ -23,6 +23,29 @@ export class BatchDailyDataController {
     return { success: true, message: 'Entry posted.', data: result };
   }
 
+  @Get('day-status')
+  @RequirePermission('PRODUCTION', 'BATCH_SCHEDULE', 'view')
+  @ApiOperation({ summary: "Per-stage status for one date: animal count, lines due, and whether every mandatory one is answered" })
+  @ApiParam({ name: 'batchId', description: 'Batch UUID' })
+  @ApiQuery({ name: 'date', description: 'YYYY-MM-DD', required: true })
+  async dayStatus(@Param('batchId') batchId: string, @Query('date') date: string, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const data = await this.batchDailyDataService.dayStatus(batchId, date, tenantId);
+    return { success: true, message: 'Day status retrieved.', data };
+  }
+
+  @Get('pending-days')
+  @RequirePermission('PRODUCTION', 'BATCH_SCHEDULE', 'view')
+  @ApiOperation({ summary: "Days from the batch start still missing a mandatory entry, oldest first — the backlog before today can be entered" })
+  @ApiParam({ name: 'batchId', description: 'Batch UUID' })
+  @ApiQuery({ name: 'upTo', description: 'YYYY-MM-DD, usually today', required: true })
+  async pendingDays(@Param('batchId') batchId: string, @Query('upTo') upTo: string, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const data = await this.batchDailyDataService.pendingDays(batchId, upTo, tenantId);
+    // oldest is what the screen opens on, so it is named rather than implied.
+    return { success: true, message: 'Pending days retrieved.', data, oldest: data[0] ?? null };
+  }
+
   @Get()
   @RequirePermission('PRODUCTION', 'BATCH_SCHEDULE', 'view')
   @ApiOperation({ summary: 'List entries already recorded for this batch on a given date' })
