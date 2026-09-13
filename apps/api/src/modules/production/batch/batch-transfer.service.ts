@@ -7,6 +7,7 @@ import * as schema from '../../../core/database/schema';
 import { CreateBatchTransferDto, MergeBatchDto, QueryBatchTransferDto, SplitBatchDto } from './dto/batch.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
+import { SchedulerHeaderService } from '../scheduler-header/scheduler-header.service';
 
 // Local time, not UTC. MySQL's own DEFAULT (now()) on created_at is local, so
 // formatting through toISOString() (as some older services here do) stamps
@@ -42,6 +43,7 @@ export class BatchTransferService {
     private readonly cls: ClsService,
     private readonly auditService: AuditLogService,
     private readonly numberSeriesService: NumberSeriesService,
+    private readonly schedulerHeaderService: SchedulerHeaderService,
   ) {}
 
   private get db(): MySql2Database<typeof schema> {
@@ -202,7 +204,7 @@ export class BatchTransferService {
     });
 
     if (dto.post_immediately !== false) {
-      return this.post(transferId, tenantId, userPayload);
+      return this.post(transferId, tenantId, userPayload, dto.auto_triggers_stage);
     }
     return this.findOne(transferId, tenantId);
   }
@@ -292,7 +294,6 @@ export class BatchTransferService {
       nob_id: parent.nob_id,
       lob_id: parent.lob_id,
       breed_id: parent.breed_id,
-      scheduler_id: parent.scheduler_id,
       costing_method: parent.costing_method,
       operational_area_id: parent.operational_area_id,
       shed_id: parent.shed_id,
@@ -333,6 +334,13 @@ export class BatchTransferService {
       parentBatchId,
       userPayload,
     );
+
+    // The child starts life already in a resolved stage (holdStageId), unlike a
+    // normal batch that only gets one via transferStage() later — give it the
+    // same auto-generated scheduler_header a transferStage() call would.
+    if (holdStageId) {
+      await this.schedulerHeaderService.createForStage(childBatchId, holdStageId, tenantId, userPayload);
+    }
 
     return {
       child: { batch_id: childBatchId, batch_no: childBatchNo, parent_batch_id: parentBatchId, current_stage_code: holdStageCode },
@@ -397,7 +405,7 @@ export class BatchTransferService {
    * Applies the movement. Everything here is idempotent-guarded by the DRAFT
    * check, so a double-submit cannot move the same animals twice.
    */
-  async post(transferId: string, tenantId: string, userPayload?: { userId?: string }) {
+  async post(transferId: string, tenantId: string, userPayload?: { userId?: string }, autoTriggersStage?: boolean) {
     const transfer = await this.findOne(transferId, tenantId);
     if (transfer.status !== 'DRAFT') {
       throw new BadRequestException(`Only a DRAFT transfer can be posted (this one is ${transfer.status}).`);
@@ -449,6 +457,19 @@ export class BatchTransferService {
         updated_at: toMysqlTimestamp(),
       })
       .where(inArray(schema.animalRegister.animal_id, animalIds));
+
+    // 1b. "Destination stage auto-triggered if auto_triggers_stage = TRUE"
+    // (Schedule_master_template.xlsx) — the TRANSFER scheduler_line that
+    // generated this transfer can ask for the destination batch's current
+    // stage to get (or reuse) its own scheduler_header right away, rather
+    // than waiting on a separate transferStage() call. createForStage() is
+    // idempotent on (batch_id, stage_id), so this is safe to call even if a
+    // header already exists. Runs after the repoint above so the live
+    // animal_register count createForStage() reads already includes these
+    // animals.
+    if (autoTriggersStage && destBatch?.stage_id) {
+      await this.schedulerHeaderService.createForStage(transfer.to_batch_id, destBatch.stage_id, tenantId, userPayload);
+    }
 
     // 2. Move the carrying value and head count between the two batches' states.
     await this.shiftBioAssetState(transfer.from_batch_id, -headCount, -totalValue);

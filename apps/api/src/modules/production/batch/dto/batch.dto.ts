@@ -113,10 +113,15 @@ export class CreateBatchDto {
   @IsOptional()
   breed_id?: string;
 
-  @ApiProperty({ description: 'Scheduler UUID (optional) — attaches a period-based KPI monitoring plan to this batch', required: false })
+  @ApiProperty({ description: 'Initial Stage UUID from Stage Master (filtered by LOB)', required: false })
   @IsUUID()
   @IsOptional()
-  scheduler_id?: string;
+  stage_id?: string;
+
+  @ApiProperty({ description: 'Whether to auto-generate standard scheduler for the initial stage (defaults to true)', required: false })
+  @IsBoolean()
+  @IsOptional()
+  auto_generate_scheduler?: boolean;
 
   @ApiProperty({ description: 'Shed UUID (optional — set exactly one of shed_id/location_id, or neither)', required: false })
   @IsUUID()
@@ -193,7 +198,7 @@ export class RenewBatchDto {
   @IsOptional()
   remarks?: string;
 
-  @ApiProperty({ description: 'Input lines for the new cycle — everything else (breed, scheduler, shed, costing method, standard assumptions) is carried forward from the source batch', type: [BatchInputLineInput] })
+  @ApiProperty({ description: 'Input lines for the new cycle — everything else (breed, shed, costing method, standard assumptions) is carried forward from the source batch', type: [BatchInputLineInput] })
   @IsArray()
   @ArrayMinSize(1)
   @ValidateNested({ each: true })
@@ -662,6 +667,14 @@ export class CreateBatchTransferDto {
   })
   @IsOptional()
   post_immediately?: boolean;
+
+  @ApiProperty({
+    description: 'Internal — set by BatchDailyDataService when the TRANSFER scheduler_line that generated this transfer has auto_triggers_stage = true. Not intended for direct/manual use.',
+    required: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  auto_triggers_stage?: boolean;
 }
 
 export class SplitBatchDto {

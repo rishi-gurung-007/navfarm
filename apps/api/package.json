@@ -222,6 +222,13 @@
           "command": "node --env-file-if-exists=.env --import tsx src/scripts/fix-non-uuid-company-ids.ts"
         }
       },
+      "db-backfill-scheduler-headers": {
+        "executor": "nx:run-commands",
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --env-file-if-exists=.env --import tsx src/scripts/backfill-scheduler-headers.ts"
+        }
+      },
       "db-migrate-master": {
         "executor": "nx:run-commands",
         "options": {
@@ -279,6 +286,13 @@
         "executor": "nx:run-commands",
         "options": {
           "command": "node --env-file-if-exists=.env --import tsx src/scripts/seed-demo-gaps.ts",
+          "cwd": "apps/api"
+        }
+      },
+      "db-seed-activity-master": {
+        "executor": "nx:run-commands",
+        "options": {
+          "command": "node --env-file-if-exists=.env --import tsx src/scripts/seed-activity-master.ts",
           "cwd": "apps/api"
         }
       }

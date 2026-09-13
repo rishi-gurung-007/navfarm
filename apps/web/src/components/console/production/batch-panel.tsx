@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Plus, Trash2, Search, Loader2, Inbox, Eye, PlayCircle, CheckCircle2, ClipboardCheck, QrCode as QrCodeIcon, RefreshCw } from "lucide-react";
+import { Plus, Trash2, Search, Loader2, Inbox, Eye, PlayCircle, CheckCircle2, ClipboardCheck, QrCode as QrCodeIcon, RefreshCw, CalendarClock } from "lucide-react";
 import QRCode from "react-qr-code";
 import { api } from "@/services/api-client";
 import { Dialog } from "@/components/ui/dialog";
@@ -61,13 +61,13 @@ export default function BatchPanel() {
   const [warehouses, setWarehouses] = useState<Row[]>([]);
   const [resources, setResources] = useState<Row[]>([]);
   const [batches, setBatches] = useState<Row[]>([]);
-  const [schedulers, setSchedulers] = useState<Row[]>([]);
+  const [stages, setStages] = useState<Row[]>([]);
 
   const [modalOpen, setModalOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState("");
   const [nobId, setNobId] = useState("");
-  const [header, setHeader] = useState<Row>({ lob_id: "", costing_method: "STANDARD", breed_id: "", scheduler_id: "", shed_id: "", start_date: "", expected_end_date: "", opening_quantity: "", uom: "", remarks: "" });
+  const [header, setHeader] = useState<Row>({ lob_id: "", costing_method: "STANDARD", breed_id: "", stage_id: "", shed_id: "", start_date: "", expected_end_date: "", opening_quantity: "", uom: "", remarks: "" });
   const [inputLines, setInputLines] = useState<Row[]>([emptyInputLine()]);
   const [stdForm, setStdForm] = useState<Row>({ std_output_quantity: "", std_output_cost_per_unit: "", std_overhead_rate_per_unit: "" });
   const [stdConsumptionLines, setStdConsumptionLines] = useState<Row[]>([emptyStdConsumptionLine()]);
@@ -105,6 +105,14 @@ export default function BatchPanel() {
   const [dataEntryError, setDataEntryError] = useState("");
   const [dataEntryLines, setDataEntryLines] = useState<Row[]>([]);
   const [dataEntryValues, setDataEntryValues] = useState<Record<string, string>>({});
+  const [dataEntryLotNos, setDataEntryLotNos] = useState<Record<string, string>>({});
+  const [dataEntryDestBatches, setDataEntryDestBatches] = useState<Record<string, string>>({});
+  const [dataEntryTexts, setDataEntryTexts] = useState<Record<string, string>>({});
+
+  // A DESCRIPTIVE line's kpi_uom is normally a numeric unit (KG, SCORE, HEAD...);
+  // a "/"-separated one (e.g. YES/NO) is the template's own convention for a
+  // non-numeric capture — those lines need a text field, not a number input.
+  const isTextCapture = (line: Row) => line.line_type === "DESCRIPTIVE" && !!line.kpi_uom && line.kpi_uom.includes("/");
   const [dataEntrySavingId, setDataEntrySavingId] = useState<string | null>(null);
 
   const [closeModalOpen, setCloseModalOpen] = useState(false);
@@ -233,22 +241,17 @@ export default function BatchPanel() {
     api.get(`/shed?${qs}`).then((r) => setSheds(unwrap<Row[]>(r) || [])).catch(() => setSheds([]));
     api.get(`/item?${qs}`).then((r) => setItems(unwrap<Row[]>(r) || [])).catch(() => setItems([]));
     api.get(`/resource?${qs}`).then((r) => setResources(unwrap<Row[]>(r) || [])).catch(() => setResources([]));
+    if (activeLobId) {
+      api.get(`/stage?lobId=${activeLobId}&isActive=true&limit=200`).then((r) => setStages(unwrap<Row[]>(r) || [])).catch(() => setStages([]));
+    } else {
+      setStages([]);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeNobId, activeLobId]);
 
-  useEffect(() => {
-    if (!header.lob_id) { setSchedulers([]); return; }
-    const params = new URLSearchParams();
-    if (companyId) params.set("companyId", companyId);
-    params.set("lobId", header.lob_id);
-    params.set("limit", "200");
-    api.get(`/scheduler?${params.toString()}`).then((r) => setSchedulers(unwrap<Row[]>(r) || [])).catch(() => setSchedulers([]));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [header.lob_id]);
-
   const openCreate = () => {
     setNobId("");
-    setHeader({ lob_id: "", costing_method: "STANDARD", breed_id: "", scheduler_id: "", shed_id: "", start_date: new Date().toISOString().slice(0, 10), expected_end_date: "", opening_quantity: "", uom: "", remarks: "" });
+    setHeader({ lob_id: "", costing_method: "STANDARD", breed_id: "", stage_id: "", shed_id: "", start_date: new Date().toISOString().slice(0, 10), expected_end_date: "", opening_quantity: "", uom: "", remarks: "" });
     setInputLines([emptyInputLine()]);
     setStdForm({ std_output_quantity: "", std_output_cost_per_unit: "", std_overhead_rate_per_unit: "" });
     setStdConsumptionLines([emptyStdConsumptionLine()]);
@@ -311,7 +314,7 @@ export default function BatchPanel() {
         lob_id: header.lob_id,
         costing_method: header.costing_method,
         breed_id: header.breed_id || undefined,
-        scheduler_id: header.scheduler_id || undefined,
+        stage_id: header.stage_id || undefined,
         shed_id: header.shed_id || undefined,
         start_date: header.start_date,
         expected_end_date: header.expected_end_date || undefined,
@@ -361,8 +364,11 @@ export default function BatchPanel() {
       const dueLines = data.lines || [];
       setDataEntryLines(dueLines);
       setDataEntryValues(
-        Object.fromEntries(dueLines.map((l: Row) => [l.spl_id, l.already_entered_qty ? String(l.already_entered_qty) : ""]))
+        Object.fromEntries(dueLines.map((l: Row) => [l.line_id, l.already_entered_qty ? String(l.already_entered_qty) : ""]))
       );
+      setDataEntryLotNos({});
+      setDataEntryDestBatches({});
+      setDataEntryTexts({});
     } catch (err: any) {
       setDataEntryError(err?.message || t("blErrLoadDataEntryLines"));
       setDataEntryLines([]);
@@ -376,21 +382,32 @@ export default function BatchPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewing?.batch_id, detailTab, dataEntryDate]);
 
+  const dataEntryCanSave = (line: Row) => {
+    if (isTextCapture(line)) return !!dataEntryTexts[line.line_id];
+    const rawValue = dataEntryValues[line.line_id];
+    if (rawValue === undefined || rawValue === "") return false;
+    if (line.lot_required && !dataEntryLotNos[line.line_id]) return false;
+    if (line.line_type === "TRANSFER" && !dataEntryDestBatches[line.line_id]) return false;
+    return true;
+  };
+
   const handleDataEntrySave = async (line: Row) => {
     if (!viewing) return;
-    const rawValue = dataEntryValues[line.spl_id];
-    if (rawValue === undefined || rawValue === "") return;
-    setDataEntrySavingId(line.spl_id);
+    if (!dataEntryCanSave(line)) return;
+    setDataEntrySavingId(line.line_id);
     setDataEntryError("");
     try {
-      await api.post(`/batch/${viewing.batch_id}/transaction`, {
-        transaction_date: dataEntryDate,
-        transaction_type: line.parameter_type,
-        item_id: line.item_id || undefined,
-        resource_id: line.resource_id || undefined,
-        quantity: Number(rawValue),
-        uom: line.uom || undefined,
-      });
+      // Dispatch (inventory/GL/alert/transfer) happens server-side, keyed off
+      // this line's own line_type — the form only needs to say what was entered.
+      const payload: Row = { line_id: line.line_id, entry_date: dataEntryDate };
+      if (isTextCapture(line)) {
+        payload.entered_text = dataEntryTexts[line.line_id];
+      } else {
+        payload.entered_value = Number(dataEntryValues[line.line_id]);
+      }
+      if (line.lot_required) payload.lot_no = dataEntryLotNos[line.line_id];
+      if (line.line_type === "TRANSFER") payload.destination_batch_id = dataEntryDestBatches[line.line_id];
+      await api.post(`/batch/${viewing.batch_id}/daily-data`, payload);
       await loadDataEntry();
       await refreshViewing();
     } catch (err: any) {
@@ -763,18 +780,17 @@ export default function BatchPanel() {
     setStageError("");
     setStageOptions([]);
     setStageModalOpen(true);
-    // Stages aren't a fixed enum — they're whatever the batch's own scheduler
-    // defines via stage-scoped parameter lines (scheduler_parameter_line.stage_code),
-    // and schedulers are themselves NOB/LOB-scoped. So the valid stage list for
-    // this batch is exactly the distinct stage codes configured on its scheduler.
-    if (!viewing.scheduler_id) return;
+    // Stages aren't a fixed enum — they're whatever Stage Master defines for
+    // this batch's LOB (the same source transferStage() itself validates
+    // against server-side), minus the stage the batch is already in.
+    if (!viewing.lob_id) return;
     setStageOptionsLoading(true);
     try {
-      const scheduler = unwrap<Row>(await api.get(`/scheduler/${viewing.scheduler_id}`));
+      const stages = unwrap<Row[]>(await api.get(`/stage?lobId=${viewing.lob_id}&isActive=true&limit=200`)) || [];
       const codes = Array.from(
         new Set(
-          (scheduler?.parameter_lines || [])
-            .map((l: Row) => l.stage_code)
+          stages
+            .map((s: Row) => s.stage_code)
             .filter((c: string | null) => !!c && c !== viewing.current_stage_code)
         )
       ) as string[];
@@ -948,10 +964,32 @@ export default function BatchPanel() {
               </select>
             </div>
             <div className="flex flex-col gap-1.5">
-              <label className="nf-text-label" style={S.sub}>{t("blLabelScheduler")}</label>
-              <select value={header.scheduler_id} onChange={(e) => setHeader((h) => ({ ...h, scheduler_id: e.target.value }))} className={`${inputCls} nf-select`} style={S.input} disabled={!header.lob_id}>
-                <option value="">{header.lob_id ? t("blNone") : t("blSelectLobFirst")}</option>
-                {schedulers.map((s) => <option key={s.scheduler_id} value={s.scheduler_id}>{s.scheduler_code} — {s.scheduler_name}</option>)}
+              <label className="nf-text-label" style={S.sub}>Initial Stage <span className="text-(--danger)">*</span></label>
+              <select
+                value={header.stage_id}
+                onChange={(e) => {
+                  const sId = e.target.value;
+                  const st = stages.find((s) => s.stage_id === sId);
+                  setHeader((h) => {
+                    let end = h.expected_end_date;
+                    if (st?.typical_duration_days && h.start_date) {
+                      const d = new Date(h.start_date);
+                      d.setDate(d.getDate() + Number(st.typical_duration_days));
+                      end = d.toISOString().slice(0, 10);
+                    }
+                    return { ...h, stage_id: sId, expected_end_date: end };
+                  });
+                }}
+                className={`${inputCls} nf-select`}
+                style={S.input}
+                disabled={!header.lob_id}
+              >
+                <option value="">{header.lob_id ? t("blSelectEllipsis") : t("blSelectNobFirst")}</option>
+                {stages.map((s) => (
+                  <option key={s.stage_id} value={s.stage_id}>
+                    {s.stage_code} — {s.stage_name} ({s.typical_duration_days ? `${s.typical_duration_days} days` : "Open duration"})
+                  </option>
+                ))}
               </select>
             </div>
             <div className="flex flex-col gap-1.5">
@@ -984,6 +1022,17 @@ export default function BatchPanel() {
               <label className="nf-text-label" style={S.sub}>{t("blLabelRemarks")}</label>
               <input value={header.remarks} onChange={(e) => setHeader((h) => ({ ...h, remarks: e.target.value }))} className={inputCls} style={S.input} />
             </div>
+            {header.stage_id && (
+              <div className="sm:col-span-2 rounded-lg border border-primary/20 bg-primary/5 p-3 text-xs flex items-start gap-2.5">
+                <CalendarClock className="h-4 w-4 shrink-0 text-primary mt-0.5" />
+                <div className="flex flex-col gap-0.5">
+                  <span className="font-semibold text-primary">Stage 1 Scheduler Auto-Generation</span>
+                  <span style={S.sub}>
+                    Creating this batch will automatically generate its <strong>{stages.find((s) => s.stage_id === header.stage_id)?.stage_name}</strong> scheduler with standard SOP activities (daily feed rations, health medications, and KPI limits) based on breed lifecycle standards.
+                  </span>
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="flex items-center justify-between pt-2">
@@ -1298,7 +1347,7 @@ export default function BatchPanel() {
 
             {detailTab === "data-entry" && (
               <div className="flex flex-col gap-3">
-                {!viewing.scheduler_id ? (
+                {!viewing.scheduler ? (
                   <InlineAlert variant="info">{t("blNoSchedulerInfo")}</InlineAlert>
                 ) : viewing.status !== "ACTIVE" ? (
                   <InlineAlert variant="info">{t("blDataEntryActiveOnly")}</InlineAlert>
@@ -1328,30 +1377,64 @@ export default function BatchPanel() {
                           {!dataEntryLoading && dataEntryLines.length === 0 ? (
                             <tr><TableCell colSpan={8} className="py-6 text-center" style={S.sub}>{t("blNoParamsScheduled")}</TableCell></tr>
                           ) : dataEntryLines.map((line) => (
-                            <TableRow key={line.spl_id}>
-                              <TableCell className="px-3 py-2" style={S.sub}>{line.parameter_type}</TableCell>
-                              <TableCell className="px-3 py-2" style={S.primary}>{line.parameter_name}</TableCell>
+                            <TableRow key={line.line_id}>
+                              <TableCell className="px-3 py-2" style={S.sub}>{line.line_type}</TableCell>
+                              <TableCell className="px-3 py-2" style={S.primary}>{line.activity_name}</TableCell>
                               <TableCell className="px-3 py-2" style={S.sub}>{line.item_label || "—"}</TableCell>
                               <TableCell className="px-3 py-2" style={S.sub}>{line.uom || "—"}</TableCell>
                               <TableCell className="px-3 py-2" style={S.sub}>{line.occurrence ? line.occurrence.charAt(0) + line.occurrence.slice(1).toLowerCase() : "—"}</TableCell>
                               <TableCell className="px-3 py-2" style={S.primary}>{Number(line.expected_qty).toLocaleString(undefined, { maximumFractionDigits: 4 })}</TableCell>
                               <TableCell className="px-2 py-1.5 w-28">
-                                <input
-                                  type="number"
-                                  value={dataEntryValues[line.spl_id] ?? ""}
-                                  onChange={(e) => setDataEntryValues((v) => ({ ...v, [line.spl_id]: e.target.value }))}
-                                  className={inputCls}
-                                  style={S.input}
-                                />
+                                {isTextCapture(line) ? (
+                                  <input
+                                    type="text"
+                                    value={dataEntryTexts[line.line_id] ?? ""}
+                                    onChange={(e) => setDataEntryTexts((v) => ({ ...v, [line.line_id]: e.target.value }))}
+                                    placeholder={line.kpi_uom}
+                                    className={inputCls}
+                                    style={S.input}
+                                  />
+                                ) : (
+                                  <input
+                                    type="number"
+                                    value={dataEntryValues[line.line_id] ?? ""}
+                                    onChange={(e) => setDataEntryValues((v) => ({ ...v, [line.line_id]: e.target.value }))}
+                                    className={inputCls}
+                                    style={S.input}
+                                  />
+                                )}
+                                {line.lot_required && (
+                                  <input
+                                    type="text"
+                                    value={dataEntryLotNos[line.line_id] ?? ""}
+                                    onChange={(e) => setDataEntryLotNos((v) => ({ ...v, [line.line_id]: e.target.value }))}
+                                    placeholder={t("blPlaceholderLotNo")}
+                                    className={inputCls + " mt-1"}
+                                    style={S.input}
+                                  />
+                                )}
+                                {line.line_type === "TRANSFER" && (
+                                  <select
+                                    value={dataEntryDestBatches[line.line_id] ?? ""}
+                                    onChange={(e) => setDataEntryDestBatches((v) => ({ ...v, [line.line_id]: e.target.value }))}
+                                    className={`${inputCls} nf-select mt-1`}
+                                    style={S.input}
+                                  >
+                                    <option value="">{t("blPlaceholderDestBatch")}</option>
+                                    {batches.filter((b) => b.batch_id !== viewing.batch_id).map((b) => (
+                                      <option key={b.batch_id} value={b.batch_id}>{b.batch_no}</option>
+                                    ))}
+                                  </select>
+                                )}
                               </TableCell>
                               <TableCell className="px-2 py-1.5">
                                 <button
                                   onClick={() => handleDataEntrySave(line)}
-                                  disabled={dataEntrySavingId === line.spl_id || !dataEntryValues[line.spl_id]}
+                                  disabled={dataEntrySavingId === line.line_id || !dataEntryCanSave(line)}
                                   className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
                                   style={{ backgroundColor: "var(--accent)" }}
                                 >
-                                  {dataEntrySavingId === line.spl_id ? t("blSaving") : t("blSave")}
+                                  {dataEntrySavingId === line.line_id ? t("blSaving") : t("blSave")}
                                 </button>
                               </TableCell>
                             </TableRow>
@@ -1363,6 +1446,7 @@ export default function BatchPanel() {
                 )}
               </div>
             )}
+
 
             {detailTab === "transactions" && (
             <>
@@ -1644,7 +1728,6 @@ export default function BatchPanel() {
           <div className="rounded-lg border px-3 py-2 text-xs" style={S.surface}>
             <p className="mb-1 font-semibold uppercase tracking-wider" style={S.muted}>{t("blCarriedForwardFrom", { batchNo: viewing?.batch_no })}</p>
             <p style={S.sub}>{t("blLabelBreedColon")} <span style={S.primary}>{viewing?.breed_id ? breeds.find((b) => b.breed_id === viewing.breed_id)?.breed_name || "—" : "—"}</span></p>
-            <p style={S.sub}>{t("blLabelSchedulerColon")} <span style={S.primary}>{viewing?.scheduler_id ? schedulers.find((s) => s.scheduler_id === viewing.scheduler_id)?.scheduler_name || "—" : "—"}</span></p>
             <p style={S.sub}>{t("blLabelShedColon")} <span style={S.primary}>{viewing?.shed_id ? sheds.find((s) => s.shed_id === viewing.shed_id)?.shed_name || "—" : "—"}</span></p>
             <p style={S.sub}>{t("blLabelCostingMethodColon")} <span style={S.primary}>{viewing?.costing_method}</span>{viewing?.standard ? t("blStdCostCarriedForwardNote") : ""}</p>
           </div>

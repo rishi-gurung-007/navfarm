@@ -275,6 +275,14 @@ export interface MasterDataField {
   section?: string;
   /** Show this optional field in the compact inline lookup creator. */
   showInLookup?: boolean;
+  /**
+   * Renders a single (non-multiple) select-entity field as a searchable combobox — a text
+   * filter over the option list — instead of a plain `<select>`. Set on fields whose catalog
+   * realistically grows long enough that scrolling a native dropdown stops being usable (Item,
+   * GL Account, Location, Animal, Batch, Breed, Goods Receipt); left off catalogs that stay
+   * short by nature (NOB/LOB, UOM, Item Type, Costing Method, ...).
+   */
+  searchable?: boolean;
 }
 
 export interface MasterDataConfig {

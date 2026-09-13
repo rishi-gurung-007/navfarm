@@ -4,6 +4,7 @@ import { ClsService } from 'nestjs-cls';
 import { BatchTransferService } from './batch-transfer.service';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
+import { SchedulerHeaderService } from '../scheduler-header/scheduler-header.service';
 import * as schema from '../../../core/database/schema';
 
 describe('BatchTransferService', () => {
@@ -44,6 +45,7 @@ describe('BatchTransferService', () => {
         { provide: ClsService, useValue: { get: jest.fn().mockReturnValue(mockDb) } },
         { provide: AuditLogService, useValue: { log: jest.fn().mockResolvedValue({}) } },
         { provide: NumberSeriesService, useValue: { generateNext: jest.fn().mockResolvedValue('BTR-2026-0001') } },
+        { provide: SchedulerHeaderService, useValue: { createForStage: jest.fn().mockResolvedValue({}) } },
       ],
     }).compile();
 
@@ -53,7 +55,7 @@ describe('BatchTransferService', () => {
   describe('splitBatch', () => {
     const parent = {
       batch_id: 'batch-gest', batch_no: 'PIG-BAT-2026-0001', tenant_id: 'tenant-123', company_id: 'comp-1',
-      nob_id: 'nob-1', lob_id: 'lob-1', breed_id: 'breed-1', scheduler_id: 'sched-1',
+      nob_id: 'nob-1', lob_id: 'lob-1', breed_id: 'breed-1',
       costing_method: 'BIO_ASSET', current_stage_code: 'DRY_SOW_GESTATION', stage_id: 'stage-gest',
       shed_id: 'shed-1', location_id: 'pen-1', status: 'ACTIVE',
       opening_quantity: '11.0000', closing_quantity: '11.0000', uom: 'HEAD',
@@ -80,7 +82,7 @@ describe('BatchTransferService', () => {
       expect(childHeader.parent_batch_id).toBe('batch-gest');
       expect(childHeader.current_stage_code).toBe('DRY_SOW_GESTATION');
       expect(childHeader.opening_quantity).toBe('2.0000');
-      expect(childHeader.scheduler_id).toBe('sched-1');
+      expect(childHeader.breed_id).toBe('breed-1');
       expect(result.child.batch_no).toBeDefined();
     });
 

@@ -22,6 +22,7 @@ import { useCodeSeries } from "./useCodeSeries";
 import { MasterRecordView } from "./MasterRecordView";
 import { BcOwnershipNotice } from "./BcOwnershipNotice";
 import { EntityLookupField } from "./EntityLookupField";
+import { SearchableEntitySelect } from "./SearchableEntitySelect";
 
 const PAGE_SIZE = 25;
 
@@ -41,6 +42,19 @@ const inputCls = "nf-input";
 
 function unwrap<T = any>(res: any): T {
   return (Array.isArray(res) ? res : res?.data ?? res) as T;
+}
+
+/**
+ * An entity option's display text: its label keys joined, falling back to the
+ * value it stores so a row with no label still renders as something.
+ *
+ * Used by the `searchable` popover. EntityLookupField builds the same string
+ * from `labelKeys` itself, which is why the two look identical on screen.
+ */
+function entityLabel(row: Row, field: MasterDataField): string {
+  const keys = field.entityLabelKeys || [];
+  const text = keys.map((k) => row[k]).filter(Boolean).join(" — ");
+  return text || row[field.entityValueKey || "id"];
 }
 
 function parentKeys(f: MasterDataField): string[] {
@@ -107,8 +121,16 @@ function resolveEndpoint(f: MasterDataField, form: Row): string | null {
 }
 
 function displayValue(row: Row, key: string, yesLabel: string, noLabel: string): string {
+  if ((key === "stage" || key === "stage_id") && (row.stage || row.stage_name || row.stage_code)) {
+    return String(row.stage || row.stage_name || row.stage_code);
+  }
   const v = row[key];
-  if (v === null || v === undefined || v === "") return "—";
+  if (v === null || v === undefined || v === "") {
+    if (key === "stage" || key === "stage_id") {
+      return row.stage || row.stage_name || row.stage_code || "—";
+    }
+    return "—";
+  }
   if (typeof v === "boolean") return v ? yesLabel : noLabel;
   // A list column is a list of values, not the JSON that carried them. The euro
   // read `["DE","FR","NL"]` in the Countries column, brackets and quotes and
@@ -1419,6 +1441,29 @@ export default function MasterDataTable({ config }: { config: MasterDataConfig }
           />
         );
       }
+      const placeholderText = restrictedReason || (disabled ? t("selectXFirst", { name: parentLabel }) : t("selectPlaceholder"));
+      if (f.searchable) {
+        return (
+          <SearchableEntitySelect
+            id={accessibility.id}
+            ariaLabel={accessibility["aria-label"]}
+            ariaRequired={accessibility["aria-required"]}
+            value={value}
+            onChange={(v) => setField(f.key, v)}
+            options={options}
+            valueKey={f.entityValueKey || "id"}
+            getLabel={(o) => entityLabel(o, f)}
+            disabled={disabled}
+            placeholder={placeholderText}
+            searchPlaceholder={t("searchPlaceholder")}
+            noMatchesLabel={t("mdNoMatches")}
+          />
+        );
+      }
+      // Not a plain <select>: EntityLookupField opens a searchable picker, so a
+      // catalog that has grown long stays usable without anyone having to mark
+      // the field `searchable` first. The `searchable` branch above renders a
+      // popover instead for the fields that ask for it.
       return (
         <EntityLookupField
           id={accessibility.id}

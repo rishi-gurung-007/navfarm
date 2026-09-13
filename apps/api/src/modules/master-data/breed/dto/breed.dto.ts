@@ -812,6 +812,11 @@ export class QueryBreedLifecycleStageDto extends MasterListQueryDto {
   @IsUUID()
   companyId?: string;
 
+  @ApiProperty({ description: 'Search term for lifecycle code, stage, or breed', required: false })
+  @IsOptional()
+  @IsString()
+  search?: string;
+
   @ApiProperty({ description: 'Filter by breed UUID', required: false })
   @IsOptional()
   @IsUUID()

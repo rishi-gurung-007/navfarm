@@ -15,13 +15,13 @@ import {
   LogOut,
   RefreshCw,
   Layers,
-  CalendarClock,
   Wheat,
   Pill,
   CheckSquare,
   Settings,
   AlertTriangle,
   Package,
+  CalendarClock,
 } from "lucide-react";
 import {
   getStoredUser,
@@ -305,6 +305,10 @@ export default function ConsoleLayout({ children, modal }: { children: React.Rea
       // specs/nav-scope-consistency.spec.ts locks the relative order of every
       // route two scopes share; each scope still keeps its own items.
       { label: t("navBatches"), href: "/batches", icon: Wheat, activePrefix: "/batches", children: batchChildren },
+      // Schedulers is a company-scope entry too now, not operational-only. It
+      // sits next to Batches in both, because a scheduler belongs to a batch
+      // and a stage — which is exactly what the shared-order spec is for.
+      { label: t("navSchedulers"), href: "/schedulers", icon: CalendarClock, activePrefix: "/schedulers" },
       { label: t("navLivestock"), href: "/livestock", icon: Pill, children: livestockChildren },
       { label: t("inventoryStock"), href: "/inventory/balance", icon: Boxes, activePrefix: "/inventory" },
       { label: t("financeCosting"), href: "/finance/journal", icon: Landmark, activePrefix: "/finance" },
@@ -349,7 +353,12 @@ export default function ConsoleLayout({ children, modal }: { children: React.Rea
         icon: Wheat,
         children: batchChildren,
       },
-      { label: t("navSchedulers"), href: "/schedulers", icon: CalendarClock },
+      {
+        label: t("navSchedulers"),
+        href: "/schedulers",
+        icon: CalendarClock,
+        activePrefix: "/schedulers",
+      },
       {
         label: t("navLivestock"),
         href: "/livestock",

@@ -286,7 +286,7 @@ export async function seedFullCoverage() {
             rw('PRODUCTION', 'QC'),
             rw('PRODUCTION', 'APPROVAL'),
             ro('PRODUCTION', 'STAGE'),
-            ro('PRODUCTION', 'SCHEDULER'),
+            ro('PRODUCTION', 'BATCH_SCHEDULE'),
             ro('PRODUCTION', 'PARAMETER'),
             ro('PRODUCTION', 'QC_PARAMETER'),
             ro('PRODUCTION', 'QR_CODE'),
@@ -661,7 +661,7 @@ export async function seedFullCoverage() {
         for (const a of alerts) {
           await db.insert(schema.notificationAlertLog).values({
             alert_id: randomUUID(), tenant_id: tenantId, company_id: compId, lob_id: lobId, batch_id: batch!.batch_id,
-            alert_type: 'KPI_DEVIATION', severity: a.severity, title: a.title, message: a.message, parameter_name: a.param,
+            alert_type: 'KPI_DEVIATION', severity: a.severity, title: a.title, message: a.message, activity_name: a.param,
             kpi_mode: 'BAND', expected_value: a.expected, actual_value: a.actual, deviation_pct: a.devPct,
             is_read: a.isRead, read_at: a.isRead ? tsMinus(a.daysAgo - 1) : null, created_at: tsMinus(a.daysAgo),
           });

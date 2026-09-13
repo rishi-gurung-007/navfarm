@@ -12,6 +12,7 @@ import { seedLocation } from './lib/seed-location';
 import { seedCode } from './lib/seed-series-code';
 import { seedDefaultCompanyRoles } from '../modules/core/role/default-role-seed';
 import { STARTER_GL_ACCOUNTS, STARTER_GL_MAPPINGS, STARTER_WAREHOUSE } from '../modules/system/setup-wizard/seed/starter-master-data.seed-data';
+import { seedActivitiesForTenant } from './seed-activity-master';
 
 /**
  * One-command dev/demo environment: creates a working tenant + company +
@@ -670,6 +671,8 @@ export async function seedDevTenant() {
           });
         }
       }
+
+      await seedActivitiesForTenant(tenantDb, tenantId);
     } catch (err) {
       if (!existingTenant) {
         await masterDb.execute(`DROP DATABASE IF EXISTS \`${dbName}\``);

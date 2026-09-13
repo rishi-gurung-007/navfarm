@@ -854,7 +854,7 @@ export class LocationService {
         parent: parentLocation,
       })
       .from(schema.locationMaster)
-      .leftJoin(parentLocation, eq(schema.locationMaster.parent_location_id, parentLocation.location_id))
+      .leftJoin(parentLocation as any, eq(schema.locationMaster.parent_location_id, parentLocation.location_id))
       .where(and(...conditions));
 
     // Get animal counts per location

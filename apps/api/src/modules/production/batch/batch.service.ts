@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, like, isNull, count, inArray, desc, SQL } from 'drizzle-orm';
+import { eq, and, like, isNull, inArray, desc, SQL } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { unlink } from 'fs/promises';
 import { resolve } from 'path';
@@ -24,6 +24,7 @@ import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { InventoryLedgerService } from '../../inventory/inventory-ledger/inventory-ledger.service';
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
+import { SchedulerHeaderService } from '../scheduler-header/scheduler-header.service';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   return date.toISOString().slice(0, 19).replace('T', ' ');
@@ -61,6 +62,7 @@ export class BatchService {
     private readonly ledgerService: InventoryLedgerService,
     private readonly glPostingService: GlPostingService,
     private readonly numberSeriesService: NumberSeriesService,
+    private readonly schedulerHeaderService: SchedulerHeaderService,
   ) {}
 
   private get db(): MySql2Database<typeof schema> {
@@ -117,6 +119,33 @@ export class BatchService {
       );
     }
 
+    let initialStage: typeof schema.stageMaster.$inferSelect | undefined;
+    if (dto.stage_id) {
+      const [stage] = await this.db
+        .select()
+        .from(schema.stageMaster)
+        .where(
+          and(
+            eq(schema.stageMaster.stage_id, dto.stage_id),
+            eq(schema.stageMaster.lob_id, dto.lob_id),
+            eq(schema.stageMaster.is_active, true),
+            isNull(schema.stageMaster.deleted_at),
+          ),
+        )
+        .limit(1);
+      if (!stage) {
+        throw new BadRequestException(`Stage with ID '${dto.stage_id}' not found or does not belong to this Line of Business.`);
+      }
+      initialStage = stage;
+    }
+
+    let computedExpectedEndDate = dto.expected_end_date || null;
+    if (!computedExpectedEndDate && initialStage?.typical_duration_days) {
+      const startDate = new Date(dto.start_date);
+      startDate.setDate(startDate.getDate() + initialStage.typical_duration_days);
+      computedExpectedEndDate = startDate.toISOString().slice(0, 10);
+    }
+
     const batchId = randomUUID();
     const batchNo = await this.db.transaction(async (tx) => {
       const no = await this.generateBatchNo(tenantId, dto.company_id, tx);
@@ -129,11 +158,12 @@ export class BatchService {
         nob_id: lob.nob_id,
         costing_method: dto.costing_method.toUpperCase(),
         breed_id: dto.breed_id || null,
-        scheduler_id: dto.scheduler_id || null,
+        stage_id: initialStage?.stage_id || null,
+        current_stage_code: initialStage?.stage_code || null,
         shed_id: dto.shed_id || null,
         location_id: dto.location_id || null,
         start_date: dto.start_date,
-        expected_end_date: dto.expected_end_date || null,
+        expected_end_date: computedExpectedEndDate,
         status: 'DRAFT',
         opening_quantity: dto.opening_quantity.toString(),
         uom: dto.uom,
@@ -229,6 +259,10 @@ export class BatchService {
       }
     }
 
+    if (initialStage && dto.auto_generate_scheduler !== false) {
+      await this.schedulerHeaderService.createForStage(batchId, initialStage.stage_id, tenantId, userPayload);
+    }
+
     await this.auditService.log({
       tenantId,
       companyId: dto.company_id,
@@ -244,11 +278,14 @@ export class BatchService {
 
   /**
    * Copy-forward for perpetual/seasonal LOBs (orchards, apiaries) — creates a
-   * new DRAFT batch carrying the source's config (breed, scheduler, shed,
-   * costing method, standard-cost assumptions) forward, needing only the new
-   * cycle's own start date / opening quantity / input lines. Gated by
+   * new DRAFT batch carrying the source's config (breed, shed, costing method,
+   * standard-cost assumptions) forward, needing only the new cycle's own
+   * start date / opening quantity / input lines. Gated by
    * lob_master.batch_copy_allowed — matches the spec's "annual batch copy"
-   * (year-end: COPY batch for next season, scheduler + location auto-copied).
+   * (year-end: COPY batch for next season, location auto-copied). The new
+   * batch gets its own scheduler_header the first time it transfers into a
+   * stage, same as any other batch — nothing scheduler-related carries
+   * forward from the source.
    */
   async renew(id: string, dto: RenewBatchDto, tenantId: string, userPayload?: UserContext) {
     const source = await this.findOne(id);
@@ -265,7 +302,6 @@ export class BatchService {
         lob_id: source.lob_id,
         costing_method: source.costing_method,
         breed_id: source.breed_id || undefined,
-        scheduler_id: source.scheduler_id || undefined,
         shed_id: source.shed_id || undefined,
         location_id: source.location_id || undefined,
         start_date: dto.start_date,
@@ -387,8 +423,15 @@ export class BatchService {
       ? await this.db.select().from(schema.bioAssetLedger).where(eq(schema.bioAssetLedger.batch_id, id))
       : [];
 
-    const [scheduler] = batch.scheduler_id
-      ? await this.db.select().from(schema.schedulerMaster).where(eq(schema.schedulerMaster.scheduler_id, batch.scheduler_id)).limit(1)
+    // The batch's current-stage scheduler_header — one row per (batch_id, stage_id),
+    // auto-created by SchedulerHeaderService.createForStage() on transferStage().
+    const [schedulerHeader] = batch.stage_id
+      ? await this.db.select().from(schema.schedulerHeader)
+          .where(and(eq(schema.schedulerHeader.batch_id, id), eq(schema.schedulerHeader.stage_id, batch.stage_id)))
+          .limit(1)
+      : [];
+    const schedulerLines = schedulerHeader
+      ? await this.db.select().from(schema.schedulerLine).where(eq(schema.schedulerLine.scheduler_id, schedulerHeader.scheduler_id))
       : [];
     const alerts = await this.db.select().from(schema.notificationAlertLog).where(eq(schema.notificationAlertLog.batch_id, id));
     const stageLog = await this.db.select().from(schema.batchStageLog).where(eq(schema.batchStageLog.batch_id, id));
@@ -403,7 +446,7 @@ export class BatchService {
       variances,
       bio_asset_state: bioAssetState || null,
       bio_asset_entries: bioAssetEntries,
-      scheduler: scheduler || null,
+      scheduler: schedulerHeader ? { ...schedulerHeader, lines: schedulerLines } : null,
       alerts,
       stage_log: stageLog,
     };
@@ -527,6 +570,33 @@ export class BatchService {
       oldValues: { current_stage_code: batch.current_stage_code, sub_location_id: batch.sub_location_id },
       newValues: { current_stage_code: dto.to_stage_code, sub_location_id: dto.to_location_id },
     });
+
+    if (batch.stage_id) {
+      const todayDate = toMysqlTimestamp().slice(0, 10);
+      await this.db
+        .update(schema.schedulerHeader)
+        .set({
+          scheduler_status: 'COMPLETED',
+          actual_end_date: todayDate,
+          updated_at: toMysqlTimestamp(),
+        })
+        .where(
+          and(
+            eq(schema.schedulerHeader.batch_id, id),
+            eq(schema.schedulerHeader.stage_id, batch.stage_id),
+            eq(schema.schedulerHeader.scheduler_status, 'ACTIVE'),
+          ),
+        );
+    }
+
+    // Auto-create this stage's scheduler_header + lines — only once the code
+    // resolved to a real Stage Master row (matchedStage.stage_id); a batch
+    // whose LOB has no Stage Master data gets no scheduler, same as it gets
+    // no stage_id. Idempotent, so a correction that re-runs the same
+    // transfer never duplicates it.
+    if (matchedStage?.stage_id) {
+      await this.schedulerHeaderService.createForStage(id, matchedStage.stage_id, tenantId, userPayload);
+    }
 
     return this.findOne(id);
   }
@@ -787,7 +857,18 @@ export class BatchService {
       .set({ status: 'ACTIVE', updated_by: userPayload?.userId || null, updated_at: toMysqlTimestamp() })
       .where(eq(schema.batchHeader.batch_id, id));
 
-    await this.syncSchedulerLock(batch.scheduler_id);
+    if (batch.stage_id) {
+      await this.db
+        .update(schema.schedulerHeader)
+        .set({ scheduler_status: 'ACTIVE', updated_at: toMysqlTimestamp() })
+        .where(
+          and(
+            eq(schema.schedulerHeader.batch_id, id),
+            eq(schema.schedulerHeader.stage_id, batch.stage_id),
+            eq(schema.schedulerHeader.scheduler_status, 'DRAFT'),
+          ),
+        );
+    }
 
     await this.auditService.log({
       tenantId,
@@ -1273,7 +1354,7 @@ export class BatchService {
       });
     }
 
-    if (batch.scheduler_id && dto.quantity !== undefined && dto.quantity !== null) {
+    if (dto.quantity !== undefined && dto.quantity !== null) {
       await this.evaluateKpi(batch, {
         transaction_id: transactionId,
         transaction_date: dto.transaction_date,
@@ -1298,75 +1379,91 @@ export class BatchService {
   }
 
   /**
-   * Additive KPI-monitoring layer (Phase 6) — no-ops entirely if the batch
-   * has no scheduler attached. Finds the scheduler_parameter_line covering
-   * today's day-of-batch for a parameter matching this transaction, compares
-   * actual vs. expected, and writes a notification_alert_log row on breach.
-   * Does not touch cost/GL — purely observational.
+   * The batch's current-stage scheduler_header — the row
+   * SchedulerHeaderService.createForStage() created when transferStage()
+   * last moved this batch into its current resolved stage_id. Null if the
+   * batch has never resolved into a real Stage Master stage (stage_id unset)
+   * or that header hasn't been created yet.
+   */
+  private async loadCurrentSchedulerHeader(batch: Awaited<ReturnType<BatchService['findOne']>>) {
+    if (!batch.stage_id) return null;
+    const [header] = await this.db
+      .select()
+      .from(schema.schedulerHeader)
+      .where(and(eq(schema.schedulerHeader.batch_id, batch.batch_id), eq(schema.schedulerHeader.stage_id, batch.stage_id)))
+      .limit(1);
+    return header || null;
+  }
+
+  /**
+   * Additive KPI-monitoring layer — no-ops entirely if the batch has no
+   * current-stage scheduler_header. Finds the scheduler_line "live" for the
+   * given day whose line_type/item/resource matches this transaction,
+   * compares actual vs. its lower/upper_alert_limit, and writes a
+   * notification_alert_log row on breach. Does not touch cost/GL — purely
+   * observational.
    */
   /**
-   * Day-range + stage filter shared by evaluateKpi() and getDataEntry() —
-   * all scheduler_parameter_line rows (joined to their Parameter) that are
-   * "live" for a given day of the batch, regardless of what transaction (if
-   * any) is being checked against them.
+   * Day-range + occurrence filter shared by evaluateKpi() and getDataEntry()
+   * — every active scheduler_line under the batch's current-stage header
+   * that is "live" (due) on the given calendar date, paired with that header.
    */
   private async loadActiveScheduleLines(
     batch: Awaited<ReturnType<BatchService['findOne']>>,
-    dayOfBatch: number
+    dateStr: string,
   ) {
-    if (!batch.scheduler_id) return [];
+    const header = await this.loadCurrentSchedulerHeader(batch);
+    if (!header) return [];
 
     const lines = await this.db
-      .select({
-        spl: schema.schedulerParameterLine,
-        parameter: schema.parameterMaster,
-      })
-      .from(schema.schedulerParameterLine)
-      .innerJoin(schema.parameterMaster, eq(schema.schedulerParameterLine.parameter_id, schema.parameterMaster.parameter_id))
-      .where(eq(schema.schedulerParameterLine.scheduler_id, batch.scheduler_id));
+      .select()
+      .from(schema.schedulerLine)
+      .where(and(eq(schema.schedulerLine.scheduler_id, header.scheduler_id), eq(schema.schedulerLine.is_active, true)));
+    if (!lines.length) return [];
 
-    return lines.filter(({ spl }) => {
-      if (dayOfBatch < spl.period_from || dayOfBatch > spl.period_to) return false;
-      // A line scoped to a stage only applies once the batch has transferred
-      // into it (e.g. hatcher-stage temperature thresholds don't fire while
-      // still in the setter stage) — unscoped lines (stage_code null) always
-      // apply, preserving today's behavior for batches that never transfer.
-      if (spl.stage_code && spl.stage_code !== batch.current_stage_code) return false;
-      return true;
+    const date = new Date(dateStr);
+    const dayOfStage = Math.floor((date.getTime() - new Date(header.effective_from).getTime()) / (1000 * 60 * 60 * 24)) + 1;
+    if (dayOfStage < 1) return [];
+
+    const customLineIds = lines.filter((l) => l.occurrence === 'CUSTOM').map((l) => l.line_id);
+    const customDays = customLineIds.length
+      ? await this.db.select().from(schema.schedulerLineCustomDays).where(inArray(schema.schedulerLineCustomDays.line_id, customLineIds))
+      : [];
+
+    const isoWeekday = ((date.getDay() + 6) % 7) + 1; // 1=Monday..7=Sunday, matching scheduler_line.day_of_week
+    const stageStartDom = new Date(header.effective_from).getDate();
+    const dom = date.getDate();
+
+    const dueLines = lines.filter((line) => {
+      if (dayOfStage < line.start_day) return false;
+      if (line.end_day != null && dayOfStage > line.end_day) return false;
+      switch (line.occurrence) {
+        case 'WEEKLY': return line.day_of_week === isoWeekday;
+        case 'MONTHLY': return dom === stageStartDom;
+        case 'ONCE': return dayOfStage === line.start_day;
+        case 'CUSTOM': return customDays.some((d) => d.line_id === line.line_id && d.day_number === dayOfStage && d.is_active);
+        case 'DAILY':
+        default: return true;
+      }
     });
+
+    return dueLines.map((line) => ({ header, line }));
   }
 
-  private computeExpectedQty(
-    spl: typeof schema.schedulerParameterLine.$inferSelect,
-    parameter: typeof schema.parameterMaster.$inferSelect,
-    openingQty: number
-  ): number {
-    return spl.expected_qty_override
-      ? Number(spl.expected_qty_override)
-      : parameter.qty_method === 'PER_UNIT' && parameter.default_qty_per_unit
-      ? Number(parameter.default_qty_per_unit) * openingQty
-      : parameter.qty_method === 'PER_BATCH' && parameter.default_qty_per_batch
-      ? Number(parameter.default_qty_per_batch)
-      : openingQty; // MANUAL_AT_ENTRY fallback — e.g. mortality as a % of headcount
+  private computeExpectedQty(line: typeof schema.schedulerLine.$inferSelect, animalCount: number): number {
+    if (line.standard_qty == null) return 0;
+    const qty = Number(line.standard_qty);
+    return line.qty_basis === 'PER_HEAD' ? qty * animalCount : qty; // TOTAL_BATCH / PER_PEN / FIXED all use the raw value
   }
 
-  /**
-   * Keeps scheduler_master.is_locked in sync with whether any batch is
-   * currently ACTIVE against it — locked while at least one is, so its plan
-   * can't change out from under a batch being KPI-tracked against it, but
-   * unlocked again once none are, so it becomes editable once its batches
-   * close or get cancelled rather than staying locked forever.
-   */
-  private async syncSchedulerLock(schedulerId: string | null) {
-    if (!schedulerId) return;
-    const [{ activeCount }] = await this.db
-      .select({ activeCount: count() })
-      .from(schema.batchHeader)
-      .where(and(eq(schema.batchHeader.scheduler_id, schedulerId), eq(schema.batchHeader.status, 'ACTIVE')));
-    await this.db
-      .update(schema.schedulerMaster)
-      .set({ is_locked: activeCount > 0, updated_at: toMysqlTimestamp() })
-      .where(eq(schema.schedulerMaster.scheduler_id, schedulerId));
+  /** transaction_type (batch_transaction's generic enum) -> the scheduler_line.line_type(s) it can match. */
+  private lineTypesForTransaction(transactionType: string): string[] {
+    switch (transactionType) {
+      case 'CONSUMPTION': return ['CONSUMPTION'];
+      case 'OUTPUT': return ['OUTPUT'];
+      case 'OVERHEAD': return ['OVERHEAD'];
+      default: return ['DESCRIPTIVE']; // MORTALITY, OBSERVATION — captured as DESCRIPTIVE KPI lines in the new model
+    }
   }
 
   private async evaluateKpi(
@@ -1380,57 +1477,31 @@ export class BatchService {
       quantity: number;
     }
   ) {
-    if (!batch.scheduler_id) return;
+    const activePairs = await this.loadActiveScheduleLines(batch, transaction.transaction_date);
+    if (!activePairs.length) return;
 
-    const startDate = new Date(batch.start_date);
-    const txDate = new Date(transaction.transaction_date);
-    const dayOfBatch = Math.floor((txDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
-    if (dayOfBatch < 1) return;
-
-    const activeLines = await this.loadActiveScheduleLines(batch, dayOfBatch);
-    const match = activeLines.find(({ parameter }) => {
-      if (parameter.parameter_type !== transaction.transaction_type) return false;
-      if (parameter.item_id && parameter.item_id !== transaction.item_id) return false;
-      if (parameter.resource_id && parameter.resource_id !== transaction.resource_id) return false;
+    const candidateTypes = this.lineTypesForTransaction(transaction.transaction_type);
+    const match = activePairs.find(({ line }) => {
+      if (!candidateTypes.includes(line.line_type)) return false;
+      if (line.item_id && line.item_id !== transaction.item_id) return false;
+      if (line.resource_id && line.resource_id !== transaction.resource_id) return false;
       return true;
     });
-
-    if (!match || !match.spl.kpi_enabled || !match.spl.kpi_mode) return;
-    const { spl, parameter } = match;
-
-    const openingQty = Number(batch.opening_quantity);
-    const expectedQty = this.computeExpectedQty(spl, parameter, openingQty);
+    if (!match) return;
+    const { header, line } = match;
+    if (line.lower_alert_limit == null && line.upper_alert_limit == null) return;
 
     const actual = transaction.quantity;
-    let breached = false;
-    let breachDirection: 'below' | 'above' | null = null;
-    let deviationPct: number | null = null;
-    let severity: 'WARNING' | 'CRITICAL' = 'WARNING';
-
-    if (spl.kpi_mode === 'PCT') {
-      if (expectedQty <= 0) return;
-      const minQty = spl.kpi_min_pct ? expectedQty * (Number(spl.kpi_min_pct) / 100) : -Infinity;
-      const maxQty = spl.kpi_max_pct ? expectedQty * (Number(spl.kpi_max_pct) / 100) : Infinity;
-      breached = actual < minQty || actual > maxQty;
-      breachDirection = actual < minQty ? 'below' : actual > maxQty ? 'above' : null;
-      deviationPct = (actual / expectedQty - 1) * 100;
-      if (breached && spl.critical_threshold_pct && Math.abs(deviationPct) > Number(spl.critical_threshold_pct)) {
-        severity = 'CRITICAL';
-      }
-    } else if (spl.kpi_mode === 'VALUE') {
-      const minVal = spl.kpi_min_value !== null ? Number(spl.kpi_min_value) : -Infinity;
-      const maxVal = spl.kpi_max_value !== null ? Number(spl.kpi_max_value) : Infinity;
-      breached = actual < minVal || actual > maxVal;
-      breachDirection = actual < minVal ? 'below' : actual > maxVal ? 'above' : null;
-    }
-
+    const minVal = line.lower_alert_limit != null ? Number(line.lower_alert_limit) : -Infinity;
+    const maxVal = line.upper_alert_limit != null ? Number(line.upper_alert_limit) : Infinity;
+    const breached = actual < minVal || actual > maxVal;
     if (!breached) return;
+    const breachDirection = actual < minVal ? 'below' : 'above';
 
+    const expectedQty = this.computeExpectedQty(line, Number(header.animal_count));
     const deviationAmount = actual - expectedQty;
-    const title = `${parameter.parameter_name} ${breachDirection === 'below' ? 'Below' : 'Above'} KPI — Batch ${batch.batch_no}${spl.period_label ? `, ${spl.period_label}` : ''}`;
-    const message = spl.kpi_mode === 'PCT'
-      ? `${parameter.parameter_name}: actual ${actual}, expected ${expectedQty.toFixed(4)} (${(deviationPct ?? 0).toFixed(2)}% deviation). Batch ${batch.batch_no}, Day ${dayOfBatch}.`
-      : `${parameter.parameter_name}: actual ${actual} outside range [${spl.kpi_min_value ?? '-∞'}, ${spl.kpi_max_value ?? '∞'}]. Batch ${batch.batch_no}, Day ${dayOfBatch}.`;
+    const title = `${line.activity_name} ${breachDirection === 'below' ? 'Below' : 'Above'} Limit — Batch ${batch.batch_no}`;
+    const message = `${line.activity_name}: actual ${actual} outside range [${line.lower_alert_limit ?? '-∞'}, ${line.upper_alert_limit ?? '∞'}]. Batch ${batch.batch_no}.`;
 
     await this.db.insert(schema.notificationAlertLog).values({
       alert_id: randomUUID(),
@@ -1438,48 +1509,50 @@ export class BatchService {
       company_id: batch.company_id,
       lob_id: batch.lob_id,
       batch_id: batch.batch_id,
-      spl_id: spl.spl_id,
+      line_id: line.line_id,
       transaction_id: transaction.transaction_id,
       alert_type: 'KPI_DEVIATION',
-      severity,
+      severity: line.alert_severity === 'INFO' || line.alert_severity === 'CRITICAL' ? line.alert_severity : 'WARNING',
       title,
       message,
-      parameter_name: parameter.parameter_name,
-      kpi_mode: spl.kpi_mode,
+      activity_name: line.activity_name,
+      kpi_mode: 'VALUE',
       expected_value: expectedQty.toString(),
       actual_value: actual.toString(),
       deviation_amount: deviationAmount.toString(),
-      deviation_pct: deviationPct !== null ? deviationPct.toString() : null,
-      kpi_min: spl.kpi_mode === 'PCT' ? spl.kpi_min_pct : spl.kpi_min_value,
-      kpi_max: spl.kpi_mode === 'PCT' ? spl.kpi_max_pct : spl.kpi_max_value,
+      deviation_pct: null,
+      kpi_min: line.lower_alert_limit,
+      kpi_max: line.upper_alert_limit,
     });
   }
 
   /**
-   * Drives the batch "Data Entry" screen: every scheduler_parameter_line
-   * that's due on the given date, with its expected quantity and whatever's
-   * already been recorded that day — so the UI can show a guided checklist
-   * instead of a blank generic transaction form.
+   * Drives the batch "Data Entry" screen: every scheduler_line due on the
+   * given date under the batch's current-stage scheduler_header, with its
+   * expected quantity and whatever's already been recorded that day — so the
+   * UI can show a guided checklist instead of a blank generic transaction
+   * form.
    */
   async getDataEntry(id: string, dateStr: string) {
     const batch = await this.findOne(id);
-    if (!batch.scheduler_id) {
-      throw new BadRequestException('This batch has no scheduler attached — record entries via the generic Transactions form instead.');
+    const activePairs = await this.loadActiveScheduleLines(batch, dateStr);
+    if (!activePairs.length) {
+      return { date: dateStr, day_of_batch: null, lines: [] };
     }
-
-    const startDate = new Date(batch.start_date);
-    const date = new Date(dateStr);
-    const dayOfBatch = Math.floor((date.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
-
-    const activeLines = await this.loadActiveScheduleLines(batch, dayOfBatch);
-    const openingQty = Number(batch.opening_quantity);
+    const header = activePairs[0].header;
+    const animalCount = Number(header.animal_count);
+    const dayOfStage = Math.floor((new Date(dateStr).getTime() - new Date(header.effective_from).getTime()) / (1000 * 60 * 60 * 24)) + 1;
 
     const sameDayTx = await this.db
       .select()
       .from(schema.batchTransaction)
       .where(and(eq(schema.batchTransaction.batch_id, id), eq(schema.batchTransaction.transaction_date, dateStr)));
+    const sameDayEntries = await this.db
+      .select()
+      .from(schema.batchDailyData)
+      .where(and(eq(schema.batchDailyData.batch_id, id), eq(schema.batchDailyData.entry_date, dateStr)));
 
-    const itemIds = [...new Set(activeLines.map(({ parameter }) => parameter.item_id).filter((x): x is string => !!x))];
+    const itemIds = [...new Set(activePairs.map(({ line }) => line.item_id).filter((x): x is string => !!x))];
     const itemRows = itemIds.length
       ? await this.db.select().from(schema.itemMaster).where(inArray(schema.itemMaster.item_id, itemIds))
       : [];
@@ -1496,10 +1569,14 @@ export class BatchService {
       if (!itemId) return null;
       return itemRows.find((x) => x.item_id === itemId)?.item_code ?? null;
     };
+    const itemUom = (itemId: string | null) => {
+      if (!itemId) return null;
+      return itemRows.find((x) => x.item_id === itemId)?.uom_primary ?? null;
+    };
 
-    // Labour and utility parameters cost by the hour/unit of a resource rather
+    // Labour and utility lines cost by the hour/unit of a resource rather
     // than by an item, so their rate lives on resource_master.
-    const resourceIds = [...new Set(activeLines.map(({ parameter }) => parameter.resource_id).filter((x): x is string => !!x))];
+    const resourceIds = [...new Set(activePairs.map(({ line }) => line.resource_id).filter((x): x is string => !!x))];
     const resourceRows = resourceIds.length
       ? await this.db.select().from(schema.resourceMaster).where(inArray(schema.resourceMaster.resource_id, resourceIds))
       : [];
@@ -1508,21 +1585,13 @@ export class BatchService {
     // schedule doses in — ivermectin is bought per 100 ml VIAL and given in ML.
     const conversions = await this.db.select().from(schema.uomConversionMaster);
 
-    /**
-     * The money rate for a line, expressed in the line's own unit.
-     *
-     * Two things were wrong here. It fell back to
-     * parameter.default_qty_per_unit — a per-head quantity — so feed priced at
-     * 2.2/kg instead of 28/kg and six labour hours cost six rupees. And it
-     * ignored units entirely, so a vial price was charged per millilitre,
-     * costing a 40 ml deworming round Rs 11,200 instead of Rs 112.
-     */
+    /** The money rate for a line, expressed in the line's own unit. */
     const standardRate = (
-      parameter: { item_id: string | null; resource_id: string | null },
+      line: { item_id: string | null; resource_id: string | null },
       lineUom: string | null,
     ) => {
-      if (parameter.item_id) {
-        const item = itemRows.find((x) => x.item_id === parameter.item_id);
+      if (line.item_id) {
+        const item = itemRows.find((x) => x.item_id === line.item_id);
         if (item?.standard_cost == null) return null;
         const cost = Number(item.standard_cost);
         const stockUom = item.uom_primary;
@@ -1535,42 +1604,46 @@ export class BatchService {
         if (inverse && Number(inverse.conversion_factor) > 0) return cost * Number(inverse.conversion_factor);
         return cost;
       }
-      if (parameter.resource_id) {
-        const cost = resourceRows.find((x) => x.resource_id === parameter.resource_id)?.cost_rate;
+      if (line.resource_id) {
+        const cost = resourceRows.find((x) => x.resource_id === line.resource_id)?.cost_rate;
         return cost != null ? Number(cost) : null;
       }
       return null;
     };
 
-    const lines = activeLines.map(({ spl, parameter }) => {
-      const alreadyEntered = sameDayTx
-        .filter((t) => t.transaction_type === parameter.parameter_type
-          && (parameter.item_id ? t.item_id === parameter.item_id : true)
-          && (parameter.resource_id ? t.resource_id === parameter.resource_id : true))
+    const lines = activePairs.map(({ line }) => {
+      const enteredEntry = sameDayEntries.find((e) => e.line_id === line.line_id);
+      const legacyEntered = sameDayTx
+        .filter((t) => line.item_id ? t.item_id === line.item_id : line.resource_id ? t.resource_id === line.resource_id : false)
         .reduce((sum, t) => sum + Number(t.quantity || 0), 0);
-
-      const stdRate = standardRate(parameter, spl.uom_override || parameter.default_uom || null);
+      const alreadyEntered = enteredEntry ? Number(enteredEntry.entered_value || 0) : legacyEntered;
+      const uom = line.item_id ? itemUom(line.item_id) : line.kpi_uom;
+      const stdRate = standardRate(line, uom);
 
       return {
-        spl_id: spl.spl_id,
-        parameter_id: parameter.parameter_id,
-        parameter_type: parameter.parameter_type,
-        parameter_name: parameter.parameter_name,
-        item_id: parameter.item_id,
-        item_label: itemLabel(parameter.item_id),
-        item_type: itemType(parameter.item_id),
-        item_code: itemCode(parameter.item_id),
-        resource_id: parameter.resource_id,
-        uom: spl.uom_override || parameter.default_uom || null,
-        occurrence: spl.occurrence,
-        period_label: spl.period_label,
-        expected_qty: this.computeExpectedQty(spl, parameter, openingQty),
+        line_id: line.line_id,
+        line_type: line.line_type,
+        activity_name: line.activity_name,
+        item_id: line.item_id,
+        item_description: line.item_description,
+        item_label: itemLabel(line.item_id),
+        item_type: itemType(line.item_id),
+        item_code: itemCode(line.item_id),
+        // Medicine/vaccine withdrawal period — auto-flows from item_master,
+        // shown only where it's actually relevant (lot-tracked CONSUMPTION).
+        withdrawal_days: line.lot_required ? (itemRows.find((x) => x.item_id === line.item_id)?.withdrawal_days ?? null) : null,
+        resource_id: line.resource_id,
+        uom,
+        occurrence: line.occurrence,
+        is_mandatory: line.is_mandatory,
+        lot_required: line.lot_required,
+        expected_qty: this.computeExpectedQty(line, animalCount),
         already_entered_qty: alreadyEntered,
         std_rate: stdRate,
       };
     });
 
-    return { date: dateStr, day_of_batch: dayOfBatch, lines };
+    return { date: dateStr, day_of_batch: dayOfStage, lines };
   }
 
   async close(id: string, dto: CloseBatchDto, tenantId: string, userPayload?: UserContext) {
@@ -1692,8 +1765,6 @@ export class BatchService {
     if (varianceLines.length > 0) {
       await this.postVarianceLines(id, batch, varianceLines, actualEndDate, tenantId, userPayload);
     }
-
-    await this.syncSchedulerLock(batch.scheduler_id);
 
     await this.auditService.log({
       tenantId,
@@ -2171,7 +2242,6 @@ export class BatchService {
           updated_at: toMysqlTimestamp(),
         })
         .where(eq(schema.batchHeader.batch_id, id));
-      await this.syncSchedulerLock(batch.scheduler_id);
     }
 
     await this.auditService.log({
@@ -2190,6 +2260,19 @@ export class BatchService {
   async remove(id: string, tenantId: string, userPayload?: UserContext) {
     const batch = await this.findOne(id);
     this.assertStatus(batch, 'DRAFT');
+
+    // Explicit, named guard — a DRAFT batch can't actually have a scheduler yet
+    // (transferStage() requires ACTIVE), so this never fires today, but it's the
+    // direct check the requirement names rather than relying on that invariant
+    // holding forever.
+    const [activeScheduler] = await this.db.select({ scheduler_id: schema.schedulerHeader.scheduler_id })
+      .from(schema.schedulerHeader)
+      .where(and(eq(schema.schedulerHeader.batch_id, id), eq(schema.schedulerHeader.scheduler_status, 'ACTIVE')))
+      .limit(1);
+    if (activeScheduler) {
+      throw new BadRequestException(`Batch '${batch.batch_no}' has an ACTIVE scheduler and cannot be deleted.`);
+    }
+
     const deletedTime = toMysqlTimestamp();
 
     await this.db
@@ -2461,236 +2544,14 @@ export class BatchService {
   }
 
   /**
-   * Auto-generates a concrete scheduler_master and scheduler_parameter_line records
-   * for a batch from its breed's breed_lifecycle_stages, then links and locks it.
+   * Manually (re)generates the scheduler_header for this batch's CURRENT
+   * stage from breed_lifecycle_stages — the same idempotent path
+   * transferStage() calls automatically. Useful for a batch that reached its
+   * current stage before this feature existed, or whose header needs
+   * refreshing after breed lifecycle standards change.
    */
   async generateSchedulerForBatch(batchId: string, tenantId: string, userPayload?: UserContext) {
-    const batch = await this.findOne(batchId);
-
-    if (!batch.breed_id) {
-      throw new BadRequestException('Batch must have a breed assigned to auto-generate a scheduler from breed lifecycle standards.');
-    }
-    // scheduler_master.nob_id and lob_id are NOT NULL; a batch missing either
-    // would fail at insert time with a driver error instead of a clear message.
-    if (!batch.nob_id || !batch.lob_id) {
-      throw new BadRequestException('Batch must have both a nature and a line of business set before a scheduler can be generated for it.');
-    }
-    const nobId = batch.nob_id;
-    const lobId = batch.lob_id;
-
-    // findOne() returns breed_id, not a joined breed — read the name for the
-    // messages and the scheduler title below.
-    const [batchBreed] = await this.db
-      .select({ breed_name: schema.breedMaster.breed_name })
-      .from(schema.breedMaster)
-      .where(eq(schema.breedMaster.breed_id, batch.breed_id))
-      .limit(1);
-    const breedName = batchBreed?.breed_name ?? null;
-
-    // 1. Fetch breed lifecycle stages
-    const lifecycleRows = await this.db
-      .select({
-        lifecycle: schema.breedLifecycleStages,
-        stage: schema.stageMaster,
-      })
-      .from(schema.breedLifecycleStages)
-      .innerJoin(schema.stageMaster, eq(schema.breedLifecycleStages.stage_id, schema.stageMaster.stage_id))
-      .where(
-        and(
-          eq(schema.breedLifecycleStages.breed_id, batch.breed_id),
-          eq(schema.breedLifecycleStages.tenant_id, tenantId),
-          eq(schema.breedLifecycleStages.is_active, true)
-        )
-      )
-      .orderBy(schema.breedLifecycleStages.period_from);
-
-    if (lifecycleRows.length === 0) {
-      throw new BadRequestException(`No breed lifecycle standards found for breed '${breedName || batch.breed_id}'.`);
-    }
-
-    // 2. Fetch existing or create fallback parameter_master records
-    const existingParams = await this.db
-      .select()
-      .from(schema.parameterMaster)
-      .where(
-        and(
-          eq(schema.parameterMaster.tenant_id, tenantId),
-          eq(schema.parameterMaster.is_active, true)
-        )
-      );
-
-    const findOrCreateParam = async (
-      paramCode: string, paramName: string, paramType: string, defaultUom: string,
-    ): Promise<typeof schema.parameterMaster.$inferSelect> => {
-      let foundParam = existingParams.find(p => p.parameter_code === paramCode || (p.parameter_type === paramType && p.parameter_name === paramName));
-      if (!foundParam) {
-        const newId = randomUUID();
-        await this.db.insert(schema.parameterMaster).values({
-          parameter_id: newId,
-          tenant_id: tenantId,
-          nob_id: nobId,
-          lob_id: lobId,
-          parameter_code: paramCode,
-          parameter_name: paramName,
-          parameter_type: paramType,
-          default_uom: defaultUom,
-          qty_method: 'PER_UNIT',
-          created_by: userPayload?.userId || null,
-        });
-        foundParam = {
-          parameter_id: newId,
-          tenant_id: tenantId,
-          nob_id: nobId,
-          lob_id: lobId,
-          parameter_code: paramCode,
-          parameter_name: paramName,
-          parameter_type: paramType,
-          default_uom: defaultUom,
-          qty_method: 'PER_UNIT',
-          created_by: userPayload?.userId || null,
-          created_at: new Date().toISOString(),
-          company_id: null,
-          description: null,
-          default_qty_per_unit: null,
-          default_qty_per_batch: null,
-          item_id: null,
-          resource_id: null,
-          is_mandatory: false,
-          is_active: true,
-        };
-      }
-      return foundParam;
-    };
-
-    const feedParam = await findOrCreateParam('FEED_STD', 'Daily Feed Consumption', 'CONSUMPTION', 'KG');
-    const mortParam = await findOrCreateParam('MORT_STD', 'Standard Mortality', 'MORTALITY', 'HEAD');
-    const weightParam = await findOrCreateParam('WEIGHT_STD', 'Body Weight Target', 'OUTPUT', 'KG');
-
-    // 3. Create scheduler_master
-    const schedulerId = randomUUID();
-    const schedulerCode = `SCHED-${batch.batch_no}`;
-    const totalDays = lifecycleRows.reduce((max, r) => {
-      const pTo = toDays(r.lifecycle.period_to, r.lifecycle.calc_unit);
-      return Math.max(max, pTo);
-    }, 180);
-
-    // If an existing scheduler with this code exists, append short timestamp
-    const [existingSched] = await this.db
-      .select()
-      .from(schema.schedulerMaster)
-      .where(and(eq(schema.schedulerMaster.tenant_id, tenantId), eq(schema.schedulerMaster.scheduler_code, schedulerCode)))
-      .limit(1);
-
-    const finalSchedCode = existingSched ? `${schedulerCode}-${Date.now().toString().slice(-4)}` : schedulerCode;
-
-    await this.db.insert(schema.schedulerMaster).values({
-      scheduler_id: schedulerId,
-      tenant_id: tenantId,
-      company_id: batch.company_id,
-      nob_id: nobId,
-      lob_id: lobId,
-      scheduler_code: finalSchedCode,
-      scheduler_name: `Scheduler for Batch ${batch.batch_no} (${breedName || 'Breed Standards'})`,
-      duration_value: totalDays,
-      duration_unit: 'DAY',
-      breed_id: batch.breed_id,
-      batch_start_from: 'Batch Start Date',
-      is_locked: true,
-      description: `Auto-generated from breed lifecycle standards for ${breedName || 'breed'}.`,
-      created_by: userPayload?.userId || null,
-    });
-
-    // 4. Create scheduler_parameter_line rows
-    let periodNo = 1;
-    for (const { lifecycle, stage } of lifecycleRows) {
-      const periodFrom = toDays(lifecycle.period_from, lifecycle.calc_unit);
-      const periodTo = toDays(lifecycle.period_to, lifecycle.calc_unit);
-
-      // Feed line
-      if (lifecycle.feed_qty_per_head_per_day_kg) {
-        await this.db.insert(schema.schedulerParameterLine).values({
-          spl_id: randomUUID(),
-          scheduler_id: schedulerId,
-          parameter_id: feedParam.parameter_id,
-          period_no: periodNo++,
-          period_from: periodFrom,
-          period_to: periodTo,
-          period_label: `${stage.stage_name} Feed`,
-          stage_code: stage.stage_code,
-          expected_qty_override: lifecycle.feed_qty_per_head_per_day_kg.toString(),
-          uom_override: 'KG',
-          kpi_enabled: true,
-          kpi_mode: 'VALUE',
-          kpi_target_value: lifecycle.feed_qty_per_head_per_day_kg.toString(),
-          kpi_min_pct: '15.00',
-          kpi_max_pct: '15.00',
-          critical_threshold_pct: '25.00',
-          notify_in_app: true,
-          notes: `Standard feed intake: ${lifecycle.feed_qty_per_head_per_day_kg} kg/head/day`,
-        });
-      }
-
-      // Mortality line
-      if (lifecycle.std_mortality_rate_pct) {
-        await this.db.insert(schema.schedulerParameterLine).values({
-          spl_id: randomUUID(),
-          scheduler_id: schedulerId,
-          parameter_id: mortParam.parameter_id,
-          period_no: periodNo++,
-          period_from: periodFrom,
-          period_to: periodTo,
-          period_label: `${stage.stage_name} Mortality`,
-          stage_code: stage.stage_code,
-          kpi_enabled: true,
-          kpi_mode: 'VALUE',
-          kpi_target_value: lifecycle.std_mortality_rate_pct.toString(),
-          critical_threshold_pct: '50.00',
-          notify_in_app: true,
-          notes: `Expected max mortality: ${lifecycle.std_mortality_rate_pct}%`,
-        });
-      }
-
-      // Weight target line
-      const targetWeight = lifecycle.std_body_weight_kg ?? lifecycle.std_output_qty;
-      if (targetWeight) {
-        await this.db.insert(schema.schedulerParameterLine).values({
-          spl_id: randomUUID(),
-          scheduler_id: schedulerId,
-          parameter_id: weightParam.parameter_id,
-          period_no: periodNo++,
-          period_from: periodFrom,
-          period_to: periodTo,
-          period_label: `${stage.stage_name} Target Weight`,
-          stage_code: stage.stage_code,
-          expected_qty_override: targetWeight.toString(),
-          uom_override: 'KG',
-          kpi_enabled: false,
-          notes: `Target body weight: ${targetWeight} kg`,
-        });
-      }
-    }
-
-    // 5. Update batch with new scheduler_id
-    await this.db
-      .update(schema.batchHeader)
-      .set({
-        scheduler_id: schedulerId,
-        updated_by: userPayload?.userId || null,
-        updated_at: toMysqlTimestamp(),
-      })
-      .where(eq(schema.batchHeader.batch_id, batchId));
-
-    await this.auditService.log({
-      tenantId,
-      companyId: batch.company_id,
-      userId: userPayload?.userId,
-      action: 'GENERATE_SCHEDULER',
-      entityName: 'batch_header',
-      entityId: batchId,
-      newValues: { scheduler_id: schedulerId, scheduler_code: finalSchedCode },
-    });
-
-    return this.findOne(batchId);
+    return this.schedulerHeaderService.generateForBatchCurrentStage(batchId, tenantId, userPayload);
   }
 
   /**
@@ -2722,19 +2583,26 @@ export class BatchService {
       )
       .orderBy(schema.batchTransaction.transaction_date);
 
-    // 2. Fetch scheduler lines if present
-    let scheduleLines: Array<{ spl: typeof schema.schedulerParameterLine.$inferSelect; param: typeof schema.parameterMaster.$inferSelect }> = [];
-    if (batch.scheduler_id) {
-      const lines = await this.db
-        .select({
-          spl: schema.schedulerParameterLine,
-          param: schema.parameterMaster,
-        })
-        .from(schema.schedulerParameterLine)
-        .innerJoin(schema.parameterMaster, eq(schema.schedulerParameterLine.parameter_id, schema.parameterMaster.parameter_id))
-        .where(eq(schema.schedulerParameterLine.scheduler_id, batch.scheduler_id));
-      scheduleLines = lines;
-    }
+    // 2. Fetch every scheduler_header this batch has accumulated (one per stage it
+    // has passed through) with their lines, so a day anywhere in the batch's life
+    // can be resolved to whichever stage's schedule actually covered it.
+    const schedulerHeaders = await this.db.select().from(schema.schedulerHeader).where(eq(schema.schedulerHeader.batch_id, batchId));
+    const schedulerLines = schedulerHeaders.length
+      ? await this.db.select().from(schema.schedulerLine).where(inArray(schema.schedulerLine.scheduler_id, schedulerHeaders.map((h) => h.scheduler_id)))
+      : [];
+    const lineForDate = (date: Date, lineType: string) => {
+      const header = schedulerHeaders.find((h) => {
+        const from = new Date(h.effective_from);
+        const to = h.effective_to ? new Date(h.effective_to) : null;
+        return date >= from && (!to || date <= to);
+      });
+      if (!header) return null;
+      const dayOfStage = Math.floor((date.getTime() - new Date(header.effective_from).getTime()) / (1000 * 60 * 60 * 24)) + 1;
+      return schedulerLines.find((l) =>
+        l.scheduler_id === header.scheduler_id && l.line_type === lineType &&
+        dayOfStage >= l.start_day && (l.end_day == null || dayOfStage <= l.end_day)
+      ) || null;
+    };
 
     // Also fetch breed lifecycle stages for reference
     const lifecycleStandards = batch.breed_id
@@ -2793,9 +2661,10 @@ export class BatchService {
       let stdMortPct = 0;
 
       // Check schedule lines
-      const activeFeedLine = scheduleLines.find(l => l.param.parameter_type === 'CONSUMPTION' && day >= l.spl.period_from && day <= l.spl.period_to);
-      if (activeFeedLine && activeFeedLine.spl.expected_qty_override) {
-        stdDailyFeedPerHead = Number(activeFeedLine.spl.expected_qty_override);
+      const curDateObj = new Date(startDate.getTime() + (day - 1) * 86400000);
+      const activeFeedLine = lineForDate(curDateObj, 'CONSUMPTION');
+      if (activeFeedLine && activeFeedLine.standard_qty) {
+        stdDailyFeedPerHead = Number(activeFeedLine.standard_qty);
       } else {
         // Fallback to breed standards
         const lc = lifecycleStandards.find(l => {
@@ -2810,9 +2679,9 @@ export class BatchService {
         }
       }
 
-      const activeWeightLine = scheduleLines.find(l => l.param.parameter_type === 'OUTPUT' && day >= l.spl.period_from && day <= l.spl.period_to);
-      if (activeWeightLine && activeWeightLine.spl.expected_qty_override) {
-        stdTargetWeight = Number(activeWeightLine.spl.expected_qty_override);
+      const activeWeightLine = lineForDate(curDateObj, 'OUTPUT');
+      if (activeWeightLine && activeWeightLine.standard_qty) {
+        stdTargetWeight = Number(activeWeightLine.standard_qty);
       }
 
       const stdTotalDailyFeed = stdDailyFeedPerHead * initialHeadcount;
@@ -2863,8 +2732,7 @@ export class BatchService {
         batch_name: batch.remarks || batch.batch_no,
         breed_id: batch.breed_id,
         breed_name: breedName,
-        has_scheduler: Boolean(batch.scheduler_id),
-        scheduler_code: batch.scheduler?.scheduler_code || null,
+        has_scheduler: schedulerHeaders.length > 0,
         start_date: batch.start_date,
         batch_age_days: batchAgeDays,
         initial_quantity: initialHeadcount,

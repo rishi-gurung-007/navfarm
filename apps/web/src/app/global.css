@@ -763,6 +763,21 @@ html[data-scroll-locked] body {
 [data-popover-panel][data-align='end'] { inset-inline-end: 0; }
 [data-popover-panel][data-align='start'] { inset-inline-start: 0; }
 
+/* A searchable select's panel stands in for the trigger it opens from — a form field — so it
+   must match that field's actual width, not the shared menu-style min/max-width range above.
+   Selector specificity (three attribute/class parts) beats the two-part align rules regardless
+   of source order, so this wins for either alignment without needing `!important`. */
+[data-popover-panel][data-align='start'].nf-combobox-panel,
+[data-popover-panel][data-align='end'].nf-combobox-panel {
+  inset-inline-start: 0;
+  inset-inline-end: 0;
+  width: auto;
+  min-width: 0;
+  max-width: none;
+  max-height: none;
+  overflow: hidden;
+}
+
 /* Identity/caption block. Full-bleed rule, no card, no icon. */
 [data-popover-heading] {
   margin: 0 -4px 4px;

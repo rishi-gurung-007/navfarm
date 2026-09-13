@@ -21,6 +21,7 @@ export const MASTER_TABLES: Record<string, AnyMySqlTable> = {
   species: schema.speciesMaster,
   breed: schema.breedMaster, 'breed-lifecycle-stage': schema.breedLifecycleStages,
   reason: schema.reasonMaster, disease: schema.diseaseMaster, 'feed-formula': schema.feedFormulaMaster,
+  activity: schema.activityMaster,
   supplier: schema.supplierMaster, customer: schema.customerMaster, resource: schema.resourceMaster,
   'gl-account': schema.glAccountMaster, 'gl-mapping': schema.glMappingMaster, 'cost-center': schema.costCenterMaster,
 };

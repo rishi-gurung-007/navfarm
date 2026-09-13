@@ -59,7 +59,7 @@ const location: MasterDataConfig = {
     { key: "nob_id", label: "Nature of Business", type: "select-entity", entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], helpText: "Leave blank if this location is shared across all business verticals." },
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank if this location is shared across all LOBs under the selected NOB." },
     { key: "company_id", label: "Company", type: "text", hideInForm: true },
-    { key: "location_code", label: "Location Code", type: "text", readOnly: true, helpText: "Generated from the selected Location Type prefix and kept permanently." , section: "Identification" },
+    { key: "location_code", label: "Location Code", type: "text", readOnly: true, helpText: "Generated from the selected Location Type prefix and kept permanently.", section: "Identification" },
     { key: "location_name", label: "Location Name", type: "text", required: true, placeholder: "Porta Farm", section: "Identification" },
     { key: "location_address", label: "Location Address", type: "text", required: true, placeholder: "48 Peg, Bulawayo Road", section: "Identification" },
     {
@@ -67,7 +67,7 @@ const location: MasterDataConfig = {
       entityEndpoint: "/location-type", entityValueKey: "type_code", entityLabelKeys: ["type_code", "type_name"], section: "Identification",
     },
     {
-      key: "parent_location_id", label: "Parent Location", type: "select-entity", required: true,
+      key: "parent_location_id", label: "Parent Location", type: "select-entity", required: true, searchable: true,
       entityEndpoint: "/location", entityValueKey: "location_id", entityLabelKeys: ["location_code", "location_name"],
       dependsOn: "location_type",
       restrictOptionsBy: {
@@ -209,7 +209,7 @@ const numberSeries: MasterDataConfig = {
       helpText: "Where the prefix sits among the fields below.",
       visibleWhen: { anyOf: [{ key: "use_prefix", equals: true }] },
     },
-    
+
     {
       // Free text accepted anything — a space, a letter, a character the
       // sequence parser would then fail to split on. Three that read cleanly in
@@ -260,6 +260,43 @@ const numberSeries: MasterDataConfig = {
   ],
 };
 
+const activity: MasterDataConfig = {
+  key: "activity",
+  label: "Activities",
+  description: "Standard activities catalog (feed, vaccines, weigh, tasks) used across schedulers and daily data entry.",
+  apiBase: "/activity",
+  idKey: "activity_id",
+  group: "Production",
+  isPrimary: true,
+  supportsNobLobFilter: true,
+  supportsRestore: true,
+  columns: [
+    { key: "activity_code", label: "Code" },
+    { key: "activity_name", label: "Name" },
+    { key: "line_type", label: "Line Type" },
+    { key: "description", label: "Description" },
+  ],
+  fields: [
+    { key: "company_id", label: "Company", type: "text", hideInForm: true },
+    { key: "activity_code", label: "Activity Code", type: "text", required: true, placeholder: "e.g. MORN_FEED", createOnly: true, helpText: "Short unique uppercase code (e.g. MORN_FEED) for lookups and reporting." },
+    { key: "activity_name", label: "Activity Name", type: "text", required: true, placeholder: "e.g. Morning Feed" },
+    {
+      key: "line_type", label: "Line Type", type: "select", required: true,
+      options: [
+        { value: "CONSUMPTION", label: "CONSUMPTION" },
+        { value: "OUTPUT", label: "OUTPUT" },
+        { value: "DESCRIPTIVE", label: "DESCRIPTIVE" },
+        { value: "OVERHEAD", label: "OVERHEAD" },
+        { value: "RESOURCE", label: "RESOURCE" },
+        { value: "TRANSFER", label: "TRANSFER" },
+      ],
+    },
+    { key: "nob_id", label: "Nature of Business", type: "select-entity", entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], helpText: "Leave blank if this activity is shared across all business verticals." },
+    { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank if this activity is shared across all LOBs under the selected NOB." },
+    { key: "description", label: "Description", type: "textarea", placeholder: "Optional notes or instructions for this activity" },
+  ],
+};
+
 // ── Piggery ──────────────────────────────────────────────────────────────────
 
 const animal: MasterDataConfig = {
@@ -297,7 +334,7 @@ const animal: MasterDataConfig = {
       key: "animal_type", label: "Animal Type", type: "select", required: true, section: "Identification",
       options: ["SOW", "BOAR", "GILT", "PIGLET", "COMMERCIAL_PIG"].map((v) => ({ value: v, label: v.replace(/_/g, " ") })),
     },
-    { key: "breed_id", label: "Breed", type: "select-entity", required: true, entityEndpoint: "/breed", entityValueKey: "breed_id", entityLabelKeys: ["breed_code", "breed_name"], section: "Identification" },
+    { key: "breed_id", label: "Breed", type: "select-entity", required: true, searchable: true, entityEndpoint: "/breed", entityValueKey: "breed_id", entityLabelKeys: ["breed_code", "breed_name"], section: "Identification" },
     {
       key: "gender", label: "Gender", type: "select", required: true, section: "Identification",
       options: [{ value: "F", label: "Female" }, { value: "M", label: "Male" }],
@@ -307,8 +344,8 @@ const animal: MasterDataConfig = {
     { key: "rfid_tag", label: "RFID Tag", type: "text", helpText: "Unique if set.", section: "Identification" },
     { key: "ear_tag", label: "Ear Tag (Visual)", type: "text", section: "Identification" },
     { key: "ear_tag_image_url", label: "Ear Tag Image URL", type: "text", placeholder: "https://cdn.navfarm.io/ear-tags/...", helpText: "Paste an image URL for now; direct file upload to Cloudflare R2 is planned for later.", section: "Identification" },
-    { key: "sire_animal_id", label: "Sire (Father)", type: "select-entity", entityEndpoint: "/animal", entityValueKey: "animal_id", entityLabelKeys: ["animal_code"], section: "Lineage" },
-    { key: "dam_animal_id", label: "Dam (Mother)", type: "select-entity", entityEndpoint: "/animal", entityValueKey: "animal_id", entityLabelKeys: ["animal_code"], section: "Lineage" },
+    { key: "sire_animal_id", label: "Sire (Father)", type: "select-entity", searchable: true, entityEndpoint: "/animal", entityValueKey: "animal_id", entityLabelKeys: ["animal_code"], section: "Lineage" },
+    { key: "dam_animal_id", label: "Dam (Mother)", type: "select-entity", searchable: true, entityEndpoint: "/animal", entityValueKey: "animal_id", entityLabelKeys: ["animal_code"], section: "Lineage" },
     {
       key: "entry_type", label: "Entry Type", type: "select", required: true, section: "Acquisition",
       options: ["PURCHASED_IMPORTED", "PURCHASED_LOCAL", "BORN_ON_FARM", "TRANSFERRED_IN"].map((v) => ({ value: v, label: v.replace(/_/g, " ") })),
@@ -324,11 +361,11 @@ const animal: MasterDataConfig = {
     // enforced these as COND rules and rejected the wrong combination; the form
     // asked for both from everyone, so a born-on-farm piglet was offered a
     // goods receipt it could never legally carry.
-    { key: "source_receipt_id", label: "Source Goods Receipt", type: "select-entity", entityEndpoint: "/goods-receipt", entityValueKey: "receipt_id", entityLabelKeys: ["receipt_no"], visibleWhen: { anyOf: [{ key: "entry_type", equals: ["PURCHASED_IMPORTED", "PURCHASED_LOCAL"] }] }, requiredWhen: { anyOf: [{ key: "entry_type", equals: ["PURCHASED_IMPORTED", "PURCHASED_LOCAL"] }] }, helpText: "The receipt this animal arrived on.", section: "Acquisition" },
-    { key: "source_batch_id", label: "Source Batch", type: "select-entity", entityEndpoint: "/batch", entityValueKey: "batch_id", entityLabelKeys: ["batch_no"], visibleWhen: { anyOf: [{ key: "entry_type", equals: "BORN_ON_FARM" }] }, requiredWhen: { anyOf: [{ key: "entry_type", equals: "BORN_ON_FARM" }] }, helpText: "The farrowing batch this animal was born from.", section: "Acquisition" },
+    { key: "source_receipt_id", searchable: true, label: "Source Goods Receipt", type: "select-entity", entityEndpoint: "/goods-receipt", entityValueKey: "receipt_id", entityLabelKeys: ["receipt_no"], visibleWhen: { anyOf: [{ key: "entry_type", equals: ["PURCHASED_IMPORTED", "PURCHASED_LOCAL"] }] }, requiredWhen: { anyOf: [{ key: "entry_type", equals: ["PURCHASED_IMPORTED", "PURCHASED_LOCAL"] }] }, helpText: "The receipt this animal arrived on.", section: "Acquisition" },
+    { key: "source_batch_id", searchable: true, label: "Source Batch", type: "select-entity", entityEndpoint: "/batch", entityValueKey: "batch_id", entityLabelKeys: ["batch_no"], visibleWhen: { anyOf: [{ key: "entry_type", equals: "BORN_ON_FARM" }] }, requiredWhen: { anyOf: [{ key: "entry_type", equals: "BORN_ON_FARM" }] }, helpText: "The farrowing batch this animal was born from.", section: "Acquisition" },
     // LIVESTOCK is the item type seeded for living biological assets. There is
     // no LIVING_ASSET item type; using it here left this required picker empty.
-    { key: "item_id", label: "Item (Living Asset)", type: "select-entity", required: true, entityEndpoint: "/item?itemType=LIVESTOCK", entityValueKey: "item_id", entityLabelKeys: ["item_code", "item_name"], section: "Acquisition" },
+    { key: "item_id", searchable: true, label: "Item (Living Asset)", type: "select-entity", required: true, entityEndpoint: "/item?itemType=LIVESTOCK", entityValueKey: "item_id", entityLabelKeys: ["item_code", "item_name"], section: "Acquisition" },
     // Two fields, one column. A purchased animal's cost is read off its goods
     // receipt by the API and anything typed here is discarded, so offering an
     // editable box for it would take input it then throws away. Everything else
@@ -360,8 +397,8 @@ const animal: MasterDataConfig = {
     { key: "tsi", label: "TSI", type: "number", step: "0.01", helpText: "Total Sow Index score.", visibleWhen: { anyOf: [{ key: "gender", equals: "F" }] }, section: "Bio-Asset" },
     { key: "grading", label: "Grading", type: "text", visibleWhen: { anyOf: [{ key: "gender", equals: "F" }] }, section: "Bio-Asset" },
     { key: "current_stage_id", label: "Current Stage", type: "select-entity", entityEndpoint: "/stage", entityValueKey: "stage_id", entityLabelKeys: ["stage_code", "stage_name"], section: "Current Position" },
-    { key: "current_batch_id", label: "Current Batch", type: "select-entity", entityEndpoint: "/batch", entityValueKey: "batch_id", entityLabelKeys: ["batch_no"], section: "Current Position" },
-    { key: "current_location_id", label: "Current Location", type: "select-entity", entityEndpoint: "/location", entityValueKey: "location_id", entityLabelKeys: ["location_code", "location_name"], section: "Current Position" },
+    { key: "current_batch_id", label: "Current Batch", type: "select-entity", searchable: true, entityEndpoint: "/batch", entityValueKey: "batch_id", entityLabelKeys: ["batch_no"], section: "Current Position" },
+    { key: "current_location_id", label: "Current Location", type: "select-entity", searchable: true, entityEndpoint: "/location", entityValueKey: "location_id", entityLabelKeys: ["location_code", "location_name"], section: "Current Position" },
     {
       key: "status", label: "Status", type: "select", section: "Current Position",
       // The four disposal statuses are absent on purpose: the API refuses them
@@ -505,7 +542,7 @@ const uomConversion: MasterDataConfig = {
     // The four fields below are the whole of the client's "UOM Conversion" sheet
     // (Unit Of Measure.xlsx). Their wording is the sheet's own, not a paraphrase.
     {
-      key: "item_id", label: "Item", type: "select-entity",
+      key: "item_id", label: "Item", type: "select-entity", searchable: true,
       entityEndpoint: "/item", entityValueKey: "item_id", entityLabelKeys: ["item_code", "item_name"],
       helpText: "Leave blank for a factor that applies to every item using these units.",
     },
@@ -733,12 +770,9 @@ const item: MasterDataConfig = {
     },
     { key: "is_qr_enabled", label: "QR Tracking Enabled", type: "boolean" },
     { key: "item_image_url", label: "Item Image URL", type: "text", placeholder: "https://cdn.navfarm.io/items/..." },
-    // Both accounts come from Business Central with the item — BBP-1 §1.5 — so
-    // they are read in the record's Business Central panel, under a From BC
-    // chip, rather than typed here. Listed in bcFields above, which is what
-    // puts them in that panel and takes them out of this form.
-    { key: "inventory_gl_account", label: "Inventory GL Account", type: "select-entity", hideInForm: true, entityEndpoint: "/gl-account", entityValueKey: "gl_account_id", entityLabelKeys: ["account_code", "account_name"], helpText: "GL account this item posts inventory value to.", section: "Accounting" },
-    { key: "cogs_gl_account", label: "COGS GL Account", type: "select-entity", hideInForm: true, entityEndpoint: "/gl-account", entityValueKey: "gl_account_id", entityLabelKeys: ["account_code", "account_name"], helpText: "GL account this item posts cost of goods sold to.", section: "Accounting" },
+    { key: "inventory_gl_account", label: "Inventory GL Account", type: "select-entity", searchable: true, entityEndpoint: "/gl-account", entityValueKey: "gl_account_id", entityLabelKeys: ["account_code", "account_name"], helpText: "GL account this item posts inventory value to.", section: "Accounting" },
+    { key: "cogs_gl_account", label: "COGS GL Account", type: "select-entity", searchable: true, entityEndpoint: "/gl-account", entityValueKey: "gl_account_id", entityLabelKeys: ["account_code", "account_name"], helpText: "GL account this item posts cost of goods sold to.", section: "Accounting" },
+    { key: "is_blocked", label: "Blocked", type: "boolean", helpText: "A blocked item stays visible/historical but cannot be transacted.", section: "Accounting" },
     {
       // A Mandatory attribute is on every item in scope, so the form opens with
       // a row for each one already in place and no way to take it out. The
@@ -843,6 +877,7 @@ const breedLifecycleStage: MasterDataConfig = {
   tabLabel: "Lifecycle Stages",
   columns: [
     { key: "lifecycle_code", label: "Code" },
+    { key: "stage", label: "Stage" },
     { key: "calc_unit", label: "Unit" },
     { key: "period_from", label: "From" },
     { key: "period_to", label: "To" },
@@ -853,7 +888,7 @@ const breedLifecycleStage: MasterDataConfig = {
     { key: "nob_id", label: "Nature of Business", type: "select-entity", entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], helpText: "Leave blank if this lifecycle row is shared across all business verticals." },
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank if this lifecycle row is shared across all LOBs under the selected NOB." },
     { key: "lifecycle_code", label: "Lifecycle Code", type: "text", placeholder: "BLS-001", helpText: "Optional. Leave blank until the numbering convention is agreed; a series can generate it later." },
-    { key: "breed_id", label: "Breed", type: "select-entity", required: true, entityEndpoint: "/breed", entityValueKey: "breed_id", entityLabelKeys: ["breed_code", "breed_name"] },
+    { key: "breed_id", label: "Breed", type: "select-entity", required: true, searchable: true, entityEndpoint: "/breed", entityValueKey: "breed_id", entityLabelKeys: ["breed_code", "breed_name"] },
     { key: "stage_id", label: "Stage", type: "select-entity", required: true, entityEndpoint: "/stage", entityValueKey: "stage_id", entityLabelKeys: ["stage_code", "stage_name"] },
     {
       key: "category", label: "Category", type: "select",
@@ -868,20 +903,16 @@ const breedLifecycleStage: MasterDataConfig = {
     { key: "period_to", label: "Period To", type: "number", required: true },
     // Breed Master Template, Lifecycle sheet: "Teats" (mandatory). The standard
     // for the stage; BBP §6 hard-blocks gilt selection below 15.
-    { key: "std_teats", label: "Standard Teat Count", type: "number", min: 0, max: 99, helpText: "Minimum teat count expected at this stage, two digits at most. BBP §6 blocks gilt selection below 15." },
-    {
-      key: "season_type", label: "Season", type: "select",
-      helpText: "ALL when the standard does not vary by season.",
-      options: ["ALL", "SUMMER", "WINTER"].map((v) => ({ value: v, label: v.charAt(0) + v.slice(1).toLowerCase() })),
-    },
-    { key: "feed_item_id", label: "Feed Item", type: "select-entity", entityEndpoint: "/item?itemType=FEED", entityValueKey: "item_id", entityLabelKeys: ["item_code", "item_name"] },
+    { key: "std_teats", label: "Standard Teat Count", type: "number", helpText: "Minimum teat count expected at this stage. BBP §6 blocks gilt selection below 15." },
+    { key: "season_type", label: "Season", type: "text", placeholder: "Winter" },
+    { key: "feed_item_id", label: "Feed Item", type: "select-entity", searchable: true, entityEndpoint: "/item", entityValueKey: "item_id", entityLabelKeys: ["item_code", "item_name"] },
     { key: "feed_qty_per_head_per_day_kg", label: "Feed Qty per Head per Day (KG)", type: "number", step: "0.0001" },
     { key: "feed_wastage_pct", label: "Feed Wastage %", type: "number", step: "0.01" },
     { key: "std_body_weight_kg", label: "Std Body Weight (KG)", type: "number", step: "0.001" },
     { key: "std_adg_gpd", label: "Std ADG (g/day)", type: "number", step: "0.01" },
     { key: "std_fcr", label: "Std FCR", type: "number", step: "0.001" },
     { key: "std_mortality_rate_pct", label: "Std Mortality Rate %", type: "number", step: "0.001" },
-    { key: "output_item_id", label: "Output Item", type: "select-entity", entityEndpoint: "/item", entityValueKey: "item_id", entityLabelKeys: ["item_code", "item_name"] },
+    { key: "output_item_id", label: "Output Item", type: "select-entity", searchable: true, entityEndpoint: "/item", entityValueKey: "item_id", entityLabelKeys: ["item_code", "item_name"] },
     { key: "output_uom", label: "Output UOM", type: "text" },
     { key: "std_output_qty", label: "Std Output Qty", type: "number", step: "0.001" },
     { key: "kpi_thresholds", label: "KPIs & Alerts", type: "json", helpText: "One entry per KPI, each with its own alert: [{ metric, lower_limit, upper_limit, severity }]. Severity is INFO, WARNING or CRITICAL." },
@@ -1012,7 +1043,7 @@ const feedFormula: MasterDataConfig = {
     { key: "nob_id", label: "Nature of Business", type: "select-entity", entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], filterOnly: true, helpText: "Scopes the Produced Item picker below — feed formulas aren't NOB/LOB-scoped themselves." },
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", filterOnly: true },
     {
-      key: "target_item_id", label: "Produced Item", type: "select-entity", required: true, entityEndpoint: "/item", entityValueKey: "item_id", entityLabelKeys: ["item_code", "item_name"],
+      key: "target_item_id", label: "Produced Item", type: "select-entity", required: true, searchable: true, entityEndpoint: "/item", entityValueKey: "item_id", entityLabelKeys: ["item_code", "item_name"],
       dependsOn: ["nob_id", "lob_id"], dependsOnMode: "query", queryParams: { nob_id: "nobId", lob_id: "lobId" },
     },
     { key: "batch_size", label: "Batch Size", type: "number", required: true, step: "0.01" },
@@ -1024,7 +1055,7 @@ const feedFormula: MasterDataConfig = {
     {
       key: "ingredients", label: "Ingredients", type: "json", required: true, createOnly: true,
       jsonRow: [
-        { key: "item_id", label: "Item", type: "select-entity", entityEndpoint: "/item", entityValueKey: "item_id", entityLabelKeys: ["item_code", "item_name"] },
+        { key: "item_id", label: "Item", type: "select-entity", searchable: true, entityEndpoint: "/item", entityValueKey: "item_id", entityLabelKeys: ["item_code", "item_name"] },
         { key: "quantity", label: "Quantity", type: "number", step: "0.001" },
         { key: "unit", label: "Unit", type: "select-entity", entityEndpoint: "/uom?uomType=WEIGHT", entityValueKey: "uom_code", entityLabelKeys: ["uom_code", "uom_name"] },
         { key: "inclusion_pct", label: "Inclusion %", type: "number", step: "0.01" },
@@ -1163,7 +1194,7 @@ const resource: MasterDataConfig = {
     { key: "unit", label: "Cost UOM", type: "select-entity", entityEndpoint: "/uom", entityValueKey: "uom_code", entityLabelKeys: ["uom_code", "uom_name"], section: "Capacity & Cost" },
     { key: "cost_rate", label: "Cost Rate", type: "number", step: "0.01", section: "Capacity & Cost" },
     { key: "cost_element", label: "Cost Element", type: "text", placeholder: "DIRECT_LABOR", helpText: "GL cost classification, e.g. DIRECT_LABOR / INDIRECT_LABOR / EQUIPMENT_HIRE / FUEL / MAINTENANCE.", section: "Capacity & Cost" },
-    { key: "gl_cost_account", label: "GL Cost Account", type: "select-entity", entityEndpoint: "/gl-account", entityValueKey: "gl_account_id", entityLabelKeys: ["account_code", "account_name"], helpText: "GL account this resource posts cost to.", section: "Capacity & Cost" },
+    { key: "gl_cost_account", label: "GL Cost Account", type: "select-entity", searchable: true, entityEndpoint: "/gl-account", entityValueKey: "gl_account_id", entityLabelKeys: ["account_code", "account_name"], helpText: "GL account this resource posts cost to.", section: "Capacity & Cost" },
     { key: "asset_code", label: "Asset Code", type: "text", placeholder: "ASSET-PELLETISER-01", helpText: "Equipment/vehicle only.", section: "Asset", visibleWhen: { anyOf: [{ key: "resource_type", equals: ["EQUIPMENT", "VEHICLE"] }] } },
     { key: "asset_make", label: "Asset Make", type: "text", section: "Asset", visibleWhen: { anyOf: [{ key: "resource_type", equals: ["EQUIPMENT", "VEHICLE"] }] } },
     { key: "asset_model", label: "Asset Model", type: "text", section: "Asset", visibleWhen: { anyOf: [{ key: "resource_type", equals: ["EQUIPMENT", "VEHICLE"] }] } },
@@ -1213,7 +1244,7 @@ const glAccount: MasterDataConfig = {
       key: "account_type", label: "Account Type", type: "select", required: true, section: "Identification",
       options: ["ASSET", "LIABILITY", "EQUITY", "INCOME", "EXPENSE"].map((v) => ({ value: v, label: v })),
     },
-    { key: "parent_account_id", label: "Parent Account", type: "select-entity", entityEndpoint: "/gl-account", entityValueKey: "gl_account_id", entityLabelKeys: ["account_code", "account_name"], section: "Hierarchy" },
+    { key: "parent_account_id", label: "Parent Account", type: "select-entity", searchable: true, entityEndpoint: "/gl-account", entityValueKey: "gl_account_id", entityLabelKeys: ["account_code", "account_name"], section: "Hierarchy" },
     { key: "is_sub_account", label: "Sub-Account", type: "boolean", section: "Hierarchy" },
     { key: "is_reconciliation", label: "Reconciliation Account", type: "boolean", section: "Hierarchy" },
   ],
@@ -1279,8 +1310,8 @@ const glMapping: MasterDataConfig = {
         { value: "BIO_DISPOSAL_SOLD", label: "Bio-Asset — Disposal (Sold)" },
       ],
     },
-    { key: "debit_gl_account_id", label: "Debit GL Account", type: "select-entity", entityEndpoint: "/gl-account", entityValueKey: "gl_account_id", entityLabelKeys: ["account_code", "account_name"] },
-    { key: "credit_gl_account_id", label: "Credit GL Account", type: "select-entity", entityEndpoint: "/gl-account", entityValueKey: "gl_account_id", entityLabelKeys: ["account_code", "account_name"] },
+    { key: "debit_gl_account_id", label: "Debit GL Account", type: "select-entity", searchable: true, entityEndpoint: "/gl-account", entityValueKey: "gl_account_id", entityLabelKeys: ["account_code", "account_name"] },
+    { key: "credit_gl_account_id", label: "Credit GL Account", type: "select-entity", searchable: true, entityEndpoint: "/gl-account", entityValueKey: "gl_account_id", entityLabelKeys: ["account_code", "account_name"] },
   ],
 };
 
@@ -1457,7 +1488,7 @@ const exchangeRate: MasterDataConfig = {
 
 export const MASTER_DATA_CONFIGS: MasterDataConfig[] = [
   locationType, location,
-  stage, numberSeries,
+  stage, numberSeries, activity,
   animal,
   itemCategory, itemType, uom, uomConversion, item, itemAttribute,
   species, breed, breedLifecycleStage, reason, disease, feedFormula,

@@ -1,12 +1,12 @@
 "use client";
 
 import { ProductionPageShell } from "@/components/console/production/production-page-shell";
-import SchedulerPanel from "@/components/console/production/scheduler-panel";
+import SchedulerListPanel from "@/components/console/production/scheduler-list-panel";
 
-export default function ProductionSchedulerPage() {
+export default function SchedulersPage() {
   return (
-    <ProductionPageShell titleKey="scheduler">
-      {() => <SchedulerPanel />}
+    <ProductionPageShell titleKey="navSchedulers">
+      {() => <SchedulerListPanel />}
     </ProductionPageShell>
   );
 }

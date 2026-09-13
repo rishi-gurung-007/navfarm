@@ -365,7 +365,15 @@ describe('BreedService', () => {
           from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ stage_id: 'stage-lactation' }]) }) }),
         })
         .mockReturnValueOnce({
-          from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ lifecycle_id: 'lc-1', breed_id: 'breed-1', stage_id: 'stage-lactation' }]) }) }),
+          from: jest.fn().mockReturnValue({
+            leftJoin: jest.fn().mockReturnValue({
+              leftJoin: jest.fn().mockReturnValue({
+                where: jest.fn().mockReturnValue({
+                  limit: jest.fn().mockResolvedValue([{ lifecycle_id: 'lc-1', breed_id: 'breed-1', stage_id: 'stage-lactation' }]),
+                }),
+              }),
+            }),
+          }),
         });
 
       mockDbInsert.mockReturnValue({ values: jest.fn().mockResolvedValue({}) });

@@ -86,6 +86,13 @@ export interface PopoverProps {
   label?: string;
   /** Extra classes on the anchor wrapper, for layout only. */
   className?: string;
+  /**
+   * Extra classes on the panel itself. The default panel sizes itself like a menu (a
+   * content-driven width between 224 and 320px) — a surface standing in for a form field
+   * instead (a searchable select) needs to match its trigger's actual width, which this hook
+   * exists for; see `.nf-combobox-panel` in global.css for that override.
+   */
+  panelClassName?: string;
 }
 
 export function Popover({
@@ -99,6 +106,7 @@ export function Popover({
   panelRole,
   label,
   className,
+  panelClassName,
 }: PopoverProps) {
   const panelId = `nf-popover-${useId()}`;
   const anchorRef = useRef<HTMLDivElement>(null);
@@ -186,6 +194,7 @@ export function Popover({
           data-popover-panel
           data-side={side}
           data-align={align}
+          className={panelClassName}
           role={panelRole}
           aria-label={panelRole ? label : undefined}
         >

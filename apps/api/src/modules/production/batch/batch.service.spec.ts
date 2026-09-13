@@ -5,12 +5,14 @@ import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { InventoryLedgerService } from '../../inventory/inventory-ledger/inventory-ledger.service';
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
+import { SchedulerHeaderService } from '../scheduler-header/scheduler-header.service';
 import { BadRequestException } from '@nestjs/common';
 import * as schema from '../../../core/database/schema';
 
 describe('BatchService', () => {
   let service: BatchService;
   let numberSeriesService: NumberSeriesService;
+  let module: TestingModule;
 
   const mockDbSelect = jest.fn();
   const mockDbInsert = jest.fn();
@@ -40,7 +42,7 @@ describe('BatchService', () => {
     mockDbUpdate.mockReset();
     mockDbTransaction.mockReset();
 
-    const module: TestingModule = await Test.createTestingModule({
+    module = await Test.createTestingModule({
       providers: [
         BatchService,
         { provide: ClsService, useValue: { get: jest.fn().mockReturnValue(mockDb) } },
@@ -48,6 +50,7 @@ describe('BatchService', () => {
         { provide: InventoryLedgerService, useValue: {} },
         { provide: GlPostingService, useValue: {} },
         { provide: NumberSeriesService, useValue: { generateNext: jest.fn().mockResolvedValue('BATCH-000001') } },
+        { provide: SchedulerHeaderService, useValue: { createForStage: jest.fn().mockResolvedValue({}), generateForBatchCurrentStage: jest.fn().mockResolvedValue({}) } },
       ],
     }).compile();
 
@@ -171,10 +174,8 @@ describe('BatchService', () => {
 
       await service.transferStage('batch-1', { to_stage_code: 'LACTATION' }, 'tenant-123', { userId: 'user-1' });
 
-      // First update is batch_header; the second repoints the in-step animals.
-      // mockDbUpdate returns one shared object, so both payloads land on the same
-      // set() mock — index 1 is the animal update.
-      expect(mockDbUpdate).toHaveBeenCalledTimes(2);
+      // First update is batch_header; second repoints in-step animals; third completes prior scheduler.
+      expect(mockDbUpdate).toHaveBeenCalledTimes(3);
       expect(mockDbUpdate.mock.calls[1][0]).toBe(schema.animalRegister);
       const setMock = mockDbUpdate.mock.results[0].value.set as jest.Mock;
       expect(setMock.mock.calls[1][0].current_stage_id).toBe('stage-lactation');
@@ -207,8 +208,8 @@ describe('BatchService', () => {
 
       await service.transferStage('batch-1', { to_stage_code: 'LACTATION' }, 'tenant-123', { userId: 'user-1' });
 
-      // Only batch_header is updated — no animal write at all.
-      expect(mockDbUpdate).toHaveBeenCalledTimes(1);
+      // batch_header and prior stage scheduler_header are updated — no animal write at all.
+      expect(mockDbUpdate).toHaveBeenCalledTimes(2);
     });
 
     it('does not touch animals when no stage_master row matches the code', async () => {
@@ -460,46 +461,54 @@ describe('BatchService', () => {
   describe('getDataEntry', () => {
     const scheduledBatch = {
       ...activeBatch,
-      scheduler_id: 'sched-1',
+      stage_id: 'stage-gest',
       start_date: '2026-07-01',
       opening_quantity: '20.0000',
       current_stage_code: 'GESTATION',
     };
 
-    const feedParameter = {
-      parameter_id: 'p-feed',
-      parameter_type: 'CONSUMPTION',
+    const schedulerHeader = {
+      scheduler_id: 'sched-1',
+      batch_id: 'batch-1',
+      stage_id: 'stage-gest',
+      effective_from: '2026-09-01',
+      animal_count: '20.0000',
+    };
+
+    const feedLine = {
+      line_id: 'line-feed',
+      line_type: 'CONSUMPTION',
       parameter_name: 'Mid Gestation Ration',
       item_id: 'item-feed',
       resource_id: null,
-      default_uom: 'KG',
-      qty_method: 'PER_UNIT',
+      qty_basis: 'PER_HEAD',
       // kilograms per head per day — a quantity, emphatically not a price
-      default_qty_per_unit: '2.2000',
-      default_qty_per_batch: null,
+      standard_qty: '2.2000',
+      occurrence: 'DAILY',
+      kpi_uom: null,
     };
 
-    const setup = (parameter: any, itemRow: any | null) => {
+    // Every getDataEntry query in order: same-day transactions, same-day
+    // batch_daily_data entries, item rows, resource rows, uom conversions.
+    const setup = (line: any, itemRow: any | null) => {
       jest.spyOn(service, 'findOne').mockResolvedValue(scheduledBatch as any);
-      jest.spyOn(service as any, 'loadActiveScheduleLines').mockResolvedValue([
-        {
-          spl: { spl_id: 'spl-1', period_label: 'Mid Gestation', occurrence: 'DAILY', uom_override: null, expected_qty_override: null },
-          parameter,
-        },
-      ]);
+      jest.spyOn(service as any, 'loadActiveScheduleLines').mockResolvedValue([{ header: schedulerHeader, line }]);
       mockDbSelect
         .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([]) }) }) // same-day transactions
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([]) }) }) // same-day daily-data entries
         .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue(itemRow ? [itemRow] : []) }) }) // item rows
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([]) }) }) // resource rows
         .mockReturnValueOnce({ from: jest.fn().mockResolvedValue([]) }); // uom conversions
     };
 
     it('reports the item standard cost as the line rate', async () => {
-      setup(feedParameter, {
+      setup(feedLine, {
         item_id: 'item-feed',
         item_code: 'FEED-GEST-SOW',
         item_name: 'Dry Sow Gestation Mash',
         item_type: 'FEED',
         standard_cost: '28.000000',
+        uom_primary: 'KG',
       });
 
       const result = await service.getDataEntry('batch-1', '2026-09-01');
@@ -507,42 +516,20 @@ describe('BatchService', () => {
       // 28/kg, not 2.2 — the per-head quantity was being surfaced as a price,
       // so the data-entry screen costed 6 labour hours at ₹6.
       expect(result.lines[0].std_rate).toBe(28);
+      // 2.2 kg/head * 20 animals (scheduler_header.animal_count)
       expect(result.lines[0].expected_qty).toBe(44);
     });
 
-    it('converts the item rate into the line unit when they differ', async () => {
-      // Ivermectin is stocked and priced per 100 ml VIAL, but the schedule
-      // doses in ML. Using the vial price per millilitre costed a 40 ml round
-      // at Rs 11,200 instead of Rs 112.
-      jest.spyOn(service, 'findOne').mockResolvedValue(scheduledBatch as any);
-      jest.spyOn(service as any, 'loadActiveScheduleLines').mockResolvedValue([
-        {
-          spl: { spl_id: 'spl-m', period_label: 'Deworming', occurrence: 'DAILY', uom_override: 'ML', expected_qty_override: null },
-          parameter: {
-            parameter_id: 'p-med', parameter_type: 'CONSUMPTION', parameter_name: 'Deworming',
-            item_id: 'item-med', resource_id: null, default_uom: 'ML',
-            qty_method: 'PER_UNIT', default_qty_per_unit: '2.0000', default_qty_per_batch: null,
-          },
-        },
-      ]);
-      mockDbSelect
-        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([]) }) }) // same-day tx
-        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([
-          { item_id: 'item-med', item_code: 'MED-IVERMECTIN', item_name: 'Ivermectin 1% 100ml', item_type: 'MEDICINE', standard_cost: '280.000000', uom_primary: 'VIAL' },
-        ]) }) }) // items
-        .mockReturnValueOnce({ from: jest.fn().mockResolvedValue([
-          { from_uom: 'VIAL', to_uom: 'ML', conversion_factor: '100.000000' },
-        ]) }); // uom conversions
+    // The old model's uom_override — dosing in ML from stock priced per VIAL —
+    // is gone: the new scheduler_line schema (Master Templates/
+    // Schedule_master_template.xlsx) marks `uom` CALC, auto-flowing from
+    // item_master.uom_primary with no per-line override, so a line's unit is
+    // now always its item's stock unit and the conversion branch in
+    // getDataEntry's standardRate() is unreachable for CONSUMPTION/OUTPUT.
 
-      const result = await service.getDataEntry('batch-1', '2026-09-01');
-
-      expect(result.lines[0].std_rate).toBe(2.8);
-      expect(result.lines[0].expected_qty).toBe(40);
-    });
-
-    it('reports no rate rather than a quantity when the parameter has no item', async () => {
+    it('reports no rate rather than a quantity when the line has no item or resource', async () => {
       setup(
-        { ...feedParameter, parameter_id: 'p-labour', parameter_type: 'OVERHEAD', item_id: null, default_uom: 'HRS', qty_method: 'PER_BATCH', default_qty_per_unit: null, default_qty_per_batch: '6.0000' },
+        { ...feedLine, line_id: 'line-labour', line_type: 'DESCRIPTIVE', item_id: null, qty_basis: null, standard_qty: null, kpi_uom: 'HRS' },
         null,
       );
 
@@ -882,80 +869,18 @@ describe('BatchService', () => {
   });
 
   describe('generateSchedulerForBatch', () => {
-    it('throws if batch has no breed assigned', async () => {
-      jest.spyOn(service, 'findOne').mockResolvedValue({
-        batch_id: 'b-1',
-        breed_id: null,
-      } as any);
-
-      await expect(service.generateSchedulerForBatch('b-1', 'tenant-123')).rejects.toThrow(BadRequestException);
-    });
-
-    it('generates scheduler and parameter lines from breed lifecycle standards', async () => {
-      jest.spyOn(service, 'findOne')
-        .mockResolvedValueOnce({
-          batch_id: 'b-1',
-          batch_no: 'BATCH-2026-0001',
-          breed_id: 'breed-1',
-          nob_id: 'nob-1',
-          lob_id: 'lob-1',
-          company_id: 'comp-1',
-        } as any)
-        .mockResolvedValueOnce({
-          batch_id: 'b-1',
-          batch_no: 'BATCH-2026-0001',
-          scheduler_id: 'sched-1',
-          scheduler: { scheduler_code: 'SCHED-BATCH-2026-0001' },
-        } as any);
-
-      mockDbSelect
-        .mockReturnValueOnce({
-          from: jest.fn().mockReturnValue({
-            where: jest.fn().mockReturnValue({
-              limit: jest.fn().mockResolvedValue([{ breed_name: 'Large White Yorkshire' }]),
-            }),
-          }),
-        }) // breed name lookup
-        .mockReturnValueOnce({
-          from: jest.fn().mockReturnValue({
-            innerJoin: jest.fn().mockReturnValue({
-              where: jest.fn().mockReturnValue({
-                orderBy: jest.fn().mockResolvedValue([
-                  {
-                    lifecycle: {
-                      period_from: 1,
-                      period_to: 30,
-                      calc_unit: 'DAY',
-                      feed_qty_per_head_per_day_kg: '1.2000',
-                      std_mortality_rate_pct: '1.500',
-                      std_body_weight_kg: '25.000',
-                    },
-                    stage: { stage_name: 'Quarantine / Grower', stage_code: 'GROWER' },
-                  },
-                ]),
-              }),
-            }),
-          }),
-        }) // breedLifecycleStages
-        .mockReturnValueOnce({
-          from: jest.fn().mockReturnValue({
-            where: jest.fn().mockResolvedValue([]),
-          }),
-        }) // parameterMaster existing
-        .mockReturnValueOnce({
-          from: jest.fn().mockReturnValue({
-            where: jest.fn().mockReturnValue({
-              limit: jest.fn().mockResolvedValue([]),
-            }),
-          }),
-        }); // existing scheduler check
-
-      mockDbInsert.mockReturnValue({ values: jest.fn().mockResolvedValue({}) });
-      mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) }) });
+    // The heavy lifting (breed lifecycle lookup, line generation) now lives in
+    // SchedulerHeaderService.generateForBatchCurrentStage() — see
+    // scheduler-header.service.spec.ts. This is a thin delegator, so the only
+    // thing worth asserting here is that the delegation happens.
+    it('delegates to SchedulerHeaderService.generateForBatchCurrentStage', async () => {
+      const schedulerHeaderService = module.get<SchedulerHeaderService>(SchedulerHeaderService);
+      const spy = jest.spyOn(schedulerHeaderService, 'generateForBatchCurrentStage').mockResolvedValue({ scheduler_id: 'sched-1' } as any);
 
       const res = await service.generateSchedulerForBatch('b-1', 'tenant-123', { userId: 'user-1' });
-      expect(res.scheduler_id).toBe('sched-1');
-      expect(mockDbInsert).toHaveBeenCalled();
+
+      expect(spy).toHaveBeenCalledWith('b-1', 'tenant-123', { userId: 'user-1' });
+      expect(res).toEqual({ scheduler_id: 'sched-1' });
     });
   });
 
@@ -967,7 +892,6 @@ describe('BatchService', () => {
         start_date: new Date(Date.now() - 5 * 86400000).toISOString().slice(0, 10),
         initial_quantity: 100,
         current_quantity: 98,
-        scheduler_id: 'sched-1',
       } as any);
 
       mockDbSelect
@@ -998,17 +922,8 @@ describe('BatchService', () => {
           }),
         }) // batch transactions
         .mockReturnValueOnce({
-          from: jest.fn().mockReturnValue({
-            innerJoin: jest.fn().mockReturnValue({
-              where: jest.fn().mockResolvedValue([
-                {
-                  spl: { period_from: 1, period_to: 50, expected_qty_override: '1.2' },
-                  param: { parameter_type: 'CONSUMPTION' },
-                },
-              ]),
-            }),
-          }),
-        }); // scheduler lines
+          from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([]) }),
+        }); // scheduler_header rows for this batch — none, so schedulerLines is never queried
 
       const res = await service.getBatchPerformanceCurves('b-1', 'tenant-123');
 

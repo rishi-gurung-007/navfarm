@@ -2,7 +2,7 @@ import { masterScopeConditions } from '../../../common/master-data-scope';
 import { generateCompositeCode } from '../../system/number-series/composite-code.util';
 import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, like, or, isNull, ne, inArray } from 'drizzle-orm';
+import { eq, and, like, or, isNull, ne, inArray, sql, getTableColumns } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
@@ -735,8 +735,17 @@ export class BreedService {
 
   async findOneLifecycleStage(id: string) {
     const [lifecycleStage] = await this.db
-      .select()
+      .select({
+        ...getTableColumns(schema.breedLifecycleStages),
+        stage_name: schema.stageMaster.stage_name,
+        stage_code: schema.stageMaster.stage_code,
+        stage: sql<string>`COALESCE(${schema.stageMaster.stage_name}, ${schema.stageMaster.stage_code})`,
+        breed_name: schema.breedMaster.breed_name,
+        breed_code: schema.breedMaster.breed_code,
+      })
       .from(schema.breedLifecycleStages)
+      .leftJoin(schema.stageMaster, eq(schema.breedLifecycleStages.stage_id, schema.stageMaster.stage_id))
+      .leftJoin(schema.breedMaster, eq(schema.breedLifecycleStages.breed_id, schema.breedMaster.breed_id))
       .where(eq(schema.breedLifecycleStages.lifecycle_id, id))
       .limit(1);
 
@@ -756,13 +765,32 @@ export class BreedService {
 
     if (query.breedId) conditions.push(eq(schema.breedLifecycleStages.breed_id, query.breedId));
     if (query.stageId) conditions.push(eq(schema.breedLifecycleStages.stage_id, query.stageId));
+    if (query.search) {
+      const s = `%${query.search.trim()}%`;
+      conditions.push(or(
+        like(schema.breedLifecycleStages.lifecycle_code, s),
+        like(schema.stageMaster.stage_name, s),
+        like(schema.stageMaster.stage_code, s),
+        like(schema.breedMaster.breed_name, s),
+        like(schema.breedMaster.breed_code, s)
+      ));
+    }
 
     const limit = query.limit || 50;
     const offset = query.offset || 0;
 
     return this.db
-      .select()
+      .select({
+        ...getTableColumns(schema.breedLifecycleStages),
+        stage_name: schema.stageMaster.stage_name,
+        stage_code: schema.stageMaster.stage_code,
+        stage: sql<string>`COALESCE(${schema.stageMaster.stage_name}, ${schema.stageMaster.stage_code})`,
+        breed_name: schema.breedMaster.breed_name,
+        breed_code: schema.breedMaster.breed_code,
+      })
       .from(schema.breedLifecycleStages)
+      .leftJoin(schema.stageMaster, eq(schema.breedLifecycleStages.stage_id, schema.stageMaster.stage_id))
+      .leftJoin(schema.breedMaster, eq(schema.breedLifecycleStages.breed_id, schema.breedMaster.breed_id))
       .where(and(...conditions))
       .orderBy(schema.breedLifecycleStages.period_from)
       .limit(limit)

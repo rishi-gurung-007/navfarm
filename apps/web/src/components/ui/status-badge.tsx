@@ -35,6 +35,7 @@ const STATUS_VARIANT: Record<string, BadgeProps['variant']> = {
   // attention, not a failure and not a quiet terminal state.
   BLOCKED: 'warning',
   COMPLETED: 'success',
+  SUSPENDED: 'warning',
 
   // Alert severity
   INFO: 'info',

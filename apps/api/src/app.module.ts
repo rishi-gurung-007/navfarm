@@ -36,6 +36,7 @@ import { CustomerModule } from './modules/master-data/customer/customer.module';
 import { ResourceModule } from './modules/master-data/resource/resource.module';
 import { DiseaseModule } from './modules/master-data/disease/disease.module';
 import { ReasonModule } from './modules/master-data/reason/reason.module';
+import { ActivityModule } from './modules/master-data/activity/activity.module';
 import { FeedFormulaModule } from './modules/master-data/feed-formula/feed-formula.module';
 import { GlAccountModule } from './modules/finance/gl-account/gl-account.module';
 import { GlMappingModule } from './modules/finance/gl-mapping/gl-mapping.module';
@@ -51,7 +52,8 @@ import { FinancialReportsModule } from './modules/finance/financial-reports/fina
 import { BatchModule } from './modules/production/batch/batch.module';
 import { ParameterModule } from './modules/production/parameter/parameter.module';
 import { StageModule } from './modules/production/stage/stage.module';
-import { SchedulerModule } from './modules/production/scheduler/scheduler.module';
+import { SchedulerHeaderModule } from './modules/production/scheduler-header/scheduler-header.module';
+import { BatchDailyDataModule } from './modules/production/batch-daily-data/batch-daily-data.module';
 import { AlertModule } from './modules/production/alert/alert.module';
 import { ApprovalModule } from './modules/production/approval/approval.module';
 import { MilkModule } from './modules/production/milk/milk.module';
@@ -117,6 +119,7 @@ import { SystemController } from './system/system.controller';
     ResourceModule,
     DiseaseModule,
     ReasonModule,
+    ActivityModule,
     FeedFormulaModule,
     GlAccountModule,
     GlMappingModule,
@@ -132,7 +135,8 @@ import { SystemController } from './system/system.controller';
     BatchModule,
     ParameterModule,
     StageModule,
-    SchedulerModule,
+    SchedulerHeaderModule,
+    BatchDailyDataModule,
     AlertModule,
     ApprovalModule,
     MilkModule,

@@ -41,7 +41,7 @@ type Grant = {
 
 /** Every master-data resource a data-entry or list screen resolves against. */
 const MASTER_DATA_RESOURCES = [
-  'BREED', 'BREED_LIFECYCLE_STAGE', 'COST_CENTER', 'CUSTOMER', 'DISEASE', 'FARM',
+  'ACTIVITY', 'BREED', 'BREED_LIFECYCLE_STAGE', 'COST_CENTER', 'CUSTOMER', 'DISEASE', 'FARM',
   'FEED_FORMULA', 'GL_ACCOUNT', 'GL_MAPPING', 'ITEM', 'ITEM_ATTRIBUTE',
   'ITEM_CATEGORY', 'ITEM_TYPE', 'LOCATION', 'MEDICINE', 'OPERATIONAL_AREA', 'RESOURCE',
   'SHED', 'SPECIES', 'SUPPLIER', 'UOM', 'WAREHOUSE',
@@ -53,7 +53,7 @@ const INVENTORY_RESOURCES = [
 ];
 
 const PRODUCTION_RESOURCES = [
-  'APPROVAL', 'BATCH', 'PARAMETER', 'QC', 'QC_PARAMETER', 'QR_CODE', 'SCHEDULER', 'STAGE',
+  'APPROVAL', 'BATCH', 'BATCH_SCHEDULE', 'PARAMETER', 'QC', 'QC_PARAMETER', 'QR_CODE', 'STAGE',
 ];
 
 const row = (roleId: string, g: Grant) => ({
@@ -152,7 +152,7 @@ export async function seedDefaultCompanyRoles(
   await tx.insert(schema.rolePermissions).values([
     row(operatorRoleId, { module: 'PRODUCTION', resource: 'BATCH', view: true, create: true, edit: true }),
     row(operatorRoleId, { module: 'PRODUCTION', resource: 'STAGE', view: true }),
-    row(operatorRoleId, { module: 'PRODUCTION', resource: 'SCHEDULER', view: true }),
+    row(operatorRoleId, { module: 'PRODUCTION', resource: 'BATCH_SCHEDULE', view: true }),
     row(operatorRoleId, { module: 'PRODUCTION', resource: 'PARAMETER', view: true }),
     row(operatorRoleId, { module: 'PRODUCTION', resource: 'QC', view: true, create: true }),
     row(operatorRoleId, { module: 'PRODUCTION', resource: 'QR_CODE', view: true }),

@@ -349,96 +349,9 @@ export async function seedPiggeryData() {
       paramMap1.set(p.code, pId!);
     }
 
-    // Each line is scoped to the stage it belongs to. loadActiveScheduleLines()
-    // in batch.service.ts only applies a line once the batch is IN that stage
-    // (stage_code null = applies in every stage), so one scheduler per batch
-    // carries a different plan and different KPI thresholds per stage.
-    // Day ranges span the batch's whole life, starting at the first stage it
-    // genuinely entered. A gilt cohort is bought in, quarantined, grown, served
-    // and only then gestates — starting the schedule at Flush/AI left Quarantine
-    // and Gilt Grower reading "Upcoming" on a sow already 63 days pregnant.
-    const schedConfigs1 = [
-      {
-        // Gilt intake through to farrowing: 30 d quarantine + 77 d grower +
-        // 10 d flush/service + 114 d gestation.
-        code: 'SCHED-PIG-GEST-114', name: 'Gilt Intake to Farrowing — Full Sow Cycle', durationValue: 231, breed: yorkshire, desc: 'Quarantine, grower, flush/service and the three gestation phases',
-        lines: [
-          { paramCode: 'PARAM-FEED-QUAR-SOW',   stage: 'QUARANTINE',        periodNo: 1,  from: 1,   to: 30,  label: 'Quarantine Intake Ration',  occ: 'DAILY', qty: null, uom: 'KG',   kpi: true,  minPct: '15.00', maxPct: '15.00', target: '1.5000' },
-          { paramCode: 'PARAM-MORT-PIG',        stage: 'QUARANTINE',        periodNo: 2,  from: 1,   to: 30,  label: 'Quarantine Mortality',      occ: 'DAILY', qty: '0.00000000', uom: 'HEAD', kpi: true, minPct: null, maxPct: '1.00', target: '0.0000' },
-          { paramCode: 'PARAM-FEED-GILT',       stage: 'GILT_GROWER',       periodNo: 3,  from: 31,  to: 107, label: 'Gilt Grower Ration',        occ: 'DAILY', qty: null, uom: 'KG',   kpi: true,  minPct: '10.00', maxPct: '10.00', target: '2.2000' },
-          { paramCode: 'PARAM-FEED-FLUSH',      stage: 'FLUSH',     periodNo: 4,  from: 108, to: 117, label: 'Flush Ration (Pre-Service)', occ: 'DAILY', qty: null, uom: 'KG',  kpi: true,  minPct: '8.00',  maxPct: '8.00',  target: '3.0000' },
-          { paramCode: 'PARAM-FEED-GEST-EARLY', stage: 'GESTATION', periodNo: 5,  from: 118, to: 147, label: 'Early Gestation',           occ: 'DAILY', qty: null, uom: 'KG',   kpi: true,  minPct: '10.00', maxPct: '10.00', target: '2.0000' },
-          { paramCode: 'PARAM-FEED-GEST-MID',   stage: 'GESTATION', periodNo: 6,  from: 148, to: 202, label: 'Mid Gestation',             occ: 'DAILY', qty: null, uom: 'KG',   kpi: true,  minPct: '10.00', maxPct: '10.00', target: '2.2000' },
-          { paramCode: 'PARAM-FEED-GEST-LATE',  stage: 'GESTATION', periodNo: 7,  from: 203, to: 227, label: 'Late Gestation',            occ: 'DAILY', qty: null, uom: 'KG',   kpi: true,  minPct: '10.00', maxPct: '10.00', target: '2.8000' },
-          { paramCode: 'PARAM-FEED-PREFARROW',  stage: 'GESTATION', periodNo: 8,  from: 228, to: 231, label: 'Pre-Farrow Transition',     occ: 'DAILY', qty: null, uom: 'KG',   kpi: true,  minPct: '10.00', maxPct: '10.00', target: '2.0000' },
-          { paramCode: 'PARAM-MORT-PIG',        stage: 'GESTATION', periodNo: 9,  from: 118, to: 231, label: 'Gestation Sow Mortality',   occ: 'DAILY', qty: '0.00000000', uom: 'HEAD', kpi: true, minPct: null, maxPct: '1.00', target: '0.0000' },
-          { paramCode: 'PARAM-MED-DEWORM',      stage: 'GESTATION', periodNo: 10, from: 170, to: 190, label: 'Mid-Gestation Deworming',   occ: 'DAILY', qty: null, uom: 'ML',   kpi: false, minPct: null, maxPct: null, target: '2.0000' },
-          // Unscoped — tracked in every stage.
-          { paramCode: 'PARAM-WATER-PIG',       stage: null,                periodNo: 11, from: 1,   to: 231, label: 'Water Intake (All Stages)', occ: 'DAILY', qty: null, uom: 'LTR',  kpi: false, minPct: null, maxPct: null, target: '15.0000' },
-          { paramCode: 'PARAM-LABOUR-PIG',      stage: null,                periodNo: 12, from: 1,   to: 231, label: 'Direct Labour Hours',       occ: 'DAILY', qty: null, uom: 'HRS',  kpi: false, minPct: null, maxPct: null, target: '6.0000' },
-          { paramCode: 'PARAM-POWER-PIG',       stage: null,                periodNo: 13, from: 1,   to: 231, label: 'Ventilation & Lighting',    occ: 'DAILY', qty: null, uom: 'KWH',  kpi: false, minPct: null, maxPct: null, target: '320.0000' },
-          { paramCode: 'PARAM-BODYWT-PIG',      stage: null,                periodNo: 14, from: 1,   to: 231, label: 'Body Weight Sampling',      occ: 'WEEKLY', qty: '165.00000000', uom: 'KG', kpi: false, minPct: null, maxPct: null, target: '165.0000' },
-        ]
-      },
-      {
-        // The same intake-to-service run, carried on through farrowing, the
-        // 28-day lactation and weaning.
-        code: 'SCHED-PIG-FARR-28', name: 'Sow Cycle through Farrowing, Lactation & Weaning', durationValue: 280, breed: landrace, desc: 'Full cycle: quarantine, grower, service, gestation, farrowing and lactation',
-        lines: [
-          { paramCode: 'PARAM-FEED-QUAR-SOW',   stage: 'QUARANTINE',        periodNo: 1,  from: 1,   to: 30,  label: 'Quarantine Intake Ration',  occ: 'DAILY', qty: null, uom: 'KG',  kpi: true, minPct: '15.00', maxPct: '15.00', target: '1.5000' },
-          { paramCode: 'PARAM-FEED-GILT',       stage: 'GILT_GROWER',       periodNo: 2,  from: 31,  to: 107, label: 'Gilt Grower Ration',        occ: 'DAILY', qty: null, uom: 'KG',  kpi: true, minPct: '10.00', maxPct: '10.00', target: '2.2000' },
-          { paramCode: 'PARAM-FEED-FLUSH',      stage: 'FLUSH',     periodNo: 3,  from: 108, to: 117, label: 'Flush Ration (Pre-Service)', occ: 'DAILY', qty: null, uom: 'KG', kpi: true, minPct: '8.00', maxPct: '8.00', target: '3.0000' },
-          { paramCode: 'PARAM-FEED-GEST-MID',   stage: 'GESTATION', periodNo: 4,  from: 118, to: 231, label: 'Gestation Ration',          occ: 'DAILY', qty: null, uom: 'KG',  kpi: true, minPct: '10.00', maxPct: '10.00', target: '2.2000' },
-          { paramCode: 'PARAM-FEED-FARROW-DAY', stage: 'FARROWING',         periodNo: 5,  from: 232, to: 234, label: 'Farrowing Day Ration',      occ: 'DAILY', qty: null, uom: 'KG',  kpi: true, minPct: '15.00', maxPct: '15.00', target: '1.5000' },
-          { paramCode: 'PARAM-MORT-PIG',        stage: 'FARROWING',         periodNo: 6,  from: 232, to: 234, label: 'Farrowing Losses',          occ: 'DAILY', qty: '0.00000000', uom: 'HEAD', kpi: true, minPct: null, maxPct: '2.00', target: '0.0000' },
-          { paramCode: 'PARAM-FEED-LACT-EARLY', stage: 'LACTATION',         periodNo: 7,  from: 235, to: 241, label: 'Early Lactation',           occ: 'DAILY', qty: null, uom: 'KG',  kpi: true, minPct: '10.00', maxPct: '10.00', target: '4.0000' },
-          { paramCode: 'PARAM-FEED-LACT-PEAK',  stage: 'LACTATION',         periodNo: 8,  from: 242, to: 258, label: 'Peak Lactation',            occ: 'DAILY', qty: null, uom: 'KG',  kpi: true, minPct: '10.00', maxPct: '10.00', target: '6.5000' },
-          { paramCode: 'PARAM-FEED-LACT-WEAN',  stage: 'LACTATION',         periodNo: 9,  from: 259, to: 280, label: 'Pre-Wean Stepdown',         occ: 'DAILY', qty: null, uom: 'KG',  kpi: true, minPct: '10.00', maxPct: '10.00', target: '5.0000' },
-          { paramCode: 'PARAM-FEED-CREEP',      stage: 'LACTATION',         periodNo: 10, from: 241, to: 280, label: 'Piglet Creep Feed Intake',  occ: 'DAILY', qty: null, uom: 'KG',  kpi: true, minPct: '15.00', maxPct: '15.00', target: '0.3500' },
-          { paramCode: 'PARAM-MED-IRON',        stage: 'LACTATION',         periodNo: 11, from: 237, to: 244, label: 'Piglet Iron Dextran',       occ: 'DAILY', qty: null, uom: 'ML',  kpi: false, minPct: null, maxPct: null, target: '2.0000' },
-          { paramCode: 'PARAM-MORT-PIG',        stage: 'LACTATION',         periodNo: 12, from: 235, to: 280, label: 'Pre-Weaning Piglet Mortality', occ: 'DAILY', qty: '0.00000000', uom: 'HEAD', kpi: true, minPct: null, maxPct: '5.00', target: '0.0000' },
-          { paramCode: 'PARAM-WATER-PIG',       stage: null,                periodNo: 13, from: 1,   to: 280, label: 'Water Intake (All Stages)', occ: 'DAILY', qty: null, uom: 'LTR', kpi: false, minPct: null, maxPct: null, target: '15.0000' },
-          { paramCode: 'PARAM-LABOUR-PIG',      stage: null,                periodNo: 14, from: 1,   to: 280, label: 'Direct Labour Hours',       occ: 'DAILY', qty: null, uom: 'HRS', kpi: false, minPct: null, maxPct: null, target: '6.0000' },
-          { paramCode: 'PARAM-POWER-PIG',       stage: null,                periodNo: 15, from: 1,   to: 280, label: 'Ventilation & Lighting',    occ: 'DAILY', qty: null, uom: 'KWH', kpi: false, minPct: null, maxPct: null, target: '320.0000' },
-          { paramCode: 'PARAM-BODYWT-PIG',      stage: null,                periodNo: 16, from: 1,   to: 280, label: 'Body Weight Sampling',      occ: 'WEEKLY', qty: '155.00000000', uom: 'KG', kpi: false, minPct: null, maxPct: null, target: '155.0000' },
-        ]
-      }
-    ];
-    const schedMap1 = new Map<string, string>();
-    for (const s of schedConfigs1) {
-      const [existingSched] = await db.select().from(schema.schedulerMaster).where(and(eq(schema.schedulerMaster.company_id, comp1Id), eq(schema.schedulerMaster.scheduler_code, s.code))).limit(1);
-      let sId = existingSched?.scheduler_id;
-      if (!existingSched) {
-        sId = randomUUID();
-        await db.insert(schema.schedulerMaster).values({
-          scheduler_id: sId, tenant_id: tenantId, company_id: comp1Id, nob_id: nobId, lob_id: lobId, scheduler_code: s.code, scheduler_name: s.name, duration_value: s.durationValue, duration_unit: 'DAY', breed_id: s.breed?.breed_id, is_locked: true, batch_start_from: 'Start Date', description: s.desc, is_active: true, created_by: c1AdminId,
-        });
-      } else {
-        await db.update(schema.schedulerMaster).set({ scheduler_name: s.name, duration_value: s.durationValue, description: s.desc }).where(eq(schema.schedulerMaster.scheduler_id, sId!));
-      }
-      // Lines are synced on every run, keyed by period_no, so edits to the
-      // schedule above reach an already-seeded database instead of only a fresh
-      // one — the previous insert-only path silently skipped existing tenants.
-      for (const line of s.lines) {
-        const pId = paramMap1.get(line.paramCode);
-        if (!pId) continue;
-        const lineValues = {
-          parameter_id: pId, period_from: line.from, period_to: line.to, period_label: line.label,
-          occurrence: line.occ as any, stage_code: line.stage, expected_qty_override: line.qty,
-          uom_override: line.uom, kpi_enabled: line.kpi, kpi_mode: 'PCT' as const,
-          kpi_min_pct: line.minPct, kpi_max_pct: line.maxPct, kpi_target_value: line.target, notify_in_app: true,
-        };
-        const [existingLine] = await db.select().from(schema.schedulerParameterLine)
-          .where(and(eq(schema.schedulerParameterLine.scheduler_id, sId!), eq(schema.schedulerParameterLine.period_no, line.periodNo)))
-          .limit(1);
-        if (existingLine) {
-          await db.update(schema.schedulerParameterLine).set(lineValues).where(eq(schema.schedulerParameterLine.spl_id, existingLine.spl_id));
-        } else {
-          await db.insert(schema.schedulerParameterLine).values({ spl_id: randomUUID(), scheduler_id: sId!, period_no: line.periodNo, ...lineValues });
-        }
-      }
-      schedMap1.set(s.code, sId!);
-    }
+    // Schedulers are now batch-level (scheduler_header/scheduler_line) generated
+    // via backfill-scheduler-headers or on stage transfer.
+
 
     // 1.5 Tagged Swine Herd Animals (15 Head)
     const animalConfigs1 = [
@@ -559,12 +472,10 @@ export async function seedPiggeryData() {
       const [existingBatch] = await db.select().from(schema.batchHeader).where(and(eq(schema.batchHeader.company_id, comp1Id), eq(schema.batchHeader.batch_no, b.no))).limit(1);
       let batId = existingBatch?.batch_id;
       const stage = stageByCode.get(b.stage);
-      const schedId = schedMap1.get(b.schedulerCode);
-
       if (!existingBatch) {
         batId = randomUUID();
         await db.insert(schema.batchHeader).values({
-          batch_id: batId, tenant_id: tenantId, company_id: comp1Id, nob_id: nobId, lob_id: lobId, batch_no: b.no, breed_id: b.breed.breed_id, scheduler_id: schedId || null, costing_method: b.costing, current_stage_code: b.stage, stage_id: stageOf(b.stage).stage_id, shed_id: shedMap1.get(b.shedCode)!.id, location_id: penMap1.get(b.penCode)!, start_date: b.start, expected_end_date: b.end, opening_quantity: b.qty, closing_quantity: b.qty, uom: 'HEAD', status: b.status, remarks: b.remarks, created_by: c1AdminId,
+          batch_id: batId, tenant_id: tenantId, company_id: comp1Id, nob_id: nobId, lob_id: lobId, batch_no: b.no, breed_id: b.breed.breed_id, costing_method: b.costing, current_stage_code: b.stage, stage_id: stageOf(b.stage).stage_id, shed_id: shedMap1.get(b.shedCode)!.id, location_id: penMap1.get(b.penCode)!, start_date: b.start, expected_end_date: b.end, opening_quantity: b.qty, closing_quantity: b.qty, uom: 'HEAD', status: b.status, remarks: b.remarks, created_by: c1AdminId,
         });
 
         const bioStage = b.stage === 'GESTATION' || b.stage === 'LACTATION' ? 'PRODUCTIVE_SOW' : 'PREMATURE';
@@ -749,76 +660,8 @@ export async function seedPiggeryData() {
       paramMap2.set(p.code, pId!);
     }
 
-    const schedConfigs2 = [
-      {
-        // Incoming weaners are held in quarantine for 14 d before entering the
-        // grower pens — two stages, two different rations and mortality limits.
-        code: 'SCHED-PIG-GROW-60', name: 'Quarantine & 60-Day Weaner-to-Grower Schedule', durationValue: 60, breed: duroc, desc: 'Stage-scoped: 14-day intake quarantine then the grower growth curve',
-        lines: [
-          { paramCode: 'PARAM-FEED-QUAR',       stage: 'QUARANTINE', periodNo: 1, from: 1,  to: 14, label: 'Quarantine Adaptation Ration', occ: 'DAILY', qty: null, uom: 'KG',   kpi: true, minPct: '15.00', maxPct: '15.00', target: '0.9000' },
-          { paramCode: 'PARAM-MORT-PIG',    stage: 'QUARANTINE', periodNo: 2, from: 1,  to: 14, label: 'Quarantine Mortality Limit',   occ: 'DAILY', qty: '0.00000000', uom: 'HEAD', kpi: true, minPct: null,    maxPct: '3.00',  target: '0.0000' },
-          { paramCode: 'PARAM-FEED-NURSERY',    stage: 'GILT_GROWER',  periodNo: 3, from: 15, to: 34, label: 'Nursery Weaner Adaptation',    occ: 'DAILY', qty: null, uom: 'KG',   kpi: true, minPct: '10.00', maxPct: '10.00', target: '1.2000' },
-          { paramCode: 'PARAM-FEED-GROW-EARLY', stage: 'GILT_GROWER',  periodNo: 4, from: 35, to: 48, label: 'Early Grower Phase',           occ: 'DAILY', qty: null, uom: 'KG',   kpi: true, minPct: '10.00', maxPct: '10.00', target: '1.8000' },
-          { paramCode: 'PARAM-FEED-GROW-LATE',  stage: 'GILT_GROWER',  periodNo: 5, from: 49, to: 60, label: 'Late Grower Phase',            occ: 'DAILY', qty: null, uom: 'KG',   kpi: true, minPct: '10.00', maxPct: '10.00', target: '2.3000' },
-          { paramCode: 'PARAM-BODYWT-PIG',  stage: 'GILT_GROWER',  periodNo: 6, from: 15, to: 60, label: 'Target Final Grower Weight (60kg)', occ: 'DAILY', qty: '60.00000000', uom: 'KG', kpi: true, minPct: '5.00', maxPct: '5.00', target: '60.0000' },
-          { paramCode: 'PARAM-MORT-PIG',    stage: 'GILT_GROWER',  periodNo: 7, from: 15, to: 60, label: 'Grower Mortality Limit',       occ: 'DAILY', qty: '0.00000000', uom: 'HEAD', kpi: true, minPct: null,    maxPct: '1.50',  target: '0.0000' },
-          { paramCode: 'PARAM-LABOUR-PIG',      stage: null,         periodNo: 8, from: 1, to: 60, label: 'Direct Labour Hours',    occ: 'DAILY', qty: null, uom: 'HRS', kpi: false, minPct: null, maxPct: null, target: '8.0000' },
-          { paramCode: 'PARAM-POWER-PIG',       stage: null,         periodNo: 9, from: 1, to: 60, label: 'Ventilation & Lighting', occ: 'DAILY', qty: null, uom: 'KWH', kpi: false, minPct: null, maxPct: null, target: '450.0000' },
-          { paramCode: 'PARAM-MED-DEWORM',      stage: 'GILT_GROWER',  periodNo: 10, from: 20, to: 60, label: 'Grower Deworming Round', occ: 'DAILY', qty: null, uom: 'ML', kpi: false, minPct: null, maxPct: null, target: '2.0000' },
-        ]
-      },
-      {
-        // Grow-out to market weight, then the slaughter/harvest window.
-        code: 'SCHED-PIG-FIN-90', name: 'Finisher Grow-Out & Slaughter Schedule', durationValue: 137, breed: duroc, desc: 'Stage-scoped: 130-day finishing grow-out then the harvest window',
-        lines: [
-          { paramCode: 'PARAM-FEED-QUAR',       stage: 'QUARANTINE', periodNo: 10, from: 1, to: 14, label: 'Intake Quarantine Ration',   occ: 'DAILY', qty: null, uom: 'KG', kpi: true, minPct: '15.00', maxPct: '15.00', target: '0.9000' },
-          { paramCode: 'PARAM-FEED-FIN-1',      stage: 'GILT_GROWER', periodNo: 1, from: 15,  to: 60,  label: 'Finisher Phase 1',            occ: 'DAILY', qty: null, uom: 'KG', kpi: true, minPct: '10.00', maxPct: '10.00', target: '2.5000' },
-          { paramCode: 'PARAM-FEED-FIN-2',      stage: 'GILT_GROWER', periodNo: 2, from: 61,  to: 100, label: 'Finisher Phase 2',            occ: 'DAILY', qty: null, uom: 'KG', kpi: true, minPct: '10.00', maxPct: '10.00', target: '2.9000' },
-          { paramCode: 'PARAM-FEED-FIN-MKT',    stage: 'GILT_GROWER', periodNo: 3, from: 101, to: 130, label: 'Market Finishing Phase',      occ: 'DAILY', qty: null, uom: 'KG', kpi: true, minPct: '10.00', maxPct: '10.00', target: '3.2000' },
-          { paramCode: 'PARAM-BODYWT-PIG',  stage: 'GILT_GROWER', periodNo: 4, from: 1,   to: 130, label: 'Target Market Weight (110kg)', occ: 'DAILY', qty: '110.00000000', uom: 'KG', kpi: true, minPct: '5.00', maxPct: '5.00', target: '110.0000' },
-          { paramCode: 'PARAM-MORT-PIG',    stage: 'GILT_GROWER', periodNo: 5, from: 1,   to: 130, label: 'Finisher Mortality Limit',    occ: 'DAILY', qty: '0.00000000', uom: 'HEAD', kpi: true, minPct: null, maxPct: '2.00', target: '0.0000' },
-          { paramCode: 'PARAM-PORK-OUTPUT', stage: 'SLAUGHTERED', periodNo: 6, from: 131, to: 137, label: 'Dressed Carcass Harvest Yield', occ: 'DAILY', qty: null, uom: 'KG', kpi: true, minPct: '5.00', maxPct: '5.00', target: '85.0000' },
-          { paramCode: 'PARAM-LABOUR-PIG',      stage: null,        periodNo: 7, from: 1, to: 137, label: 'Direct Labour Hours',    occ: 'DAILY', qty: null, uom: 'HRS', kpi: false, minPct: null, maxPct: null, target: '8.0000' },
-          { paramCode: 'PARAM-POWER-PIG',       stage: null,        periodNo: 8, from: 1, to: 137, label: 'Ventilation & Lighting', occ: 'DAILY', qty: null, uom: 'KWH', kpi: false, minPct: null, maxPct: null, target: '450.0000' },
-          { paramCode: 'PARAM-MED-DEWORM',      stage: 'GILT_GROWER', periodNo: 9, from: 30, to: 130, label: 'Finisher Deworming Round', occ: 'DAILY', qty: null, uom: 'ML', kpi: false, minPct: null, maxPct: null, target: '2.0000' },
-        ]
-      }
-    ];
-    const schedMap2 = new Map<string, string>();
-    for (const s of schedConfigs2) {
-      const [existingSched] = await db.select().from(schema.schedulerMaster).where(and(eq(schema.schedulerMaster.company_id, comp2Id), eq(schema.schedulerMaster.scheduler_code, s.code))).limit(1);
-      let sId = existingSched?.scheduler_id;
-      if (!existingSched) {
-        sId = randomUUID();
-        await db.insert(schema.schedulerMaster).values({
-          scheduler_id: sId, tenant_id: tenantId, company_id: comp2Id, nob_id: nobId, lob_id: lobId, scheduler_code: s.code, scheduler_name: s.name, duration_value: s.durationValue, duration_unit: 'DAY', breed_id: s.breed?.breed_id, is_locked: true, batch_start_from: 'Start Date', description: s.desc, is_active: true, created_by: c2AdminId,
-        });
-      } else {
-        await db.update(schema.schedulerMaster).set({ scheduler_name: s.name, duration_value: s.durationValue, description: s.desc }).where(eq(schema.schedulerMaster.scheduler_id, sId!));
-      }
-      // Lines are synced on every run, keyed by period_no, so edits to the
-      // schedule above reach an already-seeded database instead of only a fresh
-      // one — the previous insert-only path silently skipped existing tenants.
-      for (const line of s.lines) {
-        const pId = paramMap2.get(line.paramCode);
-        if (!pId) continue;
-        const lineValues = {
-          parameter_id: pId, period_from: line.from, period_to: line.to, period_label: line.label,
-          occurrence: line.occ as any, stage_code: line.stage, expected_qty_override: line.qty,
-          uom_override: line.uom, kpi_enabled: line.kpi, kpi_mode: 'PCT' as const,
-          kpi_min_pct: line.minPct, kpi_max_pct: line.maxPct, kpi_target_value: line.target, notify_in_app: true,
-        };
-        const [existingLine] = await db.select().from(schema.schedulerParameterLine)
-          .where(and(eq(schema.schedulerParameterLine.scheduler_id, sId!), eq(schema.schedulerParameterLine.period_no, line.periodNo)))
-          .limit(1);
-        if (existingLine) {
-          await db.update(schema.schedulerParameterLine).set(lineValues).where(eq(schema.schedulerParameterLine.spl_id, existingLine.spl_id));
-        } else {
-          await db.insert(schema.schedulerParameterLine).values({ spl_id: randomUUID(), scheduler_id: sId!, period_no: line.periodNo, ...lineValues });
-        }
-      }
-      schedMap2.set(s.code, sId!);
-    }
+    // Schedulers for Company 2 are batch-level (scheduler_header/scheduler_line).
+
 
     // 2.5 Production Batches & 30-Day Daily Entries for Company 2
     const batches2 = [
@@ -829,12 +672,10 @@ export async function seedPiggeryData() {
       const [existingBatch] = await db.select().from(schema.batchHeader).where(and(eq(schema.batchHeader.company_id, comp2Id), eq(schema.batchHeader.batch_no, b.no))).limit(1);
       let batId = existingBatch?.batch_id;
       const stage = stageByCode.get(b.stage);
-      const schedId = schedMap2.get(b.schedulerCode);
-
       if (!existingBatch) {
         batId = randomUUID();
         await db.insert(schema.batchHeader).values({
-          batch_id: batId, tenant_id: tenantId, company_id: comp2Id, nob_id: nobId, lob_id: lobId, batch_no: b.no, breed_id: b.breed.breed_id, scheduler_id: schedId || null, costing_method: b.costing, current_stage_code: b.stage, stage_id: stageOf(b.stage).stage_id, shed_id: shedMap2.get(b.shedCode)!.id, location_id: penMap2.get(b.penCode)!, start_date: b.start, expected_end_date: b.end, opening_quantity: b.qty, closing_quantity: b.status === 'CLOSED' ? '98.0000' : b.qty, uom: 'HEAD', status: b.status, remarks: b.remarks, created_by: c2AdminId,
+          batch_id: batId, tenant_id: tenantId, company_id: comp2Id, nob_id: nobId, lob_id: lobId, batch_no: b.no, breed_id: b.breed.breed_id, costing_method: b.costing, current_stage_code: b.stage, stage_id: stageOf(b.stage).stage_id, shed_id: shedMap2.get(b.shedCode)!.id, location_id: penMap2.get(b.penCode)!, start_date: b.start, expected_end_date: b.end, opening_quantity: b.qty, closing_quantity: b.status === 'CLOSED' ? '98.0000' : b.qty, uom: 'HEAD', status: b.status, remarks: b.remarks, created_by: c2AdminId,
         });
 
         // Multi-day grower feeding transactions
@@ -1164,7 +1005,7 @@ export async function seedPiggeryData() {
         holdBatchId = randomUUID();
         await db.insert(schema.batchHeader).values({
           batch_id: holdBatchId, tenant_id: tenantId, company_id: comp1Id, nob_id: nobId, lob_id: lobId,
-          batch_no: holdBatchNo, breed_id: yorkshire.breed_id, scheduler_id: schedMap1.get('SCHED-PIG-GEST-114') || null,
+          batch_no: holdBatchNo, breed_id: yorkshire.breed_id,
           // The hold group IS a split of the gestation cohort — without this link
           // the console can't mark it as one, and the two read as unrelated batches.
           parent_batch_id: cohortBatchId ?? null,

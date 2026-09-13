@@ -11,6 +11,7 @@ import { singularLabel } from "@/modules/master-data/labels";
  * knows whether it pluralises regularly.
  */
 const EXPECTED: Record<string, string> = {
+  activity: "Activity",
   location: "Location",
   "location-type": "Location Type",
   stage: "Stage",

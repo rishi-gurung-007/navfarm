@@ -65,11 +65,12 @@ const DEFAULT_RESOURCES = [
   { module_code: "NOTIFICATION", resource: "SETTINGS", name: "Notification Gateway Settings", nameKey: "rolNotificationGateway" },
   { module_code: "MASTER_DATA", resource: "OPERATIONAL_AREA", name: "Operational Areas", nameKey: "operationalAreas" },
   { module_code: "MASTER_DATA", resource: "BREED_LIFECYCLE_STAGE", name: "Breed Lifecycle Standards", nameKey: "rolBreedLifecycleStandards" },
+  { module_code: "MASTER_DATA", resource: "ACTIVITY", name: "Activities", nameKey: "rolActivities" },
   // PRODUCTION (Phase 5)
   { module_code: "PRODUCTION", resource: "BATCH", name: "Production Batches", nameKey: "dashProductionBatches" },
   // PRODUCTION (Phase 6)
   { module_code: "PRODUCTION", resource: "PARAMETER", name: "Production Parameters", nameKey: "rolProductionParameters" },
-  { module_code: "PRODUCTION", resource: "SCHEDULER", name: "Production Schedulers", nameKey: "rolProductionSchedulers" },
+  { module_code: "PRODUCTION", resource: "BATCH_SCHEDULE", name: "Production Schedulers", nameKey: "rolProductionSchedulers" },
   // PRODUCTION (QC/QR)
   { module_code: "PRODUCTION", resource: "QC_PARAMETER", name: "QC Parameters", nameKey: "navQcParameters" },
   { module_code: "PRODUCTION", resource: "QC", name: "QC Inspections", nameKey: "rolQcInspections" },

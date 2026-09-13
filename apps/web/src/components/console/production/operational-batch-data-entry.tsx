@@ -46,6 +46,7 @@ interface FeedItem {
   item_id?: string;
   animalIds?: string[];
   animalLabels?: string[];
+  lotRequired?: boolean;
 }
 
 interface MedItem {
@@ -58,6 +59,7 @@ interface MedItem {
   item_id?: string;
   animalIds?: string[];
   animalLabels?: string[];
+  lotRequired?: boolean;
 }
 
 interface MortalityItem {
@@ -152,6 +154,12 @@ export default function OperationalBatchDataEntry() {
   const [mortalityRows, setMortalityRows] = useState<MortalityItem[]>([]);
   const [labourRows, setLabourRows] = useState<LabourItem[]>([]);
   const [overheadRows, setOverheadRows] = useState<OverheadItem[]>([]);
+  // line_ids of the currently-loaded schedule's due lines — a row whose id is in
+  // here is schedule-sourced (id === ln.line_id, see loadBatchDailyData below),
+  // as opposed to a client-added ad hoc row (f-/m-/mo-/l-/o- prefixed id) or a
+  // "copy previous day" row (copy-${line_id}, deliberately excluded so a copy
+  // reposts as a fresh manual entry, not a silent repost against another day).
+  const [scheduledLineIds, setScheduledLineIds] = useState<Set<string>>(new Set());
 
   const [avgWeight, setAvgWeight] = useState(0);
   const [weightGain, setWeightGain] = useState(0);
@@ -325,18 +333,18 @@ export default function OperationalBatchDataEntry() {
     setNoScheduler(false);
 
     Promise.all([
-      api.get(`/batch/${selectedBatchId}/data-entry?date=${selectedDate}`).catch((err: any) => {
-        if (err?.status === 400 || err?.message?.includes("no scheduler")) {
-          setNoScheduler(true);
-        }
-        return { lines: [] };
-      }),
+      // No longer errors when the batch has no current-stage schedule — it
+      // returns an empty lines array instead, so "no scheduler" is read from
+      // that rather than a caught error.
+      api.get(`/batch/${selectedBatchId}/data-entry?date=${selectedDate}`).catch(() => ({ lines: [] })),
       api.get(`/batch/${selectedBatchId}`).catch(() => null),
       api.get(`/stage`).catch(() => []),
     ])
       .then(([schedRes, batchRes, stageRes]) => {
         const schedData = schedRes?.data ?? schedRes;
         const lines: any[] = schedData?.lines ?? [];
+        setNoScheduler(lines.length === 0);
+        setScheduledLineIds(new Set(lines.map((ln: any) => ln.line_id)));
         const batchData = batchRes?.data ?? batchRes;
 
         // Dynamically update the batch stage from latest database record
@@ -406,13 +414,17 @@ export default function OperationalBatchDataEntry() {
         const mortalities: MortalityItem[] = [];
 
         lines.forEach((ln: any) => {
-          const type = ln.parameter_type;
+          // line_type replaces the old parameter_type (CONSUMPTION/OUTPUT/DESCRIPTIVE/
+          // OVERHEAD/RESOURCE/TRANSFER) — mortality and body-weight, which used to be
+          // their own MORTALITY/OBSERVATION types, are now DESCRIPTIVE lines
+          // distinguished by kpi_metric.
+          const type = ln.line_type;
           const itype = (ln.item_type || "").toUpperCase();
 
           if (type === "CONSUMPTION" && (itype === "FEED" || itype === "RAW_MATERIAL" || itype.includes("FEED"))) {
             feeds.push({
-              id: ln.spl_id,
-              item: ln.item_label || ln.parameter_name,
+              id: ln.line_id,
+              item: ln.item_label || ln.activity_name,
               uom: ln.uom || "KG",
               opening: 0,
               issued: ln.expected_qty,
@@ -420,34 +432,36 @@ export default function OperationalBatchDataEntry() {
               wastage: Math.max(0, ln.expected_qty - ln.already_entered_qty),
               rate: ln.std_rate ?? 0,
               item_id: ln.item_id,
+              lotRequired: !!ln.lot_required,
             });
           } else if (type === "CONSUMPTION" && (itype === "MEDICINE" || itype === "CHEMICAL" || itype.includes("MED"))) {
             meds.push({
-              id: ln.spl_id,
-              item: ln.item_label || ln.parameter_name,
+              id: ln.line_id,
+              item: ln.item_label || ln.activity_name,
               uom: ln.uom || "ML",
               issued: ln.expected_qty,
               consumed: ln.already_entered_qty,
               cost: (ln.std_rate ?? 0) * ln.expected_qty,
               item_id: ln.item_id,
+              lotRequired: !!ln.lot_required,
             });
           } else if (type === "OVERHEAD") {
             overheads.push({
-              id: ln.spl_id,
-              type: ln.parameter_name,
+              id: ln.line_id,
+              type: ln.activity_name,
               amount: ln.expected_qty,
-              remarks: ln.period_label || "",
+              remarks: "",
             });
-          } else if (type === "MORTALITY") {
+          } else if (type === "DESCRIPTIVE" && ln.kpi_metric === "MORTALITY_COUNT") {
             mortalities.push({
-              id: ln.spl_id,
-              reason: ln.parameter_name,
+              id: ln.line_id,
+              reason: ln.activity_name,
               count: ln.already_entered_qty,
               remarks: "",
             });
           }
-          // OBSERVATION lines → weight/BCS
-          if (type === "OBSERVATION" && ln.parameter_name?.toLowerCase().includes("weight")) {
+          // DESCRIPTIVE body-weight lines → weight/BCS
+          if (type === "DESCRIPTIVE" && ln.kpi_metric === "BODY_WEIGHT") {
             setAvgWeight(ln.already_entered_qty > 0 ? ln.already_entered_qty : 0);
           }
         });
@@ -652,10 +666,10 @@ export default function OperationalBatchDataEntry() {
       .then((res) => {
         const lines: any[] = res?.data?.lines ?? res?.lines ?? [];
         const feeds: FeedItem[] = lines
-          .filter((ln) => ln.parameter_type === "CONSUMPTION" && (ln.item_type || "").toUpperCase().includes("FEED"))
+          .filter((ln) => ln.line_type === "CONSUMPTION" && (ln.item_type || "").toUpperCase().includes("FEED"))
           .map((ln) => ({
-            id: `copy-${ln.spl_id}`,
-            item: ln.item_label || ln.parameter_name,
+            id: `copy-${ln.line_id}`,
+            item: ln.item_label || ln.activity_name,
             uom: ln.uom || "KG",
             opening: 0,
             issued: ln.expected_qty,
@@ -728,6 +742,18 @@ export default function OperationalBatchDataEntry() {
               if (feed.item_id) txPayload.item_id = feed.item_id;
               await api.post(`/batch/${currentBatch.id}/transaction`, txPayload);
             }
+          } else if (scheduledLineIds.has(feed.id) && !feed.lotRequired) {
+            // Whole-batch, schedule-sourced row — post through the scheduler-
+            // aware engine so it's recorded against this exact line and shows
+            // up in batch_daily_data, instead of the old fuzzy item-match path.
+            // Lot-required lines stay on /transaction below — this screen has
+            // no lot-number input, and /daily-data rejects them without one.
+            await api.post(`/batch/${currentBatch.id}/daily-data`, {
+              line_id: feed.id,
+              entry_date: selectedDate,
+              entered_value: Number(feed.consumed),
+              rate: feed.rate || undefined,
+            });
           } else {
             const txPayload: any = {
               transaction_date: selectedDate,
@@ -765,6 +791,13 @@ export default function OperationalBatchDataEntry() {
               if (med.item_id) txPayload.item_id = med.item_id;
               await api.post(`/batch/${currentBatch.id}/transaction`, txPayload);
             }
+          } else if (scheduledLineIds.has(med.id) && !med.lotRequired) {
+            await api.post(`/batch/${currentBatch.id}/daily-data`, {
+              line_id: med.id,
+              entry_date: selectedDate,
+              entered_value: Number(med.consumed),
+              rate: rate || undefined,
+            });
           } else {
             const txPayload: any = {
               transaction_date: selectedDate,
@@ -795,6 +828,15 @@ export default function OperationalBatchDataEntry() {
               animal_id: animalId,
             });
           }
+        } else if (Number(mort.count) > 0 && scheduledLineIds.has(mort.id)) {
+          // DESCRIPTIVE MORTALITY_COUNT line — posting here also keeps
+          // scheduler_header.animal_count live (see batch-daily-data.service.ts).
+          await api.post(`/batch/${currentBatch.id}/daily-data`, {
+            line_id: mort.id,
+            entry_date: selectedDate,
+            entered_value: Number(mort.count),
+            remarks: `${mort.reason}${mort.remarks ? ` — ${mort.remarks}` : ""}`,
+          });
         } else if (Number(mort.count) > 0) {
           await api.post(`/batch/${currentBatch.id}/transaction`, {
             transaction_date: selectedDate,
@@ -849,7 +891,14 @@ export default function OperationalBatchDataEntry() {
 
       // Post overhead allocations — do NOT send 'amount' field (not in DTO)
       for (const ov of overheadRows) {
-        if (Number(ov.amount) > 0) {
+        if (Number(ov.amount) > 0 && scheduledLineIds.has(ov.id)) {
+          await api.post(`/batch/${currentBatch.id}/daily-data`, {
+            line_id: ov.id,
+            entry_date: selectedDate,
+            entered_value: Number(ov.amount),
+            remarks: ov.remarks || ov.type || "Operational Overhead",
+          });
+        } else if (Number(ov.amount) > 0) {
           await api.post(`/batch/${currentBatch.id}/transaction`, {
             transaction_date: selectedDate,
             transaction_type: "OVERHEAD",

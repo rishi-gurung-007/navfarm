@@ -1359,6 +1359,50 @@ export const reasonMaster = mysqlTable('reason_master', {
   deleted_at: timestamp('deleted_at', { mode: 'string' }),
 }, (table) => [uniqueIndex('uq_reason_scope_code').on(table.tenant_id, sql`(coalesce(${table.company_id}, ''))`, table.reason_code)]);
 
+/**
+ * Named catalog of scheduler activities ("Morning Feed", "Booster Vaccine",
+ * "Weekly Weigh") — so scheduler_line.activity_name is picked from a
+ * consistent list instead of free text (which drifted: "Morning Feed" vs
+ * "morning feed" vs "AM Feed" all meaning the same thing). company_id/nob_id/
+ * lob_id are auto-resolved from the caller's workspace scope on create (see
+ * masterScopeConditions/enforceMasterRequest) — null company_id means a
+ * tenant-wide shared template, same convention as every other master here.
+ */
+export const activityMaster = mysqlTable('activity_master', {
+  activity_id: varchar('activity_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+  company_id: varchar('company_id', { length: 36 }).references(() => companyMaster.company_id, { onDelete: 'restrict' }),
+  nob_id: varchar('nob_id', { length: 36 }).references(() => nobMaster.nob_id, { onDelete: 'restrict' }),
+  lob_id: varchar('lob_id', { length: 36 }).references(() => lobMaster.lob_id, { onDelete: 'restrict' }),
+  activity_code: varchar('activity_code', { length: 50 }).notNull(),
+  activity_name: varchar('activity_name', { length: 200 }).notNull(),
+  line_type: varchar('line_type', { length: 20 }).notNull(), // CONSUMPTION, OUTPUT, DESCRIPTIVE, OVERHEAD, RESOURCE, TRANSFER
+  description: text('description'),
+  // Tier-2 smart defaults — pre-fill a new scheduler_line when this activity is
+  // picked; the line itself stays fully editable afterward, same relationship
+  // item_master already has to a consumption line's qty/rate.
+  default_item_id: varchar('default_item_id', { length: 36 }).references(() => itemMaster.item_id, { onDelete: 'restrict' }),
+  default_resource_id: varchar('default_resource_id', { length: 36 }).references(() => resourceMaster.resource_id, { onDelete: 'restrict' }),
+  default_occurrence: varchar('default_occurrence', { length: 10 }), // DAILY, WEEKLY, MONTHLY, ONCE, CUSTOM
+  default_qty_basis: varchar('default_qty_basis', { length: 20 }), // PER_HEAD, TOTAL_BATCH, PER_PEN, FIXED
+  default_output_basis: varchar('default_output_basis', { length: 20 }), // PER_SOW, PER_PEN, PER_BATCH
+  default_kpi_metric: varchar('default_kpi_metric', { length: 50 }),
+  default_capture_per: varchar('default_capture_per', { length: 20 }), // AVERAGE, TOTAL, PER_HEAD
+  default_overhead_category: varchar('default_overhead_category', { length: 30 }),
+  default_gl_account: varchar('default_gl_account', { length: 20 }),
+  default_is_mandatory: boolean('default_is_mandatory').default(false).notNull(),
+  default_lot_required: boolean('default_lot_required').default(false).notNull(),
+  is_active: boolean('is_active').default(true).notNull(),
+  created_by: varchar('created_by', { length: 36 }),
+  updated_by: varchar('updated_by', { length: 36 }),
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+  updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex('uq_activity_scope_code').on(
+    table.tenant_id, sql`(coalesce(${table.company_id}, ''))`, sql`(coalesce(${table.lob_id}, ''))`, table.activity_code,
+  ),
+]);
+
 export const diseaseMaster = mysqlTable('disease_master', {
   disease_id: varchar('disease_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
   tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
@@ -1946,7 +1990,6 @@ export const batchHeader = mysqlTable('batch_header', {
   nob_id: varchar('nob_id', { length: 36 }).references(() => nobMaster.nob_id, { onDelete: 'restrict' }),
   costing_method: varchar('costing_method', { length: 20 }).notNull(), // STANDARD, FIFO
   breed_id: varchar('breed_id', { length: 36 }).references(() => breedMaster.breed_id, { onDelete: 'restrict' }),
-  scheduler_id: varchar('scheduler_id', { length: 36 }).references(() => schedulerMaster.scheduler_id, { onDelete: 'restrict' }),
   operational_area_id: varchar('operational_area_id', { length: 36 }),
   shed_id: varchar('shed_id', { length: 36 }),
   location_id: varchar('location_id', { length: 36 }),
@@ -2454,68 +2497,173 @@ export const parameterMaster = mysqlTable('parameter_master', {
   created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
 });
 
-export const schedulerMaster = mysqlTable('scheduler_master', {
+/**
+ * One scheduler_header per (batch_id, stage_id) — auto-created by
+ * BatchService.transferStage() the moment a batch resolves into a real
+ * Stage Master row (see SchedulerHeaderService.createForStage()), carrying
+ * that stage's scheduler_line rows for the daily data-entry screen. Replaces
+ * the old scheduler_master template-per-batch model: there is no longer a
+ * "pick a scheduler" step at batch creation — every stage a batch passes
+ * through gets its own instance, sourced from breed_lifecycle_stages.
+ */
+export const schedulerHeader = mysqlTable('scheduler_header', {
   scheduler_id: varchar('scheduler_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
   tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
-  company_id: varchar('company_id', { length: 36 }),
-  nob_id: varchar('nob_id', { length: 36 }).notNull().references(() => nobMaster.nob_id, { onDelete: 'restrict' }),
-  lob_id: varchar('lob_id', { length: 36 }).notNull().references(() => lobMaster.lob_id, { onDelete: 'restrict' }),
-  scheduler_code: varchar('scheduler_code', { length: 50 }).notNull(),
-  scheduler_name: varchar('scheduler_name', { length: 200 }).notNull(),
-  duration_value: int('duration_value').notNull(),
-  duration_unit: varchar('duration_unit', { length: 10 }).notNull(), // DAY, WEEK, MONTH
+  company_id: varchar('company_id', { length: 36 }).notNull().references(() => companyMaster.company_id, { onDelete: 'restrict' }),
+  batch_id: varchar('batch_id', { length: 36 }).notNull().references(() => batchHeader.batch_id, { onDelete: 'restrict' }),
+  stage_id: varchar('stage_id', { length: 36 }).notNull().references(() => stageMaster.stage_id, { onDelete: 'restrict' }),
   breed_id: varchar('breed_id', { length: 36 }).references(() => breedMaster.breed_id, { onDelete: 'restrict' }),
-  is_locked: boolean('is_locked').default(false).notNull(),
-  // Informational label only (e.g. "Start Date") — day-of-batch math always
-  // anchors to batch_header.start_date regardless of this value.
-  batch_start_from: varchar('batch_start_from', { length: 50 }),
-  description: text('description'),
-  is_active: boolean('is_active').default(true).notNull(),
+  lob_id: varchar('lob_id', { length: 36 }).notNull().references(() => lobMaster.lob_id, { onDelete: 'restrict' }),
+  nob_id: varchar('nob_id', { length: 36 }).references(() => nobMaster.nob_id, { onDelete: 'restrict' }),
+  // Batch's sub_location_id (or location_id/shed_id fallback) at the moment this
+  // stage started — a snapshot, not a live pointer, since the batch can move
+  // again while this header stays the historical record of that stage's plan.
+  // Shares location_master's own id space with farm/shed/warehouse_master
+  // (location.service.ts's legacy-mirror insert), so this FK holds for a
+  // shed_id fallback too, not only a "real" location_id.
+  location_id: varchar('location_id', { length: 36 }).references(() => locationMaster.location_id, { onDelete: 'restrict' }),
+  data_entry_level: varchar('data_entry_level', { length: 10 }).default('SHED').notNull(), // FARM, SHED, PEN
+  scheduler_status: varchar('scheduler_status', { length: 20 }).default('DRAFT').notNull(), // DRAFT, ACTIVE, COMPLETED, SUSPENDED
+  effective_from: date('effective_from', { mode: 'string' }).notNull(),
+  effective_to: date('effective_to', { mode: 'string' }),
+  actual_end_date: date('actual_end_date', { mode: 'string' }),
+  animal_count: decimal('animal_count', { precision: 14, scale: 4 }).notNull(),
+  auto_generated: boolean('auto_generated').default(true).notNull(),
+  approved_by: varchar('approved_by', { length: 36 }),
+  approved_at: timestamp('approved_at', { mode: 'string' }),
+  notes: text('notes'),
+  extension_config: json('extension_config'),
   created_by: varchar('created_by', { length: 36 }),
   created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
   updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().notNull(),
-});
+}, (table) => ({
+  // "One scheduler_header per batch per stage" — the spec's own words.
+  uqBatchStage: uniqueIndex('uq_scheduler_header_batch_stage').on(table.batch_id, table.stage_id),
+}));
 
-export const schedulerParameterLine = mysqlTable('scheduler_parameter_line', {
-  spl_id: varchar('spl_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+/**
+ * One row per parameter (feed, medicine, vaccine, KPI check, overhead cost,
+ * resource booking, inter-batch transfer) captured on a scheduler_header's
+ * daily data-entry screen. Which columns apply is governed entirely by
+ * line_type — see the "LINE TYPE REFERENCE" sheet in
+ * Master Templates/Schedule_master_template.xlsx, enforced in
+ * scheduler-header.service.ts's per-type validation, not in the schema.
+ *
+ * Deliberately does NOT store uom/resource_name — the template marks those
+ * CALC (auto-flow, read-only), so they're resolved via join to item_master/
+ * resource_master at read time instead of duplicated here, where an edit to
+ * the source master would otherwise silently drift. item_description is the
+ * one exception: TDD explicitly calls it out as free-editable, not CALC.
+ */
+export const schedulerLine = mysqlTable('scheduler_line', {
+  line_id: varchar('line_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
   scheduler_id: varchar('scheduler_id', { length: 36 }).notNull(),
-  parameter_id: varchar('parameter_id', { length: 36 }).notNull(),
-  period_no: int('period_no').notNull(),
-  period_from: int('period_from').notNull(),
-  period_to: int('period_to').notNull(),
-  period_label: varchar('period_label', { length: 50 }),
-  occurrence: varchar('occurrence', { length: 10 }), // DAILY, WEEKLY, MONTHLY
-  // When set, this KPI line only applies once the batch has transferred into
-  // this stage (batch_header.current_stage_code) — lets a scheduler define
-  // different thresholds pre- vs. post-transfer (e.g. setter vs. hatcher
-  // temperature ranges). Null = applies regardless of stage (today's behavior).
-  stage_code: varchar('stage_code', { length: 255 }),
-  expected_qty_override: decimal('expected_qty_override', { precision: 18, scale: 8 }),
-  uom_override: varchar('uom_override', { length: 20 }),
-  kpi_enabled: boolean('kpi_enabled').default(true).notNull(),
-  kpi_mode: varchar('kpi_mode', { length: 10 }), // PCT, VALUE
-  kpi_min_pct: decimal('kpi_min_pct', { precision: 6, scale: 2 }),
-  kpi_max_pct: decimal('kpi_max_pct', { precision: 6, scale: 2 }),
-  kpi_min_value: decimal('kpi_min_value', { precision: 18, scale: 4 }),
-  kpi_max_value: decimal('kpi_max_value', { precision: 18, scale: 4 }),
-  kpi_target_value: decimal('kpi_target_value', { precision: 18, scale: 4 }),
-  critical_threshold_pct: decimal('critical_threshold_pct', { precision: 6, scale: 2 }),
-  notify_in_app: boolean('notify_in_app').default(true).notNull(),
-  notify_push: boolean('notify_push').default(false).notNull(),
-  notify_email: boolean('notify_email').default(false).notNull(),
-  sort_order: int('sort_order'),
-  notes: text('notes'),
+  // Unique per scheduler_id (uqSchedulerLineSeq below) — the data-entry screen
+  // groups rows by line_type first, then orders by this within that group.
+  line_seq: int('line_seq').notNull(),
+  line_type: varchar('line_type', { length: 20 }).notNull(), // CONSUMPTION, OUTPUT, DESCRIPTIVE, OVERHEAD, RESOURCE, TRANSFER
+  activity_name: varchar('activity_name', { length: 200 }).notNull(),
+  // Auto-flows from scheduler_header.stage_id — every line under one header
+  // belongs to that header's single stage; stored redundantly (not just
+  // derived via join) because the TDD names it as its own line-level field.
+  stage_id: varchar('stage_id', { length: 36 }).references(() => stageMaster.stage_id, { onDelete: 'restrict' }),
+  occurrence: varchar('occurrence', { length: 10 }).default('DAILY').notNull(), // DAILY, WEEKLY, MONTHLY, ONCE, CUSTOM
+  start_day: int('start_day').default(1).notNull(),
+  end_day: int('end_day'),
+  day_of_week: int('day_of_week'), // 1=Monday..7=Sunday — required when occurrence = WEEKLY
+  is_mandatory: boolean('is_mandatory').default(false).notNull(),
+  source: varchar('source', { length: 10 }).default('AUTO').notNull(), // AUTO, MANUAL
+  lifecycle_ref_id: varchar('lifecycle_ref_id', { length: 36 }),
+  nob_id: varchar('nob_id', { length: 36 }),
+  lob_id: varchar('lob_id', { length: 36 }),
+  item_id: varchar('item_id', { length: 36 }).references(() => itemMaster.item_id, { onDelete: 'restrict' }), // CONSUMPTION / OUTPUT
+  // Free-editable, unlike uom/resource_name — pre-filled from item_master.item_name
+  // when auto-generated, but the TDD explicitly wants this writable afterward.
+  item_description: varchar('item_description', { length: 200 }),
+  standard_qty: decimal('standard_qty', { precision: 18, scale: 6 }),
+  qty_basis: varchar('qty_basis', { length: 20 }), // PER_HEAD, TOTAL_BATCH, PER_PEN, FIXED
+  allow_qty_edit: boolean('allow_qty_edit').default(true).notNull(),
+  lot_required: boolean('lot_required').default(false).notNull(),
+  creates_inventory: boolean('creates_inventory').default(false).notNull(), // OUTPUT only
+  output_lot_auto: boolean('output_lot_auto').default(true).notNull(), // OUTPUT only
+  output_basis: varchar('output_basis', { length: 20 }), // PER_SOW, PER_PEN, PER_BATCH
+  // TRANSFER only — posting this line auto-creates (or reuses) the destination
+  // batch's scheduler_header for its current stage, instead of waiting on a
+  // separate stage transition.
+  auto_triggers_stage: boolean('auto_triggers_stage').default(false).notNull(),
+  kpi_metric: varchar('kpi_metric', { length: 50 }), // DESCRIPTIVE only — BODY_WEIGHT, FCR, MORTALITY_COUNT, ...
+  kpi_uom: varchar('kpi_uom', { length: 20 }),
+  std_value: decimal('std_value', { precision: 18, scale: 4 }),
+  lower_alert_limit: decimal('lower_alert_limit', { precision: 18, scale: 4 }),
+  upper_alert_limit: decimal('upper_alert_limit', { precision: 18, scale: 4 }),
+  alert_severity: varchar('alert_severity', { length: 10 }).default('WARNING'), // INFO, WARNING, CRITICAL
+  capture_per: varchar('capture_per', { length: 20 }), // AVERAGE, TOTAL, PER_HEAD — DESCRIPTIVE only
+  overhead_category: varchar('overhead_category', { length: 30 }), // OVERHEAD only
+  gl_account: varchar('gl_account', { length: 20 }), // OVERHEAD / RESOURCE — gl_account_master.account_code
+  estimated_cost: decimal('estimated_cost', { precision: 18, scale: 4 }),
+  resource_id: varchar('resource_id', { length: 36 }).references(() => resourceMaster.resource_id, { onDelete: 'restrict' }), // RESOURCE only
+  is_active: boolean('is_active').default(true).notNull(),
+  extension_config: json('extension_config'),
 }, (table) => ({
   schedulerFk: foreignKey({
     columns: [table.scheduler_id],
-    foreignColumns: [schedulerMaster.scheduler_id],
-    name: 'spl_scheduler_id_fk'
+    foreignColumns: [schedulerHeader.scheduler_id],
+    name: 'scheduler_line_scheduler_id_fk'
   }).onDelete('cascade'),
-  parameterFk: foreignKey({
-    columns: [table.parameter_id],
-    foreignColumns: [parameterMaster.parameter_id],
-    name: 'spl_parameter_id_fk'
-  }).onDelete('restrict'),
+  lifecycleFk: foreignKey({
+    columns: [table.lifecycle_ref_id],
+    foreignColumns: [breedLifecycleStages.lifecycle_id],
+    name: 'scheduler_line_lifecycle_ref_fk'
+  }).onDelete('set null'),
+  uqSchedulerLineSeq: uniqueIndex('uq_scheduler_line_scheduler_seq').on(table.scheduler_id, table.line_seq),
+}));
+
+/** Specific day numbers (from batch/stage start) a CUSTOM-occurrence line appears on
+ * — e.g. a vaccination on day 7, 21 and 35. Replaces the xlsx's redundant
+ * scheduler_line.custom_days JSONB column (the sheet defines both; this normalized,
+ * queryable child table is the one kept). */
+export const schedulerLineCustomDays = mysqlTable('scheduler_line_custom_days', {
+  custom_day_id: varchar('custom_day_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  line_id: varchar('line_id', { length: 36 }).notNull().references(() => schedulerLine.line_id, { onDelete: 'cascade' }),
+  day_number: int('day_number').notNull(),
+  day_label: varchar('day_label', { length: 50 }),
+  is_active: boolean('is_active').default(true).notNull(),
+}, (table) => ({
+  uqLineDay: uniqueIndex('uq_scheduler_line_custom_days_line_day').on(table.line_id, table.day_number),
+}));
+
+/**
+ * One row per (scheduler_line, entry_date) — what a farmer actually entered on the
+ * daily data-entry screen, and what posting resulted from it. `posted`/`posting_reference`
+ * record the outcome of BatchDailyDataService's per-line_type dispatch (see the "LINE TYPE
+ * REFERENCE" sheet's "Posting Engine Action" column): CONSUMPTION/OUTPUT reference an
+ * inventory_ledger row, OVERHEAD/RESOURCE a GL journal, TRANSFER the destination batch_id;
+ * DESCRIPTIVE never posts (batch_daily_data is itself the record) but can still set
+ * alert_triggered when the value breaches the line's lower/upper_alert_limit.
+ */
+export const batchDailyData = mysqlTable('batch_daily_data', {
+  entry_id: varchar('entry_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+  company_id: varchar('company_id', { length: 36 }).notNull(),
+  line_id: varchar('line_id', { length: 36 }).notNull().references(() => schedulerLine.line_id, { onDelete: 'restrict' }),
+  batch_id: varchar('batch_id', { length: 36 }).notNull().references(() => batchHeader.batch_id, { onDelete: 'restrict' }),
+  entry_date: date('entry_date', { mode: 'string' }).notNull(),
+  entered_value: decimal('entered_value', { precision: 18, scale: 6 }),
+  entered_text: varchar('entered_text', { length: 500 }),
+  lot_id: varchar('lot_id', { length: 36 }),
+  lot_no: varchar('lot_no', { length: 80 }),
+  resource_id: varchar('resource_id', { length: 36 }),
+  posted: boolean('posted').default(false).notNull(),
+  posting_reference: varchar('posting_reference', { length: 36 }), // inventory_ledger.ledger_id, journal_header.journal_id, or destination batch_id
+  alert_triggered: boolean('alert_triggered').default(false).notNull(),
+  alert_note: varchar('alert_note', { length: 500 }),
+  remarks: varchar('remarks', { length: 500 }),
+  created_by: varchar('created_by', { length: 36 }),
+  updated_by: varchar('updated_by', { length: 36 }),
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+  updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().notNull(),
+}, (table) => ({
+  uqLineDate: uniqueIndex('uq_batch_daily_data_line_date').on(table.line_id, table.entry_date),
 }));
 
 export const notificationAlertLog = mysqlTable('notification_alert_log', {
@@ -2524,13 +2672,16 @@ export const notificationAlertLog = mysqlTable('notification_alert_log', {
   company_id: varchar('company_id', { length: 36 }).notNull().references(() => companyMaster.company_id, { onDelete: 'restrict' }),
   lob_id: varchar('lob_id', { length: 36 }).references(() => lobMaster.lob_id, { onDelete: 'restrict' }),
   batch_id: varchar('batch_id', { length: 36 }).references(() => batchHeader.batch_id, { onDelete: 'cascade' }),
-  spl_id: varchar('spl_id', { length: 36 }),
+  // References scheduler_line.line_id (loose pointer, no FK — same pattern as
+  // transaction_id below). Named line_id rather than the old table's "spl_id"
+  // now that scheduler_parameter_line no longer exists.
+  line_id: varchar('line_id', { length: 36 }),
   transaction_id: varchar('transaction_id', { length: 36 }),
   alert_type: varchar('alert_type', { length: 40 }).default('KPI_DEVIATION').notNull(),
-  severity: varchar('severity', { length: 10 }).notNull(), // WARNING, CRITICAL
+  severity: varchar('severity', { length: 10 }).notNull(), // INFO, WARNING, CRITICAL
   title: varchar('title', { length: 200 }).notNull(),
   message: text('message').notNull(),
-  parameter_name: varchar('parameter_name', { length: 200 }),
+  activity_name: varchar('activity_name', { length: 200 }),
   kpi_mode: varchar('kpi_mode', { length: 10 }),
   expected_value: decimal('expected_value', { precision: 18, scale: 4 }),
   actual_value: decimal('actual_value', { precision: 18, scale: 4 }),
@@ -2543,10 +2694,10 @@ export const notificationAlertLog = mysqlTable('notification_alert_log', {
   read_at: timestamp('read_at', { mode: 'string' }),
   created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
 }, (table) => ({
-  splFk: foreignKey({
-    columns: [table.spl_id],
-    foreignColumns: [schedulerParameterLine.spl_id],
-    name: 'nal_spl_id_fk'
+  lineFk: foreignKey({
+    columns: [table.line_id],
+    foreignColumns: [schedulerLine.line_id],
+    name: 'nal_line_id_fk'
   }).onDelete('restrict'),
   transactionFk: foreignKey({
     columns: [table.transaction_id],
@@ -2560,19 +2711,33 @@ export const parameterMasterRelations = relations(parameterMaster, ({ one }) => 
   resource: one(resourceMaster, { fields: [parameterMaster.resource_id], references: [resourceMaster.resource_id] }),
 }));
 
-export const schedulerMasterRelations = relations(schedulerMaster, ({ one, many }) => ({
-  breed: one(breedMaster, { fields: [schedulerMaster.breed_id], references: [breedMaster.breed_id] }),
-  parameterLines: many(schedulerParameterLine),
+export const schedulerHeaderRelations = relations(schedulerHeader, ({ one, many }) => ({
+  batch: one(batchHeader, { fields: [schedulerHeader.batch_id], references: [batchHeader.batch_id] }),
+  stage: one(stageMaster, { fields: [schedulerHeader.stage_id], references: [stageMaster.stage_id] }),
+  breed: one(breedMaster, { fields: [schedulerHeader.breed_id], references: [breedMaster.breed_id] }),
+  lines: many(schedulerLine),
 }));
 
-export const schedulerParameterLineRelations = relations(schedulerParameterLine, ({ one }) => ({
-  scheduler: one(schedulerMaster, { fields: [schedulerParameterLine.scheduler_id], references: [schedulerMaster.scheduler_id] }),
-  parameter: one(parameterMaster, { fields: [schedulerParameterLine.parameter_id], references: [parameterMaster.parameter_id] }),
+export const schedulerLineRelations = relations(schedulerLine, ({ one, many }) => ({
+  scheduler: one(schedulerHeader, { fields: [schedulerLine.scheduler_id], references: [schedulerHeader.scheduler_id] }),
+  item: one(itemMaster, { fields: [schedulerLine.item_id], references: [itemMaster.item_id] }),
+  resource: one(resourceMaster, { fields: [schedulerLine.resource_id], references: [resourceMaster.resource_id] }),
+  lifecycleRef: one(breedLifecycleStages, { fields: [schedulerLine.lifecycle_ref_id], references: [breedLifecycleStages.lifecycle_id] }),
+  customDays: many(schedulerLineCustomDays),
+}));
+
+export const schedulerLineCustomDaysRelations = relations(schedulerLineCustomDays, ({ one }) => ({
+  line: one(schedulerLine, { fields: [schedulerLineCustomDays.line_id], references: [schedulerLine.line_id] }),
+}));
+
+export const batchDailyDataRelations = relations(batchDailyData, ({ one }) => ({
+  line: one(schedulerLine, { fields: [batchDailyData.line_id], references: [schedulerLine.line_id] }),
+  batch: one(batchHeader, { fields: [batchDailyData.batch_id], references: [batchHeader.batch_id] }),
 }));
 
 export const notificationAlertLogRelations = relations(notificationAlertLog, ({ one }) => ({
   batch: one(batchHeader, { fields: [notificationAlertLog.batch_id], references: [batchHeader.batch_id] }),
-  schedulerParameterLine: one(schedulerParameterLine, { fields: [notificationAlertLog.spl_id], references: [schedulerParameterLine.spl_id] }),
+  schedulerLine: one(schedulerLine, { fields: [notificationAlertLog.line_id], references: [schedulerLine.line_id] }),
   transaction: one(batchTransaction, { fields: [notificationAlertLog.transaction_id], references: [batchTransaction.transaction_id] }),
 }));
 

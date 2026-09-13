@@ -617,6 +617,34 @@
       "when": 1789234400180,
       "tag": "0087_free_chat",
       "breakpoints": true
+    },
+    {
+      "idx": 88,
+      "version": "5",
+      "when": 1789234401180,
+      "tag": "0088_scheduler_header_replace_scheduler_master",
+      "breakpoints": true
+    },
+    {
+      "idx": 89,
+      "version": "5",
+      "when": 1789234402180,
+      "tag": "0089_scheduler_header_gap_fixes",
+      "breakpoints": true
+    },
+    {
+      "idx": 90,
+      "version": "5",
+      "when": 1789234403180,
+      "tag": "0090_scheduler_line_auto_triggers_stage",
+      "breakpoints": true
+    },
+    {
+      "idx": 91,
+      "version": "5",
+      "when": 1789234404180,
+      "tag": "0091_activity_master",
+      "breakpoints": true
     }
   ]
 }
