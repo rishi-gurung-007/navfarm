@@ -53,7 +53,7 @@ const INVENTORY_RESOURCES = [
 ];
 
 const PRODUCTION_RESOURCES = [
-  'APPROVAL', 'BATCH', 'BATCH_SCHEDULE', 'PARAMETER', 'QC', 'QC_PARAMETER', 'QR_CODE', 'STAGE',
+  'APPROVAL', 'BATCH', 'BATCH_ENTRY', 'BATCH_SCHEDULE', 'PARAMETER', 'QC', 'QC_PARAMETER', 'QR_CODE', 'STAGE',
 ];
 
 const row = (roleId: string, g: Grant) => ({
@@ -153,6 +153,10 @@ export async function seedDefaultCompanyRoles(
     row(operatorRoleId, { module: 'PRODUCTION', resource: 'BATCH', view: true, create: true, edit: true }),
     row(operatorRoleId, { module: 'PRODUCTION', resource: 'STAGE', view: true }),
     row(operatorRoleId, { module: 'PRODUCTION', resource: 'BATCH_SCHEDULE', view: true }),
+    // Records the day's work, including days still owed. Deliberately without
+    // edit: that is what fences a worker to changing today's own entries, and
+    // without approve: an unscheduled health event goes to a supervisor.
+    row(operatorRoleId, { module: 'PRODUCTION', resource: 'BATCH_ENTRY', view: true, create: true }),
     row(operatorRoleId, { module: 'PRODUCTION', resource: 'PARAMETER', view: true }),
     row(operatorRoleId, { module: 'PRODUCTION', resource: 'QC', view: true, create: true }),
     row(operatorRoleId, { module: 'PRODUCTION', resource: 'QR_CODE', view: true }),

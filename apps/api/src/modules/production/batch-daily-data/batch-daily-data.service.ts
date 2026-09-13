@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { eq, and, inArray, sql } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
@@ -10,6 +10,8 @@ import { BatchService, type UserContext } from '../batch/batch.service';
 import { BatchTransferService } from '../batch/batch-transfer.service';
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
 import { DueLine, stageDayStatus, pendingDays, StageDayStatus } from './day-completeness';
+import { entryVerdict, todayIn, todayAtOffset } from './entry-window';
+import { userHasPermission } from '../../../common/permissions';
 
 const toMysqlTimestamp = (date: Date = new Date()) => date.toISOString().slice(0, 19).replace('T', ' ');
 
@@ -133,6 +135,84 @@ export class BatchDailyDataService {
     is_mandatory: !!l.is_mandatory,
   });
 
+
+  /**
+   * Today's date on the farm, from the company's own timezone.
+   *
+   * The column is named default_timezone_id but holds an IANA code in the data
+   * we have, so the code is tried first and timezone_master's stored offset is
+   * the fallback for rows that really do hold an id.
+   */
+  private async companyToday(companyId: string): Promise<string> {
+    const [company] = await this.db
+      .select({ tz: schema.companyMaster.default_timezone_id })
+      .from(schema.companyMaster)
+      .where(eq(schema.companyMaster.company_id, companyId))
+      .limit(1);
+
+    const byCode = todayIn(company?.tz);
+    if (byCode) return byCode;
+
+    if (company?.tz) {
+      const [zone] = await this.db
+        .select({ code: schema.timezoneMaster.tz_code, offset: schema.timezoneMaster.offset_minutes })
+        .from(schema.timezoneMaster)
+        .where(eq(schema.timezoneMaster.tz_id, company.tz))
+        .limit(1);
+      if (zone) return todayIn(zone.code) ?? todayAtOffset(zone.offset);
+    }
+    // A company with no resolvable timezone still has to be able to record a
+    // day; UTC is the honest default rather than a refusal.
+    return todayAtOffset(0);
+  }
+
+  /**
+   * Applies the entry window: no future days, workers may only change today's
+   * own entries, and today waits until the backlog before it is cleared.
+   *
+   * The supervisor exemption is read from the permission table — edit on
+   * PRODUCTION/BATCH_ENTRY — and never from a role name, so a farm that renames
+   * or adds roles does not have to come back to this code.
+   */
+  private async assertMayRecord(
+    batchId: string,
+    companyId: string,
+    lineId: string,
+    entryDate: string,
+    tenantId: string,
+    userPayload?: UserContext,
+  ): Promise<void> {
+    const today = await this.companyToday(companyId);
+    const mayEditAnyDay = await userHasPermission(this.db, userPayload as any, {
+      moduleCode: 'PRODUCTION', resource: 'BATCH_ENTRY', action: 'edit',
+    });
+
+    const [existing] = await this.db
+      .select({ entry_id: schema.batchDailyData.entry_id })
+      .from(schema.batchDailyData)
+      .where(and(
+        eq(schema.batchDailyData.line_id, lineId),
+        eq(schema.batchDailyData.entry_date, entryDate),
+      ))
+      .limit(1);
+
+    // Only computed for a worker, and only up to the day being entered — a
+    // supervisor is exempt, so the backlog query is work nobody would read.
+    const earlierPending = mayEditAnyDay
+      ? []
+      : (await this.pendingDays(batchId, entryDate, tenantId)).filter((d) => d < entryDate);
+
+    const verdict = entryVerdict({
+      entryDate, today, exists: !!existing, mayEditAnyDay, earlierPending,
+    });
+    if (verdict.allowed) return;
+
+    // A future date is the request being wrong; the other two are the user not
+    // being allowed to do it yet, which is a different thing to the client.
+    if (verdict.code === 'FUTURE') throw new BadRequestException(verdict.message);
+    throw new ForbiddenException(verdict.message);
+  }
+
   private get db(): MySql2Database<typeof schema> {
     const tenantDb = this.cls.get<MySql2Database<typeof schema>>('tenantDb');
     if (!tenantDb) throw new Error('Tenant database connection context not established.');
@@ -151,6 +231,8 @@ export class BatchDailyDataService {
     if (line.lot_required && !dto.lot_no) {
       throw new BadRequestException(`'${line.activity_name}' requires a lot number.`);
     }
+
+    await this.assertMayRecord(batchId, header.company_id, line.line_id, dto.entry_date, tenantId, userPayload);
 
     const entryId = randomUUID();
     let posted = false;

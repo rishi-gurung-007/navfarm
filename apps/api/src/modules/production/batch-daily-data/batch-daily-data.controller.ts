@@ -11,10 +11,20 @@ import { RequirePermission } from '../../../common/decorators/require-permission
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('batch/:batchId/daily-data')
 export class BatchDailyDataController {
+  /*
+   * Guarded by PRODUCTION/BATCH_ENTRY, not BATCH_SCHEDULE. Designing a schedule
+   * and recording against one are different jobs: an operator needs the second
+   * without the first, and under the old resource could not post at all.
+   *
+   * `create` covers recording a day, including a day still owed. `edit` is not
+   * required to post — it is what lifts the worker's fence on changing a past
+   * day, and the service reads it directly because whether an entry may change
+   * depends on its date, which no decorator can see.
+   */
   constructor(private readonly batchDailyDataService: BatchDailyDataService) {}
 
   @Post()
-  @RequirePermission('PRODUCTION', 'BATCH_SCHEDULE', 'create')
+  @RequirePermission('PRODUCTION', 'BATCH_ENTRY', 'create')
   @ApiOperation({ summary: 'Post one scheduler_line entry for a date — dispatches to inventory/GL/animal-transfer per line_type, same day+line upserts' })
   @ApiParam({ name: 'batchId', description: 'Batch UUID' })
   async postEntry(@Param('batchId') batchId: string, @Body() dto: CreateBatchDailyDataDto, @Req() req: any) {
@@ -24,7 +34,7 @@ export class BatchDailyDataController {
   }
 
   @Get('day-status')
-  @RequirePermission('PRODUCTION', 'BATCH_SCHEDULE', 'view')
+  @RequirePermission('PRODUCTION', 'BATCH_ENTRY', 'view')
   @ApiOperation({ summary: "Per-stage status for one date: animal count, lines due, and whether every mandatory one is answered" })
   @ApiParam({ name: 'batchId', description: 'Batch UUID' })
   @ApiQuery({ name: 'date', description: 'YYYY-MM-DD', required: true })
@@ -35,7 +45,7 @@ export class BatchDailyDataController {
   }
 
   @Get('pending-days')
-  @RequirePermission('PRODUCTION', 'BATCH_SCHEDULE', 'view')
+  @RequirePermission('PRODUCTION', 'BATCH_ENTRY', 'view')
   @ApiOperation({ summary: "Days from the batch start still missing a mandatory entry, oldest first — the backlog before today can be entered" })
   @ApiParam({ name: 'batchId', description: 'Batch UUID' })
   @ApiQuery({ name: 'upTo', description: 'YYYY-MM-DD, usually today', required: true })
@@ -47,7 +57,7 @@ export class BatchDailyDataController {
   }
 
   @Get()
-  @RequirePermission('PRODUCTION', 'BATCH_SCHEDULE', 'view')
+  @RequirePermission('PRODUCTION', 'BATCH_ENTRY', 'view')
   @ApiOperation({ summary: 'List entries already recorded for this batch on a given date' })
   @ApiParam({ name: 'batchId', description: 'Batch UUID' })
   @ApiQuery({ name: 'date', description: 'YYYY-MM-DD', required: true })
