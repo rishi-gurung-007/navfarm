@@ -645,6 +645,13 @@
       "when": 1789234404180,
       "tag": "0091_activity_master",
       "breakpoints": true
+    },
+    {
+      "idx": 92,
+      "version": "5",
+      "when": 1789234405180,
+      "tag": "0092_batch_animal_tracking",
+      "breakpoints": true
     }
   ]
 }

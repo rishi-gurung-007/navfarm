@@ -1982,6 +1982,19 @@ export const noSeriesMaster = mysqlTable('no_series_master', {
 }));
 
 export const batchHeader = mysqlTable('batch_header', {
+  /**
+   * Whether this batch tracks animals individually or only as a headcount.
+   *
+   * REGISTERED — animal_register rows point at the batch and each animal moves
+   * stage on its own, so data entry asks which stage before it asks anything
+   * else. COUNT_ONLY — no animal records, the batch moves stage as one, and
+   * entry goes straight to its current stage.
+   *
+   * Explicit rather than inferred from whether animals exist yet: a registered
+   * batch would otherwise read as count-only until its first animal is added,
+   * and the entry screen would change shape under the person using it.
+   */
+  animal_tracking: varchar('animal_tracking', { length: 20 }).default('COUNT_ONLY').notNull(),
   batch_id: varchar('batch_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
   tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
   company_id: varchar('company_id', { length: 36 }).notNull().references(() => companyMaster.company_id, { onDelete: 'restrict' }),
