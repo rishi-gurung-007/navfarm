@@ -48,12 +48,39 @@ export class BatchDailyDataController {
   @RequirePermission('PRODUCTION', 'BATCH_ENTRY', 'view')
   @ApiOperation({ summary: "Days from the batch start still missing a mandatory entry, oldest first — the backlog before today can be entered" })
   @ApiParam({ name: 'batchId', description: 'Batch UUID' })
-  @ApiQuery({ name: 'upTo', description: 'YYYY-MM-DD, usually today', required: true })
-  async pendingDays(@Param('batchId') batchId: string, @Query('upTo') upTo: string, @Req() req: any) {
+  @ApiQuery({ name: 'upTo', description: "YYYY-MM-DD; defaults to today on the farm", required: false })
+  async pendingDays(@Param('batchId') batchId: string, @Req() req: any, @Query('upTo') upTo?: string) {
     const tenantId = req.user?.tenantId || req['tenantId'];
     const data = await this.batchDailyDataService.pendingDays(batchId, upTo, tenantId);
     // oldest is what the screen opens on, so it is named rather than implied.
     return { success: true, message: 'Pending days retrieved.', data, oldest: data[0] ?? null };
+  }
+
+  @Get('form')
+  @RequirePermission('PRODUCTION', 'BATCH_ENTRY', 'view')
+  @ApiOperation({ summary: "Everything one day's entry screen needs: stage ticks, the lines due with standard quantities, prior answers, and per-line editability" })
+  @ApiParam({ name: 'batchId', description: 'Batch UUID' })
+  @ApiQuery({ name: 'date', description: "YYYY-MM-DD; defaults to today on the farm, which is not necessarily today in the browser", required: false })
+  @ApiQuery({ name: 'stageId', description: 'Stage to show lines for; defaults to the first stage still owing work', required: false })
+  async entryForm(
+    @Param('batchId') batchId: string,
+    @Req() req: any,
+    @Query('date') date?: string,
+    @Query('stageId') stageId?: string,
+  ) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const data = await this.batchDailyDataService.entryForm(batchId, date, tenantId, req.user, stageId);
+    return { success: true, message: 'Entry form retrieved.', data };
+  }
+
+  @Get('entry-dates')
+  @RequirePermission('PRODUCTION', 'BATCH_ENTRY', 'view')
+  @ApiOperation({ summary: 'Dates this batch has anything recorded on, newest first — the right-hand history list' })
+  @ApiParam({ name: 'batchId', description: 'Batch UUID' })
+  async entryDates(@Param('batchId') batchId: string, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const data = await this.batchDailyDataService.entryDates(batchId, tenantId);
+    return { success: true, message: 'Entry dates retrieved.', data };
   }
 
   @Get()

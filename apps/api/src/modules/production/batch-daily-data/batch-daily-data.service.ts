@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, inArray, sql } from 'drizzle-orm';
+import { eq, and, inArray, sql, desc } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
@@ -9,7 +9,7 @@ import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { BatchService, type UserContext } from '../batch/batch.service';
 import { BatchTransferService } from '../batch/batch-transfer.service';
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
-import { DueLine, stageDayStatus, pendingDays, StageDayStatus } from './day-completeness';
+import { DueLine, stageDayStatus, pendingDays, isLineDue, StageDayStatus } from './day-completeness';
 import { entryVerdict, todayIn, todayAtOffset } from './entry-window';
 import { userHasPermission } from '../../../common/permissions';
 
@@ -91,11 +91,12 @@ export class BatchDailyDataService {
    * mandatory line, oldest first — the backlog the worker must clear before
    * today can be entered.
    */
-  async pendingDays(batchId: string, upTo: string, tenantId: string): Promise<string[]> {
+  async pendingDays(batchId: string, upTo: string | undefined, tenantId: string): Promise<string[]> {
     const [batch] = await this.db.select().from(schema.batchHeader)
       .where(and(eq(schema.batchHeader.batch_id, batchId), eq(schema.batchHeader.tenant_id, tenantId)))
       .limit(1);
     if (!batch) throw new NotFoundException('Batch not found.');
+    const upToDate = upTo || await this.companyToday(batch.company_id);
 
     const headers = await this.db.select().from(schema.schedulerHeader)
       .where(and(eq(schema.schedulerHeader.batch_id, batchId), eq(schema.schedulerHeader.tenant_id, tenantId)));
@@ -120,9 +121,234 @@ export class BatchDailyDataService {
     for (const header of headers) {
       const own = lines.filter((l) => l.scheduler_id === header.scheduler_id).map(this.toDueLine);
       const from = String(header.effective_from).slice(0, 10);
-      for (const d of pendingDays(own, from, batchStart, upTo, enteredByDate)) all.add(d);
+      for (const d of pendingDays(own, from, batchStart, upToDate, enteredByDate)) all.add(d);
     }
     return [...all].sort();
+  }
+
+  /**
+   * Everything one screen needs to enter a day: the stage list with its ticks,
+   * the lines due under the chosen stage with their standard quantity already
+   * worked out, whatever was entered before, and — per line — whether this user
+   * may touch it today and why not.
+   *
+   * One call rather than five, and the entry window is answered here rather
+   * than re-derived in the browser. A rule the client re-implements is a rule
+   * that drifts, and this one decides whether a farm's day is recorded.
+   */
+  async entryForm(batchId: string, requestedDate: string | undefined, tenantId: string, userPayload?: UserContext, stageId?: string) {
+    const [batch] = await this.db.select().from(schema.batchHeader)
+      .where(and(eq(schema.batchHeader.batch_id, batchId), eq(schema.batchHeader.tenant_id, tenantId)))
+      .limit(1);
+    if (!batch) throw new NotFoundException('Batch not found.');
+
+    const today = await this.companyToday(batch.company_id);
+    // The day defaults here rather than in the browser. A worker in Harare
+    // opening this at 01:00 has a browser that says tomorrow; the farm does
+    // not, and it is the farm's day that is being recorded.
+    const date = requestedDate || today;
+    const mayEditAnyDay = await userHasPermission(this.db, userPayload as any, {
+      moduleCode: 'PRODUCTION', resource: 'BATCH_ENTRY', action: 'edit',
+    });
+
+    const headers = await this.db.select().from(schema.schedulerHeader)
+      .where(and(eq(schema.schedulerHeader.batch_id, batchId), eq(schema.schedulerHeader.tenant_id, tenantId)));
+    if (!headers.length) {
+      return {
+        batch: this.batchSummary(batch), date, today, hasScheduler: false,
+        mayEditAnyDay, backlog: [], stages: [], lines: [],
+      };
+    }
+
+    const schedulerIds = headers.map((h) => h.scheduler_id);
+    const lines = await this.db.select().from(schema.schedulerLine)
+      .where(and(inArray(schema.schedulerLine.scheduler_id, schedulerIds), eq(schema.schedulerLine.is_active, true)));
+
+    const entries = await this.findForDate(batchId, date, tenantId);
+    const enteredIds = new Set(entries.map((e) => e.line_id as string));
+
+    // A batch that registers its animals can have them spread across stages, so
+    // the count beside a stage is the animals actually standing in it. A count-
+    // only batch moves as one, and the scheduler's own figure is all there is.
+    const perStageAnimals = new Map<string, number>();
+    if (batch.animal_tracking === 'REGISTERED') {
+      const counted = await this.db
+        .select({ stage_id: schema.animalRegister.current_stage_id, n: sql<number>`count(*)` })
+        .from(schema.animalRegister)
+        .where(and(
+          eq(schema.animalRegister.current_batch_id, batchId),
+          eq(schema.animalRegister.is_active, true),
+        ))
+        .groupBy(schema.animalRegister.current_stage_id);
+      for (const row of counted) if (row.stage_id) perStageAnimals.set(row.stage_id, Number(row.n));
+    }
+
+    const backlog = mayEditAnyDay
+      ? []
+      : (await this.pendingDays(batchId, date, tenantId)).filter((d) => d < date);
+
+    const stageIds = [...new Set([
+      ...headers.map((h) => h.stage_id).filter(Boolean) as string[],
+      ...lines.map((l) => l.stage_id).filter(Boolean) as string[],
+      ...perStageAnimals.keys(),
+    ])];
+    const stageNames = new Map<string, string>();
+    if (stageIds.length) {
+      for (const st of await this.db
+        .select({ id: schema.stageMaster.stage_id, name: schema.stageMaster.stage_name })
+        .from(schema.stageMaster).where(inArray(schema.stageMaster.stage_id, stageIds))) {
+        stageNames.set(st.id, st.name);
+      }
+    }
+
+    /* ── The stage strip ─────────────────────────────────────────────────── */
+    const stages: any[] = [];
+    for (const header of headers) {
+      const own = lines.filter((l) => l.scheduler_id === header.scheduler_id).map(this.toDueLine);
+      const from = String(header.effective_from).slice(0, 10);
+      for (const status of stageDayStatus(own, from, date, enteredIds)) {
+        const sid = status.stage_id ?? header.stage_id;
+        stages.push({
+          ...status,
+          stage_id: sid,
+          stage_name: sid ? stageNames.get(sid) ?? null : null,
+          scheduler_id: header.scheduler_id,
+          animal_count: (sid && perStageAnimals.get(sid))
+            ?? (header.animal_count == null ? null : Number(header.animal_count)),
+        });
+      }
+    }
+
+    /* ── The lines under the chosen stage ────────────────────────────────── */
+    // A count-only batch has one stage and no choice to make, so nothing is
+    // asked of the worker: the first stage with work is the one they land on.
+    // A registered-animal batch can have animals standing in a stage nothing is
+    // scheduled for. Those stages still belong on the strip with their count —
+    // leaving them off hides animals, and a farm cannot notice a stage it has
+    // no schedule for if the screen never mentions it.
+    for (const [sid, n] of perStageAnimals) {
+      if (stages.some((st) => st.stage_id === sid)) continue;
+      stages.push({
+        stage_id: sid, stage_name: stageNames.get(sid) ?? null, scheduler_id: null,
+        animal_count: n, due: 0, mandatory: 0, mandatoryEntered: 0, entered: 0,
+        // Nothing is owed, but nothing can be entered either — the UI marks
+        // this differently from a day's work that is finished.
+        complete: true, scheduled: false,
+      });
+    }
+    for (const st of stages) if (st.scheduled === undefined) st.scheduled = true;
+    stages.sort((a, b) => Number(b.scheduled) - Number(a.scheduled)
+      || String(a.stage_name ?? '').localeCompare(String(b.stage_name ?? '')));
+
+    const chosen = stageId
+      ?? stages.find((s) => s.scheduled && !s.complete)?.stage_id
+      ?? stages.find((s) => s.scheduled)?.stage_id
+      ?? stages[0]?.stage_id ?? null;
+    const chosenStage = stages.find((s) => s.stage_id === chosen);
+    const headcount = chosenStage?.animal_count ?? null;
+
+    const dueLines = lines.filter((l) => {
+      const header = headers.find((h) => h.scheduler_id === l.scheduler_id);
+      if (!header) return false;
+      const sid = l.stage_id ?? header.stage_id;
+      if (chosen && sid !== chosen) return false;
+      return isLineDue(this.toDueLine(l), String(header.effective_from).slice(0, 10), date);
+    });
+
+    const itemIds = [...new Set(dueLines.map((l) => l.item_id).filter(Boolean) as string[])];
+    const items = new Map<string, { name: string; uom: string }>();
+    if (itemIds.length) {
+      for (const it of await this.db
+        .select({ id: schema.itemMaster.item_id, name: schema.itemMaster.item_name, uom: schema.itemMaster.uom_primary })
+        .from(schema.itemMaster).where(inArray(schema.itemMaster.item_id, itemIds))) {
+        items.set(it.id, { name: it.name, uom: it.uom ?? 'PCS' });
+      }
+    }
+
+    const formLines = dueLines
+      .sort((a, b) => (a.line_seq ?? 0) - (b.line_seq ?? 0))
+      .map((l) => {
+        const entry = entries.find((e) => e.line_id === l.line_id) ?? null;
+        const item = l.item_id ? items.get(l.item_id) : undefined;
+        const standard = l.standard_qty == null ? null : Number(l.standard_qty);
+        // PER_HEAD is a per-animal ration; the worker is shown the whole pen's
+        // quantity, which is what they actually weigh out.
+        const suggested = standard != null && l.qty_basis === 'PER_HEAD' && headcount
+          ? Number((standard * headcount).toFixed(4))
+          : standard;
+
+        const verdict = entryVerdict({
+          entryDate: date, today, exists: !!entry, mayEditAnyDay, earlierPending: backlog,
+        });
+
+        return {
+          line_id: l.line_id,
+          line_seq: l.line_seq,
+          line_type: l.line_type,
+          activity_name: l.activity_name,
+          stage_id: l.stage_id,
+          is_mandatory: !!l.is_mandatory,
+          item_id: l.item_id,
+          item_name: item?.name ?? l.item_description ?? null,
+          uom: item?.uom ?? l.kpi_uom ?? null,
+          standard_qty: standard,
+          qty_basis: l.qty_basis,
+          suggested_value: suggested,
+          allow_qty_edit: l.allow_qty_edit !== false,
+          lot_required: !!l.lot_required,
+          kpi_metric: l.kpi_metric,
+          std_value: l.std_value == null ? null : Number(l.std_value),
+          lower_alert_limit: l.lower_alert_limit == null ? null : Number(l.lower_alert_limit),
+          upper_alert_limit: l.upper_alert_limit == null ? null : Number(l.upper_alert_limit),
+          resource_id: l.resource_id,
+          entry: entry
+            ? {
+                entry_id: entry.entry_id,
+                entered_value: entry.entered_value == null ? null : Number(entry.entered_value),
+                entered_text: entry.entered_text,
+                lot_no: entry.lot_no,
+                remarks: entry.remarks,
+                posted: !!entry.posted,
+                alert_triggered: !!entry.alert_triggered,
+                alert_note: entry.alert_note,
+              }
+            : null,
+          editable: verdict.allowed,
+          locked_reason: verdict.allowed ? null : verdict.message,
+        };
+      });
+
+    return {
+      batch: this.batchSummary(batch),
+      date, today, hasScheduler: true, mayEditAnyDay,
+      backlog,
+      selected_stage_id: chosen,
+      stages,
+      lines: formLines,
+      complete: stages.some((s) => s.scheduled) && stages.every((s) => s.complete),
+    };
+  }
+
+  /** The dates this batch has anything recorded on, newest first. */
+  async entryDates(batchId: string, tenantId: string, limit = 60): Promise<string[]> {
+    const rows = await this.db
+      .selectDistinct({ entry_date: schema.batchDailyData.entry_date })
+      .from(schema.batchDailyData)
+      .where(and(eq(schema.batchDailyData.batch_id, batchId), eq(schema.batchDailyData.tenant_id, tenantId)))
+      .orderBy(desc(schema.batchDailyData.entry_date))
+      .limit(limit);
+    return rows.map((r) => String(r.entry_date).slice(0, 10));
+  }
+
+  private batchSummary(batch: typeof schema.batchHeader.$inferSelect) {
+    return {
+      batch_id: batch.batch_id,
+      batch_no: batch.batch_no,
+      animal_tracking: batch.animal_tracking,
+      stage_id: batch.stage_id,
+      start_date: String(batch.start_date).slice(0, 10),
+      status: batch.status,
+    };
   }
 
   private toDueLine = (l: typeof schema.schedulerLine.$inferSelect): DueLine => ({
