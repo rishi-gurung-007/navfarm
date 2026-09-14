@@ -16,7 +16,13 @@ describe('CountryService', () => {
     delete: mockDbDelete,
   };
 
-  const found = (rows: any[]) => ({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue(rows) }) }) });
+  const found = (rows: any[]) => ({
+    from: jest.fn().mockReturnValue({
+      where: jest
+        .fn()
+        .mockReturnValue({ limit: jest.fn().mockResolvedValue(rows) }),
+    }),
+  });
 
   beforeEach(async () => {
     mockDbSelect.mockReset();
@@ -24,7 +30,13 @@ describe('CountryService', () => {
     mockDbDelete.mockReset();
 
     const module: TestingModule = await Test.createTestingModule({
-      providers: [CountryService, { provide: ClsService, useValue: { get: jest.fn().mockReturnValue(mockDb) } }],
+      providers: [
+        CountryService,
+        {
+          provide: ClsService,
+          useValue: { get: jest.fn().mockReturnValue(mockDb) },
+        },
+      ],
     }).compile();
 
     service = module.get<CountryService>(CountryService);
@@ -40,17 +52,24 @@ describe('CountryService', () => {
         from: jest.fn().mockReturnValue({
           where: jest.fn().mockReturnValue({
             orderBy: jest.fn().mockReturnValue({
-              limit: jest.fn().mockReturnValue({ offset: jest.fn().mockResolvedValue([{ iso2: 'IN' }]) }),
+              limit: jest.fn().mockReturnValue({
+                offset: jest.fn().mockResolvedValue([{ iso2: 'IN' }]),
+              }),
             }),
           }),
         }),
       })
       .mockReturnValueOnce({
-        from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ total: 1 }]) }),
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockResolvedValue([{ total: 1 }]),
+        }),
       });
 
     await expect(service.listCountries()).resolves.toEqual({
-      data: [{ iso2: 'IN' }], total: 1, limit: 50, offset: 0,
+      data: [{ iso2: 'IN' }],
+      total: 1,
+      limit: 50,
+      offset: 0,
     });
   });
 
@@ -58,13 +77,19 @@ describe('CountryService', () => {
     it('listStates() throws NotFoundException for an unknown country', async () => {
       mockDbSelect.mockReturnValueOnce(found([]));
 
-      await expect(service.listStates('missing-id')).rejects.toThrow(NotFoundException);
+      await expect(service.listStates('missing-id')).rejects.toThrow(
+        NotFoundException,
+      );
     });
 
     it('listStates() returns active states for a known country', async () => {
       mockDbSelect
         .mockReturnValueOnce(found([{ country_id: 'c-1' }]))
-        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ state_code: 'MH' }]) }) });
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            where: jest.fn().mockResolvedValue([{ state_code: 'MH' }]),
+          }),
+        });
 
       const result = await service.listStates('c-1');
 
@@ -74,7 +99,12 @@ describe('CountryService', () => {
     it('createState() rejects an unknown country before inserting', async () => {
       mockDbSelect.mockReturnValueOnce(found([]));
 
-      await expect(service.createState('missing-id', { state_code: 'MH', state_name: 'Maharashtra' })).rejects.toThrow(NotFoundException);
+      await expect(
+        service.createState('missing-id', {
+          state_code: 'MH',
+          state_name: 'Maharashtra',
+        }),
+      ).rejects.toThrow(NotFoundException);
       expect(mockDbInsert).not.toHaveBeenCalled();
     });
 
@@ -84,7 +114,10 @@ describe('CountryService', () => {
         .mockReturnValueOnce(found([{ state_code: 'MH', country_id: 'c-1' }]));
       mockDbInsert.mockReturnValue({ values: jest.fn().mockResolvedValue({}) });
 
-      const result = await service.createState('c-1', { state_code: 'MH', state_name: 'Maharashtra' });
+      const result = await service.createState('c-1', {
+        state_code: 'MH',
+        state_name: 'Maharashtra',
+      });
 
       expect(mockDbInsert).toHaveBeenCalled();
       expect(result).toEqual({ state_code: 'MH', country_id: 'c-1' });

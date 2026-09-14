@@ -1,12 +1,12 @@
-"use client";
+'use client';
 
-import { useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 
 export default function LegacyBatchSchedulersPage() {
   const router = useRouter();
   useEffect(() => {
-    router.replace("/schedulers");
+    router.replace('/schedulers');
   }, [router]);
 
   return null;

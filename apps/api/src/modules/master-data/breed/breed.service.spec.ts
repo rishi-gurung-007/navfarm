@@ -4,7 +4,11 @@ import { ClsService } from 'nestjs-cls';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { NobLobResolutionService } from '../../core/operational-area/nob-lob-resolution.service';
-import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
 
 describe('BreedService', () => {
   let service: BreedService;
@@ -17,29 +21,44 @@ describe('BreedService', () => {
     select: mockDbSelect,
     insert: mockDbInsert,
     update: mockDbUpdate,
-    transaction: jest.fn((work: (tx: any) => Promise<any>): Promise<any> => work(mockDb)),
+    transaction: jest.fn((work: (tx: any) => Promise<any>): Promise<any> =>
+      work(mockDb),
+    ),
   };
 
   const numberSeries = {
-    resolveNewCode: jest.fn(async (_master: string, code?: string) => code?.toUpperCase()),
+    resolveNewCode: jest.fn(async (_master: string, code?: string) =>
+      code?.toUpperCase(),
+    ),
     resolveSeriesFor: jest.fn(),
     generateNext: jest.fn(),
     lockSeries: jest.fn(),
     // No BREED_LIFECYCLE_STAGE series is configured, so a typed code is kept as
     // entered and a blank one leaves the nullable column null.
-    resolveOptionalCode: jest.fn(async (_master: string, code?: string | null) => code?.trim() ? code.trim().toUpperCase() : null),
-    editedCode: jest.fn(async (_master: string, code: string | null | undefined, current?: string | null) => {
-      if (!code?.trim()) return null;
-      const next = code.trim().toUpperCase();
-      return next === current ? null : next;
-    }),
+    resolveOptionalCode: jest.fn(
+      async (_master: string, code?: string | null) =>
+        code?.trim() ? code.trim().toUpperCase() : null,
+    ),
+    editedCode: jest.fn(
+      async (
+        _master: string,
+        code: string | null | undefined,
+        current?: string | null,
+      ) => {
+        if (!code?.trim()) return null;
+        const next = code.trim().toUpperCase();
+        return next === current ? null : next;
+      },
+    ),
   };
 
   const nobLobResolution = {
-    resolve: jest.fn(async (_tenantId: string, _companyId: any, explicit: any) => ({
-      nob_id: explicit?.nob_id ?? null,
-      lob_id: explicit?.lob_id ?? null,
-    })),
+    resolve: jest.fn(
+      async (_tenantId: string, _companyId: any, explicit: any) => ({
+        nob_id: explicit?.nob_id ?? null,
+        lob_id: explicit?.lob_id ?? null,
+      }),
+    ),
   };
 
   beforeEach(async () => {
@@ -53,10 +72,12 @@ describe('BreedService', () => {
     numberSeries.lockSeries.mockReset();
     numberSeries.resolveSeriesFor.mockResolvedValue(null); // default: manual, as today
     nobLobResolution.resolve.mockReset();
-    nobLobResolution.resolve.mockImplementation(async (_tenantId: string, _companyId: any, explicit: any) => ({
-      nob_id: explicit?.nob_id ?? null,
-      lob_id: explicit?.lob_id ?? null,
-    }));
+    nobLobResolution.resolve.mockImplementation(
+      async (_tenantId: string, _companyId: any, explicit: any) => ({
+        nob_id: explicit?.nob_id ?? null,
+        lob_id: explicit?.lob_id ?? null,
+      }),
+    );
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -118,7 +139,11 @@ describe('BreedService', () => {
         .mockReturnValueOnce({
           from: jest.fn().mockReturnValue({
             where: jest.fn().mockReturnValue({
-              limit: jest.fn().mockResolvedValue([{ species_code: 'CHICKEN', species_name: 'Chicken' }]),
+              limit: jest
+                .fn()
+                .mockResolvedValue([
+                  { species_code: 'CHICKEN', species_name: 'Chicken' },
+                ]),
             }),
           }),
         });
@@ -149,7 +174,11 @@ describe('BreedService', () => {
         .mockReturnValueOnce({
           from: jest.fn().mockReturnValue({
             where: jest.fn().mockReturnValue({
-              limit: jest.fn().mockResolvedValue([{ species_id: 'spec-1', species_name: 'Chicken' }]),
+              limit: jest
+                .fn()
+                .mockResolvedValue([
+                  { species_id: 'spec-1', species_name: 'Chicken' },
+                ]),
             }),
           }),
         })
@@ -180,7 +209,11 @@ describe('BreedService', () => {
         .mockReturnValueOnce({
           from: jest.fn().mockReturnValue({
             where: jest.fn().mockReturnValue({
-              limit: jest.fn().mockResolvedValue([{ species_id: 'spec-1', species_name: 'Chicken' }]),
+              limit: jest
+                .fn()
+                .mockResolvedValue([
+                  { species_id: 'spec-1', species_name: 'Chicken' },
+                ]),
             }),
           }),
         })
@@ -194,7 +227,11 @@ describe('BreedService', () => {
         .mockReturnValueOnce({
           from: jest.fn().mockReturnValue({
             where: jest.fn().mockReturnValue({
-              limit: jest.fn().mockResolvedValue([{ breed_code: 'COBB500', breed_name: 'Cobb 500' }]),
+              limit: jest
+                .fn()
+                .mockResolvedValue([
+                  { breed_code: 'COBB500', breed_name: 'Cobb 500' },
+                ]),
             }),
           }),
         });
@@ -222,18 +259,41 @@ describe('BreedService', () => {
     it('should persist piggery-specific fields', async () => {
       mockDbSelect
         .mockReturnValueOnce({
-          from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ species_id: 'spec-pig', species_name: 'Pig' }]) }) }),
+          from: jest.fn().mockReturnValue({
+            where: jest.fn().mockReturnValue({
+              limit: jest
+                .fn()
+                .mockResolvedValue([
+                  { species_id: 'spec-pig', species_name: 'Pig' },
+                ]),
+            }),
+          }),
         })
         .mockReturnValueOnce({
-          from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }) }),
+          from: jest.fn().mockReturnValue({
+            where: jest
+              .fn()
+              .mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }),
+          }),
         })
         .mockReturnValueOnce({
-          from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ breed_code: 'YORKSHIRE', gestation_days: 114 }]) }) }),
+          from: jest.fn().mockReturnValue({
+            where: jest.fn().mockReturnValue({
+              limit: jest
+                .fn()
+                .mockResolvedValue([
+                  { breed_code: 'YORKSHIRE', gestation_days: 114 },
+                ]),
+            }),
+          }),
         });
 
       let insertedValues: any;
       mockDbInsert.mockReturnValue({
-        values: jest.fn().mockImplementation((v) => { insertedValues = v; return Promise.resolve({}); }),
+        values: jest.fn().mockImplementation((v) => {
+          insertedValues = v;
+          return Promise.resolve({});
+        }),
       });
 
       await service.createBreed(
@@ -262,78 +322,187 @@ describe('BreedService', () => {
 
     it.each([
       ['FARM-001', [], 'FARM-001/SOW-001'],
-      ['FARM-001', [{ code: 'FARM-001/SOW-001' }, { code: 'FARM-001/SOW-003' }], 'FARM-001/SOW-004'],
+      [
+        'FARM-001',
+        [{ code: 'FARM-001/SOW-001' }, { code: 'FARM-001/SOW-003' }],
+        'FARM-001/SOW-004',
+      ],
       ['FARM-002', [], 'FARM-002/SOW-001'],
-    ])('generates a type code under location %s', async (parentCode, siblings, expected) => {
-      numberSeries.resolveSeriesFor.mockResolvedValue('BREED_SOW');
-      numberSeries.lockSeries.mockResolvedValue({ allow_manual: false, prefix: 'SOW', seq_length: 3 });
-      const returning = (rows: any[]) => ({ from: () => ({ where: () => Object.assign(Promise.resolve(rows), { limit: async () => rows }) }) });
-      mockDbSelect
-        .mockReturnValueOnce(returning([{ species_id: 'pig', species_name: 'Pig' }]))
-        .mockReturnValueOnce(returning([{ location_code: parentCode, location_type: 'FARM', parent_location_id: null }]))
-        .mockReturnValueOnce(returning(siblings as any[]))
-        .mockReturnValueOnce(returning([]))
-        .mockReturnValueOnce(returning([{ breed_code: expected }]));
-      mockDbInsert.mockReturnValue({ values: jest.fn().mockResolvedValue({}) });
-      const result = await service.createBreed({
-        nob_id: 'livestock', breed_name: 'Yorkshire', species_id: 'pig', breed_type: 'SOW', location_id: 'location',
-      }, 'tenant');
-      expect(result.breed_code).toBe(expected);
-      expect(numberSeries.lockSeries).toHaveBeenCalledWith('BREED_SOW', 'tenant', null, mockDb);
-      expect(numberSeries.generateNext).not.toHaveBeenCalled();
-    });
+    ])(
+      'generates a type code under location %s',
+      async (parentCode, siblings, expected) => {
+        numberSeries.resolveSeriesFor.mockResolvedValue('BREED_SOW');
+        numberSeries.lockSeries.mockResolvedValue({
+          allow_manual: false,
+          prefix: 'SOW',
+          seq_length: 3,
+        });
+        const returning = (rows: any[]) => ({
+          from: () => ({
+            where: () =>
+              Object.assign(Promise.resolve(rows), { limit: async () => rows }),
+          }),
+        });
+        mockDbSelect
+          .mockReturnValueOnce(
+            returning([{ species_id: 'pig', species_name: 'Pig' }]),
+          )
+          .mockReturnValueOnce(
+            returning([
+              {
+                location_code: parentCode,
+                location_type: 'FARM',
+                parent_location_id: null,
+              },
+            ]),
+          )
+          .mockReturnValueOnce(returning(siblings as any[]))
+          .mockReturnValueOnce(returning([]))
+          .mockReturnValueOnce(returning([{ breed_code: expected }]));
+        mockDbInsert.mockReturnValue({
+          values: jest.fn().mockResolvedValue({}),
+        });
+        const result = await service.createBreed(
+          {
+            nob_id: 'livestock',
+            breed_name: 'Yorkshire',
+            species_id: 'pig',
+            breed_type: 'SOW',
+            location_id: 'location',
+          },
+          'tenant',
+        );
+        expect(result.breed_code).toBe(expected);
+        expect(numberSeries.lockSeries).toHaveBeenCalledWith(
+          'BREED_SOW',
+          'tenant',
+          null,
+          mockDb,
+        );
+        expect(numberSeries.generateNext).not.toHaveBeenCalled();
+      },
+    );
 
     it.each([
       { location_type: 'PEN', parent_location_id: 'farm' },
       { location_type: 'FARM', parent_location_id: 'another-farm' },
       null,
-    ])('rejects a non-root farm even with a manual breed code: %j', async (location) => {
-      const returning = (rows: any[]) => ({ from: () => ({ where: () => ({ limit: async () => rows }) }) });
-      mockDbSelect.mockReturnValueOnce(returning([{ species_id: 'pig', species_name: 'Pig' }]))
-        .mockReturnValueOnce(returning(location ? [location] : []));
-      await expect(service.createBreed({ nob_id: 'livestock', breed_name: 'Yorkshire', species_id: 'pig', breed_type: 'SOW', location_id: 'location', breed_code: 'CUSTOM' }, 'tenant'))
-        .rejects.toThrow('first-level farm');
-      expect(mockDbInsert).not.toHaveBeenCalled();
-    });
+    ])(
+      'rejects a non-root farm even with a manual breed code: %j',
+      async (location) => {
+        const returning = (rows: any[]) => ({
+          from: () => ({ where: () => ({ limit: async () => rows }) }),
+        });
+        mockDbSelect
+          .mockReturnValueOnce(
+            returning([{ species_id: 'pig', species_name: 'Pig' }]),
+          )
+          .mockReturnValueOnce(returning(location ? [location] : []));
+        await expect(
+          service.createBreed(
+            {
+              nob_id: 'livestock',
+              breed_name: 'Yorkshire',
+              species_id: 'pig',
+              breed_type: 'SOW',
+              location_id: 'location',
+              breed_code: 'CUSTOM',
+            },
+            'tenant',
+          ),
+        ).rejects.toThrow('first-level farm');
+        expect(mockDbInsert).not.toHaveBeenCalled();
+      },
+    );
 
     it('can generate a breed code without the optional farm', async () => {
       numberSeries.resolveSeriesFor.mockResolvedValue('BREED');
       numberSeries.lockSeries.mockResolvedValue({ allow_manual: true });
       numberSeries.generateNext.mockResolvedValue('BRD-001');
-      const returning = (rows: any[]) => ({ from: () => ({ where: () => ({ limit: async () => rows }) }) });
-      mockDbSelect.mockReturnValueOnce(returning([{ species_id: 'pig', species_name: 'Pig' }]))
-        .mockReturnValueOnce(returning([])).mockReturnValueOnce(returning([{ breed_code: 'BRD-001' }]));
+      const returning = (rows: any[]) => ({
+        from: () => ({ where: () => ({ limit: async () => rows }) }),
+      });
+      mockDbSelect
+        .mockReturnValueOnce(
+          returning([{ species_id: 'pig', species_name: 'Pig' }]),
+        )
+        .mockReturnValueOnce(returning([]))
+        .mockReturnValueOnce(returning([{ breed_code: 'BRD-001' }]));
       mockDbInsert.mockReturnValue({ values: jest.fn().mockResolvedValue({}) });
-      await expect(service.createBreed({ nob_id: 'livestock', breed_name: 'Yorkshire', species_id: 'pig', breed_type: 'SOW' }, 'tenant'))
-        .resolves.toMatchObject({ breed_code: 'BRD-001' });
+      await expect(
+        service.createBreed(
+          {
+            nob_id: 'livestock',
+            breed_name: 'Yorkshire',
+            species_id: 'pig',
+            breed_type: 'SOW',
+          },
+          'tenant',
+        ),
+      ).resolves.toMatchObject({ breed_code: 'BRD-001' });
       // The DTO is now the fifth argument: a series configured with
       // code_segments/prefix_field reads its segments out of the record being
       // created, so breed_name can drive the code instead of a fixed prefix.
-      expect(numberSeries.generateNext).toHaveBeenCalledWith('BREED', 'tenant', null, mockDb,
-        { nob_id: 'livestock', breed_name: 'Yorkshire', species_id: 'pig', breed_type: 'SOW' });
+      expect(numberSeries.generateNext).toHaveBeenCalledWith(
+        'BREED',
+        'tenant',
+        null,
+        mockDb,
+        {
+          nob_id: 'livestock',
+          breed_name: 'Yorkshire',
+          species_id: 'pig',
+          breed_type: 'SOW',
+        },
+      );
     });
 
     it('rejects when neither a series nor a manual breed_code is supplied', async () => {
       mockDbSelect.mockReturnValueOnce({
-        from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ species_id: 'spec-1', species_name: 'Chicken' }]) }) }),
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockReturnValue({
+            limit: jest
+              .fn()
+              .mockResolvedValue([
+                { species_id: 'spec-1', species_name: 'Chicken' },
+              ]),
+          }),
+        }),
       });
 
-      await expect(service.createBreed(
-        { nob_id: 'nob-1', breed_name: 'Cobb 500', species_id: 'spec-1', breed_type: 'BROILER' } as any,
-        'tenant-123',
-      )).rejects.toThrow(BadRequestException);
+      await expect(
+        service.createBreed(
+          {
+            nob_id: 'nob-1',
+            breed_name: 'Cobb 500',
+            species_id: 'spec-1',
+            breed_type: 'BROILER',
+          } as any,
+          'tenant-123',
+        ),
+      ).rejects.toThrow(BadRequestException);
     });
   });
 
   describe('lifecycle stages', () => {
     it('should reject an unknown breed_id', async () => {
       mockDbSelect.mockReturnValueOnce({
-        from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }) }),
+        from: jest.fn().mockReturnValue({
+          where: jest
+            .fn()
+            .mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }),
+        }),
       });
 
       await expect(
         service.createLifecycleStage(
-          { breed_id: 'bogus-breed', stage_id: 'stage-1', calc_unit: 'WEEK', period_from: 1, period_to: 4 },
+          {
+            breed_id: 'bogus-breed',
+            stage_id: 'stage-1',
+            calc_unit: 'WEEK',
+            period_from: 1,
+            period_to: 4,
+          },
           'tenant-123',
         ),
       ).rejects.toThrow(NotFoundException);
@@ -342,15 +511,29 @@ describe('BreedService', () => {
     it('should reject an unknown stage_id', async () => {
       mockDbSelect
         .mockReturnValueOnce({
-          from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ breed_id: 'breed-1' }]) }) }),
+          from: jest.fn().mockReturnValue({
+            where: jest.fn().mockReturnValue({
+              limit: jest.fn().mockResolvedValue([{ breed_id: 'breed-1' }]),
+            }),
+          }),
         })
         .mockReturnValueOnce({
-          from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }) }),
+          from: jest.fn().mockReturnValue({
+            where: jest
+              .fn()
+              .mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }),
+          }),
         });
 
       await expect(
         service.createLifecycleStage(
-          { breed_id: 'breed-1', stage_id: 'bogus-stage', calc_unit: 'WEEK', period_from: 1, period_to: 4 },
+          {
+            breed_id: 'breed-1',
+            stage_id: 'bogus-stage',
+            calc_unit: 'WEEK',
+            period_from: 1,
+            period_to: 4,
+          },
           'tenant-123',
         ),
       ).rejects.toThrow(NotFoundException);
@@ -359,17 +542,33 @@ describe('BreedService', () => {
     it('should create a valid lifecycle stage', async () => {
       mockDbSelect
         .mockReturnValueOnce({
-          from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ breed_id: 'breed-1' }]) }) }),
+          from: jest.fn().mockReturnValue({
+            where: jest.fn().mockReturnValue({
+              limit: jest.fn().mockResolvedValue([{ breed_id: 'breed-1' }]),
+            }),
+          }),
         })
         .mockReturnValueOnce({
-          from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ stage_id: 'stage-lactation' }]) }) }),
+          from: jest.fn().mockReturnValue({
+            where: jest.fn().mockReturnValue({
+              limit: jest
+                .fn()
+                .mockResolvedValue([{ stage_id: 'stage-lactation' }]),
+            }),
+          }),
         })
         .mockReturnValueOnce({
           from: jest.fn().mockReturnValue({
             leftJoin: jest.fn().mockReturnValue({
               leftJoin: jest.fn().mockReturnValue({
                 where: jest.fn().mockReturnValue({
-                  limit: jest.fn().mockResolvedValue([{ lifecycle_id: 'lc-1', breed_id: 'breed-1', stage_id: 'stage-lactation' }]),
+                  limit: jest.fn().mockResolvedValue([
+                    {
+                      lifecycle_id: 'lc-1',
+                      breed_id: 'breed-1',
+                      stage_id: 'stage-lactation',
+                    },
+                  ]),
                 }),
               }),
             }),

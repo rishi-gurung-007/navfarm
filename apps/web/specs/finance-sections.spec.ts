@@ -12,10 +12,13 @@ const shellSource = readFileSync(
   'utf8',
 );
 
-const SECTION_RE = /\{ key: "([a-z-]+)", href: "([^"]+)", labelKey: "([A-Za-z]+)" \}/g;
+const SECTION_RE =
+  /\{ key: "([a-z-]+)", href: "([^"]+)", labelKey: "([A-Za-z]+)" \}/g;
 
 function sections() {
-  return [...shellSource.matchAll(SECTION_RE)].map(([, key, href, labelKey]) => ({ key, href, labelKey }));
+  return [...shellSource.matchAll(SECTION_RE)].map(
+    ([, key, href, labelKey]) => ({ key, href, labelKey }),
+  );
 }
 
 describe('Finance sections', () => {
@@ -42,8 +45,16 @@ describe('Finance sections', () => {
   it('points each section at a route that exists', () => {
     for (const section of sections()) {
       const segment = section.href.replace(/^\/finance\/?/, '');
-      const page = join(__dirname, '../src/app/(app)/finance', segment, 'page.tsx');
-      expect({ href: section.href, exists: readFileSync(page, 'utf8').length > 0 }).toEqual({
+      const page = join(
+        __dirname,
+        '../src/app/(app)/finance',
+        segment,
+        'page.tsx',
+      );
+      expect({
+        href: section.href,
+        exists: readFileSync(page, 'utf8').length > 0,
+      }).toEqual({
         href: section.href,
         exists: true,
       });
@@ -56,7 +67,10 @@ describe('Finance sections', () => {
       const hasBranch =
         shellSource.includes(`activeKey === "${section.key}" ?`) ||
         section.key === 'bio-asset-reconciliation';
-      expect({ key: section.key, hasBranch }).toEqual({ key: section.key, hasBranch: true });
+      expect({ key: section.key, hasBranch }).toEqual({
+        key: section.key,
+        hasBranch: true,
+      });
     }
   });
 

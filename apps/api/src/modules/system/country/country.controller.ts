@@ -1,9 +1,29 @@
-import { Controller, Get, Post, Put, Delete, Body, Param, Query, UseGuards } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth, ApiParam } from '@nestjs/swagger';
+import {
+  Controller,
+  Get,
+  Post,
+  Put,
+  Delete,
+  Body,
+  Param,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiBearerAuth,
+  ApiParam,
+} from '@nestjs/swagger';
 import { CountryService } from './country.service';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { SystemAdminGuard } from '../../../common/guards/system-admin.guard';
-import { CreateCountryDto, UpdateCountryDto, CreateStateDto, UpdateStateDto } from './dto/country.dto';
+import {
+  CreateCountryDto,
+  UpdateCountryDto,
+  CreateStateDto,
+  UpdateStateDto,
+} from './dto/country.dto';
 import { QueryCountryDto } from './dto/country.dto';
 
 @ApiTags('Country & State Master')
@@ -16,7 +36,11 @@ export class CountryController {
   async listCountries(@Query() query: QueryCountryDto) {
     const result = await this.countryService.listCountries(query);
     // `data` stays the array every picker already reads.
-    return { success: true, message: 'Countries retrieved successfully.', ...result };
+    return {
+      success: true,
+      message: 'Countries retrieved successfully.',
+      ...result,
+    };
   }
 
   @Post()
@@ -55,7 +79,9 @@ export class CountryController {
   @Post(':id/states')
   @UseGuards(JwtAuthGuard, SystemAdminGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Platform Admin: Add a state/province to a country' })
+  @ApiOperation({
+    summary: 'Platform Admin: Add a state/province to a country',
+  })
   @ApiParam({ name: 'id', description: 'Country UUID' })
   async createState(@Param('id') id: string, @Body() body: CreateStateDto) {
     return this.countryService.createState(id, body);
@@ -66,7 +92,10 @@ export class CountryController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Platform Admin: Update a state/province' })
   @ApiParam({ name: 'stateId', description: 'State UUID' })
-  async updateState(@Param('stateId') stateId: string, @Body() body: UpdateStateDto) {
+  async updateState(
+    @Param('stateId') stateId: string,
+    @Body() body: UpdateStateDto,
+  ) {
     return this.countryService.updateState(stateId, body);
   }
 

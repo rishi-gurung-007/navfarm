@@ -1,12 +1,24 @@
 import { masterScopeConditions } from '../../../common/master-data-scope';
-import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ConflictException,
+  BadRequestException,
+} from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { eq, and, or, like, desc, sql } from 'drizzle-orm';
 import { aliasedTable } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
-import { BulkTransitionAnimalStageDto, CreateAnimalDto, UpdateAnimalDto, DisposeAnimalDto, QueryAnimalDto, TransitionAnimalStageDto } from './dto/animal.dto';
+import {
+  BulkTransitionAnimalStageDto,
+  CreateAnimalDto,
+  UpdateAnimalDto,
+  DisposeAnimalDto,
+  QueryAnimalDto,
+  TransitionAnimalStageDto,
+} from './dto/animal.dto';
 
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 
@@ -15,9 +27,13 @@ import { NobLobResolutionService } from '../../core/operational-area/nob-lob-res
 import { AnimalMovementLogService } from '../animal-movement-log/animal-movement-log.service';
 import { SchedulerHeaderService } from '../../production/scheduler-header/scheduler-header.service';
 import { BatchTransferService } from '../../production/batch/batch-transfer.service';
-import { listFilterConditions, listOrderBy } from '../../../common/master-list-query';
+import {
+  listFilterConditions,
+  listOrderBy,
+} from '../../../common/master-list-query';
 
-const toMysqlTimestamp = (date: Date = new Date()) => date.toISOString().slice(0, 19).replace('T', ' ');
+const toMysqlTimestamp = (date: Date = new Date()) =>
+  date.toISOString().slice(0, 19).replace('T', ' ');
 
 // Maps a disposal_type to the terminal `status` it leaves the animal in. TRANSFERRED has no
 // direct status match in the spec's STATUSES enum (it means the animal left this tenant's
@@ -49,7 +65,9 @@ const MIN_GILT_TEATS = 15;
  * disposal record and no withdrawal check — verified against the running API
  * on 2026-09-07 before the guard existed.
  */
-const DISPOSAL_ONLY_STATUSES = new Set(Object.values(DISPOSAL_STATUS_MAP).filter(Boolean) as string[]);
+const DISPOSAL_ONLY_STATUSES = new Set(
+  Object.values(DISPOSAL_STATUS_MAP).filter(Boolean) as string[],
+);
 
 /**
  * CULLED is blocked too, but it is NOT a disposal type — DISPOSAL_TYPES is
@@ -107,7 +125,9 @@ export function resolveAgeAtEntryWeeks(
     const born = Date.parse(`${String(dob).slice(0, 10)}T00:00:00Z`);
     const entered = Date.parse(`${String(entryDate).slice(0, 10)}T00:00:00Z`);
     if (Number.isNaN(born) || Number.isNaN(entered)) {
-      throw new BadRequestException('Date of birth and entry date must both be valid dates.');
+      throw new BadRequestException(
+        'Date of birth and entry date must both be valid dates.',
+      );
     }
     if (born > entered) {
       throw new BadRequestException(
@@ -120,7 +140,11 @@ export function resolveAgeAtEntryWeeks(
 
   if (typed === undefined || typed === null) return null;
 
-  if (!Number.isInteger(typed) || typed < 0 || typed > MAX_TYPED_AGE_AT_ENTRY_WEEKS) {
+  if (
+    !Number.isInteger(typed) ||
+    typed < 0 ||
+    typed > MAX_TYPED_AGE_AT_ENTRY_WEEKS
+  ) {
     throw new BadRequestException(
       `Age at entry must be a whole number of weeks between 0 and ${MAX_TYPED_AGE_AT_ENTRY_WEEKS}.`,
     );
@@ -128,8 +152,12 @@ export function resolveAgeAtEntryWeeks(
   return typed;
 }
 
-function assertGiltTeatCount(animalType: string | undefined, noOfTeats: number | undefined | null): void {
-  if (animalType !== 'GILT' || noOfTeats === undefined || noOfTeats === null) return;
+function assertGiltTeatCount(
+  animalType: string | undefined,
+  noOfTeats: number | undefined | null,
+): void {
+  if (animalType !== 'GILT' || noOfTeats === undefined || noOfTeats === null)
+    return;
   if (noOfTeats < MIN_GILT_TEATS) {
     throw new BadRequestException(
       `Teat count ${noOfTeats} is below the minimum of ${MIN_GILT_TEATS} — this gilt cannot be selected regardless of TSI score.`,
@@ -157,11 +185,9 @@ export class AnimalService {
     return tenantDb;
   }
 
-  private async assertExists<T extends { limit: (n: number) => Promise<any[]> }>(
-    query: T,
-    label: string,
-    id: string,
-  ) {
+  private async assertExists<
+    T extends { limit: (n: number) => Promise<any[]> },
+  >(query: T, label: string, id: string) {
     const rows = await query.limit(1);
     if (rows.length === 0) {
       throw new NotFoundException(`${label} with ID '${id}' not found.`);
@@ -175,7 +201,10 @@ export class AnimalService {
    * equal to withdrawal_days. Block the slaughter if not." Reduced in JS rather than a SQL
    * GROUP BY — per-animal medication log volume is small (a few dozen rows at most).
    */
-  private async assertWithdrawalPeriodsElapsed(animalId: string, disposalDate: string) {
+  private async assertWithdrawalPeriodsElapsed(
+    animalId: string,
+    disposalDate: string,
+  ) {
     const rows = await this.db
       .select({
         item_id: schema.itemMaster.item_id,
@@ -185,10 +214,16 @@ export class AnimalService {
         administered_date: schema.animalMedicationLog.administered_date,
       })
       .from(schema.animalMedicationLog)
-      .innerJoin(schema.itemMaster, eq(schema.animalMedicationLog.item_id, schema.itemMaster.item_id))
+      .innerJoin(
+        schema.itemMaster,
+        eq(schema.animalMedicationLog.item_id, schema.itemMaster.item_id),
+      )
       .where(eq(schema.animalMedicationLog.animal_id, animalId));
 
-    const lastDoseByItem = new Map<string, { item_name: string; withdrawal_days: number; lastDate: string }>();
+    const lastDoseByItem = new Map<
+      string,
+      { item_name: string; withdrawal_days: number; lastDate: string }
+    >();
     for (const row of rows) {
       if (row.withdrawal_days == null) continue;
       if (!['MEDICINE', 'VACCINE'].includes(row.item_type)) continue;
@@ -204,15 +239,25 @@ export class AnimalService {
 
     const disposalMs = new Date(disposalDate).getTime();
     const violations: string[] = [];
-    for (const { item_name, withdrawal_days, lastDate } of lastDoseByItem.values()) {
-      const daysSinceDose = Math.floor((disposalMs - new Date(lastDate).getTime()) / 86400000);
+    for (const {
+      item_name,
+      withdrawal_days,
+      lastDate,
+    } of lastDoseByItem.values()) {
+      const daysSinceDose = Math.floor(
+        (disposalMs - new Date(lastDate).getTime()) / 86400000,
+      );
       if (daysSinceDose < withdrawal_days) {
-        violations.push(`${item_name} (${withdrawal_days - daysSinceDose} day(s) remaining, last dose ${lastDate})`);
+        violations.push(
+          `${item_name} (${withdrawal_days - daysSinceDose} day(s) remaining, last dose ${lastDate})`,
+        );
       }
     }
 
     if (violations.length > 0) {
-      throw new BadRequestException(`Cannot slaughter — withdrawal period not elapsed for: ${violations.join('; ')}`);
+      throw new BadRequestException(
+        `Cannot slaughter — withdrawal period not elapsed for: ${violations.join('; ')}`,
+      );
     }
   }
 
@@ -223,14 +268,27 @@ export class AnimalService {
    * tenant-wide ANIMAL series and finally to ANIMAL_PIGGERY so existing
    * piggery tenants keep their numbering unchanged.
    */
-  private async generateAnimalCode(lobId: string, tenantId: string, companyId: string, manualCode?: string, record: Record<string, unknown> = {}): Promise<string> {
+  private async generateAnimalCode(
+    lobId: string,
+    tenantId: string,
+    companyId: string,
+    manualCode?: string,
+    record: Record<string, unknown> = {},
+  ): Promise<string> {
     const [lob] = await this.db
       .select({ lob_code: schema.lobMaster.lob_code })
       .from(schema.lobMaster)
       .where(eq(schema.lobMaster.lob_id, lobId))
       .limit(1);
 
-    if (manualCode) return this.numberSeriesService.manualCode('ANIMAL', manualCode, tenantId, companyId, lob?.lob_code?.toUpperCase());
+    if (manualCode)
+      return this.numberSeriesService.manualCode(
+        'ANIMAL',
+        manualCode,
+        tenantId,
+        companyId,
+        lob?.lob_code?.toUpperCase(),
+      );
 
     const candidates = [
       lob?.lob_code ? `ANIMAL_${lob.lob_code.toUpperCase()}` : null,
@@ -241,7 +299,13 @@ export class AnimalService {
     let lastError: unknown;
     for (const seriesCode of candidates) {
       try {
-        return await this.numberSeriesService.generateNext(seriesCode, tenantId, companyId, undefined, record);
+        return await this.numberSeriesService.generateNext(
+          seriesCode,
+          tenantId,
+          companyId,
+          undefined,
+          record,
+        );
       } catch (err) {
         lastError = err;
       }
@@ -256,11 +320,19 @@ export class AnimalService {
     // fails after it has run leaves a permanent hole in the animal codes. One
     // did — a create refused for an out-of-range age still burned PIG-2026-0022,
     // and the register jumped straight from 0021 to 0023.
-    const ageAtEntryWeeks = resolveAgeAtEntryWeeks(dto.dob, dto.entry_date, dto.age_at_entry_weeks);
+    const ageAtEntryWeeks = resolveAgeAtEntryWeeks(
+      dto.dob,
+      dto.entry_date,
+      dto.age_at_entry_weeks,
+    );
 
     await this.assertExists(
-      this.db.select().from(schema.companyMaster).where(eq(schema.companyMaster.company_id, dto.company_id)),
-      'Company', dto.company_id,
+      this.db
+        .select()
+        .from(schema.companyMaster)
+        .where(eq(schema.companyMaster.company_id, dto.company_id)),
+      'Company',
+      dto.company_id,
     );
 
     // NOB/LOB are no longer asked on the form — derive them from the company's
@@ -268,10 +340,14 @@ export class AnimalService {
     // wins). animal_register.nob_id/lob_id are NOT NULL, so an ambiguous
     // company (operational areas split across LOBs) surfaces a clear error
     // here rather than a raw DB constraint failure.
-    const resolved = await this.nobLobResolution.resolve(tenantId, dto.company_id, {
-      nob_id: dto.nob_id,
-      lob_id: dto.lob_id,
-    });
+    const resolved = await this.nobLobResolution.resolve(
+      tenantId,
+      dto.company_id,
+      {
+        nob_id: dto.nob_id,
+        lob_id: dto.lob_id,
+      },
+    );
     if (!resolved.nob_id || !resolved.lob_id) {
       throw new BadRequestException(
         "Cannot determine this animal's Nature of Business / Line of Business — this company's operational areas span multiple business verticals. Specify nob_id and lob_id explicitly.",
@@ -281,29 +357,52 @@ export class AnimalService {
     const lobId = resolved.lob_id;
 
     await this.assertExists(
-      this.db.select().from(schema.nobMaster).where(eq(schema.nobMaster.nob_id, nobId)),
-      'NOB', nobId,
+      this.db
+        .select()
+        .from(schema.nobMaster)
+        .where(eq(schema.nobMaster.nob_id, nobId)),
+      'NOB',
+      nobId,
     );
     await this.assertExists(
-      this.db.select().from(schema.lobMaster).where(eq(schema.lobMaster.lob_id, lobId)),
-      'LOB', lobId,
+      this.db
+        .select()
+        .from(schema.lobMaster)
+        .where(eq(schema.lobMaster.lob_id, lobId)),
+      'LOB',
+      lobId,
     );
     await this.assertExists(
-      this.db.select().from(schema.breedMaster).where(eq(schema.breedMaster.breed_id, dto.breed_id)),
-      'Breed', dto.breed_id,
+      this.db
+        .select()
+        .from(schema.breedMaster)
+        .where(eq(schema.breedMaster.breed_id, dto.breed_id)),
+      'Breed',
+      dto.breed_id,
     );
     await this.assertExists(
-      this.db.select().from(schema.itemMaster).where(eq(schema.itemMaster.item_id, dto.item_id)),
-      'Item', dto.item_id,
+      this.db
+        .select()
+        .from(schema.itemMaster)
+        .where(eq(schema.itemMaster.item_id, dto.item_id)),
+      'Item',
+      dto.item_id,
     );
 
     // COND rules from the spec: source_receipt_id required for purchased entries,
     // source_batch_id required for on-farm births.
-    if (['PURCHASED_IMPORTED', 'PURCHASED_LOCAL'].includes(dto.entry_type) && !dto.source_receipt_id) {
-      throw new BadRequestException(`source_receipt_id is required when entry_type is '${dto.entry_type}'.`);
+    if (
+      ['PURCHASED_IMPORTED', 'PURCHASED_LOCAL'].includes(dto.entry_type) &&
+      !dto.source_receipt_id
+    ) {
+      throw new BadRequestException(
+        `source_receipt_id is required when entry_type is '${dto.entry_type}'.`,
+      );
     }
     if (dto.entry_type === 'BORN_ON_FARM' && !dto.source_batch_id) {
-      throw new BadRequestException(`source_batch_id is required when entry_type is 'BORN_ON_FARM'.`);
+      throw new BadRequestException(
+        `source_batch_id is required when entry_type is 'BORN_ON_FARM'.`,
+      );
     }
 
     // A purchased animal's cost is a fact on the receipt it arrived on, not a
@@ -314,17 +413,26 @@ export class AnimalService {
     let acquisitionCost = dto.acquisition_cost;
     if (dto.source_receipt_id) {
       await this.assertExists(
-        this.db.select().from(schema.goodsReceipt).where(eq(schema.goodsReceipt.receipt_id, dto.source_receipt_id)),
-        'Goods receipt', dto.source_receipt_id,
+        this.db
+          .select()
+          .from(schema.goodsReceipt)
+          .where(eq(schema.goodsReceipt.receipt_id, dto.source_receipt_id)),
+        'Goods receipt',
+        dto.source_receipt_id,
       );
 
       const [receiptLine] = await this.db
-        .select({ rate: schema.goodsReceiptLine.rate, amount: schema.goodsReceiptLine.amount })
+        .select({
+          rate: schema.goodsReceiptLine.rate,
+          amount: schema.goodsReceiptLine.amount,
+        })
         .from(schema.goodsReceiptLine)
-        .where(and(
-          eq(schema.goodsReceiptLine.receipt_id, dto.source_receipt_id),
-          eq(schema.goodsReceiptLine.item_id, dto.item_id),
-        ))
+        .where(
+          and(
+            eq(schema.goodsReceiptLine.receipt_id, dto.source_receipt_id),
+            eq(schema.goodsReceiptLine.item_id, dto.item_id),
+          ),
+        )
         .limit(1);
 
       if (!receiptLine) {
@@ -351,38 +459,64 @@ export class AnimalService {
     }
     if (dto.source_batch_id) {
       await this.assertExists(
-        this.db.select().from(schema.batchHeader).where(eq(schema.batchHeader.batch_id, dto.source_batch_id)),
-        'Batch', dto.source_batch_id,
+        this.db
+          .select()
+          .from(schema.batchHeader)
+          .where(eq(schema.batchHeader.batch_id, dto.source_batch_id)),
+        'Batch',
+        dto.source_batch_id,
       );
     }
     if (dto.sire_animal_id) {
       await this.assertExists(
-        this.db.select().from(schema.animalRegister).where(eq(schema.animalRegister.animal_id, dto.sire_animal_id)),
-        'Sire animal', dto.sire_animal_id,
+        this.db
+          .select()
+          .from(schema.animalRegister)
+          .where(eq(schema.animalRegister.animal_id, dto.sire_animal_id)),
+        'Sire animal',
+        dto.sire_animal_id,
       );
     }
     if (dto.dam_animal_id) {
       await this.assertExists(
-        this.db.select().from(schema.animalRegister).where(eq(schema.animalRegister.animal_id, dto.dam_animal_id)),
-        'Dam animal', dto.dam_animal_id,
+        this.db
+          .select()
+          .from(schema.animalRegister)
+          .where(eq(schema.animalRegister.animal_id, dto.dam_animal_id)),
+        'Dam animal',
+        dto.dam_animal_id,
       );
     }
     if (dto.current_stage_id) {
       await this.assertExists(
-        this.db.select().from(schema.stageMaster).where(eq(schema.stageMaster.stage_id, dto.current_stage_id)),
-        'Stage', dto.current_stage_id,
+        this.db
+          .select()
+          .from(schema.stageMaster)
+          .where(eq(schema.stageMaster.stage_id, dto.current_stage_id)),
+        'Stage',
+        dto.current_stage_id,
       );
     }
     if (dto.current_batch_id) {
       await this.assertExists(
-        this.db.select().from(schema.batchHeader).where(eq(schema.batchHeader.batch_id, dto.current_batch_id)),
-        'Batch', dto.current_batch_id,
+        this.db
+          .select()
+          .from(schema.batchHeader)
+          .where(eq(schema.batchHeader.batch_id, dto.current_batch_id)),
+        'Batch',
+        dto.current_batch_id,
       );
     }
     if (dto.current_location_id) {
       await this.assertExists(
-        this.db.select().from(schema.locationMaster).where(eq(schema.locationMaster.location_id, dto.current_location_id)),
-        'Location', dto.current_location_id,
+        this.db
+          .select()
+          .from(schema.locationMaster)
+          .where(
+            eq(schema.locationMaster.location_id, dto.current_location_id),
+          ),
+        'Location',
+        dto.current_location_id,
       );
     }
 
@@ -390,15 +524,28 @@ export class AnimalService {
       const duplicateRfid = await this.db
         .select()
         .from(schema.animalRegister)
-        .where(and(eq(schema.animalRegister.tenant_id, tenantId), eq(schema.animalRegister.rfid_tag, dto.rfid_tag)))
+        .where(
+          and(
+            eq(schema.animalRegister.tenant_id, tenantId),
+            eq(schema.animalRegister.rfid_tag, dto.rfid_tag),
+          ),
+        )
         .limit(1);
       if (duplicateRfid.length > 0) {
-        throw new ConflictException(`RFID tag '${dto.rfid_tag}' is already registered to another animal.`);
+        throw new ConflictException(
+          `RFID tag '${dto.rfid_tag}' is already registered to another animal.`,
+        );
       }
     }
 
     const animalId = randomUUID();
-    const animalCode = await this.generateAnimalCode(lobId, tenantId, dto.company_id, dto.animal_code, dto as unknown as Record<string, unknown>);
+    const animalCode = await this.generateAnimalCode(
+      lobId,
+      tenantId,
+      dto.company_id,
+      dto.animal_code,
+      dto as unknown as Record<string, unknown>,
+    );
     const totalOpeningAssetValue = acquisitionCost + (dto.landing_cost || 0);
 
     const newAnimal = {
@@ -498,7 +645,9 @@ export class AnimalService {
   async lookupByTag(tag: string, tenantId: string) {
     const trimmed = tag.trim();
     if (!trimmed) {
-      throw new BadRequestException('Tag / Code query parameter cannot be empty.');
+      throw new BadRequestException(
+        'Tag / Code query parameter cannot be empty.',
+      );
     }
 
     const rows = await this.db
@@ -509,9 +658,18 @@ export class AnimalService {
         batch: schema.batchHeader,
       })
       .from(schema.animalRegister)
-      .leftJoin(schema.breedMaster, eq(schema.animalRegister.breed_id, schema.breedMaster.breed_id))
-      .leftJoin(schema.stageMaster, eq(schema.animalRegister.current_stage_id, schema.stageMaster.stage_id))
-      .leftJoin(schema.batchHeader, eq(schema.animalRegister.current_batch_id, schema.batchHeader.batch_id))
+      .leftJoin(
+        schema.breedMaster,
+        eq(schema.animalRegister.breed_id, schema.breedMaster.breed_id),
+      )
+      .leftJoin(
+        schema.stageMaster,
+        eq(schema.animalRegister.current_stage_id, schema.stageMaster.stage_id),
+      )
+      .leftJoin(
+        schema.batchHeader,
+        eq(schema.animalRegister.current_batch_id, schema.batchHeader.batch_id),
+      )
       .where(
         and(
           eq(schema.animalRegister.tenant_id, tenantId),
@@ -519,14 +677,16 @@ export class AnimalService {
             eq(schema.animalRegister.rfid_tag, trimmed),
             eq(schema.animalRegister.ear_tag, trimmed),
             eq(schema.animalRegister.animal_code, trimmed),
-            eq(schema.animalRegister.animal_id, trimmed)
-          )
-        )
+            eq(schema.animalRegister.animal_id, trimmed),
+          ),
+        ),
       )
       .limit(1);
 
     if (rows.length === 0) {
-      throw new NotFoundException(`No animal found matching RFID tag, ear tag, or code '${trimmed}'.`);
+      throw new NotFoundException(
+        `No animal found matching RFID tag, ear tag, or code '${trimmed}'.`,
+      );
     }
 
     const { animal, breed, stage, batch } = rows[0];
@@ -539,15 +699,24 @@ export class AnimalService {
         administered_date: schema.animalMedicationLog.administered_date,
       })
       .from(schema.animalMedicationLog)
-      .innerJoin(schema.itemMaster, eq(schema.animalMedicationLog.item_id, schema.itemMaster.item_id))
+      .innerJoin(
+        schema.itemMaster,
+        eq(schema.animalMedicationLog.item_id, schema.itemMaster.item_id),
+      )
       .where(eq(schema.animalMedicationLog.animal_id, animal.animal_id));
 
     const todayMs = new Date().getTime();
-    const activeWithdrawals: Array<{ item_name: string; daysRemaining: number; lastDose: string }> = [];
+    const activeWithdrawals: Array<{
+      item_name: string;
+      daysRemaining: number;
+      lastDose: string;
+    }> = [];
 
     for (const med of medRows) {
       if (med.withdrawal_days == null) continue;
-      const daysSinceDose = Math.floor((todayMs - new Date(med.administered_date).getTime()) / 86400000);
+      const daysSinceDose = Math.floor(
+        (todayMs - new Date(med.administered_date).getTime()) / 86400000,
+      );
       if (daysSinceDose < med.withdrawal_days) {
         activeWithdrawals.push({
           item_name: med.item_name,
@@ -586,24 +755,42 @@ export class AnimalService {
   async findAll(query: QueryAnimalDto, tenantId: string) {
     const conditions: any[] = [eq(schema.animalRegister.tenant_id, tenantId)];
 
-    if (!query.includeDisposed) conditions.push(eq(schema.animalRegister.is_active, true));
-    conditions.push(...masterScopeConditions(this.cls, schema.animalRegister, query.companyId));
-    if (query.breedId) conditions.push(eq(schema.animalRegister.breed_id, query.breedId));
-    if (query.animalType) conditions.push(eq(schema.animalRegister.animal_type, query.animalType));
-    if (query.status) conditions.push(eq(schema.animalRegister.status, query.status));
-    if (query.currentBatchId) conditions.push(eq(schema.animalRegister.current_batch_id, query.currentBatchId));
-    if (query.currentLocationId) conditions.push(eq(schema.animalRegister.current_location_id, query.currentLocationId));
+    if (!query.includeDisposed)
+      conditions.push(eq(schema.animalRegister.is_active, true));
+    conditions.push(
+      ...masterScopeConditions(
+        this.cls,
+        schema.animalRegister,
+        query.companyId,
+      ),
+    );
+    if (query.breedId)
+      conditions.push(eq(schema.animalRegister.breed_id, query.breedId));
+    if (query.animalType)
+      conditions.push(eq(schema.animalRegister.animal_type, query.animalType));
+    if (query.status)
+      conditions.push(eq(schema.animalRegister.status, query.status));
+    if (query.currentBatchId)
+      conditions.push(
+        eq(schema.animalRegister.current_batch_id, query.currentBatchId),
+      );
+    if (query.currentLocationId)
+      conditions.push(
+        eq(schema.animalRegister.current_location_id, query.currentLocationId),
+      );
     if (query.search) {
       conditions.push(
         or(
           like(schema.animalRegister.animal_code, `%${query.search}%`),
           like(schema.animalRegister.rfid_tag, `%${query.search}%`),
-          like(schema.animalRegister.ear_tag, `%${query.search}%`)
-        )
+          like(schema.animalRegister.ear_tag, `%${query.search}%`),
+        ),
       );
     }
 
-    conditions.push(...listFilterConditions(schema.animalRegister, query.filter));
+    conditions.push(
+      ...listFilterConditions(schema.animalRegister, query.filter),
+    );
 
     const limit = query.limit || 50;
     const offset = query.offset || 0;
@@ -612,12 +799,23 @@ export class AnimalService {
       .select()
       .from(schema.animalRegister)
       .where(and(...conditions))
-      .orderBy(listOrderBy(schema.animalRegister, query, schema.animalRegister.animal_code))
+      .orderBy(
+        listOrderBy(
+          schema.animalRegister,
+          query,
+          schema.animalRegister.animal_code,
+        ),
+      )
       .limit(limit)
       .offset(offset);
   }
 
-  async update(id: string, dto: UpdateAnimalDto, tenantId: string, userPayload?: any) {
+  async update(
+    id: string,
+    dto: UpdateAnimalDto,
+    tenantId: string,
+    userPayload?: any,
+  ) {
     const animal = await this.findOne(id);
 
     // Changing to the same value is not a disposal, so re-saving a form that
@@ -639,8 +837,12 @@ export class AnimalService {
 
     if (dto.breed_id) {
       await this.assertExists(
-        this.db.select().from(schema.breedMaster).where(eq(schema.breedMaster.breed_id, dto.breed_id)),
-        'Breed', dto.breed_id,
+        this.db
+          .select()
+          .from(schema.breedMaster)
+          .where(eq(schema.breedMaster.breed_id, dto.breed_id)),
+        'Breed',
+        dto.breed_id,
       );
     }
     if (dto.sire_animal_id) {
@@ -648,8 +850,12 @@ export class AnimalService {
         throw new BadRequestException('An animal cannot be its own sire.');
       }
       await this.assertExists(
-        this.db.select().from(schema.animalRegister).where(eq(schema.animalRegister.animal_id, dto.sire_animal_id)),
-        'Sire animal', dto.sire_animal_id,
+        this.db
+          .select()
+          .from(schema.animalRegister)
+          .where(eq(schema.animalRegister.animal_id, dto.sire_animal_id)),
+        'Sire animal',
+        dto.sire_animal_id,
       );
     }
     if (dto.dam_animal_id) {
@@ -657,36 +863,61 @@ export class AnimalService {
         throw new BadRequestException('An animal cannot be its own dam.');
       }
       await this.assertExists(
-        this.db.select().from(schema.animalRegister).where(eq(schema.animalRegister.animal_id, dto.dam_animal_id)),
-        'Dam animal', dto.dam_animal_id,
+        this.db
+          .select()
+          .from(schema.animalRegister)
+          .where(eq(schema.animalRegister.animal_id, dto.dam_animal_id)),
+        'Dam animal',
+        dto.dam_animal_id,
       );
     }
     if (dto.current_stage_id) {
       await this.assertExists(
-        this.db.select().from(schema.stageMaster).where(eq(schema.stageMaster.stage_id, dto.current_stage_id)),
-        'Stage', dto.current_stage_id,
+        this.db
+          .select()
+          .from(schema.stageMaster)
+          .where(eq(schema.stageMaster.stage_id, dto.current_stage_id)),
+        'Stage',
+        dto.current_stage_id,
       );
     }
     if (dto.current_batch_id) {
       await this.assertExists(
-        this.db.select().from(schema.batchHeader).where(eq(schema.batchHeader.batch_id, dto.current_batch_id)),
-        'Batch', dto.current_batch_id,
+        this.db
+          .select()
+          .from(schema.batchHeader)
+          .where(eq(schema.batchHeader.batch_id, dto.current_batch_id)),
+        'Batch',
+        dto.current_batch_id,
       );
     }
     if (dto.current_location_id) {
       await this.assertExists(
-        this.db.select().from(schema.locationMaster).where(eq(schema.locationMaster.location_id, dto.current_location_id)),
-        'Location', dto.current_location_id,
+        this.db
+          .select()
+          .from(schema.locationMaster)
+          .where(
+            eq(schema.locationMaster.location_id, dto.current_location_id),
+          ),
+        'Location',
+        dto.current_location_id,
       );
     }
     if (dto.rfid_tag && dto.rfid_tag !== animal.rfid_tag) {
       const duplicateRfid = await this.db
         .select()
         .from(schema.animalRegister)
-        .where(and(eq(schema.animalRegister.tenant_id, tenantId), eq(schema.animalRegister.rfid_tag, dto.rfid_tag)))
+        .where(
+          and(
+            eq(schema.animalRegister.tenant_id, tenantId),
+            eq(schema.animalRegister.rfid_tag, dto.rfid_tag),
+          ),
+        )
         .limit(1);
       if (duplicateRfid.length > 0) {
-        throw new ConflictException(`RFID tag '${dto.rfid_tag}' is already registered to another animal.`);
+        throw new ConflictException(
+          `RFID tag '${dto.rfid_tag}' is already registered to another animal.`,
+        );
       }
     }
 
@@ -710,27 +941,45 @@ export class AnimalService {
     }
     if (dto.rfid_tag !== undefined) updates.rfid_tag = dto.rfid_tag;
     if (dto.ear_tag !== undefined) updates.ear_tag = dto.ear_tag;
-    if (dto.ear_tag_image_url !== undefined) updates.ear_tag_image_url = dto.ear_tag_image_url;
-    if (dto.sire_animal_id !== undefined) updates.sire_animal_id = dto.sire_animal_id;
-    if (dto.dam_animal_id !== undefined) updates.dam_animal_id = dto.dam_animal_id;
-    if (dto.current_stage_id !== undefined) updates.current_stage_id = dto.current_stage_id;
-    if (dto.current_batch_id !== undefined) updates.current_batch_id = dto.current_batch_id;
-    if (dto.current_location_id !== undefined) updates.current_location_id = dto.current_location_id;
+    if (dto.ear_tag_image_url !== undefined)
+      updates.ear_tag_image_url = dto.ear_tag_image_url;
+    if (dto.sire_animal_id !== undefined)
+      updates.sire_animal_id = dto.sire_animal_id;
+    if (dto.dam_animal_id !== undefined)
+      updates.dam_animal_id = dto.dam_animal_id;
+    if (dto.current_stage_id !== undefined)
+      updates.current_stage_id = dto.current_stage_id;
+    if (dto.current_batch_id !== undefined)
+      updates.current_batch_id = dto.current_batch_id;
+    if (dto.current_location_id !== undefined)
+      updates.current_location_id = dto.current_location_id;
     if (dto.parity_count !== undefined) updates.parity_count = dto.parity_count;
-    if (dto.total_piglets_born_live !== undefined) updates.total_piglets_born_live = dto.total_piglets_born_live;
-    if (dto.total_piglets_weaned !== undefined) updates.total_piglets_weaned = dto.total_piglets_weaned;
-    if (dto.current_bio_asset_value !== undefined) updates.current_bio_asset_value = dto.current_bio_asset_value?.toString() ?? null;
-    if (dto.total_amortised !== undefined) updates.total_amortised = dto.total_amortised?.toString() ?? null;
-    if (dto.book_value !== undefined) updates.book_value = dto.book_value?.toString() ?? null;
-    if (dto.residual_value !== undefined) updates.residual_value = dto.residual_value?.toString() ?? null;
-    if (dto.amortisation_monthly !== undefined) updates.amortisation_monthly = dto.amortisation_monthly?.toString() ?? null;
-    if (dto.productive_life_start !== undefined) updates.productive_life_start = dto.productive_life_start;
-    if (dto.expected_cull_date !== undefined) updates.expected_cull_date = dto.expected_cull_date;
+    if (dto.total_piglets_born_live !== undefined)
+      updates.total_piglets_born_live = dto.total_piglets_born_live;
+    if (dto.total_piglets_weaned !== undefined)
+      updates.total_piglets_weaned = dto.total_piglets_weaned;
+    if (dto.current_bio_asset_value !== undefined)
+      updates.current_bio_asset_value =
+        dto.current_bio_asset_value?.toString() ?? null;
+    if (dto.total_amortised !== undefined)
+      updates.total_amortised = dto.total_amortised?.toString() ?? null;
+    if (dto.book_value !== undefined)
+      updates.book_value = dto.book_value?.toString() ?? null;
+    if (dto.residual_value !== undefined)
+      updates.residual_value = dto.residual_value?.toString() ?? null;
+    if (dto.amortisation_monthly !== undefined)
+      updates.amortisation_monthly =
+        dto.amortisation_monthly?.toString() ?? null;
+    if (dto.productive_life_start !== undefined)
+      updates.productive_life_start = dto.productive_life_start;
+    if (dto.expected_cull_date !== undefined)
+      updates.expected_cull_date = dto.expected_cull_date;
     if (dto.status !== undefined) updates.status = dto.status;
     if (dto.no_of_teats !== undefined) updates.no_of_teats = dto.no_of_teats;
     if (dto.tsi !== undefined) updates.tsi = dto.tsi?.toString() ?? null;
     if (dto.grading !== undefined) updates.grading = dto.grading;
-    if (dto.serial_number !== undefined) updates.serial_number = dto.serial_number;
+    if (dto.serial_number !== undefined)
+      updates.serial_number = dto.serial_number;
     if (dto.notes !== undefined) updates.notes = dto.notes;
 
     // current_batch_id/current_stage_id are the fields two concurrent requests
@@ -743,21 +992,38 @@ export class AnimalService {
     // that commit ("last write wins" would let both callers believe they
     // succeeded). Other fields on this DTO don't have this race, so the lock
     // is scoped to only when the request actually touches assignment state.
-    const touchesAssignment = dto.current_batch_id !== undefined || dto.current_stage_id !== undefined;
+    const touchesAssignment =
+      dto.current_batch_id !== undefined || dto.current_stage_id !== undefined;
     if (touchesAssignment) {
       await this.db.transaction(async (tx) => {
         const [locked] = await tx
-          .select({ current_batch_id: schema.animalRegister.current_batch_id, current_stage_id: schema.animalRegister.current_stage_id })
+          .select({
+            current_batch_id: schema.animalRegister.current_batch_id,
+            current_stage_id: schema.animalRegister.current_stage_id,
+          })
           .from(schema.animalRegister)
           .where(eq(schema.animalRegister.animal_id, id))
           .for('update');
-        if (dto.current_batch_id !== undefined && locked.current_batch_id !== animal.current_batch_id) {
-          throw new ConflictException(`Animal '${animal.animal_code}' was already moved to a different batch by another request. Reload and try again.`);
+        if (
+          dto.current_batch_id !== undefined &&
+          locked.current_batch_id !== animal.current_batch_id
+        ) {
+          throw new ConflictException(
+            `Animal '${animal.animal_code}' was already moved to a different batch by another request. Reload and try again.`,
+          );
         }
-        if (dto.current_stage_id !== undefined && locked.current_stage_id !== animal.current_stage_id) {
-          throw new ConflictException(`Animal '${animal.animal_code}' was already moved to a different stage by another request. Reload and try again.`);
+        if (
+          dto.current_stage_id !== undefined &&
+          locked.current_stage_id !== animal.current_stage_id
+        ) {
+          throw new ConflictException(
+            `Animal '${animal.animal_code}' was already moved to a different stage by another request. Reload and try again.`,
+          );
         }
-        await tx.update(schema.animalRegister).set(updates).where(eq(schema.animalRegister.animal_id, id));
+        await tx
+          .update(schema.animalRegister)
+          .set(updates)
+          .where(eq(schema.animalRegister.animal_id, id));
       });
     } else {
       await this.db
@@ -772,16 +1038,34 @@ export class AnimalService {
     // dedicated flows exist as separate endpoints, so movement logging has to
     // live here too, not just in transitionStage(). No explicit event date on
     // this DTO (unlike transitionStage's transition_date), so today stands in.
-    const batchChanged = dto.current_batch_id !== undefined && dto.current_batch_id !== animal.current_batch_id;
-    const stageChanged = dto.current_stage_id !== undefined && dto.current_stage_id !== animal.current_stage_id;
-    const locationChanged = dto.current_location_id !== undefined && dto.current_location_id !== animal.current_location_id;
+    const batchChanged =
+      dto.current_batch_id !== undefined &&
+      dto.current_batch_id !== animal.current_batch_id;
+    const stageChanged =
+      dto.current_stage_id !== undefined &&
+      dto.current_stage_id !== animal.current_stage_id;
+    const locationChanged =
+      dto.current_location_id !== undefined &&
+      dto.current_location_id !== animal.current_location_id;
     if (batchChanged || stageChanged || locationChanged) {
-      const newBatchId = batchChanged ? dto.current_batch_id! : animal.current_batch_id;
-      const newStageId = stageChanged ? dto.current_stage_id! : animal.current_stage_id;
-      const newLocationId = locationChanged ? dto.current_location_id! : animal.current_location_id;
+      const newBatchId = batchChanged
+        ? dto.current_batch_id!
+        : animal.current_batch_id;
+      const newStageId = stageChanged
+        ? dto.current_stage_id!
+        : animal.current_stage_id;
+      const newLocationId = locationChanged
+        ? dto.current_location_id!
+        : animal.current_location_id;
       const movementType = batchChanged
-        ? (newBatchId ? (animal.current_batch_id ? 'TRANSFER' : 'ASSIGN') : 'UNASSIGN')
-        : stageChanged ? 'STAGE_CHANGE' : 'RELOCATE';
+        ? newBatchId
+          ? animal.current_batch_id
+            ? 'TRANSFER'
+            : 'ASSIGN'
+          : 'UNASSIGN'
+        : stageChanged
+          ? 'STAGE_CHANGE'
+          : 'RELOCATE';
 
       await this.movementLog.record({
         tenantId,
@@ -801,7 +1085,12 @@ export class AnimalService {
       // Only meaningful once the animal has landed in both a batch and a
       // stage — an assign-with-no-stage-yet has nothing to schedule against.
       if (newBatchId && newStageId) {
-        await this.schedulerHeaderService.createForStage(newBatchId, newStageId, tenantId, userPayload);
+        await this.schedulerHeaderService.createForStage(
+          newBatchId,
+          newStageId,
+          tenantId,
+          userPayload,
+        );
       }
     }
 
@@ -826,19 +1115,30 @@ export class AnimalService {
    * only when book_value is already known (it's a plain column in this phase, not
    * ledger-derived — see schema.ts's animal_register comment).
    */
-  async dispose(id: string, dto: DisposeAnimalDto, tenantId: string, userPayload?: any) {
+  async dispose(
+    id: string,
+    dto: DisposeAnimalDto,
+    tenantId: string,
+    userPayload?: any,
+  ) {
     const animal = await this.findOne(id);
 
     if (!animal.is_active) {
-      throw new BadRequestException(`Animal '${animal.animal_code}' has already been disposed.`);
+      throw new BadRequestException(
+        `Animal '${animal.animal_code}' has already been disposed.`,
+      );
     }
 
     if (dto.disposal_type === 'SLAUGHTERED') {
       await this.assertWithdrawalPeriodsElapsed(id, dto.disposal_date);
     }
 
-    const bookValue = animal.book_value != null ? Number(animal.book_value) : null;
-    const gainLoss = dto.disposal_value != null && bookValue != null ? dto.disposal_value - bookValue : null;
+    const bookValue =
+      animal.book_value != null ? Number(animal.book_value) : null;
+    const gainLoss =
+      dto.disposal_value != null && bookValue != null
+        ? dto.disposal_value - bookValue
+        : null;
     const mappedStatus = DISPOSAL_STATUS_MAP[dto.disposal_type];
 
     const updates: any = {
@@ -948,10 +1248,12 @@ export class AnimalService {
       .from(schema.breedingRecord)
       .leftJoin(sow, eq(sow.animal_id, schema.breedingRecord.sow_animal_id))
       .leftJoin(boar, eq(boar.animal_id, schema.breedingRecord.boar_animal_id))
-      .where(or(
-        eq(schema.breedingRecord.sow_animal_id, animalId),
-        eq(schema.breedingRecord.boar_animal_id, animalId),
-      ))
+      .where(
+        or(
+          eq(schema.breedingRecord.sow_animal_id, animalId),
+          eq(schema.breedingRecord.boar_animal_id, animalId),
+        ),
+      )
       .orderBy(desc(schema.breedingRecord.mating_date));
 
     // Farrowings hang off the sow only — a boar's litters are reachable through
@@ -962,7 +1264,12 @@ export class AnimalService {
       .where(eq(schema.farrowingRecord.sow_animal_id, animalId))
       .orderBy(desc(schema.farrowingRecord.farrowing_date));
 
-    return { animal_code: animal.animal_code, animal_type: animal.animal_type, matings, farrowings };
+    return {
+      animal_code: animal.animal_code,
+      animal_type: animal.animal_type,
+      matings,
+      farrowings,
+    };
   }
 
   async getBioAssetLedger(animalId: string) {
@@ -990,7 +1297,10 @@ export class AnimalService {
     dto: BulkTransitionAnimalStageDto,
     tenantId: string,
     userPayload?: any,
-  ): Promise<{ moved: number; failed: Array<{ animal_id: string; reason: string }> }> {
+  ): Promise<{
+    moved: number;
+    failed: Array<{ animal_id: string; reason: string }>;
+  }> {
     const animalIds = dto.animal_ids ?? [];
     if (animalIds.length === 0) {
       throw new BadRequestException('Select at least one animal to move.');
@@ -1014,21 +1324,35 @@ export class AnimalService {
     return { moved, failed };
   }
 
-  async transitionStage(id: string, dto: TransitionAnimalStageDto, tenantId: string, userPayload?: any) {
+  async transitionStage(
+    id: string,
+    dto: TransitionAnimalStageDto,
+    tenantId: string,
+    userPayload?: any,
+  ) {
     const animal = await this.findOne(id);
     if (!animal.is_active) {
-      throw new BadRequestException(`Cannot transition disposed or inactive animal '${animal.animal_code}'.`);
+      throw new BadRequestException(
+        `Cannot transition disposed or inactive animal '${animal.animal_code}'.`,
+      );
     }
 
     // 1. Verify destination stage
     const [destStage] = await this.db
       .select()
       .from(schema.stageMaster)
-      .where(and(eq(schema.stageMaster.stage_id, dto.to_stage_id), eq(schema.stageMaster.tenant_id, tenantId)))
+      .where(
+        and(
+          eq(schema.stageMaster.stage_id, dto.to_stage_id),
+          eq(schema.stageMaster.tenant_id, tenantId),
+        ),
+      )
       .limit(1);
 
     if (!destStage) {
-      throw new NotFoundException(`Destination Stage with ID '${dto.to_stage_id}' not found.`);
+      throw new NotFoundException(
+        `Destination Stage with ID '${dto.to_stage_id}' not found.`,
+      );
     }
 
     // 2. Minimum duration validation if moving from a stage that specifies min_days_before_move
@@ -1040,7 +1364,10 @@ export class AnimalService {
         .where(eq(schema.stageMaster.stage_id, animal.current_stage_id))
         .limit(1);
 
-      if (currentStage?.min_days_before_move && currentStage.min_days_before_move > 0) {
+      if (
+        currentStage?.min_days_before_move &&
+        currentStage.min_days_before_move > 0
+      ) {
         // Prefer the date the animal actually entered its CURRENT stage (the
         // most recent movement-log row that landed it there) over its overall
         // farm entry_date — otherwise an animal past its first stage is
@@ -1048,22 +1375,29 @@ export class AnimalService {
         const [lastStageEntry] = await this.db
           .select({ event_date: schema.animalMovementLog.event_date })
           .from(schema.animalMovementLog)
-          .where(and(
-            eq(schema.animalMovementLog.animal_id, id),
-            eq(schema.animalMovementLog.to_stage_id, animal.current_stage_id),
-          ))
+          .where(
+            and(
+              eq(schema.animalMovementLog.animal_id, id),
+              eq(schema.animalMovementLog.to_stage_id, animal.current_stage_id),
+            ),
+          )
           .orderBy(desc(schema.animalMovementLog.event_date))
           .limit(1);
 
         const stageEntryDate = lastStageEntry
           ? new Date(lastStageEntry.event_date)
-          : (animal.entry_date ? new Date(animal.entry_date) : new Date(animal.created_at));
+          : animal.entry_date
+            ? new Date(animal.entry_date)
+            : new Date(animal.created_at);
         const transDate = new Date(dto.transition_date);
-        const daysPassed = Math.floor((transDate.getTime() - stageEntryDate.getTime()) / (1000 * 60 * 60 * 24));
+        const daysPassed = Math.floor(
+          (transDate.getTime() - stageEntryDate.getTime()) /
+            (1000 * 60 * 60 * 24),
+        );
 
         if (daysPassed < currentStage.min_days_before_move && !dto.reason) {
           throw new BadRequestException(
-            `Minimum duration of ${currentStage.min_days_before_move} days required for '${currentStage.stage_name}' before transition (current: ${daysPassed} days in this stage). Provide a reason to override.`
+            `Minimum duration of ${currentStage.min_days_before_move} days required for '${currentStage.stage_name}' before transition (current: ${daysPassed} days in this stage). Provide a reason to override.`,
           );
         }
       }
@@ -1074,10 +1408,17 @@ export class AnimalService {
       const [loc] = await this.db
         .select()
         .from(schema.locationMaster)
-        .where(and(eq(schema.locationMaster.location_id, dto.to_location_id), eq(schema.locationMaster.tenant_id, tenantId)))
+        .where(
+          and(
+            eq(schema.locationMaster.location_id, dto.to_location_id),
+            eq(schema.locationMaster.tenant_id, tenantId),
+          ),
+        )
         .limit(1);
       if (!loc) {
-        throw new NotFoundException(`Destination Location with ID '${dto.to_location_id}' not found.`);
+        throw new NotFoundException(
+          `Destination Location with ID '${dto.to_location_id}' not found.`,
+        );
       }
     }
 
@@ -1086,10 +1427,17 @@ export class AnimalService {
       const [batch] = await this.db
         .select()
         .from(schema.batchHeader)
-        .where(and(eq(schema.batchHeader.batch_id, dto.to_batch_id), eq(schema.batchHeader.tenant_id, tenantId)))
+        .where(
+          and(
+            eq(schema.batchHeader.batch_id, dto.to_batch_id),
+            eq(schema.batchHeader.tenant_id, tenantId),
+          ),
+        )
         .limit(1);
       if (!batch) {
-        throw new NotFoundException(`Destination Batch with ID '${dto.to_batch_id}' not found.`);
+        throw new NotFoundException(
+          `Destination Batch with ID '${dto.to_batch_id}' not found.`,
+        );
       }
     }
 
@@ -1098,14 +1446,25 @@ export class AnimalService {
     const destCode = destStage.stage_code?.toUpperCase();
     if (
       animal.gender === 'F' &&
-      ['WEANING', 'DRY_SOW_GESTATION', 'FLUSH_SERVICE', 'DRY_PERIOD', 'GESTATION', 'FLUSH'].includes(destCode || '') &&
+      [
+        'WEANING',
+        'DRY_SOW_GESTATION',
+        'FLUSH_SERVICE',
+        'DRY_PERIOD',
+        'GESTATION',
+        'FLUSH',
+      ].includes(destCode || '') &&
       currentStage?.stage_code?.toUpperCase()?.includes('FARROW')
     ) {
       newParity += 1;
     }
 
-    const newBatchId = dto.to_batch_id !== undefined ? dto.to_batch_id : animal.current_batch_id;
-    const newLocationId = dto.to_location_id !== undefined ? dto.to_location_id : animal.current_location_id;
+    const newBatchId =
+      dto.to_batch_id !== undefined ? dto.to_batch_id : animal.current_batch_id;
+    const newLocationId =
+      dto.to_location_id !== undefined
+        ? dto.to_location_id
+        : animal.current_location_id;
     const isCrossBatchMove = newBatchId !== animal.current_batch_id;
 
     // A real cross-batch move (this animal already belongs to a source batch,
@@ -1145,7 +1504,9 @@ export class AnimalService {
       // destination batch's own nominal stage (exactly the ANIMAL_WISE case:
       // several animals landing in the same batch at different stages). Set
       // it explicitly rather than trusting whatever the transfer inferred.
-      await this.db.update(schema.animalRegister).set({ current_stage_id: dto.to_stage_id, parity_count: newParity })
+      await this.db
+        .update(schema.animalRegister)
+        .set({ current_stage_id: dto.to_stage_id, parity_count: newParity })
         .where(eq(schema.animalRegister.animal_id, id));
     } else {
       await this.db
@@ -1165,12 +1526,22 @@ export class AnimalService {
     // transferStage() already makes for a whole-batch move, just scoped to
     // this one animal's own stage instead. No-ops if it already exists.
     if (newBatchId) {
-      await this.schedulerHeaderService.createForStage(newBatchId, dto.to_stage_id, tenantId, userPayload);
+      await this.schedulerHeaderService.createForStage(
+        newBatchId,
+        dto.to_stage_id,
+        tenantId,
+        userPayload,
+      );
     }
 
     const movementType = isCrossBatchMove
-      ? (animal.current_batch_id ? 'TRANSFER' : 'ASSIGN') // same distinction update() makes: no prior batch means nothing to move value FROM
-      : (newLocationId !== animal.current_location_id && dto.to_stage_id === animal.current_stage_id ? 'RELOCATE' : 'STAGE_CHANGE');
+      ? animal.current_batch_id
+        ? 'TRANSFER'
+        : 'ASSIGN' // same distinction update() makes: no prior batch means nothing to move value FROM
+      : newLocationId !== animal.current_location_id &&
+          dto.to_stage_id === animal.current_stage_id
+        ? 'RELOCATE'
+        : 'STAGE_CHANGE';
     await this.movementLog.record({
       tenantId,
       companyId: animal.company_id,

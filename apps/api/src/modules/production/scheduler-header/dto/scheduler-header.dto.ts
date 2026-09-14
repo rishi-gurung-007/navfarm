@@ -1,23 +1,64 @@
 import { ApiProperty } from '@nestjs/swagger';
 import {
-  IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsInt, Min, IsNumber, IsIn, IsArray, ValidateNested,
+  IsString,
+  IsNotEmpty,
+  IsOptional,
+  IsUUID,
+  IsBoolean,
+  IsInt,
+  Min,
+  IsNumber,
+  IsIn,
+  IsArray,
+  ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
-export const LINE_TYPES = ['CONSUMPTION', 'OUTPUT', 'DESCRIPTIVE', 'OVERHEAD', 'RESOURCE', 'TRANSFER'] as const;
-export const OCCURRENCES = ['DAILY', 'WEEKLY', 'MONTHLY', 'ONCE', 'CUSTOM'] as const;
-export const QTY_BASES = ['PER_HEAD', 'TOTAL_BATCH', 'PER_PEN', 'FIXED'] as const;
+export const LINE_TYPES = [
+  'CONSUMPTION',
+  'OUTPUT',
+  'DESCRIPTIVE',
+  'OVERHEAD',
+  'RESOURCE',
+  'TRANSFER',
+] as const;
+export const OCCURRENCES = [
+  'DAILY',
+  'WEEKLY',
+  'MONTHLY',
+  'ONCE',
+  'CUSTOM',
+] as const;
+export const QTY_BASES = [
+  'PER_HEAD',
+  'TOTAL_BATCH',
+  'PER_PEN',
+  'FIXED',
+] as const;
 export const OUTPUT_BASES = ['PER_SOW', 'PER_PEN', 'PER_BATCH'] as const;
 export const DATA_ENTRY_LEVELS = ['FARM', 'SHED', 'PEN'] as const;
 export const KPI_METRICS = [
-  'BODY_WEIGHT', 'FCR', 'ADG', 'BCS_SCORE', 'MORTALITY_COUNT', 'TEMPERATURE',
-  'HEAD_COUNT', 'LITTER_SIZE', 'WEANING_WEIGHT', 'PIGLETS_BORN', 'SEMEN_MOTILITY',
-  'EGG_COUNT', 'MILK_LITRES', 'CUSTOM',
+  'BODY_WEIGHT',
+  'FCR',
+  'ADG',
+  'BCS_SCORE',
+  'MORTALITY_COUNT',
+  'TEMPERATURE',
+  'HEAD_COUNT',
+  'LITTER_SIZE',
+  'WEANING_WEIGHT',
+  'PIGLETS_BORN',
+  'SEMEN_MOTILITY',
+  'EGG_COUNT',
+  'MILK_LITRES',
+  'CUSTOM',
 ] as const;
 export const CAPTURE_PERS = ['AVERAGE', 'TOTAL', 'PER_HEAD'] as const;
 
 export class GenerateSchedulerHeaderDto {
-  @ApiProperty({ description: 'Batch UUID to generate this stage\'s schedule for' })
+  @ApiProperty({
+    description: "Batch UUID to generate this stage's schedule for",
+  })
   @IsUUID()
   @IsNotEmpty()
   batch_id: string;
@@ -102,15 +143,28 @@ export class UpdateSchedulerHeaderDto {
   notes?: string;
 }
 
-export const SCHEDULER_STATUSES = ['DRAFT', 'ACTIVE', 'COMPLETED', 'SUSPENDED'] as const;
+export const SCHEDULER_STATUSES = [
+  'DRAFT',
+  'ACTIVE',
+  'COMPLETED',
+  'SUSPENDED',
+] as const;
 
 export class QuerySchedulerHeaderDto {
-  @ApiProperty({ description: 'Filter by batch UUID — returns that batch\'s full schedule history (one row per stage)', required: false })
+  @ApiProperty({
+    description:
+      "Filter by batch UUID — returns that batch's full schedule history (one row per stage)",
+    required: false,
+  })
   @IsOptional()
   @IsUUID()
   batchId?: string;
 
-  @ApiProperty({ description: 'Filter by company UUID — used for the company-wide Scheduler list when batchId is omitted', required: false })
+  @ApiProperty({
+    description:
+      'Filter by company UUID — used for the company-wide Scheduler list when batchId is omitted',
+    required: false,
+  })
   @IsOptional()
   @IsUUID()
   companyId?: string;
@@ -173,13 +227,21 @@ export class CreateSchedulerLineDto {
   @Min(1)
   end_day?: number;
 
-  @ApiProperty({ description: '1=Monday..7=Sunday — required when occurrence=WEEKLY', required: false })
+  @ApiProperty({
+    description: '1=Monday..7=Sunday — required when occurrence=WEEKLY',
+    required: false,
+  })
   @IsOptional()
   @IsInt()
   @Min(1)
   day_of_week?: number;
 
-  @ApiProperty({ description: 'Day numbers (from stage start) — required when occurrence=CUSTOM', required: false, type: [Number] })
+  @ApiProperty({
+    description:
+      'Day numbers (from stage start) — required when occurrence=CUSTOM',
+    required: false,
+    type: [Number],
+  })
   @IsOptional()
   @IsArray()
   custom_days?: number[];
@@ -189,12 +251,19 @@ export class CreateSchedulerLineDto {
   @IsBoolean()
   is_mandatory?: boolean;
 
-  @ApiProperty({ description: 'Item UUID — CONSUMPTION / OUTPUT', required: false })
+  @ApiProperty({
+    description: 'Item UUID — CONSUMPTION / OUTPUT',
+    required: false,
+  })
   @IsOptional()
   @IsUUID()
   item_id?: string;
 
-  @ApiProperty({ description: 'Free-editable description — pre-filled from item_master.item_name on item_id selection but not locked to it', required: false })
+  @ApiProperty({
+    description:
+      'Free-editable description — pre-filled from item_master.item_name on item_id selection but not locked to it',
+    required: false,
+  })
   @IsOptional()
   @IsString()
   item_description?: string;
@@ -204,7 +273,11 @@ export class CreateSchedulerLineDto {
   @IsNumber()
   standard_qty?: number;
 
-  @ApiProperty({ enum: QTY_BASES, description: 'CONSUMPTION only', required: false })
+  @ApiProperty({
+    enum: QTY_BASES,
+    description: 'CONSUMPTION only',
+    required: false,
+  })
   @IsOptional()
   @IsString()
   @IsIn(QTY_BASES)
@@ -215,7 +288,12 @@ export class CreateSchedulerLineDto {
   @IsBoolean()
   allow_qty_edit?: boolean;
 
-  @ApiProperty({ description: 'CONSUMPTION only — FIFO traceability and medicine withdrawal-period tracking', required: false, default: false })
+  @ApiProperty({
+    description:
+      'CONSUMPTION only — FIFO traceability and medicine withdrawal-period tracking',
+    required: false,
+    default: false,
+  })
   @IsOptional()
   @IsBoolean()
   lot_required?: boolean;
@@ -230,7 +308,11 @@ export class CreateSchedulerLineDto {
   @IsBoolean()
   output_lot_auto?: boolean;
 
-  @ApiProperty({ enum: OUTPUT_BASES, description: 'OUTPUT only', required: false })
+  @ApiProperty({
+    enum: OUTPUT_BASES,
+    description: 'OUTPUT only',
+    required: false,
+  })
   @IsOptional()
   @IsString()
   @IsIn(OUTPUT_BASES)
@@ -261,13 +343,20 @@ export class CreateSchedulerLineDto {
   @IsNumber()
   upper_alert_limit?: number;
 
-  @ApiProperty({ enum: ['INFO', 'WARNING', 'CRITICAL'], required: false, default: 'WARNING' })
+  @ApiProperty({
+    enum: ['INFO', 'WARNING', 'CRITICAL'],
+    required: false,
+    default: 'WARNING',
+  })
   @IsOptional()
   @IsString()
   @IsIn(['INFO', 'WARNING', 'CRITICAL'])
   alert_severity?: string;
 
-  @ApiProperty({ description: 'DESCRIPTIVE only — AVERAGE / TOTAL / PER_HEAD', required: false })
+  @ApiProperty({
+    description: 'DESCRIPTIVE only — AVERAGE / TOTAL / PER_HEAD',
+    required: false,
+  })
   @IsOptional()
   @IsString()
   capture_per?: string;
@@ -277,7 +366,10 @@ export class CreateSchedulerLineDto {
   @IsString()
   overhead_category?: string;
 
-  @ApiProperty({ description: 'OVERHEAD / RESOURCE — gl_account_master.account_code', required: false })
+  @ApiProperty({
+    description: 'OVERHEAD / RESOURCE — gl_account_master.account_code',
+    required: false,
+  })
   @IsOptional()
   @IsString()
   gl_account?: string;
@@ -292,7 +384,12 @@ export class CreateSchedulerLineDto {
   @IsUUID()
   resource_id?: string;
 
-  @ApiProperty({ description: 'TRANSFER only — auto-create the destination batch\'s scheduler_header for its current stage when this line is posted', required: false, default: false })
+  @ApiProperty({
+    description:
+      "TRANSFER only — auto-create the destination batch's scheduler_header for its current stage when this line is posted",
+    required: false,
+    default: false,
+  })
   @IsOptional()
   @IsBoolean()
   auto_triggers_stage?: boolean;

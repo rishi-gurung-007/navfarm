@@ -13,7 +13,11 @@ export class CreateCountryDto {
   @ApiProperty({ description: 'Full country name', example: 'India' })
   country_name: string;
 
-  @ApiProperty({ description: 'International dialing code', required: false, example: '+91' })
+  @ApiProperty({
+    description: 'International dialing code',
+    required: false,
+    example: '+91',
+  })
   phone_code?: string;
 
   @ApiProperty({ description: 'Default timezone UUID', required: false })
@@ -53,7 +57,10 @@ export class UpdateCountryDto {
 }
 
 export class CreateStateDto {
-  @ApiProperty({ description: 'Short state code, unique per country', example: 'MH' })
+  @ApiProperty({
+    description: 'Short state code, unique per country',
+    example: 'MH',
+  })
   state_code: string;
 
   @ApiProperty({ description: 'Full state name', example: 'Maharashtra' })
@@ -71,7 +78,6 @@ export class UpdateStateDto {
   is_active?: boolean;
 }
 
-
 export class QueryCountryDto extends MasterListQueryDto {
   /**
    * Accepted, not applied. Every master list sends the active company, and the
@@ -80,19 +86,27 @@ export class QueryCountryDto extends MasterListQueryDto {
    * and rendered as empty. `country_master` has no company_id: countries are
    * tenant-wide reference data, the same list for every company under it.
    */
-  @ApiProperty({ description: 'Ignored — countries are tenant-wide, not company-scoped.', required: false })
+  @ApiProperty({
+    description: 'Ignored — countries are tenant-wide, not company-scoped.',
+    required: false,
+  })
   @IsOptional()
   @IsString()
   companyId?: string;
 
-  @ApiProperty({ description: 'Search ISO code or country name', required: false })
+  @ApiProperty({
+    description: 'Search ISO code or country name',
+    required: false,
+  })
   @IsOptional()
   @IsString()
   search?: string;
 
   @ApiProperty({ description: 'Filter by active status', required: false })
   @IsOptional()
-  @Transform(({ value }) => (value === 'true' ? true : value === 'false' ? false : value))
+  @Transform(({ value }) =>
+    value === 'true' ? true : value === 'false' ? false : value,
+  )
   @IsBoolean()
   isActive?: boolean;
 }

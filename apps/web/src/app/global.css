@@ -1,13 +1,25 @@
 @import 'tailwindcss';
 
 @keyframes fade-in {
-  from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 @keyframes slide-up {
-  from { opacity: 0; transform: translateY(16px) scale(0.985); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
+  from {
+    opacity: 0;
+    transform: translateY(16px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 :root {
@@ -111,7 +123,8 @@ body {
   min-width: 320px;
   color: var(--text-secondary);
   background: var(--bg);
-  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', sans-serif;
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', sans-serif;
   font-size: 1rem;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
@@ -167,7 +180,9 @@ body {
      visible remains focusable and still reachable by a screen reader. */
   visibility: hidden;
   transform: translateX(-100%);
-  transition: transform 240ms cubic-bezier(0.22, 1, 0.36, 1), visibility 240ms;
+  transition:
+    transform 240ms cubic-bezier(0.22, 1, 0.36, 1),
+    visibility 240ms;
 }
 
 [data-shell-region='primary-nav'][data-open='true'] {
@@ -531,7 +546,9 @@ body {
   line-height: 1.35;
   text-align: start;
   cursor: pointer;
-  transition: background-color 120ms ease, color 120ms ease;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
 }
 
 /* Grouped indexes indent their entries under the group caption; a flat index
@@ -612,7 +629,8 @@ body {
     color: var(--text-primary);
   }
 
-  [data-context-nav][data-grouped='false'] [data-context-nav-item][aria-current='page'] {
+  [data-context-nav][data-grouped='false']
+    [data-context-nav-item][aria-current='page'] {
     border-bottom-color: var(--accent);
     background: transparent;
   }
@@ -728,8 +746,14 @@ html[data-scroll-locked] body {
    ───────────────────────────────────────────────────────────────────────── */
 
 @keyframes nf-popover-in {
-  from { opacity: 0; transform: translateY(-2px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 [data-popover-anchor] {
@@ -758,10 +782,18 @@ html[data-scroll-locked] body {
   overscroll-behavior: contain;
 }
 
-[data-popover-panel][data-side='bottom'] { top: calc(100% + 6px); }
-[data-popover-panel][data-side='top'] { bottom: calc(100% + 6px); }
-[data-popover-panel][data-align='end'] { inset-inline-end: 0; }
-[data-popover-panel][data-align='start'] { inset-inline-start: 0; }
+[data-popover-panel][data-side='bottom'] {
+  top: calc(100% + 6px);
+}
+[data-popover-panel][data-side='top'] {
+  bottom: calc(100% + 6px);
+}
+[data-popover-panel][data-align='end'] {
+  inset-inline-end: 0;
+}
+[data-popover-panel][data-align='start'] {
+  inset-inline-start: 0;
+}
 
 /* A searchable select's panel stands in for the trigger it opens from — a form field — so it
    must match that field's actual width, not the shared menu-style min/max-width range above.
@@ -827,17 +859,23 @@ html[data-scroll-locked] body {
   line-height: 1.3;
   text-align: start;
   text-decoration: none;
-  transition: background-color 120ms ease, color 120ms ease;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
 }
 
 /* Touch devices get the 44px target from apple.design.md §18 without the
    desktop menu turning into a list of oversized rows. */
 @media (pointer: coarse) {
-  [data-menu-item] { min-height: 44px; }
+  [data-menu-item] {
+    min-height: 44px;
+  }
 }
 
 [data-menu-item]:hover,
-[data-menu-item]:focus-visible { background: var(--surface-secondary); }
+[data-menu-item]:focus-visible {
+  background: var(--surface-secondary);
+}
 
 /* Inset ring: the standard 2px offset ring would be clipped by the panel edge
    on the outermost items. This replaces it, it does not remove it. */
@@ -847,24 +885,37 @@ html[data-scroll-locked] body {
 }
 
 /* Navfarm red earns its place on the one destructive action in the menu. */
-[data-menu-item][data-tone='danger'] { color: var(--danger); }
+[data-menu-item][data-tone='danger'] {
+  color: var(--danger);
+}
 [data-menu-item][data-tone='danger']:hover,
-[data-menu-item][data-tone='danger']:focus-visible { background: var(--danger-muted); }
+[data-menu-item][data-tone='danger']:focus-visible {
+  background: var(--danger-muted);
+}
 
 /* Focusable but inert — arrow keys still reach it, activation does nothing. */
 [data-menu-item][aria-disabled='true'] {
   color: var(--text-disabled);
   cursor: default;
 }
-[data-menu-item][aria-disabled='true']:hover { background: transparent; }
+[data-menu-item][aria-disabled='true']:hover {
+  background: transparent;
+}
 
 [data-menu-item][aria-checked='true'] {
   color: var(--accent);
   font-weight: 600;
 }
 
-[data-menu-item-leading] { display: flex; flex-shrink: 0; align-items: center; }
-[data-menu-item-body] { min-width: 0; flex: 1 1 auto; }
+[data-menu-item-leading] {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+}
+[data-menu-item-body] {
+  min-width: 0;
+  flex: 1 1 auto;
+}
 [data-menu-item-label] {
   display: block;
   overflow: hidden;
@@ -898,7 +949,10 @@ html[data-scroll-locked] body {
   background: transparent;
 }
 @media (min-width: 640px) {
-  [data-profile-trigger] { width: 36px; height: 36px; }
+  [data-profile-trigger] {
+    width: 36px;
+    height: 36px;
+  }
 }
 
 [data-profile-avatar] {
@@ -1064,7 +1118,9 @@ html[data-scroll-locked] body {
   border-radius: var(--radius-pill);
   background: transparent;
   color: var(--text-secondary);
-  transition: background-color 120ms ease, color 120ms ease;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
 }
 
 [data-drawer-close]:hover {
@@ -1098,23 +1154,48 @@ html[data-scroll-locked] body {
 }
 
 @media (min-width: 640px) {
-  [data-drawer-header] { padding: 24px 24px 18px; }
-  [data-drawer-body] { padding: 24px; }
-  [data-drawer-footer] { padding: 16px 24px; }
+  [data-drawer-header] {
+    padding: 24px 24px 18px;
+  }
+  [data-drawer-body] {
+    padding: 24px;
+  }
+  [data-drawer-footer] {
+    padding: 16px 24px;
+  }
 }
 
-h1, h2, h3, h4, h5, h6 {
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
   color: var(--text-primary);
   font-weight: 600;
   text-wrap: balance;
 }
 
-p { text-wrap: pretty; }
+p {
+  text-wrap: pretty;
+}
 
-button, a, select, input, textarea { -webkit-tap-highlight-color: transparent; }
-button:not(:disabled), select { cursor: pointer; }
+button,
+a,
+select,
+input,
+textarea {
+  -webkit-tap-highlight-color: transparent;
+}
+button:not(:disabled),
+select {
+  cursor: pointer;
+}
 
-::selection { background: var(--accent-muted); color: var(--selection-text); }
+::selection {
+  background: var(--accent-muted);
+  color: var(--selection-text);
+}
 
 /* Type ladder — apple.design.md §8. Weight discipline: 600 for headings,
    400 for body, 300 rare, 700 reserved for exceptional emphasis, 500
@@ -1186,22 +1267,37 @@ button:not(:disabled), select { cursor: pointer; }
   }
 }
 
-:where(a, button, summary, input, select, textarea, [role='button']):focus-visible {
+:where(
+  a,
+  button,
+  summary,
+  input,
+  select,
+  textarea,
+  [role='button']
+):focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 
-input:not([type='checkbox']):not([type='radio']):not([type='submit']):not([type='button']),
+input:not([type='checkbox']):not([type='radio']):not([type='submit']):not(
+    [type='button']
+  ),
 select,
 textarea {
   border: 1px solid var(--input-border);
   background-color: var(--input-bg);
   color: var(--input-text);
   outline: none;
-  transition: border-color 160ms ease, box-shadow 160ms ease, background-color 160ms ease;
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    background-color 160ms ease;
 }
 
-input:not([type='checkbox']):not([type='radio']):not([type='submit']):not([type='button'])::placeholder,
+input:not([type='checkbox']):not([type='radio']):not([type='submit']):not(
+    [type='button']
+  )::placeholder,
 textarea::placeholder {
   color: var(--input-placeholder);
 }
@@ -1215,7 +1311,10 @@ textarea:focus-visible {
   box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
-.nf-embedded-input:focus-visible { outline: none; box-shadow: none; }
+.nf-embedded-input:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
 
 /* Control size classes matching Apple design spec.
    Wrapped in @layer components: Tailwind utilities always win over ANY
@@ -1234,7 +1333,9 @@ textarea:focus-visible {
     padding: 0.5rem 0.75rem;
     font-size: 0.875rem;
     outline: none;
-    transition: border-color 160ms ease, box-shadow 160ms ease;
+    transition:
+      border-color 160ms ease,
+      box-shadow 160ms ease;
   }
   .nf-input-sm {
     border: 1px solid var(--input-border);
@@ -1244,7 +1345,9 @@ textarea:focus-visible {
     padding: 0.375rem 0.5rem;
     font-size: 0.75rem;
     outline: none;
-    transition: border-color 160ms ease, box-shadow 160ms ease;
+    transition:
+      border-color 160ms ease,
+      box-shadow 160ms ease;
   }
   .nf-input:focus-visible,
   .nf-input-sm:focus-visible {
@@ -1300,8 +1403,12 @@ textarea:focus-visible {
   color: var(--text-muted);
   transition: color 150ms ease;
 }
-.nf-lang-icon { left: 9px; }
-.nf-lang-chevron { right: 8px; }
+.nf-lang-icon {
+  left: 9px;
+}
+.nf-lang-chevron {
+  right: 8px;
+}
 .nf-lang-select {
   height: 32px;
   padding: 0 26px 0 28px;
@@ -1315,11 +1422,18 @@ textarea:focus-visible {
   appearance: none;
   -webkit-appearance: none;
   -moz-appearance: none;
-  transition: border-color 150ms ease, color 150ms ease;
+  transition:
+    border-color 150ms ease,
+    color 150ms ease;
 }
-.nf-lang:hover .nf-lang-select { border-color: var(--border-strong); color: var(--text-primary); }
+.nf-lang:hover .nf-lang-select {
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
 .nf-lang:hover .nf-lang-icon,
-.nf-lang:hover .nf-lang-chevron { color: var(--text-secondary); }
+.nf-lang:hover .nf-lang-chevron {
+  color: var(--text-secondary);
+}
 .nf-lang-select:focus-visible {
   outline: none;
   border-color: var(--input-border-focus);
@@ -1347,30 +1461,64 @@ textarea:focus-visible {
 html[data-theme='dark'] .nf-select {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%239095a0' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
 }
-.nf-glass { background: var(--surface-overlay); backdrop-filter: blur(20px) saturate(160%); }
-.nf-card { border: 1px solid var(--card-border); background: var(--card-bg); border-radius: var(--radius-lg); }
-.nf-touch { min-height: 44px; min-width: 44px; }
+.nf-glass {
+  background: var(--surface-overlay);
+  backdrop-filter: blur(20px) saturate(160%);
+}
+.nf-card {
+  border: 1px solid var(--card-border);
+  background: var(--card-bg);
+  border-radius: var(--radius-lg);
+}
+.nf-touch {
+  min-height: 44px;
+  min-width: 44px;
+}
 
 /* Interaction — apple.design.md §18. Quiet, physical, never bouncy. */
-.nf-press { transition: transform 120ms ease, opacity 120ms ease; }
-.nf-press:active { transform: scale(0.98); }
+.nf-press {
+  transition:
+    transform 120ms ease,
+    opacity 120ms ease;
+}
+.nf-press:active {
+  transform: scale(0.98);
+}
 @media (prefers-reduced-motion: reduce) {
-  .nf-press:active { transform: none; }
+  .nf-press:active {
+    transform: none;
+  }
 }
 
 /* Legacy company settings content is kept functional but presented in the
    same light NAVFarm workspace language as the surrounding console. */
-.nf-company-config { color: var(--text-primary) !important; }
-.nf-company-config [class*='text-white'] { color: var(--text-primary) !important; }
-.nf-company-config [class*='text-gray-'] { color: var(--text-secondary) !important; }
-.nf-company-config [class*='text-teal-'] { color: var(--accent) !important; }
+.nf-company-config {
+  color: var(--text-primary) !important;
+}
+.nf-company-config [class*='text-white'] {
+  color: var(--text-primary) !important;
+}
+.nf-company-config [class*='text-gray-'] {
+  color: var(--text-secondary) !important;
+}
+.nf-company-config [class*='text-teal-'] {
+  color: var(--accent) !important;
+}
 .nf-company-config [class*='bg-[#121824]'],
-.nf-company-config [class*='bg-[#0b0f19]'] { background-color: var(--surface-raised) !important; }
+.nf-company-config [class*='bg-[#0b0f19]'] {
+  background-color: var(--surface-raised) !important;
+}
 .nf-company-config [class*='border-[#1a1f2e]'],
-.nf-company-config [class*='border-gray-8'] { border-color: var(--border) !important; }
-.nf-company-config [class*='bg-teal-'] { background-color: var(--accent-muted) !important; }
+.nf-company-config [class*='border-gray-8'] {
+  border-color: var(--border) !important;
+}
+.nf-company-config [class*='bg-teal-'] {
+  background-color: var(--accent-muted) !important;
+}
 .nf-company-config button[class*='bg-[#0b1248]'],
-.nf-company-config button[type='submit'] { color: #fff !important; }
+.nf-company-config button[type='submit'] {
+  color: #fff !important;
+}
 .nf-company-config .nf-primary-action {
   background: var(--accent) !important;
   color: #fff !important;
@@ -1381,13 +1529,27 @@ html[data-theme='dark'] .nf-select {
   color: var(--input-text) !important;
 }
 
-::-webkit-scrollbar { width: 8px; height: 8px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--border); border-radius: 999px; }
-::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
 
-.animate-fade-in { animation: fade-in 0.45s ease-out both; }
-.animate-slide-up { animation: slide-up 0.45s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.animate-fade-in {
+  animation: fade-in 0.45s ease-out both;
+}
+.animate-slide-up {
+  animation: slide-up 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
 
 html[data-theme='dark'] {
   color-scheme: dark;
@@ -1446,7 +1608,9 @@ html[data-theme='dark'] {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
+  *,
+  *::before,
+  *::after {
     scroll-behavior: auto !important;
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;

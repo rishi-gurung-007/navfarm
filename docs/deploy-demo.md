@@ -75,8 +75,8 @@ steps instead: `db-bootstrap`, `db-sync-nob-lob`, `db-sync-locale-master`,
 2. Set the server-only env vars from `apps/web/.env.example`:
    - `NAVFARM_API_MODE=proxy`
    - `NAVFARM_API_UPSTREAM_URL=https://<railway-api-domain>`
-   Browser requests remain same-origin at `/api/v1`; the Next.js server proxies
-   them to Railway.
+     Browser requests remain same-origin at `/api/v1`; the Next.js server proxies
+     them to Railway.
 3. Deploy. Copy the resulting Vercel URL (e.g.
    `https://navfarm.vercel.app`).
 

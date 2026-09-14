@@ -1,15 +1,30 @@
-import { companyCondition, masterScopeConditions } from '../../../common/master-data-scope';
-import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
+import {
+  companyCondition,
+  masterScopeConditions,
+} from '../../../common/master-data-scope';
+import {
+  Injectable,
+  NotFoundException,
+  ConflictException,
+  BadRequestException,
+} from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { eq, and, like, or, isNull, ne } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
-import { CreateGlAccountDto, UpdateGlAccountDto, QueryGlAccountDto } from './dto/gl-account.dto';
+import {
+  CreateGlAccountDto,
+  UpdateGlAccountDto,
+  QueryGlAccountDto,
+} from './dto/gl-account.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { generateCompositeCode } from '../../system/number-series/composite-code.util';
-import { listFilterConditions, runMasterList } from '../../../common/master-list-query';
+import {
+  listFilterConditions,
+  runMasterList,
+} from '../../../common/master-list-query';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   return date.toISOString().slice(0, 19).replace('T', ' ');
@@ -35,10 +50,17 @@ export class GlAccountService {
     const [parent] = await this.db
       .select()
       .from(schema.glAccountMaster)
-      .where(and(eq(schema.glAccountMaster.gl_account_id, parentAccountId), isNull(schema.glAccountMaster.deleted_at)))
+      .where(
+        and(
+          eq(schema.glAccountMaster.gl_account_id, parentAccountId),
+          isNull(schema.glAccountMaster.deleted_at),
+        ),
+      )
       .limit(1);
     if (!parent) {
-      throw new NotFoundException(`Parent G/L Account with ID '${parentAccountId}' not found.`);
+      throw new NotFoundException(
+        `Parent G/L Account with ID '${parentAccountId}' not found.`,
+      );
     }
     return parent;
   }
@@ -49,28 +71,50 @@ export class GlAccountService {
       const [company] = await this.db
         .select()
         .from(schema.companyMaster)
-        .where(and(companyCondition(schema.companyMaster.company_id, dto.company_id), isNull(schema.companyMaster.deleted_at)))
+        .where(
+          and(
+            companyCondition(schema.companyMaster.company_id, dto.company_id),
+            isNull(schema.companyMaster.deleted_at),
+          ),
+        )
         .limit(1);
 
       if (!company) {
-        throw new NotFoundException(`Company with ID '${dto.company_id}' not found.`);
+        throw new NotFoundException(
+          `Company with ID '${dto.company_id}' not found.`,
+        );
       }
     }
 
     // 2. Verify parent account exists if specified
-    const parent = dto.parent_account_id ? await this.findParentAccount(dto.parent_account_id) : undefined;
+    const parent = dto.parent_account_id
+      ? await this.findParentAccount(dto.parent_account_id)
+      : undefined;
 
     // 3. Resolve a series for this account_type, falling back to the master-alone series.
-    const seriesCode = await this.numberSeriesService.resolveSeriesFor('GL_ACCOUNT', dto.account_type, tenantId, dto.company_id);
+    const seriesCode = await this.numberSeriesService.resolveSeriesFor(
+      'GL_ACCOUNT',
+      dto.account_type,
+      tenantId,
+      dto.company_id,
+    );
 
     if (!seriesCode) {
       return this.createManual(dto, tenantId, userPayload);
     }
 
     const glAccountId = randomUUID();
-    const attempt = () => this.db.transaction((tx) => this.createAutoRecord(tx, {
-      dto, tenantId, seriesCode, parent, glAccountId, userPayload,
-    }));
+    const attempt = () =>
+      this.db.transaction((tx) =>
+        this.createAutoRecord(tx, {
+          dto,
+          tenantId,
+          seriesCode,
+          parent,
+          glAccountId,
+          userPayload,
+        }),
+      );
 
     let newAccount: Awaited<ReturnType<typeof this.createAutoRecord>>;
     try {
@@ -81,7 +125,9 @@ export class GlAccountService {
         newAccount = await attempt();
       } catch (retryErr) {
         if ((retryErr as { code?: string })?.code === 'ER_DUP_ENTRY') {
-          throw new ConflictException('Account code collided with a concurrently created account; please retry.');
+          throw new ConflictException(
+            'Account code collided with a concurrently created account; please retry.',
+          );
         }
         throw retryErr;
       }
@@ -101,9 +147,15 @@ export class GlAccountService {
   }
 
   /** No series configured for GL_ACCOUNT[_<type>] — manual entry, exactly as before this feature existed. */
-  private async createManual(dto: CreateGlAccountDto, tenantId: string, userPayload?: any) {
+  private async createManual(
+    dto: CreateGlAccountDto,
+    tenantId: string,
+    userPayload?: any,
+  ) {
     if (!dto.account_code) {
-      throw new BadRequestException('account_code is required — no number series is configured for G/L accounts.');
+      throw new BadRequestException(
+        'account_code is required — no number series is configured for G/L accounts.',
+      );
     }
 
     // Check unique account code in this company
@@ -115,13 +167,15 @@ export class GlAccountService {
           eq(schema.glAccountMaster.tenant_id, tenantId),
           companyCondition(schema.glAccountMaster.company_id, dto.company_id),
           eq(schema.glAccountMaster.account_code, dto.account_code),
-          isNull(schema.glAccountMaster.deleted_at)
-        )
+          isNull(schema.glAccountMaster.deleted_at),
+        ),
       )
       .limit(1);
 
     if (existing.length > 0) {
-      throw new ConflictException(`G/L Account with code '${dto.account_code}' already exists in this company.`);
+      throw new ConflictException(
+        `G/L Account with code '${dto.account_code}' already exists in this company.`,
+      );
     }
 
     const glAccountId = randomUUID();
@@ -139,7 +193,9 @@ export class GlAccountService {
       is_reconciliation: dto.is_reconciliation ?? false,
       is_active: true,
       status: 'ACTIVE',
-      extension_config: dto.extension_config ? JSON.stringify(dto.extension_config) : null,
+      extension_config: dto.extension_config
+        ? JSON.stringify(dto.extension_config)
+        : null,
       created_by: userPayload?.userId || null,
       updated_by: userPayload?.userId || null,
     };
@@ -176,9 +232,15 @@ export class GlAccountService {
       userPayload?: any;
     },
   ) {
-    const { dto, tenantId, seriesCode, parent, glAccountId, userPayload } = params;
+    const { dto, tenantId, seriesCode, parent, glAccountId, userPayload } =
+      params;
 
-    const series = await this.numberSeriesService.lockSeries(seriesCode, tenantId, dto.company_id, tx);
+    const series = await this.numberSeriesService.lockSeries(
+      seriesCode,
+      tenantId,
+      dto.company_id,
+      tx,
+    );
 
     let accountCode: string;
     if (series.allow_manual && dto.account_code) {
@@ -188,16 +250,28 @@ export class GlAccountService {
         parentCode: parent.account_code,
         prefix: series.prefix || seriesCode,
         seqLength: series.seq_length,
-        fetchSiblingCodes: () => tx
-          .select({ code: schema.glAccountMaster.account_code })
-          .from(schema.glAccountMaster)
-          .where(and(
-            eq(schema.glAccountMaster.tenant_id, tenantId),
-            eq(schema.glAccountMaster.parent_account_id, parent.gl_account_id),
-          )),
+        fetchSiblingCodes: () =>
+          tx
+            .select({ code: schema.glAccountMaster.account_code })
+            .from(schema.glAccountMaster)
+            .where(
+              and(
+                eq(schema.glAccountMaster.tenant_id, tenantId),
+                eq(
+                  schema.glAccountMaster.parent_account_id,
+                  parent.gl_account_id,
+                ),
+              ),
+            ),
       });
     } else {
-      accountCode = await this.numberSeriesService.generateNext(seriesCode, tenantId, dto.company_id, tx, dto as unknown as Record<string, unknown>);
+      accountCode = await this.numberSeriesService.generateNext(
+        seriesCode,
+        tenantId,
+        dto.company_id,
+        tx,
+        dto as unknown as Record<string, unknown>,
+      );
     }
 
     if (accountCode.length > 255) {
@@ -220,7 +294,9 @@ export class GlAccountService {
       is_reconciliation: dto.is_reconciliation ?? false,
       is_active: true,
       status: 'ACTIVE',
-      extension_config: dto.extension_config ? JSON.stringify(dto.extension_config) : null,
+      extension_config: dto.extension_config
+        ? JSON.stringify(dto.extension_config)
+        : null,
       created_by: userPayload?.userId || null,
       updated_by: userPayload?.userId || null,
     };
@@ -233,7 +309,12 @@ export class GlAccountService {
     const [account] = await this.db
       .select()
       .from(schema.glAccountMaster)
-      .where(and(eq(schema.glAccountMaster.gl_account_id, id), isNull(schema.glAccountMaster.deleted_at)))
+      .where(
+        and(
+          eq(schema.glAccountMaster.gl_account_id, id),
+          isNull(schema.glAccountMaster.deleted_at),
+        ),
+      )
       .limit(1);
 
     if (!account) {
@@ -245,16 +326,24 @@ export class GlAccountService {
 
   async findAll(query: QueryGlAccountDto, tenantId: string) {
     // No isNull(deleted_at) filter — list view shows both Active/Inactive states (toggle switch) so a blocked row can be found again and restored.
-    const conditions: any[] = [
-      eq(schema.glAccountMaster.tenant_id, tenantId),
-    ];
+    const conditions: any[] = [eq(schema.glAccountMaster.tenant_id, tenantId)];
 
-    conditions.push(...masterScopeConditions(this.cls, schema.glAccountMaster, query.companyId));
+    conditions.push(
+      ...masterScopeConditions(
+        this.cls,
+        schema.glAccountMaster,
+        query.companyId,
+      ),
+    );
     if (query.accountType) {
-      conditions.push(eq(schema.glAccountMaster.account_type, query.accountType));
+      conditions.push(
+        eq(schema.glAccountMaster.account_type, query.accountType),
+      );
     }
     if (query.parentAccountId) {
-      conditions.push(eq(schema.glAccountMaster.parent_account_id, query.parentAccountId));
+      conditions.push(
+        eq(schema.glAccountMaster.parent_account_id, query.parentAccountId),
+      );
     }
     if (query.isActive !== undefined) {
       conditions.push(eq(schema.glAccountMaster.is_active, query.isActive));
@@ -263,19 +352,32 @@ export class GlAccountService {
       conditions.push(
         or(
           like(schema.glAccountMaster.account_code, `%${query.search}%`),
-          like(schema.glAccountMaster.account_name, `%${query.search}%`)
-        )
+          like(schema.glAccountMaster.account_name, `%${query.search}%`),
+        ),
       );
     }
 
-    conditions.push(...listFilterConditions(schema.glAccountMaster, query.filter));
+    conditions.push(
+      ...listFilterConditions(schema.glAccountMaster, query.filter),
+    );
 
     // Rows and the matching count together, so the pager knows how many
     // pages there really are rather than guessing from a full page.
-    return runMasterList(this.db, schema.glAccountMaster, conditions, query, schema.glAccountMaster.account_code);
+    return runMasterList(
+      this.db,
+      schema.glAccountMaster,
+      conditions,
+      query,
+      schema.glAccountMaster.account_code,
+    );
   }
 
-  async update(id: string, dto: UpdateGlAccountDto, tenantId: string, userPayload?: any) {
+  async update(
+    id: string,
+    dto: UpdateGlAccountDto,
+    tenantId: string,
+    userPayload?: any,
+  ) {
     const account = await this.findOne(id);
 
     if (dto.account_code && dto.account_code !== account.account_code) {
@@ -285,20 +387,28 @@ export class GlAccountService {
         .where(
           and(
             eq(schema.glAccountMaster.tenant_id, tenantId),
-            companyCondition(schema.glAccountMaster.company_id, account.company_id),
+            companyCondition(
+              schema.glAccountMaster.company_id,
+              account.company_id,
+            ),
             eq(schema.glAccountMaster.account_code, dto.account_code),
             ne(schema.glAccountMaster.gl_account_id, id),
-            isNull(schema.glAccountMaster.deleted_at)
-          )
+            isNull(schema.glAccountMaster.deleted_at),
+          ),
         )
         .limit(1);
 
       if (existing.length > 0) {
-        throw new ConflictException(`G/L Account with code '${dto.account_code}' already exists in this company.`);
+        throw new ConflictException(
+          `G/L Account with code '${dto.account_code}' already exists in this company.`,
+        );
       }
     }
 
-    if (dto.parent_account_id && dto.parent_account_id !== account.parent_account_id) {
+    if (
+      dto.parent_account_id &&
+      dto.parent_account_id !== account.parent_account_id
+    ) {
       if (dto.parent_account_id === id) {
         throw new ConflictException('A G/L Account cannot be its own parent.');
       }
@@ -309,13 +419,15 @@ export class GlAccountService {
         .where(
           and(
             eq(schema.glAccountMaster.gl_account_id, dto.parent_account_id),
-            isNull(schema.glAccountMaster.deleted_at)
-          )
+            isNull(schema.glAccountMaster.deleted_at),
+          ),
         )
         .limit(1);
 
       if (!parent) {
-        throw new NotFoundException(`Parent G/L Account with ID '${dto.parent_account_id}' not found.`);
+        throw new NotFoundException(
+          `Parent G/L Account with ID '${dto.parent_account_id}' not found.`,
+        );
       }
     }
 
@@ -327,12 +439,16 @@ export class GlAccountService {
     if (dto.account_code !== undefined) updates.account_code = dto.account_code;
     if (dto.account_name !== undefined) updates.account_name = dto.account_name;
     if (dto.account_type !== undefined) updates.account_type = dto.account_type;
-    if (dto.parent_account_id !== undefined) updates.parent_account_id = dto.parent_account_id;
-    if (dto.is_sub_account !== undefined) updates.is_sub_account = dto.is_sub_account;
-    if (dto.is_reconciliation !== undefined) updates.is_reconciliation = dto.is_reconciliation;
+    if (dto.parent_account_id !== undefined)
+      updates.parent_account_id = dto.parent_account_id;
+    if (dto.is_sub_account !== undefined)
+      updates.is_sub_account = dto.is_sub_account;
+    if (dto.is_reconciliation !== undefined)
+      updates.is_reconciliation = dto.is_reconciliation;
     if (dto.is_active !== undefined) updates.is_active = dto.is_active;
     if (dto.status !== undefined) updates.status = dto.status;
-    if (dto.extension_config !== undefined) updates.extension_config = JSON.stringify(dto.extension_config);
+    if (dto.extension_config !== undefined)
+      updates.extension_config = JSON.stringify(dto.extension_config);
 
     await this.db
       .update(schema.glAccountMaster)
@@ -363,13 +479,15 @@ export class GlAccountService {
       .where(
         and(
           eq(schema.glAccountMaster.parent_account_id, id),
-          isNull(schema.glAccountMaster.deleted_at)
-        )
+          isNull(schema.glAccountMaster.deleted_at),
+        ),
       )
       .limit(1);
 
     if (subAccounts.length > 0) {
-      throw new ConflictException('Cannot delete a G/L Account that has active sub-accounts.');
+      throw new ConflictException(
+        'Cannot delete a G/L Account that has active sub-accounts.',
+      );
     }
 
     const deletedTime = toMysqlTimestamp();
@@ -395,7 +513,10 @@ export class GlAccountService {
       newValues: { status: 'INACTIVE', deleted_at: deletedTime },
     });
 
-    return { success: true, message: `G/L Account '${account.account_name}' soft-deleted successfully.` };
+    return {
+      success: true,
+      message: `G/L Account '${account.account_name}' soft-deleted successfully.`,
+    };
   }
 
   async restore(id: string, tenantId: string, userPayload?: any) {
@@ -421,13 +542,15 @@ export class GlAccountService {
         .where(
           and(
             eq(schema.glAccountMaster.gl_account_id, account.parent_account_id),
-            isNull(schema.glAccountMaster.deleted_at)
-          )
+            isNull(schema.glAccountMaster.deleted_at),
+          ),
         )
         .limit(1);
 
       if (!parent) {
-        throw new ConflictException('Cannot restore a G/L Account whose parent is deleted or inactive. Restore parent first.');
+        throw new ConflictException(
+          'Cannot restore a G/L Account whose parent is deleted or inactive. Restore parent first.',
+        );
       }
     }
 

@@ -22,7 +22,14 @@ describe('ActivityService', () => {
     mockCls = {
       get: jest.fn((key: string) => {
         if (key === 'tenantDb') return mockDb;
-        if (key === 'masterScope') return { kind: 'OPERATIONAL', companyId: 'comp-1', nobId: 'nob-pig', lobId: 'lob-pig', tenantId: 'tenant-1' };
+        if (key === 'masterScope')
+          return {
+            kind: 'OPERATIONAL',
+            companyId: 'comp-1',
+            nobId: 'nob-pig',
+            lobId: 'lob-pig',
+            tenantId: 'tenant-1',
+          };
         return null;
       }),
     };
@@ -101,10 +108,14 @@ describe('ActivityService', () => {
         { userId: 'user-1' },
       );
 
-      expect(mockNobLobResolution.resolve).toHaveBeenCalledWith('tenant-1', 'comp-1', {
-        nob_id: undefined,
-        lob_id: undefined,
-      });
+      expect(mockNobLobResolution.resolve).toHaveBeenCalledWith(
+        'tenant-1',
+        'comp-1',
+        {
+          nob_id: undefined,
+          lob_id: undefined,
+        },
+      );
       expect(result.activity_code).toBe('MORN_FEED');
       expect(result.company_id).toBe('comp-1');
       expect(result.nob_id).toBe('nob-pig');
@@ -143,7 +154,9 @@ describe('ActivityService', () => {
         }),
       });
 
-      await expect(service.findOne('non-existent', 'tenant-1')).rejects.toThrow(NotFoundException);
+      await expect(service.findOne('non-existent', 'tenant-1')).rejects.toThrow(
+        NotFoundException,
+      );
     });
   });
 });

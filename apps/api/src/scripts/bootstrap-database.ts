@@ -7,7 +7,10 @@ import { migrate } from 'drizzle-orm/mysql2/migrator';
 import * as mysql from 'mysql2/promise';
 import * as master from '../core/database/master-schema';
 import * as tenant from '../core/database/schema';
-import { CURRENCY_SEED_ROWS, defaultCurrencyIdFor } from './lib/currency-seed-data';
+import {
+  CURRENCY_SEED_ROWS,
+  defaultCurrencyIdFor,
+} from './lib/currency-seed-data';
 
 /**
  * Upsert payload with the primary key stripped.
@@ -19,7 +22,10 @@ import { CURRENCY_SEED_ROWS, defaultCurrencyIdFor } from './lib/currency-seed-da
  * timezone_master because user_master.timezone_pref_id points at it. The
  * natural key is what identifies the row; the surrogate id must not move.
  */
-function withoutId<T extends Record<string, unknown>>(row: T, idKey: keyof T): Partial<T> {
+function withoutId<T extends Record<string, unknown>>(
+  row: T,
+  idKey: keyof T,
+): Partial<T> {
   const { [idKey]: _omitted, ...rest } = row;
   return rest as Partial<T>;
 }
@@ -33,9 +39,10 @@ const host = process.env.DATABASE_HOST || 'localhost';
 const port = Number(process.env.DATABASE_PORT || 3306);
 const user = process.env.DATABASE_USERNAME || 'root';
 const password = process.env.DATABASE_PASSWORD || '';
-const ssl = process.env.DATABASE_SSL === 'true'
-  ? { minVersion: 'TLSv1.2' as const, rejectUnauthorized: true }
-  : undefined;
+const ssl =
+  process.env.DATABASE_SSL === 'true'
+    ? { minVersion: 'TLSv1.2' as const, rejectUnauthorized: true }
+    : undefined;
 const masterDatabase = process.env.DATABASE_NAME || 'navfarm_master';
 const systemDatabase = process.env.SYSTEM_TENANT_DATABASE || 'tenant_system';
 const adminEmail = process.env.SYSTEM_ADMIN_EMAIL || 'admin@navfarm.local';
@@ -50,13 +57,21 @@ function assertDatabaseName(value: string): string {
 
 export async function bootstrap() {
   if (!adminPassword || adminPassword.length < 8) {
-    throw new Error('SYSTEM_ADMIN_PASSWORD must be at least 8 characters long.');
+    throw new Error(
+      'SYSTEM_ADMIN_PASSWORD must be at least 8 characters long.',
+    );
   }
 
   assertDatabaseName(masterDatabase);
   assertDatabaseName(systemDatabase);
 
-  const server = await mysql.createConnection({ host, port, user, password, ssl });
+  const server = await mysql.createConnection({
+    host,
+    port,
+    user,
+    password,
+    ssl,
+  });
   await server.query(`CREATE DATABASE IF NOT EXISTS \`${masterDatabase}\``);
   await server.query(`CREATE DATABASE IF NOT EXISTS \`${systemDatabase}\``);
   await server.end();
@@ -170,7 +185,8 @@ export async function bootstrap() {
      * on a Zimbabwe piggery. The base currency is a company setting; there is
      * no system-wide answer to it. Rishi's call, 2026-09-09.
      */
-    const currencies: Array<typeof master.currencyMaster.$inferInsert> = CURRENCY_SEED_ROWS;
+    const currencies: Array<typeof master.currencyMaster.$inferInsert> =
+      CURRENCY_SEED_ROWS;
 
     for (const currency of currencies) {
       await masterDb
@@ -186,30 +202,138 @@ export async function bootstrap() {
     // Starter set, same "small but real, expand via the API" pattern as languages/
     // currencies above — not the full ~400 IANA / ~195 ISO country lists.
     const timezones: Array<typeof master.timezoneMaster.$inferInsert> = [
-      { tz_code: 'UTC', tz_name: 'Coordinated Universal Time', utc_offset: '+00:00', offset_minutes: 0, is_dst: false },
-      { tz_code: 'Asia/Kolkata', tz_name: 'India Standard Time', utc_offset: '+05:30', offset_minutes: 330, is_dst: false },
-      { tz_code: 'Asia/Dubai', tz_name: 'Gulf Standard Time', utc_offset: '+04:00', offset_minutes: 240, is_dst: false },
-      { tz_code: 'Asia/Singapore', tz_name: 'Singapore Standard Time', utc_offset: '+08:00', offset_minutes: 480, is_dst: false },
-      { tz_code: 'Asia/Shanghai', tz_name: 'China Standard Time', utc_offset: '+08:00', offset_minutes: 480, is_dst: false },
-      { tz_code: 'Asia/Tokyo', tz_name: 'Japan Standard Time', utc_offset: '+09:00', offset_minutes: 540, is_dst: false },
-      { tz_code: 'Asia/Dhaka', tz_name: 'Bangladesh Standard Time', utc_offset: '+06:00', offset_minutes: 360, is_dst: false },
-      { tz_code: 'Asia/Bangkok', tz_name: 'Indochina Time', utc_offset: '+07:00', offset_minutes: 420, is_dst: false },
-      { tz_code: 'Europe/London', tz_name: 'Greenwich Mean Time', utc_offset: '+00:00', offset_minutes: 0, is_dst: true },
-      { tz_code: 'Europe/Paris', tz_name: 'Central European Time', utc_offset: '+01:00', offset_minutes: 60, is_dst: true },
-      { tz_code: 'America/New_York', tz_name: 'Eastern Standard Time', utc_offset: '-05:00', offset_minutes: -300, is_dst: true },
-      { tz_code: 'America/Los_Angeles', tz_name: 'Pacific Standard Time', utc_offset: '-08:00', offset_minutes: -480, is_dst: true },
-      { tz_code: 'America/Sao_Paulo', tz_name: 'Brasilia Standard Time', utc_offset: '-03:00', offset_minutes: -180, is_dst: false },
-      { tz_code: 'Australia/Sydney', tz_name: 'Australian Eastern Standard Time', utc_offset: '+10:00', offset_minutes: 600, is_dst: true },
-      { tz_code: 'Africa/Johannesburg', tz_name: 'South Africa Standard Time', utc_offset: '+02:00', offset_minutes: 120, is_dst: false },
-      { tz_code: 'Africa/Harare', tz_name: 'Central Africa Time', utc_offset: '+02:00', offset_minutes: 120, is_dst: false },
-      { tz_code: 'Africa/Lagos', tz_name: 'West Africa Time', utc_offset: '+01:00', offset_minutes: 60, is_dst: false },
+      {
+        tz_code: 'UTC',
+        tz_name: 'Coordinated Universal Time',
+        utc_offset: '+00:00',
+        offset_minutes: 0,
+        is_dst: false,
+      },
+      {
+        tz_code: 'Asia/Kolkata',
+        tz_name: 'India Standard Time',
+        utc_offset: '+05:30',
+        offset_minutes: 330,
+        is_dst: false,
+      },
+      {
+        tz_code: 'Asia/Dubai',
+        tz_name: 'Gulf Standard Time',
+        utc_offset: '+04:00',
+        offset_minutes: 240,
+        is_dst: false,
+      },
+      {
+        tz_code: 'Asia/Singapore',
+        tz_name: 'Singapore Standard Time',
+        utc_offset: '+08:00',
+        offset_minutes: 480,
+        is_dst: false,
+      },
+      {
+        tz_code: 'Asia/Shanghai',
+        tz_name: 'China Standard Time',
+        utc_offset: '+08:00',
+        offset_minutes: 480,
+        is_dst: false,
+      },
+      {
+        tz_code: 'Asia/Tokyo',
+        tz_name: 'Japan Standard Time',
+        utc_offset: '+09:00',
+        offset_minutes: 540,
+        is_dst: false,
+      },
+      {
+        tz_code: 'Asia/Dhaka',
+        tz_name: 'Bangladesh Standard Time',
+        utc_offset: '+06:00',
+        offset_minutes: 360,
+        is_dst: false,
+      },
+      {
+        tz_code: 'Asia/Bangkok',
+        tz_name: 'Indochina Time',
+        utc_offset: '+07:00',
+        offset_minutes: 420,
+        is_dst: false,
+      },
+      {
+        tz_code: 'Europe/London',
+        tz_name: 'Greenwich Mean Time',
+        utc_offset: '+00:00',
+        offset_minutes: 0,
+        is_dst: true,
+      },
+      {
+        tz_code: 'Europe/Paris',
+        tz_name: 'Central European Time',
+        utc_offset: '+01:00',
+        offset_minutes: 60,
+        is_dst: true,
+      },
+      {
+        tz_code: 'America/New_York',
+        tz_name: 'Eastern Standard Time',
+        utc_offset: '-05:00',
+        offset_minutes: -300,
+        is_dst: true,
+      },
+      {
+        tz_code: 'America/Los_Angeles',
+        tz_name: 'Pacific Standard Time',
+        utc_offset: '-08:00',
+        offset_minutes: -480,
+        is_dst: true,
+      },
+      {
+        tz_code: 'America/Sao_Paulo',
+        tz_name: 'Brasilia Standard Time',
+        utc_offset: '-03:00',
+        offset_minutes: -180,
+        is_dst: false,
+      },
+      {
+        tz_code: 'Australia/Sydney',
+        tz_name: 'Australian Eastern Standard Time',
+        utc_offset: '+10:00',
+        offset_minutes: 600,
+        is_dst: true,
+      },
+      {
+        tz_code: 'Africa/Johannesburg',
+        tz_name: 'South Africa Standard Time',
+        utc_offset: '+02:00',
+        offset_minutes: 120,
+        is_dst: false,
+      },
+      {
+        tz_code: 'Africa/Harare',
+        tz_name: 'Central Africa Time',
+        utc_offset: '+02:00',
+        offset_minutes: 120,
+        is_dst: false,
+      },
+      {
+        tz_code: 'Africa/Lagos',
+        tz_name: 'West Africa Time',
+        utc_offset: '+01:00',
+        offset_minutes: 60,
+        is_dst: false,
+      },
     ].map((tz) => ({ ...tz, tz_id: randomUUID() }));
 
     const tzIdByCode = new Map(timezones.map((tz) => [tz.tz_code, tz.tz_id!]));
 
     for (const tz of timezones) {
-      await masterDb.insert(master.timezoneMaster).values(tz).onDuplicateKeyUpdate({ set: withoutId(tz, 'tz_id') });
-      await tenantDb.insert(tenant.timezoneMaster).values(tz).onDuplicateKeyUpdate({ set: withoutId(tz, 'tz_id') });
+      await masterDb
+        .insert(master.timezoneMaster)
+        .values(tz)
+        .onDuplicateKeyUpdate({ set: withoutId(tz, 'tz_id') });
+      await tenantDb
+        .insert(tenant.timezoneMaster)
+        .values(tz)
+        .onDuplicateKeyUpdate({ set: withoutId(tz, 'tz_id') });
     }
 
     // Re-read the ids that actually landed. On a re-run the rows already exist
@@ -221,42 +345,225 @@ export async function bootstrap() {
     }
 
     const countries: Array<typeof master.countryMaster.$inferInsert> = [
-      { iso2: 'IN', iso3: 'IND', country_name: 'India', phone_code: '+91', default_tz_id: tzIdByCode.get('Asia/Kolkata'), flag_emoji: '🇮🇳' },
-      { iso2: 'US', iso3: 'USA', country_name: 'United States', phone_code: '+1', default_tz_id: tzIdByCode.get('America/New_York'), flag_emoji: '🇺🇸' },
-      { iso2: 'GB', iso3: 'GBR', country_name: 'United Kingdom', phone_code: '+44', default_tz_id: tzIdByCode.get('Europe/London'), flag_emoji: '🇬🇧' },
-      { iso2: 'AE', iso3: 'ARE', country_name: 'United Arab Emirates', phone_code: '+971', default_tz_id: tzIdByCode.get('Asia/Dubai'), flag_emoji: '🇦🇪' },
-      { iso2: 'SG', iso3: 'SGP', country_name: 'Singapore', phone_code: '+65', default_tz_id: tzIdByCode.get('Asia/Singapore'), flag_emoji: '🇸🇬' },
-      { iso2: 'CN', iso3: 'CHN', country_name: 'China', phone_code: '+86', default_tz_id: tzIdByCode.get('Asia/Shanghai'), flag_emoji: '🇨🇳' },
-      { iso2: 'JP', iso3: 'JPN', country_name: 'Japan', phone_code: '+81', default_tz_id: tzIdByCode.get('Asia/Tokyo'), flag_emoji: '🇯🇵' },
-      { iso2: 'AU', iso3: 'AUS', country_name: 'Australia', phone_code: '+61', default_tz_id: tzIdByCode.get('Australia/Sydney'), flag_emoji: '🇦🇺' },
-      { iso2: 'ZW', iso3: 'ZWE', country_name: 'Zimbabwe', phone_code: '+263', default_tz_id: tzIdByCode.get('Africa/Harare'), flag_emoji: '🇿🇼' },
-      { iso2: 'ZA', iso3: 'ZAF', country_name: 'South Africa', phone_code: '+27', default_tz_id: tzIdByCode.get('Africa/Johannesburg'), flag_emoji: '🇿🇦' },
-      { iso2: 'NG', iso3: 'NGA', country_name: 'Nigeria', phone_code: '+234', default_tz_id: tzIdByCode.get('Africa/Lagos'), flag_emoji: '🇳🇬' },
-      { iso2: 'DE', iso3: 'DEU', country_name: 'Germany', phone_code: '+49', default_tz_id: tzIdByCode.get('Europe/Paris'), flag_emoji: '🇩🇪' },
-      { iso2: 'FR', iso3: 'FRA', country_name: 'France', phone_code: '+33', default_tz_id: tzIdByCode.get('Europe/Paris'), flag_emoji: '🇫🇷' },
-      { iso2: 'CA', iso3: 'CAN', country_name: 'Canada', phone_code: '+1', default_tz_id: tzIdByCode.get('America/New_York'), flag_emoji: '🇨🇦' },
-      { iso2: 'BR', iso3: 'BRA', country_name: 'Brazil', phone_code: '+55', default_tz_id: tzIdByCode.get('America/Sao_Paulo'), flag_emoji: '🇧🇷' },
-      { iso2: 'BD', iso3: 'BGD', country_name: 'Bangladesh', phone_code: '+880', default_tz_id: tzIdByCode.get('Asia/Dhaka'), flag_emoji: '🇧🇩' },
-      { iso2: 'TH', iso3: 'THA', country_name: 'Thailand', phone_code: '+66', default_tz_id: tzIdByCode.get('Asia/Bangkok'), flag_emoji: '🇹🇭' },
-      { iso2: 'VN', iso3: 'VNM', country_name: 'Vietnam', phone_code: '+84', default_tz_id: tzIdByCode.get('Asia/Bangkok'), flag_emoji: '🇻🇳' },
-      { iso2: 'ID', iso3: 'IDN', country_name: 'Indonesia', phone_code: '+62', default_tz_id: tzIdByCode.get('Asia/Bangkok'), flag_emoji: '🇮🇩' },
-      { iso2: 'PH', iso3: 'PHL', country_name: 'Philippines', phone_code: '+63', default_tz_id: tzIdByCode.get('Asia/Singapore'), flag_emoji: '🇵🇭' },
-      { iso2: 'KE', iso3: 'KEN', country_name: 'Kenya', phone_code: '+254', default_tz_id: tzIdByCode.get('Africa/Johannesburg'), flag_emoji: '🇰🇪' },
-      { iso2: 'EG', iso3: 'EGY', country_name: 'Egypt', phone_code: '+20', default_tz_id: tzIdByCode.get('Europe/Paris'), flag_emoji: '🇪🇬' },
-      { iso2: 'LK', iso3: 'LKA', country_name: 'Sri Lanka', phone_code: '+94', default_tz_id: tzIdByCode.get('Asia/Kolkata'), flag_emoji: '🇱🇰' },
-      { iso2: 'NL', iso3: 'NLD', country_name: 'Netherlands', phone_code: '+31', default_tz_id: tzIdByCode.get('Europe/Paris'), flag_emoji: '🇳🇱' },
-      { iso2: 'MX', iso3: 'MEX', country_name: 'Mexico', phone_code: '+52', default_tz_id: tzIdByCode.get('America/Los_Angeles'), flag_emoji: '🇲🇽' },
+      {
+        iso2: 'IN',
+        iso3: 'IND',
+        country_name: 'India',
+        phone_code: '+91',
+        default_tz_id: tzIdByCode.get('Asia/Kolkata'),
+        flag_emoji: '🇮🇳',
+      },
+      {
+        iso2: 'US',
+        iso3: 'USA',
+        country_name: 'United States',
+        phone_code: '+1',
+        default_tz_id: tzIdByCode.get('America/New_York'),
+        flag_emoji: '🇺🇸',
+      },
+      {
+        iso2: 'GB',
+        iso3: 'GBR',
+        country_name: 'United Kingdom',
+        phone_code: '+44',
+        default_tz_id: tzIdByCode.get('Europe/London'),
+        flag_emoji: '🇬🇧',
+      },
+      {
+        iso2: 'AE',
+        iso3: 'ARE',
+        country_name: 'United Arab Emirates',
+        phone_code: '+971',
+        default_tz_id: tzIdByCode.get('Asia/Dubai'),
+        flag_emoji: '🇦🇪',
+      },
+      {
+        iso2: 'SG',
+        iso3: 'SGP',
+        country_name: 'Singapore',
+        phone_code: '+65',
+        default_tz_id: tzIdByCode.get('Asia/Singapore'),
+        flag_emoji: '🇸🇬',
+      },
+      {
+        iso2: 'CN',
+        iso3: 'CHN',
+        country_name: 'China',
+        phone_code: '+86',
+        default_tz_id: tzIdByCode.get('Asia/Shanghai'),
+        flag_emoji: '🇨🇳',
+      },
+      {
+        iso2: 'JP',
+        iso3: 'JPN',
+        country_name: 'Japan',
+        phone_code: '+81',
+        default_tz_id: tzIdByCode.get('Asia/Tokyo'),
+        flag_emoji: '🇯🇵',
+      },
+      {
+        iso2: 'AU',
+        iso3: 'AUS',
+        country_name: 'Australia',
+        phone_code: '+61',
+        default_tz_id: tzIdByCode.get('Australia/Sydney'),
+        flag_emoji: '🇦🇺',
+      },
+      {
+        iso2: 'ZW',
+        iso3: 'ZWE',
+        country_name: 'Zimbabwe',
+        phone_code: '+263',
+        default_tz_id: tzIdByCode.get('Africa/Harare'),
+        flag_emoji: '🇿🇼',
+      },
+      {
+        iso2: 'ZA',
+        iso3: 'ZAF',
+        country_name: 'South Africa',
+        phone_code: '+27',
+        default_tz_id: tzIdByCode.get('Africa/Johannesburg'),
+        flag_emoji: '🇿🇦',
+      },
+      {
+        iso2: 'NG',
+        iso3: 'NGA',
+        country_name: 'Nigeria',
+        phone_code: '+234',
+        default_tz_id: tzIdByCode.get('Africa/Lagos'),
+        flag_emoji: '🇳🇬',
+      },
+      {
+        iso2: 'DE',
+        iso3: 'DEU',
+        country_name: 'Germany',
+        phone_code: '+49',
+        default_tz_id: tzIdByCode.get('Europe/Paris'),
+        flag_emoji: '🇩🇪',
+      },
+      {
+        iso2: 'FR',
+        iso3: 'FRA',
+        country_name: 'France',
+        phone_code: '+33',
+        default_tz_id: tzIdByCode.get('Europe/Paris'),
+        flag_emoji: '🇫🇷',
+      },
+      {
+        iso2: 'CA',
+        iso3: 'CAN',
+        country_name: 'Canada',
+        phone_code: '+1',
+        default_tz_id: tzIdByCode.get('America/New_York'),
+        flag_emoji: '🇨🇦',
+      },
+      {
+        iso2: 'BR',
+        iso3: 'BRA',
+        country_name: 'Brazil',
+        phone_code: '+55',
+        default_tz_id: tzIdByCode.get('America/Sao_Paulo'),
+        flag_emoji: '🇧🇷',
+      },
+      {
+        iso2: 'BD',
+        iso3: 'BGD',
+        country_name: 'Bangladesh',
+        phone_code: '+880',
+        default_tz_id: tzIdByCode.get('Asia/Dhaka'),
+        flag_emoji: '🇧🇩',
+      },
+      {
+        iso2: 'TH',
+        iso3: 'THA',
+        country_name: 'Thailand',
+        phone_code: '+66',
+        default_tz_id: tzIdByCode.get('Asia/Bangkok'),
+        flag_emoji: '🇹🇭',
+      },
+      {
+        iso2: 'VN',
+        iso3: 'VNM',
+        country_name: 'Vietnam',
+        phone_code: '+84',
+        default_tz_id: tzIdByCode.get('Asia/Bangkok'),
+        flag_emoji: '🇻🇳',
+      },
+      {
+        iso2: 'ID',
+        iso3: 'IDN',
+        country_name: 'Indonesia',
+        phone_code: '+62',
+        default_tz_id: tzIdByCode.get('Asia/Bangkok'),
+        flag_emoji: '🇮🇩',
+      },
+      {
+        iso2: 'PH',
+        iso3: 'PHL',
+        country_name: 'Philippines',
+        phone_code: '+63',
+        default_tz_id: tzIdByCode.get('Asia/Singapore'),
+        flag_emoji: '🇵🇭',
+      },
+      {
+        iso2: 'KE',
+        iso3: 'KEN',
+        country_name: 'Kenya',
+        phone_code: '+254',
+        default_tz_id: tzIdByCode.get('Africa/Johannesburg'),
+        flag_emoji: '🇰🇪',
+      },
+      {
+        iso2: 'EG',
+        iso3: 'EGY',
+        country_name: 'Egypt',
+        phone_code: '+20',
+        default_tz_id: tzIdByCode.get('Europe/Paris'),
+        flag_emoji: '🇪🇬',
+      },
+      {
+        iso2: 'LK',
+        iso3: 'LKA',
+        country_name: 'Sri Lanka',
+        phone_code: '+94',
+        default_tz_id: tzIdByCode.get('Asia/Kolkata'),
+        flag_emoji: '🇱🇰',
+      },
+      {
+        iso2: 'NL',
+        iso3: 'NLD',
+        country_name: 'Netherlands',
+        phone_code: '+31',
+        default_tz_id: tzIdByCode.get('Europe/Paris'),
+        flag_emoji: '🇳🇱',
+      },
+      {
+        iso2: 'MX',
+        iso3: 'MEX',
+        country_name: 'Mexico',
+        phone_code: '+52',
+        default_tz_id: tzIdByCode.get('America/Los_Angeles'),
+        flag_emoji: '🇲🇽',
+      },
     ].map((c) => ({
       ...c,
       country_id: randomUUID(),
       default_currency_id: defaultCurrencyIdFor(c.iso2),
     }));
 
-    const countryIdByIso2 = new Map(countries.map((c) => [c.iso2, c.country_id!]));
+    const countryIdByIso2 = new Map(
+      countries.map((c) => [c.iso2, c.country_id!]),
+    );
 
     for (const country of countries) {
-      await masterDb.insert(master.countryMaster).values(country).onDuplicateKeyUpdate({ set: withoutId(country, 'country_id') });
-      await tenantDb.insert(tenant.countryMaster).values(country).onDuplicateKeyUpdate({ set: withoutId(country, 'country_id') });
+      await masterDb
+        .insert(master.countryMaster)
+        .values(country)
+        .onDuplicateKeyUpdate({ set: withoutId(country, 'country_id') });
+      await tenantDb
+        .insert(tenant.countryMaster)
+        .values(country)
+        .onDuplicateKeyUpdate({ set: withoutId(country, 'country_id') });
     }
 
     // Same again — state_province.country_id has to reference the row that is
@@ -270,10 +577,23 @@ export async function bootstrap() {
     // starter set.
     const indiaId = countryIdByIso2.get('IN')!;
     const indiaStates: Array<typeof master.stateProvince.$inferInsert> = [
-      ['MH', 'Maharashtra'], ['PB', 'Punjab'], ['HR', 'Haryana'], ['UP', 'Uttar Pradesh'],
-      ['KA', 'Karnataka'], ['TN', 'Tamil Nadu'], ['GJ', 'Gujarat'], ['RJ', 'Rajasthan'],
-      ['WB', 'West Bengal'], ['TS', 'Telangana'], ['AP', 'Andhra Pradesh'], ['KL', 'Kerala'],
-      ['MP', 'Madhya Pradesh'], ['BR', 'Bihar'], ['OR', 'Odisha'], ['AS', 'Assam'], ['DL', 'Delhi'],
+      ['MH', 'Maharashtra'],
+      ['PB', 'Punjab'],
+      ['HR', 'Haryana'],
+      ['UP', 'Uttar Pradesh'],
+      ['KA', 'Karnataka'],
+      ['TN', 'Tamil Nadu'],
+      ['GJ', 'Gujarat'],
+      ['RJ', 'Rajasthan'],
+      ['WB', 'West Bengal'],
+      ['TS', 'Telangana'],
+      ['AP', 'Andhra Pradesh'],
+      ['KL', 'Kerala'],
+      ['MP', 'Madhya Pradesh'],
+      ['BR', 'Bihar'],
+      ['OR', 'Odisha'],
+      ['AS', 'Assam'],
+      ['DL', 'Delhi'],
     ].map(([code, name]) => ({
       state_id: randomUUID(),
       country_id: indiaId,
@@ -282,8 +602,14 @@ export async function bootstrap() {
     }));
 
     for (const state of indiaStates) {
-      await masterDb.insert(master.stateProvince).values(state).onDuplicateKeyUpdate({ set: withoutId(state, 'state_id') });
-      await tenantDb.insert(tenant.stateProvince).values(state).onDuplicateKeyUpdate({ set: withoutId(state, 'state_id') });
+      await masterDb
+        .insert(master.stateProvince)
+        .values(state)
+        .onDuplicateKeyUpdate({ set: withoutId(state, 'state_id') });
+      await tenantDb
+        .insert(tenant.stateProvince)
+        .values(state)
+        .onDuplicateKeyUpdate({ set: withoutId(state, 'state_id') });
     }
 
     // STANDARD / BIO_ASSET are the two methods actually implemented in batch.service.ts —
@@ -291,7 +617,9 @@ export async function bootstrap() {
     // it already branches on a real, authoritative row to point at. FIFO / AVG are item-level
     // inventory valuation methods (item_master.valuation_method) — not batch costing methods,
     // batch.service.ts does not branch on them.
-    const costingMethods: Array<typeof master.costingMethodConfig.$inferInsert> = [
+    const costingMethods: Array<
+      typeof master.costingMethodConfig.$inferInsert
+    > = [
       {
         method_code: 'STANDARD',
         // Named for itself, not for FIFO: FIFO is its own row below, and the
@@ -328,8 +656,14 @@ export async function bootstrap() {
       },
     ];
     for (const method of costingMethods) {
-      await masterDb.insert(master.costingMethodConfig).values(method).onDuplicateKeyUpdate({ set: withoutId(method, 'method_code') });
-      await tenantDb.insert(tenant.costingMethodConfig).values(method).onDuplicateKeyUpdate({ set: withoutId(method, 'method_code') });
+      await masterDb
+        .insert(master.costingMethodConfig)
+        .values(method)
+        .onDuplicateKeyUpdate({ set: withoutId(method, 'method_code') });
+      await tenantDb
+        .insert(tenant.costingMethodConfig)
+        .values(method)
+        .onDuplicateKeyUpdate({ set: withoutId(method, 'method_code') });
     }
 
     const setupSteps = [
@@ -438,24 +772,69 @@ export async function bootstrap() {
     }
 
     const lobs = [
-      ['POULTRY', 'PLT_REARING', 'Rearing & Breeding', 'STANDARD,FIFO', 'NO', 'NO'],
+      [
+        'POULTRY',
+        'PLT_REARING',
+        'Rearing & Breeding',
+        'STANDARD,FIFO',
+        'NO',
+        'NO',
+      ],
       ['POULTRY', 'PLT_LAYING', 'Laying', 'STANDARD,FIFO', 'YES', 'YES'],
       ['POULTRY', 'PLT_HATCHING', 'Hatching', 'STANDARD,FIFO', 'YES', 'YES'],
-      ['POULTRY', 'PLT_CB', 'Commercial Broiler Farming', 'STANDARD', 'YES', 'YES'],
-      ['POULTRY', 'PLT_SLAUGHTER', 'Poultry Slaughter', 'STANDARD', 'YES', 'YES'],
+      [
+        'POULTRY',
+        'PLT_CB',
+        'Commercial Broiler Farming',
+        'STANDARD',
+        'YES',
+        'YES',
+      ],
+      [
+        'POULTRY',
+        'PLT_SLAUGHTER',
+        'Poultry Slaughter',
+        'STANDARD',
+        'YES',
+        'YES',
+      ],
       ['LIVESTOCK', 'LVS_MILKING', 'Dairy', 'BIO_ASSET,FIFO', 'YES', 'YES'],
-      ['LIVESTOCK', 'LVS_PIGGERY', 'Piggery', 'BIO_ASSET,STANDARD', 'YES', 'YES'],
-      ['LIVESTOCK', 'LVS_GOAT_SHEEP', 'Goat & Sheep', 'BIO_ASSET', 'YES', 'YES'],
+      [
+        'LIVESTOCK',
+        'LVS_PIGGERY',
+        'Piggery',
+        'BIO_ASSET,STANDARD',
+        'YES',
+        'YES',
+      ],
+      [
+        'LIVESTOCK',
+        'LVS_GOAT_SHEEP',
+        'Goat & Sheep',
+        'BIO_ASSET',
+        'YES',
+        'YES',
+      ],
       ['AGRI', 'AGRI_FRUIT', 'Fruit Farming', 'BIO_ASSET,FIFO', 'YES', 'YES'],
       ['AGRI', 'AGRI_CROP', 'Crop Farming', 'STANDARD,FIFO', 'YES', 'YES'],
       ['AGRI', 'AGRI_SEEDS', 'Seed Processing', 'STANDARD', 'YES', 'YES'],
       ['AQUA', 'AQA_FISH', 'Fish Farming', 'BIO_ASSET,FIFO', 'YES', 'YES'],
-      ['AQUA', 'AQA_SLAUGHTER', 'Aquaculture Slaughter', 'STANDARD', 'YES', 'YES'],
+      [
+        'AQUA',
+        'AQA_SLAUGHTER',
+        'Aquaculture Slaughter',
+        'STANDARD',
+        'YES',
+        'YES',
+      ],
       ['INSECT', 'INS_BEE', 'Bee Keeping', 'STANDARD', 'YES', 'YES'],
       ['INSECT', 'BSF', 'Black Soldier Fly', 'STANDARD', 'YES', 'YES'],
       ['PRODUCTION', 'FEED_PROD', 'Feed Production', 'STANDARD', 'YES', 'YES'],
     ] as const;
-    for (const [index, [nobCode, code, name, costing, qc, qr]] of lobs.entries()) {
+    for (const [
+      index,
+      [nobCode, code, name, costing, qc, qr],
+    ] of lobs.entries()) {
       const lob = {
         lob_id: `60000000-6000-6000-6000-${String(index + 1).padStart(12, '0')}`,
         nob_id: nobIds.get(nobCode)!,
@@ -583,14 +962,19 @@ export async function bootstrap() {
         user_id: process.env.SYSTEM_ADMIN_ID || randomUUID(),
         company_id: SYSTEM_COMPANY_ID,
         tenant_id: SYSTEM_TENANT_ID,
-        full_name: process.env.SYSTEM_ADMIN_NAME || 'NAVFarm System Administrator',
+        full_name:
+          process.env.SYSTEM_ADMIN_NAME || 'NAVFarm System Administrator',
         email: adminEmail.toLowerCase(),
         password_hash: passwordHash,
         user_type: 'SYSTEM_ADMIN',
         timezone_pref_id: 'Asia/Kolkata',
       })
       .onDuplicateKeyUpdate({
-        set: { password_hash: passwordHash, user_type: 'SYSTEM_ADMIN', is_active: true },
+        set: {
+          password_hash: passwordHash,
+          user_type: 'SYSTEM_ADMIN',
+          is_active: true,
+        },
       });
 
     console.log(`Bootstrapped ${masterDatabase} and ${systemDatabase}.`);

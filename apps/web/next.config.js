@@ -19,10 +19,13 @@ const DEVELOPMENT_PAGE_EXTENSIONS = [...PRODUCTION_PAGE_EXTENSIONS, 'dev.tsx'];
 function apiUpstreamOrigin() {
   const mode = process.env.NAVFARM_API_MODE || 'proxy';
   if (mode !== 'proxy') {
-    throw new Error(`Unsupported NAVFARM_API_MODE: ${mode}. The current web application supports proxy mode.`);
+    throw new Error(
+      `Unsupported NAVFARM_API_MODE: ${mode}. The current web application supports proxy mode.`,
+    );
   }
 
-  const configured = process.env.NAVFARM_API_UPSTREAM_URL || 'http://127.0.0.1:2877';
+  const configured =
+    process.env.NAVFARM_API_UPSTREAM_URL || 'http://127.0.0.1:2877';
   const upstream = new URL(configured);
   if (!['http:', 'https:'].includes(upstream.protocol)) {
     throw new Error('NAVFARM_API_UPSTREAM_URL must use http or https.');
@@ -31,7 +34,9 @@ function apiUpstreamOrigin() {
     throw new Error('NAVFARM_API_UPSTREAM_URL must not contain credentials.');
   }
   if (upstream.pathname !== '/' || upstream.search || upstream.hash) {
-    throw new Error('NAVFARM_API_UPSTREAM_URL must be an origin without a path, query, or fragment.');
+    throw new Error(
+      'NAVFARM_API_UPSTREAM_URL must be an origin without a path, query, or fragment.',
+    );
   }
   return upstream.origin;
 }

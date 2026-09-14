@@ -41,28 +41,43 @@ const host = process.env.DATABASE_HOST || '127.0.0.1';
 const port = Number(process.env.DATABASE_PORT || 3306);
 const user = process.env.DATABASE_USERNAME || 'root';
 const password = process.env.DATABASE_PASSWORD || '';
-const ssl = process.env.DATABASE_SSL === 'true'
-  ? { minVersion: 'TLSv1.2' as const, rejectUnauthorized: true }
-  : undefined;
+const ssl =
+  process.env.DATABASE_SSL === 'true'
+    ? { minVersion: 'TLSv1.2' as const, rejectUnauthorized: true }
+    : undefined;
 const database = process.env.DEV_TENANT_DATABASE || 'tenant_navfarmdev';
 
 // mysql2 returns JSON columns already parsed into JS objects/arrays — passing
 // one straight back through another `?` placeholder for a JSON column fails
 // ("Invalid JSON text"), so every JSON-typed value read from `tmpl` needs to
 // be re-stringified before going into an INSERT/UPDATE.
-const toJsonParam = (value: unknown): string | null => (value == null ? null : JSON.stringify(value));
+const toJsonParam = (value: unknown): string | null =>
+  value == null ? null : JSON.stringify(value);
 
 async function run() {
   const apply = process.argv.includes('--apply');
   const verify = process.argv.includes('--verify');
-  if (process.argv.slice(2).some((a) => !['--apply', '--verify'].includes(a)) || (apply && verify)) {
+  if (
+    process.argv.slice(2).some((a) => !['--apply', '--verify'].includes(a)) ||
+    (apply && verify)
+  ) {
     throw new Error('Use no flags (read-only), --verify, or --apply.');
   }
 
-  const db = await mysql.createConnection({ host, port, user, password, database, ssl });
+  const db = await mysql.createConnection({
+    host,
+    port,
+    user,
+    password,
+    database,
+    ssl,
+  });
   try {
-    const [[lock]] = await db.query<RowDataPacket[]>("SELECT GET_LOCK('navfarm-backfill-breed-lifecycle', 5) acquired");
-    if (Number(lock.acquired) !== 1) throw new Error('Another run of this script is active.');
+    const [[lock]] = await db.query<RowDataPacket[]>(
+      "SELECT GET_LOCK('navfarm-backfill-breed-lifecycle', 5) acquired",
+    );
+    if (Number(lock.acquired) !== 1)
+      throw new Error('Another run of this script is active.');
     await db.beginTransaction();
 
     const [companies] = await db.query<RowDataPacket[]>(
@@ -77,9 +92,22 @@ async function run() {
       WHERE bls.company_id IS NULL
     `);
 
-    const inserted: Array<{ company: string; breed_code: string; stage_code: string }> = [];
-    const protocolsBackfilled: Array<{ company: string; breed_code: string; stage_code: string }> = [];
-    const unresolved: Array<{ company: string; breed_code: string; stage_code: string; reason: string }> = [];
+    const inserted: Array<{
+      company: string;
+      breed_code: string;
+      stage_code: string;
+    }> = [];
+    const protocolsBackfilled: Array<{
+      company: string;
+      breed_code: string;
+      stage_code: string;
+    }> = [];
+    const unresolved: Array<{
+      company: string;
+      breed_code: string;
+      stage_code: string;
+      reason: string;
+    }> = [];
 
     for (const company of companies) {
       for (const tmpl of templateRows) {
@@ -88,7 +116,12 @@ async function run() {
           [company.company_id, tmpl.breed_code],
         );
         if (!ownBreed) {
-          unresolved.push({ company: company.company_code, breed_code: tmpl.breed_code, stage_code: tmpl.stage_code, reason: 'no adopted breed' });
+          unresolved.push({
+            company: company.company_code,
+            breed_code: tmpl.breed_code,
+            stage_code: tmpl.stage_code,
+            reason: 'no adopted breed',
+          });
           continue;
         }
         const [[ownStage]] = await db.query<RowDataPacket[]>(
@@ -96,7 +129,12 @@ async function run() {
           [company.company_id, tmpl.stage_code],
         );
         if (!ownStage) {
-          unresolved.push({ company: company.company_code, breed_code: tmpl.breed_code, stage_code: tmpl.stage_code, reason: 'no adopted stage' });
+          unresolved.push({
+            company: company.company_code,
+            breed_code: tmpl.breed_code,
+            stage_code: tmpl.stage_code,
+            reason: 'no adopted stage',
+          });
           continue;
         }
 
@@ -115,7 +153,11 @@ async function run() {
         );
 
         if (!existing) {
-          inserted.push({ company: company.company_code, breed_code: tmpl.breed_code, stage_code: tmpl.stage_code });
+          inserted.push({
+            company: company.company_code,
+            breed_code: tmpl.breed_code,
+            stage_code: tmpl.stage_code,
+          });
           if (apply || verify) {
             await db.query(
               `INSERT INTO breed_lifecycle_stages (
@@ -126,55 +168,101 @@ async function run() {
                 kpi_lower_limit, kpi_upper_limit, kpi_thresholds, alert_severity, notes, is_active, created_by
               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
               [
-                randomUUID(), tmpl.tenant_id, company.company_id, tmpl.nob_id, tmpl.lob_id, tmpl.lifecycle_code,
-                ownBreed.breed_id, ownStage.stage_id, tmpl.category, tmpl.calc_unit, tmpl.period_from, tmpl.period_to,
-                tmpl.std_teats, tmpl.season_type, tmpl.feed_item_id, tmpl.feed_qty_per_head_per_day_kg,
-                tmpl.feed_wastage_pct, tmpl.std_body_weight_kg, tmpl.std_adg_gpd, tmpl.std_fcr,
-                tmpl.std_mortality_rate_pct, tmpl.output_item_id, tmpl.output_uom, tmpl.std_output_qty,
-                toJsonParam(tmpl.medication_protocol), toJsonParam(tmpl.vaccination_protocol), toJsonParam(tmpl.resource_requirements),
-                tmpl.kpi_lower_limit, tmpl.kpi_upper_limit, toJsonParam(tmpl.kpi_thresholds), tmpl.alert_severity, tmpl.notes,
-                tmpl.is_active, tmpl.created_by,
+                randomUUID(),
+                tmpl.tenant_id,
+                company.company_id,
+                tmpl.nob_id,
+                tmpl.lob_id,
+                tmpl.lifecycle_code,
+                ownBreed.breed_id,
+                ownStage.stage_id,
+                tmpl.category,
+                tmpl.calc_unit,
+                tmpl.period_from,
+                tmpl.period_to,
+                tmpl.std_teats,
+                tmpl.season_type,
+                tmpl.feed_item_id,
+                tmpl.feed_qty_per_head_per_day_kg,
+                tmpl.feed_wastage_pct,
+                tmpl.std_body_weight_kg,
+                tmpl.std_adg_gpd,
+                tmpl.std_fcr,
+                tmpl.std_mortality_rate_pct,
+                tmpl.output_item_id,
+                tmpl.output_uom,
+                tmpl.std_output_qty,
+                toJsonParam(tmpl.medication_protocol),
+                toJsonParam(tmpl.vaccination_protocol),
+                toJsonParam(tmpl.resource_requirements),
+                tmpl.kpi_lower_limit,
+                tmpl.kpi_upper_limit,
+                toJsonParam(tmpl.kpi_thresholds),
+                tmpl.alert_severity,
+                tmpl.notes,
+                tmpl.is_active,
+                tmpl.created_by,
               ],
             );
           }
           continue;
         }
 
-        const needsMedication = !existing.medication_protocol && !!tmpl.medication_protocol;
-        const needsVaccination = !existing.vaccination_protocol && !!tmpl.vaccination_protocol;
+        const needsMedication =
+          !existing.medication_protocol && !!tmpl.medication_protocol;
+        const needsVaccination =
+          !existing.vaccination_protocol && !!tmpl.vaccination_protocol;
         if (needsMedication || needsVaccination) {
-          protocolsBackfilled.push({ company: company.company_code, breed_code: tmpl.breed_code, stage_code: tmpl.stage_code });
+          protocolsBackfilled.push({
+            company: company.company_code,
+            breed_code: tmpl.breed_code,
+            stage_code: tmpl.stage_code,
+          });
           if (apply || verify) {
             await db.query(
               `UPDATE breed_lifecycle_stages SET
                 medication_protocol = COALESCE(medication_protocol, ?),
                 vaccination_protocol = COALESCE(vaccination_protocol, ?)
                WHERE lifecycle_id = ?`,
-              [toJsonParam(tmpl.medication_protocol), toJsonParam(tmpl.vaccination_protocol), existing.lifecycle_id],
+              [
+                toJsonParam(tmpl.medication_protocol),
+                toJsonParam(tmpl.vaccination_protocol),
+                existing.lifecycle_id,
+              ],
             );
           }
         }
       }
     }
 
-    console.log(JSON.stringify({
-      database,
-      mode: apply ? 'APPLY' : verify ? 'VERIFY' : 'READ-ONLY',
-      companiesChecked: companies.map((c) => c.company_code),
-      templateRowsChecked: templateRows.length,
-      fullRowsInserted: inserted.length,
-      fullRowsInsertedDetail: inserted,
-      protocolsBackfilledCount: protocolsBackfilled.length,
-      protocolsBackfilledDetail: protocolsBackfilled,
-      unresolved,
-    }, null, 2));
+    console.log(
+      JSON.stringify(
+        {
+          database,
+          mode: apply ? 'APPLY' : verify ? 'VERIFY' : 'READ-ONLY',
+          companiesChecked: companies.map((c) => c.company_code),
+          templateRowsChecked: templateRows.length,
+          fullRowsInserted: inserted.length,
+          fullRowsInsertedDetail: inserted,
+          protocolsBackfilledCount: protocolsBackfilled.length,
+          protocolsBackfilledDetail: protocolsBackfilled,
+          unresolved,
+        },
+        null,
+        2,
+      ),
+    );
 
     if (apply) {
       await db.commit();
       console.log('Committed.');
     } else {
       await db.rollback();
-      console.log(verify ? 'Verified and rolled back. No changes committed.' : 'Read-only. No changes attempted.');
+      console.log(
+        verify
+          ? 'Verified and rolled back. No changes committed.'
+          : 'Read-only. No changes attempted.',
+      );
     }
   } finally {
     await db.query("SELECT RELEASE_LOCK('navfarm-backfill-breed-lifecycle')");
@@ -182,4 +270,7 @@ async function run() {
   }
 }
 
-run().catch((err) => { console.error(err.message); process.exit(1); });
+run().catch((err) => {
+  console.error(err.message);
+  process.exit(1);
+});

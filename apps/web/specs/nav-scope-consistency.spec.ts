@@ -45,11 +45,14 @@ function navByScope(): Record<string, Map<string, string>> {
     const line = lines[i];
     if (/activeScope === "TENANT"/.test(line)) current = 'TENANT';
     else if (/activeScope === "COMPANY"/.test(line)) current = 'COMPANY';
-    else if (/^ {2}\} else \{/.test(line) && current === 'COMPANY') current = 'OPERATIONAL';
+    else if (/^ {2}\} else \{/.test(line) && current === 'COMPANY')
+      current = 'OPERATIONAL';
     if (!current) continue;
 
     // Single-line item: { label: t("key"), href: "/path", ... }
-    const inline = line.match(/^ {6}\{\s*label: t\("([A-Za-z0-9_]+)"[^)]*\)\s*,\s*href: "([^"]+)"/);
+    const inline = line.match(
+      /^ {6}\{\s*label: t\("([A-Za-z0-9_]+)"[^)]*\)\s*,\s*href: "([^"]+)"/,
+    );
     if (inline) {
       record(inline[2], inline[1]);
       continue;
@@ -60,7 +63,8 @@ function navByScope(): Record<string, Map<string, string>> {
       let labelKey: string | null = null;
       let href: string | null = null;
       for (let j = i + 1; j < Math.min(i + 6, lines.length); j++) {
-        labelKey ??= lines[j].match(/^ {8}label: t\("([A-Za-z0-9_]+)"/)?.[1] ?? null;
+        labelKey ??=
+          lines[j].match(/^ {8}label: t\("([A-Za-z0-9_]+)"/)?.[1] ?? null;
         href ??= lines[j].match(/^ {8}href: "([^"]+)"/)?.[1] ?? null;
       }
       if (labelKey && href) record(href, labelKey);
@@ -72,9 +76,16 @@ function navByScope(): Record<string, Map<string, string>> {
 describe('Sidebar consistency across workspace scopes', () => {
   it('finds nav items in all three scopes', () => {
     const scopes = navByScope();
-    expect(Object.keys(scopes).sort()).toEqual(['COMPANY', 'OPERATIONAL', 'TENANT']);
+    expect(Object.keys(scopes).sort()).toEqual([
+      'COMPANY',
+      'OPERATIONAL',
+      'TENANT',
+    ]);
     for (const [scope, items] of Object.entries(scopes)) {
-      expect({ scope, hasItems: items.size > 0 }).toEqual({ scope, hasItems: true });
+      expect({ scope, hasItems: items.size > 0 }).toEqual({
+        scope,
+        hasItems: true,
+      });
     }
   });
 
@@ -84,7 +95,9 @@ describe('Sidebar consistency across workspace scopes', () => {
 
     for (const [scope, items] of Object.entries(scopes)) {
       for (const [href, labelKey] of items) {
-        (labelsByHref.get(href) ?? labelsByHref.set(href, new Map()).get(href)!).set(scope, labelKey);
+        (
+          labelsByHref.get(href) ?? labelsByHref.set(href, new Map()).get(href)!
+        ).set(scope, labelKey);
       }
     }
 
@@ -121,7 +134,8 @@ describe('Sidebar consistency across workspace scopes', () => {
         const shared = new Set(first.filter((href) => second.includes(href)));
         const a = first.filter((href) => shared.has(href));
         const b = second.filter((href) => shared.has(href));
-        if (a.join() !== b.join()) conflicts.push({ scopes: `${names[i]} vs ${names[j]}`, a, b });
+        if (a.join() !== b.join())
+          conflicts.push({ scopes: `${names[i]} vs ${names[j]}`, a, b });
       }
     }
 

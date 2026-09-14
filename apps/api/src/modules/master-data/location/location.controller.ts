@@ -1,19 +1,28 @@
-import { 
-  Controller, 
-  Get, 
-  Post, 
-  Put, 
-  Delete, 
-  Param, 
-  Body, 
-  Query, 
-  Req, 
-  UseGuards, 
-  Patch 
+import {
+  Controller,
+  Get,
+  Post,
+  Put,
+  Delete,
+  Param,
+  Body,
+  Query,
+  Req,
+  UseGuards,
+  Patch,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth, ApiParam } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiBearerAuth,
+  ApiParam,
+} from '@nestjs/swagger';
 import { LocationService } from './location.service';
-import { CreateLocationDto, UpdateLocationDto, QueryLocationDto } from './dto/location.dto';
+import {
+  CreateLocationDto,
+  UpdateLocationDto,
+  QueryLocationDto,
+} from './dto/location.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
@@ -34,7 +43,7 @@ export class LocationController {
     return {
       success: true,
       message: 'Location registered successfully.',
-      data: result
+      data: result,
     };
   }
 
@@ -59,19 +68,24 @@ export class LocationController {
 
   @Get('occupancy')
   @RequirePermission('MASTER_DATA', 'LOCATION', 'view')
-  @ApiOperation({ summary: 'Facility & Pen live occupancy, animal headcount and biosecurity tracking' })
+  @ApiOperation({
+    summary:
+      'Facility & Pen live occupancy, animal headcount and biosecurity tracking',
+  })
   async getOccupancy(@Query('companyId') companyId: string, @Req() req: any) {
     const tenantId = req.user?.tenantId || req['tenantId'];
-    const result = await this.locationService.getLocationOccupancy(tenantId, companyId);
+    const result = await this.locationService.getLocationOccupancy(
+      tenantId,
+      companyId,
+    );
     return {
       success: true,
       message: 'Facility occupancy retrieved successfully.',
-      data: result
+      data: result,
     };
   }
 
   @Get(':id')
-
   @RequirePermission('MASTER_DATA', 'LOCATION', 'view')
   @ApiOperation({ summary: 'Fetch details of a single Location by UUID' })
   @ApiParam({ name: 'id', description: 'Location UUID' })
@@ -81,7 +95,7 @@ export class LocationController {
     return {
       success: true,
       message: 'Location details retrieved.',
-      data: result
+      data: result,
     };
   }
 
@@ -89,13 +103,22 @@ export class LocationController {
   @RequirePermission('MASTER_DATA', 'LOCATION', 'edit')
   @ApiOperation({ summary: 'Update details of an existing Location' })
   @ApiParam({ name: 'id', description: 'Location UUID' })
-  async update(@Param('id') id: string, @Body() dto: UpdateLocationDto, @Req() req: any) {
+  async update(
+    @Param('id') id: string,
+    @Body() dto: UpdateLocationDto,
+    @Req() req: any,
+  ) {
     const tenantId = req.user?.tenantId || req['tenantId'];
-    const result = await this.locationService.update(id, dto, tenantId, req.user);
+    const result = await this.locationService.update(
+      id,
+      dto,
+      tenantId,
+      req.user,
+    );
     return {
       success: true,
       message: 'Location updated successfully.',
-      data: result
+      data: result,
     };
   }
 
@@ -119,7 +142,7 @@ export class LocationController {
     return {
       success: true,
       message: 'Location restored successfully.',
-      data: result
+      data: result,
     };
   }
 }

@@ -58,7 +58,7 @@
           "command": "node --import tsx src/scripts/seed-farm-locations.ts"
         }
       },
-"db-seed-farm-masters": {
+      "db-seed-farm-masters": {
         "executor": "nx:run-commands",
         "cache": false,
         "options": {
@@ -66,7 +66,7 @@
           "command": "node --import tsx src/scripts/seed-farm-masters.ts"
         }
       },
-"db-align-stages-to-tdd": {
+      "db-align-stages-to-tdd": {
         "executor": "nx:run-commands",
         "cache": false,
         "options": {
@@ -182,7 +182,9 @@
       "start": {
         "executor": "nx:run-commands",
         "continuous": true,
-        "dependsOn": ["build"],
+        "dependsOn": [
+          "build"
+        ],
         "options": {
           "cwd": "apps/api",
           "command": "node --env-file-if-exists=.env dist/main.js",

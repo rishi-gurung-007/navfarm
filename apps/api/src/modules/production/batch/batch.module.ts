@@ -12,7 +12,13 @@ import { BatchDailyDataModule } from '../batch-daily-data/batch-daily-data.modul
 @Module({
   // forwardRef: BatchDailyDataModule already imports this module (for
   // addTransaction); BatchService.postBatchDay() needs the reverse edge too.
-  imports: [InventoryLedgerModule, JournalModule, NumberSeriesModule, SchedulerHeaderModule, forwardRef(() => BatchDailyDataModule)],
+  imports: [
+    InventoryLedgerModule,
+    JournalModule,
+    NumberSeriesModule,
+    SchedulerHeaderModule,
+    forwardRef(() => BatchDailyDataModule),
+  ],
   controllers: [BatchController, BatchTransferController],
   providers: [BatchService, BatchTransferService],
   exports: [BatchService, BatchTransferService],

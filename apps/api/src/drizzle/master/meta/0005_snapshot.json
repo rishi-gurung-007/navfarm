@@ -99,12 +99,8 @@
           "name": "audit_log_tenant_id_tenant_master_tenant_id_fk",
           "tableFrom": "audit_log",
           "tableTo": "tenant_master",
-          "columnsFrom": [
-            "tenant_id"
-          ],
-          "columnsTo": [
-            "tenant_id"
-          ],
+          "columnsFrom": ["tenant_id"],
+          "columnsTo": ["tenant_id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -112,9 +108,7 @@
       "compositePrimaryKeys": {
         "audit_log_audit_id": {
           "name": "audit_log_audit_id",
-          "columns": [
-            "audit_id"
-          ]
+          "columns": ["audit_id"]
         }
       },
       "uniqueConstraints": {},
@@ -205,9 +199,7 @@
       "compositePrimaryKeys": {
         "costing_method_config_method_code": {
           "name": "costing_method_config_method_code",
-          "columns": [
-            "method_code"
-          ]
+          "columns": ["method_code"]
         }
       },
       "uniqueConstraints": {},
@@ -287,12 +279,8 @@
           "name": "country_master_default_tz_id_fk",
           "tableFrom": "country_master",
           "tableTo": "timezone_master",
-          "columnsFrom": [
-            "default_tz_id"
-          ],
-          "columnsTo": [
-            "tz_id"
-          ],
+          "columnsFrom": ["default_tz_id"],
+          "columnsTo": ["tz_id"],
           "onDelete": "set null",
           "onUpdate": "no action"
         },
@@ -300,12 +288,8 @@
           "name": "country_master_default_currency_id_fk",
           "tableFrom": "country_master",
           "tableTo": "currency_master",
-          "columnsFrom": [
-            "default_currency_id"
-          ],
-          "columnsTo": [
-            "currency_id"
-          ],
+          "columnsFrom": ["default_currency_id"],
+          "columnsTo": ["currency_id"],
           "onDelete": "set null",
           "onUpdate": "no action"
         }
@@ -313,23 +297,17 @@
       "compositePrimaryKeys": {
         "country_master_country_id": {
           "name": "country_master_country_id",
-          "columns": [
-            "country_id"
-          ]
+          "columns": ["country_id"]
         }
       },
       "uniqueConstraints": {
         "country_master_iso2_unique": {
           "name": "country_master_iso2_unique",
-          "columns": [
-            "iso2"
-          ]
+          "columns": ["iso2"]
         },
         "country_master_iso3_unique": {
           "name": "country_master_iso3_unique",
-          "columns": [
-            "iso3"
-          ]
+          "columns": ["iso3"]
         }
       },
       "checkConstraint": {}
@@ -410,17 +388,13 @@
       "compositePrimaryKeys": {
         "currency_master_currency_id": {
           "name": "currency_master_currency_id",
-          "columns": [
-            "currency_id"
-          ]
+          "columns": ["currency_id"]
         }
       },
       "uniqueConstraints": {
         "currency_master_iso_code_unique": {
           "name": "currency_master_iso_code_unique",
-          "columns": [
-            "iso_code"
-          ]
+          "columns": ["iso_code"]
         }
       },
       "checkConstraint": {}
@@ -540,17 +514,13 @@
       "compositePrimaryKeys": {
         "language_master_lang_id": {
           "name": "language_master_lang_id",
-          "columns": [
-            "lang_id"
-          ]
+          "columns": ["lang_id"]
         }
       },
       "uniqueConstraints": {
         "language_master_lang_code_unique": {
           "name": "language_master_lang_code_unique",
-          "columns": [
-            "lang_code"
-          ]
+          "columns": ["lang_code"]
         }
       },
       "checkConstraint": {}
@@ -691,12 +661,8 @@
           "name": "lob_master_nob_id_nob_master_nob_id_fk",
           "tableFrom": "lob_master",
           "tableTo": "nob_master",
-          "columnsFrom": [
-            "nob_id"
-          ],
-          "columnsTo": [
-            "nob_id"
-          ],
+          "columnsFrom": ["nob_id"],
+          "columnsTo": ["nob_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         }
@@ -704,17 +670,13 @@
       "compositePrimaryKeys": {
         "lob_master_lob_id": {
           "name": "lob_master_lob_id",
-          "columns": [
-            "lob_id"
-          ]
+          "columns": ["lob_id"]
         }
       },
       "uniqueConstraints": {
         "lob_master_lob_code_unique": {
           "name": "lob_master_lob_code_unique",
-          "columns": [
-            "lob_code"
-          ]
+          "columns": ["lob_code"]
         }
       },
       "checkConstraint": {}
@@ -808,17 +770,13 @@
       "compositePrimaryKeys": {
         "nob_master_nob_id": {
           "name": "nob_master_nob_id",
-          "columns": [
-            "nob_id"
-          ]
+          "columns": ["nob_id"]
         }
       },
       "uniqueConstraints": {
         "nob_master_nob_code_unique": {
           "name": "nob_master_nob_code_unique",
-          "columns": [
-            "nob_code"
-          ]
+          "columns": ["nob_code"]
         }
       },
       "checkConstraint": {}
@@ -908,9 +866,7 @@
       "compositePrimaryKeys": {
         "plan_master_plan_id": {
           "name": "plan_master_plan_id",
-          "columns": [
-            "plan_id"
-          ]
+          "columns": ["plan_id"]
         }
       },
       "uniqueConstraints": {},
@@ -997,17 +953,13 @@
       "compositePrimaryKeys": {
         "setup_step_master_step_id": {
           "name": "setup_step_master_step_id",
-          "columns": [
-            "step_id"
-          ]
+          "columns": ["step_id"]
         }
       },
       "uniqueConstraints": {
         "setup_step_master_step_code_unique": {
           "name": "setup_step_master_step_code_unique",
-          "columns": [
-            "step_code"
-          ]
+          "columns": ["step_code"]
         }
       },
       "checkConstraint": {}
@@ -1055,10 +1007,7 @@
       "indexes": {
         "uq_state_province_country_code": {
           "name": "uq_state_province_country_code",
-          "columns": [
-            "country_id",
-            "state_code"
-          ],
+          "columns": ["country_id", "state_code"],
           "isUnique": true
         }
       },
@@ -1067,12 +1016,8 @@
           "name": "state_province_country_id_country_master_country_id_fk",
           "tableFrom": "state_province",
           "tableTo": "country_master",
-          "columnsFrom": [
-            "country_id"
-          ],
-          "columnsTo": [
-            "country_id"
-          ],
+          "columnsFrom": ["country_id"],
+          "columnsTo": ["country_id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -1080,9 +1025,7 @@
       "compositePrimaryKeys": {
         "state_province_state_id": {
           "name": "state_province_state_id",
-          "columns": [
-            "state_id"
-          ]
+          "columns": ["state_id"]
         }
       },
       "uniqueConstraints": {},
@@ -1283,12 +1226,8 @@
           "name": "tenant_master_plan_id_plan_master_plan_id_fk",
           "tableFrom": "tenant_master",
           "tableTo": "plan_master",
-          "columnsFrom": [
-            "plan_id"
-          ],
-          "columnsTo": [
-            "plan_id"
-          ],
+          "columnsFrom": ["plan_id"],
+          "columnsTo": ["plan_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         }
@@ -1296,17 +1235,13 @@
       "compositePrimaryKeys": {
         "tenant_master_tenant_id": {
           "name": "tenant_master_tenant_id",
-          "columns": [
-            "tenant_id"
-          ]
+          "columns": ["tenant_id"]
         }
       },
       "uniqueConstraints": {
         "tenant_master_tenant_code_unique": {
           "name": "tenant_master_tenant_code_unique",
-          "columns": [
-            "tenant_code"
-          ]
+          "columns": ["tenant_code"]
         }
       },
       "checkConstraint": {}
@@ -1396,12 +1331,8 @@
           "name": "tenant_subscription_tenant_id_tenant_master_tenant_id_fk",
           "tableFrom": "tenant_subscription",
           "tableTo": "tenant_master",
-          "columnsFrom": [
-            "tenant_id"
-          ],
-          "columnsTo": [
-            "tenant_id"
-          ],
+          "columnsFrom": ["tenant_id"],
+          "columnsTo": ["tenant_id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -1409,12 +1340,8 @@
           "name": "tenant_subscription_plan_code_plan_master_plan_id_fk",
           "tableFrom": "tenant_subscription",
           "tableTo": "plan_master",
-          "columnsFrom": [
-            "plan_code"
-          ],
-          "columnsTo": [
-            "plan_id"
-          ],
+          "columnsFrom": ["plan_code"],
+          "columnsTo": ["plan_id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
         }
@@ -1422,17 +1349,13 @@
       "compositePrimaryKeys": {
         "tenant_subscription_sub_id": {
           "name": "tenant_subscription_sub_id",
-          "columns": [
-            "sub_id"
-          ]
+          "columns": ["sub_id"]
         }
       },
       "uniqueConstraints": {
         "tenant_subscription_tenant_id_unique": {
           "name": "tenant_subscription_tenant_id_unique",
-          "columns": [
-            "tenant_id"
-          ]
+          "columns": ["tenant_id"]
         }
       },
       "checkConstraint": {}
@@ -1497,17 +1420,13 @@
       "compositePrimaryKeys": {
         "timezone_master_tz_id": {
           "name": "timezone_master_tz_id",
-          "columns": [
-            "tz_id"
-          ]
+          "columns": ["tz_id"]
         }
       },
       "uniqueConstraints": {
         "timezone_master_tz_code_unique": {
           "name": "timezone_master_tz_code_unique",
-          "columns": [
-            "tz_code"
-          ]
+          "columns": ["tz_code"]
         }
       },
       "checkConstraint": {}
@@ -1551,12 +1470,8 @@
           "name": "user_auth_index_tenant_id_tenant_master_tenant_id_fk",
           "tableFrom": "user_auth_index",
           "tableTo": "tenant_master",
-          "columnsFrom": [
-            "tenant_id"
-          ],
-          "columnsTo": [
-            "tenant_id"
-          ],
+          "columnsFrom": ["tenant_id"],
+          "columnsTo": ["tenant_id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -1564,9 +1479,7 @@
       "compositePrimaryKeys": {
         "user_auth_index_email": {
           "name": "user_auth_index_email",
-          "columns": [
-            "email"
-          ]
+          "columns": ["email"]
         }
       },
       "uniqueConstraints": {},

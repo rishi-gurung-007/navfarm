@@ -1,15 +1,27 @@
 import { masterScopeConditions } from '../../../common/master-data-scope';
-import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ConflictException,
+  BadRequestException,
+} from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { eq, and, like, or, isNull, ne } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
-import { CreateItemCategoryDto, UpdateItemCategoryDto, QueryItemCategoryDto } from './dto/item-category.dto';
+import {
+  CreateItemCategoryDto,
+  UpdateItemCategoryDto,
+  QueryItemCategoryDto,
+} from './dto/item-category.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { generateCompositeCode } from '../../system/number-series/composite-code.util';
-import { listFilterConditions, runMasterList } from '../../../common/master-list-query';
+import {
+  listFilterConditions,
+  runMasterList,
+} from '../../../common/master-list-query';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   return date.toISOString().slice(0, 19).replace('T', ' ');
@@ -31,7 +43,11 @@ export class ItemCategoryService {
     return tenantDb;
   }
 
-  async create(dto: CreateItemCategoryDto, tenantId: string, userPayload?: any) {
+  async create(
+    dto: CreateItemCategoryDto,
+    tenantId: string,
+    userPayload?: any,
+  ) {
     const companyId = dto.company_id || null;
 
     // 1. Verify company exists (if provided)
@@ -39,28 +55,51 @@ export class ItemCategoryService {
       const [company] = await this.db
         .select()
         .from(schema.companyMaster)
-        .where(and(eq(schema.companyMaster.company_id, companyId), isNull(schema.companyMaster.deleted_at)))
+        .where(
+          and(
+            eq(schema.companyMaster.company_id, companyId),
+            isNull(schema.companyMaster.deleted_at),
+          ),
+        )
         .limit(1);
 
       if (!company) {
-        throw new NotFoundException(`Company with ID '${companyId}' not found.`);
+        throw new NotFoundException(
+          `Company with ID '${companyId}' not found.`,
+        );
       }
     }
 
     // 2. Verify parent category exists (if provided)
-    const parent = dto.parent_category_id ? await this.findOne(dto.parent_category_id) : undefined;
+    const parent = dto.parent_category_id
+      ? await this.findOne(dto.parent_category_id)
+      : undefined;
 
     // 3. Item categories carry no type dimension of their own — resolve the master-alone series.
-    const seriesCode = await this.numberSeriesService.resolveSeriesFor('ITEM_CATEGORY', null, tenantId, companyId);
+    const seriesCode = await this.numberSeriesService.resolveSeriesFor(
+      'ITEM_CATEGORY',
+      null,
+      tenantId,
+      companyId,
+    );
 
     if (!seriesCode) {
       return this.createManual(dto, tenantId, companyId, userPayload);
     }
 
     const categoryId = randomUUID();
-    const attempt = () => this.db.transaction((tx) => this.createAutoRecord(tx, {
-      dto, tenantId, companyId, seriesCode, parent, categoryId, userPayload,
-    }));
+    const attempt = () =>
+      this.db.transaction((tx) =>
+        this.createAutoRecord(tx, {
+          dto,
+          tenantId,
+          companyId,
+          seriesCode,
+          parent,
+          categoryId,
+          userPayload,
+        }),
+      );
 
     let newCategory: Awaited<ReturnType<typeof this.createAutoRecord>>;
     try {
@@ -71,7 +110,9 @@ export class ItemCategoryService {
         newCategory = await attempt();
       } catch (retryErr) {
         if ((retryErr as { code?: string })?.code === 'ER_DUP_ENTRY') {
-          throw new ConflictException('Category code collided with a concurrently created category; please retry.');
+          throw new ConflictException(
+            'Category code collided with a concurrently created category; please retry.',
+          );
         }
         throw retryErr;
       }
@@ -91,18 +132,30 @@ export class ItemCategoryService {
   }
 
   /** No series configured for ITEM_CATEGORY — manual entry, exactly as before this feature existed. */
-  private async createManual(dto: CreateItemCategoryDto, tenantId: string, companyId: string | null, userPayload?: any) {
+  private async createManual(
+    dto: CreateItemCategoryDto,
+    tenantId: string,
+    companyId: string | null,
+    userPayload?: any,
+  ) {
     if (!dto.category_code) {
-      throw new BadRequestException('category_code is required — no number series is configured for item categories.');
+      throw new BadRequestException(
+        'category_code is required — no number series is configured for item categories.',
+      );
     }
 
     const duplicateConditions = [
       eq(schema.itemCategoryMaster.tenant_id, tenantId),
-      eq(schema.itemCategoryMaster.category_code, dto.category_code.toUpperCase()),
+      eq(
+        schema.itemCategoryMaster.category_code,
+        dto.category_code.toUpperCase(),
+      ),
       isNull(schema.itemCategoryMaster.deleted_at),
     ];
     if (companyId) {
-      duplicateConditions.push(eq(schema.itemCategoryMaster.company_id, companyId));
+      duplicateConditions.push(
+        eq(schema.itemCategoryMaster.company_id, companyId),
+      );
     } else {
       duplicateConditions.push(isNull(schema.itemCategoryMaster.company_id));
     }
@@ -114,7 +167,9 @@ export class ItemCategoryService {
       .limit(1);
 
     if (existing.length > 0) {
-      throw new ConflictException(`Item category with code '${dto.category_code}' already exists in this scope.`);
+      throw new ConflictException(
+        `Item category with code '${dto.category_code}' already exists in this scope.`,
+      );
     }
 
     const categoryId = randomUUID();
@@ -130,7 +185,9 @@ export class ItemCategoryService {
       item_type: dto.item_type || null,
       is_active: true,
       status: 'ACTIVE',
-      extension_config: dto.extension_config ? JSON.stringify(dto.extension_config) : null,
+      extension_config: dto.extension_config
+        ? JSON.stringify(dto.extension_config)
+        : null,
       created_by: userPayload?.userId || null,
       updated_by: userPayload?.userId || null,
     };
@@ -168,12 +225,25 @@ export class ItemCategoryService {
       userPayload?: any;
     },
   ) {
-    const { dto, tenantId, companyId, seriesCode, parent, categoryId, userPayload } = params;
+    const {
+      dto,
+      tenantId,
+      companyId,
+      seriesCode,
+      parent,
+      categoryId,
+      userPayload,
+    } = params;
 
     // Locks the series row for the duration of code generation + this insert —
     // also the row that carries allow_manual, so a user-supplied code can win
     // when the series explicitly permits it.
-    const series = await this.numberSeriesService.lockSeries(seriesCode, tenantId, companyId, tx);
+    const series = await this.numberSeriesService.lockSeries(
+      seriesCode,
+      tenantId,
+      companyId,
+      tx,
+    );
 
     let categoryCode: string;
     if (series.allow_manual && dto.category_code) {
@@ -183,16 +253,28 @@ export class ItemCategoryService {
         parentCode: parent.category_code,
         prefix: series.prefix || seriesCode,
         seqLength: series.seq_length,
-        fetchSiblingCodes: () => tx
-          .select({ code: schema.itemCategoryMaster.category_code })
-          .from(schema.itemCategoryMaster)
-          .where(and(
-            eq(schema.itemCategoryMaster.tenant_id, tenantId),
-            eq(schema.itemCategoryMaster.parent_category_id, parent.category_id),
-          )),
+        fetchSiblingCodes: () =>
+          tx
+            .select({ code: schema.itemCategoryMaster.category_code })
+            .from(schema.itemCategoryMaster)
+            .where(
+              and(
+                eq(schema.itemCategoryMaster.tenant_id, tenantId),
+                eq(
+                  schema.itemCategoryMaster.parent_category_id,
+                  parent.category_id,
+                ),
+              ),
+            ),
       });
     } else {
-      categoryCode = await this.numberSeriesService.generateNext(seriesCode, tenantId, companyId, tx, dto as unknown as Record<string, unknown>);
+      categoryCode = await this.numberSeriesService.generateNext(
+        seriesCode,
+        tenantId,
+        companyId,
+        tx,
+        dto as unknown as Record<string, unknown>,
+      );
     }
 
     if (categoryCode.length > 255) {
@@ -213,7 +295,9 @@ export class ItemCategoryService {
       item_type: dto.item_type || null,
       is_active: true,
       status: 'ACTIVE',
-      extension_config: dto.extension_config ? JSON.stringify(dto.extension_config) : null,
+      extension_config: dto.extension_config
+        ? JSON.stringify(dto.extension_config)
+        : null,
       created_by: userPayload?.userId || null,
       updated_by: userPayload?.userId || null,
     };
@@ -226,7 +310,12 @@ export class ItemCategoryService {
     const [category] = await this.db
       .select()
       .from(schema.itemCategoryMaster)
-      .where(and(eq(schema.itemCategoryMaster.category_id, id), isNull(schema.itemCategoryMaster.deleted_at)))
+      .where(
+        and(
+          eq(schema.itemCategoryMaster.category_id, id),
+          isNull(schema.itemCategoryMaster.deleted_at),
+        ),
+      )
       .limit(1);
 
     if (!category) {
@@ -242,9 +331,20 @@ export class ItemCategoryService {
       eq(schema.itemCategoryMaster.tenant_id, tenantId),
     ];
 
-    conditions.push(...masterScopeConditions(this.cls, schema.itemCategoryMaster, query.companyId));
+    conditions.push(
+      ...masterScopeConditions(
+        this.cls,
+        schema.itemCategoryMaster,
+        query.companyId,
+      ),
+    );
     if (query.parentCategoryId) {
-      conditions.push(eq(schema.itemCategoryMaster.parent_category_id, query.parentCategoryId));
+      conditions.push(
+        eq(
+          schema.itemCategoryMaster.parent_category_id,
+          query.parentCategoryId,
+        ),
+      );
     }
     // A category picker should offer categories, not sub-categories. Without
     // this the Item form's Category dropdown listed FEED-STARTER and
@@ -262,19 +362,32 @@ export class ItemCategoryService {
       conditions.push(
         or(
           like(schema.itemCategoryMaster.category_code, `%${query.search}%`),
-          like(schema.itemCategoryMaster.category_name, `%${query.search}%`)
-        )
+          like(schema.itemCategoryMaster.category_name, `%${query.search}%`),
+        ),
       );
     }
 
-    conditions.push(...listFilterConditions(schema.itemCategoryMaster, query.filter));
+    conditions.push(
+      ...listFilterConditions(schema.itemCategoryMaster, query.filter),
+    );
 
     // Rows and the matching count together, so the pager knows how many
     // pages there really are rather than guessing from a full page.
-    return runMasterList(this.db, schema.itemCategoryMaster, conditions, query, schema.itemCategoryMaster.category_code);
+    return runMasterList(
+      this.db,
+      schema.itemCategoryMaster,
+      conditions,
+      query,
+      schema.itemCategoryMaster.category_code,
+    );
   }
 
-  async update(id: string, dto: UpdateItemCategoryDto, tenantId: string, userPayload?: any) {
+  async update(
+    id: string,
+    dto: UpdateItemCategoryDto,
+    tenantId: string,
+    userPayload?: any,
+  ) {
     const category = await this.findOne(id);
 
     if (dto.parent_category_id) {
@@ -284,16 +397,24 @@ export class ItemCategoryService {
       await this.findOne(dto.parent_category_id);
     }
 
-    if (dto.category_code && dto.category_code.toUpperCase() !== category.category_code) {
+    if (
+      dto.category_code &&
+      dto.category_code.toUpperCase() !== category.category_code
+    ) {
       const duplicateConditions = [
         eq(schema.itemCategoryMaster.tenant_id, tenantId),
-        eq(schema.itemCategoryMaster.category_code, dto.category_code.toUpperCase()),
+        eq(
+          schema.itemCategoryMaster.category_code,
+          dto.category_code.toUpperCase(),
+        ),
         ne(schema.itemCategoryMaster.category_id, id),
         isNull(schema.itemCategoryMaster.deleted_at),
       ];
       const targetCompanyId = category.company_id;
       if (targetCompanyId) {
-        duplicateConditions.push(eq(schema.itemCategoryMaster.company_id, targetCompanyId));
+        duplicateConditions.push(
+          eq(schema.itemCategoryMaster.company_id, targetCompanyId),
+        );
       } else {
         duplicateConditions.push(isNull(schema.itemCategoryMaster.company_id));
       }
@@ -305,7 +426,9 @@ export class ItemCategoryService {
         .limit(1);
 
       if (existing.length > 0) {
-        throw new ConflictException(`Item category with code '${dto.category_code}' already exists in this scope.`);
+        throw new ConflictException(
+          `Item category with code '${dto.category_code}' already exists in this scope.`,
+        );
       }
     }
 
@@ -314,13 +437,17 @@ export class ItemCategoryService {
       updated_at: toMysqlTimestamp(),
     };
 
-    if (dto.parent_category_id !== undefined) updates.parent_category_id = dto.parent_category_id;
+    if (dto.parent_category_id !== undefined)
+      updates.parent_category_id = dto.parent_category_id;
     if (dto.item_type !== undefined) updates.item_type = dto.item_type;
-    if (dto.category_code !== undefined) updates.category_code = dto.category_code.toUpperCase();
-    if (dto.category_name !== undefined) updates.category_name = dto.category_name;
+    if (dto.category_code !== undefined)
+      updates.category_code = dto.category_code.toUpperCase();
+    if (dto.category_name !== undefined)
+      updates.category_name = dto.category_name;
     if (dto.is_active !== undefined) updates.is_active = dto.is_active;
     if (dto.status !== undefined) updates.status = dto.status;
-    if (dto.extension_config !== undefined) updates.extension_config = JSON.stringify(dto.extension_config);
+    if (dto.extension_config !== undefined)
+      updates.extension_config = JSON.stringify(dto.extension_config);
 
     await this.db
       .update(schema.itemCategoryMaster)
@@ -366,7 +493,10 @@ export class ItemCategoryService {
       newValues: { status: 'INACTIVE', deleted_at: deletedTime },
     });
 
-    return { success: true, message: `Item Category '${category.category_name}' has been soft-deleted.` };
+    return {
+      success: true,
+      message: `Item Category '${category.category_name}' has been soft-deleted.`,
+    };
   }
 
   async restore(id: string, tenantId: string, userPayload?: any) {

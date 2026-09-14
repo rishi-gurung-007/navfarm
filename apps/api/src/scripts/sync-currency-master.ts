@@ -1,6 +1,10 @@
 import * as mysql from 'mysql2/promise';
 import type { RowDataPacket, ResultSetHeader } from 'mysql2/promise';
-import { CURRENCY_SEED_ROWS, DEFAULT_CURRENCY_BY_COUNTRY, CURRENCY_ID_BY_ISO } from './lib/currency-seed-data';
+import {
+  CURRENCY_SEED_ROWS,
+  DEFAULT_CURRENCY_BY_COUNTRY,
+  CURRENCY_ID_BY_ISO,
+} from './lib/currency-seed-data';
 
 /**
  * Brings the currency reference list, and each country's default currency, up
@@ -27,9 +31,10 @@ const host = process.env.DATABASE_HOST || 'localhost';
 const port = Number(process.env.DATABASE_PORT || 3306);
 const user = process.env.DATABASE_USERNAME || 'root';
 const password = process.env.DATABASE_PASSWORD || '';
-const ssl = process.env.DATABASE_SSL === 'true'
-  ? { minVersion: 'TLSv1.2' as const, rejectUnauthorized: true }
-  : undefined;
+const ssl =
+  process.env.DATABASE_SSL === 'true'
+    ? { minVersion: 'TLSv1.2' as const, rejectUnauthorized: true }
+    : undefined;
 const masterDatabase = process.env.DATABASE_NAME || 'navfarm_master';
 
 interface Plan {
@@ -38,12 +43,27 @@ interface Plan {
   currenciesUpdated: string[];
   currenciesUnchanged: number;
   countryDefaultsSet: string[];
-  countryDefaultsDiffer: Array<{ iso2: string; existing: string; expected: string }>;
+  countryDefaultsDiffer: Array<{
+    iso2: string;
+    existing: string;
+    expected: string;
+  }>;
   countriesAbsent: string[];
 }
 
-async function syncOne(database: string, apply: boolean, verify: boolean): Promise<Plan> {
-  const db = await mysql.createConnection({ host, port, user, password, database, ssl });
+async function syncOne(
+  database: string,
+  apply: boolean,
+  verify: boolean,
+): Promise<Plan> {
+  const db = await mysql.createConnection({
+    host,
+    port,
+    user,
+    password,
+    database,
+    ssl,
+  });
   const plan: Plan = {
     database,
     currenciesInserted: [],
@@ -73,13 +93,17 @@ async function syncOne(database: string, apply: boolean, verify: boolean): Promi
         const currentCodes = JSON.stringify(
           typeof current.country_codes === 'string'
             ? JSON.parse(current.country_codes)
-            : current.country_codes ?? null,
+            : (current.country_codes ?? null),
         );
-        const same = current.currency_name === row.currency_name
-          && current.symbol === row.symbol
-          && Number(current.decimal_places) === row.decimal_places
-          && currentCodes === codes;
-        if (same) { plan.currenciesUnchanged += 1; continue; }
+        const same =
+          current.currency_name === row.currency_name &&
+          current.symbol === row.symbol &&
+          Number(current.decimal_places) === row.decimal_places &&
+          currentCodes === codes;
+        if (same) {
+          plan.currenciesUnchanged += 1;
+          continue;
+        }
         plan.currenciesUpdated.push(row.iso_code);
       }
 
@@ -93,7 +117,14 @@ async function syncOne(database: string, apply: boolean, verify: boolean): Promi
              symbol = VALUES(symbol),
              decimal_places = VALUES(decimal_places),
              country_codes = VALUES(country_codes)`,
-          [row.currency_id, row.iso_code, row.currency_name, row.symbol, row.decimal_places, codes],
+          [
+            row.currency_id,
+            row.iso_code,
+            row.currency_name,
+            row.symbol,
+            row.decimal_places,
+            codes,
+          ],
         );
       }
     }
@@ -103,15 +134,35 @@ async function syncOne(database: string, apply: boolean, verify: boolean): Promi
     );
     const countryByIso = new Map(countries.map((r) => [r.iso2 as string, r]));
     // Re-read: an insert above may have just created the row this points at.
-    const [afterCurrencies] = await db.query<RowDataPacket[]>('SELECT currency_id, iso_code FROM currency_master');
-    const liveIdByIso = new Map(afterCurrencies.map((r) => [r.iso_code as string, r.currency_id as string]));
+    const [afterCurrencies] = await db.query<RowDataPacket[]>(
+      'SELECT currency_id, iso_code FROM currency_master',
+    );
+    const liveIdByIso = new Map(
+      afterCurrencies.map((r) => [
+        r.iso_code as string,
+        r.currency_id as string,
+      ]),
+    );
 
-    for (const [iso2, currencyIso] of Object.entries(DEFAULT_CURRENCY_BY_COUNTRY)) {
+    for (const [iso2, currencyIso] of Object.entries(
+      DEFAULT_CURRENCY_BY_COUNTRY,
+    )) {
       const country = countryByIso.get(iso2);
-      if (!country) { plan.countriesAbsent.push(iso2); continue; }
-      const expected = liveIdByIso.get(currencyIso) ?? CURRENCY_ID_BY_ISO.get(currencyIso)!;
-      if (country.default_currency_id && country.default_currency_id !== expected) {
-        plan.countryDefaultsDiffer.push({ iso2, existing: String(country.default_currency_id), expected });
+      if (!country) {
+        plan.countriesAbsent.push(iso2);
+        continue;
+      }
+      const expected =
+        liveIdByIso.get(currencyIso) ?? CURRENCY_ID_BY_ISO.get(currencyIso)!;
+      if (
+        country.default_currency_id &&
+        country.default_currency_id !== expected
+      ) {
+        plan.countryDefaultsDiffer.push({
+          iso2,
+          existing: String(country.default_currency_id),
+          expected,
+        });
         continue;
       }
       if (country.default_currency_id === expected) continue;
@@ -129,7 +180,9 @@ async function syncOne(database: string, apply: boolean, verify: boolean): Promi
     return plan;
   } catch (err) {
     await db.rollback().catch(() => undefined);
-    throw new Error(`[${database}] ${err instanceof Error ? err.message : String(err)}`);
+    throw new Error(
+      `[${database}] ${err instanceof Error ? err.message : String(err)}`,
+    );
   } finally {
     await db.end();
   }
@@ -138,27 +191,46 @@ async function syncOne(database: string, apply: boolean, verify: boolean): Promi
 async function run() {
   const apply = process.argv.includes('--apply');
   const verify = process.argv.includes('--verify');
-  if (process.argv.slice(2).some((a) => !['--apply', '--verify'].includes(a)) || (apply && verify)) {
+  if (
+    process.argv.slice(2).some((a) => !['--apply', '--verify'].includes(a)) ||
+    (apply && verify)
+  ) {
     throw new Error('Use no flags (read-only), --verify, or --apply.');
   }
 
-  const masterConn = await mysql.createConnection({ host, port, user, password, database: masterDatabase, ssl });
+  const masterConn = await mysql.createConnection({
+    host,
+    port,
+    user,
+    password,
+    database: masterDatabase,
+    ssl,
+  });
   let databases: string[];
   try {
-    const [tenants] = await masterConn.query<RowDataPacket[]>('SELECT db_name FROM tenant_master');
+    const [tenants] = await masterConn.query<RowDataPacket[]>(
+      'SELECT db_name FROM tenant_master',
+    );
     databases = [masterDatabase, ...tenants.map((t) => t.db_name as string)];
   } finally {
     await masterConn.end();
   }
 
   const plans: Plan[] = [];
-  for (const database of databases) plans.push(await syncOne(database, apply, verify));
+  for (const database of databases)
+    plans.push(await syncOne(database, apply, verify));
 
-  console.log(JSON.stringify({
-    mode: apply ? 'APPLY' : verify ? 'VERIFY' : 'READ-ONLY',
-    seedCurrencies: CURRENCY_SEED_ROWS.length,
-    databases: plans,
-  }, null, 2));
+  console.log(
+    JSON.stringify(
+      {
+        mode: apply ? 'APPLY' : verify ? 'VERIFY' : 'READ-ONLY',
+        seedCurrencies: CURRENCY_SEED_ROWS.length,
+        databases: plans,
+      },
+      null,
+      2,
+    ),
+  );
 
   console.log(
     apply
@@ -169,4 +241,7 @@ async function run() {
   );
 }
 
-run().catch((err) => { console.error(err instanceof Error ? err.message : err); process.exit(1); });
+run().catch((err) => {
+  console.error(err instanceof Error ? err.message : err);
+  process.exit(1);
+});

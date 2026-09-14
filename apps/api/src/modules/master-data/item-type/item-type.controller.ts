@@ -9,11 +9,20 @@ import {
   Query,
   Req,
   UseGuards,
-  Patch
+  Patch,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth, ApiParam } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiBearerAuth,
+  ApiParam,
+} from '@nestjs/swagger';
 import { ItemTypeService } from './item-type.service';
-import { CreateItemTypeDto, UpdateItemTypeDto, QueryItemTypeDto } from './dto/item-type.dto';
+import {
+  CreateItemTypeDto,
+  UpdateItemTypeDto,
+  QueryItemTypeDto,
+} from './dto/item-type.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
@@ -34,7 +43,7 @@ export class ItemTypeController {
     return {
       success: true,
       message: 'Item type registered successfully.',
-      data: result
+      data: result,
     };
   }
 
@@ -47,7 +56,7 @@ export class ItemTypeController {
     return {
       success: true,
       message: 'Item types retrieved successfully.',
-            // `data` stays the array every caller already reads; total/limit/offset
+      // `data` stays the array every caller already reads; total/limit/offset
       // are siblings the list screen pages on.
       data: result.data,
       total: result.total,
@@ -65,7 +74,7 @@ export class ItemTypeController {
     return {
       success: true,
       message: 'Item type details retrieved.',
-      data: result
+      data: result,
     };
   }
 
@@ -73,13 +82,22 @@ export class ItemTypeController {
   @RequirePermission('MASTER_DATA', 'ITEM_TYPE', 'edit')
   @ApiOperation({ summary: 'Update details of an existing Item Type' })
   @ApiParam({ name: 'id', description: 'Item Type UUID' })
-  async update(@Param('id') id: string, @Body() dto: UpdateItemTypeDto, @Req() req: any) {
+  async update(
+    @Param('id') id: string,
+    @Body() dto: UpdateItemTypeDto,
+    @Req() req: any,
+  ) {
     const tenantId = req.user?.tenantId || req['tenantId'];
-    const result = await this.itemTypeService.update(id, dto, tenantId, req.user);
+    const result = await this.itemTypeService.update(
+      id,
+      dto,
+      tenantId,
+      req.user,
+    );
     return {
       success: true,
       message: 'Item type updated successfully.',
-      data: result
+      data: result,
     };
   }
 
@@ -103,7 +121,7 @@ export class ItemTypeController {
     return {
       success: true,
       message: 'Item type restored successfully.',
-      data: result
+      data: result,
     };
   }
 }

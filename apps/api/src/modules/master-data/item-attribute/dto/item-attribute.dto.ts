@@ -1,5 +1,15 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsInt, Min, IsIn, IsArray } from 'class-validator';
+import {
+  IsString,
+  IsNotEmpty,
+  IsOptional,
+  IsUUID,
+  IsBoolean,
+  IsInt,
+  Min,
+  IsIn,
+  IsArray,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 import { MasterListQueryDto } from '../../../../common/master-list-query';
 
@@ -11,59 +21,102 @@ import { MasterListQueryDto } from '../../../../common/master-list-query';
 const DATA_TYPES = ['TEXT', 'NUMBER', 'DATE', 'BOOLEAN'] as const;
 
 export class CreateItemAttributeDto {
-  @ApiProperty({ description: 'Company UUID scope (null means tenant-wide, usable by all companies)', required: false })
+  @ApiProperty({
+    description:
+      'Company UUID scope (null means tenant-wide, usable by all companies)',
+    required: false,
+  })
   @IsUUID()
   @IsOptional()
   company_id?: string;
 
-  @ApiProperty({ description: 'Nature of Business UUID scope (null means applies to all NOBs)', required: false })
+  @ApiProperty({
+    description:
+      'Nature of Business UUID scope (null means applies to all NOBs)',
+    required: false,
+  })
   @IsString()
   @IsOptional()
   nob_id?: string;
 
-  @ApiProperty({ description: 'Line of Business UUID scope (null means applies to all LOBs under the NOB)', required: false })
+  @ApiProperty({
+    description:
+      'Line of Business UUID scope (null means applies to all LOBs under the NOB)',
+    required: false,
+  })
   @IsString()
   @IsOptional()
   lob_id?: string;
 
-  @ApiProperty({ description: 'Unique short code for this attribute', example: 'PROTEIN_PCT' })
+  @ApiProperty({
+    description: 'Unique short code for this attribute',
+    example: 'PROTEIN_PCT',
+  })
   @IsOptional()
   @IsString()
   @IsNotEmpty()
   attribute_code?: string;
 
-  @ApiProperty({ description: 'Display name shown on the item form', example: 'Protein %' })
+  @ApiProperty({
+    description: 'Display name shown on the item form',
+    example: 'Protein %',
+  })
   @IsString()
   @IsNotEmpty()
   attribute_name: string;
 
-  @ApiProperty({ description: 'Value type for this attribute', example: 'NUMBER', enum: DATA_TYPES })
+  @ApiProperty({
+    description: 'Value type for this attribute',
+    example: 'NUMBER',
+    enum: DATA_TYPES,
+  })
   @IsString()
   @IsNotEmpty()
   @IsIn(DATA_TYPES)
   data_type: string;
 
-  @ApiProperty({ description: 'Selectable options, required when data_type=LIST', required: false, example: ['Grade A', 'Grade B'] })
+  @ApiProperty({
+    description: 'Selectable options, required when data_type=LIST',
+    required: false,
+    example: ['Grade A', 'Grade B'],
+  })
   @IsArray()
   @IsOptional()
   list_values?: string[];
 
-  @ApiProperty({ description: 'Unit label for the value (e.g. PCT, KG)', required: false, example: 'PCT' })
+  @ApiProperty({
+    description: 'Unit label for the value (e.g. PCT, KG)',
+    required: false,
+    example: 'PCT',
+  })
   @IsString()
   @IsOptional()
   unit?: string;
 
-  @ApiProperty({ description: 'Must every item in scope provide this attribute?', default: false, required: false })
+  @ApiProperty({
+    description: 'Must every item in scope provide this attribute?',
+    default: false,
+    required: false,
+  })
   @IsBoolean()
   @IsOptional()
   is_mandatory?: boolean;
 
-  @ApiProperty({ description: 'Does this attribute feed into cost calculations?', default: false, required: false })
+  @ApiProperty({
+    description: 'Does this attribute feed into cost calculations?',
+    default: false,
+    required: false,
+  })
   @IsBoolean()
   @IsOptional()
   affects_costing?: boolean;
 
-  @ApiProperty({ description: 'Does this attribute distinguish item variants (e.g. colour, size)?', default: false, required: false })
+  @ApiProperty({
+    description:
+      'Does this attribute distinguish item variants (e.g. colour, size)?',
+    default: false,
+    required: false,
+  })
   @IsBoolean()
   @IsOptional()
   is_variant?: boolean;
@@ -126,7 +179,11 @@ export class UpdateItemAttributeDto {
   @IsOptional()
   is_active?: boolean;
 
-  @ApiProperty({ required: false, example: 'ACTIVE', enum: ['ACTIVE', 'INACTIVE', 'ARCHIVE'] })
+  @ApiProperty({
+    required: false,
+    example: 'ACTIVE',
+    enum: ['ACTIVE', 'INACTIVE', 'ARCHIVE'],
+  })
   @IsString()
   @IsOptional()
   status?: string;
@@ -154,7 +211,10 @@ export class QueryItemAttributeDto extends MasterListQueryDto {
   @Type(() => Boolean)
   isActive?: boolean;
 
-  @ApiProperty({ description: 'Search attribute code or name', required: false })
+  @ApiProperty({
+    description: 'Search attribute code or name',
+    required: false,
+  })
   @IsOptional()
   @IsString()
   search?: string;

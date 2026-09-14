@@ -73,7 +73,10 @@ export function statusVariant(status?: string | null): BadgeProps['variant'] {
   return STATUS_VARIANT[status.toUpperCase()] ?? 'neutral';
 }
 
-export interface StatusBadgeProps extends Omit<BadgeProps, 'variant' | 'children'> {
+export interface StatusBadgeProps extends Omit<
+  BadgeProps,
+  'variant' | 'children'
+> {
   status?: string | null;
   /** Display text, when it differs from the raw status (e.g. a translated label). */
   label?: string;

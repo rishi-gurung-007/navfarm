@@ -5,13 +5,13 @@ server. It is a demo/testing deployment, not a production architecture.
 
 ## Server layout
 
-| Component | Binding | Public? |
-|---|---|---|
-| RDP administration | `103.234.185.14:9296` | Restricted to administrators |
-| NAVFarm web | `0.0.0.0:3002` | Yes, for initial testing |
-| NAVFarm API | `127.0.0.1:2877` | No; reached through the web proxy |
-| MySQL 8.4 (`MySQL84`) | `127.0.0.1:3306` | No |
-| MySQL X Protocol | `33060`, if enabled | No |
+| Component             | Binding               | Public?                           |
+| --------------------- | --------------------- | --------------------------------- |
+| RDP administration    | `103.234.185.14:9296` | Restricted to administrators      |
+| NAVFarm web           | `0.0.0.0:3002`        | Yes, for initial testing          |
+| NAVFarm API           | `127.0.0.1:2877`      | No; reached through the web proxy |
+| MySQL 8.4 (`MySQL84`) | `127.0.0.1:3306`      | No                                |
+| MySQL X Protocol      | `33060`, if enabled   | No                                |
 
 Port 9296 is only the RDP endpoint. It is not an application port and must not
 appear in NAVFarm environment files. Redis is not used by NAVFarm and is not
@@ -77,8 +77,7 @@ SHOW DATABASES LIKE 'tenant\_%';
 
 The database account in `apps/api/.env` must be able to create and migrate
 `navfarm_master`, `tenant_system`, and `tenant_<tenant_code>` during bootstrap.
-Keep MySQL bound locally and do not create inbound firewall rules for 3306 or
-33060.
+Keep MySQL bound locally and do not create inbound firewall rules for 3306 or 33060.
 
 ## 3. Create the required environment files
 

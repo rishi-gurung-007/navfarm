@@ -1,19 +1,28 @@
-import { 
-  Controller, 
-  Get, 
-  Post, 
-  Put, 
-  Delete, 
-  Param, 
-  Body, 
-  Query, 
-  Req, 
-  UseGuards, 
-  Patch 
+import {
+  Controller,
+  Get,
+  Post,
+  Put,
+  Delete,
+  Param,
+  Body,
+  Query,
+  Req,
+  UseGuards,
+  Patch,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth, ApiParam } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiBearerAuth,
+  ApiParam,
+} from '@nestjs/swagger';
 import { CostCenterService } from './cost-center.service';
-import { CreateCostCenterDto, UpdateCostCenterDto, QueryCostCenterDto } from './dto/cost-center.dto';
+import {
+  CreateCostCenterDto,
+  UpdateCostCenterDto,
+  QueryCostCenterDto,
+} from './dto/cost-center.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
@@ -34,7 +43,7 @@ export class CostCenterController {
     return {
       success: true,
       message: 'Cost Center registered successfully.',
-      data: result
+      data: result,
     };
   }
 
@@ -47,7 +56,7 @@ export class CostCenterController {
     return {
       success: true,
       message: 'Cost Centers retrieved successfully.',
-            // `data` stays the array every caller already reads; total/limit/offset
+      // `data` stays the array every caller already reads; total/limit/offset
       // are siblings the list screen pages on.
       data: result.data,
       total: result.total,
@@ -65,7 +74,7 @@ export class CostCenterController {
     return {
       success: true,
       message: 'Cost Center details retrieved.',
-      data: result
+      data: result,
     };
   }
 
@@ -73,13 +82,22 @@ export class CostCenterController {
   @RequirePermission('MASTER_DATA', 'COST_CENTER', 'edit')
   @ApiOperation({ summary: 'Update details of an existing Cost Center' })
   @ApiParam({ name: 'id', description: 'Cost Center UUID' })
-  async update(@Param('id') id: string, @Body() dto: UpdateCostCenterDto, @Req() req: any) {
+  async update(
+    @Param('id') id: string,
+    @Body() dto: UpdateCostCenterDto,
+    @Req() req: any,
+  ) {
     const tenantId = req.user?.tenantId || req['tenantId'];
-    const result = await this.costCenterService.update(id, dto, tenantId, req.user);
+    const result = await this.costCenterService.update(
+      id,
+      dto,
+      tenantId,
+      req.user,
+    );
     return {
       success: true,
       message: 'Cost Center updated successfully.',
-      data: result
+      data: result,
     };
   }
 
@@ -103,7 +121,7 @@ export class CostCenterController {
     return {
       success: true,
       message: 'Cost Center restored successfully.',
-      data: result
+      data: result,
     };
   }
 }

@@ -27,17 +27,30 @@ describe('BatchDailyDataService', () => {
   beforeEach(async () => {
     mockDbSelect.mockReset();
     mockDbInsert.mockReset();
-    mockDbInsert.mockReturnValue({ values: jest.fn().mockReturnValue({ onDuplicateKeyUpdate: jest.fn().mockResolvedValue({}) }) });
+    mockDbInsert.mockReturnValue({
+      values: jest.fn().mockReturnValue({
+        onDuplicateKeyUpdate: jest.fn().mockResolvedValue({}),
+      }),
+    });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         BatchDailyDataService,
-        { provide: ClsService, useValue: { get: jest.fn().mockReturnValue(mockDb) } },
-        { provide: AuditLogService, useValue: { log: jest.fn().mockResolvedValue({}) } },
+        {
+          provide: ClsService,
+          useValue: { get: jest.fn().mockReturnValue(mockDb) },
+        },
+        {
+          provide: AuditLogService,
+          useValue: { log: jest.fn().mockResolvedValue({}) },
+        },
         { provide: BatchService, useValue: { addTransaction: jest.fn() } },
         { provide: BatchTransferService, useValue: { create: jest.fn() } },
         { provide: GlPostingService, useValue: {} },
-        { provide: AnimalMovementLogService, useValue: { record: jest.fn().mockResolvedValue('movement-1') } },
+        {
+          provide: AnimalMovementLogService,
+          useValue: { record: jest.fn().mockResolvedValue('movement-1') },
+        },
       ],
     }).compile();
 
@@ -46,33 +59,116 @@ describe('BatchDailyDataService', () => {
   });
 
   it('rejects an entry against a deactivated line', async () => {
-    mockDbSelect.mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ line_id: 'line-1', is_active: false }]) }) }) });
+    mockDbSelect.mockReturnValueOnce({
+      from: jest.fn().mockReturnValue({
+        where: jest.fn().mockReturnValue({
+          limit: jest
+            .fn()
+            .mockResolvedValue([{ line_id: 'line-1', is_active: false }]),
+        }),
+      }),
+    });
 
     await expect(
-      service.postEntry('batch-1', { line_id: 'line-1', entry_date: '2026-09-08', entered_value: 2 } as any, 'tenant-123'),
+      service.postEntry(
+        'batch-1',
+        {
+          line_id: 'line-1',
+          entry_date: '2026-09-08',
+          entered_value: 2,
+        } as any,
+        'tenant-123',
+      ),
     ).rejects.toThrow(ConflictException);
   });
 
-  it('delegates a CONSUMPTION entry to BatchService.addTransaction with the item\'s stock UOM', async () => {
+  it("delegates a CONSUMPTION entry to BatchService.addTransaction with the item's stock UOM", async () => {
     mockDbSelect
-      .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([
-        { line_id: 'line-1', scheduler_id: 'sched-1', is_active: true, line_type: 'CONSUMPTION', item_id: 'item-feed', lot_required: false, parameter_name: 'Morning Feed' },
-      ]) }) }) }) // line lookup
-      .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([header]) }) }) }) // header lookup
-      .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ tracking_mode: 'BATCH_WISE' }]) }) }) }) // batch tracking_mode lookup
-      .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }) }) }) // idempotency check — no existing row
-      .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ item_id: 'item-feed', uom_primary: 'KG' }]) }) }) }) // item lookup
-      .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([]) }) }); // findForDate at the end
+      .mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockReturnValue({
+            limit: jest.fn().mockResolvedValue([
+              {
+                line_id: 'line-1',
+                scheduler_id: 'sched-1',
+                is_active: true,
+                line_type: 'CONSUMPTION',
+                item_id: 'item-feed',
+                lot_required: false,
+                parameter_name: 'Morning Feed',
+              },
+            ]),
+          }),
+        }),
+      }) // line lookup
+      .mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockReturnValue({
+            limit: jest.fn().mockResolvedValue([header]),
+          }),
+        }),
+      }) // header lookup
+      .mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockReturnValue({
+            limit: jest
+              .fn()
+              .mockResolvedValue([{ tracking_mode: 'BATCH_WISE' }]),
+          }),
+        }),
+      }) // batch tracking_mode lookup
+      .mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest
+            .fn()
+            .mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }),
+        }),
+      }) // idempotency check — no existing row
+      .mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockReturnValue({
+            limit: jest
+              .fn()
+              .mockResolvedValue([{ item_id: 'item-feed', uom_primary: 'KG' }]),
+          }),
+        }),
+      }) // item lookup
+      .mockReturnValueOnce({
+        from: jest
+          .fn()
+          .mockReturnValue({ where: jest.fn().mockResolvedValue([]) }),
+      }); // findForDate at the end
 
     (batchService.addTransaction as jest.Mock).mockResolvedValue({
-      transactions: [{ transaction_id: 'tx-1', transaction_date: '2026-09-08', item_id: 'item-feed', transaction_type: 'CONSUMPTION' }],
+      transactions: [
+        {
+          transaction_id: 'tx-1',
+          transaction_date: '2026-09-08',
+          item_id: 'item-feed',
+          transaction_type: 'CONSUMPTION',
+        },
+      ],
     });
 
-    await service.postEntry('batch-1', { line_id: 'line-1', entry_date: '2026-09-08', entered_value: 22.5 } as any, 'tenant-123', { userId: 'user-1' });
+    await service.postEntry(
+      'batch-1',
+      {
+        line_id: 'line-1',
+        entry_date: '2026-09-08',
+        entered_value: 22.5,
+      } as any,
+      'tenant-123',
+      { userId: 'user-1' },
+    );
 
     expect(batchService.addTransaction).toHaveBeenCalledWith(
       'batch-1',
-      expect.objectContaining({ transaction_type: 'CONSUMPTION', item_id: 'item-feed', quantity: 22.5, uom: 'KG' }),
+      expect.objectContaining({
+        transaction_type: 'CONSUMPTION',
+        item_id: 'item-feed',
+        quantity: 22.5,
+        uom: 'KG',
+      }),
       'tenant-123',
       { userId: 'user-1' },
     );
@@ -86,17 +182,70 @@ describe('BatchDailyDataService', () => {
   // ever showed one row for that (line_id, entry_date).
   it('skips addTransaction on an identical resubmission of an already-posted line', async () => {
     mockDbSelect
-      .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([
-        { line_id: 'line-1', scheduler_id: 'sched-1', is_active: true, line_type: 'CONSUMPTION', item_id: 'item-feed', lot_required: false, parameter_name: 'Morning Feed' },
-      ]) }) }) }) // line lookup
-      .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([header]) }) }) }) // header lookup
-      .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ tracking_mode: 'BATCH_WISE' }]) }) }) }) // batch tracking_mode lookup
-      .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([
-        { entry_id: 'entry-1', entered_value: '22.5000', entered_text: null, lot_no: null, posted: true },
-      ]) }) }) }) // idempotency check — already posted with the same value
-      .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([]) }) }); // findForDate — the early-return path still reports the existing row
+      .mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockReturnValue({
+            limit: jest.fn().mockResolvedValue([
+              {
+                line_id: 'line-1',
+                scheduler_id: 'sched-1',
+                is_active: true,
+                line_type: 'CONSUMPTION',
+                item_id: 'item-feed',
+                lot_required: false,
+                parameter_name: 'Morning Feed',
+              },
+            ]),
+          }),
+        }),
+      }) // line lookup
+      .mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockReturnValue({
+            limit: jest.fn().mockResolvedValue([header]),
+          }),
+        }),
+      }) // header lookup
+      .mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockReturnValue({
+            limit: jest
+              .fn()
+              .mockResolvedValue([{ tracking_mode: 'BATCH_WISE' }]),
+          }),
+        }),
+      }) // batch tracking_mode lookup
+      .mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockReturnValue({
+            limit: jest.fn().mockResolvedValue([
+              {
+                entry_id: 'entry-1',
+                entered_value: '22.5000',
+                entered_text: null,
+                lot_no: null,
+                posted: true,
+              },
+            ]),
+          }),
+        }),
+      }) // idempotency check — already posted with the same value
+      .mockReturnValueOnce({
+        from: jest
+          .fn()
+          .mockReturnValue({ where: jest.fn().mockResolvedValue([]) }),
+      }); // findForDate — the early-return path still reports the existing row
 
-    await service.postEntry('batch-1', { line_id: 'line-1', entry_date: '2026-09-08', entered_value: 22.5 } as any, 'tenant-123', { userId: 'user-1' });
+    await service.postEntry(
+      'batch-1',
+      {
+        line_id: 'line-1',
+        entry_date: '2026-09-08',
+        entered_value: 22.5,
+      } as any,
+      'tenant-123',
+      { userId: 'user-1' },
+    );
 
     expect(batchService.addTransaction).not.toHaveBeenCalled();
     expect(mockDbInsert).not.toHaveBeenCalled();
@@ -108,34 +257,140 @@ describe('BatchDailyDataService', () => {
   // BatchService.postBatchDay() for every still-draft row) dispatches it.
   it('records a draft entry without touching inventory/GL, and marks it not posted', async () => {
     mockDbSelect
-      .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([
-        { line_id: 'line-1', scheduler_id: 'sched-1', is_active: true, line_type: 'CONSUMPTION', item_id: 'item-feed', lot_required: false, parameter_name: 'Morning Feed' },
-      ]) }) }) }) // line lookup
-      .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([header]) }) }) }) // header lookup
-      .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ tracking_mode: 'BATCH_WISE' }]) }) }) }) // batch tracking_mode lookup
-      .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }) }) }) // idempotency check — no existing row
-      .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([]) }) }); // findForDate at the end
+      .mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockReturnValue({
+            limit: jest.fn().mockResolvedValue([
+              {
+                line_id: 'line-1',
+                scheduler_id: 'sched-1',
+                is_active: true,
+                line_type: 'CONSUMPTION',
+                item_id: 'item-feed',
+                lot_required: false,
+                parameter_name: 'Morning Feed',
+              },
+            ]),
+          }),
+        }),
+      }) // line lookup
+      .mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockReturnValue({
+            limit: jest.fn().mockResolvedValue([header]),
+          }),
+        }),
+      }) // header lookup
+      .mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockReturnValue({
+            limit: jest
+              .fn()
+              .mockResolvedValue([{ tracking_mode: 'BATCH_WISE' }]),
+          }),
+        }),
+      }) // batch tracking_mode lookup
+      .mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest
+            .fn()
+            .mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }),
+        }),
+      }) // idempotency check — no existing row
+      .mockReturnValueOnce({
+        from: jest
+          .fn()
+          .mockReturnValue({ where: jest.fn().mockResolvedValue([]) }),
+      }); // findForDate at the end
 
     const insertedValues: any[] = [];
-    mockDbInsert.mockReturnValue({ values: jest.fn((v: any) => { insertedValues.push(v); return { onDuplicateKeyUpdate: jest.fn().mockResolvedValue({}) }; }) });
+    mockDbInsert.mockReturnValue({
+      values: jest.fn((v: any) => {
+        insertedValues.push(v);
+        return { onDuplicateKeyUpdate: jest.fn().mockResolvedValue({}) };
+      }),
+    });
 
-    await service.postEntry('batch-1', { line_id: 'line-1', entry_date: '2026-09-08', entered_value: 40, draft: true } as any, 'tenant-123', { userId: 'user-1' });
+    await service.postEntry(
+      'batch-1',
+      {
+        line_id: 'line-1',
+        entry_date: '2026-09-08',
+        entered_value: 40,
+        draft: true,
+      } as any,
+      'tenant-123',
+      { userId: 'user-1' },
+    );
 
     expect(batchService.addTransaction).not.toHaveBeenCalled();
-    expect(insertedValues[0]).toMatchObject({ posted: false, entered_value: '40' });
+    expect(insertedValues[0]).toMatchObject({
+      posted: false,
+      entered_value: '40',
+    });
   });
 
   it('flags a DESCRIPTIVE entry that breaches its alert limit without posting a transaction', async () => {
     mockDbSelect
-      .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([
-        { line_id: 'line-mort', scheduler_id: 'sched-1', is_active: true, line_type: 'DESCRIPTIVE', item_id: null, lot_required: false, parameter_name: 'Daily Mortality', lower_alert_limit: null, upper_alert_limit: '1', alert_severity: 'CRITICAL', std_value: null },
-      ]) }) }) }) // line lookup
-      .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([header]) }) }) }) // header lookup
-      .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ tracking_mode: 'BATCH_WISE' }]) }) }) }) // batch tracking_mode lookup
-      .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }) }) }) // idempotency check — no existing row
-      .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([]) }) }); // findForDate at the end
+      .mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockReturnValue({
+            limit: jest.fn().mockResolvedValue([
+              {
+                line_id: 'line-mort',
+                scheduler_id: 'sched-1',
+                is_active: true,
+                line_type: 'DESCRIPTIVE',
+                item_id: null,
+                lot_required: false,
+                parameter_name: 'Daily Mortality',
+                lower_alert_limit: null,
+                upper_alert_limit: '1',
+                alert_severity: 'CRITICAL',
+                std_value: null,
+              },
+            ]),
+          }),
+        }),
+      }) // line lookup
+      .mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockReturnValue({
+            limit: jest.fn().mockResolvedValue([header]),
+          }),
+        }),
+      }) // header lookup
+      .mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockReturnValue({
+            limit: jest
+              .fn()
+              .mockResolvedValue([{ tracking_mode: 'BATCH_WISE' }]),
+          }),
+        }),
+      }) // batch tracking_mode lookup
+      .mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest
+            .fn()
+            .mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }),
+        }),
+      }) // idempotency check — no existing row
+      .mockReturnValueOnce({
+        from: jest
+          .fn()
+          .mockReturnValue({ where: jest.fn().mockResolvedValue([]) }),
+      }); // findForDate at the end
 
-    await service.postEntry('batch-1', { line_id: 'line-mort', entry_date: '2026-09-08', entered_value: 3 } as any, 'tenant-123');
+    await service.postEntry(
+      'batch-1',
+      {
+        line_id: 'line-mort',
+        entry_date: '2026-09-08',
+        entered_value: 3,
+      } as any,
+      'tenant-123',
+    );
 
     expect(batchService.addTransaction).not.toHaveBeenCalled();
     // First insert call is the notification_alert_log write; second is batch_daily_data.
@@ -143,56 +398,219 @@ describe('BatchDailyDataService', () => {
   });
 
   describe('ANIMAL_WISE batches', () => {
-    const stageHeader = { ...header, stage_id: 'stage-flush', animal_count: '3' };
+    const stageHeader = {
+      ...header,
+      stage_id: 'stage-flush',
+      animal_count: '3',
+    };
 
     it('rejects an entry with no animal_id against an ANIMAL_WISE batch', async () => {
       mockDbSelect
-        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([
-          { line_id: 'line-1', scheduler_id: 'sched-1', is_active: true, line_type: 'CONSUMPTION', item_id: 'item-feed', lot_required: false },
-        ]) }) }) }) // line lookup
-        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([stageHeader]) }) }) }) // header lookup
-        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ tracking_mode: 'ANIMAL_WISE' }]) }) }) }); // batch tracking_mode lookup
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            where: jest.fn().mockReturnValue({
+              limit: jest.fn().mockResolvedValue([
+                {
+                  line_id: 'line-1',
+                  scheduler_id: 'sched-1',
+                  is_active: true,
+                  line_type: 'CONSUMPTION',
+                  item_id: 'item-feed',
+                  lot_required: false,
+                },
+              ]),
+            }),
+          }),
+        }) // line lookup
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            where: jest.fn().mockReturnValue({
+              limit: jest.fn().mockResolvedValue([stageHeader]),
+            }),
+          }),
+        }) // header lookup
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            where: jest.fn().mockReturnValue({
+              limit: jest
+                .fn()
+                .mockResolvedValue([{ tracking_mode: 'ANIMAL_WISE' }]),
+            }),
+          }),
+        }); // batch tracking_mode lookup
 
       await expect(
-        service.postEntry('batch-1', { line_id: 'line-1', entry_date: '2026-09-08', entered_value: 2 } as any, 'tenant-123'),
+        service.postEntry(
+          'batch-1',
+          {
+            line_id: 'line-1',
+            entry_date: '2026-09-08',
+            entered_value: 2,
+          } as any,
+          'tenant-123',
+        ),
       ).rejects.toThrow(BadRequestException);
     });
 
     it('rejects an animal_id that is at a different stage than this line', async () => {
       mockDbSelect
-        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([
-          { line_id: 'line-1', scheduler_id: 'sched-1', is_active: true, line_type: 'CONSUMPTION', item_id: 'item-feed', lot_required: false },
-        ]) }) }) }) // line lookup
-        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([stageHeader]) }) }) }) // header lookup
-        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ tracking_mode: 'ANIMAL_WISE' }]) }) }) }) // batch tracking_mode lookup
-        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([
-          { animal_id: 'a-1', animal_code: 'PIG-0001', current_batch_id: 'batch-1', current_stage_id: 'stage-gestation' },
-        ]) }) }) }); // animal lookup — wrong stage
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            where: jest.fn().mockReturnValue({
+              limit: jest.fn().mockResolvedValue([
+                {
+                  line_id: 'line-1',
+                  scheduler_id: 'sched-1',
+                  is_active: true,
+                  line_type: 'CONSUMPTION',
+                  item_id: 'item-feed',
+                  lot_required: false,
+                },
+              ]),
+            }),
+          }),
+        }) // line lookup
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            where: jest.fn().mockReturnValue({
+              limit: jest.fn().mockResolvedValue([stageHeader]),
+            }),
+          }),
+        }) // header lookup
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            where: jest.fn().mockReturnValue({
+              limit: jest
+                .fn()
+                .mockResolvedValue([{ tracking_mode: 'ANIMAL_WISE' }]),
+            }),
+          }),
+        }) // batch tracking_mode lookup
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            where: jest.fn().mockReturnValue({
+              limit: jest.fn().mockResolvedValue([
+                {
+                  animal_id: 'a-1',
+                  animal_code: 'PIG-0001',
+                  current_batch_id: 'batch-1',
+                  current_stage_id: 'stage-gestation',
+                },
+              ]),
+            }),
+          }),
+        }); // animal lookup — wrong stage
 
       await expect(
-        service.postEntry('batch-1', { line_id: 'line-1', entry_date: '2026-09-08', entered_value: 2, animal_id: 'a-1' } as any, 'tenant-123'),
+        service.postEntry(
+          'batch-1',
+          {
+            line_id: 'line-1',
+            entry_date: '2026-09-08',
+            entered_value: 2,
+            animal_id: 'a-1',
+          } as any,
+          'tenant-123',
+        ),
       ).rejects.toThrow(BadRequestException);
     });
 
     it('marks the exact named animal dead for a MORTALITY_COUNT entry, without touching other animals at the stage', async () => {
-      const mortLine = { line_id: 'line-mort', scheduler_id: 'sched-1', is_active: true, line_type: 'DESCRIPTIVE', item_id: null, lot_required: false, kpi_metric: 'MORTALITY_COUNT', lower_alert_limit: null, upper_alert_limit: null };
+      const mortLine = {
+        line_id: 'line-mort',
+        scheduler_id: 'sched-1',
+        is_active: true,
+        line_type: 'DESCRIPTIVE',
+        item_id: null,
+        lot_required: false,
+        kpi_metric: 'MORTALITY_COUNT',
+        lower_alert_limit: null,
+        upper_alert_limit: null,
+      };
       mockDbSelect
-        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([mortLine]) }) }) }) // line lookup
-        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([stageHeader]) }) }) }) // header lookup
-        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ tracking_mode: 'ANIMAL_WISE' }]) }) }) }) // batch tracking_mode lookup
-        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([
-          { animal_id: 'a-1', animal_code: 'PIG-0001', current_batch_id: 'batch-1', current_stage_id: 'stage-flush' },
-        ]) }) }) }) // animal lookup — correct stage
-        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }) }) }) // stage/date lock check — none
-        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }) }) }) // idempotency check — no existing row
-        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }) }) }) // previous same-day entry (none)
-        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([]) }) }); // findForDate at the end
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            where: jest.fn().mockReturnValue({
+              limit: jest.fn().mockResolvedValue([mortLine]),
+            }),
+          }),
+        }) // line lookup
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            where: jest.fn().mockReturnValue({
+              limit: jest.fn().mockResolvedValue([stageHeader]),
+            }),
+          }),
+        }) // header lookup
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            where: jest.fn().mockReturnValue({
+              limit: jest
+                .fn()
+                .mockResolvedValue([{ tracking_mode: 'ANIMAL_WISE' }]),
+            }),
+          }),
+        }) // batch tracking_mode lookup
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            where: jest.fn().mockReturnValue({
+              limit: jest.fn().mockResolvedValue([
+                {
+                  animal_id: 'a-1',
+                  animal_code: 'PIG-0001',
+                  current_batch_id: 'batch-1',
+                  current_stage_id: 'stage-flush',
+                },
+              ]),
+            }),
+          }),
+        }) // animal lookup — correct stage
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            where: jest
+              .fn()
+              .mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }),
+          }),
+        }) // stage/date lock check — none
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            where: jest
+              .fn()
+              .mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }),
+          }),
+        }) // idempotency check — no existing row
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            where: jest
+              .fn()
+              .mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }),
+          }),
+        }) // previous same-day entry (none)
+        .mockReturnValueOnce({
+          from: jest
+            .fn()
+            .mockReturnValue({ where: jest.fn().mockResolvedValue([]) }),
+        }); // findForDate at the end
 
       const updateSets: any[] = [];
-      const mockDbUpdate = jest.fn().mockReturnValue({ set: jest.fn((v: any) => { updateSets.push(v); return { where: jest.fn().mockResolvedValue({}) }; }) });
+      const mockDbUpdate = jest.fn().mockReturnValue({
+        set: jest.fn((v: any) => {
+          updateSets.push(v);
+          return { where: jest.fn().mockResolvedValue({}) };
+        }),
+      });
       (mockDb as any).update = mockDbUpdate;
 
-      await service.postEntry('batch-1', { line_id: 'line-mort', entry_date: '2026-09-08', entered_value: 1, animal_id: 'a-1' } as any, 'tenant-123');
+      await service.postEntry(
+        'batch-1',
+        {
+          line_id: 'line-mort',
+          entry_date: '2026-09-08',
+          entered_value: 1,
+          animal_id: 'a-1',
+        } as any,
+        'tenant-123',
+      );
 
       expect(mockDbUpdate).toHaveBeenCalledWith(expect.anything());
       const animalUpdate = updateSets.find((v) => v.status === 'DEAD');

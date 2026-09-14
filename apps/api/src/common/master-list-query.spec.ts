@@ -36,12 +36,16 @@ describe('master list query', () => {
     });
 
     it('skips empty values rather than matching on empty string', () => {
-      expect(listFilterConditions(schema.locationMaster, { location_type: '' })).toHaveLength(0);
+      expect(
+        listFilterConditions(schema.locationMaster, { location_type: '' }),
+      ).toHaveLength(0);
     });
 
     it('accepts an array for a multi-select filter', () => {
       expect(
-        listFilterConditions(schema.locationMaster, { location_type: ['PEN', 'CRATE'] }),
+        listFilterConditions(schema.locationMaster, {
+          location_type: ['PEN', 'CRATE'],
+        }),
       ).toHaveLength(1);
     });
 
@@ -56,20 +60,28 @@ describe('master list query', () => {
 
     it('refuses a column the workspace owns', () => {
       for (const key of ['tenant_id', 'company_id']) {
-        expect(() => listFilterConditions(schema.locationMaster, { [key]: 'abc' }))
-          .toThrow(/set by the active workspace/);
+        expect(() =>
+          listFilterConditions(schema.locationMaster, { [key]: 'abc' }),
+        ).toThrow(/set by the active workspace/);
       }
     });
 
     it('takes no filter at all without complaint', () => {
-      expect(listFilterConditions(schema.locationMaster, undefined)).toEqual([]);
+      expect(listFilterConditions(schema.locationMaster, undefined)).toEqual(
+        [],
+      );
     });
   });
 
   describe('listOrderBy', () => {
     it('sorts by the fallback column when the caller asks for nothing', () => {
-      expect(listOrderBy(schema.locationMaster, {}, schema.locationMaster.location_code))
-        .toBeDefined();
+      expect(
+        listOrderBy(
+          schema.locationMaster,
+          {},
+          schema.locationMaster.location_code,
+        ),
+      ).toBeDefined();
     });
 
     it('sorts by a requested column', () => {

@@ -38,7 +38,8 @@ const LANDRACE_LIFECYCLE_STAGES: LifecycleDefinition[] = [
     stdMortalityRatePct: 1.0,
     stdTeats: 15,
     alertSeverity: 'WARNING',
-    notes: 'Quarantine health monitoring and acclimatization. Minimum 15 teats expected.'
+    notes:
+      'Quarantine health monitoring and acclimatization. Minimum 15 teats expected.',
   },
   {
     code: 'BLS-LAND-02',
@@ -55,7 +56,8 @@ const LANDRACE_LIFECYCLE_STAGES: LifecycleDefinition[] = [
     stdMortalityRatePct: 0.5,
     stdTeats: 15,
     alertSeverity: 'WARNING',
-    notes: 'Landrace gilts target service weight 120-130 kg. Minimum 15 teats required for breeding.'
+    notes:
+      'Landrace gilts target service weight 120-130 kg. Minimum 15 teats required for breeding.',
   },
   {
     code: 'BLS-LAND-03',
@@ -70,7 +72,7 @@ const LANDRACE_LIFECYCLE_STAGES: LifecycleDefinition[] = [
     stdMortalityRatePct: 0.2,
     stdTeats: 15,
     alertSeverity: 'INFO',
-    notes: 'High farrowing rate target 87%. Confirm conception scan on Day 21.'
+    notes: 'High farrowing rate target 87%. Confirm conception scan on Day 21.',
   },
   {
     code: 'BLS-LAND-04',
@@ -86,7 +88,8 @@ const LANDRACE_LIFECYCLE_STAGES: LifecycleDefinition[] = [
     stdMortalityRatePct: 0.3,
     stdTeats: 15,
     alertSeverity: 'WARNING',
-    notes: 'Standard gestation length 114-115 days. Maintain Body Condition Score (BCS) 3.0-3.5.'
+    notes:
+      'Standard gestation length 114-115 days. Maintain Body Condition Score (BCS) 3.0-3.5.',
   },
   {
     code: 'BLS-LAND-05',
@@ -103,7 +106,8 @@ const LANDRACE_LIFECYCLE_STAGES: LifecycleDefinition[] = [
     stdOutputQty: 12.0,
     stdTeats: 15,
     alertSeverity: 'CRITICAL',
-    notes: 'Prolific maternal line. Live born target >= 12. Record live born, weak, and stillbirths.'
+    notes:
+      'Prolific maternal line. Live born target >= 12. Record live born, weak, and stillbirths.',
   },
   {
     code: 'BLS-LAND-06',
@@ -121,7 +125,8 @@ const LANDRACE_LIFECYCLE_STAGES: LifecycleDefinition[] = [
     stdOutputQty: 10.5,
     stdTeats: 15,
     alertSeverity: 'WARNING',
-    notes: 'Ad-lib feeding to maximize milk yield. Target 10.5 weaned per litter with 6.5 kg weaning weight.'
+    notes:
+      'Ad-lib feeding to maximize milk yield. Target 10.5 weaned per litter with 6.5 kg weaning weight.',
   },
   {
     code: 'BLS-LAND-07',
@@ -136,7 +141,8 @@ const LANDRACE_LIFECYCLE_STAGES: LifecycleDefinition[] = [
     stdOutputQty: 10.5,
     stdTeats: 15,
     alertSeverity: 'INFO',
-    notes: 'Individual weaning weights recorded. Target sow weaning-to-service interval <= 5 days.'
+    notes:
+      'Individual weaning weights recorded. Target sow weaning-to-service interval <= 5 days.',
   },
   {
     code: 'BLS-LAND-08',
@@ -155,18 +161,23 @@ const LANDRACE_LIFECYCLE_STAGES: LifecycleDefinition[] = [
     outputUom: 'KG',
     stdOutputQty: 80.0,
     alertSeverity: 'CRITICAL',
-    notes: 'Market finisher phase. Target 112 kg live weight at 77 days in grower. FCR must stay <= 2.85.'
-  }
+    notes:
+      'Market finisher phase. Target 112 kg live weight at 77 days in grower. FCR must stay <= 2.85.',
+  },
 ];
 
 async function seedTenantDatabase(dbName: string, tenantId: string) {
   console.log(`\n>>> Seeding 8 Breed Lifecycle Stages in: ${dbName}`);
-  const conn = await mysql.createConnection({ host: 'localhost', user: 'root', database: dbName });
+  const conn = await mysql.createConnection({
+    host: 'localhost',
+    user: 'root',
+    database: dbName,
+  });
 
   try {
     // 1. Get all Landrace breeds in this tenant (including company-specific and template)
     const [breeds] = await conn.query<any[]>(
-      'SELECT breed_id, breed_code, breed_name, company_id FROM breed_master WHERE breed_code = "LANDRACE"'
+      'SELECT breed_id, breed_code, breed_name, company_id FROM breed_master WHERE breed_code = "LANDRACE"',
     );
     if (!breeds.length) {
       console.log(`  No LANDRACE breed found in ${dbName}. Skipping.`);
@@ -176,28 +187,40 @@ async function seedTenantDatabase(dbName: string, tenantId: string) {
 
     // 2. Fetch stage mapping: map stage_code + company_id -> stage_id
     const [stages] = await conn.query<any[]>(
-      'SELECT stage_id, stage_code, company_id FROM stage_master'
+      'SELECT stage_id, stage_code, company_id FROM stage_master',
     );
 
     // 3. Fetch item mapping
     const [items] = await conn.query<any[]>(
-      'SELECT item_id, item_code, company_id FROM item_master'
+      'SELECT item_id, item_code, company_id FROM item_master',
     );
 
     const resolveItem = (code?: string, companyId?: string | null) => {
       if (!code) return null;
       // Match company item first, then template
-      const match = items.find((i) => i.item_code === code && i.company_id === companyId)
-                 || items.find((i) => i.item_code === code && !i.company_id)
-                 || items.find((i) => i.item_code.includes('PIG') && (i.company_id === companyId || !i.company_id));
+      const match =
+        items.find((i) => i.item_code === code && i.company_id === companyId) ||
+        items.find((i) => i.item_code === code && !i.company_id) ||
+        items.find(
+          (i) =>
+            i.item_code.includes('PIG') &&
+            (i.company_id === companyId || !i.company_id),
+        );
       return match ? match.item_id : null;
     };
 
     const resolveStage = (stageCode: string, companyId?: string | null) => {
       // Find exact stage_code for this company, or fallback to company_id is null, or alternative code
-      const match = stages.find((s) => s.stage_code === stageCode && s.company_id === companyId)
-                 || stages.find((s) => s.stage_code === stageCode && !s.company_id)
-                 || (stageCode === 'DRY_SOW_GESTATION' && (stages.find((s) => s.stage_code === 'GESTATION' && s.company_id === companyId) || stages.find((s) => s.stage_code === 'GESTATION' && !s.company_id)));
+      const match =
+        stages.find(
+          (s) => s.stage_code === stageCode && s.company_id === companyId,
+        ) ||
+        stages.find((s) => s.stage_code === stageCode && !s.company_id) ||
+        (stageCode === 'DRY_SOW_GESTATION' &&
+          (stages.find(
+            (s) => s.stage_code === 'GESTATION' && s.company_id === companyId,
+          ) ||
+            stages.find((s) => s.stage_code === 'GESTATION' && !s.company_id)));
       return match ? match.stage_id : null;
     };
 
@@ -209,24 +232,31 @@ async function seedTenantDatabase(dbName: string, tenantId: string) {
       if (breed.company_id) {
         const [comp] = await conn.query<any[]>(
           'SELECT company_code FROM company_master WHERE company_id = ?',
-          [breed.company_id]
+          [breed.company_id],
         );
         if (comp.length && comp[0].company_code) {
           companyCode = comp[0].company_code;
         }
       }
 
-      console.log(`  Processing breed: ${breed.breed_name} (${breed.breed_id}), company: ${companyCode}`);
+      console.log(
+        `  Processing breed: ${breed.breed_name} (${breed.breed_id}), company: ${companyCode}`,
+      );
 
       for (let i = 0; i < LANDRACE_LIFECYCLE_STAGES.length; i++) {
         const def = LANDRACE_LIFECYCLE_STAGES[i];
         const num = String(i + 1).padStart(2, '0');
         // Unique code per tenant and company
-        const code = companyCode === 'TPL' ? `BLS-LAND-${num}` : `BLS-${companyCode.slice(0, 4)}-${num}`;
+        const code =
+          companyCode === 'TPL'
+            ? `BLS-LAND-${num}`
+            : `BLS-${companyCode.slice(0, 4)}-${num}`;
 
         const stageId = resolveStage(def.stageCode, breed.company_id);
         if (!stageId) {
-          console.warn(`    Stage '${def.stageCode}' not found for company ${breed.company_id}. Skipping.`);
+          console.warn(
+            `    Stage '${def.stageCode}' not found for company ${breed.company_id}. Skipping.`,
+          );
           continue;
         }
 
@@ -236,7 +266,7 @@ async function seedTenantDatabase(dbName: string, tenantId: string) {
         // Check if a lifecycle stage already exists for this (breed_id, stage_id)
         const [existing] = await conn.query<any[]>(
           'SELECT lifecycle_id FROM breed_lifecycle_stages WHERE breed_id = ? AND stage_id = ?',
-          [breed.breed_id, stageId]
+          [breed.breed_id, stageId],
         );
 
         if (existing.length > 0) {
@@ -280,7 +310,7 @@ async function seedTenantDatabase(dbName: string, tenantId: string) {
               def.alertSeverity,
               def.notes,
               existing[0].lifecycle_id,
-            ]
+            ],
           );
           updatedCount++;
         } else {
@@ -332,14 +362,16 @@ async function seedTenantDatabase(dbName: string, tenantId: string) {
               def.stdTeats ?? null,
               def.alertSeverity,
               def.notes,
-            ]
+            ],
           );
           insertedCount++;
         }
       }
     }
 
-    console.log(`  Done for ${dbName}: ${insertedCount} inserted, ${updatedCount} updated.`);
+    console.log(
+      `  Done for ${dbName}: ${insertedCount} inserted, ${updatedCount} updated.`,
+    );
   } finally {
     await conn.end();
   }
@@ -350,10 +382,16 @@ async function main() {
 
   for (const masterDb of masterDatabases) {
     try {
-      console.log(`\n================ Checking master DB: ${masterDb} ================`);
-      const conn = await mysql.createConnection({ host: 'localhost', user: 'root', database: masterDb });
+      console.log(
+        `\n================ Checking master DB: ${masterDb} ================`,
+      );
+      const conn = await mysql.createConnection({
+        host: 'localhost',
+        user: 'root',
+        database: masterDb,
+      });
       const [tenants] = await conn.query<any[]>(
-        'SELECT tenant_id, tenant_code, db_name FROM tenant_master WHERE tenant_code != "system"'
+        'SELECT tenant_id, tenant_code, db_name FROM tenant_master WHERE tenant_code != "system"',
       );
       await conn.end();
 

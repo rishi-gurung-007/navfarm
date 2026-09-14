@@ -1,15 +1,15 @@
 export type FieldType =
-  | "text"
-  | "textarea"
-  | "number"
-  | "boolean"
-  | "email"
-  | "date"
-  | "select"
-  | "select-entity"
-  | "field-list"
-  | "json"
-  | "string-list";
+  | 'text'
+  | 'textarea'
+  | 'number'
+  | 'boolean'
+  | 'email'
+  | 'date'
+  | 'select'
+  | 'select-entity'
+  | 'field-list'
+  | 'json'
+  | 'string-list';
 
 export interface SelectOption {
   value: string;
@@ -74,7 +74,7 @@ export interface MasterDataField {
    *   that param rather than blocking the fetch — matches the backend treating an absent
    *   filter as "show all".
    */
-  dependsOnMode?: "path" | "query";
+  dependsOnMode?: 'path' | 'query';
   /** Required when dependsOnMode is "query": maps each dependsOn field key to its query-param name. */
   queryParams?: Record<string, string>;
   /**
@@ -136,7 +136,12 @@ export interface MasterDataField {
    * field and locks it, a miss leaves it editable so the value is captured here
    * for the first time.
    */
-  derivedFrom?: { endpoint: string; params: Record<string, string>; valueKey: string; missingHelpText?: string };
+  derivedFrom?: {
+    endpoint: string;
+    params: Record<string, string>;
+    valueKey: string;
+    missingHelpText?: string;
+  };
   /**
    * Describes one entry of a `json` array field so it can be edited as rows of
    * real inputs — add, fill, delete — instead of asking someone to type valid
@@ -201,7 +206,7 @@ export interface MasterDataField {
    * question, and a plain on/off switch is worse still: "off" cannot say what
    * it means.
    */
-  control?: "segmented";
+  control?: 'segmented';
   /**
    * Value this control starts on once it appears. A segmented choice between
    * two options has no meaningful empty state — "neither" is what the switch
@@ -304,7 +309,7 @@ export interface MasterDataConfig {
   /** Frontend-only BC references. Never part of creation/edit payloads. */
   bcFields?: { key: string; label: string }[];
   /** BC owns this catalog; local users may browse but cannot mutate it. */
-  owner?: "BC";
+  owner?: 'BC';
   /**
    * What the blueprint says about this catalog's source, quoted. Rendered by
    * BcOwnershipNotice so each master cites its own section rather than one
@@ -331,7 +336,7 @@ export interface MasterDataConfig {
    * is master-specific — there is no generic "show everything" panel worth
    * having.
    */
-  detailPanel?: "animal";
+  detailPanel?: 'animal';
   /**
    * Which values of this master's own `status` column mean the record is still
    * in play. Used to colour the status chip: in-play reads as live, anything

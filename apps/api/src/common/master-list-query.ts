@@ -1,8 +1,25 @@
 import { BadRequestException } from '@nestjs/common';
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsIn, IsInt, IsObject, IsOptional, IsString, Min } from 'class-validator';
+import {
+  IsIn,
+  IsInt,
+  IsObject,
+  IsOptional,
+  IsString,
+  Min,
+} from 'class-validator';
 import { Type } from 'class-transformer';
-import { and, asc, count, desc, eq, getTableColumns, inArray, like, SQL } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  getTableColumns,
+  inArray,
+  like,
+  SQL,
+} from 'drizzle-orm';
 import { AnyMySqlColumn, AnyMySqlTable } from 'drizzle-orm/mysql-core';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import * as schema from '../core/database/schema';
@@ -26,12 +43,17 @@ import * as schema from '../core/database/schema';
  * there really are.
  */
 export class MasterListQueryDto {
-  @ApiPropertyOptional({ description: 'Column to sort by. Must be a real column on this master.' })
+  @ApiPropertyOptional({
+    description: 'Column to sort by. Must be a real column on this master.',
+  })
   @IsOptional()
   @IsString()
   sort?: string;
 
-  @ApiPropertyOptional({ description: 'Sort direction.', enum: ['asc', 'desc'] })
+  @ApiPropertyOptional({
+    description: 'Sort direction.',
+    enum: ['asc', 'desc'],
+  })
   @IsOptional()
   @IsIn(['asc', 'desc'])
   dir?: 'asc' | 'desc';
@@ -45,7 +67,9 @@ export class MasterListQueryDto {
    * filters without inventing a query language. Every key is checked against
    * the table's own columns before it reaches SQL.
    */
-  @ApiPropertyOptional({ description: 'Per-column filters, as filter[column]=value.' })
+  @ApiPropertyOptional({
+    description: 'Per-column filters, as filter[column]=value.',
+  })
   @IsOptional()
   @IsObject()
   filter?: Record<string, string | string[]>;
@@ -74,7 +98,8 @@ export interface MasterList<T> {
   offset: number;
 }
 
-const columnsOf = (table: AnyMySqlTable) => getTableColumns(table) as Record<string, AnyMySqlColumn>;
+const columnsOf = (table: AnyMySqlTable) =>
+  getTableColumns(table) as Record<string, AnyMySqlColumn>;
 
 /**
  * Columns a caller may never filter on, because the workspace decides them.
@@ -188,7 +213,15 @@ export async function runMasterList<T extends Record<string, unknown>>(
     .limit(limit)
     .offset(offset);
 
-  const [counted] = await db.select({ total: count() }).from(table).where(where);
+  const [counted] = await db
+    .select({ total: count() })
+    .from(table)
+    .where(where);
 
-  return { data: rows as T[], total: Number(counted?.total ?? 0), limit, offset };
+  return {
+    data: rows as T[],
+    total: Number(counted?.total ?? 0),
+    limit,
+    offset,
+  };
 }

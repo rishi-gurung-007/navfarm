@@ -98,14 +98,35 @@ export const CURRENCY_ID_BY_ISO = new Map(
  * Germany, France and the Netherlands all point at the one EUR row.
  */
 export const DEFAULT_CURRENCY_BY_COUNTRY: Record<string, string> = {
-  IN: 'INR', US: 'USD', ZW: 'USD', GB: 'GBP', AE: 'AED', SG: 'SGD', CN: 'CNY',
-  JP: 'JPY', AU: 'AUD', ZA: 'ZAR', NG: 'NGN', DE: 'EUR', FR: 'EUR', NL: 'EUR',
-  CA: 'CAD', BR: 'BRL', BD: 'BDT', TH: 'THB', VN: 'VND', ID: 'IDR', PH: 'PHP',
-  KE: 'KES', EG: 'EGP', LK: 'LKR', MX: 'MXN',
+  IN: 'INR',
+  US: 'USD',
+  ZW: 'USD',
+  GB: 'GBP',
+  AE: 'AED',
+  SG: 'SGD',
+  CN: 'CNY',
+  JP: 'JPY',
+  AU: 'AUD',
+  ZA: 'ZAR',
+  NG: 'NGN',
+  DE: 'EUR',
+  FR: 'EUR',
+  NL: 'EUR',
+  CA: 'CAD',
+  BR: 'BRL',
+  BD: 'BDT',
+  TH: 'THB',
+  VN: 'VND',
+  ID: 'IDR',
+  PH: 'PHP',
+  KE: 'KES',
+  EG: 'EGP',
+  LK: 'LKR',
+  MX: 'MXN',
 };
 
 /** The currency id a country should default to, or null when unmapped. */
 export function defaultCurrencyIdFor(iso2: string): string | null {
   const iso = DEFAULT_CURRENCY_BY_COUNTRY[iso2];
-  return iso ? CURRENCY_ID_BY_ISO.get(iso) ?? null : null;
+  return iso ? (CURRENCY_ID_BY_ISO.get(iso) ?? null) : null;
 }

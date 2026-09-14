@@ -1,12 +1,23 @@
-import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ConflictException,
+} from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { eq, and, or, isNull, desc, like, ne } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/mysql-core';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
-import { QueryCurrencyDto, CreateExchangeRateDto, UpdateExchangeRateRowDto } from './dto/currency.dto';
-import { listFilterConditions, listOrderBy } from '../../../common/master-list-query';
+import {
+  QueryCurrencyDto,
+  CreateExchangeRateDto,
+  UpdateExchangeRateRowDto,
+} from './dto/currency.dto';
+import {
+  listFilterConditions,
+  listOrderBy,
+} from '../../../common/master-list-query';
 
 @Injectable()
 export class CurrencyService {
@@ -27,7 +38,10 @@ export class CurrencyService {
       .from(schema.currencyMaster)
       .where(eq(schema.currencyMaster.iso_code, 'USD'))
       .limit(1);
-    if (!usd) throw new NotFoundException('No USD currency row — run db-sync-currency-master.');
+    if (!usd)
+      throw new NotFoundException(
+        'No USD currency row — run db-sync-currency-master.',
+      );
     return usd.id;
   }
 
@@ -40,7 +54,9 @@ export class CurrencyService {
    */
   async listCurrencies(query: QueryCurrencyDto = {}) {
     const conditions: any[] = [];
-    conditions.push(...listFilterConditions(schema.currencyMaster, query.filter));
+    conditions.push(
+      ...listFilterConditions(schema.currencyMaster, query.filter),
+    );
     if (query.isActive !== undefined) {
       conditions.push(eq(schema.currencyMaster.is_active, query.isActive));
     }
@@ -56,7 +72,13 @@ export class CurrencyService {
       .select()
       .from(schema.currencyMaster)
       .where(conditions.length ? and(...conditions) : undefined)
-      .orderBy(listOrderBy(schema.currencyMaster, query, schema.currencyMaster.iso_code))
+      .orderBy(
+        listOrderBy(
+          schema.currencyMaster,
+          query,
+          schema.currencyMaster.iso_code,
+        ),
+      )
       .limit(query.limit || 50)
       .offset(query.offset || 0);
   }
@@ -72,7 +94,12 @@ export class CurrencyService {
   async listExchangeRates(companyId?: string | null) {
     const to = alias(schema.currencyMaster, 'to_currency');
     const conditions = companyId
-      ? [or(eq(schema.exchangeRate.company_id, companyId), isNull(schema.exchangeRate.company_id))!]
+      ? [
+          or(
+            eq(schema.exchangeRate.company_id, companyId),
+            isNull(schema.exchangeRate.company_id),
+          )!,
+        ]
       : [];
     return this.db
       .select({
@@ -87,28 +114,39 @@ export class CurrencyService {
         to_currency: to.iso_code,
       })
       .from(schema.exchangeRate)
-      .innerJoin(schema.currencyMaster, eq(schema.exchangeRate.from_currency_id, schema.currencyMaster.currency_id))
+      .innerJoin(
+        schema.currencyMaster,
+        eq(
+          schema.exchangeRate.from_currency_id,
+          schema.currencyMaster.currency_id,
+        ),
+      )
       .innerJoin(to, eq(schema.exchangeRate.to_currency_id, to.currency_id))
       .where(conditions.length ? and(...conditions) : undefined)
       .orderBy(desc(schema.exchangeRate.rate_date));
   }
 
-  async updateExchangeRate(fromCurrencyId: string, toCurrencyId: string, rate: number, source?: string, rateDate?: string, companyId?: string | null) {
+  async updateExchangeRate(
+    fromCurrencyId: string,
+    toCurrencyId: string,
+    rate: number,
+    source?: string,
+    rateDate?: string,
+    companyId?: string | null,
+  ) {
     const rateId = randomUUID();
-    await this.db
-      .insert(schema.exchangeRate)
-      .values({
-        rate_id: rateId,
-        company_id: companyId || null,
-        from_currency_id: fromCurrencyId,
-        to_currency_id: toCurrencyId,
-        rate: rate.toString(),
-        // A dated row, not an overwrite: restating a past period needs the rate
-        // as at that date, so each entry is kept rather than replacing the last.
-        rate_date: rateDate || new Date().toISOString().split('T')[0],
-        rate_source: source || 'MANUAL',
-      });
-    
+    await this.db.insert(schema.exchangeRate).values({
+      rate_id: rateId,
+      company_id: companyId || null,
+      from_currency_id: fromCurrencyId,
+      to_currency_id: toCurrencyId,
+      rate: rate.toString(),
+      // A dated row, not an overwrite: restating a past period needs the rate
+      // as at that date, so each entry is kept rather than replacing the last.
+      rate_date: rateDate || new Date().toISOString().split('T')[0],
+      rate_source: source || 'MANUAL',
+    });
+
     const [newRate] = await this.db
       .select()
       .from(schema.exchangeRate)
@@ -127,7 +165,8 @@ export class CurrencyService {
       .from(schema.currencyMaster)
       .where(eq(schema.currencyMaster.iso_code, iso_code))
       .limit(1);
-    if (clash) throw new ConflictException(`Currency '${iso_code}' already exists.`);
+    if (clash)
+      throw new ConflictException(`Currency '${iso_code}' already exists.`);
     await this.db.insert(schema.currencyMaster).values({
       ...data,
       iso_code,
@@ -148,18 +187,23 @@ export class CurrencyService {
       const [clash] = await this.db
         .select({ id: schema.currencyMaster.currency_id })
         .from(schema.currencyMaster)
-        .where(and(
-          eq(schema.currencyMaster.iso_code, updates.iso_code),
-          ne(schema.currencyMaster.currency_id, id),
-        ))
+        .where(
+          and(
+            eq(schema.currencyMaster.iso_code, updates.iso_code),
+            ne(schema.currencyMaster.currency_id, id),
+          ),
+        )
         .limit(1);
-      if (clash) throw new ConflictException(`Currency '${updates.iso_code}' already exists.`);
+      if (clash)
+        throw new ConflictException(
+          `Currency '${updates.iso_code}' already exists.`,
+        );
     }
     await this.db
       .update(schema.currencyMaster)
       .set(updates)
       .where(eq(schema.currencyMaster.currency_id, id));
-    
+
     const [updatedCurr] = await this.db
       .select()
       .from(schema.currencyMaster)
@@ -223,7 +267,9 @@ export class CurrencyService {
     const rateId = randomUUID();
     const from = dto.from_currency_id || (await this.usdCurrencyId());
     if (from === dto.to_currency_id) {
-      throw new ConflictException('A currency cannot have an exchange rate against itself.');
+      throw new ConflictException(
+        'A currency cannot have an exchange rate against itself.',
+      );
     }
     await this.db.insert(schema.exchangeRate).values({
       rate_id: rateId,
@@ -248,19 +294,25 @@ export class CurrencyService {
       .from(schema.exchangeRate)
       .where(eq(schema.exchangeRate.rate_id, id))
       .limit(1);
-    if (!existing) throw new NotFoundException(`Exchange rate '${id}' not found.`);
+    if (!existing)
+      throw new NotFoundException(`Exchange rate '${id}' not found.`);
 
     const updates: Record<string, unknown> = {};
-    if (dto.to_currency_id !== undefined) updates.to_currency_id = dto.to_currency_id;
-    if (dto.from_currency_id !== undefined) updates.from_currency_id = dto.from_currency_id;
+    if (dto.to_currency_id !== undefined)
+      updates.to_currency_id = dto.to_currency_id;
+    if (dto.from_currency_id !== undefined)
+      updates.from_currency_id = dto.from_currency_id;
     if (dto.rate !== undefined) updates.rate = String(dto.rate);
     if (dto.rate_date !== undefined) updates.rate_date = dto.rate_date;
     if (dto.rate_source !== undefined) updates.rate_source = dto.rate_source;
 
-    const from = (updates.from_currency_id as string) ?? existing.from_currency_id;
+    const from =
+      (updates.from_currency_id as string) ?? existing.from_currency_id;
     const to = (updates.to_currency_id as string) ?? existing.to_currency_id;
     if (from === to) {
-      throw new ConflictException('A currency cannot have an exchange rate against itself.');
+      throw new ConflictException(
+        'A currency cannot have an exchange rate against itself.',
+      );
     }
 
     if (Object.keys(updates).length) {
@@ -287,8 +339,11 @@ export class CurrencyService {
       .from(schema.exchangeRate)
       .where(eq(schema.exchangeRate.rate_id, id))
       .limit(1);
-    if (!existing) throw new NotFoundException(`Exchange rate '${id}' not found.`);
-    await this.db.delete(schema.exchangeRate).where(eq(schema.exchangeRate.rate_id, id));
+    if (!existing)
+      throw new NotFoundException(`Exchange rate '${id}' not found.`);
+    await this.db
+      .delete(schema.exchangeRate)
+      .where(eq(schema.exchangeRate.rate_id, id));
     return existing;
   }
 }

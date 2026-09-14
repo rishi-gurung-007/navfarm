@@ -21,7 +21,8 @@ export class AnimalMovementLogService {
 
   private get db(): MySql2Database<typeof schema> {
     const tenantDb = this.cls.get<MySql2Database<typeof schema>>('tenantDb');
-    if (!tenantDb) throw new Error('Tenant database connection context not established.');
+    if (!tenantDb)
+      throw new Error('Tenant database connection context not established.');
     return tenantDb;
   }
 
@@ -29,7 +30,16 @@ export class AnimalMovementLogService {
     tenantId: string;
     companyId?: string | null;
     animalId: string;
-    movementType: 'PURCHASE' | 'ASSIGN' | 'TRANSFER' | 'STAGE_CHANGE' | 'RELOCATE' | 'UNASSIGN' | 'MORTALITY' | 'OUTPUT' | 'CULL';
+    movementType:
+      | 'PURCHASE'
+      | 'ASSIGN'
+      | 'TRANSFER'
+      | 'STAGE_CHANGE'
+      | 'RELOCATE'
+      | 'UNASSIGN'
+      | 'MORTALITY'
+      | 'OUTPUT'
+      | 'CULL';
     eventDate: string;
     fromBatchId?: string | null;
     toBatchId?: string | null;
@@ -89,13 +99,36 @@ export class AnimalMovementLogService {
         from_location_name: fromLocation.location_name,
       })
       .from(schema.animalMovementLog)
-      .leftJoin(toBatch as any, eq(schema.animalMovementLog.to_batch_id, toBatch.batch_id))
-      .leftJoin(toStage as any, eq(schema.animalMovementLog.to_stage_id, toStage.stage_id))
-      .leftJoin(fromStage as any, eq(schema.animalMovementLog.from_stage_id, fromStage.stage_id))
-      .leftJoin(toLocation as any, eq(schema.animalMovementLog.to_location_id, toLocation.location_id))
-      .leftJoin(fromLocation as any, eq(schema.animalMovementLog.from_location_id, fromLocation.location_id))
-      .where(and(eq(schema.animalMovementLog.animal_id, animalId), eq(schema.animalMovementLog.tenant_id, tenantId)))
-      .orderBy(asc(schema.animalMovementLog.event_date), asc(schema.animalMovementLog.created_at));
+      .leftJoin(
+        toBatch as any,
+        eq(schema.animalMovementLog.to_batch_id, toBatch.batch_id),
+      )
+      .leftJoin(
+        toStage as any,
+        eq(schema.animalMovementLog.to_stage_id, toStage.stage_id),
+      )
+      .leftJoin(
+        fromStage as any,
+        eq(schema.animalMovementLog.from_stage_id, fromStage.stage_id),
+      )
+      .leftJoin(
+        toLocation as any,
+        eq(schema.animalMovementLog.to_location_id, toLocation.location_id),
+      )
+      .leftJoin(
+        fromLocation as any,
+        eq(schema.animalMovementLog.from_location_id, fromLocation.location_id),
+      )
+      .where(
+        and(
+          eq(schema.animalMovementLog.animal_id, animalId),
+          eq(schema.animalMovementLog.tenant_id, tenantId),
+        ),
+      )
+      .orderBy(
+        asc(schema.animalMovementLog.event_date),
+        asc(schema.animalMovementLog.created_at),
+      );
 
     let lastDate: string | null = null;
     return rows.map(({ log, ...labels }) => {

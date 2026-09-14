@@ -20,20 +20,30 @@ const host = process.env.DATABASE_HOST || 'localhost';
 const port = Number(process.env.DATABASE_PORT || 3306);
 const user = process.env.DATABASE_USERNAME || 'root';
 const password = process.env.DATABASE_PASSWORD || '';
-const ssl = process.env.DATABASE_SSL === 'true'
-  ? { minVersion: 'TLSv1.2' as const, rejectUnauthorized: true }
-  : undefined;
+const ssl =
+  process.env.DATABASE_SSL === 'true'
+    ? { minVersion: 'TLSv1.2' as const, rejectUnauthorized: true }
+    : undefined;
 const masterDatabase = process.env.DATABASE_NAME || 'navfarm_master';
 
 async function run() {
-  const pool = mysql.createPool({ host, port, user, password, database: masterDatabase, ssl });
+  const pool = mysql.createPool({
+    host,
+    port,
+    user,
+    password,
+    database: masterDatabase,
+    ssl,
+  });
   const db = drizzle(pool, { schema: master, mode: 'default' });
 
   try {
     await migrate(db as any, {
       migrationsFolder: resolve(process.cwd(), 'src/drizzle/master'),
     });
-    console.log(`[${masterDatabase}] master migrations applied (or already up to date).`);
+    console.log(
+      `[${masterDatabase}] master migrations applied (or already up to date).`,
+    );
   } finally {
     await pool.end();
   }

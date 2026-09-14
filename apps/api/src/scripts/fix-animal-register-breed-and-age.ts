@@ -57,32 +57,46 @@ const host = process.env.DATABASE_HOST || '127.0.0.1';
 const port = Number(process.env.DATABASE_PORT || 3306);
 const user = process.env.DATABASE_USERNAME || 'root';
 const password = process.env.DATABASE_PASSWORD || '';
-const ssl = process.env.DATABASE_SSL === 'true'
-  ? { minVersion: 'TLSv1.2' as const, rejectUnauthorized: true }
-  : undefined;
+const ssl =
+  process.env.DATABASE_SSL === 'true'
+    ? { minVersion: 'TLSv1.2' as const, rejectUnauthorized: true }
+    : undefined;
 const database = process.env.DEV_TENANT_DATABASE || 'tenant_navfarmdev';
 
 // Typical age at entry, in weeks, by animal_type — only PIGGERY types appear
 // in this tenant's data today; extend if another NOB's animals ever need this.
 const TYPICAL_AGE_WEEKS: Record<string, number> = {
-  PIGLET: 4,            // weaned feeder piglet
-  GILT: 24,             // replacement breeding gilt, pre-first-service age
-  COMMERCIAL_PIG: 16,   // grower/finisher stage
-  SOW: 130,             // mature breeding sow (~2.5 yrs)
-  BOAR: 150,            // mature herd sire (~3 yrs)
+  PIGLET: 4, // weaned feeder piglet
+  GILT: 24, // replacement breeding gilt, pre-first-service age
+  COMMERCIAL_PIG: 16, // grower/finisher stage
+  SOW: 130, // mature breeding sow (~2.5 yrs)
+  BOAR: 150, // mature herd sire (~3 yrs)
 };
 
 async function run() {
   const apply = process.argv.includes('--apply');
   const verify = process.argv.includes('--verify');
-  if (process.argv.slice(2).some((a) => !['--apply', '--verify'].includes(a)) || (apply && verify)) {
+  if (
+    process.argv.slice(2).some((a) => !['--apply', '--verify'].includes(a)) ||
+    (apply && verify)
+  ) {
     throw new Error('Use no flags (read-only), --verify, or --apply.');
   }
 
-  const db = await mysql.createConnection({ host, port, user, password, database, ssl });
+  const db = await mysql.createConnection({
+    host,
+    port,
+    user,
+    password,
+    database,
+    ssl,
+  });
   try {
-    const [[lock]] = await db.query<RowDataPacket[]>("SELECT GET_LOCK('navfarm-fix-animal-breed-age', 5) acquired");
-    if (Number(lock.acquired) !== 1) throw new Error('Another run of this script is active.');
+    const [[lock]] = await db.query<RowDataPacket[]>(
+      "SELECT GET_LOCK('navfarm-fix-animal-breed-age', 5) acquired",
+    );
+    if (Number(lock.acquired) !== 1)
+      throw new Error('Another run of this script is active.');
     await db.beginTransaction();
 
     // --- 1. breed_id: template -> this animal's own company-adopted copy ---
@@ -97,15 +111,17 @@ async function run() {
         AND adopted.company_id = ar.company_id
     `);
     const resolvableBreedFixes = breedMismatches.filter((r) => r.new_breed_id);
-    const unresolvableBreedMismatches = breedMismatches.filter((r) => !r.new_breed_id);
+    const unresolvableBreedMismatches = breedMismatches.filter(
+      (r) => !r.new_breed_id,
+    );
 
     let breedRowsUpdated = 0;
     if (apply || verify) {
       for (const row of resolvableBreedFixes) {
-        const [result] = await db.query(
+        const [result] = (await db.query(
           'UPDATE animal_register SET breed_id = ? WHERE animal_id = ?',
           [row.new_breed_id, row.animal_id],
-        ) as any;
+        )) as any;
         breedRowsUpdated += result.affectedRows;
       }
     }
@@ -116,16 +132,20 @@ async function run() {
       FROM animal_register
       WHERE dob IS NULL AND age_at_entry_weeks IS NULL
     `);
-    const resolvableAgeFixes = ageGaps.filter((r) => TYPICAL_AGE_WEEKS[r.animal_type] != null);
-    const unresolvableAgeGaps = ageGaps.filter((r) => TYPICAL_AGE_WEEKS[r.animal_type] == null);
+    const resolvableAgeFixes = ageGaps.filter(
+      (r) => TYPICAL_AGE_WEEKS[r.animal_type] != null,
+    );
+    const unresolvableAgeGaps = ageGaps.filter(
+      (r) => TYPICAL_AGE_WEEKS[r.animal_type] == null,
+    );
 
     let ageRowsUpdated = 0;
     if (apply || verify) {
       for (const row of resolvableAgeFixes) {
-        const [result] = await db.query(
+        const [result] = (await db.query(
           'UPDATE animal_register SET age_at_entry_weeks = ? WHERE animal_id = ?',
           [TYPICAL_AGE_WEEKS[row.animal_type], row.animal_id],
-        ) as any;
+        )) as any;
         ageRowsUpdated += result.affectedRows;
       }
     }
@@ -142,48 +162,74 @@ async function run() {
         AND own.company_id = ar.company_id
     `);
     const resolvableStageFixes = stageMismatches.filter((r) => r.new_stage_id);
-    const unresolvableStageMismatches = stageMismatches.filter((r) => !r.new_stage_id);
+    const unresolvableStageMismatches = stageMismatches.filter(
+      (r) => !r.new_stage_id,
+    );
 
     let stageRowsUpdated = 0;
     if (apply || verify) {
       for (const row of resolvableStageFixes) {
-        const [result] = await db.query(
+        const [result] = (await db.query(
           'UPDATE animal_register SET current_stage_id = ? WHERE animal_id = ?',
           [row.new_stage_id, row.animal_id],
-        ) as any;
+        )) as any;
         stageRowsUpdated += result.affectedRows;
       }
     }
 
-    console.log(JSON.stringify({
-      database,
-      mode: apply ? 'APPLY' : verify ? 'VERIFY' : 'READ-ONLY',
-      breedFix: {
-        templateLinkedAnimalsFound: breedMismatches.length,
-        resolvedByAdoptedCopy: resolvableBreedFixes.length,
-        rowsUpdated: apply || verify ? breedRowsUpdated : '(not run — read-only mode)',
-        unresolvable: unresolvableBreedMismatches.map((r) => ({ animal_code: r.animal_code, breed_code: r.breed_code, company_id: r.company_id })),
-      },
-      ageFix: {
-        animalsWithNoDobOrAge: ageGaps.length,
-        resolvedByTypicalAge: resolvableAgeFixes.length,
-        rowsUpdated: apply || verify ? ageRowsUpdated : '(not run — read-only mode)',
-        unresolvable: unresolvableAgeGaps.map((r) => ({ animal_code: r.animal_code, animal_type: r.animal_type })),
-      },
-      stageFix: {
-        crossCompanyStageAnimalsFound: stageMismatches.length,
-        resolvedByOwnCompanyStage: resolvableStageFixes.length,
-        rowsUpdated: apply || verify ? stageRowsUpdated : '(not run — read-only mode)',
-        unresolvable: unresolvableStageMismatches.map((r) => ({ animal_code: r.animal_code, stage_code: r.stage_code, wrong_company_id: r.wrong_company_id })),
-      },
-    }, null, 2));
+    console.log(
+      JSON.stringify(
+        {
+          database,
+          mode: apply ? 'APPLY' : verify ? 'VERIFY' : 'READ-ONLY',
+          breedFix: {
+            templateLinkedAnimalsFound: breedMismatches.length,
+            resolvedByAdoptedCopy: resolvableBreedFixes.length,
+            rowsUpdated:
+              apply || verify ? breedRowsUpdated : '(not run — read-only mode)',
+            unresolvable: unresolvableBreedMismatches.map((r) => ({
+              animal_code: r.animal_code,
+              breed_code: r.breed_code,
+              company_id: r.company_id,
+            })),
+          },
+          ageFix: {
+            animalsWithNoDobOrAge: ageGaps.length,
+            resolvedByTypicalAge: resolvableAgeFixes.length,
+            rowsUpdated:
+              apply || verify ? ageRowsUpdated : '(not run — read-only mode)',
+            unresolvable: unresolvableAgeGaps.map((r) => ({
+              animal_code: r.animal_code,
+              animal_type: r.animal_type,
+            })),
+          },
+          stageFix: {
+            crossCompanyStageAnimalsFound: stageMismatches.length,
+            resolvedByOwnCompanyStage: resolvableStageFixes.length,
+            rowsUpdated:
+              apply || verify ? stageRowsUpdated : '(not run — read-only mode)',
+            unresolvable: unresolvableStageMismatches.map((r) => ({
+              animal_code: r.animal_code,
+              stage_code: r.stage_code,
+              wrong_company_id: r.wrong_company_id,
+            })),
+          },
+        },
+        null,
+        2,
+      ),
+    );
 
     if (apply) {
       await db.commit();
       console.log('Committed.');
     } else {
       await db.rollback();
-      console.log(verify ? 'Verified and rolled back. No changes committed.' : 'Read-only. No changes attempted.');
+      console.log(
+        verify
+          ? 'Verified and rolled back. No changes committed.'
+          : 'Read-only. No changes attempted.',
+      );
     }
   } finally {
     await db.query("SELECT RELEASE_LOCK('navfarm-fix-animal-breed-age')");
@@ -191,4 +237,7 @@ async function run() {
   }
 }
 
-run().catch((err) => { console.error(err.message); process.exit(1); });
+run().catch((err) => {
+  console.error(err.message);
+  process.exit(1);
+});

@@ -9,7 +9,12 @@ import { SchedulerHeaderModule } from '../../production/scheduler-header/schedul
 import { BatchModule } from '../../production/batch/batch.module';
 
 @Module({
-  imports: [NumberSeriesModule, OperationalAreaModule, SchedulerHeaderModule, BatchModule],
+  imports: [
+    NumberSeriesModule,
+    OperationalAreaModule,
+    SchedulerHeaderModule,
+    BatchModule,
+  ],
   controllers: [AnimalController, AnimalMedicationLogController],
   providers: [AnimalService, AnimalMedicationLogService],
   exports: [AnimalService, AnimalMedicationLogService],

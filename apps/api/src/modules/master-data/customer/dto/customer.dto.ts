@@ -1,35 +1,66 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsInt, Min, IsEmail, IsNumber } from 'class-validator';
+import {
+  IsString,
+  IsNotEmpty,
+  IsOptional,
+  IsUUID,
+  IsBoolean,
+  IsInt,
+  Min,
+  IsEmail,
+  IsNumber,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 import { MasterListQueryDto } from '../../../../common/master-list-query';
 
 export class CreateCustomerDto {
-  @ApiProperty({ description: 'Company UUID scope ownership', example: 'company-uuid-here' })
+  @ApiProperty({
+    description: 'Company UUID scope ownership',
+    example: 'company-uuid-here',
+  })
   @IsUUID()
   @IsOptional()
   company_id?: string;
 
-  @ApiProperty({ description: 'Legacy input only; the API generates CUS-001, CUS-002, etc. per company', example: 'CUS-001', required: false })
+  @ApiProperty({
+    description:
+      'Legacy input only; the API generates CUS-001, CUS-002, etc. per company',
+    example: 'CUS-001',
+    required: false,
+  })
   @IsString()
   @IsOptional()
   customer_code?: string;
 
-  @ApiProperty({ description: 'Full name of the customer', example: 'John Doe Wholesalers' })
+  @ApiProperty({
+    description: 'Full name of the customer',
+    example: 'John Doe Wholesalers',
+  })
   @IsString()
   @IsNotEmpty()
   customer_name: string;
 
-  @ApiProperty({ description: 'Contact email address', required: false, example: 'billing@johndoe.com' })
+  @ApiProperty({
+    description: 'Contact email address',
+    required: false,
+    example: 'billing@johndoe.com',
+  })
   @IsEmail()
   @IsOptional()
   email?: string;
 
-  @ApiProperty({ description: 'Primary mobile number for notifications', example: '+919876543210' })
+  @ApiProperty({
+    description: 'Primary mobile number for notifications',
+    example: '+919876543210',
+  })
   @IsString()
   @IsNotEmpty()
   mobile: string;
 
-  @ApiProperty({ description: 'Government Tax Registration Number (e.g. VAT, GSTIN, EIN)', required: false })
+  @ApiProperty({
+    description: 'Government Tax Registration Number (e.g. VAT, GSTIN, EIN)',
+    required: false,
+  })
   @IsString()
   @IsOptional()
   tax_number?: string;
@@ -39,7 +70,10 @@ export class CreateCustomerDto {
   @IsOptional()
   credit_limit?: number;
 
-  @ApiProperty({ description: 'Customer street address line 1', required: false })
+  @ApiProperty({
+    description: 'Customer street address line 1',
+    required: false,
+  })
   @IsString()
   @IsOptional()
   address_line1?: string;
@@ -64,16 +98,26 @@ export class CreateCustomerDto {
   @IsOptional()
   pincode?: string;
 
-  @ApiProperty({ description: 'Flexible custom config configurations in JSON format', required: false })
+  @ApiProperty({
+    description: 'Flexible custom config configurations in JSON format',
+    required: false,
+  })
   @IsOptional()
   extension_config?: any;
 
-  @ApiProperty({ description: 'Nature of Business UUID scope (blank = available across all NOBs)', required: false })
+  @ApiProperty({
+    description:
+      'Nature of Business UUID scope (blank = available across all NOBs)',
+    required: false,
+  })
   @IsString()
   @IsOptional()
   nob_id?: string;
 
-  @ApiProperty({ description: 'Line of Business UUID scope (blank = not LOB-restricted)', required: false })
+  @ApiProperty({
+    description: 'Line of Business UUID scope (blank = not LOB-restricted)',
+    required: false,
+  })
   @IsString()
   @IsOptional()
   lob_id?: string;
@@ -140,7 +184,11 @@ export class UpdateCustomerDto {
   @IsOptional()
   is_active?: boolean;
 
-  @ApiProperty({ required: false, example: 'ACTIVE', enum: ['ACTIVE', 'INACTIVE', 'ARCHIVE'] })
+  @ApiProperty({
+    required: false,
+    example: 'ACTIVE',
+    enum: ['ACTIVE', 'INACTIVE', 'ARCHIVE'],
+  })
   @IsString()
   @IsOptional()
   status?: string;
@@ -149,12 +197,19 @@ export class UpdateCustomerDto {
   @IsOptional()
   extension_config?: any;
 
-  @ApiProperty({ description: 'Nature of Business UUID scope (blank = available across all NOBs)', required: false })
+  @ApiProperty({
+    description:
+      'Nature of Business UUID scope (blank = available across all NOBs)',
+    required: false,
+  })
   @IsString()
   @IsOptional()
   nob_id?: string;
 
-  @ApiProperty({ description: 'Line of Business UUID scope (blank = not LOB-restricted)', required: false })
+  @ApiProperty({
+    description: 'Line of Business UUID scope (blank = not LOB-restricted)',
+    required: false,
+  })
   @IsString()
   @IsOptional()
   lob_id?: string;
@@ -172,7 +227,10 @@ export class QueryCustomerDto extends MasterListQueryDto {
   @Type(() => Boolean)
   isActive?: boolean;
 
-  @ApiProperty({ description: 'Search customer code, name, or mobile', required: false })
+  @ApiProperty({
+    description: 'Search customer code, name, or mobile',
+    required: false,
+  })
   @IsOptional()
   @IsString()
   search?: string;

@@ -1,20 +1,28 @@
 import { masterScopeConditions } from '../../../common/master-data-scope';
-import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ConflictException,
+  BadRequestException,
+} from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { eq, and, like, or, isNull, ne } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
-import { 
-  CreateUomDto, 
-  UpdateUomDto, 
-  QueryUomDto, 
-  CreateUomConversionDto, 
-  UpdateUomConversionDto 
+import {
+  CreateUomDto,
+  UpdateUomDto,
+  QueryUomDto,
+  CreateUomConversionDto,
+  UpdateUomConversionDto,
 } from './dto/uom.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
-import { listFilterConditions, listOrderBy } from '../../../common/master-list-query';
+import {
+  listFilterConditions,
+  listOrderBy,
+} from '../../../common/master-list-query';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   return date.toISOString().slice(0, 19).replace('T', ' ');
@@ -37,19 +45,40 @@ export class UomService {
   }
 
   /** Resolves by uom_type first (e.g. UOM_WEIGHT), then the master-alone UOM series, else manual. */
-  private async resolveUomCode(dto: CreateUomDto, tenantId: string, companyId: string | null): Promise<string> {
-    const seriesCode = await this.numberSeriesService.resolveSeriesFor('UOM', dto.uom_type, tenantId, companyId);
+  private async resolveUomCode(
+    dto: CreateUomDto,
+    tenantId: string,
+    companyId: string | null,
+  ): Promise<string> {
+    const seriesCode = await this.numberSeriesService.resolveSeriesFor(
+      'UOM',
+      dto.uom_type,
+      tenantId,
+      companyId,
+    );
     if (!seriesCode) {
       if (!dto.uom_code) {
-        throw new BadRequestException('uom_code is required — no number series is configured for units of measure.');
+        throw new BadRequestException(
+          'uom_code is required — no number series is configured for units of measure.',
+        );
       }
       return dto.uom_code.toUpperCase();
     }
-    const series = await this.numberSeriesService.lockSeries(seriesCode, tenantId, companyId);
+    const series = await this.numberSeriesService.lockSeries(
+      seriesCode,
+      tenantId,
+      companyId,
+    );
     if (series.allow_manual && dto.uom_code) {
       return dto.uom_code.toUpperCase();
     }
-    return this.numberSeriesService.generateNext(seriesCode, tenantId, companyId, undefined, dto as unknown as Record<string, unknown>);
+    return this.numberSeriesService.generateNext(
+      seriesCode,
+      tenantId,
+      companyId,
+      undefined,
+      dto as unknown as Record<string, unknown>,
+    );
   }
 
   async create(dto: CreateUomDto, tenantId: string, userPayload?: any) {
@@ -77,7 +106,9 @@ export class UomService {
       .limit(1);
 
     if (existing.length > 0) {
-      throw new ConflictException(`UOM with code '${uomCode}' already exists in this scope.`);
+      throw new ConflictException(
+        `UOM with code '${uomCode}' already exists in this scope.`,
+      );
     }
 
     // Handle is_base_uom rule: only one base UOM per uom_type within scope
@@ -102,7 +133,7 @@ export class UomService {
 
       if (existingBase.length > 0) {
         throw new BadRequestException(
-          `A base UOM for type '${dto.uom_type}' already exists (${existingBase[0].uom_code}). Please deactivate it first.`
+          `A base UOM for type '${dto.uom_type}' already exists (${existingBase[0].uom_code}). Please deactivate it first.`,
         );
       }
     }
@@ -121,7 +152,9 @@ export class UomService {
       is_base_uom: dto.is_base_uom ?? false,
       is_active: true,
       status: 'ACTIVE',
-      extension_config: dto.extension_config ? JSON.stringify(dto.extension_config) : null,
+      extension_config: dto.extension_config
+        ? JSON.stringify(dto.extension_config)
+        : null,
       created_by: userPayload?.userId || null,
       updated_by: userPayload?.userId || null,
     };
@@ -146,7 +179,12 @@ export class UomService {
     const [uom] = await this.db
       .select()
       .from(schema.uomMaster)
-      .where(and(eq(schema.uomMaster.uom_id, id), isNull(schema.uomMaster.deleted_at)))
+      .where(
+        and(
+          eq(schema.uomMaster.uom_id, id),
+          isNull(schema.uomMaster.deleted_at),
+        ),
+      )
       .limit(1);
 
     if (!uom) {
@@ -158,11 +196,11 @@ export class UomService {
 
   async findAll(query: QueryUomDto, tenantId: string) {
     // No isNull(deleted_at) filter — list view shows both Active/Inactive states (toggle switch) so a blocked row can be found again and restored.
-    const conditions: any[] = [
-      eq(schema.uomMaster.tenant_id, tenantId),
-    ];
+    const conditions: any[] = [eq(schema.uomMaster.tenant_id, tenantId)];
 
-    conditions.push(...masterScopeConditions(this.cls, schema.uomMaster, query.companyId));
+    conditions.push(
+      ...masterScopeConditions(this.cls, schema.uomMaster, query.companyId),
+    );
     if (query.uomType) {
       conditions.push(eq(schema.uomMaster.uom_type, query.uomType));
     }
@@ -173,8 +211,8 @@ export class UomService {
       conditions.push(
         or(
           like(schema.uomMaster.uom_code, `%${query.search}%`),
-          like(schema.uomMaster.uom_name, `%${query.search}%`)
-        )
+          like(schema.uomMaster.uom_name, `%${query.search}%`),
+        ),
       );
     }
 
@@ -192,7 +230,12 @@ export class UomService {
       .offset(offset);
   }
 
-  async update(id: string, dto: UpdateUomDto, tenantId: string, userPayload?: any) {
+  async update(
+    id: string,
+    dto: UpdateUomDto,
+    tenantId: string,
+    userPayload?: any,
+  ) {
     const uom = await this.findOne(id);
 
     // Validate unique code if code is changed
@@ -216,12 +259,18 @@ export class UomService {
         .limit(1);
 
       if (existing.length > 0) {
-        throw new ConflictException(`UOM with code '${dto.uom_code}' already exists in this scope.`);
+        throw new ConflictException(
+          `UOM with code '${dto.uom_code}' already exists in this scope.`,
+        );
       }
     }
 
     // Handle is_base_uom rule: only one base UOM per type
-    if ((dto.is_base_uom ?? uom.is_base_uom) && (!uom.is_base_uom || (dto.uom_type !== undefined && dto.uom_type !== uom.uom_type))) {
+    if (
+      (dto.is_base_uom ?? uom.is_base_uom) &&
+      (!uom.is_base_uom ||
+        (dto.uom_type !== undefined && dto.uom_type !== uom.uom_type))
+    ) {
       const baseConditions = [
         eq(schema.uomMaster.tenant_id, tenantId),
         eq(schema.uomMaster.uom_type, dto.uom_type || uom.uom_type),
@@ -243,7 +292,7 @@ export class UomService {
 
       if (existingBase.length > 0) {
         throw new BadRequestException(
-          `A base UOM for type '${dto.uom_type || uom.uom_type}' already exists (${existingBase[0].uom_code}).`
+          `A base UOM for type '${dto.uom_type || uom.uom_type}' already exists (${existingBase[0].uom_code}).`,
         );
       }
     }
@@ -253,14 +302,17 @@ export class UomService {
       updated_at: toMysqlTimestamp(),
     };
 
-    if (dto.uom_code !== undefined) updates.uom_code = dto.uom_code.toUpperCase();
+    if (dto.uom_code !== undefined)
+      updates.uom_code = dto.uom_code.toUpperCase();
     if (dto.uom_name !== undefined) updates.uom_name = dto.uom_name;
     if (dto.uom_type !== undefined) updates.uom_type = dto.uom_type;
-    if (dto.decimal_places !== undefined) updates.decimal_places = dto.decimal_places;
+    if (dto.decimal_places !== undefined)
+      updates.decimal_places = dto.decimal_places;
     if (dto.is_base_uom !== undefined) updates.is_base_uom = dto.is_base_uom;
     if (dto.is_active !== undefined) updates.is_active = dto.is_active;
     if (dto.status !== undefined) updates.status = dto.status;
-    if (dto.extension_config !== undefined) updates.extension_config = JSON.stringify(dto.extension_config);
+    if (dto.extension_config !== undefined)
+      updates.extension_config = JSON.stringify(dto.extension_config);
 
     await this.db
       .update(schema.uomMaster)
@@ -311,7 +363,10 @@ export class UomService {
       newValues: { status: 'INACTIVE', deleted_at: deletedTime },
     });
 
-    return { success: true, message: `UOM '${uom.uom_code}' has been successfully soft-deleted.` };
+    return {
+      success: true,
+      message: `UOM '${uom.uom_code}' has been successfully soft-deleted.`,
+    };
   }
 
   async restore(id: string, tenantId: string, userPayload?: any) {
@@ -358,7 +413,11 @@ export class UomService {
   // UOM CONVERSIONS
   // ========================================================
 
-  async createConversion(dto: CreateUomConversionDto, tenantId: string, userPayload?: any) {
+  async createConversion(
+    dto: CreateUomConversionDto,
+    tenantId: string,
+    userPayload?: any,
+  ) {
     const companyId = dto.company_id || null;
 
     // Check if conversion already exists
@@ -370,19 +429,30 @@ export class UomService {
           eq(schema.uomConversionMaster.tenant_id, tenantId),
           eq(schema.uomConversionMaster.from_uom, dto.from_uom.toUpperCase()),
           eq(schema.uomConversionMaster.to_uom, dto.to_uom.toUpperCase()),
-          dto.item_id ? eq(schema.uomConversionMaster.item_id, dto.item_id) : isNull(schema.uomConversionMaster.item_id),
+          dto.item_id
+            ? eq(schema.uomConversionMaster.item_id, dto.item_id)
+            : isNull(schema.uomConversionMaster.item_id),
           isNull(schema.uomConversionMaster.deleted_at),
-        )
+        ),
       )
       .limit(1);
 
     if (existing.length > 0) {
-      throw new ConflictException('A conversion factor already exists between these units.');
+      throw new ConflictException(
+        'A conversion factor already exists between these units.',
+      );
     }
 
     // Manual today, automatic once a UOM_CONVERSION series is configured; null
     // when neither applies, which is why the column is nullable.
-    const conversionCode = await this.numberSeriesService.resolveOptionalCode('UOM_CONVERSION', dto.conversion_code, tenantId, companyId, undefined, dto as unknown as Record<string, unknown>);
+    const conversionCode = await this.numberSeriesService.resolveOptionalCode(
+      'UOM_CONVERSION',
+      dto.conversion_code,
+      tenantId,
+      companyId,
+      undefined,
+      dto as unknown as Record<string, unknown>,
+    );
 
     const conversionId = randomUUID();
     const newConv = {
@@ -423,7 +493,12 @@ export class UomService {
     const [conv] = await this.db
       .select()
       .from(schema.uomConversionMaster)
-      .where(and(eq(schema.uomConversionMaster.conversion_id, id), isNull(schema.uomConversionMaster.deleted_at)))
+      .where(
+        and(
+          eq(schema.uomConversionMaster.conversion_id, id),
+          isNull(schema.uomConversionMaster.deleted_at),
+        ),
+      )
       .limit(1);
 
     if (!conv) {
@@ -433,19 +508,35 @@ export class UomService {
     return conv;
   }
 
-  async findAllConversions(query: { itemId?: string; companyId?: string; fromUom?: string; toUom?: string; limit?: number; offset?: number }, tenantId: string) {
+  async findAllConversions(
+    query: {
+      itemId?: string;
+      companyId?: string;
+      fromUom?: string;
+      toUom?: string;
+      limit?: number;
+      offset?: number;
+    },
+    tenantId: string,
+  ) {
     // No isNull(deleted_at) filter — list view shows both Active/Inactive states (toggle switch) so a blocked row can be found again and restored.
     const conditions: any[] = [
       eq(schema.uomConversionMaster.tenant_id, tenantId),
     ];
 
-    conditions.push(...masterScopeConditions(this.cls, schema.uomConversionMaster, query.companyId));
+    conditions.push(
+      ...masterScopeConditions(
+        this.cls,
+        schema.uomConversionMaster,
+        query.companyId,
+      ),
+    );
     if (query.itemId) {
       conditions.push(
         or(
           eq(schema.uomConversionMaster.item_id, query.itemId),
-          isNull(schema.uomConversionMaster.item_id) // Include global mappings
-        )
+          isNull(schema.uomConversionMaster.item_id), // Include global mappings
+        ),
       );
     }
 
@@ -453,8 +544,14 @@ export class UomService {
     // "Auto-filled from uom_conversion_master", which needs a lookup by unit
     // pair rather than by item — otherwise the form has to ask for a number
     // this table already holds.
-    if (query.fromUom) conditions.push(eq(schema.uomConversionMaster.from_uom, query.fromUom.toUpperCase()));
-    if (query.toUom) conditions.push(eq(schema.uomConversionMaster.to_uom, query.toUom.toUpperCase()));
+    if (query.fromUom)
+      conditions.push(
+        eq(schema.uomConversionMaster.from_uom, query.fromUom.toUpperCase()),
+      );
+    if (query.toUom)
+      conditions.push(
+        eq(schema.uomConversionMaster.to_uom, query.toUom.toUpperCase()),
+      );
 
     const limit = query.limit || 50;
     const offset = query.offset || 0;
@@ -468,7 +565,12 @@ export class UomService {
       .offset(offset);
   }
 
-  async updateConversion(id: string, dto: UpdateUomConversionDto, tenantId: string, userPayload?: any) {
+  async updateConversion(
+    id: string,
+    dto: UpdateUomConversionDto,
+    tenantId: string,
+    userPayload?: any,
+  ) {
     const conv = await this.findOneConversion(id);
 
     const updates: any = {
@@ -478,10 +580,18 @@ export class UomService {
 
     // Blank means "untouched": the master-data form posts "" for every optional
     // field, and rows created before this column existed still hold NULL.
-    const conversionCode = await this.numberSeriesService.editedCode('UOM_CONVERSION', dto.conversion_code, conv.conversion_code, tenantId, conv.company_id);
+    const conversionCode = await this.numberSeriesService.editedCode(
+      'UOM_CONVERSION',
+      dto.conversion_code,
+      conv.conversion_code,
+      tenantId,
+      conv.company_id,
+    );
     if (conversionCode) updates.conversion_code = conversionCode;
-    if (dto.conversion_factor !== undefined) updates.conversion_factor = dto.conversion_factor.toString();
-    if (dto.effective_from !== undefined) updates.effective_from = dto.effective_from;
+    if (dto.conversion_factor !== undefined)
+      updates.conversion_factor = dto.conversion_factor.toString();
+    if (dto.effective_from !== undefined)
+      updates.effective_from = dto.effective_from;
     if (dto.effective_to !== undefined) updates.effective_to = dto.effective_to;
     if (dto.is_active !== undefined) updates.is_active = dto.is_active;
     if (dto.status !== undefined) updates.status = dto.status;
@@ -530,7 +640,10 @@ export class UomService {
       newValues: { status: 'INACTIVE', deleted_at: deletedTime },
     });
 
-    return { success: true, message: 'UOM conversion has been successfully soft-deleted.' };
+    return {
+      success: true,
+      message: 'UOM conversion has been successfully soft-deleted.',
+    };
   }
 
   /**
@@ -543,7 +656,7 @@ export class UomService {
     toUom: string,
     itemId?: string,
     companyId?: string,
-    tenantId?: string
+    tenantId?: string,
   ): Promise<number> {
     const fromClean = fromUom.toUpperCase().trim();
     const toClean = toUom.toUpperCase().trim();
@@ -561,8 +674,8 @@ export class UomService {
             eq(schema.uomConversionMaster.to_uom, toClean),
             eq(schema.uomConversionMaster.item_id, itemId),
             eq(schema.uomConversionMaster.is_active, true),
-            isNull(schema.uomConversionMaster.deleted_at)
-          )
+            isNull(schema.uomConversionMaster.deleted_at),
+          ),
         )
         .limit(1);
 
@@ -581,8 +694,8 @@ export class UomService {
           eq(schema.uomConversionMaster.to_uom, toClean),
           isNull(schema.uomConversionMaster.item_id),
           eq(schema.uomConversionMaster.is_active, true),
-          isNull(schema.uomConversionMaster.deleted_at)
-        )
+          isNull(schema.uomConversionMaster.deleted_at),
+        ),
       )
       .limit(1);
 
@@ -599,8 +712,8 @@ export class UomService {
           eq(schema.uomConversionMaster.from_uom, toClean),
           eq(schema.uomConversionMaster.to_uom, fromClean),
           eq(schema.uomConversionMaster.is_active, true),
-          isNull(schema.uomConversionMaster.deleted_at)
-        )
+          isNull(schema.uomConversionMaster.deleted_at),
+        ),
       )
       .limit(1);
 
@@ -610,7 +723,7 @@ export class UomService {
     }
 
     throw new BadRequestException(
-      `No UOM conversion rule found between '${fromClean}' and '${toClean}'${itemId ? ` for item '${itemId}'` : ''}.`
+      `No UOM conversion rule found between '${fromClean}' and '${toClean}'${itemId ? ` for item '${itemId}'` : ''}.`,
     );
   }
 
@@ -620,9 +733,15 @@ export class UomService {
     quantity: number,
     itemId?: string,
     companyId?: string,
-    tenantId?: string
+    tenantId?: string,
   ) {
-    const factor = await this.resolveConversionFactor(fromUom, toUom, itemId, companyId, tenantId);
+    const factor = await this.resolveConversionFactor(
+      fromUom,
+      toUom,
+      itemId,
+      companyId,
+      tenantId,
+    );
     return {
       fromUom: fromUom.toUpperCase().trim(),
       toUom: toUom.toUpperCase().trim(),

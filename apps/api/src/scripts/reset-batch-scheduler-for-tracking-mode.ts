@@ -30,9 +30,10 @@ const host = process.env.DATABASE_HOST || '127.0.0.1';
 const port = Number(process.env.DATABASE_PORT || 3306);
 const user = process.env.DATABASE_USERNAME || 'root';
 const password = process.env.DATABASE_PASSWORD || '';
-const ssl = process.env.DATABASE_SSL === 'true'
-  ? { minVersion: 'TLSv1.2' as const, rejectUnauthorized: true }
-  : undefined;
+const ssl =
+  process.env.DATABASE_SSL === 'true'
+    ? { minVersion: 'TLSv1.2' as const, rejectUnauthorized: true }
+    : undefined;
 const database = process.env.DEV_TENANT_DATABASE || 'tenant_navfarmdev';
 
 // Children before parents. Every table here holds a real, non-nullable-in-
@@ -68,24 +69,44 @@ const DELETE_ORDER = [
 // Left alone deliberately — animal-linked history, ON DELETE SET NULL on their
 // batch FK, reported here so a reviewer can see they were considered and not
 // just missed.
-const PRESERVED_TABLES = ['breeding_record', 'farrowing_record', 'semen_batch', 'approval_request'];
+const PRESERVED_TABLES = [
+  'breeding_record',
+  'farrowing_record',
+  'semen_batch',
+  'approval_request',
+];
 
 async function run() {
   const apply = process.argv.includes('--apply');
   const verify = process.argv.includes('--verify');
-  if (process.argv.slice(2).some((a) => !['--apply', '--verify'].includes(a)) || (apply && verify)) {
+  if (
+    process.argv.slice(2).some((a) => !['--apply', '--verify'].includes(a)) ||
+    (apply && verify)
+  ) {
     throw new Error('Use no flags (read-only), --verify, or --apply.');
   }
 
-  const db = await mysql.createConnection({ host, port, user, password, database, ssl });
+  const db = await mysql.createConnection({
+    host,
+    port,
+    user,
+    password,
+    database,
+    ssl,
+  });
   try {
-    const [[lock]] = await db.query<RowDataPacket[]>("SELECT GET_LOCK('navfarm-batch-scheduler-reset', 5) acquired");
-    if (Number(lock.acquired) !== 1) throw new Error('Another reset run is active.');
+    const [[lock]] = await db.query<RowDataPacket[]>(
+      "SELECT GET_LOCK('navfarm-batch-scheduler-reset', 5) acquired",
+    );
+    if (Number(lock.acquired) !== 1)
+      throw new Error('Another reset run is active.');
     await db.beginTransaction();
 
     const before: Record<string, number> = {};
     for (const table of [...DELETE_ORDER, ...PRESERVED_TABLES]) {
-      const [[row]] = await db.query<RowDataPacket[]>(`SELECT COUNT(*) c FROM \`${table}\``);
+      const [[row]] = await db.query<RowDataPacket[]>(
+        `SELECT COUNT(*) c FROM \`${table}\``,
+      );
       before[table] = Number(row.c);
     }
 
@@ -97,14 +118,16 @@ async function run() {
 
     let unassigned = 0;
     if (apply || verify) {
-      const [result] = await db.query('UPDATE animal_register SET current_batch_id = NULL WHERE current_batch_id IS NOT NULL') as any;
+      const [result] = (await db.query(
+        'UPDATE animal_register SET current_batch_id = NULL WHERE current_batch_id IS NOT NULL',
+      )) as any;
       unassigned = result.affectedRows;
     }
 
     const deleted: Record<string, number> = {};
     if (apply || verify) {
       for (const table of DELETE_ORDER) {
-        const [result] = await db.query(`DELETE FROM \`${table}\``) as any;
+        const [result] = (await db.query(`DELETE FROM \`${table}\``)) as any;
         deleted[table] = result.affectedRows;
       }
     }
@@ -115,24 +138,36 @@ async function run() {
        FROM animal_register`,
     );
 
-    console.log(JSON.stringify({
-      database,
-      mode: apply ? 'APPLY' : verify ? 'VERIFY' : 'READ-ONLY',
-      rowCountsBeforeReset: before,
-      animalRegisterBefore: animalBefore,
-      animalRegisterAfterUnassignOnly: apply || verify ? animalAfter : '(not run — read-only mode)',
-      animalsUnassignedFromBatch: apply || verify ? unassigned : '(not run — read-only mode)',
-      rowsDeleted: apply || verify ? deleted : '(not run — read-only mode)',
-      preservedUntouched: PRESERVED_TABLES,
-      note: 'animal_register.current_stage_id and current_location_id are never modified by this script.',
-    }, null, 2));
+    console.log(
+      JSON.stringify(
+        {
+          database,
+          mode: apply ? 'APPLY' : verify ? 'VERIFY' : 'READ-ONLY',
+          rowCountsBeforeReset: before,
+          animalRegisterBefore: animalBefore,
+          animalRegisterAfterUnassignOnly:
+            apply || verify ? animalAfter : '(not run — read-only mode)',
+          animalsUnassignedFromBatch:
+            apply || verify ? unassigned : '(not run — read-only mode)',
+          rowsDeleted: apply || verify ? deleted : '(not run — read-only mode)',
+          preservedUntouched: PRESERVED_TABLES,
+          note: 'animal_register.current_stage_id and current_location_id are never modified by this script.',
+        },
+        null,
+        2,
+      ),
+    );
 
     if (apply) {
       await db.commit();
       console.log('Committed.');
     } else {
       await db.rollback();
-      console.log(verify ? 'Verified and rolled back. No changes committed.' : 'Read-only. No changes attempted.');
+      console.log(
+        verify
+          ? 'Verified and rolled back. No changes committed.'
+          : 'Read-only. No changes attempted.',
+      );
     }
   } finally {
     await db.query("SELECT RELEASE_LOCK('navfarm-batch-scheduler-reset')");
@@ -140,4 +175,7 @@ async function run() {
   }
 }
 
-run().catch((err) => { console.error(err.message); process.exit(1); });
+run().catch((err) => {
+  console.error(err.message);
+  process.exit(1);
+});

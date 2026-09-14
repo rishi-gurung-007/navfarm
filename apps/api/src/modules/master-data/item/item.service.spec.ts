@@ -4,7 +4,11 @@ import { ClsService } from 'nestjs-cls';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { NobLobResolutionService } from '../../core/operational-area/nob-lob-resolution.service';
-import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
 
 describe('ItemService', () => {
   let service: ItemService;
@@ -27,10 +31,12 @@ describe('ItemService', () => {
   const mockGenerateNext = jest.fn();
 
   const nobLobResolution = {
-    resolve: jest.fn(async (_tenantId: string, _companyId: any, explicit: any) => ({
-      nob_id: explicit?.nob_id ?? null,
-      lob_id: explicit?.lob_id ?? null,
-    })),
+    resolve: jest.fn(
+      async (_tenantId: string, _companyId: any, explicit: any) => ({
+        nob_id: explicit?.nob_id ?? null,
+        lob_id: explicit?.lob_id ?? null,
+      }),
+    ),
   };
 
   beforeEach(async () => {
@@ -42,10 +48,12 @@ describe('ItemService', () => {
     mockGenerateNext.mockReset();
     mockGenerateNext.mockResolvedValue('ITM-0001');
     nobLobResolution.resolve.mockReset();
-    nobLobResolution.resolve.mockImplementation(async (_tenantId: string, _companyId: any, explicit: any) => ({
-      nob_id: explicit?.nob_id ?? null,
-      lob_id: explicit?.lob_id ?? null,
-    }));
+    nobLobResolution.resolve.mockImplementation(
+      async (_tenantId: string, _companyId: any, explicit: any) => ({
+        nob_id: explicit?.nob_id ?? null,
+        lob_id: explicit?.lob_id ?? null,
+      }),
+    );
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -74,7 +82,9 @@ describe('ItemService', () => {
     }).compile();
 
     service = module.get<ItemService>(ItemService);
-    jest.spyOn(service as any, 'ensureCompanyItemSeries').mockResolvedValue(undefined);
+    jest
+      .spyOn(service as any, 'ensureCompanyItemSeries')
+      .mockResolvedValue(undefined);
   });
 
   it('should be defined', () => {
@@ -94,7 +104,11 @@ describe('ItemService', () => {
         .mockReturnValueOnce({
           from: jest.fn().mockReturnValue({
             where: jest.fn().mockReturnValue({
-              limit: jest.fn().mockResolvedValue([{ category_id: 'cat-1', category_name: 'Chicks' }]),
+              limit: jest
+                .fn()
+                .mockResolvedValue([
+                  { category_id: 'cat-1', category_name: 'Chicks' },
+                ]),
             }),
           }),
         })
@@ -108,7 +122,11 @@ describe('ItemService', () => {
         .mockReturnValueOnce({
           from: jest.fn().mockReturnValue({
             where: jest.fn().mockReturnValue({
-              limit: jest.fn().mockResolvedValue([{ item_id: 'item-1', item_code: 'ITM-0001' }]),
+              limit: jest
+                .fn()
+                .mockResolvedValue([
+                  { item_id: 'item-1', item_code: 'ITM-0001' },
+                ]),
             }),
           }),
         })
@@ -138,15 +156,33 @@ describe('ItemService', () => {
         { userId: 'user-1' },
       );
 
-      expect(mockGenerateNext).toHaveBeenCalledWith('ITEM', 'tenant-123', 'comp-1', undefined, expect.any(Object));
+      expect(mockGenerateNext).toHaveBeenCalledWith(
+        'ITEM',
+        'tenant-123',
+        'comp-1',
+        undefined,
+        expect.any(Object),
+      );
       expect(mockDb.transaction).toHaveBeenCalled();
       expect(result.item_code).toBe('ITM-0001');
     });
 
     it('should reject a MEDICINE item with no withdrawal_days', async () => {
       mockDbSelect
-        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ company_id: 'comp-1' }]) }) }) })
-        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ id: 'type-medicine' }]) }) }) });
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            where: jest.fn().mockReturnValue({
+              limit: jest.fn().mockResolvedValue([{ company_id: 'comp-1' }]),
+            }),
+          }),
+        })
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            where: jest.fn().mockReturnValue({
+              limit: jest.fn().mockResolvedValue([{ id: 'type-medicine' }]),
+            }),
+          }),
+        });
 
       await expect(
         service.create(
@@ -168,43 +204,125 @@ describe('ItemService', () => {
     // them from the company's operational areas via NobLobResolutionService.
     describe('NOB/LOB derivation (D1)', () => {
       it('stores the single NOB/LOB the company resolves to when the payload omits both', async () => {
-        nobLobResolution.resolve.mockResolvedValue({ nob_id: 'nob-livestock', lob_id: 'lob-piggery' });
+        nobLobResolution.resolve.mockResolvedValue({
+          nob_id: 'nob-livestock',
+          lob_id: 'lob-piggery',
+        });
         mockDbSelect
-          .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ company_id: 'comp-1' }]) }) }) })
-          .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ id: 'type-raw' }]) }) }) })
-          .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ item_id: 'item-1', item_code: 'ITM-0001' }]) }) }) })
-          .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ leftJoin: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([]) }) }) });
+          .mockReturnValueOnce({
+            from: jest.fn().mockReturnValue({
+              where: jest.fn().mockReturnValue({
+                limit: jest.fn().mockResolvedValue([{ company_id: 'comp-1' }]),
+              }),
+            }),
+          })
+          .mockReturnValueOnce({
+            from: jest.fn().mockReturnValue({
+              where: jest.fn().mockReturnValue({
+                limit: jest.fn().mockResolvedValue([{ id: 'type-raw' }]),
+              }),
+            }),
+          })
+          .mockReturnValueOnce({
+            from: jest.fn().mockReturnValue({
+              where: jest.fn().mockReturnValue({
+                limit: jest
+                  .fn()
+                  .mockResolvedValue([
+                    { item_id: 'item-1', item_code: 'ITM-0001' },
+                  ]),
+              }),
+            }),
+          })
+          .mockReturnValueOnce({
+            from: jest.fn().mockReturnValue({
+              leftJoin: jest
+                .fn()
+                .mockReturnValue({ where: jest.fn().mockResolvedValue([]) }),
+            }),
+          });
 
         let insertedValues: any;
         mockDbInsert.mockReturnValue({
-          values: jest.fn().mockImplementation((v) => { insertedValues = v; return Promise.resolve({}); }),
+          values: jest.fn().mockImplementation((v) => {
+            insertedValues = v;
+            return Promise.resolve({});
+          }),
         });
 
         await service.create(
-          { company_id: 'comp-1', item_name: 'Starter Feed', item_type: 'RAW_MATERIAL', uom_primary: 'KG' } as any,
+          {
+            company_id: 'comp-1',
+            item_name: 'Starter Feed',
+            item_type: 'RAW_MATERIAL',
+            uom_primary: 'KG',
+          } as any,
           'tenant-123',
         );
 
-        expect(nobLobResolution.resolve).toHaveBeenCalledWith('tenant-123', 'comp-1', { nob_id: undefined, lob_id: undefined });
+        expect(nobLobResolution.resolve).toHaveBeenCalledWith(
+          'tenant-123',
+          'comp-1',
+          { nob_id: undefined, lob_id: undefined },
+        );
         expect(insertedValues.nob_id).toBe('nob-livestock');
         expect(insertedValues.lob_id).toBe('lob-piggery');
       });
 
       it('stores null and still succeeds when the company spans two LOBs', async () => {
-        nobLobResolution.resolve.mockResolvedValue({ nob_id: 'nob-livestock', lob_id: null });
+        nobLobResolution.resolve.mockResolvedValue({
+          nob_id: 'nob-livestock',
+          lob_id: null,
+        });
         mockDbSelect
-          .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ company_id: 'comp-1' }]) }) }) })
-          .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ id: 'type-raw' }]) }) }) })
-          .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ item_id: 'item-1', item_code: 'ITM-0001' }]) }) }) })
-          .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ leftJoin: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([]) }) }) });
+          .mockReturnValueOnce({
+            from: jest.fn().mockReturnValue({
+              where: jest.fn().mockReturnValue({
+                limit: jest.fn().mockResolvedValue([{ company_id: 'comp-1' }]),
+              }),
+            }),
+          })
+          .mockReturnValueOnce({
+            from: jest.fn().mockReturnValue({
+              where: jest.fn().mockReturnValue({
+                limit: jest.fn().mockResolvedValue([{ id: 'type-raw' }]),
+              }),
+            }),
+          })
+          .mockReturnValueOnce({
+            from: jest.fn().mockReturnValue({
+              where: jest.fn().mockReturnValue({
+                limit: jest
+                  .fn()
+                  .mockResolvedValue([
+                    { item_id: 'item-1', item_code: 'ITM-0001' },
+                  ]),
+              }),
+            }),
+          })
+          .mockReturnValueOnce({
+            from: jest.fn().mockReturnValue({
+              leftJoin: jest
+                .fn()
+                .mockReturnValue({ where: jest.fn().mockResolvedValue([]) }),
+            }),
+          });
 
         let insertedValues: any;
         mockDbInsert.mockReturnValue({
-          values: jest.fn().mockImplementation((v) => { insertedValues = v; return Promise.resolve({}); }),
+          values: jest.fn().mockImplementation((v) => {
+            insertedValues = v;
+            return Promise.resolve({});
+          }),
         });
 
         const result = await service.create(
-          { company_id: 'comp-1', item_name: 'Starter Feed', item_type: 'RAW_MATERIAL', uom_primary: 'KG' } as any,
+          {
+            company_id: 'comp-1',
+            item_name: 'Starter Feed',
+            item_type: 'RAW_MATERIAL',
+            uom_primary: 'KG',
+          } as any,
           'tenant-123',
         );
 
@@ -215,22 +333,63 @@ describe('ItemService', () => {
 
       it('honors an explicit nob_id on the DTO over derivation', async () => {
         mockDbSelect
-          .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ company_id: 'comp-1' }]) }) }) })
-          .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ id: 'type-raw' }]) }) }) })
-          .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ item_id: 'item-1', item_code: 'ITM-0001' }]) }) }) })
-          .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ leftJoin: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([]) }) }) });
+          .mockReturnValueOnce({
+            from: jest.fn().mockReturnValue({
+              where: jest.fn().mockReturnValue({
+                limit: jest.fn().mockResolvedValue([{ company_id: 'comp-1' }]),
+              }),
+            }),
+          })
+          .mockReturnValueOnce({
+            from: jest.fn().mockReturnValue({
+              where: jest.fn().mockReturnValue({
+                limit: jest.fn().mockResolvedValue([{ id: 'type-raw' }]),
+              }),
+            }),
+          })
+          .mockReturnValueOnce({
+            from: jest.fn().mockReturnValue({
+              where: jest.fn().mockReturnValue({
+                limit: jest
+                  .fn()
+                  .mockResolvedValue([
+                    { item_id: 'item-1', item_code: 'ITM-0001' },
+                  ]),
+              }),
+            }),
+          })
+          .mockReturnValueOnce({
+            from: jest.fn().mockReturnValue({
+              leftJoin: jest
+                .fn()
+                .mockReturnValue({ where: jest.fn().mockResolvedValue([]) }),
+            }),
+          });
 
         let insertedValues: any;
         mockDbInsert.mockReturnValue({
-          values: jest.fn().mockImplementation((v) => { insertedValues = v; return Promise.resolve({}); }),
+          values: jest.fn().mockImplementation((v) => {
+            insertedValues = v;
+            return Promise.resolve({});
+          }),
         });
 
         await service.create(
-          { company_id: 'comp-1', item_name: 'Starter Feed', item_type: 'RAW_MATERIAL', uom_primary: 'KG', nob_id: 'nob-explicit' } as any,
+          {
+            company_id: 'comp-1',
+            item_name: 'Starter Feed',
+            item_type: 'RAW_MATERIAL',
+            uom_primary: 'KG',
+            nob_id: 'nob-explicit',
+          } as any,
           'tenant-123',
         );
 
-        expect(nobLobResolution.resolve).toHaveBeenCalledWith('tenant-123', 'comp-1', { nob_id: 'nob-explicit', lob_id: undefined });
+        expect(nobLobResolution.resolve).toHaveBeenCalledWith(
+          'tenant-123',
+          'comp-1',
+          { nob_id: 'nob-explicit', lob_id: undefined },
+        );
         expect(insertedValues.nob_id).toBe('nob-explicit');
       });
     });
@@ -245,14 +404,26 @@ describe('ItemService', () => {
    */
   describe('item_type validation against item_type_master', () => {
     const rows = (result: any[]) => ({
-      from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue(result) }) }),
+      from: jest.fn().mockReturnValue({
+        where: jest
+          .fn()
+          .mockReturnValue({ limit: jest.fn().mockResolvedValue(result) }),
+      }),
     });
     const attributeRows = (result: any[]) => ({
-      from: jest.fn().mockReturnValue({ leftJoin: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue(result) }) }),
+      from: jest.fn().mockReturnValue({
+        leftJoin: jest
+          .fn()
+          .mockReturnValue({ where: jest.fn().mockResolvedValue(result) }),
+      }),
     });
     const legacyItem = {
-      item_id: 'item-1', item_code: 'ITM-0001', item_name: 'Offal',
-      item_type: 'BY_PRODUCT', company_id: 'comp-1', withdrawal_days: null,
+      item_id: 'item-1',
+      item_code: 'ITM-0001',
+      item_name: 'Offal',
+      item_type: 'BY_PRODUCT',
+      company_id: 'comp-1',
+      withdrawal_days: null,
     };
 
     it('rejects a create whose item_type is not a known type code', async () => {
@@ -262,7 +433,12 @@ describe('ItemService', () => {
 
       await expect(
         service.create(
-          { company_id: 'comp-1', item_name: 'Nonsense', item_type: 'BANANA_REPUBLIC', uom_primary: 'KG' } as any,
+          {
+            company_id: 'comp-1',
+            item_name: 'Nonsense',
+            item_type: 'BANANA_REPUBLIC',
+            uom_primary: 'KG',
+          } as any,
           'tenant-123',
         ),
       ).rejects.toThrow(NotFoundException);
@@ -277,8 +453,13 @@ describe('ItemService', () => {
         .mockReturnValueOnce(attributeRows([]))
         .mockReturnValueOnce(rows([])); // item_type_master: no such code
 
-      await expect(service.update('item-1', { item_type: 'BANANA_REPUBLIC' }, 'tenant-123'))
-        .rejects.toThrow(NotFoundException);
+      await expect(
+        service.update(
+          'item-1',
+          { item_type: 'BANANA_REPUBLIC' },
+          'tenant-123',
+        ),
+      ).rejects.toThrow(NotFoundException);
       expect(mockDbUpdate).not.toHaveBeenCalled();
     });
 
@@ -287,12 +468,20 @@ describe('ItemService', () => {
         .mockReturnValueOnce(rows([legacyItem])) // findOne
         .mockReturnValueOnce(attributeRows([]))
         .mockReturnValueOnce(rows([{ id: 'type-finished' }])) // item_type_master hit
-        .mockReturnValueOnce(rows([{ ...legacyItem, item_type: 'FINISHED_GOOD' }])) // findOne after update
+        .mockReturnValueOnce(
+          rows([{ ...legacyItem, item_type: 'FINISHED_GOOD' }]),
+        ) // findOne after update
         .mockReturnValueOnce(attributeRows([]));
-      const set = jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) });
+      const set = jest
+        .fn()
+        .mockReturnValue({ where: jest.fn().mockResolvedValue({}) });
       mockDbUpdate.mockReturnValue({ set });
 
-      const result = await service.update('item-1', { item_type: 'FINISHED_GOOD' }, 'tenant-123');
+      const result = await service.update(
+        'item-1',
+        { item_type: 'FINISHED_GOOD' },
+        'tenant-123',
+      );
 
       expect(set.mock.calls[0][0].item_type).toBe('FINISHED_GOOD');
       expect(result.item_type).toBe('FINISHED_GOOD');
@@ -305,12 +494,20 @@ describe('ItemService', () => {
       mockDbSelect
         .mockReturnValueOnce(rows([legacyItem])) // findOne
         .mockReturnValueOnce(attributeRows([]))
-        .mockReturnValueOnce(rows([{ ...legacyItem, item_name: 'Offal (chilled)' }])) // findOne after update
+        .mockReturnValueOnce(
+          rows([{ ...legacyItem, item_name: 'Offal (chilled)' }]),
+        ) // findOne after update
         .mockReturnValueOnce(attributeRows([]));
-      const set = jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) });
+      const set = jest
+        .fn()
+        .mockReturnValue({ where: jest.fn().mockResolvedValue({}) });
       mockDbUpdate.mockReturnValue({ set });
 
-      const result = await service.update('item-1', { item_name: 'Offal (chilled)', item_type: 'BY_PRODUCT' }, 'tenant-123');
+      const result = await service.update(
+        'item-1',
+        { item_name: 'Offal (chilled)', item_type: 'BY_PRODUCT' },
+        'tenant-123',
+      );
 
       expect(set.mock.calls[0][0].item_name).toBe('Offal (chilled)');
       expect(result.item_name).toBe('Offal (chilled)');
@@ -321,7 +518,9 @@ describe('ItemService', () => {
         .mockReturnValueOnce(rows([legacyItem]))
         .mockReturnValueOnce(attributeRows([]));
 
-      await expect(service.findOne('item-1')).resolves.toMatchObject({ item_type: 'BY_PRODUCT' });
+      await expect(service.findOne('item-1')).resolves.toMatchObject({
+        item_type: 'BY_PRODUCT',
+      });
     });
 
     // findAll left-joins item_category_master so the list can show the category
@@ -335,18 +534,25 @@ describe('ItemService', () => {
             leftJoin: jest.fn().mockReturnValue({
               where: jest.fn().mockReturnValue({
                 orderBy: jest.fn().mockReturnValue({
-                  limit: jest.fn().mockReturnValue({ offset: jest.fn().mockResolvedValue([legacyItem]) }),
+                  limit: jest.fn().mockReturnValue({
+                    offset: jest.fn().mockResolvedValue([legacyItem]),
+                  }),
                 }),
               }),
             }),
           }),
         })
         .mockReturnValueOnce({
-          from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ total: 1 }]) }),
+          from: jest.fn().mockReturnValue({
+            where: jest.fn().mockResolvedValue([{ total: 1 }]),
+          }),
         });
 
       await expect(service.findAll({}, 'tenant-123')).resolves.toEqual({
-        data: [legacyItem], total: 1, limit: 50, offset: 0,
+        data: [legacyItem],
+        total: 1,
+        limit: 50,
+        offset: 0,
       });
     });
   });
@@ -356,39 +562,59 @@ describe('ItemService', () => {
       .mockReturnValueOnce({
         from: jest.fn().mockReturnValue({
           where: jest.fn().mockReturnValue({
-            limit: jest.fn().mockResolvedValue([{ item_id: 'item-1', item_code: 'ITM-0001' }]),
+            limit: jest
+              .fn()
+              .mockResolvedValue([
+                { item_id: 'item-1', item_code: 'ITM-0001' },
+              ]),
           }),
         }),
       })
       .mockReturnValueOnce({
         from: jest.fn().mockReturnValue({
-          leftJoin: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([]) }),
+          leftJoin: jest
+            .fn()
+            .mockReturnValue({ where: jest.fn().mockResolvedValue([]) }),
         }),
       });
 
-    await expect(service.update('item-1', { item_code: 'RAW-0001' }, 'tenant-123'))
-      .rejects.toThrow(ConflictException);
+    await expect(
+      service.update('item-1', { item_code: 'RAW-0001' }, 'tenant-123'),
+    ).rejects.toThrow(ConflictException);
   });
 
   it('initializes one company ITEM counter after the highest existing item code', async () => {
     (service as any).ensureCompanyItemSeries.mockRestore();
     mockDbSelect
       .mockReturnValueOnce({
-        from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }) }),
+        from: jest.fn().mockReturnValue({
+          where: jest
+            .fn()
+            .mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }),
+        }),
       })
       .mockReturnValueOnce({
         from: jest.fn().mockReturnValue({
           where: jest.fn().mockReturnValue({
-            limit: jest.fn().mockResolvedValue([{
-              series_name: 'Item Code', document_type: 'ITEM', prefix: 'ITM', date_format: null,
-              separator: '-', seq_length: 4, reset_frequency: 'NEVER',
-            }]),
+            limit: jest.fn().mockResolvedValue([
+              {
+                series_name: 'Item Code',
+                document_type: 'ITEM',
+                prefix: 'ITM',
+                date_format: null,
+                separator: '-',
+                seq_length: 4,
+                reset_frequency: 'NEVER',
+              },
+            ]),
           }),
         }),
       })
       .mockReturnValueOnce({
         from: jest.fn().mockReturnValue({
-          where: jest.fn().mockResolvedValue([{ code: 'ITM-0002' }, { code: 'ITM-0009' }]),
+          where: jest
+            .fn()
+            .mockResolvedValue([{ code: 'ITM-0002' }, { code: 'ITM-0009' }]),
         }),
       });
     const onDuplicateKeyUpdate = jest.fn().mockResolvedValue({});
@@ -397,8 +623,12 @@ describe('ItemService', () => {
 
     await (service as any).ensureCompanyItemSeries('tenant-123', 'comp-1');
 
-    expect(values).toHaveBeenCalledWith(expect.objectContaining({
-      company_id: 'comp-1', series_code: 'ITEM', current_seq: 9,
-    }));
+    expect(values).toHaveBeenCalledWith(
+      expect.objectContaining({
+        company_id: 'comp-1',
+        series_code: 'ITEM',
+        current_seq: 9,
+      }),
+    );
   });
 });

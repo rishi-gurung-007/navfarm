@@ -65,7 +65,8 @@ export const STANDARD_ACTIVITY_SEEDS = [
     default_qty_basis: 'PER_HEAD',
     default_is_mandatory: true,
     default_lot_required: true,
-    description: 'Iron dextran injection for newborn piglets to prevent anaemia.',
+    description:
+      'Iron dextran injection for newborn piglets to prevent anaemia.',
   },
   {
     activity_code: 'DEWORM_DOSE',
@@ -119,7 +120,8 @@ export const STANDARD_ACTIVITY_SEEDS = [
     default_occurrence: 'ONCE',
     default_output_basis: 'PER_PEN',
     default_is_mandatory: true,
-    description: 'Market-weight finishers ready for sale or slaughter transfer.',
+    description:
+      'Market-weight finishers ready for sale or slaughter transfer.',
   },
   {
     activity_code: 'SEMEN_HARVEST',
@@ -152,7 +154,8 @@ export const STANDARD_ACTIVITY_SEEDS = [
     default_kpi_metric: 'MORTALITY_COUNT',
     default_capture_per: 'TOTAL',
     default_is_mandatory: true,
-    description: 'Daily headcount inspection to record animal deaths and causes.',
+    description:
+      'Daily headcount inspection to record animal deaths and causes.',
   },
   {
     activity_code: 'WEEKLY_BODY_WEIGHT',
@@ -185,7 +188,8 @@ export const STANDARD_ACTIVITY_SEEDS = [
     default_kpi_metric: 'HEAT_SCORE',
     default_capture_per: 'PER_HEAD',
     default_is_mandatory: false,
-    description: 'Twice-daily boar-run estrus detection for artificial insemination.',
+    description:
+      'Twice-daily boar-run estrus detection for artificial insemination.',
   },
   {
     activity_code: 'PREG_CHECK',
@@ -196,7 +200,8 @@ export const STANDARD_ACTIVITY_SEEDS = [
     default_kpi_metric: 'PREGNANCY_STATUS',
     default_capture_per: 'PER_HEAD',
     default_is_mandatory: true,
-    description: 'Ultrasound confirmation of pregnancy at 28-35 days post-mating.',
+    description:
+      'Ultrasound confirmation of pregnancy at 28-35 days post-mating.',
   },
   {
     activity_code: 'TEMP_HUMID_LOG',
@@ -220,7 +225,8 @@ export const STANDARD_ACTIVITY_SEEDS = [
     default_overhead_category: 'UTILITIES',
     default_gl_account: '7200',
     default_is_mandatory: false,
-    description: 'Power charges for barn ventilation, lighting, and heating lamps.',
+    description:
+      'Power charges for barn ventilation, lighting, and heating lamps.',
   },
   {
     activity_code: 'WATER_UTILITY',
@@ -231,7 +237,8 @@ export const STANDARD_ACTIVITY_SEEDS = [
     default_overhead_category: 'UTILITIES',
     default_gl_account: '7210',
     default_is_mandatory: false,
-    description: 'Clean water supply for animal drinking nipples and barn washdowns.',
+    description:
+      'Clean water supply for animal drinking nipples and barn washdowns.',
   },
   {
     activity_code: 'BEDDING_MATERIAL',
@@ -264,7 +271,8 @@ export const STANDARD_ACTIVITY_SEEDS = [
     is_piggery_specific: false,
     default_occurrence: 'DAILY',
     default_is_mandatory: false,
-    description: 'General daily feeding, pen scrap-down, and bedding upkeep labor hours.',
+    description:
+      'General daily feeding, pen scrap-down, and bedding upkeep labor hours.',
   },
   {
     activity_code: 'VET_VISIT',
@@ -273,7 +281,8 @@ export const STANDARD_ACTIVITY_SEEDS = [
     is_piggery_specific: false,
     default_occurrence: 'WEEKLY',
     default_is_mandatory: false,
-    description: 'Professional herd health inspection and treatment by farm veterinarian.',
+    description:
+      'Professional herd health inspection and treatment by farm veterinarian.',
   },
   {
     activity_code: 'DISINFECT_CREW',
@@ -282,7 +291,8 @@ export const STANDARD_ACTIVITY_SEEDS = [
     is_piggery_specific: false,
     default_occurrence: 'ONCE',
     default_is_mandatory: false,
-    description: 'All-in-all-out terminal pressure washing and chemical sanitization.',
+    description:
+      'All-in-all-out terminal pressure washing and chemical sanitization.',
   },
   {
     activity_code: 'FARROW_ATTEND',
@@ -291,7 +301,8 @@ export const STANDARD_ACTIVITY_SEEDS = [
     is_piggery_specific: true,
     default_occurrence: 'DAILY',
     default_is_mandatory: false,
-    description: 'Dedicated midwife supervision during active farrowing batches.',
+    description:
+      'Dedicated midwife supervision during active farrowing batches.',
   },
 
   // ── TRANSFER ──
@@ -302,7 +313,8 @@ export const STANDARD_ACTIVITY_SEEDS = [
     is_piggery_specific: false,
     default_occurrence: 'ONCE',
     default_is_mandatory: true,
-    description: 'Standard transition advancing animals to the next stage in sequence.',
+    description:
+      'Standard transition advancing animals to the next stage in sequence.',
   },
   {
     activity_code: 'WEAN_TRANSFER',
@@ -320,7 +332,8 @@ export const STANDARD_ACTIVITY_SEEDS = [
     is_piggery_specific: true,
     default_occurrence: 'ONCE',
     default_is_mandatory: true,
-    description: 'Batch movement of feeder pigs from nursery to grow-finish barn.',
+    description:
+      'Batch movement of feeder pigs from nursery to grow-finish barn.',
   },
 ];
 
@@ -328,37 +341,57 @@ const host = process.env.DATABASE_HOST || 'localhost';
 const port = Number(process.env.DATABASE_PORT || 3306);
 const user = process.env.DATABASE_USERNAME || 'root';
 const password = process.env.DATABASE_PASSWORD || '';
-const ssl = process.env.DATABASE_SSL === 'true'
-  ? { minVersion: 'TLSv1.2' as const, rejectUnauthorized: true }
-  : undefined;
+const ssl =
+  process.env.DATABASE_SSL === 'true'
+    ? { minVersion: 'TLSv1.2' as const, rejectUnauthorized: true }
+    : undefined;
 const masterDatabase = process.env.DATABASE_NAME || 'navfarm_master';
 
 export async function seedActivitiesForTenant(tenantDb: any, tenantId: string) {
   // Resolve LIVESTOCK NOB and LVS_PIGGERY LOB
-  const [pigNob] = await tenantDb.select().from(tenant.nobMaster).where(eq(tenant.nobMaster.nob_code, 'LIVESTOCK')).limit(1);
-  const [pigLob] = await tenantDb.select().from(tenant.lobMaster).where(eq(tenant.lobMaster.lob_code, 'LVS_PIGGERY')).limit(1);
+  const [pigNob] = await tenantDb
+    .select()
+    .from(tenant.nobMaster)
+    .where(eq(tenant.nobMaster.nob_code, 'LIVESTOCK'))
+    .limit(1);
+  const [pigLob] = await tenantDb
+    .select()
+    .from(tenant.lobMaster)
+    .where(eq(tenant.lobMaster.lob_code, 'LVS_PIGGERY'))
+    .limit(1);
 
-  const companies = await tenantDb.select().from(tenant.companyMaster).where(ne(tenant.companyMaster.company_code, 'PLACEHOLDER'));
+  const companies = await tenantDb
+    .select()
+    .from(tenant.companyMaster)
+    .where(ne(tenant.companyMaster.company_code, 'PLACEHOLDER'));
   const targets: Array<{ companyId: string | null; label: string }> = [
     { companyId: null, label: 'Tenant Template' },
-    ...companies.map((c: any) => ({ companyId: c.company_id, label: c.company_name })),
+    ...companies.map((c: any) => ({
+      companyId: c.company_id,
+      label: c.company_name,
+    })),
   ];
 
   let inserted = 0;
   let updated = 0;
 
   for (const target of targets) {
-    const existing = await tenantDb.select().from(tenant.activityMaster).where(
-      and(
-        eq(tenant.activityMaster.tenant_id, tenantId),
-        target.companyId ? eq(tenant.activityMaster.company_id, target.companyId) : isNull(tenant.activityMaster.company_id),
-      ),
-    );
+    const existing = await tenantDb
+      .select()
+      .from(tenant.activityMaster)
+      .where(
+        and(
+          eq(tenant.activityMaster.tenant_id, tenantId),
+          target.companyId
+            ? eq(tenant.activityMaster.company_id, target.companyId)
+            : isNull(tenant.activityMaster.company_id),
+        ),
+      );
     const existingCodes = new Set(existing.map((e: any) => e.activity_code));
 
     for (const s of STANDARD_ACTIVITY_SEEDS) {
-      const nobId = s.is_piggery_specific ? (pigNob?.nob_id || null) : null;
-      const lobId = s.is_piggery_specific ? (pigLob?.lob_id || null) : null;
+      const nobId = s.is_piggery_specific ? pigNob?.nob_id || null : null;
+      const lobId = s.is_piggery_specific ? pigLob?.lob_id || null : null;
 
       if (!existingCodes.has(s.activity_code)) {
         await tenantDb.insert(tenant.activityMaster).values({
@@ -376,7 +409,8 @@ export async function seedActivitiesForTenant(tenantDb: any, tenantId: string) {
           default_output_basis: (s as any).default_output_basis || null,
           default_kpi_metric: (s as any).default_kpi_metric || null,
           default_capture_per: (s as any).default_capture_per || null,
-          default_overhead_category: (s as any).default_overhead_category || null,
+          default_overhead_category:
+            (s as any).default_overhead_category || null,
           default_gl_account: (s as any).default_gl_account || null,
           default_is_mandatory: s.default_is_mandatory,
           default_lot_required: (s as any).default_lot_required || false,
@@ -385,34 +419,53 @@ export async function seedActivitiesForTenant(tenantDb: any, tenantId: string) {
         inserted++;
       } else {
         // Update description / defaults if already created
-        await tenantDb.update(tenant.activityMaster).set({
-          activity_name: s.activity_name,
-          line_type: s.line_type,
-          description: s.description,
-          default_occurrence: s.default_occurrence || null,
-          default_qty_basis: (s as any).default_qty_basis || null,
-          default_output_basis: (s as any).default_output_basis || null,
-          default_kpi_metric: (s as any).default_kpi_metric || null,
-          default_capture_per: (s as any).default_capture_per || null,
-          default_overhead_category: (s as any).default_overhead_category || null,
-          default_gl_account: (s as any).default_gl_account || null,
-          default_is_mandatory: s.default_is_mandatory,
-          default_lot_required: (s as any).default_lot_required || false,
-        }).where(and(
-          eq(tenant.activityMaster.tenant_id, tenantId),
-          target.companyId ? eq(tenant.activityMaster.company_id, target.companyId) : isNull(tenant.activityMaster.company_id),
-          eq(tenant.activityMaster.activity_code, s.activity_code),
-        ));
+        await tenantDb
+          .update(tenant.activityMaster)
+          .set({
+            activity_name: s.activity_name,
+            line_type: s.line_type,
+            description: s.description,
+            default_occurrence: s.default_occurrence || null,
+            default_qty_basis: (s as any).default_qty_basis || null,
+            default_output_basis: (s as any).default_output_basis || null,
+            default_kpi_metric: (s as any).default_kpi_metric || null,
+            default_capture_per: (s as any).default_capture_per || null,
+            default_overhead_category:
+              (s as any).default_overhead_category || null,
+            default_gl_account: (s as any).default_gl_account || null,
+            default_is_mandatory: s.default_is_mandatory,
+            default_lot_required: (s as any).default_lot_required || false,
+          })
+          .where(
+            and(
+              eq(tenant.activityMaster.tenant_id, tenantId),
+              target.companyId
+                ? eq(tenant.activityMaster.company_id, target.companyId)
+                : isNull(tenant.activityMaster.company_id),
+              eq(tenant.activityMaster.activity_code, s.activity_code),
+            ),
+          );
         updated++;
       }
     }
   }
 
-  return { inserted, updated, total: STANDARD_ACTIVITY_SEEDS.length * targets.length };
+  return {
+    inserted,
+    updated,
+    total: STANDARD_ACTIVITY_SEEDS.length * targets.length,
+  };
 }
 
 async function run() {
-  const masterPool = mysql.createPool({ host, port, user, password, database: masterDatabase, ssl });
+  const masterPool = mysql.createPool({
+    host,
+    port,
+    user,
+    password,
+    database: masterDatabase,
+    ssl,
+  });
   const masterDb = drizzle(masterPool, { schema: master, mode: 'default' });
 
   try {
@@ -432,9 +485,14 @@ async function run() {
 
       try {
         const result = await seedActivitiesForTenant(tenantDb, t.tenant_id);
-        console.log(`  [${t.tenant_code}] Seeded activities: ${result.inserted} inserted, ${result.updated} updated (total catalog: ${result.total}).`);
+        console.log(
+          `  [${t.tenant_code}] Seeded activities: ${result.inserted} inserted, ${result.updated} updated (total catalog: ${result.total}).`,
+        );
       } catch (err) {
-        console.error(`  [${t.tenant_code}] FAILED:`, err instanceof Error ? err.message : err);
+        console.error(
+          `  [${t.tenant_code}] FAILED:`,
+          err instanceof Error ? err.message : err,
+        );
       } finally {
         await tenantPool.end();
       }

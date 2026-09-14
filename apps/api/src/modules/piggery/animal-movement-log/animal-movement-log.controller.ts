@@ -8,7 +8,8 @@ import { AnimalMovementLogService } from './animal-movement-log.service';
 // One endpoint, two tabs (HISTORY and LOCATION TRACEABILITY) — both read this
 // same list and present/filter it differently client-side, so they can never
 // disagree about the same move.
-@ApiTags('Animal Movement Log') @ApiBearerAuth()
+@ApiTags('Animal Movement Log')
+@ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('animal')
 export class AnimalMovementLogController {
@@ -17,6 +18,9 @@ export class AnimalMovementLogController {
   @Get(':id/movement-log')
   @RequirePermission('PIGGERY', 'ANIMAL', 'view')
   async list(@Param('id') id: string, @Req() req: any) {
-    return { success: true, data: await this.movementLog.findForAnimal(id, req.user.tenantId) };
+    return {
+      success: true,
+      data: await this.movementLog.findForAnimal(id, req.user.tenantId),
+    };
   }
 }

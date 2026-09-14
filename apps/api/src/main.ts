@@ -9,7 +9,9 @@ import { mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 async function bootstrap() {
-  const app = await NestFactory.create<NestExpressApplication>(AppModule, { bodyParser: false });
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
+    bodyParser: false,
+  });
   // Express 5 — which Nest 11 ships — defaults the query parser to 'simple',
   // where Express 4 defaulted to 'extended'. Simple parsing does not read
   // bracket syntax: 'filter[location_type]=PEN' arrives as one flat key
@@ -25,10 +27,15 @@ async function bootstrap() {
   mkdirSync(uploadsDir, { recursive: true });
   app.use('/uploads', express.static(uploadsDir));
 
-  const apiPrefix = (process.env.API_PREFIX || 'api/v1').replace(/^\/+|\/+$/g, '');
-  const docsPath = (process.env.API_DOCS_PATH || 'api/docs').replace(/^\/+|\/+$/g, '');
-  const corsOrigins = process.env.CORS_ORIGINS
-    ?.split(',')
+  const apiPrefix = (process.env.API_PREFIX || 'api/v1').replace(
+    /^\/+|\/+$/g,
+    '',
+  );
+  const docsPath = (process.env.API_DOCS_PATH || 'api/docs').replace(
+    /^\/+|\/+$/g,
+    '',
+  );
+  const corsOrigins = process.env.CORS_ORIGINS?.split(',')
     .map((origin) => origin.trim())
     .filter(Boolean);
   const isDevelopment = process.env.NODE_ENV !== 'production';
@@ -58,14 +65,16 @@ async function bootstrap() {
 
   // Set global API prefix
   app.setGlobalPrefix(apiPrefix);
-  
+
   // Use global validation pipes
-  app.useGlobalPipes(new ValidationPipe({
-    whitelist: true,
-    transform: true,
-    forbidNonWhitelisted: true,
-    transformOptions: { enableImplicitConversion: true },
-  }));
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true,
+      transform: true,
+      forbidNonWhitelisted: true,
+      transformOptions: { enableImplicitConversion: true },
+    }),
+  );
 
   // Global exception filters
   app.useGlobalFilters(new HttpExceptionFilter());
@@ -107,9 +116,9 @@ async function bootstrap() {
     .setVersion('1.0')
     .addBearerAuth()
     .build();
-    
+
   const document = SwaggerModule.createDocument(app, config);
-  
+
   const customOptions = {
     customSiteTitle: 'NAVFarm ERP API Documentation',
     customCss: `

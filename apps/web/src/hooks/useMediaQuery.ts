@@ -1,6 +1,6 @@
-"use client";
+'use client';
 
-import { useEffect, useState } from "react";
+import { useEffect, useState } from 'react';
 
 /**
  * Live answer to a media query, for the cases where a breakpoint has to change
@@ -24,12 +24,12 @@ export function useMediaQuery(query: string): boolean {
     const mql = window.matchMedia(query);
     const onChange = () => setMatches(mql.matches);
     onChange();
-    mql.addEventListener("change", onChange);
-    return () => mql.removeEventListener("change", onChange);
+    mql.addEventListener('change', onChange);
+    return () => mql.removeEventListener('change', onChange);
   }, [query]);
 
   return matches;
 }
 
 /** Tailwind's `lg` — where the console gains room for a side panel. */
-export const useIsDesktop = () => useMediaQuery("(min-width: 1024px)");
+export const useIsDesktop = () => useMediaQuery('(min-width: 1024px)');
