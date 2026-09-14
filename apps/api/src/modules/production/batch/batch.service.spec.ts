@@ -9,6 +9,7 @@ import { NumberSeriesService } from '../../system/number-series/number-series.se
 import { SchedulerHeaderService } from '../scheduler-header/scheduler-header.service';
 import { BadRequestException } from '@nestjs/common';
 import * as schema from '../../../core/database/schema';
+import { MySqlDialect } from 'drizzle-orm/mysql-core';
 
 describe('BatchService', () => {
   let service: BatchService;
@@ -302,6 +303,73 @@ describe('BatchService', () => {
   });
 
   describe('addTransaction — clinical detail', () => {
+    const treatment = { transaction_date: '2026-09-14', transaction_type: 'CONSUMPTION',
+      item_id: 'medicine-id', quantity: 1, uom: 'ML', treatment_detail: { diagnosis: 'Treatment' } };
+
+    it.each([
+      { item_id: undefined }, { quantity: 0 }, { quantity: -1 }, { quantity: NaN }, { uom: undefined },
+    ])('refuses incomplete or nonpositive consumption before choosing an item: %j', async (invalid) => {
+      jest.spyOn(service, 'findOne').mockResolvedValue({ ...activeBatch, costing_method: 'BIO_ASSET' } as any);
+      await expect(service.addTransaction('batch-1', { ...treatment, ...invalid } as any, 'tenant-123'))
+        .rejects.toThrow(/explicit item_id, positive quantity and uom/);
+      expect(mockDbSelect).not.toHaveBeenCalled();
+      expect(mockDbInsert).not.toHaveBeenCalled();
+    });
+
+    it('refuses treatments that do not resolve to an active company medicine or vaccine', async () => {
+      jest.spyOn(service, 'findOne').mockResolvedValue(activeBatch as any);
+      let query: any;
+      mockDbSelect.mockReturnValue({ from: () => ({ where: (condition: any) => {
+        query = new MySqlDialect().sqlToQuery(condition);
+        return { limit: async () => [] };
+      } }) });
+      await expect(service.addTransaction('batch-1', treatment as any, 'tenant-123')).rejects.toThrow(/active medicine or vaccine/);
+      expect(query.sql).toContain('`company_id` = ?');
+      expect(query.sql).toContain('`is_active` = ?');
+      expect(query.params).toEqual(expect.arrayContaining(['comp-1', 'MEDICINE', 'VACCINE']));
+      expect(mockDbInsert).not.toHaveBeenCalled();
+    });
+
+    it('refuses a dose count when the medicine is stocked in a different unit', async () => {
+      jest.spyOn(service, 'findOne').mockResolvedValue(activeBatch as any);
+      mockDbSelect.mockReturnValue({ from: () => ({ where: () => ({ limit: async () => [{ uom_primary: 'ML' }] }) }) });
+      await expect(service.addTransaction('batch-1', { ...treatment, uom: 'DOSES' } as any, 'tenant-123'))
+        .rejects.toThrow(/stock unit ML/);
+      expect(mockDbInsert).not.toHaveBeenCalled();
+    });
+
+    it('refuses a selected animal outside the active batch and company', async () => {
+      jest.spyOn(service, 'findOne').mockResolvedValue(activeBatch as any);
+      let animalQuery: any;
+      mockDbSelect.mockReturnValue({ from: (table: unknown) => ({ where: (condition: any) => {
+        if (table === schema.animalRegister) animalQuery = new MySqlDialect().sqlToQuery(condition);
+        return { limit: async () => [{ uom_primary: 'ML' }], for: async () => [] };
+      } }) });
+      await expect(service.addTransaction('batch-1', { ...treatment, animal_id: 'animal-id' } as any, 'tenant-123'))
+        .rejects.toThrow(/active member of this batch/);
+      expect(animalQuery.sql).toContain('`current_batch_id` = ?');
+      expect(animalQuery.sql).toContain('`company_id` = ?');
+      expect(animalQuery.sql).toContain('`tenant_id` = ?');
+      expect(animalQuery.sql).toContain('`is_active` = ?');
+      expect(animalQuery.params).toEqual(expect.arrayContaining(['animal-id', 'batch-1', 'comp-1', 'tenant-123']));
+      expect(mockDbInsert).not.toHaveBeenCalled();
+    });
+
+    it('issues the selected vaccine to an active batch member using its stock unit', async () => {
+      jest.spyOn(service, 'findOne').mockResolvedValue({ ...activeBatch, batch_no: 'batch' } as any);
+      mockDbSelect.mockReturnValue({ from: () => ({ where: () => ({
+        limit: async () => [{ uom_primary: 'ML' }], for: async () => [{ animal_id: 'animal-id' }],
+      }) }) });
+      mockDbInsert.mockReturnValue({ values: jest.fn().mockResolvedValue({}) });
+      const ledger = module.get<InventoryLedgerService>(InventoryLedgerService);
+      const gl = module.get<GlPostingService>(GlPostingService);
+      ledger.writeNegativeEntry = jest.fn().mockResolvedValue({ ledger_id: 'ledger', rate: '2', amount: '-2' });
+      gl.postInventoryLedgerEntry = jest.fn().mockResolvedValue({});
+      await service.addTransaction('batch-1', { ...treatment, item_id: 'vaccine-id', animal_id: 'animal-id' } as any, 'tenant-123');
+      expect(ledger.writeNegativeEntry).toHaveBeenCalledWith(expect.objectContaining({ itemId: 'vaccine-id', quantity: 1, uom: 'ML' }));
+      expect(mockDbInsert).toHaveBeenCalledWith(schema.batchTreatmentDetail);
+    });
+
     // The guards run before any write, so a mismatched detail must leave
     // nothing behind — not a transaction row with an orphaned narrative.
     it('refuses mortality_detail on a transaction that is not a death', async () => {
@@ -944,6 +1012,4 @@ describe('BatchService', () => {
     });
   });
 });
-
-
 

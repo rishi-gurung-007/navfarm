@@ -5,6 +5,7 @@ import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { NobLobResolutionService } from '../../core/operational-area/nob-lob-resolution.service';
 import { BadRequestException, ConflictException } from '@nestjs/common';
+import { transactionCls } from '../../../test-utils/transaction-cls';
 
 describe('AnimalService', () => {
   let service: AnimalService;
@@ -20,7 +21,10 @@ describe('AnimalService', () => {
     update: mockDbUpdate,
   };
 
-  const found = (row: any) => ({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue(row ? [row] : []) }) }) });
+  const found = (row: any) => ({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue(row ? [row] : []), for: jest.fn().mockResolvedValue(row ? [row] : []) }) }) });
+  const joinedTreatmentRows = (rows: any[]) => ({ from: () => ({
+    innerJoin: jest.fn().mockReturnThis(), where: jest.fn().mockResolvedValue(rows),
+  }) });
 
   const baseDto = {
     company_id: 'comp-1',
@@ -56,7 +60,7 @@ describe('AnimalService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AnimalService,
-        { provide: ClsService, useValue: { get: jest.fn().mockReturnValue(mockDb) } },
+        { provide: ClsService, useValue: transactionCls(mockDb) },
         { provide: AuditLogService, useValue: { log: jest.fn().mockResolvedValue({}) } },
         { provide: NumberSeriesService, useValue: { generateNext: jest.fn().mockResolvedValue('PIG-2026-0001') } },
         { provide: NobLobResolutionService, useValue: nobLobResolution },
@@ -507,7 +511,8 @@ describe('AnimalService', () => {
         .mockReturnValueOnce(found({ animal_id: 'a-1', company_id: 'comp-1', is_active: true, book_value: null, animal_code: 'PIG-2026-0004' }))
         .mockReturnValueOnce(joinedMedicationRows([
           { item_id: 'item-med', item_name: 'Amoxicillin', item_type: 'MEDICINE', withdrawal_days: 10, administered_date: '2026-06-05' },
-        ]));
+        ]))
+        .mockReturnValueOnce(joinedTreatmentRows([]));
 
       await expect(
         service.dispose('a-1', { disposal_type: 'SLAUGHTERED', disposal_date: '2026-06-10' }, 'tenant-123'),
@@ -520,6 +525,7 @@ describe('AnimalService', () => {
         .mockReturnValueOnce(joinedMedicationRows([
           { item_id: 'item-med', item_name: 'Amoxicillin', item_type: 'MEDICINE', withdrawal_days: 10, administered_date: '2026-05-01' },
         ]))
+        .mockReturnValueOnce(joinedTreatmentRows([]))
         .mockReturnValueOnce(found({ animal_id: 'a-1', is_active: false, status: 'SLAUGHTERED' }));
 
       mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) }) });
@@ -533,6 +539,7 @@ describe('AnimalService', () => {
       mockDbSelect
         .mockReturnValueOnce(found({ animal_id: 'a-1', company_id: 'comp-1', is_active: true, book_value: null, animal_code: 'PIG-2026-0006' }))
         .mockReturnValueOnce(joinedMedicationRows([]))
+        .mockReturnValueOnce(joinedTreatmentRows([]))
         .mockReturnValueOnce(found({ animal_id: 'a-1', is_active: false, status: 'SLAUGHTERED' }));
 
       mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) }) });
@@ -598,7 +605,8 @@ describe('AnimalService', () => {
               where: jest.fn().mockResolvedValue([]),
             }),
           }),
-        });
+        })
+        .mockReturnValueOnce(joinedTreatmentRows([]));
 
       const res = await service.lookupByTag('RFID-12345', 'tenant-123');
 
@@ -764,5 +772,4 @@ describe('AnimalService', () => {
     });
   });
 });
-
 

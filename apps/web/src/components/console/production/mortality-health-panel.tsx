@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   HeartPulse,
   Skull,
@@ -9,6 +9,8 @@ import {
   Stethoscope,
 } from "lucide-react";
 import { Dialog } from "@/components/ui/dialog";
+import { Field, ReadField } from "@/components/ui/field";
+import { EntityLookupField } from "@/modules/master-data/EntityLookupField";
 import { Button } from "@/components/ui/button";
 import { TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { StatRow, StatCard } from "@/components/ui/stat-row";
@@ -40,7 +42,7 @@ type TreatmentRecord = {
   medicine_name: string;
   dosage: string;
   route: string;
-  withdrawal_days: number;
+  withdrawal_days: number | null;
   status: "ACTIVE" | "RECOVERED" | "UNDER_OBSERVATION";
   veterinarian: string;
 };
@@ -158,9 +160,52 @@ export default function MortalityHealthPanel() {
     treatment_date: new Date().toISOString().slice(0, 10),
     batch_no: "",
     status: "ACTIVE",
-    withdrawal_days: 7,
-    route: "Intramuscular (IM)",
+
   });
+
+  const [healthItems, setHealthItems] = useState<Record<string, unknown>[]>([]);
+  const [healthItemsLoading, setHealthItemsLoading] = useState(false);
+  const [treatmentItemId, setTreatmentItemId] = useState("");
+  const [treatmentQuantity, setTreatmentQuantity] = useState("");
+  const [treatmentLot, setTreatmentLot] = useState("");
+  const [treatmentError, setTreatmentError] = useState("");
+  const [savingTreatment, setSavingTreatment] = useState(false);
+  const [uncertainTreatment, setUncertainTreatment] = useState(false);
+  const selectedHealthItem = healthItems.find((item) => item.item_id === treatmentItemId);
+
+  useEffect(() => {
+    if (!treatmentDialogOpen) return;
+    let cancelled = false;
+    const load = async () => {
+      setHealthItemsLoading(true);
+      setTreatmentError("");
+      try {
+        const companyId = getActiveCompanyId();
+        if (!companyId) throw new Error("Select a company before recording treatment.");
+        const items: Record<string, unknown>[] = [];
+        for (const itemType of ["MEDICINE", "VACCINE"]) {
+          let offset = 0;
+          while (true) {
+            const res = await api.get(`/item?companyId=${companyId}&itemType=${itemType}&isActive=true&limit=100&offset=${offset}`);
+            const rows = res?.data ?? [];
+            items.push(...rows);
+            offset += rows.length;
+            if (!rows.length || offset >= Number(res.total ?? rows.length)) break;
+          }
+        }
+        if (!cancelled) setHealthItems(items);
+      } catch (error) {
+        if (!cancelled) {
+          setHealthItems([]);
+          setTreatmentError(error instanceof Error ? error.message : "Could not load medicines and vaccines.");
+        }
+      } finally {
+        if (!cancelled) setHealthItemsLoading(false);
+      }
+    };
+    void load();
+    return () => { cancelled = true; };
+  }, [treatmentDialogOpen]);
 
   useEffect(() => {
     const companyId = getActiveCompanyId();
@@ -252,7 +297,8 @@ export default function MortalityHealthPanel() {
                   });
                 } else if (
                   t.transaction_type === "CONSUMPTION" &&
-                  (t.uom === "ML" ||
+                  (t.route != null || t.withdrawal_days != null || t.diagnosis != null || t.veterinarian != null ||
+                    t.uom === "ML" ||
                     t.uom === "DOSES" ||
                     (t.remarks && (
                       t.remarks.toLowerCase().includes("vaccine") ||
@@ -280,10 +326,12 @@ export default function MortalityHealthPanel() {
                     batch_no: b.batch_no,
                     diagnosis: t.diagnosis || legacy.diagnosis || t.remarks || "—",
                     medicine_name: t.item_name || t.item_code || legacy.medicine || "—",
-                    dosage: legacy.dosage || `${t.quantity} ${t.uom || ""}`.trim(),
+                    dosage: legacy.dosage || (t.item_name && t.remarks?.startsWith(`${t.item_name} — `)
+                      ? t.remarks.slice(`${t.item_name} — `.length)
+                      : `${t.quantity} ${t.uom || ""}`.trim()),
                     route: t.route || legacy.route || "—",
-                    withdrawal_days: withdrawalDays ?? 0,
-                    status: stillWithdrawing ? "ACTIVE" : "RECOVERED",
+                    withdrawal_days: withdrawalDays ?? null,
+                    status: withdrawalDays == null ? "UNDER_OBSERVATION" : stillWithdrawing ? "ACTIVE" : "RECOVERED",
                     veterinarian: t.veterinarian || legacy.vet || "—",
                   });
                 }
@@ -301,7 +349,10 @@ export default function MortalityHealthPanel() {
       });
   }, []);
 
+  const animalLoadSequence = useRef(0);
   const loadModalAnimals = async (batchNo: string) => {
+    const sequence = ++animalLoadSequence.current;
+    setModalAnimals([]);
     const companyId = getActiveCompanyId();
     const batchObj = batches.find((b) => b.no === batchNo);
     if (!companyId || !batchObj) {
@@ -312,11 +363,11 @@ export default function MortalityHealthPanel() {
     try {
       const res = await api.get(`/animal?companyId=${companyId}&currentBatchId=${batchObj.id}&limit=500`);
       const list: any[] = Array.isArray(res) ? res : (res?.data ?? []);
-      setModalAnimals(list.map((a) => ({ animal_id: a.animal_id, label: a.ear_tag || a.animal_code })));
+      if (sequence === animalLoadSequence.current) setModalAnimals(list.map((a) => ({ animal_id: a.animal_id, label: a.ear_tag || a.animal_code })));
     } catch {
-      setModalAnimals([]);
+      if (sequence === animalLoadSequence.current) setModalAnimals([]);
     } finally {
-      setModalAnimalsLoading(false);
+      if (sequence === animalLoadSequence.current) setModalAnimalsLoading(false);
     }
   };
 
@@ -406,74 +457,69 @@ export default function MortalityHealthPanel() {
   };
 
   const handleSaveTreatment = async () => {
+    if (savingTreatment || uncertainTreatment) return;
+    setTreatmentError("");
     const selectedAnimals = Array.from(treatmentAnimalIds);
-    if (selectedAnimals.length === 0 && !newTreatment.ear_tag) return;
-    if (!newTreatment.medicine_name) return;
-    const batchObj = batches.find((b) => b.no === newTreatment.batch_no) || batches[0];
-    const dosage = newTreatment.dosage || "Standard therapeutic dose";
-    const route = newTreatment.route || "IM";
-    const vet = newTreatment.veterinarian || "Dr. Sharma";
-    const diagnosis = newTreatment.diagnosis || "General Clinical Observation";
-    // Prescription fields go to batch_treatment_detail as columns; `remarks`
-    // keeps the dose, which the transaction itself has no field for.
-    const treatmentDetail = {
-      diagnosis,
-      // The API only accepts known route codes; send nothing rather than a
-      // value it would reject and lose the whole entry over.
-      route: ROUTE_TO_CODE[route] ?? (VALID_ROUTE_CODES.has(route) ? route : undefined),
-      withdrawal_days: Number(newTreatment.withdrawal_days) || 0,
-      veterinarian: vet,
-    };
-    const treatmentNote = `${newTreatment.medicine_name} — ${dosage}`;
-
-    if (batchObj) {
-      try {
-        if (selectedAnimals.length > 0) {
-          for (const animalId of selectedAnimals) {
-            await api.post(`/batch/${batchObj.id}/transaction`, {
-              transaction_date: newTreatment.treatment_date || new Date().toISOString().slice(0, 10),
-              transaction_type: "CONSUMPTION",
-              quantity: 1,
-              uom: "DOSES",
-              remarks: treatmentNote,
-              treatment_detail: treatmentDetail,
-              animal_id: animalId,
-            });
-          }
-        } else {
-          await api.post(`/batch/${batchObj.id}/transaction`, {
-            transaction_date: newTreatment.treatment_date || new Date().toISOString().slice(0, 10),
-            transaction_type: "CONSUMPTION",
-            quantity: 1,
-            uom: "DOSES",
-            remarks: treatmentNote,
-            treatment_detail: treatmentDetail,
-          });
-        }
-      } catch { void 0; }
+    const batchObj = batches.find((b) => b.no === newTreatment.batch_no);
+    const quantity = Number(treatmentQuantity);
+    if (!batchObj || !selectedAnimals.length || !selectedHealthItem || !selectedHealthItem.uom_primary || !newTreatment.treatment_date || !Number.isFinite(quantity) || quantity <= 0) {
+      setTreatmentError("Select a batch, animals, medicine or vaccine, treatment date and a positive stock quantity per animal.");
+      return;
     }
-
-    const earTagLabel = selectedAnimals.length > 0
-      ? selectedAnimals.map((id) => modalAnimals.find((a) => a.animal_id === id)?.label || id).join(", ")
-      : (newTreatment.ear_tag as string);
-
-    const rec: TreatmentRecord = {
-      id: `t-${Date.now()}`,
-      treatment_date: newTreatment.treatment_date || new Date().toISOString().slice(0, 10),
-      ear_tag: earTagLabel,
-      animal_id: selectedAnimals.length === 1 ? selectedAnimals[0] : undefined,
-      batch_no: newTreatment.batch_no || (batches[0]?.no ?? "BATCH-01"),
-      diagnosis,
-      medicine_name: newTreatment.medicine_name,
-      dosage,
-      route,
-      withdrawal_days: Number(newTreatment.withdrawal_days) || 0,
-      status: (newTreatment.status as any) || "ACTIVE",
-      veterinarian: vet,
+    const route = newTreatment.route || "";
+    const treatmentDetail = {
+      diagnosis: newTreatment.diagnosis?.trim() || undefined,
+      route: ROUTE_TO_CODE[route] ?? (VALID_ROUTE_CODES.has(route) ? route : undefined),
+      withdrawal_days: newTreatment.withdrawal_days,
+      veterinarian: newTreatment.veterinarian?.trim() || undefined,
     };
-    setTreatmentList([rec, ...treatmentList]);
-    setTreatmentAnimalIds(new Set());
-    setTreatmentDialogOpen(false);
+    setSavingTreatment(true);
+    let saved = 0;
+    try {
+      for (const animalId of selectedAnimals) {
+        const result = await api.post(`/batch/${batchObj.id}/transaction`, {
+          transaction_date: newTreatment.treatment_date,
+          transaction_type: "CONSUMPTION",
+          item_id: treatmentItemId,
+          quantity,
+          uom: selectedHealthItem.uom_primary,
+          lot_no: treatmentLot.trim() || undefined,
+          remarks: [selectedHealthItem.item_name, newTreatment.dosage?.trim()].filter(Boolean).join(" — "),
+          treatment_detail: treatmentDetail,
+          animal_id: animalId,
+        });
+        const transactionId = result?.posting_transaction_id ?? result?.data?.posting_transaction_id;
+        if (!transactionId) {
+          setUncertainTreatment(true);
+          throw new Error("The server did not return a posting reference. Reload and check the register before retrying.");
+        }
+        saved++;
+        setTreatmentAnimalIds((current) => {
+          const remaining = new Set(current);
+          remaining.delete(animalId);
+          return remaining;
+        });
+        setTreatmentList((current) => [{
+          id: transactionId,
+          treatment_date: newTreatment.treatment_date!,
+          ear_tag: modalAnimals.find((animal) => animal.animal_id === animalId)?.label || animalId,
+          animal_id: animalId,
+          batch_no: batchObj.no,
+          diagnosis: treatmentDetail.diagnosis || "—",
+          medicine_name: String(selectedHealthItem.item_name),
+          dosage: newTreatment.dosage?.trim() || `${quantity} ${selectedHealthItem.uom_primary}`,
+          route: treatmentDetail.route || "—",
+          withdrawal_days: newTreatment.withdrawal_days ?? null,
+          status: newTreatment.withdrawal_days == null ? "UNDER_OBSERVATION" : "ACTIVE",
+          veterinarian: treatmentDetail.veterinarian || "—",
+        }, ...current]);
+      }
+      setTreatmentDialogOpen(false);
+    } catch (error) {
+      setTreatmentError(`${saved ? `${saved} animal treatment(s) saved; only remaining animals are selected. ` : ""}${error instanceof Error ? error.message : "Treatment could not be saved."}`);
+    } finally {
+      setSavingTreatment(false);
+    }
   };
 
   const totalMortalityHeads = mortalityList.reduce((acc, m) => acc + m.head_count, 0);
@@ -722,7 +768,7 @@ export default function MortalityHealthPanel() {
                       <span className="block text-[10px] text-[var(--text-secondary)]">{tr.dosage}</span>
                     </TableCell>
                     <TableCell className="py-2.5 px-3 text-[var(--text-secondary)]">{tr.route}</TableCell>
-                    <TableCell className="py-2.5 px-3 text-center font-semibold" style={{ color: "var(--warning)" }}>{t("mhDaysValue", { count: tr.withdrawal_days })}</TableCell>
+                    <TableCell className="py-2.5 px-3 text-center font-semibold" style={{ color: "var(--warning)" }}>{tr.withdrawal_days == null ? "Not recorded" : t("mhDaysValue", { count: tr.withdrawal_days })}</TableCell>
                     <TableCell className="py-2.5 px-3">
                       <span
                         className="inline-flex items-center gap-1 rounded-[var(--radius-pill)] px-2 py-0.5 text-[10px] font-semibold border"
@@ -732,7 +778,7 @@ export default function MortalityHealthPanel() {
                           borderColor: tr.status === "ACTIVE" ? "rgba(183, 121, 31, 0.2)" : "rgba(47, 125, 91, 0.2)",
                         }}
                       >
-                        {tr.status === "ACTIVE" ? t("mhUnderTreatment") : t("mhRecovered")}
+                        {tr.status === "UNDER_OBSERVATION" ? "Withdrawal not recorded" : tr.status === "ACTIVE" ? t("mhUnderTreatment") : t("mhRecovered")}
                       </span>
                     </TableCell>
                     <TableCell className="py-2.5 px-3 text-[var(--text-secondary)]">{tr.veterinarian}</TableCell>
@@ -914,31 +960,29 @@ export default function MortalityHealthPanel() {
       {/* ── MODAL: RECORD TREATMENT ── */}
       <Dialog
         open={treatmentDialogOpen}
-        onClose={() => setTreatmentDialogOpen(false)}
+        onClose={() => { if (!savingTreatment) setTreatmentDialogOpen(false); }}
         title={t("mhRecordVeterinaryTreatment")}
         maxWidth="md"
       >
-        <div className="space-y-4 text-xs pt-2">
+        <fieldset disabled={savingTreatment} className="space-y-4 text-xs pt-2">
           <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="font-semibold block mb-1">{t("mhTreatmentDate")}</label>
+            <Field label={t("mhTreatmentDate")} htmlFor="treatment-date" required>
               <input
-                type="date"
+                id="treatment-date" type="date"
                 value={newTreatment.treatment_date}
                 onChange={(e) => setNewTreatment({ ...newTreatment, treatment_date: e.target.value })}
                 className="nf-input w-full"
               />
-            </div>
-            <div>
-              <label className="font-semibold block mb-1">{t("mhBatchPen")}</label>
-              <select
+            </Field>
+            <Field label={t("mhBatchPen")} htmlFor="treatment-batch" required>
+              <select id="treatment-batch"
                 value={newTreatment.batch_no}
                 onChange={(e) => { setNewTreatment({ ...newTreatment, batch_no: e.target.value }); setTreatmentAnimalIds(new Set()); loadModalAnimals(e.target.value); }}
                 className="nf-input w-full"
               >
                 {batches.map((b) => <option key={b.id} value={b.no}>{b.no}</option>)}
               </select>
-            </div>
+            </Field>
           </div>
 
           <div>
@@ -959,72 +1003,47 @@ export default function MortalityHealthPanel() {
             )}
           </div>
 
-          <div>
-            <label className="font-semibold block mb-1">{t("mhClinicalDiagnosis")}</label>
-            <input
-              type="text"
-              value={newTreatment.diagnosis}
-              onChange={(e) => setNewTreatment({ ...newTreatment, diagnosis: e.target.value })}
-              placeholder={t("mhDiagnosisPlaceholder")}
-              className="nf-input w-full"
-            />
-          </div>
-
+          <Field label={t("mhClinicalDiagnosis")} htmlFor="treatment-diagnosis">
+            <input id="treatment-diagnosis" value={newTreatment.diagnosis ?? ""} onChange={(e) => setNewTreatment({ ...newTreatment, diagnosis: e.target.value })} className="nf-input w-full" />
+          </Field>
+          <Field label={t("mhMedicineVaccineAdministered")} htmlFor="treatment-item" required>
+            <EntityLookupField id="treatment-item" label={t("mhMedicineVaccineAdministered")} options={healthItems} value={treatmentItemId} valueKey="item_id" labelKeys={["item_code", "item_name"]} onChange={(value) => setTreatmentItemId(String(value))} loading={healthItemsLoading} placeholder="Select medicine or vaccine" />
+          </Field>
           <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="font-semibold block mb-1">{t("mhMedicineVaccineAdministered")}</label>
-              <input
-                type="text"
-                value={newTreatment.medicine_name}
-                onChange={(e) => setNewTreatment({ ...newTreatment, medicine_name: e.target.value })}
-                placeholder={t("mhMedicinePlaceholder")}
-                className="nf-input w-full"
-              />
-            </div>
-            <div>
-              <label className="font-semibold block mb-1">{t("mhDosageRoute")}</label>
-              <input
-                type="text"
-                value={newTreatment.dosage}
-                onChange={(e) => setNewTreatment({ ...newTreatment, dosage: e.target.value })}
-                placeholder={t("mhDosagePlaceholder")}
-                className="nf-input w-full"
-              />
-            </div>
+            <Field label="Stock quantity per animal" htmlFor="treatment-quantity" required hint="Enter stock issued for each selected animal, in the item's stock unit.">
+              <input id="treatment-quantity" type="number" min="0" step="any" value={treatmentQuantity} onChange={(e) => setTreatmentQuantity(e.target.value)} className="nf-input w-full" />
+            </Field>
+            <ReadField label="Stock unit" value={selectedHealthItem?.uom_primary as string | undefined} />
+            <Field label="Lot number" htmlFor="treatment-lot" hint="Leave blank to use the oldest available stock.">
+              <input id="treatment-lot" value={treatmentLot} onChange={(e) => setTreatmentLot(e.target.value)} className="nf-input w-full" />
+            </Field>
+            <Field label="Dosage notes" htmlFor="treatment-dosage">
+              <input id="treatment-dosage" value={newTreatment.dosage ?? ""} onChange={(e) => setNewTreatment({ ...newTreatment, dosage: e.target.value })} className="nf-input w-full" />
+            </Field>
+            <Field label="Route" htmlFor="treatment-route">
+              <select id="treatment-route" value={newTreatment.route ?? ""} onChange={(e) => setNewTreatment({ ...newTreatment, route: e.target.value })} className="nf-input w-full">
+                <option value="">Not recorded</option>
+                {Object.entries(ROUTE_TO_CODE).map(([label, code]) => <option key={code} value={code}>{label}</option>)}
+              </select>
+            </Field>
+            <Field label={t("mhMeatWithdrawalPeriodDays")} htmlFor="treatment-withdrawal">
+              <input id="treatment-withdrawal" type="number" min="0" value={newTreatment.withdrawal_days ?? ""} onChange={(e) => setNewTreatment({ ...newTreatment, withdrawal_days: e.target.value === "" ? undefined : Number(e.target.value) })} className="nf-input w-full" />
+            </Field>
+            <Field label={t("mhAttendingVeterinarian")} htmlFor="treatment-vet">
+              <input id="treatment-vet" value={newTreatment.veterinarian ?? ""} onChange={(e) => setNewTreatment({ ...newTreatment, veterinarian: e.target.value })} className="nf-input w-full" />
+            </Field>
           </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="font-semibold block mb-1">{t("mhMeatWithdrawalPeriodDays")}</label>
-              <input
-                type="number"
-                min="0"
-                value={newTreatment.withdrawal_days}
-                onChange={(e) => setNewTreatment({ ...newTreatment, withdrawal_days: Number(e.target.value) })}
-                className="nf-input w-full"
-              />
-            </div>
-            <div>
-              <label className="font-semibold block mb-1">{t("mhAttendingVeterinarian")}</label>
-              <input
-                type="text"
-                value={newTreatment.veterinarian}
-                onChange={(e) => setNewTreatment({ ...newTreatment, veterinarian: e.target.value })}
-                placeholder={t("mhVeterinarianPlaceholder")}
-                className="nf-input w-full"
-              />
-            </div>
-          </div>
+          {treatmentError && <p role="alert" className="text-sm text-(--danger)">{treatmentError}</p>}
 
           <div className="flex justify-end gap-2 pt-2 border-t" style={{ borderColor: "var(--border)" }}>
-            <Button variant="outline" onClick={() => setTreatmentDialogOpen(false)}>
+            <Button variant="outline" disabled={savingTreatment} onClick={() => setTreatmentDialogOpen(false)}>
               {t("mhCancel")}
             </Button>
-            <Button onClick={handleSaveTreatment} className="nf-btn-primary">
+            <Button onClick={handleSaveTreatment} disabled={savingTreatment || healthItemsLoading || uncertainTreatment} className="nf-btn-primary">
               {t("mhSaveTreatmentRecord")}
             </Button>
           </div>
-        </div>
+        </fieldset>
       </Dialog>
     </div>
   );

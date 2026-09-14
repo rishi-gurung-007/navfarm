@@ -1430,3 +1430,29 @@ created one 1 PACK Tylosin issue costing 350 and JE-000017, then repeated approv
 refused without extra rows. HLT-UNS-2026-0003 requested 1000 PACK; generic approval
 refused shortage and left PENDING/decided_at NULL with counts unchanged. These are
 explicit DEMO VERIFICATION records, not client clinical events.
+
+## 2026-09-14 — Explicit treatment stock and one withdrawal check (F6)
+
+Handoff F6 exposed arbitrary medicine selection. Treatments now select an existing
+active company medicine/vaccine and explicitly enter the stock quantity per animal;
+the unit comes from that item's primary stock unit. The API refuses missing item,
+nonpositive quantity, mismatched treatment unit, and inactive/wrong-batch animals.
+No clinical diagnosis, veterinarian, route or withdrawal duration is invented.
+Unrecorded withdrawal displays as unrecorded, not zero. Failed writes remain errors;
+only acknowledged postings appear in the list, and partial multi-animal failure
+retains only unsaved animals for retry. An absent posting reference disables retry
+until reload/reconciliation.
+
+Driving the newly working path exposed that AnimalService's slaughter check and
+lookup badge read only standalone medication logs. Both now also read the existing
+batch treatment rows, using recorded withdrawal days when supplied and master days
+otherwise. The latest expiry per item wins; a later shorter dose cannot erase an
+earlier longer withdrawal. Treatment and disposal lock the same animal, and disposal
+is transactional. This is an integrity repair, not a new clinical policy. Standalone
+medication-entry concurrency and undocumented clinical rules are not claimed fixed.
+
+Verified with an explicitly labelled diagnostic vaccine treatment on demo SOW-LW-018:
+1 DOSE at 85 from DEMO-F6-20260914, recorded diagnostic withdrawal 1 day (not a client
+prescription). Lookup showed 1 day remaining and slaughter refused; MySQL retained
+active/PREGNANT with no disposal. Full IDs and remaining limitations are in
+VERIFICATION-2026-09-14-health.md.

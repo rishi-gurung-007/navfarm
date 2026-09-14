@@ -39,3 +39,42 @@ MySQL confirms 4 DOSE Parvo-Shield vaccine at configured 85 = 340, lot
 DEMO-F6-20260914, remaining 4. JE-000018 debit/credit both 340. Warehouse remains
 the existing inactive demo silo used by the foundation exercise; inactive-location
 acceptance is a known separate gap, not claimed fixed here.
+
+## F6 completed live checks
+
+After the final API rebuild/restart (stopped lsof-confirmed PID 14093):
+
+- Old missing-item/DOSES request returned 400, no arbitrary medicine selected.
+- Browser selected PIG-BAT-2026-0101, SOW-LW-018 and Parvo-Shield from the actual
+  medicine/vaccine picker. Quantity 1000, lot DEMO-F6-20260914 returned shortage 996;
+  dialog stayed open with error, no fabricated treatment, MySQL vaccine remaining 4,
+  treatment-detail count 40, ledger/journal counts 18/18.
+- Browser changed quantity to 1 and entered an explicitly diagnostic one-day
+  withdrawal. Successful transaction `93651cee-df52-476b-92fe-af8b3df96e49` records
+  animal `0893c0d6-bc50-4ab2-858d-69d6afbea400`, vaccine
+  `14b94bfd-9b8c-49d1-9f28-cc00062849b0`, 1 DOSE, amount -85. Ledger
+  `2fe2ba94-03ba-44ec-91d2-494b0d14936e` issues the same lot; receipt ledger
+  `30c1b42a-8f42-47f9-8e56-7386fa3851aa` remains 3. JE-000019 debit/credit 85/85.
+  `batch_treatment_detail` has recorded withdrawal 1 and veterinarian NULL.
+- Full browser reload retained the treatment row and chosen vaccine.
+- GET animal/lookup/tag?tag=SOW-LW-018 returned hasActiveWithdrawal=true and vaccine
+  daysRemaining=1. PATCH disposal SLAUGHTERED on 2026-09-14 returned 400 naming that
+  vaccine. MySQL animal remains active=1, PREGNANT, disposal_date/type both NULL.
+- Supplying DOSES for the selected DOSE-stock vaccine returned 400, unchanged counts.
+- Final posting counts: 19 ledger, 11 applications, 19 journals, 38 journal lines,
+  314 batch transactions. No automatic stock insertion occurred.
+
+Validation: API 623 tests/61 suites; web 156 tests/24 suites. API/web typechecks pass;
+API production build passes with existing Express dynamic-dependency warning. Web
+lint reports 79 errors/671 warnings, below the documented 85-error baseline; existing
+empty catches remain in unrelated mortality/read paths. Tests/builds ran serially
+with a 1GB Node heap limit. No full frontend production build was run.
+
+Not verified: concurrent request stress tests, every role's UI permissions, live
+expiry-boundary disposal (would dispose the diagnostic animal), BIO_ASSET treatment
+costing, standalone medication-log concurrency, batch-level health approval applying
+a withdrawal to all animals. Approval still stores a medicine name rather than its
+UUID; renamed/ambiguous/changed-unit requests refuse. Historical demo clinical rows,
+future dates and inactive-location acceptance were not comprehensively repaired.
+Farm-wise access is not designed: the operational-only versus master-data scope
+question has been presented to Rishi and remains unanswered.

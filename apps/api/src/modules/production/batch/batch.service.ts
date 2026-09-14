@@ -957,6 +957,38 @@ export class BatchService {
       throw new BadRequestException('treatment_detail belongs on the CONSUMPTION row that issues the medicine or vaccine.');
     }
 
+    if (dto.transaction_type === 'CONSUMPTION' &&
+      (!dto.item_id || !Number.isFinite(dto.quantity) || Number(dto.quantity) <= 0 || !dto.uom?.trim())) {
+      throw new BadRequestException('CONSUMPTION transactions require explicit item_id, positive quantity and uom.');
+    }
+    if (dto.treatment_detail) {
+      const [item] = await this.db.select({ uom_primary: schema.itemMaster.uom_primary })
+        .from(schema.itemMaster).where(and(
+          eq(schema.itemMaster.item_id, dto.item_id!),
+          eq(schema.itemMaster.tenant_id, tenantId),
+          eq(schema.itemMaster.company_id, batch.company_id),
+          eq(schema.itemMaster.is_active, true),
+          isNull(schema.itemMaster.deleted_at),
+          inArray(schema.itemMaster.item_type, ['MEDICINE', 'VACCINE']),
+        )).limit(1);
+      if (!item) throw new BadRequestException('Treatment requires an active medicine or vaccine in this company.');
+      if (!item.uom_primary || dto.uom !== item.uom_primary) {
+        throw new BadRequestException(`Record treatment quantity in the item's stock unit ${item.uom_primary || '(not configured)'}.`);
+      }
+      if (dto.animal_id) {
+        // Animal Register has no deleted_at: is_active=false marks disposal.
+        const [animal] = await this.db.select({ animal_id: schema.animalRegister.animal_id })
+          .from(schema.animalRegister).where(and(
+            eq(schema.animalRegister.animal_id, dto.animal_id),
+            eq(schema.animalRegister.tenant_id, tenantId),
+            eq(schema.animalRegister.company_id, batch.company_id),
+            eq(schema.animalRegister.current_batch_id, id),
+            eq(schema.animalRegister.is_active, true),
+          )).for('update');
+        if (!animal) throw new BadRequestException('The treated animal must be an active member of this batch and company.');
+      }
+    }
+
     const isBioAsset = batch.costing_method === 'BIO_ASSET';
     let bioState: typeof schema.batchBioAssetState.$inferSelect | undefined;
     if (isBioAsset) {
@@ -997,66 +1029,20 @@ export class BatchService {
     let rate: number | null = dto.rate ?? null;
 
     if (dto.transaction_type === 'CONSUMPTION') {
-      if (!dto.item_id) {
-        const isMed =
-          (dto.remarks || '').toLowerCase().includes('med') ||
-          (dto.remarks || '').toLowerCase().includes('vaccin') ||
-          (dto.remarks || '').toLowerCase().includes('antibiotic') ||
-          (dto.remarks || '').toLowerCase().includes('deworm') ||
-          (dto.remarks || '').toLowerCase().includes('dextran') ||
-          (dto.remarks || '').toLowerCase().includes('ivermectin') ||
-          dto.uom === 'ML' ||
-          dto.uom === 'DOSES' ||
-          dto.uom === 'VIAL';
-
-        const [matchedItem] = await this.db
-          .select({ item_id: schema.itemMaster.item_id })
-          .from(schema.itemMaster)
-          .where(
-            and(
-              eq(schema.itemMaster.tenant_id, tenantId),
-              eq(schema.itemMaster.is_active, true),
-              isMed ? eq(schema.itemMaster.item_type, 'MEDICINE') : eq(schema.itemMaster.item_type, 'FEED')
-            )
-          )
-          .limit(1);
-
-        if (matchedItem) {
-          dto.item_id = matchedItem.item_id;
-        } else {
-          const [anyItem] = await this.db
-            .select({ item_id: schema.itemMaster.item_id })
-            .from(schema.itemMaster)
-            .where(
-              and(
-                eq(schema.itemMaster.tenant_id, tenantId),
-                eq(schema.itemMaster.is_active, true)
-              )
-            )
-            .limit(1);
-          if (anyItem) {
-            dto.item_id = anyItem.item_id;
-          }
-        }
-      }
-
-      if (!dto.item_id || !dto.quantity || !dto.uom) {
-        throw new BadRequestException('CONSUMPTION transactions require item_id, quantity and uom.');
-      }
       const bioTransactionType = isBioAsset
         ? (bio?.stage === 'PREMATURE' ? 'BIO_CONSUMPTION_PREMATURE' : 'BIO_CONSUMPTION_MATURE')
         : 'BATCH_CONSUMPTION';
       const ledgerEntry = await this.ledgerService.writeNegativeEntry({
         tenantId,
         companyId: batch.company_id,
-        itemId: dto.item_id,
+        itemId: dto.item_id!,
         documentType: 'BATCH',
         documentNo: batch.batch_no,
         documentLineId: transactionId,
         postingDate: dto.transaction_date,
         transactionType: bioTransactionType,
-        quantity: dto.quantity,
-        uom: dto.uom,
+        quantity: dto.quantity!,
+        uom: dto.uom!,
         lotNo: dto.lot_no,
         batchNo: batch.batch_no,
         userId: userPayload?.userId,
@@ -1079,14 +1065,14 @@ export class BatchService {
           entry_id: randomUUID(),
           tenant_id: tenantId,
           company_id: batch.company_id,
-          bio_asset_item_id: dto.item_id,
+          bio_asset_item_id: dto.item_id!,
           entry_type: 'CONSUMPTION',
           document_no: batch.batch_no,
           batch_id: id,
           batch_no: batch.batch_no,
           posting_date: dto.transaction_date,
           stage: 'PREMATURE',
-          quantity: dto.quantity.toString(),
+          quantity: dto.quantity!.toString(),
           cost_amount: capitalized.toString(),
           cost_amount_each_unit: rate?.toString() || null,
           costing_method: 'COST_ACCUMULATION',

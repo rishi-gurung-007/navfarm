@@ -1,3 +1,4 @@
+import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { masterScopeConditions } from '../../../common/master-data-scope';
 import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
@@ -167,10 +168,11 @@ export class AnimalService {
    * Spec: "At the time of a slaughter entry the system must check that today minus the
    * last administration date for each medicine given to that animal is greater than or
    * equal to withdrawal_days. Block the slaughter if not." Reduced in JS rather than a SQL
-   * GROUP BY — per-animal medication log volume is small (a few dozen rows at most).
+   * GROUP BY. Both medication logs and batch treatments record administrations;
+   * treatment-specific withdrawal days take precedence over master defaults.
    */
-  private async assertWithdrawalPeriodsElapsed(animalId: string, disposalDate: string) {
-    const rows = await this.db
+  private async activeWithdrawalPeriods(animalId: string, asOfDate: string) {
+    const medicationRows = await this.db
       .select({
         item_id: schema.itemMaster.item_id,
         item_name: schema.itemMaster.item_name,
@@ -181,31 +183,48 @@ export class AnimalService {
       .from(schema.animalMedicationLog)
       .innerJoin(schema.itemMaster, eq(schema.animalMedicationLog.item_id, schema.itemMaster.item_id))
       .where(eq(schema.animalMedicationLog.animal_id, animalId));
-
-    const lastDoseByItem = new Map<string, { item_name: string; withdrawal_days: number; lastDate: string }>();
+    const treatmentRows = await this.db
+      .select({
+        item_id: schema.itemMaster.item_id,
+        item_name: schema.itemMaster.item_name,
+        item_type: schema.itemMaster.item_type,
+        withdrawal_days: schema.batchTreatmentDetail.withdrawal_days,
+        master_withdrawal_days: schema.itemMaster.withdrawal_days,
+        administered_date: schema.batchTransaction.transaction_date,
+      })
+      .from(schema.batchTransaction)
+      .innerJoin(schema.batchTreatmentDetail, eq(schema.batchTreatmentDetail.transaction_id, schema.batchTransaction.transaction_id))
+      .innerJoin(schema.itemMaster, eq(schema.itemMaster.item_id, schema.batchTransaction.item_id))
+      .where(and(
+        eq(schema.batchTransaction.animal_id, animalId),
+        eq(schema.batchTransaction.transaction_type, 'CONSUMPTION'),
+        sql`${schema.batchTransaction.quantity} > 0`,
+      ));
+    const rows = [...medicationRows, ...treatmentRows.map(row => ({
+      ...row, withdrawal_days: row.withdrawal_days ?? row.master_withdrawal_days,
+    }))];
+    const dayMs = 86400000;
+    const asOfMs = new Date(asOfDate).getTime();
+    // Recorded treatment durations can differ between doses. The most recent
+    // dose must not erase an earlier dose whose withdrawal expires later.
+    const latestExpiryByItem = new Map<string, { item_name: string; expiry: number; lastDose: string }>();
     for (const row of rows) {
-      if (row.withdrawal_days == null) continue;
-      if (!['MEDICINE', 'VACCINE'].includes(row.item_type)) continue;
-      const existing = lastDoseByItem.get(row.item_id);
-      if (!existing || row.administered_date > existing.lastDate) {
-        lastDoseByItem.set(row.item_id, {
-          item_name: row.item_name,
-          withdrawal_days: row.withdrawal_days,
-          lastDate: row.administered_date,
-        });
+      if (row.withdrawal_days == null || !['MEDICINE', 'VACCINE'].includes(row.item_type)) continue;
+      const expiry = new Date(row.administered_date).getTime() + Number(row.withdrawal_days) * dayMs;
+      const existing = latestExpiryByItem.get(row.item_id);
+      if (!existing || expiry > existing.expiry) {
+        latestExpiryByItem.set(row.item_id, { item_name: row.item_name, expiry, lastDose: row.administered_date });
       }
     }
+    return [...latestExpiryByItem.values()]
+      .filter(row => row.expiry > asOfMs)
+      .map(row => ({ item_name: row.item_name, daysRemaining: Math.ceil((row.expiry - asOfMs) / dayMs), lastDose: row.lastDose }));
+  }
 
-    const disposalMs = new Date(disposalDate).getTime();
-    const violations: string[] = [];
-    for (const { item_name, withdrawal_days, lastDate } of lastDoseByItem.values()) {
-      const daysSinceDose = Math.floor((disposalMs - new Date(lastDate).getTime()) / 86400000);
-      if (daysSinceDose < withdrawal_days) {
-        violations.push(`${item_name} (${withdrawal_days - daysSinceDose} day(s) remaining, last dose ${lastDate})`);
-      }
-    }
-
-    if (violations.length > 0) {
+  private async assertWithdrawalPeriodsElapsed(animalId: string, disposalDate: string) {
+    const withdrawals = await this.activeWithdrawalPeriods(animalId, disposalDate);
+    if (withdrawals.length) {
+      const violations = withdrawals.map(row => `${row.item_name} (${row.daysRemaining} day(s) remaining, last dose ${row.lastDose})`);
       throw new BadRequestException(`Cannot slaughter — withdrawal period not elapsed for: ${violations.join('; ')}`);
     }
   }
@@ -510,31 +529,7 @@ export class AnimalService {
 
     const { animal, breed, stage, batch } = rows[0];
 
-    // Check active withdrawal period status
-    const medRows = await this.db
-      .select({
-        item_name: schema.itemMaster.item_name,
-        withdrawal_days: schema.itemMaster.withdrawal_days,
-        administered_date: schema.animalMedicationLog.administered_date,
-      })
-      .from(schema.animalMedicationLog)
-      .innerJoin(schema.itemMaster, eq(schema.animalMedicationLog.item_id, schema.itemMaster.item_id))
-      .where(eq(schema.animalMedicationLog.animal_id, animal.animal_id));
-
-    const todayMs = new Date().getTime();
-    const activeWithdrawals: Array<{ item_name: string; daysRemaining: number; lastDose: string }> = [];
-
-    for (const med of medRows) {
-      if (med.withdrawal_days == null) continue;
-      const daysSinceDose = Math.floor((todayMs - new Date(med.administered_date).getTime()) / 86400000);
-      if (daysSinceDose < med.withdrawal_days) {
-        activeWithdrawals.push({
-          item_name: med.item_name,
-          daysRemaining: med.withdrawal_days - daysSinceDose,
-          lastDose: med.administered_date,
-        });
-      }
-    }
+    const activeWithdrawals = await this.activeWithdrawalPeriods(animal.animal_id, new Date().toISOString().slice(0, 10));
 
     return {
       ...animal,
@@ -739,7 +734,13 @@ export class AnimalService {
    * ledger-derived — see schema.ts's animal_register comment).
    */
   async dispose(id: string, dto: DisposeAnimalDto, tenantId: string, userPayload?: any) {
-    const animal = await this.findOne(id);
+    return withTenantTransaction(this.cls, async () => {
+    // Treatment posting locks this same animal after its batch. Disposal never
+    // locks a batch, so there is no reverse batch/animal lock ordering.
+    const [animal] = await this.db.select().from(schema.animalRegister)
+      .where(and(eq(schema.animalRegister.animal_id, id), eq(schema.animalRegister.tenant_id, tenantId)))
+      .for('update');
+    if (!animal) throw new NotFoundException(`Animal '${id}' not found.`);
 
     if (!animal.is_active) {
       throw new BadRequestException(`Animal '${animal.animal_code}' has already been disposed.`);
@@ -805,6 +806,7 @@ export class AnimalService {
     });
 
     return this.findOne(id);
+    });
   }
 
   /**
