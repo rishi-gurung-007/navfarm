@@ -1,11 +1,13 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, or, isNull, gte, lte, desc, like, sql, SQL } from 'drizzle-orm';
+import { eq, and, or, isNull, gte, lte, desc, like, sql, SQL, inArray } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
 import { CreateApprovalRequestDto, DecideApprovalDto, QueryApprovalDto } from './dto/approval.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
+import { BatchService } from '../batch/batch.service';
+import { withTenantTransaction } from '../../../common/tenant-transaction';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   const pad = (n: number) => String(n).padStart(2, '0');
@@ -36,6 +38,7 @@ export class ApprovalService {
   constructor(
     private readonly cls: ClsService,
     private readonly auditService: AuditLogService,
+    private readonly batchService: BatchService,
   ) {}
 
   private get db(): MySql2Database<typeof schema> {
@@ -169,14 +172,36 @@ export class ApprovalService {
     return this.decide(requestId, 'APPROVED', tenantId, undefined, userPayload);
   }
 
+  async approveUnscheduledHealth(batchId: string, requestId: string, tenantId: string, userPayload?: any) {
+    return this.decide(requestId, 'APPROVED', tenantId, undefined, userPayload, batchId);
+  }
+
   async reject(requestId: string, dto: DecideApprovalDto, tenantId: string, userPayload?: any) {
     return this.decide(requestId, 'REJECTED', tenantId, dto.rejection_reason, userPayload);
   }
 
-  private async decide(requestId: string, status: 'APPROVED' | 'REJECTED', tenantId: string, reason: string | undefined, userPayload?: any) {
-    const current = await this.findOne(requestId, tenantId);
+  private async decide(requestId: string, status: 'APPROVED' | 'REJECTED', tenantId: string, reason: string | undefined, userPayload?: any, expectedHealthBatchId?: string) {
+    return withTenantTransaction(this.cls, async () => {
+    // A locking read does not establish a repeatable-read snapshot. Every
+    // decision locks the request first; health posting then locks its batch.
+    const [current] = await this.db.select().from(schema.approvalRequest)
+      .where(and(eq(schema.approvalRequest.request_id, requestId), eq(schema.approvalRequest.tenant_id, tenantId), isNull(schema.approvalRequest.deleted_at)))
+      .for('update');
+    if (!current) throw new NotFoundException('Approval request not found.');
+    if (expectedHealthBatchId && (current.doc_type !== 'UNSCHEDULED_HEALTH' || current.batch_id !== expectedHealthBatchId)) {
+      throw new BadRequestException('That request is not an unscheduled health event on this batch.');
+    }
     if (current.status !== 'PENDING') {
       throw new BadRequestException(`This request was already ${current.status.toLowerCase()} and cannot be decided again.`);
+    }
+
+    if (status === 'APPROVED' && current.doc_type === 'UNSCHEDULED_HEALTH') {
+      if (!current.batch_id) throw new BadRequestException('This health request has no batch.');
+      const [batch] = await this.db.select().from(schema.batchHeader)
+        .where(and(eq(schema.batchHeader.batch_id, current.batch_id), eq(schema.batchHeader.tenant_id, tenantId), isNull(schema.batchHeader.deleted_at)))
+        .for('update');
+      if (!batch || batch.company_id !== current.company_id) throw new BadRequestException('The health request batch does not belong to its company.');
+      await this.postHealthTreatment(current, tenantId, userPayload);
     }
 
     await this.db
@@ -203,10 +228,44 @@ export class ApprovalService {
     });
 
     return this.findOne(requestId, tenantId);
+    });
+  }
+
+  private async postHealthTreatment(request: typeof schema.approvalRequest.$inferSelect, tenantId: string, userPayload?: any) {
+    // Observations have no requested medicine quantity and need no stock issue.
+    if (request.requested_qty == null) return;
+    const quantity = Number(request.requested_qty);
+    if (!request.item_or_stage || !Number.isFinite(quantity) || quantity <= 0) {
+      throw new BadRequestException('A treatment requires a medicine and a positive quantity.');
+    }
+    const items = await this.db.select({ item_id: schema.itemMaster.item_id, uom: schema.itemMaster.uom_primary })
+      .from(schema.itemMaster).where(and(
+        eq(schema.itemMaster.item_name, request.item_or_stage),
+        eq(schema.itemMaster.tenant_id, tenantId),
+        eq(schema.itemMaster.company_id, request.company_id),
+        eq(schema.itemMaster.is_active, true),
+        isNull(schema.itemMaster.deleted_at),
+        inArray(schema.itemMaster.item_type, ['MEDICINE', 'VACCINE']),
+      )).limit(2);
+    if (items.length !== 1) throw new BadRequestException('The requested medicine must resolve to exactly one active item in this company; correct the request before approving.');
+    const item = items[0];
+    if (!item.uom || request.uom !== item.uom) {
+      throw new BadRequestException('The requested treatment unit must match the medicine stock unit; correct the request before approving.');
+    }
+    const eventDate = /^Date: (\d{4}-\d{2}-\d{2})$/m.exec(request.justification ?? '')?.[1];
+    await this.batchService.addTransaction(request.batch_id!, {
+      transaction_date: eventDate ?? String(request.submitted_at).slice(0, 10),
+      transaction_type: 'CONSUMPTION', item_id: item.item_id, quantity,
+      uom: item.uom, remarks: `${request.doc_no} — unscheduled health event`,
+    }, tenantId, userPayload);
   }
 
   async remove(requestId: string, tenantId: string, userPayload?: any) {
-    const current = await this.findOne(requestId, tenantId);
+    return withTenantTransaction(this.cls, async () => {
+    const [current] = await this.db.select().from(schema.approvalRequest)
+      .where(and(eq(schema.approvalRequest.request_id, requestId), eq(schema.approvalRequest.tenant_id, tenantId), isNull(schema.approvalRequest.deleted_at)))
+      .for('update');
+    if (!current) throw new NotFoundException('Approval request not found.');
     if (current.status !== 'PENDING') {
       throw new BadRequestException('Only a pending request can be withdrawn. A decided request is part of the audit trail.');
     }
@@ -223,6 +282,7 @@ export class ApprovalService {
       entityId: requestId,
     });
     return { request_id: requestId, withdrawn: true };
+    });
   }
 
   /** One projection shared by list and detail, so both screens agree on field names. */

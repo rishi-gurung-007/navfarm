@@ -31,6 +31,7 @@ describe('BatchDailyDataService', () => {
     findOne: jest.fn(),
     findAll: jest.fn(),
     approve: jest.fn(),
+    approveUnscheduledHealth: jest.fn(),
     reject: jest.fn(),
   };
 
@@ -242,69 +243,19 @@ describe('BatchDailyDataService', () => {
       } as any, 'tenant-123')).rejects.toThrow(NotFoundException);
     });
 
-    // Posting runs before the decision is recorded, so a medicine that cannot
-    // be issued leaves the request PENDING rather than approved against a
-    // posting that never happened.
-    it('issues the medicine against the batch before approving', async () => {
-      approvalService.findOne.mockResolvedValue({
-        request_id: 'req-1', doc_no: 'HLT-UNS-2026-0001', doc_type: 'UNSCHEDULED_HEALTH',
-        batch_id: 'batch-1', status: 'PENDING', item_or_stage: 'Oxytetracycline',
-        requested_qty: '12', justification: `Observed: Lame gilt\nDate: ${ENTRY_DATE}`,
-        submitted_at: `${ENTRY_DATE} 08:00:00`,
-      });
-      rows.set(schema.itemMaster, [{ item_id: 'med-1', uom: 'ML' }]);
-      (batchService.addTransaction as jest.Mock).mockResolvedValue({ transactions: [] });
-
-      await service.approveUnscheduledHealth('batch-1', 'req-1', 'tenant-123', { userId: 'u' });
-
-      expect(batchService.addTransaction).toHaveBeenCalledWith(
-        'batch-1',
-        expect.objectContaining({
-          transaction_type: 'CONSUMPTION', item_id: 'med-1', quantity: 12,
-          uom: 'ML', transaction_date: ENTRY_DATE,
-        }),
-        'tenant-123',
-        { userId: 'u' },
-      );
-      expect(approvalService.approve).toHaveBeenCalledWith('req-1', 'tenant-123', { userId: 'u' });
+    it('delegates health approval with the expected batch and current user', async () => {
+      approvalService.approveUnscheduledHealth.mockResolvedValue({ status: 'APPROVED' });
+      await expect(service.approveUnscheduledHealth('batch-1', 'req-1', 'tenant-123', { userId: 'u' }))
+        .resolves.toEqual({ status: 'APPROVED' });
+      expect(approvalService.approveUnscheduledHealth).toHaveBeenCalledWith('batch-1', 'req-1', 'tenant-123', { userId: 'u' });
+      expect(batchService.addTransaction).not.toHaveBeenCalled();
     });
 
-    it('leaves the request pending when the posting throws', async () => {
-      approvalService.findOne.mockResolvedValue({
-        request_id: 'req-1', doc_type: 'UNSCHEDULED_HEALTH', batch_id: 'batch-1', status: 'PENDING',
-        item_or_stage: 'Oxytetracycline', requested_qty: '12', justification: '', submitted_at: `${ENTRY_DATE} 08:00:00`,
-      });
-      rows.set(schema.itemMaster, [{ item_id: 'med-1', uom: 'ML' }]);
-      (batchService.addTransaction as jest.Mock).mockRejectedValue(new Error('No stock on hand'));
-
+    it('propagates a failed health approval without approving separately', async () => {
+      approvalService.approveUnscheduledHealth.mockRejectedValue(new Error('No stock on hand'));
       await expect(service.approveUnscheduledHealth('batch-1', 'req-1', 'tenant-123')).rejects.toThrow('No stock on hand');
       expect(approvalService.approve).not.toHaveBeenCalled();
     });
 
-    // An observation with no treatment is a real thing to record, and there is
-    // simply nothing to post for it.
-    it('approves an observation with no medicine without posting anything', async () => {
-      approvalService.findOne.mockResolvedValue({
-        request_id: 'req-2', doc_type: 'UNSCHEDULED_HEALTH', batch_id: 'batch-1', status: 'PENDING',
-        item_or_stage: 'Health event', requested_qty: null, justification: '', submitted_at: `${ENTRY_DATE} 08:00:00`,
-      });
-      await service.approveUnscheduledHealth('batch-1', 'req-2', 'tenant-123');
-      expect(batchService.addTransaction).not.toHaveBeenCalled();
-      expect(approvalService.approve).toHaveBeenCalled();
-    });
-
-    it('refuses to decide the same event twice', async () => {
-      approvalService.findOne.mockResolvedValue({
-        request_id: 'req-1', doc_type: 'UNSCHEDULED_HEALTH', batch_id: 'batch-1', status: 'APPROVED',
-      });
-      await expect(service.approveUnscheduledHealth('batch-1', 'req-1', 'tenant-123')).rejects.toThrow(ConflictException);
-    });
-
-    it('refuses a request belonging to a different batch', async () => {
-      approvalService.findOne.mockResolvedValue({
-        request_id: 'req-1', doc_type: 'UNSCHEDULED_HEALTH', batch_id: 'other-batch', status: 'PENDING',
-      });
-      await expect(service.approveUnscheduledHealth('batch-1', 'req-1', 'tenant-123')).rejects.toThrow(BadRequestException);
-    });
   });
 });

@@ -468,51 +468,7 @@ export class BatchDailyDataService {
     tenantId: string,
     userPayload?: UserContext,
   ) {
-    return withTenantTransaction(this.cls, async () => {
-    // Lock the batch before any consistent read establishes a snapshot.
-    await this.db.select({ batch_id: schema.batchHeader.batch_id }).from(schema.batchHeader)
-      .where(and(eq(schema.batchHeader.batch_id, batchId), eq(schema.batchHeader.tenant_id, tenantId))).for('update');
-    await this.db.select({ request_id: schema.approvalRequest.request_id }).from(schema.approvalRequest)
-      .where(and(eq(schema.approvalRequest.request_id, requestId), eq(schema.approvalRequest.tenant_id, tenantId))).for('update');
-    const request: any = await this.approvalService.findOne(requestId, tenantId);
-    if (request.doc_type !== UNSCHEDULED_HEALTH) {
-      throw new BadRequestException('That request is not an unscheduled health event.');
-    }
-    if (request.batch_id !== batchId) {
-      throw new BadRequestException('That request does not belong to this batch.');
-    }
-    if (request.status !== 'PENDING') {
-      throw new ConflictException(`This event was already ${String(request.status).toLowerCase()}.`);
-    }
-
-    // The treatment line is optional — an observation with no medicine is a
-    // real thing to record, and there is simply nothing to post for it.
-    const medicineName = request.item_or_stage as string | null;
-    const quantity = request.requested_qty != null ? Number(request.requested_qty) : null;
-    if (medicineName && quantity != null && !Number.isNaN(quantity) && quantity > 0) {
-      const [item] = await this.db.select({
-        item_id: schema.itemMaster.item_id,
-        uom: schema.itemMaster.uom_primary,
-      }).from(schema.itemMaster).where(and(
-        eq(schema.itemMaster.item_name, medicineName),
-        eq(schema.itemMaster.tenant_id, tenantId),
-      )).limit(1);
-
-      if (!item) throw new BadRequestException('The requested medicine no longer resolves; correct the request before approving.');
-      if (item) {
-        await this.batchService.addTransaction(batchId, {
-          transaction_date: this.dateFromJustification(request.justification) ?? String(request.submitted_at).slice(0, 10),
-          transaction_type: 'CONSUMPTION',
-          item_id: item.item_id,
-          quantity,
-          uom: item.uom || 'PCS',
-          remarks: `${request.doc_no} — unscheduled health event`,
-        } as any, tenantId, userPayload as any);
-      }
-    }
-
-    return this.approvalService.approve(requestId, tenantId, userPayload);
-    });
+    return this.approvalService.approveUnscheduledHealth(batchId, requestId, tenantId, userPayload);
   }
 
   async rejectUnscheduledHealth(
@@ -527,12 +483,6 @@ export class BatchDailyDataService {
       throw new BadRequestException('That request is not an unscheduled health event on this batch.');
     }
     return this.approvalService.reject(requestId, { rejection_reason: reason } as any, tenantId, userPayload);
-  }
-
-  /** The event's own date, written into the justification when it was raised. */
-  private dateFromJustification(justification: string | null): string | null {
-    const match = /^Date: (\d{4}-\d{2}-\d{2})$/m.exec(justification ?? '');
-    return match ? match[1] : null;
   }
 
   /** The dates this batch has anything recorded on, newest first. */

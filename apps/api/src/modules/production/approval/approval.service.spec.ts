@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ClsService } from 'nestjs-cls';
 import { ApprovalService } from './approval.service';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
+import { BatchService } from '../batch/batch.service';
 
 /**
  * QueryApprovalDto advertises `limit` and `offset`, and the global
@@ -35,6 +36,7 @@ describe('ApprovalService.findAll pagination', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ApprovalService,
+        { provide: BatchService, useValue: { addTransaction: jest.fn() } },
         { provide: ClsService, useValue: { get: jest.fn().mockReturnValue(chain) } },
         { provide: AuditLogService, useValue: { log: jest.fn().mockResolvedValue({}) } },
       ],

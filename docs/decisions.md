@@ -1413,3 +1413,20 @@ no-valuation overhead and failed dedicated health approval. Exact identifiers,
 amounts, retained diagnostic rows, and unverified paths are recorded in
 `docs/VERIFICATION-2026-09-14-foundation.md`. These are labelled demo tests, not
 client operations. F5/F6 and farm-access design were not started.
+
+## 2026-09-14 — Health approval must post before its decision commits (F5)
+
+Rishi authorized continuing the handoff foundations in working phases. The generic
+approval route used by the web now dispatches unscheduled health treatments to the
+same batch posting path as dedicated approval. Request, stock, batch cost, journal
+and decision share one transaction; approval/rejection/withdrawal lock the request.
+An ambiguous, missing or inactive company medicine/vaccine, or a changed stock
+unit, refuses approval. No default unit is invented. Existing requests store item
+names, so name changes can require correcting a request; no schema redesign was
+introduced. Farm-wise access design remains pending Rishi's scope answer.
+
+Live API/MySQL evidence: HLT-UNS-2026-0002 approved through `/approval/:id/approve`
+created one 1 PACK Tylosin issue costing 350 and JE-000017, then repeated approval
+refused without extra rows. HLT-UNS-2026-0003 requested 1000 PACK; generic approval
+refused shortage and left PENDING/decided_at NULL with counts unchanged. These are
+explicit DEMO VERIFICATION records, not client clinical events.
