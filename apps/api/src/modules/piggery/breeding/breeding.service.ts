@@ -337,15 +337,13 @@ export class BreedingService {
       })
       .where(eq(schema.farrowingRecord.farrow_id, farrowId));
 
-    if (sow) {
-      await this.db
-        .update(schema.animalRegister)
-        .set({
-          total_piglets_weaned: (sow.total_piglets_weaned || 0) + dto.piglets_weaned,
-          status: 'ACTIVE',
-        })
-        .where(eq(schema.animalRegister.animal_id, sow.animal_id));
-    }
+    await this.db
+      .update(schema.animalRegister)
+      .set({
+        total_piglets_weaned: (sow.total_piglets_weaned || 0) + dto.piglets_weaned,
+        status: 'ACTIVE',
+      })
+      .where(eq(schema.animalRegister.animal_id, sow.animal_id));
 
     return {
       farrow_id: farrowId,

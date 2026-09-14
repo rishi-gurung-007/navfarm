@@ -1,6 +1,6 @@
 import { ClsService } from 'nestjs-cls';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import type { FarmScope } from '../common/farm-scope';
+import { FARM_SCOPE_KEY, type FarmScope } from '../common/farm-scope';
 
 /** Real CLS propagation; query doubles supply the database operations. */
 export function transactionCls(db: object): ClsService {
@@ -18,5 +18,5 @@ export function transactionCls(db: object): ClsService {
  */
 export function useFarmScope(cls: ClsService, scope: FarmScope): void {
   const get = cls.get.bind(cls);
-  cls.get = ((key?: string) => (key === 'farmScope' ? scope : get(key as any))) as typeof cls.get;
+  cls.get = ((key?: string) => (key === FARM_SCOPE_KEY ? scope : get(key as any))) as typeof cls.get;
 }
