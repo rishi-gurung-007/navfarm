@@ -435,15 +435,22 @@ export class BatchDailyDataService {
     return request;
   }
 
-  /** Health events raised against this batch, newest first. */
+  /**
+   * Health events raised against this batch, newest first.
+   *
+   * findAll answers with a bare array. Spreading it into an object turned the
+   * list into `{"0": {...}}` with the rows also under a nested `data` key —
+   * the controller's envelope then carried that instead of an array, so any
+   * caller doing `data.map` on it fails. Return the array itself; the
+   * controller is what wraps it.
+   */
   async listUnscheduledHealth(batchId: string, tenantId: string, status?: string) {
-    return this.approvalService.findAll({
+    const res: any = await this.approvalService.findAll({
       doc_type: UNSCHEDULED_HEALTH,
       status,
-    } as any, tenantId).then((res: any) => ({
-      ...res,
-      data: (res.data ?? res).filter((r: any) => r.batch_id === batchId),
-    }));
+    } as any, tenantId);
+    const rows: any[] = Array.isArray(res) ? res : (res?.data ?? []);
+    return rows.filter((r: any) => r.batch_id === batchId);
   }
 
   /**

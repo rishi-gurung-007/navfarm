@@ -206,6 +206,21 @@ describe('BatchDailyDataService', () => {
       } as any, 'tenant-123')).rejects.toThrow(BadRequestException);
     });
 
+    // Found by calling the running endpoint, not by reading the code:
+    // findAll answers with a bare array, and spreading one into an object
+    // produced `{"0": {...}}` — a shape every caller's .map() would choke on.
+    it('lists this batch\'s events as an array', async () => {
+      approvalService.findAll.mockResolvedValue([
+        { request_id: 'req-1', batch_id: 'batch-1', doc_no: 'HLT-UNS-2026-0001' },
+        { request_id: 'req-2', batch_id: 'batch-9', doc_no: 'HLT-UNS-2026-0002' },
+      ]);
+
+      const list = await service.listUnscheduledHealth('batch-1', 'tenant-123', 'PENDING');
+
+      expect(Array.isArray(list)).toBe(true);
+      expect(list.map((r: any) => r.doc_no)).toEqual(['HLT-UNS-2026-0001']);
+    });
+
     it('refuses a medicine that is not in the Item Master', async () => {
       rows.set(schema.itemMaster, []);
       await expect(service.recordUnscheduledHealth('batch-1', {
