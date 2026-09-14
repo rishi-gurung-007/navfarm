@@ -1456,3 +1456,31 @@ Verified with an explicitly labelled diagnostic vaccine treatment on demo SOW-LW
 prescription). Lookup showed 1 day remaining and slaughter refused; MySQL retained
 active/PREGNANT with no disposal. Full IDs and remaining limitations are in
 VERIFICATION-2026-09-14-health.md.
+
+## 2026-09-14 — Consistent data-entry dialog frames
+
+Rishi requested the same width and height for dialogs with fields, referencing
+Microsoft BC, and authorized a better design without another approval round.
+Use one shared responsive Dialog frame: maximum 1120 × 768 CSS pixels, 24px
+viewport margins on desktop, full viewport below 640px. Header and actions stay
+fixed while fields scroll. Short confirmations can explicitly use compact
+presentation. This supersedes field-count-based widths and creation drawers.
+Treatment groups context/animal selection separately from prescription/stock.
+Company and user creation adopt the same frame with native form-associated
+footer submit buttons. Removed fictional name/email and Indian phone examples
+encountered in user creation; no replacement client data was invented.
+
+Verification: drove treatment and user creation in the running web app at a
+measured 1280 × 800 viewport; both frames were 1120 × 752 at (80,24).
+Treatment also checked at measured 834 × 1112 (786 × 768 frame) and 480 × 844
+(full-screen frame, no horizontal overflow, Save visible). The in-app viewport
+control clamped the attempted narrower phone test to 480 CSS pixels, so 390px
+is not claimed as verified. Scrolling exposed the veterinarian field while
+keeping actions pinned. Escape restored focus to Invite User; Escape from the
+medicine picker closed only the picker and returned focus to treatment-item.
+Web: 156 tests/24 suites and typecheck passed. The health dialog test mock had
+to render the existing footer contract after actions moved there.
+No API or database writes were made for this presentation change. Not every
+individual form was manually opened; company creation submission and narrow
+390px layout remain unverified. Existing foundation/health write-path evidence
+remains in the separate verification reports. Both dev servers were left up.

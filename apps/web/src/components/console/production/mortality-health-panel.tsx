@@ -839,7 +839,14 @@ export default function MortalityHealthPanel() {
         open={mortalityDialogOpen}
         onClose={() => setMortalityDialogOpen(false)}
         title={t("mhLogMortalityPostMortemEvent")}
-        maxWidth="md"
+        footer={<>
+            <Button variant="outline" onClick={() => setMortalityDialogOpen(false)}>
+              {t("mhCancel")}
+            </Button>
+            <Button onClick={handleSaveMortality} className="nf-btn-primary">
+              {t("mhSaveMortalityEntry")}
+            </Button>
+        </>}
       >
         <div className="space-y-4 text-xs pt-2">
           <div className="grid grid-cols-2 gap-3">
@@ -946,14 +953,7 @@ export default function MortalityHealthPanel() {
             </select>
           </div>
 
-          <div className="flex justify-end gap-2 pt-2 border-t" style={{ borderColor: "var(--border)" }}>
-            <Button variant="outline" onClick={() => setMortalityDialogOpen(false)}>
-              {t("mhCancel")}
-            </Button>
-            <Button onClick={handleSaveMortality} className="nf-btn-primary">
-              {t("mhSaveMortalityEntry")}
-            </Button>
-          </div>
+
         </div>
       </Dialog>
 
@@ -962,10 +962,19 @@ export default function MortalityHealthPanel() {
         open={treatmentDialogOpen}
         onClose={() => { if (!savingTreatment) setTreatmentDialogOpen(false); }}
         title={t("mhRecordVeterinaryTreatment")}
-        maxWidth="md"
+        footer={<>
+            <Button variant="outline" disabled={savingTreatment} onClick={() => setTreatmentDialogOpen(false)}>
+              {t("mhCancel")}
+            </Button>
+            <Button onClick={handleSaveTreatment} disabled={savingTreatment || healthItemsLoading || uncertainTreatment} className="nf-btn-primary">
+              {t("mhSaveTreatmentRecord")}
+            </Button>
+        </>}
       >
-        <fieldset disabled={savingTreatment} className="space-y-4 text-xs pt-2">
-          <div className="grid grid-cols-2 gap-3">
+        <fieldset disabled={savingTreatment} className="grid gap-8 md:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
+          <section className="min-w-0 space-y-5" aria-label="Treatment context">
+          <h3 className="text-sm font-semibold">Treatment context</h3>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-1">
             <Field label={t("mhTreatmentDate")} htmlFor="treatment-date" required>
               <input
                 id="treatment-date" type="date"
@@ -988,14 +997,14 @@ export default function MortalityHealthPanel() {
           <div>
             <label className="font-semibold block mb-1">{t("mhAnimalEarTagId")}</label>
             {modalAnimalsLoading ? (
-              <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>{t("bulkScopeLoading")}</p>
+              <p className="text-sm" style={{ color: "var(--text-muted)" }}>{t("bulkScopeLoading")}</p>
             ) : modalAnimals.length === 0 ? (
-              <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>{t("bulkScopeNoAnimals")}</p>
+              <p className="text-sm" style={{ color: "var(--text-muted)" }}>{t("bulkScopeNoAnimals")}</p>
             ) : (
-              <div className="max-h-40 overflow-y-auto rounded-[var(--radius-sm)] border" style={{ borderColor: "var(--border)" }}>
+              <div className="max-h-72 overflow-y-auto overscroll-contain rounded-[var(--radius-sm)] border" style={{ borderColor: "var(--border)" }}>
                 {modalAnimals.map((a) => (
-                  <label key={a.animal_id} className="flex cursor-pointer items-center gap-2 border-b px-3 py-1.5 last:border-b-0" style={{ borderColor: "var(--border)" }}>
-                    <input type="checkbox" checked={treatmentAnimalIds.has(a.animal_id)} onChange={() => toggleTreatmentAnimal(a.animal_id)} className="h-3.5 w-3.5 rounded-[var(--radius-xs)] accent-(--accent)" />
+                  <label key={a.animal_id} className="flex cursor-pointer items-center min-h-11 gap-3 border-b px-3 py-2 last:border-b-0" style={{ borderColor: "var(--border)" }}>
+                    <input type="checkbox" checked={treatmentAnimalIds.has(a.animal_id)} onChange={() => toggleTreatmentAnimal(a.animal_id)} className="h-4 w-4 rounded-[var(--radius-xs)] accent-(--accent)" />
                     <span className="font-mono font-semibold" style={{ color: "var(--accent)" }}>{a.label}</span>
                   </label>
                 ))}
@@ -1003,13 +1012,16 @@ export default function MortalityHealthPanel() {
             )}
           </div>
 
+          </section>
+          <section className="min-w-0 space-y-5" aria-label="Prescription and stock">
+          <h3 className="text-sm font-semibold">Prescription and stock</h3>
           <Field label={t("mhClinicalDiagnosis")} htmlFor="treatment-diagnosis">
             <input id="treatment-diagnosis" value={newTreatment.diagnosis ?? ""} onChange={(e) => setNewTreatment({ ...newTreatment, diagnosis: e.target.value })} className="nf-input w-full" />
           </Field>
           <Field label={t("mhMedicineVaccineAdministered")} htmlFor="treatment-item" required>
             <EntityLookupField id="treatment-item" label={t("mhMedicineVaccineAdministered")} options={healthItems} value={treatmentItemId} valueKey="item_id" labelKeys={["item_code", "item_name"]} onChange={(value) => setTreatmentItemId(String(value))} loading={healthItemsLoading} placeholder="Select medicine or vaccine" />
           </Field>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field label="Stock quantity per animal" htmlFor="treatment-quantity" required hint="Enter stock issued for each selected animal, in the item's stock unit.">
               <input id="treatment-quantity" type="number" min="0" step="any" value={treatmentQuantity} onChange={(e) => setTreatmentQuantity(e.target.value)} className="nf-input w-full" />
             </Field>
@@ -1035,14 +1047,8 @@ export default function MortalityHealthPanel() {
           </div>
           {treatmentError && <p role="alert" className="text-sm text-(--danger)">{treatmentError}</p>}
 
-          <div className="flex justify-end gap-2 pt-2 border-t" style={{ borderColor: "var(--border)" }}>
-            <Button variant="outline" disabled={savingTreatment} onClick={() => setTreatmentDialogOpen(false)}>
-              {t("mhCancel")}
-            </Button>
-            <Button onClick={handleSaveTreatment} disabled={savingTreatment || healthItemsLoading || uncertainTreatment} className="nf-btn-primary">
-              {t("mhSaveTreatmentRecord")}
-            </Button>
-          </div>
+
+          </section>
         </fieldset>
       </Dialog>
     </div>

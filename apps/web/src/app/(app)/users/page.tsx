@@ -9,7 +9,7 @@ import {
 import { api } from "../../../services/api-client";
 import { getStoredUser, getStoredToken, getStoredTenantId, getActiveCompanyId, NavUser } from "../../../hooks/useAuth";
 import { useLanguage } from "../../../hooks/useLanguage";
-import { Drawer } from "../../../components/ui/drawer";
+import { Dialog } from "../../../components/ui/dialog";
 import { Button } from "../../../components/ui/button";
 import { Input } from "../../../components/ui/input";
 import { Select } from "../../../components/ui/select";
@@ -250,21 +250,33 @@ export default function UsersPage() {
       {success && <Toast variant="success" message={success} onClose={() => setSuccess("")} />}
 
       {/* ── Add User Form ── */}
-      {/* Six fields of account creation — a drawer, not a dialog. The actions
-          stay inside the <form> rather than moving to the drawer footer: a
-          submit button outside its form would change how this form submits,
-          and submit semantics are not this phase's to change. */}
-      <Drawer open={showAddForm} onClose={() => setShowAddForm(false)} title={t("usrInviteDrawerTitle")} description={t("usrInviteDrawerDesc")} size="lg">
-          <form onSubmit={handleAddUser} className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+      <Dialog
+        open={showAddForm}
+        onClose={() => setShowAddForm(false)}
+        title={t("usrInviteDrawerTitle")}
+        description={t("usrInviteDrawerDesc")}
+        footer={
+          <>
+            <Button type="button" variant="outline" onClick={() => setShowAddForm(false)}>
+              {t("cancel")}
+            </Button>
+            <Button type="submit" form="create-user-form" disabled={submitting}>
+              {submitting ? <RefreshCw className="w-4 h-4 animate-spin" /> : <UserPlus className="w-4 h-4" />}
+              {submitting ? t("usrRegistering") : t("usrRegisterUser")}
+            </Button>
+          </>
+        }
+      >
+          <form id="create-user-form" onSubmit={handleAddUser} className="grid grid-cols-1 gap-5 sm:grid-cols-2">
             <div>
               <Label>{t("usrFullName")}</Label>
               <Input required value={newUser.full_name} onChange={(e) => setNewUser({ ...newUser, full_name: e.target.value })}
-                placeholder={t("gPhJaneSmith")} />
+                 />
             </div>
             <div>
               <Label>{t("usrEmailAddress")}</Label>
               <Input required type="email" value={newUser.email} onChange={(e) => setNewUser({ ...newUser, email: e.target.value })}
-                placeholder={t("gPhJaneEmail")} />
+                 />
             </div>
             <div>
               <Label>{t("usrTempPassword")}</Label>
@@ -274,7 +286,7 @@ export default function UsersPage() {
             <div>
               <Label>{t("usrPhone")}</Label>
               <Input value={newUser.phone} onChange={(e) => setNewUser({ ...newUser, phone: e.target.value })}
-                placeholder="+91 98765 43210" />
+                 />
             </div>
 
             {isTenantAdmin && (
@@ -297,17 +309,8 @@ export default function UsersPage() {
               </Select>
             </div>
 
-            <div className="sm:col-span-2 flex flex-col-reverse gap-3 border-t pt-5 sm:flex-row sm:justify-end" style={S.border}>
-              <Button type="submit" disabled={submitting}>
-                {submitting ? <RefreshCw className="w-4 h-4 animate-spin" /> : <UserPlus className="w-4 h-4" />}
-                {submitting ? t("usrRegistering") : t("usrRegisterUser")}
-              </Button>
-              <Button type="button" variant="outline" onClick={() => setShowAddForm(false)}>
-                {t("cancel")}
-              </Button>
-            </div>
           </form>
-      </Drawer>
+      </Dialog>
 
       {/* ── Users Table ── */}
       <div className="overflow-hidden rounded-[var(--radius-md)] border border-(--border) bg-(--surface)">

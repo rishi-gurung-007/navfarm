@@ -17,11 +17,11 @@ interface DialogProps {
   footer?: ReactNode;
   maxWidth?: 'sm' | 'md' | 'lg' | 'xl';
   /**
-   * `modal` is the normal centred window. `page` keeps the same dialog
-   * semantics and pinned actions, but gives long forms a near-viewport work
-   * surface instead of squeezing them into a side sheet or a tall card.
+   * Forms share one stable desktop frame, independent of field count.
+   * `page` is retained as an alias for existing callers. Only short, non-form
+   * confirmations opt into `compact`; maxWidth applies to those only.
    */
-  presentation?: 'modal' | 'page';
+  presentation?: 'modal' | 'page' | 'compact';
   className?: string;
 }
 
@@ -64,7 +64,7 @@ export function Dialog({
     <div
       className={cn(
         'fixed inset-0 z-[100] grid h-[100dvh] w-screen place-items-center overflow-y-auto',
-        presentation === 'page' ? 'p-0 sm:p-6' : 'p-4 sm:p-6',
+        presentation === 'compact' ? 'p-4 sm:p-6' : 'p-0 sm:p-6',
       )}
       role="presentation"
       data-dialog-root
@@ -81,9 +81,9 @@ export function Dialog({
         data-presentation={presentation}
         className={cn(
           'relative my-auto flex w-full flex-col overflow-hidden border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] shadow-[var(--shadow-md)] outline-none',
-          presentation === 'page'
-            ? 'h-[100dvh] max-h-none max-w-none rounded-none border-0 sm:h-[calc(100dvh-3rem)] sm:max-w-[min(90rem,calc(100vw-3rem))] sm:rounded-[var(--radius-lg)] sm:border'
-            : cn('max-h-[calc(100dvh-2rem)] rounded-[var(--radius-lg)] sm:max-h-[calc(100dvh-3rem)]', widths[maxWidth]),
+          presentation === 'compact'
+            ? cn('max-h-[calc(100dvh-2rem)] rounded-[var(--radius-lg)] sm:max-h-[calc(100dvh-3rem)]', widths[maxWidth])
+            : 'h-[100dvh] max-h-[100dvh] max-w-none rounded-none border-0 sm:h-[min(48rem,calc(100dvh-3rem))] sm:max-w-[70rem] sm:rounded-[var(--radius-lg)] sm:border',
           className,
         )}
       >
@@ -92,9 +92,9 @@ export function Dialog({
             <h2 id={titleId} className="nf-text-body-strong text-lg text-[var(--text-primary)]">{title}</h2>
             {description && <p id={descriptionId} className="mt-1 text-sm leading-5 text-[var(--text-secondary)]">{description}</p>}
           </div>
-          <button type="button" onClick={onClose} aria-label={t("close")} className="nf-press flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-secondary)] hover:text-[var(--text-primary)]"><X size={18} /></button>
+          <button type="button" onClick={onClose} aria-label={t("close")} className="nf-press flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-secondary)] hover:text-[var(--text-primary)]"><X size={18} /></button>
         </header>
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6">{children}</div>
+        <div data-dialog-body className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-5 sm:px-6">{children}</div>
         {footer && <footer className="flex shrink-0 flex-wrap items-center justify-end gap-3 border-t border-[var(--border-subtle)] bg-[var(--surface-raised)] px-5 py-4 sm:px-6">{footer}</footer>}
       </div>
     </div>,

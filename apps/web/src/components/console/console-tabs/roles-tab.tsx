@@ -493,6 +493,7 @@ export default function RolesTab({
         open={Boolean(deletingRoleId)}
         onClose={() => !deletingRole && setDeletingRoleId(null)}
         title={t("roleModalDeleteTitle")}
+        presentation="compact"
         description={t("roleModalDeleteDesc")}
         maxWidth="sm"
         footer={

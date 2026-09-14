@@ -10,8 +10,8 @@ jest.mock('../src/hooks/useLanguage', () => ({ useLanguage: () => ({ t: (key: st
 // Exercise panel state and posting behavior; the shared lookup and dialog have
 // their own interaction tests. Keep their controlled-value contracts here.
 jest.mock('../src/components/ui/dialog', () => ({
-  Dialog: ({ open, title, children }: { open: boolean; title: string; children: React.ReactNode }) =>
-    open ? <div role="dialog" aria-label={title}>{children}</div> : null,
+  Dialog: ({ open, title, children, footer }: { open: boolean; title: string; children: React.ReactNode; footer?: React.ReactNode }) =>
+    open ? <div role="dialog" aria-label={title}>{children}{footer}</div> : null,
 }));
 jest.mock('../src/modules/master-data/EntityLookupField', () => ({
   EntityLookupField: ({ id, label, options, value, onChange }: {

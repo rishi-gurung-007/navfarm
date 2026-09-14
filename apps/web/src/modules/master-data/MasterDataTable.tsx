@@ -1804,10 +1804,8 @@ export default function MasterDataTable({ config }: { config: MasterDataConfig }
 
       {viewingId && <MasterRecordView config={config} id={viewingId} onClose={() => setViewingId(null)} />}
 
-      {/* Master forms open in a centred window. Dense, sectioned forms use a
-          near-full-page presentation like Business Central, while compact
-          masters keep a conventional modal. Both retain one scrolling body,
-          a pinned action footer, focus trapping and Escape handling. */}
+      {/* Every master form shares the same responsive frame and pinned actions.
+          Section count changes its content layout, never the window size. */}
       <Dialog
         open={modalOpen && !readOnly}
         onClose={() => !saving && setModalOpen(false)}
@@ -1893,6 +1891,7 @@ export default function MasterDataTable({ config }: { config: MasterDataConfig }
         open={!!confirmDelete}
         onClose={() => !deleting && setConfirmDelete(null)}
         title={t("deactivateRecordTitle")}
+        presentation="compact"
         description={confirmDelete ? t("deactivateRecordDesc", { name: confirmDelete[columns[0]?.key] ?? confirmDelete[config.idKey], label: tLabel(config.label) }) : undefined}
         maxWidth="sm"
         footer={

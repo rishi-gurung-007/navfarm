@@ -10,7 +10,7 @@ import { api } from "@/services/api-client";
 import { updateStoredUser, getActiveCompanyId, getActiveWorkspaceScope, setActiveCompanyId } from "@/hooks/useAuth";
 import { useCompaniesPageData } from "@/components/console/companies/use-companies-page-data";
 import { useLanguage } from "@/hooks/useLanguage";
-import { Drawer } from "@/components/ui/drawer";
+import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -101,8 +101,24 @@ export default function CompaniesIndexPage() {
           }
         />
 
-        <Drawer open={showAddModal} onClose={() => setShowAddModal(false)} title={t("coAddCompanyDrawerTitle")} description={t("coAddCompanyDrawerDesc")} size="lg">
-          <form onSubmit={handleCreateCompany} className="space-y-5">
+        <Dialog
+          open={showAddModal}
+          onClose={() => setShowAddModal(false)}
+          title={t("coAddCompanyDrawerTitle")}
+          description={t("coAddCompanyDrawerDesc")}
+          footer={
+            <>
+              <Button type="button" variant="outline" onClick={() => setShowAddModal(false)}>
+                {t("cancel")}
+              </Button>
+              <Button type="submit" form="create-company-form" disabled={creating}>
+                {creating ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                {creating ? t("coCreatingCompany") : t("coCreateCompany")}
+              </Button>
+            </>
+          }
+        >
+          <form id="create-company-form" onSubmit={handleCreateCompany} className="space-y-5">
             {createError && <ErrorState message={createError} />}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
@@ -168,17 +184,8 @@ export default function CompaniesIndexPage() {
                 </Select>
               </div>
             </div>
-            <div className="flex flex-col-reverse gap-3 border-t pt-5 sm:flex-row sm:justify-end" style={S.border}>
-              <Button type="submit" disabled={creating}>
-                {creating ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                {creating ? t("coCreatingCompany") : t("coCreateCompany")}
-              </Button>
-              <Button type="button" variant="outline" onClick={() => setShowAddModal(false)}>
-                {t("cancel")}
-              </Button>
-            </div>
           </form>
-        </Drawer>
+        </Dialog>
 
         {error && <ErrorState message={error} />}
 
