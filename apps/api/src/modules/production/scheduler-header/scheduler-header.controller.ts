@@ -9,10 +9,12 @@ import {
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
+import { FarmScoped } from '../../../common/farm-scope';
 
 @ApiTags('Batch Schedules')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
+@FarmScoped()
 @Controller('scheduler-header')
 export class SchedulerHeaderController {
   constructor(private readonly schedulerHeaderService: SchedulerHeaderService) {}

@@ -7,14 +7,16 @@ import { InventoryLedgerService } from '../../inventory/inventory-ledger/invento
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { SchedulerHeaderService } from '../scheduler-header/scheduler-header.service';
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import * as schema from '../../../core/database/schema';
 import { MySqlDialect } from 'drizzle-orm/mysql-core';
+import { FarmScope } from '../../../common/farm-scope';
 
 describe('BatchService', () => {
   let service: BatchService;
   let numberSeriesService: NumberSeriesService;
   let module: TestingModule;
+  let clsService: ClsService;
 
   const mockDbSelect = jest.fn();
   const mockDbInsert = jest.fn();
@@ -67,7 +69,17 @@ describe('BatchService', () => {
     }) as any;
     service = module.get<BatchService>(BatchService);
     numberSeriesService = module.get<NumberSeriesService>(NumberSeriesService);
+    clsService = module.get<ClsService>(ClsService);
   });
+
+  /** Layers a farm scope onto the CLS `get` the running test's ClsService instance
+   * already answers 'tenantDb' from (transactionCls) — same wrapping style as
+   * batch-daily-data.service.spec's table-keyed mock, applied to CLS instead of db. */
+  const useFarmScope = (scope: FarmScope) => {
+    const cls = clsService as any;
+    const base = cls.get.bind(cls);
+    cls.get = ((key?: string) => (key === 'farmScope' ? scope : base(key))) as typeof cls.get;
+  };
 
   describe('create', () => {
     it('delegates batch_no generation to NumberSeriesService and persists the result', async () => {
@@ -1009,6 +1021,82 @@ describe('BatchService', () => {
       expect(res.curves.length).toBeGreaterThan(0);
       expect(res.summary.totalActFeedKg).toBe(120);
       expect(res.summary.totalMortality).toBe(2);
+    });
+  });
+
+  describe('farm scope', () => {
+    const grasmere: FarmScope = { farmId: 'farm-g', restricted: true, companyId: 'co-1', lobId: 'lob-pig' };
+
+    // Table-keyed db double, modelled on batch-daily-data.service.spec.ts —
+    // needed here because create() -> findOne() fans out into many unrelated
+    // selects (input lines, transactions, attachments, ...) that a
+    // call-order-sequenced mock can't accommodate.
+    const rows = new Map<unknown, unknown[]>();
+    const insertedByTable = new Map<unknown, unknown>();
+
+    const chain = (result: unknown[]) => {
+      const self: any = {
+        from: () => self,
+        where: () => self,
+        limit: () => self,
+        for: () => self,
+        orderBy: () => self,
+        leftJoin: () => self,
+        innerJoin: () => self,
+        then: (ok: any, err: any) => Promise.resolve(result).then(ok, err),
+      };
+      return self;
+    };
+
+    const insertedValues = (table: unknown) => insertedByTable.get(table);
+
+    const validCreateDto = {
+      company_id: 'comp-1',
+      lob_id: 'lob-piggery',
+      costing_method: 'FIFO',
+      start_date: '2026-01-01',
+      opening_quantity: 100,
+      uom: 'HEAD',
+      input_lines: [] as unknown[],
+    };
+
+    beforeEach(() => {
+      rows.clear();
+      insertedByTable.clear();
+      rows.set(schema.lobMaster, [{ nob_id: 'nob-1', lob_name: 'Piggery', costing_method_allowed: 'FIFO,STANDARD' }]);
+      rows.set(schema.batchHeader, [{ ...activeBatch }]);
+
+      mockDbSelect.mockReset();
+      mockDbSelect.mockImplementation(() => ({ from: (table: unknown) => chain(rows.get(table) ?? []) }));
+      mockDb.select = mockDbSelect;
+
+      mockDbInsert.mockReset();
+      mockDbInsert.mockImplementation((table: unknown) => ({
+        values: jest.fn((v: unknown) => { insertedByTable.set(table, v); return Promise.resolve({}); }),
+      }));
+
+      mockDbTransaction.mockReset();
+      mockDbTransaction.mockImplementation(async (work: any) => work(mockDb));
+    });
+
+    it('answers 404 for a batch on another farm', async () => {
+      useFarmScope(grasmere);
+      rows.set(schema.batchHeader, []); // the scoped query finds nothing
+      await expect(service.findOne('batch-on-kintyre')).rejects.toThrow(NotFoundException);
+    });
+
+    it('stamps the farm derived from the batch location on create', async () => {
+      useFarmScope(grasmere);
+      rows.set(schema.locationMaster, [{ location_id: 'pen-1', parent: 'shed-1', farm_id: 'farm-g' }]);
+      await service.create({ ...validCreateDto, location_id: 'pen-1' } as any, 'tenant-1', { userId: 'u-1' } as any);
+      expect(insertedValues(schema.batchHeader)).toMatchObject({ farm_id: 'farm-g' });
+    });
+
+    it('refuses creating a batch on a location of another farm', async () => {
+      useFarmScope(grasmere);
+      rows.set(schema.locationMaster, [{ location_id: 'pen-k', parent: 'shed-k', farm_id: 'farm-k' }]);
+      await expect(service.create({ ...validCreateDto, location_id: 'pen-k' } as any, 'tenant-1', { userId: 'u-1' } as any))
+        .rejects.toThrow('Batch location is not on your active farm.');
     });
   });
 });

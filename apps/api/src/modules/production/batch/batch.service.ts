@@ -8,6 +8,7 @@ import { unlink } from 'fs/promises';
 import { resolve } from 'path';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
+import { farmScope, batchScopeConditions, assertLocationOnActiveFarm, farmOfLocation } from '../../../common/farm-scope';
 import {
   CreateBatchDto,
   AddBatchTransactionDto,
@@ -148,6 +149,13 @@ export class BatchService {
       computedExpectedEndDate = startDate.toISOString().slice(0, 10);
     }
 
+    const scope = farmScope(this.cls);
+    // CreateBatchDto carries shed_id and location_id (one or neither); sub_location_id is set later by stage transfer.
+    const placementId = dto.location_id || dto.shed_id || null;
+    await assertLocationOnActiveFarm(this.db, scope, placementId, 'Batch location');
+    // A standard user's batch lands on their farm even when the form sent no location.
+    const farmId = (placementId ? await farmOfLocation(this.db, placementId) : null) ?? scope.farmId;
+
     const batchId = randomUUID();
     const batchNo = await this.db.transaction(async (tx) => {
       const no = await this.generateBatchNo(tenantId, dto.company_id, tx);
@@ -164,6 +172,7 @@ export class BatchService {
         current_stage_code: initialStage?.stage_code || null,
         shed_id: dto.shed_id || null,
         location_id: dto.location_id || null,
+        farm_id: farmId,
         start_date: dto.start_date,
         expected_end_date: computedExpectedEndDate,
         status: 'DRAFT',
@@ -353,7 +362,7 @@ export class BatchService {
     const [batch] = await this.db
       .select()
       .from(schema.batchHeader)
-      .where(and(eq(schema.batchHeader.batch_id, id), isNull(schema.batchHeader.deleted_at)))
+      .where(and(eq(schema.batchHeader.batch_id, id), isNull(schema.batchHeader.deleted_at), ...batchScopeConditions(farmScope(this.cls))))
       .limit(1);
 
     if (!batch) {
@@ -610,6 +619,7 @@ export class BatchService {
     if (query.status) conditions.push(eq(schema.batchHeader.status, query.status));
     if (query.lobId) conditions.push(eq(schema.batchHeader.lob_id, query.lobId));
     if (query.search) conditions.push(like(schema.batchHeader.batch_no, `%${query.search}%`));
+    conditions.push(...batchScopeConditions(farmScope(this.cls)));
 
     const limit = query.limit || 50;
     const offset = query.offset || 0;

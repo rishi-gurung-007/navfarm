@@ -4,6 +4,7 @@ import { eq, and, or, like, inArray, count, sql, desc } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
+import { farmScope, batchScopeConditions, batchOnFarm } from '../../../common/farm-scope';
 import {
   CreateSchedulerHeaderDto, UpdateSchedulerHeaderDto,
   CreateSchedulerLineDto, UpdateSchedulerLineDto, UpdateSchedulerHeaderStatusDto, QuerySchedulerHeaderDto,
@@ -308,7 +309,11 @@ export class SchedulerHeaderService {
       throw new ConflictException(`A scheduler already exists for batch '${dto.batch_id}' and stage '${dto.stage_id}'.`);
     }
 
-    const [batch] = await this.db.select().from(schema.batchHeader).where(eq(schema.batchHeader.batch_id, dto.batch_id)).limit(1);
+    const [batch] = await this.db
+      .select()
+      .from(schema.batchHeader)
+      .where(and(eq(schema.batchHeader.batch_id, dto.batch_id), eq(schema.batchHeader.tenant_id, tenantId), ...batchScopeConditions(farmScope(this.cls))))
+      .limit(1);
     if (!batch) throw new NotFoundException(`Batch '${dto.batch_id}' not found.`);
 
     const [stage] = await this.db.select().from(schema.stageMaster).where(eq(schema.stageMaster.stage_id, dto.stage_id)).limit(1);
@@ -530,6 +535,17 @@ export class SchedulerHeaderService {
     const [header] = await this.db.select().from(schema.schedulerHeader).where(eq(schema.schedulerHeader.scheduler_id, id)).limit(1);
     if (!header) throw new NotFoundException(`Scheduler '${id}' not found.`);
 
+    // Not injecting BatchService (would create a circular module dependency
+    // with batch <-> scheduler-header) — the scoped check is run directly
+    // against batch_header instead.
+    const scope = farmScope(this.cls);
+    const [batchInScope] = await this.db
+      .select({ batch_id: schema.batchHeader.batch_id })
+      .from(schema.batchHeader)
+      .where(and(eq(schema.batchHeader.batch_id, header.batch_id), ...batchScopeConditions(scope)))
+      .limit(1);
+    if (!batchInScope) throw new NotFoundException(`Scheduler '${id}' not found.`);
+
     const lines = await this.db.select().from(schema.schedulerLine).where(eq(schema.schedulerLine.scheduler_id, id));
     const lineIds = lines.map((l) => l.line_id);
     const customDays = lineIds.length
@@ -596,10 +612,15 @@ export class SchedulerHeaderService {
   }
 
   async findAllForBatch(batchId: string, tenantId: string) {
+    const scope = farmScope(this.cls);
     return this.db
       .select()
       .from(schema.schedulerHeader)
-      .where(and(eq(schema.schedulerHeader.tenant_id, tenantId), eq(schema.schedulerHeader.batch_id, batchId)))
+      .where(and(
+        eq(schema.schedulerHeader.tenant_id, tenantId),
+        eq(schema.schedulerHeader.batch_id, batchId),
+        ...(scope.farmId ? [batchOnFarm(schema.schedulerHeader.batch_id, scope.farmId)] : []),
+      ))
       .orderBy(schema.schedulerHeader.effective_from);
   }
 
@@ -611,10 +632,12 @@ export class SchedulerHeaderService {
    * of this codebase's list endpoints.
    */
   async findAllForCompany(query: QuerySchedulerHeaderDto, tenantId: string) {
+    const scope = farmScope(this.cls);
     const conditions = [eq(schema.schedulerHeader.tenant_id, tenantId)];
     if (query.companyId) conditions.push(eq(schema.schedulerHeader.company_id, query.companyId));
     if (query.status) conditions.push(eq(schema.schedulerHeader.scheduler_status, query.status));
     if (query.lobId) conditions.push(eq(schema.schedulerHeader.lob_id, query.lobId));
+    conditions.push(...(scope.farmId ? [batchOnFarm(schema.schedulerHeader.batch_id, scope.farmId)] : []));
 
     const rows = await this.db
       .select()
