@@ -154,6 +154,25 @@ export class BatchController {
     };
   }
 
+  @Get(':id/posted-dates')
+  @RequirePermission('PRODUCTION', 'BATCH', 'view')
+  @ApiOperation({
+    summary:
+      "Dates already posted (or posted then reopened) for this batch — drives the Data Entry screen's history dropdown. Pass stageId to scope to one ANIMAL_WISE stage.",
+  })
+  @ApiParam({ name: 'id', description: 'Batch UUID' })
+  async getPostedDates(
+    @Param('id') id: string,
+    @Query('stageId') stageId?: string,
+  ) {
+    const result = await this.batchService.getPostedDates(id, stageId);
+    return {
+      success: true,
+      message: 'Posted dates retrieved.',
+      data: result,
+    };
+  }
+
   @Post(':id/post-day')
   @RequirePermission('PRODUCTION', 'BATCH', 'edit')
   @ApiOperation({

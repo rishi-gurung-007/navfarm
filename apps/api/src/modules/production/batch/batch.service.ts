@@ -2268,6 +2268,40 @@ export class BatchService {
     return { date: dateStr, day_of_batch: dayOfStage, lines, ...lockInfo };
   }
 
+  /**
+   * Dates that already have a posting on record for this batch — LOCKED
+   * (posted, untouched since) or REOPENED (posted, then reopened for a
+   * correction that hasn't been re-posted yet) both count, since both mean
+   * there is real history to look at. Backs the Data Entry screen's history
+   * dropdown: pick a date here instead of guessing one into the plain date
+   * picker and finding it empty.
+   *
+   * ANIMAL_WISE locks are scoped per stage, so `stageId` narrows to the
+   * stage currently selected on screen; omitted for BATCH_WISE, which only
+   * ever has the one stage a batch is in at a time.
+   */
+  async getPostedDates(batchId: string, stageId?: string) {
+    const conditions = [eq(schema.batchDataEntryLock.batch_id, batchId)];
+    if (stageId)
+      conditions.push(eq(schema.batchDataEntryLock.stage_id, stageId));
+    const rows = await this.db
+      .select({
+        entry_date: schema.batchDataEntryLock.entry_date,
+        stage_id: schema.batchDataEntryLock.stage_id,
+        stage_name: schema.stageMaster.stage_name,
+        status: schema.batchDataEntryLock.status,
+        locked_at: schema.batchDataEntryLock.locked_at,
+      })
+      .from(schema.batchDataEntryLock)
+      .leftJoin(
+        schema.stageMaster,
+        eq(schema.stageMaster.stage_id, schema.batchDataEntryLock.stage_id),
+      )
+      .where(and(...conditions))
+      .orderBy(desc(schema.batchDataEntryLock.entry_date));
+    return rows;
+  }
+
   /** Shared by getDataEntry() (BATCH_WISE) and getDataEntryByStage() — one stage/date's current lock state. */
   private async getLockInfo(batchId: string, stageId: string, dateStr: string) {
     const [lock] = await this.db

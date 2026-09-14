@@ -231,6 +231,8 @@ export default function OperationalBatchDataEntry() {
   const [generalNotes, setGeneralNotes] = useState('');
   const [savingNotes, setSavingNotes] = useState(false);
 
+  const [postedDates, setPostedDates] = useState<Row[]>([]);
+
   const [attachments, setAttachments] = useState<BatchAttachment[]>([]);
   const [uploadingFile, setUploadingFile] = useState<File | null>(null);
   const [uploadError, setUploadError] = useState('');
@@ -589,10 +591,19 @@ export default function OperationalBatchDataEntry() {
           // Data" jump straight to the next stage instead of sitting on the
           // one that was just posted. Falls back to any active stage (even a
           // locked one) so a fully-posted day still shows something.
+          //
+          // None of that applies once the user has picked a date on purpose
+          // (native picker or the History dropdown) — they are browsing a
+          // specific day, most likely because it's locked, and jumping them
+          // to a different stage because THIS one is locked is exactly
+          // backwards. Keep whatever stage they had selected; only fall back
+          // if that stage genuinely isn't part of this date at all.
           setSelectedStageId((prev) => {
             const prevStage = prev
               ? stages.find((s) => s.stage_id === prev)
               : undefined;
+            if (userPickedDateRef.current)
+              return prevStage ? prev : stages[0]?.stage_id || null;
             if (prevStage && prevStage.lock_status !== 'LOCKED') return prev;
             const nextOpen = progress.find(
               (p: Row) =>
@@ -752,6 +763,23 @@ export default function OperationalBatchDataEntry() {
     setEntryScope('ALL');
   }, [selectedStageId]);
 
+  // History dropdown: dates that already have a real posting on record,
+  // scoped to the selected stage for ANIMAL_WISE (locks are per stage there)
+  // and to the whole batch for BATCH_WISE (one stage at a time anyway).
+  const loadPostedDates = () => {
+    if (!selectedBatchId) return;
+    const qs = selectedStageId ? `?stageId=${selectedStageId}` : '';
+    api
+      .get(`/batch/${selectedBatchId}/posted-dates${qs}`)
+      .then((res: any) => setPostedDates(unwrap<Row[]>(res) || []))
+      .catch(() => setPostedDates([]));
+  };
+
+  useEffect(() => {
+    loadPostedDates();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedBatchId, selectedStageId]);
+
   const loadAttachments = () => {
     if (!selectedBatchId) return;
     api
@@ -894,6 +922,7 @@ export default function OperationalBatchDataEntry() {
         {},
       );
       loadDataEntry();
+      loadPostedDates();
     } catch (err: any) {
       setStageActionError(err?.message || 'Could not post stage data.');
     } finally {
@@ -913,6 +942,7 @@ export default function OperationalBatchDataEntry() {
       setReopenBoxOpen(false);
       setReopenReason('');
       loadDataEntry();
+      loadPostedDates();
     } catch (err: any) {
       setStageActionError(err?.message || 'Could not reopen stage data.');
     } finally {
@@ -983,6 +1013,7 @@ export default function OperationalBatchDataEntry() {
         `✓ ${selectedDate} posted and locked for batch ${currentBatch.code}. Moved to ${nextDate} for the next entry.`,
       );
       setSelectedDate(nextDate);
+      loadPostedDates();
       setTimeout(() => setSaveSuccessMsg(''), 5000);
     } catch (err: any) {
       const errMsg =
@@ -1752,6 +1783,40 @@ export default function OperationalBatchDataEntry() {
                   className="rounded-[var(--radius-xs)] border border-[var(--border)] bg-[var(--surface-raised)] px-3 py-1.5 text-xs font-semibold text-[var(--text-primary)] focus:outline-none disabled:opacity-60"
                 />
               </div>
+
+              {postedDates.length > 0 && (
+                <div>
+                  <label className="nf-text-label mb-1 block text-[var(--text-muted)]">
+                    History
+                  </label>
+                  <select
+                    value=""
+                    disabled={posting}
+                    onChange={(e) => {
+                      if (!e.target.value) return;
+                      userPickedDateRef.current = true;
+                      setSelectedDate(e.target.value);
+                      e.target.value = '';
+                    }}
+                    className="nf-select rounded-[var(--radius-xs)] border border-[var(--border)] bg-[var(--surface-raised)] px-3 py-1.5 text-xs font-semibold text-[var(--text-primary)] focus:outline-none disabled:opacity-60"
+                  >
+                    <option value="">
+                      {postedDates.length} posted date
+                      {postedDates.length === 1 ? '' : 's'} — view…
+                    </option>
+                    {postedDates.map((d: Row, idx: number) => (
+                      <option
+                        key={`${d.entry_date}-${d.stage_id}-${idx}`}
+                        value={String(d.entry_date)}
+                      >
+                        {String(d.entry_date)}
+                        {d.stage_name ? ` — ${d.stage_name}` : ''}
+                        {d.status === 'REOPENED' ? ' (reopened)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               {dataEntryLoading && (
                 <Loader2
