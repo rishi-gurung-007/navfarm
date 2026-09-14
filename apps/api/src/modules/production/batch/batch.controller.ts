@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Put,
   Delete,
   Param,
   Body,
@@ -107,6 +108,27 @@ export class BatchController {
   async findOne(@Param('id') id: string) {
     const result = await this.batchService.findOne(id);
     return { success: true, message: 'Batch details retrieved.', data: result };
+  }
+
+  @Put(':id')
+  @RequirePermission('PRODUCTION', 'BATCH', 'edit')
+  @ApiOperation({
+    summary:
+      'Edit a DRAFT Batch — header, input lines/standard-cost config (BATCH_WISE) or animal roster (ANIMAL_WISE). Refused once activated; breed/headcount refused once individual animal records already exist for it.',
+  })
+  @ApiParam({ name: 'id', description: 'Batch UUID' })
+  async update(
+    @Param('id') id: string,
+    @Body() dto: CreateBatchDto,
+    @Req() req: any,
+  ) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const result = await this.batchService.update(id, dto, tenantId, req.user);
+    return {
+      success: true,
+      message: 'Batch updated successfully.',
+      data: result,
+    };
   }
 
   @Delete(':id')

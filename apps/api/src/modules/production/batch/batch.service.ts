@@ -508,6 +508,345 @@ export class BatchService {
   }
 
   /**
+   * DRAFT batches carry no external side effect yet — no inventory drawn, no
+   * GL posted, no animal committed to a real production run (that's exactly
+   * what activate() does) — so a draft is safe to edit outright rather than
+   * needing a reversal/correction flow. Reuses CreateBatchDto's shape and
+   * most of create()'s own validation.
+   *
+   * Deliberately narrower than create() in one place: a livestock BATCH_WISE
+   * batch (breed_id set) already got one animal_register placeholder row per
+   * head at creation time (registerPlaceholderAnimals()). Reconciling that
+   * set on every edit — working out which placeholders to delete, which to
+   * keep, whether one already has hand-edited fields worth preserving — is
+   * real animal-record surgery, not batch-header editing, so breed_id and
+   * opening_quantity are refused once placeholders exist. Every other field,
+   * including the input lines and standard-cost config, is fully editable.
+   * A mistake that big is what the existing DELETE (cancel) endpoint is for
+   * — discard the draft and start over.
+   */
+  async update(
+    id: string,
+    dto: CreateBatchDto,
+    tenantId: string,
+    userPayload?: UserContext,
+  ) {
+    const batch = await this.findOne(id);
+    this.assertStatus(batch, 'DRAFT');
+    const trackingMode = batch.tracking_mode;
+
+    const [lob] = await this.db
+      .select()
+      .from(schema.lobMaster)
+      .where(
+        and(
+          eq(schema.lobMaster.lob_id, dto.lob_id),
+          eq(schema.lobMaster.is_active, true),
+        ),
+      )
+      .limit(1);
+    if (!lob) {
+      throw new NotFoundException(
+        `Line of Business with ID '${dto.lob_id}' not found.`,
+      );
+    }
+    const allowedMethods = lob.costing_method_allowed
+      .split(',')
+      .map((m) => m.trim().toUpperCase());
+    if (!allowedMethods.includes(dto.costing_method.toUpperCase())) {
+      throw new BadRequestException(
+        `Costing method '${dto.costing_method}' is not allowed for LOB '${lob.lob_name}' (allowed: ${lob.costing_method_allowed}).`,
+      );
+    }
+
+    let initialStage: typeof schema.stageMaster.$inferSelect | undefined;
+    if (dto.stage_id) {
+      const [stage] = await this.db
+        .select()
+        .from(schema.stageMaster)
+        .where(
+          and(
+            eq(schema.stageMaster.stage_id, dto.stage_id),
+            eq(schema.stageMaster.lob_id, dto.lob_id),
+            eq(schema.stageMaster.is_active, true),
+            isNull(schema.stageMaster.deleted_at),
+          ),
+        )
+        .limit(1);
+      if (!stage) {
+        throw new NotFoundException(
+          `Stage with ID '${dto.stage_id}' not found for this LOB.`,
+        );
+      }
+      initialStage = stage;
+    }
+
+    let openingQuantity: number;
+
+    if (trackingMode === 'ANIMAL_WISE') {
+      if (!dto.animal_ids || dto.animal_ids.length === 0) {
+        throw new BadRequestException(
+          'animal_ids is required for ANIMAL_WISE batches.',
+        );
+      }
+      const currentAnimals = await this.db
+        .select({ animal_id: schema.animalRegister.animal_id })
+        .from(schema.animalRegister)
+        .where(eq(schema.animalRegister.current_batch_id, id));
+      const currentIds = new Set(currentAnimals.map((a) => a.animal_id));
+      const nextIds = new Set(dto.animal_ids);
+      const toRemove = [...currentIds].filter((a) => !nextIds.has(a));
+      const toAdd = [...nextIds].filter((a) => !currentIds.has(a));
+
+      if (toAdd.length) {
+        const candidates = await this.db
+          .select()
+          .from(schema.animalRegister)
+          .where(
+            and(
+              inArray(schema.animalRegister.animal_id, toAdd),
+              eq(schema.animalRegister.tenant_id, tenantId),
+            ),
+          );
+        const foundIds = new Set(candidates.map((a) => a.animal_id));
+        const missing = toAdd.filter((a) => !foundIds.has(a));
+        if (missing.length) {
+          throw new BadRequestException(
+            `Animal(s) not found: ${missing.join(', ')}.`,
+          );
+        }
+        const alreadyAssigned = candidates.filter((a) => a.current_batch_id);
+        if (alreadyAssigned.length) {
+          throw new BadRequestException(
+            `Animal(s) already assigned to a batch: ${alreadyAssigned.map((a) => a.animal_code).join(', ')}.`,
+          );
+        }
+        const wrongLob = candidates.filter((a) => a.lob_id !== dto.lob_id);
+        if (wrongLob.length) {
+          throw new BadRequestException(
+            `Animal(s) do not belong to this Line of Business: ${wrongLob.map((a) => a.animal_code).join(', ')}.`,
+          );
+        }
+        for (const animal of candidates) {
+          await this.db
+            .update(schema.animalRegister)
+            .set({
+              current_batch_id: id,
+              updated_by: userPayload?.userId || null,
+              updated_at: toMysqlTimestamp(),
+            })
+            .where(eq(schema.animalRegister.animal_id, animal.animal_id));
+          await this.movementLog.record({
+            tenantId,
+            companyId: dto.company_id,
+            animalId: animal.animal_id,
+            movementType: 'ASSIGN',
+            eventDate: dto.start_date,
+            toBatchId: id,
+            toStageId: animal.current_stage_id,
+            toLocationId: animal.current_location_id,
+            userId: userPayload?.userId,
+          });
+        }
+        const distinctStageIds = [
+          ...new Set(
+            candidates
+              .map((a) => a.current_stage_id)
+              .filter((sid): sid is string => !!sid),
+          ),
+        ];
+        for (const stageId of distinctStageIds) {
+          await this.schedulerHeaderService.createForStage(
+            id,
+            stageId,
+            tenantId,
+            userPayload,
+          );
+        }
+      }
+
+      if (toRemove.length) {
+        for (const animalId of toRemove) {
+          const [animal] = await this.db
+            .select()
+            .from(schema.animalRegister)
+            .where(eq(schema.animalRegister.animal_id, animalId))
+            .limit(1);
+          await this.db
+            .update(schema.animalRegister)
+            .set({
+              current_batch_id: null,
+              updated_by: userPayload?.userId || null,
+              updated_at: toMysqlTimestamp(),
+            })
+            .where(eq(schema.animalRegister.animal_id, animalId));
+          await this.movementLog.record({
+            tenantId,
+            companyId: dto.company_id,
+            animalId,
+            movementType: 'UNASSIGN',
+            eventDate: dto.start_date,
+            fromBatchId: id,
+            fromStageId: animal?.current_stage_id,
+            fromLocationId: animal?.current_location_id,
+            userId: userPayload?.userId,
+          });
+        }
+      }
+
+      openingQuantity = nextIds.size;
+    } else {
+      if (!dto.input_lines || dto.input_lines.length === 0) {
+        throw new BadRequestException(
+          'input_lines is required for BATCH_WISE batches.',
+        );
+      }
+      if (dto.opening_quantity === undefined || dto.opening_quantity === null) {
+        throw new BadRequestException(
+          'opening_quantity is required for BATCH_WISE batches.',
+        );
+      }
+
+      const [existingPlaceholder] = await this.db
+        .select({ animal_id: schema.animalRegister.animal_id })
+        .from(schema.animalRegister)
+        .where(eq(schema.animalRegister.current_batch_id, id))
+        .limit(1);
+      if (existingPlaceholder) {
+        const breedChanged = !!dto.breed_id && dto.breed_id !== batch.breed_id;
+        const qtyChanged =
+          Number(dto.opening_quantity) !== Number(batch.opening_quantity);
+        if (breedChanged || qtyChanged) {
+          throw new BadRequestException(
+            `This batch already has individual animal records — breed and headcount can no longer be changed by editing. Cancel this draft and create a new one instead.`,
+          );
+        }
+      }
+
+      openingQuantity = dto.opening_quantity;
+
+      await this.db
+        .delete(schema.batchInputLine)
+        .where(eq(schema.batchInputLine.batch_id, id));
+      await this.db.insert(schema.batchInputLine).values(
+        dto.input_lines.map((line, idx) => ({
+          line_id: randomUUID(),
+          batch_id: id,
+          line_no: idx + 1,
+          item_id: line.item_id,
+          source_batch_id: line.source_batch_id || null,
+          quantity: line.quantity.toString(),
+          uom: line.uom,
+          rate: line.rate?.toString() || null,
+          amount: line.rate ? (line.quantity * line.rate).toString() : null,
+        })),
+      );
+
+      await this.db
+        .delete(schema.batchStandardConsumptionLine)
+        .where(eq(schema.batchStandardConsumptionLine.batch_id, id));
+      await this.db
+        .delete(schema.batchStandard)
+        .where(eq(schema.batchStandard.batch_id, id));
+      await this.db
+        .delete(schema.batchBioAssetState)
+        .where(eq(schema.batchBioAssetState.batch_id, id));
+
+      if (dto.costing_method.toUpperCase() === 'STANDARD') {
+        let stdOutputQty = dto.standard?.std_output_quantity;
+        if (stdOutputQty === undefined || stdOutputQty === null) {
+          let mortalityPct = 0;
+          if (dto.breed_id) {
+            const [breed] = await this.db
+              .select()
+              .from(schema.breedMaster)
+              .where(eq(schema.breedMaster.breed_id, dto.breed_id))
+              .limit(1);
+            mortalityPct = breed?.avg_mortality_pct
+              ? Number(breed.avg_mortality_pct)
+              : 0;
+          }
+          stdOutputQty = dto.opening_quantity * (1 - mortalityPct / 100);
+        }
+        await this.db.insert(schema.batchStandard).values({
+          standard_id: randomUUID(),
+          batch_id: id,
+          std_output_quantity: stdOutputQty.toString(),
+          std_output_cost_per_unit:
+            dto.standard?.std_output_cost_per_unit?.toString() || null,
+          std_overhead_rate_per_unit:
+            dto.standard?.std_overhead_rate_per_unit?.toString() || null,
+          created_by: userPayload?.userId || null,
+        });
+        if (dto.standard?.consumption_lines?.length) {
+          await this.db.insert(schema.batchStandardConsumptionLine).values(
+            dto.standard.consumption_lines.map((line) => ({
+              line_id: randomUUID(),
+              batch_id: id,
+              item_id: line.item_id,
+              std_qty_per_unit_per_day:
+                line.std_qty_per_unit_per_day.toString(),
+              std_rate: line.std_rate?.toString() || null,
+            })),
+          );
+        }
+      } else if (dto.costing_method.toUpperCase() === 'BIO_ASSET') {
+        await this.db.insert(schema.batchBioAssetState).values({
+          state_id: randomUUID(),
+          batch_id: id,
+          stage: 'PREMATURE',
+          current_quantity: dto.opening_quantity.toString(),
+          nca_book_value: '0.0000',
+        });
+      }
+
+      if (initialStage && dto.auto_generate_scheduler !== false) {
+        await this.schedulerHeaderService.createForStage(
+          id,
+          initialStage.stage_id,
+          tenantId,
+          userPayload,
+        );
+      }
+    }
+
+    await this.db
+      .update(schema.batchHeader)
+      .set({
+        lob_id: dto.lob_id,
+        nob_id: lob.nob_id,
+        costing_method: dto.costing_method.toUpperCase(),
+        breed_id: dto.breed_id || null,
+        stage_id: initialStage?.stage_id || batch.stage_id || null,
+        current_stage_code:
+          initialStage?.stage_code || batch.current_stage_code || null,
+        shed_id: dto.shed_id || null,
+        location_id: dto.location_id || null,
+        start_date: dto.start_date,
+        expected_end_date: dto.expected_end_date || null,
+        opening_quantity: openingQuantity.toString(),
+        uom: dto.uom,
+        remarks: dto.remarks || null,
+        updated_by: userPayload?.userId || null,
+        updated_at: toMysqlTimestamp(),
+      })
+      .where(eq(schema.batchHeader.batch_id, id));
+
+    await this.auditService.log({
+      tenantId,
+      companyId: dto.company_id,
+      userId: userPayload?.userId,
+      action: 'UPDATE',
+      entityName: 'batch_header',
+      entityId: id,
+      oldValues: batch,
+      newValues: dto,
+    });
+
+    return this.findOne(id);
+  }
+
+  /**
    * Copy-forward for perpetual/seasonal LOBs (orchards, apiaries) — creates a
    * new DRAFT batch carrying the source's config (breed, shed, costing method,
    * standard-cost assumptions) forward, needing only the new cycle's own

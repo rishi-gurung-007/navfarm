@@ -10,6 +10,7 @@ import {
   Inbox,
   Eye,
   PlayCircle,
+  Pencil,
   CheckCircle2,
   ClipboardCheck,
   QrCode as QrCodeIcon,
@@ -149,6 +150,10 @@ export default function BatchPanel() {
   const [stdConsumptionLines, setStdConsumptionLines] = useState<Row[]>([
     emptyStdConsumptionLine(),
   ]);
+
+  // null = the modal below is creating a new batch; a batch_id = it's
+  // editing that (necessarily still-DRAFT) one instead.
+  const [editingBatchId, setEditingBatchId] = useState<string | null>(null);
 
   const [viewing, setViewing] = useState<Row | null>(null);
   const [acting, setActing] = useState(false);
@@ -391,6 +396,73 @@ export default function BatchPanel() {
     });
     setStdConsumptionLines([emptyStdConsumptionLine()]);
     setFormError('');
+    setEditingBatchId(null);
+    setModalOpen(true);
+  };
+
+  // Opens the same modal pre-filled from an existing DRAFT batch — see
+  // BatchService.update() for what stays editable (everything) vs. refused
+  // (breed/headcount once individual animal records already exist for a
+  // BATCH_WISE batch).
+  const openEdit = async (batch: Row) => {
+    setNobId(batch.nob_id || activeArea?.nob_id || '');
+    setHeader({
+      lob_id: batch.lob_id || '',
+      costing_method: batch.costing_method || 'STANDARD',
+      breed_id: batch.breed_id || '',
+      stage_id: batch.stage_id || '',
+      shed_id: batch.shed_id || '',
+      start_date: batch.start_date || '',
+      expected_end_date: batch.expected_end_date || '',
+      opening_quantity: batch.opening_quantity || '',
+      uom: batch.uom || '',
+      remarks: batch.remarks || '',
+    });
+    const isAnimalWise = batch.tracking_mode === 'ANIMAL_WISE';
+    setTrackingMode(isAnimalWise ? 'ANIMAL_WISE' : 'BATCH_WISE');
+    setAnimalSearch('');
+    setAnimalGenderFilter('');
+    setAnimalStageFilter('');
+    setInputLines(
+      batch.input_lines?.length
+        ? batch.input_lines.map((l: Row) => ({
+            item_id: l.item_id || '',
+            source_batch_id: l.source_batch_id || '',
+            quantity: l.quantity || '',
+            uom: l.uom || '',
+            rate: l.rate || '',
+          }))
+        : [emptyInputLine()],
+    );
+    setStdForm({
+      std_output_quantity: batch.standard?.std_output_quantity || '',
+      std_output_cost_per_unit: batch.standard?.std_output_cost_per_unit || '',
+      std_overhead_rate_per_unit:
+        batch.standard?.std_overhead_rate_per_unit || '',
+    });
+    setStdConsumptionLines(
+      batch.standard?.consumption_lines?.length
+        ? batch.standard.consumption_lines.map((l: Row) => ({
+            item_id: l.item_id || '',
+            std_qty_per_unit_per_day: l.std_qty_per_unit_per_day || '',
+            std_rate: l.std_rate || '',
+          }))
+        : [emptyStdConsumptionLine()],
+    );
+    setSelectedAnimalIds(new Set());
+    if (isAnimalWise) {
+      try {
+        const res = await api.get(
+          `/animal?companyId=${batch.company_id}&currentBatchId=${batch.batch_id}&limit=500`,
+        );
+        const roster = unwrap<Row[]>(res) || [];
+        setSelectedAnimalIds(new Set(roster.map((a) => a.animal_id)));
+      } catch {
+        setSelectedAnimalIds(new Set());
+      }
+    }
+    setFormError('');
+    setEditingBatchId(batch.batch_id);
     setModalOpen(true);
   };
 
@@ -406,9 +478,13 @@ export default function BatchPanel() {
       .catch(() => setAnimalCandidates([]));
   }, [modalOpen, trackingMode, companyId]);
 
+  // Editing a DRAFT ANIMAL_WISE batch: its own already-assigned animals must
+  // still show up here (already-checked, and uncheckable to remove them) —
+  // "unassigned" alone would hide every animal the batch already has.
   const unassignedAnimalCandidates = animalCandidates.filter(
     (a) =>
-      !a.current_batch_id && (!header.lob_id || a.lob_id === header.lob_id),
+      (!a.current_batch_id || a.current_batch_id === editingBatchId) &&
+      (!header.lob_id || a.lob_id === header.lob_id),
   );
   // Stage options offered in the filter dropdown are only the stages actually
   // present among this LOB's unassigned candidates — no point listing a stage
@@ -512,7 +588,12 @@ export default function BatchPanel() {
       prev.length > 1 ? prev.filter((_, i) => i !== idx) : prev,
     );
 
-  const handleSave = async () => {
+  // `activateAfter` is what tells "Save as Draft" and "Create" apart — both
+  // go through the same create call (every batch is born a DRAFT, per
+  // BatchService.create()), "Create" just immediately follows it with the
+  // same POST /batch/:id/activate a user would otherwise trigger by hand
+  // from the batch's detail view.
+  const handleSave = async (activateAfter: boolean) => {
     setSaving(true);
     setFormError('');
     try {
@@ -530,7 +611,7 @@ export default function BatchPanel() {
           throw new Error(
             'Select at least one animal for an Animal Wise batch.',
           );
-        await api.post('/batch', {
+        const animalWisePayload = {
           tracking_mode: 'ANIMAL_WISE',
           animal_ids: [...selectedAnimalIds],
           company_id: companyId,
@@ -542,8 +623,16 @@ export default function BatchPanel() {
           expected_end_date: header.expected_end_date || undefined,
           uom: header.uom,
           remarks: header.remarks || undefined,
-        });
+        };
+        const created = unwrap<Row>(
+          editingBatchId
+            ? await api.put(`/batch/${editingBatchId}`, animalWisePayload)
+            : await api.post('/batch', animalWisePayload),
+        );
+        if (activateAfter)
+          await api.post(`/batch/${created.batch_id}/activate`, {});
         setModalOpen(false);
+        if (viewing?.batch_id === created.batch_id) await refreshViewing();
         load();
         return;
       }
@@ -592,7 +681,7 @@ export default function BatchPanel() {
         }
       }
 
-      await api.post('/batch', {
+      const batchWisePayload = {
         company_id: companyId,
         lob_id: header.lob_id,
         costing_method: header.costing_method,
@@ -606,8 +695,16 @@ export default function BatchPanel() {
         remarks: header.remarks || undefined,
         input_lines: cleanLines,
         standard,
-      });
+      };
+      const created = unwrap<Row>(
+        editingBatchId
+          ? await api.put(`/batch/${editingBatchId}`, batchWisePayload)
+          : await api.post('/batch', batchWisePayload),
+      );
+      if (activateAfter)
+        await api.post(`/batch/${created.batch_id}/activate`, {});
       setModalOpen(false);
+      if (viewing?.batch_id === created.batch_id) await refreshViewing();
       load();
     } catch (err: any) {
       setFormError(err?.message || t('blErrSaveBatch'));
@@ -1254,29 +1351,35 @@ export default function BatchPanel() {
         )}
       </div>
 
-      {/* Create modal */}
+      {/* Create/Edit modal */}
       <Dialog
         open={modalOpen}
         onClose={() => !saving && setModalOpen(false)}
-        title={t('blNewBatch')}
+        title={
+          editingBatchId ? `${t('edit')} — ${t('blNewBatch')}` : t('blNewBatch')
+        }
         maxWidth="xl"
         footer={
           <>
             <Button
               variant="outline"
               size="sm"
-              onClick={() => setModalOpen(false)}
+              onClick={() => handleSave(false)}
               disabled={saving}
             >
-              {t('blCancel')}
+              {saving ? t('blSaving') : t('blSaveDraft')}
             </Button>
             <Button
               size="sm"
-              onClick={handleSave}
+              onClick={() => handleSave(true)}
               disabled={saving}
               className="nf-btn-primary"
             >
-              {saving ? t('blSaving') : t('blSaveDraft')}
+              {saving
+                ? t('blSaving')
+                : editingBatchId
+                  ? t('blActivateBatch')
+                  : t('create')}
             </Button>
           </>
         }
@@ -2294,15 +2397,25 @@ export default function BatchPanel() {
             {detailTab === 'overview' && (
               <>
                 {viewing.status === 'DRAFT' && (
-                  <Button
-                    onClick={handleActivate}
-                    disabled={acting}
-                    size="sm"
-                    className="nf-btn-primary self-start"
-                  >
-                    <PlayCircle className="h-4 w-4" />{' '}
-                    {acting ? t('blActivating') : t('blActivateBatch')}
-                  </Button>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      onClick={() => openEdit(viewing)}
+                      variant="outline"
+                      size="sm"
+                      className="self-start gap-1.5"
+                    >
+                      <Pencil className="h-3.5 w-3.5" /> {t('edit')}
+                    </Button>
+                    <Button
+                      onClick={handleActivate}
+                      disabled={acting}
+                      size="sm"
+                      className="nf-btn-primary self-start"
+                    >
+                      <PlayCircle className="h-4 w-4" />{' '}
+                      {acting ? t('blActivating') : t('blActivateBatch')}
+                    </Button>
+                  </div>
                 )}
 
                 {viewing.status === 'ACTIVE' && (

@@ -23,6 +23,8 @@ import {
   PackageCheck,
   Building2,
   Users,
+  ChevronDown,
+  ChevronRight,
 } from 'lucide-react';
 import PiggeryLifecycleStepper, {
   type PiggeryStage,
@@ -232,6 +234,21 @@ export default function OperationalBatchDataEntry() {
   const [savingNotes, setSavingNotes] = useState(false);
 
   const [postedDates, setPostedDates] = useState<Row[]>([]);
+
+  // Which activity-type boxes (Feed, Medicine, Mortality, …) are collapsed —
+  // keyed by bucket key, not scoped per animal/date, so a stage with a lot
+  // of activity types stays collapsed the way the user left it while they
+  // move between animals or dates.
+  const [collapsedBuckets, setCollapsedBuckets] = useState<Set<string>>(
+    new Set(),
+  );
+  const toggleBucketCollapsed = (key: string) =>
+    setCollapsedBuckets((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
 
   const [attachments, setAttachments] = useState<BatchAttachment[]>([]);
   const [uploadingFile, setUploadingFile] = useState<File | null>(null);
@@ -1342,10 +1359,28 @@ export default function OperationalBatchDataEntry() {
           {t('blNoParamsScheduled')}
         </p>
       );
+    const allCollapsed = boxes.every((box) => collapsedBuckets.has(box.key));
     return (
       <div className="flex flex-col gap-3">
+        {boxes.length > 1 && (
+          <div className="flex items-center justify-end">
+            <button
+              type="button"
+              onClick={() =>
+                setCollapsedBuckets(
+                  allCollapsed ? new Set() : new Set(boxes.map((b) => b.key)),
+                )
+              }
+              className="text-[10px] font-semibold hover:underline"
+              style={S.accent}
+            >
+              {allCollapsed ? 'Expand all' : 'Collapse all'}
+            </button>
+          </div>
+        )}
         {boxes.map((box) => {
           const Icon = box.icon;
+          const collapsed = collapsedBuckets.has(box.key);
           const uoms = new Set(box.lines.map((l) => l.uom).filter(Boolean));
           const canTotal =
             uoms.size === 1 && box.lines.every((l) => !isTextCapture(l));
@@ -1363,10 +1398,24 @@ export default function OperationalBatchDataEntry() {
               className="rounded-lg border overflow-hidden"
               style={S.surface}
             >
-              <div
-                className="flex items-center gap-2 px-3 py-2 border-b"
+              <button
+                type="button"
+                onClick={() => toggleBucketCollapsed(box.key)}
+                aria-expanded={!collapsed}
+                className="flex w-full items-center gap-2 px-3 py-2 border-b text-left"
                 style={{ borderColor: 'var(--border)' }}
               >
+                {collapsed ? (
+                  <ChevronRight
+                    className="h-3.5 w-3.5 shrink-0"
+                    style={S.muted}
+                  />
+                ) : (
+                  <ChevronDown
+                    className="h-3.5 w-3.5 shrink-0"
+                    style={S.muted}
+                  />
+                )}
                 <Icon
                   className="h-4 w-4 shrink-0"
                   style={{ color: box.color }}
@@ -1377,30 +1426,42 @@ export default function OperationalBatchDataEntry() {
                 >
                   {box.title}
                 </span>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full border-collapse text-left text-xs">
-                  {dataEntryTableHeader}
-                  <TableBody>
-                    {box.lines.map((line) =>
-                      renderDataEntryRow(line, animalId, rowLocked, broadcast),
-                    )}
-                  </TableBody>
-                </table>
-              </div>
-              {total != null && (
-                <div
-                  className="flex items-center justify-end gap-1.5 px-3 py-1.5 border-t text-[11px]"
-                  style={{ borderColor: 'var(--border)' }}
-                >
-                  <span style={S.muted}>Total:</span>
-                  <span className="font-bold" style={S.primary}>
-                    {total.toLocaleString(undefined, {
-                      maximumFractionDigits: 2,
-                    })}{' '}
-                    {[...uoms][0]}
-                  </span>
-                </div>
+                <span className="text-[10px] font-semibold" style={S.muted}>
+                  ({box.lines.length})
+                </span>
+              </button>
+              {!collapsed && (
+                <>
+                  <div className="overflow-x-auto">
+                    <table className="w-full border-collapse text-left text-xs">
+                      {dataEntryTableHeader}
+                      <TableBody>
+                        {box.lines.map((line) =>
+                          renderDataEntryRow(
+                            line,
+                            animalId,
+                            rowLocked,
+                            broadcast,
+                          ),
+                        )}
+                      </TableBody>
+                    </table>
+                  </div>
+                  {total != null && (
+                    <div
+                      className="flex items-center justify-end gap-1.5 px-3 py-1.5 border-t text-[11px]"
+                      style={{ borderColor: 'var(--border)' }}
+                    >
+                      <span style={S.muted}>Total:</span>
+                      <span className="font-bold" style={S.primary}>
+                        {total.toLocaleString(undefined, {
+                          maximumFractionDigits: 2,
+                        })}{' '}
+                        {[...uoms][0]}
+                      </span>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           );
