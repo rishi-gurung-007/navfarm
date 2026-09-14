@@ -41,7 +41,7 @@ export class BatchController {
   }
 
   @Post('bulk-daily-entry')
-  @RequirePermission('PRODUCTION', 'BATCH', 'edit')
+  @RequirePermission('PRODUCTION', 'BATCH_ENTRY', 'create')
   @ApiOperation({ summary: 'Bulk record daily operational data (feed, mortality, water, temp) across multiple batches' })
   async bulkDailyEntry(@Body() dto: BulkDailyEntryDto, @Req() req: any) {
     const tenantId = req.user?.tenantId || req['tenantId'];
@@ -97,7 +97,7 @@ export class BatchController {
   }
 
   @Post(':id/transaction')
-  @RequirePermission('PRODUCTION', 'BATCH', 'edit')
+  @RequirePermission('PRODUCTION', 'BATCH_ENTRY', 'create')
   @ApiOperation({ summary: 'Record a daily transaction against an ACTIVE Batch (consumption, mortality, output, overhead, observation)' })
   @ApiParam({ name: 'id', description: 'Batch UUID' })
   async addTransaction(@Param('id') id: string, @Body() dto: AddBatchTransactionDto, @Req() req: any) {
@@ -107,7 +107,7 @@ export class BatchController {
   }
 
   @Post(':id/close')
-  @RequirePermission('PRODUCTION', 'BATCH', 'edit')
+  @RequirePermission('PRODUCTION', 'BATCH', 'approve')
   @ApiOperation({ summary: 'Close an ACTIVE Batch — allocates total cost across output lines and posts them to inventory' })
   @ApiParam({ name: 'id', description: 'Batch UUID' })
   async close(@Param('id') id: string, @Body() dto: CloseBatchDto, @Req() req: any) {
@@ -117,7 +117,7 @@ export class BatchController {
   }
 
   @Post(':id/mature')
-  @RequirePermission('PRODUCTION', 'BATCH', 'edit')
+  @RequirePermission('PRODUCTION', 'BATCH', 'approve')
   @ApiOperation({ summary: 'BIO_ASSET only — transitions PREMATURE → MATURE and sets up the amortization schedule' })
   @ApiParam({ name: 'id', description: 'Batch UUID' })
   async mature(@Param('id') id: string, @Body() dto: MatureBioAssetDto, @Req() req: any) {
@@ -127,7 +127,7 @@ export class BatchController {
   }
 
   @Post(':id/amortize')
-  @RequirePermission('PRODUCTION', 'BATCH', 'edit')
+  @RequirePermission('PRODUCTION', 'BATCH', 'approve')
   @ApiOperation({ summary: 'BIO_ASSET only, MATURE stage — runs one month of amortization (one run per calendar month)' })
   @ApiParam({ name: 'id', description: 'Batch UUID' })
   async amortize(@Param('id') id: string, @Body() dto: AmortizeBioAssetDto, @Req() req: any) {
@@ -137,7 +137,7 @@ export class BatchController {
   }
 
   @Post(':id/fair-value')
-  @RequirePermission('PRODUCTION', 'BATCH', 'edit')
+  @RequirePermission('PRODUCTION', 'BATCH', 'approve')
   @ApiOperation({ summary: 'BIO_ASSET only — revalues the herd to a new fair value per unit, posting the gain or loss' })
   @ApiParam({ name: 'id', description: 'Batch UUID' })
   async fairValue(@Param('id') id: string, @Body() dto: RecordFairValueDto, @Req() req: any) {
@@ -147,7 +147,7 @@ export class BatchController {
   }
 
   @Post(':id/dispose')
-  @RequirePermission('PRODUCTION', 'BATCH', 'edit')
+  @RequirePermission('PRODUCTION', 'BATCH', 'approve')
   @ApiOperation({ summary: 'BIO_ASSET only — exits animals via HARVEST (to inventory) or SOLD (gain/loss); auto-closes once the herd is fully disposed' })
   @ApiParam({ name: 'id', description: 'Batch UUID' })
   async dispose(@Param('id') id: string, @Body() dto: DisposeBioAssetDto, @Req() req: any) {
@@ -167,7 +167,7 @@ export class BatchController {
   }
 
   @Post(':id/transfer-stage')
-  @RequirePermission('PRODUCTION', 'BATCH', 'edit')
+  @RequirePermission('PRODUCTION', 'BATCH', 'approve')
   @ApiOperation({ summary: 'Record a physical move to a new stage/sub-location mid-life (e.g. setter room -> hatcher room) — tracking only, no GL impact' })
   @ApiParam({ name: 'id', description: 'Batch UUID' })
   async transferStage(@Param('id') id: string, @Body() dto: TransferStageDto, @Req() req: any) {

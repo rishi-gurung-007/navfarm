@@ -5,7 +5,6 @@ const req = (over: Partial<EntryRequest> = {}): EntryRequest => ({
   today: '2026-09-13',
   exists: false,
   mayEditAnyDay: false,
-  earlierPending: [],
   ...over,
 });
 
@@ -34,22 +33,8 @@ describe('entryVerdict', () => {
       .toEqual({ allowed: true });
   });
 
-  it('holds today back while an earlier day is incomplete', () => {
-    const v = entryVerdict(req({ earlierPending: ['2026-09-11'] }));
-    expect(v).toMatchObject({ allowed: false, code: 'BACKLOG' });
-    expect((v as any).message).toContain('2026-09-11');
-  });
-
-  it('names the oldest owed day and counts the rest', () => {
-    const v = entryVerdict(req({ earlierPending: ['2026-09-10', '2026-09-11', '2026-09-12'] }));
-    expect((v as any).message).toContain('2026-09-10');
-    expect((v as any).message).toContain('2 later days');
-  });
-
-  // A supervisor fixing an old entry must not be blocked by a backlog that is
-  // not theirs to clear.
-  it('does not hold a supervisor back for a backlog', () => {
-    expect(entryVerdict(req({ mayEditAnyDay: true, earlierPending: ['2026-09-01'] })))
+  it('never holds today back for an earlier incomplete day', () => {
+    expect(entryVerdict({ entryDate: '2026-09-14', today: '2026-09-14', exists: false, mayEditAnyDay: false }))
       .toEqual({ allowed: true });
   });
 

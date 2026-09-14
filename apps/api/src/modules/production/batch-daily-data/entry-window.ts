@@ -1,22 +1,23 @@
 /**
  * Who may record or change a day's entry, and when.
  *
- * Three rules the farm asked for, kept in one place because they interact:
+ * Rules the farm asked for, kept in one place because they interact:
  *
  *  - A day that has not happened yet is never enterable, by anyone.
  *  - A worker may enter any day still owed, but may only *change* today's.
  *    Clearing a backlog is entry, not editing — fencing it would leave the
  *    worker unable to do the very thing the backlog rule demands of them.
- *  - Today cannot be started while an earlier day is still incomplete.
+ *  - A missed day never blocks today (decided 2026-09-14): gaps are surfaced
+ *    as Missing and notified instead.
  *
- * The second and third rules fence the worker, not the supervisor: a role
- * holding edit on the entry resource is exactly the role whose job is fixing
- * what the worker got wrong, and a backlog it did not create must not stop it.
+ * The second rule fences the worker, not the supervisor: a role holding edit
+ * on the entry resource is exactly the role whose job is fixing what the
+ * worker got wrong.
  *
  * Which role that is comes from the permission table, never from a role name.
  */
 
-export type EntryRefusal = 'FUTURE' | 'PAST_EDIT' | 'BACKLOG';
+export type EntryRefusal = 'FUTURE' | 'PAST_EDIT';
 
 export type EntryVerdict =
   | { allowed: true }
@@ -31,8 +32,6 @@ export interface EntryRequest {
   exists: boolean;
   /** Holder of edit on the entry resource — supervisor and above. */
   mayEditAnyDay: boolean;
-  /** Incomplete days strictly before entryDate, oldest first. */
-  earlierPending: string[];
 }
 
 export function entryVerdict(req: EntryRequest): EntryVerdict {
@@ -51,18 +50,6 @@ export function entryVerdict(req: EntryRequest): EntryVerdict {
       allowed: false,
       code: 'PAST_EDIT',
       message: `This entry was recorded on ${req.entryDate} and can no longer be changed here. Ask a supervisor to correct it.`,
-    };
-  }
-
-  if (req.earlierPending.length) {
-    const [oldest] = req.earlierPending;
-    const more = req.earlierPending.length - 1;
-    return {
-      allowed: false,
-      code: 'BACKLOG',
-      message: more
-        ? `${oldest} is still incomplete, along with ${more} later day${more > 1 ? 's' : ''}. Enter ${oldest} first.`
-        : `${oldest} is still incomplete. Enter it before ${req.entryDate}.`,
     };
   }
 

@@ -96,8 +96,9 @@ export class BatchDailyDataService {
 
   /**
    * The days from the batch's start up to `upTo` that still have an unanswered
-   * mandatory line, oldest first — the backlog the worker must clear before
-   * today can be entered.
+   * mandatory line, oldest first. These no longer gate today's entry (decided
+   * 2026-09-14) — they surface in History as Missing, for the worker to
+   * backfill and for admins to be notified about.
    */
   async pendingDays(batchId: string, upTo: string | undefined, tenantId: string): Promise<string[]> {
     const [batch] = await this.db.select().from(schema.batchHeader)
@@ -286,7 +287,7 @@ export class BatchDailyDataService {
           : standard;
 
         const verdict = entryVerdict({
-          entryDate: date, today, exists: !!entry, mayEditAnyDay, earlierPending: backlog,
+          entryDate: date, today, exists: !!entry, mayEditAnyDay,
         });
 
         return {
@@ -550,8 +551,9 @@ export class BatchDailyDataService {
   }
 
   /**
-   * Applies the entry window: no future days, workers may only change today's
-   * own entries, and today waits until the backlog before it is cleared.
+   * Applies the entry window: no future days, and workers may only change
+   * today's own entries. A missed day never blocks today (decided 2026-09-14)
+   * — gaps are surfaced as Missing and notified instead, not gated here.
    *
    * The supervisor exemption is read from the permission table — edit on
    * PRODUCTION/BATCH_ENTRY — and never from a role name, so a farm that renames
@@ -579,14 +581,8 @@ export class BatchDailyDataService {
       ))
       .limit(1);
 
-    // Only computed for a worker, and only up to the day being entered — a
-    // supervisor is exempt, so the backlog query is work nobody would read.
-    const earlierPending = mayEditAnyDay
-      ? []
-      : (await this.pendingDays(batchId, entryDate, tenantId)).filter((d) => d < entryDate);
-
     const verdict = entryVerdict({
-      entryDate, today, exists: !!existing, mayEditAnyDay, earlierPending,
+      entryDate, today, exists: !!existing, mayEditAnyDay,
     });
     if (verdict.allowed) return;
 
