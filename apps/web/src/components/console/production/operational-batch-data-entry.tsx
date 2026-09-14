@@ -215,6 +215,7 @@ export default function OperationalBatchDataEntry() {
   // ANIMAL_WISE per-stage lock). Posting is final for BATCH_WISE — no reopen
   // here, matching BatchService.postBatchDay()'s own comment.
   const [posting, setPosting] = useState(false);
+  const [savingAllDraft, setSavingAllDraft] = useState(false);
   const [lockInfo, setLockInfo] = useState<{
     status: string | null;
     lockedBy?: string | null;
@@ -926,6 +927,105 @@ export default function OperationalBatchDataEntry() {
       setDataEntryError(err?.message || t('blErrRecordEntry'));
     } finally {
       setDataEntrySavingId(null);
+    }
+  };
+
+  // A single "Save to Draft" for the whole screen instead of clicking every
+  // line's own Save one at a time — same draft:true dispatch each row's
+  // button already makes, just fired for every line (and, in "all animals"
+  // scope, every animal) that currently has something entered. Lines left
+  // blank are silently skipped rather than erroring, the same as leaving a
+  // row's own Save button unclicked.
+  const handleSaveAllToDraft = async () => {
+    if (!currentBatch) return;
+    setSavingAllDraft(true);
+    setSaveErrorMsg('');
+    try {
+      const buildPayload = (line: Row, key: string, animalId?: string): Row => {
+        const payload: Row = {
+          line_id: line.line_id,
+          entry_date: selectedDate,
+          draft: true,
+        };
+        if (animalId) payload.animal_id = animalId;
+        if (isTextCapture(line)) payload.entered_text = dataEntryTexts[key];
+        else payload.entered_value = Number(dataEntryValues[key]);
+        if (line.lot_required) payload.lot_no = dataEntryLotNos[key];
+        if (line.line_type === 'TRANSFER')
+          payload.destination_batch_id = dataEntryDestBatches[key];
+        return payload;
+      };
+      const tasks: Promise<any>[] = [];
+
+      if (isAnimalWise) {
+        if (!selectedStage) return;
+        if (entryScope === 'ALL') {
+          const templateAnimal = (selectedStage.animals || [])[0];
+          const lines: Row[] = templateAnimal?.lines || [];
+          const animalIds = (selectedStage.animals || []).map(
+            (a: Row) => a.animal_id,
+          );
+          for (const line of lines) {
+            if (!dataEntryCanSave(line, '__ALL__')) continue;
+            const key = entryKey(line.line_id, '__ALL__');
+            for (const animalId of animalIds) {
+              tasks.push(
+                api.post(
+                  `/batch/${currentBatch.id}/daily-data`,
+                  buildPayload(line, key, animalId),
+                ),
+              );
+            }
+          }
+        } else {
+          const animal = (selectedStage.animals || []).find(
+            (a: Row) => a.animal_id === entryScope,
+          );
+          const lines: Row[] = animal?.lines || [];
+          for (const line of lines) {
+            if (!dataEntryCanSave(line, entryScope)) continue;
+            const key = entryKey(line.line_id, entryScope);
+            tasks.push(
+              api.post(
+                `/batch/${currentBatch.id}/daily-data`,
+                buildPayload(line, key, entryScope),
+              ),
+            );
+          }
+        }
+      } else {
+        for (const line of dataEntryLines) {
+          if (!dataEntryCanSave(line, undefined)) continue;
+          const key = entryKey(line.line_id, undefined);
+          tasks.push(
+            api.post(
+              `/batch/${currentBatch.id}/daily-data`,
+              buildPayload(line, key, undefined),
+            ),
+          );
+        }
+      }
+
+      if (!tasks.length) {
+        setSaveErrorMsg('Nothing to save — enter at least one value first.');
+        return;
+      }
+
+      const results = await Promise.allSettled(tasks);
+      const failed = results.filter((r) => r.status === 'rejected').length;
+      if (failed) {
+        setSaveErrorMsg(
+          `${failed} of ${tasks.length} ${tasks.length === 1 ? 'entry' : 'entries'} failed to save — the rest saved as drafts.`,
+        );
+      } else {
+        setSaveSuccessMsg(
+          `✓ Saved ${tasks.length} ${tasks.length === 1 ? 'entry' : 'entries'} to draft.`,
+        );
+        setTimeout(() => setSaveSuccessMsg(''), 3500);
+      }
+      loadDataEntry();
+    } finally {
+      setSavingAllDraft(false);
     }
   };
 
@@ -1888,23 +1988,41 @@ export default function OperationalBatchDataEntry() {
             </div>
 
             {!isAnimalWise && (
-              <Button
-                size="sm"
-                onClick={handlePostEntry}
-                disabled={posting || locked}
-                className="nf-btn-primary text-xs h-8 gap-1.5 font-semibold"
-              >
-                {posting ? (
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <Lock className="w-3.5 h-3.5" />
+              <div className="flex items-center gap-2">
+                {!locked && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={handleSaveAllToDraft}
+                    disabled={savingAllDraft || posting}
+                    className="text-xs h-8 gap-1.5 font-semibold"
+                  >
+                    {savingAllDraft ? (
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Save className="w-3.5 h-3.5" />
+                    )}
+                    {savingAllDraft ? 'Saving…' : 'Save to Draft'}
+                  </Button>
                 )}
-                {locked
-                  ? 'Posted & Locked'
-                  : posting
-                    ? 'Posting…'
-                    : 'Post Entry'}
-              </Button>
+                <Button
+                  size="sm"
+                  onClick={handlePostEntry}
+                  disabled={posting || locked}
+                  className="nf-btn-primary text-xs h-8 gap-1.5 font-semibold"
+                >
+                  {posting ? (
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Lock className="w-3.5 h-3.5" />
+                  )}
+                  {locked
+                    ? 'Posted & Locked'
+                    : posting
+                      ? 'Posting…'
+                      : 'Post Entry'}
+                </Button>
+              </div>
             )}
 
             {isAnimalWise && selectedStage && (
@@ -1934,19 +2052,35 @@ export default function OperationalBatchDataEntry() {
                     <Lock className="h-3.5 w-3.5" /> Posted & Locked
                   </span>
                 ) : (
-                  <Button
-                    size="sm"
-                    onClick={handlePostStageDay}
-                    disabled={stageActionBusy}
-                    className="nf-btn-primary text-xs h-8 gap-1.5 font-semibold"
-                  >
-                    {stageActionBusy ? (
-                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                    ) : (
-                      <Lock className="w-3.5 h-3.5" />
-                    )}
-                    {stageActionBusy ? t('blSaving') : 'Post Stage Data'}
-                  </Button>
+                  <>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={handleSaveAllToDraft}
+                      disabled={savingAllDraft || stageActionBusy}
+                      className="text-xs h-8 gap-1.5 font-semibold"
+                    >
+                      {savingAllDraft ? (
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Save className="w-3.5 h-3.5" />
+                      )}
+                      {savingAllDraft ? 'Saving…' : 'Save to Draft'}
+                    </Button>
+                    <Button
+                      size="sm"
+                      onClick={handlePostStageDay}
+                      disabled={stageActionBusy}
+                      className="nf-btn-primary text-xs h-8 gap-1.5 font-semibold"
+                    >
+                      {stageActionBusy ? (
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Lock className="w-3.5 h-3.5" />
+                      )}
+                      {stageActionBusy ? t('blSaving') : 'Post Stage Data'}
+                    </Button>
+                  </>
                 )}
               </div>
             )}

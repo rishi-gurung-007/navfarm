@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   Plus,
@@ -141,6 +141,16 @@ export default function BatchPanel() {
   const [animalSearch, setAnimalSearch] = useState('');
   const [animalGenderFilter, setAnimalGenderFilter] = useState('');
   const [animalStageFilter, setAnimalStageFilter] = useState('');
+  // Off by default: the picker's job is finding animals to ADD, so hiding
+  // ones already spoken for elsewhere is the useful default. Toggling this
+  // on is for the "which animals exist at all" question — e.g. confirming
+  // why a CSV row didn't come through selected.
+  const [showAllAnimals, setShowAllAnimals] = useState(false);
+  const [csvImportResult, setCsvImportResult] = useState<{
+    matched: number;
+    errors: string[];
+  } | null>(null);
+  const csvFileInputRef = useRef<HTMLInputElement>(null);
   const [inputLines, setInputLines] = useState<Row[]>([emptyInputLine()]);
   const [stdForm, setStdForm] = useState<Row>({
     std_output_quantity: '',
@@ -388,6 +398,8 @@ export default function BatchPanel() {
     setAnimalSearch('');
     setAnimalGenderFilter('');
     setAnimalStageFilter('');
+    setShowAllAnimals(false);
+    setCsvImportResult(null);
     setInputLines([emptyInputLine()]);
     setStdForm({
       std_output_quantity: '',
@@ -423,6 +435,8 @@ export default function BatchPanel() {
     setAnimalSearch('');
     setAnimalGenderFilter('');
     setAnimalStageFilter('');
+    setShowAllAnimals(false);
+    setCsvImportResult(null);
     setInputLines(
       batch.input_lines?.length
         ? batch.input_lines.map((l: Row) => ({
@@ -481,9 +495,14 @@ export default function BatchPanel() {
   // Editing a DRAFT ANIMAL_WISE batch: its own already-assigned animals must
   // still show up here (already-checked, and uncheckable to remove them) —
   // "unassigned" alone would hide every animal the batch already has.
+  // "Show all" widens this further, to every animal in the LOB regardless of
+  // assignment — the assigned ones just render clearly marked and
+  // unselectable (isAssignedElsewhere below), not silently hidden.
+  const isAssignedElsewhere = (a: Row) =>
+    !!a.current_batch_id && a.current_batch_id !== editingBatchId;
   const unassignedAnimalCandidates = animalCandidates.filter(
     (a) =>
-      (!a.current_batch_id || a.current_batch_id === editingBatchId) &&
+      (showAllAnimals || !isAssignedElsewhere(a)) &&
       (!header.lob_id || a.lob_id === header.lob_id),
   );
   // Stage options offered in the filter dropdown are only the stages actually
@@ -549,19 +568,187 @@ export default function BatchPanel() {
       return next;
     });
   };
+  // "Select all" only ever acts on rows the user could click one at a time —
+  // an animal shown-but-assigned-elsewhere (showAllAnimals view) is display
+  // only, never part of the bulk toggle.
+  const selectableFilteredCandidates = filteredAnimalCandidates.filter(
+    (a) => !isAssignedElsewhere(a),
+  );
   const allFilteredSelected =
-    filteredAnimalCandidates.length > 0 &&
-    filteredAnimalCandidates.every((a) => selectedAnimalIds.has(a.animal_id));
+    selectableFilteredCandidates.length > 0 &&
+    selectableFilteredCandidates.every((a) =>
+      selectedAnimalIds.has(a.animal_id),
+    );
   const toggleSelectAllFiltered = () => {
     setSelectedAnimalIds((prev) => {
       const next = new Set(prev);
       if (allFilteredSelected) {
-        filteredAnimalCandidates.forEach((a) => next.delete(a.animal_id));
+        selectableFilteredCandidates.forEach((a) => next.delete(a.animal_id));
       } else {
-        filteredAnimalCandidates.forEach((a) => next.add(a.animal_id));
+        selectableFilteredCandidates.forEach((a) => next.add(a.animal_id));
       }
       return next;
     });
+  };
+
+  // One field per exported column, quoted whenever it might carry a comma —
+  // reused by both the export (encode) and import (decode expects the same
+  // header names) so the round trip stays honest.
+  const csvEscape = (value: string) =>
+    /[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
+
+  const handleExportAnimalsCsv = () => {
+    const rows = filteredAnimalCandidates;
+    const header = [
+      'animal_code',
+      'ear_tag',
+      'rfid_tag',
+      'gender',
+      'animal_type',
+      'breed',
+      'stage',
+      'location',
+      'assignment_status',
+    ];
+    const lines = [header.join(',')];
+    for (const a of rows) {
+      lines.push(
+        [
+          a.animal_code || '',
+          a.ear_tag || '',
+          a.rfid_tag || '',
+          a.gender || '',
+          a.animal_type || '',
+          breedLabel(a.breed_id),
+          stageLabel(a.current_stage_id),
+          locationLabel(a.current_location_id),
+          isAssignedElsewhere(a) ? 'ASSIGNED' : 'AVAILABLE',
+        ]
+          .map((v) => csvEscape(String(v)))
+          .join(','),
+      );
+    }
+    const blob = new Blob([lines.join('\n')], {
+      type: 'text/csv;charset=utf-8;',
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `animals_${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  /** Minimal RFC4180 line-splitter — handles quoted fields containing commas
+   *  or escaped quotes, which a plain split(',') would mangle. */
+  const parseCsv = (text: string): string[][] => {
+    const rows: string[][] = [];
+    let row: string[] = [];
+    let field = '';
+    let inQuotes = false;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      if (inQuotes) {
+        if (c === '"' && text[i + 1] === '"') {
+          field += '"';
+          i++;
+        } else if (c === '"') {
+          inQuotes = false;
+        } else {
+          field += c;
+        }
+      } else if (c === '"') {
+        inQuotes = true;
+      } else if (c === ',') {
+        row.push(field);
+        field = '';
+      } else if (c === '\n' || c === '\r') {
+        if (c === '\r' && text[i + 1] === '\n') i++;
+        row.push(field);
+        field = '';
+        if (row.some((v) => v.trim() !== '')) rows.push(row);
+        row = [];
+      } else {
+        field += c;
+      }
+    }
+    if (field !== '' || row.length) {
+      row.push(field);
+      if (row.some((v) => v.trim() !== '')) rows.push(row);
+    }
+    return rows;
+  };
+
+  const handleImportAnimalsCsv = async (file: File) => {
+    setCsvImportResult(null);
+    const text = await file.text();
+    const rows = parseCsv(text);
+    if (rows.length < 1) {
+      setCsvImportResult({ matched: 0, errors: ['The file is empty.'] });
+      return;
+    }
+    const headerRow = rows[0].map((h) => h.trim().toLowerCase());
+    const codeCol = headerRow.indexOf('animal_code');
+    const earTagCol = headerRow.indexOf('ear_tag');
+    if (codeCol === -1 && earTagCol === -1) {
+      setCsvImportResult({
+        matched: 0,
+        errors: [
+          "The file needs an 'animal_code' (or 'ear_tag') column — export the current list to see the expected format.",
+        ],
+      });
+      return;
+    }
+
+    const byCode = new Map(
+      animalCandidates
+        .filter((a) => a.animal_code)
+        .map((a) => [String(a.animal_code).trim().toLowerCase(), a]),
+    );
+    const byEarTag = new Map(
+      animalCandidates
+        .filter((a) => a.ear_tag)
+        .map((a) => [String(a.ear_tag).trim().toLowerCase(), a]),
+    );
+
+    const errors: string[] = [];
+    const toSelect = new Set<string>();
+    const dataRows = rows.slice(1);
+    for (let i = 0; i < dataRows.length; i++) {
+      const line = i + 2; // 1-based, plus the header row
+      const raw =
+        (codeCol !== -1 ? dataRows[i][codeCol] : '') ||
+        (earTagCol !== -1 ? dataRows[i][earTagCol] : '');
+      const key = raw.trim();
+      if (!key) {
+        errors.push(`Row ${line}: identifier is empty.`);
+        continue;
+      }
+      const animal =
+        byCode.get(key.toLowerCase()) || byEarTag.get(key.toLowerCase());
+      if (!animal) {
+        errors.push(`Row ${line}: '${key}' does not match any animal.`);
+        continue;
+      }
+      if (header.lob_id && animal.lob_id !== header.lob_id) {
+        errors.push(
+          `Row ${line}: '${key}' is not in the selected Line of Business.`,
+        );
+        continue;
+      }
+      if (isAssignedElsewhere(animal)) {
+        errors.push(`Row ${line}: '${key}' is already assigned to a batch.`);
+        continue;
+      }
+      toSelect.add(animal.animal_id);
+    }
+
+    if (toSelect.size) {
+      setSelectedAnimalIds((prev) => new Set([...prev, ...toSelect]));
+    }
+    setCsvImportResult({ matched: toSelect.size, errors });
   };
 
   const setInputLineField = (idx: number, key: string, value: any) => {
@@ -2091,7 +2278,7 @@ export default function BatchPanel() {
                   style={S.sub}
                 >
                   Select Animals ({selectedAnimalIds.size} of{' '}
-                  {filteredAnimalCandidates.length} selected)
+                  {selectableFilteredCandidates.length} selected)
                 </p>
                 <div className="flex items-center gap-2">
                   <select
@@ -2132,6 +2319,79 @@ export default function BatchPanel() {
                   </div>
                 </div>
               </div>
+              <div className="flex items-center justify-between gap-3">
+                <label
+                  className="flex items-center gap-1.5 text-[11px] font-semibold"
+                  style={S.sub}
+                >
+                  <input
+                    type="checkbox"
+                    checked={showAllAnimals}
+                    onChange={(e) => setShowAllAnimals(e.target.checked)}
+                  />
+                  Show all animals (including already-assigned)
+                </label>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleExportAnimalsCsv}
+                    disabled={filteredAnimalCandidates.length === 0}
+                    className="rounded-lg border px-2.5 py-1 text-[11px] font-semibold disabled:opacity-50"
+                    style={S.surface}
+                  >
+                    Export CSV
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => csvFileInputRef.current?.click()}
+                    className="rounded-lg border px-2.5 py-1 text-[11px] font-semibold"
+                    style={S.surface}
+                  >
+                    Import CSV
+                  </button>
+                  <input
+                    ref={csvFileInputRef}
+                    type="file"
+                    accept=".csv,text/csv"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) handleImportAnimalsCsv(file);
+                      e.target.value = '';
+                    }}
+                  />
+                </div>
+              </div>
+              {csvImportResult && (
+                <div
+                  className="rounded-lg border px-3 py-2 text-[11px]"
+                  style={S.surface}
+                >
+                  <p className="font-semibold" style={S.primary}>
+                    {csvImportResult.matched} animal
+                    {csvImportResult.matched === 1 ? '' : 's'} selected from
+                    file.
+                    {csvImportResult.errors.length > 0 &&
+                      ` ${csvImportResult.errors.length} row${csvImportResult.errors.length === 1 ? '' : 's'} could not be matched:`}
+                  </p>
+                  {csvImportResult.errors.length > 0 && (
+                    <ul
+                      className="mt-1 list-disc pl-4"
+                      style={{ color: 'var(--danger)' }}
+                    >
+                      {csvImportResult.errors.slice(0, 10).map((e, i) => (
+                        <li key={i}>{e}</li>
+                      ))}
+                      {csvImportResult.errors.length > 10 && (
+                        <li>
+                          +{csvImportResult.errors.length - 10} more row
+                          {csvImportResult.errors.length - 10 === 1 ? '' : 's'}…
+                        </li>
+                      )}
+                    </ul>
+                  )}
+                </div>
+              )}
               {!header.lob_id ? (
                 <p className="text-xs" style={S.muted}>
                   Select a Line of Business first.
@@ -2183,11 +2443,19 @@ export default function BatchPanel() {
                     <TableBody>
                       {filteredAnimalCandidates.map((a) => {
                         const selected = selectedAnimalIds.has(a.animal_id);
+                        const assignedElsewhere = isAssignedElsewhere(a);
                         return (
                           <TableRow
                             key={a.animal_id}
-                            onClick={() => toggleAnimalSelected(a.animal_id)}
-                            className="cursor-pointer"
+                            onClick={() =>
+                              !assignedElsewhere &&
+                              toggleAnimalSelected(a.animal_id)
+                            }
+                            className={
+                              assignedElsewhere
+                                ? 'cursor-not-allowed opacity-60'
+                                : 'cursor-pointer'
+                            }
                             style={
                               selected
                                 ? { backgroundColor: 'var(--surface-raised)' }
@@ -2198,6 +2466,7 @@ export default function BatchPanel() {
                               <input
                                 type="checkbox"
                                 checked={selected}
+                                disabled={assignedElsewhere}
                                 onChange={() =>
                                   toggleAnimalSelected(a.animal_id)
                                 }
@@ -2229,8 +2498,21 @@ export default function BatchPanel() {
                             <TableCell className="px-3 py-1.5" style={S.sub}>
                               {locationLabel(a.current_location_id)}
                             </TableCell>
-                            <TableCell className="px-3 py-1.5" style={S.sub}>
-                              {a.status || '—'}
+                            <TableCell className="px-3 py-1.5">
+                              {assignedElsewhere ? (
+                                <span
+                                  className="rounded-full px-2 py-0.5 text-[10px] font-bold"
+                                  style={{
+                                    backgroundColor:
+                                      'var(--danger-subtle, #fee2e2)',
+                                    color: 'var(--danger)',
+                                  }}
+                                >
+                                  Assigned
+                                </span>
+                              ) : (
+                                <span style={S.sub}>{a.status || '—'}</span>
+                              )}
                             </TableCell>
                           </TableRow>
                         );
