@@ -1366,3 +1366,19 @@ it answered no `total` and rejected `filter[column]`, being older than that work
 **Measure a merge before arguing about it.** The estimate from reading the file
 list was 17 conflicts; the dry run found 7, and most of those were generated
 files nobody hand-edits.
+
+## Foundation posting repairs precede feature work
+*Rishi's instruction, 2026-09-14; handoff §2 F1–F4.*
+
+An omitted GL dimension imposes no constraint; a supplied dimension matches its
+value or a NULL wildcard. The old predicate demanded NULL when callers omitted
+valuation, rejecting every batch cost against the seeded mappings. Removed the
+demo detail seed's FIFO/category/Gestation pins and repaired the existing 29
+company mappings using `db-repair-demo-gl-dimensions`: reviewed `--verify` first,
+then `--apply`. MySQL reports 29/29 wildcard valuation, category and stage;
+NOB/LOB and account assignments remain as they were. The regression test failed
+on the old SQL predicate and all five GL tests pass with the fix. Live posting
+verification follows F2/F3; this entry does not claim it has run yet.
+
+These are technical repairs explicitly requested by Rishi, not new client
+accounting rules. Farm-access design remains deferred pending his scoping answer.

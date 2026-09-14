@@ -240,23 +240,7 @@ export async function enrichDemoMasters(conn: mysql.Connection, tenantId: string
      SET b.location_id = l.location_id
      WHERE b.tenant_id = ? AND b.location_id IS NULL`, [tenantId]);
 
-  // ---- GL mappings: the costing dimensions the posting rule varies by.
-  await run('gl mapping detail',
-    `UPDATE gl_mapping_master SET valuation_method = COALESCE(valuation_method, 'FIFO') WHERE tenant_id = ?`, [tenantId]);
-  await run('gl mapping category',
-    `UPDATE gl_mapping_master m
-       JOIN item_category_master c ON c.tenant_id = m.tenant_id AND (c.company_id <=> m.company_id)
-         AND c.category_name = 'Finished Swine Feeds & Diets'
-     SET m.item_category_id = c.category_id
-     WHERE m.tenant_id = ? AND m.item_category_id IS NULL
-       AND m.transaction_type IN ('BATCH_CONSUMPTION','CONSUMPTION','BATCH_INPUT')`, [tenantId]);
-  // Biological postings vary by the stage the animal is in, so those rules name one.
-  await run('gl mapping stage',
-    `UPDATE gl_mapping_master m
-       JOIN stage_master s ON s.tenant_id = m.tenant_id AND (s.company_id <=> m.company_id)
-         AND s.stage_code = 'GESTATION'
-     SET m.stage_id = s.stage_id
-     WHERE m.tenant_id = ? AND m.stage_id IS NULL AND m.transaction_type LIKE 'BIO_%'`, [tenantId]);
+  // GL dimensions stay wildcard unless an actual posting rule constrains them.
 
   // ---- Resources: the cost account they post to, and licence renewal.
   await run('resource gl account',

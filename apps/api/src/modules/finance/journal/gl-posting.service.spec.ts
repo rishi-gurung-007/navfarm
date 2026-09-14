@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { GlPostingService } from './gl-posting.service';
 import { JournalService } from './journal.service';
 import { ClsService } from 'nestjs-cls';
+import { MySqlDialect } from 'drizzle-orm/mysql-core';
 import { BadRequestException } from '@nestjs/common';
 
 describe('GlPostingService', () => {
@@ -106,4 +107,19 @@ describe('GlPostingService', () => {
     expect(mockDbSelect).toHaveBeenCalledTimes(1); // no item lookup for postBatchCostEntry
     expect(mockJournalService.createAndPostSystemJournal).toHaveBeenCalled();
   });
+  it('does not constrain dimensions omitted by batch costs, but retains supplied dimensions', async () => {
+    let query: any;
+    mockDbSelect.mockReturnValueOnce({ from: () => ({ where: (condition: any) => {
+      query = new MySqlDialect().sqlToQuery(condition);
+      return [{ debit_gl_account_id: 'gl-dr', credit_gl_account_id: 'gl-cr' }];
+    } }) });
+    await service.postBatchCostEntry({ tenantId: 'tenant-1', companyId: 'comp-1',
+      transactionType: 'OVERHEAD', amount: 50, documentNo: 'BATCH-001',
+      postingDate: '2026-06-01', nobId: 'nob-1' });
+    expect(query.sql).not.toMatch(/valuation_method|item_category_id|stage_id|lob_id/);
+    expect(query.sql).toContain('`nob_id` = ?');
+    expect(query.sql).toContain('`nob_id` is null');
+    expect(query.params).toContain('nob-1');
+  });
+
 });

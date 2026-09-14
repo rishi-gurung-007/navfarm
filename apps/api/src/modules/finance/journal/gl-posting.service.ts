@@ -57,8 +57,9 @@ export class GlPostingService {
     for (const key of Object.keys(dimensionCol) as Array<keyof typeof dimensionCol>) {
       const value = context[key];
       const col = dimensionCol[key];
-      // A mapping matches this dimension if it's wildcard (NULL) or pinned to this exact value.
-      conditions.push((value ? or(eq(col, value), isNull(col)) : isNull(col))!);
+      // An omitted dimension imposes no constraint. Supplied dimensions accept
+      // their exact value or a wildcard mapping.
+      if (value != null) conditions.push(or(eq(col, value), isNull(col))!);
     }
 
     const mappings = await this.db
