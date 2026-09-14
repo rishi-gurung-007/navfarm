@@ -6,7 +6,7 @@ import { JwtStrategy } from './jwt.strategy';
 
 describe('JwtStrategy.validate', () => {
   const dialect = new MySqlDialect();
-  const user = { user_id: 'user-1', email: 'person@example.test', full_name: 'Test Person', tenant_id: 'tenant-1', company_id: 'company-1', user_type: 'STANDARD_USER', is_active: true, deleted_at: null as string | null };
+  const user = { user_id: 'user-1', email: 'person@example.test', full_name: 'Test Person', tenant_id: 'tenant-1', company_id: 'company-1', farm_id: 'farm-1', user_type: 'STANDARD_USER', is_active: true, deleted_at: null as string | null };
   let where: jest.Mock;
   let strategy: JwtStrategy;
 
@@ -42,5 +42,11 @@ describe('JwtStrategy.validate', () => {
     await expect(strategy.validate({ sub: 'user-1', type: 'refresh' })).rejects.toThrow(UnauthorizedException);
     user.is_active = false;
     await expect(strategy.validate({ sub: 'user-1', type: 'access' })).rejects.toThrow(UnauthorizedException);
+  });
+
+  it('carries the assigned farm so the guard can bound a standard user', async () => {
+    // Arrange the existing user-row mock to return farm_id, then:
+    const user = await strategy.validate({ sub: 'user-1', type: 'access' } as any);
+    expect(user).toMatchObject({ farmId: 'farm-1' });
   });
 });

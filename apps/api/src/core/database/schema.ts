@@ -284,6 +284,9 @@ export const companyCurrencyConfig = mysqlTable('company_currency_config', {
 export const userMaster = mysqlTable('user_master', {
   user_id: varchar('user_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
   company_id: varchar('company_id', { length: 36 }).notNull().references(() => companyMaster.company_id, { onDelete: 'restrict' }),
+  // A STANDARD_USER's one farm (a top-level location). Null for every other
+  // user type, whose farm reach comes from their company or LOB scope instead.
+  farm_id: varchar('farm_id', { length: 36 }).references((): AnyMySqlColumn => locationMaster.location_id, { onDelete: 'restrict' }),
   tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
   full_name: varchar('full_name', { length: 200 }).notNull(),
   email: varchar('email', { length: 200 }).notNull().unique(),
@@ -2006,6 +2009,9 @@ export const batchHeader = mysqlTable('batch_header', {
   operational_area_id: varchar('operational_area_id', { length: 36 }),
   shed_id: varchar('shed_id', { length: 36 }),
   location_id: varchar('location_id', { length: 36 }),
+  // The farm the batch runs on — the access boundary for everything recorded
+  // against it. Derived from its location on create; see farm-scope.ts.
+  farm_id: varchar('farm_id', { length: 36 }),
   // Config lineage for the renew()/copy-forward flow (perpetual/seasonal LOBs
   // like orchards, apiaries) — distinct from batch_input_line.source_batch_id,
   // which tracks cost traceability. No FK constraint, same lightweight
@@ -2066,6 +2072,7 @@ export const batchHeader = mysqlTable('batch_header', {
     foreignColumns: [stageMaster.stage_id],
     name: 'batch_header_stage_id_fk'
   }).onDelete('set null'),
+  farmFk: foreignKey({ columns: [table.farm_id], foreignColumns: [locationMaster.location_id], name: 'batch_header_farm_id_fk' }).onDelete('restrict'),
   // Defense in depth alongside the row-locked generator in batch.service.ts —
   // a duplicate batch_no under concurrent inserts fails loudly instead of
   // silently corrupting the document sequence.

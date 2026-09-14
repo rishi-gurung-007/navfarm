@@ -652,6 +652,13 @@
       "when": 1789234405180,
       "tag": "0092_batch_animal_tracking",
       "breakpoints": true
+    },
+    {
+      "idx": 93,
+      "version": "5",
+      "when": 1789234406180,
+      "tag": "0093_farm_scope_columns",
+      "breakpoints": true
     }
   ]
 }
