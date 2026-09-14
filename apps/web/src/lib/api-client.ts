@@ -85,7 +85,10 @@ function clearSession() {
   const refreshToken = localStorage.getItem(AUTH_STORAGE.refreshToken);
   const tenantId = localStorage.getItem(AUTH_STORAGE.tenantId);
   if (token && refreshToken) {
-    const headers = new Headers({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` });
+    const headers = new Headers({
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    });
     if (tenantId) headers.set('x-tenant-id', tenantId);
     fetch(`${API_BASE_URL}/auth/logout`, {
       method: 'POST',
@@ -138,7 +141,11 @@ async function refreshAccessToken(): Promise<string> {
       // state. Send the browser to login instead of leaving a signed-out user
       // looking at a dashboard of zeroes.
       redirectToLogin();
-      throw new ApiError(errorMessage(payload, 'Your session has expired.'), response.status, payload);
+      throw new ApiError(
+        errorMessage(payload, 'Your session has expired.'),
+        response.status,
+        payload,
+      );
     }
     localStorage.setItem(AUTH_STORAGE.accessToken, payload.access_token);
     if (payload.refresh_token) {
@@ -151,29 +158,55 @@ async function refreshAccessToken(): Promise<string> {
   return refreshPromise;
 }
 
-export async function apiRequest<T>(path: string, options: ApiOptions = {}): Promise<T> {
-  const { body, tenantId = stored(AUTH_STORAGE.tenantId), retry = true, ...init } = options;
+export async function apiRequest<T>(
+  path: string,
+  options: ApiOptions = {},
+): Promise<T> {
+  const {
+    body,
+    tenantId = stored(AUTH_STORAGE.tenantId),
+    retry = true,
+    ...init
+  } = options;
   const headers = new Headers(init.headers);
-  const isFormData = body instanceof FormData || (body && typeof (body as any).append === 'function');
+  const isFormData =
+    body instanceof FormData ||
+    (body && typeof (body as any).append === 'function');
   if (!isFormData) headers.set('Content-Type', 'application/json');
   const token = stored(AUTH_STORAGE.accessToken);
   if (token) headers.set('Authorization', `Bearer ${token}`);
   if (tenantId) headers.set('x-tenant-id', tenantId);
   const activeCompanyId = stored('active_company_id');
   let userType: string | undefined;
-  try { userType = JSON.parse(stored(AUTH_STORAGE.user) || '{}').userType; } catch { /* Authentication handles an invalid stored session. */ }
-  const workspaceScope = stored('active_workspace_scope') || (userType === 'TENANT_ADMIN' ? 'TENANT' : ['OPERATIONAL_ADMIN', 'STANDARD_USER'].includes(userType || '') ? 'OPERATIONAL' : 'COMPANY');
+  try {
+    userType = JSON.parse(stored(AUTH_STORAGE.user) || '{}').userType;
+  } catch {
+    /* Authentication handles an invalid stored session. */
+  }
+  const workspaceScope =
+    stored('active_workspace_scope') ||
+    (userType === 'TENANT_ADMIN'
+      ? 'TENANT'
+      : ['OPERATIONAL_ADMIN', 'STANDARD_USER'].includes(userType || '')
+        ? 'OPERATIONAL'
+        : 'COMPANY');
   if (workspaceScope) headers.set('x-workspace-scope', workspaceScope);
-  if (activeCompanyId && workspaceScope !== 'TENANT') headers.set('x-active-company-id', activeCompanyId);
+  if (activeCompanyId && workspaceScope !== 'TENANT')
+    headers.set('x-active-company-id', activeCompanyId);
   else headers.delete('x-active-company-id');
   const activeAreaId = stored('active_operational_area_id');
-  if (activeAreaId && (!workspaceScope || workspaceScope === 'OPERATIONAL')) headers.set('x-active-operational-area-id', activeAreaId);
+  if (activeAreaId && (!workspaceScope || workspaceScope === 'OPERATIONAL'))
+    headers.set('x-active-operational-area-id', activeAreaId);
   else headers.delete('x-active-operational-area-id');
 
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...init,
     headers,
-    body: isFormData ? (body as any) : body === undefined ? undefined : JSON.stringify(body),
+    body: isFormData
+      ? (body as any)
+      : body === undefined
+        ? undefined
+        : JSON.stringify(body),
   });
 
   if (response.status === 401 && token && retry && path !== '/auth/refresh') {
@@ -182,19 +215,29 @@ export async function apiRequest<T>(path: string, options: ApiOptions = {}): Pro
     return apiRequest<T>(path, { ...options, headers, retry: false });
   }
 
-  const payload = response.status === 204 ? null : await response.json().catch(() => null);
+  const payload =
+    response.status === 204 ? null : await response.json().catch(() => null);
   if (!response.ok) {
-    throw new ApiError(errorMessage(payload, `Request failed (${response.status}).`), response.status, payload);
+    throw new ApiError(
+      errorMessage(payload, `Request failed (${response.status}).`),
+      response.status,
+      payload,
+    );
   }
   return payload as T;
 }
 
 export const api = {
-  get: <T>(path: string, options?: ApiOptions) => apiRequest<T>(path, { ...options, method: 'GET' }),
-  post: <T>(path: string, body?: unknown, options?: ApiOptions) => apiRequest<T>(path, { ...options, method: 'POST', body }),
-  put: <T>(path: string, body?: unknown, options?: ApiOptions) => apiRequest<T>(path, { ...options, method: 'PUT', body }),
-  patch: <T>(path: string, body?: unknown, options?: ApiOptions) => apiRequest<T>(path, { ...options, method: 'PATCH', body }),
-  delete: <T>(path: string, options?: ApiOptions) => apiRequest<T>(path, { ...options, method: 'DELETE' }),
+  get: <T>(path: string, options?: ApiOptions) =>
+    apiRequest<T>(path, { ...options, method: 'GET' }),
+  post: <T>(path: string, body?: unknown, options?: ApiOptions) =>
+    apiRequest<T>(path, { ...options, method: 'POST', body }),
+  put: <T>(path: string, body?: unknown, options?: ApiOptions) =>
+    apiRequest<T>(path, { ...options, method: 'PUT', body }),
+  patch: <T>(path: string, body?: unknown, options?: ApiOptions) =>
+    apiRequest<T>(path, { ...options, method: 'PATCH', body }),
+  delete: <T>(path: string, options?: ApiOptions) =>
+    apiRequest<T>(path, { ...options, method: 'DELETE' }),
 };
 
 export function persistAuthSession(session: {
@@ -208,7 +251,9 @@ export function persistAuthSession(session: {
   const uiLanguage = (session.user as { uiLanguage?: string }).uiLanguage;
   if (uiLanguage) {
     localStorage.setItem('navfarm_lang', uiLanguage);
-    window.dispatchEvent(new CustomEvent('navfarm:lang-sync', { detail: uiLanguage }));
+    window.dispatchEvent(
+      new CustomEvent('navfarm:lang-sync', { detail: uiLanguage }),
+    );
   }
   const tenantId = (session.user as { tenantId?: string }).tenantId;
   if (tenantId) {

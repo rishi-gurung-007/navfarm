@@ -1,19 +1,28 @@
-import { 
-  Controller, 
-  Get, 
-  Post, 
-  Put, 
-  Delete, 
-  Param, 
-  Body, 
-  Query, 
-  Req, 
-  UseGuards, 
-  Patch 
+import {
+  Controller,
+  Get,
+  Post,
+  Put,
+  Delete,
+  Param,
+  Body,
+  Query,
+  Req,
+  UseGuards,
+  Patch,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth, ApiParam } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiBearerAuth,
+  ApiParam,
+} from '@nestjs/swagger';
 import { ItemCategoryService } from './item-category.service';
-import { CreateItemCategoryDto, UpdateItemCategoryDto, QueryItemCategoryDto } from './dto/item-category.dto';
+import {
+  CreateItemCategoryDto,
+  UpdateItemCategoryDto,
+  QueryItemCategoryDto,
+} from './dto/item-category.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
@@ -30,11 +39,15 @@ export class ItemCategoryController {
   @ApiOperation({ summary: 'Register a new Item Category' })
   async create(@Body() dto: CreateItemCategoryDto, @Req() req: any) {
     const tenantId = req.user?.tenantId || req['tenantId'];
-    const result = await this.itemCategoryService.create(dto, tenantId, req.user);
+    const result = await this.itemCategoryService.create(
+      dto,
+      tenantId,
+      req.user,
+    );
     return {
       success: true,
       message: 'Item category registered successfully.',
-      data: result
+      data: result,
     };
   }
 
@@ -47,7 +60,12 @@ export class ItemCategoryController {
     return {
       success: true,
       message: 'Item categories retrieved successfully.',
-      data: result
+      // `data` stays the array every caller already reads; total/limit/offset
+      // are siblings the list screen pages on.
+      data: result.data,
+      total: result.total,
+      limit: result.limit,
+      offset: result.offset,
     };
   }
 
@@ -60,7 +78,7 @@ export class ItemCategoryController {
     return {
       success: true,
       message: 'Item category details retrieved.',
-      data: result
+      data: result,
     };
   }
 
@@ -68,13 +86,22 @@ export class ItemCategoryController {
   @RequirePermission('MASTER_DATA', 'ITEM_CATEGORY', 'edit')
   @ApiOperation({ summary: 'Update details of an existing Item Category' })
   @ApiParam({ name: 'id', description: 'Item Category UUID' })
-  async update(@Param('id') id: string, @Body() dto: UpdateItemCategoryDto, @Req() req: any) {
+  async update(
+    @Param('id') id: string,
+    @Body() dto: UpdateItemCategoryDto,
+    @Req() req: any,
+  ) {
     const tenantId = req.user?.tenantId || req['tenantId'];
-    const result = await this.itemCategoryService.update(id, dto, tenantId, req.user);
+    const result = await this.itemCategoryService.update(
+      id,
+      dto,
+      tenantId,
+      req.user,
+    );
     return {
       success: true,
       message: 'Item category updated successfully.',
-      data: result
+      data: result,
     };
   }
 
@@ -84,7 +111,11 @@ export class ItemCategoryController {
   @ApiParam({ name: 'id', description: 'Item Category UUID' })
   async remove(@Param('id') id: string, @Req() req: any) {
     const tenantId = req.user?.tenantId || req['tenantId'];
-    const result = await this.itemCategoryService.remove(id, tenantId, req.user);
+    const result = await this.itemCategoryService.remove(
+      id,
+      tenantId,
+      req.user,
+    );
     return result;
   }
 
@@ -94,11 +125,15 @@ export class ItemCategoryController {
   @ApiParam({ name: 'id', description: 'Item Category UUID' })
   async restore(@Param('id') id: string, @Req() req: any) {
     const tenantId = req.user?.tenantId || req['tenantId'];
-    const result = await this.itemCategoryService.restore(id, tenantId, req.user);
+    const result = await this.itemCategoryService.restore(
+      id,
+      tenantId,
+      req.user,
+    );
     return {
       success: true,
       message: 'Item category restored successfully.',
-      data: result
+      data: result,
     };
   }
 }

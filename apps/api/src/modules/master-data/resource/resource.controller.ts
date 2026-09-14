@@ -1,24 +1,29 @@
-import { 
-  Controller, 
-  Get, 
-  Post, 
-  Put, 
-  Delete, 
-  Param, 
-  Body, 
-  Query, 
-  Req, 
-  UseGuards, 
-  Patch 
+import {
+  Controller,
+  Get,
+  Post,
+  Put,
+  Delete,
+  Param,
+  Body,
+  Query,
+  Req,
+  UseGuards,
+  Patch,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth, ApiParam } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiBearerAuth,
+  ApiParam,
+} from '@nestjs/swagger';
 import { ResourceService } from './resource.service';
-import { 
-  CreateResourceDto, 
-  UpdateResourceDto, 
+import {
+  CreateResourceDto,
+  UpdateResourceDto,
   QueryResourceDto,
   CreateMaintenanceLogDto,
-  UpdateMaintenanceLogDto
+  UpdateMaintenanceLogDto,
 } from './dto/resource.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
@@ -35,14 +40,16 @@ export class ResourceController {
 
   @Post()
   @RequirePermission('MASTER_DATA', 'RESOURCE', 'create')
-  @ApiOperation({ summary: 'Register a new Resource (Labor/Equipment/Vehicle)' })
+  @ApiOperation({
+    summary: 'Register a new Resource (Labor/Equipment/Vehicle)',
+  })
   async create(@Body() dto: CreateResourceDto, @Req() req: any) {
     const tenantId = req.user?.tenantId || req['tenantId'];
     const result = await this.resourceService.create(dto, tenantId, req.user);
     return {
       success: true,
       message: 'Resource registered successfully.',
-      data: result
+      data: result,
     };
   }
 
@@ -55,7 +62,12 @@ export class ResourceController {
     return {
       success: true,
       message: 'Resources retrieved successfully.',
-      data: result
+      // `data` stays the array every caller already reads; total/limit/offset
+      // are siblings the list screen pages on.
+      data: result.data,
+      total: result.total,
+      limit: result.limit,
+      offset: result.offset,
     };
   }
 
@@ -68,7 +80,7 @@ export class ResourceController {
     return {
       success: true,
       message: 'Resource details retrieved.',
-      data: result
+      data: result,
     };
   }
 
@@ -76,13 +88,22 @@ export class ResourceController {
   @RequirePermission('MASTER_DATA', 'RESOURCE', 'edit')
   @ApiOperation({ summary: 'Update details of an existing Resource' })
   @ApiParam({ name: 'id', description: 'Resource UUID' })
-  async update(@Param('id') id: string, @Body() dto: UpdateResourceDto, @Req() req: any) {
+  async update(
+    @Param('id') id: string,
+    @Body() dto: UpdateResourceDto,
+    @Req() req: any,
+  ) {
     const tenantId = req.user?.tenantId || req['tenantId'];
-    const result = await this.resourceService.update(id, dto, tenantId, req.user);
+    const result = await this.resourceService.update(
+      id,
+      dto,
+      tenantId,
+      req.user,
+    );
     return {
       success: true,
       message: 'Resource updated successfully.',
-      data: result
+      data: result,
     };
   }
 
@@ -106,7 +127,7 @@ export class ResourceController {
     return {
       success: true,
       message: 'Resource restored successfully.',
-      data: result
+      data: result,
     };
   }
 
@@ -119,14 +140,19 @@ export class ResourceController {
   async createMaintenanceLog(
     @Param('id') id: string,
     @Body() dto: CreateMaintenanceLogDto,
-    @Req() req: any
+    @Req() req: any,
   ) {
     const tenantId = req.user?.tenantId || req['tenantId'];
-    const result = await this.resourceService.createMaintenanceLog(id, dto, tenantId, req.user);
+    const result = await this.resourceService.createMaintenanceLog(
+      id,
+      dto,
+      tenantId,
+      req.user,
+    );
     return {
       success: true,
       message: 'Maintenance log created successfully.',
-      data: result
+      data: result,
     };
   }
 
@@ -136,11 +162,14 @@ export class ResourceController {
   @ApiParam({ name: 'id', description: 'Resource UUID' })
   async findAllMaintenanceLogs(@Param('id') id: string, @Req() req: any) {
     const tenantId = req.user?.tenantId || req['tenantId'];
-    const result = await this.resourceService.findAllMaintenanceLogs(id, tenantId);
+    const result = await this.resourceService.findAllMaintenanceLogs(
+      id,
+      tenantId,
+    );
     return {
       success: true,
       message: 'Maintenance logs retrieved.',
-      data: result
+      data: result,
     };
   }
 
@@ -153,7 +182,7 @@ export class ResourceController {
     return {
       success: true,
       message: 'Maintenance log details retrieved.',
-      data: result
+      data: result,
     };
   }
 
@@ -164,14 +193,19 @@ export class ResourceController {
   async updateMaintenanceLog(
     @Param('logId') logId: string,
     @Body() dto: UpdateMaintenanceLogDto,
-    @Req() req: any
+    @Req() req: any,
   ) {
     const tenantId = req.user?.tenantId || req['tenantId'];
-    const result = await this.resourceService.updateMaintenanceLog(logId, dto, tenantId, req.user);
+    const result = await this.resourceService.updateMaintenanceLog(
+      logId,
+      dto,
+      tenantId,
+      req.user,
+    );
     return {
       success: true,
       message: 'Maintenance log updated successfully.',
-      data: result
+      data: result,
     };
   }
 
@@ -181,7 +215,11 @@ export class ResourceController {
   @ApiParam({ name: 'logId', description: 'Maintenance Log UUID' })
   async removeMaintenanceLog(@Param('logId') logId: string, @Req() req: any) {
     const tenantId = req.user?.tenantId || req['tenantId'];
-    const result = await this.resourceService.removeMaintenanceLog(logId, tenantId, req.user);
+    const result = await this.resourceService.removeMaintenanceLog(
+      logId,
+      tenantId,
+      req.user,
+    );
     return result;
   }
 }

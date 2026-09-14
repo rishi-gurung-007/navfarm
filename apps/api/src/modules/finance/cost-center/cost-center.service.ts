@@ -1,14 +1,30 @@
-import { companyCondition, masterScopeConditions } from '../../../common/master-data-scope';
-import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
+import {
+  companyCondition,
+  masterScopeConditions,
+} from '../../../common/master-data-scope';
+import {
+  Injectable,
+  NotFoundException,
+  ConflictException,
+  BadRequestException,
+} from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { eq, and, like, or, isNull, ne } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
-import { CreateCostCenterDto, UpdateCostCenterDto, QueryCostCenterDto } from './dto/cost-center.dto';
+import {
+  CreateCostCenterDto,
+  UpdateCostCenterDto,
+  QueryCostCenterDto,
+} from './dto/cost-center.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { generateCompositeCode } from '../../system/number-series/composite-code.util';
+import {
+  listFilterConditions,
+  runMasterList,
+} from '../../../common/master-list-query';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   return date.toISOString().slice(0, 19).replace('T', ' ');
@@ -34,10 +50,17 @@ export class CostCenterService {
     const [parent] = await this.db
       .select()
       .from(schema.costCenterMaster)
-      .where(and(eq(schema.costCenterMaster.cost_center_id, parentCostCenterId), isNull(schema.costCenterMaster.deleted_at)))
+      .where(
+        and(
+          eq(schema.costCenterMaster.cost_center_id, parentCostCenterId),
+          isNull(schema.costCenterMaster.deleted_at),
+        ),
+      )
       .limit(1);
     if (!parent) {
-      throw new NotFoundException(`Parent Cost Center with ID '${parentCostCenterId}' not found.`);
+      throw new NotFoundException(
+        `Parent Cost Center with ID '${parentCostCenterId}' not found.`,
+      );
     }
     return parent;
   }
@@ -48,28 +71,50 @@ export class CostCenterService {
       const [company] = await this.db
         .select()
         .from(schema.companyMaster)
-        .where(and(companyCondition(schema.companyMaster.company_id, dto.company_id), isNull(schema.companyMaster.deleted_at)))
+        .where(
+          and(
+            companyCondition(schema.companyMaster.company_id, dto.company_id),
+            isNull(schema.companyMaster.deleted_at),
+          ),
+        )
         .limit(1);
 
       if (!company) {
-        throw new NotFoundException(`Company with ID '${dto.company_id}' not found.`);
+        throw new NotFoundException(
+          `Company with ID '${dto.company_id}' not found.`,
+        );
       }
     }
 
     // 2. Verify parent cost center if specified
-    const parent = dto.parent_cost_center_id ? await this.findParentCostCenter(dto.parent_cost_center_id) : undefined;
+    const parent = dto.parent_cost_center_id
+      ? await this.findParentCostCenter(dto.parent_cost_center_id)
+      : undefined;
 
     // 3. Resolve a series for this cost_center_type, falling back to the master-alone series.
-    const seriesCode = await this.numberSeriesService.resolveSeriesFor('COST_CENTER', dto.cost_center_type, tenantId, dto.company_id);
+    const seriesCode = await this.numberSeriesService.resolveSeriesFor(
+      'COST_CENTER',
+      dto.cost_center_type,
+      tenantId,
+      dto.company_id,
+    );
 
     if (!seriesCode) {
       return this.createManual(dto, tenantId, userPayload);
     }
 
     const costCenterId = randomUUID();
-    const attempt = () => this.db.transaction((tx) => this.createAutoRecord(tx, {
-      dto, tenantId, seriesCode, parent, costCenterId, userPayload,
-    }));
+    const attempt = () =>
+      this.db.transaction((tx) =>
+        this.createAutoRecord(tx, {
+          dto,
+          tenantId,
+          seriesCode,
+          parent,
+          costCenterId,
+          userPayload,
+        }),
+      );
 
     let newCC: Awaited<ReturnType<typeof this.createAutoRecord>>;
     try {
@@ -80,7 +125,9 @@ export class CostCenterService {
         newCC = await attempt();
       } catch (retryErr) {
         if ((retryErr as { code?: string })?.code === 'ER_DUP_ENTRY') {
-          throw new ConflictException('Cost Center code collided with a concurrently created cost center; please retry.');
+          throw new ConflictException(
+            'Cost Center code collided with a concurrently created cost center; please retry.',
+          );
         }
         throw retryErr;
       }
@@ -100,9 +147,15 @@ export class CostCenterService {
   }
 
   /** No series configured for COST_CENTER[_<type>] — manual entry, exactly as before this feature existed. */
-  private async createManual(dto: CreateCostCenterDto, tenantId: string, userPayload?: any) {
+  private async createManual(
+    dto: CreateCostCenterDto,
+    tenantId: string,
+    userPayload?: any,
+  ) {
     if (!dto.cost_center_code) {
-      throw new BadRequestException('cost_center_code is required — no number series is configured for cost centers.');
+      throw new BadRequestException(
+        'cost_center_code is required — no number series is configured for cost centers.',
+      );
     }
 
     const existing = await this.db
@@ -112,14 +165,19 @@ export class CostCenterService {
         and(
           eq(schema.costCenterMaster.tenant_id, tenantId),
           companyCondition(schema.costCenterMaster.company_id, dto.company_id),
-          eq(schema.costCenterMaster.cost_center_code, dto.cost_center_code.toUpperCase()),
-          isNull(schema.costCenterMaster.deleted_at)
-        )
+          eq(
+            schema.costCenterMaster.cost_center_code,
+            dto.cost_center_code.toUpperCase(),
+          ),
+          isNull(schema.costCenterMaster.deleted_at),
+        ),
       )
       .limit(1);
 
     if (existing.length > 0) {
-      throw new ConflictException(`Cost Center with code '${dto.cost_center_code}' already exists in this company.`);
+      throw new ConflictException(
+        `Cost Center with code '${dto.cost_center_code}' already exists in this company.`,
+      );
     }
 
     const costCenterId = randomUUID();
@@ -135,7 +193,9 @@ export class CostCenterService {
       parent_cost_center_id: dto.parent_cost_center_id || null,
       is_active: true,
       status: 'ACTIVE',
-      extension_config: dto.extension_config ? JSON.stringify(dto.extension_config) : null,
+      extension_config: dto.extension_config
+        ? JSON.stringify(dto.extension_config)
+        : null,
       created_by: userPayload?.userId || null,
       updated_by: userPayload?.userId || null,
     };
@@ -172,9 +232,15 @@ export class CostCenterService {
       userPayload?: any;
     },
   ) {
-    const { dto, tenantId, seriesCode, parent, costCenterId, userPayload } = params;
+    const { dto, tenantId, seriesCode, parent, costCenterId, userPayload } =
+      params;
 
-    const series = await this.numberSeriesService.lockSeries(seriesCode, tenantId, dto.company_id, tx);
+    const series = await this.numberSeriesService.lockSeries(
+      seriesCode,
+      tenantId,
+      dto.company_id,
+      tx,
+    );
 
     let costCenterCode: string;
     if (series.allow_manual && dto.cost_center_code) {
@@ -184,16 +250,28 @@ export class CostCenterService {
         parentCode: parent.cost_center_code,
         prefix: series.prefix || seriesCode,
         seqLength: series.seq_length,
-        fetchSiblingCodes: () => tx
-          .select({ code: schema.costCenterMaster.cost_center_code })
-          .from(schema.costCenterMaster)
-          .where(and(
-            eq(schema.costCenterMaster.tenant_id, tenantId),
-            eq(schema.costCenterMaster.parent_cost_center_id, parent.cost_center_id),
-          )),
+        fetchSiblingCodes: () =>
+          tx
+            .select({ code: schema.costCenterMaster.cost_center_code })
+            .from(schema.costCenterMaster)
+            .where(
+              and(
+                eq(schema.costCenterMaster.tenant_id, tenantId),
+                eq(
+                  schema.costCenterMaster.parent_cost_center_id,
+                  parent.cost_center_id,
+                ),
+              ),
+            ),
       });
     } else {
-      costCenterCode = await this.numberSeriesService.generateNext(seriesCode, tenantId, dto.company_id, tx, dto as unknown as Record<string, unknown>);
+      costCenterCode = await this.numberSeriesService.generateNext(
+        seriesCode,
+        tenantId,
+        dto.company_id,
+        tx,
+        dto as unknown as Record<string, unknown>,
+      );
     }
 
     if (costCenterCode.length > 255) {
@@ -214,7 +292,9 @@ export class CostCenterService {
       parent_cost_center_id: dto.parent_cost_center_id || null,
       is_active: true,
       status: 'ACTIVE',
-      extension_config: dto.extension_config ? JSON.stringify(dto.extension_config) : null,
+      extension_config: dto.extension_config
+        ? JSON.stringify(dto.extension_config)
+        : null,
       created_by: userPayload?.userId || null,
       updated_by: userPayload?.userId || null,
     };
@@ -227,7 +307,12 @@ export class CostCenterService {
     const [cc] = await this.db
       .select()
       .from(schema.costCenterMaster)
-      .where(and(eq(schema.costCenterMaster.cost_center_id, id), isNull(schema.costCenterMaster.deleted_at)))
+      .where(
+        and(
+          eq(schema.costCenterMaster.cost_center_id, id),
+          isNull(schema.costCenterMaster.deleted_at),
+        ),
+      )
       .limit(1);
 
     if (!cc) {
@@ -239,16 +324,27 @@ export class CostCenterService {
 
   async findAll(query: QueryCostCenterDto, tenantId: string) {
     // No isNull(deleted_at) filter — list view shows both Active/Inactive states (toggle switch) so a blocked row can be found again and restored.
-    const conditions: any[] = [
-      eq(schema.costCenterMaster.tenant_id, tenantId),
-    ];
+    const conditions: any[] = [eq(schema.costCenterMaster.tenant_id, tenantId)];
 
-    conditions.push(...masterScopeConditions(this.cls, schema.costCenterMaster, query.companyId));
+    conditions.push(
+      ...masterScopeConditions(
+        this.cls,
+        schema.costCenterMaster,
+        query.companyId,
+      ),
+    );
     if (query.costCenterType) {
-      conditions.push(eq(schema.costCenterMaster.cost_center_type, query.costCenterType));
+      conditions.push(
+        eq(schema.costCenterMaster.cost_center_type, query.costCenterType),
+      );
     }
     if (query.parentCostCenterId) {
-      conditions.push(eq(schema.costCenterMaster.parent_cost_center_id, query.parentCostCenterId));
+      conditions.push(
+        eq(
+          schema.costCenterMaster.parent_cost_center_id,
+          query.parentCostCenterId,
+        ),
+      );
     }
     if (query.isActive !== undefined) {
       conditions.push(eq(schema.costCenterMaster.is_active, query.isActive));
@@ -257,26 +353,38 @@ export class CostCenterService {
       conditions.push(
         or(
           like(schema.costCenterMaster.cost_center_code, `%${query.search}%`),
-          like(schema.costCenterMaster.cost_center_name, `%${query.search}%`)
-        )
+          like(schema.costCenterMaster.cost_center_name, `%${query.search}%`),
+        ),
       );
     }
 
-    const limit = query.limit || 50;
-    const offset = query.offset || 0;
+    conditions.push(
+      ...listFilterConditions(schema.costCenterMaster, query.filter),
+    );
 
-    return this.db
-      .select()
-      .from(schema.costCenterMaster)
-      .where(and(...conditions))
-      .limit(limit)
-      .offset(offset);
+    // Rows and the matching count together, so the pager knows how many
+    // pages there really are rather than guessing from a full page.
+    return runMasterList(
+      this.db,
+      schema.costCenterMaster,
+      conditions,
+      query,
+      schema.costCenterMaster.cost_center_code,
+    );
   }
 
-  async update(id: string, dto: UpdateCostCenterDto, tenantId: string, userPayload?: any) {
+  async update(
+    id: string,
+    dto: UpdateCostCenterDto,
+    tenantId: string,
+    userPayload?: any,
+  ) {
     const cc = await this.findOne(id);
 
-    if (dto.cost_center_code && dto.cost_center_code.toUpperCase() !== cc.cost_center_code) {
+    if (
+      dto.cost_center_code &&
+      dto.cost_center_code.toUpperCase() !== cc.cost_center_code
+    ) {
       const existing = await this.db
         .select()
         .from(schema.costCenterMaster)
@@ -284,19 +392,27 @@ export class CostCenterService {
           and(
             eq(schema.costCenterMaster.tenant_id, tenantId),
             companyCondition(schema.costCenterMaster.company_id, cc.company_id),
-            eq(schema.costCenterMaster.cost_center_code, dto.cost_center_code.toUpperCase()),
+            eq(
+              schema.costCenterMaster.cost_center_code,
+              dto.cost_center_code.toUpperCase(),
+            ),
             ne(schema.costCenterMaster.cost_center_id, id),
-            isNull(schema.costCenterMaster.deleted_at)
-          )
+            isNull(schema.costCenterMaster.deleted_at),
+          ),
         )
         .limit(1);
 
       if (existing.length > 0) {
-        throw new ConflictException(`Cost Center with code '${dto.cost_center_code}' already exists in this company.`);
+        throw new ConflictException(
+          `Cost Center with code '${dto.cost_center_code}' already exists in this company.`,
+        );
       }
     }
 
-    if (dto.parent_cost_center_id && dto.parent_cost_center_id !== cc.parent_cost_center_id) {
+    if (
+      dto.parent_cost_center_id &&
+      dto.parent_cost_center_id !== cc.parent_cost_center_id
+    ) {
       if (dto.parent_cost_center_id === id) {
         throw new ConflictException('A Cost Center cannot be its own parent.');
       }
@@ -306,14 +422,19 @@ export class CostCenterService {
         .from(schema.costCenterMaster)
         .where(
           and(
-            eq(schema.costCenterMaster.cost_center_id, dto.parent_cost_center_id),
-            isNull(schema.costCenterMaster.deleted_at)
-          )
+            eq(
+              schema.costCenterMaster.cost_center_id,
+              dto.parent_cost_center_id,
+            ),
+            isNull(schema.costCenterMaster.deleted_at),
+          ),
         )
         .limit(1);
 
       if (!parent) {
-        throw new NotFoundException(`Parent Cost Center with ID '${dto.parent_cost_center_id}' not found.`);
+        throw new NotFoundException(
+          `Parent Cost Center with ID '${dto.parent_cost_center_id}' not found.`,
+        );
       }
     }
 
@@ -322,13 +443,18 @@ export class CostCenterService {
       updated_at: toMysqlTimestamp(),
     };
 
-    if (dto.cost_center_code !== undefined) updates.cost_center_code = dto.cost_center_code.toUpperCase();
-    if (dto.cost_center_name !== undefined) updates.cost_center_name = dto.cost_center_name;
-    if (dto.cost_center_type !== undefined) updates.cost_center_type = dto.cost_center_type;
-    if (dto.parent_cost_center_id !== undefined) updates.parent_cost_center_id = dto.parent_cost_center_id;
+    if (dto.cost_center_code !== undefined)
+      updates.cost_center_code = dto.cost_center_code.toUpperCase();
+    if (dto.cost_center_name !== undefined)
+      updates.cost_center_name = dto.cost_center_name;
+    if (dto.cost_center_type !== undefined)
+      updates.cost_center_type = dto.cost_center_type;
+    if (dto.parent_cost_center_id !== undefined)
+      updates.parent_cost_center_id = dto.parent_cost_center_id;
     if (dto.is_active !== undefined) updates.is_active = dto.is_active;
     if (dto.status !== undefined) updates.status = dto.status;
-    if (dto.extension_config !== undefined) updates.extension_config = JSON.stringify(dto.extension_config);
+    if (dto.extension_config !== undefined)
+      updates.extension_config = JSON.stringify(dto.extension_config);
 
     await this.db
       .update(schema.costCenterMaster)
@@ -359,13 +485,15 @@ export class CostCenterService {
       .where(
         and(
           eq(schema.costCenterMaster.parent_cost_center_id, id),
-          isNull(schema.costCenterMaster.deleted_at)
-        )
+          isNull(schema.costCenterMaster.deleted_at),
+        ),
       )
       .limit(1);
 
     if (subCCs.length > 0) {
-      throw new ConflictException('Cannot delete a Cost Center that has active sub-cost centers.');
+      throw new ConflictException(
+        'Cannot delete a Cost Center that has active sub-cost centers.',
+      );
     }
 
     const deletedTime = toMysqlTimestamp();
@@ -391,7 +519,10 @@ export class CostCenterService {
       newValues: { status: 'INACTIVE', deleted_at: deletedTime },
     });
 
-    return { success: true, message: `Cost Center '${cc.cost_center_name}' soft-deleted successfully.` };
+    return {
+      success: true,
+      message: `Cost Center '${cc.cost_center_name}' soft-deleted successfully.`,
+    };
   }
 
   async restore(id: string, tenantId: string, userPayload?: any) {
@@ -416,14 +547,19 @@ export class CostCenterService {
         .from(schema.costCenterMaster)
         .where(
           and(
-            eq(schema.costCenterMaster.cost_center_id, cc.parent_cost_center_id),
-            isNull(schema.costCenterMaster.deleted_at)
-          )
+            eq(
+              schema.costCenterMaster.cost_center_id,
+              cc.parent_cost_center_id,
+            ),
+            isNull(schema.costCenterMaster.deleted_at),
+          ),
         )
         .limit(1);
 
       if (!parent) {
-        throw new ConflictException('Cannot restore a Cost Center whose parent is deleted or inactive. Restore parent first.');
+        throw new ConflictException(
+          'Cannot restore a Cost Center whose parent is deleted or inactive. Restore parent first.',
+        );
       }
     }
 

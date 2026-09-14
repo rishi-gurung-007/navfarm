@@ -1,4 +1,4 @@
-"use client";
+'use client';
 
 import {
   createContext,
@@ -11,7 +11,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
   type RefObject,
-} from "react";
+} from 'react';
 
 /**
  * The application's anchored-overlay primitive.
@@ -33,11 +33,11 @@ import {
  * or focus leaving the anchor subtree.
  */
 
-export type PopoverAlign = "start" | "end";
-export type PopoverSide = "top" | "bottom";
+export type PopoverAlign = 'start' | 'end';
+export type PopoverSide = 'top' | 'bottom';
 
 /** Focus placement requested by the interaction that opened the surface. */
-export type PopoverIntent = "first" | "last";
+export type PopoverIntent = 'first' | 'last';
 
 interface PopoverSurfaceValue {
   intent: PopoverIntent;
@@ -54,18 +54,19 @@ const PopoverSurfaceContext = createContext<PopoverSurfaceValue | null>(null);
 /** Surface-side view of the popover. Only valid inside a `<Popover>` panel. */
 export function usePopoverSurface(): PopoverSurfaceValue {
   const value = useContext(PopoverSurfaceContext);
-  if (!value) throw new Error("usePopoverSurface must be used inside a <Popover>");
+  if (!value)
+    throw new Error('usePopoverSurface must be used inside a <Popover>');
   return value;
 }
 
 /** Props the popover owns on the caller's trigger element. */
 export interface PopoverTriggerProps {
   ref: RefObject<HTMLButtonElement | null>;
-  type: "button";
-  "aria-haspopup": "menu" | "dialog" | "listbox";
-  "aria-expanded": boolean;
-  "aria-controls"?: string;
-  "data-state": "open" | "closed";
+  type: 'button';
+  'aria-haspopup': 'menu' | 'dialog' | 'listbox';
+  'aria-expanded': boolean;
+  'aria-controls'?: string;
+  'data-state': 'open' | 'closed';
   onClick: () => void;
   onKeyDown: (event: ReactKeyboardEvent<HTMLButtonElement>) => void;
 }
@@ -80,12 +81,19 @@ export interface PopoverProps {
   align?: PopoverAlign;
   side?: PopoverSide;
   /** What the trigger announces it opens. Matches the panel's content. */
-  haspopup?: "menu" | "dialog" | "listbox";
+  haspopup?: 'menu' | 'dialog' | 'listbox';
   /** Applied to the panel when it is not a menu, together with `label`. */
-  panelRole?: "dialog";
+  panelRole?: 'dialog';
   label?: string;
   /** Extra classes on the anchor wrapper, for layout only. */
   className?: string;
+  /**
+   * Extra classes on the panel itself. The default panel sizes itself like a menu (a
+   * content-driven width between 224 and 320px) — a surface standing in for a form field
+   * instead (a searchable select) needs to match its trigger's actual width, which this hook
+   * exists for; see `.nf-combobox-panel` in global.css for that override.
+   */
+  panelClassName?: string;
 }
 
 export function Popover({
@@ -93,17 +101,18 @@ export function Popover({
   onOpenChange,
   trigger,
   children,
-  align = "end",
-  side = "bottom",
-  haspopup = "menu",
+  align = 'end',
+  side = 'bottom',
+  haspopup = 'menu',
   panelRole,
   label,
   className,
+  panelClassName,
 }: PopoverProps) {
   const panelId = `nf-popover-${useId()}`;
   const anchorRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const [intent, setIntent] = useState<PopoverIntent>("first");
+  const [intent, setIntent] = useState<PopoverIntent>('first');
 
   const onOpenChangeRef = useRef(onOpenChange);
   onOpenChangeRef.current = onOpenChange;
@@ -121,7 +130,7 @@ export function Popover({
     const anchor = anchorRef.current;
 
     function onKeyDown(event: KeyboardEvent) {
-      if (event.key !== "Escape") return;
+      if (event.key !== 'Escape') return;
       // Stops the Escape from also reaching an enclosing dialog or drawer:
       // the innermost overlay is the one the user meant to dismiss.
       event.stopPropagation();
@@ -147,32 +156,32 @@ export function Popover({
       close({ restoreFocus: false });
     }
 
-    document.addEventListener("keydown", onKeyDown);
-    document.addEventListener("pointerdown", onPointerDown, true);
-    anchor?.addEventListener("focusout", onFocusOut);
+    document.addEventListener('keydown', onKeyDown);
+    document.addEventListener('pointerdown', onPointerDown, true);
+    anchor?.addEventListener('focusout', onFocusOut);
     return () => {
-      document.removeEventListener("keydown", onKeyDown);
-      document.removeEventListener("pointerdown", onPointerDown, true);
-      anchor?.removeEventListener("focusout", onFocusOut);
+      document.removeEventListener('keydown', onKeyDown);
+      document.removeEventListener('pointerdown', onPointerDown, true);
+      anchor?.removeEventListener('focusout', onFocusOut);
     };
   }, [open, close]);
 
   const triggerProps: PopoverTriggerProps = {
     ref: triggerRef,
-    type: "button",
-    "aria-haspopup": haspopup,
-    "aria-expanded": open,
+    type: 'button',
+    'aria-haspopup': haspopup,
+    'aria-expanded': open,
     // Only advertised while the panel exists, so the reference always resolves.
-    "aria-controls": open ? panelId : undefined,
-    "data-state": open ? "open" : "closed",
+    'aria-controls': open ? panelId : undefined,
+    'data-state': open ? 'open' : 'closed',
     onClick: () => {
-      setIntent("first");
+      setIntent('first');
       onOpenChange(!open);
     },
     onKeyDown: (event) => {
-      if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+      if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
       event.preventDefault();
-      setIntent(event.key === "ArrowDown" ? "first" : "last");
+      setIntent(event.key === 'ArrowDown' ? 'first' : 'last');
       if (!open) onOpenChange(true);
     },
   };
@@ -186,6 +195,7 @@ export function Popover({
           data-popover-panel
           data-side={side}
           data-align={align}
+          className={panelClassName}
           role={panelRole}
           aria-label={panelRole ? label : undefined}
         >

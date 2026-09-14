@@ -1,5 +1,5 @@
-import { MASTER_DATA_CONFIGS } from "@/modules/master-data/configs";
-import { singularLabel } from "@/modules/master-data/labels";
+import { MASTER_DATA_CONFIGS } from '@/modules/master-data/configs';
+import { singularLabel } from '@/modules/master-data/labels';
 
 /**
  * "Add X" and "Edit X" singularise the master's plural label. Stripping a
@@ -11,38 +11,46 @@ import { singularLabel } from "@/modules/master-data/labels";
  * knows whether it pluralises regularly.
  */
 const EXPECTED: Record<string, string> = {
-  location: "Location",
-  "location-type": "Location Type",
-  stage: "Stage",
-  "number-series": "Number Series",
-  animal: "Animal Register",
-  item: "Item",
-  "item-type": "Item Type",
-  "item-category": "Item Category",
-  "item-attribute": "Item Attribute",
-  uom: "Unit of Measure",
-  "uom-conversion": "UOM Conversion",
-  species: "Species",
-  breed: "Breed",
-  "breed-lifecycle-stage": "Breed Lifecycle Stage",
-  disease: "Disease",
-  "feed-formula": "Feed Formula",
-  supplier: "Supplier",
-  customer: "Customer",
-  resource: "Resource",
-  "gl-account": "GL Account",
-  "gl-mapping": "GL Mapping",
-  "cost-center": "Cost Center",
-  reason: "Reason",
+  activity: 'Activity',
+  location: 'Location',
+  'location-type': 'Location Type',
+  stage: 'Stage',
+  'number-series': 'Number Series',
+  animal: 'Animal Register',
+  item: 'Item',
+  'item-type': 'Item Type',
+  'item-category': 'Item Category',
+  'item-attribute': 'Item Attribute',
+  uom: 'Unit of Measure',
+  'uom-conversion': 'UOM Conversion',
+  species: 'Species',
+  breed: 'Breed',
+  'breed-lifecycle-stage': 'Breed Lifecycle Stage',
+  disease: 'Disease',
+  'feed-formula': 'Feed Formula',
+  supplier: 'Supplier',
+  customer: 'Customer',
+  resource: 'Resource',
+  'gl-account': 'GL Account',
+  'gl-mapping': 'GL Mapping',
+  'cost-center': 'Cost Center',
+  reason: 'Reason',
+  // "Currencies" -> "Currency": a -ies plural the trailing-s rule turns
+  // into "Currencie", which is exactly what this map exists to catch.
+  country: 'Country',
+  currency: 'Currency',
+  'exchange-rate': 'Exchange Rate',
 };
 
-describe("singularLabel", () => {
-  it("covers every registered master, so a new one cannot slip through untested", () => {
-    expect(MASTER_DATA_CONFIGS.map((c) => c.key).sort()).toEqual(Object.keys(EXPECTED).sort());
+describe('singularLabel', () => {
+  it('covers every registered master, so a new one cannot slip through untested', () => {
+    expect(MASTER_DATA_CONFIGS.map((c) => c.key).sort()).toEqual(
+      Object.keys(EXPECTED).sort(),
+    );
   });
 
   it.each(MASTER_DATA_CONFIGS.map((c) => [c.key, c] as const))(
-    "singularises %s",
+    'singularises %s',
     (key, config) => {
       expect(singularLabel(config)).toBe(EXPECTED[key]);
     },

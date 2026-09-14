@@ -1,5 +1,10 @@
 import { masterScopeConditions } from '../../../common/master-data-scope';
-import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ConflictException,
+  BadRequestException,
+} from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { eq, and, like, or, isNull } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
@@ -9,6 +14,10 @@ import { CreateStageDto, UpdateStageDto, QueryStageDto } from './dto/stage.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { NobLobResolutionService } from '../../core/operational-area/nob-lob-resolution.service';
+import {
+  listFilterConditions,
+  listOrderBy,
+} from '../../../common/master-list-query';
 
 @Injectable()
 export class StageService {
@@ -28,25 +37,50 @@ export class StageService {
   }
 
   /** Resolves by stage_category first (e.g. STAGE_PRODUCTIVE), then the master-alone STAGE series, else manual. */
-  private async resolveStageCode(dto: CreateStageDto, tenantId: string): Promise<string> {
-    const seriesCode = await this.numberSeriesService.resolveSeriesFor('STAGE', dto.stage_category, tenantId, dto.company_id);
+  private async resolveStageCode(
+    dto: CreateStageDto,
+    tenantId: string,
+  ): Promise<string> {
+    const seriesCode = await this.numberSeriesService.resolveSeriesFor(
+      'STAGE',
+      dto.stage_category,
+      tenantId,
+      dto.company_id,
+    );
     if (!seriesCode) {
       if (!dto.stage_code) {
-        throw new BadRequestException('stage_code is required — no number series is configured for stages.');
+        throw new BadRequestException(
+          'stage_code is required — no number series is configured for stages.',
+        );
       }
       return dto.stage_code.toUpperCase();
     }
-    const series = await this.numberSeriesService.lockSeries(seriesCode, tenantId, dto.company_id);
+    const series = await this.numberSeriesService.lockSeries(
+      seriesCode,
+      tenantId,
+      dto.company_id,
+    );
     if (series.allow_manual && dto.stage_code) {
       return dto.stage_code.toUpperCase();
     }
-    return this.numberSeriesService.generateNext(seriesCode, tenantId, dto.company_id, undefined, dto as unknown as Record<string, unknown>);
+    return this.numberSeriesService.generateNext(
+      seriesCode,
+      tenantId,
+      dto.company_id,
+      undefined,
+      dto as unknown as Record<string, unknown>,
+    );
   }
 
   /** AUTO_BY_DAY stages must specify which day to auto-move on. */
-  private assertAutoMoveDayWhenAutoByDay(transitionTrigger: string, autoMoveOnDay?: number | null) {
+  private assertAutoMoveDayWhenAutoByDay(
+    transitionTrigger: string,
+    autoMoveOnDay?: number | null,
+  ) {
     if (transitionTrigger === 'AUTO_BY_DAY' && autoMoveOnDay == null) {
-      throw new ConflictException('auto_move_on_day is required when transition_trigger is AUTO_BY_DAY.');
+      throw new ConflictException(
+        'auto_move_on_day is required when transition_trigger is AUTO_BY_DAY.',
+      );
     }
   }
 
@@ -54,7 +88,12 @@ export class StageService {
     const [stage] = await this.db
       .select()
       .from(schema.stageMaster)
-      .where(and(eq(schema.stageMaster.stage_id, stageId), isNull(schema.stageMaster.deleted_at)))
+      .where(
+        and(
+          eq(schema.stageMaster.stage_id, stageId),
+          isNull(schema.stageMaster.deleted_at),
+        ),
+      )
       .limit(1);
     if (!stage) {
       throw new NotFoundException(`Stage with ID '${stageId}' not found.`);
@@ -68,10 +107,14 @@ export class StageService {
     // (operational areas split across LOBs) surfaces a clear error here
     // instead of a raw DB constraint failure — unlike item/resource/number-series,
     // a stage genuinely cannot exist without knowing which LOB it belongs to.
-    const resolved = await this.nobLobResolution.resolve(tenantId, dto.company_id, {
-      nob_id: dto.nob_id,
-      lob_id: dto.lob_id,
-    });
+    const resolved = await this.nobLobResolution.resolve(
+      tenantId,
+      dto.company_id,
+      {
+        nob_id: dto.nob_id,
+        lob_id: dto.lob_id,
+      },
+    );
     if (!resolved.nob_id || !resolved.lob_id) {
       throw new BadRequestException(
         "Cannot determine this stage's Nature of Business / Line of Business — this company's operational areas span multiple business verticals. Specify nob_id and lob_id explicitly.",
@@ -98,10 +141,14 @@ export class StageService {
       throw new NotFoundException(`LOB with ID '${lobId}' not found.`);
     }
 
-    this.assertAutoMoveDayWhenAutoByDay(dto.transition_trigger, dto.auto_move_on_day);
+    this.assertAutoMoveDayWhenAutoByDay(
+      dto.transition_trigger,
+      dto.auto_move_on_day,
+    );
 
     if (dto.next_stage_id) await this.assertStageExists(dto.next_stage_id);
-    if (dto.alt_next_stage_id) await this.assertStageExists(dto.alt_next_stage_id);
+    if (dto.alt_next_stage_id)
+      await this.assertStageExists(dto.alt_next_stage_id);
 
     // Resolve the stage code — a series (stage_category first, then STAGE alone) if
     // one is configured, else the user-supplied code.
@@ -114,7 +161,9 @@ export class StageService {
       isNull(schema.stageMaster.deleted_at),
     ];
     if (dto.company_id) {
-      duplicateConditions.push(eq(schema.stageMaster.company_id, dto.company_id));
+      duplicateConditions.push(
+        eq(schema.stageMaster.company_id, dto.company_id),
+      );
     } else {
       duplicateConditions.push(isNull(schema.stageMaster.company_id));
     }
@@ -126,7 +175,9 @@ export class StageService {
       .limit(1);
 
     if (existing.length > 0) {
-      throw new ConflictException(`Stage code '${stageCode}' already exists for this LOB.`);
+      throw new ConflictException(
+        `Stage code '${stageCode}' already exists for this LOB.`,
+      );
     }
 
     const stageId = randomUUID();
@@ -147,7 +198,9 @@ export class StageService {
       next_stage_id: dto.next_stage_id || null,
       alt_next_stage_id: dto.alt_next_stage_id || null,
       alt_trigger_condition: dto.alt_trigger_condition || null,
-      required_kpi_to_pass: dto.required_kpi_to_pass ? JSON.stringify(dto.required_kpi_to_pass) : null,
+      required_kpi_to_pass: dto.required_kpi_to_pass
+        ? JSON.stringify(dto.required_kpi_to_pass)
+        : null,
       data_entry_form: dto.data_entry_form || 'STANDARD',
       scheduler_auto_create: dto.scheduler_auto_create ?? true,
       show_on_animal_card: dto.show_on_animal_card ?? true,
@@ -179,7 +232,12 @@ export class StageService {
     const [stage] = await this.db
       .select()
       .from(schema.stageMaster)
-      .where(and(eq(schema.stageMaster.stage_id, id), isNull(schema.stageMaster.deleted_at)))
+      .where(
+        and(
+          eq(schema.stageMaster.stage_id, id),
+          isNull(schema.stageMaster.deleted_at),
+        ),
+      )
       .limit(1);
 
     if (!stage) {
@@ -191,23 +249,31 @@ export class StageService {
 
   async findAll(query: QueryStageDto, tenantId: string) {
     // No isNull(deleted_at) filter — list view shows both Active/Inactive states (toggle switch) so a blocked row can be found again and restored.
-    const conditions: any[] = [
-      eq(schema.stageMaster.tenant_id, tenantId),
-    ];
+    const conditions: any[] = [eq(schema.stageMaster.tenant_id, tenantId)];
 
-    conditions.push(...masterScopeConditions(this.cls, schema.stageMaster, query.companyId));
-    if (query.nobId) conditions.push(eq(schema.stageMaster.nob_id, query.nobId));
-    if (query.lobId) conditions.push(eq(schema.stageMaster.lob_id, query.lobId));
-    if (query.stageCategory) conditions.push(eq(schema.stageMaster.stage_category, query.stageCategory));
-    if (query.isActive !== undefined) conditions.push(eq(schema.stageMaster.is_active, query.isActive));
+    conditions.push(
+      ...masterScopeConditions(this.cls, schema.stageMaster, query.companyId),
+    );
+    if (query.nobId)
+      conditions.push(eq(schema.stageMaster.nob_id, query.nobId));
+    if (query.lobId)
+      conditions.push(eq(schema.stageMaster.lob_id, query.lobId));
+    if (query.stageCategory)
+      conditions.push(
+        eq(schema.stageMaster.stage_category, query.stageCategory),
+      );
+    if (query.isActive !== undefined)
+      conditions.push(eq(schema.stageMaster.is_active, query.isActive));
     if (query.search) {
       conditions.push(
         or(
           like(schema.stageMaster.stage_code, `%${query.search}%`),
-          like(schema.stageMaster.stage_name, `%${query.search}%`)
-        )
+          like(schema.stageMaster.stage_name, `%${query.search}%`),
+        ),
       );
     }
+
+    conditions.push(...listFilterConditions(schema.stageMaster, query.filter));
 
     const limit = query.limit || 50;
     const offset = query.offset || 0;
@@ -216,41 +282,73 @@ export class StageService {
       .select()
       .from(schema.stageMaster)
       .where(and(...conditions))
-      .orderBy(schema.stageMaster.stage_sequence)
+      .orderBy(
+        listOrderBy(
+          schema.stageMaster,
+          query,
+          schema.stageMaster.stage_sequence,
+        ),
+      )
       .limit(limit)
       .offset(offset);
   }
 
-  async update(id: string, dto: UpdateStageDto, tenantId: string, userPayload?: any) {
+  async update(
+    id: string,
+    dto: UpdateStageDto,
+    tenantId: string,
+    userPayload?: any,
+  ) {
     const stage = await this.findOne(id);
 
     const effectiveTrigger = dto.transition_trigger ?? stage.transition_trigger;
-    const effectiveAutoMoveDay = dto.auto_move_on_day !== undefined ? dto.auto_move_on_day : stage.auto_move_on_day;
-    this.assertAutoMoveDayWhenAutoByDay(effectiveTrigger, effectiveAutoMoveDay as any);
+    const effectiveAutoMoveDay =
+      dto.auto_move_on_day !== undefined
+        ? dto.auto_move_on_day
+        : stage.auto_move_on_day;
+    this.assertAutoMoveDayWhenAutoByDay(
+      effectiveTrigger,
+      effectiveAutoMoveDay as any,
+    );
 
     if (dto.next_stage_id) await this.assertStageExists(dto.next_stage_id);
-    if (dto.alt_next_stage_id) await this.assertStageExists(dto.alt_next_stage_id);
+    if (dto.alt_next_stage_id)
+      await this.assertStageExists(dto.alt_next_stage_id);
 
     const updates: any = {
       updated_by: userPayload?.userId || null,
     };
 
     if (dto.stage_name !== undefined) updates.stage_name = dto.stage_name;
-    if (dto.stage_category !== undefined) updates.stage_category = dto.stage_category;
-    if (dto.stage_sequence !== undefined) updates.stage_sequence = dto.stage_sequence;
-    if (dto.typical_duration_days !== undefined) updates.typical_duration_days = dto.typical_duration_days;
-    if (dto.min_days_before_move !== undefined) updates.min_days_before_move = dto.min_days_before_move;
-    if (dto.transition_trigger !== undefined) updates.transition_trigger = dto.transition_trigger;
-    if (dto.auto_move_on_day !== undefined) updates.auto_move_on_day = dto.auto_move_on_day;
-    if (dto.next_stage_id !== undefined) updates.next_stage_id = dto.next_stage_id;
-    if (dto.alt_next_stage_id !== undefined) updates.alt_next_stage_id = dto.alt_next_stage_id;
-    if (dto.alt_trigger_condition !== undefined) updates.alt_trigger_condition = dto.alt_trigger_condition;
-    if (dto.required_kpi_to_pass !== undefined) updates.required_kpi_to_pass = JSON.stringify(dto.required_kpi_to_pass);
-    if (dto.data_entry_form !== undefined) updates.data_entry_form = dto.data_entry_form;
-    if (dto.scheduler_auto_create !== undefined) updates.scheduler_auto_create = dto.scheduler_auto_create;
-    if (dto.show_on_animal_card !== undefined) updates.show_on_animal_card = dto.show_on_animal_card;
+    if (dto.stage_category !== undefined)
+      updates.stage_category = dto.stage_category;
+    if (dto.stage_sequence !== undefined)
+      updates.stage_sequence = dto.stage_sequence;
+    if (dto.typical_duration_days !== undefined)
+      updates.typical_duration_days = dto.typical_duration_days;
+    if (dto.min_days_before_move !== undefined)
+      updates.min_days_before_move = dto.min_days_before_move;
+    if (dto.transition_trigger !== undefined)
+      updates.transition_trigger = dto.transition_trigger;
+    if (dto.auto_move_on_day !== undefined)
+      updates.auto_move_on_day = dto.auto_move_on_day;
+    if (dto.next_stage_id !== undefined)
+      updates.next_stage_id = dto.next_stage_id;
+    if (dto.alt_next_stage_id !== undefined)
+      updates.alt_next_stage_id = dto.alt_next_stage_id;
+    if (dto.alt_trigger_condition !== undefined)
+      updates.alt_trigger_condition = dto.alt_trigger_condition;
+    if (dto.required_kpi_to_pass !== undefined)
+      updates.required_kpi_to_pass = JSON.stringify(dto.required_kpi_to_pass);
+    if (dto.data_entry_form !== undefined)
+      updates.data_entry_form = dto.data_entry_form;
+    if (dto.scheduler_auto_create !== undefined)
+      updates.scheduler_auto_create = dto.scheduler_auto_create;
+    if (dto.show_on_animal_card !== undefined)
+      updates.show_on_animal_card = dto.show_on_animal_card;
     if (dto.icon_code !== undefined) updates.icon_code = dto.icon_code;
-    if (dto.stage_description !== undefined) updates.stage_description = dto.stage_description;
+    if (dto.stage_description !== undefined)
+      updates.stage_description = dto.stage_description;
     if (dto.sort_order !== undefined) updates.sort_order = dto.sort_order;
     if (dto.is_active !== undefined) updates.is_active = dto.is_active;
 
@@ -277,14 +375,19 @@ export class StageService {
     const stage = await this.findOne(id);
 
     if (stage.is_system) {
-      throw new BadRequestException(`Stage '${stage.stage_code}' is a system-seeded stage and cannot be deleted.`);
+      throw new BadRequestException(
+        `Stage '${stage.stage_code}' is a system-seeded stage and cannot be deleted.`,
+      );
     }
 
     await this.db
       .update(schema.stageMaster)
       .set({
         is_active: false,
-        deleted_at: new Date().toISOString().slice(0, 19).replace('T', ' ') as any,
+        deleted_at: new Date()
+          .toISOString()
+          .slice(0, 19)
+          .replace('T', ' ') as any,
         updated_by: userPayload?.userId || null,
       })
       .where(eq(schema.stageMaster.stage_id, id));
@@ -299,6 +402,9 @@ export class StageService {
       oldValues: stage,
     });
 
-    return { success: true, message: `Stage '${stage.stage_name}' has been deactivated.` };
+    return {
+      success: true,
+      message: `Stage '${stage.stage_name}' has been deactivated.`,
+    };
   }
 }

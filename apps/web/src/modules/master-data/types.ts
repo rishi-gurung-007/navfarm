@@ -1,15 +1,15 @@
 export type FieldType =
-  | "text"
-  | "textarea"
-  | "number"
-  | "boolean"
-  | "email"
-  | "date"
-  | "select"
-  | "select-entity"
-  | "field-list"
-  | "json"
-  | "string-list";
+  | 'text'
+  | 'textarea'
+  | 'number'
+  | 'boolean'
+  | 'email'
+  | 'date'
+  | 'select'
+  | 'select-entity'
+  | 'field-list'
+  | 'json'
+  | 'string-list';
 
 export interface SelectOption {
   value: string;
@@ -51,6 +51,14 @@ export interface MasterDataField {
   /** Select multiple related values with checkboxes (submitted as an array). */
   multiple?: boolean;
   /**
+   * What an empty `multiple` value means on the record view. It defaults to
+   * "All (no restriction)", which is right where empty widens the rule —
+   * Allowed Parent Types, Applicable Stages — and wrong where empty just means
+   * nothing was recorded. A currency with no countries is not legal tender
+   * everywhere.
+   */
+  emptyMultipleLabel?: string;
+  /**
    * For type "select-entity": key(s) of other field(s) in this form whose value this dropdown
    * depends on (e.g. lob_id depending on nob_id). Disabled until every parent has a value;
    * resets when any parent changes.
@@ -66,7 +74,7 @@ export interface MasterDataField {
    *   that param rather than blocking the fetch — matches the backend treating an absent
    *   filter as "show all".
    */
-  dependsOnMode?: "path" | "query";
+  dependsOnMode?: 'path' | 'query';
   /** Required when dependsOnMode is "query": maps each dependsOn field key to its query-param name. */
   queryParams?: Record<string, string>;
   /**
@@ -128,7 +136,12 @@ export interface MasterDataField {
    * field and locks it, a miss leaves it editable so the value is captured here
    * for the first time.
    */
-  derivedFrom?: { endpoint: string; params: Record<string, string>; valueKey: string; missingHelpText?: string };
+  derivedFrom?: {
+    endpoint: string;
+    params: Record<string, string>;
+    valueKey: string;
+    missingHelpText?: string;
+  };
   /**
    * Describes one entry of a `json` array field so it can be edited as rows of
    * real inputs — add, fill, delete — instead of asking someone to type valid
@@ -137,7 +150,9 @@ export interface MasterDataField {
    *
    * Each column may itself be a select-entity, so an entry that references
    * another master (an item attribute, a feed ingredient) is chosen rather
-   * than pasted as a UUID.
+   * than pasted as a UUID — or a plain `select` with `options`, for a closed
+   * set of values that is not a master at all (a vaccination's route, or what
+   * its schedule counts from). Anything else renders as a text or number input.
    */
   jsonRow?: MasterDataField[];
   /**
@@ -191,7 +206,7 @@ export interface MasterDataField {
    * question, and a plain on/off switch is worse still: "off" cannot say what
    * it means.
    */
-  control?: "segmented";
+  control?: 'segmented';
   /**
    * Value this control starts on once it appears. A segmented choice between
    * two options has no meaningful empty state — "neither" is what the switch
@@ -265,6 +280,14 @@ export interface MasterDataField {
   section?: string;
   /** Show this optional field in the compact inline lookup creator. */
   showInLookup?: boolean;
+  /**
+   * Renders a single (non-multiple) select-entity field as a searchable combobox — a text
+   * filter over the option list — instead of a plain `<select>`. Set on fields whose catalog
+   * realistically grows long enough that scrolling a native dropdown stops being usable (Item,
+   * GL Account, Location, Animal, Batch, Breed, Goods Receipt); left off catalogs that stay
+   * short by nature (NOB/LOB, UOM, Item Type, Costing Method, ...).
+   */
+  searchable?: boolean;
 }
 
 export interface MasterDataConfig {
@@ -286,7 +309,7 @@ export interface MasterDataConfig {
   /** Frontend-only BC references. Never part of creation/edit payloads. */
   bcFields?: { key: string; label: string }[];
   /** BC owns this catalog; local users may browse but cannot mutate it. */
-  owner?: "BC";
+  owner?: 'BC';
   /**
    * What the blueprint says about this catalog's source, quoted. Rendered by
    * BcOwnershipNotice so each master cites its own section rather than one
@@ -313,7 +336,7 @@ export interface MasterDataConfig {
    * is master-specific — there is no generic "show everything" panel worth
    * having.
    */
-  detailPanel?: "animal";
+  detailPanel?: 'animal';
   /**
    * Which values of this master's own `status` column mean the record is still
    * in play. Used to colour the status chip: in-play reads as live, anything

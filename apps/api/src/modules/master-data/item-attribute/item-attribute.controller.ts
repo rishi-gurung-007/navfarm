@@ -11,9 +11,18 @@ import {
   UseGuards,
   Patch,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth, ApiParam } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiBearerAuth,
+  ApiParam,
+} from '@nestjs/swagger';
 import { ItemAttributeService } from './item-attribute.service';
-import { CreateItemAttributeDto, UpdateItemAttributeDto, QueryItemAttributeDto } from './dto/item-attribute.dto';
+import {
+  CreateItemAttributeDto,
+  UpdateItemAttributeDto,
+  QueryItemAttributeDto,
+} from './dto/item-attribute.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
@@ -27,10 +36,16 @@ export class ItemAttributeController {
 
   @Post()
   @RequirePermission('MASTER_DATA', 'ITEM_ATTRIBUTE', 'create')
-  @ApiOperation({ summary: 'Define a new item attribute (e.g. Protein %, Colour)' })
+  @ApiOperation({
+    summary: 'Define a new item attribute (e.g. Protein %, Colour)',
+  })
   async create(@Body() dto: CreateItemAttributeDto, @Req() req: any) {
     const tenantId = req.user?.tenantId || req['tenantId'];
-    const result = await this.itemAttributeService.create(dto, tenantId, req.user);
+    const result = await this.itemAttributeService.create(
+      dto,
+      tenantId,
+      req.user,
+    );
     return {
       success: true,
       message: 'Item attribute created successfully.',
@@ -47,7 +62,12 @@ export class ItemAttributeController {
     return {
       success: true,
       message: 'Item attributes retrieved successfully.',
-      data: result,
+      // `data` stays the array every caller already reads; total/limit/offset
+      // are siblings the list screen pages on.
+      data: result.data,
+      total: result.total,
+      limit: result.limit,
+      offset: result.offset,
     };
   }
 
@@ -68,9 +88,18 @@ export class ItemAttributeController {
   @RequirePermission('MASTER_DATA', 'ITEM_ATTRIBUTE', 'edit')
   @ApiOperation({ summary: 'Update an existing item attribute' })
   @ApiParam({ name: 'id', description: 'Attribute UUID' })
-  async update(@Param('id') id: string, @Body() dto: UpdateItemAttributeDto, @Req() req: any) {
+  async update(
+    @Param('id') id: string,
+    @Body() dto: UpdateItemAttributeDto,
+    @Req() req: any,
+  ) {
     const tenantId = req.user?.tenantId || req['tenantId'];
-    const result = await this.itemAttributeService.update(id, dto, tenantId, req.user);
+    const result = await this.itemAttributeService.update(
+      id,
+      dto,
+      tenantId,
+      req.user,
+    );
     return {
       success: true,
       message: 'Item attribute updated successfully.',
@@ -93,7 +122,11 @@ export class ItemAttributeController {
   @ApiParam({ name: 'id', description: 'Attribute UUID' })
   async restore(@Param('id') id: string, @Req() req: any) {
     const tenantId = req.user?.tenantId || req['tenantId'];
-    const result = await this.itemAttributeService.restore(id, tenantId, req.user);
+    const result = await this.itemAttributeService.restore(
+      id,
+      tenantId,
+      req.user,
+    );
     return {
       success: true,
       message: 'Item attribute restored successfully.',

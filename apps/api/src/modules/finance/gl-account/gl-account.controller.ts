@@ -1,19 +1,28 @@
-import { 
-  Controller, 
-  Get, 
-  Post, 
-  Put, 
-  Delete, 
-  Param, 
-  Body, 
-  Query, 
-  Req, 
-  UseGuards, 
-  Patch 
+import {
+  Controller,
+  Get,
+  Post,
+  Put,
+  Delete,
+  Param,
+  Body,
+  Query,
+  Req,
+  UseGuards,
+  Patch,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth, ApiParam } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiBearerAuth,
+  ApiParam,
+} from '@nestjs/swagger';
 import { GlAccountService } from './gl-account.service';
-import { CreateGlAccountDto, UpdateGlAccountDto, QueryGlAccountDto } from './dto/gl-account.dto';
+import {
+  CreateGlAccountDto,
+  UpdateGlAccountDto,
+  QueryGlAccountDto,
+} from './dto/gl-account.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
@@ -37,7 +46,7 @@ export class GlAccountController {
     return {
       success: true,
       message: 'G/L Account registered successfully.',
-      data: result
+      data: result,
     };
   }
 
@@ -50,7 +59,12 @@ export class GlAccountController {
     return {
       success: true,
       message: 'G/L Accounts retrieved successfully.',
-      data: result
+      // `data` stays the array every caller already reads; total/limit/offset
+      // are siblings the list screen pages on.
+      data: result.data,
+      total: result.total,
+      limit: result.limit,
+      offset: result.offset,
     };
   }
 
@@ -63,7 +77,7 @@ export class GlAccountController {
     return {
       success: true,
       message: 'G/L Account details retrieved.',
-      data: result
+      data: result,
     };
   }
 
@@ -71,13 +85,22 @@ export class GlAccountController {
   @RequirePermission('MASTER_DATA', 'GL_ACCOUNT', 'edit')
   @ApiOperation({ summary: 'Update details of an existing G/L Account' })
   @ApiParam({ name: 'id', description: 'G/L Account UUID' })
-  async update(@Param('id') id: string, @Body() dto: UpdateGlAccountDto, @Req() req: any) {
+  async update(
+    @Param('id') id: string,
+    @Body() dto: UpdateGlAccountDto,
+    @Req() req: any,
+  ) {
     const tenantId = req.user?.tenantId || req['tenantId'];
-    const result = await this.glAccountService.update(id, dto, tenantId, req.user);
+    const result = await this.glAccountService.update(
+      id,
+      dto,
+      tenantId,
+      req.user,
+    );
     return {
       success: true,
       message: 'G/L Account updated successfully.',
-      data: result
+      data: result,
     };
   }
 
@@ -101,7 +124,7 @@ export class GlAccountController {
     return {
       success: true,
       message: 'G/L Account restored successfully.',
-      data: result
+      data: result,
     };
   }
 }

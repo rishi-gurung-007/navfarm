@@ -12,10 +12,13 @@ const shellSource = readFileSync(
   'utf8',
 );
 
-const SECTION_RE = /\{ key: "([a-z-]+)", href: "([^"]+)", labelKey: "([A-Za-z]+)" \}/g;
+const SECTION_RE =
+  /\{ key: "([a-z-]+)", href: "([^"]+)", labelKey: "([A-Za-z]+)" \}/g;
 
 function sections() {
-  return [...shellSource.matchAll(SECTION_RE)].map(([, key, href, labelKey]) => ({ key, href, labelKey }));
+  return [...shellSource.matchAll(SECTION_RE)].map(
+    ([, key, href, labelKey]) => ({ key, href, labelKey }),
+  );
 }
 
 describe('Finance sections', () => {
@@ -28,18 +31,30 @@ describe('Finance sections', () => {
       'trial-balance',
       'bio-asset-reconciliation',
       'batch-cost-variance',
-      // Not a report: the first data-entry screen in Finance. BBP-1 §1.1 has
-      // Finance entering the USD/ZWL rate by hand, so it belongs with the
-      // finance work rather than in a setup page nobody revisits.
-      'exchange-rates',
+      // No exchange-rates entry. It was here on the reading that BBP-1 §1.1,
+      // which has Finance entering the USD/ZWL rate by hand, meant the screen
+      // belonged among the finance work. §1.1 says who types the rate, not
+      // which menu it hangs from, and the same screen was already reachable at
+      // Master Data > Exchange Rates over the same /currency/rates endpoint —
+      // one catalog under two names. The API settles it: every rate route is
+      // gated on MASTER_DATA/CURRENCY, not on a finance permission. Rishi's
+      // call, 2026-09-12.
     ]);
   });
 
   it('points each section at a route that exists', () => {
     for (const section of sections()) {
       const segment = section.href.replace(/^\/finance\/?/, '');
-      const page = join(__dirname, '../src/app/(app)/finance', segment, 'page.tsx');
-      expect({ href: section.href, exists: readFileSync(page, 'utf8').length > 0 }).toEqual({
+      const page = join(
+        __dirname,
+        '../src/app/(app)/finance',
+        segment,
+        'page.tsx',
+      );
+      expect({
+        href: section.href,
+        exists: readFileSync(page, 'utf8').length > 0,
+      }).toEqual({
         href: section.href,
         exists: true,
       });
@@ -52,7 +67,10 @@ describe('Finance sections', () => {
       const hasBranch =
         shellSource.includes(`activeKey === "${section.key}" ?`) ||
         section.key === 'bio-asset-reconciliation';
-      expect({ key: section.key, hasBranch }).toEqual({ key: section.key, hasBranch: true });
+      expect({ key: section.key, hasBranch }).toEqual({
+        key: section.key,
+        hasBranch: true,
+      });
     }
   });
 

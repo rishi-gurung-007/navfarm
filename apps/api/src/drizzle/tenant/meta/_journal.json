@@ -603,6 +603,62 @@
       "when": 1788984636980,
       "tag": "0085_silky_lester",
       "breakpoints": true
+    },
+    {
+      "idx": 86,
+      "version": "5",
+      "when": 1789036206000,
+      "tag": "0086_scheduler_header_replace_scheduler_master",
+      "breakpoints": true
+    },
+    {
+      "idx": 87,
+      "version": "5",
+      "when": 1789036206001,
+      "tag": "0087_scheduler_header_gap_fixes",
+      "breakpoints": true
+    },
+    {
+      "idx": 88,
+      "version": "5",
+      "when": 1789036206002,
+      "tag": "0088_scheduler_line_auto_triggers_stage",
+      "breakpoints": true
+    },
+    {
+      "idx": 89,
+      "version": "5",
+      "when": 1789036206003,
+      "tag": "0089_activity_master",
+      "breakpoints": true
+    },
+    {
+      "idx": 90,
+      "version": "5",
+      "when": 1789100000000,
+      "tag": "0090_tracking_mode_and_animal_movement_log",
+      "breakpoints": true
+    },
+    {
+      "idx": 91,
+      "version": "5",
+      "when": 1789150000000,
+      "tag": "0091_batch_data_entry_lock",
+      "breakpoints": true
+    },
+    {
+      "idx": 92,
+      "version": "5",
+      "when": 1789200000001,
+      "tag": "0092_thin_king_bedlam",
+      "breakpoints": true
+    },
+    {
+      "idx": 93,
+      "version": "5",
+      "when": 1789200000002,
+      "tag": "0093_free_chat",
+      "breakpoints": true
     }
   ]
 }

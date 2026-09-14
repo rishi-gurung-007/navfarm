@@ -1,13 +1,25 @@
 import { masterScopeConditions } from '../../../common/master-data-scope';
-import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ConflictException,
+} from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { eq, and, like, or, isNull, ne } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
-import { CreateItemAttributeDto, UpdateItemAttributeDto, QueryItemAttributeDto } from './dto/item-attribute.dto';
+import {
+  CreateItemAttributeDto,
+  UpdateItemAttributeDto,
+  QueryItemAttributeDto,
+} from './dto/item-attribute.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
+import {
+  listFilterConditions,
+  runMasterList,
+} from '../../../common/master-list-query';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   return date.toISOString().slice(0, 19).replace('T', ' ');
@@ -29,13 +41,29 @@ export class ItemAttributeService {
     return tenantDb;
   }
 
-  async create(dto: CreateItemAttributeDto, tenantId: string, userPayload?: any) {
+  async create(
+    dto: CreateItemAttributeDto,
+    tenantId: string,
+    userPayload?: any,
+  ) {
     const companyId = dto.company_id || null;
 
-    if (dto.data_type === 'LIST' && (!dto.list_values || dto.list_values.length === 0)) {
-      throw new ConflictException('LIST attributes require at least one entry in list_values.');
+    if (
+      dto.data_type === 'LIST' &&
+      (!dto.list_values || dto.list_values.length === 0)
+    ) {
+      throw new ConflictException(
+        'LIST attributes require at least one entry in list_values.',
+      );
     }
-    const attributeCode = await this.numberSeriesService.resolveNewCode('ITEM_ATTRIBUTE', dto.attribute_code, tenantId, companyId, undefined, dto as unknown as Record<string, unknown>);
+    const attributeCode = await this.numberSeriesService.resolveNewCode(
+      'ITEM_ATTRIBUTE',
+      dto.attribute_code,
+      tenantId,
+      companyId,
+      undefined,
+      dto as unknown as Record<string, unknown>,
+    );
 
     const conditions = [
       eq(schema.itemAttributeMaster.tenant_id, tenantId),
@@ -55,7 +83,9 @@ export class ItemAttributeService {
       .limit(1);
 
     if (existing.length > 0) {
-      throw new ConflictException(`Attribute with code '${dto.attribute_code}' already exists in this scope.`);
+      throw new ConflictException(
+        `Attribute with code '${dto.attribute_code}' already exists in this scope.`,
+      );
     }
 
     const attributeId = randomUUID();
@@ -98,7 +128,12 @@ export class ItemAttributeService {
     const [attribute] = await this.db
       .select()
       .from(schema.itemAttributeMaster)
-      .where(and(eq(schema.itemAttributeMaster.attribute_id, id), isNull(schema.itemAttributeMaster.deleted_at)))
+      .where(
+        and(
+          eq(schema.itemAttributeMaster.attribute_id, id),
+          isNull(schema.itemAttributeMaster.deleted_at),
+        ),
+      )
       .limit(1);
 
     if (!attribute) {
@@ -114,7 +149,13 @@ export class ItemAttributeService {
       eq(schema.itemAttributeMaster.tenant_id, tenantId),
     ];
 
-    conditions.push(...masterScopeConditions(this.cls, schema.itemAttributeMaster, query.companyId));
+    conditions.push(
+      ...masterScopeConditions(
+        this.cls,
+        schema.itemAttributeMaster,
+        query.companyId,
+      ),
+    );
     if (query.nobId) {
       conditions.push(eq(schema.itemAttributeMaster.nob_id, query.nobId));
     }
@@ -128,34 +169,51 @@ export class ItemAttributeService {
       conditions.push(
         or(
           like(schema.itemAttributeMaster.attribute_code, `%${query.search}%`),
-          like(schema.itemAttributeMaster.attribute_name, `%${query.search}%`)
-        )
+          like(schema.itemAttributeMaster.attribute_name, `%${query.search}%`),
+        ),
       );
     }
 
-    const limit = query.limit || 50;
-    const offset = query.offset || 0;
+    conditions.push(
+      ...listFilterConditions(schema.itemAttributeMaster, query.filter),
+    );
 
-    return this.db
-      .select()
-      .from(schema.itemAttributeMaster)
-      .where(and(...conditions))
-      .limit(limit)
-      .offset(offset);
+    // Rows and the matching count together, so the pager knows how many
+    // pages there really are rather than guessing from a full page.
+    return runMasterList(
+      this.db,
+      schema.itemAttributeMaster,
+      conditions,
+      query,
+      schema.itemAttributeMaster.attribute_code,
+    );
   }
 
-  async update(id: string, dto: UpdateItemAttributeDto, tenantId: string, userPayload?: any) {
+  async update(
+    id: string,
+    dto: UpdateItemAttributeDto,
+    tenantId: string,
+    userPayload?: any,
+  ) {
     const attribute = await this.findOne(id);
 
-    if (dto.attribute_code && dto.attribute_code.toUpperCase() !== attribute.attribute_code) {
+    if (
+      dto.attribute_code &&
+      dto.attribute_code.toUpperCase() !== attribute.attribute_code
+    ) {
       const codeConditions = [
         eq(schema.itemAttributeMaster.tenant_id, tenantId),
-        eq(schema.itemAttributeMaster.attribute_code, dto.attribute_code.toUpperCase()),
+        eq(
+          schema.itemAttributeMaster.attribute_code,
+          dto.attribute_code.toUpperCase(),
+        ),
         ne(schema.itemAttributeMaster.attribute_id, id),
         isNull(schema.itemAttributeMaster.deleted_at),
       ];
       if (attribute.company_id) {
-        codeConditions.push(eq(schema.itemAttributeMaster.company_id, attribute.company_id));
+        codeConditions.push(
+          eq(schema.itemAttributeMaster.company_id, attribute.company_id),
+        );
       } else {
         codeConditions.push(isNull(schema.itemAttributeMaster.company_id));
       }
@@ -167,7 +225,9 @@ export class ItemAttributeService {
         .limit(1);
 
       if (existing.length > 0) {
-        throw new ConflictException(`Attribute with code '${dto.attribute_code}' already exists in this scope.`);
+        throw new ConflictException(
+          `Attribute with code '${dto.attribute_code}' already exists in this scope.`,
+        );
       }
     }
 
@@ -178,13 +238,17 @@ export class ItemAttributeService {
 
     if (dto.nob_id !== undefined) updates.nob_id = dto.nob_id;
     if (dto.lob_id !== undefined) updates.lob_id = dto.lob_id;
-    if (dto.attribute_code !== undefined) updates.attribute_code = dto.attribute_code.toUpperCase();
-    if (dto.attribute_name !== undefined) updates.attribute_name = dto.attribute_name;
+    if (dto.attribute_code !== undefined)
+      updates.attribute_code = dto.attribute_code.toUpperCase();
+    if (dto.attribute_name !== undefined)
+      updates.attribute_name = dto.attribute_name;
     if (dto.data_type !== undefined) updates.data_type = dto.data_type;
-    if (dto.list_values !== undefined) updates.list_values = JSON.stringify(dto.list_values);
+    if (dto.list_values !== undefined)
+      updates.list_values = JSON.stringify(dto.list_values);
     if (dto.unit !== undefined) updates.unit = dto.unit;
     if (dto.is_mandatory !== undefined) updates.is_mandatory = dto.is_mandatory;
-    if (dto.affects_costing !== undefined) updates.affects_costing = dto.affects_costing;
+    if (dto.affects_costing !== undefined)
+      updates.affects_costing = dto.affects_costing;
     if (dto.is_variant !== undefined) updates.is_variant = dto.is_variant;
     if (dto.is_active !== undefined) updates.is_active = dto.is_active;
     if (dto.status !== undefined) updates.status = dto.status;
@@ -233,7 +297,10 @@ export class ItemAttributeService {
       newValues: { status: 'INACTIVE', deleted_at: deletedTime },
     });
 
-    return { success: true, message: `Item attribute '${attribute.attribute_name}' has been soft-deleted.` };
+    return {
+      success: true,
+      message: `Item attribute '${attribute.attribute_name}' has been soft-deleted.`,
+    };
   }
 
   async restore(id: string, tenantId: string, userPayload?: any) {

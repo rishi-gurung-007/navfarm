@@ -1,6 +1,17 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsInt, Min, IsNumber, IsDateString } from 'class-validator';
+import {
+  IsString,
+  IsNotEmpty,
+  IsOptional,
+  IsUUID,
+  IsBoolean,
+  IsInt,
+  Min,
+  IsNumber,
+  IsDateString,
+} from 'class-validator';
 import { Type } from 'class-transformer';
+import { MasterListQueryDto } from '../../../../common/master-list-query';
 
 export class CreateResourceDto {
   @ApiProperty({ description: 'Company UUID scope ownership' })
@@ -8,67 +19,112 @@ export class CreateResourceDto {
   @IsOptional()
   company_id?: string;
 
-  @ApiProperty({ description: 'Nature of Business UUID scope (blank = available across all NOBs)', required: false })
+  @ApiProperty({
+    description:
+      'Nature of Business UUID scope (blank = available across all NOBs)',
+    required: false,
+  })
   @IsString()
   @IsOptional()
   nob_id?: string;
 
-  @ApiProperty({ description: 'Line of Business UUID scope (blank = not LOB-restricted)', required: false })
+  @ApiProperty({
+    description: 'Line of Business UUID scope (blank = not LOB-restricted)',
+    required: false,
+  })
   @IsString()
   @IsOptional()
   lob_id?: string;
 
-  @ApiProperty({ description: 'Legacy input only; the API generates RES-001, RES-002, etc. per company', example: 'RES-001', required: false })
+  @ApiProperty({
+    description:
+      'Legacy input only; the API generates RES-001, RES-002, etc. per company',
+    example: 'RES-001',
+    required: false,
+  })
   @IsString()
   @IsOptional()
   resource_code?: string;
 
-  @ApiProperty({ description: 'Full name/description of the resource', example: 'Senior Laborer' })
+  @ApiProperty({
+    description: 'Full name/description of the resource',
+    example: 'Senior Laborer',
+  })
   @IsString()
   @IsNotEmpty()
   resource_name: string;
 
-  @ApiProperty({ description: 'Resource category; LABOR remains a legacy alias', example: 'MANPOWER', enum: ['MANPOWER', 'EQUIPMENT', 'VEHICLE', 'UTILITY', 'OTHER', 'LABOR'] })
+  @ApiProperty({
+    description: 'Resource category; LABOR remains a legacy alias',
+    example: 'MANPOWER',
+    enum: ['MANPOWER', 'EQUIPMENT', 'VEHICLE', 'UTILITY', 'OTHER', 'LABOR'],
+  })
   @IsString()
   @IsNotEmpty()
   resource_type: string;
 
-  @ApiProperty({ description: 'Sub-classification: PERMANENT/CONTRACT/DAILY for labor, OWNED/LEASED/RENTED for equipment', required: false })
+  @ApiProperty({
+    description:
+      'Sub-classification: PERMANENT/CONTRACT/DAILY for labor, OWNED/LEASED/RENTED for equipment',
+    required: false,
+  })
   @IsString()
   @IsOptional()
   resource_sub_type?: string;
 
-  @ApiProperty({ description: 'HR employee ID (labor/manpower resources only)', required: false })
+  @ApiProperty({
+    description: 'HR employee ID (labor/manpower resources only)',
+    required: false,
+  })
   @IsString()
   @IsOptional()
   employee_id?: string;
 
-  @ApiProperty({ description: 'Job title/designation (labor/manpower resources only)', required: false })
+  @ApiProperty({
+    description: 'Job title/designation (labor/manpower resources only)',
+    required: false,
+  })
   @IsString()
   @IsOptional()
   designation?: string;
 
-  @ApiProperty({ description: 'Operating capacity count/limit', required: false })
+  @ApiProperty({
+    description: 'Operating capacity count/limit',
+    required: false,
+  })
   @IsNumber()
   @IsOptional()
   capacity?: number;
 
-  @ApiProperty({ description: 'UOM for the capacity value (e.g. KG_PER_HOUR)', required: false })
+  @ApiProperty({
+    description: 'UOM for the capacity value (e.g. KG_PER_HOUR)',
+    required: false,
+  })
   @IsString()
   @IsOptional()
   capacity_uom?: string;
 
-  @ApiProperty({ description: 'Operational units', required: false, example: 'HOURS' })
+  @ApiProperty({
+    description: 'Operational units',
+    required: false,
+    example: 'HOURS',
+  })
   @IsString()
   @IsOptional()
   unit?: string;
 
-  @ApiProperty({ description: 'Standard billing cost rate per unit', required: false })
+  @ApiProperty({
+    description: 'Standard billing cost rate per unit',
+    required: false,
+  })
   @IsNumber()
   @IsOptional()
   cost_rate?: number;
 
-  @ApiProperty({ description: 'Fixed asset register code (equipment/vehicle only)', required: false })
+  @ApiProperty({
+    description: 'Fixed asset register code (equipment/vehicle only)',
+    required: false,
+  })
   @IsString()
   @IsOptional()
   asset_code?: string;
@@ -78,12 +134,18 @@ export class CreateResourceDto {
   @IsOptional()
   asset_make?: string;
 
-  @ApiProperty({ description: 'Model number of the equipment', required: false })
+  @ApiProperty({
+    description: 'Model number of the equipment',
+    required: false,
+  })
   @IsString()
   @IsOptional()
   asset_model?: string;
 
-  @ApiProperty({ description: 'Serial number of the equipment', required: false })
+  @ApiProperty({
+    description: 'Serial number of the equipment',
+    required: false,
+  })
   @IsString()
   @IsOptional()
   asset_serial_no?: string;
@@ -98,43 +160,68 @@ export class CreateResourceDto {
   @IsOptional()
   warranty_expiry_date?: string;
 
-  @ApiProperty({ description: 'Days between scheduled maintenance services (equipment/vehicle)', required: false })
+  @ApiProperty({
+    description:
+      'Days between scheduled maintenance services (equipment/vehicle)',
+    required: false,
+  })
   @IsInt()
   @Min(1)
   @IsOptional()
   maintenance_frequency_days?: number;
 
-  @ApiProperty({ description: 'Expected cost per maintenance service', required: false })
+  @ApiProperty({
+    description: 'Expected cost per maintenance service',
+    required: false,
+  })
   @IsNumber()
   @IsOptional()
   maintenance_cost_per_service?: number;
 
-  @ApiProperty({ description: 'Preferred maintenance vendor/engineer', required: false })
+  @ApiProperty({
+    description: 'Preferred maintenance vendor/engineer',
+    required: false,
+  })
   @IsString()
   @IsOptional()
   maintenance_vendor?: string;
 
-  @ApiProperty({ description: 'GL account this resource posts cost to', required: false })
+  @ApiProperty({
+    description: 'GL account this resource posts cost to',
+    required: false,
+  })
   @IsUUID()
   @IsOptional()
   gl_cost_account?: string;
 
-  @ApiProperty({ description: 'Department this resource belongs to', required: false })
+  @ApiProperty({
+    description: 'Department this resource belongs to',
+    required: false,
+  })
   @IsString()
   @IsOptional()
   department?: string;
 
-  @ApiProperty({ description: 'Cost element/classification for costing reports', required: false })
+  @ApiProperty({
+    description: 'Cost element/classification for costing reports',
+    required: false,
+  })
   @IsString()
   @IsOptional()
   cost_element?: string;
 
-  @ApiProperty({ description: 'License/certification expiry date (labor resources only)', required: false })
+  @ApiProperty({
+    description: 'License/certification expiry date (labor resources only)',
+    required: false,
+  })
   @IsDateString()
   @IsOptional()
   license_expiry?: string;
 
-  @ApiProperty({ description: 'Flexible custom config configurations in JSON format', required: false })
+  @ApiProperty({
+    description: 'Flexible custom config configurations in JSON format',
+    required: false,
+  })
   @IsOptional()
   extension_config?: any;
 }
@@ -271,7 +358,11 @@ export class UpdateResourceDto {
   @IsOptional()
   is_active?: boolean;
 
-  @ApiProperty({ required: false, example: 'ACTIVE', enum: ['ACTIVE', 'INACTIVE', 'ARCHIVE'] })
+  @ApiProperty({
+    required: false,
+    example: 'ACTIVE',
+    enum: ['ACTIVE', 'INACTIVE', 'ARCHIVE'],
+  })
   @IsString()
   @IsOptional()
   status?: string;
@@ -281,13 +372,16 @@ export class UpdateResourceDto {
   extension_config?: any;
 }
 
-export class QueryResourceDto {
+export class QueryResourceDto extends MasterListQueryDto {
   @ApiProperty({ description: 'Filter by company UUID', required: false })
   @IsOptional()
   @IsUUID()
   companyId?: string;
 
-  @ApiProperty({ description: 'Filter by resource type category', required: false })
+  @ApiProperty({
+    description: 'Filter by resource type category',
+    required: false,
+  })
   @IsOptional()
   @IsString()
   resourceType?: string;
@@ -302,7 +396,10 @@ export class QueryResourceDto {
   @IsString()
   lobId?: string;
 
-  @ApiProperty({ description: 'Filter resources whose next maintenance is due within N days', required: false })
+  @ApiProperty({
+    description: 'Filter resources whose next maintenance is due within N days',
+    required: false,
+  })
   @IsOptional()
   @Type(() => Number)
   @IsInt()
@@ -318,29 +415,22 @@ export class QueryResourceDto {
   @IsOptional()
   @IsString()
   search?: string;
-
-  @ApiProperty({ description: 'Results per page', default: 50, required: false })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  limit?: number;
-
-  @ApiProperty({ description: 'Pagination offset', default: 0, required: false })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(0)
-  offset?: number;
 }
 
 export class CreateMaintenanceLogDto {
-  @ApiProperty({ description: 'Maintenance service date', example: '2026-07-27' })
+  @ApiProperty({
+    description: 'Maintenance service date',
+    example: '2026-07-27',
+  })
   @IsDateString()
   @IsNotEmpty()
   maintenance_date: string;
 
-  @ApiProperty({ description: 'Type of maintenance', example: 'PREVENTIVE', enum: ['PREVENTIVE', 'BREAKDOWN', 'CALIBRATION'] })
+  @ApiProperty({
+    description: 'Type of maintenance',
+    example: 'PREVENTIVE',
+    enum: ['PREVENTIVE', 'BREAKDOWN', 'CALIBRATION'],
+  })
   @IsString()
   @IsNotEmpty()
   maintenance_type: string;
@@ -355,17 +445,27 @@ export class CreateMaintenanceLogDto {
   @IsOptional()
   cost?: number;
 
-  @ApiProperty({ description: 'Technician/vendor name performing service', required: false })
+  @ApiProperty({
+    description: 'Technician/vendor name performing service',
+    required: false,
+  })
   @IsString()
   @IsOptional()
   performed_by?: string;
 
-  @ApiProperty({ description: 'Service status', default: 'COMPLETED', required: false })
+  @ApiProperty({
+    description: 'Service status',
+    default: 'COMPLETED',
+    required: false,
+  })
   @IsString()
   @IsOptional()
   status?: string;
 
-  @ApiProperty({ description: 'Flexible custom config configurations in JSON format', required: false })
+  @ApiProperty({
+    description: 'Flexible custom config configurations in JSON format',
+    required: false,
+  })
   @IsOptional()
   extension_config?: any;
 }

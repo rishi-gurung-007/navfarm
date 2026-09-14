@@ -35,6 +35,7 @@ const STATUS_VARIANT: Record<string, BadgeProps['variant']> = {
   // attention, not a failure and not a quiet terminal state.
   BLOCKED: 'warning',
   COMPLETED: 'success',
+  SUSPENDED: 'warning',
 
   // Alert severity
   INFO: 'info',
@@ -72,7 +73,10 @@ export function statusVariant(status?: string | null): BadgeProps['variant'] {
   return STATUS_VARIANT[status.toUpperCase()] ?? 'neutral';
 }
 
-export interface StatusBadgeProps extends Omit<BadgeProps, 'variant' | 'children'> {
+export interface StatusBadgeProps extends Omit<
+  BadgeProps,
+  'variant' | 'children'
+> {
   status?: string | null;
   /** Display text, when it differs from the raw status (e.g. a translated label). */
   label?: string;

@@ -16,7 +16,13 @@ describe('CountryService', () => {
     delete: mockDbDelete,
   };
 
-  const found = (rows: any[]) => ({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue(rows) }) }) });
+  const found = (rows: any[]) => ({
+    from: jest.fn().mockReturnValue({
+      where: jest
+        .fn()
+        .mockReturnValue({ limit: jest.fn().mockResolvedValue(rows) }),
+    }),
+  });
 
   beforeEach(async () => {
     mockDbSelect.mockReset();
@@ -24,31 +30,66 @@ describe('CountryService', () => {
     mockDbDelete.mockReset();
 
     const module: TestingModule = await Test.createTestingModule({
-      providers: [CountryService, { provide: ClsService, useValue: { get: jest.fn().mockReturnValue(mockDb) } }],
+      providers: [
+        CountryService,
+        {
+          provide: ClsService,
+          useValue: { get: jest.fn().mockReturnValue(mockDb) },
+        },
+      ],
     }).compile();
 
     service = module.get<CountryService>(CountryService);
   });
 
-  it('listCountries() returns only active countries', async () => {
-    mockDbSelect.mockReturnValue({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ iso2: 'IN' }]) }) });
+  // listCountries answers the shared master list contract now: rows plus a
+  // total, sorted and pageable. It also stopped forcing isActive — a master
+  // list has to show a blocked row so it can be found and restored, and the
+  // pickers that consume this pass isActive=true themselves.
+  it('listCountries() returns rows with a total', async () => {
+    mockDbSelect
+      .mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockReturnValue({
+            orderBy: jest.fn().mockReturnValue({
+              limit: jest.fn().mockReturnValue({
+                offset: jest.fn().mockResolvedValue([{ iso2: 'IN' }]),
+              }),
+            }),
+          }),
+        }),
+      })
+      .mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockResolvedValue([{ total: 1 }]),
+        }),
+      });
 
-    const result = await service.listCountries();
-
-    expect(result).toEqual([{ iso2: 'IN' }]);
+    await expect(service.listCountries()).resolves.toEqual({
+      data: [{ iso2: 'IN' }],
+      total: 1,
+      limit: 50,
+      offset: 0,
+    });
   });
 
   describe('states', () => {
     it('listStates() throws NotFoundException for an unknown country', async () => {
       mockDbSelect.mockReturnValueOnce(found([]));
 
-      await expect(service.listStates('missing-id')).rejects.toThrow(NotFoundException);
+      await expect(service.listStates('missing-id')).rejects.toThrow(
+        NotFoundException,
+      );
     });
 
     it('listStates() returns active states for a known country', async () => {
       mockDbSelect
         .mockReturnValueOnce(found([{ country_id: 'c-1' }]))
-        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ state_code: 'MH' }]) }) });
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            where: jest.fn().mockResolvedValue([{ state_code: 'MH' }]),
+          }),
+        });
 
       const result = await service.listStates('c-1');
 
@@ -58,7 +99,12 @@ describe('CountryService', () => {
     it('createState() rejects an unknown country before inserting', async () => {
       mockDbSelect.mockReturnValueOnce(found([]));
 
-      await expect(service.createState('missing-id', { state_code: 'MH', state_name: 'Maharashtra' })).rejects.toThrow(NotFoundException);
+      await expect(
+        service.createState('missing-id', {
+          state_code: 'MH',
+          state_name: 'Maharashtra',
+        }),
+      ).rejects.toThrow(NotFoundException);
       expect(mockDbInsert).not.toHaveBeenCalled();
     });
 
@@ -68,7 +114,10 @@ describe('CountryService', () => {
         .mockReturnValueOnce(found([{ state_code: 'MH', country_id: 'c-1' }]));
       mockDbInsert.mockReturnValue({ values: jest.fn().mockResolvedValue({}) });
 
-      const result = await service.createState('c-1', { state_code: 'MH', state_name: 'Maharashtra' });
+      const result = await service.createState('c-1', {
+        state_code: 'MH',
+        state_name: 'Maharashtra',
+      });
 
       expect(mockDbInsert).toHaveBeenCalled();
       expect(result).toEqual({ state_code: 'MH', country_id: 'c-1' });

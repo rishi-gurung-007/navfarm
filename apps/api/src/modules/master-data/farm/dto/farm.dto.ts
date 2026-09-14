@@ -1,29 +1,62 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsInt, Min } from 'class-validator';
+import {
+  IsString,
+  IsNotEmpty,
+  IsOptional,
+  IsUUID,
+  IsBoolean,
+  IsInt,
+  Min,
+} from 'class-validator';
 import { Type } from 'class-transformer';
+import { MasterListQueryDto } from '../../../../common/master-list-query';
 
 export class CreateFarmDto {
-  @ApiProperty({ description: 'Company UUID ownership scope', example: 'company-uuid-here' })
+  @ApiProperty({
+    description: 'Company UUID ownership scope',
+    example: 'company-uuid-here',
+  })
   @IsUUID()
   @IsNotEmpty()
   company_id: string;
 
-  @ApiProperty({ description: 'Unique code for the farm within the company', example: 'FARM01' })
+  @ApiProperty({
+    description: 'Unique code for the farm within the company',
+    example: 'FARM01',
+  })
   @IsString()
   @IsNotEmpty()
   farm_code: string;
 
-  @ApiProperty({ description: 'Descriptive name of the farm', example: 'Green Valley Breeding Farm' })
+  @ApiProperty({
+    description: 'Descriptive name of the farm',
+    example: 'Green Valley Breeding Farm',
+  })
   @IsString()
   @IsNotEmpty()
   farm_name: string;
 
-  @ApiProperty({ description: 'Farm type classification', example: 'BREEDER', enum: ['BREEDER', 'COMMERCIAL_LAYERS', 'COMMERCIAL_BROILERS', 'HATCHERY', 'REARING', 'DAIRY'] })
+  @ApiProperty({
+    description: 'Farm type classification',
+    example: 'BREEDER',
+    enum: [
+      'BREEDER',
+      'COMMERCIAL_LAYERS',
+      'COMMERCIAL_BROILERS',
+      'HATCHERY',
+      'REARING',
+      'DAIRY',
+    ],
+  })
   @IsString()
   @IsNotEmpty()
   farm_type: string;
 
-  @ApiProperty({ description: 'Nature of Business UUID scope (blank = shared across all business verticals)', required: false })
+  @ApiProperty({
+    description:
+      'Nature of Business UUID scope (blank = shared across all business verticals)',
+    required: false,
+  })
   @IsString()
   @IsOptional()
   nob_id?: string;
@@ -33,7 +66,11 @@ export class CreateFarmDto {
   @IsOptional()
   lob_id?: string;
 
-  @ApiProperty({ description: 'Maximum holding capacity', default: 0, required: false })
+  @ApiProperty({
+    description: 'Maximum holding capacity',
+    default: 0,
+    required: false,
+  })
   @IsInt()
   @Min(0)
   @IsOptional()
@@ -64,7 +101,10 @@ export class CreateFarmDto {
   @IsOptional()
   pincode?: string;
 
-  @ApiProperty({ description: 'Custom dynamic metadata configurations', required: false })
+  @ApiProperty({
+    description: 'Custom dynamic metadata configurations',
+    required: false,
+  })
   @IsOptional()
   extension_config?: any;
 }
@@ -131,7 +171,11 @@ export class UpdateFarmDto {
   @IsOptional()
   is_active?: boolean;
 
-  @ApiProperty({ required: false, example: 'ACTIVE', enum: ['ACTIVE', 'INACTIVE', 'ARCHIVE'] })
+  @ApiProperty({
+    required: false,
+    example: 'ACTIVE',
+    enum: ['ACTIVE', 'INACTIVE', 'ARCHIVE'],
+  })
   @IsString()
   @IsOptional()
   status?: string;
@@ -141,18 +185,24 @@ export class UpdateFarmDto {
   extension_config?: any;
 }
 
-export class QueryFarmDto {
+export class QueryFarmDto extends MasterListQueryDto {
   @ApiProperty({ description: 'Filter by company UUID', required: false })
   @IsOptional()
   @IsUUID()
   companyId?: string;
 
-  @ApiProperty({ description: 'Filter by Nature of Business UUID', required: false })
+  @ApiProperty({
+    description: 'Filter by Nature of Business UUID',
+    required: false,
+  })
   @IsOptional()
   @IsString()
   nobId?: string;
 
-  @ApiProperty({ description: 'Filter by Line of Business UUID', required: false })
+  @ApiProperty({
+    description: 'Filter by Line of Business UUID',
+    required: false,
+  })
   @IsOptional()
   @IsString()
   lobId?: string;
@@ -172,18 +222,4 @@ export class QueryFarmDto {
   @IsOptional()
   @IsString()
   search?: string;
-
-  @ApiProperty({ description: 'Results per page', default: 50, required: false })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  limit?: number;
-
-  @ApiProperty({ description: 'Pagination offset', default: 0, required: false })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(0)
-  offset?: number;
 }

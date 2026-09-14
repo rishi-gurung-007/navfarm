@@ -1,12 +1,28 @@
-import { companyCondition, masterScopeConditions } from '../../../common/master-data-scope';
-import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
+import {
+  companyCondition,
+  masterScopeConditions,
+} from '../../../common/master-data-scope';
+import {
+  listFilterConditions,
+  runMasterList,
+} from '../../../common/master-list-query';
+import {
+  Injectable,
+  NotFoundException,
+  ConflictException,
+  BadRequestException,
+} from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { alias } from 'drizzle-orm/mysql-core';
 import { eq, and, like, or, isNull, sql } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
-import { CreateLocationDto, UpdateLocationDto, QueryLocationDto } from './dto/location.dto';
+import {
+  CreateLocationDto,
+  UpdateLocationDto,
+  QueryLocationDto,
+} from './dto/location.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { generateCompositeCode } from '../../system/number-series/composite-code.util';
@@ -33,7 +49,12 @@ const toMysqlTimestamp = (date: Date = new Date()) => {
  *   without changing its area would count it twice and reject a valid save.
  */
 export function sumAreasInUnit(
-  rows: { location_id?: string; location_code: string; area_size: string | number | null; area_unit: string | null }[],
+  rows: {
+    location_id?: string;
+    location_code: string;
+    area_size: string | number | null;
+    area_unit: string | null;
+  }[],
   unit: string | null | undefined,
   excludeLocationId?: string,
 ): { total: number; counted: string[]; skipped: string[] } {
@@ -43,7 +64,11 @@ export function sumAreasInUnit(
   for (const row of rows) {
     if (excludeLocationId && row.location_id === excludeLocationId) continue;
     if (row.area_size == null || row.area_size === '') continue;
-    if (unit && row.area_unit && unit.toUpperCase() !== row.area_unit.toUpperCase()) {
+    if (
+      unit &&
+      row.area_unit &&
+      unit.toUpperCase() !== row.area_unit.toUpperCase()
+    ) {
       skipped.push(row.location_code);
       continue;
     }
@@ -71,24 +96,39 @@ export class LocationService {
     return tenantDb;
   }
 
-  private async resolveLocationType(typeCode: string, tenantId: string, companyId?: string | null) {
+  private async resolveLocationType(
+    typeCode: string,
+    tenantId: string,
+    companyId?: string | null,
+  ) {
     const conditions = [
       eq(schema.locationTypeMaster.tenant_id, tenantId),
       eq(schema.locationTypeMaster.type_code, typeCode.toUpperCase()),
       eq(schema.locationTypeMaster.is_active, true),
       isNull(schema.locationTypeMaster.deleted_at),
     ];
-    conditions.push(companyCondition(schema.locationTypeMaster.company_id, companyId));
-    const [type] = await this.db.select().from(schema.locationTypeMaster).where(and(...conditions))
-      .orderBy(sql`${schema.locationTypeMaster.company_id} IS NULL`).limit(1);
-    if (!type) throw new NotFoundException(`Location Type '${typeCode}' not found.`);
+    conditions.push(
+      companyCondition(schema.locationTypeMaster.company_id, companyId),
+    );
+    const [type] = await this.db
+      .select()
+      .from(schema.locationTypeMaster)
+      .where(and(...conditions))
+      .orderBy(sql`${schema.locationTypeMaster.company_id} IS NULL`)
+      .limit(1);
+    if (!type)
+      throw new NotFoundException(`Location Type '${typeCode}' not found.`);
     return type;
   }
 
   private allowedParentTypes(value: unknown): string[] {
     if (Array.isArray(value)) return value.map(String);
     if (typeof value === 'string') {
-      try { return JSON.parse(value); } catch { return []; }
+      try {
+        return JSON.parse(value);
+      } catch {
+        return [];
+      }
     }
     return [];
   }
@@ -104,25 +144,43 @@ export class LocationService {
    * The old per-type rows still resolve for anyone who has them; this only
    * stops new ones being minted.
    */
-  private async ensureCompanySeries(_type: typeof schema.locationTypeMaster.$inferSelect, tenantId: string, companyId?: string | null) {
+  private async ensureCompanySeries(
+    _type: typeof schema.locationTypeMaster.$inferSelect,
+    tenantId: string,
+    companyId?: string | null,
+  ) {
     const seriesCode = 'LOCATION';
     if (!companyId) return seriesCode;
-    const [series] = await this.db.select().from(schema.noSeriesMaster).where(and(
-      eq(schema.noSeriesMaster.tenant_id, tenantId),
-      eq(schema.noSeriesMaster.company_id, companyId),
-      eq(schema.noSeriesMaster.series_code, seriesCode),
-      isNull(schema.noSeriesMaster.deleted_at),
-    )).limit(1);
+    const [series] = await this.db
+      .select()
+      .from(schema.noSeriesMaster)
+      .where(
+        and(
+          eq(schema.noSeriesMaster.tenant_id, tenantId),
+          eq(schema.noSeriesMaster.company_id, companyId),
+          eq(schema.noSeriesMaster.series_code, seriesCode),
+          isNull(schema.noSeriesMaster.deleted_at),
+        ),
+      )
+      .limit(1);
     if (!series) {
       await this.db.insert(schema.noSeriesMaster).values({
-        series_id: randomUUID(), tenant_id: tenantId, company_id: companyId,
-        series_code: seriesCode, series_name: 'Location Code',
-        document_type: 'LOCATION', prefix: null, separator: '-',
+        series_id: randomUUID(),
+        tenant_id: tenantId,
+        company_id: companyId,
+        series_code: seriesCode,
+        series_name: 'Location Code',
+        document_type: 'LOCATION',
+        prefix: null,
+        separator: '-',
         // The shape itself: parent code, then this level's type, then a number
         // counted among the siblings sharing that stem. A first-level location
         // has no parent to name, so its code is just TYPE-001.
         code_segments: ['parent_location_id', 'location_type'],
-        seq_length: 3, current_seq: 0, reset_frequency: 'NEVER', allow_manual: true,
+        seq_length: 3,
+        current_seq: 0,
+        reset_frequency: 'NEVER',
+        allow_manual: true,
       });
     }
     return seriesCode;
@@ -155,10 +213,21 @@ export class LocationService {
     if (!parent) {
       // A root location has no parent to name, so the only segment it can offer
       // is its own type. Children still take the hierarchical path below.
-      return this.numberSeriesService.generateNext(seriesCode, tenantId, companyId, executor, { location_type: type.type_code });
+      return this.numberSeriesService.generateNext(
+        seriesCode,
+        tenantId,
+        companyId,
+        executor,
+        { location_type: type.type_code },
+      );
     }
 
-    const series = await this.numberSeriesService.lockSeries(seriesCode, tenantId, companyId, executor);
+    const series = await this.numberSeriesService.lockSeries(
+      seriesCode,
+      tenantId,
+      companyId,
+      executor,
+    );
 
     // Series-driven when the series says how, guaranteed when it does not.
     //
@@ -173,24 +242,33 @@ export class LocationService {
     // was left unconfigured would otherwise issue flat codes for locations that
     // do have parents, and nothing would say so.
     if (segmentFields(series).length) {
-      return this.numberSeriesService.generateNext(seriesCode, tenantId, companyId, executor, {
-        parent_location_id: parent.location_id,
-        location_type: type.type_code,
-      });
+      return this.numberSeriesService.generateNext(
+        seriesCode,
+        tenantId,
+        companyId,
+        executor,
+        {
+          parent_location_id: parent.location_id,
+          location_type: type.type_code,
+        },
+      );
     }
 
     return generateCompositeCode({
       parentCode: parent.location_code,
       prefix: type.code_prefix,
       seqLength: series.seq_length,
-      fetchSiblingCodes: () => executor
-        .select({ code: schema.locationMaster.location_code })
-        .from(schema.locationMaster)
-        .where(and(
-          eq(schema.locationMaster.tenant_id, tenantId),
-          eq(schema.locationMaster.parent_location_id, parent.location_id),
-          eq(schema.locationMaster.location_type, type.type_code),
-        )),
+      fetchSiblingCodes: () =>
+        executor
+          .select({ code: schema.locationMaster.location_code })
+          .from(schema.locationMaster)
+          .where(
+            and(
+              eq(schema.locationMaster.tenant_id, tenantId),
+              eq(schema.locationMaster.parent_location_id, parent.location_id),
+              eq(schema.locationMaster.location_type, type.type_code),
+            ),
+          ),
     });
   }
 
@@ -215,15 +293,39 @@ export class LocationService {
       userPayload?: any;
     },
   ) {
-    const { seriesCode, locationType, tenantId, companyId, parent, locationId, typeCode, locationLevel, dto, userPayload } = params;
+    const {
+      seriesCode,
+      locationType,
+      tenantId,
+      companyId,
+      parent,
+      locationId,
+      typeCode,
+      locationLevel,
+      dto,
+      userPayload,
+    } = params;
 
     // Code generation happens inside this transaction, using tx as the lock
     // executor, so the series row's SELECT ... FOR UPDATE (or, for a child
     // location, the sibling count it guards) stays locked until the insert
     // below commits — two concurrent creates cannot produce the same code.
     const locationCode = dto.location_code?.trim()
-      ? await this.numberSeriesService.manualCode('LOCATION', dto.location_code, tenantId, companyId, typeCode)
-      : await this.generateLocationCode(seriesCode, locationType, tenantId, companyId, parent, tx);
+      ? await this.numberSeriesService.manualCode(
+          'LOCATION',
+          dto.location_code,
+          tenantId,
+          companyId,
+          typeCode,
+        )
+      : await this.generateLocationCode(
+          seriesCode,
+          locationType,
+          tenantId,
+          companyId,
+          parent,
+          tx,
+        );
 
     // location_code is varchar(255). A deep hierarchical tree (each level
     // prepending "<parent code>/<TYPE>-<seq>") can in principle exceed that —
@@ -241,9 +343,29 @@ export class LocationService {
       company_id: companyId,
       nob_id: dto.nob_id || null,
       lob_id: dto.lob_id || null,
-      farm_id: typeCode === 'FARM' ? locationId : parent ? (parent.location_type === 'FARM' ? parent.location_id : parent.farm_id) : null,
-      shed_id: typeCode === 'SHED' ? locationId : parent ? (parent.location_type === 'SHED' ? parent.location_id : parent.shed_id) : null,
-      warehouse_id: ['STORE', 'SILO'].includes(typeCode) ? locationId : parent ? (['STORE', 'SILO'].includes(parent.location_type) ? parent.location_id : parent.warehouse_id) : null,
+      farm_id:
+        typeCode === 'FARM'
+          ? locationId
+          : parent
+            ? parent.location_type === 'FARM'
+              ? parent.location_id
+              : parent.farm_id
+            : null,
+      shed_id:
+        typeCode === 'SHED'
+          ? locationId
+          : parent
+            ? parent.location_type === 'SHED'
+              ? parent.location_id
+              : parent.shed_id
+            : null,
+      warehouse_id: ['STORE', 'SILO'].includes(typeCode)
+        ? locationId
+        : parent
+          ? ['STORE', 'SILO'].includes(parent.location_type)
+            ? parent.location_id
+            : parent.warehouse_id
+          : null,
       location_code: locationCode,
       location_name: dto.location_name,
       location_address: dto.location_address,
@@ -262,9 +384,13 @@ export class LocationService {
       silo_capacity_kg: dto.silo_capacity_kg?.toString() || null,
       silo_reorder_days: dto.silo_reorder_days ?? null,
       downtime_days_required: dto.downtime_days_required ?? null,
+      storage_name: dto.storage_name ?? null,
+      feed_in_bags: dto.feed_in_bags ?? null,
       is_active: true,
       status: 'ACTIVE',
-      extension_config: dto.extension_config ? JSON.stringify(dto.extension_config) : null,
+      extension_config: dto.extension_config
+        ? JSON.stringify(dto.extension_config)
+        : null,
       created_by: userPayload?.userId || null,
       updated_by: userPayload?.userId || null,
     };
@@ -273,18 +399,35 @@ export class LocationService {
     return location;
   }
 
-  private async assertNoHierarchyCycle(id: string, parentId: string, tenantId: string) {
+  private async assertNoHierarchyCycle(
+    id: string,
+    parentId: string,
+    tenantId: string,
+  ) {
     let cursor: string | null = parentId;
     const visited = new Set<string>();
     while (cursor) {
-      if (cursor === id) throw new ConflictException('A location cannot be moved under one of its descendants.');
-      if (visited.has(cursor)) throw new ConflictException('The selected parent belongs to an invalid hierarchy cycle.');
+      if (cursor === id)
+        throw new ConflictException(
+          'A location cannot be moved under one of its descendants.',
+        );
+      if (visited.has(cursor))
+        throw new ConflictException(
+          'The selected parent belongs to an invalid hierarchy cycle.',
+        );
       visited.add(cursor);
-      const [row] = await this.db.select({ parent_location_id: schema.locationMaster.parent_location_id })
-        .from(schema.locationMaster).where(and(
-          eq(schema.locationMaster.location_id, cursor),
-          eq(schema.locationMaster.tenant_id, tenantId),
-        )).limit(1);
+      const [row] = await this.db
+        .select({
+          parent_location_id: schema.locationMaster.parent_location_id,
+        })
+        .from(schema.locationMaster)
+        .where(
+          and(
+            eq(schema.locationMaster.location_id, cursor),
+            eq(schema.locationMaster.tenant_id, tenantId),
+          ),
+        )
+        .limit(1);
       cursor = row?.parent_location_id || null;
     }
   }
@@ -295,9 +438,12 @@ export class LocationService {
     siloCapacityKg?: number | null,
     siloReorderDays?: number | null,
   ) {
-    if (locationType === 'SILO' && (siloCapacityKg == null || siloReorderDays == null)) {
+    if (
+      locationType === 'SILO' &&
+      (siloCapacityKg == null || siloReorderDays == null)
+    ) {
       throw new ConflictException(
-        'A SILO location requires both silo_capacity_kg and silo_reorder_days.'
+        'A SILO location requires both silo_capacity_kg and silo_reorder_days.',
       );
     }
   }
@@ -318,16 +464,21 @@ export class LocationService {
     tenantId: string,
     excludeLocationId?: string,
   ): Promise<{ total: number; counted: string[]; skipped: string[] }> {
-    const children = await this.db.select({
-      location_id: schema.locationMaster.location_id,
-      location_code: schema.locationMaster.location_code,
-      area_size: schema.locationMaster.area_size,
-      area_unit: schema.locationMaster.area_unit,
-    }).from(schema.locationMaster).where(and(
-      eq(schema.locationMaster.parent_location_id, parentLocationId),
-      eq(schema.locationMaster.tenant_id, tenantId),
-      isNull(schema.locationMaster.deleted_at),
-    ));
+    const children = await this.db
+      .select({
+        location_id: schema.locationMaster.location_id,
+        location_code: schema.locationMaster.location_code,
+        area_size: schema.locationMaster.area_size,
+        area_unit: schema.locationMaster.area_unit,
+      })
+      .from(schema.locationMaster)
+      .where(
+        and(
+          eq(schema.locationMaster.parent_location_id, parentLocationId),
+          eq(schema.locationMaster.tenant_id, tenantId),
+          isNull(schema.locationMaster.deleted_at),
+        ),
+      );
 
     return sumAreasInUnit(children, unit, excludeLocationId);
   }
@@ -346,19 +497,39 @@ export class LocationService {
   private async assertAreaFitsInParent(
     childAreaSize: number | string | null | undefined,
     childAreaUnit: string | null | undefined,
-    parent: { location_id: string; area_size: string | null; area_unit: string | null; location_code: string } | undefined,
+    parent:
+      | {
+          location_id: string;
+          area_size: string | null;
+          area_unit: string | null;
+          location_code: string;
+        }
+      | undefined,
     tenantId: string,
     excludeLocationId?: string,
   ) {
-    if (childAreaSize == null || childAreaSize === '' || !parent?.area_size) return;
-    if (childAreaUnit && parent.area_unit && childAreaUnit.toUpperCase() !== parent.area_unit.toUpperCase()) return;
+    if (childAreaSize == null || childAreaSize === '' || !parent?.area_size)
+      return;
+    if (
+      childAreaUnit &&
+      parent.area_unit &&
+      childAreaUnit.toUpperCase() !== parent.area_unit.toUpperCase()
+    )
+      return;
     const childSize = Number(childAreaSize);
     const parentSize = Number(parent.area_size);
     if (!Number.isFinite(childSize) || !Number.isFinite(parentSize)) return;
 
     const unit = parent.area_unit || childAreaUnit || null;
-    const { total: siblingTotal, counted, skipped } = await this.sumChildArea(
-      parent.location_id, unit, tenantId, excludeLocationId,
+    const {
+      total: siblingTotal,
+      counted,
+      skipped,
+    } = await this.sumChildArea(
+      parent.location_id,
+      unit,
+      tenantId,
+      excludeLocationId,
     );
     const combined = siblingTotal + childSize;
     if (combined > parentSize) {
@@ -366,7 +537,9 @@ export class LocationService {
       const withSiblings = counted.length
         ? ` (${childSize}${u} here plus ${siblingTotal}${u} already used by ${counted.length} other location${counted.length === 1 ? '' : 's'}: ${counted.slice(0, 3).join(', ')}${counted.length > 3 ? '…' : ''})`
         : '';
-      const note = skipped.length ? ` ${skipped.length} location(s) measured in another unit were not counted.` : '';
+      const note = skipped.length
+        ? ` ${skipped.length} location(s) measured in another unit were not counted.`
+        : '';
       throw new ConflictException(
         `Total area of locations under '${parent.location_code}' would be ${combined}${u}, which exceeds its ${parentSize}${u}${withSiblings}.${note}`,
       );
@@ -391,10 +564,16 @@ export class LocationService {
     const parentSize = Number(newAreaSize);
     if (!Number.isFinite(parentSize)) return;
 
-    const { total, counted, skipped } = await this.sumChildArea(locationId, newAreaUnit, tenantId);
+    const { total, counted, skipped } = await this.sumChildArea(
+      locationId,
+      newAreaUnit,
+      tenantId,
+    );
     if (counted.length && total > parentSize) {
       const u = newAreaUnit ? ' ' + newAreaUnit : '';
-      const note = skipped.length ? ` ${skipped.length} location(s) measured in another unit were not counted.` : '';
+      const note = skipped.length
+        ? ` ${skipped.length} location(s) measured in another unit were not counted.`
+        : '';
       throw new ConflictException(
         `Cannot set Area Size to ${parentSize}${u} — locations under it already total ${total}${u} (${counted.slice(0, 3).join(', ')}${counted.length > 3 ? '…' : ''}).${note}`,
       );
@@ -402,7 +581,11 @@ export class LocationService {
   }
 
   /** Validates the UOM belongs to the same template/company scope. */
-  private async assertUomExists(uomCode: string | null | undefined, tenantId: string, companyId?: string | null) {
+  private async assertUomExists(
+    uomCode: string | null | undefined,
+    tenantId: string,
+    companyId?: string | null,
+  ) {
     if (!uomCode) return;
 
     const conditions = [
@@ -425,58 +608,94 @@ export class LocationService {
 
   async create(dto: CreateLocationDto, tenantId: string, userPayload?: any) {
     if (!dto.company_id) {
-      throw new ConflictException('A company is required to create a location and allocate its code sequence.');
+      throw new ConflictException(
+        'A company is required to create a location and allocate its code sequence.',
+      );
     }
     const [company] = await this.db
       .select()
       .from(schema.companyMaster)
-      .where(and(
-        eq(schema.companyMaster.company_id, dto.company_id),
-        eq(schema.companyMaster.tenant_id, tenantId),
-        isNull(schema.companyMaster.deleted_at),
-      ))
+      .where(
+        and(
+          eq(schema.companyMaster.company_id, dto.company_id),
+          eq(schema.companyMaster.tenant_id, tenantId),
+          isNull(schema.companyMaster.deleted_at),
+        ),
+      )
       .limit(1);
 
     if (!company) {
-      throw new NotFoundException(`Company with ID '${dto.company_id}' not found.`);
+      throw new NotFoundException(
+        `Company with ID '${dto.company_id}' not found.`,
+      );
     }
 
     const companyId = dto.company_id;
-    const locationType = await this.resolveLocationType(dto.location_type, tenantId, companyId);
+    const locationType = await this.resolveLocationType(
+      dto.location_type,
+      tenantId,
+      companyId,
+    );
     const typeCode = locationType.type_code;
-    const allowedParentTypes = this.allowedParentTypes(locationType.allowed_parent_types);
+    const allowedParentTypes = this.allowedParentTypes(
+      locationType.allowed_parent_types,
+    );
 
     // parent_location_id is the single canonical hierarchy. Legacy ancestry
     // columns are derived below only to keep older operational flows working.
     let locationLevel = 1;
     let parent: typeof schema.locationMaster.$inferSelect | undefined;
     if (allowedParentTypes.length === 0 && dto.parent_location_id) {
-      throw new ConflictException(`${locationType.type_name} is a root location and cannot have a parent.`);
+      throw new ConflictException(
+        `${locationType.type_name} is a root location and cannot have a parent.`,
+      );
     }
     if (dto.parent_location_id) {
-      [parent] = await this.db.select().from(schema.locationMaster).where(and(
-        eq(schema.locationMaster.location_id, dto.parent_location_id),
-        eq(schema.locationMaster.tenant_id, tenantId),
-        eq(schema.locationMaster.company_id, companyId),
-        isNull(schema.locationMaster.deleted_at),
-      )).limit(1);
-      if (!parent) throw new NotFoundException(`Parent Location '${dto.parent_location_id}' not found.`);
+      [parent] = await this.db
+        .select()
+        .from(schema.locationMaster)
+        .where(
+          and(
+            eq(schema.locationMaster.location_id, dto.parent_location_id),
+            eq(schema.locationMaster.tenant_id, tenantId),
+            eq(schema.locationMaster.company_id, companyId),
+            isNull(schema.locationMaster.deleted_at),
+          ),
+        )
+        .limit(1);
+      if (!parent)
+        throw new NotFoundException(
+          `Parent Location '${dto.parent_location_id}' not found.`,
+        );
       if (!allowedParentTypes.includes(parent.location_type)) {
-        throw new ConflictException(`${locationType.type_name} must be created under ${allowedParentTypes.join(' or ')}.`);
+        throw new ConflictException(
+          `${locationType.type_name} must be created under ${allowedParentTypes.join(' or ')}.`,
+        );
       }
       locationLevel = parent.location_level + 1;
     }
     if (allowedParentTypes.length > 0 && !parent) {
-      throw new ConflictException(`${locationType.type_name} requires a parent location.`);
+      throw new ConflictException(
+        `${locationType.type_name} requires a parent location.`,
+      );
     }
 
     // 3.5. This location's area, plus everything already under the same parent,
     //      must fit inside that parent.
-    await this.assertAreaFitsInParent(dto.area_size, dto.area_unit, parent, tenantId);
+    await this.assertAreaFitsInParent(
+      dto.area_size,
+      dto.area_unit,
+      parent,
+      tenantId,
+    );
 
     // 4. SILO locations must carry silo tracking fields
     if (!dto.storage_type && typeCode === 'SILO') dto.storage_type = 'SILO';
-    this.assertSiloFieldsWhenSilo(dto.storage_type, dto.silo_capacity_kg, dto.silo_reorder_days);
+    this.assertSiloFieldsWhenSilo(
+      dto.storage_type,
+      dto.silo_capacity_kg,
+      dto.silo_reorder_days,
+    );
     if (dto.storage_type !== 'SILO') {
       dto.silo_capacity_kg = undefined;
       dto.silo_reorder_days = undefined;
@@ -486,10 +705,25 @@ export class LocationService {
     await this.assertUomExists(dto.area_unit, tenantId, dto.company_id);
     await this.assertUomExists(dto.capacity_uom, tenantId, dto.company_id);
 
-    const seriesCode = await this.ensureCompanySeries(locationType, tenantId, companyId);
+    const seriesCode = await this.ensureCompanySeries(
+      locationType,
+      tenantId,
+      companyId,
+    );
 
     const locationId = randomUUID();
-    const attemptParams = { seriesCode, locationType, tenantId, companyId, parent, locationId, typeCode, locationLevel, dto, userPayload };
+    const attemptParams = {
+      seriesCode,
+      locationType,
+      tenantId,
+      companyId,
+      parent,
+      locationId,
+      typeCode,
+      locationLevel,
+      dto,
+      userPayload,
+    };
 
     // uq_location_master_tenant_company_code is the guard against two
     // concurrent creates computing the same generated code (see the locking
@@ -502,14 +736,20 @@ export class LocationService {
     // Only if the retry also collides do we give up and surface it.
     let newLocation: Awaited<ReturnType<typeof this.createLocationRecord>>;
     try {
-      newLocation = await this.db.transaction((tx) => this.createLocationRecord(tx, attemptParams));
+      newLocation = await this.db.transaction((tx) =>
+        this.createLocationRecord(tx, attemptParams),
+      );
     } catch (err) {
       if ((err as { code?: string })?.code !== 'ER_DUP_ENTRY') throw err;
       try {
-        newLocation = await this.db.transaction((tx) => this.createLocationRecord(tx, attemptParams));
+        newLocation = await this.db.transaction((tx) =>
+          this.createLocationRecord(tx, attemptParams),
+        );
       } catch (retryErr) {
         if ((retryErr as { code?: string })?.code === 'ER_DUP_ENTRY') {
-          throw new ConflictException('Location code collided with a concurrently created location; please retry.');
+          throw new ConflictException(
+            'Location code collided with a concurrently created location; please retry.',
+          );
         }
         throw retryErr;
       }
@@ -532,11 +772,13 @@ export class LocationService {
     const [location] = await this.db
       .select()
       .from(schema.locationMaster)
-      .where(and(
-        eq(schema.locationMaster.location_id, id),
-        eq(schema.locationMaster.tenant_id, tenantId),
-        isNull(schema.locationMaster.deleted_at),
-      ))
+      .where(
+        and(
+          eq(schema.locationMaster.location_id, id),
+          eq(schema.locationMaster.tenant_id, tenantId),
+          isNull(schema.locationMaster.deleted_at),
+        ),
+      )
       .limit(1);
 
     if (!location) {
@@ -550,11 +792,15 @@ export class LocationService {
     // No isNull(deleted_at) filter here — remove() sets both is_active=false and deleted_at, and
     // the list view is meant to show both states (Active/Inactive toggle) so a blocked location
     // can be found again and restored, rather than vanishing from the list entirely.
-    const conditions: any[] = [
-      eq(schema.locationMaster.tenant_id, tenantId),
-    ];
+    const conditions: any[] = [eq(schema.locationMaster.tenant_id, tenantId)];
 
-    conditions.push(...masterScopeConditions(this.cls, schema.locationMaster, query.companyId));
+    conditions.push(
+      ...masterScopeConditions(
+        this.cls,
+        schema.locationMaster,
+        query.companyId,
+      ),
+    );
     if (query.nobId) {
       conditions.push(eq(schema.locationMaster.nob_id, query.nobId));
     }
@@ -568,13 +814,19 @@ export class LocationService {
       conditions.push(eq(schema.locationMaster.shed_id, query.shedId));
     }
     if (query.warehouseId) {
-      conditions.push(eq(schema.locationMaster.warehouse_id, query.warehouseId));
+      conditions.push(
+        eq(schema.locationMaster.warehouse_id, query.warehouseId),
+      );
     }
     if (query.parentLocationId) {
-      conditions.push(eq(schema.locationMaster.parent_location_id, query.parentLocationId));
+      conditions.push(
+        eq(schema.locationMaster.parent_location_id, query.parentLocationId),
+      );
     }
     if (query.locationType) {
-      conditions.push(eq(schema.locationMaster.location_type, query.locationType));
+      conditions.push(
+        eq(schema.locationMaster.location_type, query.locationType),
+      );
     }
     if (query.rootOnly) {
       conditions.push(isNull(schema.locationMaster.parent_location_id));
@@ -586,98 +838,192 @@ export class LocationService {
       conditions.push(
         or(
           like(schema.locationMaster.location_code, `%${query.search}%`),
-          like(schema.locationMaster.location_name, `%${query.search}%`)
-        )
+          like(schema.locationMaster.location_name, `%${query.search}%`),
+        ),
       );
     }
 
-    const limit = query.limit || 50;
-    const offset = query.offset || 0;
+    // The named filters above stay as they are — callers already use them.
+    // Anything else the table has a column for comes through filter[column],
+    // so the list screen can narrow on storage type, level or capacity without
+    // a new query param and a new release each time.
+    conditions.push(
+      ...listFilterConditions(schema.locationMaster, query.filter),
+    );
 
-    return this.db
-      .select()
-      .from(schema.locationMaster)
-      .where(and(...conditions))
-      .limit(limit)
-      .offset(offset);
+    return runMasterList(
+      this.db,
+      schema.locationMaster,
+      conditions,
+      query,
+      schema.locationMaster.location_code,
+    );
   }
 
-  async update(id: string, dto: UpdateLocationDto, tenantId: string, userPayload?: any) {
+  async update(
+    id: string,
+    dto: UpdateLocationDto,
+    tenantId: string,
+    userPayload?: any,
+  ) {
     const location = await this.findOne(id, tenantId);
 
-    if (dto.location_type !== undefined && dto.location_type !== location.location_type) {
-      throw new ConflictException('Location Type cannot be changed after a location is created. Create a new location instead.');
+    if (
+      dto.location_type !== undefined &&
+      dto.location_type !== location.location_type
+    ) {
+      throw new ConflictException(
+        'Location Type cannot be changed after a location is created. Create a new location instead.',
+      );
     }
-    if (dto.company_id !== undefined && dto.company_id !== location.company_id) {
-      throw new ConflictException('A location cannot be moved to another company after its code is allocated.');
+    if (
+      dto.company_id !== undefined &&
+      dto.company_id !== location.company_id
+    ) {
+      throw new ConflictException(
+        'A location cannot be moved to another company after its code is allocated.',
+      );
     }
 
     if (dto.company_id) {
       const [company] = await this.db
         .select()
         .from(schema.companyMaster)
-        .where(and(eq(schema.companyMaster.company_id, dto.company_id), isNull(schema.companyMaster.deleted_at)))
+        .where(
+          and(
+            eq(schema.companyMaster.company_id, dto.company_id),
+            isNull(schema.companyMaster.deleted_at),
+          ),
+        )
         .limit(1);
 
       if (!company) {
-        throw new NotFoundException(`Company with ID '${dto.company_id}' not found.`);
+        throw new NotFoundException(
+          `Company with ID '${dto.company_id}' not found.`,
+        );
       }
     }
 
-    const effectiveLocationType = dto.location_type !== undefined ? dto.location_type : location.location_type;
-    const effectiveCompanyId = dto.company_id !== undefined ? dto.company_id : location.company_id;
-    const locationType = await this.resolveLocationType(effectiveLocationType, tenantId, effectiveCompanyId);
-    const allowedParentTypes = this.allowedParentTypes(locationType.allowed_parent_types);
-    const effectiveParentId = dto.parent_location_id !== undefined ? dto.parent_location_id : location.parent_location_id;
+    const effectiveLocationType =
+      dto.location_type !== undefined
+        ? dto.location_type
+        : location.location_type;
+    const effectiveCompanyId =
+      dto.company_id !== undefined ? dto.company_id : location.company_id;
+    const locationType = await this.resolveLocationType(
+      effectiveLocationType,
+      tenantId,
+      effectiveCompanyId,
+    );
+    const allowedParentTypes = this.allowedParentTypes(
+      locationType.allowed_parent_types,
+    );
+    const effectiveParentId =
+      dto.parent_location_id !== undefined
+        ? dto.parent_location_id
+        : location.parent_location_id;
     let parent: typeof schema.locationMaster.$inferSelect | undefined;
     let newLocationLevel: number | undefined;
     if (effectiveParentId) {
-      if (effectiveParentId === id) throw new ConflictException('A location cannot be its own parent.');
-      [parent] = await this.db.select().from(schema.locationMaster).where(and(
-        eq(schema.locationMaster.location_id, effectiveParentId),
-        eq(schema.locationMaster.tenant_id, tenantId),
-        effectiveCompanyId
-          ? eq(schema.locationMaster.company_id, effectiveCompanyId)
-          : isNull(schema.locationMaster.company_id),
-        isNull(schema.locationMaster.deleted_at),
-      )).limit(1);
-      if (!parent) throw new NotFoundException(`Parent Location '${effectiveParentId}' not found.`);
+      if (effectiveParentId === id)
+        throw new ConflictException('A location cannot be its own parent.');
+      [parent] = await this.db
+        .select()
+        .from(schema.locationMaster)
+        .where(
+          and(
+            eq(schema.locationMaster.location_id, effectiveParentId),
+            eq(schema.locationMaster.tenant_id, tenantId),
+            effectiveCompanyId
+              ? eq(schema.locationMaster.company_id, effectiveCompanyId)
+              : isNull(schema.locationMaster.company_id),
+            isNull(schema.locationMaster.deleted_at),
+          ),
+        )
+        .limit(1);
+      if (!parent)
+        throw new NotFoundException(
+          `Parent Location '${effectiveParentId}' not found.`,
+        );
       if (!allowedParentTypes.includes(parent.location_type)) {
-        throw new ConflictException(`${locationType.type_name} must be placed under ${allowedParentTypes.join(' or ')}.`);
+        throw new ConflictException(
+          `${locationType.type_name} must be placed under ${allowedParentTypes.join(' or ')}.`,
+        );
       }
       await this.assertNoHierarchyCycle(id, effectiveParentId, tenantId);
       newLocationLevel = parent.location_level + 1;
     } else if (allowedParentTypes.length > 0) {
-      throw new ConflictException(`${locationType.type_name} requires a parent location.`);
+      throw new ConflictException(
+        `${locationType.type_name} requires a parent location.`,
+      );
     } else {
       newLocationLevel = 1;
     }
 
     // SILO locations must carry silo tracking fields — validate against effective values so a
     // partial update that doesn't touch these fields doesn't spuriously fail.
-    const effectiveSiloCapacity = dto.silo_capacity_kg !== undefined ? dto.silo_capacity_kg : location.silo_capacity_kg;
-    const effectiveSiloReorderDays = dto.silo_reorder_days !== undefined ? dto.silo_reorder_days : location.silo_reorder_days;
-    const effectiveStorage = dto.storage_type !== undefined ? dto.storage_type : location.storage_type || (effectiveLocationType === 'SILO' ? 'SILO' : null);
-    this.assertSiloFieldsWhenSilo(effectiveStorage, effectiveSiloCapacity as any, effectiveSiloReorderDays as any);
+    const effectiveSiloCapacity =
+      dto.silo_capacity_kg !== undefined
+        ? dto.silo_capacity_kg
+        : location.silo_capacity_kg;
+    const effectiveSiloReorderDays =
+      dto.silo_reorder_days !== undefined
+        ? dto.silo_reorder_days
+        : location.silo_reorder_days;
+    const effectiveStorage =
+      dto.storage_type !== undefined
+        ? dto.storage_type
+        : location.storage_type ||
+          (effectiveLocationType === 'SILO' ? 'SILO' : null);
+    this.assertSiloFieldsWhenSilo(
+      effectiveStorage,
+      effectiveSiloCapacity as any,
+      effectiveSiloReorderDays as any,
+    );
 
     if (dto.area_unit !== undefined) {
-      await this.assertUomExists(dto.area_unit, tenantId, dto.company_id !== undefined ? dto.company_id : location.company_id);
+      await this.assertUomExists(
+        dto.area_unit,
+        tenantId,
+        dto.company_id !== undefined ? dto.company_id : location.company_id,
+      );
     }
     if (dto.capacity_uom !== undefined) {
-      await this.assertUomExists(dto.capacity_uom, tenantId, dto.company_id !== undefined ? dto.company_id : location.company_id);
+      await this.assertUomExists(
+        dto.capacity_uom,
+        tenantId,
+        dto.company_id !== undefined ? dto.company_id : location.company_id,
+      );
     }
 
     // This location's area must still fit inside its (possibly newly-assigned) parent's, and —
     // the other direction — shrinking its own area must not strand children that already fit
     // under the old value.
-    if (dto.area_size !== undefined || dto.area_unit !== undefined || dto.parent_location_id !== undefined) {
-      const effectiveAreaSize = dto.area_size !== undefined ? dto.area_size : location.area_size;
-      const effectiveAreaUnit = dto.area_unit !== undefined ? dto.area_unit : location.area_unit;
+    if (
+      dto.area_size !== undefined ||
+      dto.area_unit !== undefined ||
+      dto.parent_location_id !== undefined
+    ) {
+      const effectiveAreaSize =
+        dto.area_size !== undefined ? dto.area_size : location.area_size;
+      const effectiveAreaUnit =
+        dto.area_unit !== undefined ? dto.area_unit : location.area_unit;
       // Exclude this location from its own sibling total, or editing a location
       // without changing its area would count it twice and reject a valid save.
-      await this.assertAreaFitsInParent(effectiveAreaSize, effectiveAreaUnit, parent, tenantId, id);
+      await this.assertAreaFitsInParent(
+        effectiveAreaSize,
+        effectiveAreaUnit,
+        parent,
+        tenantId,
+        id,
+      );
       if (dto.area_size !== undefined || dto.area_unit !== undefined) {
-        await this.assertChildTotalFitsWithinArea(id, effectiveAreaSize, effectiveAreaUnit, tenantId);
+        await this.assertChildTotalFitsWithinArea(
+          id,
+          effectiveAreaSize,
+          effectiveAreaUnit,
+          tenantId,
+        );
       }
     }
 
@@ -688,38 +1034,75 @@ export class LocationService {
 
     if (dto.nob_id !== undefined) updates.nob_id = dto.nob_id;
     if (dto.lob_id !== undefined) updates.lob_id = dto.lob_id;
-    if (dto.location_name !== undefined) updates.location_name = dto.location_name;
-    if (dto.location_address !== undefined) updates.location_address = dto.location_address;
+    if (dto.location_name !== undefined)
+      updates.location_name = dto.location_name;
+    if (dto.location_address !== undefined)
+      updates.location_address = dto.location_address;
     if (dto.parent_location_id !== undefined) {
       updates.parent_location_id = dto.parent_location_id;
       updates.location_level = newLocationLevel;
-      updates.farm_id = location.location_type === 'FARM' ? id : parent ? (parent.location_type === 'FARM' ? parent.location_id : parent.farm_id) : null;
-      updates.shed_id = location.location_type === 'SHED' ? id : parent ? (parent.location_type === 'SHED' ? parent.location_id : parent.shed_id) : null;
-      updates.warehouse_id = ['STORE', 'SILO'].includes(location.location_type) ? id : parent ? (['STORE', 'SILO'].includes(parent.location_type) ? parent.location_id : parent.warehouse_id) : null;
+      updates.farm_id =
+        location.location_type === 'FARM'
+          ? id
+          : parent
+            ? parent.location_type === 'FARM'
+              ? parent.location_id
+              : parent.farm_id
+            : null;
+      updates.shed_id =
+        location.location_type === 'SHED'
+          ? id
+          : parent
+            ? parent.location_type === 'SHED'
+              ? parent.location_id
+              : parent.shed_id
+            : null;
+      updates.warehouse_id = ['STORE', 'SILO'].includes(location.location_type)
+        ? id
+        : parent
+          ? ['STORE', 'SILO'].includes(parent.location_type)
+            ? parent.location_id
+            : parent.warehouse_id
+          : null;
     }
-    if (dto.area_size !== undefined) updates.area_size = dto.area_size?.toString() || null;
+    if (dto.area_size !== undefined)
+      updates.area_size = dto.area_size?.toString() || null;
     if (dto.area_unit !== undefined) updates.area_unit = dto.area_unit;
-    if (dto.max_capacity !== undefined) updates.max_capacity = dto.max_capacity?.toString() || null;
+    if (dto.max_capacity !== undefined)
+      updates.max_capacity = dto.max_capacity?.toString() || null;
     if (dto.capacity_uom !== undefined) updates.capacity_uom = dto.capacity_uom;
-    if (dto.current_count !== undefined) updates.current_count = dto.current_count?.toString() || '0.00';
-    if (dto.gps_latitude !== undefined) updates.gps_latitude = dto.gps_latitude?.toString() || null;
-    if (dto.gps_longitude !== undefined) updates.gps_longitude = dto.gps_longitude?.toString() || null;
+    if (dto.current_count !== undefined)
+      updates.current_count = dto.current_count?.toString() || '0.00';
+    if (dto.gps_latitude !== undefined)
+      updates.gps_latitude = dto.gps_latitude?.toString() || null;
+    if (dto.gps_longitude !== undefined)
+      updates.gps_longitude = dto.gps_longitude?.toString() || null;
     if (dto.storage_type !== undefined) updates.storage_type = dto.storage_type;
-    if (dto.is_quarantine_zone !== undefined) updates.is_quarantine_zone = dto.is_quarantine_zone;
-    if (dto.silo_capacity_kg !== undefined) updates.silo_capacity_kg = dto.silo_capacity_kg?.toString() || null;
-    if (dto.silo_reorder_days !== undefined) updates.silo_reorder_days = dto.silo_reorder_days;
+    if (dto.is_quarantine_zone !== undefined)
+      updates.is_quarantine_zone = dto.is_quarantine_zone;
+    if (dto.silo_capacity_kg !== undefined)
+      updates.silo_capacity_kg = dto.silo_capacity_kg?.toString() || null;
+    if (dto.silo_reorder_days !== undefined)
+      updates.silo_reorder_days = dto.silo_reorder_days;
     if (effectiveStorage !== 'SILO') {
       updates.silo_capacity_kg = null;
       updates.silo_reorder_days = null;
     }
-    if (dto.downtime_days_required !== undefined) updates.downtime_days_required = dto.downtime_days_required;
+    if (dto.downtime_days_required !== undefined)
+      updates.downtime_days_required = dto.downtime_days_required;
+    if (dto.storage_name !== undefined) updates.storage_name = dto.storage_name;
+    if (dto.feed_in_bags !== undefined) updates.feed_in_bags = dto.feed_in_bags;
     if (dto.is_active !== undefined) updates.is_active = dto.is_active;
     if (dto.status !== undefined) updates.status = dto.status;
-    if (dto.extension_config !== undefined) updates.extension_config = JSON.stringify(dto.extension_config);
+    if (dto.extension_config !== undefined)
+      updates.extension_config = JSON.stringify(dto.extension_config);
 
     const effective = { ...location, ...updates };
     await this.db.transaction(async (tx) => {
-      await tx.update(schema.locationMaster).set(updates).where(eq(schema.locationMaster.location_id, id));
+      await tx
+        .update(schema.locationMaster)
+        .set(updates)
+        .where(eq(schema.locationMaster.location_id, id));
     });
 
     await this.auditService.log({
@@ -740,24 +1123,35 @@ export class LocationService {
     const location = await this.findOne(id, tenantId);
     const deletedTime = toMysqlTimestamp();
 
-    const [child] = await this.db.select({ location_id: schema.locationMaster.location_id })
-      .from(schema.locationMaster).where(and(
-        eq(schema.locationMaster.parent_location_id, id),
-        eq(schema.locationMaster.tenant_id, tenantId),
-        eq(schema.locationMaster.is_active, true),
-        isNull(schema.locationMaster.deleted_at),
-      )).limit(1);
-    if (child) throw new ConflictException('Deactivate or move this location\'s child locations first.');
+    const [child] = await this.db
+      .select({ location_id: schema.locationMaster.location_id })
+      .from(schema.locationMaster)
+      .where(
+        and(
+          eq(schema.locationMaster.parent_location_id, id),
+          eq(schema.locationMaster.tenant_id, tenantId),
+          eq(schema.locationMaster.is_active, true),
+          isNull(schema.locationMaster.deleted_at),
+        ),
+      )
+      .limit(1);
+    if (child)
+      throw new ConflictException(
+        "Deactivate or move this location's child locations first.",
+      );
 
     const updates = {
-        is_active: false,
-        status: 'INACTIVE',
-        deleted_at: deletedTime as any,
-        updated_by: userPayload?.userId || null,
-        updated_at: deletedTime,
+      is_active: false,
+      status: 'INACTIVE',
+      deleted_at: deletedTime as any,
+      updated_by: userPayload?.userId || null,
+      updated_at: deletedTime,
     };
     await this.db.transaction(async (tx) => {
-      await tx.update(schema.locationMaster).set(updates).where(eq(schema.locationMaster.location_id, id));
+      await tx
+        .update(schema.locationMaster)
+        .set(updates)
+        .where(eq(schema.locationMaster.location_id, id));
     });
 
     await this.auditService.log({
@@ -771,17 +1165,22 @@ export class LocationService {
       newValues: { status: 'INACTIVE', deleted_at: deletedTime },
     });
 
-    return { success: true, message: `Location '${location.location_name}' has been soft-deleted.` };
+    return {
+      success: true,
+      message: `Location '${location.location_name}' has been soft-deleted.`,
+    };
   }
 
   async restore(id: string, tenantId: string, userPayload?: any) {
     const [location] = await this.db
       .select()
       .from(schema.locationMaster)
-      .where(and(
-        eq(schema.locationMaster.location_id, id),
-        eq(schema.locationMaster.tenant_id, tenantId),
-      ))
+      .where(
+        and(
+          eq(schema.locationMaster.location_id, id),
+          eq(schema.locationMaster.tenant_id, tenantId),
+        ),
+      )
       .limit(1);
 
     if (!location) {
@@ -793,14 +1192,17 @@ export class LocationService {
     }
 
     const updates = {
-        is_active: true,
-        status: 'ACTIVE',
-        deleted_at: null,
-        updated_by: userPayload?.userId || null,
-        updated_at: toMysqlTimestamp(),
+      is_active: true,
+      status: 'ACTIVE',
+      deleted_at: null,
+      updated_by: userPayload?.userId || null,
+      updated_at: toMysqlTimestamp(),
     };
     await this.db.transaction(async (tx) => {
-      await tx.update(schema.locationMaster).set(updates).where(eq(schema.locationMaster.location_id, id));
+      await tx
+        .update(schema.locationMaster)
+        .set(updates)
+        .where(eq(schema.locationMaster.location_id, id));
     });
 
     await this.auditService.log({
@@ -826,8 +1228,8 @@ export class LocationService {
       conditions.push(
         or(
           eq(schema.locationMaster.company_id, companyId),
-          isNull(schema.locationMaster.company_id)
-        )
+          isNull(schema.locationMaster.company_id),
+        ),
       );
     }
 
@@ -838,14 +1240,23 @@ export class LocationService {
     // locationMaster is self-referential, so Drizzle's alias overload widens it
     // to a table/view union under TS 5.9. It is still the same MySQL table shape;
     // keep that shape explicit so leftJoin accepts the alias.
-    const parentLocation = alias(schema.locationMaster, 'parent_location') as unknown as typeof schema.locationMaster;
+    const parentLocation = alias(
+      schema.locationMaster,
+      'parent_location',
+    ) as unknown as typeof schema.locationMaster;
     const locations = await this.db
       .select({
         location: schema.locationMaster,
         parent: parentLocation,
       })
       .from(schema.locationMaster)
-      .leftJoin(parentLocation, eq(schema.locationMaster.parent_location_id, parentLocation.location_id))
+      .leftJoin(
+        parentLocation as any,
+        eq(
+          schema.locationMaster.parent_location_id,
+          parentLocation.location_id,
+        ),
+      )
       .where(and(...conditions));
 
     // Get animal counts per location
@@ -894,9 +1305,11 @@ export class LocationService {
 
     for (const a of animals) {
       if (a.current_location_id) {
-        animalCountMap[a.current_location_id] = (animalCountMap[a.current_location_id] || 0) + 1;
+        animalCountMap[a.current_location_id] =
+          (animalCountMap[a.current_location_id] || 0) + 1;
         if (a.status === 'SICK' || a.status === 'QUARANTINE') {
-          sickQuarantineMap[a.current_location_id] = (sickQuarantineMap[a.current_location_id] || 0) + 1;
+          sickQuarantineMap[a.current_location_id] =
+            (sickQuarantineMap[a.current_location_id] || 0) + 1;
         }
       }
     }
@@ -905,16 +1318,24 @@ export class LocationService {
     for (const b of batches) {
       const locId = b.location_id || b.shed_id;
       if (locId) {
-        batchCountMap[locId] = (batchCountMap[locId] || 0) + Number(b.opening_quantity || 0);
+        batchCountMap[locId] =
+          (batchCountMap[locId] || 0) + Number(b.opening_quantity || 0);
       }
     }
 
     return locations.map(({ location, parent }) => {
       const animalHeadcount = animalCountMap[location.location_id] || 0;
-      const batchHeadcount = batchCountMap[location.location_id] || (location.shed_id ? batchCountMap[location.shed_id] || 0 : 0);
+      const batchHeadcount =
+        batchCountMap[location.location_id] ||
+        (location.shed_id ? batchCountMap[location.shed_id] || 0 : 0);
       const totalOccupancy = animalHeadcount + batchHeadcount;
-      const maxCap = location.max_capacity ? Number(location.max_capacity) : null;
-      const utilizationPct = maxCap && maxCap > 0 ? Math.round((totalOccupancy / maxCap) * 100) : null;
+      const maxCap = location.max_capacity
+        ? Number(location.max_capacity)
+        : null;
+      const utilizationPct =
+        maxCap && maxCap > 0
+          ? Math.round((totalOccupancy / maxCap) * 100)
+          : null;
       const isOverCapacity = maxCap != null && totalOccupancy > maxCap;
       const sickCount = sickQuarantineMap[location.location_id] || 0;
 

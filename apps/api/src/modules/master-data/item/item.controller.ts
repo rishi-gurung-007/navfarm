@@ -1,17 +1,22 @@
-import { 
-  Controller, 
-  Get, 
-  Post, 
-  Put, 
-  Delete, 
-  Param, 
-  Body, 
-  Query, 
-  Req, 
-  UseGuards, 
-  Patch 
+import {
+  Controller,
+  Get,
+  Post,
+  Put,
+  Delete,
+  Param,
+  Body,
+  Query,
+  Req,
+  UseGuards,
+  Patch,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth, ApiParam } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiBearerAuth,
+  ApiParam,
+} from '@nestjs/swagger';
 import { ItemService } from './item.service';
 import { CreateItemDto, UpdateItemDto, QueryItemDto } from './dto/item.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
@@ -37,7 +42,7 @@ export class ItemController {
     return {
       success: true,
       message: 'Item registered successfully.',
-      data: result
+      data: result,
     };
   }
 
@@ -50,34 +55,48 @@ export class ItemController {
     return {
       success: true,
       message: 'Items retrieved successfully.',
-      data: result
+      // `data` stays the array every caller already reads; total/limit/offset
+      // are siblings the list screen pages on.
+      data: result.data,
+      total: result.total,
+      limit: result.limit,
+      offset: result.offset,
     };
   }
 
   @Get(':id')
   @RequirePermission('MASTER_DATA', 'ITEM', 'view')
-  @ApiOperation({ summary: 'Fetch details of a single Item by UUID including mapped attributes' })
+  @ApiOperation({
+    summary:
+      'Fetch details of a single Item by UUID including mapped attributes',
+  })
   @ApiParam({ name: 'id', description: 'Item UUID' })
   async findOne(@Param('id') id: string) {
     const result = await this.itemService.findOne(id, true);
     return {
       success: true,
       message: 'Item details retrieved.',
-      data: result
+      data: result,
     };
   }
 
   @Put(':id')
   @RequirePermission('MASTER_DATA', 'ITEM', 'edit')
-  @ApiOperation({ summary: 'Update details and attributes of an existing Item' })
+  @ApiOperation({
+    summary: 'Update details and attributes of an existing Item',
+  })
   @ApiParam({ name: 'id', description: 'Item UUID' })
-  async update(@Param('id') id: string, @Body() dto: UpdateItemDto, @Req() req: any) {
+  async update(
+    @Param('id') id: string,
+    @Body() dto: UpdateItemDto,
+    @Req() req: any,
+  ) {
     const tenantId = req.user?.tenantId || req['tenantId'];
     const result = await this.itemService.update(id, dto, tenantId, req.user);
     return {
       success: true,
       message: 'Item updated successfully.',
-      data: result
+      data: result,
     };
   }
 
@@ -101,7 +120,7 @@ export class ItemController {
     return {
       success: true,
       message: 'Item restored successfully.',
-      data: result
+      data: result,
     };
   }
 }

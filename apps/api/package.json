@@ -50,12 +50,60 @@
           "command": "node --env-file-if-exists=.env --import tsx src/scripts/align-master-codes-to-series.ts"
         }
       },
+      "db-seed-farm-locations": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --import tsx src/scripts/seed-farm-locations.ts"
+        }
+      },
+      "db-seed-farm-masters": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --import tsx src/scripts/seed-farm-masters.ts"
+        }
+      },
       "db-align-stages-to-tdd": {
         "executor": "nx:run-commands",
         "cache": false,
         "options": {
           "cwd": "apps/api",
           "command": "node --import tsx src/scripts/align-stages-to-tdd.ts"
+        }
+      },
+      "db-reset-batch-scheduler-for-tracking-mode": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --env-file-if-exists=.env --import tsx src/scripts/reset-batch-scheduler-for-tracking-mode.ts"
+        }
+      },
+      "db-fix-animal-register-breed-and-age": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --env-file-if-exists=.env --import tsx src/scripts/fix-animal-register-breed-and-age.ts"
+        }
+      },
+      "db-backfill-company-breed-lifecycle-stages": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --env-file-if-exists=.env --import tsx src/scripts/backfill-company-breed-lifecycle-stages.ts"
+        }
+      },
+      "db-seed-batch-full-schedulers": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --env-file-if-exists=.env --import tsx src/scripts/seed-batch-full-schedulers.ts"
         }
       },
       "build": {
@@ -134,7 +182,9 @@
       "start": {
         "executor": "nx:run-commands",
         "continuous": true,
-        "dependsOn": ["build"],
+        "dependsOn": [
+          "build"
+        ],
         "options": {
           "cwd": "apps/api",
           "command": "node --env-file-if-exists=.env dist/main.js",
@@ -185,6 +235,13 @@
           "command": "node --env-file-if-exists=.env --import tsx src/scripts/sync-nob-lob.ts"
         }
       },
+      "db-sync-currency-master": {
+        "executor": "nx:run-commands",
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --env-file-if-exists=.env --import tsx src/scripts/sync-currency-master.ts"
+        }
+      },
       "db-sync-locale-master": {
         "executor": "nx:run-commands",
         "options": {
@@ -199,11 +256,18 @@
           "command": "node --env-file-if-exists=.env --import tsx src/scripts/fix-non-uuid-company-ids.ts"
         }
       },
+      "db-backfill-scheduler-headers": {
+        "executor": "nx:run-commands",
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --env-file-if-exists=.env --import tsx src/scripts/backfill-scheduler-headers.ts"
+        }
+      },
       "db-migrate-master": {
         "executor": "nx:run-commands",
         "options": {
           "cwd": "apps/api",
-          "command": "drizzle-kit migrate --config drizzle.master.config.ts"
+          "command": "node --env-file-if-exists=.env --import tsx src/scripts/migrate-master.ts"
         }
       },
       "db-generate-tenant": {
@@ -256,6 +320,13 @@
         "executor": "nx:run-commands",
         "options": {
           "command": "node --env-file-if-exists=.env --import tsx src/scripts/seed-demo-gaps.ts",
+          "cwd": "apps/api"
+        }
+      },
+      "db-seed-activity-master": {
+        "executor": "nx:run-commands",
+        "options": {
+          "command": "node --env-file-if-exists=.env --import tsx src/scripts/seed-activity-master.ts",
           "cwd": "apps/api"
         }
       }

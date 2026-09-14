@@ -1,13 +1,28 @@
-import { companyCondition, masterScopeConditions } from '../../../common/master-data-scope';
-import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import {
+  companyCondition,
+  masterScopeConditions,
+} from '../../../common/master-data-scope';
+import {
+  Injectable,
+  NotFoundException,
+  ConflictException,
+} from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { eq, and, like, or, isNull } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
-import { CreateCustomerDto, UpdateCustomerDto, QueryCustomerDto } from './dto/customer.dto';
+import {
+  CreateCustomerDto,
+  UpdateCustomerDto,
+  QueryCustomerDto,
+} from './dto/customer.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
+import {
+  listFilterConditions,
+  runMasterList,
+} from '../../../common/master-list-query';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   return date.toISOString().slice(0, 19).replace('T', ' ');
@@ -35,29 +50,61 @@ export class CustomerService {
       const [company] = await this.db
         .select()
         .from(schema.companyMaster)
-        .where(and(companyCondition(schema.companyMaster.company_id, dto.company_id), isNull(schema.companyMaster.deleted_at)))
+        .where(
+          and(
+            companyCondition(schema.companyMaster.company_id, dto.company_id),
+            isNull(schema.companyMaster.deleted_at),
+          ),
+        )
         .limit(1);
 
       if (!company) {
-        throw new NotFoundException(`Company with ID '${dto.company_id}' not found.`);
+        throw new NotFoundException(
+          `Company with ID '${dto.company_id}' not found.`,
+        );
       }
     }
 
     await this.numberSeriesService.ensureCompanySeries(
       tenantId,
       dto.company_id,
-      { seriesCode: 'CUSTOMER', seriesName: 'Customer Code', documentType: 'CUSTOMER', prefix: 'CUS', seqLength: 3 },
+      {
+        seriesCode: 'CUSTOMER',
+        seriesName: 'Customer Code',
+        documentType: 'CUSTOMER',
+        prefix: 'CUS',
+        seqLength: 3,
+      },
       async () => {
-        const rows = await this.db.select({ code: schema.customerMaster.customer_code }).from(schema.customerMaster).where(and(
-          eq(schema.customerMaster.tenant_id, tenantId),
-          companyCondition(schema.customerMaster.company_id, dto.company_id),
-        ));
+        const rows = await this.db
+          .select({ code: schema.customerMaster.customer_code })
+          .from(schema.customerMaster)
+          .where(
+            and(
+              eq(schema.customerMaster.tenant_id, tenantId),
+              companyCondition(
+                schema.customerMaster.company_id,
+                dto.company_id,
+              ),
+            ),
+          );
         return rows.map((row) => row.code);
       },
     );
     const customerCode = dto.customer_code?.trim()
-      ? await this.numberSeriesService.manualCode('CUSTOMER', dto.customer_code, tenantId, dto.company_id)
-      : await this.numberSeriesService.generateNext('CUSTOMER', tenantId, dto.company_id, undefined, dto as unknown as Record<string, unknown>);
+      ? await this.numberSeriesService.manualCode(
+          'CUSTOMER',
+          dto.customer_code,
+          tenantId,
+          dto.company_id,
+        )
+      : await this.numberSeriesService.generateNext(
+          'CUSTOMER',
+          tenantId,
+          dto.company_id,
+          undefined,
+          dto as unknown as Record<string, unknown>,
+        );
 
     const customerId = randomUUID();
     const newCustomer = {
@@ -79,7 +126,9 @@ export class CustomerService {
       pincode: dto.pincode || null,
       is_active: true,
       status: 'ACTIVE',
-      extension_config: dto.extension_config ? JSON.stringify(dto.extension_config) : null,
+      extension_config: dto.extension_config
+        ? JSON.stringify(dto.extension_config)
+        : null,
       created_by: userPayload?.userId || null,
       updated_by: userPayload?.userId || null,
     };
@@ -103,7 +152,12 @@ export class CustomerService {
     const [customer] = await this.db
       .select()
       .from(schema.customerMaster)
-      .where(and(eq(schema.customerMaster.customer_id, id), isNull(schema.customerMaster.deleted_at)))
+      .where(
+        and(
+          eq(schema.customerMaster.customer_id, id),
+          isNull(schema.customerMaster.deleted_at),
+        ),
+      )
       .limit(1);
 
     if (!customer) {
@@ -115,11 +169,15 @@ export class CustomerService {
 
   async findAll(query: QueryCustomerDto, tenantId: string) {
     // No isNull(deleted_at) filter — list view shows both Active/Inactive states (toggle switch) so a blocked row can be found again and restored.
-    const conditions: any[] = [
-      eq(schema.customerMaster.tenant_id, tenantId),
-    ];
+    const conditions: any[] = [eq(schema.customerMaster.tenant_id, tenantId)];
 
-    conditions.push(...masterScopeConditions(this.cls, schema.customerMaster, query.companyId));
+    conditions.push(
+      ...masterScopeConditions(
+        this.cls,
+        schema.customerMaster,
+        query.companyId,
+      ),
+    );
     if (query.isActive !== undefined) {
       conditions.push(eq(schema.customerMaster.is_active, query.isActive));
     }
@@ -128,27 +186,41 @@ export class CustomerService {
         or(
           like(schema.customerMaster.customer_code, `%${query.search}%`),
           like(schema.customerMaster.customer_name, `%${query.search}%`),
-          like(schema.customerMaster.mobile, `%${query.search}%`)
-        )
+          like(schema.customerMaster.mobile, `%${query.search}%`),
+        ),
       );
     }
 
-    const limit = query.limit || 50;
-    const offset = query.offset || 0;
+    conditions.push(
+      ...listFilterConditions(schema.customerMaster, query.filter),
+    );
 
-    return this.db
-      .select()
-      .from(schema.customerMaster)
-      .where(and(...conditions))
-      .limit(limit)
-      .offset(offset);
+    // Rows and the matching count together, so the pager knows how many
+    // pages there really are rather than guessing from a full page.
+    return runMasterList(
+      this.db,
+      schema.customerMaster,
+      conditions,
+      query,
+      schema.customerMaster.customer_code,
+    );
   }
 
-  async update(id: string, dto: UpdateCustomerDto, tenantId: string, userPayload?: any) {
+  async update(
+    id: string,
+    dto: UpdateCustomerDto,
+    tenantId: string,
+    userPayload?: any,
+  ) {
     const customer = await this.findOne(id);
 
-    if (dto.customer_code && dto.customer_code.toUpperCase() !== customer.customer_code) {
-      throw new ConflictException('Customer Code is generated from the company-wide CUSTOMER sequence and cannot be changed.');
+    if (
+      dto.customer_code &&
+      dto.customer_code.toUpperCase() !== customer.customer_code
+    ) {
+      throw new ConflictException(
+        'Customer Code is generated from the company-wide CUSTOMER sequence and cannot be changed.',
+      );
     }
 
     const updates: any = {
@@ -156,19 +228,23 @@ export class CustomerService {
       updated_at: toMysqlTimestamp(),
     };
 
-    if (dto.customer_name !== undefined) updates.customer_name = dto.customer_name;
+    if (dto.customer_name !== undefined)
+      updates.customer_name = dto.customer_name;
     if (dto.email !== undefined) updates.email = dto.email;
     if (dto.mobile !== undefined) updates.mobile = dto.mobile;
     if (dto.tax_number !== undefined) updates.tax_number = dto.tax_number;
-    if (dto.credit_limit !== undefined) updates.credit_limit = dto.credit_limit?.toString() || null;
-    if (dto.address_line1 !== undefined) updates.address_line1 = dto.address_line1;
+    if (dto.credit_limit !== undefined)
+      updates.credit_limit = dto.credit_limit?.toString() || null;
+    if (dto.address_line1 !== undefined)
+      updates.address_line1 = dto.address_line1;
     if (dto.city !== undefined) updates.city = dto.city;
     if (dto.state !== undefined) updates.state = dto.state;
     if (dto.country !== undefined) updates.country = dto.country;
     if (dto.pincode !== undefined) updates.pincode = dto.pincode;
     if (dto.is_active !== undefined) updates.is_active = dto.is_active;
     if (dto.status !== undefined) updates.status = dto.status;
-    if (dto.extension_config !== undefined) updates.extension_config = JSON.stringify(dto.extension_config);
+    if (dto.extension_config !== undefined)
+      updates.extension_config = JSON.stringify(dto.extension_config);
 
     await this.db
       .update(schema.customerMaster)
@@ -214,7 +290,10 @@ export class CustomerService {
       newValues: { status: 'INACTIVE', deleted_at: deletedTime },
     });
 
-    return { success: true, message: `Customer '${customer.customer_name}' has been soft-deleted.` };
+    return {
+      success: true,
+      message: `Customer '${customer.customer_name}' has been soft-deleted.`,
+    };
   }
 
   async restore(id: string, tenantId: string, userPayload?: any) {

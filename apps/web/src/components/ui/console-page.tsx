@@ -1,5 +1,5 @@
-import type { ReactNode } from "react";
-import { cn } from "@/lib/utils";
+import type { ReactNode } from 'react';
+import { cn } from '@/lib/utils';
 
 /**
  * The one page-level container every route renders into. Before this, each
@@ -15,19 +15,24 @@ import { cn } from "@/lib/utils";
  */
 export function ConsolePage({
   children,
-  size = "default",
+  size = 'default',
   className,
 }: {
   children: ReactNode;
-  size?: "default" | "narrow";
+  size?: 'default' | 'narrow';
   className?: string;
 }) {
   return (
     <div
       className={cn(
-        "mx-auto space-y-6 px-4 pb-6 sm:px-6 lg:px-7",
-        size === "narrow" ? "max-w-2xl" : "max-w-7xl",
-        className
+        // pb-10, not pb-6: the last row of a long list used to finish flush
+        // against the bottom of the scroller, so anything overlaying that
+        // edge — a horizontal scrollbar on a wide table, the floating
+        // assistant button — covered it with the list already scrolled to
+        // its limit and no way to bring it further into view.
+        'mx-auto space-y-6 px-4 pb-10 sm:px-6 lg:px-7',
+        size === 'narrow' ? 'max-w-2xl' : 'max-w-7xl',
+        className,
       )}
     >
       {children}

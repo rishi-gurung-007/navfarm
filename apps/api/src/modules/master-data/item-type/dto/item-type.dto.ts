@@ -1,43 +1,82 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsInt, Min } from 'class-validator';
+import {
+  IsString,
+  IsNotEmpty,
+  IsOptional,
+  IsUUID,
+  IsBoolean,
+  IsInt,
+  Min,
+} from 'class-validator';
 import { Type } from 'class-transformer';
+import { MasterListQueryDto } from '../../../../common/master-list-query';
 
 export class CreateItemTypeDto {
-  @ApiProperty({ description: 'Company UUID scope (null means tenant-wide global type)', required: false, example: 'company-uuid-here' })
+  @ApiProperty({
+    description: 'Company UUID scope (null means tenant-wide global type)',
+    required: false,
+    example: 'company-uuid-here',
+  })
   @IsUUID()
   @IsOptional()
   company_id?: string;
 
-  @ApiProperty({ description: 'Unique item type code. Optional when a number series is configured for item types — the code is generated then.', required: false, example: 'RAW_MATERIAL' })
+  @ApiProperty({
+    description:
+      'Unique item type code. Optional when a number series is configured for item types — the code is generated then.',
+    required: false,
+    example: 'RAW_MATERIAL',
+  })
   @IsString()
   @IsOptional()
   type_code?: string;
 
-  @ApiProperty({ description: 'Descriptive name of the item type', example: 'Raw Material' })
+  @ApiProperty({
+    description: 'Descriptive name of the item type',
+    example: 'Raw Material',
+  })
   @IsString()
   @IsNotEmpty()
   type_name: string;
 
-  @ApiProperty({ description: 'Prefix an ITEM_<type_code> series uses instead of its own prefix when generating item codes for this type. Defaults to the type_code itself when omitted.', required: false, example: 'RAW' })
+  @ApiProperty({
+    description:
+      'Prefix an ITEM_<type_code> series uses instead of its own prefix when generating item codes for this type. Defaults to the type_code itself when omitted.',
+    required: false,
+    example: 'RAW',
+  })
   @IsString()
   @IsOptional()
   code_prefix?: string;
 
-  @ApiProperty({ description: 'Explanation of what this item type is used for', required: false })
+  @ApiProperty({
+    description: 'Explanation of what this item type is used for',
+    required: false,
+  })
   @IsString()
   @IsOptional()
   description?: string;
 
-  @ApiProperty({ description: 'Flexible custom config configurations in JSON format', required: false })
+  @ApiProperty({
+    description: 'Flexible custom config configurations in JSON format',
+    required: false,
+  })
   @IsOptional()
   extension_config?: any;
 
-  @ApiProperty({ description: 'Nature of Business UUID scope (blank = available across all NOBs)', required: false })
+  @ApiProperty({
+    description:
+      'Nature of Business UUID scope (blank = available across all NOBs)',
+    required: false,
+  })
   @IsString()
   @IsOptional()
   nob_id?: string;
 
-  @ApiProperty({ description: 'Line of Business UUID scope (blank = not LOB-restricted)', required: false })
+  @ApiProperty({
+    description: 'Line of Business UUID scope (blank = not LOB-restricted)',
+    required: false,
+  })
   @IsString()
   @IsOptional()
   lob_id?: string;
@@ -69,7 +108,11 @@ export class UpdateItemTypeDto {
   @IsOptional()
   is_active?: boolean;
 
-  @ApiProperty({ required: false, example: 'ACTIVE', enum: ['ACTIVE', 'INACTIVE', 'ARCHIVE'] })
+  @ApiProperty({
+    required: false,
+    example: 'ACTIVE',
+    enum: ['ACTIVE', 'INACTIVE', 'ARCHIVE'],
+  })
   @IsString()
   @IsOptional()
   status?: string;
@@ -78,18 +121,25 @@ export class UpdateItemTypeDto {
   @IsOptional()
   extension_config?: any;
 
-  @ApiProperty({ description: 'Nature of Business UUID scope (blank = available across all NOBs)', required: false })
+  @ApiProperty({
+    description:
+      'Nature of Business UUID scope (blank = available across all NOBs)',
+    required: false,
+  })
   @IsString()
   @IsOptional()
   nob_id?: string;
 
-  @ApiProperty({ description: 'Line of Business UUID scope (blank = not LOB-restricted)', required: false })
+  @ApiProperty({
+    description: 'Line of Business UUID scope (blank = not LOB-restricted)',
+    required: false,
+  })
   @IsString()
   @IsOptional()
   lob_id?: string;
 }
 
-export class QueryItemTypeDto {
+export class QueryItemTypeDto extends MasterListQueryDto {
   @ApiProperty({ description: 'Filter by company UUID', required: false })
   @IsOptional()
   @IsUUID()
@@ -105,18 +155,4 @@ export class QueryItemTypeDto {
   @IsOptional()
   @IsString()
   search?: string;
-
-  @ApiProperty({ description: 'Results per page', default: 50, required: false })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  limit?: number;
-
-  @ApiProperty({ description: 'Pagination offset', default: 0, required: false })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(0)
-  offset?: number;
 }

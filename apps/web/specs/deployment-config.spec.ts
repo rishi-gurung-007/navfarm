@@ -18,8 +18,14 @@ describe('Windows production deployment configuration', () => {
     const config = createNextConfig('phase-production-build');
 
     await expect(config.rewrites()).resolves.toEqual([
-      { source: '/api/v1/:path*', destination: 'http://127.0.0.1:2877/api/v1/:path*' },
-      { source: '/uploads/:path*', destination: 'http://127.0.0.1:2877/uploads/:path*' },
+      {
+        source: '/api/v1/:path*',
+        destination: 'http://127.0.0.1:2877/api/v1/:path*',
+      },
+      {
+        source: '/uploads/:path*',
+        destination: 'http://127.0.0.1:2877/uploads/:path*',
+      },
     ]);
   });
 
