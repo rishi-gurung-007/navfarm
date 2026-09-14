@@ -1,6 +1,6 @@
 import { MySqlDialect } from 'drizzle-orm/mysql-core';
 import { ApprovalService } from './approval.service';
-import { transactionCls } from '../../../test-utils/transaction-cls';
+import { transactionCls, useFarmScope } from '../../../test-utils/transaction-cls';
 import * as schema from '../../../core/database/schema';
 
 describe('approval posting', () => {
@@ -12,6 +12,7 @@ describe('approval posting', () => {
   let audit: any;
   let events: string[];
   let queries: any[];
+  let cls: ReturnType<typeof transactionCls>;
 
   beforeEach(() => {
     request = { request_id: 'req', tenant_id: 'tenant', company_id: 'company',
@@ -42,7 +43,7 @@ describe('approval posting', () => {
         Object.assign(request, values);
       } }) })),
     };
-    const cls = transactionCls(db);
+    cls = transactionCls(db);
     batchService = { addTransaction: jest.fn(async () => {
       expect(cls.get('tenantPostingTransaction')).toBe(true);
       events.push('post');
@@ -65,6 +66,16 @@ describe('approval posting', () => {
     expect(query.params).toContain('company');
     expect(query.params).toEqual(expect.arrayContaining(['MEDICINE', 'VACCINE']));
     expect(request.status).toBe('APPROVED');
+  });
+
+  it('scopes the request lock before approving', async () => {
+    useFarmScope(cls, { farmId: null, restricted: true, companyId: 'company', lobId: 'lob-pig' });
+
+    await service.approve('req', 'tenant', { userId: 'user' });
+
+    const query = queries.find(q => q.table === schema.approvalRequest);
+    expect(query.sql).toContain('`approval_request`.`company_id` = ?');
+    expect(query.sql).toContain('br.lob_id = ?');
   });
 
   it('uses the same posting path for batch-specific approval', async () => {
@@ -153,5 +164,15 @@ describe('approval posting', () => {
     expect(events).toEqual(['lock-request', 'decision', 'audit']);
     expect(request.deleted_at).toBeDefined();
     expect(db.transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it('scopes the request lock before withdrawing', async () => {
+    useFarmScope(cls, { farmId: 'farm-g', restricted: true, companyId: 'company', lobId: 'lob-pig' });
+
+    await service.remove('req', 'tenant');
+
+    const query = queries.find(q => q.table === schema.approvalRequest);
+    expect(query.sql).toContain('batch_header bf');
+    expect(query.sql).toContain('`approval_request`.`company_id` = ?');
   });
 });

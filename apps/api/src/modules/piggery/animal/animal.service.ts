@@ -524,6 +524,7 @@ export class AnimalService {
       .where(
         and(
           eq(schema.animalRegister.tenant_id, tenantId),
+          ...animalScopeConditions(farmScope(this.cls)),
           or(
             eq(schema.animalRegister.rfid_tag, trimmed),
             eq(schema.animalRegister.ear_tag, trimmed),
@@ -757,7 +758,11 @@ export class AnimalService {
     // Treatment posting locks this same animal after its batch. Disposal never
     // locks a batch, so there is no reverse batch/animal lock ordering.
     const [animal] = await this.db.select().from(schema.animalRegister)
-      .where(and(eq(schema.animalRegister.animal_id, id), eq(schema.animalRegister.tenant_id, tenantId)))
+      .where(and(
+        eq(schema.animalRegister.animal_id, id),
+        eq(schema.animalRegister.tenant_id, tenantId),
+        ...animalScopeConditions(farmScope(this.cls)),
+      ))
       .for('update');
     if (!animal) throw new NotFoundException(`Animal '${id}' not found.`);
 
@@ -977,6 +982,14 @@ export class AnimalService {
       if (!loc) {
         throw new NotFoundException(`Destination Location with ID '${dto.to_location_id}' not found.`);
       }
+      const scope = farmScope(this.cls);
+      if (scope.companyId && loc.company_id !== scope.companyId) {
+        throw new BadRequestException('Destination Location is outside the active company.');
+      }
+      if (scope.restricted && scope.lobId && loc.lob_id !== scope.lobId) {
+        throw new BadRequestException('Destination Location is outside the active line of business.');
+      }
+      await assertLocationOnActiveFarm(this.db, scope, dto.to_location_id, 'Destination Location');
     }
 
     // 4. Optional batch verification
@@ -984,7 +997,11 @@ export class AnimalService {
       const [batch] = await this.db
         .select()
         .from(schema.batchHeader)
-        .where(and(eq(schema.batchHeader.batch_id, dto.to_batch_id), eq(schema.batchHeader.tenant_id, tenantId)))
+        .where(and(
+          eq(schema.batchHeader.batch_id, dto.to_batch_id),
+          eq(schema.batchHeader.tenant_id, tenantId),
+          ...batchScopeConditions(farmScope(this.cls)),
+        ))
         .limit(1);
       if (!batch) {
         throw new NotFoundException(`Destination Batch with ID '${dto.to_batch_id}' not found.`);

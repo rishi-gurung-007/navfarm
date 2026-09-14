@@ -5,6 +5,7 @@ import { QueryAlertDto, MarkAlertReadDto } from './dto/alert.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
+import { FarmScoped } from '../../../common/farm-scope';
 
 // Alert visibility rides on the existing PRODUCTION/BATCH permission —
 // alerts are just a KPI-monitoring view over batch daily entries, not a
@@ -12,6 +13,7 @@ import { RequirePermission } from '../../../common/decorators/require-permission
 @ApiTags('KPI Alert Center')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
+@FarmScoped()
 @Controller('alert')
 export class AlertController {
   constructor(private readonly alertService: AlertService) {}

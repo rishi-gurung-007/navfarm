@@ -1,11 +1,11 @@
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, or, like, isNull, count } from 'drizzle-orm';
+import { eq, and, or, like, isNull, count, sql } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
-import { farmScope, locationOnFarm, assertLocationOnActiveFarm } from '../../../common/farm-scope';
+import { assertCompanyInScope, farmScope, locationOnFarm, assertLocationOnActiveFarm, restrictedScopeConditions } from '../../../common/farm-scope';
 import { CreateStockTransferDto, UpdateStockTransferDto, QueryStockTransferDto } from './dto/stock-transfer.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
@@ -47,11 +47,18 @@ export class StockTransferService {
   }
 
   async create(dto: CreateStockTransferDto, tenantId: string, userPayload?: any) {
+    assertCompanyInScope(farmScope(this.cls), dto.company_id);
     return withTenantTransaction(this.cls, async () => {
     if (dto.from_warehouse_id === dto.to_warehouse_id) {
       throw new BadRequestException('Source and destination warehouse must be different.');
     }
     await assertLocationOnActiveFarm(this.db, farmScope(this.cls), dto.from_warehouse_id, 'Source warehouse');
+    await assertLocationOnActiveFarm(
+      this.db,
+      { ...farmScope(this.cls), farmId: null },
+      dto.to_warehouse_id,
+      'Destination warehouse',
+    );
 
     const transferId = randomUUID();
     const transferNo = await this.db.transaction(async (tx) => {
@@ -113,6 +120,11 @@ export class StockTransferService {
         )!
       );
     }
+    conditions.push(...restrictedScopeConditions(scope, { companyId: schema.stockTransfer.company_id }));
+    if (scope.restricted && scope.lobId) conditions.push(or(
+      sql`${schema.stockTransfer.from_warehouse_id} IN (SELECT lsl.location_id FROM location_master lsl WHERE lsl.lob_id = ${scope.lobId})`,
+      sql`${schema.stockTransfer.to_warehouse_id} IN (SELECT lsl.location_id FROM location_master lsl WHERE lsl.lob_id = ${scope.lobId})`,
+    )!);
 
     const [transfer] = await this.db
       .select()
@@ -144,6 +156,11 @@ export class StockTransferService {
         )!
       );
     }
+    conditions.push(...restrictedScopeConditions(scope, { companyId: schema.stockTransfer.company_id }));
+    if (scope.restricted && scope.lobId) conditions.push(or(
+      sql`${schema.stockTransfer.from_warehouse_id} IN (SELECT lsl.location_id FROM location_master lsl WHERE lsl.lob_id = ${scope.lobId})`,
+      sql`${schema.stockTransfer.to_warehouse_id} IN (SELECT lsl.location_id FROM location_master lsl WHERE lsl.lob_id = ${scope.lobId})`,
+    )!);
 
     if (query.companyId) conditions.push(eq(schema.stockTransfer.company_id, query.companyId));
     if (query.status) conditions.push(eq(schema.stockTransfer.status, query.status));
@@ -177,6 +194,14 @@ export class StockTransferService {
     }
     if (dto.from_warehouse_id !== undefined) {
       await assertLocationOnActiveFarm(this.db, farmScope(this.cls), dto.from_warehouse_id, 'Source warehouse');
+    }
+    if (dto.to_warehouse_id !== undefined) {
+      await assertLocationOnActiveFarm(
+        this.db,
+        { ...farmScope(this.cls), farmId: null },
+        dto.to_warehouse_id,
+        'Destination warehouse',
+      );
     }
 
     const updates: any = {
@@ -237,6 +262,10 @@ export class StockTransferService {
     return withTenantTransaction(this.cls, async () => {
     const transfer = await this.findOne(id);
     this.assertDraft(transfer);
+
+    const companyLobScope = { ...farmScope(this.cls), farmId: null };
+    await assertLocationOnActiveFarm(this.db, companyLobScope, transfer.from_warehouse_id, 'Source warehouse');
+    await assertLocationOnActiveFarm(this.db, companyLobScope, transfer.to_warehouse_id, 'Destination warehouse');
 
     if (!transfer.lines || transfer.lines.length === 0) {
       throw new BadRequestException('Cannot post a Stock Transfer with no lines.');

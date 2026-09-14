@@ -229,6 +229,20 @@ describe('BreedingService', () => {
       expect(renderedWhere()).toContain('animal_register af');
     });
 
+    it.each([
+      ['matings', () => service.getMatingRecords('tenant-1')],
+      ['farrowings', () => service.getFarrowingRecords('tenant-1')],
+      ['semen batches', () => service.getSemenBatches('tenant-1')],
+    ])('bounds %s by company and LOB when an operational admin selected no farm', async (_label, run) => {
+      useFarmScope(cls, { farmId: null, restricted: true, companyId: 'co-1', lobId: 'lob-pig' });
+
+      await run();
+
+      const where = renderedWhere();
+      expect(where).toContain('`animal_register`.`company_id` = ?');
+      expect(where).toContain('`animal_register`.`lob_id` = ?');
+    });
+
     it('answers 404 when recording a mating for a sow on another farm', async () => {
       useFarmScope(cls, { farmId: 'farm-g', restricted: true, companyId: 'co-1', lobId: 'lob-pig' });
       rows.set(schema.animalRegister, []);

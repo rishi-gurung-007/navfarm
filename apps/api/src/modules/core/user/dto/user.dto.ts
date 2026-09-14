@@ -62,6 +62,11 @@ export class CreateUserDto {
   @IsString()
   @IsOptional()
   timezone_pref_id?: string;
+
+  @ApiProperty({ description: 'Assigned top-level farm UUID (required for standard users)', required: false })
+  @IsUUID()
+  @IsOptional()
+  farm_id?: string;
 }
 
 export class UpdateUserDto {
@@ -100,6 +105,11 @@ export class UpdateUserDto {
   @IsString()
   @IsOptional()
   timezone_pref_id?: string;
+
+  @ApiProperty({ description: 'Assigned top-level farm UUID', required: false })
+  @IsUUID()
+  @IsOptional()
+  farm_id?: string;
 
   @ApiProperty({ description: 'Activate or deactivate user account', required: false, example: true })
   @IsBoolean()
@@ -158,6 +168,9 @@ export class UserResponseDto {
 
   @ApiProperty({ example: 'STAFF' })
   user_type: string;
+
+  @ApiProperty({ required: false })
+  farm_id?: string;
 
   @ApiProperty({ example: true })
   is_active: boolean;

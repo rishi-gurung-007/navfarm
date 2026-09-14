@@ -4,7 +4,7 @@ import { eq, and, desc, isNull, sql } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
-import { farmScope, animalScopeConditions, animalOnFarm } from '../../../common/farm-scope';
+import { farmScope, animalScopeConditions } from '../../../common/farm-scope';
 import {
   CreateMatingDto,
   UpdatePregCheckDto,
@@ -181,7 +181,7 @@ export class BreedingService {
     if (companyId) {
       conditions.push(eq(schema.breedingRecord.company_id, companyId));
     }
-    if (scope.farmId) conditions.push(animalOnFarm(schema.breedingRecord.sow_animal_id, scope.farmId));
+    conditions.push(...animalScopeConditions(scope));
 
     const records = await this.db
       .select({
@@ -358,7 +358,7 @@ export class BreedingService {
     if (companyId) {
       conditions.push(eq(schema.farrowingRecord.company_id, companyId));
     }
-    if (scope.farmId) conditions.push(animalOnFarm(schema.farrowingRecord.sow_animal_id, scope.farmId));
+    conditions.push(...animalScopeConditions(scope));
 
     const records = await this.db
       .select({
@@ -467,7 +467,7 @@ export class BreedingService {
     if (companyId) {
       conditions.push(eq(schema.semenBatch.company_id, companyId));
     }
-    if (scope.farmId) conditions.push(animalOnFarm(schema.semenBatch.boar_animal_id, scope.farmId));
+    conditions.push(...animalScopeConditions(scope));
 
     return await this.db
       .select({

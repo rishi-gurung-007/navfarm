@@ -1,11 +1,12 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, isNull, or } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
 import { CreateQcDto, QueryQcDto } from './dto/qc.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
+import { batchReferenceScopeConditions, batchScopeConditions, farmScope } from '../../../common/farm-scope';
 
 @Injectable()
 export class QcService {
@@ -26,10 +27,24 @@ export class QcService {
     const [batch] = await this.db
       .select()
       .from(schema.batchHeader)
-      .where(eq(schema.batchHeader.batch_id, dto.source_batch_id))
+      .where(and(
+        eq(schema.batchHeader.batch_id, dto.source_batch_id),
+        eq(schema.batchHeader.tenant_id, tenantId),
+        ...batchScopeConditions(farmScope(this.cls)),
+      ))
       .limit(1);
     if (!batch) {
       throw new NotFoundException(`Batch with ID '${dto.source_batch_id}' not found.`);
+    }
+    if (dto.company_id !== batch.company_id) throw new BadRequestException('QC record company must match the batch company.');
+    if (dto.output_line_id) {
+      const [outputLine] = await this.db.select({ line_id: schema.batchOutputLine.line_id })
+        .from(schema.batchOutputLine)
+        .where(and(
+          eq(schema.batchOutputLine.line_id, dto.output_line_id),
+          eq(schema.batchOutputLine.batch_id, batch.batch_id),
+        )).limit(1);
+      if (!outputLine) throw new BadRequestException('The output line does not belong to the source batch.');
     }
 
     // Resolve each param and auto-determine PASS/FAIL.
@@ -40,7 +55,12 @@ export class QcService {
       const [param] = await this.db
         .select()
         .from(schema.qcParameterMaster)
-        .where(eq(schema.qcParameterMaster.param_id, r.param_id))
+        .where(and(
+          eq(schema.qcParameterMaster.param_id, r.param_id),
+          eq(schema.qcParameterMaster.tenant_id, tenantId),
+          eq(schema.qcParameterMaster.company_id, batch.company_id),
+          or(isNull(schema.qcParameterMaster.lob_id), eq(schema.qcParameterMaster.lob_id, batch.lob_id)),
+        ))
         .limit(1);
       if (!param) {
         throw new BadRequestException(`QC parameter with ID '${r.param_id}' not found.`);
@@ -81,7 +101,7 @@ export class QcService {
     await this.db.insert(schema.qcBatchDetail).values({
       qc_id: qcId,
       tenant_id: tenantId,
-      company_id: dto.company_id,
+      company_id: batch.company_id,
       source_batch_id: dto.source_batch_id,
       output_line_id: dto.output_line_id || null,
       qc_date: dto.qc_date,
@@ -105,7 +125,7 @@ export class QcService {
 
     await this.auditService.log({
       tenantId,
-      companyId: dto.company_id,
+      companyId: batch.company_id,
       userId: userPayload?.userId,
       action: 'CREATE',
       entityName: 'qc_batch_detail',
@@ -117,10 +137,11 @@ export class QcService {
   }
 
   async findOne(id: string) {
+    const scope = farmScope(this.cls);
     const [qc] = await this.db
       .select()
       .from(schema.qcBatchDetail)
-      .where(eq(schema.qcBatchDetail.qc_id, id))
+      .where(and(eq(schema.qcBatchDetail.qc_id, id), ...batchReferenceScopeConditions(scope, schema.qcBatchDetail.source_batch_id)))
       .limit(1);
     if (!qc) {
       throw new NotFoundException(`QC record with ID '${id}' not found.`);
@@ -131,6 +152,7 @@ export class QcService {
 
   async findAll(query: QueryQcDto, tenantId: string) {
     const conditions: any[] = [eq(schema.qcBatchDetail.tenant_id, tenantId)];
+    conditions.push(...batchReferenceScopeConditions(farmScope(this.cls), schema.qcBatchDetail.source_batch_id));
     if (query.companyId) conditions.push(eq(schema.qcBatchDetail.company_id, query.companyId));
     if (query.sourceBatchId) conditions.push(eq(schema.qcBatchDetail.source_batch_id, query.sourceBatchId));
     if (query.outputLineId) conditions.push(eq(schema.qcBatchDetail.output_line_id, query.outputLineId));

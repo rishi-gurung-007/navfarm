@@ -6,7 +6,7 @@ import { MySqlDialect } from 'drizzle-orm/mysql-core';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BadRequestException } from '@nestjs/common';
 import * as schema from '../../../core/database/schema';
 
 describe('GoodsReceiptService', () => {
@@ -112,7 +112,7 @@ describe('GoodsReceiptService', () => {
     const chain = (result: unknown[]) => {
       const self: any = {
         from: () => self,
-        where: (cond: unknown) => { capturedWhere = cond; return self; },
+        where: (cond: unknown) => { capturedWhere ??= cond; return self; },
         limit: () => self,
         offset: () => self,
         for: () => self,
@@ -124,7 +124,7 @@ describe('GoodsReceiptService', () => {
     const renderedWhere = () => new MySqlDialect().sqlToQuery(capturedWhere as any).sql;
 
     const validReceiptDto = {
-      company_id: 'comp-1',
+      company_id: 'co-1',
       warehouse_id: 'wh-1',
       posting_date: '2026-01-01',
       lines: [{ item_id: 'item-1', quantity: 10, uom: 'KG' }],
@@ -160,15 +160,22 @@ describe('GoodsReceiptService', () => {
       expect(renderedWhere()).toContain('location_master lf');
     });
 
-    it('answers 404 for a receipt into another farm', async () => {
+    it('puts the active-farm condition on receipt detail reads', async () => {
       useFarmScope(cls, grasmere);
-      rows.set(schema.goodsReceipt, []);
-      await expect(service.findOne('grn-kintyre')).rejects.toThrow(NotFoundException);
+      rows.set(schema.goodsReceipt, [{ receipt_id: 'grn-1' }]);
+      await service.findOne('grn-1');
+      expect(renderedWhere()).toContain('location_master lf');
+    });
+
+    it('bounds receipts by company when an operational admin selects no farm', async () => {
+      useFarmScope(cls, { ...grasmere, farmId: null });
+      await service.findAll({} as any, 'tenant-1');
+      expect(renderedWhere()).toContain('`goods_receipt`.`company_id` = ?');
     });
 
     it('refuses a receipt into a warehouse on another farm', async () => {
       useFarmScope(cls, grasmere);
-      rows.set(schema.locationMaster, [{ location_id: 'store-k', parent: 'farm-k', farm_id: 'farm-k' }]);
+      rows.set(schema.locationMaster, [{ location_id: 'store-k', parent: 'farm-k', farm_id: 'farm-k', company_id: 'co-1', lob_id: 'lob-pig' }]);
       await expect(service.create({ ...validReceiptDto, warehouse_id: 'store-k' } as any, 'tenant-1'))
         .rejects.toThrow('Warehouse is not on your active farm.');
     });

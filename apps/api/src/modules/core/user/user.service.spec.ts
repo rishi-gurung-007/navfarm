@@ -8,6 +8,7 @@ import { UserDirectoryService } from '../../../core/database/user-directory.serv
 
 const TENANT = '11111111-1111-4111-8111-111111111111';
 const COMPANY = '22222222-2222-4222-8222-222222222222';
+const FARM = '44444444-4444-4444-8444-444444444444';
 
 describe('UserService user-type hierarchy', () => {
   // Every select resolves the next queued row set; writes resolve nothing.
@@ -43,6 +44,7 @@ describe('UserService user-type hierarchy', () => {
     full_name: 'New User',
     email: 'new.user@example.test',
     password: 'longenough1',
+    ...(!user_type || user_type === 'STANDARD_USER' ? { farm_id: FARM } : {}),
     ...(user_type ? { user_type } : {}),
   });
 
@@ -84,6 +86,7 @@ describe('UserService user-type hierarchy', () => {
     });
 
     it.each(['OPERATIONAL_ADMIN', 'STANDARD_USER'])('lets a COMPANY_ADMIN create a %s', async (type) => {
+      if (type === 'STANDARD_USER') selectResults.push([{ location_id: FARM }]);
       selectResults.push([]); // no existing email
       queueUser(target(type, 'created'));
       await expect(service.create(createDto(type), requester('COMPANY_ADMIN'))).resolves.toMatchObject({ user_type: type });
@@ -91,6 +94,7 @@ describe('UserService user-type hierarchy', () => {
     });
 
     it('defaults an omitted user_type to STANDARD_USER, not the legacy STAFF', async () => {
+      selectResults.push([{ location_id: FARM }]);
       selectResults.push([]);
       queueUser(target('STANDARD_USER', 'created'));
       await service.create(createDto(), requester('OPERATIONAL_ADMIN'));

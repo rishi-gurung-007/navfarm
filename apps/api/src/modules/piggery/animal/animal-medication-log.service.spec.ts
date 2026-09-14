@@ -21,7 +21,7 @@ describe('AnimalMedicationLogService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AnimalMedicationLogService,
-        { provide: ClsService, useValue: { get: jest.fn().mockReturnValue(mockDb) } },
+        { provide: ClsService, useValue: { get: jest.fn((key: string) => key === 'tenantDb' ? mockDb : undefined) } },
         { provide: AuditLogService, useValue: { log: jest.fn().mockResolvedValue({}) } },
       ],
     }).compile();
@@ -66,11 +66,13 @@ describe('AnimalMedicationLogService', () => {
 
   describe('findByAnimal', () => {
     it('returns the medication log ordered most-recent-first', async () => {
-      mockDbSelect.mockReturnValue({
-        from: jest.fn().mockReturnValue({
-          where: jest.fn().mockReturnValue({ orderBy: jest.fn().mockResolvedValue([{ log_id: 'log-1' }]) }),
-        }),
-      });
+      mockDbSelect
+        .mockReturnValueOnce(found([{ animal_id: 'a-1' }]))
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            where: jest.fn().mockReturnValue({ orderBy: jest.fn().mockResolvedValue([{ log_id: 'log-1' }]) }),
+          }),
+        });
 
       const result = await service.findByAnimal('a-1');
 

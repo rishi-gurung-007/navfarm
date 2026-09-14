@@ -1,6 +1,5 @@
 import { transactionCls, useFarmScope } from '../../../test-utils/transaction-cls';
 import { Test, TestingModule } from '@nestjs/testing';
-import { NotFoundException } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
 import { MySqlDialect } from 'drizzle-orm/mysql-core';
 import { StockAdjustmentService } from './stock-adjustment.service';
@@ -33,7 +32,7 @@ describe('StockAdjustmentService', () => {
   const chain = (result: unknown[]) => {
     const self: any = {
       from: () => self,
-      where: (cond: unknown) => { capturedWhere = cond; return self; },
+      where: (cond: unknown) => { capturedWhere ??= cond; return self; },
       limit: () => self,
       offset: () => self,
       for: () => self,
@@ -45,7 +44,7 @@ describe('StockAdjustmentService', () => {
   const renderedWhere = () => new MySqlDialect().sqlToQuery(capturedWhere as any).sql;
 
   const validAdjustmentDto = {
-    company_id: 'comp-1',
+    company_id: 'co-1',
     warehouse_id: 'wh-1',
     posting_date: '2026-01-01',
     lines: [{ item_id: 'item-1', quantity: -5, uom: 'KG' }],
@@ -88,15 +87,22 @@ describe('StockAdjustmentService', () => {
       expect(renderedWhere()).toContain('location_master lf');
     });
 
-    it('answers 404 for an adjustment in another farm', async () => {
+    it('puts the active-farm condition on adjustment detail reads', async () => {
       useFarmScope(cls, grasmere);
-      rows.set(schema.stockAdjustment, []);
-      await expect(service.findOne('adj-kintyre')).rejects.toThrow(NotFoundException);
+      rows.set(schema.stockAdjustment, [{ adjustment_id: 'adj-1' }]);
+      await service.findOne('adj-1');
+      expect(renderedWhere()).toContain('location_master lf');
+    });
+
+    it('bounds adjustments by company when an operational admin selects no farm', async () => {
+      useFarmScope(cls, { ...grasmere, farmId: null });
+      await service.findAll({} as any, 'tenant-1');
+      expect(renderedWhere()).toContain('`stock_adjustment`.`company_id` = ?');
     });
 
     it('refuses adjusting a warehouse on another farm', async () => {
       useFarmScope(cls, grasmere);
-      rows.set(schema.locationMaster, [{ location_id: 'store-k', parent: 'farm-k', farm_id: 'farm-k' }]);
+      rows.set(schema.locationMaster, [{ location_id: 'store-k', parent: 'farm-k', farm_id: 'farm-k', company_id: 'co-1', lob_id: 'lob-pig' }]);
       await expect(service.create({ ...validAdjustmentDto, warehouse_id: 'store-k' } as any, 'tenant-1'))
         .rejects.toThrow('Warehouse is not on your active farm.');
     });

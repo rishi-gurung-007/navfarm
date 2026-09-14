@@ -15,7 +15,7 @@ import { DueLine, stageDayStatus, pendingDays, isLineDue, StageDayStatus } from 
 import { entryVerdict, todayIn, todayAtOffset } from './entry-window';
 import { userHasPermission } from '../../../common/permissions';
 import { ApprovalService } from '../approval/approval.service';
-import { batchScopeConditions, farmScope } from '../../../common/farm-scope';
+import { batchReferenceScopeConditions, batchScopeConditions, farmScope, restrictedScopeConditions } from '../../../common/farm-scope';
 
 /** approval_request.doc_type for a health event outside the schedule. */
 export const UNSCHEDULED_HEALTH = 'UNSCHEDULED_HEALTH';
@@ -487,12 +487,24 @@ export class BatchDailyDataService {
     return this.approvalService.reject(requestId, { rejection_reason: reason } as any, tenantId, userPayload);
   }
 
-  /** The dates this batch has anything recorded on, newest first. */
+  /**
+   * The dates this batch has anything recorded on, newest first.
+   *
+   * Unlike every other read here this one never loads the batch, so before
+   * 14 September it answered for any batch id in the tenant. batch_daily_data
+   * has no farm of its own — the farm is its batch's — hence batchOnFarm.
+   */
   async entryDates(batchId: string, tenantId: string, limit = 60): Promise<string[]> {
+    const scope = farmScope(this.cls);
     const rows = await this.db
       .selectDistinct({ entry_date: schema.batchDailyData.entry_date })
       .from(schema.batchDailyData)
-      .where(and(eq(schema.batchDailyData.batch_id, batchId), eq(schema.batchDailyData.tenant_id, tenantId)))
+      .where(and(
+        eq(schema.batchDailyData.batch_id, batchId),
+        eq(schema.batchDailyData.tenant_id, tenantId),
+        ...batchReferenceScopeConditions(scope, schema.batchDailyData.batch_id),
+        ...restrictedScopeConditions(scope, { companyId: schema.batchDailyData.company_id }),
+      ))
       .orderBy(desc(schema.batchDailyData.entry_date))
       .limit(limit);
     return rows.map((r) => String(r.entry_date).slice(0, 10));
@@ -866,10 +878,18 @@ export class BatchDailyDataService {
     });
   }
 
+  /** Same unscoped-read fix as entryDates: the day's entries follow their batch's farm. */
   async findForDate(batchId: string, entryDate: string, tenantId: string) {
+    const scope = farmScope(this.cls);
     return this.db
       .select()
       .from(schema.batchDailyData)
-      .where(and(eq(schema.batchDailyData.batch_id, batchId), eq(schema.batchDailyData.entry_date, entryDate), eq(schema.batchDailyData.tenant_id, tenantId)));
+      .where(and(
+        eq(schema.batchDailyData.batch_id, batchId),
+        eq(schema.batchDailyData.entry_date, entryDate),
+        eq(schema.batchDailyData.tenant_id, tenantId),
+        ...batchReferenceScopeConditions(scope, schema.batchDailyData.batch_id),
+        ...restrictedScopeConditions(scope, { companyId: schema.batchDailyData.company_id }),
+      ));
   }
 }

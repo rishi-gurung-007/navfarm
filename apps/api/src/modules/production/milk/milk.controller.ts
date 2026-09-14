@@ -5,10 +5,12 @@ import { RecordMilkDto, QueryMilkDto } from './dto/milk.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
+import { FarmScoped } from '../../../common/farm-scope';
 
 @ApiTags('Dairy Milk Production')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
+@FarmScoped()
 @Controller('milk-production')
 export class MilkController {
   constructor(private readonly milkService: MilkService) {}

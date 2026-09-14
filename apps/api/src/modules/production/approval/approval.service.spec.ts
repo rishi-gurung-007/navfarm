@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { ForbiddenException } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
 import { MySqlDialect } from 'drizzle-orm/mysql-core';
 import { ApprovalService } from './approval.service';
@@ -128,6 +129,24 @@ describe('ApprovalService farm scope', () => {
 
     const where = renderedWhere();
     expect(where).toMatch(/batch_id` IS NOT NULL/);
-    expect(where).toContain('batch_header bl');
+    expect(where).toContain('batch_header br');
+  });
+
+  it('also limits that queue to the active company', async () => {
+    useFarmScope(cls, { farmId: null, restricted: true, companyId: 'co-1', lobId: 'lob-pig' });
+
+    await service.findAll({} as any, 'tenant-1');
+
+    const where = renderedWhere();
+    expect(where).toContain('`approval_request`.`company_id` = ?');
+    expect(where).toContain('br.company_id = ?');
+  });
+
+  it('refuses a batchless approval from a restricted user because it has no operational scope', async () => {
+    useFarmScope(cls, { farmId: null, restricted: true, companyId: 'co-1', lobId: 'lob-pig' });
+    mockDb.select.mockClear();
+
+    await expect(service.create({ company_id: 'co-1' } as any, 'tenant-1')).rejects.toThrow(ForbiddenException);
+    expect(mockDb.select).not.toHaveBeenCalled();
   });
 });

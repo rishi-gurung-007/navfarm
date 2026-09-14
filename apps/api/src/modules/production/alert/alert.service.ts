@@ -4,6 +4,7 @@ import { eq, and, desc } from 'drizzle-orm';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
 import { QueryAlertDto } from './dto/alert.dto';
+import { batchReferenceScopeConditions, farmScope } from '../../../common/farm-scope';
 
 const toMysqlTimestamp = (date: Date = new Date()) => date.toISOString().slice(0, 19).replace('T', ' ');
 
@@ -21,6 +22,7 @@ export class AlertService {
 
   async findAll(query: QueryAlertDto, tenantId: string) {
     const conditions: any[] = [eq(schema.notificationAlertLog.tenant_id, tenantId)];
+    conditions.push(...batchReferenceScopeConditions(farmScope(this.cls), schema.notificationAlertLog.batch_id));
 
     if (query.companyId) conditions.push(eq(schema.notificationAlertLog.company_id, query.companyId));
     if (query.batchId) conditions.push(eq(schema.notificationAlertLog.batch_id, query.batchId));
@@ -43,10 +45,15 @@ export class AlertService {
   // alerts span every company the tenant has — without this check a user
   // could mark another company's alert read just by guessing/enumerating IDs.
   async markRead(id: string, companyId: string, userPayload?: any) {
+    const conditions = [
+      eq(schema.notificationAlertLog.alert_id, id),
+      eq(schema.notificationAlertLog.company_id, companyId),
+      ...batchReferenceScopeConditions(farmScope(this.cls), schema.notificationAlertLog.batch_id),
+    ];
     const [alert] = await this.db
       .select()
       .from(schema.notificationAlertLog)
-      .where(and(eq(schema.notificationAlertLog.alert_id, id), eq(schema.notificationAlertLog.company_id, companyId)))
+      .where(and(...conditions))
       .limit(1);
 
     if (!alert) {

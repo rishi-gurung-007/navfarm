@@ -4,7 +4,7 @@ import { eq, and, or, like, inArray, count, sql, desc } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
-import { farmScope, batchScopeConditions, batchOnFarm } from '../../../common/farm-scope';
+import { farmScope, batchScopeConditions, batchOnFarm, restrictedScopeConditions } from '../../../common/farm-scope';
 import {
   CreateSchedulerHeaderDto, UpdateSchedulerHeaderDto,
   CreateSchedulerLineDto, UpdateSchedulerLineDto, UpdateSchedulerHeaderStatusDto, QuerySchedulerHeaderDto,
@@ -203,18 +203,50 @@ export class SchedulerHeaderService {
    * Auto-creates (or returns the existing) scheduler_header for this batch's
    * stage — called by BatchService.transferStage() right after it resolves a
    * real stage_id. Idempotent on (batch_id, stage_id): re-entering the same
-   * stage never duplicates a header.
+  * stage never duplicates a header.
+  */
+  async createForStage(batchId: string, stageId: string, tenantId: string, userPayload?: { userId?: string }): Promise<any> {
+    return this.createForStageInternal(batchId, stageId, tenantId, userPayload);
+  }
+
+  /**
+   * Internal transfer path. The caller has already authorized the source and
+   * verified this destination batch belongs to the same company/LOB. Passing
+   * the row avoids re-applying the source farm to a legitimate farm transfer.
    */
-  async createForStage(batchId: string, stageId: string, tenantId: string, userPayload?: { userId?: string }) {
+  async createForAuthorizedBatchStage(
+    batch: typeof schema.batchHeader.$inferSelect,
+    stageId: string,
+    tenantId: string,
+    userPayload?: { userId?: string },
+  ) {
+    if (batch.tenant_id !== tenantId) throw new NotFoundException(`Batch '${batch.batch_id}' not found.`);
+    return this.createForStageInternal(batch.batch_id, stageId, tenantId, userPayload, batch);
+  }
+
+  private async createForStageInternal(
+    batchId: string,
+    stageId: string,
+    tenantId: string,
+    userPayload?: { userId?: string },
+    authorizedBatch?: typeof schema.batchHeader.$inferSelect,
+  ) {
+    let batch = authorizedBatch;
+    if (!batch) {
+      [batch] = await this.db.select().from(schema.batchHeader).where(and(
+        eq(schema.batchHeader.batch_id, batchId),
+        eq(schema.batchHeader.tenant_id, tenantId),
+        ...batchScopeConditions(farmScope(this.cls)),
+      )).limit(1);
+    }
+    if (!batch) throw new NotFoundException(`Batch '${batchId}' not found.`);
+
     const [existing] = await this.db
       .select()
       .from(schema.schedulerHeader)
       .where(and(eq(schema.schedulerHeader.batch_id, batchId), eq(schema.schedulerHeader.stage_id, stageId)))
       .limit(1);
-    if (existing) return this.findOne(existing.scheduler_id);
-
-    const [batch] = await this.db.select().from(schema.batchHeader).where(eq(schema.batchHeader.batch_id, batchId)).limit(1);
-    if (!batch) throw new NotFoundException(`Batch '${batchId}' not found.`);
+    if (existing) return authorizedBatch ? existing : this.findOne(existing.scheduler_id);
 
     const [stage] = await this.db.select().from(schema.stageMaster).where(eq(schema.stageMaster.stage_id, stageId)).limit(1);
     if (!stage) throw new NotFoundException(`Stage '${stageId}' not found.`);
@@ -279,13 +311,17 @@ export class SchedulerHeaderService {
       newValues: { batch_id: batchId, stage_id: stageId, auto_generated: true },
     });
 
-    return this.findOne(schedulerId);
+    return authorizedBatch ? { scheduler_id: schedulerId } : this.findOne(schedulerId);
   }
 
   /** Manual entry point mirroring transferStage()'s automatic call — resolves the
    * batch's current stage_id itself so callers don't need BatchService. */
   async generateForBatchCurrentStage(batchId: string, tenantId: string, userPayload?: { userId?: string }) {
-    const [batch] = await this.db.select().from(schema.batchHeader).where(eq(schema.batchHeader.batch_id, batchId)).limit(1);
+    const [batch] = await this.db.select().from(schema.batchHeader).where(and(
+      eq(schema.batchHeader.batch_id, batchId),
+      eq(schema.batchHeader.tenant_id, tenantId),
+      ...batchScopeConditions(farmScope(this.cls)),
+    )).limit(1);
     if (!batch) throw new NotFoundException(`Batch '${batchId}' not found.`);
     if (!batch.stage_id) {
       throw new BadRequestException('This batch has not transferred into a Stage Master stage yet — transfer it into a stage first.');
@@ -620,6 +656,9 @@ export class SchedulerHeaderService {
         eq(schema.schedulerHeader.tenant_id, tenantId),
         eq(schema.schedulerHeader.batch_id, batchId),
         ...(scope.farmId ? [batchOnFarm(schema.schedulerHeader.batch_id, scope.farmId)] : []),
+        // An operational admin may send no x-active-farm-id, leaving farmId
+        // null — the farm condition alone would then bound nothing at all.
+        ...restrictedScopeConditions(scope, { companyId: schema.schedulerHeader.company_id, lobId: schema.schedulerHeader.lob_id }),
       ))
       .orderBy(schema.schedulerHeader.effective_from);
   }
@@ -638,6 +677,9 @@ export class SchedulerHeaderService {
     if (query.status) conditions.push(eq(schema.schedulerHeader.scheduler_status, query.status));
     if (query.lobId) conditions.push(eq(schema.schedulerHeader.lob_id, query.lobId));
     conditions.push(...(scope.farmId ? [batchOnFarm(schema.schedulerHeader.batch_id, scope.farmId)] : []));
+    // Same reason as findAllForBatch: farmId is null for an operational admin
+    // who selected no farm, so their own LOB and company are the whole bound.
+    conditions.push(...restrictedScopeConditions(scope, { companyId: schema.schedulerHeader.company_id, lobId: schema.schedulerHeader.lob_id }));
 
     const rows = await this.db
       .select()

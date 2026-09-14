@@ -1,11 +1,13 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
+import { MySqlDialect } from 'drizzle-orm/mysql-core';
 import { SchedulerHeaderService } from './scheduler-header.service';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { FarmScope } from '../../../common/farm-scope';
 
 describe('SchedulerHeaderService', () => {
+  const dialect = new MySqlDialect();
   let service: SchedulerHeaderService;
 
   const mockDbSelect = jest.fn();
@@ -24,6 +26,8 @@ describe('SchedulerHeaderService', () => {
   // matching every request-less/internal caller. Tests that need a bounded farm call
   // useFarmScope() to stub the CLS 'farmScope' key, same pattern as batch.service.spec.
   let farmScopeValue: FarmScope | undefined;
+  let capturedWhere: unknown;
+  const renderedWhere = () => dialect.sqlToQuery(capturedWhere as any);
   const useFarmScope = (scope: FarmScope) => { farmScopeValue = scope; };
   const clsGet = jest.fn((key?: string) => {
     if (key === 'tenantDb') return mockDb;
@@ -64,6 +68,7 @@ describe('SchedulerHeaderService', () => {
     mockDbUpdate.mockReset();
     mockDbDelete.mockReset();
     farmScopeValue = undefined;
+    capturedWhere = undefined;
     clsGet.mockClear();
 
     const module: TestingModule = await Test.createTestingModule({
@@ -80,6 +85,7 @@ describe('SchedulerHeaderService', () => {
   describe('createForStage', () => {
     it('returns the existing header instead of creating a duplicate for the same (batch, stage)', async () => {
       mockDbSelect
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([batch]) }) }) }) // scoped batch lookup
         .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ scheduler_id: 'sched-existing', batch_id: 'batch-1' }]) }) }) }) // existing header check
         .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ scheduler_id: 'sched-existing', batch_id: 'batch-1' }]) }) }) }) // findOne: header
         .mockReturnValueOnce(batchInScopeRow('batch-1')) // findOne: farm-scope batch check
@@ -105,8 +111,8 @@ describe('SchedulerHeaderService', () => {
       }));
 
       mockDbSelect
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([batch]) }) }) }) // scoped batch lookup
         .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }) }) }) // no existing header
-        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([batch]) }) }) }) // batch lookup
         .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([stage]) }) }) }) // stage lookup
         .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ orderBy: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }) }) }) }) // priorHeader check — none, so effective_from = batch.start_date and animal_count falls through to opening_quantity
         .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ liveCount: 0 }]) }) }) // live animal_register count — none tracked, falls back to opening_quantity
@@ -149,6 +155,41 @@ describe('SchedulerHeaderService', () => {
         .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }) }) }); // scoped batch check finds nothing
 
       await expect(service.findOne('sched-1')).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('scheduler lists — restricted scope', () => {
+    const listChain = () => {
+      const chain: any = {
+        from: () => chain,
+        where: (condition: unknown) => { capturedWhere = condition; return chain; },
+        orderBy: () => Promise.resolve([]),
+      };
+      return chain;
+    };
+
+    it('bounds a batch scheduler list by company and LOB when an operational admin selects no farm', async () => {
+      useFarmScope({ farmId: null, restricted: true, companyId: 'co-1', lobId: 'lob-pig' });
+      mockDbSelect.mockReturnValue(listChain());
+
+      await service.findAllForBatch('batch-1', 'tenant-1');
+
+      const { sql, params } = renderedWhere();
+      expect(sql).toContain('`scheduler_header`.`lob_id` = ?');
+      expect(sql).toContain('`scheduler_header`.`company_id` = ?');
+      expect(params).toEqual(expect.arrayContaining(['lob-pig', 'co-1']));
+    });
+
+    it('bounds the company-wide scheduler list by company and LOB when an operational admin selects no farm', async () => {
+      useFarmScope({ farmId: null, restricted: true, companyId: 'co-1', lobId: 'lob-pig' });
+      mockDbSelect.mockReturnValue(listChain());
+
+      await service.findAllForCompany({} as any, 'tenant-1');
+
+      const { sql, params } = renderedWhere();
+      expect(sql).toContain('`scheduler_header`.`lob_id` = ?');
+      expect(sql).toContain('`scheduler_header`.`company_id` = ?');
+      expect(params).toEqual(expect.arrayContaining(['lob-pig', 'co-1']));
     });
   });
 

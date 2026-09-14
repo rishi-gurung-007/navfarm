@@ -6,7 +6,7 @@ import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
 import { QueryInventoryLedgerDto, QueryStockBalanceDto } from './dto/inventory-ledger.dto';
-import { farmScope, locationOnFarm } from '../../../common/farm-scope';
+import { farmScope, locationOnFarm, restrictedScopeConditions } from '../../../common/farm-scope';
 
 interface WritePositiveEntryParams {
   tenantId: string;
@@ -101,7 +101,7 @@ export class InventoryLedgerService {
           created_at: new Date().toISOString().slice(0, 19).replace('T', ' '), created_by: userId || null,
         });
       }
-      return this.findOne(reversalId);
+      return this.loadOne(reversalId);
     });
   }
 
@@ -152,7 +152,7 @@ export class InventoryLedgerService {
       created_by: params.userId || null,
     });
 
-    return this.findOne(ledgerId);
+    return this.loadOne(ledgerId);
   }
 
   /**
@@ -339,7 +339,7 @@ export class InventoryLedgerService {
         .where(eq(schema.inventoryLedger.ledger_id, ledgerId));
     });
 
-    return this.findOne(ledgerId);
+    return this.loadOne(ledgerId);
   }
 
   /**
@@ -397,15 +397,32 @@ export class InventoryLedgerService {
 
   /** Ledger rows on the active farm. Batch issues carry no warehouse, so they reach their farm through the batch. */
   private farmConditions(): SQL[] {
-    const { farmId } = farmScope(this.cls);
-    if (!farmId) return [];
-    return [or(
-      locationOnFarm(schema.inventoryLedger.warehouse_id, farmId),
-      and(
-        isNull(schema.inventoryLedger.warehouse_id),
-        sql`EXISTS (SELECT 1 FROM batch_header b WHERE b.batch_no = ${schema.inventoryLedger.batch_no} AND b.company_id = ${schema.inventoryLedger.company_id} AND b.farm_id = ${farmId})`,
-      ),
-    )!];
+    const scope = farmScope(this.cls);
+    const conditions: SQL[] = [];
+    if (scope.farmId) {
+      conditions.push(or(
+        locationOnFarm(schema.inventoryLedger.warehouse_id, scope.farmId),
+        and(
+          isNull(schema.inventoryLedger.warehouse_id),
+          sql`EXISTS (SELECT 1 FROM batch_header b WHERE b.batch_no = ${schema.inventoryLedger.batch_no} AND b.company_id = ${schema.inventoryLedger.company_id} AND b.farm_id = ${scope.farmId})`,
+        ),
+      )!);
+    }
+    conditions.push(...restrictedScopeConditions(scope, {
+      companyId: schema.inventoryLedger.company_id,
+      lobId: schema.inventoryLedger.lob_id,
+    }));
+    return conditions;
+  }
+
+  /** Internal post-write read-back. The writer already authorized its source document; HTTP farm scope belongs only on public reads. */
+  private async loadOne(ledgerId: string) {
+    const [entry] = await this.db
+      .select()
+      .from(schema.inventoryLedger)
+      .where(eq(schema.inventoryLedger.ledger_id, ledgerId))
+      .limit(1);
+    return entry;
   }
 
   async findOne(ledgerId: string) {

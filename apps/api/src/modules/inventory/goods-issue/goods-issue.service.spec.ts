@@ -1,6 +1,5 @@
 import { transactionCls, useFarmScope } from '../../../test-utils/transaction-cls';
 import { Test, TestingModule } from '@nestjs/testing';
-import { NotFoundException } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
 import { MySqlDialect } from 'drizzle-orm/mysql-core';
 import { GoodsIssueService } from './goods-issue.service';
@@ -33,7 +32,7 @@ describe('GoodsIssueService', () => {
   const chain = (result: unknown[]) => {
     const self: any = {
       from: () => self,
-      where: (cond: unknown) => { capturedWhere = cond; return self; },
+      where: (cond: unknown) => { capturedWhere ??= cond; return self; },
       limit: () => self,
       offset: () => self,
       for: () => self,
@@ -45,7 +44,7 @@ describe('GoodsIssueService', () => {
   const renderedWhere = () => new MySqlDialect().sqlToQuery(capturedWhere as any).sql;
 
   const validIssueDto = {
-    company_id: 'comp-1',
+    company_id: 'co-1',
     warehouse_id: 'wh-1',
     posting_date: '2026-01-01',
     lines: [{ item_id: 'item-1', quantity: 5, uom: 'KG' }],
@@ -88,15 +87,22 @@ describe('GoodsIssueService', () => {
       expect(renderedWhere()).toContain('location_master lf');
     });
 
-    it('answers 404 for an issue from another farm', async () => {
+    it('puts the active-farm condition on issue detail reads', async () => {
       useFarmScope(cls, grasmere);
-      rows.set(schema.goodsIssue, []);
-      await expect(service.findOne('gi-kintyre')).rejects.toThrow(NotFoundException);
+      rows.set(schema.goodsIssue, [{ issue_id: 'gi-1' }]);
+      await service.findOne('gi-1');
+      expect(renderedWhere()).toContain('location_master lf');
+    });
+
+    it('bounds issues by company when an operational admin selects no farm', async () => {
+      useFarmScope(cls, { ...grasmere, farmId: null });
+      await service.findAll({} as any, 'tenant-1');
+      expect(renderedWhere()).toContain('`goods_issue`.`company_id` = ?');
     });
 
     it('refuses issuing from a warehouse on another farm', async () => {
       useFarmScope(cls, grasmere);
-      rows.set(schema.locationMaster, [{ location_id: 'store-k', parent: 'farm-k', farm_id: 'farm-k' }]);
+      rows.set(schema.locationMaster, [{ location_id: 'store-k', parent: 'farm-k', farm_id: 'farm-k', company_id: 'co-1', lob_id: 'lob-pig' }]);
       await expect(service.create({ ...validIssueDto, warehouse_id: 'store-k' } as any, 'tenant-1'))
         .rejects.toThrow('Warehouse is not on your active farm.');
     });

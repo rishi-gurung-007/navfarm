@@ -1,11 +1,12 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, desc } from 'drizzle-orm';
+import { and, eq, desc } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
 import { RecordMedicationDto } from './dto/animal-medication-log.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
+import { animalScopeConditions, farmScope } from '../../../common/farm-scope';
 
 @Injectable()
 export class AnimalMedicationLogService {
@@ -26,7 +27,11 @@ export class AnimalMedicationLogService {
     const [animal] = await this.db
       .select()
       .from(schema.animalRegister)
-      .where(eq(schema.animalRegister.animal_id, animalId))
+      .where(and(
+        eq(schema.animalRegister.animal_id, animalId),
+        eq(schema.animalRegister.tenant_id, tenantId),
+        ...animalScopeConditions(farmScope(this.cls)),
+      ))
       .limit(1);
     if (!animal) {
       throw new NotFoundException(`Animal with ID '${animalId}' not found.`);
@@ -35,7 +40,11 @@ export class AnimalMedicationLogService {
     const [item] = await this.db
       .select()
       .from(schema.itemMaster)
-      .where(eq(schema.itemMaster.item_id, dto.item_id))
+      .where(and(
+        eq(schema.itemMaster.item_id, dto.item_id),
+        eq(schema.itemMaster.tenant_id, tenantId),
+        eq(schema.itemMaster.company_id, animal.company_id),
+      ))
       .limit(1);
     if (!item) {
       throw new NotFoundException(`Item with ID '${dto.item_id}' not found.`);
@@ -75,6 +84,11 @@ export class AnimalMedicationLogService {
   }
 
   async findByAnimal(animalId: string) {
+    const [animal] = await this.db.select({ animal_id: schema.animalRegister.animal_id })
+      .from(schema.animalRegister)
+      .where(and(eq(schema.animalRegister.animal_id, animalId), ...animalScopeConditions(farmScope(this.cls))))
+      .limit(1);
+    if (!animal) throw new NotFoundException(`Animal with ID '${animalId}' not found.`);
     return this.db
       .select()
       .from(schema.animalMedicationLog)

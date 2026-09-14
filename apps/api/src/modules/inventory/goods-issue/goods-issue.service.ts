@@ -5,7 +5,7 @@ import { eq, and, like, isNull, count } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
-import { farmScope, locationOnFarm, assertLocationOnActiveFarm } from '../../../common/farm-scope';
+import { assertCompanyInScope, farmScope, locationReferenceScopeConditions, assertLocationOnActiveFarm, restrictedScopeConditions } from '../../../common/farm-scope';
 import { CreateGoodsIssueDto, UpdateGoodsIssueDto, QueryGoodsIssueDto } from './dto/goods-issue.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
@@ -47,6 +47,7 @@ export class GoodsIssueService {
   }
 
   async create(dto: CreateGoodsIssueDto, tenantId: string, userPayload?: any) {
+    assertCompanyInScope(farmScope(this.cls), dto.company_id);
     await assertLocationOnActiveFarm(this.db, farmScope(this.cls), dto.warehouse_id, 'Warehouse');
     return withTenantTransaction(this.cls, async () => {
     const issueId = randomUUID();
@@ -101,7 +102,8 @@ export class GoodsIssueService {
   async findOne(id: string) {
     const scope = farmScope(this.cls);
     const conditions = [eq(schema.goodsIssue.issue_id, id), isNull(schema.goodsIssue.deleted_at)];
-    if (scope.farmId) conditions.push(locationOnFarm(schema.goodsIssue.warehouse_id, scope.farmId));
+    conditions.push(...locationReferenceScopeConditions(scope, schema.goodsIssue.warehouse_id));
+    conditions.push(...restrictedScopeConditions(scope, { companyId: schema.goodsIssue.company_id }));
 
     const [issue] = await this.db
       .select()
@@ -125,7 +127,8 @@ export class GoodsIssueService {
     const conditions: any[] = [eq(schema.goodsIssue.tenant_id, tenantId), isNull(schema.goodsIssue.deleted_at)];
 
     const scope = farmScope(this.cls);
-    if (scope.farmId) conditions.push(locationOnFarm(schema.goodsIssue.warehouse_id, scope.farmId));
+    conditions.push(...locationReferenceScopeConditions(scope, schema.goodsIssue.warehouse_id));
+    conditions.push(...restrictedScopeConditions(scope, { companyId: schema.goodsIssue.company_id }));
 
     if (query.companyId) conditions.push(eq(schema.goodsIssue.company_id, query.companyId));
     if (query.status) conditions.push(eq(schema.goodsIssue.status, query.status));

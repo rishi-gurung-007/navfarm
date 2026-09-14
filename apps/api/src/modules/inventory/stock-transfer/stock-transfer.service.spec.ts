@@ -1,6 +1,5 @@
 import { transactionCls, useFarmScope } from '../../../test-utils/transaction-cls';
 import { Test, TestingModule } from '@nestjs/testing';
-import { NotFoundException } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
 import { MySqlDialect } from 'drizzle-orm/mysql-core';
 import { StockTransferService } from './stock-transfer.service';
@@ -13,8 +12,8 @@ import * as schema from '../../../core/database/schema';
  * Phase 1 access foundation, Task 7: stock transfers belong to the farm
  * holding either the source or destination warehouse (common/farm-scope.ts
  * locationOnFarm, joined with OR — see stock-transfer.service.ts's findOne
- * and findAll). Only the source warehouse is checked on create/update: the
- * destination may sit on another farm, and farm-to-farm approval is Phase 7.
+ * and findAll). The source must be on the active farm; the destination may sit
+ * on another farm but must remain in the caller's company and LOB.
  * Modelled on breeding.service.spec.ts / batch-daily-data.service.spec.ts's
  * table-keyed db mock — it answers by table, not by call order, and captures
  * the last `.where()` condition so a test can render the SQL and check the
@@ -36,7 +35,7 @@ describe('StockTransferService', () => {
   const chain = (result: unknown[]) => {
     const self: any = {
       from: () => self,
-      where: (cond: unknown) => { capturedWhere = cond; return self; },
+      where: (cond: unknown) => { capturedWhere ??= cond; return self; },
       limit: () => self,
       offset: () => self,
       for: () => self,
@@ -50,7 +49,7 @@ describe('StockTransferService', () => {
   // from/to must differ — create()'s own guard rejects an equal pair before
   // the farm check ever runs.
   const validTransferDto = {
-    company_id: 'comp-1',
+    company_id: 'co-1',
     from_warehouse_id: 'wh-1',
     to_warehouse_id: 'wh-2',
     posting_date: '2026-01-01',
@@ -94,17 +93,66 @@ describe('StockTransferService', () => {
       expect(renderedWhere()).toContain('location_master lf');
     });
 
-    it('answers 404 for a transfer touching another farm', async () => {
+    it('puts the active-farm condition on transfer detail reads', async () => {
       useFarmScope(cls, grasmere);
-      rows.set(schema.stockTransfer, []);
-      await expect(service.findOne('tr-kintyre')).rejects.toThrow(NotFoundException);
+      rows.set(schema.stockTransfer, [{ transfer_id: 'tr-1' }]);
+      await service.findOne('tr-1');
+      expect(renderedWhere()).toContain('location_master lf');
+    });
+
+    it('bounds transfers by company when an operational admin selects no farm', async () => {
+      useFarmScope(cls, { ...grasmere, farmId: null });
+      await service.findAll({} as any, 'tenant-1');
+      expect(renderedWhere()).toContain('`stock_transfer`.`company_id` = ?');
     });
 
     it('refuses transferring from a source warehouse on another farm', async () => {
       useFarmScope(cls, grasmere);
-      rows.set(schema.locationMaster, [{ location_id: 'store-k', parent: 'farm-k', farm_id: 'farm-k' }]);
+      rows.set(schema.locationMaster, [{ location_id: 'store-k', parent: 'farm-k', farm_id: 'farm-k', company_id: 'co-1', lob_id: 'lob-pig' }]);
       await expect(service.create({ ...validTransferDto, from_warehouse_id: 'store-k' } as any, 'tenant-1'))
         .rejects.toThrow('Source warehouse is not on your active farm.');
+    });
+
+    it('refuses a destination warehouse outside the active company even for a farm transfer', async () => {
+      useFarmScope(cls, grasmere);
+      mockDbSelect
+        .mockReturnValueOnce({ from: () => chain([{ location_id: 'wh-1', parent: 'farm-g', farm_id: 'farm-g', company_id: 'co-1', lob_id: 'lob-pig' }]) })
+        .mockReturnValueOnce({ from: () => chain([{ location_id: 'wh-2', parent: 'farm-k', farm_id: 'farm-k', company_id: 'co-2', lob_id: 'lob-pig' }]) });
+
+      await expect(service.create(validTransferDto as any, 'tenant-1'))
+        .rejects.toThrow('Destination warehouse is not on your active farm.');
+      expect(mockDbInsert).not.toHaveBeenCalled();
+    });
+
+    it('revalidates a draft destination before posting', async () => {
+      useFarmScope(cls, grasmere);
+      jest.spyOn(service, 'findOne').mockResolvedValue({
+        transfer_id: 'tr-1', company_id: 'co-1', status: 'DRAFT',
+        from_warehouse_id: 'wh-1', to_warehouse_id: 'wh-2',
+        lines: [{ line_id: 'ln-1', item_id: 'item-1', quantity: '1', uom: 'KG' }],
+      } as any);
+      mockDbSelect
+        .mockReturnValueOnce({ from: () => chain([{ location_id: 'wh-1', parent: 'farm-g', farm_id: 'farm-g', company_id: 'co-1', lob_id: 'lob-pig' }]) })
+        .mockReturnValueOnce({ from: () => chain([{ location_id: 'wh-2', parent: 'farm-k', farm_id: 'farm-k', company_id: 'co-2', lob_id: 'lob-pig' }]) });
+
+      await expect(service.post('tr-1', 'tenant-1'))
+        .rejects.toThrow('Destination warehouse is not on your active farm.');
+      expect(mockDbUpdate).not.toHaveBeenCalled();
+    });
+
+    it('refuses updating a draft to a destination outside the active company', async () => {
+      useFarmScope(cls, grasmere);
+      jest.spyOn(service, 'findOne').mockResolvedValue({
+        transfer_id: 'tr-1', company_id: 'co-1', status: 'DRAFT',
+        from_warehouse_id: 'wh-1', to_warehouse_id: 'wh-2', lines: [],
+      } as any);
+      mockDbSelect.mockReturnValueOnce({
+        from: () => chain([{ location_id: 'wh-other', parent: 'farm-k', farm_id: 'farm-k', company_id: 'co-2', lob_id: 'lob-pig' }]),
+      });
+
+      await expect(service.update('tr-1', { to_warehouse_id: 'wh-other' } as any, 'tenant-1'))
+        .rejects.toThrow('Destination warehouse is not on your active farm.');
+      expect(mockDbUpdate).not.toHaveBeenCalled();
     });
   });
 });

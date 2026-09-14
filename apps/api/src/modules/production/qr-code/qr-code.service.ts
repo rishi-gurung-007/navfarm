@@ -1,11 +1,12 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, count } from 'drizzle-orm';
+import { eq, and, count, isNull, or } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
 import { CreateQrCodeDto, QueryQrCodeDto } from './dto/qr-code.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
+import { assertLocationOnActiveFarm, batchReferenceScopeConditions, batchScopeConditions, farmScope } from '../../../common/farm-scope';
 
 const addDays = (dateStr: string, days: number): string => {
   const d = new Date(dateStr);
@@ -66,7 +67,22 @@ export class QrCodeService {
   }
 
   async create(dto: CreateQrCodeDto, tenantId: string, userPayload?: any) {
-    const [item] = await this.db.select().from(schema.itemMaster).where(eq(schema.itemMaster.item_id, dto.item_id)).limit(1);
+    const [batch] = await this.db.select().from(schema.batchHeader).where(and(
+      eq(schema.batchHeader.batch_id, dto.batch_id),
+      eq(schema.batchHeader.tenant_id, tenantId),
+      ...batchScopeConditions(farmScope(this.cls)),
+    )).limit(1);
+    if (!batch) {
+      throw new NotFoundException(`Batch with ID '${dto.batch_id}' not found.`);
+    }
+    if (dto.company_id !== batch.company_id) throw new BadRequestException('QR/Pack company must match the batch company.');
+
+    const [item] = await this.db.select().from(schema.itemMaster).where(and(
+      eq(schema.itemMaster.item_id, dto.item_id),
+      eq(schema.itemMaster.tenant_id, tenantId),
+      eq(schema.itemMaster.company_id, batch.company_id),
+      or(isNull(schema.itemMaster.lob_id), eq(schema.itemMaster.lob_id, batch.lob_id)),
+    )).limit(1);
     if (!item) {
       throw new NotFoundException(`Item with ID '${dto.item_id}' not found.`);
     }
@@ -74,9 +90,15 @@ export class QrCodeService {
       throw new BadRequestException(`Item '${item.item_code}' is not QR-enabled. Enable is_qr_enabled on the item first.`);
     }
 
-    const [batch] = await this.db.select().from(schema.batchHeader).where(eq(schema.batchHeader.batch_id, dto.batch_id)).limit(1);
-    if (!batch) {
-      throw new NotFoundException(`Batch with ID '${dto.batch_id}' not found.`);
+    if (dto.output_line_id) {
+      const [outputLine] = await this.db.select({ line_id: schema.batchOutputLine.line_id })
+        .from(schema.batchOutputLine)
+        .where(and(
+          eq(schema.batchOutputLine.line_id, dto.output_line_id),
+          eq(schema.batchOutputLine.batch_id, batch.batch_id),
+          eq(schema.batchOutputLine.item_id, dto.item_id),
+        )).limit(1);
+      if (!outputLine) throw new BadRequestException('The output line does not belong to this batch and item.');
     }
 
     let breedName: string | null = null;
@@ -88,7 +110,11 @@ export class QrCodeService {
     let qcSummary: any = null;
     let grade: string | null = null;
     if (dto.qc_id) {
-      const [qc] = await this.db.select().from(schema.qcBatchDetail).where(eq(schema.qcBatchDetail.qc_id, dto.qc_id)).limit(1);
+      const [qc] = await this.db.select().from(schema.qcBatchDetail).where(and(
+        eq(schema.qcBatchDetail.qc_id, dto.qc_id),
+        eq(schema.qcBatchDetail.source_batch_id, batch.batch_id),
+        eq(schema.qcBatchDetail.company_id, batch.company_id),
+      )).limit(1);
       if (!qc) {
         throw new NotFoundException(`QC record with ID '${dto.qc_id}' not found.`);
       }
@@ -110,13 +136,17 @@ export class QrCodeService {
       }
     }
 
-    const packNo = await this.generatePackNo(tenantId, dto.company_id);
+    const packNo = await this.generatePackNo(tenantId, batch.company_id);
     const expiryDate = item.shelf_life_days ? addDays(dto.production_date, item.shelf_life_days) : null;
     const originChain = await this.buildOriginChain(dto.batch_id);
 
     let facilityCode: string | null = null;
     if (dto.warehouse_id) {
-      const [wh] = await this.db.select().from(schema.locationMaster).where(eq(schema.locationMaster.location_id, dto.warehouse_id)).limit(1);
+      await assertLocationOnActiveFarm(this.db, farmScope(this.cls), dto.warehouse_id, 'Pack warehouse');
+      const [wh] = await this.db.select().from(schema.locationMaster).where(and(
+        eq(schema.locationMaster.location_id, dto.warehouse_id),
+        eq(schema.locationMaster.company_id, batch.company_id),
+      )).limit(1);
       facilityCode = wh?.location_code || null;
     }
 
@@ -143,7 +173,7 @@ export class QrCodeService {
     await this.db.insert(schema.qrCodeMaster).values({
       qr_id: qrId,
       tenant_id: tenantId,
-      company_id: dto.company_id,
+      company_id: batch.company_id,
       batch_id: dto.batch_id,
       output_line_id: dto.output_line_id || null,
       qc_id: dto.qc_id || null,
@@ -165,7 +195,7 @@ export class QrCodeService {
 
     await this.auditService.log({
       tenantId,
-      companyId: dto.company_id,
+      companyId: batch.company_id,
       userId: userPayload?.userId,
       action: 'CREATE',
       entityName: 'qr_code_master',
@@ -177,7 +207,10 @@ export class QrCodeService {
   }
 
   async findOne(id: string) {
-    const [qr] = await this.db.select().from(schema.qrCodeMaster).where(eq(schema.qrCodeMaster.qr_id, id)).limit(1);
+    const [qr] = await this.db.select().from(schema.qrCodeMaster).where(and(
+      eq(schema.qrCodeMaster.qr_id, id),
+      ...batchReferenceScopeConditions(farmScope(this.cls), schema.qrCodeMaster.batch_id),
+    )).limit(1);
     if (!qr) {
       throw new NotFoundException(`QR/Pack with ID '${id}' not found.`);
     }
@@ -186,6 +219,7 @@ export class QrCodeService {
 
   async findAll(query: QueryQrCodeDto, tenantId: string) {
     const conditions: any[] = [eq(schema.qrCodeMaster.tenant_id, tenantId)];
+    conditions.push(...batchReferenceScopeConditions(farmScope(this.cls), schema.qrCodeMaster.batch_id));
     if (query.companyId) conditions.push(eq(schema.qrCodeMaster.company_id, query.companyId));
     if (query.batchId) conditions.push(eq(schema.qrCodeMaster.batch_id, query.batchId));
     if (query.outputLineId) conditions.push(eq(schema.qrCodeMaster.output_line_id, query.outputLineId));

@@ -1,11 +1,19 @@
-import { Injectable } from '@nestjs/common';
+import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, desc } from 'drizzle-orm';
+import { eq, and, desc, isNotNull, or, SQL } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
 import { CreateBioAssetLedgerDto, QueryBioAssetLedgerDto } from './dto/bio-asset-ledger.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
+import {
+  animalOnFarm,
+  assertCompanyInScope,
+  assertLobInScope,
+  batchOnFarm,
+  farmScope,
+  restrictedScopeConditions,
+} from '../../../common/farm-scope';
 
 /**
  * Manual-entry API for the Bio-Asset Ledger (living/biological assets:
@@ -29,6 +37,12 @@ export class BioAssetLedgerService {
   }
 
   async create(dto: CreateBioAssetLedgerDto, tenantId: string, userPayload?: any) {
+    const scope = farmScope(this.cls);
+    assertCompanyInScope(scope, dto.company_id);
+    assertLobInScope(scope, dto.lob_id);
+    if (scope.restricted || scope.farmId) {
+      throw new ForbiddenException('Farm-scoped biological-asset changes must be recorded through a batch or animal workflow.');
+    }
     const entryId = randomUUID();
 
     const costAmount = dto.cost_amount ?? null;
@@ -71,16 +85,36 @@ export class BioAssetLedgerService {
   }
 
   async findOne(id: string) {
+    const conditions: SQL[] = [eq(schema.bioAssetLedger.entry_id, id), ...this.scopeConditions()];
     const [entry] = await this.db
       .select()
       .from(schema.bioAssetLedger)
-      .where(eq(schema.bioAssetLedger.entry_id, id))
+      .where(and(...conditions))
       .limit(1);
+    if (!entry) throw new NotFoundException('Bio-Asset Ledger entry not found.');
     return entry;
   }
 
+  private scopeConditions(): SQL[] {
+    const scope = farmScope(this.cls);
+    const conditions = restrictedScopeConditions(scope, {
+      companyId: schema.bioAssetLedger.company_id,
+      lobId: schema.bioAssetLedger.lob_id,
+    });
+    if (scope.farmId) {
+      conditions.push(or(
+        batchOnFarm(schema.bioAssetLedger.batch_id, scope.farmId),
+        animalOnFarm(schema.bioAssetLedger.animal_id, scope.farmId),
+      )!);
+    }
+    if (scope.restricted) {
+      conditions.push(or(isNotNull(schema.bioAssetLedger.batch_id), isNotNull(schema.bioAssetLedger.animal_id))!);
+    }
+    return conditions;
+  }
+
   async findAll(query: QueryBioAssetLedgerDto, tenantId: string) {
-    const conditions: any[] = [eq(schema.bioAssetLedger.tenant_id, tenantId)];
+    const conditions: SQL[] = [eq(schema.bioAssetLedger.tenant_id, tenantId), ...this.scopeConditions()];
 
     if (query.companyId) conditions.push(eq(schema.bioAssetLedger.company_id, query.companyId));
     if (query.bioAssetItemId) conditions.push(eq(schema.bioAssetLedger.bio_asset_item_id, query.bioAssetItemId));

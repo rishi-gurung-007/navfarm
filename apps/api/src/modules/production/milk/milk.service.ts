@@ -6,6 +6,7 @@ import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
 import { RecordMilkDto, QueryMilkDto } from './dto/milk.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
+import { batchReferenceScopeConditions, batchScopeConditions, farmScope } from '../../../common/farm-scope';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   const pad = (n: number) => String(n).padStart(2, '0');
@@ -38,9 +39,13 @@ export class MilkService {
     const [batch] = await this.db
       .select()
       .from(schema.batchHeader)
-      .where(and(eq(schema.batchHeader.batch_id, dto.batch_id), eq(schema.batchHeader.tenant_id, tenantId)))
+      .where(and(eq(schema.batchHeader.batch_id, dto.batch_id), eq(schema.batchHeader.tenant_id, tenantId), ...batchScopeConditions(farmScope(this.cls))))
       .limit(1);
     if (!batch) throw new NotFoundException('Batch not found.');
+    if (dto.company_id !== batch.company_id) throw new BadRequestException('Milk record company must match the batch company.');
+    if (dto.operational_area_id && dto.operational_area_id !== batch.operational_area_id) {
+      throw new BadRequestException('Milk record operational area must match the batch operational area.');
+    }
     if (batch.status !== 'ACTIVE') {
       throw new BadRequestException(`Milk can only be recorded against an ACTIVE batch (this one is ${batch.status}).`);
     }
@@ -91,8 +96,8 @@ export class MilkService {
         await this.db.insert(schema.milkProductionLog).values({
           log_id: logId,
           tenant_id: tenantId,
-          company_id: dto.company_id,
-          operational_area_id: dto.operational_area_id || batch.operational_area_id || null,
+          company_id: batch.company_id,
+          operational_area_id: batch.operational_area_id || null,
           batch_id: dto.batch_id,
           animal_id: dto.animal_id || null,
           log_date: dto.log_date,
@@ -109,7 +114,7 @@ export class MilkService {
 
     await this.auditService.log({
       tenantId,
-      companyId: dto.company_id,
+      companyId: batch.company_id,
       userId: userPayload?.userId,
       action: existing.length ? 'UPDATE' : 'CREATE',
       entityName: 'milk_production_log',
@@ -121,10 +126,16 @@ export class MilkService {
   }
 
   async findOne(logId: string, tenantId: string) {
+    const scope = farmScope(this.cls);
     const [row] = await this.db
       .select()
       .from(schema.milkProductionLog)
-      .where(and(eq(schema.milkProductionLog.log_id, logId), eq(schema.milkProductionLog.tenant_id, tenantId), isNull(schema.milkProductionLog.deleted_at)))
+      .where(and(
+        eq(schema.milkProductionLog.log_id, logId),
+        eq(schema.milkProductionLog.tenant_id, tenantId),
+        isNull(schema.milkProductionLog.deleted_at),
+        ...batchReferenceScopeConditions(scope, schema.milkProductionLog.batch_id),
+      ))
       .limit(1);
     if (!row) throw new NotFoundException('Milk record not found.');
     return row;
@@ -132,6 +143,7 @@ export class MilkService {
 
   async findAll(query: QueryMilkDto, tenantId: string) {
     const conditions: SQL[] = [eq(schema.milkProductionLog.tenant_id, tenantId), isNull(schema.milkProductionLog.deleted_at)];
+    conditions.push(...batchReferenceScopeConditions(farmScope(this.cls), schema.milkProductionLog.batch_id));
     if (query.company_id) conditions.push(eq(schema.milkProductionLog.company_id, query.company_id));
     if (query.batch_id) conditions.push(eq(schema.milkProductionLog.batch_id, query.batch_id));
     if (query.animal_id) conditions.push(eq(schema.milkProductionLog.animal_id, query.animal_id));
@@ -173,7 +185,7 @@ export class MilkService {
     const [batch] = await this.db
       .select()
       .from(schema.batchHeader)
-      .where(and(eq(schema.batchHeader.batch_id, batchId), eq(schema.batchHeader.tenant_id, tenantId)))
+      .where(and(eq(schema.batchHeader.batch_id, batchId), eq(schema.batchHeader.tenant_id, tenantId), ...batchScopeConditions(farmScope(this.cls))))
       .limit(1);
     if (!batch) throw new NotFoundException('Batch not found.');
 
@@ -236,7 +248,7 @@ export class MilkService {
     const [batch] = await this.db
       .select({ batch_id: schema.batchHeader.batch_id })
       .from(schema.batchHeader)
-      .where(and(eq(schema.batchHeader.batch_id, batchId), eq(schema.batchHeader.tenant_id, tenantId)))
+      .where(and(eq(schema.batchHeader.batch_id, batchId), eq(schema.batchHeader.tenant_id, tenantId), ...batchScopeConditions(farmScope(this.cls))))
       .limit(1);
     if (!batch) throw new NotFoundException('Batch not found.');
 

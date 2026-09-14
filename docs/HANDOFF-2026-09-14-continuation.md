@@ -25,6 +25,13 @@ tenant or company admins. All demo data is rebuilt from the seeds, operational
 records posted through services. The item 1 login fixes are done and verified
 (`docs/VERIFICATION-2026-09-14-logins.md`).
 
+**Phase 1 continuation:** two later Claude sessions implemented the access
+foundation and both expired. Codex recovered and audited their work, repaired
+the cross-company/farm/LOB gaps found by independent review, and completed the
+live database-backed gate. Read
+`docs/VERIFICATION-2026-09-14-phase-01.md` and the Phase 1 SDD ledger before
+starting Phase 2.
+
 ## Repository and completed commits
 
 Workspace `/Users/nero/Desktop/navfarm`, branch `neroen`. Tracked working tree

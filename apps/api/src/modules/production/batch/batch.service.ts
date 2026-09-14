@@ -8,7 +8,7 @@ import { unlink } from 'fs/promises';
 import { resolve } from 'path';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
-import { farmScope, batchScopeConditions, assertLocationOnActiveFarm, farmOfLocation } from '../../../common/farm-scope';
+import { assertCompanyInScope, assertLobInScope, farmScope, batchScopeConditions, assertLocationOnActiveFarm, farmOfLocation } from '../../../common/farm-scope';
 import {
   CreateBatchDto,
   AddBatchTransactionDto,
@@ -150,6 +150,8 @@ export class BatchService {
     }
 
     const scope = farmScope(this.cls);
+    assertCompanyInScope(scope, dto.company_id);
+    assertLobInScope(scope, dto.lob_id);
     // CreateBatchDto carries shed_id and location_id (one or neither); sub_location_id is set later by stage transfer.
     const placementId = dto.location_id || dto.shed_id || null;
     await assertLocationOnActiveFarm(this.db, scope, placementId, 'Batch location');
@@ -2830,6 +2832,7 @@ export class BatchService {
   }
 
   async listAttachments(batchId: string, date?: string) {
+    await this.findOne(batchId);
     const conditions = [eq(schema.batchAttachment.batch_id, batchId)];
     if (date) conditions.push(eq(schema.batchAttachment.log_date, date));
     return this.db
@@ -2840,6 +2843,7 @@ export class BatchService {
   }
 
   async deleteAttachment(batchId: string, attachmentId: string) {
+    await this.findOne(batchId);
     const [attachment] = await this.db
       .select()
       .from(schema.batchAttachment)

@@ -1051,8 +1051,8 @@ describe('BatchService', () => {
     const insertedValues = (table: unknown) => insertedByTable.get(table);
 
     const validCreateDto = {
-      company_id: 'comp-1',
-      lob_id: 'lob-piggery',
+      company_id: 'co-1',
+      lob_id: 'lob-pig',
       costing_method: 'FIFO',
       start_date: '2026-01-01',
       opening_quantity: 100,
@@ -1087,17 +1087,16 @@ describe('BatchService', () => {
 
     it('stamps the farm derived from the batch location on create', async () => {
       useFarmScope(grasmere);
-      rows.set(schema.locationMaster, [{ location_id: 'pen-1', parent: 'shed-1', farm_id: 'farm-g' }]);
+      rows.set(schema.locationMaster, [{ location_id: 'pen-1', parent: 'shed-1', farm_id: 'farm-g', company_id: 'co-1', lob_id: 'lob-pig' }]);
       await service.create({ ...validCreateDto, location_id: 'pen-1' } as any, 'tenant-1', { userId: 'u-1' } as any);
       expect(insertedValues(schema.batchHeader)).toMatchObject({ farm_id: 'farm-g' });
     });
 
     it('refuses creating a batch on a location of another farm', async () => {
       useFarmScope(grasmere);
-      rows.set(schema.locationMaster, [{ location_id: 'pen-k', parent: 'shed-k', farm_id: 'farm-k' }]);
+      rows.set(schema.locationMaster, [{ location_id: 'pen-k', parent: 'shed-k', farm_id: 'farm-k', company_id: 'co-1', lob_id: 'lob-pig' }]);
       await expect(service.create({ ...validCreateDto, location_id: 'pen-k' } as any, 'tenant-1', { userId: 'u-1' } as any))
         .rejects.toThrow('Batch location is not on your active farm.');
     });
   });
 });
-

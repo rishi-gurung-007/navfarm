@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { eq, and, or, isNull, gte, lte, desc, like, sql, SQL, inArray } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
@@ -8,7 +8,7 @@ import { CreateApprovalRequestDto, DecideApprovalDto, QueryApprovalDto } from '.
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { BatchService } from '../batch/batch.service';
 import { withTenantTransaction } from '../../../common/tenant-transaction';
-import { farmScope, batchOnFarm } from '../../../common/farm-scope';
+import { batchReferenceScopeConditions, batchScopeConditions, farmScope, restrictedScopeConditions } from '../../../common/farm-scope';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   const pad = (n: number) => String(n).padStart(2, '0');
@@ -66,6 +66,30 @@ export class ApprovalService {
   }
 
   async create(dto: CreateApprovalRequestDto, tenantId: string, userPayload?: any) {
+    const scope = farmScope(this.cls);
+    if (scope.restricted && dto.company_id !== scope.companyId) {
+      throw new ForbiddenException('Not authorized for this company.');
+    }
+    if (scope.restricted && !dto.batch_id) {
+      throw new ForbiddenException('A batch is required to establish the operational scope of this approval.');
+    }
+    if (dto.batch_id) {
+      const [batch] = await this.db
+        .select({ batch_id: schema.batchHeader.batch_id, company_id: schema.batchHeader.company_id })
+        .from(schema.batchHeader)
+        .where(and(
+          eq(schema.batchHeader.batch_id, dto.batch_id),
+          eq(schema.batchHeader.tenant_id, tenantId),
+          isNull(schema.batchHeader.deleted_at),
+          ...batchScopeConditions(scope),
+        ))
+        .limit(1);
+      if (!batch) throw new NotFoundException('Approval batch not found.');
+      if (batch.company_id !== dto.company_id) {
+        throw new BadRequestException('The approval batch does not belong to the request company.');
+      }
+    }
+
     const requestId = randomUUID();
     const docNo = await this.generateDocNo(tenantId, dto.company_id, dto.doc_type);
 
@@ -112,14 +136,12 @@ export class ApprovalService {
    * still sees only their own line of business.
    */
   private farmConditions(): SQL[] {
-    const { farmId, restricted, lobId } = farmScope(this.cls);
-    if (farmId) return [batchOnFarm(schema.approvalRequest.batch_id, farmId)];
-    if (restricted) {
-      const conditions: SQL[] = [sql`${schema.approvalRequest.batch_id} IS NOT NULL`];
-      if (lobId) conditions.push(sql`${schema.approvalRequest.batch_id} IN (SELECT bl.batch_id FROM batch_header bl WHERE bl.lob_id = ${lobId})`);
-      return conditions;
-    }
-    return [];
+    const scope = farmScope(this.cls);
+    return [
+      ...(scope.restricted ? [sql`${schema.approvalRequest.batch_id} IS NOT NULL`] : []),
+      ...batchReferenceScopeConditions(scope, schema.approvalRequest.batch_id),
+      ...restrictedScopeConditions(scope, { companyId: schema.approvalRequest.company_id }),
+    ];
   }
 
   async findAll(query: QueryApprovalDto, tenantId: string) {
@@ -203,7 +225,12 @@ export class ApprovalService {
     // A locking read does not establish a repeatable-read snapshot. Every
     // decision locks the request first; health posting then locks its batch.
     const [current] = await this.db.select().from(schema.approvalRequest)
-      .where(and(eq(schema.approvalRequest.request_id, requestId), eq(schema.approvalRequest.tenant_id, tenantId), isNull(schema.approvalRequest.deleted_at)))
+      .where(and(
+        eq(schema.approvalRequest.request_id, requestId),
+        eq(schema.approvalRequest.tenant_id, tenantId),
+        isNull(schema.approvalRequest.deleted_at),
+        ...this.farmConditions(),
+      ))
       .for('update');
     if (!current) throw new NotFoundException('Approval request not found.');
     if (expectedHealthBatchId && (current.doc_type !== 'UNSCHEDULED_HEALTH' || current.batch_id !== expectedHealthBatchId)) {
@@ -281,7 +308,12 @@ export class ApprovalService {
   async remove(requestId: string, tenantId: string, userPayload?: any) {
     return withTenantTransaction(this.cls, async () => {
     const [current] = await this.db.select().from(schema.approvalRequest)
-      .where(and(eq(schema.approvalRequest.request_id, requestId), eq(schema.approvalRequest.tenant_id, tenantId), isNull(schema.approvalRequest.deleted_at)))
+      .where(and(
+        eq(schema.approvalRequest.request_id, requestId),
+        eq(schema.approvalRequest.tenant_id, tenantId),
+        isNull(schema.approvalRequest.deleted_at),
+        ...this.farmConditions(),
+      ))
       .for('update');
     if (!current) throw new NotFoundException('Approval request not found.');
     if (current.status !== 'PENDING') {

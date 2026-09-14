@@ -79,7 +79,13 @@ export async function resolveFarmScope(db: Db, input: ResolveFarmScopeInput): Pr
   // restricted user who omitted it read every operational record.
   if (restricted && !activeArea) throw new BadRequestException('Select an operational area first.');
 
-  const companyId = activeArea?.company_id ?? activeCompanyId ?? null;
+  // Company-bound users must never become tenant-wide merely because a client
+  // omitted the active-company header. Tenant/system admins legitimately have
+  // no fixed company and remain unbounded until they select one.
+  const assignedCompanyId = ['COMPANY_ADMIN', 'OPERATIONAL_ADMIN', 'STANDARD_USER'].includes(user.userType)
+    ? user.companyId
+    : null;
+  const companyId = activeArea?.company_id ?? activeCompanyId ?? assignedCompanyId ?? null;
   const lobId = restricted ? activeArea!.lob_id : null;
 
   if (user.userType === 'STANDARD_USER') {
@@ -102,9 +108,37 @@ export function locationOnFarm(column: AnyMySqlColumn, farmId: string): SQL {
   return sql`${column} IN (SELECT lf.location_id FROM location_master lf WHERE lf.location_id = ${farmId} OR lf.farm_id = ${farmId})`;
 }
 
+/** Scope a row whose only operational boundary is a location/warehouse id. */
+export function locationReferenceScopeConditions(scope: FarmScope, locationIdColumn: AnyMySqlColumn): SQL[] {
+  const conditions: SQL[] = [];
+  if (scope.farmId) conditions.push(locationOnFarm(locationIdColumn, scope.farmId));
+  if (scope.companyId) {
+    conditions.push(sql`${locationIdColumn} IN (SELECT ls.location_id FROM location_master ls WHERE ls.company_id = ${scope.companyId})`);
+  }
+  if (scope.restricted && scope.lobId) {
+    conditions.push(sql`${locationIdColumn} IN (SELECT ls.location_id FROM location_master ls WHERE ls.lob_id = ${scope.lobId})`);
+  }
+  return conditions;
+}
+
 /** `column` holds a batch whose farm is `farmId`. */
 export function batchOnFarm(batchIdColumn: AnyMySqlColumn, farmId: string): SQL {
   return sql`${batchIdColumn} IN (SELECT bf.batch_id FROM batch_header bf WHERE bf.farm_id = ${farmId})`;
+}
+
+/** Scope a row that carries a batch id but no direct farm/LOB boundary of its own. */
+export function batchReferenceScopeConditions(scope: FarmScope, batchIdColumn: AnyMySqlColumn): SQL[] {
+  const conditions: SQL[] = [];
+  if (scope.farmId) conditions.push(batchOnFarm(batchIdColumn, scope.farmId));
+  if (scope.restricted && scope.lobId) {
+    conditions.push(sql`${batchIdColumn} IN (SELECT br.batch_id FROM batch_header br WHERE br.lob_id = ${scope.lobId})`);
+  }
+  // A selected company is a boundary for company admins as well as restricted
+  // operational users. Only the LOB subquery is restricted-user-specific.
+  if (scope.companyId) {
+    conditions.push(sql`${batchIdColumn} IN (SELECT br.batch_id FROM batch_header br WHERE br.company_id = ${scope.companyId})`);
+  }
+  return conditions;
 }
 
 /** `column` holds an animal standing on `farmId`: by its location, or by its batch when it has none. */
@@ -116,12 +150,43 @@ export function animalOnFarm(animalIdColumn: AnyMySqlColumn, farmId: string): SQ
   )`;
 }
 
+/**
+ * The selected-company and restricted-LOB half of a caller's scope. Every
+ * farm-scoped surface needs it because farmId may legitimately be null. Pass
+ * whichever of the two columns the table actually has.
+ */
+export function restrictedScopeConditions(
+  scope: FarmScope,
+  columns: { companyId?: AnyMySqlColumn; lobId?: AnyMySqlColumn },
+): SQL[] {
+  const conditions: SQL[] = [];
+  // A selected/assigned company is a boundary for company admins too; only the
+  // LOB boundary is specific to operationally restricted users.
+  if (columns.lobId && scope.lobId) conditions.push(eq(columns.lobId, scope.lobId));
+  if (columns.companyId && scope.companyId) conditions.push(eq(columns.companyId, scope.companyId));
+  return conditions;
+}
+
+export function assertCompanyInScope(scope: FarmScope, companyId: string): void {
+  if (scope.companyId && companyId !== scope.companyId) {
+    throw new ForbiddenException('Not authorized for this company.');
+  }
+}
+
+export function assertLobInScope(scope: FarmScope, lobId: string | null | undefined): void {
+  if (scope.restricted && scope.lobId && lobId !== scope.lobId) {
+    throw new ForbiddenException('Not authorized for this line of business.');
+  }
+}
+
 /** For queries on batch_header itself. */
 export function batchScopeConditions(scope: FarmScope): SQL[] {
   const conditions: SQL[] = [];
   if (scope.farmId) conditions.push(eq(schema.batchHeader.farm_id, scope.farmId));
-  if (scope.restricted && scope.lobId) conditions.push(eq(schema.batchHeader.lob_id, scope.lobId));
-  if (scope.restricted && scope.companyId) conditions.push(eq(schema.batchHeader.company_id, scope.companyId));
+  conditions.push(...restrictedScopeConditions(scope, {
+    companyId: schema.batchHeader.company_id,
+    lobId: schema.batchHeader.lob_id,
+  }));
   return conditions;
 }
 
@@ -129,7 +194,10 @@ export function batchScopeConditions(scope: FarmScope): SQL[] {
 export function animalScopeConditions(scope: FarmScope): SQL[] {
   const conditions: SQL[] = [];
   if (scope.farmId) conditions.push(animalOnFarm(schema.animalRegister.animal_id, scope.farmId));
-  if (scope.restricted && scope.lobId) conditions.push(eq(schema.animalRegister.lob_id, scope.lobId));
+  conditions.push(...restrictedScopeConditions(scope, {
+    companyId: schema.animalRegister.company_id,
+    lobId: schema.animalRegister.lob_id,
+  }));
   return conditions;
 }
 
@@ -146,8 +214,19 @@ export async function farmOfLocation(db: Db, locationId: string): Promise<string
 
 /** A create or update naming a location must stay on the active farm. Locations are visible masters, so this is a 403, not a 404. */
 export async function assertLocationOnActiveFarm(db: Db, scope: FarmScope, locationId: string | null | undefined, label: string): Promise<void> {
-  if (!scope.farmId || !locationId) return;
-  if ((await farmOfLocation(db, locationId)) !== scope.farmId) {
+  if (!locationId) return;
+  if (!scope.farmId && !scope.companyId && !scope.lobId) return;
+  const [row] = await db.select({
+    company_id: schema.locationMaster.company_id,
+    lob_id: schema.locationMaster.lob_id,
+    location_id: schema.locationMaster.location_id,
+    parent: schema.locationMaster.parent_location_id,
+    farm_id: schema.locationMaster.farm_id,
+  }).from(schema.locationMaster).where(eq(schema.locationMaster.location_id, locationId)).limit(1);
+  const actualFarm = row ? (row.parent === null ? row.location_id : row.farm_id) : null;
+  if (!row || (scope.companyId && row.company_id !== scope.companyId) ||
+      (scope.restricted && scope.lobId && row.lob_id && row.lob_id !== scope.lobId) ||
+      (scope.farmId && actualFarm !== scope.farmId)) {
     throw new ForbiddenException(`${label} is not on your active farm.`);
   }
 }

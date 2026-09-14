@@ -16,11 +16,13 @@ describe('BatchTransferService', () => {
   const mockDbSelect = jest.fn();
   const mockDbUpdate = jest.fn();
   const mockDbInsert = jest.fn();
+  const mockCreateForAuthorizedBatchStage = jest.fn();
 
-  const mockDb = {
+  const mockDb: any = {
     select: mockDbSelect,
     update: mockDbUpdate,
     insert: mockDbInsert,
+    transaction: jest.fn(async (work: (tx: unknown) => Promise<unknown>): Promise<unknown> => work(mockDb)),
   };
 
   // farmScope() reads its own key off the same ClsService that 'tenantDb'
@@ -52,16 +54,25 @@ describe('BatchTransferService', () => {
     mockDbSelect.mockReset();
     mockDbUpdate.mockReset();
     mockDbInsert.mockReset();
+    mockDb.transaction.mockClear();
+    mockCreateForAuthorizedBatchStage.mockReset().mockResolvedValue({});
     farmScopeValue = undefined;
     capturedWhere = undefined;
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         BatchTransferService,
-        { provide: ClsService, useValue: { get: jest.fn((key?: string) => (key === 'farmScope' ? farmScopeValue : mockDb)) } },
+        { provide: ClsService, useValue: {
+          get: jest.fn((key?: string) => key === 'farmScope' ? farmScopeValue : key === 'tenantPostingTransaction' ? false : mockDb),
+          run: jest.fn(async (work: () => Promise<unknown>) => work()),
+          set: jest.fn(),
+        } },
         { provide: AuditLogService, useValue: { log: jest.fn().mockResolvedValue({}) } },
         { provide: NumberSeriesService, useValue: { generateNext: jest.fn().mockResolvedValue('BTR-2026-0001') } },
-        { provide: SchedulerHeaderService, useValue: { createForStage: jest.fn().mockResolvedValue({}) } },
+        { provide: SchedulerHeaderService, useValue: {
+          createForStage: jest.fn().mockResolvedValue({}),
+          createForAuthorizedBatchStage: mockCreateForAuthorizedBatchStage,
+        } },
       ],
     }).compile();
 
@@ -231,6 +242,43 @@ describe('BatchTransferService', () => {
 
       expect(renderedWhere()).toMatch(/from_batch_id` IN \(SELECT bf\.batch_id FROM batch_header bf.*\bor\b.*to_batch_id` IN \(SELECT bf\.batch_id FROM batch_header bf/s);
     });
+
+    it('bounds transfers by company when an operational admin selects no farm', async () => {
+      useFarmScope({ farmId: null, restricted: true, companyId: 'co-1', lobId: 'lob-pig' });
+      const chain: any = {
+        from: () => chain,
+        leftJoin: () => chain,
+        where: (cond: unknown) => { capturedWhere = cond; return chain; },
+        orderBy: () => Promise.resolve([]),
+      };
+      mockDbSelect.mockReturnValue(chain);
+
+      await service.findAll({} as any, 'tenant-1');
+
+      expect(renderedWhere()).toContain('`batch_transfer`.`company_id` = ?');
+    });
+  });
+
+  describe('findOne', () => {
+    it('bounds the transfer that authorizes post and cancel by company when an operational admin selects no farm', async () => {
+      useFarmScope({ farmId: null, restricted: true, companyId: 'co-1', lobId: 'lob-pig' });
+      const transferChain: any = {
+        from: () => transferChain,
+        where: (cond: unknown) => { capturedWhere = cond; return transferChain; },
+        limit: () => Promise.resolve([draftTransfer]),
+      };
+      const linesChain: any = {
+        from: () => linesChain,
+        leftJoin: () => linesChain,
+        where: () => linesChain,
+        orderBy: () => Promise.resolve([]),
+      };
+      mockDbSelect.mockReturnValueOnce(transferChain).mockReturnValueOnce(linesChain);
+
+      await service.findOne('tr-1', 'tenant-123');
+
+      expect(renderedWhere()).toContain('`batch_transfer`.`company_id` = ?');
+    });
   });
 
   describe('post', () => {
@@ -253,7 +301,10 @@ describe('BatchTransferService', () => {
         .mockReturnValueOnce({
           from: jest.fn().mockReturnValue({
             where: jest.fn().mockReturnValue({
-              limit: jest.fn().mockResolvedValue([{ stage_id: 'stage-farrowing' }]),
+              limit: jest.fn().mockResolvedValue([{
+                batch_id: 'batch-farrow', tenant_id: 'tenant-123', company_id: 'comp-1',
+                lob_id: 'lob-1', stage_id: 'stage-farrowing',
+              }]),
             }),
           }),
         }); // destination batch stage
@@ -266,6 +317,59 @@ describe('BatchTransferService', () => {
       const animalSet = (mockDbUpdate.mock.results[0].value.set as jest.Mock).mock.calls[0][0];
       expect(animalSet.current_batch_id).toBe('batch-farrow');
       expect(animalSet.current_stage_id).toBe('stage-farrowing');
+    });
+
+    it('uses the pre-authorized destination scheduler path inside the posting transaction', async () => {
+      jest.spyOn(service, 'findOne').mockResolvedValue(draftTransfer as any);
+      jest.spyOn(service as any, 'shiftBioAssetState').mockResolvedValue(undefined);
+      jest.spyOn(service as any, 'shiftClosingQuantity').mockResolvedValue(undefined);
+      jest.spyOn(service as any, 'writeLedgerLegs').mockResolvedValue(undefined);
+      mockDbSelect
+        .mockReturnValueOnce({ from: () => ({ where: () => Promise.resolve([{ animal_id: 'a-1' }, { animal_id: 'a-2' }]) }) })
+        .mockReturnValueOnce({ from: () => ({ where: () => ({ limit: () => Promise.resolve([{
+          batch_id: 'batch-farrow', tenant_id: 'tenant-123', company_id: 'comp-1',
+          lob_id: 'lob-1', stage_id: 'stage-farrowing',
+        }]) }) }) });
+      mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) }) });
+
+      await service.post('tr-1', 'tenant-123', { userId: 'user-1' }, true);
+
+      expect(mockDb.transaction).toHaveBeenCalled();
+      expect(mockCreateForAuthorizedBatchStage).toHaveBeenCalledWith(
+        expect.objectContaining({ batch_id: 'batch-farrow', company_id: 'comp-1' }),
+        'stage-farrowing',
+        'tenant-123',
+        { userId: 'user-1' },
+      );
+    });
+
+    it('does not continue posting when destination scheduler generation fails', async () => {
+      jest.spyOn(service, 'findOne').mockResolvedValue(draftTransfer as any);
+      const shiftState = jest.spyOn(service as any, 'shiftBioAssetState').mockResolvedValue(undefined);
+      mockCreateForAuthorizedBatchStage.mockRejectedValue(new Error('scheduler failed'));
+      mockDbSelect
+        .mockReturnValueOnce({ from: () => ({ where: () => Promise.resolve([{ animal_id: 'a-1' }, { animal_id: 'a-2' }]) }) })
+        .mockReturnValueOnce({ from: () => ({ where: () => ({ limit: () => Promise.resolve([{
+          batch_id: 'batch-farrow', tenant_id: 'tenant-123', company_id: 'comp-1',
+          lob_id: 'lob-1', stage_id: 'stage-farrowing',
+        }]) }) }) });
+      mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) }) });
+
+      await expect(service.post('tr-1', 'tenant-123', undefined, true)).rejects.toThrow('scheduler failed');
+
+      expect(mockDb.transaction).toHaveBeenCalled();
+      expect(shiftState).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('listTransferableAnimals', () => {
+    it('authorizes the requested batch before returning its animal details', async () => {
+      const load = jest.spyOn(service as any, 'loadBatch').mockRejectedValue(new Error('out of scope'));
+
+      await expect(service.listTransferableAnimals('other-farm-batch', 'tenant-123')).rejects.toThrow('out of scope');
+
+      expect(load).toHaveBeenCalledWith('other-farm-batch', 'tenant-123', 'Source');
+      expect(mockDbSelect).not.toHaveBeenCalled();
     });
   });
 });

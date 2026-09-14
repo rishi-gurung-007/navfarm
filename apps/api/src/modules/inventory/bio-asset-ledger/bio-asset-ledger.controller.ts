@@ -5,11 +5,13 @@ import { CreateBioAssetLedgerDto, QueryBioAssetLedgerDto } from './dto/bio-asset
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
+import { FarmScoped } from '../../../common/farm-scope';
 
 @ApiTags('Bio-Asset Ledger')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('bio-asset-ledger')
+@FarmScoped()
 export class BioAssetLedgerController {
   constructor(private readonly bioAssetLedgerService: BioAssetLedgerService) {}
 

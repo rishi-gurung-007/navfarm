@@ -2,6 +2,7 @@ import { transactionCls } from '../../../test-utils/transaction-cls';
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConflictException, ForbiddenException, BadRequestException, NotFoundException } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
+import { MySqlDialect } from 'drizzle-orm/mysql-core';
 import { BatchDailyDataService } from './batch-daily-data.service';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { BatchService } from '../batch/batch.service';
@@ -17,14 +18,17 @@ import * as schema from '../../../core/database/schema';
  * window guard broke all of it by adding three.
  */
 describe('BatchDailyDataService', () => {
+  const dialect = new MySqlDialect();
   let service: BatchDailyDataService;
   let batchService: BatchService;
 
   const rows = new Map<unknown, unknown[]>();
+  const capturedWheres: Array<{ table: unknown; condition: unknown }> = [];
   const mockDbSelect = jest.fn();
+  const mockDbSelectDistinct = jest.fn();
   const mockDbInsert = jest.fn();
   const mockDbUpdate = jest.fn();
-  const mockDb = { select: mockDbSelect, insert: mockDbInsert, update: mockDbUpdate };
+  const mockDb = { select: mockDbSelect, selectDistinct: mockDbSelectDistinct, insert: mockDbInsert, update: mockDbUpdate };
 
   const approvalService = {
     create: jest.fn(),
@@ -36,10 +40,10 @@ describe('BatchDailyDataService', () => {
   };
 
   /** Awaitable at any point, so .where(), .limit() and .orderBy() all resolve. */
-  const chain = (result: unknown[]) => {
+  const chain = (result: unknown[], table: unknown) => {
     const self: any = {
       from: () => self,
-      where: () => self,
+      where: (condition: unknown) => { capturedWheres.push({ table, condition }); return self; },
       limit: () => self,
       for: () => self,
       orderBy: () => self,
@@ -60,6 +64,7 @@ describe('BatchDailyDataService', () => {
 
   beforeEach(async () => {
     rows.clear();
+    capturedWheres.length = 0;
     farmScopeValue = undefined;
     // The batch and its schedule exist; nothing has been entered yet; the user
     // holds no grants, i.e. is the on-ground worker.
@@ -70,11 +75,13 @@ describe('BatchDailyDataService', () => {
     rows.set(schema.userRoleAssignment, []);
 
     mockDbSelect.mockReset();
+    mockDbSelectDistinct.mockReset();
     mockDbInsert.mockReset();
     mockDbUpdate.mockReset();
     Object.values(approvalService).forEach((fn) => fn.mockReset());
     approvalService.create.mockResolvedValue({ request_id: 'req-1', doc_no: 'HLT-UNS-2026-0001' });
-    mockDbSelect.mockImplementation(() => ({ from: (table: unknown) => chain(rows.get(table) ?? []) }));
+    mockDbSelect.mockImplementation(() => ({ from: (table: unknown) => chain(rows.get(table) ?? [], table) }));
+    mockDbSelectDistinct.mockImplementation(() => ({ from: (table: unknown) => chain(rows.get(table) ?? [], table) }));
     mockDbInsert.mockReturnValue({ values: jest.fn().mockReturnValue({ onDuplicateKeyUpdate: jest.fn().mockResolvedValue({}) }) });
     mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) }) });
 
@@ -106,10 +113,53 @@ describe('BatchDailyDataService', () => {
     }]);
   };
 
-  it('answers 404 when the batch is on another farm', async () => {
+  const renderedWhereFor = (table: unknown, occurrence = 0) => {
+    const matches = capturedWheres.filter((entry) => entry.table === table);
+    return dialect.sqlToQuery(matches[occurrence].condition as any);
+  };
+
+  it('puts farm, company and LOB conditions on the batch lookup used by entryForm', async () => {
     useFarmScope({ farmId: 'farm-g', restricted: true, companyId: 'comp-1', lobId: 'lob-1' });
-    rows.set(schema.batchHeader, []); // scoped batch lookup finds nothing
-    await expect(service.entryForm('batch-1', undefined as any, 'tenant-123', { userId: 'u' } as any)).rejects.toThrow(NotFoundException);
+    await service.entryForm('batch-1', undefined, 'tenant-123', { userId: 'u' } as any);
+
+    const { sql, params } = renderedWhereFor(schema.batchHeader);
+    expect(sql).toContain('`batch_header`.`farm_id` = ?');
+    expect(sql).toContain('`batch_header`.`lob_id` = ?');
+    expect(sql).toContain('`batch_header`.`company_id` = ?');
+    expect(params).toEqual(expect.arrayContaining(['farm-g', 'lob-1', 'comp-1']));
+  });
+
+  it('refuses postEntry before side effects when its scoped batch lock finds nothing', async () => {
+    useFarmScope({ farmId: 'farm-g', restricted: true, companyId: 'comp-1', lobId: 'lob-1' });
+    rows.set(schema.batchHeader, []);
+
+    await expect(
+      service.postEntry('batch-1', { line_id: 'line-1', entry_date: ENTRY_DATE, entered_value: 2 } as any, 'tenant-123'),
+    ).rejects.toThrow(NotFoundException);
+
+    const { sql } = renderedWhereFor(schema.batchHeader);
+    expect(sql).toContain('`batch_header`.`farm_id` = ?');
+    expect(mockDbInsert).not.toHaveBeenCalled();
+  });
+
+  it('bounds entryDates by company when an operational admin selects no farm', async () => {
+    useFarmScope({ farmId: null, restricted: true, companyId: 'comp-1', lobId: 'lob-1' });
+
+    await service.entryDates('batch-1', 'tenant-123');
+
+    const { sql, params } = renderedWhereFor(schema.batchDailyData);
+    expect(sql).toContain('`batch_daily_data`.`company_id` = ?');
+    expect(params).toContain('comp-1');
+  });
+
+  it('bounds findForDate by company when an operational admin selects no farm', async () => {
+    useFarmScope({ farmId: null, restricted: true, companyId: 'comp-1', lobId: 'lob-1' });
+
+    await service.findForDate('batch-1', ENTRY_DATE, 'tenant-123');
+
+    const { sql, params } = renderedWhereFor(schema.batchDailyData);
+    expect(sql).toContain('`batch_daily_data`.`company_id` = ?');
+    expect(params).toContain('comp-1');
   });
 
   it('reverses the prior consumption before posting a corrected daily quantity', async () => {

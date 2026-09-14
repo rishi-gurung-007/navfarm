@@ -14,6 +14,11 @@ import { GoodsIssueController } from '../modules/inventory/goods-issue/goods-iss
 import { StockAdjustmentController } from '../modules/inventory/stock-adjustment/stock-adjustment.controller';
 import { StockTransferController } from '../modules/inventory/stock-transfer/stock-transfer.controller';
 import { InventoryLedgerController } from '../modules/inventory/inventory-ledger/inventory-ledger.controller';
+import { AlertController } from '../modules/production/alert/alert.controller';
+import { MilkController } from '../modules/production/milk/milk.controller';
+import { QcController } from '../modules/production/qc/qc.controller';
+import { QrCodeController } from '../modules/production/qr-code/qr-code.controller';
+import { BioAssetLedgerController } from '../modules/inventory/bio-asset-ledger/bio-asset-ledger.controller';
 
 /**
  * Farm scope is opt-in per controller, and a controller that forgets it reads
@@ -26,16 +31,13 @@ const SCOPED = {
   ApprovalController, AnimalController, AnimalMedicationLogController, BreedingController,
   GoodsReceiptController, GoodsIssueController, StockAdjustmentController, StockTransferController,
   InventoryLedgerController,
+  AlertController, MilkController, QcController, QrCodeController,
+  BioAssetLedgerController,
 };
 
 const EXEMPT: Record<string, string> = {
-  'inventory/bio-asset-ledger/bio-asset-ledger.controller.ts': 'Finance reconciliation, company-level by decision.',
-  'production/alert/alert.controller.ts': 'Alerts carry no batch or location to reach a farm through.',
-  'production/milk/milk.controller.ts': 'Dairy — dormant, out of scope.',
   'production/parameter/parameter.controller.ts': 'Master data, not farm-specific.',
   'production/qc-parameter/qc-parameter.controller.ts': 'Master data, not farm-specific.',
-  'production/qc/qc.controller.ts': 'Not in the MVP scope; classify when QC is built.',
-  'production/qr-code/qr-code.controller.ts': 'Not in the MVP scope; classify when QR packs are built.',
   'production/stage/stage.controller.ts': 'Master data, not farm-specific.',
 };
 

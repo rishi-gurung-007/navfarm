@@ -49,6 +49,10 @@ export class UserService {
     if (requester.userType !== 'SYSTEM_ADMIN' && dto.tenant_id !== requester.tenantId) {
       throw new ForbiddenException('You can only create users in your own tenant.');
     }
+    if (userType === 'STANDARD_USER' && !dto.farm_id) {
+      throw new BadRequestException('A standard user must be assigned to a farm.');
+    }
+    if (dto.farm_id) await this.assertActiveCompanyFarm(dto.farm_id, dto.company_id, dto.tenant_id);
 
     const existing = await this.db
       .select()
@@ -78,6 +82,7 @@ export class UserService {
         department: dto.department || null,
         designation: dto.designation || null,
         timezone_pref_id: dto.timezone_pref_id || null,
+        farm_id: dto.farm_id || null,
       });
       await tx.insert(schema.userCompanyAssignments).values({
         user_id: userId,
@@ -239,6 +244,13 @@ export class UserService {
       throw new BadRequestException('You cannot deactivate your own account.');
     }
 
+    const resultingType = typeChanged ? dto.user_type : user.user_type;
+    const resultingFarm = dto.farm_id !== undefined ? dto.farm_id : user.farm_id;
+    if (resultingType === 'STANDARD_USER' && !resultingFarm) {
+      throw new BadRequestException('A standard user must be assigned to a farm.');
+    }
+    if (dto.farm_id) await this.assertActiveCompanyFarm(dto.farm_id, user.company_id, user.tenant_id);
+
     const updates: any = {};
     if (dto.full_name !== undefined) updates.full_name = dto.full_name;
     if (dto.phone !== undefined) updates.phone = dto.phone;
@@ -248,6 +260,7 @@ export class UserService {
     if (dto.designation !== undefined) updates.designation = dto.designation;
     if (dto.timezone_pref_id !== undefined) updates.timezone_pref_id = dto.timezone_pref_id;
     if (dto.is_active !== undefined) updates.is_active = dto.is_active;
+    if (dto.farm_id !== undefined) updates.farm_id = dto.farm_id;
 
     if (Object.keys(updates).length > 0) {
       await this.db
@@ -305,5 +318,19 @@ export class UserService {
     if (!outranks(requester?.userType, targetType)) {
       throw new ForbiddenException('You cannot modify a user at or above your own access level.');
     }
+  }
+
+  private async assertActiveCompanyFarm(farmId: string, companyId: string, tenantId: string): Promise<void> {
+    const [farm] = await this.db.select({ location_id: schema.locationMaster.location_id })
+      .from(schema.locationMaster)
+      .where(and(
+        eq(schema.locationMaster.location_id, farmId),
+        eq(schema.locationMaster.company_id, companyId),
+        eq(schema.locationMaster.tenant_id, tenantId),
+        eq(schema.locationMaster.is_active, true),
+        sql`${schema.locationMaster.parent_location_id} IS NULL`,
+        sql`${schema.locationMaster.deleted_at} IS NULL`,
+      )).limit(1);
+    if (!farm) throw new BadRequestException('The assigned farm must be an active top-level farm in the user company.');
   }
 }

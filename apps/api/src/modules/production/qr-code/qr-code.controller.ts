@@ -5,10 +5,12 @@ import { CreateQrCodeDto, QueryQrCodeDto } from './dto/qr-code.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
+import { FarmScoped } from '../../../common/farm-scope';
 
 @ApiTags('QR Traceability Packs')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
+@FarmScoped()
 @Controller('qr-code')
 export class QrCodeController {
   constructor(private readonly qrCodeService: QrCodeService) {}

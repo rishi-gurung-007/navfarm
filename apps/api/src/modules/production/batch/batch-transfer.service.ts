@@ -8,7 +8,8 @@ import { CreateBatchTransferDto, MergeBatchDto, QueryBatchTransferDto, SplitBatc
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { SchedulerHeaderService } from '../scheduler-header/scheduler-header.service';
-import { batchOnFarm, batchScopeConditions, farmScope } from '../../../common/farm-scope';
+import { assertLocationOnActiveFarm, assertLobInScope, batchOnFarm, batchScopeConditions, farmScope, restrictedScopeConditions } from '../../../common/farm-scope';
+import { withTenantTransaction } from '../../../common/tenant-transaction';
 
 // Local time, not UTC. MySQL's own DEFAULT (now()) on created_at is local, so
 // formatting through toISOString() (as some older services here do) stamps
@@ -93,6 +94,11 @@ export class BatchTransferService {
 
   /** Animals currently sitting in a batch and still alive — the transferable pool. */
   async listTransferableAnimals(batchId: string, tenantId: string) {
+    await this.loadBatch(batchId, tenantId, 'Source');
+    return this.listTransferableAnimalsFromAuthorizedBatch(batchId, tenantId);
+  }
+
+  private async listTransferableAnimalsFromAuthorizedBatch(batchId: string, tenantId: string) {
     return this.db
       .select({
         animal_id: schema.animalRegister.animal_id,
@@ -134,9 +140,20 @@ export class BatchTransferService {
     if (source.company_id !== destination.company_id) {
       throw new BadRequestException('Cross-company transfers are not supported — both batches must belong to the same company.');
     }
+    if (source.lob_id !== destination.lob_id) {
+      throw new BadRequestException('Cross-LOB transfers are not supported — both batches must belong to the same line of business.');
+    }
+    if (dto.to_location_id) {
+      await assertLocationOnActiveFarm(this.db, {
+        farmId: destination.farm_id,
+        restricted: true,
+        companyId: destination.company_id,
+        lobId: destination.lob_id,
+      }, dto.to_location_id, 'Destination location');
+    }
 
     const transferType = dto.transfer_type || (dto.animal_ids?.length ? 'PARTIAL' : 'FULL_BATCH');
-    const pool = await this.listTransferableAnimals(fromBatchId, tenantId);
+    const pool = await this.listTransferableAnimalsFromAuthorizedBatch(fromBatchId, tenantId);
 
     let selected = pool;
     if (transferType === 'PARTIAL') {
@@ -418,6 +435,7 @@ export class BatchTransferService {
    * check, so a double-submit cannot move the same animals twice.
    */
   async post(transferId: string, tenantId: string, userPayload?: { userId?: string }, autoTriggersStage?: boolean) {
+    return withTenantTransaction(this.cls, async () => {
     const transfer = await this.findOne(transferId, tenantId);
     if (transfer.status !== 'DRAFT') {
       throw new BadRequestException(`Only a DRAFT transfer can be posted (this one is ${transfer.status}).`);
@@ -452,10 +470,17 @@ export class BatchTransferService {
     // batch sitting at a different stage has to move their stage with them —
     // otherwise a pig transferred into farrowing still reports as gestating.
     const [destBatch] = await this.db
-      .select({ stage_id: schema.batchHeader.stage_id })
+      .select()
       .from(schema.batchHeader)
-      .where(eq(schema.batchHeader.batch_id, transfer.to_batch_id))
+      .where(and(
+        eq(schema.batchHeader.batch_id, transfer.to_batch_id),
+        eq(schema.batchHeader.tenant_id, tenantId),
+        eq(schema.batchHeader.company_id, transfer.company_id),
+        isNull(schema.batchHeader.deleted_at),
+      ))
       .limit(1);
+    if (!destBatch) throw new NotFoundException('Destination batch not found.');
+    assertLobInScope(farmScope(this.cls), destBatch.lob_id);
 
     // 1. Repoint the animals. They stay ACTIVE and is_active — a transferred
     //    animal is still fully operable, just under a different batch.
@@ -480,7 +505,7 @@ export class BatchTransferService {
     // animal_register count createForStage() reads already includes these
     // animals.
     if (autoTriggersStage && destBatch?.stage_id) {
-      await this.schedulerHeaderService.createForStage(transfer.to_batch_id, destBatch.stage_id, tenantId, userPayload);
+      await this.schedulerHeaderService.createForAuthorizedBatchStage(destBatch, destBatch.stage_id, tenantId, userPayload);
     }
 
     // 2. Move the carrying value and head count between the two batches' states.
@@ -519,6 +544,7 @@ export class BatchTransferService {
     });
 
     return this.findOne(transferId, tenantId);
+    });
   }
 
   /** Adds (or subtracts) head count and carrying value on one batch's bio-asset state row. */
@@ -679,6 +705,14 @@ export class BatchTransferService {
         batchOnFarm(schema.batchTransfer.to_batch_id, scope.farmId),
       )!);
     }
+    // An operational admin who sent no x-active-farm-id has farmId null, so the
+    // farm condition above adds nothing — and post()/cancel() authorize purely
+    // by reaching this row, which is why the company bound belongs here too.
+    conditions.push(...restrictedScopeConditions(scope, { companyId: schema.batchTransfer.company_id }));
+    if (scope.restricted && scope.lobId) conditions.push(or(
+      sql`${schema.batchTransfer.from_batch_id} IN (SELECT btl.batch_id FROM batch_header btl WHERE btl.lob_id = ${scope.lobId})`,
+      sql`${schema.batchTransfer.to_batch_id} IN (SELECT btl.batch_id FROM batch_header btl WHERE btl.lob_id = ${scope.lobId})`,
+    )!);
 
     const [transfer] = await this.db
       .select()
@@ -723,6 +757,11 @@ export class BatchTransferService {
     // of it touches that farm.
     const scope = farmScope(this.cls);
     if (scope.farmId) conditions.push(or(batchOnFarm(schema.batchTransfer.from_batch_id, scope.farmId), batchOnFarm(schema.batchTransfer.to_batch_id, scope.farmId))!);
+    conditions.push(...restrictedScopeConditions(scope, { companyId: schema.batchTransfer.company_id }));
+    if (scope.restricted && scope.lobId) conditions.push(or(
+      sql`${schema.batchTransfer.from_batch_id} IN (SELECT btl.batch_id FROM batch_header btl WHERE btl.lob_id = ${scope.lobId})`,
+      sql`${schema.batchTransfer.to_batch_id} IN (SELECT btl.batch_id FROM batch_header btl WHERE btl.lob_id = ${scope.lobId})`,
+    )!);
 
     const fromBatch = schema.batchHeader;
     const rows = await this.db
