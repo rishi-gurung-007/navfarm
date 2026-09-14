@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { eq, and, or, inArray, isNull, gte, lte, desc, sql, SQL } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
@@ -8,8 +8,53 @@ import { CreateBatchTransferDto, MergeBatchDto, QueryBatchTransferDto, SplitBatc
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { SchedulerHeaderService } from '../scheduler-header/scheduler-header.service';
-import { assertLocationOnActiveFarm, assertLobInScope, batchOnFarm, batchScopeConditions, farmScope, restrictedScopeConditions } from '../../../common/farm-scope';
+import {
+  assertLocationOnActiveFarm,
+  batchOnFarm,
+  batchReferenceScopeConditions,
+  batchScopeConditions,
+  farmScope,
+  restrictedScopeConditions,
+  type FarmScope,
+} from '../../../common/farm-scope';
 import { withTenantTransaction } from '../../../common/tenant-transaction';
+
+type BatchRow = typeof schema.batchHeader.$inferSelect;
+
+/** The request user as the transfer rules read it. `userType` is unknown so any controller/service user shape fits. */
+export interface TransferActor {
+  userId?: string;
+  userType?: unknown;
+}
+
+export const WORKER_TRANSFER_REFUSAL = 'Transfers by farm workers need approval, which is not available yet.';
+export const FARM_TO_FARM_TRANSFER_REFUSAL = 'Farm-to-farm transfers need approval by a tenant or company admin.';
+
+function transferActorType(actor: TransferActor | undefined, scope: FarmScope): string | null {
+  const userType = actor?.userType;
+  if (typeof userType === 'string') return userType;
+  // A restricted scope with no user type is a caller that dropped req.user on
+  // the way here. Treat it as the least-privileged type so the rule fails closed.
+  return scope.restricted ? 'STANDARD_USER' : null;
+}
+
+/**
+ * Interim rule until the Phase 7 approval workflow exists: decisions.md says
+ * every standard-user transfer needs approval, and there is nothing yet to
+ * approve it with, so a farm worker cannot create or post one at all. Checked
+ * before any read so the refusal says nothing about the batches named.
+ */
+export function assertWorkerMayTransfer(actor: TransferActor | undefined, scope: FarmScope): void {
+  if (transferActorType(actor, scope) === 'STANDARD_USER') throw new ForbiddenException(WORKER_TRANSFER_REFUSAL);
+}
+
+/** Operational admins move animals within a farm; between farms needs a tenant or company admin. */
+function assertFarmToFarmAllowed(actor: TransferActor | undefined, scope: FarmScope, source: BatchRow, destination: BatchRow): void {
+  assertWorkerMayTransfer(actor, scope);
+  if (transferActorType(actor, scope) === 'OPERATIONAL_ADMIN' && source.farm_id !== destination.farm_id) {
+    throw new ForbiddenException(FARM_TO_FARM_TRANSFER_REFUSAL);
+  }
+}
 
 // Local time, not UTC. MySQL's own DEFAULT (now()) on created_at is local, so
 // formatting through toISOString() (as some older services here do) stamps
@@ -71,13 +116,8 @@ export class BatchTransferService {
     }
   }
 
-  /**
-   * `scoped` defaults on so a farm-scoped user cannot read across farms by
-   * naming another farm's batch id. The destination side of a transfer is the
-   * one deliberate exception — animals move between farms of the same company,
-   * so `create` loads it with `scoped = false`.
-   */
-  private async loadBatch(batchId: string, tenantId: string, label: string, scoped = true) {
+  /** Scoped, so a farm-scoped user cannot act across farms by naming another farm's batch id. */
+  private async loadBatch(batchId: string, tenantId: string, label: string) {
     const [batch] = await this.db
       .select()
       .from(schema.batchHeader)
@@ -85,11 +125,103 @@ export class BatchTransferService {
         eq(schema.batchHeader.batch_id, batchId),
         eq(schema.batchHeader.tenant_id, tenantId),
         isNull(schema.batchHeader.deleted_at),
-        ...(scoped ? batchScopeConditions(farmScope(this.cls)) : []),
+        ...batchScopeConditions(farmScope(this.cls)),
       ))
       .limit(1);
     if (!batch) throw new NotFoundException(`${label} batch not found.`);
     return batch;
+  }
+
+  /**
+   * The destination may be on another farm of the same company, so it is not
+   * farm-scoped (the farm-to-farm rule decides that). Outside the source's
+   * company or LOB it answers exactly like a batch that does not exist: the
+   * old "Cross-company…" 400 confirmed another company's batch id was real.
+   */
+  private async loadDestinationBatch(batchId: string, source: BatchRow, tenantId: string) {
+    const [batch] = await this.db
+      .select()
+      .from(schema.batchHeader)
+      .where(and(
+        eq(schema.batchHeader.batch_id, batchId),
+        eq(schema.batchHeader.tenant_id, tenantId),
+        isNull(schema.batchHeader.deleted_at),
+        eq(schema.batchHeader.company_id, source.company_id),
+        eq(schema.batchHeader.lob_id, source.lob_id),
+      ))
+      .limit(1);
+    if (!batch) throw new NotFoundException('Destination batch not found.');
+    return batch;
+  }
+
+  /**
+   * The row every mutation authorizes through, locked. findOne() shows a
+   * transfer to either farm it touches, but changing it is the source farm's
+   * call: reaching it through to_batch_id let a destination-farm worker post or
+   * cancel the source farm's draft and debit its batch. So farm, LOB and company
+   * sit on from_batch_id only.
+   */
+  private async loadTransferForMutation(transferId: string, tenantId: string) {
+    const scope = farmScope(this.cls);
+    const [transfer] = await this.db
+      .select()
+      .from(schema.batchTransfer)
+      .where(and(
+        eq(schema.batchTransfer.transfer_id, transferId),
+        eq(schema.batchTransfer.tenant_id, tenantId),
+        isNull(schema.batchTransfer.deleted_at),
+        ...batchReferenceScopeConditions(scope, schema.batchTransfer.from_batch_id),
+        ...restrictedScopeConditions(scope, { companyId: schema.batchTransfer.company_id }),
+      ))
+      .for('update');
+    if (!transfer) throw new NotFoundException('Transfer not found.');
+    const lines = await this.loadLines(transferId);
+    return { ...transfer, lines };
+  }
+
+  /**
+   * Locks both batch rows — the same rows addTransaction() locks — so a
+   * consumption posting at the same moment cannot lose this change to their
+   * counts and carrying value. Always lowest batch_id first, so two transfers
+   * crossing the same pair in opposite directions cannot deadlock.
+   */
+  private async lockTransferBatches(
+    transfer: { from_batch_id: string; to_batch_id: string; company_id: string },
+    tenantId: string,
+  ): Promise<{ source: BatchRow; destination: BatchRow }> {
+    const lockSource = async () => (await this.db
+      .select()
+      .from(schema.batchHeader)
+      .where(and(
+        eq(schema.batchHeader.batch_id, transfer.from_batch_id),
+        eq(schema.batchHeader.tenant_id, tenantId),
+        isNull(schema.batchHeader.deleted_at),
+        ...batchScopeConditions(farmScope(this.cls)),
+      ))
+      .for('update'))[0];
+    const lockDestination = async () => (await this.db
+      .select()
+      .from(schema.batchHeader)
+      .where(and(
+        eq(schema.batchHeader.batch_id, transfer.to_batch_id),
+        eq(schema.batchHeader.tenant_id, tenantId),
+        eq(schema.batchHeader.company_id, transfer.company_id),
+        isNull(schema.batchHeader.deleted_at),
+      ))
+      .for('update'))[0];
+
+    let source: BatchRow | undefined;
+    let destination: BatchRow | undefined;
+    if (transfer.from_batch_id < transfer.to_batch_id) {
+      source = await lockSource();
+      destination = await lockDestination();
+    } else {
+      destination = await lockDestination();
+      source = await lockSource();
+    }
+    if (!source) throw new NotFoundException('Source batch not found.');
+    if (!destination || destination.lob_id !== source.lob_id) throw new NotFoundException('Destination batch not found.');
+    return { source, destination };
   }
 
   /** Animals currently sitting in a batch and still alive — the transferable pool. */
@@ -124,24 +256,34 @@ export class BatchTransferService {
       .orderBy(schema.animalRegister.animal_code);
   }
 
-  async create(dto: CreateBatchTransferDto, tenantId: string, fromBatchId: string, userPayload?: { userId?: string }) {
+  /**
+   * `options.autoTriggersStage` is internal: only the TRANSFER scheduler line
+   * sets it (it generates the destination's scheduler unscoped), so it is not
+   * on the HTTP DTO.
+   */
+  async create(
+    dto: CreateBatchTransferDto,
+    tenantId: string,
+    fromBatchId: string,
+    userPayload?: TransferActor,
+    options: { autoTriggersStage?: boolean } = {},
+  ) {
+    assertWorkerMayTransfer(userPayload, farmScope(this.cls));
+    // One transaction with the post below, so a refused post leaves no DRAFT
+    // header and lines behind from an autocommitted insert.
+    return withTenantTransaction(this.cls, async () => {
     const source = await this.loadBatch(fromBatchId, tenantId, 'Source');
-    const destination = await this.loadBatch(dto.to_batch_id, tenantId, 'Destination', false);
+    const destination = await this.loadDestinationBatch(dto.to_batch_id, source, tenantId);
 
     if (source.batch_id === destination.batch_id) {
       throw new BadRequestException('Source and destination batch must be different.');
     }
+    assertFarmToFarmAllowed(userPayload, farmScope(this.cls), source, destination);
     if (source.status !== 'ACTIVE') {
       throw new BadRequestException(`Only an ACTIVE batch can transfer animals out (source is ${source.status}).`);
     }
     if (!['DRAFT', 'ACTIVE'].includes(destination.status)) {
       throw new BadRequestException(`Destination batch must be DRAFT or ACTIVE (it is ${destination.status}).`);
-    }
-    if (source.company_id !== destination.company_id) {
-      throw new BadRequestException('Cross-company transfers are not supported — both batches must belong to the same company.');
-    }
-    if (source.lob_id !== destination.lob_id) {
-      throw new BadRequestException('Cross-LOB transfers are not supported — both batches must belong to the same line of business.');
     }
     if (dto.to_location_id) {
       await assertLocationOnActiveFarm(this.db, {
@@ -233,9 +375,10 @@ export class BatchTransferService {
     });
 
     if (dto.post_immediately !== false) {
-      return this.post(transferId, tenantId, userPayload, dto.auto_triggers_stage);
+      return this.post(transferId, tenantId, userPayload, options.autoTriggersStage);
     }
     return this.findOne(transferId, tenantId);
+    });
   }
 
   /** Live members of a batch — the pool a split or merge can actually move. */
@@ -275,8 +418,13 @@ export class BatchTransferService {
     parentBatchId: string,
     dto: SplitBatchDto,
     tenantId: string,
-    userPayload?: { userId?: string },
+    userPayload?: TransferActor,
   ) {
+    assertWorkerMayTransfer(userPayload, farmScope(this.cls));
+    // Atomic: the child batch, the animal movement and the child's scheduler
+    // commit together. Before, the child was autocommitted and a later refusal
+    // left it behind with the animals already moved.
+    return withTenantTransaction(this.cls, async () => {
     const parent = await this.loadBatch(parentBatchId, tenantId, 'Source');
 
     const animalIds = dto.animal_ids ?? [];
@@ -320,6 +468,10 @@ export class BatchTransferService {
       tenant_id: tenantId,
       company_id: parent.company_id,
       batch_no: childBatchNo,
+      // The group stays on the parent's farm. A farm-less child was invisible to
+      // every farm-scoped user, including the one who split it, and unmergeable.
+      farm_id: parent.farm_id,
+      animal_tracking: parent.animal_tracking,
       nob_id: parent.nob_id,
       lob_id: parent.lob_id,
       breed_id: parent.breed_id,
@@ -366,15 +518,23 @@ export class BatchTransferService {
 
     // The child starts life already in a resolved stage (holdStageId), unlike a
     // normal batch that only gets one via transferStage() later — give it the
-    // same auto-generated scheduler_header a transferStage() call would.
+    // same auto-generated scheduler_header a transferStage() call would. The
+    // authorized-row path: the parent was scope-checked above and the child is
+    // its copy, so re-scoping it here could only fail after the animals moved.
     if (holdStageId) {
-      await this.schedulerHeaderService.createForStage(childBatchId, holdStageId, tenantId, userPayload);
+      const [child] = await this.db
+        .select()
+        .from(schema.batchHeader)
+        .where(eq(schema.batchHeader.batch_id, childBatchId))
+        .limit(1);
+      await this.schedulerHeaderService.createForAuthorizedBatchStage(child, holdStageId, tenantId, userPayload);
     }
 
     return {
       child: { batch_id: childBatchId, batch_no: childBatchNo, parent_batch_id: parentBatchId, current_stage_code: holdStageCode },
       transfer,
     };
+    });
   }
 
   /**
@@ -388,8 +548,12 @@ export class BatchTransferService {
     childBatchId: string,
     dto: MergeBatchDto,
     tenantId: string,
-    userPayload?: { userId?: string },
+    userPayload?: TransferActor,
   ) {
+    assertWorkerMayTransfer(userPayload, farmScope(this.cls));
+    // Atomic with the movement: a closed child with its animals still in it, or
+    // moved animals under a child still open, were both possible before.
+    return withTenantTransaction(this.cls, async () => {
     const child = await this.loadBatch(childBatchId, tenantId, 'Source');
 
     if (!child.parent_batch_id) {
@@ -428,18 +592,24 @@ export class BatchTransferService {
       .where(eq(schema.batchHeader.batch_id, childBatchId));
 
     return { merged: animalIds.length, into_batch_id: child.parent_batch_id, transfer };
+    });
   }
 
   /**
-   * Applies the movement. Everything here is idempotent-guarded by the DRAFT
-   * check, so a double-submit cannot move the same animals twice.
+   * Applies the movement. The transfer row is locked before its DRAFT check and
+   * DRAFT -> POSTED is claimed conditionally before any side effect, so a
+   * double-submit waits for the first post, then is refused — it cannot move
+   * the same animals, value or ledger legs twice.
    */
-  async post(transferId: string, tenantId: string, userPayload?: { userId?: string }, autoTriggersStage?: boolean) {
+  async post(transferId: string, tenantId: string, userPayload?: TransferActor, autoTriggersStage?: boolean) {
+    assertWorkerMayTransfer(userPayload, farmScope(this.cls));
     return withTenantTransaction(this.cls, async () => {
-    const transfer = await this.findOne(transferId, tenantId);
+    const transfer = await this.loadTransferForMutation(transferId, tenantId);
     if (transfer.status !== 'DRAFT') {
       throw new BadRequestException(`Only a DRAFT transfer can be posted (this one is ${transfer.status}).`);
     }
+    const { source, destination: destBatch } = await this.lockTransferBatches(transfer, tenantId);
+    assertFarmToFarmAllowed(userPayload, farmScope(this.cls), source, destBatch);
 
     const animalIds = transfer.lines.map((l) => l.animal_id);
     const headCount = animalIds.length;
@@ -465,25 +635,25 @@ export class BatchTransferService {
       );
     }
 
-    // The destination batch's stage. Animals carry their own current_stage_id
-    // (read by the herd and bio-asset-by-stage reports), so moving them into a
-    // batch sitting at a different stage has to move their stage with them —
-    // otherwise a pig transferred into farrowing still reports as gestating.
-    const [destBatch] = await this.db
-      .select()
-      .from(schema.batchHeader)
-      .where(and(
-        eq(schema.batchHeader.batch_id, transfer.to_batch_id),
-        eq(schema.batchHeader.tenant_id, tenantId),
-        eq(schema.batchHeader.company_id, transfer.company_id),
-        isNull(schema.batchHeader.deleted_at),
-      ))
-      .limit(1);
-    if (!destBatch) throw new NotFoundException('Destination batch not found.');
-    assertLobInScope(farmScope(this.cls), destBatch.lob_id);
+    const [claim] = await this.db
+      .update(schema.batchTransfer)
+      .set({
+        status: 'POSTED',
+        posted_at: toMysqlTimestamp(),
+        posted_by: userPayload?.userId || null,
+        updated_by: userPayload?.userId || null,
+        updated_at: toMysqlTimestamp(),
+      })
+      .where(and(eq(schema.batchTransfer.transfer_id, transferId), eq(schema.batchTransfer.status, 'DRAFT')));
+    if (!claim || claim.affectedRows === 0) {
+      throw new ConflictException('This transfer was already posted or cancelled by another request.');
+    }
 
     // 1. Repoint the animals. They stay ACTIVE and is_active — a transferred
-    //    animal is still fully operable, just under a different batch.
+    //    animal is still fully operable, just under a different batch. Their
+    //    current_stage_id follows the destination batch's stage (read by the
+    //    herd and bio-asset-by-stage reports), otherwise a pig transferred into
+    //    farrowing still reports as gestating.
     await this.db
       .update(schema.animalRegister)
       .set({
@@ -520,17 +690,6 @@ export class BatchTransferService {
     // 4. Bio-asset ledger: an out leg and an in leg, so the roll-forward report
     //    shows the movement on both batches instead of value silently appearing.
     await this.writeLedgerLegs(transfer, tenantId, userPayload?.userId);
-
-    await this.db
-      .update(schema.batchTransfer)
-      .set({
-        status: 'POSTED',
-        posted_at: toMysqlTimestamp(),
-        posted_by: userPayload?.userId || null,
-        updated_by: userPayload?.userId || null,
-        updated_at: toMysqlTimestamp(),
-      })
-      .where(eq(schema.batchTransfer.transfer_id, transferId));
 
     await this.auditService.log({
       tenantId,
@@ -670,15 +829,18 @@ export class BatchTransferService {
     await this.db.insert(schema.bioAssetLedger).values(rows);
   }
 
-  async cancel(transferId: string, tenantId: string, userPayload?: { userId?: string }) {
-    const transfer = await this.findOne(transferId, tenantId);
+  async cancel(transferId: string, tenantId: string, userPayload?: TransferActor) {
+    return withTenantTransaction(this.cls, async () => {
+    // Source-side and locked, like post(): a cancel racing a post must not
+    // flip a transfer the other request has just posted back to CANCELLED.
+    const transfer = await this.loadTransferForMutation(transferId, tenantId);
     if (transfer.status !== 'DRAFT') {
       throw new BadRequestException('Only a DRAFT transfer can be cancelled. A posted transfer must be reversed by a new transfer in the opposite direction.');
     }
     await this.db
       .update(schema.batchTransfer)
       .set({ status: 'CANCELLED', updated_by: userPayload?.userId || null, updated_at: toMysqlTimestamp() })
-      .where(eq(schema.batchTransfer.transfer_id, transferId));
+      .where(and(eq(schema.batchTransfer.transfer_id, transferId), eq(schema.batchTransfer.status, 'DRAFT')));
     await this.auditService.log({
       tenantId,
       companyId: transfer.company_id,
@@ -688,40 +850,11 @@ export class BatchTransferService {
       entityId: transferId,
     });
     return this.findOne(transferId, tenantId);
+    });
   }
 
-  async findOne(transferId: string, tenantId: string) {
-    // A transfer touches two batches, possibly on two different farms — it is
-    // visible from either side, not only the one the caller's farm is on.
-    const scope = farmScope(this.cls);
-    const conditions: SQL[] = [
-      eq(schema.batchTransfer.transfer_id, transferId),
-      eq(schema.batchTransfer.tenant_id, tenantId),
-      isNull(schema.batchTransfer.deleted_at),
-    ];
-    if (scope.farmId) {
-      conditions.push(or(
-        batchOnFarm(schema.batchTransfer.from_batch_id, scope.farmId),
-        batchOnFarm(schema.batchTransfer.to_batch_id, scope.farmId),
-      )!);
-    }
-    // An operational admin who sent no x-active-farm-id has farmId null, so the
-    // farm condition above adds nothing — and post()/cancel() authorize purely
-    // by reaching this row, which is why the company bound belongs here too.
-    conditions.push(...restrictedScopeConditions(scope, { companyId: schema.batchTransfer.company_id }));
-    if (scope.restricted && scope.lobId) conditions.push(or(
-      sql`${schema.batchTransfer.from_batch_id} IN (SELECT btl.batch_id FROM batch_header btl WHERE btl.lob_id = ${scope.lobId})`,
-      sql`${schema.batchTransfer.to_batch_id} IN (SELECT btl.batch_id FROM batch_header btl WHERE btl.lob_id = ${scope.lobId})`,
-    )!);
-
-    const [transfer] = await this.db
-      .select()
-      .from(schema.batchTransfer)
-      .where(and(...conditions))
-      .limit(1);
-    if (!transfer) throw new NotFoundException('Transfer not found.');
-
-    const lines = await this.db
+  private async loadLines(transferId: string) {
+    return this.db
       .select({
         line_id: schema.batchTransferLine.line_id,
         line_no: schema.batchTransferLine.line_no,
@@ -738,7 +871,40 @@ export class BatchTransferService {
       .leftJoin(schema.animalRegister, eq(schema.animalRegister.animal_id, schema.batchTransferLine.animal_id))
       .where(eq(schema.batchTransferLine.transfer_id, transferId))
       .orderBy(schema.batchTransferLine.line_no);
+  }
 
+  /** Visibility only — a mutation authorizes through loadTransferForMutation(). */
+  async findOne(transferId: string, tenantId: string) {
+    // A transfer touches two batches, possibly on two different farms — it is
+    // visible from either side, not only the one the caller's farm is on.
+    const scope = farmScope(this.cls);
+    const conditions: SQL[] = [
+      eq(schema.batchTransfer.transfer_id, transferId),
+      eq(schema.batchTransfer.tenant_id, tenantId),
+      isNull(schema.batchTransfer.deleted_at),
+    ];
+    if (scope.farmId) {
+      conditions.push(or(
+        batchOnFarm(schema.batchTransfer.from_batch_id, scope.farmId),
+        batchOnFarm(schema.batchTransfer.to_batch_id, scope.farmId),
+      )!);
+    }
+    // An operational admin who sent no x-active-farm-id has farmId null, so the
+    // farm condition above adds nothing; the company bound still applies.
+    conditions.push(...restrictedScopeConditions(scope, { companyId: schema.batchTransfer.company_id }));
+    if (scope.restricted && scope.lobId) conditions.push(or(
+      sql`${schema.batchTransfer.from_batch_id} IN (SELECT btl.batch_id FROM batch_header btl WHERE btl.lob_id = ${scope.lobId})`,
+      sql`${schema.batchTransfer.to_batch_id} IN (SELECT btl.batch_id FROM batch_header btl WHERE btl.lob_id = ${scope.lobId})`,
+    )!);
+
+    const [transfer] = await this.db
+      .select()
+      .from(schema.batchTransfer)
+      .where(and(...conditions))
+      .limit(1);
+    if (!transfer) throw new NotFoundException('Transfer not found.');
+
+    const lines = await this.loadLines(transferId);
     return { ...transfer, lines };
   }
 

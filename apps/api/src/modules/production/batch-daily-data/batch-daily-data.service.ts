@@ -9,7 +9,7 @@ import { CreateBatchDailyDataDto } from './dto/batch-daily-data.dto';
 import { CreateUnscheduledHealthDto } from './dto/unscheduled-health.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { BatchService, type UserContext } from '../batch/batch.service';
-import { BatchTransferService } from '../batch/batch-transfer.service';
+import { BatchTransferService, assertWorkerMayTransfer } from '../batch/batch-transfer.service';
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
 import { DueLine, stageDayStatus, pendingDays, isLineDue, StageDayStatus } from './day-completeness';
 import { entryVerdict, todayIn, todayAtOffset } from './entry-window';
@@ -795,6 +795,11 @@ export class BatchDailyDataService {
         if (dto.entered_value == null && line.standard_qty == null) {
           throw new BadRequestException('entered_value (or the line\'s standard_qty) is required to know how many head to move.');
         }
+        // destination_batch_id comes from the request body, so this is the same
+        // movement as POST /batch-transfer and obeys the same interim rule: a
+        // farm worker holding only BATCH_ENTRY create cannot move animals.
+        // create() re-checks; refusing here also skips the candidate read.
+        assertWorkerMayTransfer(userPayload, farmScope(this.cls));
         const headcount = Math.round(dto.entered_value ?? Number(line.standard_qty));
         // Auto-select the oldest still-in-this-batch animals up to the requested
         // headcount — the schedule line only says how many move, not which ones;
@@ -818,11 +823,12 @@ export class BatchDailyDataService {
             animal_ids: candidates.map((c) => c.animal_id),
             reason: line.activity_name,
             remarks: dto.remarks,
-            auto_triggers_stage: line.auto_triggers_stage,
           } as any,
           tenantId,
           batchId,
           userPayload,
+          // A service option, not a DTO field: the HTTP body cannot set it.
+          { autoTriggersStage: line.auto_triggers_stage },
         );
         posted = true;
         postingReference = (transferResult as any)?.transfer_id || dto.destination_batch_id;

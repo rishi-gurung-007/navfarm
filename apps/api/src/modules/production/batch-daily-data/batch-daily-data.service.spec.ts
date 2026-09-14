@@ -198,6 +198,44 @@ describe('BatchDailyDataService', () => {
     );
   });
 
+  describe('TRANSFER lines', () => {
+    // destination_batch_id is from the request body, so a worker holding only
+    // BATCH_ENTRY create could move animals to any farm through this line.
+    const transferEntry = { line_id: 'line-1', entry_date: ENTRY_DATE, entered_value: 1, destination_batch_id: 'batch-other' } as any;
+
+    beforeEach(() => {
+      line({ line_type: 'TRANSFER', activity_name: 'Move to farrowing', auto_triggers_stage: true, standard_qty: '1' });
+      rows.set(schema.animalRegister, [{ animal_id: 'a-1' }]);
+      jest.spyOn(service as any, 'companyToday').mockResolvedValue(ENTRY_DATE);
+    });
+
+    it('refuses a farm worker before selecting or moving any animal', async () => {
+      useFarmScope({ farmId: 'farm-g', restricted: true, companyId: 'comp-1', lobId: 'lob-1' });
+      const transfers = service['batchTransferService'] as unknown as { create: jest.Mock };
+
+      await expect(service.postEntry('batch-1', transferEntry, 'tenant-123', { userId: 'w-1', userType: 'STANDARD_USER' }))
+        .rejects.toThrow(new ForbiddenException('Transfers by farm workers need approval, which is not available yet.'));
+
+      expect(transfers.create).not.toHaveBeenCalled();
+      expect(capturedWheres.some((entry) => entry.table === schema.animalRegister)).toBe(false);
+      expect(mockDbInsert).not.toHaveBeenCalled();
+    });
+
+    it('passes auto_triggers_stage as a service option, never in the transfer body', async () => {
+      const transfers = service['batchTransferService'] as unknown as { create: jest.Mock };
+      transfers.create.mockResolvedValue({ transfer_id: 'tr-1' });
+      const admin = { userId: 'ca-1', userType: 'COMPANY_ADMIN' };
+
+      await service.postEntry('batch-1', transferEntry, 'tenant-123', admin);
+
+      const [body, tenantId, fromBatchId, actor, options] = transfers.create.mock.calls[0];
+      expect(body).not.toHaveProperty('auto_triggers_stage');
+      expect(body.to_batch_id).toBe('batch-other');
+      expect([tenantId, fromBatchId, actor]).toEqual(['tenant-123', 'batch-1', admin]);
+      expect(options).toEqual({ autoTriggersStage: true });
+    });
+  });
+
   it('flags a DESCRIPTIVE entry that breaches its alert limit without posting a transaction', async () => {
     line({ line_id: 'line-mort', line_type: 'DESCRIPTIVE', item_id: null, activity_name: 'Daily Mortality',
       lower_alert_limit: null, upper_alert_limit: '1', alert_severity: 'CRITICAL', std_value: null });

@@ -5,7 +5,7 @@ import { eq, and, or, like, isNull, count, sql } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
-import { assertCompanyInScope, farmScope, locationOnFarm, assertLocationOnActiveFarm, restrictedScopeConditions } from '../../../common/farm-scope';
+import { assertCompanyInScope, farmScope, locationOnFarm, locationReferenceScopeConditions, assertLocationOnActiveFarm, restrictedScopeConditions } from '../../../common/farm-scope';
 import { CreateStockTransferDto, UpdateStockTransferDto, QueryStockTransferDto } from './dto/stock-transfer.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
@@ -109,6 +109,54 @@ export class StockTransferService {
     );
   }
 
+  /**
+   * The row every mutation authorizes through, locked. findOne() shows a
+   * transfer to either farm it touches, but only the source farm may change
+   * it: through to_warehouse_id a destination-farm manager could rewrite a
+   * draft's quantities and post it, draining the source farm's warehouse. So
+   * farm, LOB and company sit on from_warehouse_id only.
+   */
+  private async loadForMutation(id: string, tenantId: string) {
+    const scope = farmScope(this.cls);
+    const [transfer] = await this.db
+      .select()
+      .from(schema.stockTransfer)
+      .where(and(
+        eq(schema.stockTransfer.transfer_id, id),
+        eq(schema.stockTransfer.tenant_id, tenantId),
+        isNull(schema.stockTransfer.deleted_at),
+        ...locationReferenceScopeConditions(scope, schema.stockTransfer.from_warehouse_id),
+        ...restrictedScopeConditions(scope, { companyId: schema.stockTransfer.company_id }),
+      ))
+      .for('update');
+
+    if (!transfer) {
+      throw new NotFoundException(`Stock Transfer with ID '${id}' not found.`);
+    }
+
+    const lines = await this.db
+      .select()
+      .from(schema.stockTransferLine)
+      .where(eq(schema.stockTransferLine.transfer_id, id));
+
+    return { ...transfer, lines };
+  }
+
+  /** The same two checks create() applies: source on the active farm, destination in the company and LOB. */
+  private async assertWarehouses(fromWarehouseId: string, toWarehouseId: string) {
+    if (fromWarehouseId === toWarehouseId) {
+      throw new BadRequestException('Source and destination warehouse must be different.');
+    }
+    await assertLocationOnActiveFarm(this.db, farmScope(this.cls), fromWarehouseId, 'Source warehouse');
+    await assertLocationOnActiveFarm(
+      this.db,
+      { ...farmScope(this.cls), farmId: null },
+      toWarehouseId,
+      'Destination warehouse',
+    );
+  }
+
+  /** Visibility only — a mutation authorizes through loadForMutation(). */
   async findOne(id: string) {
     const scope = farmScope(this.cls);
     const conditions = [eq(schema.stockTransfer.transfer_id, id), isNull(schema.stockTransfer.deleted_at)];
@@ -184,25 +232,16 @@ export class StockTransferService {
   }
 
   async update(id: string, dto: UpdateStockTransferDto, tenantId: string, userPayload?: any) {
-    const transfer = await this.findOne(id);
+    return withTenantTransaction(this.cls, async () => {
+    const transfer = await this.loadForMutation(id, tenantId);
     this.assertDraft(transfer);
 
+    // Both warehouses, changed or not, against create()'s rules. The source
+    // staying on the editor's farm is also what keeps the edited transfer
+    // visible to them whatever to_warehouse_id becomes.
     const fromWarehouseId = dto.from_warehouse_id ?? transfer.from_warehouse_id;
     const toWarehouseId = dto.to_warehouse_id ?? transfer.to_warehouse_id;
-    if (fromWarehouseId === toWarehouseId) {
-      throw new BadRequestException('Source and destination warehouse must be different.');
-    }
-    if (dto.from_warehouse_id !== undefined) {
-      await assertLocationOnActiveFarm(this.db, farmScope(this.cls), dto.from_warehouse_id, 'Source warehouse');
-    }
-    if (dto.to_warehouse_id !== undefined) {
-      await assertLocationOnActiveFarm(
-        this.db,
-        { ...farmScope(this.cls), farmId: null },
-        dto.to_warehouse_id,
-        'Destination warehouse',
-      );
-    }
+    await this.assertWarehouses(fromWarehouseId, toWarehouseId);
 
     const updates: any = {
       updated_by: userPayload?.userId || null,
@@ -213,7 +252,8 @@ export class StockTransferService {
     if (dto.posting_date !== undefined) updates.posting_date = dto.posting_date;
     if (dto.remarks !== undefined) updates.remarks = dto.remarks;
 
-    await this.db.update(schema.stockTransfer).set(updates).where(eq(schema.stockTransfer.transfer_id, id));
+    await this.db.update(schema.stockTransfer).set(updates)
+      .where(and(eq(schema.stockTransfer.transfer_id, id), eq(schema.stockTransfer.status, 'DRAFT')));
 
     if (dto.lines) {
       await this.db.delete(schema.stockTransferLine).where(eq(schema.stockTransferLine.transfer_id, id));
@@ -232,17 +272,19 @@ export class StockTransferService {
     });
 
     return this.findOne(id);
+    });
   }
 
   async remove(id: string, tenantId: string, userPayload?: any) {
-    const transfer = await this.findOne(id);
+    return withTenantTransaction(this.cls, async () => {
+    const transfer = await this.loadForMutation(id, tenantId);
     this.assertDraft(transfer);
     const deletedTime = toMysqlTimestamp();
 
     await this.db
       .update(schema.stockTransfer)
       .set({ status: 'CANCELLED', deleted_at: deletedTime as any, updated_by: userPayload?.userId || null })
-      .where(eq(schema.stockTransfer.transfer_id, id));
+      .where(and(eq(schema.stockTransfer.transfer_id, id), eq(schema.stockTransfer.status, 'DRAFT')));
 
     await this.auditService.log({
       tenantId,
@@ -256,16 +298,17 @@ export class StockTransferService {
     });
 
     return { success: true, message: `Stock Transfer '${transfer.transfer_no}' has been cancelled.` };
+    });
   }
 
   async post(id: string, tenantId: string, userPayload?: any) {
     return withTenantTransaction(this.cls, async () => {
-    const transfer = await this.findOne(id);
+    const transfer = await this.loadForMutation(id, tenantId);
     this.assertDraft(transfer);
 
-    const companyLobScope = { ...farmScope(this.cls), farmId: null };
-    await assertLocationOnActiveFarm(this.db, companyLobScope, transfer.from_warehouse_id, 'Source warehouse');
-    await assertLocationOnActiveFarm(this.db, companyLobScope, transfer.to_warehouse_id, 'Destination warehouse');
+    // The source with the caller's full scope, farm included — posting drains
+    // it. (This used to drop farmId for both warehouses.)
+    await this.assertWarehouses(transfer.from_warehouse_id, transfer.to_warehouse_id);
 
     if (!transfer.lines || transfer.lines.length === 0) {
       throw new BadRequestException('Cannot post a Stock Transfer with no lines.');

@@ -673,13 +673,10 @@ export class CreateBatchTransferDto {
   @IsOptional()
   post_immediately?: boolean;
 
-  @ApiProperty({
-    description: 'Internal — set by BatchDailyDataService when the TRANSFER scheduler_line that generated this transfer has auto_triggers_stage = true. Not intended for direct/manual use.',
-    required: false,
-  })
-  @IsOptional()
-  @IsBoolean()
-  auto_triggers_stage?: boolean;
+  // No auto_triggers_stage here. It makes post() generate a scheduler for the
+  // destination batch without scoping it, so it is the scheduler's decision
+  // alone: BatchDailyDataService passes it to create() as a service option, and
+  // the global forbidNonWhitelisted pipe answers it with a 400 from HTTP.
 }
 
 export class SplitBatchDto {
