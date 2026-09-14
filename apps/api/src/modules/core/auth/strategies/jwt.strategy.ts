@@ -3,7 +3,7 @@ import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { ConfigService } from '@nestjs/config';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../../core/database/schema';
 import { resolveJwtSecret } from '../../../../config/jwt.config';
@@ -34,7 +34,9 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     const [user] = await db
       .select()
       .from(schema.userMaster)
-      .where(eq(schema.userMaster.user_id, payload.sub))
+      // A soft-deleted user keeps its row; without this an access token issued
+      // before the deletion stays usable until it expires.
+      .where(and(eq(schema.userMaster.user_id, payload.sub), isNull(schema.userMaster.deleted_at)))
       .limit(1);
 
     if (!user || !user.is_active) {

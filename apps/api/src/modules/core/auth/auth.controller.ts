@@ -9,12 +9,17 @@ import { UpdateProfileDto } from './dto/update-profile.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { UpdateNotificationPreferencesDto } from './dto/update-notification-preferences.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../../../common/guards/roles.guard';
+import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
 
 @ApiTags('Authentication')
 @Controller('auth')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
+  // Deliberately unguarded: the first user of an empty tenant registers with no
+  // session. AuthService.registerAdmin verifies any bearer token itself and
+  // requires one once the tenant has users.
   @Post('register-admin')
   @ApiOperation({ summary: 'Register the initial Company Admin (Step 9 of setup)' })
   @ApiResponse({ status: HttpStatus.CREATED, description: 'Administrative account created successfully.' })
@@ -27,8 +32,12 @@ export class AuthController {
     return this.authService.registerAdmin(dto, authHeader);
   }
 
+  // Same authorization as GET /user: this lists every user with roles and
+  // phone numbers, so a signed-in operator must not reach it on a session alone.
+  // Admin user types pass RolesGuard without consulting the grant table.
   @Get('users')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @RequirePermission('RBAC', 'USER', 'view')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'List all users in the active tenant workspace' })
   async listUsers(@Request() req) {

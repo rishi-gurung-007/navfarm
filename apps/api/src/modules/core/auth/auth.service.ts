@@ -1,7 +1,7 @@
 import { Injectable, UnauthorizedException, ConflictException, BadRequestException, Inject, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, or } from 'drizzle-orm';
+import { eq, and, or, isNull } from 'drizzle-orm';
 import * as bcrypt from 'bcryptjs';
 import * as crypto from 'crypto';
 import { ClsService } from 'nestjs-cls';
@@ -24,6 +24,30 @@ const toMysqlTimestamp = (date: Date = new Date()) => {
   return date.toISOString().slice(0, 19).replace('T', ' ');
 };
 
+// toMysqlTimestamp writes UTC wall-clock time and the driver hands TIMESTAMP
+// columns back as that same naive string. `new Date(naive)` reads it in the
+// server's local zone instead — Asia/Calcutta here — which put every lock
+// 5h30m in the past, so the account lockout never engaged. Read it as UTC.
+const fromMysqlTimestamp = (value: string | Date | null | undefined): Date | null => {
+  if (!value) return null;
+  if (value instanceof Date) return value;
+  const hasZone = /(Z|[+-]\d{2}:?\d{2})$/i.test(value);
+  return new Date(hasZone ? value : `${value.replace(' ', 'T')}Z`);
+};
+
+const MAX_FAILED_LOGINS = 5;
+const LOCKOUT_MINUTES = 15;
+
+// One answer for an unknown address, a wrong password and a locked account, so
+// the login endpoint cannot be used to learn which accounts exist. It names the
+// lockout policy so a locked-out user still has a reason to wait.
+const INVALID_LOGIN_MESSAGE = `Invalid email credentials. Accounts are locked for ${LOCKOUT_MINUTES} minutes after ${MAX_FAILED_LOGINS} failed attempts.`;
+
+// Compared against when the email matches no account, so that path spends the
+// same bcrypt work as a wrong password and response time does not reveal
+// whether the address is registered. Same cost factor as real password hashes.
+const DUMMY_PASSWORD_HASH = bcrypt.hashSync(crypto.randomBytes(32).toString('hex'), 10);
+
 @Injectable()
 export class AuthService {
   constructor(
@@ -45,15 +69,91 @@ export class AuthService {
     return tenantDb;
   }
 
+  /**
+   * register-admin has no guard because the first user of an empty tenant
+   * registers without a session, so the bearer token is checked here instead.
+   * It used to be read with jwtService.decode, which does not check the
+   * signature: a hand-made token claiming TENANT_ADMIN could create admins.
+   * A header that is present but not a valid access token is an error, never
+   * "no requester".
+   */
+  private verifyRegisteringToken(authHeader?: string): { sub: string } | null {
+    if (!authHeader) return null;
+
+    const token = authHeader.startsWith('Bearer ') ? authHeader.substring(7).trim() : '';
+    let payload: any = null;
+    try {
+      payload = token ? this.jwtService.verify(token) : null;
+    } catch {
+      payload = null;
+    }
+
+    if (!payload?.sub) {
+      throw new UnauthorizedException('Access denied. Invalid session token.');
+    }
+    if (payload.type === 'refresh') {
+      throw new UnauthorizedException('A refresh token cannot be used to access this resource.');
+    }
+    return payload;
+  }
+
   async registerAdmin(dto: RegisterAdminDto, authHeader?: string) {
-    let requestingUser: any = null;
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-      const token = authHeader.substring(7);
-      try {
-        requestingUser = this.jwtService.decode(token);
-      } catch (e) {
-        // Ignored
+    const tokenPayload = this.verifyRegisteringToken(authHeader);
+
+    // The user is written into the database of the x-tenant-id workspace, and
+    // "is this the tenant's first user" is counted there. A body tenant_id
+    // naming a different tenant counted zero users in the wrong database and
+    // took the unauthenticated first-user path.
+    const contextTenantId = this.cls.get<string>('tenantId');
+    if (contextTenantId && contextTenantId !== dto.tenant_id) {
+      throw new BadRequestException('tenant_id does not match the active tenant workspace.');
+    }
+
+    const activeUsers = await this.db
+      .select()
+      .from(schema.userMaster)
+      .where(eq(schema.userMaster.tenant_id, dto.tenant_id));
+
+    // Enforce role boundary logic before anything about the target email or
+    // tenant is disclosed to the caller.
+    if (activeUsers.length > 0) {
+      if (!tokenPayload) {
+        throw new UnauthorizedException('Authentication required to register additional users.');
       }
+
+      // The requester's type, status and tenant come from user_master, not from
+      // the token's claims: a token outlives a demotion, deactivation or deletion.
+      const [requestingUser] = await this.db
+        .select()
+        .from(schema.userMaster)
+        .where(and(eq(schema.userMaster.user_id, tokenPayload.sub), isNull(schema.userMaster.deleted_at)))
+        .limit(1);
+
+      if (!requestingUser || !requestingUser.is_active) {
+        throw new UnauthorizedException('User is not authorized or active.');
+      }
+      if (requestingUser.tenant_id !== dto.tenant_id) {
+        throw new ForbiddenException('Insufficient privileges to register user accounts in this tenant.');
+      }
+
+      const requesterType = requestingUser.user_type;
+      if (requesterType === 'TENANT_ADMIN') {
+        if (dto.user_type !== 'COMPANY_ADMIN' && dto.user_type !== 'OPERATIONAL_ADMIN' && dto.user_type !== 'STANDARD_USER') {
+          throw new BadRequestException('Tenant Administrators can register Company Admins, Operational Admins, or Standard Users.');
+        }
+      } else if (requesterType === 'COMPANY_ADMIN') {
+        if (dto.user_type !== 'OPERATIONAL_ADMIN' && dto.user_type !== 'STANDARD_USER') {
+          throw new BadRequestException('Company Administrators can register Operational Admins and Standard Operators.');
+        }
+      } else if (requesterType === 'OPERATIONAL_ADMIN') {
+        if (dto.user_type !== 'STANDARD_USER') {
+          throw new BadRequestException('Operational Administrators can only register Standard Operators.');
+        }
+      } else {
+        throw new ForbiddenException('Insufficient privileges to register user accounts.');
+      }
+    } else {
+      dto.user_type = 'TENANT_ADMIN';
     }
 
     // 1. Check if user already exists
@@ -78,41 +178,10 @@ export class AuthService {
       throw new NotFoundException(`Tenant with ID '${dto.tenant_id}' not found.`);
     }
 
-    const activeUsers = await this.db
-      .select()
-      .from(schema.userMaster)
-      .where(eq(schema.userMaster.tenant_id, dto.tenant_id));
-
     if (activeUsers.length >= tenantMeta.max_users) {
       throw new BadRequestException(
         `User registration limit reached (${tenantMeta.max_users}). Please upgrade your SaaS plan to register more users.`
       );
-    }
-
-    // Enforce role boundary logic:
-    if (activeUsers.length > 0) {
-      if (!requestingUser) {
-        throw new UnauthorizedException('Authentication required to register additional users.');
-      }
-
-      const requesterType = requestingUser.userType;
-      if (requesterType === 'TENANT_ADMIN') {
-        if (dto.user_type !== 'COMPANY_ADMIN' && dto.user_type !== 'OPERATIONAL_ADMIN' && dto.user_type !== 'STANDARD_USER') {
-          throw new BadRequestException('Tenant Administrators can register Company Admins, Operational Admins, or Standard Users.');
-        }
-      } else if (requesterType === 'COMPANY_ADMIN') {
-        if (dto.user_type !== 'OPERATIONAL_ADMIN' && dto.user_type !== 'STANDARD_USER') {
-          throw new BadRequestException('Company Administrators can register Operational Admins and Standard Operators.');
-        }
-      } else if (requesterType === 'OPERATIONAL_ADMIN') {
-        if (dto.user_type !== 'STANDARD_USER') {
-          throw new BadRequestException('Operational Administrators can only register Standard Operators.');
-        }
-      } else {
-        throw new ForbiddenException('Insufficient privileges to register user accounts.');
-      }
-    } else {
-      dto.user_type = 'TENANT_ADMIN';
     }
 
     // Ensure placeholder company exists in tenant database to satisfy foreign keys
@@ -164,10 +233,16 @@ export class AuthService {
       // remembered to go assign them something narrower via Team
       // Management. A standard user should start with zero permissions,
       // not full access that quietly gets revoked later.
-      const isStandardUser = dto.user_type === 'STANDARD_USER';
+      //
+      // The same holds for OPERATIONAL_ADMIN, which the original
+      // `!== STANDARD_USER` test missed: it is not an admin user type in
+      // RolesGuard, so its role IS consulted, and SUPER_ADMIN handed every
+      // invited operational admin ALL/ALL. Only the two types that bypass
+      // permissions get the scaffolding role; everyone else starts with none.
+      const bypassesPermissions = dto.user_type === 'TENANT_ADMIN' || dto.user_type === 'COMPANY_ADMIN';
       let superAdminRole: typeof schema.roleMaster.$inferSelect | undefined;
 
-      if (!isStandardUser) {
+      if (bypassesPermissions) {
         [superAdminRole] = await tx
           .select()
           .from(schema.roleMaster)
@@ -236,7 +311,7 @@ export class AuthService {
         .where(eq(schema.userMaster.user_id, userId))
         .limit(1);
 
-      // 5. Assign SUPER_ADMIN role to user (skipped entirely for STANDARD_USER — see above)
+      // 5. Assign SUPER_ADMIN role to user (only TENANT_ADMIN and COMPANY_ADMIN — see above)
       if (superAdminRole) {
         await tx.insert(schema.userRoleAssignment).values({
           user_id: user.user_id,
@@ -294,7 +369,7 @@ export class AuthService {
           const [userRecord] = await tenantDbConnection
             .select()
             .from(schema.userMaster)
-            .where(eq(schema.userMaster.email, email))
+            .where(and(eq(schema.userMaster.email, email), isNull(schema.userMaster.deleted_at)))
             .limit(1);
           if (userRecord) {
             user = userRecord;
@@ -322,7 +397,7 @@ export class AuthService {
           const [userRecord] = await tenantDbConnection
             .select()
             .from(schema.userMaster)
-            .where(eq(schema.userMaster.email, email))
+            .where(and(eq(schema.userMaster.email, email), isNull(schema.userMaster.deleted_at)))
             .limit(1);
 
           if (userRecord) {
@@ -352,7 +427,7 @@ export class AuthService {
           const [fallbackUser] = await fallbackDb
             .select()
             .from(schema.userMaster)
-            .where(eq(schema.userMaster.email, dto.email.toLowerCase()))
+            .where(and(eq(schema.userMaster.email, email), isNull(schema.userMaster.deleted_at)))
             .limit(1);
           if (fallbackUser) {
             user = fallbackUser;
@@ -366,41 +441,42 @@ export class AuthService {
     }
 
     if (!user) {
-      throw new UnauthorizedException('Invalid email credentials.');
-    }
-
-    // Check if the tenant workspace is suspended
-    const tenantToCheck = matchedTenant;
-    if (tenantToCheck && !tenantToCheck.is_active) {
-      throw new ForbiddenException('Your tenant workspace is suspended or inactive. Please contact system support.');
-    }
-
-    if (!user.is_active) {
-      throw new ForbiddenException('Your user account is inactive or disabled. Please contact your company administrator.');
+      // Spend the bcrypt work a real account would, so an unregistered address
+      // cannot be told apart from a wrong password by response time.
+      await bcrypt.compare(dto.password, DUMMY_PASSWORD_HASH);
+      throw new UnauthorizedException(INVALID_LOGIN_MESSAGE);
     }
 
     // Bind dynamically resolved tenant context to current request thread execution storage
     this.cls.set('tenantId', resolvedTenantId);
     this.cls.set('tenantDb', targetDb);
 
-    // 2. Check lockout policy
-    if (user.locked_until && new Date(user.locked_until) > new Date()) {
-      const secondsLeft = Math.ceil((new Date(user.locked_until).getTime() - Date.now()) / 1000);
-      throw new UnauthorizedException(`Account is locked out. Please try again in ${secondsLeft} seconds.`);
+    // 2. Verify password before disclosing anything about the account. The
+    // suspended, inactive and locked checks used to run first, so anyone could
+    // learn an address's status without knowing its password.
+    const now = Date.now();
+    const lockedUntil = fromMysqlTimestamp(user.locked_until);
+    const isLocked = !!lockedUntil && lockedUntil.getTime() > now;
+    const isPasswordValid = await bcrypt.compare(dto.password, user.password_hash);
+
+    // 3. Lockout policy. While a lock is active every attempt gets the
+    // bad-password answer, whatever was typed: replying "locked" to the right
+    // password would confirm each guess and make the lockout pointless. Attempts
+    // during a lock are not counted, so nobody can keep extending it.
+    if (isLocked) {
+      throw new UnauthorizedException(INVALID_LOGIN_MESSAGE);
     }
 
-    // 3. Verify password
-    const isPasswordValid = await bcrypt.compare(dto.password, user.password_hash);
     if (!isPasswordValid) {
-      // Increment failed login count
-      const failedCount = user.failed_login_count + 1;
+      // A lock that has run out starts a fresh count; carrying the old count
+      // over re-locked the account on the first typo after it expired.
+      const failedCount = (lockedUntil ? 0 : user.failed_login_count) + 1;
       const updates: any = { failed_login_count: failedCount };
 
-      if (failedCount >= 5) {
-        // Lock account for 15 minutes
-        const lockTime = new Date();
-        lockTime.setMinutes(lockTime.getMinutes() + 15);
-        updates.locked_until = toMysqlTimestamp(lockTime);
+      if (failedCount >= MAX_FAILED_LOGINS) {
+        updates.locked_until = toMysqlTimestamp(new Date(now + LOCKOUT_MINUTES * 60 * 1000));
+      } else if (lockedUntil) {
+        updates.locked_until = null;
       }
 
       await this.db
@@ -408,7 +484,16 @@ export class AuthService {
         .set(updates)
         .where(eq(schema.userMaster.user_id, user.user_id));
 
-      throw new UnauthorizedException('Invalid email credentials or inactive account.');
+      throw new UnauthorizedException(INVALID_LOGIN_MESSAGE);
+    }
+
+    // Only a caller who has proved the password is told why the account cannot sign in.
+    if (matchedTenant && !matchedTenant.is_active) {
+      throw new ForbiddenException('Your tenant workspace is suspended or inactive. Please contact system support.');
+    }
+
+    if (!user.is_active) {
+      throw new ForbiddenException('Your user account is inactive or disabled. Please contact your company administrator.');
     }
 
     // Reset failed login count on success
@@ -447,19 +532,12 @@ export class AuthService {
     const [user] = await this.db
       .select()
       .from(schema.userMaster)
-      .where(eq(schema.userMaster.email, dto.email.toLowerCase()))
+      .where(and(eq(schema.userMaster.email, dto.email.toLowerCase()), isNull(schema.userMaster.deleted_at)))
       .limit(1);
 
-    if (!user || !user.is_active) {
-      throw new UnauthorizedException('Invalid account.');
-    }
-
-    if (!user.mfa_enabled || !user.mfa_secret) {
-      throw new BadRequestException('MFA is not enabled for this account.');
-    }
-
-    const isValid = this.verifyTOTP(user.mfa_secret, dto.code);
-    if (!isValid) {
+    // One answer for every failure. Separate replies for an unknown or disabled
+    // account and for one without MFA let this public endpoint enumerate accounts.
+    if (!user || !user.is_active || !user.mfa_enabled || !user.mfa_secret || !this.verifyTOTP(user.mfa_secret, dto.code)) {
       throw new UnauthorizedException('Invalid MFA token code.');
     }
 
@@ -663,14 +741,15 @@ export class AuthService {
         .where(eq(schema.userSession.refresh_token_hash, tokenHash))
         .limit(1);
 
-      if (!session || session.revoked_at || new Date(session.expires_at) < new Date()) {
+      const sessionExpiresAt = fromMysqlTimestamp(session?.expires_at);
+      if (!session || session.revoked_at || !sessionExpiresAt || sessionExpiresAt.getTime() < Date.now()) {
         throw new UnauthorizedException('Invalid or expired refresh token.');
       }
 
       const [user] = await db
         .select()
         .from(schema.userMaster)
-        .where(eq(schema.userMaster.user_id, payload.sub))
+        .where(and(eq(schema.userMaster.user_id, payload.sub), isNull(schema.userMaster.deleted_at)))
         .limit(1);
 
       if (!user || !user.is_active) {
@@ -915,7 +994,7 @@ export class AuthService {
       .where(eq(schema.userSession.user_id, userId));
     const now = new Date();
     return rows
-      .filter((s) => !s.revokedAt && new Date(s.expiresAt) > now)
+      .filter((s) => !s.revokedAt && (fromMysqlTimestamp(s.expiresAt)?.getTime() ?? 0) > now.getTime())
       .sort((a, b) => new Date(b.issuedAt).getTime() - new Date(a.issuedAt).getTime());
   }
 
