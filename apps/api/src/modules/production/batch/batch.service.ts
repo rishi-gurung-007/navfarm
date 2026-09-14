@@ -1437,7 +1437,11 @@ export class BatchService {
           .where(eq(schema.batchHeader.batch_id, id));
       }
     } else if (dto.transaction_type === 'OVERHEAD') {
-      if (!dto.quantity || dto.rate === undefined || dto.rate === null) {
+      // A genuine 0 — no cost that day, or (for a RESOURCE line routed
+      // through here, e.g. "Farm Labour Hours") no hours logged — is a real
+      // answer, not a missing one; only undefined/null means it was never
+      // entered. `!dto.quantity` used to reject 0 as if it were missing.
+      if (dto.quantity === undefined || dto.quantity === null || dto.rate === undefined || dto.rate === null) {
         throw new BadRequestException('OVERHEAD transactions require quantity and rate.');
       }
       amount = -(dto.quantity * dto.rate);

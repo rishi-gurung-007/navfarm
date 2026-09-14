@@ -47,10 +47,10 @@ type LineSpec =
 // Interleaved so that a brand-new header's first 10 picks already span every
 // type, not 8 CONSUMPTION lines before the first DESCRIPTIVE one.
 const LINE_TEMPLATE: LineSpec[] = [
-  { line_type: 'CONSUMPTION', activity_name: 'Morning Feed Ration', itemCode: 'LVS-PIG-FEED', standard_qty: '2.5000', is_mandatory: true },
+  { line_type: 'CONSUMPTION', activity_name: 'Morning Feed Ration', itemCode: 'LVS-PIG-FEED', standard_qty: '2.5000' },
   { line_type: 'DESCRIPTIVE', activity_name: 'Body Weight Check', kpi_metric: 'BODY_WEIGHT', kpi_uom: 'KG', capture_per: 'AVERAGE' },
   { line_type: 'CONSUMPTION', activity_name: 'Evening Feed Ration', itemCode: 'FEED-GEST-SOW', standard_qty: '2.0000' },
-  { line_type: 'DESCRIPTIVE', activity_name: 'Mortality Count', kpi_metric: 'MORTALITY_COUNT', kpi_uom: 'HEAD', capture_per: 'TOTAL', is_mandatory: true },
+  { line_type: 'DESCRIPTIVE', activity_name: 'Mortality Count', kpi_metric: 'MORTALITY_COUNT', kpi_uom: 'HEAD', capture_per: 'TOTAL' },
   { line_type: 'CONSUMPTION', activity_name: 'Vitamin & Mineral Premix', itemCode: 'RAW-SWINE-PREMIX', standard_qty: '0.0500' },
   { line_type: 'OVERHEAD', activity_name: 'Utilities — Electricity', overhead_category: 'UTILITIES' },
   { line_type: 'CONSUMPTION', activity_name: 'Creep Feed Supplement', itemCode: 'FEED-CREEP-PRE', standard_qty: '0.3000' },
