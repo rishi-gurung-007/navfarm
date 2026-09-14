@@ -1719,3 +1719,19 @@ code a user's click goes through.
 **The plan runs to MVP, not to a date.** 18 September is a checkpoint with a
 defined demo-ready line; work continues in the same order until every area meets
 its MVP criteria, whether that lands earlier or later.
+
+## Breed codes come from the BREED Number Series, manual entry allowed
+*Decided 2026-09-15 by Rishi.*
+
+A breed's code is issued by the BREED Number Series, which is configured with the
+`breed_name` segment and no sequence, so "Large White" becomes `LARGE_WHITE` — the
+same code for the same breed on every farm (spec §13). The series was extended for
+exactly this; code generation must not route around it. Phase 2 removes the
+farm-prefixed composite branch in `BreedService` that bypassed the series whenever a
+farm was chosen, and scopes the series' duplicate check by farm so the same code can
+exist on each farm.
+
+**Manual entry stays allowed** on the BREED series. Rishi will enter codes that match
+the breed's code on other farms; a transfer between farms matches destination profiles
+by breed code, so a mistyped manual code is what would make a transfer block for a
+missing profile.

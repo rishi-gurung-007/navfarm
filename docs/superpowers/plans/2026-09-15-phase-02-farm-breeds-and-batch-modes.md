@@ -35,7 +35,9 @@ decides whether Animal rows are registered. The farm-scope helpers from Phase 1
    series with a farm-prefixed composite code whenever a farm is chosen, and the series'
    clash check (`scopeKeyConditions`) is tenant + company only, so the second farm's
    `LARGE_WHITE` would be refused. A breed's code is identity and is not regenerated on
-   rename, as with every series-issued code.
+   rename, as with every series-issued code. **Manual entry stays allowed** on the
+   BREED series (Rishi, 2026-09-15) — keep the `allow_manual` branch; codes typed by hand
+   are his to keep consistent across farms.
 2. **Tenant templates stay farm-less.** A breed with `company_id IS NULL` is a tenant
    template, not a farm profile; farm is required for company breeds only.
 3. **Registered Animals registers the opening headcount.** A `REGISTERED` batch with
