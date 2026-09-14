@@ -1677,3 +1677,45 @@ administrators with Breed create/update permission and offers a prefilled
 destination-profile creation path. Farm-specific lifecycle/performance values
 are never copied automatically. After the profile is created, the transfer is
 revalidated and resumes its approval path.
+
+## Access, approvals and demo data settled on the evening of 14 September
+*Decided 2026-09-14 by Rishi, in answer to the conflicts between the two access
+designs.*
+
+**The access model in `2026-09-14-access-scope-and-master-data-ux-design.md`
+stands.** An operational admin covers every farm in the company for their LOB; a
+standard user is restricted to **exactly one** assigned farm, fixed and never a
+switch; `operational_area_master.farm_id` carries no access meaning; Breed Master
+is farm-specific. The earlier answers that restricted operational admins by farm
+and allowed multi-farm standard users with a switcher are withdrawn.
+
+**The backlog gate is dropped.** Today no longer waits for earlier days to be
+complete. Missing required entries are flagged Overdue in History and notified;
+a standard user backfills them without approval. A missed day must never stop
+someone recording today's deaths or sick animals.
+
+**Who approves.** Requisitions and ordinary approval-required transfers are
+decided by admin user types — tenant, company or operational admin — within
+their scope. **Farm-to-farm transfers are approved only by a tenant admin or a
+company admin**, including a farm-to-farm transfer an operational admin
+initiates. *(Recorded reading: "the top level users approve" includes the
+operational admin; the farm-to-farm rule then narrows it. Confirm if wrong.)*
+
+**Demo data is rebuilt, not repaired.** Every NAVFarm record is dropped and the
+database is rebuilt from the seed scripts as one complete, presentable demo. This
+replaces the approved FARM-001 → Grasmere move script and removes the DEMO
+VERIFICATION records. NavCRM's databases on the same server are never touched.
+The Triple C master templates the registered seeds already load (MULTIPLIER and
+PORTA locations, breeds, resources) stay part of the rebuild; operational data —
+batches, animals, entries, receipts, transfers, breeding — is synthetic and
+clearly demo, per "Demo data may be synthetic when it is clearly demo-only".
+
+**Demo operational data is posted through the application's services, not
+inserted.** Before 14 September the seeds wrote batches, ledgers and journals with
+raw inserts, which is how 582 green tests hid a write path that had never run.
+The rebuilt demo proves its own records: every posting in it went through the
+code a user's click goes through.
+
+**The plan runs to MVP, not to a date.** 18 September is a checkpoint with a
+defined demo-ready line; work continues in the same order until every area meets
+its MVP criteria, whether that lands earlier or later.

@@ -4,7 +4,7 @@
 
 **Decision owner:** Rishi
 
-**Status:** Approved in conversation; awaiting review of this written specification
+**Status:** Approved by Rishi 2026-09-14 evening, with the approver and backlog-gate decisions added. Delivery order: `docs/superpowers/plans/2026-09-14-mvp-delivery-plan.md`
 
 ## 1. Purpose and deadline boundary
 
@@ -212,6 +212,10 @@ A Standard User may enter a previously missing sub-card for any eligible past
 date through today without requesting edit access. This is a new entry, not a
 correction. Future entries remain forbidden.
 
+**There is no backlog gate** (decided 2026-09-14). Today's entries never wait
+for earlier days to be complete; the existing gate from commit `ab3daf6` is
+removed. Gaps are surfaced by the Missing state and its notification.
+
 ## 9. Corrections and edit access
 
 Direct edit scope is:
@@ -281,9 +285,15 @@ one transaction.
 Auto-approved still means fully recorded and posted through the transfer
 engine. It does not bypass validation, audit or financial movements.
 
-The person/role authorized to approve a pending transfer is controlled through
-the existing Approval permission model. This design does not invent a new
-hardcoded approver title.
+Approvers (decided by Rishi 2026-09-14):
+
+- A pending **same-farm** transfer is approved by an admin user type — tenant,
+  company or operational admin — within scope.
+- A pending **farm-to-farm** transfer is approved **only by a tenant admin or a
+  company admin**, whoever initiated it.
+
+The Approval permission model still gates the action; these rules bound which
+user types may hold it for each transfer kind.
 
 ## 12. Count Only proportional transfer
 

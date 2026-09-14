@@ -4,7 +4,7 @@
 
 **Decision owner:** Rishi
 
-**Status:** Approved in conversation; awaiting review of this written specification
+**Status:** Approved by Rishi 2026-09-14 evening, with §3.1 added. Delivery order: `docs/superpowers/plans/2026-09-14-mvp-delivery-plan.md`
 
 ## 1. Purpose and scope
 
@@ -89,6 +89,30 @@ defined in `2026-09-14-daily-data-entry-and-transfers-design.md`.
 Changing an existing location's parent or changing a Location Type's allowed
 parents is not part of this design. This work must not silently introduce a new
 reparenting policy; that data-integrity behavior requires its own decision.
+
+### 3.1 Enforcement details carried in from the 14 September login audit
+
+These were measured against the running API before this design was written and
+are requirements, not suggestions:
+
+- **The operational-area header is mandatory for restricted users.** Today
+  `roles.guard.ts` validates `x-active-operational-area-id` only when it is sent,
+  so an OPERATIONAL_ADMIN or STANDARD_USER who omits it reads every batch,
+  approval and ledger row. For those user types an operational route without the
+  header answers 400.
+- **Out-of-boundary records answer 404, not 403**, on read-by-id, so a record on
+  another farm cannot be confirmed to exist. A create that names another farm's
+  location answers 403 with a clear message, because locations are visible
+  masters.
+- **Inventory ledger rows without a warehouse** (batch consumptions) derive their
+  farm through their batch.
+- **An approval with neither a batch nor a location path** is visible to admin
+  user types only.
+- **A guard spec enumerates operational controllers** and fails when one lacks
+  farm enforcement, in the style of `role-permissions-coverage.spec.ts`.
+- **No partial write without scope.** The API never writes
+  `operational_area_id` on batch or animal create today; every new write path
+  stores or derives its farm in the same change.
 
 ## 4. Breed ownership and identity
 
@@ -275,7 +299,8 @@ The work is accepted only when all of the following are demonstrated:
 
 - Each of the four user types can see and mutate exactly the records inside the
   company, operational-area and farm boundaries applicable to that record type.
-- A newly invited operational administrator receives no implicit wildcard
+- *(Delivered and verified live on 14 September, commits 59a580a, 58aad7b,
+  97288dc — do not rebuild.)* A newly invited operational administrator receives no implicit wildcard
   role. User-type and role administration enforce the existing strict
   hierarchy: no tenant API can create `SYSTEM_ADMIN`, no user can assign their
   own or a higher type, and only tenant-level administration can grant
