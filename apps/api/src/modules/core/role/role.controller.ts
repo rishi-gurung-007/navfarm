@@ -24,7 +24,7 @@ export class RoleController {
   @RequirePermission('RBAC', 'ROLE', 'edit')
   @ApiOperation({ summary: 'Assign an RBAC Role to a User' })
   async assignRole(@Body() body: AssignRoleDto, @Request() req) {
-    return this.roleService.assignRoleToUser(body.userId, body.roleId, req.user.userId);
+    return this.roleService.assignRoleToUser(body.userId, body.roleId, req.user);
   }
 
   @Post('permissions/:roleId')
@@ -34,8 +34,9 @@ export class RoleController {
   async updatePermissions(
     @Param('roleId') roleId: string,
     @Body() body: UpdatePermissionsDto,
+    @Request() req,
   ) {
-    return this.roleService.updateRolePermissions(roleId, body.permissions);
+    return this.roleService.updateRolePermissions(roleId, req.user, body.permissions);
   }
 
   @Get('permissions/:roleId')
@@ -74,8 +75,8 @@ export class RoleController {
   @RequirePermission('RBAC', 'ROLE', 'edit')
   @ApiOperation({ summary: 'Revoke/unassign a role from a user' })
   @ApiParam({ name: 'assignId', description: 'Assignment UUID' })
-  async unassignRole(@Param('assignId') assignId: string) {
-    return this.roleService.unassignRole(assignId);
+  async unassignRole(@Param('assignId') assignId: string, @Request() req) {
+    return this.roleService.unassignRole(assignId, req.user);
   }
 
   @Get('assignments/:userId')

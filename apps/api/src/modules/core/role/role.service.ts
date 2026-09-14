@@ -1,10 +1,17 @@
-import { Injectable, ConflictException, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, ConflictException, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, or, isNull } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
+import { isTenantLevelUserType, outranks } from '../../../common/user-type-hierarchy';
+
+/** Who is asking, from the validated JWT user — never from a request body. */
+export interface RoleRequester {
+  userId: string;
+  userType?: string;
+}
 
 @Injectable()
 export class RoleService {
@@ -66,7 +73,13 @@ export class RoleService {
     return role;
   }
 
-  async assignRoleToUser(userId: string, roleId: string, assignedBy: string) {
+  /**
+   * A role is a grant of permissions, so assigning one is the same act as
+   * raising a user's access. Before this checked nothing, a company admin could
+   * hand a standard user SUPER_ADMIN (ALL/ALL) — the same escalation the
+   * user-type ladder closes, reached through a different door.
+   */
+  async assignRoleToUser(userId: string, roleId: string, requester: RoleRequester) {
     const role = await this.db
       .select()
       .from(schema.roleMaster)
@@ -76,6 +89,23 @@ export class RoleService {
     if (role.length === 0) {
       throw new NotFoundException(`Role with ID '${roleId}' not found.`);
     }
+
+    const target = await this.loadTargetUser(userId);
+
+    // Strictly above: this also stops anyone re-assigning their own role.
+    if (!outranks(requester.userType, target.user_type)) {
+      throw new ForbiddenException('You can only assign roles to users below your own access level.');
+    }
+
+    if (!isTenantLevelUserType(requester.userType) && (role[0].role_code === 'SUPER_ADMIN' || await this.grantsUnrestrictedAccess(roleId))) {
+      throw new ForbiddenException('Only a tenant administrator can assign a role with unrestricted access.');
+    }
+
+    if (role[0].company_id && !(await this.userBelongsToCompany(target, role[0].company_id))) {
+      throw new BadRequestException('That role belongs to a company this user is not part of.');
+    }
+
+    const assignedBy = requester.userId;
 
     return this.db.transaction(async (tx) => {
       await tx
@@ -102,7 +132,7 @@ export class RoleService {
     });
   }
 
-  async updateRolePermissions(roleId: string, permissions: Array<{
+  async updateRolePermissions(roleId: string, requester: RoleRequester, permissions: Array<{
     module_code: string;
     resource: string;
     can_view?: boolean;
@@ -125,6 +155,13 @@ export class RoleService {
 
     if (role[0].is_system_role) {
       throw new BadRequestException('System role permissions cannot be changed.');
+    }
+
+    // An ALL wildcard on a custom role turns every holder of it into a super
+    // administrator, so writing one is a tenant-level decision.
+    const widensToAll = permissions.some((p) => p.module_code === 'ALL' || p.resource === 'ALL');
+    if (widensToAll && !isTenantLevelUserType(requester.userType)) {
+      throw new ForbiddenException('Only a tenant administrator can grant unrestricted (ALL) permissions.');
     }
 
     return this.db.transaction(async (tx) => {
@@ -265,7 +302,7 @@ export class RoleService {
     return { success: true, message: `Role '${role.role_code}' deleted successfully.` };
   }
 
-  async unassignRole(assignId: string) {
+  async unassignRole(assignId: string, requester: RoleRequester) {
     const [assignment] = await this.db
       .select()
       .from(schema.userRoleAssignment)
@@ -274,6 +311,12 @@ export class RoleService {
 
     if (!assignment) {
       throw new NotFoundException(`Role assignment with ID '${assignId}' not found.`);
+    }
+
+    // Removing a higher admin's role is as much an attack on them as editing them.
+    const target = await this.loadTargetUser(assignment.user_id);
+    if (!outranks(requester.userType, target.user_type)) {
+      throw new ForbiddenException('You can only remove roles from users below your own access level.');
     }
 
     await this.db
@@ -301,5 +344,49 @@ export class RoleService {
         eq(schema.userRoleAssignment.role_id, schema.roleMaster.role_id),
       )
       .where(eq(schema.userRoleAssignment.user_id, userId));
+  }
+
+  private async loadTargetUser(userId: string) {
+    const [target] = await this.db
+      .select({
+        user_id: schema.userMaster.user_id,
+        user_type: schema.userMaster.user_type,
+        company_id: schema.userMaster.company_id,
+      })
+      .from(schema.userMaster)
+      .where(and(eq(schema.userMaster.user_id, userId), isNull(schema.userMaster.deleted_at)))
+      .limit(1);
+
+    if (!target) {
+      throw new NotFoundException(`User with ID '${userId}' not found.`);
+    }
+    return target;
+  }
+
+  private async grantsUnrestrictedAccess(roleId: string): Promise<boolean> {
+    const [row] = await this.db
+      .select({ id: schema.rolePermissions.perm_id })
+      .from(schema.rolePermissions)
+      .where(and(
+        eq(schema.rolePermissions.role_id, roleId),
+        or(eq(schema.rolePermissions.module_code, 'ALL'), eq(schema.rolePermissions.resource, 'ALL')),
+      ))
+      .limit(1);
+    return Boolean(row);
+  }
+
+  /** Home company, or an active assignment — the same rule RolesGuard applies to the company header. */
+  private async userBelongsToCompany(target: { user_id: string; company_id: string | null }, companyId: string): Promise<boolean> {
+    if (target.company_id === companyId) return true;
+    const [assignment] = await this.db
+      .select({ id: schema.userCompanyAssignments.assign_id })
+      .from(schema.userCompanyAssignments)
+      .where(and(
+        eq(schema.userCompanyAssignments.user_id, target.user_id),
+        eq(schema.userCompanyAssignments.company_id, companyId),
+        eq(schema.userCompanyAssignments.is_active, true),
+      ))
+      .limit(1);
+    return Boolean(assignment);
   }
 }
