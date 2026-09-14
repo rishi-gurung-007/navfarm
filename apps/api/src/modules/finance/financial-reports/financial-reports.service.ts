@@ -1,8 +1,9 @@
-import { Injectable } from '@nestjs/common';
+import { ForbiddenException, Injectable } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, lte, between, isNull, sql, inArray } from 'drizzle-orm';
+import { eq, and, lte, between, isNull, sql, inArray, or } from 'drizzle-orm';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
+import { animalOnFarm, animalScopeConditions, batchOnFarm, batchScopeConditions, farmScope, FarmScope } from '../../../common/farm-scope';
 
 interface AccountBalanceRow {
   gl_account_id: string;
@@ -34,6 +35,24 @@ export class FinancialReportsService {
       throw new Error('Tenant database connection context not established.');
     }
     return tenantDb;
+  }
+
+  /**
+   * Every report is company-bound. A caller whose scope already names a
+   * company (company admin, operational admin, standard user) must query
+   * that company — the client-supplied companyId is only trusted when the
+   * scope has none, which is true only for tenant/system admins who have
+   * not selected one. This is what closes C3: the herd-analytics endpoint
+   * used to trust the query companyId outright.
+   */
+  private resolveCompanyId(scope: FarmScope, queryCompanyId: string): string {
+    if (scope.companyId) {
+      if (queryCompanyId && queryCompanyId !== scope.companyId) {
+        throw new ForbiddenException('Report company must match the workspace.');
+      }
+      return scope.companyId;
+    }
+    return queryCompanyId;
   }
 
   private async getAccountBalances(
@@ -78,7 +97,11 @@ export class FinancialReportsService {
     return rows.map((r) => ({ ...r, total_debit: Number(r.total_debit), total_credit: Number(r.total_credit) }));
   }
 
-  async getTrialBalance(tenantId: string, companyId: string, asOfDate: string) {
+  async getTrialBalance(tenantId: string, queryCompanyId: string, asOfDate: string) {
+    // Finance statements are company-level, not farm-scoped (decided
+    // 2026-09-14) — but the company itself must still come from scope, not
+    // an unchecked client-supplied id.
+    const companyId = this.resolveCompanyId(farmScope(this.cls), queryCompanyId);
     const rows = await this.getAccountBalances(tenantId, companyId, lte(schema.journalHeader.posting_date, asOfDate));
 
     const accounts = rows
@@ -98,7 +121,8 @@ export class FinancialReportsService {
     return { asOfDate, accounts, totalDebit, totalCredit, isBalanced: Math.abs(totalDebit - totalCredit) < 0.0001 };
   }
 
-  async getBalanceSheet(tenantId: string, companyId: string, asOfDate: string) {
+  async getBalanceSheet(tenantId: string, queryCompanyId: string, asOfDate: string) {
+    const companyId = this.resolveCompanyId(farmScope(this.cls), queryCompanyId);
     const rows = await this.getAccountBalances(tenantId, companyId, lte(schema.journalHeader.posting_date, asOfDate), [
       'ASSET',
       'LIABILITY',
@@ -158,7 +182,8 @@ export class FinancialReportsService {
     };
   }
 
-  async getProfitLoss(tenantId: string, companyId: string, dateFrom: string, dateTo: string) {
+  async getProfitLoss(tenantId: string, queryCompanyId: string, dateFrom: string, dateTo: string) {
+    const companyId = this.resolveCompanyId(farmScope(this.cls), queryCompanyId);
     const rows = await this.getAccountBalances(
       tenantId,
       companyId,
@@ -182,7 +207,26 @@ export class FinancialReportsService {
     return { dateFrom, dateTo, income, expense, totalIncome, totalExpense, netIncome: totalIncome - totalExpense };
   }
 
-  async getBiologicalAssetRollForward(tenantId: string, companyId: string, dateFrom: string, dateTo: string) {
+  async getBiologicalAssetRollForward(tenantId: string, queryCompanyId: string, dateFrom: string, dateTo: string) {
+    const scope = farmScope(this.cls);
+    const companyId = this.resolveCompanyId(scope, queryCompanyId);
+
+    const conditions = [
+      eq(schema.bioAssetLedger.tenant_id, tenantId),
+      eq(schema.bioAssetLedger.company_id, companyId),
+      lte(schema.bioAssetLedger.posting_date, dateTo),
+    ];
+    // bio_asset_ledger carries no farm_id of its own — its farm comes from
+    // the batch or animal the entry is against, same as bio-asset-ledger.service.
+    if (scope.farmId) {
+      conditions.push(
+        or(
+          batchOnFarm(schema.bioAssetLedger.batch_id, scope.farmId),
+          animalOnFarm(schema.bioAssetLedger.animal_id, scope.farmId),
+        )!,
+      );
+    }
+
     const allEntries = await this.db
       .select({
         entry_id: schema.bioAssetLedger.entry_id,
@@ -196,13 +240,7 @@ export class FinancialReportsService {
         costing_method: schema.bioAssetLedger.costing_method,
       })
       .from(schema.bioAssetLedger)
-      .where(
-        and(
-          eq(schema.bioAssetLedger.tenant_id, tenantId),
-          eq(schema.bioAssetLedger.company_id, companyId),
-          lte(schema.bioAssetLedger.posting_date, dateTo)
-        )
-      )
+      .where(and(...conditions))
       .orderBy(schema.bioAssetLedger.posting_date);
 
     let openingCarryingValue = 0;
@@ -318,7 +356,21 @@ export class FinancialReportsService {
     };
   }
 
-  async getPiggeryHerdAnalytics(tenantId: string, companyId: string, batchId?: string) {
+  async getPiggeryHerdAnalytics(tenantId: string, queryCompanyId: string, batchId?: string) {
+    const scope = farmScope(this.cls);
+    const companyId = this.resolveCompanyId(scope, queryCompanyId);
+
+    // animalScopeConditions carries the farm/company/LOB boundary for
+    // animal_register itself — this is what C3 found missing: a restricted
+    // or farm-selected caller must see only their farm's herd here, exactly
+    // as /animal already does.
+    const conditions = [
+      eq(schema.animalRegister.tenant_id, tenantId),
+      eq(schema.animalRegister.company_id, companyId),
+      ...animalScopeConditions(scope),
+    ];
+    if (batchId) conditions.push(eq(schema.animalRegister.current_batch_id, batchId));
+
     const animals = await this.db
       .select({
         animal: schema.animalRegister,
@@ -328,18 +380,7 @@ export class FinancialReportsService {
       .from(schema.animalRegister)
       .leftJoin(schema.breedMaster, eq(schema.animalRegister.breed_id, schema.breedMaster.breed_id))
       .leftJoin(schema.stageMaster, eq(schema.animalRegister.current_stage_id, schema.stageMaster.stage_id))
-      .where(
-        batchId
-          ? and(
-              eq(schema.animalRegister.tenant_id, tenantId),
-              eq(schema.animalRegister.company_id, companyId),
-              eq(schema.animalRegister.current_batch_id, batchId)
-            )
-          : and(
-              eq(schema.animalRegister.tenant_id, tenantId),
-              eq(schema.animalRegister.company_id, companyId)
-            )
-      );
+      .where(and(...conditions));
 
     const activeAnimals = animals.filter((a) => a.animal.is_active);
     const disposedAnimals = animals.filter((a) => !a.animal.is_active);
@@ -438,15 +479,21 @@ export class FinancialReportsService {
     };
   }
 
-  async getBatchCostVarianceReport(tenantId: string, companyId: string, batchId?: string) {
+  async getBatchCostVarianceReport(tenantId: string, queryCompanyId: string, batchId?: string) {
+    const scope = farmScope(this.cls);
+    const companyId = this.resolveCompanyId(scope, queryCompanyId);
+
     // batch_cost_variance has no tenant_id/company_id of its own — those
     // live on the batch it belongs to, so scoping goes through the join.
     // It's also one row per (batch, item, variance_type PRICE/USAGE/OUTPUT/
     // OVERHEAD), not one row per batch — this pivots those rows into a
     // single per-batch summary, which is the shape this report presents.
+    // batchScopeConditions carries the farm/company/LOB boundary on
+    // batch_header itself, same as every other batch-scoped read.
     const conditions: any[] = [
       eq(schema.batchHeader.tenant_id, tenantId),
       eq(schema.batchHeader.company_id, companyId),
+      ...batchScopeConditions(scope),
     ];
     if (batchId) {
       conditions.push(eq(schema.batchCostVariance.batch_id, batchId));

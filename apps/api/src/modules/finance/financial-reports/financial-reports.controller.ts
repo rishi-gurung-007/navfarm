@@ -5,10 +5,18 @@ import { TrialBalanceQueryDto, BalanceSheetQueryDto, ProfitLossQueryDto, BioAsse
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
+import { FarmScoped } from '../../../common/farm-scope';
 
+// C3: a Grasmere standard user got 0 rows from /animal but the whole
+// company's herd from herd-analytics — this controller was never marked,
+// so its service trusted the query companyId outright. @FarmScoped() puts
+// it on the coverage ratchet's SCOPED list; the per-report scoping itself
+// lives in the service (company derivation, and animal/batch scope
+// conditions on the reports that aggregate farm-specific records).
 @ApiTags('Financial Reports')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
+@FarmScoped()
 @Controller('financial-reports')
 export class FinancialReportsController {
   constructor(private readonly reportsService: FinancialReportsService) {}

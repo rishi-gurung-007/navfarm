@@ -1,6 +1,8 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { MySqlDialect } from 'drizzle-orm/mysql-core';
 import { FinancialReportsService } from './financial-reports.service';
 import { ClsService } from 'nestjs-cls';
+import { FARM_SCOPE_KEY, FarmScope } from '../../../common/farm-scope';
 
 describe('FinancialReportsService', () => {
   let service: FinancialReportsService;
@@ -280,6 +282,99 @@ describe('FinancialReportsService', () => {
       expect(res[0].total_variance).toBe(2000);
       expect(res[0].variance_pct).toBe(4);
       expect(res[0].is_favorable).toBe(false);
+    });
+  });
+
+  /**
+   * C3: the reports controller trusted the client-supplied companyId and never
+   * applied the farm/animal scope, so a Grasmere standard user's herd-analytics
+   * call returned the whole company's herd even though /animal correctly gave
+   * them zero rows. These tests pin the two halves of the fix: the query sent
+   * to MySQL actually carries the farm predicate, and a caller whose scope
+   * already names a company cannot override it via the query string.
+   */
+  async function serviceWithScope(scope: FarmScope): Promise<FinancialReportsService> {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        FinancialReportsService,
+        {
+          provide: ClsService,
+          useValue: {
+            get: jest.fn((key: string) => (key === FARM_SCOPE_KEY ? scope : mockDb)),
+          },
+        },
+      ],
+    }).compile();
+    return module.get<FinancialReportsService>(FinancialReportsService);
+  }
+
+  describe('getPiggeryHerdAnalytics — farm scope (C3)', () => {
+    it('renders the farm predicate in the animal_register query for a farm-restricted caller', async () => {
+      let capturedWhere: any;
+      mockDbSelect.mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          leftJoin: jest.fn().mockReturnValue({
+            leftJoin: jest.fn().mockReturnValue({
+              where: jest.fn((cond) => {
+                capturedWhere = cond;
+                return Promise.resolve([]);
+              }),
+            }),
+          }),
+        }),
+      });
+
+      const scopedService = await serviceWithScope({
+        farmId: 'farm-grasmere',
+        restricted: true,
+        companyId: 'comp-1',
+        lobId: 'lob-piggery',
+      });
+
+      await scopedService.getPiggeryHerdAnalytics('tenant-1', 'comp-1');
+
+      expect(capturedWhere).toBeDefined();
+      const { sql: renderedSql, params } = new MySqlDialect().sqlToQuery(capturedWhere);
+      // Fails if animalScopeConditions is dropped from the query: without it
+      // the where-clause never references location_master or the farm id,
+      // and this predicate — the actual leak in C3 — would be gone again.
+      expect(renderedSql.toLowerCase()).toContain('location_master');
+      expect(renderedSql.toLowerCase()).toMatch(/ and | or /);
+      expect(params).toContain('farm-grasmere');
+    });
+  });
+
+  describe('report company resolution (C3)', () => {
+    it('rejects a query companyId that does not match the caller\'s scoped company with 403', async () => {
+      const scopedService = await serviceWithScope({
+        farmId: null,
+        restricted: false,
+        companyId: 'comp-1',
+        lobId: null,
+      });
+
+      await expect(
+        scopedService.getTrialBalance('tenant-1', 'comp-OTHER', '2026-08-06'),
+      ).rejects.toThrow('Report company must match the workspace.');
+    });
+
+    it('trusts the query companyId only when the caller has no company in scope (tenant/system admin)', async () => {
+      mockDbSelect.mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          innerJoin: jest.fn().mockReturnValue({
+            innerJoin: jest.fn().mockReturnValue({
+              where: jest.fn().mockReturnValue({
+                groupBy: jest.fn().mockResolvedValue([]),
+              }),
+            }),
+          }),
+        }),
+      });
+
+      const scopedService = await serviceWithScope({ farmId: null, restricted: false, companyId: null, lobId: null });
+
+      const res = await scopedService.getTrialBalance('tenant-1', 'comp-any', '2026-08-06');
+      expect(res.asOfDate).toBe('2026-08-06');
     });
   });
 });
