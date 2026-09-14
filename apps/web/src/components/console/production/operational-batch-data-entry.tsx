@@ -28,7 +28,7 @@ import PiggeryLifecycleStepper, { type PiggeryStage } from "../piggery/piggery-l
 import { buildLifecycleStages } from "../piggery/build-lifecycle-stages";
 import { resolvePiggeryStageId, computeStageDay } from "../piggery/resolve-piggery-stage";
 import { api } from "@/services/api-client";
-import { API_BASE_URL } from "@/lib/api-client";
+import { API_ORIGIN } from "@/lib/api-client";
 import { getActiveCompanyId } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
@@ -37,10 +37,8 @@ import { TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/compon
 import { useLanguage } from "@/hooks/useLanguage";
 import AnimalStageTransitionModal from "@/components/console/piggery/animal-stage-transition-modal";
 
-// file_url from the API is server-relative (e.g. "/uploads/xyz.jpg") — resolve
-// it against the API's own origin, not the web app's, since uploads are served
-// from apps/api's /uploads static route.
-const API_ORIGIN = API_BASE_URL.replace(/\/api\/v1\/?$/, "");
+// file_url from the API is server-relative (e.g. "/uploads/xyz.jpg"). Next.js
+// proxies that same-origin path to the API alongside /api/v1.
 
 type Row = Record<string, any>;
 

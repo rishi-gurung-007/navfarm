@@ -1,4 +1,5 @@
 import { companyCondition, masterScopeConditions } from '../../../common/master-data-scope';
+import { listFilterConditions, runMasterList } from '../../../common/master-list-query';
 import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { alias } from 'drizzle-orm/mysql-core';
@@ -262,6 +263,8 @@ export class LocationService {
       silo_capacity_kg: dto.silo_capacity_kg?.toString() || null,
       silo_reorder_days: dto.silo_reorder_days ?? null,
       downtime_days_required: dto.downtime_days_required ?? null,
+      storage_name: dto.storage_name ?? null,
+      feed_in_bags: dto.feed_in_bags ?? null,
       is_active: true,
       status: 'ACTIVE',
       extension_config: dto.extension_config ? JSON.stringify(dto.extension_config) : null,
@@ -591,15 +594,19 @@ export class LocationService {
       );
     }
 
-    const limit = query.limit || 50;
-    const offset = query.offset || 0;
+    // The named filters above stay as they are — callers already use them.
+    // Anything else the table has a column for comes through filter[column],
+    // so the list screen can narrow on storage type, level or capacity without
+    // a new query param and a new release each time.
+    conditions.push(...listFilterConditions(schema.locationMaster, query.filter));
 
-    return this.db
-      .select()
-      .from(schema.locationMaster)
-      .where(and(...conditions))
-      .limit(limit)
-      .offset(offset);
+    return runMasterList(
+      this.db,
+      schema.locationMaster,
+      conditions,
+      query,
+      schema.locationMaster.location_code,
+    );
   }
 
   async update(id: string, dto: UpdateLocationDto, tenantId: string, userPayload?: any) {
@@ -713,6 +720,8 @@ export class LocationService {
       updates.silo_reorder_days = null;
     }
     if (dto.downtime_days_required !== undefined) updates.downtime_days_required = dto.downtime_days_required;
+    if (dto.storage_name !== undefined) updates.storage_name = dto.storage_name;
+    if (dto.feed_in_bags !== undefined) updates.feed_in_bags = dto.feed_in_bags;
     if (dto.is_active !== undefined) updates.is_active = dto.is_active;
     if (dto.status !== undefined) updates.status = dto.status;
     if (dto.extension_config !== undefined) updates.extension_config = JSON.stringify(dto.extension_config);
@@ -835,7 +844,10 @@ export class LocationService {
     // left-join farm_master and shed_master and fall back farm -> shed, which
     // could not name a parent of any other type (a pen under a pen, a silo
     // under a shed) and needed two dead tables to answer one question.
-    const parentLocation = alias(schema.locationMaster, 'parent_location');
+    // locationMaster is self-referential, so Drizzle's alias overload widens it
+    // to a table/view union under TS 5.9. It is still the same MySQL table shape;
+    // keep that shape explicit so leftJoin accepts the alias.
+    const parentLocation = alias(schema.locationMaster, 'parent_location') as unknown as typeof schema.locationMaster;
     const locations = await this.db
       .select({
         location: schema.locationMaster,

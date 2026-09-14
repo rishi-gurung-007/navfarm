@@ -1,6 +1,7 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsInt, Min, IsIn, IsArray } from 'class-validator';
 import { Type } from 'class-transformer';
+import { MasterListQueryDto } from '../../../../common/master-list-query';
 
 // TDD row 130 lists LIST as a fifth type, with row 131's List Values behind it.
 // Both are out: nothing on the item enforces a fixed set of values — the item's
@@ -131,7 +132,7 @@ export class UpdateItemAttributeDto {
   status?: string;
 }
 
-export class QueryItemAttributeDto {
+export class QueryItemAttributeDto extends MasterListQueryDto {
   @ApiProperty({ description: 'Filter by company UUID', required: false })
   @IsOptional()
   @IsUUID()
@@ -157,18 +158,4 @@ export class QueryItemAttributeDto {
   @IsOptional()
   @IsString()
   search?: string;
-
-  @ApiProperty({ description: 'Results per page', default: 50, required: false })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  limit?: number;
-
-  @ApiProperty({ description: 'Pagination offset', default: 0, required: false })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(0)
-  offset?: number;
 }

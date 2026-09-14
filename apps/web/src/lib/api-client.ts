@@ -1,5 +1,8 @@
-export const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL || 'http://localhost:2877/api/v1';
+// The browser always talks to the Next.js origin. next.config.js proxies this
+// boundary to the private API process, so API port 2877 never needs to be
+// reachable from a tester's machine.
+export const API_BASE_URL = '/api/v1';
+export const API_ORIGIN = API_BASE_URL.replace(/\/api\/v1\/?$/, '');
 
 export const AUTH_STORAGE = {
   user: 'navfarm_auth_user',

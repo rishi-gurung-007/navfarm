@@ -13,6 +13,7 @@ import {
   ArrayMinSize,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { MasterListQueryDto } from '../../../../common/master-list-query';
 
 export class JournalLineInput {
   @ApiProperty({ description: 'GL Account UUID' })
@@ -84,7 +85,7 @@ export class UpdateJournalDto {
   lines?: JournalLineInput[];
 }
 
-export class QueryJournalDto {
+export class QueryJournalDto extends MasterListQueryDto {
   @ApiProperty({ description: 'Filter by company UUID', required: false })
   @IsOptional()
   @IsUUID()
@@ -104,18 +105,4 @@ export class QueryJournalDto {
   @IsOptional()
   @IsString()
   search?: string;
-
-  @ApiProperty({ description: 'Results per page', default: 50, required: false })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  limit?: number;
-
-  @ApiProperty({ description: 'Pagination offset', default: 0, required: false })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(0)
-  offset?: number;
 }

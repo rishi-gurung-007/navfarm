@@ -37,6 +37,48 @@ for (const legacy of ['farm', 'shed', 'warehouse']) {
   });
 }
 
+test('Location Parent lookup follows Farm, Shed and Pen hierarchy levels', async ({ page }) => {
+  const locations = [
+    { location_id: 'farm-1', location_code: 'FARM-001', location_name: 'Main Farm', location_type: 'FARM', location_level: 1 },
+    { location_id: 'shed-1', location_code: 'FARM-001/SHED-001', location_name: 'House 1', location_type: 'SHED', location_level: 2 },
+    { location_id: 'pen-1', location_code: 'FARM-001/SHED-001/PEN-001', location_name: 'Pen 1', location_type: 'PEN', location_level: 3 },
+  ];
+  await gotoConsole(page, { path: '/master-data/location', routes: [
+    ['**/api/v1/location-type?*', (route) => route.fulfill({ json: [
+      { type_code: 'FARM', type_name: 'Farm', allowed_parent_types: [] },
+      { type_code: 'SHED', type_name: 'Shed', allowed_parent_types: ['FARM'] },
+      { type_code: 'PEN', type_name: 'Pen', allowed_parent_types: ['SHED'] },
+    ] })],
+    ['**/api/v1/location?*', (route) => route.fulfill({ json: locations })],
+  ] });
+
+  await page.locator(CONTENT).getByRole('button', { name: 'Add Location', exact: true }).click();
+  const form = page.getByRole('dialog', { name: 'Add Location', exact: true });
+  const chooseType = async (code: 'FARM' | 'SHED' | 'PEN', name: string) => {
+    await form.getByRole('button', { name: 'Location Type', exact: true }).click();
+    await page.getByRole('dialog', { name: 'Select Location Type', exact: true })
+      .getByRole('button', { name: `Select ${code} — ${name}`, exact: true }).click();
+  };
+
+  await chooseType('FARM', 'Farm');
+  await expect(form.getByRole('button', { name: 'Parent Location', exact: true })).toHaveCount(0);
+
+  await chooseType('SHED', 'Shed');
+  const parent = form.getByRole('button', { name: 'Parent Location', exact: true });
+  await expect(parent).toBeVisible();
+  await parent.click();
+  let lookup = page.getByRole('dialog', { name: 'Select Parent Location', exact: true });
+  await expect(lookup.getByText('FARM-001', { exact: true })).toBeVisible();
+  await expect(lookup.getByText('FARM-001/SHED-001', { exact: true })).toHaveCount(0);
+  await page.keyboard.press('Escape');
+
+  await chooseType('PEN', 'Pen');
+  await parent.click();
+  lookup = page.getByRole('dialog', { name: 'Select Parent Location', exact: true });
+  await expect(lookup.getByText('FARM-001/SHED-001', { exact: true })).toBeVisible();
+  await expect(lookup.getByText('FARM-001', { exact: true })).toHaveCount(0);
+});
+
 for (const width of [1440, 390]) {
   test(`Reason Master is visible but restricted for operational admins at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 950 });

@@ -56,9 +56,8 @@ steps instead: `db-bootstrap`, `db-sync-nob-lob`, `db-sync-locale-master`,
 1. New Railway project → deploy from this repo, **root directory**
    `apps/api`.
 2. Build command: `pnpm nx build api`. Start command:
-   `node dist/apps/api/main.js` — verify the exact output path by running
-   `pnpm nx build api` locally first and checking where `main.js` lands;
-   adjust if Nx's configured output path differs.
+   `node --env-file-if-exists=.env dist/main.js` from `apps/api` — the checked-in
+   Nx build writes `main.js` there.
 3. Set every var from `apps/api/.env.example` as a Railway env var, using
    the real TiDB credentials from step 1 (`DATABASE_SSL=true`) and:
    - `NODE_ENV=production`
@@ -73,9 +72,11 @@ steps instead: `db-bootstrap`, `db-sync-nob-lob`, `db-sync-locale-master`,
 
 1. New Vercel project → import this repo, **root directory** `apps/web`.
    Framework preset should auto-detect as Next.js.
-2. Set env vars (from `apps/web/.env.example`):
-   - `NEXT_PUBLIC_API_URL=https://<railway-api-domain>/api/v1`
-   - `NEXT_PUBLIC_SOCKET_URL=https://<railway-api-domain>`
+2. Set the server-only env vars from `apps/web/.env.example`:
+   - `NAVFARM_API_MODE=proxy`
+   - `NAVFARM_API_UPSTREAM_URL=https://<railway-api-domain>`
+   Browser requests remain same-origin at `/api/v1`; the Next.js server proxies
+   them to Railway.
 3. Deploy. Copy the resulting Vercel URL (e.g.
    `https://navfarm.vercel.app`).
 

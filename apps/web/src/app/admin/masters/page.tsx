@@ -102,7 +102,7 @@ export default function AdminMastersPage() {
         api.get("/currency"),
         api.get("/language"),
         api.get("/timezone"),
-        api.get("/country"),
+        api.get("/country").then((r: any) => r?.data ?? r),
         api.get("/costing-method"),
       ]);
       setNobs(nobList); setCurrencies(currList); setLanguages(langList);
@@ -211,7 +211,7 @@ export default function AdminMastersPage() {
       setSuccess("Country added.");
       setShowCountryForm(false);
       setCountryForm({ iso2: "", iso3: "", country_name: "", phone_code: "", flag_emoji: "" });
-      setCountries(await api.get("/country"));
+      setCountries(await api.get("/country").then((r: any) => r?.data ?? r));
     } catch (err: any) { setError(err?.message || "Failed to create country."); }
     finally { setSavingCountry(false); }
   };

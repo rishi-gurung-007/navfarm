@@ -187,6 +187,19 @@ export const currencyMaster = mysqlTable('currency_master', {
   symbol: varchar('symbol', { length: 5 }).notNull(),
   symbol_position: varchar('symbol_position', { length: 10 }).default('PREFIX').notNull(),
   decimal_places: int('decimal_places').default(2).notNull(),
+  /**
+   * Countries where this currency is legal tender, as ISO alpha-2 codes.
+   * An array because one country cannot hold either fact: the euro is a single
+   * currency across Germany, France and the Netherlands, and the US dollar is
+   * legal tender in Zimbabwe as well as the United States.
+   *
+   * Codes in a JSON array rather than ids in a join table, matching
+   * location_type_master.allowed_parent_types and reason_master.applicable_stages,
+   * which are the same shape. country_master.default_currency_id answers the
+   * opposite direction — one country's default currency — and is not derived
+   * from this, nor this from it.
+   */
+  country_codes: json('country_codes').$type<string[] | null>(),
   is_system_default: boolean('is_system_default').default(false).notNull(),
   is_active: boolean('is_active').default(true).notNull()
 });
@@ -774,7 +787,6 @@ export const breedMaster = mysqlTable('breed_master', {
   farrowing_rate_pct: decimal('farrowing_rate_pct', { precision: 5, scale: 2 }),
   boar_doses_per_week: decimal('boar_doses_per_week', { precision: 5, scale: 2 }),
   boar_productive_life_months: int('boar_productive_life_months'),
-  vaccination_schedule: json('vaccination_schedule'),
   age_labels: json('age_labels'),
   description: text('description'),
   // Master Template parity (P2) — a hold flag distinct from is_active/status.
@@ -878,6 +890,14 @@ export const locationMaster = mysqlTable('location_master', {
   gps_latitude: decimal('gps_latitude', { precision: 10, scale: 8 }),
   gps_longitude: decimal('gps_longitude', { precision: 11, scale: 8 }),
   storage_type: varchar('storage_type', { length: 30 }),
+  // The silo or store's own name-number, as the Location Master templates carry
+  // it: MULTIPLIER writes MGH1 against each grower house, Porta writes PSL FS -
+  // 01 and STORE. storage_type says which kind it is; this says which one.
+  storage_name: varchar('storage_name', { length: 100 }),
+  // Whether feed is delivered to this location in bags rather than blown into a
+  // silo. Both templates carry it per location, and the breed lifecycle sheets
+  // read it: a stage's feed is "bagged" at MFH and "Bulk" at MSL.
+  feed_in_bags: boolean('feed_in_bags'),
   is_quarantine_zone: boolean('is_quarantine_zone').default(false).notNull(),
   // Maximum feed capacity of this Silo in KG. Required when location_type = SILO.
   silo_capacity_kg: decimal('silo_capacity_kg', { precision: 12, scale: 2 }),

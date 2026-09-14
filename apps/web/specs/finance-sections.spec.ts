@@ -28,10 +28,14 @@ describe('Finance sections', () => {
       'trial-balance',
       'bio-asset-reconciliation',
       'batch-cost-variance',
-      // Not a report: the first data-entry screen in Finance. BBP-1 §1.1 has
-      // Finance entering the USD/ZWL rate by hand, so it belongs with the
-      // finance work rather than in a setup page nobody revisits.
-      'exchange-rates',
+      // No exchange-rates entry. It was here on the reading that BBP-1 §1.1,
+      // which has Finance entering the USD/ZWL rate by hand, meant the screen
+      // belonged among the finance work. §1.1 says who types the rate, not
+      // which menu it hangs from, and the same screen was already reachable at
+      // Master Data > Exchange Rates over the same /currency/rates endpoint —
+      // one catalog under two names. The API settles it: every rate route is
+      // gated on MASTER_DATA/CURRENCY, not on a finance permission. Rishi's
+      // call, 2026-09-12.
     ]);
   });
 

@@ -1,6 +1,7 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsIn, IsInt, Min, IsNumber, IsDateString, IsArray, ArrayNotEmpty, MaxLength } from 'class-validator';
 import { Type } from 'class-transformer';
+import { MasterListQueryDto } from '../../../../common/master-list-query';
 
 /**
  * Animal types across every livestock line of business, not just Piggery.
@@ -363,7 +364,7 @@ export class DisposeAnimalDto {
   notes?: string;
 }
 
-export class QueryAnimalDto {
+export class QueryAnimalDto extends MasterListQueryDto {
   @ApiProperty({ required: false })
   @IsOptional()
   @IsUUID()
@@ -410,20 +411,6 @@ export class QueryAnimalDto {
   @IsBoolean()
   @Type(() => Boolean)
   isActive?: boolean;
-
-  @ApiProperty({ required: false, default: 50 })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  limit?: number;
-
-  @ApiProperty({ required: false, default: 0 })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(0)
-  offset?: number;
 }
 
 export class TransitionAnimalStageDto {

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, isNull, or, sql } from 'drizzle-orm';
 import * as schema from '../../core/database/schema';
 import {
   formatSeriesCode,
@@ -167,9 +167,11 @@ async function generateLocationCode(
       and(
         eq(schema.noSeriesMaster.tenant_id, ctx.tenantId),
         eq(schema.noSeriesMaster.series_code, 'LOCATION'),
+        or(eq(schema.noSeriesMaster.company_id, ctx.companyId), isNull(schema.noSeriesMaster.company_id)),
         isNull(schema.noSeriesMaster.deleted_at),
       ),
     )
+    .orderBy(sql`${schema.noSeriesMaster.company_id} IS NULL`)
     .limit(1);
 
   const format = series ?? {
@@ -185,8 +187,10 @@ async function generateLocationCode(
       and(
         eq(schema.locationTypeMaster.tenant_id, ctx.tenantId),
         eq(schema.locationTypeMaster.type_code, loc.type),
+        or(eq(schema.locationTypeMaster.company_id, ctx.companyId), isNull(schema.locationTypeMaster.company_id)),
       ),
     )
+    .orderBy(sql`${schema.locationTypeMaster.company_id} IS NULL`)
     .limit(1);
 
   const now = new Date();

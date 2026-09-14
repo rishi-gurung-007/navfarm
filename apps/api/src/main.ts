@@ -1,4 +1,5 @@
 import { NestFactory } from '@nestjs/core';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
 import { Logger, ValidationPipe } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
@@ -8,7 +9,15 @@ import { mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule, { bodyParser: false });
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { bodyParser: false });
+  // Express 5 — which Nest 11 ships — defaults the query parser to 'simple',
+  // where Express 4 defaulted to 'extended'. Simple parsing does not read
+  // bracket syntax: 'filter[location_type]=PEN' arrives as one flat key
+  // literally named 'filter[location_type]', which the whitelisting
+  // ValidationPipe then rejects as an unknown property. The master list
+  // contract (see common/master-list-query.ts) is built on filter[column],
+  // so the parser is set back to the one that understands it.
+  app.set('query parser', 'extended');
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
@@ -23,12 +32,24 @@ async function bootstrap() {
     .map((origin) => origin.trim())
     .filter(Boolean);
   const isDevelopment = process.env.NODE_ENV !== 'production';
-  const isLoopbackOrigin = (origin: string) => {
+  // In dev, the API is also reached through the web app's same-origin proxy
+  // (next.config.js rewrites) from other devices on the LAN — a tester's
+  // browser at http://192.168.x.x:3000 forwards that Origin header straight
+  // through. Loopback-only was too narrow for that, and there is no browser
+  // enforcing this cross-origin anyway (the browser only ever talks to its
+  // own origin; the proxy hop to the API is server-to-server) — so any
+  // private-network origin is safe to allow here in development.
+  const isDevAllowedOrigin = (origin: string) => {
     try {
       const url = new URL(origin);
+      if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
+      const host = url.hostname;
       return (
-        (url.protocol === 'http:' || url.protocol === 'https:') &&
-        (url.hostname === 'localhost' || url.hostname === '127.0.0.1')
+        host === 'localhost' ||
+        host === '127.0.0.1' ||
+        /^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host) ||
+        /^192\.168\.\d{1,3}\.\d{1,3}$/.test(host) ||
+        /^172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}$/.test(host)
       );
     } catch {
       return false;
@@ -56,13 +77,17 @@ async function bootstrap() {
       if (
         !origin ||
         corsOrigins?.includes(origin) ||
-        (isDevelopment && isLoopbackOrigin(origin))
+        (isDevelopment && isDevAllowedOrigin(origin))
       ) {
         callback(null, true);
         return;
       }
 
-      callback(new Error(`Origin ${origin} is not allowed by CORS`), false);
+      // Passing an Error here (instead of `false`) makes the cors middleware
+      // throw past Nest's exception filter as a raw unhandled exception —
+      // every request from a disallowed origin 500'd instead of getting a
+      // clean, silent CORS rejection.
+      callback(null, false);
     },
     credentials: true,
   });
@@ -179,9 +204,14 @@ async function bootstrap() {
 
   SwaggerModule.setup(docsPath, app, document, customOptions);
 
-  const port = process.env.PORT ?? 2877;
-  await app.listen(port);
-  Logger.log(`NAVFarm API: http://localhost:${port}/${apiPrefix}`);
-  Logger.log(`Swagger: http://localhost:${port}/${docsPath}`);
+  const host = process.env.NAVFARM_API_HOST || '0.0.0.0';
+  const portValue = process.env.NAVFARM_API_PORT || process.env.PORT || '2877';
+  const port = Number.parseInt(portValue, 10);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`Invalid NAVFarm API port: ${portValue}`);
+  }
+  await app.listen(port, host);
+  Logger.log(`NAVFarm API: http://${host}:${port}/${apiPrefix}`);
+  Logger.log(`Swagger: http://${host}:${port}/${docsPath}`);
 }
 void bootstrap();

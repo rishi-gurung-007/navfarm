@@ -7,6 +7,7 @@ import { migrate } from 'drizzle-orm/mysql2/migrator';
 import * as mysql from 'mysql2/promise';
 import * as master from '../core/database/master-schema';
 import * as tenant from '../core/database/schema';
+import { CURRENCY_SEED_ROWS, defaultCurrencyIdFor } from './lib/currency-seed-data';
 
 /**
  * Upsert payload with the primary key stripped.
@@ -26,7 +27,6 @@ function withoutId<T extends Record<string, unknown>>(row: T, idKey: keyof T): P
 const SYSTEM_TENANT_ID = '00000000-0000-0000-0000-000000000000';
 const SYSTEM_COMPANY_ID = '00000000-0000-0000-0000-000000000000';
 const ENGLISH_ID = '10000000-1000-1000-1000-100000000001';
-const INR_ID = '20000000-2000-2000-2000-200000000001';
 const USD_ID = '20000000-2000-2000-2000-200000000002';
 
 const host = process.env.DATABASE_HOST || 'localhost';
@@ -159,37 +159,19 @@ export async function bootstrap() {
         .onDuplicateKeyUpdate({ set: withoutId(language, 'lang_id') });
     }
 
-    const currencies: Array<typeof master.currencyMaster.$inferInsert> = [
-      // No default currency. This table is a reference list of ISO currencies for
-      // company_currency_config and exchange_rate to point at — nothing else. A
-      // default here silently picked one, and the one it picked was the Indian
-      // Rupee on a Zimbabwe piggery. The base currency is a company setting;
-      // there is no system-wide answer to it. Rishi's call, 2026-09-09.
-      {
-        currency_id: INR_ID,
-        iso_code: 'INR',
-        currency_name: 'Indian Rupee',
-        symbol: '₹',
-      },
-      {
-        currency_id: '20000000-2000-2000-2000-200000000002',
-        iso_code: 'USD',
-        currency_name: 'US Dollar',
-        symbol: '$',
-      },
-      {
-        // BBP-1 §1.1 treats ZWL as the foreign currency against a USD base:
-        // "Exchange Rate (USD/ZWL) ... Manual entry by Finance." Without the
-        // row there is nothing to record a rate against.
-        // NOTE for the client: Zimbabwe replaced ZWL with ZiG (Zimbabwe Gold)
-        // in April 2024. The blueprint says ZWL throughout, so ZWL is what is
-        // seeded — worth confirming before sign-off.
-        currency_id: '20000000-2000-2000-2000-200000000003',
-        iso_code: 'ZWL',
-        currency_name: 'Zimbabwe Dollar',
-        symbol: 'Z$',
-      },
-    ];
+    /**
+     * Currency reference data and the country defaults live in
+     * lib/currency-seed-data.ts, shared with sync-currency-master.ts so an
+     * existing database and a fresh one cannot drift apart.
+     *
+     * No default currency is set here. This table is a reference list for
+     * company_currency_config and exchange_rate to point at — nothing else. A
+     * default silently picked one, and the one it picked was the Indian Rupee
+     * on a Zimbabwe piggery. The base currency is a company setting; there is
+     * no system-wide answer to it. Rishi's call, 2026-09-09.
+     */
+    const currencies: Array<typeof master.currencyMaster.$inferInsert> = CURRENCY_SEED_ROWS;
+
     for (const currency of currencies) {
       await masterDb
         .insert(master.currencyMaster)
@@ -238,17 +220,16 @@ export async function bootstrap() {
       tzIdByCode.set(row.tz_code, row.tz_id);
     }
 
-    const usdId = USD_ID;
     const countries: Array<typeof master.countryMaster.$inferInsert> = [
-      { iso2: 'IN', iso3: 'IND', country_name: 'India', phone_code: '+91', default_tz_id: tzIdByCode.get('Asia/Kolkata'), default_currency_id: INR_ID, flag_emoji: '🇮🇳' },
-      { iso2: 'US', iso3: 'USA', country_name: 'United States', phone_code: '+1', default_tz_id: tzIdByCode.get('America/New_York'), default_currency_id: usdId, flag_emoji: '🇺🇸' },
+      { iso2: 'IN', iso3: 'IND', country_name: 'India', phone_code: '+91', default_tz_id: tzIdByCode.get('Asia/Kolkata'), flag_emoji: '🇮🇳' },
+      { iso2: 'US', iso3: 'USA', country_name: 'United States', phone_code: '+1', default_tz_id: tzIdByCode.get('America/New_York'), flag_emoji: '🇺🇸' },
       { iso2: 'GB', iso3: 'GBR', country_name: 'United Kingdom', phone_code: '+44', default_tz_id: tzIdByCode.get('Europe/London'), flag_emoji: '🇬🇧' },
       { iso2: 'AE', iso3: 'ARE', country_name: 'United Arab Emirates', phone_code: '+971', default_tz_id: tzIdByCode.get('Asia/Dubai'), flag_emoji: '🇦🇪' },
       { iso2: 'SG', iso3: 'SGP', country_name: 'Singapore', phone_code: '+65', default_tz_id: tzIdByCode.get('Asia/Singapore'), flag_emoji: '🇸🇬' },
       { iso2: 'CN', iso3: 'CHN', country_name: 'China', phone_code: '+86', default_tz_id: tzIdByCode.get('Asia/Shanghai'), flag_emoji: '🇨🇳' },
       { iso2: 'JP', iso3: 'JPN', country_name: 'Japan', phone_code: '+81', default_tz_id: tzIdByCode.get('Asia/Tokyo'), flag_emoji: '🇯🇵' },
       { iso2: 'AU', iso3: 'AUS', country_name: 'Australia', phone_code: '+61', default_tz_id: tzIdByCode.get('Australia/Sydney'), flag_emoji: '🇦🇺' },
-      { iso2: 'ZW', iso3: 'ZWE', country_name: 'Zimbabwe', phone_code: '+263', default_tz_id: tzIdByCode.get('Africa/Harare'), default_currency_id: usdId, flag_emoji: '🇿🇼' },
+      { iso2: 'ZW', iso3: 'ZWE', country_name: 'Zimbabwe', phone_code: '+263', default_tz_id: tzIdByCode.get('Africa/Harare'), flag_emoji: '🇿🇼' },
       { iso2: 'ZA', iso3: 'ZAF', country_name: 'South Africa', phone_code: '+27', default_tz_id: tzIdByCode.get('Africa/Johannesburg'), flag_emoji: '🇿🇦' },
       { iso2: 'NG', iso3: 'NGA', country_name: 'Nigeria', phone_code: '+234', default_tz_id: tzIdByCode.get('Africa/Lagos'), flag_emoji: '🇳🇬' },
       { iso2: 'DE', iso3: 'DEU', country_name: 'Germany', phone_code: '+49', default_tz_id: tzIdByCode.get('Europe/Paris'), flag_emoji: '🇩🇪' },
@@ -265,7 +246,11 @@ export async function bootstrap() {
       { iso2: 'LK', iso3: 'LKA', country_name: 'Sri Lanka', phone_code: '+94', default_tz_id: tzIdByCode.get('Asia/Kolkata'), flag_emoji: '🇱🇰' },
       { iso2: 'NL', iso3: 'NLD', country_name: 'Netherlands', phone_code: '+31', default_tz_id: tzIdByCode.get('Europe/Paris'), flag_emoji: '🇳🇱' },
       { iso2: 'MX', iso3: 'MEX', country_name: 'Mexico', phone_code: '+52', default_tz_id: tzIdByCode.get('America/Los_Angeles'), flag_emoji: '🇲🇽' },
-    ].map((c) => ({ ...c, country_id: randomUUID() }));
+    ].map((c) => ({
+      ...c,
+      country_id: randomUUID(),
+      default_currency_id: defaultCurrencyIdFor(c.iso2),
+    }));
 
     const countryIdByIso2 = new Map(countries.map((c) => [c.iso2, c.country_id!]));
 

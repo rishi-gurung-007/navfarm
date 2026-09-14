@@ -51,6 +51,14 @@ export interface MasterDataField {
   /** Select multiple related values with checkboxes (submitted as an array). */
   multiple?: boolean;
   /**
+   * What an empty `multiple` value means on the record view. It defaults to
+   * "All (no restriction)", which is right where empty widens the rule —
+   * Allowed Parent Types, Applicable Stages — and wrong where empty just means
+   * nothing was recorded. A currency with no countries is not legal tender
+   * everywhere.
+   */
+  emptyMultipleLabel?: string;
+  /**
    * For type "select-entity": key(s) of other field(s) in this form whose value this dropdown
    * depends on (e.g. lob_id depending on nob_id). Disabled until every parent has a value;
    * resets when any parent changes.
@@ -70,11 +78,22 @@ export interface MasterDataField {
   /** Required when dependsOnMode is "query": maps each dependsOn field key to its query-param name. */
   queryParams?: Record<string, string>;
   /**
+   * Optional with dependsOnMode "query": translates the parent's value before it
+   * is sent, keyed by parent field then by that field's value.
+   *
+   * Without it the parent's raw value is the param value, which only works when
+   * the two vocabularies match. A UOM list narrowed by item type does not:
+   * item_type is LIVESTOCK but the UOM master's type is COUNT. A value with no
+   * entry sends no param at all, so the field falls back to the unfiltered list
+   * rather than showing nothing.
+   */
+  queryValueMap?: Record<string, Record<string, string>>;
+  /**
    * Narrows this select-entity field's options to whichever "types" another already-selected
    * master row allows — driven entirely by live master data, not a hardcoded rule. Location's
    * Parent Location uses this: the selected Location Type's own `allowed_parent_types` list
    * says which location types may be its parent (an empty list means it's a root type, e.g.
-   * Farm, and the field is disabled with no options at all).
+   * Farm, and the field has no options at all).
    *
    * Pair with `dependsOn: selectorKey` (default "path" mode) so the field is disabled until
    * the selector has a value and resets when the selector changes — this prop only adds the
@@ -91,6 +110,8 @@ export interface MasterDataField {
     allowListKey: string;
     /** Column on this field's own option rows to test against the allow-list (e.g. "location_type"). */
     optionCodeKey: string;
+    /** Hide the control when the selected row's allow-list is empty (e.g. a root Location Type has no parent). */
+    hideWhenEmpty?: boolean;
   };
   /**
    * For dependsOnMode "query": hide this field until every parent has a value,
@@ -124,7 +145,9 @@ export interface MasterDataField {
    *
    * Each column may itself be a select-entity, so an entry that references
    * another master (an item attribute, a feed ingredient) is chosen rather
-   * than pasted as a UUID.
+   * than pasted as a UUID — or a plain `select` with `options`, for a closed
+   * set of values that is not a master at all (a vaccination's route, or what
+   * its schedule counts from). Anything else renders as a text or number input.
    */
   jsonRow?: MasterDataField[];
   /**

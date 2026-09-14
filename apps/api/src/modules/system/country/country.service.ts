@@ -1,9 +1,11 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, like, or, SQL } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
+import { listFilterConditions, runMasterList } from '../../../common/master-list-query';
+import { QueryCountryDto } from './dto/country.dto';
 
 @Injectable()
 export class CountryService {
@@ -17,8 +19,28 @@ export class CountryService {
     return tenantDb;
   }
 
-  async listCountries() {
-    return this.db.select().from(schema.countryMaster).where(eq(schema.countryMaster.is_active, true));
+  /**
+   * The same list contract every other master answers: sort, filter[column],
+   * limit/offset and a total. It used to return every active country with no
+   * query at all, which is fine for filling a picker and useless as a screen.
+   *
+   * `isActive` is no longer forced on. A master list shows blocked rows so they
+   * can be found and restored; the pickers that consume this pass
+   * `isActive=true` themselves, as they already do everywhere else.
+   */
+  async listCountries(query: QueryCountryDto = {}) {
+    const conditions: SQL[] = [];
+    if (query.isActive !== undefined) {
+      conditions.push(eq(schema.countryMaster.is_active, query.isActive));
+    }
+    if (query.search) {
+      conditions.push(or(
+        like(schema.countryMaster.iso2, `%${query.search}%`),
+        like(schema.countryMaster.country_name, `%${query.search}%`),
+      )!);
+    }
+    conditions.push(...listFilterConditions(schema.countryMaster, query.filter));
+    return runMasterList(this.db, schema.countryMaster, conditions, query, schema.countryMaster.iso2);
   }
 
   async createCountry(data: any) {

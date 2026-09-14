@@ -19,6 +19,7 @@ import {
 import { api } from "../../../services/api-client";
 import { Dialog } from "../../ui/dialog";
 import { useLanguage } from "@/hooks/useLanguage";
+import { API_ORIGIN } from "@/lib/api-client";
 
 interface CompanyTabProps {
   activeCompany: any;
@@ -320,7 +321,7 @@ export default function CompanyTab({
     }
   };
 
-  const backendUrl = process.env.NEXT_PUBLIC_API_URL?.replace('/api/v1', '') || 'http://localhost:2877';
+  const backendUrl = API_ORIGIN;
 
   // Fetch LOBs list for selected NOBs in modulesForm editing
 

@@ -1,6 +1,7 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsInt, Min, IsNumber } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
+import { MasterListQueryDto } from '../../../../common/master-list-query';
 
 export class CreateLocationDto {
   @ApiProperty({ description: 'Company UUID scope', required: false })
@@ -119,6 +120,16 @@ export class CreateLocationDto {
   @IsOptional()
   @Min(0)
   downtime_days_required?: number;
+
+  @ApiProperty({ description: "The silo or store's own name-number, as the Location Master templates carry it (MGH1, PSL FS - 01, STORE).", required: false })
+  @IsString()
+  @IsOptional()
+  storage_name?: string;
+
+  @ApiProperty({ description: 'Whether feed reaches this location in bags rather than blown into a silo.', required: false })
+  @IsBoolean()
+  @IsOptional()
+  feed_in_bags?: boolean;
 
   @ApiProperty({ description: 'Flexible custom config configurations in JSON format', required: false })
   @IsOptional()
@@ -245,6 +256,16 @@ export class UpdateLocationDto {
   downtime_days_required?: number;
 
   @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  storage_name?: string;
+
+  @ApiProperty({ required: false })
+  @IsBoolean()
+  @IsOptional()
+  feed_in_bags?: boolean;
+
+  @ApiProperty({ required: false })
   @IsBoolean()
   @IsOptional()
   is_active?: boolean;
@@ -259,7 +280,11 @@ export class UpdateLocationDto {
   extension_config?: any;
 }
 
-export class QueryLocationDto {
+// Extends the shared master list contract, which adds sort, dir and
+// filter[column] on top of this master's own named filters. The global
+// ValidationPipe runs with forbidNonWhitelisted, so a property that is not
+// declared is a 400 rather than an ignored parameter.
+export class QueryLocationDto extends MasterListQueryDto {
   @ApiProperty({ description: 'Filter by company UUID', required: false })
   @IsOptional()
   @IsUUID()
@@ -317,17 +342,4 @@ export class QueryLocationDto {
   @IsString()
   search?: string;
 
-  @ApiProperty({ description: 'Results per page', default: 50, required: false })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  limit?: number;
-
-  @ApiProperty({ description: 'Pagination offset', default: 0, required: false })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(0)
-  offset?: number;
 }

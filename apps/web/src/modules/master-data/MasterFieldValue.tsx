@@ -5,7 +5,9 @@ import { api } from "@/services/api-client";
 import type { MasterDataField } from "./types";
 
 export function formatMasterValue(value: unknown, field?: MasterDataField): string {
-  if (field?.multiple && (value == null || (Array.isArray(value) && !value.length))) return "All (no restriction)";
+  if (field?.multiple && (value == null || (Array.isArray(value) && !value.length))) {
+    return field.emptyMultipleLabel ?? "All (no restriction)";
+  }
   if (value === null || value === undefined || value === "") return "—";
   if (typeof value === "boolean") return value ? "Yes" : "No";
   if (Array.isArray(value) && !value.length) return field?.multiple ? "All stages" : "—";

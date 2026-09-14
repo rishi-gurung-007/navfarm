@@ -1,6 +1,7 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { IsString, IsNotEmpty, IsOptional, IsUUID, IsNumber, IsBoolean, IsIn, IsInt, Min } from 'class-validator';
 import { Type } from 'class-transformer';
+import { MasterListQueryDto } from '../../../../common/master-list-query';
 
 const STAGE_CATEGORIES = ['PRE_PRODUCTIVE', 'PRODUCTIVE', 'OUTPUT', 'DISPOSAL'] as const;
 const TRANSITION_TRIGGERS = ['AUTO_BY_DAY', 'MANUAL', 'EVENT_BASED', 'KPI_BASED'] as const;
@@ -214,7 +215,7 @@ export class UpdateStageDto {
   is_active?: boolean;
 }
 
-export class QueryStageDto {
+export class QueryStageDto extends MasterListQueryDto {
   @ApiProperty({ required: false })
   @IsOptional()
   @IsUUID()
@@ -245,18 +246,4 @@ export class QueryStageDto {
   @IsOptional()
   @IsString()
   search?: string;
-
-  @ApiProperty({ required: false, default: 50 })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  limit?: number;
-
-  @ApiProperty({ required: false, default: 0 })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(0)
-  offset?: number;
 }

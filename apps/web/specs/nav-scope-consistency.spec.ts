@@ -96,4 +96,35 @@ describe('Sidebar consistency across workspace scopes', () => {
 
     expect(disagreements).toEqual([]);
   });
+
+  /**
+   * Labels agreeing is not enough: a person who steps from company scope down
+   * into an operational area should find the same things in the same order.
+   * Master Data sat 4th in company scope and 10th in operational, Batches 7th
+   * and 2nd, Livestock 8th and 4th — so the muscle memory built in one scope
+   * was wrong in the other.
+   *
+   * Only the RELATIVE order of shared routes is locked. A scope keeps its own
+   * items and may interleave them (Schedulers sits next to Batches in an
+   * operational area, and exists nowhere else); what it may not do is reshuffle
+   * the routes it has in common with another scope.
+   */
+  it('keeps shared routes in one relative order across scopes', () => {
+    const scopes = navByScope();
+    const names = Object.keys(scopes).sort();
+    const conflicts: { scopes: string; a: string[]; b: string[] }[] = [];
+
+    for (let i = 0; i < names.length; i++) {
+      for (let j = i + 1; j < names.length; j++) {
+        const first = [...scopes[names[i]].keys()];
+        const second = [...scopes[names[j]].keys()];
+        const shared = new Set(first.filter((href) => second.includes(href)));
+        const a = first.filter((href) => shared.has(href));
+        const b = second.filter((href) => shared.has(href));
+        if (a.join() !== b.join()) conflicts.push({ scopes: `${names[i]} vs ${names[j]}`, a, b });
+      }
+    }
+
+    expect(conflicts).toEqual([]);
+  });
 });

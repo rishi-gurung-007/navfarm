@@ -1,6 +1,7 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsInt, Min, IsIn } from 'class-validator';
 import { Type } from 'class-transformer';
+import { MasterListQueryDto } from '../../../../common/master-list-query';
 
 export class CreateCostCenterDto {
   @ApiProperty({ description: 'Company UUID scope ownership', example: 'company-uuid-here' })
@@ -91,7 +92,7 @@ export class UpdateCostCenterDto {
   lob_id?: string;
 }
 
-export class QueryCostCenterDto {
+export class QueryCostCenterDto extends MasterListQueryDto {
   @ApiProperty({ description: 'Filter by company UUID', required: false })
   @IsOptional()
   @IsUUID()
@@ -117,18 +118,4 @@ export class QueryCostCenterDto {
   @IsOptional()
   @IsString()
   search?: string;
-
-  @ApiProperty({ description: 'Results per page', default: 50, required: false })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  limit?: number;
-
-  @ApiProperty({ description: 'Pagination offset', default: 0, required: false })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(0)
-  offset?: number;
 }

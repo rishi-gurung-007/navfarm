@@ -20,6 +20,7 @@ import {
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { NobLobResolutionService } from '../../core/operational-area/nob-lob-resolution.service';
+import { listFilterConditions, listOrderBy } from '../../../common/master-list-query';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   return date.toISOString().slice(0, 19).replace('T', ' ');
@@ -176,6 +177,8 @@ export class BreedService {
       );
     }
 
+    conditions.push(...listFilterConditions(schema.speciesMaster, query.filter));
+
     const limit = query.limit || 50;
     const offset = query.offset || 0;
 
@@ -183,6 +186,7 @@ export class BreedService {
       .select()
       .from(schema.speciesMaster)
       .where(and(...conditions))
+      .orderBy(listOrderBy(schema.speciesMaster, query, schema.speciesMaster.species_code))
       .limit(limit)
       .offset(offset);
   }
@@ -398,7 +402,6 @@ export class BreedService {
       farrowing_rate_pct: dto.farrowing_rate_pct?.toString() || null,
       boar_doses_per_week: dto.boar_doses_per_week?.toString() || null,
       boar_productive_life_months: dto.boar_productive_life_months ?? null,
-      vaccination_schedule: dto.vaccination_schedule ? JSON.stringify(dto.vaccination_schedule) : null,
       age_labels: dto.age_labels ? JSON.stringify(dto.age_labels) : null,
       description: dto.description || null,
       is_active: true,
@@ -473,6 +476,8 @@ export class BreedService {
       );
     }
 
+    conditions.push(...listFilterConditions(schema.breedMaster, query.filter));
+
     const limit = query.limit || 50;
     const offset = query.offset || 0;
 
@@ -480,6 +485,7 @@ export class BreedService {
       .select()
       .from(schema.breedMaster)
       .where(and(...conditions))
+      .orderBy(listOrderBy(schema.breedMaster, query, schema.breedMaster.breed_code))
       .limit(limit)
       .offset(offset);
   }
@@ -549,7 +555,6 @@ export class BreedService {
     if (dto.farrowing_rate_pct !== undefined) updates.farrowing_rate_pct = dto.farrowing_rate_pct?.toString() || null;
     if (dto.boar_doses_per_week !== undefined) updates.boar_doses_per_week = dto.boar_doses_per_week?.toString() || null;
     if (dto.boar_productive_life_months !== undefined) updates.boar_productive_life_months = dto.boar_productive_life_months;
-    if (dto.vaccination_schedule !== undefined) updates.vaccination_schedule = JSON.stringify(dto.vaccination_schedule);
     if (dto.age_labels !== undefined) updates.age_labels = JSON.stringify(dto.age_labels);
     if (dto.description !== undefined) updates.description = dto.description;
     if (dto.is_active !== undefined) updates.is_active = dto.is_active;

@@ -9,6 +9,7 @@ import { CreateGlAccountDto, UpdateGlAccountDto, QueryGlAccountDto } from './dto
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { generateCompositeCode } from '../../system/number-series/composite-code.util';
+import { listFilterConditions, runMasterList } from '../../../common/master-list-query';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   return date.toISOString().slice(0, 19).replace('T', ' ');
@@ -267,15 +268,11 @@ export class GlAccountService {
       );
     }
 
-    const limit = query.limit || 50;
-    const offset = query.offset || 0;
+    conditions.push(...listFilterConditions(schema.glAccountMaster, query.filter));
 
-    return this.db
-      .select()
-      .from(schema.glAccountMaster)
-      .where(and(...conditions))
-      .limit(limit)
-      .offset(offset);
+    // Rows and the matching count together, so the pager knows how many
+    // pages there really are rather than guessing from a full page.
+    return runMasterList(this.db, schema.glAccountMaster, conditions, query, schema.glAccountMaster.account_code);
   }
 
   async update(id: string, dto: UpdateGlAccountDto, tenantId: string, userPayload?: any) {

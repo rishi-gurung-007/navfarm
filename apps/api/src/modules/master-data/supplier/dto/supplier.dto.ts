@@ -1,6 +1,7 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsInt, Min, IsEmail, IsIn, IsNumber } from 'class-validator';
 import { Type } from 'class-transformer';
+import { MasterListQueryDto } from '../../../../common/master-list-query';
 
 const VENDOR_TYPES = ['ANIMAL_SUPPLIER', 'BREEDING_FARM', 'SEMEN_SUPPLIER', 'FEED_SUPPLIER', 'MEDICINE_SUPPLIER', 'EQUIPMENT_SUPPLIER', 'SERVICES', 'GENERAL'] as const;
 
@@ -223,7 +224,7 @@ export class UpdateSupplierDto {
   lob_id?: string;
 }
 
-export class QuerySupplierDto {
+export class QuerySupplierDto extends MasterListQueryDto {
   @ApiProperty({ description: 'Filter by company UUID', required: false })
   @IsOptional()
   @IsUUID()
@@ -250,18 +251,4 @@ export class QuerySupplierDto {
   @IsOptional()
   @IsString()
   search?: string;
-
-  @ApiProperty({ description: 'Results per page', default: 50, required: false })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  limit?: number;
-
-  @ApiProperty({ description: 'Pagination offset', default: 0, required: false })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(0)
-  offset?: number;
 }

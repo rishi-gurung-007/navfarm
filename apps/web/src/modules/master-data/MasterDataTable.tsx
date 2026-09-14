@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Plus, Pencil, Trash2, Search, Loader2, Inbox, Eye } from "lucide-react";
+import { Plus, Pencil, Trash2, Search, Loader2, Inbox, Eye, SlidersHorizontal, ArrowUpDown, X } from "lucide-react";
 import { api } from "@/services/api-client";
 import { Dialog } from "@/components/ui/dialog";
+import { Field } from "@/components/ui/field";
+import { useIsDesktop } from "@/hooks/useMediaQuery";
 import { InlineAlert } from "@/components/ui/alert";
 import { Pagination } from "@/components/ui/pagination";
 import { TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
@@ -19,7 +21,7 @@ import { codeFieldOf } from "./useCodeSeries";
 import { useCodeSeries } from "./useCodeSeries";
 import { MasterRecordView } from "./MasterRecordView";
 import { BcOwnershipNotice } from "./BcOwnershipNotice";
-import { SearchableEntitySelect } from "./SearchableEntitySelect";
+import { EntityLookupField } from "./EntityLookupField";
 
 const PAGE_SIZE = 25;
 
@@ -39,12 +41,6 @@ const inputCls = "nf-input";
 
 function unwrap<T = any>(res: any): T {
   return (Array.isArray(res) ? res : res?.data ?? res) as T;
-}
-
-function entityLabel(row: Row, field: MasterDataField): string {
-  const keys = field.entityLabelKeys || [];
-  const text = keys.map((k) => row[k]).filter(Boolean).join(" — ");
-  return text || row[field.entityValueKey || "id"];
 }
 
 function parentKeys(f: MasterDataField): string[] {
@@ -88,8 +84,13 @@ function resolveEndpoint(f: MasterDataField, form: Row): string | null {
   if (f.dependsOnMode === "query") {
     const params = new URLSearchParams();
     for (const key of parents) {
-      const val = form[key];
+      const raw = form[key];
       const paramName = f.queryParams?.[key];
+      // A field may translate the parent's value before sending it — item_type
+      // LIVESTOCK narrows the UOM list to COUNT, not to "LIVESTOCK". An
+      // unmapped value omits the param and leaves the list unfiltered.
+      const map = f.queryValueMap?.[key];
+      const val = map ? (raw ? map[String(raw)] : undefined) : raw;
       if (val && paramName) params.set(paramName, val);
     }
     const qs = params.toString();
@@ -106,17 +107,18 @@ function resolveEndpoint(f: MasterDataField, form: Row): string | null {
 }
 
 function displayValue(row: Row, key: string, yesLabel: string, noLabel: string): string {
+  // The stage column carries an id, but the row already has the joined
+  // name/code alongside it — prefer that over printing the bare id.
   if ((key === "stage" || key === "stage_id") && (row.stage || row.stage_name || row.stage_code)) {
     return String(row.stage || row.stage_name || row.stage_code);
   }
   const v = row[key];
-  if (v === null || v === undefined || v === "") {
-    if (key === "stage" || key === "stage_id") {
-      return row.stage || row.stage_name || row.stage_code || "—";
-    }
-    return "—";
-  }
+  if (v === null || v === undefined || v === "") return "—";
   if (typeof v === "boolean") return v ? yesLabel : noLabel;
+  // A list column is a list of values, not the JSON that carried them. The euro
+  // read `["DE","FR","NL"]` in the Countries column, brackets and quotes and
+  // all, because every object fell through to JSON.stringify.
+  if (Array.isArray(v)) return v.length ? v.map((entry) => String(entry)).join(", ") : "—";
   if (typeof v === "object") return JSON.stringify(v);
   return String(v);
 }
@@ -138,6 +140,133 @@ function parseStringList(v: any): string[] {
     }
   }
   return [];
+}
+
+export function entityRestrictionState(
+  field: MasterDataField,
+  values: Record<string, any>,
+  allOptions: Record<string, Record<string, any>[]>,
+): { selected: boolean; resolved: boolean; allowedCodes: string[]; hidden: boolean } | undefined {
+  const restriction = field.restrictOptionsBy;
+  if (!restriction) return undefined;
+
+  const selectedCode = String(values[restriction.selectorKey] ?? "");
+  const selectorRows = allOptions[restriction.selectorEntityEndpoint];
+  const selectorRow = selectorRows?.find(
+    (row) => String(row[restriction.selectorCodeKey] ?? "") === selectedCode,
+  );
+  const allowedCodes = selectorRow ? parseStringList(selectorRow[restriction.allowListKey]) : [];
+  const selected = selectedCode.length > 0;
+  const resolved = selectorRows !== undefined;
+
+  return {
+    selected,
+    resolved,
+    allowedCodes,
+    hidden: !!restriction.hideWhenEmpty && (!selected || (resolved && allowedCodes.length === 0)),
+  };
+}
+
+/**
+ * Splits the two states a `requiresParent` field can be in, which used to be
+ * collapsed into one and both answered by removing the field from the form:
+ *
+ * - `hidden` — no parent chosen yet. There is nothing to filter by, so the
+ *   picker would list the whole catalog; not offering it is right. This is what
+ *   requiresParent was added for (Sub Category once listed every category in
+ *   the tenant while no Category was selected).
+ * - `empty` — a parent IS chosen and the filtered list came back with nothing.
+ *   The field stays on the form, disabled, saying so. Deleting it instead left
+ *   a silent dead end: five of the ten item types have no categories, so
+ *   choosing one made Category disappear, and Sub Category disappeared behind
+ *   it because its own parent could then never be filled. Nothing on screen
+ *   said why, and the help text explaining it was attached to a field that was
+ *   no longer rendered.
+ *
+ * A still-in-flight fetch is neither: the field stays put so it does not
+ * flicker in and out while options load.
+ */
+export function parentFilterState(
+  field: MasterDataField,
+  values: Record<string, any>,
+  allOptions: Record<string, Record<string, any>[]>,
+): { hidden: boolean; empty: boolean } {
+  if (!field.requiresParent) return { hidden: false, empty: false };
+  const parents = parentKeys(field);
+  if (!parents.every((key) => !!values[key])) return { hidden: true, empty: false };
+  const endpoint = resolveEndpoint(field, values);
+  const loaded = endpoint ? allOptions[endpoint] : undefined;
+  if (loaded === undefined) return { hidden: false, empty: false };
+  return { hidden: false, empty: loaded.length === 0 };
+}
+
+/**
+ * The path part of an entity endpoint: no query string, no "{value}" path
+ * parameter. "/item-category?rootOnly=true" and "/setup/wizard/lobs/{value}"
+ * become "/item-category" and "/setup/wizard/lobs".
+ */
+function endpointPath(endpoint: string): string {
+  return endpoint.split("?")[0].split("/{")[0].replace(/\/+$/, "");
+}
+
+/**
+ * The masters that fill a screen's dropdowns — what the "Dropdown options come
+ * from" row names, and what the dialog renders as inline lookup cards.
+ *
+ * Derived from the select-entity fields themselves, each one's endpoint being
+ * another master's apiBase, and unioned with the hand-declared `lookupFor`.
+ * Declaring it by hand covered five masters and silently missed the rest; a
+ * field added later is picked up here with no second place to remember.
+ *
+ * Three things the earlier derivation got wrong:
+ *
+ * - It read only top-level fields, so a master reached purely through a
+ *   `jsonRow` row editor — Item Attributes, under Items' Attribute Values —
+ *   was the one master the row never mentioned.
+ * - It truncated an endpoint at its first slash, which credits "/uom" for a
+ *   reference to "/uom/conversion". The longest matching apiBase wins instead.
+ * - The caller filtered Business Central-owned masters out of the chips while
+ *   rendering them as cards, on the reasoning that they could not be saved.
+ *   They can: `readOnly` here tracks administration rights, not BC ownership,
+ *   and a BC catalog is created and edited locally until that integration is
+ *   connected. BcOwnershipNotice still states the provenance.
+ */
+export function lookupMastersFor(
+  config: MasterDataConfig,
+  all: MasterDataConfig[] = MASTER_DATA_CONFIGS,
+): MasterDataConfig[] {
+  const endpoints = config.fields
+    .flatMap((f) => [f, ...(f.jsonRow || [])])
+    .filter((f) => f.type === "select-entity" && f.entityEndpoint)
+    .map((f) => endpointPath(f.entityEndpoint!));
+  // Ordered by where the field sits on the form, not by where the master
+  // happens to sit in the registry. Registry order listed Item Categories
+  // before Item Types on the Item screen, while the form asks Item Type first
+  // and Category cannot be answered until it is — so the row read in the
+  // opposite order to the work.
+  //
+  // An endpoint no master serves — /setup/wizard/nobs, /costing-method,
+  // /goods-receipt — resolves to nothing and names no master, which is right:
+  // NOB and LOB come from the setup wizard, not from a master on this screen.
+  const seen = new Set<string>([config.key]);
+  const ordered: MasterDataConfig[] = [];
+  for (const path of endpoints) {
+    const owner = all
+      .filter((c) => path === c.apiBase || path.startsWith(c.apiBase + "/"))
+      .sort((a, b) => b.apiBase.length - a.apiBase.length)[0];
+    if (!owner || seen.has(owner.key)) continue;
+    seen.add(owner.key);
+    ordered.push(owner);
+  }
+  // A master that declares itself a lookup for this screen without sitting
+  // behind any field on it has no field position to take, so it follows in
+  // registry order.
+  for (const c of all) {
+    if (seen.has(c.key) || !c.lookupFor?.includes(config.key)) continue;
+    seen.add(c.key);
+    ordered.push(c);
+  }
+  return ordered;
 }
 
 export default function MasterDataTable({ config }: { config: MasterDataConfig }) {
@@ -182,6 +311,29 @@ export default function MasterDataTable({ config }: { config: MasterDataConfig }
 
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(PAGE_SIZE);
+  /**
+   * Row count for the whole filtered table, from the API.
+   *
+   * null means this master has not moved to the shared list contract yet (see
+   * api/src/common/master-list-query.ts) and still answers with a plain array.
+   * Those keep the old behaviour — fetch a window and slice it here — so the
+   * two styles can coexist while the contract is rolled out, rather than every
+   * master having to change on the same day.
+   */
+  const [serverTotal, setServerTotal] = useState<number | null>(null);
+  const [sortKey, setSortKey] = useState<string>("");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  /**
+   * Two copies deliberately. `colFilters` is what the list is filtered by;
+   * `filterDraft` is what the drawer is editing. They diverge while the drawer
+   * is open and rejoin on Apply, which is what makes the filters deferred —
+   * typing in the panel does not refetch on every keystroke, and closing it
+   * without applying leaves the list exactly as it was.
+   */
+  const [colFilters, setColFilters] = useState<Record<string, string>>({});
+  const [filterDraft, setFilterDraft] = useState<Record<string, string>>({});
+  const [filterOpen, setFilterOpen] = useState(false);
+  const isDesktop = useIsDesktop();
 
   const workspaceScope = getActiveWorkspaceScope();
   const companyId = workspaceScope === "TENANT" ? null : getActiveCompanyId();
@@ -211,19 +363,6 @@ export default function MasterDataTable({ config }: { config: MasterDataConfig }
     return { ...f, readOnly: true, helpText: f.helpText };
   };
   const formFields = config.fields.map(numbering.field).map(applyDerived).filter((f) => !f.hideInForm && !(workspaceScope === "OPERATIONAL" && ["nob_id", "lob_id"].includes(f.key)));
-  // A requiresParent field is offered only once it can actually be filtered, and
-  // only if that filter leaves something to choose. Before this, Sub Category
-  // listed every category in the tenant while no Category was selected.
-  const parentSatisfied = (f: MasterDataField) =>
-    !f.requiresParent || parentKeys(f).every((k) => !!form[k]);
-  const hasChoices = (f: MasterDataField) => {
-    if (!f.requiresParent) return true;
-    const ep = resolveEndpoint(f, form);
-    const loaded = ep ? entityOptions[ep] : undefined;
-    // Undefined means the fetch has not resolved yet — keep the field so it does
-    // not flicker in and out; an empty array is a real "nothing to choose".
-    return loaded === undefined || loaded.length > 0;
-  };
   // A master can be exhausted: Number Series takes exactly one row per master,
   // so once every master has one there is nothing left to add and the button
   // should go rather than open a form whose only required picker is empty.
@@ -237,7 +376,10 @@ export default function MasterDataTable({ config }: { config: MasterDataConfig }
 
   const visibleFields = (editing ? formFields.filter((f) => !f.createOnly) : formFields.filter((f) => !f.editOnly))
     .filter((f) => !f.visibleWhen || isFieldRequired({ ...f, required: false, requiredWhen: f.visibleWhen }, form))
-    .filter((f) => parentSatisfied(f) && hasChoices(f));
+    .filter((f) => !entityRestrictionState(f, form, entityOptions)?.hidden)
+    // Only the "no parent chosen yet" half hides the field; an empty filtered
+    // list keeps it, disabled, so the form can say why it has nothing to offer.
+    .filter((f) => !parentFilterState(f, form, entityOptions).hidden);
   const columns = config.columns || config.fields.filter((f) => !f.hideInTable).slice(0, 5);
   // Status and Active are different facts — Status is the master's domain
   // state, Active is whether the record is live at all — but a master that
@@ -257,11 +399,29 @@ export default function MasterDataTable({ config }: { config: MasterDataConfig }
   const detailFor = config.detailPanel;
   const selectedRow = detailFor ? rows.find((r) => String(r[config.idKey]) === selectedId) : undefined;
   const statusActiveValues = config.statusActiveValues;
-  const lookupConfigs = MASTER_DATA_CONFIGS.filter((c) => c.lookupFor?.includes(config.key));
+  const lookupConfigs = lookupMastersFor(config);
   const sectionCount = new Set(visibleFields.map((f) => f.section || "Identification")).size;
   // Business Central-style adaptive presentation: compact masters remain a
   // centred modal, while a dense or multi-card master gets a near-full-page
   // dialog with its own scrolling body and pinned actions.
+  /**
+   * The chips, which are not quite the cards.
+   *
+   * A BC-owned catalog belongs here: it is not read-only — `readOnly` above
+   * tracks administration rights — and until the Business Central integration
+   * is connected these are created and edited locally against our own
+   * database. Withholding the chip while the dialog offered the very same
+   * master as a card said two different things about one catalog, and the card
+   * was the one telling the truth.
+   *
+   * What does not belong here is a master sharing this screen's own tab bar.
+   * Item Attributes is a tab of Items; offering a chip that opens it in a modal
+   * duplicates a tab sitting inches above it. The cards keep it, because a
+   * half-filled form cannot be abandoned to go and click a tab — which is
+   * exactly the difference between the two affordances.
+   */
+  const tabGroup = (c: MasterDataConfig) => c.tabOf ?? c.key;
+  const manageableLookups = lookupConfigs.filter((c) => tabGroup(c) !== tabGroup(config));
   const usePageDialog = visibleFields.length > 10 || sectionCount > 3 || lookupConfigs.length > 2;
 
   const load = async () => {
@@ -273,10 +433,23 @@ export default function MasterDataTable({ config }: { config: MasterDataConfig }
       if (search) params.set("search", search);
       if (config.supportsNobLobFilter && nobFilter) params.set("nobId", nobFilter);
       if (config.supportsNobLobFilter && lobFilter) params.set("lobId", lobFilter);
-      params.set("limit", "200");
+      // Ask for exactly the page being shown. The previous request was always
+      // limit=200 with no offset, sliced in the browser — which silently capped
+      // every master at 200 rows. MULTIPLIER's locations alone are 508.
+      params.set("limit", String(pageSize));
+      params.set("offset", String((page - 1) * pageSize));
+      if (sortKey) { params.set("sort", sortKey); params.set("dir", sortDir); }
+      for (const [key, value] of Object.entries(colFilters)) {
+        if (value !== "") params.set(`filter[${key}]`, value);
+      }
       const res = await api.get(`${config.apiBase}?${params.toString()}`);
       const list = unwrap<Row[]>(res);
       setRows(Array.isArray(list) ? list : []);
+      // A master still on the old shape reports no total, and is paged here as
+      // before. One that reports a total has already sorted, filtered and paged
+      // in SQL, so the rows in hand are the page.
+      const total = (res as { total?: unknown })?.total;
+      setServerTotal(typeof total === "number" ? total : null);
     } catch (err: any) {
       setError(err?.message || t("mdFailedToLoad"));
     } finally {
@@ -286,11 +459,137 @@ export default function MasterDataTable({ config }: { config: MasterDataConfig }
 
   useEffect(() => {
     load();
-  }, [config.key, search, nobFilter, lobFilter]);
+  }, [config.key, search, nobFilter, lobFilter, page, pageSize, sortKey, sortDir, colFilters]);
 
-  useEffect(() => { setPage(1); }, [config.key, search, nobFilter, lobFilter, pageSize]);
+  // Anything that changes which rows match sends you back to the first page —
+  // page 7 of a filtered list that now has two pages is not a page.
+  useEffect(() => { setPage(1); }, [config.key, search, nobFilter, lobFilter, pageSize, colFilters]);
 
-  const pagedRows = rows.slice((page - 1) * pageSize, page * pageSize);
+  // A different master has different columns, so neither the sort nor the
+  // column filters carry over to it.
+  useEffect(() => {
+    setSortKey(""); setSortDir("asc");
+    setColFilters({}); setFilterDraft({}); setFilterOpen(false);
+  }, [config.key]);
+
+  // The server returns the page, so these are the rows. Slicing here is what
+  // capped every master at the 200 rows the old request asked for.
+  /**
+   * The closed set of values a column can be filtered to, or undefined when the
+   * column is free text.
+   *
+   * Read off the field behind the column: a static `select` contributes its own
+   * options, and a `select-entity` contributes whatever its master returned —
+   * those lists are already fetched on mount for the form's pickers, so the
+   * filter costs no extra request. A column with no field behind it (a joined
+   * display value such as an item's category_code) is free text.
+   *
+   * Entity options are matched on the value the row actually stores, which is
+   * the field's entityValueKey — the same distinction the form makes between a
+   * stored uom_code and a stored UUID.
+   */
+  const filterChoicesFor = (key: string): { value: string; label: string }[] | undefined => {
+    const field = config.fields.find((f) => f.key === key);
+    if (!field) return undefined;
+    if (field.type === "boolean") return [{ value: "true", label: t("mdYes") }, { value: "false", label: t("mdNo") }];
+    if (field.type === "select") return field.options?.length ? field.options : undefined;
+    if (field.type !== "select-entity" || field.dependsOn || !field.entityEndpoint) return undefined;
+    const loaded = entityOptions[field.entityEndpoint];
+    if (!loaded?.length) return undefined;
+    const valueKey = field.entityValueKey || "id";
+    const labelKeys = field.entityLabelKeys || [];
+    return loaded
+      .map((row) => ({
+        value: String(row[valueKey] ?? ""),
+        label: labelKeys.map((k) => row[k]).filter(Boolean).join(" — ") || String(row[valueKey] ?? ""),
+      }))
+      .filter((o) => o.value !== "");
+  };
+
+  /**
+   * What to call a column in the filter panel.
+   *
+   * A table header is read with the column of values under it, so Stages can
+   * head its sequence column "#" and be perfectly clear. Stripped of that
+   * context and put on a filter input, "#" says nothing — the field behind it
+   * calls itself "Display Order", which is the name to use.
+   */
+  const filterLabelFor = (key: string, columnLabel: string) => {
+    const field = config.fields.find((f) => f.key === key);
+    const label = field && field.label.length > columnLabel.length ? field.label : columnLabel;
+    return tLabel(label);
+  };
+
+  /**
+   * One filter body, two shells. Beside the table on a desktop, where there is
+   * room and keeping the rows visible is the point; as a dialog below `lg`,
+   * where a 340px column would leave the table 20px wide and the honest thing
+   * is to interrupt. Rendered once either way — a `hidden lg:block` pair would
+   * mount both and duplicate every input's id.
+   */
+  const filterFields = (
+    <div className="flex flex-col gap-4">
+      {columns.map((c) => {
+        const choices = filterChoicesFor(c.key);
+        const value = filterDraft[c.key] ?? "";
+        const fieldId = `master-${config.key}-filter-${c.key}`;
+        const set = (next: string) =>
+          setFilterDraft((prev) => {
+            const out = { ...prev };
+            if (next === "") delete out[c.key];
+            else out[c.key] = next;
+            return out;
+          });
+        return (
+          <Field key={c.key} label={filterLabelFor(c.key, c.label)} htmlFor={fieldId}>
+            {choices ? (
+              <select id={fieldId} className={`${inputCls} nf-select`} style={S.input}
+                value={value} onChange={(e) => set(e.target.value)}>
+                <option value="">{t("mdFilterAll")}</option>
+                {choices.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+            ) : (
+              // Wrapped in asterisks on the way out: a column filter is a
+              // "contains", so a partial code finds its rows. The stars are the
+              // wire format, never shown to the person typing.
+              <input id={fieldId} className={inputCls} style={S.input}
+                value={value.replace(/^\*|\*$/g, "")} placeholder={t("mdFilterAny")}
+                onChange={(e) => set(e.target.value ? `*${e.target.value}*` : "")} />
+            )}
+          </Field>
+        );
+      })}
+    </div>
+  );
+
+  // Apply closes the dialog on a phone, where the list is behind it;
+  // on a desktop the panel stays open beside the rows it just filtered.
+  const filterActions = (
+    <>
+      <button type="button" onClick={() => { setFilterDraft({}); setColFilters({}); }}
+        className="rounded-lg border px-3 py-1.5 text-xs font-medium" style={S.surface}>
+        {t("mdFiltersReset")}
+      </button>
+      <button type="button" onClick={() => { setColFilters(filterDraft); if (!isDesktop) setFilterOpen(false); }}
+        className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white"
+        style={{ backgroundColor: "var(--accent)" }}>
+        {t("mdFiltersApply")}
+      </button>
+    </>
+  );
+
+  /** How many column filters are actually in force, for the button's badge. */
+  const appliedFilterCount = Object.values(colFilters).filter((v) => v !== "").length;
+
+  const pagedRows = rows;
+  /**
+   * What the pager counts. A master on the shared list contract reports the
+   * real total. One that does not yet report a total still pages correctly —
+   * every findAll honours limit and offset — so the count is "everything up to
+   * here, plus more if this page came back full", which keeps Next reachable
+   * without inventing a total.
+   */
+  const pagerTotal = serverTotal ?? (page - 1) * pageSize + rows.length + (rows.length === pageSize ? 1 : 0);
 
   useEffect(() => {
     if (!config.supportsNobLobFilter || workspaceScope === "OPERATIONAL") return;
@@ -937,28 +1236,46 @@ export default function MasterDataTable({ config }: { config: MasterDataConfig }
           {broken && <InlineAlert>This entry is not a JSON array, so it cannot be shown as rows. Clear it to start again.</InlineAlert>}
           {rows.map((row, idx) => (
             <div key={idx} className="flex flex-wrap items-end gap-2 rounded-lg border p-2" style={S.raised}>
-              {f.jsonRow!.map((col) => (
-                <label key={col.key} className="flex min-w-[8rem] flex-1 flex-col gap-1">
-                  <span className="text-[11px] font-medium" style={S.sub}>{tLabel(col.label)}</span>
-                  {col.type === "select-entity" ? (
-                    <select className={`${inputCls} nf-select`} style={S.input} disabled={readOnly || (isLocked(row) && col.key === req?.key)}
-                      value={String(row[col.key] ?? "")}
-                      onChange={(e) => write(rows.map((r, i) => i === idx ? { ...r, [col.key]: e.target.value } : r))}>
-                      <option value="">{t("selectPlaceholder")}</option>
-                      {(entityOptions[col.entityEndpoint || ""] || []).map((o) => (
-                        <option key={String(o[col.entityValueKey || "id"])} value={String(o[col.entityValueKey || "id"])}>
-                          {(col.entityLabelKeys || []).map((k) => o[k]).filter(Boolean).join(" — ") || String(o[col.entityValueKey || "id"])}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <input className={inputCls} style={S.input} disabled={readOnly}
-                      type={col.type === "number" ? "number" : "text"} step={col.step} placeholder={col.placeholder}
-                      value={String(row[col.key] ?? "")}
-                      onChange={(e) => write(rows.map((r, i) => i === idx ? { ...r, [col.key]: col.type === "number" ? (e.target.value === "" ? "" : Number(e.target.value)) : e.target.value } : r))} />
-                  )}
-                </label>
-              ))}
+              {f.jsonRow!.map((col) => {
+                const rowFieldId = `master-${config.key}-${f.key}-${idx}-${col.key}`;
+                return (
+                  <Field key={col.key} label={tLabel(col.label)} htmlFor={rowFieldId} className="min-w-[8rem] flex-1">
+                    {col.type === "select-entity" ? (
+                      <EntityLookupField
+                        id={rowFieldId}
+                        label={tLabel(col.label)}
+                        options={entityOptions[col.entityEndpoint || ""] || []}
+                        value={String(row[col.key] ?? "")}
+                        valueKey={col.entityValueKey || "id"}
+                        labelKeys={col.entityLabelKeys || []}
+                        onChange={(next) => write(rows.map((r, i) => i === idx ? { ...r, [col.key]: next } : r))}
+                        disabled={readOnly || (isLocked(row) && col.key === req?.key)}
+                        loading={!!col.entityEndpoint && entityOptions[col.entityEndpoint] === undefined}
+                        placeholder={t("selectPlaceholder")}
+                      />
+                    ) : col.type === "select" ? (
+                      // A closed set of values inside a row is a dropdown, not
+                      // a free-text box. Without this branch a column declared
+                      // `type: "select"` fell through to the input below and
+                      // took anything typed into it: a vaccination's Route
+                      // accepted "IM", "im" and "intramuscular" as three
+                      // different answers, and its Triggered by — which decides
+                      // what the scheduler counts from — could be nonsense.
+                      <select id={rowFieldId} className={`${inputCls} nf-select`} style={S.input} disabled={readOnly}
+                        value={String(row[col.key] ?? "")}
+                        onChange={(e) => write(rows.map((r, i) => i === idx ? { ...r, [col.key]: e.target.value } : r))}>
+                        <option value="">{col.placeholder || t("selectPlaceholder")}</option>
+                        {(col.options || []).map((o) => <option key={o.value} value={o.value}>{tLabel(o.label)}</option>)}
+                      </select>
+                    ) : (
+                      <input id={rowFieldId} className={inputCls} style={S.input} disabled={readOnly}
+                        type={col.type === "number" ? "number" : "text"} step={col.step} placeholder={col.placeholder}
+                        value={String(row[col.key] ?? "")}
+                        onChange={(e) => write(rows.map((r, i) => i === idx ? { ...r, [col.key]: col.type === "number" ? (e.target.value === "" ? "" : Number(e.target.value)) : e.target.value } : r))} />
+                    )}
+                  </Field>
+                );
+              })}
               {!readOnly && (isLocked(row)
                 ? <span className="rounded-lg border px-2 py-1.5 text-xs font-medium" style={{ ...S.raised, color: "var(--text-muted)" }}>Mandatory</span>
                 : <button type="button" onClick={() => write(rows.filter((_, i) => i !== idx))}
@@ -1052,22 +1369,32 @@ export default function MasterDataTable({ config }: { config: MasterDataConfig }
     }
     if (f.type === "select-entity") {
       const resolvedEp = resolveEndpoint(f, form);
-      let options = resolvedEp ? entityOptions[resolvedEp] || [] : [];
+      const loadedOptions = resolvedEp ? entityOptions[resolvedEp] : undefined;
+      let options = loadedOptions || [];
       const parents = parentKeys(f);
       // "query" mode never blocks — an unset parent just narrows the results less, it
       // doesn't prevent fetching (mirrors the backend treating an absent filter as "show all").
       let disabled = f.dependsOnMode !== "query" && parents.length > 0 && !resolvedEp;
       const parentLabel = parents.map((k) => tLabel(config.fields.find((pf) => pf.key === k)?.label || k)).join(" & ");
       let restrictedReason = "";
+      // The parent is chosen but nothing in the referenced master matches it.
+      // The field stays, disabled, naming the parent whose choice emptied it —
+      // every master that filters a picker this way is also offered as a lookup
+      // card in the same dialog, so this is a step the person can act on.
+      if (parentFilterState(f, form, entityOptions).empty) {
+        disabled = true;
+        restrictedReason = t("mdNoOptionsForParent", { name: parentLabel });
+        options = [];
+      }
       if (f.restrictOptionsBy && !disabled) {
         const r = f.restrictOptionsBy;
-        const selectorRow = (entityOptions[r.selectorEntityEndpoint] || []).find((row) => row[r.selectorCodeKey] === form[r.selectorKey]);
-        const allowList = selectorRow ? parseStringList(selectorRow[r.allowListKey]) : [];
-        if (!allowList.length) {
+        const restriction = entityRestrictionState(f, form, entityOptions);
+        const allowList = restriction?.allowedCodes || [];
+        if (restriction?.resolved && !allowList.length) {
           disabled = true;
           restrictedReason = t("mdNoParentForType");
           options = [];
-        } else {
+        } else if (allowList.length) {
           options = options.filter((o) => allowList.includes(o[r.optionCodeKey]));
         }
       }
@@ -1080,63 +1407,36 @@ export default function MasterDataTable({ config }: { config: MasterDataConfig }
         if (taken.length) options = options.filter((o) => !taken.includes(String(o[f.entityValueKey || "id"])));
       }
       if (f.multiple) {
-        // A real multi-select rather than a column of checkboxes: with eight
-        // stages the checkbox list was taller than the rest of the form, and it
-        // read as a settings panel rather than one field. Chosen values show as
-        // removable chips so the selection is legible without opening the list.
         const selected = parseStringList(form[f.key]);
-        const missing = selected.filter((key) => !options.some((option) => option[f.entityValueKey || "id"] === key));
-        const unselected = options.filter((o) => !selected.includes(String(o[f.entityValueKey || "id"])));
-        return <div className="flex flex-col gap-2">
-          {(selected.length > 0) && <div className="flex flex-wrap gap-1.5">
-            {selected.map((key) => {
-              const option = options.find((o) => String(o[f.entityValueKey || "id"]) === key);
-              return <span key={key} className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs" style={S.raised}>
-                {option ? entityLabel(option, f) : `${key} — unavailable in active catalog`}
-                {!f.readOnly && <button type="button" aria-label={`Remove ${key}`} onClick={() => setField(f.key, selected.filter((entry) => entry !== key))}
-                  className="font-semibold" style={{ color: "var(--danger)" }}>×</button>}
-              </span>;
-            })}
-          </div>}
-          <select {...accessibility} value="" disabled={disabled || f.readOnly || !unselected.length}
-            className={`${inputCls} nf-select`} style={S.input}
-            onChange={(e) => { if (e.target.value) setField(f.key, [...selected, e.target.value]); }}>
-            <option value="">{!options.length ? t("selectPlaceholder") : unselected.length ? t("selectPlaceholder") : ""}</option>
-            {unselected.map((o) => (
-              <option key={String(o[f.entityValueKey || "id"])} value={String(o[f.entityValueKey || "id"])}>{entityLabel(o, f)}</option>
-            ))}
-          </select>
-          {!!missing.length && <p className="text-xs" style={S.muted}>{missing.length} selected value(s) are not in the active catalog.</p>}
-        </div>;
-      }
-      const placeholderText = restrictedReason || (disabled ? t("selectXFirst", { name: parentLabel }) : t("selectPlaceholder"));
-      if (f.searchable) {
         return (
-          <SearchableEntitySelect
+          <EntityLookupField
             id={accessibility.id}
-            ariaLabel={accessibility["aria-label"]}
-            ariaRequired={accessibility["aria-required"]}
-            value={value}
-            onChange={(v) => setField(f.key, v)}
+            label={accessibility["aria-label"]}
             options={options}
+            value={selected}
             valueKey={f.entityValueKey || "id"}
-            getLabel={(o) => entityLabel(o, f)}
-            disabled={disabled}
-            placeholder={placeholderText}
-            searchPlaceholder={t("searchPlaceholder")}
-            noMatchesLabel={t("mdNoMatches")}
+            labelKeys={f.entityLabelKeys || []}
+            onChange={(next) => setField(f.key, next)}
+            multiple
+            disabled={disabled || !!f.readOnly}
+            loading={!!resolvedEp && loadedOptions === undefined}
+            placeholder={restrictedReason || (disabled ? t("selectXFirst", { name: parentLabel }) : t("selectPlaceholder"))}
           />
         );
       }
       return (
-        <select {...accessibility} value={value} onChange={(e) => setField(f.key, e.target.value)} className={`${inputCls} nf-select`} style={S.input} disabled={disabled}>
-          <option value="">{placeholderText}</option>
-          {options.map((o) => (
-            <option key={o[f.entityValueKey || "id"]} value={o[f.entityValueKey || "id"]}>
-              {entityLabel(o, f)}
-            </option>
-          ))}
-        </select>
+        <EntityLookupField
+          id={accessibility.id}
+          label={accessibility["aria-label"]}
+          options={options}
+          value={String(value ?? "")}
+          valueKey={f.entityValueKey || "id"}
+          labelKeys={f.entityLabelKeys || []}
+          onChange={(next) => setField(f.key, next)}
+          disabled={disabled || !!f.readOnly}
+          loading={!!resolvedEp && loadedOptions === undefined}
+          placeholder={restrictedReason || (disabled ? t("selectXFirst", { name: parentLabel }) : t("selectPlaceholder"))}
+        />
       );
     }
     return (
@@ -1214,6 +1514,29 @@ export default function MasterDataTable({ config }: { config: MasterDataConfig }
               style={{ ...S.input, paddingLeft: "1.75rem" }}
             />
           </div>
+          {/* The search box above narrows on every keystroke because it is one
+              field and the whole list is its subject. Column filters are a set
+              of decisions taken together, so they live behind this button and
+              take effect on Apply — see the drawer at the foot of this file. */}
+          {columns.length > 0 && (
+            <button
+              type="button"
+              onClick={() => { setFilterDraft(colFilters); setFilterOpen(true); }}
+              className="flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-(--accent) hover:text-(--accent)"
+              style={appliedFilterCount ? { ...S.surface, borderColor: "var(--accent)", color: "var(--accent)" } : S.surface}
+            >
+              <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden />
+              {t("mdFilters")}
+              {appliedFilterCount > 0 && (
+                <span
+                  className="rounded-full px-1.5 py-0.5 text-[10px] font-bold leading-none text-white"
+                  style={{ backgroundColor: "var(--accent)" }}
+                >
+                  {appliedFilterCount}
+                </span>
+              )}
+            </button>
+          )}
           {!readOnly && !exhausted && <button
             onClick={openCreate}
             className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-white"
@@ -1228,21 +1551,57 @@ export default function MasterDataTable({ config }: { config: MasterDataConfig }
 
       {bcOwned && <BcOwnershipNotice config={config} />}
       {administrationRestricted && <p className="rounded-lg border p-3 text-sm" style={S.raised}>Only a Tenant Admin or Company Admin can add, edit or deactivate reasons. You can view the shared catalog here.</p>}
-      {bcOwned && lookupConfigs.length > 0 && <div className="flex flex-wrap items-center gap-3">
-        <span className="text-xs text-(--text-muted)">Related NAVFarm setup:</span>
-        {lookupConfigs.filter((c) => c.owner !== "BC").map((c) => <button key={c.key} type="button"
-          className="text-xs underline" onClick={() => setLookupManager(c)}>Manage {c.label}</button>)}
-      </div>}
+      {manageableLookups.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-(--text-muted)">Dropdown options come from</span>
+          {manageableLookups.map((c) => (
+            <button
+              key={c.key}
+              type="button"
+              onClick={() => setLookupManager(c)}
+              title={`Manage ${tLabel(c.label)}`}
+              className="inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors hover:border-(--accent) hover:text-(--accent) focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--accent)"
+              style={S.surface}
+            >
+              <SlidersHorizontal className="h-3 w-3" aria-hidden />
+              {tLabel(c.label)}
+            </button>
+          ))}
+        </div>
+      )}
 
-      <div className={selectedRow ? "grid grid-cols-1 items-start gap-4 xl:grid-cols-[minmax(0,1fr)_380px]" : undefined}>
+      {/* The filter panel is a second column of this grid, not a layer over
+          it: the table narrows and the panel takes the space, so the rows
+          being filtered stay visible and nothing is buried behind a scrim. */}
+      <div className={selectedRow || filterOpen ? "grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_340px]" : undefined}>
       <div className="min-w-0 overflow-hidden rounded-[var(--radius-md)] border" style={S.surface}>
         <div className="overflow-x-auto">
           <table className="w-full border-collapse text-left text-sm">
             <TableHeader>
               <tr className="border-b" style={{ borderColor: "var(--row-border)" }}>
-                {columns.map((c) => (
-                  <TableHead key={c.key} className="whitespace-nowrap">{tLabel(c.label)}</TableHead>
-                ))}
+                {columns.map((c) => {
+                  const active = sortKey === c.key;
+                  return (
+                    <TableHead key={c.key} className="whitespace-nowrap">
+                      {/* Sorting is done in SQL over the whole table, so it
+                          reorders every page, not the page in view. */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (active) { setSortDir(sortDir === "asc" ? "desc" : "asc"); return; }
+                          setSortKey(c.key);
+                          setSortDir("asc");
+                        }}
+                        aria-label={t("mdSortBy", { name: tLabel(c.label) })}
+                        className="inline-flex items-center gap-1 font-semibold transition-colors hover:text-(--accent) focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--accent)"
+                        style={active ? { color: "var(--accent)" } : undefined}
+                      >
+                        {tLabel(c.label)}
+                        <ArrowUpDown className="h-3 w-3 shrink-0" aria-hidden style={{ opacity: active ? 1 : 0.35 }} />
+                      </button>
+                    </TableHead>
+                  );
+                })}
                 {/* The record's own active/deactivated flag — the switch below
                     it — headed "Active" rather than "Status", because several
                     masters carry a domain status of their own that the client's
@@ -1370,7 +1729,7 @@ export default function MasterDataTable({ config }: { config: MasterDataConfig }
         </div>
         {!loading && rows.length > 0 && (
           <div className="border-t px-2" style={{ borderColor: "var(--border)" }}>
-            <Pagination page={page} pageSize={pageSize} total={rows.length} onPageChange={setPage} onPageSizeChange={setPageSize} pageSizeOptions={[25, 50, 100]} />
+            <Pagination page={page} pageSize={pageSize} total={pagerTotal} onPageChange={setPage} onPageSizeChange={setPageSize} pageSizeOptions={[25, 50, 100]} />
           </div>
         )}
       </div>
@@ -1378,6 +1737,28 @@ export default function MasterDataTable({ config }: { config: MasterDataConfig }
         <div className="min-w-0 xl:sticky xl:top-4 xl:max-h-[calc(100dvh-8rem)]">
           <AnimalDetailPanel row={selectedRow} onClose={() => setSelectedId(null)} />
         </div>
+      )}
+      {filterOpen && isDesktop && (
+        <aside className="min-w-0 lg:sticky lg:top-4" aria-label={t("mdFilters")}>
+          <div className="flex max-h-[calc(100dvh-8rem)] flex-col overflow-hidden rounded-[var(--radius-md)] border" style={S.surface}>
+            <div className="flex items-start justify-between gap-2 border-b px-4 py-3" style={{ borderColor: "var(--border)" }}>
+              <div>
+                <h2 className="text-sm font-semibold" style={S.primary}>{t("mdFilters")}</h2>
+                <p className="mt-0.5 text-xs" style={S.sub}>{t("mdFiltersDesc", { label: tLabel(config.label) })}</p>
+              </div>
+              <button type="button" onClick={() => setFilterOpen(false)} aria-label={t("close")}
+                className="rounded-lg p-1 transition-colors hover:text-(--accent)" style={S.muted}>
+                <X className="h-4 w-4" aria-hidden />
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+              {filterFields}
+            </div>
+            <div className="flex items-center justify-end gap-2 border-t px-4 py-3" style={{ borderColor: "var(--border)" }}>
+              {filterActions}
+            </div>
+          </div>
+        </aside>
       )}
       </div>
 
@@ -1439,13 +1820,16 @@ export default function MasterDataTable({ config }: { config: MasterDataConfig }
               <CollapsibleCard key={s} title={s} defaultOpen={i === 0 || bySection.get(s)!.some((f) => isFieldRequired(f, form))}>
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   {bySection.get(s)!.map((f) => (
-                    <div key={f.key} className={f.type === "textarea" || f.type === "json" || f.type === "string-list" ? "sm:col-span-2 flex flex-col gap-1.5" : "flex flex-col gap-1.5"}>
-                      <label htmlFor={`master-${config.key}-${f.key}`} className="nf-text-label" style={S.sub}>
-                        {tLabel(currentLabel(f, form))}{isFieldRequired(f, form) && <span style={{ color: "var(--danger)" }}> *</span>}
-                      </label>
+                    <Field
+                      key={f.key}
+                      label={tLabel(currentLabel(f, form))}
+                      htmlFor={`master-${config.key}-${f.key}`}
+                      required={isFieldRequired(f, form)}
+                      hint={f.helpText}
+                      className={f.type === "textarea" || f.type === "json" || f.type === "string-list" ? "sm:col-span-2" : undefined}
+                    >
                       {renderField(f)}
-                      {f.helpText && <p className="text-[11px]" style={S.muted}>{f.helpText}</p>}
-                    </div>
+                    </Field>
                   ))}
                 </div>
               </CollapsibleCard>
@@ -1484,6 +1868,21 @@ export default function MasterDataTable({ config }: { config: MasterDataConfig }
       >
         <p className="text-sm" style={S.sub}>{t("confirmDeactivate")}</p>
       </Dialog>
+
+      {/* Below `lg` the same filters interrupt as a dialog: a 340px side column
+          would leave the table too narrow to read, so the honest presentation
+          is to cover it and hand it back on Apply. */}
+      <Dialog
+        open={filterOpen && !isDesktop}
+        onClose={() => setFilterOpen(false)}
+        title={t("mdFilters")}
+        description={t("mdFiltersDesc", { label: tLabel(config.label) })}
+        maxWidth="sm"
+        footer={filterActions}
+      >
+        {filterFields}
+      </Dialog>
+
     </div>
   );
 }

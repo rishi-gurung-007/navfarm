@@ -35,6 +35,11 @@ const EXPECTED: Record<string, string> = {
   "gl-mapping": "GL Mapping",
   "cost-center": "Cost Center",
   reason: "Reason",
+  // "Currencies" -> "Currency": a -ies plural the trailing-s rule turns
+  // into "Currencie", which is exactly what this map exists to catch.
+  country: "Country",
+  currency: "Currency",
+  "exchange-rate": "Exchange Rate",
 };
 
 describe("singularLabel", () => {

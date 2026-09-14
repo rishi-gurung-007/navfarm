@@ -80,7 +80,8 @@ If pnpm reports ignored dependency build scripts, review the package name and ad
 The repository contains only templates:
 
 - `.env.example` for shared local port conventions.
-- `apps/api/.env.example` for the API, MySQL, Redis, and Cloudflare R2.
+- `apps/api/.env.example` for the API, MySQL, authentication, encryption and
+  optional email delivery.
 - `apps/web/.env.example` for public API/socket URLs and a public R2 URL.
 
 Create local files without committing them:
@@ -107,9 +108,11 @@ R2_PUBLIC_URL
 
 Create an R2 bucket and scoped API token in Cloudflare, keep the secret access key server-side, and configure CORS only for the web origins that need direct browser access. `R2_ENDPOINT` follows `https://<account-id>.r2.cloudflarestorage.com`. Do not expose `R2_SECRET_ACCESS_KEY` through a `NEXT_PUBLIC_` variable.
 
-## Local MySQL and Redis
+## Local MySQL and optional Redis
 
-Run MySQL and Redis with your preferred local package manager or containers. Use non-production credentials and create a dedicated `navfarm` database. Example container setup:
+Run MySQL with your preferred local package manager or containers. Redis is not
+connected to the application today; the Redis command below is only for future
+feature development. Use non-production credentials and a dedicated database.
 
 ```sh
 docker run --name navfarm-mysql -e MYSQL_ROOT_PASSWORD=local-root-password -e MYSQL_DATABASE=navfarm -p 3306:3306 -d mysql:8
@@ -242,11 +245,11 @@ pnpm nx show project web --json
 
 ### API
 
-Build with `pnpm nx build api`. Deploy the `apps/api/dist` output with a supported Node runtime, inject MySQL, Redis, R2, and application secrets from the hosting platform, expose the configured API port, and run database migrations as a separately controlled release step once migrations exist. Rishi owns the backend production release.
+Build with `pnpm nx build api`. Deploy the `apps/api/dist` output with a supported Node runtime, inject MySQL and application secrets from the hosting platform, and run database migrations as a separately controlled release step. Redis is not used by the current application. Rishi owns the backend production release.
 
 ### Web
 
-Build with `pnpm nx build web`. Deploy the Next.js application independently with its project root set to the monorepo root or with an Nx-aware build command. Configure `NEXT_PUBLIC_API_URL` and `NEXT_PUBLIC_SOCKET_URL` for the deployed API origin before building. Rishi owns the web release.
+Build with `pnpm nx build web`. Deploy the Next.js application independently with its project root set to the monorepo root or with an Nx-aware build command. The browser uses same-origin `/api/v1`; configure the server-only `NAVFARM_API_MODE=proxy` and `NAVFARM_API_UPSTREAM_URL` values so Next.js can reach the private API origin. Rishi owns the web release.
 
 ### Mobile
 

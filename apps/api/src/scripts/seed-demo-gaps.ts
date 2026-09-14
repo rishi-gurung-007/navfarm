@@ -8,7 +8,8 @@ import { seedCode } from './lib/seed-series-code';
 
 /**
  * Fills the master-data and configuration tables that no earlier seed touches,
- * for BOTH companies, so no screen in the console renders an empty state.
+ * for every company that actually exists, so no screen in the console renders
+ * an empty state. The current demo has one company; older datasets may have two.
  *
  * Every section is independently idempotent (select before insert) and wrapped
  * so one section failing does not abort the rest — rerun freely.
@@ -30,21 +31,23 @@ export async function seedDemoGaps() {
   const pool = mysql.createPool({ host, port, user, password, database: dbName, ssl });
   const db = drizzle(pool, { schema, mode: 'default' });
 
+  const failures: Array<{ label: string; error: unknown }> = [];
   const run = async (label: string, fn: () => Promise<void>) => {
     try {
       await fn();
       console.log(`  ✓ ${label}`);
     } catch (err) {
       console.error(`  ✗ ${label}: ${err instanceof Error ? err.message : err}`);
+      failures.push({ label, error: err });
     }
   };
 
   try {
     const companies = await db.select().from(schema.companyMaster);
     if (companies.length === 0) throw new Error(`No companies in ${dbName}.`);
-    const apex = companies.find((c) => c.company_code === 'APEXBREED') || companies[0];
-    const high = companies.find((c) => c.company_code === 'HIGHLAND') || companies[1] || companies[0];
-    const tenantId = apex.tenant_id;
+    const primary = companies.find((c) => c.company_code === 'TRIPLEC') || companies[0];
+    const high = companies.find((c) => c.company_code === 'HIGHLAND') || companies[1] || primary;
+    const tenantId = primary.tenant_id;
 
     const [nob] = await db.select().from(schema.nobMaster).where(eq(schema.nobMaster.nob_code, 'LIVESTOCK')).limit(1);
     const [lob] = await db.select().from(schema.lobMaster).where(eq(schema.lobMaster.lob_code, 'LVS_PIGGERY')).limit(1);
@@ -59,13 +62,11 @@ export async function seedDemoGaps() {
         (await db.select().from(schema.itemMaster).where(eq(schema.itemMaster.company_id, companyId)))
           .map((i) => [SEED_KEY_BY_ITEM_NAME[i.item_name] ?? i.item_code, i.item_id] as const)
       );
-    const apexItems = await itemsFor(apex.company_id);
-    const highItems = await itemsFor(high.company_id);
-
-    const perCompany = [
-      { c: apex, items: apexItems, tag: 'APX' },
-      { c: high, items: highItems, tag: 'HGH' },
-    ];
+    const perCompany = await Promise.all(companies.map(async (c) => ({
+      c,
+      items: await itemsFor(c.company_id),
+      tag: c.company_code.replace(/[^A-Z0-9]/gi, '').slice(0, 3).toUpperCase() || 'DEM',
+    })));
 
     console.log('\n🧩 Filling master-data gaps...');
 
@@ -73,10 +74,10 @@ export async function seedDemoGaps() {
     await run('Suppliers', async () => {
       for (const { c, tag } of perCompany) {
         const rows = [
-          { key: `SUP-${tag}-001`, name: 'Nutrimix Feed Industries Pvt Ltd', type: 'FEED', email: 'sales@nutrimix.example', phone: '+91 98200 11223', city: 'Pune', state: 'Maharashtra', terms: 'NET30', credit: 1500000 },
-          { key: `SUP-${tag}-002`, name: 'VetCare Pharmaceuticals', type: 'MEDICINE', email: 'orders@vetcare.example', phone: '+91 98200 44556', city: 'Hyderabad', state: 'Telangana', terms: 'NET15', credit: 500000 },
-          { key: `SUP-${tag}-003`, name: 'AgriEquip Machinery & Spares', type: 'EQUIPMENT', email: 'support@agriequip.example', phone: '+91 98200 77889', city: 'Ludhiana', state: 'Punjab', terms: 'NET45', credit: 800000 },
-          { key: `SUP-${tag}-004`, name: 'Premier Swine Genetics Import', type: 'LIVESTOCK', email: 'genetics@premierswine.example', phone: '+91 98200 33445', city: 'Bengaluru', state: 'Karnataka', terms: 'ADVANCE', credit: 2500000 },
+          { key: `SUP-${tag}-001`, name: 'Nutrimix Feed Industries Pvt Ltd', type: 'FEED_SUPPLIER', email: 'sales@nutrimix.example', phone: '+91 98200 11223', city: 'Pune', state: 'Maharashtra', terms: 'NET30', credit: 1500000 },
+          { key: `SUP-${tag}-002`, name: 'VetCare Pharmaceuticals', type: 'MEDICINE_SUPPLIER', email: 'orders@vetcare.example', phone: '+91 98200 44556', city: 'Hyderabad', state: 'Telangana', terms: 'NET15', credit: 500000 },
+          { key: `SUP-${tag}-003`, name: 'AgriEquip Machinery & Spares', type: 'EQUIPMENT_SUPPLIER', email: 'support@agriequip.example', phone: '+91 98200 77889', city: 'Ludhiana', state: 'Punjab', terms: 'NET45', credit: 800000 },
+          { key: `SUP-${tag}-004`, name: 'Premier Swine Genetics Import', type: 'ANIMAL_SUPPLIER', email: 'genetics@premierswine.example', phone: '+91 98200 33445', city: 'Bengaluru', state: 'Karnataka', terms: 'ADVANCE', credit: 2500000 },
         ];
         for (const r of rows) {
           const [x] = await db.select().from(schema.supplierMaster)
@@ -146,12 +147,12 @@ export async function seedDemoGaps() {
     await run('Resources & maintenance', async () => {
       for (const { c, tag } of perCompany) {
         const rows = [
-          { key: `RES-${tag}-LAB01`, name: 'Farm Operations Crew (6 hands)', type: 'LABOUR', sub: 'PERMANENT', rate: 550, unit: 'HR', cap: 6, desig: 'Stockperson' },
-          { key: `RES-${tag}-LAB02`, name: 'Veterinary Officer', type: 'LABOUR', sub: 'CONTRACT', rate: 1800, unit: 'HR', cap: 1, desig: 'Veterinarian' },
-          { key: `RES-${tag}-EQ01`, name: 'Feed Mill & Pellet Line', type: 'EQUIPMENT', sub: 'FIXED', rate: 950, unit: 'HR', cap: 2, make: 'Buhler', model: 'MDDK-1000' },
-          { key: `RES-${tag}-EQ02`, name: 'High-Pressure Washer', type: 'EQUIPMENT', sub: 'PORTABLE', rate: 180, unit: 'HR', cap: 1, make: 'Karcher', model: 'HD 6/15' },
+          { key: `RES-${tag}-LAB01`, name: 'Farm Operations Crew (6 hands)', type: 'MANPOWER', sub: 'PERMANENT', rate: 550, unit: 'HR', cap: 6, desig: 'Stockperson' },
+          { key: `RES-${tag}-LAB02`, name: 'Veterinary Officer', type: 'MANPOWER', sub: 'CONTRACT', rate: 1800, unit: 'HR', cap: 1, desig: 'Veterinarian' },
+          { key: `RES-${tag}-EQ01`, name: 'Feed Mill & Pellet Line', type: 'EQUIPMENT', sub: 'OWNED', rate: 950, unit: 'HR', cap: 2, make: 'Buhler', model: 'MDDK-1000' },
+          { key: `RES-${tag}-EQ02`, name: 'High-Pressure Washer', type: 'EQUIPMENT', sub: 'OWNED', rate: 180, unit: 'HR', cap: 1, make: 'Karcher', model: 'HD 6/15' },
           { key: `RES-${tag}-VH01`, name: 'Livestock Transport Truck', type: 'VEHICLE', sub: 'OWNED', rate: 42, unit: 'KM', cap: 40, make: 'Tata', model: 'LPT 1109' },
-          { key: `RES-${tag}-UTIL01`, name: 'Grid Electricity Supply', type: 'UTILITY', sub: 'METERED', rate: 9.2, unit: 'KWH', cap: 1000 },
+          { key: `RES-${tag}-UTIL01`, name: 'Grid Electricity Supply', type: 'UTILITY', sub: 'RENTED', rate: 9.2, unit: 'KWH', cap: 1000 },
         ];
         for (const r of rows) {
           let [x] = await db.select().from(schema.resourceMaster)
@@ -164,17 +165,17 @@ export async function seedDemoGaps() {
               capacity: d4(r.cap), unit: r.unit, capacity_uom: r.unit, cost_rate: d4(r.rate),
               asset_make: (r as any).make ?? null, asset_model: (r as any).model ?? null,
               designation: (r as any).desig ?? null,
-              purchase_date: r.type === 'LABOUR' ? null : '2025-04-12',
-              maintenance_frequency_days: r.type === 'LABOUR' ? null : 90,
-              last_maintenance_date: r.type === 'LABOUR' ? null : '2026-06-15',
-              next_maintenance_date: r.type === 'LABOUR' ? null : '2026-09-13',
-              maintenance_cost_per_service: r.type === 'LABOUR' ? null : d4(4500),
-              maintenance_vendor: r.type === 'LABOUR' ? null : 'AgriEquip Machinery & Spares',
+              purchase_date: r.type === 'MANPOWER' ? null : '2025-04-12',
+              maintenance_frequency_days: r.type === 'MANPOWER' ? null : 90,
+              last_maintenance_date: r.type === 'MANPOWER' ? null : '2026-06-15',
+              next_maintenance_date: r.type === 'MANPOWER' ? null : '2026-09-13',
+              maintenance_cost_per_service: r.type === 'MANPOWER' ? null : d4(4500),
+              maintenance_vendor: r.type === 'MANPOWER' ? null : 'AgriEquip Machinery & Spares',
               is_active: true, created_by: by,
             });
             [x] = [{ resource_id: id } as any];
           }
-          if (r.type === 'LABOUR' || r.type === 'UTILITY') continue;
+          if (r.type === 'MANPOWER' || r.type === 'UTILITY') continue;
           const [log] = await db.select().from(schema.resourceMaintenanceLog)
             .where(eq(schema.resourceMaintenanceLog.resource_id, x!.resource_id)).limit(1);
           if (log) continue;
@@ -265,18 +266,27 @@ export async function seedDemoGaps() {
       const attrs = [
         { code: 'ATTR-CP', name: 'Crude Protein', type: 'NUMBER', unit: '%', variant: false },
         { code: 'ATTR-ME', name: 'Metabolisable Energy', type: 'NUMBER', unit: 'kcal/kg', variant: false },
-        { code: 'ATTR-FORM', name: 'Physical Form', type: 'LIST', unit: null, variant: true, list: ['MASH', 'PELLET', 'CRUMBLE'] },
-        { code: 'ATTR-BAGSZ', name: 'Bag Size', type: 'LIST', unit: 'KG', variant: true, list: ['25', '50'] },
+        { code: 'ATTR-FORM', name: 'Physical Form', type: 'TEXT', unit: null, variant: true, list: ['MASH', 'PELLET', 'CRUMBLE'] },
+        { code: 'ATTR-BAGSZ', name: 'Bag Size', type: 'TEXT', unit: 'KG', variant: true, list: ['25', '50'] },
       ];
-      const attrIds = new Map<string, string>();
-      for (const a of attrs) {
+      // One attribute row per company, not one shared tenant row.
+      //
+      // These are seeded after the company has already adopted the tenant
+      // templates, so a tenant-only row would never get a company copy and the
+      // Item Attribute master read empty at company scope — the same way every
+      // other master did before adoption was wired in.
+      const attrIdsByCompany = new Map<string, Map<string, string>>();
+      for (const { c } of perCompany) {
+        const attrIds = new Map<string, string>();
+        attrIdsByCompany.set(c.company_id, attrIds);
+        for (const a of attrs) {
         const [x] = await db.select().from(schema.itemAttributeMaster)
-          .where(and(eq(schema.itemAttributeMaster.tenant_id, tenantId), eq(schema.itemAttributeMaster.attribute_name, a.name))).limit(1);
+          .where(and(eq(schema.itemAttributeMaster.company_id, c.company_id), eq(schema.itemAttributeMaster.attribute_name, a.name))).limit(1);
         if (!x) {
           const id = randomUUID();
           await db.insert(schema.itemAttributeMaster).values({
-            attribute_id: id, tenant_id: tenantId, nob_id: nobId, lob_id: lobId,
-            attribute_code: await seedCode(db, tenantId, null, 'ITEM_ATTRIBUTE', schema.itemAttributeMaster, schema.itemAttributeMaster.attribute_code, a.code, { attribute_name: a.name }),
+            attribute_id: id, tenant_id: tenantId, company_id: c.company_id, nob_id: nobId, lob_id: lobId,
+            attribute_code: await seedCode(db, tenantId, c.company_id, 'ITEM_ATTRIBUTE', schema.itemAttributeMaster, schema.itemAttributeMaster.attribute_code, a.code, { attribute_name: a.name }),
             attribute_name: a.name, data_type: a.type,
             list_values: (a as any).list ?? null, unit: a.unit, is_mandatory: false,
             affects_costing: false, is_variant: a.variant, is_active: true, created_by: by,
@@ -286,6 +296,7 @@ export async function seedDemoGaps() {
           attrIds.set(a.code, x.attribute_id);
         }
       }
+      }
       const values: Record<string, Record<string, string>> = {
         'FEED-GEST-SOW': { 'ATTR-CP': '14.0', 'ATTR-ME': '3050', 'ATTR-FORM': 'MASH', 'ATTR-BAGSZ': '50' },
         'FEED-LACT-SOW': { 'ATTR-CP': '18.0', 'ATTR-ME': '3250', 'ATTR-FORM': 'PELLET', 'ATTR-BAGSZ': '50' },
@@ -293,7 +304,8 @@ export async function seedDemoGaps() {
         'FEED-WEAN-GROW': { 'ATTR-CP': '19.0', 'ATTR-ME': '3300', 'ATTR-FORM': 'PELLET', 'ATTR-BAGSZ': '50' },
         'FEED-FINISHER': { 'ATTR-CP': '16.0', 'ATTR-ME': '3200', 'ATTR-FORM': 'PELLET', 'ATTR-BAGSZ': '50' },
       };
-      for (const { items } of perCompany) {
+      for (const { c, items } of perCompany) {
+        const attrIds = attrIdsByCompany.get(c.company_id) ?? new Map<string, string>();
         for (const [itemCode, vals] of Object.entries(values)) {
           const itemId = items.get(itemCode);
           if (!itemId) continue;
@@ -313,11 +325,25 @@ export async function seedDemoGaps() {
 
     /* ── UOM conversions ───────────────────────────────────────────────── */
     await run('UOM conversions', async () => {
+      // Repair the two legacy demo abbreviations before the idempotency checks.
+      // TON and LTR never existed in uom_master; the canonical codes are TONNE
+      // and LITER. If a corrected pair already exists, discard only the stale
+      // demo duplicate; otherwise rename it in place and preserve its identity.
+      await pool.query(`DELETE stale FROM uom_conversion_master stale
+        JOIN uom_conversion_master canonical
+          ON canonical.tenant_id = stale.tenant_id
+         AND (canonical.company_id <=> stale.company_id)
+         AND canonical.to_uom = stale.to_uom
+         AND canonical.from_uom = CASE stale.from_uom WHEN 'TON' THEN 'TONNE' WHEN 'LTR' THEN 'LITER' END
+       WHERE stale.from_uom IN ('TON','LTR')`);
+      await pool.query(`UPDATE uom_conversion_master
+        SET from_uom = CASE from_uom WHEN 'TON' THEN 'TONNE' WHEN 'LTR' THEN 'LITER' END
+        WHERE from_uom IN ('TON','LTR')`);
       const rows = [
-        { from: 'TON', to: 'KG', f: 1000 },
+        { from: 'TONNE', to: 'KG', f: 1000 },
         { from: 'BAG', to: 'KG', f: 50 },
         { from: 'KG', to: 'GRAM', f: 1000 },
-        { from: 'LTR', to: 'ML', f: 1000 },
+        { from: 'LITER', to: 'ML', f: 1000 },
         { from: 'DOSE', to: 'ML', f: 80 },
         // Medicines are bought and priced by the vial/pack but dosed in ml or
         // grams; without these the data-entry screen charged a whole vial per ml.
@@ -957,6 +983,12 @@ export async function seedDemoGaps() {
       }
     });
 
+    if (failures.length) {
+      throw new AggregateError(
+        failures.map((failure) => failure.error),
+        `Master-data gap fill failed in ${failures.length} section(s): ${failures.map((failure) => failure.label).join(', ')}`,
+      );
+    }
     console.log('\n🎉 Master-data gap fill complete.');
   } finally {
     await pool.end();

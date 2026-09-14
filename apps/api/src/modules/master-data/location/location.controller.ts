@@ -47,7 +47,13 @@ export class LocationController {
     return {
       success: true,
       message: 'Locations retrieved successfully.',
-      data: result
+      // `data` stays the array it has always been, so every existing caller
+      // keeps working; total/limit/offset are new siblings the list screen uses
+      // to page through the whole table rather than a fetched window of it.
+      data: result.data,
+      total: result.total,
+      limit: result.limit,
+      offset: result.offset,
     };
   }
 

@@ -60,6 +60,7 @@ const DEFAULT_RESOURCES = [
   { module_code: "MASTER_DATA", resource: "GL_ACCOUNT", name: "GL Accounts", nameKey: "rolGlAccounts" },
   { module_code: "MASTER_DATA", resource: "GL_MAPPING", name: "GL Mappings", nameKey: "rolGlMappings" },
   { module_code: "MASTER_DATA", resource: "COST_CENTER", name: "Cost Centers", nameKey: "rolCostCenters" },
+  { module_code: "MASTER_DATA", resource: "CURRENCY", name: "Currencies", nameKey: "rolCurrencies" },
   // NOTIFICATION
   { module_code: "NOTIFICATION", resource: "SETTINGS", name: "Notification Gateway Settings", nameKey: "rolNotificationGateway" },
   { module_code: "MASTER_DATA", resource: "OPERATIONAL_AREA", name: "Operational Areas", nameKey: "operationalAreas" },

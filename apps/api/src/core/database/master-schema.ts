@@ -96,6 +96,19 @@ export const currencyMaster = mysqlTable('currency_master', {
   symbol: varchar('symbol', { length: 5 }).notNull(),
   symbol_position: varchar('symbol_position', { length: 10 }).default('PREFIX').notNull(),
   decimal_places: int('decimal_places').default(2).notNull(),
+  /**
+   * Countries where this currency is legal tender, as ISO alpha-2 codes.
+   * An array because one country cannot hold either fact: the euro is a single
+   * currency across Germany, France and the Netherlands, and the US dollar is
+   * legal tender in Zimbabwe as well as the United States.
+   *
+   * Codes in a JSON array rather than ids in a join table, matching
+   * location_type_master.allowed_parent_types and reason_master.applicable_stages,
+   * which are the same shape. country_master.default_currency_id answers the
+   * opposite direction — one country's default currency — and is not derived
+   * from this, nor this from it.
+   */
+  country_codes: json('country_codes').$type<string[] | null>(),
   is_system_default: boolean('is_system_default').default(false).notNull(),
   is_active: boolean('is_active').default(true).notNull()
 });

@@ -4,7 +4,13 @@ import { drizzle } from 'drizzle-orm/mysql2';
 import { eq, and, inArray } from 'drizzle-orm';
 import * as schema from '../core/database/schema';
 import { seriesCodeFor } from './lib/seed-series-code';
-import { ITEM_CATALOG_1, ITEM_CATALOG_2, loadItemsByKey } from './lib/seed-item-catalog';
+import {
+  ITEM_CATALOG_1,
+  ITEM_CATALOG_2,
+  ITEM_CATEGORY_CATALOG,
+  ITEM_SUBCATEGORY_CATALOG,
+  loadItemsByKey,
+} from './lib/seed-item-catalog';
 import { seedLocation, type SeededLocation } from './lib/seed-location';
 
 const host = process.env.DATABASE_HOST || 'localhost';
@@ -18,6 +24,99 @@ const masterDatabase = process.env.DATABASE_NAME || 'navfarm_master';
 const isPiggeryIsolated = masterDatabase.startsWith('piggery_');
 const tenantCode = process.env.DEV_TENANT_CODE || 'devco';
 const dbName = isPiggeryIsolated ? `piggery_tenant_${tenantCode}` : `tenant_${tenantCode}`;
+
+async function seedItemCategoryTree(
+  db: any,
+  ctx: { tenantId: string; companyId: string; nobId: string; lobId: string },
+) {
+  const categoryIds = new Map<string, string>();
+  const categoryCodes = new Map<string, string>();
+  const subcategoryCodes = new Map<string, string>();
+
+  for (const category of ITEM_CATEGORY_CATALOG) {
+    const [existing] = await db.select().from(schema.itemCategoryMaster).where(and(
+      eq(schema.itemCategoryMaster.company_id, ctx.companyId),
+      eq(schema.itemCategoryMaster.category_name, category.name),
+    )).limit(1);
+
+    let id = existing?.category_id;
+    let code = existing?.category_code;
+    if (!existing) {
+      id = randomUUID();
+      const taken = (await db.select({ code: schema.itemCategoryMaster.category_code })
+        .from(schema.itemCategoryMaster)
+        .where(eq(schema.itemCategoryMaster.company_id, ctx.companyId)))
+        .map((row: { code: string }) => row.code);
+      code = (await seriesCodeFor(db, { tenantId: ctx.tenantId, companyId: ctx.companyId }, 'ITEM_CATEGORY',
+        { category_name: category.name }, taken)) ?? category.key;
+      await db.insert(schema.itemCategoryMaster).values({
+        category_id: id,
+        tenant_id: ctx.tenantId,
+        company_id: ctx.companyId,
+        nob_id: ctx.nobId,
+        lob_id: ctx.lobId,
+        category_code: code,
+        category_name: category.name,
+        item_type: category.itemType,
+        is_active: true,
+      });
+    } else {
+      // These are root categories. An older detail pass incorrectly parented the
+      // commercial biological-assets root under the breeding root, hiding it
+      // from the Item form's rootOnly category picker.
+      await db.update(schema.itemCategoryMaster).set({
+        parent_category_id: null,
+        item_type: category.itemType,
+        nob_id: existing.nob_id ?? ctx.nobId,
+        lob_id: existing.lob_id ?? ctx.lobId,
+      }).where(eq(schema.itemCategoryMaster.category_id, id));
+    }
+    categoryIds.set(category.key, id!);
+    categoryCodes.set(category.key, code!);
+  }
+
+  for (const subcategory of ITEM_SUBCATEGORY_CATALOG) {
+    const parentId = categoryIds.get(subcategory.parent);
+    if (!parentId) throw new Error(`Missing demo parent category '${subcategory.parent}'.`);
+    const parent = ITEM_CATEGORY_CATALOG.find((row) => row.key === subcategory.parent)!;
+    const [existing] = await db.select().from(schema.itemCategoryMaster).where(and(
+      eq(schema.itemCategoryMaster.company_id, ctx.companyId),
+      eq(schema.itemCategoryMaster.category_name, subcategory.name),
+    )).limit(1);
+
+    let code = existing?.category_code;
+    if (!existing) {
+      const taken = (await db.select({ code: schema.itemCategoryMaster.category_code })
+        .from(schema.itemCategoryMaster)
+        .where(eq(schema.itemCategoryMaster.company_id, ctx.companyId)))
+        .map((row: { code: string }) => row.code);
+      code = (await seriesCodeFor(db, { tenantId: ctx.tenantId, companyId: ctx.companyId }, 'ITEM_CATEGORY',
+        { category_name: subcategory.name }, taken)) ?? subcategory.key;
+      await db.insert(schema.itemCategoryMaster).values({
+        category_id: randomUUID(),
+        tenant_id: ctx.tenantId,
+        company_id: ctx.companyId,
+        nob_id: ctx.nobId,
+        lob_id: ctx.lobId,
+        category_code: code,
+        category_name: subcategory.name,
+        parent_category_id: parentId,
+        item_type: parent.itemType,
+        is_active: true,
+      });
+    } else {
+      await db.update(schema.itemCategoryMaster).set({
+        parent_category_id: parentId,
+        item_type: parent.itemType,
+        nob_id: existing.nob_id ?? ctx.nobId,
+        lob_id: existing.lob_id ?? ctx.lobId,
+      }).where(eq(schema.itemCategoryMaster.category_id, existing.category_id));
+    }
+    subcategoryCodes.set(subcategory.key, code!);
+  }
+
+  return { categoryIds, categoryCodes, subcategoryCodes };
+}
 
 export async function seedPiggeryData() {
   console.log(`Starting comprehensive piggery multi-company master & operational data seed into ${dbName}...`);
@@ -176,34 +275,11 @@ export async function seedPiggeryData() {
     // The stored category_code comes from the ITEM_CATEGORY series, which
     // composes the category's own name — these used to be hand-written CAT-*
     // codes the series could never have produced.
-    const catConfigs = [
-      { key: 'CAT-RAW-GRAINS', name: 'Raw Grains & Cereals' },
-      { key: 'CAT-PROTEIN-SUPP', name: 'Protein Meals & Supplements' },
-      { key: 'CAT-FEED-PREMIX', name: 'Vitamins & Mineral Premixes' },
-      { key: 'CAT-SWINE-FEEDS', name: 'Finished Swine Feeds & Diets' },
-      { key: 'CAT-VET-MEDS', name: 'Veterinary Medicines & Antibiotics' },
-      { key: 'CAT-VET-VACCINES', name: 'Swine Immunization Vaccines' },
-      { key: 'CAT-BIO-BREEDING', name: 'Biological Assets - Breeding Stock' },
-      { key: 'CAT-BIO-COMMERCIAL', name: 'Biological Assets - Grower & Finisher' },
-    ];
-    const catMap1 = new Map<string, string>();
-    // The category's own code, needed as a segment of the item code below.
-    const catMap1Code = new Map<string, string>();
-    for (const cat of catConfigs) {
-      // Matched on the name, not the code: the code is generated below and
-      // is not known until after this lookup.
-      const [existingCat] = await db.select().from(schema.itemCategoryMaster).where(and(eq(schema.itemCategoryMaster.company_id, comp1Id), eq(schema.itemCategoryMaster.category_name, cat.name))).limit(1);
-      let catId = existingCat?.category_id;
-      if (existingCat) catMap1Code.set(cat.key, existingCat.category_code);
-      if (!existingCat) {
-        catId = randomUUID();
-        const taken = (await db.select({ code: schema.itemCategoryMaster.category_code }).from(schema.itemCategoryMaster).where(eq(schema.itemCategoryMaster.company_id, comp1Id))).map((r: { code: string }) => r.code);
-        const categoryCode = (await seriesCodeFor(db, { tenantId, companyId: comp1Id }, 'ITEM_CATEGORY', { category_name: cat.name }, taken)) ?? cat.key;
-        await db.insert(schema.itemCategoryMaster).values({ category_id: catId, tenant_id: tenantId, company_id: comp1Id, category_code: categoryCode, category_name: cat.name, is_active: true });
-        catMap1Code.set(cat.key, categoryCode);
-      }
-      catMap1.set(cat.key, catId!);
-    }
+    const {
+      categoryIds: catMap1,
+      categoryCodes: catMap1Code,
+      subcategoryCodes: subcatMap1Code,
+    } = await seedItemCategoryTree(db, { tenantId, companyId: comp1Id, nobId, lobId });
 
     const itemMap1 = new Map<string, string>();
     for (const item of ITEM_CATALOG_1) {
@@ -213,12 +289,22 @@ export async function seedPiggeryData() {
       if (!existingItem) {
         itId = randomUUID();
         const categoryId = catMap1.get(item.cat);
+        const subcategoryCode = subcatMap1Code.get(item.sub);
+        if (!categoryId || !subcategoryCode) {
+          throw new Error(`Missing category mapping for demo item '${item.key}'.`);
+        }
         const takenItems = (await db.select({ code: schema.itemMaster.item_code }).from(schema.itemMaster).where(eq(schema.itemMaster.company_id, comp1Id))).map((r: { code: string }) => r.code);
         const itemCode = (await seriesCodeFor(db, { tenantId, companyId: comp1Id }, 'ITEM',
-          { item_type: item.type, category_id: catMap1Code.get(item.cat) ?? null, sub_category: null }, takenItems)) ?? item.key;
+          { item_type: item.type, category_id: catMap1Code.get(item.cat) ?? null, sub_category: subcategoryCode }, takenItems)) ?? item.key;
         await db.insert(schema.itemMaster).values({
-          item_id: itId, tenant_id: tenantId, company_id: comp1Id, category_id: categoryId, nob_id: nobId, lob_id: lobId, item_code: itemCode, item_name: item.name, item_type: item.type, uom_primary: item.uom, valuation_method: item.val, standard_cost: item.cost, is_biological_asset: item.bio, is_inventoriable: true, is_active: true,
+          item_id: itId, tenant_id: tenantId, company_id: comp1Id, category_id: categoryId, nob_id: nobId, lob_id: lobId, item_code: itemCode, item_name: item.name, item_type: item.type, sub_category: subcategoryCode, uom_primary: item.uom, valuation_method: item.val, standard_cost: item.cost, is_biological_asset: item.bio, is_inventoriable: true, is_active: true,
         });
+      } else {
+        const categoryId = catMap1.get(item.cat);
+        const subcategoryCode = subcatMap1Code.get(item.sub);
+        if (!categoryId || !subcategoryCode) throw new Error(`Missing category mapping for demo item '${item.key}'.`);
+        await db.update(schema.itemMaster).set({ category_id: categoryId, sub_category: subcategoryCode })
+          .where(eq(schema.itemMaster.item_id, itId!));
       }
       itemMap1.set(item.key, itId!);
     }
@@ -320,7 +406,7 @@ export async function seedPiggeryData() {
           .where(eq(schema.animalRegister.company_id, comp1Id))).map((r: { code: string }) => r.code);
         const animalCode = (await seriesCodeFor(db, { tenantId, companyId: comp1Id }, 'ANIMAL', { dob }, takenAnimals)) ?? a.code;
         await db.insert(schema.animalRegister).values({
-          animal_id: aId, tenant_id: tenantId, company_id: comp1Id, nob_id: nobId, lob_id: lobId, animal_code: animalCode, animal_type: a.type, breed_id: a.breed.breed_id, gender: a.gender, entry_type: 'PURCHASED', entry_date: '2026-01-10', dob, item_id: itId, ear_tag: a.tag, rfid_tag: a.rfid, acquisition_cost: a.cost, total_opening_asset_value: a.cost, book_value: a.cost, current_bio_asset_value: a.cost, parity_count: a.parity, total_piglets_born_live: a.born, total_piglets_weaned: a.weaned, current_stage_id: stage?.stage_id, current_location_id: locId, status: a.status, is_active: true, created_by: c1AdminId,
+          animal_id: aId, tenant_id: tenantId, company_id: comp1Id, nob_id: nobId, lob_id: lobId, animal_code: animalCode, animal_type: a.type, breed_id: a.breed.breed_id, gender: a.gender, entry_type: 'PURCHASED_LOCAL', entry_date: '2026-01-10', dob, item_id: itId, ear_tag: a.tag, rfid_tag: a.rfid, acquisition_cost: a.cost, total_opening_asset_value: a.cost, book_value: a.cost, current_bio_asset_value: a.cost, parity_count: a.parity, total_piglets_born_live: a.born, total_piglets_weaned: a.weaned, current_stage_id: stage?.stage_id, current_location_id: locId, status: a.status, is_active: true, created_by: c1AdminId,
         });
       }
       animalMap1.set(a.code, aId!);
@@ -511,24 +597,11 @@ export async function seedPiggeryData() {
     }
 
     // 2.3 Item Categories & Items for Company 2
-    const catMap2 = new Map<string, string>();
-    // The category's own code, needed as a segment of the item code below.
-    const catMap2Code = new Map<string, string>();
-    for (const cat of catConfigs) {
-      // Matched on the name, not the code: the code is generated below and
-      // is not known until after this lookup.
-      const [existingCat] = await db.select().from(schema.itemCategoryMaster).where(and(eq(schema.itemCategoryMaster.company_id, comp2Id), eq(schema.itemCategoryMaster.category_name, cat.name))).limit(1);
-      let catId = existingCat?.category_id;
-      if (existingCat) catMap2Code.set(cat.key, existingCat.category_code);
-      if (!existingCat) {
-        catId = randomUUID();
-        const taken = (await db.select({ code: schema.itemCategoryMaster.category_code }).from(schema.itemCategoryMaster).where(eq(schema.itemCategoryMaster.company_id, comp2Id))).map((r: { code: string }) => r.code);
-        const categoryCode = (await seriesCodeFor(db, { tenantId, companyId: comp2Id }, 'ITEM_CATEGORY', { category_name: cat.name }, taken)) ?? cat.key;
-        await db.insert(schema.itemCategoryMaster).values({ category_id: catId, tenant_id: tenantId, company_id: comp2Id, category_code: categoryCode, category_name: cat.name, is_active: true });
-        catMap2Code.set(cat.key, categoryCode);
-      }
-      catMap2.set(cat.key, catId!);
-    }
+    const {
+      categoryIds: catMap2,
+      categoryCodes: catMap2Code,
+      subcategoryCodes: subcatMap2Code,
+    } = await seedItemCategoryTree(db, { tenantId, companyId: comp2Id, nobId, lobId });
 
     const itemMap2 = new Map<string, string>();
     for (const item of ITEM_CATALOG_2) {
@@ -538,12 +611,22 @@ export async function seedPiggeryData() {
       if (!existingItem) {
         itId = randomUUID();
         const categoryId = catMap2.get(item.cat);
+        const subcategoryCode = subcatMap2Code.get(item.sub);
+        if (!categoryId || !subcategoryCode) {
+          throw new Error(`Missing category mapping for demo item '${item.key}'.`);
+        }
         const takenItems = (await db.select({ code: schema.itemMaster.item_code }).from(schema.itemMaster).where(eq(schema.itemMaster.company_id, comp2Id))).map((r: { code: string }) => r.code);
         const itemCode = (await seriesCodeFor(db, { tenantId, companyId: comp2Id }, 'ITEM',
-          { item_type: item.type, category_id: catMap2Code.get(item.cat) ?? null, sub_category: null }, takenItems)) ?? item.key;
+          { item_type: item.type, category_id: catMap2Code.get(item.cat) ?? null, sub_category: subcategoryCode }, takenItems)) ?? item.key;
         await db.insert(schema.itemMaster).values({
-          item_id: itId, tenant_id: tenantId, company_id: comp2Id, category_id: categoryId, nob_id: nobId, lob_id: lobId, item_code: itemCode, item_name: item.name, item_type: item.type, uom_primary: item.uom, valuation_method: item.val, standard_cost: item.cost, is_biological_asset: item.bio, is_inventoriable: true, is_active: true,
+          item_id: itId, tenant_id: tenantId, company_id: comp2Id, category_id: categoryId, nob_id: nobId, lob_id: lobId, item_code: itemCode, item_name: item.name, item_type: item.type, sub_category: subcategoryCode, uom_primary: item.uom, valuation_method: item.val, standard_cost: item.cost, is_biological_asset: item.bio, is_inventoriable: true, is_active: true,
         });
+      } else {
+        const categoryId = catMap2.get(item.cat);
+        const subcategoryCode = subcatMap2Code.get(item.sub);
+        if (!categoryId || !subcategoryCode) throw new Error(`Missing category mapping for demo item '${item.key}'.`);
+        await db.update(schema.itemMaster).set({ category_id: categoryId, sub_category: subcategoryCode })
+          .where(eq(schema.itemMaster.item_id, itId!));
       }
       itemMap2.set(item.key, itId!);
     }

@@ -8,6 +8,7 @@ import * as schema from '../../../core/database/schema';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { CreateLocationTypeDto, QueryLocationTypeDto, UpdateLocationTypeDto } from './dto/location-type.dto';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
+import { listFilterConditions, listOrderBy } from '../../../common/master-list-query';
 
 const mysqlTimestamp = () => new Date().toISOString().slice(0, 19).replace('T', ' ');
 const seriesCodeFor = (typeCode: string) => `LOCATION_${typeCode}`;
@@ -105,8 +106,13 @@ export class LocationTypeService {
     conditions.push(...masterScopeConditions(this.cls, schema.locationTypeMaster, query.companyId));
     if (query.isActive !== undefined) conditions.push(eq(schema.locationTypeMaster.is_active, query.isActive));
     if (query.search) conditions.push(or(like(schema.locationTypeMaster.type_code, `%${query.search}%`), like(schema.locationTypeMaster.type_name, `%${query.search}%`))!);
+    conditions.push(...listFilterConditions(schema.locationTypeMaster, query.filter));
     const rows = await this.db.select().from(schema.locationTypeMaster).where(and(...conditions))
-      .orderBy(sql`${schema.locationTypeMaster.company_id} IS NULL`)
+      // The company-null ordering is a precedence rule, not a preference: the
+      // rows below dedupe tenant templates against company overrides and rely
+      // on it. Any sort the caller asks for is applied within that.
+      .orderBy(sql`${schema.locationTypeMaster.company_id} IS NULL`,
+               listOrderBy(schema.locationTypeMaster, query, schema.locationTypeMaster.type_code))
       .limit(query.limit || 50).offset(query.offset || 0);
     if (!query.companyId) return rows;
     // A company override replaces the tenant-wide definition in dropdowns;

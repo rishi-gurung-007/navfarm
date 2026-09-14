@@ -246,18 +246,31 @@ async function run() {
           location_type: prefixByType.get(row.location_type) ?? row.location_type,
         };
         const stem = formatSeriesStem(series as never, now, segments);
-        const siblings = (issued.get(row.company_id) ?? []).filter((c) => c !== row.location_code);
-        const sequence = nextSequenceInStem(
-          stem,
-          series.seq_separator || series.separator || '-',
-          siblings,
-        );
-        const code = formatSeriesCode(series as never, sequence, now, segments);
+        const sequenceSeparator = series.seq_separator || series.separator || '-';
+        const sequenceText = String(row.location_code).startsWith(`${stem}${sequenceSeparator}`)
+          ? String(row.location_code).slice(`${stem}${sequenceSeparator}`.length)
+          : '';
+        const existingSequence = /^\d+$/.test(sequenceText) ? Number(sequenceText) : null;
 
-        if (code === row.location_code) {
+        // A valid code is already aligned. The previous algorithm removed the
+        // row from the occupied set first and always asked for MAX + 1, so a
+        // perfectly valid FARM-001 was proposed as FARM-002 on every run. A
+        // second run then proposed FARM-003. Compare the current code against
+        // the formatter before allocating anything; only malformed/outdated
+        // paths need a new sequence.
+        if (existingSequence !== null
+          && formatSeriesCode(series as never, existingSequence, now, segments) === row.location_code) {
           skipped.push({ location: row.location_name, why: 'already matches the series' });
           continue;
         }
+
+        const siblings = (issued.get(row.company_id) ?? []).filter((c) => c !== row.location_code);
+        const sequence = nextSequenceInStem(
+          stem,
+          sequenceSeparator,
+          siblings,
+        );
+        const code = formatSeriesCode(series as never, sequence, now, segments);
         if (apply || verify) {
           await db.query('UPDATE location_master SET location_code = ? WHERE location_id = ?', [code, row.location_id]);
         }

@@ -12,6 +12,8 @@
     "dev:mobile": "pnpm nx run mobile:serve",
     "build:api": "pnpm nx build api",
     "build:web": "pnpm nx build web",
+    "start:api": "pnpm nx run api:start",
+    "start:web": "pnpm nx run web:start",
     "test": "pnpm nx run-many -t test -p api web mobile",
     "lint": "pnpm nx run-many -t lint -p api web api-e2e web-e2e",
     "typecheck": "pnpm nx run-many -t typecheck -p api web api-e2e web-e2e",

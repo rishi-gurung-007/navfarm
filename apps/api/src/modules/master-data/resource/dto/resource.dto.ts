@@ -1,6 +1,7 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsInt, Min, IsNumber, IsDateString } from 'class-validator';
 import { Type } from 'class-transformer';
+import { MasterListQueryDto } from '../../../../common/master-list-query';
 
 export class CreateResourceDto {
   @ApiProperty({ description: 'Company UUID scope ownership' })
@@ -281,7 +282,7 @@ export class UpdateResourceDto {
   extension_config?: any;
 }
 
-export class QueryResourceDto {
+export class QueryResourceDto extends MasterListQueryDto {
   @ApiProperty({ description: 'Filter by company UUID', required: false })
   @IsOptional()
   @IsUUID()
@@ -318,20 +319,6 @@ export class QueryResourceDto {
   @IsOptional()
   @IsString()
   search?: string;
-
-  @ApiProperty({ description: 'Results per page', default: 50, required: false })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  limit?: number;
-
-  @ApiProperty({ description: 'Pagination offset', default: 0, required: false })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(0)
-  offset?: number;
 }
 
 export class CreateMaintenanceLogDto {

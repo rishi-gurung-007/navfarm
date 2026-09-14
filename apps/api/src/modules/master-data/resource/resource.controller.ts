@@ -55,7 +55,12 @@ export class ResourceController {
     return {
       success: true,
       message: 'Resources retrieved successfully.',
-      data: result
+            // `data` stays the array every caller already reads; total/limit/offset
+      // are siblings the list screen pages on.
+      data: result.data,
+      total: result.total,
+      limit: result.limit,
+      offset: result.offset,
     };
   }
 

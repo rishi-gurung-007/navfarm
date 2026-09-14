@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Building2, Upload, X, Image as ImageIcon } from "lucide-react";
 import { api } from "../../../services/api-client";
 import { useLanguage } from "@/hooks/useLanguage";
+import { API_ORIGIN } from "@/lib/api-client";
 
 interface Step1ProfileProps {
   onSubmit: (data: any) => Promise<void>;
@@ -94,7 +95,7 @@ export default function Step1Profile({ onSubmit, isSubmitting, initialData }: St
     onSubmit(formData);
   };
 
-  const backendUrl = process.env.NEXT_PUBLIC_API_URL?.replace('/api/v1', '') || 'http://localhost:2877';
+  const backendUrl = API_ORIGIN;
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">

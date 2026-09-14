@@ -434,6 +434,15 @@ body {
     min-height: 0;
     overflow-y: auto;
     overscroll-behavior: contain;
+    /* Reserve the scrollbar's width whether or not it is showing.
+       macOS can be set to show scrollbars always rather than overlay them, and
+       then the bar takes 15px out of the content the moment the list is long
+       enough to scroll. That squeeze is what pushes a table into needing a
+       horizontal scrollbar of its own, and that bar then sits across the last
+       row — the list bottoms out with its final row underneath it. Reserving
+       the gutter keeps the width constant, so the table is measured against
+       the space it will actually have. */
+    scrollbar-gutter: stable;
   }
 }
 

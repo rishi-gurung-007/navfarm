@@ -1,6 +1,7 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsInt, Min, Max, IsNumber } from 'class-validator';
 import { Type } from 'class-transformer';
+import { MasterListQueryDto } from '../../../../common/master-list-query';
 
 export class CreateUomDto {
   @ApiProperty({ description: 'Short code for the UOM. Optional when a number series is configured for UOMs — the code is generated then.', required: false, example: 'KG' })
@@ -103,7 +104,7 @@ export class UpdateUomDto {
   lob_id?: string;
 }
 
-export class QueryUomDto {
+export class QueryUomDto extends MasterListQueryDto {
   @ApiProperty({ description: 'Filter by company UUID', required: false })
   @IsOptional()
   @IsString()
@@ -124,20 +125,6 @@ export class QueryUomDto {
   @IsOptional()
   @IsString()
   search?: string;
-
-  @ApiProperty({ description: 'Results per page', default: 50, required: false })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  limit?: number;
-
-  @ApiProperty({ description: 'Pagination offset', default: 0, required: false })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(0)
-  offset?: number;
 }
 
 export class CreateUomConversionDto {

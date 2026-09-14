@@ -1,7 +1,7 @@
 import { masterScopeConditions } from '../../../common/master-data-scope';
 import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, like, or, isNull } from 'drizzle-orm';
+import { eq, and, like, or, isNull, getTableColumns, count } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
@@ -9,6 +9,7 @@ import { CreateItemDto, UpdateItemDto, QueryItemDto } from './dto/item.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { NobLobResolutionService } from '../../core/operational-area/nob-lob-resolution.service';
+import { listFilterConditions, listOrderBy } from '../../../common/master-list-query';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   return date.toISOString().slice(0, 19).replace('T', ' ');
@@ -394,15 +395,44 @@ export class ItemService {
       );
     }
 
+    conditions.push(...listFilterConditions(schema.itemMaster, query.filter));
+
     const limit = query.limit || 50;
     const offset = query.offset || 0;
 
-    return this.db
-      .select()
+    // category_code alongside the raw category_id, so a list can show the
+    // category an item is filed under. The column stores a UUID, and a list
+    // that renders it raw shows the reader a UUID; resolving it per row from
+    // the client would be one request per row instead.
+    //
+    // sub_category needs no join — it already stores the child category's own
+    // code, which is what makes it readable as it stands.
+    // Not runMasterList: that helper selects from one table, and this list joins
+    // the category so the screen shows a code rather than a UUID. The count
+    // repeats the same conditions, so the two can never disagree about what
+    // they are counting.
+    const data = await this.db
+      .select({
+        ...getTableColumns(schema.itemMaster),
+        category_code: schema.itemCategoryMaster.category_code,
+        category_name: schema.itemCategoryMaster.category_name,
+      })
       .from(schema.itemMaster)
+      .leftJoin(
+        schema.itemCategoryMaster,
+        eq(schema.itemCategoryMaster.category_id, schema.itemMaster.category_id),
+      )
       .where(and(...conditions))
+      .orderBy(listOrderBy(schema.itemMaster, query, schema.itemMaster.item_code))
       .limit(limit)
       .offset(offset);
+
+    const [counted] = await this.db
+      .select({ total: count() })
+      .from(schema.itemMaster)
+      .where(and(...conditions));
+
+    return { data, total: Number(counted?.total ?? 0), limit, offset };
   }
 
   async update(id: string, dto: UpdateItemDto, tenantId: string, userPayload?: any) {

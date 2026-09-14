@@ -1,9 +1,10 @@
-import { Controller, Get, Post, Put, Delete, Body, Param, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Put, Delete, Body, Param, Query, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiParam } from '@nestjs/swagger';
 import { CountryService } from './country.service';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { SystemAdminGuard } from '../../../common/guards/system-admin.guard';
 import { CreateCountryDto, UpdateCountryDto, CreateStateDto, UpdateStateDto } from './dto/country.dto';
+import { QueryCountryDto } from './dto/country.dto';
 
 @ApiTags('Country & State Master')
 @Controller('country')
@@ -11,9 +12,11 @@ export class CountryController {
   constructor(private readonly countryService: CountryService) {}
 
   @Get()
-  @ApiOperation({ summary: 'Fetch all active countries' })
-  async listCountries() {
-    return this.countryService.listCountries();
+  @ApiOperation({ summary: 'List countries matching filters' })
+  async listCountries(@Query() query: QueryCountryDto) {
+    const result = await this.countryService.listCountries(query);
+    // `data` stays the array every picker already reads.
+    return { success: true, message: 'Countries retrieved successfully.', ...result };
   }
 
   @Post()

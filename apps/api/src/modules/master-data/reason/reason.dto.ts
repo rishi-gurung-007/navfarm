@@ -3,6 +3,7 @@ import { IsArray, ArrayUnique, ArrayMaxSize, IsBoolean, IsIn, IsInt, IsNotEmpty,
 import { Transform, Type } from 'class-transformer';
 import { REASON_CATEGORIES } from '../../../core/database/reason-code-seed';
 import type { ReasonCategory } from '../../../core/database/reason-code-seed';
+import { MasterListQueryDto } from '../../../common/master-list-query';
 
 export class CreateReasonDto {
   @IsOptional() @IsUUID() company_id?: string;
@@ -35,12 +36,10 @@ export class UpdateReasonDto extends PartialType(OmitType(CreateReasonDto, ['com
   @IsOptional()
   lob_id?: string;
 }
-export class QueryReasonDto {
+export class QueryReasonDto extends MasterListQueryDto {
   @IsOptional() @IsUUID() companyId?: string;
   @IsOptional() @IsString() @MaxLength(150) search?: string;
   @IsOptional() @IsIn(REASON_CATEGORIES) category?: ReasonCategory;
   @IsOptional() @IsString() @Matches(/^[A-Z][A-Z0-9_]{0,49}$/) stageCode?: string;
   @IsOptional() @Transform(({ value }) => value === 'true' ? true : value === 'false' ? false : value) @IsBoolean() isActive?: boolean;
-  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(10000) limit?: number;
-  @IsOptional() @Type(() => Number) @IsInt() @Min(0) offset?: number;
 }

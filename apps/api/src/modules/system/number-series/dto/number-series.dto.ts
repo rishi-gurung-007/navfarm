@@ -1,6 +1,7 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsIn, IsInt, Min, MaxLength, IsArray } from 'class-validator';
 import { Type } from 'class-transformer';
+import { MasterListQueryDto } from '../../../../common/master-list-query';
 
 const RESET_FREQUENCIES = ['YEARLY', 'MONTHLY', 'NEVER'] as const;
 
@@ -158,7 +159,7 @@ export class UpdateNumberSeriesDto {
   is_active?: boolean;
 }
 
-export class QueryNumberSeriesDto {
+export class QueryNumberSeriesDto extends MasterListQueryDto {
   @ApiProperty({ required: false })
   @IsOptional()
   @IsUUID()
@@ -179,18 +180,4 @@ export class QueryNumberSeriesDto {
   @IsOptional()
   @IsString()
   search?: string;
-
-  @ApiProperty({ required: false, default: 50 })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  limit?: number;
-
-  @ApiProperty({ required: false, default: 0 })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(0)
-  offset?: number;
 }

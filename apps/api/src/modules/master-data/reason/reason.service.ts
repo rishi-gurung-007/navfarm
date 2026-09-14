@@ -8,6 +8,7 @@ import { masterScopeConditions } from '../../../common/master-data-scope';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { CreateReasonDto, QueryReasonDto, UpdateReasonDto } from './reason.dto';
+import { listFilterConditions, listOrderBy } from '../../../common/master-list-query';
 
 const table = schema.reasonMaster;
 @Injectable()
@@ -34,7 +35,8 @@ export class ReasonService {
     if (query.category) conditions.push(eq(table.category, query.category));
     if (query.stageCode) conditions.push(sql`(${table.applicable_stages} IS NULL OR JSON_LENGTH(${table.applicable_stages}) = 0 OR JSON_CONTAINS(${table.applicable_stages}, ${JSON.stringify(query.stageCode)}))`);
     if (query.search) conditions.push(or(like(table.reason_code, `%${query.search}%`), like(table.reason_name, `%${query.search}%`))!);
-    return this.db.select().from(table).where(and(...conditions)).orderBy(table.reason_code).limit(query.limit || 50).offset(query.offset || 0);
+    conditions.push(...listFilterConditions(table, query.filter));
+    return this.db.select().from(table).where(and(...conditions)).orderBy(listOrderBy(table, query, table.reason_code)).limit(query.limit || 50).offset(query.offset || 0);
   }
   private async log(action: string, row: typeof table.$inferSelect, user: any, oldValues?: unknown) {
     await this.audit.log({ tenantId: row.tenant_id, companyId: row.company_id || undefined, userId: user?.userId, action, entityName: 'reason_master', entityId: row.reason_id, oldValues, newValues: row });

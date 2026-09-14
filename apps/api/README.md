@@ -10,18 +10,21 @@ This Nx application contains the NestJS backend imported from
 3. Bootstrap the control-plane and platform-admin databases:
 
    ```bash
-   pnpm nx db-bootstrap api
+   pnpm nx run api:db-bootstrap
    ```
 
 4. Start the API:
 
    ```bash
-   pnpm nx serve api
+   pnpm nx run api:serve
    ```
 
 The default API URL is `http://localhost:2877/api/v1`, Swagger is at
 `http://localhost:2877/api/docs`, and the database-independent liveness route is
 `GET http://localhost:2877/api/v1/health`.
+
+For a non-watching production process with no Node inspector, build and start
+with `pnpm nx run api:build` followed by `pnpm nx run api:start`.
 
 ## Database model
 

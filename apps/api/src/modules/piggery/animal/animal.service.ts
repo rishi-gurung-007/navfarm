@@ -15,6 +15,7 @@ import { NobLobResolutionService } from '../../core/operational-area/nob-lob-res
 import { AnimalMovementLogService } from '../animal-movement-log/animal-movement-log.service';
 import { SchedulerHeaderService } from '../../production/scheduler-header/scheduler-header.service';
 import { BatchTransferService } from '../../production/batch/batch-transfer.service';
+import { listFilterConditions, listOrderBy } from '../../../common/master-list-query';
 
 const toMysqlTimestamp = (date: Date = new Date()) => date.toISOString().slice(0, 19).replace('T', ' ');
 
@@ -602,6 +603,8 @@ export class AnimalService {
       );
     }
 
+    conditions.push(...listFilterConditions(schema.animalRegister, query.filter));
+
     const limit = query.limit || 50;
     const offset = query.offset || 0;
 
@@ -609,6 +612,7 @@ export class AnimalService {
       .select()
       .from(schema.animalRegister)
       .where(and(...conditions))
+      .orderBy(listOrderBy(schema.animalRegister, query, schema.animalRegister.animal_code))
       .limit(limit)
       .offset(offset);
   }

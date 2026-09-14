@@ -9,7 +9,7 @@
         "cache": false,
         "options": {
           "cwd": "apps/api",
-          "command": "node --import tsx src/scripts/verify-demo-master-integrity.ts"
+          "command": "node --env-file-if-exists=.env --import tsx src/scripts/verify-demo-master-integrity.ts"
         }
       },
       "db-align-demo-bbp-masters": {
@@ -50,7 +50,23 @@
           "command": "node --env-file-if-exists=.env --import tsx src/scripts/align-master-codes-to-series.ts"
         }
       },
-      "db-align-stages-to-tdd": {
+      "db-seed-farm-locations": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --import tsx src/scripts/seed-farm-locations.ts"
+        }
+      },
+"db-seed-farm-masters": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --import tsx src/scripts/seed-farm-masters.ts"
+        }
+      },
+"db-align-stages-to-tdd": {
         "executor": "nx:run-commands",
         "cache": false,
         "options": {
@@ -157,7 +173,23 @@
             "buildTarget": "api:build:development"
           },
           "production": {
-            "buildTarget": "api:build:production"
+            "buildTarget": "api:build:production",
+            "inspect": false,
+            "watch": false
+          }
+        }
+      },
+      "start": {
+        "executor": "nx:run-commands",
+        "continuous": true,
+        "dependsOn": ["build"],
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --env-file-if-exists=.env dist/main.js",
+          "env": {
+            "NODE_ENV": "production",
+            "NAVFARM_API_HOST": "127.0.0.1",
+            "NAVFARM_API_PORT": "2877"
           }
         }
       },
@@ -201,6 +233,13 @@
           "command": "node --env-file-if-exists=.env --import tsx src/scripts/sync-nob-lob.ts"
         }
       },
+      "db-sync-currency-master": {
+        "executor": "nx:run-commands",
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --env-file-if-exists=.env --import tsx src/scripts/sync-currency-master.ts"
+        }
+      },
       "db-sync-locale-master": {
         "executor": "nx:run-commands",
         "options": {
@@ -226,7 +265,7 @@
         "executor": "nx:run-commands",
         "options": {
           "cwd": "apps/api",
-          "command": "drizzle-kit migrate --config drizzle.master.config.ts"
+          "command": "node --env-file-if-exists=.env --import tsx src/scripts/migrate-master.ts"
         }
       },
       "db-generate-tenant": {

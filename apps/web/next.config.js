@@ -16,6 +16,26 @@ const PRODUCTION_PAGE_EXTENSIONS = ['tsx', 'ts', 'jsx', 'js'];
  */
 const DEVELOPMENT_PAGE_EXTENSIONS = [...PRODUCTION_PAGE_EXTENSIONS, 'dev.tsx'];
 
+function apiUpstreamOrigin() {
+  const mode = process.env.NAVFARM_API_MODE || 'proxy';
+  if (mode !== 'proxy') {
+    throw new Error(`Unsupported NAVFARM_API_MODE: ${mode}. The current web application supports proxy mode.`);
+  }
+
+  const configured = process.env.NAVFARM_API_UPSTREAM_URL || 'http://127.0.0.1:2877';
+  const upstream = new URL(configured);
+  if (!['http:', 'https:'].includes(upstream.protocol)) {
+    throw new Error('NAVFARM_API_UPSTREAM_URL must use http or https.');
+  }
+  if (upstream.username || upstream.password) {
+    throw new Error('NAVFARM_API_UPSTREAM_URL must not contain credentials.');
+  }
+  if (upstream.pathname !== '/' || upstream.search || upstream.hash) {
+    throw new Error('NAVFARM_API_UPSTREAM_URL must be an origin without a path, query, or fragment.');
+  }
+  return upstream.origin;
+}
+
 /**
  * @param {string} phase
  * @returns {import('next').NextConfig}
@@ -66,6 +86,13 @@ module.exports = (phase) => ({
       destination,
       permanent: true,
     }));
+  },
+  async rewrites() {
+    const upstream = apiUpstreamOrigin();
+    return [
+      { source: '/api/v1/:path*', destination: `${upstream}/api/v1/:path*` },
+      { source: '/uploads/:path*', destination: `${upstream}/uploads/:path*` },
+    ];
   },
   pageExtensions:
     phase === PHASE_DEVELOPMENT_SERVER

@@ -12,6 +12,7 @@ import { formatSeriesCode, formatSeriesStem, nextSequence, nextSequenceInStem, s
 import { MASTER_CODE_COLUMNS } from './master-code-columns';
 import { generateCompositeCode } from './composite-code.util';
 import { CodePreviewDto } from './dto/code-preview.dto';
+import { listFilterConditions, listOrderBy } from '../../../common/master-list-query';
 
 const toMysqlTimestamp = (date: Date = new Date()) => date.toISOString().slice(0, 19).replace('T', ' ');
 
@@ -747,10 +748,14 @@ export class NumberSeriesService {
       );
     }
 
+    conditions.push(...listFilterConditions(schema.noSeriesMaster, query.filter));
+
     const limit = query.limit || 50;
     const offset = query.offset || 0;
 
-    return this.db.select().from(schema.noSeriesMaster).where(and(...conditions)).limit(limit).offset(offset);
+    return this.db.select().from(schema.noSeriesMaster).where(and(...conditions))
+      .orderBy(listOrderBy(schema.noSeriesMaster, query, schema.noSeriesMaster.series_code))
+      .limit(limit).offset(offset);
   }
 
   async update(id: string, dto: UpdateNumberSeriesDto, tenantId: string, userPayload?: any) {

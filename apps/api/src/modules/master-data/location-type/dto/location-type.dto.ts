@@ -1,6 +1,7 @@
 import { Transform, Type } from 'class-transformer';
 import { ApiProperty } from '@nestjs/swagger';
 import { IsArray, IsBoolean, IsInt, IsNotEmpty, IsOptional, IsString, IsUUID, Matches, Min } from 'class-validator';
+import { MasterListQueryDto } from '../../../../common/master-list-query';
 
 const splitParentTypes = ({ value }: { value: unknown }) => {
   if (Array.isArray(value)) return value.map(String).map((v) => v.trim().toUpperCase()).filter(Boolean);
@@ -82,7 +83,7 @@ export class UpdateLocationTypeDto {
   lob_id?: string;
 }
 
-export class QueryLocationTypeDto {
+export class QueryLocationTypeDto extends MasterListQueryDto {
   @IsUUID()
   @IsOptional()
   companyId?: string;
@@ -95,16 +96,4 @@ export class QueryLocationTypeDto {
   @IsString()
   @IsOptional()
   search?: string;
-
-  @IsInt()
-  @Min(1)
-  @IsOptional()
-  @Type(() => Number)
-  limit?: number;
-
-  @IsInt()
-  @Min(0)
-  @IsOptional()
-  @Type(() => Number)
-  offset?: number;
 }

@@ -1,4 +1,4 @@
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, isNull, or, sql } from 'drizzle-orm';
 import * as schema from '../../core/database/schema';
 import {
   formatSeriesCode,
@@ -33,6 +33,14 @@ export async function seriesCodeFor(
   record: Record<string, unknown>,
   occupied: Iterable<string> = [],
 ): Promise<string | null> {
+  // Prefer the company's own series over the tenant draft.
+  //
+  // Once a company adopts the tenant templates there are two rows per series —
+  // the draft (company_id NULL) and the company's copy — and the company's is
+  // the one actually in use. Without the ordering this picked whichever the
+  // engine returned first and advanced that row's counter, so a code could come
+  // off the draft while the app read the company's.
+  // Mirrors NumberSeriesService.generateNext's `ORDER BY company_id IS NULL`.
   const [series] = await db
     .select()
     .from(schema.noSeriesMaster)
@@ -42,8 +50,12 @@ export async function seriesCodeFor(
         eq(schema.noSeriesMaster.series_code, seriesCode),
         eq(schema.noSeriesMaster.is_active, true),
         isNull(schema.noSeriesMaster.deleted_at),
+        ctx.companyId
+          ? or(eq(schema.noSeriesMaster.company_id, ctx.companyId), isNull(schema.noSeriesMaster.company_id))
+          : isNull(schema.noSeriesMaster.company_id),
       ),
     )
+    .orderBy(sql`${schema.noSeriesMaster.company_id} IS NULL`)
     .limit(1);
 
   if (!series) return null;
@@ -51,16 +63,6 @@ export async function seriesCodeFor(
   const now = new Date();
   const stem = formatSeriesStem(series, now, record);
 
-  // A named series (no sequence) whose stem came out empty means `record` did
-  // not carry the fields the series names — and formatSeriesCode would then
-  // fall through to the bare sequence and hand back "1". That is not a code,
-  // and the second row gets "1" too and collides on the scope-code unique key.
-  //
-  // Caught exactly this way: the item-category seed passed its own {key, name}
-  // shape to a series configured on `category_name`, and every category came
-  // out as "1". A seed writing identities has to fail loudly here rather than
-  // invent one or quietly fall back to a hand-written code the series never
-  // produced.
   // A UUID never belongs in a code. NumberSeriesService resolves reference
   // fields (category_id, parent_location_id, breed_id...) to the referenced
   // row's own code before composing; this helper does not carry that registry,
@@ -77,6 +79,16 @@ export async function seriesCodeFor(
     );
   }
 
+  // A named series (no sequence) whose stem came out empty means `record` did
+  // not carry the fields the series names — and formatSeriesCode would then
+  // fall through to the bare sequence and hand back "1". That is not a code,
+  // and the second row gets "1" too and collides on the scope-code unique key.
+  //
+  // Caught exactly this way: the item-category seed passed its own {key, name}
+  // shape to a series configured on `category_name`, and every category came
+  // out as "1". A seed writing identities has to fail loudly here rather than
+  // invent one or quietly fall back to a hand-written code the series never
+  // produced.
   if (series.seq_length <= 0 && !stem) {
     throw new Error(
       `Series '${seriesCode}' composes its code from ${JSON.stringify(segmentFields(series))}, ` +
@@ -129,7 +141,9 @@ export async function seedCode(
   record: Record<string, unknown> = {},
 ): Promise<string> {
   const rows = await db.select({ code: codeColumn }).from(table).where(
-    companyId ? eq(table.company_id, companyId) : eq(table.tenant_id, tenantId),
+    companyId
+      ? and(eq(table.tenant_id, tenantId), eq(table.company_id, companyId))
+      : and(eq(table.tenant_id, tenantId), isNull(table.company_id)),
   );
   const occupied = rows.map((r: { code: string | null }) => r.code).filter(Boolean) as string[];
   return (await seriesCodeFor(db, { tenantId, companyId }, seriesCode, record, occupied)) ?? fallback;

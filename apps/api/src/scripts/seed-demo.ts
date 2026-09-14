@@ -5,6 +5,11 @@ import { seedPiggeryData } from './seed-piggery-complete-data';
 import { seedFullCoverage } from './seed-demo-full-coverage';
 import { seedDemoGaps } from './seed-demo-gaps';
 import { stampMasterNobLob } from './stamp-master-nob-lob';
+import { enrichDemoMasters, seedDocumentedReasons } from './lib/seed-demo-detail';
+import { DOCUMENTED_REASONS } from '../core/database/reason-code-seed';
+import { drizzle } from 'drizzle-orm/mysql2';
+import * as tenantSchema from '../core/database/schema';
+import { copyCompanyMasterTemplates } from '../modules/core/company/copy-master-templates';
 
 /**
  * One command to build the entire demo environment.
@@ -59,6 +64,11 @@ async function dropDatabases() {
 const stages: Array<{ label: string; fn: () => Promise<unknown> }> = [
   { label: 'Platform bootstrap (master + system tenant)', fn: bootstrap },
   { label: 'Tenant, companies, users, starter master data', fn: seedDevTenant },
+  // Between the tenant's masters and any company data: the tenant rows are the
+  // draft, and a company works from its own copy. copyCompanyMasterTemplates is
+  // what makes that copy — including no_series_master, which is why a series
+  // resolved to nothing at company scope until this ran.
+  { label: 'Adopt tenant master templates into the company', fn: adoptCompanyTemplates },
   { label: 'Piggery operational dataset (both companies)', fn: seedPiggeryData },
   { label: 'Cross-module coverage (inventory, finance, QC, approvals)', fn: seedFullCoverage },
   { label: 'Master-data & configuration gap fill', fn: seedDemoGaps },
@@ -66,7 +76,55 @@ const stages: Array<{ label: string; fn: () => Promise<unknown> }> = [
   // carries nob_id/lob_id now; piggery is the only area, so every seeded row
   // belongs to it. Only NULLs are filled, so it is safe to re-run.
   { label: 'Stamp NOB/LOB on every master', fn: stampSeededMasters },
+  // Last: the optional fields the core seeds leave NULL, so a master's edit form
+  // shows a filled record instead of a page of blanks. Demo values only — see
+  // lib/seed-demo-detail.ts for what is deliberately left for the client.
+  { label: 'Demo detail: reasons + optional master fields', fn: fillDemoDetail },
 ];
+
+async function fillDemoDetail() {
+  const conn = await mysql.createConnection({
+    host, port, user, password, ssl, database: assertDatabaseName(`tenant_${tenantCode}`),
+  });
+  try {
+    const [[tenant]] = await conn.query<any[]>('SELECT tenant_id FROM company_master LIMIT 1');
+    if (!tenant) return;
+    const reasons = await seedDocumentedReasons(conn, tenant.tenant_id, DOCUMENTED_REASONS);
+    const filled = await enrichDemoMasters(conn, tenant.tenant_id);
+    const total = filled.reduce((sum, r) => sum + r.rows, 0);
+    console.log(`  seeded ${reasons} documented reasons; filled ${total} optional field values across ${filled.length} passes.`);
+  } finally {
+    await conn.end();
+  }
+}
+
+async function adoptCompanyTemplates() {
+  const pool = mysql.createPool({
+    host, port, user, password, ssl, database: assertDatabaseName(`tenant_${tenantCode}`),
+  });
+  try {
+    const db = drizzle(pool, { schema: tenantSchema, mode: 'default' });
+    const companies = await db.select().from(tenantSchema.companyMaster);
+    for (const company of companies) {
+      // Template adoption is a one-time snapshot, not a repeated sync. The
+      // seed command is idempotent, so do not attempt to insert the same
+      // company-scoped master codes again on its second run.
+      const [existing] = await pool.query<any[]>(
+        'SELECT series_id FROM no_series_master WHERE company_id = ? LIMIT 1',
+        [company.company_id],
+      );
+      if (existing.length) {
+        console.log(`  ${company.company_code}: master templates already adopted.`);
+        continue;
+      }
+      const copied = await db.transaction((tx) =>
+        copyCompanyMasterTemplates(tx, company.tenant_id, company.company_id));
+      console.log(`  ${company.company_code}: adopted ${copied} master template rows.`);
+    }
+  } finally {
+    await pool.end();
+  }
+}
 
 async function stampSeededMasters() {
   const conn = await mysql.createConnection({

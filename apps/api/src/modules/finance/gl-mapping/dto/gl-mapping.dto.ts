@@ -1,6 +1,7 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsInt, Min } from 'class-validator';
 import { Type } from 'class-transformer';
+import { MasterListQueryDto } from '../../../../common/master-list-query';
 
 export class CreateGlMappingDto {
   @ApiProperty({ description: 'Company UUID scope ownership', example: 'company-uuid-here' })
@@ -130,7 +131,7 @@ export class UpdateGlMappingDto {
   extension_config?: any;
 }
 
-export class QueryGlMappingDto {
+export class QueryGlMappingDto extends MasterListQueryDto {
   @ApiProperty({ description: 'Filter by company UUID', required: false })
   @IsOptional()
   @IsUUID()
@@ -171,18 +172,4 @@ export class QueryGlMappingDto {
   @IsBoolean()
   @Type(() => Boolean)
   isActive?: boolean;
-
-  @ApiProperty({ description: 'Results per page', default: 50, required: false })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  limit?: number;
-
-  @ApiProperty({ description: 'Pagination offset', default: 0, required: false })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(0)
-  offset?: number;
 }

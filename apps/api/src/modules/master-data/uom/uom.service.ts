@@ -14,6 +14,7 @@ import {
 } from './dto/uom.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
+import { listFilterConditions, listOrderBy } from '../../../common/master-list-query';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   return date.toISOString().slice(0, 19).replace('T', ' ');
@@ -177,6 +178,8 @@ export class UomService {
       );
     }
 
+    conditions.push(...listFilterConditions(schema.uomMaster, query.filter));
+
     const limit = query.limit || 50;
     const offset = query.offset || 0;
 
@@ -184,6 +187,7 @@ export class UomService {
       .select()
       .from(schema.uomMaster)
       .where(and(...conditions))
+      .orderBy(listOrderBy(schema.uomMaster, query, schema.uomMaster.uom_code))
       .limit(limit)
       .offset(offset);
   }
@@ -459,6 +463,7 @@ export class UomService {
       .select()
       .from(schema.uomConversionMaster)
       .where(and(...conditions))
+      .orderBy(schema.uomConversionMaster.from_uom)
       .limit(limit)
       .offset(offset);
   }

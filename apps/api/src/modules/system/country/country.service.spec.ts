@@ -30,12 +30,28 @@ describe('CountryService', () => {
     service = module.get<CountryService>(CountryService);
   });
 
-  it('listCountries() returns only active countries', async () => {
-    mockDbSelect.mockReturnValue({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ iso2: 'IN' }]) }) });
+  // listCountries answers the shared master list contract now: rows plus a
+  // total, sorted and pageable. It also stopped forcing isActive — a master
+  // list has to show a blocked row so it can be found and restored, and the
+  // pickers that consume this pass isActive=true themselves.
+  it('listCountries() returns rows with a total', async () => {
+    mockDbSelect
+      .mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockReturnValue({
+            orderBy: jest.fn().mockReturnValue({
+              limit: jest.fn().mockReturnValue({ offset: jest.fn().mockResolvedValue([{ iso2: 'IN' }]) }),
+            }),
+          }),
+        }),
+      })
+      .mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ total: 1 }]) }),
+      });
 
-    const result = await service.listCountries();
-
-    expect(result).toEqual([{ iso2: 'IN' }]);
+    await expect(service.listCountries()).resolves.toEqual({
+      data: [{ iso2: 'IN' }], total: 1, limit: 50, offset: 0,
+    });
   });
 
   describe('states', () => {

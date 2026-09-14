@@ -31,7 +31,12 @@ const locationType: MasterDataConfig = {
     { key: "type_code", label: "Type Code", type: "text", required: true, placeholder: "FARM", createOnly: true },
     { key: "type_name", label: "Type Name", type: "text", required: true, placeholder: "Farm" },
     { key: "code_prefix", label: "Code Prefix", type: "text", required: true, placeholder: "FARM", helpText: "Future locations use PREFIX-001, PREFIX-002, and so on." },
-    { key: "allowed_parent_types", label: "Allowed Parent Types", type: "text", showInLookup: true, placeholder: "FARM,SHED", helpText: "Comma-separated type codes. Leave blank for a root type." },
+    {
+      key: "allowed_parent_types", label: "Allowed Parent Types", type: "select-entity", multiple: true,
+      entityEndpoint: "/location-type", entityValueKey: "type_code", entityLabelKeys: ["type_code", "type_name"],
+      excludeValuesOf: ["type_code"], showInLookup: true,
+      helpText: "Leave empty for a level 1 root type. Otherwise choose the location type(s) allowed at the immediately preceding level.",
+    },
   ],
 };
 
@@ -62,14 +67,14 @@ const location: MasterDataConfig = {
       entityEndpoint: "/location-type", entityValueKey: "type_code", entityLabelKeys: ["type_code", "type_name"], section: "Identification",
     },
     {
-      key: "parent_location_id", label: "Parent Location", type: "select-entity", searchable: true,
+      key: "parent_location_id", label: "Parent Location", type: "select-entity", searchable: true, required: true,
       entityEndpoint: "/location", entityValueKey: "location_id", entityLabelKeys: ["location_code", "location_name"],
       dependsOn: "location_type",
       restrictOptionsBy: {
         selectorKey: "location_type", selectorEntityEndpoint: "/location-type", selectorCodeKey: "type_code",
-        allowListKey: "allowed_parent_types", optionCodeKey: "location_type",
+        allowListKey: "allowed_parent_types", optionCodeKey: "location_type", hideWhenEmpty: true,
       },
-      helpText: "Options are limited to the parent types the selected Location Type allows; a root type (e.g. Farm) needs no parent.",
+      helpText: "Only locations from the immediately preceding hierarchy level are available. Level 1 root types, such as Farm, have no Parent Location field.",
       section: "Identification",
     },
     { key: "location_level", label: "Hierarchy Level", type: "number", hideInForm: true, helpText: "Computed from the parent location." },
@@ -81,6 +86,13 @@ const location: MasterDataConfig = {
     { key: "silo_capacity_kg", label: "Silo Capacity (KG)", type: "number", step: "0.01", visibleWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, requiredWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, helpText: "Required when Storage Location is SILO.", section: "Identification" },
     { key: "silo_reorder_days", label: "Silo Reorder Days", type: "number", visibleWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, requiredWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, helpText: "Required when Storage Location is SILO.", section: "Identification" },
     { key: "downtime_days_required", label: "Downtime Days Required", type: "number", helpText: "Empty days required between batches for biosecurity.", section: "Identification" },
+    // The silo or store's own name-number. storage_type says which kind of
+    // store this is; this says which one — MULTIPLIER writes MGH1 against each
+    // grower house, Porta writes PSL FS - 01 and STORE.
+    { key: "storage_name", label: "Silo / Store Name", type: "text", placeholder: "MGH1", visibleWhen: { anyOf: [{ key: "storage_type", equals: ["STORE", "SILO"] }] }, helpText: "The name or number this silo or store is known by on the farm.", section: "Identification" },
+    // Both Location Master templates carry this per location, and the breed
+    // lifecycle sheets read it: a stage's feed is "bagged" at MFH, "Bulk" at MSL.
+    { key: "feed_in_bags", label: "Feed in Bags", type: "boolean", helpText: "On when feed arrives here in bags rather than blown into a silo.", section: "Identification" },
   ],
 };
 
@@ -339,14 +351,27 @@ const animal: MasterDataConfig = {
       options: ["PURCHASED_IMPORTED", "PURCHASED_LOCAL", "BORN_ON_FARM", "TRANSFERRED_IN"].map((v) => ({ value: v, label: v.replace(/_/g, " ") })),
     },
     { key: "entry_date", label: "Entry Date", type: "date", required: true, section: "Acquisition" },
-    { key: "source_receipt_id", label: "Source Goods Receipt", type: "select-entity", searchable: true, entityEndpoint: "/goods-receipt", entityValueKey: "receipt_id", entityLabelKeys: ["receipt_no"], helpText: "Required for PURCHASED_IMPORTED / PURCHASED_LOCAL entries.", section: "Acquisition" },
-    { key: "source_batch_id", label: "Source Batch", type: "select-entity", searchable: true, entityEndpoint: "/batch", entityValueKey: "batch_id", entityLabelKeys: ["batch_no"], helpText: "Required for BORN_ON_FARM entries.", section: "Acquisition" },
-    // Filtered to LIVING_ASSET: the field is the animal's inventory identity, and
-    // an unfiltered /item offered feed and grain here — "Maize grain" was a valid
-    // choice for what a pig is. The picker appends isActive=true, and its URL
-    // builder handles the existing query string.
-    { key: "item_id", label: "Item (Living Asset)", type: "select-entity", required: true, searchable: true, entityEndpoint: "/item?itemType=LIVING_ASSET", entityValueKey: "item_id", entityLabelKeys: ["item_code", "item_name"], section: "Acquisition" },
-    { key: "acquisition_cost", label: "Acquisition Cost", type: "number", step: "0.01", required: true, section: "Acquisition" },
+    // Sits with Entry Date rather than beside Date of Birth (where the master
+    // template puts it) because it is the entry that gives it meaning, and the
+    // two dates it is computed from are the ones either side of it here.
+    // readOnly: the API computes it on every write and discards anything sent
+    // alongside a DOB, so an editable box would take input it then throws away.
+    { key: "age_at_entry_weeks", label: "Age at Entry (Weeks)", type: "number", readOnly: true, helpText: "Computed from Date of Birth and Entry Date.", section: "Acquisition" },
+    // Shown only for the entry types they belong to. The API has always
+    // enforced these as COND rules and rejected the wrong combination; the form
+    // asked for both from everyone, so a born-on-farm piglet was offered a
+    // goods receipt it could never legally carry.
+    { key: "source_receipt_id", label: "Source Goods Receipt", type: "select-entity", searchable: true, entityEndpoint: "/goods-receipt", entityValueKey: "receipt_id", entityLabelKeys: ["receipt_no"], visibleWhen: { anyOf: [{ key: "entry_type", equals: ["PURCHASED_IMPORTED", "PURCHASED_LOCAL"] }] }, requiredWhen: { anyOf: [{ key: "entry_type", equals: ["PURCHASED_IMPORTED", "PURCHASED_LOCAL"] }] }, helpText: "The receipt this animal arrived on.", section: "Acquisition" },
+    { key: "source_batch_id", label: "Source Batch", type: "select-entity", searchable: true, entityEndpoint: "/batch", entityValueKey: "batch_id", entityLabelKeys: ["batch_no"], visibleWhen: { anyOf: [{ key: "entry_type", equals: "BORN_ON_FARM" }] }, requiredWhen: { anyOf: [{ key: "entry_type", equals: "BORN_ON_FARM" }] }, helpText: "The farrowing batch this animal was born from.", section: "Acquisition" },
+    // LIVESTOCK is the item type seeded for living biological assets. There is
+    // no LIVING_ASSET item type; using it here left this required picker empty.
+    { key: "item_id", label: "Item (Living Asset)", type: "select-entity", required: true, searchable: true, entityEndpoint: "/item?itemType=LIVESTOCK", entityValueKey: "item_id", entityLabelKeys: ["item_code", "item_name"], section: "Acquisition" },
+    // Two fields, one column. A purchased animal's cost is read off its goods
+    // receipt by the API and anything typed here is discarded, so offering an
+    // editable box for it would take input it then throws away. Everything else
+    // has no document behind it and is entered by hand.
+    { key: "acquisition_cost", label: "Acquisition Cost", type: "number", step: "0.01", readOnly: true, visibleWhen: { anyOf: [{ key: "entry_type", equals: ["PURCHASED_IMPORTED", "PURCHASED_LOCAL"] }] }, helpText: "Taken from the rate on the source goods receipt.", section: "Acquisition" },
+    { key: "acquisition_cost", label: "Acquisition Cost", type: "number", step: "0.01", requiredWhen: { anyOf: [{ key: "entry_type", equals: ["BORN_ON_FARM", "TRANSFERRED_IN"] }] }, visibleWhen: { anyOf: [{ key: "entry_type", equals: ["BORN_ON_FARM", "TRANSFERRED_IN"] }] }, section: "Acquisition" },
     { key: "landing_cost", label: "Landing Cost", type: "number", step: "0.01", helpText: "Transport/import duty/quarantine charges for imported animals.", section: "Acquisition" },
     // Acquisition Cost + Landing Cost, computed by the service on save. Shown
     // rather than hidden because it is the figure the opening bio-asset value
@@ -622,10 +647,21 @@ const item: MasterDataConfig = {
   idKey: "item_id",
   group: "Inventory",
   isPrimary: true,
+  // Classification belongs on the list. An item's identity here is its type,
+  // its category and its sub-category — the three questions the form asks in
+  // that order, and the three segments its own code is built from — yet the
+  // list showed only the type, so the category an item was filed under could
+  // not be seen without opening it.
+  //
+  // category_code is joined by the API. The column itself holds a UUID, and a
+  // list rendering it raw would show the reader a UUID; sub_category already
+  // stores the child category's own code and needs no join.
   columns: [
     { key: "item_code", label: "Code" },
     { key: "item_name", label: "Name" },
     { key: "item_type", label: "Type" },
+    { key: "category_code", label: "Category" },
+    { key: "sub_category", label: "Sub Category" },
     { key: "uom_primary", label: "UOM" },
   ],
   fields: [
@@ -886,8 +922,53 @@ const breedLifecycleStage: MasterDataConfig = {
     // Breed Master Template, Lifecycle sheet: "Resource Requirements". The
     // column existed and nothing on the form could fill it.
     { key: "resource_requirements", label: "Resource Requirements", type: "json", helpText: "Resources this breed needs at this stage, from the resource planner." },
-    { key: "vaccination_protocol", label: "Vaccination Protocol", type: "json", helpText: "Entries of { vaccine, day, route, dose } for this breed at this stage." },
-    { key: "medication_protocol", label: "Medication Protocol", type: "json", helpText: "Entries of { medicine, day, route, dose, withdrawal_days } for this breed at this stage." },
+    // Rows, not a JSON textarea. The Breed Master workbook's Vaccination
+    // Schedule was filled in as five repeated columns — "1st vaccine -
+    // farrowsure (gilt) 25 weeks", "Vaccine porcillis 11 weeks pregnant every
+    // pregnancy cycle" — which is a spreadsheet saying "this is a list of
+    // unknown length". Five columns cannot be a schema and hand-typed JSON is
+    // not a form, so each entry is a row that can be added and deleted.
+    //
+    // trigger_type is what makes the client's own entries expressible: the
+    // triggers are not one kind of number. Some count from the animal's age in
+    // weeks, some from weeks pregnant, and some recur every pregnancy cycle. A
+    // single age_days field — which is what the template's own JSON example
+    // proposed — can hold only the first of the three.
+    //
+    // The master holds the plan; the scheduler holds the dated instances, as
+    // the template says ("Auto-populates scheduler params on batch create").
+    {
+      key: "vaccination_protocol", label: "Vaccination Protocol", type: "json",
+      jsonRow: [
+        { key: "vaccine_item_id", label: "Vaccine", type: "select-entity", entityEndpoint: "/item?itemType=VACCINE", entityValueKey: "item_id", entityLabelKeys: ["item_code", "item_name"] },
+        { key: "trigger_type", label: "Triggered by", type: "select", options: [
+          { value: "AGE_WEEKS", label: "Age (weeks)" },
+          { value: "WEEKS_PREGNANT", label: "Weeks pregnant" },
+          { value: "PER_CYCLE", label: "Every pregnancy cycle" },
+        ] },
+        { key: "trigger_value", label: "At", type: "number", step: "0.5" },
+        { key: "dose_ml", label: "Dose (ml)", type: "number", step: "0.01" },
+        { key: "route", label: "Route", type: "select", options: ["IM", "SC", "IN", "ORAL"].map((v) => ({ value: v, label: v })) },
+      ],
+      helpText: "One row per vaccination. Triggered by tells the scheduler what to count from — the animal's age, weeks pregnant, or every pregnancy cycle.",
+    },
+    {
+      key: "medication_protocol", label: "Medication Protocol", type: "json",
+      // The workbook's Medication Table is symptom-driven, not dated: Problem →
+      // Symptom → Drug → Dose → Repeat, grouped by Suckling Piglets /
+      // Lactating Sows / Dry Sows. It is a treatment reference the stockman
+      // reads when an animal presents, so it carries no trigger — the problem
+      // is the trigger.
+      jsonRow: [
+        { key: "problem", label: "Problem", type: "text", placeholder: "E.coli" },
+        { key: "symptom", label: "Symptom", type: "text", placeholder: "Scour — 1st line" },
+        { key: "medicine_item_id", label: "Drug", type: "select-entity", entityEndpoint: "/item?itemType=MEDICINE", entityValueKey: "item_id", entityLabelKeys: ["item_code", "item_name"] },
+        { key: "dose", label: "Dose", type: "text", placeholder: "0.5ml" },
+        { key: "repeat", label: "Repeat", type: "text", placeholder: "every day for 3 days" },
+        { key: "withdrawal_days", label: "Withdrawal (days)", type: "number" },
+      ],
+      helpText: "One row per problem, as the farm's treatment card is written. Dose is free text because the card records it per head and per kg both.",
+    },
     { key: "notes", label: "Notes", type: "textarea", helpText: "Shown as a tooltip on the data entry screen." },
     // TDD row 102 — traceability. The column has always been written; nothing
     // ever displayed it. hideInForm keeps it off the create/edit form while
@@ -976,7 +1057,7 @@ const feedFormula: MasterDataConfig = {
       jsonRow: [
         { key: "item_id", label: "Item", type: "select-entity", searchable: true, entityEndpoint: "/item", entityValueKey: "item_id", entityLabelKeys: ["item_code", "item_name"] },
         { key: "quantity", label: "Quantity", type: "number", step: "0.001" },
-        { key: "unit", label: "Unit", type: "select-entity", entityEndpoint: "/uom", entityValueKey: "uom_code", entityLabelKeys: ["uom_code", "uom_name"] },
+        { key: "unit", label: "Unit", type: "select-entity", entityEndpoint: "/uom?uomType=WEIGHT", entityValueKey: "uom_code", entityLabelKeys: ["uom_code", "uom_name"] },
         { key: "inclusion_pct", label: "Inclusion %", type: "number", step: "0.01" },
       ],
       helpText: 'Array of { item_id, quantity, unit, inclusion_pct?, loss_pct? }. Example: [{"item_id":"...","quantity":650,"unit":"KG"}]. Set at creation only — the API does not yet support editing ingredients after a formula is created.',
@@ -1265,6 +1346,146 @@ const costCenter: MasterDataConfig = {
   ],
 };
 
+/**
+ * Both tables have been in the database since the start — currency_master and
+ * exchange_rate, with endpoints behind them — and neither had a screen. It
+ * showed: exchange_rate held zero rows, because there was no way to enter one,
+ * and currency_master held three, one of which was the Indian Rupee.
+ *
+ * No NOB/LOB or company scoping. currency_master has no company_id column and a
+ * currency means the same thing in every workspace, so unlike the other masters
+ * this one is platform-wide reference data the client curates.
+ */
+/**
+ * Countries are reference data, not a picker with no home: Currencies names the
+ * countries a currency is legal tender in, and Suppliers and Customers record
+ * one. Without a screen the list could only be read, never extended — the 25
+ * seeded rows were the whole world as far as the app was concerned.
+ *
+ * Tenant-scoped despite living in the platform schema too: CountryService reads
+ * the tenant database, so adding one here adds it for this tenant only.
+ *
+ * It sits in the Currencies workbook rather than the sidebar — see tabOf below.
+ */
+const country: MasterDataConfig = {
+  key: "country",
+  label: "Countries",
+  singular: "Country",
+  description: "Countries the business deals with — used by currencies, suppliers and customers.",
+  apiBase: "/country",
+  idKey: "country_id",
+  group: "Finance",
+  // A sheet of the Currencies workbook, not a master of its own. A country is
+  // only ever reached through the thing that needs it — which currency is legal
+  // tender where, which country a supplier is in — so it earns a tab beside
+  // Exchange Rates rather than its own line in the sidebar. Rishi's call.
+  tabOf: "currency",
+  tabLabel: "Countries",
+  columns: [
+    { key: "iso2", label: "Code" },
+    { key: "country_name", label: "Name" },
+    { key: "iso3", label: "ISO3" },
+    { key: "phone_code", label: "Dialing Code" },
+    { key: "flag_emoji", label: "Flag" },
+  ],
+  fields: [
+    { key: "iso2", label: "ISO Code", type: "text", required: true, placeholder: "ZW", helpText: "The two-letter ISO 3166-1 alpha-2 code. This is what currencies and addresses store." },
+    { key: "country_name", label: "Country Name", type: "text", required: true, placeholder: "Zimbabwe" },
+    { key: "iso3", label: "ISO3 Code", type: "text", required: true, placeholder: "ZWE", helpText: "The three-letter ISO 3166-1 alpha-3 code." },
+    { key: "phone_code", label: "Dialing Code", type: "text", placeholder: "+263" },
+    { key: "flag_emoji", label: "Flag", type: "text", placeholder: "🇿🇼" },
+  ],
+};
+
+const currency: MasterDataConfig = {
+  key: "currency",
+  label: "Currencies",
+  singular: "Currency",
+  description: "Currencies the business transacts in, and the countries each one is legal tender in.",
+  apiBase: "/currency",
+  idKey: "currency_id",
+  group: "Finance",
+  isPrimary: true,
+  columns: [
+    { key: "iso_code", label: "Code" },
+    { key: "currency_name", label: "Name" },
+    { key: "symbol", label: "Symbol" },
+    { key: "country_codes", label: "Countries" },
+    { key: "decimal_places", label: "Decimals" },
+  ],
+  fields: [
+    { key: "iso_code", label: "Currency Code", type: "text", required: true, placeholder: "USD", helpText: "The three-letter ISO 4217 code. Saved uppercase, and unique." },
+    { key: "currency_name", label: "Currency Name", type: "text", required: true, placeholder: "US Dollar" },
+    { key: "symbol", label: "Symbol", type: "text", required: true, placeholder: "$" },
+    {
+      // Countries, not one country: the euro is legal tender across the
+      // eurozone and the US dollar is legal tender in Zimbabwe as well as the
+      // United States, so a single country field could record neither.
+      key: "country_codes", label: "Countries", type: "select-entity", multiple: true,
+      entityEndpoint: "/country", entityValueKey: "iso2", entityLabelKeys: ["iso2", "country_name"],
+      emptyMultipleLabel: "None recorded",
+      helpText: "Every country where this currency is legal tender.",
+    },
+    {
+      key: "symbol_position", label: "Symbol Position", type: "select",
+      options: [
+        { value: "PREFIX", label: "Before the amount — $100" },
+        { value: "SUFFIX", label: "After the amount — 100 $" },
+      ],
+    },
+    {
+      key: "decimal_places", label: "Decimal Places", type: "number", min: 0, max: 6, placeholder: "2",
+      helpText: "0 for currencies with no minor unit, such as the yen and the dong.",
+    },
+  ],
+};
+
+/**
+ * Rates are entered by hand and kept per date, never overwritten: BBP-1 §1.1
+ * has Finance entering the USD rate manually, and restating a past period needs
+ * the rate as at that date.
+ *
+ * Every rate is quoted against the US dollar and reads "1 USD = rate", so the
+ * base side is not on the form — the API fills it with USD (Rishi, 2026-09-11).
+ * It is still shown as a column, so what the rate is measured against is never
+ * left implicit.
+ */
+const exchangeRate: MasterDataConfig = {
+  key: "exchange-rate",
+  label: "Exchange Rates",
+  singular: "Exchange Rate",
+  description: "Manually entered USD conversion rates. Each row reads 1 USD = rate, on a date.",
+  apiBase: "/currency/rates",
+  idKey: "rate_id",
+  group: "Finance",
+  tabOf: "currency",
+  tabLabel: "Exchange Rates",
+  supportsRestore: false,
+  columns: [
+    { key: "from_currency", label: "Base" },
+    { key: "to_currency", label: "Currency" },
+    { key: "rate", label: "Rate" },
+    { key: "rate_date", label: "Date" },
+    { key: "rate_source", label: "Source" },
+  ],
+  fields: [
+    {
+      key: "to_currency_id", label: "Currency", type: "select-entity", required: true,
+      entityEndpoint: "/currency", entityValueKey: "currency_id", entityLabelKeys: ["iso_code", "currency_name"],
+      helpText: "The currency being quoted against the US dollar.",
+    },
+    {
+      key: "rate", label: "Rate (1 USD =)", type: "number", required: true, step: "0.000001", placeholder: "36.25",
+      helpText: "How many units of the chosen currency one US dollar buys. 1 USD = 36.25 ZWL is entered as 36.25.",
+    },
+    {
+      key: "rate_date", label: "Rate Date", type: "date", required: true,
+      helpText: "Rates are kept per date and never overwritten, so a past period can be restated at the rate that applied then.",
+    },
+    { key: "rate_source", label: "Source", type: "text", placeholder: "MANUAL", helpText: "Where the rate came from. The client enters these by hand." },
+  ],
+};
+
 export const MASTER_DATA_CONFIGS: MasterDataConfig[] = [
   locationType, location,
   stage, numberSeries, activity,
@@ -1272,7 +1493,7 @@ export const MASTER_DATA_CONFIGS: MasterDataConfig[] = [
   itemCategory, itemType, uom, uomConversion, item, itemAttribute,
   species, breed, breedLifecycleStage, reason, disease, feedFormula,
   supplier, customer, resource,
-  glAccount, glMapping, costCenter,
+  glAccount, glMapping, costCenter, country, currency, exchangeRate,
 ];
 
 export const MASTER_DATA_GROUPS = ["Farm Operations", "Production", "Piggery", "Inventory", "Livestock & Health", "Business Partners", "Finance"] as const;

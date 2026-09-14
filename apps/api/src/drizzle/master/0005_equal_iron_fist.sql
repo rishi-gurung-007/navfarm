@@ -1,0 +1,1 @@
+ALTER TABLE `currency_master` ADD `country_codes` json;
