@@ -1,5 +1,6 @@
 'use client';
 
+import { restoreSessionCookie } from '@/lib/api-client';
 import { useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter, usePathname } from 'next/navigation';
@@ -22,7 +23,7 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
   useEffect(() => {
     if (pathname !== '/login' && pathname !== '/signup') return;
     const user = getStoredUser();
-    if (getStoredToken() && user) {
+    if (getStoredToken() && user && restoreSessionCookie()) {
       router.replace(user.userType === 'SYSTEM_ADMIN' ? '/admin/dashboard' : '/dashboard');
     }
   }, [pathname, router]);

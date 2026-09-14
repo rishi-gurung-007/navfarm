@@ -8,6 +8,7 @@ jest.mock('next/navigation', () => ({
 }));
 
 describe('Page', () => {
+  beforeEach(() => localStorage.clear());
   it('sends an unauthenticated user to login', () => {
     const replace = jest.fn();
     (useRouter as jest.Mock).mockReturnValue({ replace });
@@ -20,6 +21,7 @@ describe('Page', () => {
   });
 
   it('sends an authenticated user to the dashboard', () => {
+    localStorage.setItem('navfarm_access_token', 'stored-token');
     const replace = jest.fn();
     (useRouter as jest.Mock).mockReturnValue({ replace });
     localStorage.setItem('navfarm_auth_user', JSON.stringify({ email: 'demo@navfarm.com' }));
@@ -30,6 +32,7 @@ describe('Page', () => {
   });
 
   it('sends a system admin to the admin area', () => {
+    localStorage.setItem('navfarm_access_token', 'stored-token');
     const replace = jest.fn();
     (useRouter as jest.Mock).mockReturnValue({ replace });
     localStorage.setItem(

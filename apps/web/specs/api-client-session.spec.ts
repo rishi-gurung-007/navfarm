@@ -79,3 +79,25 @@ describe('apiRequest — dead session handling', () => {
     expect(replace).not.toHaveBeenCalled();
   });
 });
+
+describe('restoring the navigation cookie', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    document.cookie = 'navfarm_session=; path=/; max-age=0';
+  });
+
+  it('restores the presence hint when stored credentials survive cookie expiry', async () => {
+    localStorage.setItem('navfarm_access_token', 'stored-token');
+    localStorage.setItem('navfarm_auth_user', JSON.stringify({ userType: 'COMPANY_ADMIN' }));
+    const { restoreSessionCookie } = await import('../src/lib/api-client');
+    expect(restoreSessionCookie()).toBe(true);
+    expect(document.cookie).toContain('navfarm_session=1');
+  });
+
+  it('does not restore a signed-out or incomplete session', async () => {
+    localStorage.setItem('navfarm_auth_user', '{}');
+    const { restoreSessionCookie } = await import('../src/lib/api-client');
+    expect(restoreSessionCookie()).toBe(false);
+    expect(document.cookie).not.toContain('navfarm_session=1');
+  });
+});

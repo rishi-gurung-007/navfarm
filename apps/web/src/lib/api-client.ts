@@ -23,6 +23,14 @@ function setSessionCookie() {
   document.cookie = `${SESSION_COOKIE}=1; path=/; max-age=${7 * 24 * 60 * 60}; SameSite=Lax`;
 }
 
+// Local storage can outlive the middleware's presence cookie. Restore only
+// that hint before client navigation; API token validation remains authoritative.
+export function restoreSessionCookie(): boolean {
+  if (!stored(AUTH_STORAGE.accessToken) || !stored(AUTH_STORAGE.user)) return false;
+  setSessionCookie();
+  return true;
+}
+
 function clearSessionCookie() {
   if (typeof document === 'undefined') return;
   document.cookie = `${SESSION_COOKIE}=; path=/; max-age=0; SameSite=Lax`;

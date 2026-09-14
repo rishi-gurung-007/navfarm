@@ -1,5 +1,6 @@
 'use client';
 
+import { restoreSessionCookie } from '@/lib/api-client';
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useLanguage } from "@/hooks/useLanguage";
@@ -10,7 +11,7 @@ export default function Index() {
 
   useEffect(() => {
     const raw = localStorage.getItem('navfarm_auth_user');
-    if (!raw) {
+    if (!raw || !restoreSessionCookie()) {
       router.replace('/login');
       return;
     }
