@@ -5,6 +5,7 @@ import { CreateBatchTransferDto, MergeBatchDto, QueryBatchTransferDto, SplitBatc
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
+import { FarmScoped } from '../../../common/farm-scope';
 
 /**
  * Animal movement between batches. Kept on its own base path rather than under
@@ -15,6 +16,7 @@ import { RequirePermission } from '../../../common/decorators/require-permission
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('batch-transfer')
+@FarmScoped()
 export class BatchTransferController {
   constructor(private readonly transferService: BatchTransferService) {}
 

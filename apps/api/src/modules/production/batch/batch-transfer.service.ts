@@ -8,6 +8,7 @@ import { CreateBatchTransferDto, MergeBatchDto, QueryBatchTransferDto, SplitBatc
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { SchedulerHeaderService } from '../scheduler-header/scheduler-header.service';
+import { batchOnFarm, batchScopeConditions, farmScope } from '../../../common/farm-scope';
 
 // Local time, not UTC. MySQL's own DEFAULT (now()) on created_at is local, so
 // formatting through toISOString() (as some older services here do) stamps
@@ -69,11 +70,22 @@ export class BatchTransferService {
     }
   }
 
-  private async loadBatch(batchId: string, tenantId: string, label: string) {
+  /**
+   * `scoped` defaults on so a farm-scoped user cannot read across farms by
+   * naming another farm's batch id. The destination side of a transfer is the
+   * one deliberate exception — animals move between farms of the same company,
+   * so `create` loads it with `scoped = false`.
+   */
+  private async loadBatch(batchId: string, tenantId: string, label: string, scoped = true) {
     const [batch] = await this.db
       .select()
       .from(schema.batchHeader)
-      .where(and(eq(schema.batchHeader.batch_id, batchId), eq(schema.batchHeader.tenant_id, tenantId), isNull(schema.batchHeader.deleted_at)))
+      .where(and(
+        eq(schema.batchHeader.batch_id, batchId),
+        eq(schema.batchHeader.tenant_id, tenantId),
+        isNull(schema.batchHeader.deleted_at),
+        ...(scoped ? batchScopeConditions(farmScope(this.cls)) : []),
+      ))
       .limit(1);
     if (!batch) throw new NotFoundException(`${label} batch not found.`);
     return batch;
@@ -108,7 +120,7 @@ export class BatchTransferService {
 
   async create(dto: CreateBatchTransferDto, tenantId: string, fromBatchId: string, userPayload?: { userId?: string }) {
     const source = await this.loadBatch(fromBatchId, tenantId, 'Source');
-    const destination = await this.loadBatch(dto.to_batch_id, tenantId, 'Destination');
+    const destination = await this.loadBatch(dto.to_batch_id, tenantId, 'Destination', false);
 
     if (source.batch_id === destination.batch_id) {
       throw new BadRequestException('Source and destination batch must be different.');
@@ -653,10 +665,25 @@ export class BatchTransferService {
   }
 
   async findOne(transferId: string, tenantId: string) {
+    // A transfer touches two batches, possibly on two different farms — it is
+    // visible from either side, not only the one the caller's farm is on.
+    const scope = farmScope(this.cls);
+    const conditions: SQL[] = [
+      eq(schema.batchTransfer.transfer_id, transferId),
+      eq(schema.batchTransfer.tenant_id, tenantId),
+      isNull(schema.batchTransfer.deleted_at),
+    ];
+    if (scope.farmId) {
+      conditions.push(or(
+        batchOnFarm(schema.batchTransfer.from_batch_id, scope.farmId),
+        batchOnFarm(schema.batchTransfer.to_batch_id, scope.farmId),
+      )!);
+    }
+
     const [transfer] = await this.db
       .select()
       .from(schema.batchTransfer)
-      .where(and(eq(schema.batchTransfer.transfer_id, transferId), eq(schema.batchTransfer.tenant_id, tenantId), isNull(schema.batchTransfer.deleted_at)))
+      .where(and(...conditions))
       .limit(1);
     if (!transfer) throw new NotFoundException('Transfer not found.');
 
@@ -692,6 +719,10 @@ export class BatchTransferService {
         or(eq(schema.batchTransfer.from_batch_id, query.batch_id), eq(schema.batchTransfer.to_batch_id, query.batch_id))!
       );
     }
+    // Same as findOne: a transfer belongs to a farm-scoped list if either side
+    // of it touches that farm.
+    const scope = farmScope(this.cls);
+    if (scope.farmId) conditions.push(or(batchOnFarm(schema.batchTransfer.from_batch_id, scope.farmId), batchOnFarm(schema.batchTransfer.to_batch_id, scope.farmId))!);
 
     const fromBatch = schema.batchHeader;
     const rows = await this.db

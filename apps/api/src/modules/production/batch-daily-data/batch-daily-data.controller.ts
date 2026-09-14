@@ -6,11 +6,13 @@ import { CreateUnscheduledHealthDto, RejectUnscheduledHealthDto } from './dto/un
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
+import { FarmScoped } from '../../../common/farm-scope';
 
 @ApiTags('Batch Daily Data')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('batch/:batchId/daily-data')
+@FarmScoped()
 export class BatchDailyDataController {
   /*
    * Guarded by PRODUCTION/BATCH_ENTRY, not BATCH_SCHEDULE. Designing a schedule

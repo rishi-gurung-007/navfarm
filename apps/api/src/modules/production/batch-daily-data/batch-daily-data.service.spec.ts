@@ -53,8 +53,14 @@ describe('BatchDailyDataService', () => {
   const header = { scheduler_id: 'sched-1', batch_id: 'batch-1', company_id: 'comp-1', lob_id: 'lob-1', effective_from: '2026-09-08', animal_count: '40' };
   const ENTRY_DATE = '2026-09-08';
 
+  // The transaction CLS only resolves 'tenantDb'; farmScope() reads 'farmScope'
+  // off the same ClsService, so tests that need a scope wrap .get() to answer it.
+  let farmScopeValue: unknown;
+  const useFarmScope = (scope: unknown) => { farmScopeValue = scope; };
+
   beforeEach(async () => {
     rows.clear();
+    farmScopeValue = undefined;
     // The batch and its schedule exist; nothing has been entered yet; the user
     // holds no grants, i.e. is the on-ground worker.
     rows.set(schema.batchHeader, [{ batch_id: 'batch-1', tenant_id: 'tenant-123', start_date: ENTRY_DATE, animal_tracking: 'COUNT_ONLY' }]);
@@ -72,10 +78,14 @@ describe('BatchDailyDataService', () => {
     mockDbInsert.mockReturnValue({ values: jest.fn().mockReturnValue({ onDuplicateKeyUpdate: jest.fn().mockResolvedValue({}) }) });
     mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) }) });
 
+    const cls = transactionCls(mockDb);
+    const baseGet = cls.get.bind(cls);
+    cls.get = ((key?: string) => (key === 'farmScope' ? farmScopeValue : baseGet(key as any))) as typeof cls.get;
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         BatchDailyDataService,
-        { provide: ClsService, useValue: transactionCls(mockDb) },
+        { provide: ClsService, useValue: cls },
         { provide: AuditLogService, useValue: { log: jest.fn().mockResolvedValue({}) } },
         { provide: BatchService, useValue: { addTransaction: jest.fn() } },
         { provide: BatchTransferService, useValue: { create: jest.fn() } },
@@ -95,6 +105,12 @@ describe('BatchDailyDataService', () => {
       stage_id: 'stage-1', ...over,
     }]);
   };
+
+  it('answers 404 when the batch is on another farm', async () => {
+    useFarmScope({ farmId: 'farm-g', restricted: true, companyId: 'comp-1', lobId: 'lob-1' });
+    rows.set(schema.batchHeader, []); // scoped batch lookup finds nothing
+    await expect(service.entryForm('batch-1', undefined as any, 'tenant-123', { userId: 'u' } as any)).rejects.toThrow(NotFoundException);
+  });
 
   it('reverses the prior consumption before posting a corrected daily quantity', async () => {
     line({ line_type: 'CONSUMPTION', item_id: 'item-feed', activity_name: 'Morning Feed' });

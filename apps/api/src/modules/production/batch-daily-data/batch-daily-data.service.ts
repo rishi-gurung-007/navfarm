@@ -15,6 +15,7 @@ import { DueLine, stageDayStatus, pendingDays, isLineDue, StageDayStatus } from 
 import { entryVerdict, todayIn, todayAtOffset } from './entry-window';
 import { userHasPermission } from '../../../common/permissions';
 import { ApprovalService } from '../approval/approval.service';
+import { batchScopeConditions, farmScope } from '../../../common/farm-scope';
 
 /** approval_request.doc_type for a health event outside the schedule. */
 export const UNSCHEDULED_HEALTH = 'UNSCHEDULED_HEALTH';
@@ -50,7 +51,7 @@ export class BatchDailyDataService {
    */
   async dayStatus(batchId: string, date: string, tenantId: string) {
     const [batch] = await this.db.select().from(schema.batchHeader)
-      .where(and(eq(schema.batchHeader.batch_id, batchId), eq(schema.batchHeader.tenant_id, tenantId)))
+      .where(and(eq(schema.batchHeader.batch_id, batchId), eq(schema.batchHeader.tenant_id, tenantId), ...batchScopeConditions(farmScope(this.cls))))
       .limit(1);
     if (!batch) throw new NotFoundException('Batch not found.');
 
@@ -100,7 +101,7 @@ export class BatchDailyDataService {
    */
   async pendingDays(batchId: string, upTo: string | undefined, tenantId: string): Promise<string[]> {
     const [batch] = await this.db.select().from(schema.batchHeader)
-      .where(and(eq(schema.batchHeader.batch_id, batchId), eq(schema.batchHeader.tenant_id, tenantId)))
+      .where(and(eq(schema.batchHeader.batch_id, batchId), eq(schema.batchHeader.tenant_id, tenantId), ...batchScopeConditions(farmScope(this.cls))))
       .limit(1);
     if (!batch) throw new NotFoundException('Batch not found.');
     const upToDate = upTo || await this.companyToday(batch.company_id);
@@ -145,7 +146,7 @@ export class BatchDailyDataService {
    */
   async entryForm(batchId: string, requestedDate: string | undefined, tenantId: string, userPayload?: UserContext, stageId?: string) {
     const [batch] = await this.db.select().from(schema.batchHeader)
-      .where(and(eq(schema.batchHeader.batch_id, batchId), eq(schema.batchHeader.tenant_id, tenantId)))
+      .where(and(eq(schema.batchHeader.batch_id, batchId), eq(schema.batchHeader.tenant_id, tenantId), ...batchScopeConditions(farmScope(this.cls))))
       .limit(1);
     if (!batch) throw new NotFoundException('Batch not found.');
 
@@ -362,7 +363,7 @@ export class BatchDailyDataService {
     userPayload?: UserContext,
   ) {
     const [batch] = await this.db.select().from(schema.batchHeader)
-      .where(and(eq(schema.batchHeader.batch_id, batchId), eq(schema.batchHeader.tenant_id, tenantId)))
+      .where(and(eq(schema.batchHeader.batch_id, batchId), eq(schema.batchHeader.tenant_id, tenantId), ...batchScopeConditions(farmScope(this.cls))))
       .limit(1);
     if (!batch) throw new NotFoundException('Batch not found.');
 
@@ -604,8 +605,12 @@ export class BatchDailyDataService {
   async postEntry(batchId: string, dto: CreateBatchDailyDataDto, tenantId: string, userPayload?: UserContext) {
     return withTenantTransaction(this.cls, async () => {
     // Serialize entries/corrections on the batch before taking any snapshot.
-    await this.db.select({ batch_id: schema.batchHeader.batch_id }).from(schema.batchHeader)
-      .where(and(eq(schema.batchHeader.batch_id, batchId), eq(schema.batchHeader.tenant_id, tenantId))).for('update');
+    // The scope filter means this lock also doubles as the out-of-farm guard —
+    // nothing after here checks the batch's farm again.
+    const [lockedBatch] = await this.db.select({ batch_id: schema.batchHeader.batch_id }).from(schema.batchHeader)
+      .where(and(eq(schema.batchHeader.batch_id, batchId), eq(schema.batchHeader.tenant_id, tenantId), ...batchScopeConditions(farmScope(this.cls))))
+      .for('update');
+    if (!lockedBatch) throw new NotFoundException('Batch not found.');
     const [line] = await this.db.select().from(schema.schedulerLine).where(eq(schema.schedulerLine.line_id, dto.line_id)).limit(1);
     if (!line) throw new NotFoundException(`Scheduler line '${dto.line_id}' not found.`);
     if (!line.is_active) throw new ConflictException('This line has been deactivated and no longer accepts entries.');

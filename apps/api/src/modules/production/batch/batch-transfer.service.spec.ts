@@ -1,11 +1,14 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
+import { MySqlDialect } from 'drizzle-orm/mysql-core';
 import { BatchTransferService } from './batch-transfer.service';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { SchedulerHeaderService } from '../scheduler-header/scheduler-header.service';
 import * as schema from '../../../core/database/schema';
+
+const dialect = new MySqlDialect();
 
 describe('BatchTransferService', () => {
   let service: BatchTransferService;
@@ -19,6 +22,17 @@ describe('BatchTransferService', () => {
     update: mockDbUpdate,
     insert: mockDbInsert,
   };
+
+  // farmScope() reads its own key off the same ClsService that 'tenantDb'
+  // comes from; tests that need a scope set it here.
+  let farmScopeValue: unknown;
+  const useFarmScope = (scope: unknown) => { farmScopeValue = scope; };
+
+  // findAll/findOne build their farm condition with `and`/`or` rather than a
+  // plain `eq`, so the only way to check it landed is to render the captured
+  // `where` argument back to SQL text, same approach as farm-scope.spec.ts.
+  let capturedWhere: unknown;
+  const renderedWhere = () => dialect.sqlToQuery(capturedWhere as any).sql;
 
   const draftTransfer = {
     transfer_id: 'tr-1',
@@ -38,11 +52,13 @@ describe('BatchTransferService', () => {
     mockDbSelect.mockReset();
     mockDbUpdate.mockReset();
     mockDbInsert.mockReset();
+    farmScopeValue = undefined;
+    capturedWhere = undefined;
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         BatchTransferService,
-        { provide: ClsService, useValue: { get: jest.fn().mockReturnValue(mockDb) } },
+        { provide: ClsService, useValue: { get: jest.fn((key?: string) => (key === 'farmScope' ? farmScopeValue : mockDb)) } },
         { provide: AuditLogService, useValue: { log: jest.fn().mockResolvedValue({}) } },
         { provide: NumberSeriesService, useValue: { generateNext: jest.fn().mockResolvedValue('BTR-2026-0001') } },
         { provide: SchedulerHeaderService, useValue: { createForStage: jest.fn().mockResolvedValue({}) } },
@@ -194,6 +210,26 @@ describe('BatchTransferService', () => {
       await expect(
         service.mergeBatch('batch-hold', { transfer_date: '2026-10-01' } as any, 'tenant-123'),
       ).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  describe('findAll', () => {
+    it('lists a transfer for either farm it touches', async () => {
+      useFarmScope({ farmId: 'farm-g', restricted: false, companyId: 'co-1', lobId: null });
+
+      // findAll's own select().from().leftJoin().where().orderBy() — the where
+      // argument is what we're checking, so capture it and resolve empty.
+      const chain: any = {
+        from: () => chain,
+        leftJoin: () => chain,
+        where: (cond: unknown) => { capturedWhere = cond; return chain; },
+        orderBy: () => Promise.resolve([]),
+      };
+      mockDbSelect.mockReturnValue(chain);
+
+      await service.findAll({} as any, 'tenant-1');
+
+      expect(renderedWhere()).toMatch(/from_batch_id` IN \(SELECT bf\.batch_id FROM batch_header bf.*\bor\b.*to_batch_id` IN \(SELECT bf\.batch_id FROM batch_header bf/s);
     });
   });
 
