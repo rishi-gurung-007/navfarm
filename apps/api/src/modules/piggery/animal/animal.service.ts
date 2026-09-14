@@ -1,5 +1,6 @@
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { masterScopeConditions } from '../../../common/master-data-scope';
+import { farmScope, animalScopeConditions, batchScopeConditions, assertLocationOnActiveFarm } from '../../../common/farm-scope';
 import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { eq, and, or, like, desc, sql } from 'drizzle-orm';
@@ -391,6 +392,15 @@ export class AnimalService {
         this.db.select().from(schema.batchHeader).where(eq(schema.batchHeader.batch_id, dto.current_batch_id)),
         'Batch', dto.current_batch_id,
       );
+      // Farm-scoped on top of the plain existence check above: the batch can
+      // exist tenant-wide but sit on another farm, which a restricted user or
+      // an active-farm admin must not be able to place an animal onto.
+      const [scopedBatch] = await this.db
+        .select({ batch_id: schema.batchHeader.batch_id })
+        .from(schema.batchHeader)
+        .where(and(eq(schema.batchHeader.batch_id, dto.current_batch_id), ...batchScopeConditions(farmScope(this.cls))))
+        .limit(1);
+      if (!scopedBatch) throw new NotFoundException('Batch not found.');
     }
     if (dto.current_location_id) {
       await this.assertExists(
@@ -398,6 +408,7 @@ export class AnimalService {
         'Location', dto.current_location_id,
       );
     }
+    await assertLocationOnActiveFarm(this.db, farmScope(this.cls), dto.current_location_id, 'Animal location');
 
     if (dto.rfid_tag) {
       const duplicateRfid = await this.db
@@ -547,8 +558,7 @@ export class AnimalService {
     const [animal] = await this.db
       .select()
       .from(schema.animalRegister)
-
-      .where(eq(schema.animalRegister.animal_id, id))
+      .where(and(eq(schema.animalRegister.animal_id, id), ...animalScopeConditions(farmScope(this.cls))))
       .limit(1);
 
     if (!animal) {
@@ -562,6 +572,7 @@ export class AnimalService {
 
     if (!query.includeDisposed) conditions.push(eq(schema.animalRegister.is_active, true));
     conditions.push(...masterScopeConditions(this.cls, schema.animalRegister, query.companyId));
+    conditions.push(...animalScopeConditions(farmScope(this.cls)));
     if (query.breedId) conditions.push(eq(schema.animalRegister.breed_id, query.breedId));
     if (query.animalType) conditions.push(eq(schema.animalRegister.animal_type, query.animalType));
     if (query.status) conditions.push(eq(schema.animalRegister.status, query.status));
@@ -646,6 +657,13 @@ export class AnimalService {
         this.db.select().from(schema.batchHeader).where(eq(schema.batchHeader.batch_id, dto.current_batch_id)),
         'Batch', dto.current_batch_id,
       );
+      // Farm-scoped on top of the plain existence check above — see create().
+      const [scopedBatch] = await this.db
+        .select({ batch_id: schema.batchHeader.batch_id })
+        .from(schema.batchHeader)
+        .where(and(eq(schema.batchHeader.batch_id, dto.current_batch_id), ...batchScopeConditions(farmScope(this.cls))))
+        .limit(1);
+      if (!scopedBatch) throw new NotFoundException('Batch not found.');
     }
     if (dto.current_location_id) {
       await this.assertExists(
@@ -653,6 +671,7 @@ export class AnimalService {
         'Location', dto.current_location_id,
       );
     }
+    await assertLocationOnActiveFarm(this.db, farmScope(this.cls), dto.current_location_id, 'Animal location');
     if (dto.rfid_tag && dto.rfid_tag !== animal.rfid_tag) {
       const duplicateRfid = await this.db
         .select()

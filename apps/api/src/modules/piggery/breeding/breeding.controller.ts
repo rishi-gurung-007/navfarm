@@ -13,6 +13,7 @@ import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
+import { FarmScoped } from '../../../common/farm-scope';
 import { BreedingService } from './breeding.service';
 import {
   CreateMatingDto,
@@ -28,6 +29,7 @@ import {
 // so they are gated by the animal permission rather than a separate resource
 // the roles screen does not have.
 @UseGuards(JwtAuthGuard, RolesGuard)
+@FarmScoped()
 @Controller('piggery/breeding')
 export class BreedingController {
   constructor(private readonly breedingService: BreedingService) {}

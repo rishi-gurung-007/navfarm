@@ -4,6 +4,7 @@ import { eq, and, desc, isNull, sql } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
+import { farmScope, animalScopeConditions, animalOnFarm } from '../../../common/farm-scope';
 import {
   CreateMatingDto,
   UpdatePregCheckDto,
@@ -43,7 +44,8 @@ export class BreedingService {
       .where(
         and(
           eq(schema.animalRegister.animal_id, dto.sow_animal_id),
-          eq(schema.animalRegister.tenant_id, tenantId)
+          eq(schema.animalRegister.tenant_id, tenantId),
+          ...animalScopeConditions(farmScope(this.cls)),
         )
       )
       .limit(1);
@@ -63,7 +65,8 @@ export class BreedingService {
         .where(
           and(
             eq(schema.animalRegister.animal_id, dto.boar_animal_id),
-            eq(schema.animalRegister.tenant_id, tenantId)
+            eq(schema.animalRegister.tenant_id, tenantId),
+            ...animalScopeConditions(farmScope(this.cls)),
           )
         )
         .limit(1);
@@ -125,6 +128,19 @@ export class BreedingService {
       throw new NotFoundException(`Breeding record with ID '${breedingId}' not found.`);
     }
 
+    // The breeding row is looked up by its own id, not the sow's, so the farm
+    // check has to follow the sow_animal_id it carries — answering the same
+    // not-found message keeps another farm's breeding id indistinguishable
+    // from one that never existed.
+    const [scopedSow] = await this.db
+      .select({ animal_id: schema.animalRegister.animal_id })
+      .from(schema.animalRegister)
+      .where(and(eq(schema.animalRegister.animal_id, breeding.sow_animal_id), ...animalScopeConditions(farmScope(this.cls))))
+      .limit(1);
+    if (!scopedSow) {
+      throw new NotFoundException(`Breeding record with ID '${breedingId}' not found.`);
+    }
+
     const conceptionResult = dto.conception_result || (dto.pregnancy_confirmed ? ConceptionResult.CONFIRMED : ConceptionResult.FAILED);
 
     await this.db
@@ -160,10 +176,12 @@ export class BreedingService {
   }
 
   async getMatingRecords(tenantId: string, companyId?: string) {
+    const scope = farmScope(this.cls);
     const conditions = [eq(schema.breedingRecord.tenant_id, tenantId)];
     if (companyId) {
       conditions.push(eq(schema.breedingRecord.company_id, companyId));
     }
+    if (scope.farmId) conditions.push(animalOnFarm(schema.breedingRecord.sow_animal_id, scope.farmId));
 
     const records = await this.db
       .select({
@@ -213,7 +231,8 @@ export class BreedingService {
       .where(
         and(
           eq(schema.animalRegister.animal_id, dto.sow_animal_id),
-          eq(schema.animalRegister.tenant_id, tenantId)
+          eq(schema.animalRegister.tenant_id, tenantId),
+          ...animalScopeConditions(farmScope(this.cls)),
         )
       )
       .limit(1);
@@ -296,11 +315,16 @@ export class BreedingService {
       throw new NotFoundException(`Farrowing record with ID '${farrowId}' not found.`);
     }
 
+    // Looked up by the farrowing record's own id, not the sow's — see the same
+    // note in recordPregnancyCheck.
     const [sow] = await this.db
       .select()
       .from(schema.animalRegister)
-      .where(eq(schema.animalRegister.animal_id, farrow.sow_animal_id))
+      .where(and(eq(schema.animalRegister.animal_id, farrow.sow_animal_id), ...animalScopeConditions(farmScope(this.cls))))
       .limit(1);
+    if (!sow) {
+      throw new NotFoundException(`Farrowing record with ID '${farrowId}' not found.`);
+    }
 
     await this.db
       .update(schema.farrowingRecord)
@@ -331,10 +355,12 @@ export class BreedingService {
   }
 
   async getFarrowingRecords(tenantId: string, companyId?: string) {
+    const scope = farmScope(this.cls);
     const conditions = [eq(schema.farrowingRecord.tenant_id, tenantId)];
     if (companyId) {
       conditions.push(eq(schema.farrowingRecord.company_id, companyId));
     }
+    if (scope.farmId) conditions.push(animalOnFarm(schema.farrowingRecord.sow_animal_id, scope.farmId));
 
     const records = await this.db
       .select({
@@ -387,7 +413,8 @@ export class BreedingService {
       .where(
         and(
           eq(schema.animalRegister.animal_id, dto.boar_animal_id),
-          eq(schema.animalRegister.tenant_id, tenantId)
+          eq(schema.animalRegister.tenant_id, tenantId),
+          ...animalScopeConditions(farmScope(this.cls)),
         )
       )
       .limit(1);
@@ -437,10 +464,12 @@ export class BreedingService {
   }
 
   async getSemenBatches(tenantId: string, companyId?: string) {
+    const scope = farmScope(this.cls);
     const conditions = [eq(schema.semenBatch.tenant_id, tenantId)];
     if (companyId) {
       conditions.push(eq(schema.semenBatch.company_id, companyId));
     }
+    if (scope.farmId) conditions.push(animalOnFarm(schema.semenBatch.boar_animal_id, scope.farmId));
 
     return await this.db
       .select({

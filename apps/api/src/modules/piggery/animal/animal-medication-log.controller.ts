@@ -5,10 +5,12 @@ import { RecordMedicationDto } from './dto/animal-medication-log.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
+import { FarmScoped } from '../../../common/farm-scope';
 
 @ApiTags('Animal Register')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
+@FarmScoped()
 @Controller('animal')
 export class AnimalMedicationLogController {
   constructor(private readonly medicationLogService: AnimalMedicationLogService) {}

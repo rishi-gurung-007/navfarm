@@ -4,12 +4,13 @@ import { ClsService } from 'nestjs-cls';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { NobLobResolutionService } from '../../core/operational-area/nob-lob-resolution.service';
-import { BadRequestException, ConflictException } from '@nestjs/common';
-import { transactionCls } from '../../../test-utils/transaction-cls';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import { transactionCls, useFarmScope } from '../../../test-utils/transaction-cls';
 
 describe('AnimalService', () => {
   let service: AnimalService;
   let numberSeriesService: NumberSeriesService;
+  let cls: ReturnType<typeof transactionCls>;
 
   const mockDbSelect = jest.fn();
   const mockDbInsert = jest.fn();
@@ -57,10 +58,11 @@ describe('AnimalService', () => {
       lob_id: explicit?.lob_id ?? null,
     }));
 
+    cls = transactionCls(mockDb);
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AnimalService,
-        { provide: ClsService, useValue: transactionCls(mockDb) },
+        { provide: ClsService, useValue: cls },
         { provide: AuditLogService, useValue: { log: jest.fn().mockResolvedValue({}) } },
         { provide: NumberSeriesService, useValue: { generateNext: jest.fn().mockResolvedValue('PIG-2026-0001') } },
         { provide: NobLobResolutionService, useValue: nobLobResolution },
@@ -153,6 +155,38 @@ describe('AnimalService', () => {
       await expect(
         service.update('a-1', { dam_animal_id: 'a-1' }, 'tenant-123'),
       ).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  // Phase 1 access foundation, Task 6: animals belong to the farm holding
+  // their current_location_id (or, absent one, their current_batch_id's
+  // farm) — see common/farm-scope.ts. A restricted user or an admin with an
+  // active farm must not read, nor place an animal onto, another farm.
+  describe('farm scope', () => {
+    it('answers 404 for an animal on another farm', async () => {
+      useFarmScope(cls, { farmId: 'farm-g', restricted: true, companyId: 'co-1', lobId: 'lob-pig' });
+      // findOne's own select answers empty — as it would once the farm
+      // condition excludes a row that exists but sits on another farm.
+      mockDbSelect.mockReturnValueOnce(found(null));
+
+      await expect(service.findOne('animal-on-kintyre')).rejects.toThrow(NotFoundException);
+    });
+
+    it('refuses placing an animal on another farm', async () => {
+      useFarmScope(cls, { farmId: 'farm-g', restricted: true, companyId: 'co-1', lobId: 'lob-pig' });
+      const penOnKintyre = { location_id: 'pen-k', parent: 'shed-k', farm_id: 'farm-k' };
+      mockDbSelect
+        .mockReturnValueOnce(found({ company_id: 'comp-1' }))
+        .mockReturnValueOnce(found({ nob_id: 'nob-1' }))
+        .mockReturnValueOnce(found({ lob_id: 'lob-1' }))
+        .mockReturnValueOnce(found({ breed_id: 'breed-1' }))
+        .mockReturnValueOnce(found({ item_id: 'item-1' }))
+        .mockReturnValueOnce(found(penOnKintyre)) // current_location_id assertExists
+        .mockReturnValueOnce(found(penOnKintyre)); // assertLocationOnActiveFarm -> farmOfLocation
+
+      await expect(
+        service.create({ ...baseDto, current_location_id: 'pen-k' } as any, 'tenant-1'),
+      ).rejects.toThrow('Animal location is not on your active farm.');
     });
   });
 
