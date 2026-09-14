@@ -43,15 +43,16 @@ function navByScope(): Record<string, Map<string, string>> {
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    if (/activeScope === "TENANT"/.test(line)) current = 'TENANT';
-    else if (/activeScope === "COMPANY"/.test(line)) current = 'COMPANY';
+    if (/activeScope === ["']TENANT["']/.test(line)) current = 'TENANT';
+    else if (/activeScope === ["']COMPANY["']/.test(line)) current = 'COMPANY';
     else if (/^ {2}\} else \{/.test(line) && current === 'COMPANY')
       current = 'OPERATIONAL';
     if (!current) continue;
 
-    // Single-line item: { label: t("key"), href: "/path", ... }
+    // Single-line item: { label: t("key"), href: "/path", ... } — quotes
+    // matched either way since prettier's singleQuote setting decides which.
     const inline = line.match(
-      /^ {6}\{\s*label: t\("([A-Za-z0-9_]+)"[^)]*\)\s*,\s*href: "([^"]+)"/,
+      /^ {6}\{\s*label: t\(["']([A-Za-z0-9_]+)["'][^)]*\)\s*,\s*href: ["']([^"']+)["']/,
     );
     if (inline) {
       record(inline[2], inline[1]);
@@ -64,8 +65,8 @@ function navByScope(): Record<string, Map<string, string>> {
       let href: string | null = null;
       for (let j = i + 1; j < Math.min(i + 6, lines.length); j++) {
         labelKey ??=
-          lines[j].match(/^ {8}label: t\("([A-Za-z0-9_]+)"/)?.[1] ?? null;
-        href ??= lines[j].match(/^ {8}href: "([^"]+)"/)?.[1] ?? null;
+          lines[j].match(/^ {8}label: t\(["']([A-Za-z0-9_]+)["']/)?.[1] ?? null;
+        href ??= lines[j].match(/^ {8}href: ["']([^"']+)["']/)?.[1] ?? null;
       }
       if (labelKey && href) record(href, labelKey);
     }
