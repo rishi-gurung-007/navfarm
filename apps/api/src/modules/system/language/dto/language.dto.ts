@@ -1,4 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { IsNotEmpty, IsString, MaxLength } from 'class-validator';
 
 export class ResolveTranslationDto {
   @ApiProperty({ 
@@ -28,29 +29,44 @@ export class ResolveTranslationDto {
   key: string;
 }
 
+// Lengths follow the language_translations columns, so a bad body is a 400
+// naming the field instead of a database error.
 export class AddTranslationDto {
+  // Not @IsUUID: seeded language ids (10000000-1000-1000-1000-...) are not
+  // RFC-4122 and the validator would reject real rows.
   @ApiProperty({ 
     description: 'Language identifier', 
     example: '00000000-0000-0000-0000-000000000000' 
   })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(36)
   langId: string;
 
   @ApiProperty({ 
     description: 'System module code', 
     example: 'POULTRY' 
   })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(50)
   moduleCode: string;
 
   @ApiProperty({ 
     description: 'UI translation label key name', 
     example: 'BUTTON_SUBMIT' 
   })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(200)
   key: string;
 
   @ApiProperty({ 
     description: 'Localized message value', 
     example: 'Submit' 
   })
+  @IsString()
+  @IsNotEmpty()
   value: string;
 }
 

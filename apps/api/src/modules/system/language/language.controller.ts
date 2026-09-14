@@ -29,6 +29,10 @@ export class LanguageController {
   }
 
   @Post('translation')
+  // Translations are platform-wide copy; like the language CRUD beside it, only
+  // a platform admin may write them. It was the one write left unguarded.
+  @UseGuards(JwtAuthGuard, SystemAdminGuard)
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Register/Update translation record' })
   async addTranslation(@Body() body: AddTranslationDto) {
     return this.languageService.addTranslation(body.langId, body.moduleCode, body.key, body.value);

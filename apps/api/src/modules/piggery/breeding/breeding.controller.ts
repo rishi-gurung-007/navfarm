@@ -11,6 +11,8 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../../../common/guards/roles.guard';
+import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
 import { BreedingService } from './breeding.service';
 import {
   CreateMatingDto,
@@ -22,7 +24,10 @@ import {
 
 @ApiTags('Piggery Breeding & Reproduction')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard)
+// Breeding events write parity, piglet counts and status onto animal_register,
+// so they are gated by the animal permission rather than a separate resource
+// the roles screen does not have.
+@UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('piggery/breeding')
 export class BreedingController {
   constructor(private readonly breedingService: BreedingService) {}
@@ -32,6 +37,7 @@ export class BreedingController {
   // ==========================================
 
   @Post('mating')
+  @RequirePermission('PIGGERY', 'ANIMAL', 'create')
   @ApiOperation({ summary: 'Record sow mating or AI insemination event with auto 114-day farrowing date' })
   async recordMating(@Body() dto: CreateMatingDto, @Req() req: any) {
     const tenantId = req.user?.tenantId || req['tenantId'];
@@ -39,6 +45,7 @@ export class BreedingController {
   }
 
   @Patch('mating/:id/preg-check')
+  @RequirePermission('PIGGERY', 'ANIMAL', 'edit')
   @ApiOperation({ summary: 'Record pregnancy confirmation ultrasound check result' })
   async recordPregnancyCheck(
     @Param('id') id: string,
@@ -50,6 +57,7 @@ export class BreedingController {
   }
 
   @Get('mating')
+  @RequirePermission('PIGGERY', 'ANIMAL', 'view')
   @ApiOperation({ summary: 'List sow mating records with upcoming farrowing countdowns' })
   async getMatingRecords(@Req() req: any, @Query('company_id') companyId?: string) {
     const tenantId = req.user?.tenantId || req['tenantId'];
@@ -61,6 +69,7 @@ export class BreedingController {
   // ==========================================
 
   @Post('farrowing')
+  @RequirePermission('PIGGERY', 'ANIMAL', 'create')
   @ApiOperation({ summary: 'Record sow farrowing event, live birth counts, and increment parity' })
   async recordFarrowing(@Body() dto: CreateFarrowingDto, @Req() req: any) {
     const tenantId = req.user?.tenantId || req['tenantId'];
@@ -68,6 +77,7 @@ export class BreedingController {
   }
 
   @Patch('farrowing/:id/weaning')
+  @RequirePermission('PIGGERY', 'ANIMAL', 'edit')
   @ApiOperation({ summary: 'Record litter weaning outcome, survival rate, and return sow to active' })
   async recordWeaning(
     @Param('id') id: string,
@@ -79,6 +89,7 @@ export class BreedingController {
   }
 
   @Get('farrowing')
+  @RequirePermission('PIGGERY', 'ANIMAL', 'view')
   @ApiOperation({ summary: 'List farrowing records with litter weights and survival rates' })
   async getFarrowingRecords(@Req() req: any, @Query('company_id') companyId?: string) {
     const tenantId = req.user?.tenantId || req['tenantId'];
@@ -90,6 +101,7 @@ export class BreedingController {
   // ==========================================
 
   @Post('semen-collection')
+  @RequirePermission('PIGGERY', 'ANIMAL', 'create')
   @ApiOperation({ summary: 'Record boar semen collection and compute unit cost per dose' })
   async recordSemenCollection(@Body() dto: CreateSemenCollectionDto, @Req() req: any) {
     const tenantId = req.user?.tenantId || req['tenantId'];
@@ -97,6 +109,7 @@ export class BreedingController {
   }
 
   @Get('semen-collection')
+  @RequirePermission('PIGGERY', 'ANIMAL', 'view')
   @ApiOperation({ summary: 'List boar semen collections and doses inventory' })
   async getSemenBatches(@Req() req: any, @Query('company_id') companyId?: string) {
     const tenantId = req.user?.tenantId || req['tenantId'];
