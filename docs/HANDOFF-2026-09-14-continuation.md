@@ -111,8 +111,10 @@ These are backlog items from the original handoff, not newly verified absence
 claims. Audit each area before coding and search fragments/concepts as well as
 exact names; report spellings used before declaring a feature missing.
 
-1. **Logins/access:** audit each role and workspace transition. Farm access is
-   now decided (data entry and viewing only, not masters) and can be designed.
+1. **Logins/access: audited and security fixes landed** (59a580a, 58aad7b,
+   97288dc, c51bb19). Evidence and the eleven open findings are in
+   `docs/VERIFICATION-2026-09-14-logins.md`. Farm access is decided (data entry
+   and viewing only, not masters); its foundation gap is open finding 1 there.
 2. **Scheduler:** transactional/recoverable creation, then make one through UI
    and read MySQL. Original orphan-header/retry concern remains unaddressed.
 3. **Batch creation:** expose REGISTERED/COUNT_ONLY end to end; reconcile

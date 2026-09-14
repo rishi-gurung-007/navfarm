@@ -1505,3 +1505,36 @@ split is where the bugs would have been.
 
 Still open and separate: whether MULTIPLIER and PORTA FARM become two top-level
 locations replacing the single `FARM-001` placeholder.
+
+## Logins: authorization rules settled while fixing item 1
+*Decided 2026-09-14.*
+
+**One ladder for user types.** `common/user-type-hierarchy.ts` is the single
+answer to "may this person hand out this access": only a type strictly below
+your own, never SYSTEM_ADMIN through a tenant API, never your own type, and never
+against a user at or above you. `POST /user`, `PUT /user`, delete and
+deactivate use it. `register-admin` still spells the same rule out inline.
+
+**A role is access, so role assignment obeys the ladder too.** A role that is
+SUPER_ADMIN, or carries an ALL wildcard under any name, needs a tenant-level
+admin to assign or write. Otherwise the user-type fix is bypassed through roles.
+
+**Only permission-bypassing types get the SUPER_ADMIN scaffolding role.** An
+invited OPERATIONAL_ADMIN now starts with no role, like a STANDARD_USER, and an
+admin assigns something bounded (MANAGER) through Team Management. Before, every
+invited operational admin silently held ALL/ALL.
+
+**Breeding uses PIGGERY/ANIMAL permissions**, not a new BREEDING resource.
+Breeding events mutate `animal_register`; a new resource would need a data
+migration and would fail `role-permissions-coverage.spec`. Revisit if Triple C
+wants breeding access separated from animal access.
+
+**`setup/wizard/company-details` is readable by any member of the company**, not
+admins only. `useCompanyCurrency` reads the base currency from it on every
+role's screens and swallows errors, so admin-only would silently remove money
+formatting for operators. Every other wizard write is admin-only.
+
+**During an active lockout the correct password gets the same generic 401.**
+Answering "locked" only to a correct password confirms each guess and makes the
+lockout useless. The generic message says accounts lock for 15 minutes after 5
+failures, so a real user knows to wait.
