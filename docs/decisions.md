@@ -710,11 +710,13 @@ client evidence or Rishi's decision.
 
 ---
 
-## Every dropdown's source master is named on the screen that uses it
+## Every master exposes the masters behind its dropdown options
 *Decided 2026-09-12.*
 
-The "Dropdown options come from" row is derived from the select-entity fields
-themselves, so a field added later needs no second place to remember. Three
+The row now labelled **Dropdown options** is derived from the select-entity
+fields themselves, so a field added later needs no second place to remember.
+The label was shortened by Rishi on 2026-09-14; the source-discovery decision
+remains unchanged. Three
 things it got wrong, all now fixed and covered by
 `specs/master-data-lookup-chips.spec.ts`:
 
@@ -936,9 +938,10 @@ makes Category filterable in SQL.
 ## Lookup chips follow the form, not the registry
 *Decided 2026-09-12.*
 
-"Dropdown options come from" listed masters in the order they happen to sit in
-`MASTER_DATA_CONFIGS`, so the Item screen read Item Categories before Item
-Types — the opposite of the order the form asks, where Item Type comes first and
+The row now labelled **Dropdown options** listed masters in the order they
+happen to sit in `MASTER_DATA_CONFIGS`, so the Item screen read Item Categories
+before Item Types — the opposite of the order the form asks, where Item Type
+comes first and
 Category cannot be answered until it is. The row is now ordered by field
 position, with any master that declares `lookupFor` without owning a field on
 the screen following in registry order.
@@ -1485,26 +1488,70 @@ individual form was manually opened; company creation submission and narrow
 390px layout remain unverified. Existing foundation/health write-path evidence
 remains in the separate verification reports. Both dev servers were left up.
 
-## Farm scope restricts data entry and viewing, not master data
+## Operational area and farm are separate access dimensions
 *Decided 2026-09-14 by Rishi.*
 
-A normal user is scoped to the top-level location, which is the farm. That scope
-applies to **operational data entry and viewing only**. Master data is not
-filtered by farm: items, breeds, stages, activities, suppliers and the rest stay
-visible across farms under the existing tenant/company/NOB/LOB scope.
+The earlier decision in this section incorrectly treated
+`operational_area_master.farm_id` as the farm boundary and kept every master
+outside farm scope. Rishi clarified the model after that decision, so this text
+supersedes it.
 
-So `masterScopeConditions` does **not** gain a farm dimension. The farm filter
-belongs where operational records are read and written — batches, daily entry,
-animals, breeding events, inventory movements — keyed off the farm that
-`operational_area_master.farm_id` already links.
+An operational area represents a line of business across all of its farms in a
+company. For the current scope, `PIGGERY-01` represents Piggery and is not tied
+to one farm. A farm is a separate top-level Location Master record, with the
+current dynamic hierarchy FARM → SHED → PEN.
 
-This was asked twice (original handoff §3, continuation handoff) and left open
-until now. It removes the riskiest version of item 2: master scope matching is
-exact, and adding a farm dimension on top of the existing company/tenant template
-split is where the bugs would have been.
+- A tenant admin sees every company and farm in the tenant.
+- A company admin sees every farm in that company.
+- An operational admin sees the assigned operational area/LOB across all farms
+  in that company; only Piggery is in scope now.
+- A standard user/farm worker is restricted to exactly one assigned farm.
 
-Still open and separate: whether MULTIPLIER and PORTA FARM become two top-level
-locations replacing the single `FARM-001` placeholder.
+Farm scope applies to operational records and to masters whose meaning is
+explicitly farm-specific. Breed Master is farm-specific: Location (farm) is
+required because lifecycle, growth-performance and productive-life values may
+differ by altitude even for the same breed name. A batch selects one farm. An
+animal requires a breed and derives its farm from that breed; its batch and
+physical location must match.
+
+Ordinary shared masters keep their existing tenant/company/NOB/LOB scope. A
+standard user's farm assignment does not turn every master into a farm-specific
+copy.
+
+The API must enforce these boundaries for reads and writes. Client headers and
+filtered selectors are not authorization.
+
+## Master pages and master-backed selection use one interaction system
+*Decided 2026-09-14 by Rishi.*
+
+Every master page uses the same intentional composition: title in the sticky
+header, breadcrumb beneath it, no repeated heading or filler description in the
+body, then active-tab Search/Filters/Create, true child-view tabs, a
+**Dropdown options** row, and the table. Only the table rows scroll; its header
+and footer remain visible, and the footer shows range/total, page size, current
+page/total pages and previous/next controls.
+
+The relationship label is exactly **Dropdown options** on every master. Do not
+write “Related masters:” or “Dropdown options come from”. Its chips expose the
+masters used by the active page. Location can appear there for Breed even
+though Location is itself a primary master; its canonical Location page remains
+available. Supporting option masters such as Species and Diseases do not need
+permanent sidebar entries solely for management.
+
+Master-backed fields use an anchored searchable selector below the field for
+normal selection, not a centered page dialog. The selector shows Code and Name
+by default and adds the identifying columns required by the relationship. The
+Animal Breed selector shows Breed Code, Breed Name, Location Code and Location
+Name. Add new and View full list sit below the options. View full list, or a
+Dropdown options chip, opens the full searchable/selectable management dialog.
+The old collapsed lookup cards are removed from creation forms. This pattern
+applies to all masters; fixed enums remain ordinary controls.
+
+Data-entry dialogs have footer Cancel/primary actions, no top-right X and no
+backdrop dismissal. View-only dialogs have an X and no redundant Close button.
+Destructive confirmations have Cancel/destructive actions and no X. On wide
+screens the primary and contextual sidebars are visible together; on small
+screens one drawer switches between the two navigation levels.
 
 ## Logins: authorization rules settled while fixing item 1
 *Decided 2026-09-14.*
