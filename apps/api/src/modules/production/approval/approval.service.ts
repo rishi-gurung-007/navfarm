@@ -8,7 +8,7 @@ import { CreateApprovalRequestDto, DecideApprovalDto, QueryApprovalDto } from '.
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { BatchService } from '../batch/batch.service';
 import { withTenantTransaction } from '../../../common/tenant-transaction';
-import { batchReferenceScopeConditions, batchScopeConditions, farmScope, restrictedScopeConditions } from '../../../common/farm-scope';
+import { assertCompanyInScope, batchReferenceScopeConditions, batchScopeConditions, farmScope, restrictedScopeConditions } from '../../../common/farm-scope';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   const pad = (n: number) => String(n).padStart(2, '0');
@@ -65,14 +65,47 @@ export class ApprovalService {
     return `${prefix}-${year}-${String(Number(n) + 1).padStart(4, '0')}`;
   }
 
+  /**
+   * The body's company must be one the caller belongs to, whatever header was
+   * sent — the same rule RolesGuard applies to x-active-company-id. Tenant and
+   * system admins may raise for any company of their tenant; everyone else for
+   * their home company or an active company assignment. A caller with no user
+   * context is an internal one and is bounded by scope alone.
+   */
+  private async assertMayRaiseFor(companyId: string, tenantId: string, userPayload?: any): Promise<void> {
+    if (!userPayload?.userType) return;
+    if (['TENANT_ADMIN', 'SYSTEM_ADMIN'].includes(userPayload.userType)) {
+      const [company] = await this.db
+        .select({ company_id: schema.companyMaster.company_id })
+        .from(schema.companyMaster)
+        .where(and(eq(schema.companyMaster.company_id, companyId), eq(schema.companyMaster.tenant_id, tenantId)))
+        .limit(1);
+      if (!company) throw new ForbiddenException('Not authorized for this company.');
+      return;
+    }
+    if (companyId === userPayload.companyId) return;
+    const [assignment] = await this.db
+      .select({ id: schema.userCompanyAssignments.assign_id })
+      .from(schema.userCompanyAssignments)
+      .where(and(
+        eq(schema.userCompanyAssignments.user_id, userPayload.userId),
+        eq(schema.userCompanyAssignments.company_id, companyId),
+        eq(schema.userCompanyAssignments.is_active, true),
+      ))
+      .limit(1);
+    if (!assignment) throw new ForbiddenException('Not authorized for this company.');
+  }
+
   async create(dto: CreateApprovalRequestDto, tenantId: string, userPayload?: any) {
     const scope = farmScope(this.cls);
-    if (scope.restricted && dto.company_id !== scope.companyId) {
-      throw new ForbiddenException('Not authorized for this company.');
-    }
+    // A selected company is a boundary for every caller, not only restricted
+    // ones: a company admin's batchless request used to land in another
+    // company's queue and then 404 on read-back (recovery review I5).
+    assertCompanyInScope(scope, dto.company_id);
     if (scope.restricted && !dto.batch_id) {
       throw new ForbiddenException('A batch is required to establish the operational scope of this approval.');
     }
+    await this.assertMayRaiseFor(dto.company_id, tenantId, userPayload);
     if (dto.batch_id) {
       const [batch] = await this.db
         .select({ batch_id: schema.batchHeader.batch_id, company_id: schema.batchHeader.company_id })

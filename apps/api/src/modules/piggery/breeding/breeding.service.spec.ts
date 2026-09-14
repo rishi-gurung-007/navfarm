@@ -108,6 +108,8 @@ describe('BreedingService', () => {
 
     it('auto-computes 114 days expected farrowing date and 28 days preg check date', async () => {
       rows.set(schema.animalRegister, [{ animal_id: 'sow-1', company_id: 'comp-1', parity_count: 1 }]);
+      // The lot is validated against the sow's company and the boar's farm scope (M4).
+      rows.set(schema.semenBatch, [{ semen_batch_id: 'SEM-LOT-01' }]);
 
       const result = await service.recordMating(
         {
@@ -201,6 +203,75 @@ describe('BreedingService', () => {
       // Unit cost = 500 / 50 = 10
       expect(result.running_cost_period).toBe('500.0000');
       expect(result.unit_cost_per_dose).toBe('10.000000');
+    });
+  });
+
+  /**
+   * Recovery review M4: breeding create paths stamped the body's company_id,
+   * batch_id and semen_lot_id as sent. The company now comes from the scoped
+   * animal and every referenced id must itself be in scope.
+   */
+  describe('breeding references are bound to the animal and the caller scope', () => {
+    const grasmere = { farmId: 'farm-g', restricted: true, companyId: 'co-1', lobId: 'lob-pig' };
+
+    it('stores the sow company, never the body company', async () => {
+      const result = await service.recordMating(
+        { sow_animal_id: 'sow-1', mating_type: MatingType.AI, mating_date: '2026-03-01' } as any,
+        'tenant-1',
+      );
+      expect(result.company_id).toBe('co-1');
+    });
+
+    it('refuses a body company_id that differs from the sow company, before any insert', async () => {
+      // Without the fix the record was inserted under 'co-other'.
+      await expect(service.recordMating(
+        { sow_animal_id: 'sow-1', company_id: 'co-other', mating_type: MatingType.AI, mating_date: '2026-03-01' } as any,
+        'tenant-1',
+      )).rejects.toThrow(BadRequestException);
+      await expect(service.recordFarrowing(
+        { sow_animal_id: 'sow-1', company_id: 'co-other', farrowing_date: '2026-06-23', piglets_born_live: 8 } as any,
+        'tenant-1',
+      )).rejects.toThrow(BadRequestException);
+      await expect(service.recordSemenCollection(
+        { boar_animal_id: 'sow-1', company_id: 'co-other', collection_date: '2026-04-01', doses_collected: 10 } as any,
+        'tenant-1',
+      )).rejects.toThrow(BadRequestException);
+      expect(mockDbInsert).not.toHaveBeenCalled();
+    });
+
+    it('answers not-found for a batch_id outside the caller scope, through the batch scope conditions', async () => {
+      useFarmScope(cls, grasmere);
+      rows.set(schema.batchHeader, []); // exists on Kintyre, so the scoped query finds nothing
+
+      await expect(service.recordMating(
+        { sow_animal_id: 'sow-1', batch_id: 'batch-kintyre', mating_type: MatingType.AI, mating_date: '2026-03-01' } as any,
+        'tenant-1',
+      )).rejects.toThrow("Batch with ID 'batch-kintyre' not found.");
+      expect(renderedWhere()).toContain('`batch_header`.`farm_id` = ?');
+      expect(mockDbInsert).not.toHaveBeenCalled();
+    });
+
+    it('answers not-found for a farrowing batch_id outside the caller scope', async () => {
+      useFarmScope(cls, grasmere);
+      rows.set(schema.batchHeader, []);
+
+      await expect(service.recordFarrowing(
+        { sow_animal_id: 'sow-1', batch_id: 'batch-kintyre', farrowing_date: '2026-06-23', piglets_born_live: 8 } as any,
+        'tenant-1',
+      )).rejects.toThrow(NotFoundException);
+      expect(mockDbInsert).not.toHaveBeenCalled();
+    });
+
+    it('answers not-found for a semen lot outside the caller scope', async () => {
+      useFarmScope(cls, grasmere);
+      rows.set(schema.semenBatch, []);
+
+      await expect(service.recordMating(
+        { sow_animal_id: 'sow-1', semen_lot_id: 'lot-kintyre', mating_type: MatingType.AI, mating_date: '2026-03-01' } as any,
+        'tenant-1',
+      )).rejects.toThrow("Semen lot with ID 'lot-kintyre' not found.");
+      expect(renderedWhere()).toContain('animal_register af');
+      expect(mockDbInsert).not.toHaveBeenCalled();
     });
   });
 

@@ -1,9 +1,9 @@
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { masterScopeConditions } from '../../../common/master-data-scope';
-import { farmScope, animalScopeConditions, batchScopeConditions, assertLocationOnActiveFarm } from '../../../common/farm-scope';
+import { farmScope, animalScopeConditions, batchScopeConditions, assertLocationOnActiveFarm, assertCompanyInScope, assertLobInScope, locationReferenceScopeConditions } from '../../../common/farm-scope';
 import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, or, like, desc, sql } from 'drizzle-orm';
+import { eq, and, or, like, desc, sql, isNull } from 'drizzle-orm';
 import { aliasedTable } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
@@ -165,6 +165,42 @@ export class AnimalService {
     return rows[0];
   }
 
+  /*
+   * The lookups below answer "not found" for a row that exists but lies outside
+   * the caller's scope or the animal's company, exactly as for one that does not
+   * exist. They used to be tenant-wide existence checks, which let a caller
+   * probe other farms' and companies' ids and read another company's receipt
+   * rate into an acquisition cost (recovery review C2).
+   */
+
+  /** Breeds may be the company's own or a tenant template (company_id NULL). */
+  private breedQuery(breedId: string, tenantId: string, companyId: string) {
+    return this.db.select().from(schema.breedMaster).where(and(
+      eq(schema.breedMaster.breed_id, breedId),
+      eq(schema.breedMaster.tenant_id, tenantId),
+      or(eq(schema.breedMaster.company_id, companyId), isNull(schema.breedMaster.company_id)),
+    ));
+  }
+
+  private scopedAnimalQuery(animalId: string, tenantId: string, companyId: string) {
+    return this.db.select().from(schema.animalRegister).where(and(
+      eq(schema.animalRegister.animal_id, animalId),
+      eq(schema.animalRegister.tenant_id, tenantId),
+      eq(schema.animalRegister.company_id, companyId),
+      ...animalScopeConditions(farmScope(this.cls)),
+    ));
+  }
+
+  private scopedBatchQuery(batchId: string, tenantId: string, companyId: string) {
+    return this.db.select().from(schema.batchHeader).where(and(
+      eq(schema.batchHeader.batch_id, batchId),
+      eq(schema.batchHeader.tenant_id, tenantId),
+      eq(schema.batchHeader.company_id, companyId),
+      isNull(schema.batchHeader.deleted_at),
+      ...batchScopeConditions(farmScope(this.cls)),
+    ));
+  }
+
   /**
    * Spec: "At the time of a slaughter entry the system must check that today minus the
    * last administration date for each medicine given to that animal is greater than or
@@ -272,8 +308,21 @@ export class AnimalService {
     // and the register jumped straight from 0021 to 0023.
     const ageAtEntryWeeks = resolveAgeAtEntryWeeks(dto.dob, dto.entry_date, dto.age_at_entry_weeks);
 
+    const scope = farmScope(this.cls);
+    // Every refusal below lands before the insert: the create used to write the
+    // row under the caller's company and LOB and only then 404 on read-back.
+    assertCompanyInScope(scope, dto.company_id);
+    // A restricted user's animal must stand on a farm, or no farm scope would
+    // ever show it again — including to the user who created it.
+    if (scope.restricted && !dto.current_location_id && !dto.current_batch_id) {
+      throw new BadRequestException('Choose where this animal is: a batch or a location on your farm.');
+    }
+
     await this.assertExists(
-      this.db.select().from(schema.companyMaster).where(eq(schema.companyMaster.company_id, dto.company_id)),
+      this.db.select().from(schema.companyMaster).where(and(
+        eq(schema.companyMaster.company_id, dto.company_id),
+        eq(schema.companyMaster.tenant_id, tenantId),
+      )),
       'Company', dto.company_id,
     );
 
@@ -293,6 +342,9 @@ export class AnimalService {
     }
     const nobId = resolved.nob_id;
     const lobId = resolved.lob_id;
+    // After resolution, because an explicit dto.lob_id wins it and must not
+    // carry a restricted user into another line of business.
+    assertLobInScope(scope, lobId);
 
     await this.assertExists(
       this.db.select().from(schema.nobMaster).where(eq(schema.nobMaster.nob_id, nobId)),
@@ -302,12 +354,13 @@ export class AnimalService {
       this.db.select().from(schema.lobMaster).where(eq(schema.lobMaster.lob_id, lobId)),
       'LOB', lobId,
     );
+    await this.assertExists(this.breedQuery(dto.breed_id, tenantId, dto.company_id), 'Breed', dto.breed_id);
     await this.assertExists(
-      this.db.select().from(schema.breedMaster).where(eq(schema.breedMaster.breed_id, dto.breed_id)),
-      'Breed', dto.breed_id,
-    );
-    await this.assertExists(
-      this.db.select().from(schema.itemMaster).where(eq(schema.itemMaster.item_id, dto.item_id)),
+      this.db.select().from(schema.itemMaster).where(and(
+        eq(schema.itemMaster.item_id, dto.item_id),
+        eq(schema.itemMaster.tenant_id, tenantId),
+        eq(schema.itemMaster.company_id, dto.company_id),
+      )),
       'Item', dto.item_id,
     );
 
@@ -327,8 +380,14 @@ export class AnimalService {
     // to read it off.
     let acquisitionCost = dto.acquisition_cost;
     if (dto.source_receipt_id) {
+      // A receipt reaches a farm through the warehouse it was received into.
       await this.assertExists(
-        this.db.select().from(schema.goodsReceipt).where(eq(schema.goodsReceipt.receipt_id, dto.source_receipt_id)),
+        this.db.select().from(schema.goodsReceipt).where(and(
+          eq(schema.goodsReceipt.receipt_id, dto.source_receipt_id),
+          eq(schema.goodsReceipt.tenant_id, tenantId),
+          eq(schema.goodsReceipt.company_id, dto.company_id),
+          ...locationReferenceScopeConditions(scope, schema.goodsReceipt.warehouse_id),
+        )),
         'Goods receipt', dto.source_receipt_id,
       );
 
@@ -364,22 +423,13 @@ export class AnimalService {
       );
     }
     if (dto.source_batch_id) {
-      await this.assertExists(
-        this.db.select().from(schema.batchHeader).where(eq(schema.batchHeader.batch_id, dto.source_batch_id)),
-        'Batch', dto.source_batch_id,
-      );
+      await this.assertExists(this.scopedBatchQuery(dto.source_batch_id, tenantId, dto.company_id), 'Batch', dto.source_batch_id);
     }
     if (dto.sire_animal_id) {
-      await this.assertExists(
-        this.db.select().from(schema.animalRegister).where(eq(schema.animalRegister.animal_id, dto.sire_animal_id)),
-        'Sire animal', dto.sire_animal_id,
-      );
+      await this.assertExists(this.scopedAnimalQuery(dto.sire_animal_id, tenantId, dto.company_id), 'Sire animal', dto.sire_animal_id);
     }
     if (dto.dam_animal_id) {
-      await this.assertExists(
-        this.db.select().from(schema.animalRegister).where(eq(schema.animalRegister.animal_id, dto.dam_animal_id)),
-        'Dam animal', dto.dam_animal_id,
-      );
+      await this.assertExists(this.scopedAnimalQuery(dto.dam_animal_id, tenantId, dto.company_id), 'Dam animal', dto.dam_animal_id);
     }
     if (dto.current_stage_id) {
       await this.assertExists(
@@ -387,28 +437,28 @@ export class AnimalService {
         'Stage', dto.current_stage_id,
       );
     }
+    let batchFarmId: string | null = null;
     if (dto.current_batch_id) {
-      await this.assertExists(
-        this.db.select().from(schema.batchHeader).where(eq(schema.batchHeader.batch_id, dto.current_batch_id)),
-        'Batch', dto.current_batch_id,
+      // One scoped query: a batch on another farm answers exactly like a missing one.
+      const currentBatch = await this.assertExists(
+        this.scopedBatchQuery(dto.current_batch_id, tenantId, dto.company_id), 'Batch', dto.current_batch_id,
       );
-      // Farm-scoped on top of the plain existence check above: the batch can
-      // exist tenant-wide but sit on another farm, which a restricted user or
-      // an active-farm admin must not be able to place an animal onto.
-      const [scopedBatch] = await this.db
-        .select({ batch_id: schema.batchHeader.batch_id })
-        .from(schema.batchHeader)
-        .where(and(eq(schema.batchHeader.batch_id, dto.current_batch_id), ...batchScopeConditions(farmScope(this.cls))))
-        .limit(1);
-      if (!scopedBatch) throw new NotFoundException('Batch not found.');
+      batchFarmId = currentBatch.farm_id ?? null;
     }
+    let locationFarmId: string | null = null;
     if (dto.current_location_id) {
-      await this.assertExists(
+      const location = await this.assertExists(
         this.db.select().from(schema.locationMaster).where(eq(schema.locationMaster.location_id, dto.current_location_id)),
         'Location', dto.current_location_id,
       );
+      locationFarmId = location.parent_location_id === null ? location.location_id : location.farm_id;
     }
-    await assertLocationOnActiveFarm(this.db, farmScope(this.cls), dto.current_location_id, 'Animal location');
+    await assertLocationOnActiveFarm(this.db, scope, dto.current_location_id, 'Animal location');
+    // The animal's farm is its location's, or its batch's when it has no
+    // location (animalOnFarm) — a farmless batch leaves it on no farm at all.
+    if (scope.restricted && !(dto.current_location_id ? locationFarmId : batchFarmId)) {
+      throw new BadRequestException('Choose where this animal is: a batch or a location on your farm.');
+    }
 
     if (dto.rfid_tag) {
       const duplicateRfid = await this.db
@@ -486,8 +536,10 @@ export class AnimalService {
       cost_amount: totalOpeningAssetValue.toString(),
       cost_amount_each_unit: totalOpeningAssetValue.toString(),
       costing_method: 'COST_ACCUMULATION',
-      nob_id: dto.nob_id,
-      lob_id: dto.lob_id,
+      // The resolved values: the dto's are absent whenever the company's
+      // operational areas supplied them, which left the ledger row without a LOB.
+      nob_id: nobId,
+      lob_id: lobId,
       created_by: userPayload?.userId || null,
     });
 
@@ -623,29 +675,21 @@ export class AnimalService {
 
     assertGiltTeatCount(animal.animal_type, dto.no_of_teats);
 
+    // Bound to the animal's own company and the caller's scope — see the note above breedQuery().
     if (dto.breed_id) {
-      await this.assertExists(
-        this.db.select().from(schema.breedMaster).where(eq(schema.breedMaster.breed_id, dto.breed_id)),
-        'Breed', dto.breed_id,
-      );
+      await this.assertExists(this.breedQuery(dto.breed_id, tenantId, animal.company_id), 'Breed', dto.breed_id);
     }
     if (dto.sire_animal_id) {
       if (dto.sire_animal_id === id) {
         throw new BadRequestException('An animal cannot be its own sire.');
       }
-      await this.assertExists(
-        this.db.select().from(schema.animalRegister).where(eq(schema.animalRegister.animal_id, dto.sire_animal_id)),
-        'Sire animal', dto.sire_animal_id,
-      );
+      await this.assertExists(this.scopedAnimalQuery(dto.sire_animal_id, tenantId, animal.company_id), 'Sire animal', dto.sire_animal_id);
     }
     if (dto.dam_animal_id) {
       if (dto.dam_animal_id === id) {
         throw new BadRequestException('An animal cannot be its own dam.');
       }
-      await this.assertExists(
-        this.db.select().from(schema.animalRegister).where(eq(schema.animalRegister.animal_id, dto.dam_animal_id)),
-        'Dam animal', dto.dam_animal_id,
-      );
+      await this.assertExists(this.scopedAnimalQuery(dto.dam_animal_id, tenantId, animal.company_id), 'Dam animal', dto.dam_animal_id);
     }
     if (dto.current_stage_id) {
       await this.assertExists(
@@ -654,17 +698,7 @@ export class AnimalService {
       );
     }
     if (dto.current_batch_id) {
-      await this.assertExists(
-        this.db.select().from(schema.batchHeader).where(eq(schema.batchHeader.batch_id, dto.current_batch_id)),
-        'Batch', dto.current_batch_id,
-      );
-      // Farm-scoped on top of the plain existence check above — see create().
-      const [scopedBatch] = await this.db
-        .select({ batch_id: schema.batchHeader.batch_id })
-        .from(schema.batchHeader)
-        .where(and(eq(schema.batchHeader.batch_id, dto.current_batch_id), ...batchScopeConditions(farmScope(this.cls))))
-        .limit(1);
-      if (!scopedBatch) throw new NotFoundException('Batch not found.');
+      await this.assertExists(this.scopedBatchQuery(dto.current_batch_id, tenantId, animal.company_id), 'Batch', dto.current_batch_id);
     }
     if (dto.current_location_id) {
       await this.assertExists(

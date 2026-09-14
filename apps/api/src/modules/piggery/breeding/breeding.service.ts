@@ -4,7 +4,7 @@ import { eq, and, desc, isNull, sql } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
-import { farmScope, animalScopeConditions } from '../../../common/farm-scope';
+import { farmScope, animalScopeConditions, batchScopeConditions } from '../../../common/farm-scope';
 import {
   CreateMatingDto,
   UpdatePregCheckDto,
@@ -30,6 +30,39 @@ export class BreedingService {
       throw new Error('Tenant database connection context not established.');
     }
     return tenantDb;
+  }
+
+  /**
+   * A breeding document belongs to its animal's company. The body's company_id
+   * was stamped as sent, so a caller could file a Grasmere sow's mating under
+   * another company. It may still be sent, but only to agree with the animal.
+   */
+  private assertAnimalCompany(bodyCompanyId: string | undefined, animal: { company_id: string | null }, label: string): string {
+    if (bodyCompanyId && bodyCompanyId !== animal.company_id) {
+      throw new BadRequestException(`The ${label} does not belong to the request company.`);
+    }
+    return animal.company_id!;
+  }
+
+  /**
+   * A batch named in the body must be one the caller can see and must sit in
+   * the animal's company. Out of scope answers the same not-found as missing,
+   * so the id cannot be used to probe other farms.
+   */
+  private async assertScopedBatch(batchId: string | undefined, companyId: string, tenantId: string): Promise<void> {
+    if (!batchId) return;
+    const [batch] = await this.db
+      .select({ batch_id: schema.batchHeader.batch_id })
+      .from(schema.batchHeader)
+      .where(and(
+        eq(schema.batchHeader.batch_id, batchId),
+        eq(schema.batchHeader.tenant_id, tenantId),
+        eq(schema.batchHeader.company_id, companyId),
+        isNull(schema.batchHeader.deleted_at),
+        ...batchScopeConditions(farmScope(this.cls)),
+      ))
+      .limit(1);
+    if (!batch) throw new NotFoundException(`Batch with ID '${batchId}' not found.`);
   }
 
   // ==========================================
@@ -70,9 +103,27 @@ export class BreedingService {
           )
         )
         .limit(1);
-      if (!boar) {
+      if (!boar || boar.company_id !== sow.company_id) {
         throw new NotFoundException(`Boar animal with ID '${dto.boar_animal_id}' not found.`);
       }
+    }
+
+    const companyId = this.assertAnimalCompany(dto.company_id, sow, 'sow');
+    await this.assertScopedBatch(dto.batch_id, companyId, tenantId);
+    if (dto.semen_lot_id) {
+      // semen_batch has no farm of its own; it reaches one through its boar.
+      const [lot] = await this.db
+        .select({ semen_batch_id: schema.semenBatch.semen_batch_id })
+        .from(schema.semenBatch)
+        .innerJoin(schema.animalRegister, eq(schema.semenBatch.boar_animal_id, schema.animalRegister.animal_id))
+        .where(and(
+          eq(schema.semenBatch.semen_batch_id, dto.semen_lot_id),
+          eq(schema.semenBatch.tenant_id, tenantId),
+          eq(schema.semenBatch.company_id, companyId),
+          ...animalScopeConditions(farmScope(this.cls)),
+        ))
+        .limit(1);
+      if (!lot) throw new NotFoundException(`Semen lot with ID '${dto.semen_lot_id}' not found.`);
     }
 
     // Swine standard gestation: 114 days (3 months, 3 weeks, 3 days)
@@ -85,7 +136,7 @@ export class BreedingService {
     const newRecord = {
       breeding_id: breedingId,
       tenant_id: tenantId,
-      company_id: dto.company_id || sow.company_id || null,
+      company_id: companyId,
       sow_animal_id: dto.sow_animal_id,
       batch_id: dto.batch_id || sow.current_batch_id || null,
       mating_type: dto.mating_type,
@@ -241,6 +292,22 @@ export class BreedingService {
       throw new NotFoundException(`Sow animal with ID '${dto.sow_animal_id}' not found.`);
     }
 
+    const companyId = this.assertAnimalCompany(dto.company_id, sow, 'sow');
+    await this.assertScopedBatch(dto.batch_id, companyId, tenantId);
+    if (dto.breeding_id) {
+      // The breeding row carries no farm; it is in scope only as this sow's own mating.
+      const [breeding] = await this.db
+        .select({ breeding_id: schema.breedingRecord.breeding_id })
+        .from(schema.breedingRecord)
+        .where(and(
+          eq(schema.breedingRecord.breeding_id, dto.breeding_id),
+          eq(schema.breedingRecord.tenant_id, tenantId),
+          eq(schema.breedingRecord.sow_animal_id, dto.sow_animal_id),
+        ))
+        .limit(1);
+      if (!breeding) throw new NotFoundException(`Breeding record with ID '${dto.breeding_id}' not found.`);
+    }
+
     const stillborn = dto.piglets_stillborn || 0;
     const mummified = dto.piglets_mummified || 0;
     const live = dto.piglets_born_live;
@@ -258,7 +325,7 @@ export class BreedingService {
     const newRecord = {
       farrow_id: farrowId,
       tenant_id: tenantId,
-      company_id: dto.company_id || sow.company_id || null,
+      company_id: companyId,
       sow_animal_id: dto.sow_animal_id,
       breeding_id: dto.breeding_id || null,
       batch_id: dto.batch_id || sow.current_batch_id || null,
@@ -421,6 +488,9 @@ export class BreedingService {
       throw new NotFoundException(`Boar animal with ID '${dto.boar_animal_id}' not found.`);
     }
 
+    const companyId = this.assertAnimalCompany(dto.company_id, boar, 'boar');
+    await this.assertScopedBatch(dto.boar_batch_id, companyId, tenantId);
+
     const amort = dto.amortisation_period || 0;
     const feed = dto.feed_cost_period || 0;
     const drug = dto.drug_cost_period || 0;
@@ -432,7 +502,7 @@ export class BreedingService {
     const newRecord = {
       semen_batch_id: semenBatchId,
       tenant_id: tenantId,
-      company_id: dto.company_id || boar.company_id || null,
+      company_id: companyId,
       boar_animal_id: dto.boar_animal_id,
       boar_batch_id: dto.boar_batch_id || boar.current_batch_id || null,
       collection_date: dto.collection_date,

@@ -7,7 +7,7 @@ import { InventoryLedgerService } from '../../inventory/inventory-ledger/invento
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { SchedulerHeaderService } from '../scheduler-header/scheduler-header.service';
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import * as schema from '../../../core/database/schema';
 import { MySqlDialect } from 'drizzle-orm/mysql-core';
 import { FarmScope } from '../../../common/farm-scope';
@@ -884,6 +884,13 @@ describe('BatchService', () => {
             ]),
           }),
         }),
+      }).mockReturnValueOnce({
+        // The harvest warehouse must sit on the batch's company and LOB (I4).
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockReturnValue({
+            limit: jest.fn().mockResolvedValue([{ location_id: 'wh-1', company_id: 'comp-1', lob_id: 'lob-piggery', parent: 'farm-1', farm_id: 'farm-1' }]),
+          }),
+        }),
       });
 
       mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) }) });
@@ -1090,6 +1097,106 @@ describe('BatchService', () => {
       rows.set(schema.locationMaster, [{ location_id: 'pen-1', parent: 'shed-1', farm_id: 'farm-g', company_id: 'co-1', lob_id: 'lob-pig' }]);
       await service.create({ ...validCreateDto, location_id: 'pen-1' } as any, 'tenant-1', { userId: 'u-1' } as any);
       expect(insertedValues(schema.batchHeader)).toMatchObject({ farm_id: 'farm-g' });
+    });
+
+    /**
+     * Recovery review follow-ups on the batch lifecycle. The batch below runs
+     * on Grasmere; every Kintyre id must be refused before anything is written.
+     */
+    const grasmereBatch = {
+      ...activeBatch, company_id: 'co-1', lob_id: 'lob-pig', farm_id: 'farm-g', batch_no: 'B-G-1',
+      costing_method: 'FIFO', input_lines: [], transactions: [],
+    };
+    const kintyreWarehouse = { location_id: 'wh-k', parent: 'farm-k', farm_id: 'farm-k', company_id: 'co-1', lob_id: 'lob-pig' };
+    const consumption = { transaction_date: '2026-09-14', transaction_type: 'CONSUMPTION', item_id: 'feed-1', quantity: 100, uom: 'KG' };
+
+    it('M3: answers not-found for an out-of-scope batch without taking the row lock', async () => {
+      useFarmScope(grasmere);
+      rows.set(schema.batchHeader, []); // the batch exists on Kintyre; scoped reads find nothing
+      const locked: unknown[] = [];
+      mockDbSelect.mockImplementation(() => ({ from: (table: unknown) => {
+        const c = chain(rows.get(table) ?? []);
+        c.for = () => { locked.push(table); return c; };
+        return c;
+      } }));
+
+      await expect(service.addTransaction('batch-on-kintyre', consumption as any, 'tenant-1'))
+        .rejects.toThrow(NotFoundException);
+      // Before the fix the FOR UPDATE on batch_header ran first, then findOne refused.
+      expect(locked).toEqual([]);
+      expect(mockDbInsert).not.toHaveBeenCalled();
+    });
+
+    it("I3: refuses consumption whose stock exists only in another farm's warehouse, with no ledger write", async () => {
+      jest.spyOn(service, 'findOne').mockResolvedValue(grasmereBatch as any);
+      rows.set(schema.inventoryLedger, [{ warehouse_id: 'wh-k', remaining_quantity: '500', on_farm: 0 }]);
+      let projection: any;
+      mockDbSelect.mockImplementation((p?: any) => {
+        if (p?.on_farm) projection = p;
+        return { from: (table: unknown) => chain(rows.get(table) ?? []) };
+      });
+      const writeNegativeEntry = jest.fn();
+      (service as any).ledgerService = { writeNegativeEntry };
+
+      await expect(service.addTransaction('batch-1', consumption as any, 'tenant-1'))
+        .rejects.toThrow("Stock must come from a warehouse on the batch's farm.");
+      // Before the fix nothing checked the layers: the ledger drew company-wide.
+      expect(writeNegativeEntry).not.toHaveBeenCalled();
+      expect(mockDbInsert).not.toHaveBeenCalled();
+      const onFarm = new MySqlDialect().sqlToQuery(projection.on_farm);
+      expect(onFarm.sql).toContain('lf.farm_id = ?');
+      expect(onFarm.params).toContain('farm-g');
+    });
+
+    it("I3: bounds the ledger's FIFO draw to the batch farm's warehouse when an older layer sits off the farm", async () => {
+      jest.spyOn(service, 'findOne').mockResolvedValue(grasmereBatch as any);
+      rows.set(schema.inventoryLedger, [
+        { warehouse_id: 'wh-k', remaining_quantity: '500', on_farm: 0 }, // oldest, Kintyre
+        { warehouse_id: 'wh-g', remaining_quantity: '300', on_farm: 1 },
+      ]);
+      const writeNegativeEntry = jest.fn().mockRejectedValue(new Error('stop after the ledger call'));
+      (service as any).ledgerService = { writeNegativeEntry };
+
+      await expect(service.addTransaction('batch-1', consumption as any, 'tenant-1')).rejects.toThrow('stop after the ledger call');
+      // Before the fix warehouseId was never passed, so FIFO would take Kintyre's layer.
+      expect(writeNegativeEntry).toHaveBeenCalledWith(expect.objectContaining({ itemId: 'feed-1', warehouseId: 'wh-g' }));
+    });
+
+    it("I4: refuses a stage transfer into a location on another farm, before any write", async () => {
+      jest.spyOn(service, 'findOne').mockResolvedValue(grasmereBatch as any);
+      rows.set(schema.locationMaster, [kintyreWarehouse]);
+
+      await expect(service.transferStage('batch-1', { to_stage_code: 'GROWER', to_location_id: 'wh-k' } as any, 'tenant-1'))
+        .rejects.toThrow("Stage location is not on the batch's farm.");
+      expect(mockDbUpdate).not.toHaveBeenCalled();
+      expect(mockDbInsert).not.toHaveBeenCalled();
+    });
+
+    it("I4: refuses closing with an output warehouse on another farm, before any stock posts", async () => {
+      jest.spyOn(service, 'findOne').mockResolvedValue(grasmereBatch as any);
+      rows.set(schema.locationMaster, [kintyreWarehouse]);
+      const writePositiveEntry = jest.fn();
+      (service as any).ledgerService = { writePositiveEntry };
+
+      await expect(service.close('batch-1', {
+        output_lines: [{ item_id: 'pork', quantity: 10, uom: 'KG', cost_split_pct: 100, warehouse_id: 'wh-k' }],
+      } as any, 'tenant-1')).rejects.toThrow(ForbiddenException);
+      expect(writePositiveEntry).not.toHaveBeenCalled();
+      expect(mockDbInsert).not.toHaveBeenCalled();
+    });
+
+    it("I4: refuses a harvest disposal into a warehouse on another farm, before any stock posts", async () => {
+      jest.spyOn(service, 'findOne').mockResolvedValue({ ...grasmereBatch, costing_method: 'BIO_ASSET' } as any);
+      rows.set(schema.batchBioAssetState, [{ batch_id: 'batch-1', stage: 'MATURE', current_quantity: '5', nca_book_value: '20000' }]);
+      rows.set(schema.locationMaster, [kintyreWarehouse]);
+      const writePositiveEntry = jest.fn();
+      (service as any).ledgerService = { writePositiveEntry };
+
+      await expect(service.disposeBioAsset('batch-1', {
+        disposal_type: 'HARVEST', quantity: 5, posting_date: '2026-09-14',
+        output_item_id: 'pork', output_uom: 'KG', output_quantity: 400, warehouse_id: 'wh-k',
+      } as any, 'tenant-1')).rejects.toThrow("Harvest warehouse is not on the batch's farm.");
+      expect(writePositiveEntry).not.toHaveBeenCalled();
     });
 
     it('refuses creating a batch on a location of another farm', async () => {

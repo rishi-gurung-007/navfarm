@@ -4,7 +4,8 @@ import { ClsService } from 'nestjs-cls';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { NobLobResolutionService } from '../../core/operational-area/nob-lob-resolution.service';
-import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { MySqlDialect } from 'drizzle-orm/mysql-core';
 import { transactionCls, useFarmScope } from '../../../test-utils/transaction-cls';
 
 describe('AnimalService', () => {
@@ -185,8 +186,116 @@ describe('AnimalService', () => {
         .mockReturnValueOnce(found(penOnKintyre)); // assertLocationOnActiveFarm -> farmOfLocation
 
       await expect(
-        service.create({ ...baseDto, current_location_id: 'pen-k' } as any, 'tenant-1'),
+        // In the caller's own company and LOB, so only the location is at fault.
+        service.create({ ...baseDto, company_id: 'co-1', lob_id: 'lob-pig', current_location_id: 'pen-k' } as any, 'tenant-1'),
       ).rejects.toThrow('Animal location is not on your active farm.');
+    });
+  });
+
+  /**
+   * Recovery review C2: create wrote the caller's company_id and lob_id
+   * unchecked (the row landed, then the read-back 404'd), and every secondary
+   * reference was a tenant-wide existence check — an oracle for other farms.
+   */
+  describe('create is bounded by the caller scope before anything is written', () => {
+    const grasmereOperator = { farmId: 'farm-g', restricted: true, companyId: 'co-1', lobId: 'lob-pig' };
+    const penOnGrasmere = { location_id: 'pen-g', parent: 'shed-g', parent_location_id: 'shed-g', farm_id: 'farm-g', company_id: 'co-1', lob_id: null };
+    const recordInserts = () => mockDbInsert.mockReturnValue({ values: jest.fn().mockResolvedValue({}) });
+
+    it("refuses another LOB's lob_id before any insert", async () => {
+      useFarmScope(cls, grasmereOperator);
+      // The full happy path is mocked, so without the LOB assertion the create
+      // would reach the insert (the reviewer's exploit) and this test would fail.
+      mockDbSelect
+        .mockReturnValueOnce(found({ company_id: 'co-1' }))
+        .mockReturnValueOnce(found({ nob_id: 'nob-1' }))
+        .mockReturnValueOnce(found({ lob_id: 'lob-other' }))
+        .mockReturnValueOnce(found({ breed_id: 'breed-1' }))
+        .mockReturnValueOnce(found({ item_id: 'item-1' }))
+        .mockReturnValueOnce(found(penOnGrasmere))
+        .mockReturnValueOnce(found(penOnGrasmere))
+        .mockReturnValueOnce(found({ lob_code: 'OTHER' }))
+        .mockReturnValueOnce(found({ animal_id: 'a-1' }));
+      recordInserts();
+
+      await expect(
+        service.create({ ...baseDto, company_id: 'co-1', lob_id: 'lob-other', current_location_id: 'pen-g' } as any, 'tenant-1'),
+      ).rejects.toThrow('Not authorized for this line of business.');
+      expect(mockDbInsert).not.toHaveBeenCalled();
+      expect(numberSeriesService.generateNext).not.toHaveBeenCalled();
+    });
+
+    it("refuses a company admin's create in a company other than the selected one, before any insert", async () => {
+      useFarmScope(cls, { farmId: null, restricted: false, companyId: 'co-1', lobId: null });
+      mockDbSelect
+        .mockReturnValueOnce(found({ company_id: 'co-2' }))
+        .mockReturnValueOnce(found({ nob_id: 'nob-1' }))
+        .mockReturnValueOnce(found({ lob_id: 'lob-1' }))
+        .mockReturnValueOnce(found({ breed_id: 'breed-1' }))
+        .mockReturnValueOnce(found({ item_id: 'item-1' }))
+        .mockReturnValueOnce(found({ lob_code: 'PIGGERY' }))
+        .mockReturnValueOnce(found({ animal_id: 'a-1' }));
+      recordInserts();
+
+      await expect(service.create({ ...baseDto, company_id: 'co-2' } as any, 'tenant-1')).rejects.toThrow(ForbiddenException);
+      expect(mockDbInsert).not.toHaveBeenCalled();
+    });
+
+    it('refuses a restricted user who names neither a location nor a batch', async () => {
+      useFarmScope(cls, grasmereOperator);
+
+      await expect(service.create({ ...baseDto, company_id: 'co-1', lob_id: 'lob-pig' } as any, 'tenant-1'))
+        .rejects.toThrow(new BadRequestException('Choose where this animal is: a batch or a location on your farm.'));
+      // Before the fix this animal was created on no farm at all.
+      expect(mockDbInsert).not.toHaveBeenCalled();
+    });
+
+    it('refuses a restricted user whose batch resolves to no farm', async () => {
+      useFarmScope(cls, { ...grasmereOperator, farmId: null });
+      mockDbSelect
+        .mockReturnValueOnce(found({ company_id: 'co-1' }))
+        .mockReturnValueOnce(found({ nob_id: 'nob-1' }))
+        .mockReturnValueOnce(found({ lob_id: 'lob-pig' }))
+        .mockReturnValueOnce(found({ breed_id: 'breed-1' }))
+        .mockReturnValueOnce(found({ item_id: 'item-1' }))
+        .mockReturnValueOnce(found({ batch_id: 'b-legacy', farm_id: null }));
+
+      await expect(
+        service.create({ ...baseDto, company_id: 'co-1', lob_id: 'lob-pig', current_batch_id: 'b-legacy' } as any, 'tenant-1'),
+      ).rejects.toThrow('Choose where this animal is: a batch or a location on your farm.');
+      expect(mockDbInsert).not.toHaveBeenCalled();
+    });
+
+    // Each reference that exists on another farm must answer exactly as a
+    // missing id does, and must be looked up through the caller's scope. The
+    // mocked query returns nothing either way, so the discriminating assertion
+    // is the rendered WHERE: before the fix it carried no scope at all.
+    it.each([
+      ['source batch', { source_batch_id: 'b-k' }, "Batch with ID 'b-k' not found.", '`batch_header`.`farm_id` = ?'],
+      ['current batch', { current_batch_id: 'b-k' }, "Batch with ID 'b-k' not found.", '`batch_header`.`farm_id` = ?'],
+      ['sire', { sire_animal_id: 'sire-k' }, "Sire animal with ID 'sire-k' not found.", 'animal_register af'],
+      ['dam', { dam_animal_id: 'dam-k' }, "Dam animal with ID 'dam-k' not found.", 'animal_register af'],
+      ['source receipt', { entry_type: 'PURCHASED_LOCAL', source_receipt_id: 'grn-k' }, "Goods receipt with ID 'grn-k' not found.", 'lf.farm_id = ?'],
+    ])('answers an out-of-scope %s with the missing-id not-found', async (_label, reference, message, scopeSql) => {
+      useFarmScope(cls, { farmId: 'farm-g', restricted: false, companyId: 'co-1', lobId: null });
+      let captured: any;
+      mockDbSelect
+        .mockReturnValueOnce(found({ company_id: 'co-1' }))
+        .mockReturnValueOnce(found({ nob_id: 'nob-1' }))
+        .mockReturnValueOnce(found({ lob_id: 'lob-1' }))
+        .mockReturnValueOnce(found({ breed_id: 'breed-1' }))
+        .mockReturnValueOnce(found({ item_id: 'item-1' }))
+        .mockReturnValue({ from: () => ({ where: (condition: any) => {
+          captured = condition;
+          return { limit: async () => [] };
+        } }) });
+
+      await expect(service.create({ ...baseDto, company_id: 'co-1', ...reference } as any, 'tenant-1'))
+        .rejects.toThrow(new NotFoundException(message));
+      const rendered = new MySqlDialect().sqlToQuery(captured);
+      expect(rendered.sql).toContain(scopeSql);
+      expect(rendered.params).toContain('co-1');
+      expect(mockDbInsert).not.toHaveBeenCalled();
     });
   });
 

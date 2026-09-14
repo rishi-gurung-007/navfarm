@@ -1,14 +1,14 @@
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { batchTransactionCost } from './batch-transaction-cost';
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, like, isNull, inArray, desc, SQL } from 'drizzle-orm';
+import { eq, and, like, isNull, inArray, desc, asc, sql, SQL } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { unlink } from 'fs/promises';
 import { resolve } from 'path';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
-import { assertCompanyInScope, assertLobInScope, farmScope, batchScopeConditions, assertLocationOnActiveFarm, farmOfLocation } from '../../../common/farm-scope';
+import { assertCompanyInScope, assertLobInScope, farmScope, batchScopeConditions, assertLocationOnActiveFarm, farmOfLocation, locationOnFarm } from '../../../common/farm-scope';
 import {
   CreateBatchDto,
   AddBatchTransactionDto,
@@ -476,6 +476,7 @@ export class BatchService {
   async transferStage(id: string, dto: TransferStageDto, tenantId: string, userPayload?: UserContext) {
     const batch = await this.findOne(id);
     this.assertStatus(batch, 'ACTIVE');
+    await this.assertOnBatchFarm(batch, dto.to_location_id, 'Stage location');
 
     // Opportunistic link to stage_master: if this LOB has a seeded stage matching
     // the given code, record it alongside current_stage_code. If not (LOB has no
@@ -699,6 +700,104 @@ export class BatchService {
   }
 
   /**
+   * A location or warehouse a lifecycle action writes to must sit on the
+   * batch's own farm, company and LOB — not merely the caller's. Without it a
+   * Grasmere batch could be moved into a Kintyre pen, or post its output stock
+   * into another farm's warehouse (recovery review I4). The farm-scope helper
+   * carries the rule; only the message differs, because the boundary here is
+   * the batch rather than the caller's active farm.
+   */
+  private async assertOnBatchFarm(
+    batch: { farm_id: string | null; company_id: string; lob_id: string },
+    locationId: string | null | undefined,
+    label: string,
+  ): Promise<void> {
+    try {
+      await assertLocationOnActiveFarm(
+        this.db,
+        { farmId: batch.farm_id, companyId: batch.company_id, lobId: batch.lob_id, restricted: true },
+        locationId,
+        label,
+      );
+    } catch (err) {
+      if (err instanceof ForbiddenException) throw new ForbiddenException(`${label} is not on the batch's farm.`);
+      throw err;
+    }
+  }
+
+  /**
+   * Batch consumption names no warehouse, and the ledger's FIFO draws from every
+   * warehouse of the company when none is given — so a Grasmere feed entry could
+   * decrement a Kintyre layer, or pick one deliberately by lot_no (recovery
+   * review I3). This resolves the one warehouse on the batch's farm the draw is
+   * taken from, and the caller hands it to the ledger so FIFO is bounded to it.
+   *
+   * When the unbounded draw would already have come from a single on-farm
+   * warehouse, that warehouse is returned and nothing changes. Otherwise the
+   * farm's warehouse holding the oldest stock that can cover the quantity is
+   * used. Stock that exists only off the farm is refused, never drawn.
+   *
+   * A batch with no farm (legacy rows, see recovery review M8) keeps the
+   * company-wide draw: there is no farm to bound it to.
+   */
+  private async consumptionWarehouse(
+    batch: { farm_id: string | null; company_id: string },
+    params: { tenantId: string; itemId: string; quantity: number; lotNo?: string },
+  ): Promise<string | undefined> {
+    if (!batch.farm_id) return undefined;
+    const conditions: SQL[] = [
+      eq(schema.inventoryLedger.tenant_id, params.tenantId),
+      eq(schema.inventoryLedger.company_id, batch.company_id),
+      eq(schema.inventoryLedger.item_id, params.itemId),
+      eq(schema.inventoryLedger.entry_type, 'POSITIVE'),
+      sql`${schema.inventoryLedger.remaining_quantity} > 0`,
+    ];
+    if (params.lotNo) conditions.push(eq(schema.inventoryLedger.lot_no, params.lotNo));
+    // Same filter and order as the ledger's applyFifo, so the walk below is the
+    // draw it would make. Not locked: applyFifo locks the layers it actually
+    // draws, and locking here would also lock other farms' rows.
+    const layers = await this.db
+      .select({
+        warehouse_id: schema.inventoryLedger.warehouse_id,
+        remaining_quantity: schema.inventoryLedger.remaining_quantity,
+        on_farm: sql<number>`${locationOnFarm(schema.inventoryLedger.warehouse_id, batch.farm_id)}`,
+      })
+      .from(schema.inventoryLedger)
+      .where(and(...conditions))
+      .orderBy(asc(schema.inventoryLedger.posting_date), asc(schema.inventoryLedger.created_at));
+
+    let outstanding = params.quantity;
+    const drawnFrom = new Set<string | null>();
+    let drawsOffFarm = false;
+    for (const layer of layers) {
+      if (outstanding <= 0) break;
+      drawnFrom.add(layer.warehouse_id);
+      if (Number(layer.on_farm) !== 1) drawsOffFarm = true;
+      outstanding -= Number(layer.remaining_quantity || 0);
+    }
+    const [only] = [...drawnFrom];
+    if (!drawsOffFarm && drawnFrom.size === 1 && only) return only;
+
+    // Map keeps first-seen order, which is FIFO order of each warehouse's oldest layer.
+    const onFarmTotals = new Map<string, number>();
+    for (const layer of layers) {
+      if (Number(layer.on_farm) !== 1 || !layer.warehouse_id) continue;
+      onFarmTotals.set(layer.warehouse_id, (onFarmTotals.get(layer.warehouse_id) ?? 0) + Number(layer.remaining_quantity || 0));
+    }
+    for (const [warehouseId, total] of onFarmTotals) {
+      if (total >= params.quantity) return warehouseId;
+    }
+    if (drawsOffFarm) throw new ForbiddenException("Stock must come from a warehouse on the batch's farm.");
+    // Nothing off the farm either: let the ledger report the shortfall in the
+    // farm's fullest warehouse rather than drawing unbounded.
+    const [fullest] = [...onFarmTotals.entries()].sort((a, b) => b[1] - a[1]);
+    if (fullest) return fullest[0];
+    throw new BadRequestException(
+      `Insufficient stock for item '${params.itemId}' on the batch's farm: requested ${params.quantity}. Post a receipt before issuing stock.`,
+    );
+  }
+
+  /**
    * Auto-registers `headcount` placeholder animal_register rows for a
    * newly-created BIO_ASSET batch. Per-animal fields that have no real
    * source at batch-creation time are deliberately generic/even-split rather
@@ -841,10 +940,13 @@ export class BatchService {
         .where(eq(schema.batchBioAssetState.batch_id, id));
     } else {
       for (const line of batch.input_lines) {
+        // Input stock is bounded to the batch's farm for the same reason as consumption.
+        const warehouseId = await this.consumptionWarehouse(batch, { tenantId, itemId: line.item_id, quantity: Number(line.quantity) });
         const ledgerEntry = await this.ledgerService.writeNegativeEntry({
           tenantId,
           companyId: batch.company_id,
           itemId: line.item_id,
+          warehouseId,
           documentType: 'BATCH',
           documentNo: batch.batch_no,
           documentLineId: line.line_id,
@@ -955,6 +1057,23 @@ export class BatchService {
 
   async addTransaction(id: string, dto: AddBatchTransactionDto, tenantId: string, userPayload?: UserContext) {
     return withTenantTransaction(this.cls, async () => {
+    // Scope first, lock second: the lock below would otherwise be taken on a
+    // batch the caller cannot see before findOne refuses it (recovery review
+    // M3). With no scope in force the conditions are empty and the check is moot.
+    const scopeConditions = batchScopeConditions(farmScope(this.cls));
+    if (scopeConditions.length) {
+      const [visible] = await this.db
+        .select({ scoped_batch_id: schema.batchHeader.batch_id })
+        .from(schema.batchHeader)
+        .where(and(
+          eq(schema.batchHeader.batch_id, id),
+          eq(schema.batchHeader.tenant_id, tenantId),
+          isNull(schema.batchHeader.deleted_at),
+          ...scopeConditions,
+        ))
+        .limit(1);
+      if (!visible) throw new NotFoundException(`Batch with ID '${id}' not found.`);
+    }
     await this.db.select({ batch_id: schema.batchHeader.batch_id }).from(schema.batchHeader)
       .where(and(eq(schema.batchHeader.batch_id, id), eq(schema.batchHeader.tenant_id, tenantId))).for('update');
     const batch = await this.findOne(id);
@@ -1044,10 +1163,14 @@ export class BatchService {
       const bioTransactionType = isBioAsset
         ? (bio?.stage === 'PREMATURE' ? 'BIO_CONSUMPTION_PREMATURE' : 'BIO_CONSUMPTION_MATURE')
         : 'BATCH_CONSUMPTION';
+      const warehouseId = await this.consumptionWarehouse(batch, {
+        tenantId, itemId: dto.item_id!, quantity: Number(dto.quantity), lotNo: dto.lot_no,
+      });
       const ledgerEntry = await this.ledgerService.writeNegativeEntry({
         tenantId,
         companyId: batch.company_id,
         itemId: dto.item_id!,
+        warehouseId,
         documentType: 'BATCH',
         documentNo: batch.batch_no,
         documentLineId: transactionId,
@@ -1711,6 +1834,11 @@ export class BatchService {
     if (Math.abs(totalSplitPct - 100) > 0.01) {
       throw new BadRequestException(`Output line cost_split_pct must sum to 100 (got ${totalSplitPct}).`);
     }
+    // Every line is checked before the first posts, so a bad warehouse on line
+    // two cannot leave line one's stock behind.
+    for (const line of dto.output_lines) {
+      await this.assertOnBatchFarm(batch, line.warehouse_id, 'Output warehouse');
+    }
 
     const inputTotal = (batch.input_lines || []).reduce((sum, l) => sum + Number(l.amount || 0), 0);
     // MORTALITY is deliberately excluded here — it's already expensed and relieved
@@ -2209,6 +2337,7 @@ export class BatchService {
       if (!dto.output_item_id || !dto.output_uom || !dto.output_quantity || !dto.warehouse_id) {
         throw new BadRequestException('HARVEST disposal requires output_item_id, output_uom, output_quantity and warehouse_id.');
       }
+      await this.assertOnBatchFarm(batch, dto.warehouse_id, 'Harvest warehouse');
       const rate = dto.output_quantity > 0 ? nbvDisposed / dto.output_quantity : 0;
       const ledgerEntry = await this.ledgerService.writePositiveEntry({
         tenantId,

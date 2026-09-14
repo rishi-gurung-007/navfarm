@@ -6,6 +6,7 @@ import { ApprovalService } from './approval.service';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { BatchService } from '../batch/batch.service';
 import { transactionCls, useFarmScope } from '../../../test-utils/transaction-cls';
+import * as schema from '../../../core/database/schema';
 
 /**
  * QueryApprovalDto advertises `limit` and `offset`, and the global
@@ -148,5 +149,87 @@ describe('ApprovalService farm scope', () => {
 
     await expect(service.create({ company_id: 'co-1' } as any, 'tenant-1')).rejects.toThrow(ForbiddenException);
     expect(mockDb.select).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Recovery review I5: create() checked the body's company only for restricted
+ * users, so a COMPANY_ADMIN (or a tenant admin with a company selected) could
+ * raise a batchless request into another company's approval queue.
+ */
+describe('ApprovalService.create company boundary', () => {
+  let service: ApprovalService;
+  let cls: ReturnType<typeof transactionCls>;
+  const rows = new Map<unknown, unknown[]>();
+  const queried: unknown[] = [];
+  const insert = jest.fn(() => ({ values: jest.fn().mockResolvedValue({}) }));
+
+  const chain = (table: unknown) => {
+    const result = rows.get(table) ?? [];
+    const self: any = {
+      from: () => self, where: () => self, limit: () => self, leftJoin: () => self,
+      then: (ok: any, err: any) => Promise.resolve(result).then(ok, err),
+    };
+    return self;
+  };
+  const mockDb = {
+    select: jest.fn(() => ({ from: (table: unknown) => { queried.push(table); return chain(table); } })),
+    insert,
+  };
+
+  const companyAdmin = { userId: 'u-admin', companyId: 'co-a', userType: 'COMPANY_ADMIN' };
+
+  beforeEach(async () => {
+    rows.clear();
+    queried.length = 0;
+    insert.mockClear();
+    cls = transactionCls(mockDb);
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        ApprovalService,
+        { provide: ClsService, useValue: cls },
+        { provide: AuditLogService, useValue: { log: jest.fn().mockResolvedValue({}) } },
+        { provide: BatchService, useValue: { addTransaction: jest.fn() } },
+      ],
+    }).compile();
+    service = module.get<ApprovalService>(ApprovalService);
+    // Stop after the guards: read-back and numbering are not under test here.
+    jest.spyOn(service as any, 'generateDocNo').mockResolvedValue('REQ-2026-0001');
+    jest.spyOn(service, 'findOne').mockResolvedValue({} as any);
+  });
+
+  it('refuses a company admin raising for a company other than the selected one, before any insert', async () => {
+    useFarmScope(cls, { farmId: null, restricted: false, companyId: 'co-a', lobId: null });
+
+    await expect(service.create({ company_id: 'co-b', doc_type: 'FEED_RATION', title: 't' } as any, 'tenant-1', companyAdmin))
+      .rejects.toThrow('Not authorized for this company.');
+    expect(insert).not.toHaveBeenCalled();
+  });
+
+  it('refuses a company admin raising for a company they are not assigned to, even with no company in scope', async () => {
+    useFarmScope(cls, { farmId: null, restricted: false, companyId: null, lobId: null });
+    rows.set(schema.userCompanyAssignments, []);
+
+    await expect(service.create({ company_id: 'co-b', doc_type: 'FEED_RATION', title: 't' } as any, 'tenant-1', companyAdmin))
+      .rejects.toThrow(ForbiddenException);
+    expect(queried).toContain(schema.userCompanyAssignments);
+    expect(insert).not.toHaveBeenCalled();
+  });
+
+  it('lets a company admin raise for a company they hold an active assignment to', async () => {
+    useFarmScope(cls, { farmId: null, restricted: false, companyId: null, lobId: null });
+    rows.set(schema.userCompanyAssignments, [{ id: 'assign-1' }]);
+
+    await service.create({ company_id: 'co-b', doc_type: 'FEED_RATION', title: 't' } as any, 'tenant-1', companyAdmin);
+    expect(insert).toHaveBeenCalledWith(schema.approvalRequest);
+  });
+
+  it('refuses a tenant admin raising for a company outside their tenant', async () => {
+    useFarmScope(cls, { farmId: null, restricted: false, companyId: null, lobId: null });
+    rows.set(schema.companyMaster, []);
+
+    await expect(service.create({ company_id: 'co-elsewhere', doc_type: 'FEED_RATION', title: 't' } as any, 'tenant-1',
+      { userId: 'u-t', companyId: null, userType: 'TENANT_ADMIN' })).rejects.toThrow(ForbiddenException);
+    expect(insert).not.toHaveBeenCalled();
   });
 });
