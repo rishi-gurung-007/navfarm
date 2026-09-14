@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, ConflictException, BadRequestException, Inject } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException, BadRequestException, ForbiddenException, Inject } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { and, eq, ne, isNull, like, or, type SQL } from 'drizzle-orm';
 import { ClsService } from 'nestjs-cls';
@@ -10,6 +10,7 @@ import * as crypto from 'crypto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { seedDefaultCompanyRoles } from '../role/default-role-seed';
 import { copyCompanyMasterTemplates } from './copy-master-templates';
+import { isTenantLevelUserType } from '../../../common/user-type-hierarchy';
 
 /** Seeded in bootstrap-database.ts. */
 const USD_CURRENCY_ID = '20000000-2000-2000-2000-200000000002';
@@ -87,6 +88,8 @@ export class CompanyService {
   }
 
   async create(dto: CreateCompanyDto, tenantId: string, userPayload?: any) {
+    this.assertTenantLevel(userPayload, 'create');
+
     // Check plan limits in masterDb
     const [tenantMeta] = await this.masterDb
       .select()
@@ -329,6 +332,11 @@ export class CompanyService {
 
   async update(companyId: string, dto: UpdateCompanyDto, tenantId?: string, userPayload?: any) {
     const company = await this.findOne(companyId);
+    await this.assertCanEditCompany(company, userPayload);
+    // is_active=false is a soft delete by another name, so it follows delete's rule.
+    if (dto.is_active !== undefined && dto.is_active !== company.is_active) {
+      this.assertTenantLevel(userPayload, 'deactivate or reactivate');
+    }
 
     // Validate unique code / name if modified
     if (tenantId && (dto.company_code || dto.company_name)) {
@@ -398,6 +406,7 @@ export class CompanyService {
   }
 
   async remove(companyId: string, tenantId?: string, userPayload?: any) {
+    this.assertTenantLevel(userPayload, 'delete');
     const company = await this.findOne(companyId);
     const deletedTime = toMysqlTimestamp();
 
@@ -427,6 +436,8 @@ export class CompanyService {
   }
 
   async restore(companyId: string, tenantId?: string, userPayload?: any) {
+    this.assertTenantLevel(userPayload, 'restore');
+
     const [company] = await this.db
       .select()
       .from(schema.companyMaster)
@@ -463,5 +474,49 @@ export class CompanyService {
     });
 
     return this.findOne(companyId);
+  }
+
+  /**
+   * Creating, deleting and restoring companies reshapes the tenant. The
+   * permission decorators cannot enforce that on their own: COMPANY_ADMIN
+   * bypasses role_permissions in RolesGuard, so it passed 'create'/'delete'.
+   */
+  private assertTenantLevel(userPayload: any, action: string) {
+    if (!isTenantLevelUserType(userPayload?.userType)) {
+      throw new ForbiddenException(`Only a tenant administrator can ${action} a company.`);
+    }
+  }
+
+  /**
+   * Below tenant level a user may edit only a company they belong to: their
+   * home company or an active assignment. RolesGuard validates the
+   * x-active-company-id header but never the :id in the path.
+   */
+  private async assertCanEditCompany(company: { company_id: string; tenant_id: string }, userPayload: any) {
+    const userType = userPayload?.userType;
+    if (userType === 'SYSTEM_ADMIN') return;
+    if (userType === 'TENANT_ADMIN') {
+      if (company.tenant_id !== userPayload.tenantId) {
+        throw new ForbiddenException('Not authorized for this company.');
+      }
+      return;
+    }
+    if (!userPayload?.userId) {
+      throw new ForbiddenException('Not authorized for this company.');
+    }
+    if (company.company_id === userPayload.companyId) return;
+
+    const [assignment] = await this.db
+      .select({ id: schema.userCompanyAssignments.assign_id })
+      .from(schema.userCompanyAssignments)
+      .where(and(
+        eq(schema.userCompanyAssignments.user_id, userPayload.userId),
+        eq(schema.userCompanyAssignments.company_id, company.company_id),
+        eq(schema.userCompanyAssignments.is_active, true),
+      ))
+      .limit(1);
+    if (!assignment) {
+      throw new ForbiddenException('Not authorized for this company.');
+    }
   }
 }

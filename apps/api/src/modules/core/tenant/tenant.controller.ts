@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Delete, Body, Param, HttpStatus, UseGuards, Request, ForbiddenException } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Body, Param, HttpStatus, UseGuards, Request, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiProperty, ApiBearerAuth } from '@nestjs/swagger';
 import { TenantService } from './tenant.service';
 import { SignupTenantDto } from './dto/signup-tenant.dto';
@@ -66,8 +66,10 @@ export class TenantController {
   @ApiResponse({ status: HttpStatus.OK, description: 'Tenant details retrieved.', type: TenantResponse })
   @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Tenant not found.' })
   async findOne(@Param('id') id: string, @Request() req) {
+    // tenantId on req.user comes from the user's own user_master row (JwtStrategy),
+    // so a non-platform user cannot point this at someone else's tenant.
     const user = req.user;
-    if (user.userType !== 'SYSTEM_ADMIN' && user.tenantId !== id) {
+    if (user?.userType !== 'SYSTEM_ADMIN' && (!user?.tenantId || user.tenantId !== id)) {
       throw new ForbiddenException('Access denied. You can only access details for your own tenant.');
     }
     return this.tenantService.findOne(id);
@@ -80,9 +82,17 @@ export class TenantController {
   @ApiResponse({ status: HttpStatus.OK, description: 'Tenant details retrieved.', type: TenantResponse })
   @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Tenant not found.' })
   async findByCode(@Param('code') code: string, @Request() req) {
-    const tenantDetails = await this.tenantService.findByCode(code);
     const user = req.user;
-    if (user.userType !== 'SYSTEM_ADMIN' && user.tenantId !== tenantDetails.tenant_id) {
+    if (user?.userType === 'SYSTEM_ADMIN') {
+      return this.tenantService.findByCode(code);
+    }
+    // Unknown and foreign codes answer the same 403; a 404 for one and a 403
+    // for the other let any logged-in user probe which tenant codes exist.
+    const tenantDetails = await this.tenantService.findByCode(code).catch((err) => {
+      if (err instanceof NotFoundException) return null;
+      throw err;
+    });
+    if (!tenantDetails || !user?.tenantId || user.tenantId !== tenantDetails.tenant_id) {
       throw new ForbiddenException('Access denied. You can only access details for your own tenant.');
     }
     return tenantDetails;

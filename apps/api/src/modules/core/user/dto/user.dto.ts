@@ -1,6 +1,7 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsEmail, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsInt, Min, MinLength, MaxLength } from 'class-validator';
+import { IsString, IsEmail, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsIn, IsInt, Min, MinLength, MaxLength } from 'class-validator';
 import { Type } from 'class-transformer';
+import { USER_TYPES } from '../../../../common/user-type-hierarchy';
 
 export class CreateUserDto {
   @ApiProperty({ description: 'Company UUID', example: '00000000-0000-0000-0000-000000000000' })
@@ -35,8 +36,10 @@ export class CreateUserDto {
   @IsOptional()
   phone?: string;
 
-  @ApiProperty({ description: 'User type role classification', default: 'STAFF', example: 'STAFF' })
-  @IsString()
+  // Closed list: any other string was persisted verbatim. Whether the caller
+  // may assign the value is decided in UserService against the hierarchy.
+  @ApiProperty({ description: 'User type classification', enum: USER_TYPES, default: 'STANDARD_USER', example: 'STANDARD_USER' })
+  @IsIn(USER_TYPES)
   @IsOptional()
   user_type?: string;
 
@@ -73,8 +76,8 @@ export class UpdateUserDto {
   @IsOptional()
   phone?: string;
 
-  @ApiProperty({ description: 'User type role classification', required: false, example: 'MANAGER' })
-  @IsString()
+  @ApiProperty({ description: 'User type classification', enum: USER_TYPES, required: false, example: 'STANDARD_USER' })
+  @IsIn(USER_TYPES)
   @IsOptional()
   user_type?: string;
 

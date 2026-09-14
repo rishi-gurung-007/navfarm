@@ -18,8 +18,8 @@ export class UserController {
   @ApiOperation({ summary: 'Create a new user account under a company' })
   @ApiResponse({ status: HttpStatus.CREATED, description: 'User account created.' })
   @ApiResponse({ status: HttpStatus.CONFLICT, description: 'Email already exists.' })
-  async create(@Body() body: CreateUserDto) {
-    return this.userService.create(body);
+  async create(@Body() body: CreateUserDto, @Request() req: any) {
+    return this.userService.create(body, req.user);
   }
 
   @Get()
@@ -50,7 +50,7 @@ export class UserController {
   @ApiOperation({ summary: 'Update user profile details' })
   @ApiParam({ name: 'id', description: 'User UUID' })
   async update(@Param('id') id: string, @Body() body: UpdateUserDto, @Request() req: any) {
-    return this.userService.update(id, body, req.user?.userId);
+    return this.userService.update(id, body, req.user);
   }
 
   @Delete(':id')
@@ -58,6 +58,6 @@ export class UserController {
   @ApiOperation({ summary: 'Soft-delete / deactivate a user account' })
   @ApiParam({ name: 'id', description: 'User UUID' })
   async remove(@Param('id') id: string, @Request() req: any) {
-    return this.userService.remove(id, req.user?.userId);
+    return this.userService.remove(id, req.user);
   }
 }

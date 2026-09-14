@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { eq, and, like, or, sql } from 'drizzle-orm';
 import * as bcrypt from 'bcryptjs';
@@ -7,6 +7,17 @@ import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
 import { CreateUserDto, UpdateUserDto, QueryUserDto } from './dto/user.dto';
 import { UserDirectoryService } from '../../../core/database/user-directory.service';
+import { canAssignUserType, outranks } from '../../../common/user-type-hierarchy';
+
+/**
+ * The validated JWT user (JwtStrategy re-reads user_master on every request),
+ * so userType is the database value, never anything from the request body.
+ */
+export interface RequestingUser {
+  userId: string;
+  tenantId: string;
+  userType: string;
+}
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   return date.toISOString().slice(0, 19).replace('T', ' ');
@@ -27,7 +38,18 @@ export class UserService {
     return tenantDb;
   }
 
-  async create(dto: CreateUserDto) {
+  async create(dto: CreateUserDto, requester: RequestingUser) {
+    // Checked before anything touches the database: user_type decides whether
+    // RolesGuard consults role_permissions at all, so an unchecked value let a
+    // company admin mint tenant or system admins.
+    const userType = dto.user_type ?? 'STANDARD_USER';
+    this.assertCanAssign(requester, userType);
+    // The auth directory maps the email to this tenant id for login routing;
+    // only a platform admin may name a tenant other than their own.
+    if (requester.userType !== 'SYSTEM_ADMIN' && dto.tenant_id !== requester.tenantId) {
+      throw new ForbiddenException('You can only create users in your own tenant.');
+    }
+
     const existing = await this.db
       .select()
       .from(schema.userMaster)
@@ -51,7 +73,7 @@ export class UserService {
         email: dto.email.toLowerCase(),
         phone: dto.phone || null,
         password_hash: passwordHash,
-        user_type: dto.user_type || 'STAFF',
+        user_type: userType,
         employee_id: dto.employee_id || null,
         department: dto.department || null,
         designation: dto.designation || null,
@@ -190,22 +212,37 @@ export class UserService {
     return this.findAll({ companyId });
   }
 
-  async update(id: string, dto: UpdateUserDto, actingUserId?: string) {
+  async update(id: string, dto: UpdateUserDto, requester: RequestingUser) {
     const user = await this.findById(id);
+    const actingUserId = requester.userId;
+    const isSelf = id === actingUserId;
+
+    // Peers and superiors are out of reach; your own profile is not.
+    if (!isSelf) this.assertOutranks(requester, user.user_type);
+
+    // The console's edit form always echoes the current type back, so only a
+    // real change is treated as an assignment.
+    const typeChanged = dto.user_type !== undefined && dto.user_type !== user.user_type;
+    if (typeChanged) {
+      if (isSelf) {
+        throw new ForbiddenException('You cannot change your own user type.');
+      }
+      this.assertCanAssign(requester, dto.user_type as string);
+    }
 
     // A user can edit their own profile fields, but never flip their own
     // account inactive — that's an easy way to accidentally lock yourself
     // out with no one else able to log in and reverse it (especially for a
     // tenant's only admin). Deactivating someone always has to come from a
     // different, still-active account.
-    if (actingUserId && id === actingUserId && dto.is_active === false) {
+    if (isSelf && dto.is_active === false) {
       throw new BadRequestException('You cannot deactivate your own account.');
     }
 
     const updates: any = {};
     if (dto.full_name !== undefined) updates.full_name = dto.full_name;
     if (dto.phone !== undefined) updates.phone = dto.phone;
-    if (dto.user_type !== undefined) updates.user_type = dto.user_type;
+    if (typeChanged) updates.user_type = dto.user_type;
     if (dto.employee_id !== undefined) updates.employee_id = dto.employee_id;
     if (dto.department !== undefined) updates.department = dto.department;
     if (dto.designation !== undefined) updates.designation = dto.designation;
@@ -222,8 +259,12 @@ export class UserService {
     return this.findById(id);
   }
 
-  async deactivate(id: string) {
+  async deactivate(id: string, requester: RequestingUser) {
+    if (id === requester.userId) {
+      throw new BadRequestException('You cannot deactivate your own account.');
+    }
     const user = await this.findById(id);
+    this.assertOutranks(requester, user.user_type);
 
     await this.db
       .update(schema.userMaster)
@@ -235,12 +276,13 @@ export class UserService {
     return this.findById(id);
   }
 
-  async remove(id: string, actingUserId?: string) {
-    if (actingUserId && id === actingUserId) {
+  async remove(id: string, requester: RequestingUser) {
+    if (id === requester.userId) {
       throw new BadRequestException('You cannot deactivate your own account.');
     }
 
     const user = await this.findById(id);
+    this.assertOutranks(requester, user.user_type);
 
     await this.db
       .update(schema.userMaster)
@@ -251,5 +293,17 @@ export class UserService {
       .where(eq(schema.userMaster.user_id, id));
 
     return { deleted: true, user_id: id };
+  }
+
+  private assertCanAssign(requester: RequestingUser, targetType: string) {
+    if (!canAssignUserType(requester?.userType, targetType)) {
+      throw new ForbiddenException(`You are not allowed to assign the user type '${targetType}'.`);
+    }
+  }
+
+  private assertOutranks(requester: RequestingUser, targetType: string) {
+    if (!outranks(requester?.userType, targetType)) {
+      throw new ForbiddenException('You cannot modify a user at or above your own access level.');
+    }
   }
 }
