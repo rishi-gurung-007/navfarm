@@ -38,13 +38,16 @@ wrong:
 
 ## Current work — read this before planning anything
 
-**`docs/HANDOFF-2026-09-14.md`** is the live handoff. It carries the client's own
-`Project task list.docx` scope (ten numbered items plus three follow-on), the
-four shared defects that block nine of them, the state of the tree, and how to
-drive the running app. Read it first; it will save you a day of re-deriving.
+Read **`docs/HANDOFF-2026-09-14-continuation.md`** first, then the original
+`docs/HANDOFF-2026-09-14.md` for the client scope (`Project task list.docx`:
+ten numbered items plus three follow-on). The continuation supersedes the
+original's *status*; it does not replace its scope.
 
-The one finding to absorb before you touch anything: **no document has ever been
-posted through the API in this database.** Every inventory, journal and
-batch-cost row was inserted directly by a seed script. 582 tests pass over a
-write path that has never run. Rows being present is not evidence, and neither
-is a green suite.
+As of 14 Sep afternoon the foundation defects F1, F2, F3, F5 and F6 are fixed
+and were verified by posting documents through the API and reading MySQL —
+evidence in `docs/VERIFICATION-2026-09-14-*.md`. Do not redo them.
+
+The lesson from that work still holds: **rows being present is not evidence,
+and neither is a green suite.** Before 14 Sep every inventory, journal and
+batch-cost row had been inserted by a seed script, and 582 tests passed over a
+write path that had never run. Prove a write by making it and reading MySQL.
