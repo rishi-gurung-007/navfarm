@@ -16,11 +16,13 @@ describe('AnimalService', () => {
   const mockDbSelect = jest.fn();
   const mockDbInsert = jest.fn();
   const mockDbUpdate = jest.fn();
+  const mockDbTransaction = jest.fn();
 
   const mockDb = {
     select: mockDbSelect,
     insert: mockDbInsert,
     update: mockDbUpdate,
+    transaction: mockDbTransaction,
   };
 
   const found = (row: any) => ({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue(row ? [row] : []), for: jest.fn().mockResolvedValue(row ? [row] : []) }) }) });
@@ -53,6 +55,8 @@ describe('AnimalService', () => {
     mockDbSelect.mockReset();
     mockDbInsert.mockReset();
     mockDbUpdate.mockReset();
+    mockDbTransaction.mockReset();
+    mockDbTransaction.mockImplementation(async (work) => work(mockDb));
     nobLobResolution.resolve.mockReset();
     nobLobResolution.resolve.mockImplementation(async (_tenantId: string, _companyId: any, explicit: any) => ({
       nob_id: explicit?.nob_id ?? null,
@@ -126,6 +130,22 @@ describe('AnimalService', () => {
       expect(ledgerInsert.cost_amount).toBe('3057.57');
     });
 
+    it('runs number issuance, Animal insert, and opening ledger insert in one transaction', async () => {
+      mockDbSelect
+        .mockReturnValueOnce(found({ company_id: 'comp-1' }))
+        .mockReturnValueOnce(found({ nob_id: 'nob-1' }))
+        .mockReturnValueOnce(found({ lob_id: 'lob-1' }))
+        .mockReturnValueOnce(found({ breed_id: 'breed-1' }))
+        .mockReturnValueOnce(found({ item_id: 'item-1' }))
+        .mockReturnValueOnce(found({ lob_code: 'PIGGERY' }));
+      mockDbInsert
+        .mockReturnValueOnce({ values: jest.fn().mockResolvedValue({}) })
+        .mockReturnValueOnce({ values: jest.fn().mockRejectedValue(new Error('ledger unavailable')) });
+
+      await expect(service.create(baseDto as any, 'tenant-123')).rejects.toThrow('ledger unavailable');
+      expect(mockDbTransaction).toHaveBeenCalledTimes(1);
+    });
+
     it('rejects a duplicate rfid_tag within the tenant', async () => {
       mockDbSelect
         .mockReturnValueOnce(found({ company_id: 'comp-1' }))
@@ -138,6 +158,28 @@ describe('AnimalService', () => {
       await expect(
         service.create({ ...baseDto, rfid_tag: 'RFID-001' }, 'tenant-123'),
       ).rejects.toThrow(ConflictException);
+    });
+
+    it('refuses to create an Animal row in a Count Only Batch', async () => {
+      mockDbSelect
+        .mockReturnValueOnce(found({ company_id: 'comp-1' }))
+        .mockReturnValueOnce(found({ nob_id: 'nob-1' }))
+        .mockReturnValueOnce(found({ lob_id: 'lob-1' }))
+        .mockReturnValueOnce(found({ breed_id: 'breed-1' }))
+        .mockReturnValueOnce(found({ item_id: 'item-1' }))
+        .mockReturnValueOnce(found({
+          batch_id: 'count-1', tenant_id: 'tenant-123', company_id: 'comp-1',
+          nob_id: 'nob-1', lob_id: 'lob-1', farm_id: 'farm-1',
+          breed_id: 'breed-1', animal_tracking: 'COUNT_ONLY',
+        }));
+
+      await expect(service.create({
+        ...baseDto,
+        current_batch_id: 'count-1',
+        current_stage_id: 'stage-1',
+      } as any, 'tenant-123')).rejects.toThrow(/Count Only/i);
+      expect(mockDbInsert).not.toHaveBeenCalled();
+      expect(numberSeriesService.generateNext).not.toHaveBeenCalled();
     });
   });
 
@@ -156,6 +198,38 @@ describe('AnimalService', () => {
       await expect(
         service.update('a-1', { dam_animal_id: 'a-1' }, 'tenant-123'),
       ).rejects.toThrow(BadRequestException);
+    });
+
+    it.each([
+      ['batch', { current_batch_id: 'batch-other' }],
+      ['location', { current_location_id: 'pen-other' }],
+      ['stage', { current_stage_id: 'stage-other' }],
+    ])('does not let the ordinary edit path change the animal %s', async (_field, change) => {
+      mockDbSelect.mockReturnValueOnce(found({
+        animal_id: 'a-1',
+        company_id: 'comp-1',
+        current_batch_id: 'batch-1',
+        current_location_id: 'pen-1',
+        current_stage_id: 'stage-1',
+      }));
+
+      await expect(service.update('a-1', change as any, 'tenant-123'))
+        .rejects.toThrow(/transfer|stage transition/i);
+      expect(mockDbUpdate).not.toHaveBeenCalled();
+    });
+
+    it('does not let the ordinary edit path clear placement', async () => {
+      mockDbSelect.mockReturnValueOnce(found({
+        animal_id: 'a-1',
+        company_id: 'comp-1',
+        current_batch_id: 'batch-1',
+        current_location_id: 'pen-1',
+        current_stage_id: 'stage-1',
+      }));
+
+      await expect(service.update('a-1', { current_batch_id: null } as any, 'tenant-123'))
+        .rejects.toThrow(/transfer/i);
+      expect(mockDbUpdate).not.toHaveBeenCalled();
     });
   });
 
@@ -188,7 +262,31 @@ describe('AnimalService', () => {
       await expect(
         // In the caller's own company and LOB, so only the location is at fault.
         service.create({ ...baseDto, company_id: 'co-1', lob_id: 'lob-pig', current_location_id: 'pen-k' } as any, 'tenant-1'),
-      ).rejects.toThrow('Animal location is not on your active farm.');
+      ).rejects.toThrow('Animal placement is not on your active farm.');
+    });
+
+    it('refuses a location-only placement when the Breed belongs to another farm', async () => {
+      useFarmScope(cls, { farmId: 'farm-g', restricted: true, companyId: 'co-1', lobId: 'lob-pig' });
+      const penOnGrasmere = {
+        location_id: 'pen-g', parent_location_id: 'shed-g', farm_id: 'farm-g',
+        tenant_id: 'tenant-1', company_id: 'co-1', nob_id: 'nob-1', lob_id: 'lob-pig',
+        is_active: true, deleted_at: null,
+      };
+      mockDbSelect
+        .mockReturnValueOnce(found({ company_id: 'co-1' }))
+        .mockReturnValueOnce(found({ nob_id: 'nob-1' }))
+        .mockReturnValueOnce(found({ lob_id: 'lob-pig' }))
+        .mockReturnValueOnce(found({ breed_id: 'breed-k' }))
+        .mockReturnValueOnce(found({ item_id: 'item-1' }))
+        .mockReturnValueOnce(found(penOnGrasmere))
+        .mockReturnValueOnce(found({ ...penOnGrasmere, location_id: 'farm-g', location_type: 'FARM', parent_location_id: null }))
+        .mockReturnValueOnce(found(null));
+
+      await expect(
+        service.create({ ...baseDto, company_id: 'co-1', lob_id: 'lob-pig', breed_id: 'breed-k', current_location_id: 'pen-g' } as any, 'tenant-1'),
+      ).rejects.toThrow(/Breed.*not available.*farm/i);
+      expect(mockDbInsert).not.toHaveBeenCalled();
+      expect(numberSeriesService.generateNext).not.toHaveBeenCalled();
     });
   });
 
@@ -250,6 +348,15 @@ describe('AnimalService', () => {
       expect(mockDbInsert).not.toHaveBeenCalled();
     });
 
+    it('also refuses a company admin who names neither a location nor a batch', async () => {
+      useFarmScope(cls, { farmId: null, restricted: false, companyId: 'co-1', lobId: null });
+
+      await expect(service.create({ ...baseDto, company_id: 'co-1' } as any, 'tenant-1'))
+        .rejects.toThrow('Choose where this animal is');
+      expect(mockDbInsert).not.toHaveBeenCalled();
+      expect(numberSeriesService.generateNext).not.toHaveBeenCalled();
+    });
+
     it('refuses a restricted user whose batch resolves to no farm', async () => {
       useFarmScope(cls, { ...grasmereOperator, farmId: null });
       mockDbSelect
@@ -258,11 +365,15 @@ describe('AnimalService', () => {
         .mockReturnValueOnce(found({ lob_id: 'lob-pig' }))
         .mockReturnValueOnce(found({ breed_id: 'breed-1' }))
         .mockReturnValueOnce(found({ item_id: 'item-1' }))
-        .mockReturnValueOnce(found({ batch_id: 'b-legacy', farm_id: null }));
+        .mockReturnValueOnce(found({
+          batch_id: 'b-legacy', tenant_id: 'tenant-1', company_id: 'co-1',
+          nob_id: 'nob-1', lob_id: 'lob-pig', breed_id: 'breed-1',
+          animal_tracking: 'REGISTERED', farm_id: null,
+        }));
 
       await expect(
         service.create({ ...baseDto, company_id: 'co-1', lob_id: 'lob-pig', current_batch_id: 'b-legacy' } as any, 'tenant-1'),
-      ).rejects.toThrow('Choose where this animal is: a batch or a location on your farm.');
+      ).rejects.toThrow('Batch has no farm');
       expect(mockDbInsert).not.toHaveBeenCalled();
     });
 
@@ -272,7 +383,7 @@ describe('AnimalService', () => {
     // is the rendered WHERE: before the fix it carried no scope at all.
     it.each([
       ['source batch', { source_batch_id: 'b-k' }, "Batch with ID 'b-k' not found.", '`batch_header`.`farm_id` = ?'],
-      ['current batch', { current_batch_id: 'b-k' }, "Batch with ID 'b-k' not found.", '`batch_header`.`farm_id` = ?'],
+      ['current batch', { current_batch_id: 'b-k' }, "Current Batch with ID 'b-k' not found.", '`batch_header`.`company_id` = ?'],
       ['sire', { sire_animal_id: 'sire-k' }, "Sire animal with ID 'sire-k' not found.", 'animal_register af'],
       ['dam', { dam_animal_id: 'dam-k' }, "Dam animal with ID 'dam-k' not found.", 'animal_register af'],
       ['source receipt', { entry_type: 'PURCHASED_LOCAL', source_receipt_id: 'grn-k' }, "Goods receipt with ID 'grn-k' not found.", 'lf.farm_id = ?'],
@@ -290,7 +401,7 @@ describe('AnimalService', () => {
           return { limit: async () => [] };
         } }) });
 
-      await expect(service.create({ ...baseDto, company_id: 'co-1', ...reference } as any, 'tenant-1'))
+      await expect(service.create({ ...baseDto, company_id: 'co-1', current_location_id: 'pen-g', ...reference } as any, 'tenant-1'))
         .rejects.toThrow(new NotFoundException(message));
       const rendered = new MySqlDialect().sqlToQuery(captured);
       expect(rendered.sql).toContain(scopeSql);
@@ -765,16 +876,158 @@ describe('AnimalService', () => {
   });
 
   describe('transitionStage', () => {
-    it('advances animal stage and updates destination pen/location', async () => {
+    it('refuses an animal with no Batch or physical location before writing', async () => {
+      mockDbSelect.mockReturnValueOnce(found({
+        animal_id: 'a-unplaced', company_id: 'comp-1', nob_id: 'nob-1', lob_id: 'lob-1',
+        breed_id: 'breed-1', animal_code: 'PIG-2026-0099', is_active: true,
+        current_stage_id: null, current_batch_id: null, current_location_id: null,
+      }));
+
+      await expect(service.transitionStage(
+        'a-unplaced', { to_stage_id: 'stage-2', transition_date: '2026-09-15' }, 'tenant-123',
+      )).rejects.toThrow(/Registered Animals Batch/i);
+      expect(mockDbUpdate).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['location', { to_location_id: 'pen-other-farm' }],
+      ['Batch', { to_batch_id: 'batch-other-farm' }],
+    ])('does not let stage transition move an animal to another %s', async (_field, destination) => {
+      mockDbSelect.mockReturnValueOnce(found({
+        animal_id: 'a-1', company_id: 'comp-1', animal_code: 'PIG-2026-0001', is_active: true,
+        current_batch_id: 'batch-1', current_location_id: 'pen-1', current_stage_id: 'stage-1',
+      }));
+
+      await expect(service.transitionStage('a-1', {
+        to_stage_id: 'stage-2', ...destination, transition_date: '2026-09-15',
+      }, 'tenant-123')).rejects.toThrow(/transfer/i);
+      expect(mockDbUpdate).not.toHaveBeenCalled();
+    });
+
+    it('refuses an animal attached to a Count Only Batch', async () => {
+      mockDbSelect
+        .mockReturnValueOnce(found({
+          animal_id: 'a-1', company_id: 'comp-1', nob_id: 'nob-1', lob_id: 'lob-1',
+          breed_id: 'breed-1', animal_code: 'PIG-2026-0001', is_active: true,
+          current_stage_id: null, current_batch_id: 'batch-count', current_location_id: null,
+        }))
+        .mockReturnValueOnce(found({
+          stage_id: 'stage-2', tenant_id: 'tenant-123', company_id: 'comp-1',
+          nob_id: 'nob-1', lob_id: 'lob-1', is_active: true,
+        }))
+        .mockReturnValueOnce(found({
+          batch_id: 'batch-count', tenant_id: 'tenant-123', company_id: 'comp-1',
+          nob_id: 'nob-1', lob_id: 'lob-1', farm_id: 'farm-1', breed_id: 'breed-1',
+          animal_tracking: 'COUNT_ONLY',
+        }));
+
+      await expect(service.transitionStage(
+        'a-1', { to_stage_id: 'stage-2', transition_date: '2026-09-15' }, 'tenant-123',
+      )).rejects.toThrow(/Count Only/i);
+      expect(mockDbUpdate).not.toHaveBeenCalled();
+    });
+
+    it('refuses a Batch and location that resolve to different farms', async () => {
+      mockDbSelect
+        .mockReturnValueOnce(found({
+          animal_id: 'a-1', company_id: 'comp-1', nob_id: 'nob-1', lob_id: 'lob-1',
+          breed_id: 'breed-1', animal_code: 'PIG-2026-0001', is_active: true,
+          current_stage_id: null, current_batch_id: 'batch-1', current_location_id: 'pen-2',
+        }))
+        .mockReturnValueOnce(found({
+          stage_id: 'stage-2', tenant_id: 'tenant-123', company_id: 'comp-1',
+          nob_id: 'nob-1', lob_id: 'lob-1', is_active: true,
+        }))
+        .mockReturnValueOnce(found({
+          batch_id: 'batch-1', tenant_id: 'tenant-123', company_id: 'comp-1',
+          nob_id: 'nob-1', lob_id: 'lob-1', farm_id: 'farm-1', breed_id: 'breed-1',
+          animal_tracking: 'REGISTERED',
+        }))
+        .mockReturnValueOnce(found({
+          location_id: 'pen-2', tenant_id: 'tenant-123', company_id: 'comp-1',
+          nob_id: 'nob-1', lob_id: 'lob-1', farm_id: 'farm-2', parent_location_id: 'shed-2',
+        }));
+
+      await expect(service.transitionStage(
+        'a-1', { to_stage_id: 'stage-2', transition_date: '2026-09-15' }, 'tenant-123',
+      )).rejects.toThrow(/same farm/i);
+      expect(mockDbUpdate).not.toHaveBeenCalled();
+    });
+
+    it('requires the destination Stage to match the animal company, NOB and LOB', async () => {
+      let captured: any;
+      mockDbSelect
+        .mockReturnValueOnce(found({
+          animal_id: 'a-1', company_id: 'comp-1', nob_id: 'nob-1', lob_id: 'lob-pig',
+          breed_id: 'breed-1', animal_code: 'PIG-2026-0001', is_active: true,
+          current_stage_id: null, current_batch_id: 'batch-1', current_location_id: null,
+        }))
+        .mockReturnValueOnce({ from: () => ({ where: (condition: any) => {
+          captured = condition;
+          return { limit: async () => [] };
+        } }) });
+
+      await expect(service.transitionStage(
+        'a-1', { to_stage_id: 'stage-other-lob', transition_date: '2026-09-15' }, 'tenant-123',
+      )).rejects.toThrow(NotFoundException);
+
+      const rendered = new MySqlDialect().sqlToQuery(captured);
+      expect(rendered.params).toEqual(expect.arrayContaining(['tenant-123', 'comp-1', 'nob-1', 'lob-pig']));
+      expect(mockDbUpdate).not.toHaveBeenCalled();
+    });
+
+    it('requires the Breed profile to match the animal farm, company, NOB and LOB', async () => {
+      let captured: any;
+      mockDbSelect
+        .mockReturnValueOnce(found({
+          animal_id: 'a-1', company_id: 'comp-1', nob_id: 'nob-1', lob_id: 'lob-pig',
+          breed_id: 'breed-other-lob', animal_code: 'PIG-2026-0001', is_active: true,
+          current_stage_id: null, current_batch_id: 'batch-1', current_location_id: null,
+        }))
+        .mockReturnValueOnce(found({
+          stage_id: 'stage-2', tenant_id: 'tenant-123', company_id: 'comp-1',
+          nob_id: 'nob-1', lob_id: 'lob-pig', is_active: true,
+        }))
+        .mockReturnValueOnce(found({
+          batch_id: 'batch-1', tenant_id: 'tenant-123', company_id: 'comp-1',
+          nob_id: 'nob-1', lob_id: 'lob-pig', farm_id: 'farm-1',
+          breed_id: 'breed-other-lob', animal_tracking: 'REGISTERED',
+        }))
+        .mockReturnValueOnce(found({
+          location_id: 'farm-1', tenant_id: 'tenant-123', company_id: 'comp-1',
+          nob_id: 'nob-1', lob_id: 'lob-pig', location_type: 'FARM',
+          parent_location_id: null, is_active: true,
+        }))
+        .mockReturnValueOnce({ from: () => ({ where: (condition: any) => {
+          captured = condition;
+          return { limit: async () => [] };
+        } }) });
+
+      await expect(service.transitionStage(
+        'a-1', { to_stage_id: 'stage-2', transition_date: '2026-09-15' }, 'tenant-123',
+      )).rejects.toThrow(/Breed/);
+
+      const rendered = new MySqlDialect().sqlToQuery(captured);
+      expect(rendered.params).toEqual(expect.arrayContaining([
+        'breed-other-lob', 'tenant-123', 'comp-1', 'nob-1', 'lob-pig', 'farm-1',
+      ]));
+      expect(mockDbUpdate).not.toHaveBeenCalled();
+    });
+
+    it('advances an animal stage while preserving its validated placement', async () => {
       mockDbSelect
         .mockReturnValueOnce(found({
           animal_id: 'a-1',
           company_id: 'comp-1',
+          nob_id: 'nob-1',
+          lob_id: 'lob-1',
+          breed_id: 'breed-1',
           animal_code: 'PIG-2026-0001',
           is_active: true,
           gender: 'F',
           current_stage_id: 'st-gilt',
           current_location_id: 'loc-1',
+          current_batch_id: 'batch-1',
           parity_count: 0,
           entry_date: '2026-01-01',
         })) // findOne
@@ -789,13 +1042,27 @@ describe('AnimalService', () => {
           stage_name: 'Gilt Grower',
         })) // currentStage check
         .mockReturnValueOnce(found({
-          location_id: 'loc-2',
-          location_name: 'Pen 2B',
-        })) // destLocation check
+          batch_id: 'batch-1', tenant_id: 'tenant-123', company_id: 'comp-1',
+          nob_id: 'nob-1', lob_id: 'lob-1', farm_id: 'farm-1', breed_id: 'breed-1',
+          animal_tracking: 'REGISTERED',
+        })) // effective Batch
+        .mockReturnValueOnce(found({
+          location_id: 'loc-1', tenant_id: 'tenant-123', company_id: 'comp-1',
+          nob_id: 'nob-1', lob_id: 'lob-1', farm_id: 'farm-1', parent_location_id: 'shed-1',
+        })) // effective location
+        .mockReturnValueOnce(found({
+          location_id: 'farm-1', tenant_id: 'tenant-123', company_id: 'comp-1',
+          nob_id: 'nob-1', lob_id: 'lob-1', location_type: 'FARM',
+          parent_location_id: null, is_active: true,
+        })) // active farm
+        .mockReturnValueOnce(found({
+          breed_id: 'breed-1', tenant_id: 'tenant-123', company_id: 'comp-1',
+          nob_id: 'nob-1', lob_id: 'lob-1', location_id: 'farm-1', is_active: true,
+        })) // farm-specific breed profile
         .mockReturnValueOnce(found({
           animal_id: 'a-1',
           current_stage_id: 'st-flush',
-          current_location_id: 'loc-2',
+          current_location_id: 'loc-1',
         })); // findOne return
 
       mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) }) });
@@ -804,7 +1071,6 @@ describe('AnimalService', () => {
         'a-1',
         {
           to_stage_id: 'st-flush',
-          to_location_id: 'loc-2',
           transition_date: '2026-03-01',
           reason: 'Service ready',
         },
@@ -813,7 +1079,7 @@ describe('AnimalService', () => {
       );
 
       expect(res.current_stage_id).toBe('st-flush');
-      expect(res.current_location_id).toBe('loc-2');
+      expect(res.current_location_id).toBe('loc-1');
     });
 
     it.each(['WEANING', 'DRY_PERIOD', 'GESTATION', 'FLUSH'])('preserves the post-farrowing parity rule for %s', async (destination) => {
@@ -822,11 +1088,15 @@ describe('AnimalService', () => {
         .mockReturnValueOnce(found({
           animal_id: 'a-2',
           company_id: 'comp-1',
+          nob_id: 'nob-1',
+          lob_id: 'lob-1',
+          breed_id: 'breed-1',
           animal_code: 'PIG-2026-0002',
           is_active: true,
           gender: 'F',
           current_stage_id: 'st-farrow',
           current_location_id: 'loc-1',
+          current_batch_id: 'batch-1',
           parity_count: 2,
           entry_date: '2026-01-01',
         })) // findOne — no current_stage: animal_register has no such column
@@ -841,6 +1111,24 @@ describe('AnimalService', () => {
           stage_name: 'Farrowing',
           min_days_before_move: 1,
         })) // currentStage
+        .mockReturnValueOnce(found({
+          batch_id: 'batch-1', tenant_id: 'tenant-123', company_id: 'comp-1',
+          nob_id: 'nob-1', lob_id: 'lob-1', farm_id: 'farm-1', breed_id: 'breed-1',
+          animal_tracking: 'REGISTERED',
+        }))
+        .mockReturnValueOnce(found({
+          location_id: 'loc-1', tenant_id: 'tenant-123', company_id: 'comp-1',
+          nob_id: 'nob-1', lob_id: 'lob-1', farm_id: 'farm-1', parent_location_id: 'shed-1',
+        }))
+        .mockReturnValueOnce(found({
+          location_id: 'farm-1', tenant_id: 'tenant-123', company_id: 'comp-1',
+          nob_id: 'nob-1', lob_id: 'lob-1', location_type: 'FARM',
+          parent_location_id: null, is_active: true,
+        }))
+        .mockReturnValueOnce(found({
+          breed_id: 'breed-1', tenant_id: 'tenant-123', company_id: 'comp-1',
+          nob_id: 'nob-1', lob_id: 'lob-1', location_id: 'farm-1', is_active: true,
+        }))
         .mockReturnValueOnce(found({ animal_id: 'a-2', parity_count: 3 })); // findOne return
 
       mockDbUpdate.mockReturnValue({
@@ -915,4 +1203,3 @@ describe('AnimalService', () => {
     });
   });
 });
-

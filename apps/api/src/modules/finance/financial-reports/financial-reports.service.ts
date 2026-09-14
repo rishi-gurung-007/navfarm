@@ -59,7 +59,8 @@ export class FinancialReportsService {
     tenantId: string,
     companyId: string,
     dateCondition: any,
-    accountTypes?: string[]
+    accountTypes?: string[],
+    lobId?: string,
   ): Promise<AccountBalanceRow[]> {
     const conditions: any[] = [
       eq(schema.journalHeader.tenant_id, tenantId),
@@ -70,6 +71,9 @@ export class FinancialReportsService {
     ];
     if (accountTypes && accountTypes.length > 0) {
       conditions.push(inArray(schema.glAccountMaster.account_type, accountTypes));
+    }
+    if (lobId) {
+      conditions.push(eq(schema.journalLine.lob_id, lobId));
     }
 
     const rows = await this.db
@@ -216,6 +220,12 @@ export class FinancialReportsService {
       eq(schema.bioAssetLedger.company_id, companyId),
       lte(schema.bioAssetLedger.posting_date, dateTo),
     ];
+    // A farm is not an operational-area boundary. Two LOBs can post against
+    // the same farm, so the farm predicate below cannot substitute for this
+    // exact ledger dimension.
+    if (scope.lobId) {
+      conditions.push(eq(schema.bioAssetLedger.lob_id, scope.lobId));
+    }
     // bio_asset_ledger carries no farm_id of its own — its farm comes from
     // the batch or animal the entry is against, same as bio-asset-ledger.service.
     if (scope.farmId) {
@@ -307,22 +317,54 @@ export class FinancialReportsService {
 
     const closingCarryingValue = openingCarryingValue + periodMovements;
 
-    // GL reconciliation check for biological asset accounts (1050 Pre-mature / 1060 Mature)
-    const glRows = await this.getAccountBalances(
-      tenantId,
-      companyId,
-      lte(schema.journalHeader.posting_date, dateTo),
-      ['ASSET']
-    );
+    // journal_line carries LOB but neither it nor journal_header carries a
+    // farm. A farm-filtered ledger therefore has no dimension-equivalent GL
+    // total. Reporting a company/LOB-wide GL number beside it as a variance is
+    // actively misleading, so mark reconciliation unavailable in that case.
+    // Without a selected farm, both sides can be constrained to the same
+    // company and (for operational users) exact LOB.
+    let glReconciliation;
+    if (scope.farmId) {
+      glReconciliation = {
+        available: false,
+        status: 'UNAVAILABLE' as const,
+        reason: 'GL journal lines do not carry a farm dimension.',
+        glAccounts: [],
+        totalGlBalance: null,
+        variance: null,
+        isReconciled: false,
+      };
+    } else {
+      const glRows = await this.getAccountBalances(
+        tenantId,
+        companyId,
+        lte(schema.journalHeader.posting_date, dateTo),
+        ['ASSET'],
+        scope.lobId ?? undefined,
+      );
 
-    const bioGlAccounts = glRows.filter((r) =>
-      r.account_code.startsWith('1050') ||
-      r.account_code.startsWith('1060') ||
-      r.account_name.toLowerCase().includes('biological asset')
-    );
+      const bioGlAccounts = glRows.filter((r) =>
+        r.account_code.startsWith('1050') ||
+        r.account_code.startsWith('1060') ||
+        r.account_name.toLowerCase().includes('biological asset')
+      );
 
-    const totalGlBalance = bioGlAccounts.reduce((sum, r) => sum + netBalance(r), 0);
-    const glReconciliationVariance = closingCarryingValue - totalGlBalance;
+      const totalGlBalance = bioGlAccounts.reduce((sum, r) => sum + netBalance(r), 0);
+      const variance = closingCarryingValue - totalGlBalance;
+      glReconciliation = {
+        available: true,
+        status: 'AVAILABLE' as const,
+        reason: null,
+        glAccounts: bioGlAccounts.map((a) => ({
+          account_code: a.account_code,
+          account_name: a.account_name,
+          balance: netBalance(a),
+        })),
+        totalGlBalance,
+        variance,
+        isReconciled: Math.abs(variance) < 0.01,
+      };
+    }
 
     return {
       dateFrom,
@@ -342,16 +384,7 @@ export class FinancialReportsService {
         batchCarryingValue,
         animalCarryingValue,
       },
-      glReconciliation: {
-        glAccounts: bioGlAccounts.map((a) => ({
-          account_code: a.account_code,
-          account_name: a.account_name,
-          balance: netBalance(a),
-        })),
-        totalGlBalance,
-        variance: glReconciliationVariance,
-        isReconciled: Math.abs(glReconciliationVariance) < 0.01,
-      },
+      glReconciliation,
       transactionCount: periodTransactions.length,
     };
   }
@@ -576,4 +609,3 @@ export class FinancialReportsService {
     });
   }
 }
-

@@ -18,6 +18,7 @@ describe('BatchTransferService', () => {
   const mockDbUpdate = jest.fn();
   const mockDbInsert = jest.fn();
   const mockCreateForAuthorizedBatchStage = jest.fn();
+  const mockAuditLog = jest.fn();
 
   const mockDb: any = {
     select: mockDbSelect,
@@ -54,10 +55,16 @@ describe('BatchTransferService', () => {
   };
 
   // Updates answer by table: the batch_transfer claim reports one affected row.
-  const updatesByTable = (claimRows = 1) => {
+  const updatesByTable = (claimRows = 1, animalClaimRows = 2) => {
     mockDbUpdate.mockImplementation((table: unknown) => ({
       set: jest.fn().mockReturnValue({
-        where: jest.fn().mockResolvedValue(table === schema.batchTransfer ? [{ affectedRows: claimRows }] : {}),
+        where: jest.fn().mockResolvedValue(
+          table === schema.batchTransfer
+            ? [{ affectedRows: claimRows }]
+            : table === schema.animalRegister
+              ? [{ affectedRows: animalClaimRows }]
+              : {},
+        ),
       }),
     }));
   };
@@ -94,6 +101,7 @@ describe('BatchTransferService', () => {
     mockDbSelect.mockReset();
     mockDbUpdate.mockReset();
     mockDbInsert.mockReset();
+    mockAuditLog.mockReset().mockResolvedValue({});
     mockDb.transaction.mockClear();
     mockCreateForAuthorizedBatchStage.mockReset().mockResolvedValue({});
     farmScopeValue = undefined;
@@ -108,7 +116,7 @@ describe('BatchTransferService', () => {
           run: jest.fn(async (work: () => Promise<unknown>) => work()),
           set: jest.fn(),
         } },
-        { provide: AuditLogService, useValue: { log: jest.fn().mockResolvedValue({}) } },
+        { provide: AuditLogService, useValue: { log: mockAuditLog } },
         { provide: NumberSeriesService, useValue: { generateNext: jest.fn().mockResolvedValue('BTR-2026-0001') } },
         { provide: SchedulerHeaderService, useValue: {
           createForStage: jest.fn().mockResolvedValue({}),
@@ -248,6 +256,40 @@ describe('BatchTransferService', () => {
       await expect(
         service.splitBatch('batch-gest', { animal_ids: [], transfer_date: '2026-09-01' } as any, 'tenant-123'),
       ).rejects.toThrow(BadRequestException);
+    });
+
+    it('refuses an explicit child location outside the parent company, LOB, or farm before inserting the child', async () => {
+      jest.spyOn(service as any, 'loadBatch').mockResolvedValue(parent);
+      mockDbSelect.mockReturnValueOnce(chain([], (cond) => { capturedWhere = cond; }));
+
+      await expect(service.splitBatch(
+        'batch-gest',
+        { animal_ids: ['a-1'], transfer_date: '2026-09-01', to_location_id: 'other-farm-pen' } as any,
+        'tenant-123',
+        operationalAdmin,
+      )).rejects.toThrow(new ForbiddenException('Destination location is not on your active farm.'));
+
+      const { sql: text, params } = dialect.sqlToQuery(capturedWhere as any);
+      expect(text).toContain('`location_master`.`tenant_id` = ?');
+      expect(text).toContain('`location_master`.`company_id` = ?');
+      expect(text).toContain('`location_master`.`lob_id` = ?');
+      expect(text).toContain('`location_master`.`is_active` = ?');
+      expect(text).toContain('`location_master`.`deleted_at` is null');
+      expect(params).toEqual(expect.arrayContaining(['tenant-123', 'comp-1', 'lob-1', 'farm-g']));
+      expect(mockDbInsert).not.toHaveBeenCalled();
+    });
+
+    it('keeps split placement coherent and refuses a different same-farm location', async () => {
+      jest.spyOn(service as any, 'loadBatch').mockResolvedValue(parent);
+      mockDbSelect.mockReturnValueOnce(chain([{ location_id: 'other-pen' }]));
+
+      await expect(service.splitBatch(
+        'batch-gest',
+        { animal_ids: ['a-1'], transfer_date: '2026-09-01', to_location_id: 'other-pen' } as any,
+        'tenant-123',
+        operationalAdmin,
+      )).rejects.toThrow(/Transfer workflow/);
+      expect(mockDbInsert).not.toHaveBeenCalled();
     });
 
     it('resolves the held stage to a real stage id so the animals actually move to it', async () => {
@@ -518,6 +560,85 @@ describe('BatchTransferService', () => {
       expect(ledger).not.toHaveBeenCalled();
     });
 
+    it('atomically refuses a second draft when its animal is no longer claimable from the source batch', async () => {
+      const oneAnimalTransfer = { ...draftTransfer, lines: [draftTransfer.lines[0]] };
+      jest.spyOn(service as any, 'loadTransferForMutation').mockResolvedValue(oneAnimalTransfer);
+      jest.spyOn(service as any, 'lockTransferBatches').mockResolvedValue(lockedBatches);
+      const shiftState = jest.spyOn(service as any, 'shiftBioAssetState').mockResolvedValue(undefined);
+      const ledger = jest.spyOn(service as any, 'writeLedgerLegs').mockResolvedValue(undefined);
+      mockDbSelect.mockReturnValueOnce(chain([{ animal_id: 'a-1' }]));
+      let animalClaimWhere: unknown;
+      mockDbUpdate.mockImplementation((table: unknown) => ({
+        set: jest.fn().mockReturnValue({
+          where: jest.fn((cond: unknown) => {
+            if (table === schema.animalRegister) {
+              animalClaimWhere = cond;
+              return Promise.resolve([{ affectedRows: 0 }]);
+            }
+            return Promise.resolve([{ affectedRows: 1 }]);
+          }),
+        }),
+      }));
+
+      await expect(service.post('tr-1', 'tenant-123', companyAdmin))
+        .rejects.toThrow(new ConflictException(
+          'One or more animals were moved or became unavailable while this transfer was posting. Re-create the transfer.',
+        ));
+
+      const claim = dialect.sqlToQuery(animalClaimWhere as any);
+      expect(claim.sql).toContain('`animal_register`.`current_batch_id` = ?');
+      expect(claim.sql).toContain('`animal_register`.`tenant_id` = ?');
+      expect(claim.params).toEqual(expect.arrayContaining(['batch-gest', 'tenant-123']));
+      expect(shiftState).not.toHaveBeenCalled();
+      expect(ledger).not.toHaveBeenCalled();
+      expect(mockAuditLog).not.toHaveBeenCalled();
+    });
+
+    it('rejects the transaction instead of silently posting without an accounting item', async () => {
+      jest.spyOn(service as any, 'loadTransferForMutation').mockResolvedValue(draftTransfer);
+      jest.spyOn(service as any, 'lockTransferBatches').mockResolvedValue(lockedBatches);
+      jest.spyOn(service as any, 'shiftBioAssetState').mockResolvedValue(undefined);
+      jest.spyOn(service as any, 'shiftClosingQuantity').mockResolvedValue(undefined);
+      mockDbSelect
+        .mockReturnValueOnce(chain([{ animal_id: 'a-1' }, { animal_id: 'a-2' }]))
+        .mockReturnValueOnce(chain([]))
+        .mockReturnValueOnce(chain([]));
+      updatesByTable();
+
+      await expect(service.post('tr-1', 'tenant-123', companyAdmin))
+        .rejects.toThrow(new BadRequestException(
+          'Transfer accounting item is missing from the source batch and animal. Configure it before posting.',
+        ));
+
+      expect(mockDb.transaction).toHaveBeenCalled();
+      expect(mockDbInsert).not.toHaveBeenCalledWith(schema.bioAssetLedger);
+      expect(mockAuditLog).not.toHaveBeenCalled();
+    });
+
+    it('rejects the transaction when both required accounting ledger legs are not inserted', async () => {
+      const oneAnimalTransfer = { ...draftTransfer, lines: [draftTransfer.lines[0]] };
+      jest.spyOn(service as any, 'loadTransferForMutation').mockResolvedValue(oneAnimalTransfer);
+      jest.spyOn(service as any, 'lockTransferBatches').mockResolvedValue(lockedBatches);
+      jest.spyOn(service as any, 'shiftBioAssetState').mockResolvedValue(undefined);
+      jest.spyOn(service as any, 'shiftClosingQuantity').mockResolvedValue(undefined);
+      mockDbSelect
+        .mockReturnValueOnce(chain([{ animal_id: 'a-1' }]))
+        .mockReturnValueOnce(chain([{ item_id: 'bio-item-1' }]));
+      updatesByTable(1, 1);
+      mockDbInsert.mockReturnValue({
+        values: jest.fn().mockResolvedValue([{ affectedRows: 1 }]),
+      });
+
+      await expect(service.post('tr-1', 'tenant-123', companyAdmin))
+        .rejects.toThrow(new ConflictException(
+          'Transfer accounting ledger legs could not all be posted. No transfer was applied.',
+        ));
+
+      expect(mockDb.transaction).toHaveBeenCalled();
+      expect(mockDbInsert).toHaveBeenCalledWith(schema.bioAssetLedger);
+      expect(mockAuditLog).not.toHaveBeenCalled();
+    });
+
     it('locks both batch rows, the source under the caller farm scope', async () => {
       useFarmScope(kintyreScope);
       const wheres: unknown[] = [];
@@ -552,19 +673,14 @@ describe('BatchTransferService', () => {
       expect(mockDbUpdate).not.toHaveBeenCalled();
     });
 
-    it('lets a company admin post a farm-to-farm draft', async () => {
+    it('refuses a company admin until destination Breed-profile matching is implemented', async () => {
       jest.spyOn(service as any, 'loadTransferForMutation').mockResolvedValue(draftTransfer);
       jest.spyOn(service as any, 'lockTransferBatches').mockResolvedValue({ source: kintyreSource, destination: grasmereDestination });
-      jest.spyOn(service, 'findOne').mockResolvedValue({ ...draftTransfer, status: 'POSTED' } as any);
-      jest.spyOn(service as any, 'shiftBioAssetState').mockResolvedValue(undefined);
-      jest.spyOn(service as any, 'shiftClosingQuantity').mockResolvedValue(undefined);
-      jest.spyOn(service as any, 'writeLedgerLegs').mockResolvedValue(undefined);
-      stillLiveSelect();
       updatesByTable();
 
-      await service.post('tr-1', 'tenant-123', companyAdmin);
-
-      expect(updatedTables()).toContain(schema.animalRegister);
+      await expect(service.post('tr-1', 'tenant-123', companyAdmin))
+        .rejects.toThrow(new ForbiddenException(FARM_TO_FARM_TRANSFER_REFUSAL));
+      expect(mockDbUpdate).not.toHaveBeenCalled();
     });
   });
 
@@ -618,13 +734,16 @@ describe('BatchTransferService', () => {
       await expect(service.create(dto, 'tenant-123', 'batch-gest', operationalAdmin)).rejects.toThrow('reached animal selection');
     });
 
-    it('lets a company admin move animals between farms', async () => {
+    it('refuses a company admin creating a cross-farm draft until Breed-profile matching exists', async () => {
       useFarmScope({ farmId: null, restricted: false, companyId: 'comp-1', lobId: null });
       jest.spyOn(service as any, 'loadBatch').mockResolvedValue(kintyreSource);
       mockDbSelect.mockReturnValueOnce(chain([grasmereDestination]));
-      stopAtAnimalSelection();
+      const selection = stopAtAnimalSelection();
 
-      await expect(service.create(dto, 'tenant-123', 'batch-gest', companyAdmin)).rejects.toThrow('reached animal selection');
+      await expect(service.create(dto, 'tenant-123', 'batch-gest', companyAdmin))
+        .rejects.toThrow(new ForbiddenException(FARM_TO_FARM_TRANSFER_REFUSAL));
+      expect(selection).not.toHaveBeenCalled();
+      expect(mockDbInsert).not.toHaveBeenCalled();
     });
 
     it('answers a destination in another company exactly like a missing one', async () => {

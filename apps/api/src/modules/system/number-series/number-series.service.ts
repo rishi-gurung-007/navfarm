@@ -250,9 +250,14 @@ export class NumberSeriesService {
     const columns = table ? getTableColumns(table) : undefined;
     const occupied = new Set<string>();
     if (field && columns?.[field]) {
-      const rows = await executor.select({ code: columns[field] }).from(table).where(and(
-        ...scopeKeyConditions(columns, tenantId, companyId),
-      ));
+      const occupiedConditions = scopeKeyConditions(columns, tenantId, companyId);
+      // Breed identity is Farm + Breed Code. The same biological breed is
+      // deliberately given the same code on each farm, so both preview and
+      // allocation must look for clashes only on the selected farm.
+      if (master === 'BREED' && columns.location_id && typeof record.location_id === 'string') {
+        occupiedConditions.push(eq(columns.location_id, record.location_id));
+      }
+      const rows = await executor.select({ code: columns[field] }).from(table).where(and(...occupiedConditions));
       for (const row of rows) occupied.add(String(row.code).toUpperCase());
     }
     const segments = await this.resolveSegmentValues(series, record, tenantId, companyId, executor);
@@ -485,9 +490,22 @@ export class NumberSeriesService {
       eq(schema.noSeriesMaster.is_active, true), isNull(schema.noSeriesMaster.deleted_at),
     )).limit(1);
     if (!series) return { generated: false, allowManual: true };
+    if (query.master === 'BREED' && query.parentId) {
+      const [farm] = await this.db.select().from(schema.locationMaster).where(and(
+        eq(schema.locationMaster.location_id, query.parentId),
+        eq(schema.locationMaster.tenant_id, tenantId),
+        companyCondition(schema.locationMaster.company_id, companyId),
+        isNull(schema.locationMaster.deleted_at),
+        eq(schema.locationMaster.is_active, true),
+        ...masterScopeConditions(this.cls, schema.locationMaster),
+      )).limit(1);
+      if (!farm || farm.location_type !== 'FARM' || farm.parent_location_id !== null) {
+        throw new BadRequestException('Select an active first-level farm in this workspace.');
+      }
+      record.location_id = query.parentId;
+    }
     const hierarchy: Record<string, [string, string, string, string]> = {
       LOCATION: ['location', 'location_id', 'location_code', 'parent_location_id'],
-      BREED: ['location', 'location_id', 'location_code', 'location_id'],
       ITEM_CATEGORY: ['item-category', 'category_id', 'category_code', 'parent_category_id'],
       GL_ACCOUNT: ['gl-account', 'gl_account_id', 'account_code', 'parent_account_id'],
       COST_CENTER: ['cost-center', 'cost_center_id', 'cost_center_code', 'parent_cost_center_id'],

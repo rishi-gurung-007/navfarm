@@ -2,13 +2,13 @@ import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { batchTransactionCost } from './batch-transaction-cost';
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, like, isNull, inArray, desc, asc, sql, SQL } from 'drizzle-orm';
+import { eq, and, or, like, isNull, inArray, desc, asc, sql, SQL } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { unlink } from 'fs/promises';
 import { resolve } from 'path';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
-import { assertCompanyInScope, assertLobInScope, farmScope, batchScopeConditions, assertLocationOnActiveFarm, farmOfLocation, locationOnFarm } from '../../../common/farm-scope';
+import { assertCompanyInScope, assertLobInScope, farmScope, batchScopeConditions, assertLocationOnActiveFarm, locationOnFarm } from '../../../common/farm-scope';
 import {
   CreateBatchDto,
   AddBatchTransactionDto,
@@ -37,17 +37,6 @@ const toDays = (value: number, calcUnit: string): number => {
   if (calcUnit === 'WEEK') return value * 7;
   if (calcUnit === 'MONTH') return value * 30;
   return value;
-};
-
-// Splits `total` into `n` shares that sum back to exactly `total` — any
-// rounding remainder is absorbed into the last share. Mirrors the frontend's
-// animal-multi-select.tsx helper of the same name.
-const splitEvenly = (total: number, n: number): number[] => {
-  const base = Math.floor((total / n) * 10000) / 10000;
-  const shares = new Array(n).fill(base);
-  const remainder = Math.round((total - base * n) * 10000) / 10000;
-  shares[n - 1] = Math.round((shares[n - 1] + remainder) * 10000) / 10000;
-  return shares;
 };
 
 export interface UserContext {
@@ -107,13 +96,42 @@ export class BatchService {
   }
 
   async create(dto: CreateBatchDto, tenantId: string, userPayload?: UserContext) {
+    // The header, inputs, standards, bio-asset state, scheduler, and audit are
+    // one business creation. A failure in any later step must not leave a
+    // half-created batch which a retry can duplicate.
+    return withTenantTransaction(this.cls, async () => {
+    const scope = farmScope(this.cls);
+    assertCompanyInScope(scope, dto.company_id);
+    assertLobInScope(scope, dto.lob_id);
+    if (!dto.farm_id) {
+      throw new BadRequestException('Select the farm this batch runs on.');
+    }
+    if (!dto.stage_id) {
+      throw new BadRequestException('Select the initial stage for this batch.');
+    }
+    if (!['REGISTERED', 'COUNT_ONLY'].includes(dto.animal_tracking)) {
+      throw new BadRequestException('Select how this batch tracks animals.');
+    }
+
     const [lob] = await this.db
       .select()
       .from(schema.lobMaster)
-      .where(and(eq(schema.lobMaster.lob_id, dto.lob_id), eq(schema.lobMaster.is_active, true)))
+      .where(and(
+        eq(schema.lobMaster.lob_id, dto.lob_id),
+        eq(schema.lobMaster.is_active, true),
+        sql`EXISTS (
+          SELECT 1 FROM ${schema.operationalAreaMaster} oa
+          WHERE oa.tenant_id = ${tenantId}
+            AND oa.company_id = ${dto.company_id}
+            AND oa.lob_id = ${dto.lob_id}
+            AND oa.nob_id = ${schema.lobMaster.nob_id}
+            AND oa.is_active = true
+            AND oa.deleted_at IS NULL
+        )`,
+      ))
       .limit(1);
     if (!lob) {
-      throw new NotFoundException(`Line of Business with ID '${dto.lob_id}' not found.`);
+      throw new NotFoundException(`Line of Business with ID '${dto.lob_id}' is not configured for this company.`);
     }
     const allowedMethods = lob.costing_method_allowed.split(',').map((m) => m.trim().toUpperCase());
     if (!allowedMethods.includes(dto.costing_method.toUpperCase())) {
@@ -122,24 +140,24 @@ export class BatchService {
       );
     }
 
-    let initialStage: typeof schema.stageMaster.$inferSelect | undefined;
-    if (dto.stage_id) {
-      const [stage] = await this.db
-        .select()
-        .from(schema.stageMaster)
-        .where(
-          and(
-            eq(schema.stageMaster.stage_id, dto.stage_id),
-            eq(schema.stageMaster.lob_id, dto.lob_id),
-            eq(schema.stageMaster.is_active, true),
-            isNull(schema.stageMaster.deleted_at),
-          ),
-        )
-        .limit(1);
-      if (!stage) {
-        throw new BadRequestException(`Stage with ID '${dto.stage_id}' not found or does not belong to this Line of Business.`);
-      }
-      initialStage = stage;
+    const [initialStage] = await this.db
+      .select()
+      .from(schema.stageMaster)
+      .where(
+        and(
+          eq(schema.stageMaster.stage_id, dto.stage_id),
+          eq(schema.stageMaster.tenant_id, tenantId),
+          or(eq(schema.stageMaster.company_id, dto.company_id), isNull(schema.stageMaster.company_id)),
+          eq(schema.stageMaster.lob_id, dto.lob_id),
+          eq(schema.stageMaster.is_active, true),
+          isNull(schema.stageMaster.deleted_at),
+        ),
+      )
+      .limit(1);
+    if (!initialStage || initialStage.tenant_id !== tenantId ||
+        (initialStage.company_id !== null && initialStage.company_id !== dto.company_id) ||
+        initialStage.lob_id !== dto.lob_id || !initialStage.is_active || initialStage.deleted_at) {
+      throw new BadRequestException(`Stage with ID '${dto.stage_id}' not found or does not belong to this Line of Business.`);
     }
 
     let computedExpectedEndDate = dto.expected_end_date || null;
@@ -149,23 +167,83 @@ export class BatchService {
       computedExpectedEndDate = startDate.toISOString().slice(0, 10);
     }
 
-    const scope = farmScope(this.cls);
-    assertCompanyInScope(scope, dto.company_id);
-    assertLobInScope(scope, dto.lob_id);
-    // CreateBatchDto carries shed_id and location_id (one or neither); sub_location_id is set later by stage transfer.
-    const placementId = dto.location_id || dto.shed_id || null;
-    await assertLocationOnActiveFarm(this.db, scope, placementId, 'Batch location');
-    // A standard user's batch lands on their farm even when the form sent no location.
-    const farmId = (placementId ? await farmOfLocation(this.db, placementId) : null) ?? scope.farmId;
+    const [farm] = await this.db
+      .select()
+      .from(schema.locationMaster)
+      .where(and(
+        eq(schema.locationMaster.location_id, dto.farm_id),
+        eq(schema.locationMaster.tenant_id, tenantId),
+        eq(schema.locationMaster.company_id, dto.company_id),
+        eq(schema.locationMaster.location_type, 'FARM'),
+        isNull(schema.locationMaster.parent_location_id),
+        eq(schema.locationMaster.is_active, true),
+        isNull(schema.locationMaster.deleted_at),
+      ))
+      .limit(1);
+    if (!farm || farm.tenant_id !== tenantId || farm.company_id !== dto.company_id ||
+        farm.location_type !== 'FARM' || farm.parent_location_id !== null || !farm.is_active || farm.deleted_at) {
+      throw new BadRequestException('Select the farm this batch runs on.');
+    }
+    if (scope.farmId && scope.farmId !== dto.farm_id) {
+      throw new ForbiddenException('Batch farm is not on your active farm.');
+    }
+
+    const validatePlacement = async (locationId: string | undefined, label: string, requiredType?: string) => {
+      if (!locationId) return;
+      const [location] = await this.db
+        .select()
+        .from(schema.locationMaster)
+        .where(and(
+          eq(schema.locationMaster.location_id, locationId),
+          eq(schema.locationMaster.tenant_id, tenantId),
+          eq(schema.locationMaster.company_id, dto.company_id),
+          eq(schema.locationMaster.lob_id, dto.lob_id),
+          eq(schema.locationMaster.is_active, true),
+          isNull(schema.locationMaster.deleted_at),
+        ))
+        .limit(1);
+      const actualFarm = location
+        ? (location.parent_location_id === null ? location.location_id : location.farm_id)
+        : null;
+      if (!location || location.tenant_id !== tenantId || location.company_id !== dto.company_id ||
+          location.lob_id !== dto.lob_id || !location.is_active || location.deleted_at ||
+          actualFarm !== dto.farm_id || (requiredType && location.location_type !== requiredType)) {
+        throw new ForbiddenException(`${label} is not on the batch's farm.`);
+      }
+    };
+    await validatePlacement(dto.location_id, 'Batch location');
+    await validatePlacement(dto.shed_id, 'Batch shed', 'SHED');
+
+    if (dto.breed_id) {
+      const [breed] = await this.db
+        .select()
+        .from(schema.breedMaster)
+        .where(and(
+          eq(schema.breedMaster.breed_id, dto.breed_id),
+          eq(schema.breedMaster.tenant_id, tenantId),
+          eq(schema.breedMaster.company_id, dto.company_id),
+          eq(schema.breedMaster.lob_id, dto.lob_id),
+          eq(schema.breedMaster.is_active, true),
+          isNull(schema.breedMaster.deleted_at),
+        ))
+        .limit(1);
+      if (!breed || breed.tenant_id !== tenantId || breed.company_id !== dto.company_id ||
+          breed.lob_id !== dto.lob_id || breed.location_id !== dto.farm_id || !breed.is_active || breed.deleted_at) {
+        throw new ForbiddenException('The breed profile belongs to another farm.');
+      }
+    }
+    if (dto.animal_tracking === 'REGISTERED' && !dto.breed_id) {
+      throw new BadRequestException('A Registered Animals batch needs a breed.');
+    }
+    const farmId = dto.farm_id;
 
     const batchId = randomUUID();
-    const batchNo = await this.db.transaction(async (tx) => {
-      const no = await this.generateBatchNo(tenantId, dto.company_id, tx);
-      await tx.insert(schema.batchHeader).values({
+    const batchNo = await this.generateBatchNo(tenantId, dto.company_id, this.db);
+    await this.db.insert(schema.batchHeader).values({
         batch_id: batchId,
         tenant_id: tenantId,
         company_id: dto.company_id,
-        batch_no: no,
+        batch_no: batchNo,
         lob_id: dto.lob_id,
         nob_id: lob.nob_id,
         costing_method: dto.costing_method.toUpperCase(),
@@ -175,6 +253,7 @@ export class BatchService {
         shed_id: dto.shed_id || null,
         location_id: dto.location_id || null,
         farm_id: farmId,
+        animal_tracking: dto.animal_tracking,
         start_date: dto.start_date,
         expected_end_date: computedExpectedEndDate,
         status: 'DRAFT',
@@ -184,8 +263,6 @@ export class BatchService {
         created_by: userPayload?.userId || null,
         updated_by: userPayload?.userId || null,
       });
-      return no;
-    });
 
     await this.db.insert(schema.batchInputLine).values(
       dto.input_lines.map((line, idx) => ({
@@ -247,29 +324,6 @@ export class BatchService {
         nca_book_value: '0.0000',
       });
 
-      // Livestock (breed_id set) batches get one animal_register row per head
-      // of opening_quantity, so every physical animal is individually
-      // selectable from day one instead of only whichever few a user later
-      // registers by hand. Deliberately does NOT post to bio_asset_ledger —
-      // activate() already posts one aggregate ACQUISITION entry for the
-      // batch's full input-line cost; a second, per-animal posting here would
-      // double-count the acquisition value in the ledger.
-      if (dto.breed_id) {
-        await this.registerPlaceholderAnimals({
-          batchId,
-          tenantId,
-          companyId: dto.company_id,
-          nobId: lob.nob_id,
-          lobId: dto.lob_id,
-          breedId: dto.breed_id,
-          locationId: dto.location_id || null,
-          headcount: dto.opening_quantity,
-          entryDate: dto.start_date,
-          inputLines: dto.input_lines,
-          sourceBatchId: dto.input_lines.find((l) => l.source_batch_id)?.source_batch_id || null,
-          userId: userPayload?.userId,
-        });
-      }
     }
 
     if (initialStage && dto.auto_generate_scheduler !== false) {
@@ -287,6 +341,7 @@ export class BatchService {
     });
 
     return this.findOne(batchId);
+    });
   }
 
   /**
@@ -303,6 +358,10 @@ export class BatchService {
   async renew(id: string, dto: RenewBatchDto, tenantId: string, userPayload?: UserContext) {
     const source = await this.findOne(id);
     this.assertStatus(source, 'CLOSED');
+    if (!source.farm_id || !source.stage_id ||
+        (source.animal_tracking !== 'REGISTERED' && source.animal_tracking !== 'COUNT_ONLY')) {
+      throw new BadRequestException('This legacy batch needs a farm, tracking mode, and stage before it can be renewed.');
+    }
 
     const [lob] = await this.db.select().from(schema.lobMaster).where(eq(schema.lobMaster.lob_id, source.lob_id)).limit(1);
     if (lob?.batch_copy_allowed !== 'YES') {
@@ -313,6 +372,9 @@ export class BatchService {
       {
         company_id: source.company_id,
         lob_id: source.lob_id,
+        farm_id: source.farm_id,
+        animal_tracking: source.animal_tracking,
+        stage_id: source.stage_id,
         costing_method: source.costing_method,
         breed_id: source.breed_id || undefined,
         shed_id: source.shed_id || undefined,
@@ -795,93 +857,6 @@ export class BatchService {
     throw new BadRequestException(
       `Insufficient stock for item '${params.itemId}' on the batch's farm: requested ${params.quantity}. Post a receipt before issuing stock.`,
     );
-  }
-
-  /**
-   * Auto-registers `headcount` placeholder animal_register rows for a
-   * newly-created BIO_ASSET batch. Per-animal fields that have no real
-   * source at batch-creation time are deliberately generic/even-split rather
-   * than guessed specifics — animal_type is the neutral COMMERCIAL_PIG (not
-   * SOW/BOAR/GILT, which would presume an unverified breeding-stock role),
-   * gender alternates M/F, and acquisition_cost is the batch's total
-   * input-line cost split evenly per head. All fields remain individually
-   * editable later via the normal animal-register edit flow.
-   */
-  private async registerPlaceholderAnimals(params: {
-    batchId: string;
-    tenantId: string;
-    companyId: string;
-    nobId: string;
-    lobId: string;
-    breedId: string;
-    locationId: string | null;
-    headcount: number;
-    entryDate: string;
-    inputLines: Array<{ item_id: string; quantity: number; rate?: number; source_batch_id?: string }>;
-    sourceBatchId: string | null;
-    userId?: string;
-  }) {
-    const { batchId, tenantId, companyId, nobId, lobId, breedId, locationId, headcount, entryDate, inputLines, sourceBatchId, userId } = params;
-    if (headcount <= 0) return;
-
-    const itemId = inputLines[0]?.item_id;
-    if (!itemId) return; // no input line to attribute cost/item to — skip rather than guess
-
-    const totalCost = inputLines.reduce((sum, l) => sum + Number(l.quantity) * Number(l.rate || 0), 0);
-    const shares = splitEvenly(totalCost, headcount);
-    const entryType = sourceBatchId ? 'TRANSFERRED_IN' : 'PURCHASED_LOCAL';
-
-    const createdIds: string[] = [];
-    for (let i = 0; i < headcount; i++) {
-      const animalId = randomUUID();
-      // Sequential, not Promise.all — generateNext row-locks the series and
-      // must serialize to hand out distinct codes.
-      // Resolved, not hardcoded. This asked for ANIMAL_PIGGERY by name, which
-      // broke the moment the series was renamed to ANIMAL — resolveSeriesFor
-      // tries the LOB-specific ANIMAL_PIGGERY first and falls back to ANIMAL,
-      // so either naming works and a new LOB can still take its own series.
-      const animalSeries = await this.numberSeriesService.resolveSeriesFor('ANIMAL', 'PIGGERY', tenantId, companyId);
-      if (!animalSeries) throw new BadRequestException('No animal number series is configured for this workspace.');
-      const animalCode = await this.numberSeriesService.generateNext(animalSeries, tenantId, companyId);
-      const cost = shares[i];
-      await this.db.insert(schema.animalRegister).values({
-        animal_id: animalId,
-        tenant_id: tenantId,
-        company_id: companyId,
-        nob_id: nobId,
-        lob_id: lobId,
-        animal_code: animalCode,
-        animal_type: 'COMMERCIAL_PIG',
-        breed_id: breedId,
-        gender: i % 2 === 0 ? 'F' : 'M',
-        entry_type: entryType,
-        entry_date: entryDate,
-        source_batch_id: sourceBatchId || null,
-        item_id: itemId,
-        current_batch_id: batchId,
-        current_location_id: locationId,
-        acquisition_cost: cost.toFixed(4),
-        total_opening_asset_value: cost.toFixed(4),
-        current_bio_asset_value: cost.toFixed(4),
-        total_amortised: '0.0000',
-        book_value: cost.toFixed(4),
-        status: 'ACTIVE',
-        is_active: true,
-        created_by: userId || null,
-        updated_by: userId || null,
-      });
-      createdIds.push(animalId);
-    }
-
-    await this.auditService.log({
-      tenantId,
-      companyId,
-      userId,
-      action: 'CREATE',
-      entityName: 'animal_register',
-      entityId: batchId,
-      newValues: { auto_registered_for_batch: batchId, headcount, animal_ids: createdIds },
-    });
   }
 
   /** DRAFT → ACTIVE: consumes each input line from inventory via FIFO, mirrors to GL. */

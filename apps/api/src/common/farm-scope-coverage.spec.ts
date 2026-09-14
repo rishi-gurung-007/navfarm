@@ -22,6 +22,7 @@ import { QcController } from '../modules/production/qc/qc.controller';
 import { QrCodeController } from '../modules/production/qr-code/qr-code.controller';
 import { BioAssetLedgerController } from '../modules/inventory/bio-asset-ledger/bio-asset-ledger.controller';
 import { FinancialReportsController } from '../modules/finance/financial-reports/financial-reports.controller';
+import { BreedController } from '../modules/master-data/breed/breed.controller';
 
 /**
  * Farm scope is opt-in per controller, and a controller that forgets it reads
@@ -50,6 +51,7 @@ const SCOPED = {
   AlertController, MilkController, QcController, QrCodeController,
   BioAssetLedgerController,
   FinancialReportsController,
+  BreedController,
 };
 
 const EXEMPT: Record<string, string> = {
@@ -59,7 +61,6 @@ const EXEMPT: Record<string, string> = {
   'production/stage/stage.controller.ts': 'Master data, not farm-specific.',
 
   // piggery / master-data breed family
-  'master-data/breed/breed.controller.ts': 'Farm-specific from Phase 2; scoped there.',
   'master-data/breed/breed-lifecycle-stage.controller.ts': 'Master data, not farm-specific.',
   'master-data/breed/species.controller.ts': 'Master data, not farm-specific.',
 

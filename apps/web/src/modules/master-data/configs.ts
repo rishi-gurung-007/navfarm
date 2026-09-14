@@ -825,11 +825,13 @@ const breed: MasterDataConfig = {
   columns: [
     { key: "breed_code", label: "Code" },
     { key: "breed_name", label: "Name" },
+    { key: "location_code", label: "Farm Code" },
+    { key: "location_name", label: "Farm" },
     { key: "breed_type", label: "Type" },
     { key: "avg_fcr", label: "Avg FCR" },
   ],
   fields: [
-    { key: "location_id", label: "Farm Location (optional)", type: "select-entity", entityEndpoint: "/location?locationType=FARM&rootOnly=true", entityValueKey: "location_id", entityLabelKeys: ["location_code", "location_name"], section: "Identification", helpText: "Only active, first-level farms without a parent. When selected, the farm code prefixes the generated breed code." },
+    { key: "location_id", label: "Farm", type: "select-entity", required: true, entityEndpoint: "/location?locationType=FARM&rootOnly=true&isActive=true", entityValueKey: "location_id", entityLabelKeys: ["location_code", "location_name"], section: "Identification", helpText: "The active first-level farm where this breed profile applies." },
     { key: "company_id", label: "Company (blank = global)", type: "text", hideInForm: true },
     { key: "nob_id", label: "Nature of Business", type: "select-entity", required: true, entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], section: "Identification" },
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank if this breed applies to all LOBs under the selected NOB.", section: "Identification" },

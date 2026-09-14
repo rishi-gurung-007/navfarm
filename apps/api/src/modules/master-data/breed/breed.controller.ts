@@ -17,10 +17,12 @@ import { CreateBreedDto, UpdateBreedDto, QueryBreedDto } from './dto/breed.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
+import { FarmScoped } from '../../../common/farm-scope';
 
 @ApiTags('Breed Master')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
+@FarmScoped()
 @Controller('breed')
 export class BreedController {
   constructor(private readonly breedService: BreedService) {}
@@ -55,8 +57,9 @@ export class BreedController {
   @RequirePermission('MASTER_DATA', 'BREED', 'view')
   @ApiOperation({ summary: 'Fetch details of a single Breed by UUID' })
   @ApiParam({ name: 'id', description: 'Breed UUID' })
-  async findOne(@Param('id') id: string) {
-    const result = await this.breedService.findOneBreed(id);
+  async findOne(@Param('id') id: string, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const result = await this.breedService.findOneBreed(id, tenantId);
     return {
       success: true,
       message: 'Breed details retrieved.',

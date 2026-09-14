@@ -2492,7 +2492,7 @@ export const translations = {
     astmMinDurationOverrideError: "Minimum duration is {{minDays}} days (currently {{daysInStage}} days). Please provide a reason to override.",
     astmFailedToRecordTransition: "Failed to record stage transition.",
     astmModalTitle: "Stage & Pen Transition — {{animalCode}}",
-    astmModalDescription: "Advance animal to the next production lifecycle stage, reassign pen/location, and track parity.",
+    astmModalDescription: "Advance an animal within its current Batch and location, and track parity.",
     astmCancel: "Cancel",
     astmConfirmTransition: "Confirm Stage Transition",
     astmAnimalLabel: "Animal:",

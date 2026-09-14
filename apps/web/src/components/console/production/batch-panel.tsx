@@ -8,7 +8,7 @@ import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { InlineAlert } from "@/components/ui/alert";
 import { Pagination } from "@/components/ui/pagination";
-import { getActiveCompanyId, getActiveOperationalAreaId } from "@/hooks/useAuth";
+import { getActiveCompanyId, getActiveOperationalAreaId, getStoredUser } from "@/hooks/useAuth";
 import { useLanguage } from "@/hooks/useLanguage";
 import { TableHeader, TableBody, TableFooter, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { StatusBadge } from "@/components/ui/status-badge";
@@ -55,6 +55,7 @@ export default function BatchPanel() {
   const [nobs, setNobs] = useState<Row[]>([]);
   const [lobs, setLobs] = useState<Row[]>([]);
   const [breeds, setBreeds] = useState<Row[]>([]);
+  const [farms, setFarms] = useState<Row[]>([]);
   const [sheds, setSheds] = useState<Row[]>([]);
   const [items, setItems] = useState<Row[]>([]);
   const [uoms, setUoms] = useState<Row[]>([]);
@@ -67,7 +68,7 @@ export default function BatchPanel() {
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState("");
   const [nobId, setNobId] = useState("");
-  const [header, setHeader] = useState<Row>({ lob_id: "", costing_method: "STANDARD", breed_id: "", stage_id: "", shed_id: "", start_date: "", expected_end_date: "", opening_quantity: "", uom: "", remarks: "" });
+  const [header, setHeader] = useState<Row>({ lob_id: "", farm_id: "", animal_tracking: "", costing_method: "STANDARD", breed_id: "", stage_id: "", shed_id: "", start_date: "", expected_end_date: "", opening_quantity: "", uom: "", remarks: "" });
   const [inputLines, setInputLines] = useState<Row[]>([emptyInputLine()]);
   const [stdForm, setStdForm] = useState<Row>({ std_output_quantity: "", std_output_cost_per_unit: "", std_overhead_rate_per_unit: "" });
   const [stdConsumptionLines, setStdConsumptionLines] = useState<Row[]>([emptyStdConsumptionLine()]);
@@ -156,6 +157,9 @@ export default function BatchPanel() {
   const [stageOptionsLoading, setStageOptionsLoading] = useState(false);
 
   const companyId = getActiveCompanyId();
+  const storedUser = getStoredUser();
+  const assignedFarmId = storedUser?.farmId || storedUser?.farm_id || "";
+  const farmIsFixed = storedUser?.userType === "STANDARD_USER" && !!assignedFarmId;
   const scope = typeof window !== "undefined" ? localStorage.getItem("active_workspace_scope") : "COMPANY";
 
   const load = async () => {
@@ -207,6 +211,11 @@ export default function BatchPanel() {
     const qs = params.toString();
     api.get(`/setup/wizard/nobs?${qs}`).then((r) => setNobs(unwrap<Row[]>(r) || [])).catch(() => {});
     api.get(`/uom?${qs}`).then((r) => setUoms(unwrap<Row[]>(r) || [])).catch(() => {});
+    api.get(`/location?${qs}&locationType=FARM&rootOnly=true&isActive=true`).then((r) => {
+      const list = unwrap<Row[]>(r) || [];
+      setFarms(list);
+      if (farmIsFixed) setHeader((current) => ({ ...current, farm_id: assignedFarmId }));
+    }).catch(() => setFarms([]));
     api.get(`/warehouse?${qs}`).then((r) => setWarehouses(unwrap<Row[]>(r) || [])).catch(() => {});
     api.get(`/batch?${qs}`).then((r) => setBatches(unwrap<Row[]>(r) || [])).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -251,7 +260,7 @@ export default function BatchPanel() {
 
   const openCreate = () => {
     setNobId("");
-    setHeader({ lob_id: "", costing_method: "STANDARD", breed_id: "", stage_id: "", shed_id: "", start_date: new Date().toISOString().slice(0, 10), expected_end_date: "", opening_quantity: "", uom: "", remarks: "" });
+    setHeader({ lob_id: "", farm_id: farmIsFixed ? assignedFarmId : "", animal_tracking: "", costing_method: "STANDARD", breed_id: "", stage_id: "", shed_id: "", start_date: new Date().toISOString().slice(0, 10), expected_end_date: "", opening_quantity: "", uom: "", remarks: "" });
     setInputLines([emptyInputLine()]);
     setStdForm({ std_output_quantity: "", std_output_cost_per_unit: "", std_overhead_rate_per_unit: "" });
     setStdConsumptionLines([emptyStdConsumptionLine()]);
@@ -276,6 +285,9 @@ export default function BatchPanel() {
     setFormError("");
     try {
       if (!header.lob_id) throw new Error(t("blErrLobRequired"));
+      if (!header.farm_id) throw new Error("Select the farm this Batch runs on.");
+      if (!header.animal_tracking) throw new Error("Select how this Batch tracks animals.");
+      if (!header.stage_id) throw new Error("Select the initial Stage.");
       if (!header.start_date) throw new Error(t("blErrStartDateRequired"));
       if (!header.opening_quantity || !header.uom) throw new Error(t("blErrOpeningQtyUomRequired"));
       const cleanLines = inputLines
@@ -312,6 +324,8 @@ export default function BatchPanel() {
       await api.post("/batch", {
         company_id: companyId,
         lob_id: header.lob_id,
+        farm_id: header.farm_id,
+        animal_tracking: header.animal_tracking,
         costing_method: header.costing_method,
         breed_id: header.breed_id || undefined,
         stage_id: header.stage_id || undefined,
@@ -957,10 +971,39 @@ export default function BatchPanel() {
               </select>
             </div>
             <div className="flex flex-col gap-1.5">
+              <label className="nf-text-label" style={S.sub}>Farm <span className="text-(--danger)">*</span></label>
+              <select
+                value={header.farm_id}
+                onChange={(e) => setHeader((h) => ({ ...h, farm_id: e.target.value, breed_id: "", shed_id: "" }))}
+                className={`${inputCls} nf-select`}
+                style={S.input}
+                disabled={farmIsFixed}
+              >
+                <option value="">Select…</option>
+                {farms.map((farm) => (
+                  <option key={farm.location_id} value={farm.location_id}>
+                    {farm.location_code} — {farm.location_name}
+                  </option>
+                ))}
+              </select>
+              {farmIsFixed && <p className="text-[11px]" style={S.muted}>Your assigned farm is fixed for operational entry.</p>}
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="nf-text-label" style={S.sub}>Animal Tracking <span className="text-(--danger)">*</span></label>
+              <select value={header.animal_tracking} onChange={(e) => setHeader((h) => ({ ...h, animal_tracking: e.target.value }))} className={`${inputCls} nf-select`} style={S.input}>
+                <option value="">Select…</option>
+                <option value="REGISTERED">Registered Animals</option>
+                <option value="COUNT_ONLY">Count Only</option>
+              </select>
+              <p className="text-[11px]" style={S.muted}>
+                Registered Animals are entered individually; Count Only stores the Batch headcount without Animal records.
+              </p>
+            </div>
+            <div className="flex flex-col gap-1.5">
               <label className="nf-text-label" style={S.sub}>{t("blLabelBreed")}</label>
               <select value={header.breed_id} onChange={(e) => setHeader((h) => ({ ...h, breed_id: e.target.value }))} className={`${inputCls} nf-select`} style={S.input}>
                 <option value="">{t("blSelectEllipsis")}</option>
-                {breeds.map((b) => <option key={b.breed_id} value={b.breed_id}>{b.breed_code} — {b.breed_name}</option>)}
+                {breeds.filter((b) => !header.farm_id || b.location_id === header.farm_id).map((b) => <option key={b.breed_id} value={b.breed_id}>{b.breed_code} — {b.breed_name}</option>)}
               </select>
             </div>
             <div className="flex flex-col gap-1.5">
@@ -996,7 +1039,7 @@ export default function BatchPanel() {
               <label className="nf-text-label" style={S.sub}>{t("blLabelShed")}</label>
               <select value={header.shed_id} onChange={(e) => setHeader((h) => ({ ...h, shed_id: e.target.value }))} className={`${inputCls} nf-select`} style={S.input}>
                 <option value="">{t("blSelectEllipsis")}</option>
-                {sheds.map((s) => <option key={s.shed_id} value={s.shed_id}>{s.shed_code} — {s.shed_name}</option>)}
+                {sheds.filter((s) => !header.farm_id || s.farm_id === header.farm_id).map((s) => <option key={s.shed_id} value={s.shed_id}>{s.shed_code} — {s.shed_name}</option>)}
               </select>
             </div>
             <div className="flex flex-col gap-1.5">

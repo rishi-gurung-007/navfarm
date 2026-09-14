@@ -127,6 +127,101 @@ describe('FinancialReportsService', () => {
       expect(res.assetTypeBreakdown.batchCarryingValue).toBe(9000);
       expect(res.assetTypeBreakdown.animalCarryingValue).toBe(3500);
     });
+
+    it('excludes another LOB on the selected farm and marks GL reconciliation unavailable', async () => {
+      let capturedLedgerWhere: any;
+      mockDbSelect.mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn((condition) => {
+            capturedLedgerWhere = condition;
+            return { orderBy: jest.fn().mockResolvedValue([]) };
+          }),
+        }),
+      });
+
+      const scopedService = await serviceWithScope({
+        farmId: 'farm-1',
+        restricted: true,
+        companyId: 'comp-1',
+        lobId: 'lob-piggery',
+      });
+
+      const res = await scopedService.getBiologicalAssetRollForward(
+        'tenant-1',
+        'comp-1',
+        '2026-01-01',
+        '2026-12-31',
+      );
+
+      const rendered = new MySqlDialect().sqlToQuery(capturedLedgerWhere);
+      expect(rendered.sql).toContain('`bio_asset_ledger`.`lob_id` = ?');
+      expect(rendered.sql).toContain('FROM batch_header bf WHERE bf.farm_id = ?');
+      expect(rendered.params).toEqual(expect.arrayContaining(['lob-piggery', 'farm-1']));
+      expect(mockDbSelect).toHaveBeenCalledTimes(1);
+      expect(res.glReconciliation).toMatchObject({
+        available: false,
+        status: 'UNAVAILABLE',
+        reason: 'GL journal lines do not carry a farm dimension.',
+        glAccounts: [],
+        totalGlBalance: null,
+        variance: null,
+        isReconciled: false,
+      });
+    });
+
+    it('bounds both ledger and GL to the active LOB for an operational admin without a farm', async () => {
+      let capturedLedgerWhere: any;
+      let capturedGlWhere: any;
+      mockDbSelect.mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn((condition) => {
+            capturedLedgerWhere = condition;
+            return { orderBy: jest.fn().mockResolvedValue([]) };
+          }),
+        }),
+      });
+      mockDbSelect.mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          innerJoin: jest.fn().mockReturnValue({
+            innerJoin: jest.fn().mockReturnValue({
+              where: jest.fn((condition) => {
+                capturedGlWhere = condition;
+                return { groupBy: jest.fn().mockResolvedValue([]) };
+              }),
+            }),
+          }),
+        }),
+      });
+
+      const scopedService = await serviceWithScope({
+        farmId: null,
+        restricted: true,
+        companyId: 'comp-1',
+        lobId: 'lob-piggery',
+      });
+
+      const res = await scopedService.getBiologicalAssetRollForward(
+        'tenant-1',
+        'comp-1',
+        '2026-01-01',
+        '2026-12-31',
+      );
+
+      const dialect = new MySqlDialect();
+      const renderedLedger = dialect.sqlToQuery(capturedLedgerWhere);
+      const renderedGl = dialect.sqlToQuery(capturedGlWhere);
+      expect(renderedLedger.sql).toContain('`bio_asset_ledger`.`lob_id` = ?');
+      expect(renderedLedger.params).toContain('lob-piggery');
+      expect(renderedGl.sql).toContain('`journal_line`.`lob_id` = ?');
+      expect(renderedGl.params).toContain('lob-piggery');
+      expect(res.glReconciliation).toMatchObject({
+        available: true,
+        status: 'AVAILABLE',
+        totalGlBalance: 0,
+        variance: 0,
+        isReconciled: true,
+      });
+    });
   });
 
   describe('getPiggeryHerdAnalytics', () => {

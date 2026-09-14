@@ -801,7 +801,12 @@ export const breedMaster = mysqlTable('breed_master', {
   updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().notNull(),
   deleted_at: timestamp('deleted_at', { mode: 'string' }),
   extension_config: json('extension_config')
-}, (table) => [ uniqueIndex('uq_breed_master_scope_code').on(table.tenant_id, sql`(coalesce(${table.company_id}, ''))`, table.breed_code) ]);
+}, (table) => [ uniqueIndex('uq_breed_master_scope_code').on(
+  table.tenant_id,
+  sql`(coalesce(${table.company_id}, ''))`,
+  sql`(coalesce(${table.location_id}, ''))`,
+  table.breed_code,
+) ]);
 
 
 export const operationalAreaMaster = mysqlTable('operational_area_master', {

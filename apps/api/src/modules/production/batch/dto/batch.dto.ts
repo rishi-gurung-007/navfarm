@@ -19,6 +19,7 @@ import {
 import { Type } from 'class-transformer';
 
 const COSTING_METHODS = ['STANDARD', 'FIFO', 'BIO_ASSET'] as const;
+export const ANIMAL_TRACKING_MODES = ['REGISTERED', 'COUNT_ONLY'] as const;
 const DISPOSAL_TYPES = ['HARVEST', 'SOLD'] as const;
 const TRANSACTION_TYPES = ['CONSUMPTION', 'MORTALITY', 'OUTPUT', 'OVERHEAD', 'OBSERVATION'] as const;
 const OUTPUT_TYPES = ['MAIN', 'BY_PRODUCT', 'WASTE'] as const;
@@ -102,6 +103,20 @@ export class CreateBatchDto {
   @IsNotEmpty()
   lob_id: string;
 
+  @ApiProperty({ description: 'Active top-level farm where this batch runs' })
+  @IsUUID()
+  @IsNotEmpty()
+  farm_id: string;
+
+  @ApiProperty({
+    description: 'REGISTERED uses explicitly registered animals; COUNT_ONLY keeps one stage-level headcount',
+    enum: ANIMAL_TRACKING_MODES,
+  })
+  @IsString()
+  @IsNotEmpty()
+  @IsIn(ANIMAL_TRACKING_MODES)
+  animal_tracking: (typeof ANIMAL_TRACKING_MODES)[number];
+
   @ApiProperty({ description: 'Costing method for this batch', enum: COSTING_METHODS })
   @IsString()
   @IsNotEmpty()
@@ -113,10 +128,10 @@ export class CreateBatchDto {
   @IsOptional()
   breed_id?: string;
 
-  @ApiProperty({ description: 'Initial Stage UUID from Stage Master (filtered by LOB)', required: false })
+  @ApiProperty({ description: 'Initial Stage UUID from Stage Master (filtered by LOB)' })
   @IsUUID()
-  @IsOptional()
-  stage_id?: string;
+  @IsNotEmpty()
+  stage_id: string;
 
   @ApiProperty({ description: 'Whether to auto-generate standard scheduler for the initial stage (defaults to true)', required: false })
   @IsBoolean()

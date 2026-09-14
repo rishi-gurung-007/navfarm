@@ -90,10 +90,10 @@ export class QuerySpeciesDto extends MasterListQueryDto {
 // ==========================================
 
 export class CreateBreedDto {
-  @ApiProperty({ description: 'Location where this breed is kept; used as the generated code parent.', required: false })
+  @ApiProperty({ description: 'Active first-level farm where this breed profile applies.' })
   @IsUUID()
-  @IsOptional()
-  location_id?: string;
+  @IsNotEmpty()
+  location_id: string;
   @ApiProperty({ description: 'Nature of Business UUID scope. Omit to derive it from the company\'s operational areas.', required: false, example: '50000000-5000-5000-5000-000000000001' })
   @IsString()
   @IsOptional()
@@ -449,6 +449,11 @@ export class QueryBreedDto extends MasterListQueryDto {
   @IsOptional()
   @IsString()
   companyId?: string;
+
+  @ApiProperty({ description: 'Filter by farm UUID', required: false })
+  @IsOptional()
+  @IsUUID()
+  locationId?: string;
 
   @ApiProperty({ description: 'Filter by species UUID', required: false })
   @IsOptional()

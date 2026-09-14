@@ -157,19 +157,30 @@ describe('NumberSeriesService', () => {
       expect(mockDbInsert).not.toHaveBeenCalled();
     });
 
-    it('uses the same composite sibling numbering as create', async () => {
+    it('uses the BREED field series on a farm, matching create', async () => {
       jest.spyOn(service, 'resolveCodeSettings').mockResolvedValue({ generated: true, allowManual: true, seriesCode: 'BREED' } as any);
-      mockDbSelect.mockReturnValueOnce(returning([{ ...series, series_code: 'BREED', prefix: 'BRD' }]))
+      mockDbSelect.mockReturnValueOnce(returning([{
+        ...series,
+        series_code: 'BREED',
+        document_type: 'BREED',
+        prefix: null,
+        seq_length: 0,
+        code_segments: ['breed_name'],
+      }]))
         .mockReturnValueOnce(returning([{ location_code: 'FARM-001', location_type: 'FARM', parent_location_id: null }]))
-        .mockReturnValueOnce(returning([{ code: 'FARM-001/BRD-002' }]));
-      await expect(service.previewCode({ master: 'BREED', parentId: 'farm' }, 'tenant', 'company')).resolves.toMatchObject({ preview: 'FARM-001/BRD-003' });
+        .mockReturnValueOnce(returning([{ code: 'LARGE_WHITE' }]));
+      await expect(service.previewCode({
+        master: 'BREED',
+        parentId: 'farm',
+        record: JSON.stringify({ breed_name: 'Yorkshire' }),
+      }, 'tenant', 'company')).resolves.toMatchObject({ preview: 'YORKSHIRE' });
       expect(mockDbUpdate).not.toHaveBeenCalled();
     });
 
     it('rejects inaccessible parents rather than exposing their codes', async () => {
       jest.spyOn(service, 'resolveCodeSettings').mockResolvedValue({ generated: true, allowManual: true, seriesCode: 'BREED' } as any);
       mockDbSelect.mockReturnValueOnce(returning([series])).mockReturnValueOnce(returning([]));
-      await expect(service.previewCode({ master: 'BREED', parentId: 'other-company-farm' }, 'tenant', 'company')).rejects.toThrow('active parent in this workspace');
+      await expect(service.previewCode({ master: 'BREED', parentId: 'other-company-farm' }, 'tenant', 'company')).rejects.toThrow('active first-level farm in this workspace');
       expect(mockDbUpdate).not.toHaveBeenCalled();
     });
   });

@@ -44,6 +44,10 @@ export default function BioAssetRollForwardPanel() {
   const [loading, setLoading]   = useState(false);
   const [error, setError]       = useState("");
   const [data, setData]         = useState<Row | null>(null);
+  const glReconciliationUnavailable = data?.glReconciliation?.available === false
+    || data?.glReconciliation?.status === "UNAVAILABLE";
+  const glReconciliationUnavailableReason = data?.glReconciliation?.reason
+    || "GL reconciliation is unavailable for a farm-filtered report.";
 
   const loadStatement = async () => {
     if (!companyId) return;
@@ -67,7 +71,7 @@ export default function BioAssetRollForwardPanel() {
 
   const exportCsv = () => {
     if (!data) return;
-    const lines = [
+    const lines: Array<Array<string | number | null | undefined>> = [
       [t("barfCsvTitle")],
       [t("barfCsvPeriod", { dateFrom, dateTo })],
       [],
@@ -83,10 +87,20 @@ export default function BioAssetRollForwardPanel() {
       [t("barfClosingCarryingValue"), data.closingCarryingValue],
       [],
       [t("barfCsvGlReconciliation")],
-      [t("barfCsvTotalGlBalance"), data.glReconciliation.totalGlBalance],
-      [t("barfCsvGlVariance"), data.glReconciliation.variance],
-      [t("barfCsvReconciledStatus"), data.glReconciliation.isReconciled ? t("barfCsvReconciled") : t("barfCsvVarianceDetected")],
     ];
+
+    if (glReconciliationUnavailable) {
+      lines.push(
+        [t("barfCsvReconciledStatus"), "UNAVAILABLE"],
+        ["Reason", glReconciliationUnavailableReason],
+      );
+    } else {
+      lines.push(
+        [t("barfCsvTotalGlBalance"), data.glReconciliation.totalGlBalance],
+        [t("barfCsvGlVariance"), data.glReconciliation.variance],
+        [t("barfCsvReconciledStatus"), data.glReconciliation.isReconciled ? t("barfCsvReconciled") : t("barfCsvVarianceDetected")],
+      );
+    }
 
     const csvContent = "data:text/csv;charset=utf-8," + lines.map((e) => e.join(",")).join("\n");
     const encodedUri = encodeURI(csvContent);
@@ -170,12 +184,18 @@ export default function BioAssetRollForwardPanel() {
               sub={t("barfAsOf", { date: dateTo })}
             />
             <StatCard
-              icon={data.glReconciliation.isReconciled ? CheckCircle2 : AlertTriangle}
-              tone={data.glReconciliation.isReconciled ? "success" : "warning"}
-              emphasis
+              icon={glReconciliationUnavailable ? Layers : data.glReconciliation.isReconciled ? CheckCircle2 : AlertTriangle}
+              tone={glReconciliationUnavailable ? "default" : data.glReconciliation.isReconciled ? "success" : "warning"}
+              emphasis={!glReconciliationUnavailable}
               label={t("barfGlReconciliation")}
-              value={data.glReconciliation.isReconciled ? t("barfReconciled") : formatCurrency(data.glReconciliation.variance)}
-              sub={t("barfGlNet", { amount: formatCurrency(data.glReconciliation.totalGlBalance) })}
+              value={glReconciliationUnavailable
+                ? "Unavailable"
+                : data.glReconciliation.isReconciled
+                  ? t("barfReconciled")
+                  : formatCurrency(data.glReconciliation.variance)}
+              sub={glReconciliationUnavailable
+                ? glReconciliationUnavailableReason
+                : t("barfGlNet", { amount: formatCurrency(data.glReconciliation.totalGlBalance) })}
             />
           </StatRow>
 
@@ -317,16 +337,22 @@ export default function BioAssetRollForwardPanel() {
                 <h4 className="text-sm font-semibold" style={S.primary}>{t("barfGeneralLedgerAccounts")}</h4>
               </div>
               <div className="space-y-2 text-sm divide-y divide-[var(--row-border)]">
-                {data.glReconciliation.glAccounts.map((a: Row) => (
-                  <div key={a.account_code} className="flex justify-between py-1.5">
-                    <span style={S.sub}>{a.account_code} — {a.account_name}</span>
-                    <span className="font-mono font-medium" style={S.primary}>
-                      {formatCurrency(a.balance)}
-                    </span>
-                  </div>
-                ))}
-                {data.glReconciliation.glAccounts.length === 0 && (
-                  <p className="text-xs py-2" style={S.muted}>{t("barfNoGlPostings")}</p>
+                {glReconciliationUnavailable ? (
+                  <p className="text-xs py-2" style={S.muted}>{glReconciliationUnavailableReason}</p>
+                ) : (
+                  <>
+                    {data.glReconciliation.glAccounts.map((a: Row) => (
+                      <div key={a.account_code} className="flex justify-between py-1.5">
+                        <span style={S.sub}>{a.account_code} — {a.account_name}</span>
+                        <span className="font-mono font-medium" style={S.primary}>
+                          {formatCurrency(a.balance)}
+                        </span>
+                      </div>
+                    ))}
+                    {data.glReconciliation.glAccounts.length === 0 && (
+                      <p className="text-xs py-2" style={S.muted}>{t("barfNoGlPostings")}</p>
+                    )}
+                  </>
                 )}
               </div>
             </div>

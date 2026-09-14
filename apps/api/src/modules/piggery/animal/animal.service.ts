@@ -1,7 +1,7 @@
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { masterScopeConditions } from '../../../common/master-data-scope';
-import { farmScope, animalScopeConditions, batchScopeConditions, assertLocationOnActiveFarm, assertCompanyInScope, assertLobInScope, locationReferenceScopeConditions } from '../../../common/farm-scope';
-import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
+import { farmScope, animalScopeConditions, batchScopeConditions, assertCompanyInScope, assertLobInScope, locationReferenceScopeConditions } from '../../../common/farm-scope';
+import { Injectable, NotFoundException, ConflictException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { eq, and, or, like, desc, sql, isNull } from 'drizzle-orm';
 import { aliasedTable } from 'drizzle-orm';
@@ -202,6 +202,156 @@ export class AnimalService {
   }
 
   /**
+   * An individual animal may only be carried by a Registered Animals batch.
+   * Placement is validated as one effective state rather than as independent
+   * foreign keys: otherwise a valid batch on one farm and a valid pen on a
+   * second farm can be combined into a row that belongs to neither.
+   */
+  private async assertOperationalPlacement(
+    animal: {
+      company_id: string;
+      nob_id: string;
+      lob_id: string;
+      breed_id: string;
+      current_batch_id?: string | null;
+      current_location_id?: string | null;
+    },
+    tenantId: string,
+    breedId = animal.breed_id,
+  ): Promise<{ farmId: string }> {
+    let batch: typeof schema.batchHeader.$inferSelect | undefined;
+    if (animal.current_batch_id) {
+      [batch] = await this.db
+        .select()
+        .from(schema.batchHeader)
+        .where(and(
+          eq(schema.batchHeader.batch_id, animal.current_batch_id),
+          eq(schema.batchHeader.tenant_id, tenantId),
+          eq(schema.batchHeader.company_id, animal.company_id),
+          eq(schema.batchHeader.nob_id, animal.nob_id),
+          eq(schema.batchHeader.lob_id, animal.lob_id),
+          isNull(schema.batchHeader.deleted_at),
+        ))
+        .limit(1);
+      if (!batch) {
+        throw new NotFoundException(`Current Batch with ID '${animal.current_batch_id}' not found.`);
+      }
+      if (batch.animal_tracking !== 'REGISTERED') {
+        throw new BadRequestException('An individual Animal row cannot be placed in a Count Only Batch.');
+      }
+      if (!batch.farm_id) {
+        throw new BadRequestException('The animal Batch has no farm, so its placement is incomplete.');
+      }
+    }
+
+    let location: typeof schema.locationMaster.$inferSelect | undefined;
+    let locationFarmId: string | null = null;
+    if (animal.current_location_id) {
+      [location] = await this.db
+        .select()
+        .from(schema.locationMaster)
+        .where(and(
+          eq(schema.locationMaster.location_id, animal.current_location_id),
+          eq(schema.locationMaster.tenant_id, tenantId),
+          eq(schema.locationMaster.company_id, animal.company_id),
+          or(eq(schema.locationMaster.nob_id, animal.nob_id), isNull(schema.locationMaster.nob_id)),
+          or(eq(schema.locationMaster.lob_id, animal.lob_id), isNull(schema.locationMaster.lob_id)),
+          eq(schema.locationMaster.is_active, true),
+          isNull(schema.locationMaster.deleted_at),
+        ))
+        .limit(1);
+      if (!location) {
+        throw new NotFoundException(`Current Location with ID '${animal.current_location_id}' not found.`);
+      }
+      locationFarmId = location.parent_location_id === null ? location.location_id : location.farm_id;
+      if (!locationFarmId) {
+        throw new BadRequestException('The animal Location has no farm, so its placement is incomplete.');
+      }
+    }
+
+    if (batch?.farm_id && locationFarmId && batch.farm_id !== locationFarmId) {
+      throw new BadRequestException('The animal Batch and Location must belong to the same farm.');
+    }
+    const farmId = batch?.farm_id ?? locationFarmId;
+    if (!farmId) {
+      throw new BadRequestException('The animal placement does not resolve to a farm.');
+    }
+
+    const scope = farmScope(this.cls);
+    assertCompanyInScope(scope, animal.company_id);
+    assertLobInScope(scope, animal.lob_id);
+    if (scope.farmId && scope.farmId !== farmId) {
+      throw new ForbiddenException('Animal placement is not on your active farm.');
+    }
+
+    const [farm] = await this.db
+      .select()
+      .from(schema.locationMaster)
+      .where(and(
+        eq(schema.locationMaster.location_id, farmId),
+        eq(schema.locationMaster.tenant_id, tenantId),
+        eq(schema.locationMaster.company_id, animal.company_id),
+        eq(schema.locationMaster.location_type, 'FARM'),
+        isNull(schema.locationMaster.parent_location_id),
+        eq(schema.locationMaster.is_active, true),
+        isNull(schema.locationMaster.deleted_at),
+      ))
+      .limit(1);
+    if (!farm) {
+      throw new NotFoundException(`Farm with ID '${farmId}' is not active in this animal's operational scope.`);
+    }
+    if (batch?.breed_id && batch.breed_id !== breedId) {
+      throw new BadRequestException('The animal Breed must match its Batch Breed profile.');
+    }
+
+    const [breed] = await this.db
+      .select()
+      .from(schema.breedMaster)
+      .where(and(
+        eq(schema.breedMaster.breed_id, breedId),
+        eq(schema.breedMaster.tenant_id, tenantId),
+        eq(schema.breedMaster.company_id, animal.company_id),
+        eq(schema.breedMaster.nob_id, animal.nob_id),
+        eq(schema.breedMaster.lob_id, animal.lob_id),
+        eq(schema.breedMaster.location_id, farmId),
+        eq(schema.breedMaster.is_active, true),
+        isNull(schema.breedMaster.deleted_at),
+      ))
+      .limit(1);
+    if (!breed) {
+      throw new NotFoundException(`Breed with ID '${breedId}' is not available for this animal's farm and operational scope.`);
+    }
+    return { farmId };
+  }
+
+  private scopedStageQuery(
+    stageId: string,
+    tenantId: string,
+    animal: { company_id: string; nob_id: string; lob_id: string },
+  ) {
+    return this.db.select().from(schema.stageMaster).where(and(
+      eq(schema.stageMaster.stage_id, stageId),
+      eq(schema.stageMaster.tenant_id, tenantId),
+      eq(schema.stageMaster.company_id, animal.company_id),
+      eq(schema.stageMaster.nob_id, animal.nob_id),
+      eq(schema.stageMaster.lob_id, animal.lob_id),
+      eq(schema.stageMaster.is_active, true),
+      isNull(schema.stageMaster.deleted_at),
+    ));
+  }
+
+  private assertPlacementFieldUnchanged(
+    requested: string | null | undefined,
+    current: string | null | undefined,
+    label: string,
+    route: string,
+  ): void {
+    if (requested !== undefined && requested !== current) {
+      throw new BadRequestException(`${label} changes must use the ${route}.`);
+    }
+  }
+
+  /**
    * Spec: "At the time of a slaughter entry the system must check that today minus the
    * last administration date for each medicine given to that animal is greater than or
    * equal to withdrawal_days. Block the slaughter if not." Reduced in JS rather than a SQL
@@ -300,6 +450,9 @@ export class AnimalService {
   }
 
   async create(dto: CreateAnimalDto, tenantId: string, userPayload?: any) {
+    // Number issuance, the Animal row, its IAS 41 opening ledger entry, and
+    // audit are one creation. Any failure must roll the whole operation back.
+    return withTenantTransaction(this.cls, async () => {
     assertGiltTeatCount(dto.animal_type, dto.no_of_teats);
     // Resolved here, beside the other cheap guards, rather than down at the
     // insert: generateAnimalCode() consumes a number series, and a create that
@@ -314,7 +467,8 @@ export class AnimalService {
     assertCompanyInScope(scope, dto.company_id);
     // A restricted user's animal must stand on a farm, or no farm scope would
     // ever show it again — including to the user who created it.
-    if (scope.restricted && !dto.current_location_id && !dto.current_batch_id) {
+    const requestScope = this.cls.get('farmScope');
+    if (requestScope && !dto.current_location_id && !dto.current_batch_id) {
       throw new BadRequestException('Choose where this animal is: a batch or a location on your farm.');
     }
 
@@ -431,32 +585,34 @@ export class AnimalService {
     if (dto.dam_animal_id) {
       await this.assertExists(this.scopedAnimalQuery(dto.dam_animal_id, tenantId, dto.company_id), 'Dam animal', dto.dam_animal_id);
     }
+    let placementFarmId: string | null = null;
+    if (dto.current_batch_id || dto.current_location_id) {
+      const placement = await this.assertOperationalPlacement({
+        company_id: dto.company_id,
+        nob_id: nobId,
+        lob_id: lobId,
+        breed_id: dto.breed_id,
+        current_batch_id: dto.current_batch_id,
+        current_location_id: dto.current_location_id,
+      }, tenantId);
+      placementFarmId = placement.farmId;
+      if (dto.current_batch_id && !dto.current_stage_id) {
+        throw new BadRequestException('Choose the animal\'s current Stage when placing it in a Batch.');
+      }
+    }
     if (dto.current_stage_id) {
       await this.assertExists(
-        this.db.select().from(schema.stageMaster).where(eq(schema.stageMaster.stage_id, dto.current_stage_id)),
+        this.scopedStageQuery(dto.current_stage_id, tenantId, {
+          company_id: dto.company_id,
+          nob_id: nobId,
+          lob_id: lobId,
+        }),
         'Stage', dto.current_stage_id,
       );
     }
-    let batchFarmId: string | null = null;
-    if (dto.current_batch_id) {
-      // One scoped query: a batch on another farm answers exactly like a missing one.
-      const currentBatch = await this.assertExists(
-        this.scopedBatchQuery(dto.current_batch_id, tenantId, dto.company_id), 'Batch', dto.current_batch_id,
-      );
-      batchFarmId = currentBatch.farm_id ?? null;
-    }
-    let locationFarmId: string | null = null;
-    if (dto.current_location_id) {
-      const location = await this.assertExists(
-        this.db.select().from(schema.locationMaster).where(eq(schema.locationMaster.location_id, dto.current_location_id)),
-        'Location', dto.current_location_id,
-      );
-      locationFarmId = location.parent_location_id === null ? location.location_id : location.farm_id;
-    }
-    await assertLocationOnActiveFarm(this.db, scope, dto.current_location_id, 'Animal location');
     // The animal's farm is its location's, or its batch's when it has no
     // location (animalOnFarm) — a farmless batch leaves it on no farm at all.
-    if (scope.restricted && !(dto.current_location_id ? locationFarmId : batchFarmId)) {
+    if (requestScope && !placementFarmId) {
       throw new BadRequestException('Choose where this animal is: a batch or a location on your farm.');
     }
 
@@ -554,6 +710,7 @@ export class AnimalService {
     });
 
     return this.findOne(animalId);
+    });
   }
 
   async lookupByTag(tag: string, tenantId: string) {
@@ -658,6 +815,10 @@ export class AnimalService {
   async update(id: string, dto: UpdateAnimalDto, tenantId: string, userPayload?: any) {
     const animal = await this.findOne(id);
 
+    this.assertPlacementFieldUnchanged(dto.current_batch_id, animal.current_batch_id, 'Batch', 'transfer workflow');
+    this.assertPlacementFieldUnchanged(dto.current_location_id, animal.current_location_id, 'Location', 'transfer workflow');
+    this.assertPlacementFieldUnchanged(dto.current_stage_id, animal.current_stage_id, 'Stage', 'stage transition workflow');
+
     // Changing to the same value is not a disposal, so re-saving a form that
     // shows an already-disposed animal is still allowed.
     if (dto.status && dto.status !== animal.status) {
@@ -676,8 +837,8 @@ export class AnimalService {
     assertGiltTeatCount(animal.animal_type, dto.no_of_teats);
 
     // Bound to the animal's own company and the caller's scope — see the note above breedQuery().
-    if (dto.breed_id) {
-      await this.assertExists(this.breedQuery(dto.breed_id, tenantId, animal.company_id), 'Breed', dto.breed_id);
+    if (dto.breed_id && dto.breed_id !== animal.breed_id) {
+      await this.assertOperationalPlacement(animal, tenantId, dto.breed_id);
     }
     if (dto.sire_animal_id) {
       if (dto.sire_animal_id === id) {
@@ -691,22 +852,6 @@ export class AnimalService {
       }
       await this.assertExists(this.scopedAnimalQuery(dto.dam_animal_id, tenantId, animal.company_id), 'Dam animal', dto.dam_animal_id);
     }
-    if (dto.current_stage_id) {
-      await this.assertExists(
-        this.db.select().from(schema.stageMaster).where(eq(schema.stageMaster.stage_id, dto.current_stage_id)),
-        'Stage', dto.current_stage_id,
-      );
-    }
-    if (dto.current_batch_id) {
-      await this.assertExists(this.scopedBatchQuery(dto.current_batch_id, tenantId, animal.company_id), 'Batch', dto.current_batch_id);
-    }
-    if (dto.current_location_id) {
-      await this.assertExists(
-        this.db.select().from(schema.locationMaster).where(eq(schema.locationMaster.location_id, dto.current_location_id)),
-        'Location', dto.current_location_id,
-      );
-    }
-    await assertLocationOnActiveFarm(this.db, farmScope(this.cls), dto.current_location_id, 'Animal location');
     if (dto.rfid_tag && dto.rfid_tag !== animal.rfid_tag) {
       const duplicateRfid = await this.db
         .select()
@@ -741,9 +886,6 @@ export class AnimalService {
     if (dto.ear_tag_image_url !== undefined) updates.ear_tag_image_url = dto.ear_tag_image_url;
     if (dto.sire_animal_id !== undefined) updates.sire_animal_id = dto.sire_animal_id;
     if (dto.dam_animal_id !== undefined) updates.dam_animal_id = dto.dam_animal_id;
-    if (dto.current_stage_id !== undefined) updates.current_stage_id = dto.current_stage_id;
-    if (dto.current_batch_id !== undefined) updates.current_batch_id = dto.current_batch_id;
-    if (dto.current_location_id !== undefined) updates.current_location_id = dto.current_location_id;
     if (dto.parity_count !== undefined) updates.parity_count = dto.parity_count;
     if (dto.total_piglets_born_live !== undefined) updates.total_piglets_born_live = dto.total_piglets_born_live;
     if (dto.total_piglets_weaned !== undefined) updates.total_piglets_weaned = dto.total_piglets_weaned;
@@ -973,12 +1115,18 @@ export class AnimalService {
       throw new BadRequestException(`Cannot transition disposed or inactive animal '${animal.animal_code}'.`);
     }
 
+    // This route records an in-place stage change. Batch/location movement has
+    // approvals, lineage and accounting of its own and must not be smuggled
+    // through an optional field on the stage DTO. Re-sending the current value
+    // is harmless and keeps existing clients idempotent.
+    this.assertPlacementFieldUnchanged(dto.to_batch_id, animal.current_batch_id, 'Batch', 'transfer workflow');
+    this.assertPlacementFieldUnchanged(dto.to_location_id, animal.current_location_id, 'Location', 'transfer workflow');
+    if (!animal.current_batch_id) {
+      throw new BadRequestException('An animal must be placed in a Registered Animals Batch before its stage can change.');
+    }
+
     // 1. Verify destination stage
-    const [destStage] = await this.db
-      .select()
-      .from(schema.stageMaster)
-      .where(and(eq(schema.stageMaster.stage_id, dto.to_stage_id), eq(schema.stageMaster.tenant_id, tenantId)))
-      .limit(1);
+    const [destStage] = await this.scopedStageQuery(dto.to_stage_id, tenantId, animal).limit(1);
 
     if (!destStage) {
       throw new NotFoundException(`Destination Stage with ID '${dto.to_stage_id}' not found.`);
@@ -987,11 +1135,11 @@ export class AnimalService {
     // 2. Minimum duration validation if moving from a stage that specifies min_days_before_move
     let currentStage: typeof schema.stageMaster.$inferSelect | undefined;
     if (animal.current_stage_id) {
-      [currentStage] = await this.db
-        .select()
-        .from(schema.stageMaster)
-        .where(eq(schema.stageMaster.stage_id, animal.current_stage_id))
-        .limit(1);
+      [currentStage] = await this.scopedStageQuery(animal.current_stage_id, tenantId, animal).limit(1);
+
+      if (!currentStage) {
+        throw new NotFoundException(`Current Stage with ID '${animal.current_stage_id}' not found.`);
+      }
 
       if (currentStage?.min_days_before_move && currentStage.min_days_before_move > 0) {
         const entryDate = animal.entry_date ? new Date(animal.entry_date) : new Date(animal.created_at);
@@ -1006,41 +1154,10 @@ export class AnimalService {
       }
     }
 
-    // 3. Optional location verification
-    if (dto.to_location_id) {
-      const [loc] = await this.db
-        .select()
-        .from(schema.locationMaster)
-        .where(and(eq(schema.locationMaster.location_id, dto.to_location_id), eq(schema.locationMaster.tenant_id, tenantId)))
-        .limit(1);
-      if (!loc) {
-        throw new NotFoundException(`Destination Location with ID '${dto.to_location_id}' not found.`);
-      }
-      const scope = farmScope(this.cls);
-      if (scope.companyId && loc.company_id !== scope.companyId) {
-        throw new BadRequestException('Destination Location is outside the active company.');
-      }
-      if (scope.restricted && scope.lobId && loc.lob_id !== scope.lobId) {
-        throw new BadRequestException('Destination Location is outside the active line of business.');
-      }
-      await assertLocationOnActiveFarm(this.db, scope, dto.to_location_id, 'Destination Location');
-    }
-
-    // 4. Optional batch verification
-    if (dto.to_batch_id) {
-      const [batch] = await this.db
-        .select()
-        .from(schema.batchHeader)
-        .where(and(
-          eq(schema.batchHeader.batch_id, dto.to_batch_id),
-          eq(schema.batchHeader.tenant_id, tenantId),
-          ...batchScopeConditions(farmScope(this.cls)),
-        ))
-        .limit(1);
-      if (!batch) {
-        throw new NotFoundException(`Destination Batch with ID '${dto.to_batch_id}' not found.`);
-      }
-    }
+    // 3. Validate the effective persisted placement as a unit. This catches
+    // Count Only batches, cross-LOB references and Batch/location farm splits
+    // even when the caller sends no destination placement fields.
+    await this.assertOperationalPlacement(animal, tenantId);
 
     // 5. Parity count increment check: if moving through weaning/dry from farrowing
     let newParity = animal.parity_count || 0;
@@ -1055,8 +1172,8 @@ export class AnimalService {
 
     const updates = {
       current_stage_id: dto.to_stage_id,
-      current_location_id: dto.to_location_id !== undefined ? dto.to_location_id : animal.current_location_id,
-      current_batch_id: dto.to_batch_id !== undefined ? dto.to_batch_id : animal.current_batch_id,
+      current_location_id: animal.current_location_id,
+      current_batch_id: animal.current_batch_id,
       parity_count: newParity,
       updated_by: userPayload?.userId || null,
       updated_at: toMysqlTimestamp(),

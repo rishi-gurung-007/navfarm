@@ -42,12 +42,8 @@ export default function AnimalStageTransitionModal({
   animal,
   onSuccess,
   stages,
-  locations,
-  batches,
 }: AnimalStageTransitionModalProps) {
   const [toStageId, setToStageId]       = useState("");
-  const [toLocationId, setToLocationId] = useState("");
-  const [toBatchId, setToBatchId]       = useState("");
   const [transitionDate, setTransitionDate] = useState(new Date().toISOString().slice(0, 10));
   const [reason, setReason]             = useState("");
   const [remarks, setRemarks]           = useState("");
@@ -62,8 +58,6 @@ export default function AnimalStageTransitionModal({
     if (!animal || !open) return;
     setError("");
     setTransitionDate(new Date().toISOString().slice(0, 10));
-    setToLocationId(animal.current_location_id || "");
-    setToBatchId(animal.current_batch_id || "");
     setReason("");
     setRemarks("");
 
@@ -98,8 +92,6 @@ export default function AnimalStageTransitionModal({
     try {
       await api.post(`/animal/${animal.animal_id}/transition-stage`, {
         to_stage_id: toStageId,
-        to_location_id: toLocationId || undefined,
-        to_batch_id: toBatchId || undefined,
         transition_date: transitionDate,
         reason: reason || undefined,
         remarks: remarks || undefined,
@@ -184,38 +176,8 @@ export default function AnimalStageTransitionModal({
             </select>
           </div>
 
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <div>
-              <label className="nf-label text-xs">{t("astmDestinationLocationLabel")}</label>
-              <select
-                className="nf-input text-xs"
-                value={toLocationId}
-                onChange={(e) => setToLocationId(e.target.value)}
-              >
-                <option value="">{t("astmKeepCurrentLocation")}</option>
-                {locations.map((loc) => (
-                  <option key={loc.location_id} value={loc.location_id}>
-                    {loc.location_name} ({loc.location_type || "PEN"})
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="nf-label text-xs">{t("astmDestinationBatchLabel")}</label>
-              <select
-                className="nf-input text-xs"
-                value={toBatchId}
-                onChange={(e) => setToBatchId(e.target.value)}
-              >
-                <option value="">{t("astmNoneKeepCurrent")}</option>
-                {batches.map((b) => (
-                  <option key={b.batch_id} value={b.batch_id}>
-                    {b.batch_no} {b.batch_name ? `— ${b.batch_name}` : ""}
-                  </option>
-                ))}
-              </select>
-            </div>
+          <div className="rounded-[var(--radius-md)] border p-3 text-xs" style={S.surface}>
+            Batch and location remain unchanged during a Stage transition. Use the Transfer workflow to move an animal.
           </div>
 
           <div>

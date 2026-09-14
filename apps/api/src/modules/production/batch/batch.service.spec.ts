@@ -82,36 +82,184 @@ describe('BatchService', () => {
   };
 
   describe('create', () => {
+    const query = (result: unknown[]) => ({
+      from: jest.fn().mockReturnValue({
+        where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue(result) }),
+      }),
+    });
+
+    const validDto = {
+      company_id: 'comp-1',
+      lob_id: 'lob-piggery',
+      farm_id: 'farm-1',
+      animal_tracking: 'COUNT_ONLY',
+      stage_id: 'stage-1',
+      costing_method: 'FIFO',
+      start_date: '2026-01-01',
+      opening_quantity: 100,
+      uom: 'HEAD',
+      input_lines: [] as unknown[],
+    };
+
+    const primeCreate = (options: {
+      farm?: Record<string, unknown> | null;
+      stage?: Record<string, unknown> | null;
+      placements?: Array<Record<string, unknown> | null>;
+      breed?: Record<string, unknown> | null;
+    } = {}) => {
+      const farm = options.farm === undefined ? {
+        location_id: 'farm-1', tenant_id: 'tenant-123', company_id: 'comp-1',
+        lob_id: 'lob-piggery', location_type: 'FARM', parent_location_id: null,
+        farm_id: 'farm-1', is_active: true, deleted_at: null,
+      } : options.farm;
+      const stage = options.stage === undefined ? {
+        stage_id: 'stage-1', tenant_id: 'tenant-123', company_id: 'comp-1',
+        lob_id: 'lob-piggery', stage_code: 'ENTRY', is_active: true, deleted_at: null,
+      } : options.stage;
+      mockDbSelect
+        .mockReturnValueOnce(query([{ nob_id: 'nob-1', lob_name: 'Piggery', costing_method_allowed: 'FIFO,BIO_ASSET' }]))
+        .mockReturnValueOnce(query(stage ? [stage] : []))
+        .mockReturnValueOnce(query(farm ? [farm] : []));
+      for (const placement of options.placements ?? []) {
+        mockDbSelect.mockReturnValueOnce(query(placement ? [placement] : []));
+      }
+      if (options.breed !== undefined) {
+        mockDbSelect.mockReturnValueOnce(query(options.breed ? [options.breed] : []));
+      }
+      mockDbInsert.mockImplementation(() => ({ values: jest.fn().mockResolvedValue({}) }));
+      jest.spyOn(service, 'findOne').mockResolvedValue({ ...activeBatch, batch_no: 'BATCH-000001' } as any);
+    };
+
     it('delegates batch_no generation to NumberSeriesService and persists the result', async () => {
-      mockDbSelect.mockReturnValueOnce({
-        from: jest.fn().mockReturnValue({
-          where: jest.fn().mockReturnValue({
-            limit: jest.fn().mockResolvedValue([{ nob_id: 'nob-1', costing_method_allowed: 'FIFO,STANDARD' }]),
-          }),
-        }),
-      });
-
-      mockDbTransaction.mockImplementation(async (cb: any) => cb(mockDb));
-      mockDbInsert.mockReturnValue({ values: jest.fn().mockResolvedValue({}) });
-
-      jest.spyOn(service, 'findOne').mockResolvedValueOnce({ ...activeBatch, batch_no: 'BATCH-000001' } as any);
+      primeCreate();
 
       const result = await service.create(
-        {
-          company_id: 'comp-1',
-          lob_id: 'lob-piggery',
-          costing_method: 'FIFO',
-          start_date: '2026-01-01',
-          opening_quantity: 100,
-          uom: 'HEAD',
-          input_lines: [],
-        } as any,
+        validDto as any,
         'tenant-123',
         { userId: 'user-1' },
       );
 
       expect(numberSeriesService.generateNext).toHaveBeenCalledWith('BATCH', 'tenant-123', 'comp-1', mockDb);
       expect(result.batch_no).toBe('BATCH-000001');
+    });
+
+    it('stores the explicitly selected farm, tracking mode, and initial stage', async () => {
+      primeCreate();
+      const inserted: Array<{ table: unknown; value: any }> = [];
+      mockDbInsert.mockImplementation((table: unknown) => ({
+        values: jest.fn(async (value: unknown) => { inserted.push({ table, value }); return {}; }),
+      }));
+
+      await service.create(validDto as any, 'tenant-123', { userId: 'user-1' });
+
+      expect(inserted.find((entry) => entry.table === schema.batchHeader)?.value).toMatchObject({
+        farm_id: 'farm-1', animal_tracking: 'COUNT_ONLY', stage_id: 'stage-1', current_stage_code: 'ENTRY',
+      });
+    });
+
+    it('refuses creation without an explicit farm before writing', async () => {
+      primeCreate();
+      await expect(service.create({ ...validDto, farm_id: undefined } as any, 'tenant-123'))
+        .rejects.toThrow('Select the farm this batch runs on.');
+      expect(mockDbInsert).not.toHaveBeenCalled();
+    });
+
+    it('refuses creation without an initial stage before writing', async () => {
+      primeCreate();
+      await expect(service.create({ ...validDto, stage_id: undefined } as any, 'tenant-123'))
+        .rejects.toThrow('Select the initial stage for this batch.');
+      expect(mockDbInsert).not.toHaveBeenCalled();
+    });
+
+    it('refuses creation without an explicit tracking mode before writing', async () => {
+      primeCreate();
+      await expect(service.create({ ...validDto, animal_tracking: undefined } as any, 'tenant-123'))
+        .rejects.toThrow('Select how this batch tracks animals.');
+      expect(mockDbInsert).not.toHaveBeenCalled();
+    });
+
+    it('requires the selected LOB to be configured for the tenant and company', async () => {
+      let capturedCondition: any;
+      mockDbSelect.mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockImplementation((condition: any) => {
+            capturedCondition = condition;
+            return { limit: jest.fn().mockResolvedValue([]) };
+          }),
+        }),
+      });
+
+      await expect(service.create(validDto as any, 'tenant-123'))
+        .rejects.toThrow(/not configured for this company/i);
+      const rendered = new MySqlDialect().sqlToQuery(capturedCondition);
+      expect(rendered.sql).toContain('operational_area_master');
+      expect(rendered.params).toEqual(expect.arrayContaining(['tenant-123', 'comp-1', 'lob-piggery']));
+      expect(mockDbInsert).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['inactive', { is_active: false }],
+      ['nested', { parent_location_id: 'another-farm' }],
+      ['non-farm', { location_type: 'SHED' }],
+      ['another company', { company_id: 'comp-2' }],
+    ])('refuses an %s farm before writing', async (_label, farmOverride) => {
+      primeCreate({ farm: {
+        location_id: 'farm-1', tenant_id: 'tenant-123', company_id: 'comp-1', lob_id: 'lob-piggery',
+        location_type: 'FARM', parent_location_id: null, farm_id: 'farm-1', is_active: true,
+        deleted_at: null, ...farmOverride,
+      } });
+      await expect(service.create(validDto as any, 'tenant-123')).rejects.toThrow('Select the farm this batch runs on.');
+      expect(mockDbInsert).not.toHaveBeenCalled();
+    });
+
+    it('validates both supplied placement references against the batch farm', async () => {
+      primeCreate({ placements: [
+        { location_id: 'pen-1', tenant_id: 'tenant-123', company_id: 'comp-1', lob_id: 'lob-piggery', farm_id: 'farm-1', is_active: true, deleted_at: null },
+        { location_id: 'shed-2', tenant_id: 'tenant-123', company_id: 'comp-1', lob_id: 'lob-piggery', farm_id: 'farm-2', is_active: true, deleted_at: null },
+      ] });
+      await expect(service.create({ ...validDto, location_id: 'pen-1', shed_id: 'shed-2' } as any, 'tenant-123'))
+        .rejects.toThrow("Batch shed is not on the batch's farm.");
+      expect(mockDbInsert).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['company', { company_id: 'comp-2' }],
+      ['line of business', { lob_id: 'lob-poultry' }],
+    ])('refuses a location from another %s even when its farm id matches', async (_label, override) => {
+      primeCreate({ placements: [{
+        location_id: 'pen-1', tenant_id: 'tenant-123', company_id: 'comp-1', lob_id: 'lob-piggery',
+        location_type: 'PEN', parent_location_id: 'shed-1', farm_id: 'farm-1', is_active: true,
+        deleted_at: null, ...override,
+      }] });
+      await expect(service.create({ ...validDto, location_id: 'pen-1' } as any, 'tenant-123'))
+        .rejects.toThrow("Batch location is not on the batch's farm.");
+      expect(mockDbInsert).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['farm-less', { breed_id: 'breed-1', tenant_id: 'tenant-123', company_id: 'comp-1', lob_id: 'lob-piggery', location_id: null, is_active: true, deleted_at: null }],
+      ['another-farm', { breed_id: 'breed-1', tenant_id: 'tenant-123', company_id: 'comp-1', lob_id: 'lob-piggery', location_id: 'farm-2', is_active: true, deleted_at: null }],
+      ['another-LOB', { breed_id: 'breed-1', tenant_id: 'tenant-123', company_id: 'comp-1', lob_id: 'lob-poultry', location_id: 'farm-1', is_active: true, deleted_at: null }],
+    ])('refuses a %s operational breed profile', async (_label, breed) => {
+      primeCreate({ breed });
+      await expect(service.create({ ...validDto, breed_id: 'breed-1' } as any, 'tenant-123'))
+        .rejects.toThrow('The breed profile belongs to another farm.');
+      expect(mockDbInsert).not.toHaveBeenCalled();
+    });
+
+    it.each(['COUNT_ONLY', 'REGISTERED'])('%s creation never invents Animal Register rows', async (animalTracking) => {
+      primeCreate({ breed: {
+        breed_id: 'breed-1', tenant_id: 'tenant-123', company_id: 'comp-1', lob_id: 'lob-piggery',
+        location_id: 'farm-1', is_active: true, deleted_at: null,
+      } });
+      const insertedTables: unknown[] = [];
+      mockDbInsert.mockImplementation((table: unknown) => ({
+        values: jest.fn(async () => { insertedTables.push(table); return {}; }),
+      }));
+
+      await service.create({ ...validDto, animal_tracking: animalTracking, breed_id: 'breed-1' } as any, 'tenant-123');
+
+      expect(insertedTables).not.toContain(schema.animalRegister);
     });
   });
 
@@ -1044,7 +1192,13 @@ describe('BatchService', () => {
     const chain = (result: unknown[]) => {
       const self: any = {
         from: () => self,
-        where: () => self,
+        where: (condition?: any) => {
+          if (!condition || !result.some((row: any) => row?.location_id)) return self;
+          const params = new MySqlDialect().sqlToQuery(condition).params;
+          const matchingIds = new Set(params.filter((param): param is string => typeof param === 'string'));
+          const filtered = result.filter((row: any) => !row?.location_id || matchingIds.has(row.location_id));
+          return chain(filtered.length ? filtered : result);
+        },
         limit: () => self,
         for: () => self,
         orderBy: () => self,
@@ -1060,6 +1214,9 @@ describe('BatchService', () => {
     const validCreateDto = {
       company_id: 'co-1',
       lob_id: 'lob-pig',
+      farm_id: 'farm-g',
+      animal_tracking: 'COUNT_ONLY',
+      stage_id: 'stage-1',
       costing_method: 'FIFO',
       start_date: '2026-01-01',
       opening_quantity: 100,
@@ -1071,6 +1228,14 @@ describe('BatchService', () => {
       rows.clear();
       insertedByTable.clear();
       rows.set(schema.lobMaster, [{ nob_id: 'nob-1', lob_name: 'Piggery', costing_method_allowed: 'FIFO,STANDARD' }]);
+      rows.set(schema.stageMaster, [{
+        stage_id: 'stage-1', tenant_id: 'tenant-1', company_id: 'co-1', lob_id: 'lob-pig',
+        stage_code: 'ENTRY', is_active: true, deleted_at: null,
+      }]);
+      rows.set(schema.locationMaster, [{
+        location_id: 'farm-g', tenant_id: 'tenant-1', company_id: 'co-1', lob_id: 'lob-pig',
+        location_type: 'FARM', parent_location_id: null, farm_id: 'farm-g', is_active: true, deleted_at: null,
+      }]);
       rows.set(schema.batchHeader, [{ ...activeBatch }]);
 
       mockDbSelect.mockReset();
@@ -1094,7 +1259,10 @@ describe('BatchService', () => {
 
     it('stamps the farm derived from the batch location on create', async () => {
       useFarmScope(grasmere);
-      rows.set(schema.locationMaster, [{ location_id: 'pen-1', parent: 'shed-1', farm_id: 'farm-g', company_id: 'co-1', lob_id: 'lob-pig' }]);
+      rows.set(schema.locationMaster, [
+        { location_id: 'farm-g', tenant_id: 'tenant-1', parent_location_id: null, farm_id: 'farm-g', company_id: 'co-1', lob_id: 'lob-pig', location_type: 'FARM', is_active: true, deleted_at: null },
+        { location_id: 'pen-1', tenant_id: 'tenant-1', parent_location_id: 'shed-1', farm_id: 'farm-g', company_id: 'co-1', lob_id: 'lob-pig', location_type: 'PEN', is_active: true, deleted_at: null },
+      ]);
       await service.create({ ...validCreateDto, location_id: 'pen-1' } as any, 'tenant-1', { userId: 'u-1' } as any);
       expect(insertedValues(schema.batchHeader)).toMatchObject({ farm_id: 'farm-g' });
     });
@@ -1201,9 +1369,12 @@ describe('BatchService', () => {
 
     it('refuses creating a batch on a location of another farm', async () => {
       useFarmScope(grasmere);
-      rows.set(schema.locationMaster, [{ location_id: 'pen-k', parent: 'shed-k', farm_id: 'farm-k', company_id: 'co-1', lob_id: 'lob-pig' }]);
+      rows.set(schema.locationMaster, [
+        { location_id: 'farm-g', tenant_id: 'tenant-1', parent_location_id: null, farm_id: 'farm-g', company_id: 'co-1', lob_id: 'lob-pig', location_type: 'FARM', is_active: true, deleted_at: null },
+        { location_id: 'pen-k', tenant_id: 'tenant-1', parent_location_id: 'shed-k', farm_id: 'farm-k', company_id: 'co-1', lob_id: 'lob-pig', location_type: 'PEN', is_active: true, deleted_at: null },
+      ]);
       await expect(service.create({ ...validCreateDto, location_id: 'pen-k' } as any, 'tenant-1', { userId: 'u-1' } as any))
-        .rejects.toThrow('Batch location is not on your active farm.');
+        .rejects.toThrow("Batch location is not on the batch's farm.");
     });
   });
 });

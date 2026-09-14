@@ -28,7 +28,7 @@ export interface TransferActor {
 }
 
 export const WORKER_TRANSFER_REFUSAL = 'Transfers by farm workers need approval, which is not available yet.';
-export const FARM_TO_FARM_TRANSFER_REFUSAL = 'Farm-to-farm transfers need approval by a tenant or company admin.';
+export const FARM_TO_FARM_TRANSFER_REFUSAL = 'Farm-to-farm transfers are unavailable until destination Breed-profile matching is implemented.';
 
 function transferActorType(actor: TransferActor | undefined, scope: FarmScope): string | null {
   const userType = actor?.userType;
@@ -48,10 +48,15 @@ export function assertWorkerMayTransfer(actor: TransferActor | undefined, scope:
   if (transferActorType(actor, scope) === 'STANDARD_USER') throw new ForbiddenException(WORKER_TRANSFER_REFUSAL);
 }
 
-/** Operational admins move animals within a farm; between farms needs a tenant or company admin. */
+/**
+ * Cross-farm movement must remap the animal to the matching Breed profile on
+ * the destination farm and preserve both profile references in history. Until
+ * that decided workflow exists, fail closed for every role instead of leaving
+ * an animal attached to its source-farm Breed after it moves.
+ */
 function assertFarmToFarmAllowed(actor: TransferActor | undefined, scope: FarmScope, source: BatchRow, destination: BatchRow): void {
   assertWorkerMayTransfer(actor, scope);
-  if (transferActorType(actor, scope) === 'OPERATIONAL_ADMIN' && source.farm_id !== destination.farm_id) {
+  if (source.farm_id !== destination.farm_id) {
     throw new ForbiddenException(FARM_TO_FARM_TRANSFER_REFUSAL);
   }
 }
@@ -257,6 +262,49 @@ export class BatchTransferService {
   }
 
   /**
+   * A split persists its child directly, before create() can validate the
+   * transfer destination. Validate the explicitly requested child location
+   * here so an out-of-scope pen cannot be written into the new batch first.
+   */
+  private async assertSplitDestinationLocation(
+    locationId: string,
+    parent: BatchRow,
+    tenantId: string,
+  ): Promise<void> {
+    if (!parent.farm_id) {
+      throw new BadRequestException('Source batch has no farm, so a split destination cannot be validated.');
+    }
+    const [location] = await this.db
+      .select({ location_id: schema.locationMaster.location_id })
+      .from(schema.locationMaster)
+      .where(and(
+        eq(schema.locationMaster.location_id, locationId),
+        eq(schema.locationMaster.tenant_id, tenantId),
+        eq(schema.locationMaster.company_id, parent.company_id),
+        eq(schema.locationMaster.lob_id, parent.lob_id),
+        eq(schema.locationMaster.is_active, true),
+        isNull(schema.locationMaster.deleted_at),
+        or(
+          eq(schema.locationMaster.location_id, parent.farm_id),
+          eq(schema.locationMaster.farm_id, parent.farm_id),
+        ),
+        sql`EXISTS (
+          SELECT 1 FROM location_master active_farm
+          WHERE active_farm.location_id = ${parent.farm_id}
+            AND active_farm.parent_location_id IS NULL
+            AND active_farm.tenant_id = ${tenantId}
+            AND active_farm.company_id = ${parent.company_id}
+            AND active_farm.is_active = TRUE
+            AND active_farm.deleted_at IS NULL
+        )`,
+      ))
+      .limit(1);
+    if (!location) {
+      throw new ForbiddenException('Destination location is not on your active farm.');
+    }
+  }
+
+  /**
    * `options.autoTriggersStage` is internal: only the TRANSFER scheduler line
    * sets it (it generates the destination's scheduler unscoped), so it is not
    * on the HTTP DTO.
@@ -434,6 +482,12 @@ export class BatchTransferService {
     if (parent.status !== 'ACTIVE') {
       throw new BadRequestException(`Only an ACTIVE batch can be split (this one is ${parent.status}).`);
     }
+    if (dto.to_location_id) {
+      await this.assertSplitDestinationLocation(dto.to_location_id, parent, tenantId);
+      if (dto.to_location_id !== parent.location_id && dto.to_location_id !== parent.sub_location_id) {
+        throw new BadRequestException('A split keeps the parent Batch location. Use the Transfer workflow to move animals to another location.');
+      }
+    }
 
     const childBatchId = randomUUID();
     const childBatchNo = dto.child_batch_no || `${parent.batch_no}-S${String(Date.now()).slice(-4)}`;
@@ -478,8 +532,8 @@ export class BatchTransferService {
       costing_method: parent.costing_method,
       operational_area_id: parent.operational_area_id,
       shed_id: parent.shed_id,
-      location_id: dto.to_location_id || parent.location_id,
-      sub_location_id: dto.to_location_id || parent.sub_location_id,
+      location_id: parent.location_id,
+      sub_location_id: parent.sub_location_id,
       current_stage_code: holdStageCode,
       stage_id: holdStageId,
       parent_batch_id: parentBatchId,
@@ -628,7 +682,8 @@ export class BatchTransferService {
           eq(schema.animalRegister.is_active, true),
           sql`${schema.animalRegister.status} NOT IN ('DEAD','SOLD','CULLED','SLAUGHTERED')`,
         )
-      );
+      )
+      .for('update');
     if (stillLive.length !== headCount) {
       throw new BadRequestException(
         `${headCount - stillLive.length} animal(s) on this transfer are no longer live members of the source batch. Re-create the transfer.`
@@ -654,7 +709,7 @@ export class BatchTransferService {
     //    current_stage_id follows the destination batch's stage (read by the
     //    herd and bio-asset-by-stage reports), otherwise a pig transferred into
     //    farrowing still reports as gestating.
-    await this.db
+    const [animalClaim] = await this.db
       .update(schema.animalRegister)
       .set({
         current_batch_id: transfer.to_batch_id,
@@ -663,7 +718,18 @@ export class BatchTransferService {
         updated_by: userPayload?.userId || null,
         updated_at: toMysqlTimestamp(),
       })
-      .where(inArray(schema.animalRegister.animal_id, animalIds));
+      .where(and(
+        eq(schema.animalRegister.tenant_id, tenantId),
+        inArray(schema.animalRegister.animal_id, animalIds),
+        eq(schema.animalRegister.current_batch_id, transfer.from_batch_id),
+        eq(schema.animalRegister.is_active, true),
+        sql`${schema.animalRegister.status} NOT IN ('DEAD','SOLD','CULLED','SLAUGHTERED')`,
+      ));
+    if (!animalClaim || animalClaim.affectedRows !== headCount) {
+      throw new ConflictException(
+        'One or more animals were moved or became unavailable while this transfer was posting. Re-create the transfer.',
+      );
+    }
 
     // 1b. "Destination stage auto-triggered if auto_triggers_stage = TRUE"
     // (Schedule_master_template.xlsx) — the TRANSFER scheduler_line that
@@ -689,7 +755,7 @@ export class BatchTransferService {
 
     // 4. Bio-asset ledger: an out leg and an in leg, so the roll-forward report
     //    shows the movement on both batches instead of value silently appearing.
-    await this.writeLedgerLegs(transfer, tenantId, userPayload?.userId);
+    await this.writeLedgerLegs(transfer, tenantId, source, destBatch, userPayload?.userId);
 
     await this.auditService.log({
       tenantId,
@@ -755,18 +821,13 @@ export class BatchTransferService {
   private async writeLedgerLegs(
     transfer: Awaited<ReturnType<BatchTransferService['findOne']>>,
     tenantId: string,
+    source: BatchRow,
+    destination: BatchRow,
     userId?: string,
   ) {
-    const [source] = await this.db
-      .select()
-      .from(schema.batchHeader)
-      .where(eq(schema.batchHeader.batch_id, transfer.from_batch_id))
-      .limit(1);
-    const [destination] = await this.db
-      .select()
-      .from(schema.batchHeader)
-      .where(eq(schema.batchHeader.batch_id, transfer.to_batch_id))
-      .limit(1);
+    if (!transfer.lines.length) {
+      throw new BadRequestException('Transfer accounting cannot be posted without transfer lines.');
+    }
 
     // bio_asset_item_id is NOT NULL; fall back the same way batch.service.ts does.
     const [line] = await this.db
@@ -783,7 +844,11 @@ export class BatchTransferService {
         .limit(1);
       itemId = animal?.item_id;
     }
-    if (!itemId) return; // Nothing sane to post against — skip rather than crash the transfer.
+    if (!itemId) {
+      throw new BadRequestException(
+        'Transfer accounting item is missing from the source batch and animal. Configure it before posting.',
+      );
+    }
 
     const rows = transfer.lines.flatMap((l) => [
       {
@@ -826,7 +891,10 @@ export class BatchTransferService {
       },
     ]);
 
-    await this.db.insert(schema.bioAssetLedger).values(rows);
+    const [inserted] = await this.db.insert(schema.bioAssetLedger).values(rows);
+    if (!inserted || inserted.affectedRows !== rows.length) {
+      throw new ConflictException('Transfer accounting ledger legs could not all be posted. No transfer was applied.');
+    }
   }
 
   async cancel(transferId: string, tenantId: string, userPayload?: TransferActor) {

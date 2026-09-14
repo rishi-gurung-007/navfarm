@@ -30,6 +30,8 @@ export interface NavUser {
   tenantId?:           string;
   operationalAreaId?:  string;
   operational_area_id?: string;
+  farmId?:             string;
+  farm_id?:            string;
   companies?:          CompanyRef[];
   operationalAreas?:   OperationalAreaRef[];
   permissions?: Array<{
