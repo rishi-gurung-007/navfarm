@@ -1382,3 +1382,10 @@ verification follows F2/F3; this entry does not claim it has run yet.
 
 These are technical repairs explicitly requested by Rishi, not new client
 accounting rules. Farm-access design remains deferred pending his scoping answer.
+
+*F2, 2026-09-14.* FIFO now refuses insufficient stock with a 400; no demo flag
+or automatic opening layer is retained. Layer selection also requires the
+issuing company, which it previously omitted. Two focused tests pass, including
+the shortfall case observed returning a made-up cost before the fix. Existing
+historical AUTO-STOCK-REPLENISH rows are not silently deleted; their provenance
+and downstream applications will be reported during live verification.

@@ -156,6 +156,7 @@ export class InventoryLedgerService {
 
     const layerConditions = [
       eq(schema.inventoryLedger.tenant_id, params.tenantId),
+      eq(schema.inventoryLedger.company_id, params.companyId),
       eq(schema.inventoryLedger.item_id, params.itemId),
       eq(schema.inventoryLedger.entry_type, 'POSITIVE'),
     ];
@@ -205,52 +206,9 @@ export class InventoryLedgerService {
     }
 
     if (remainingToConsume > 0) {
-      // Auto-provision standard opening layer so physical farm recording is never blocked by delayed purchase entry
-      const [itemRow] = await executor.select().from(schema.itemMaster).where(eq(schema.itemMaster.item_id, params.itemId)).limit(1);
-      const fallbackRate = Number(itemRow?.standard_cost || 25);
-      const fallbackCost = remainingToConsume * fallbackRate;
-      const bufferQty = Math.max(remainingToConsume * 100, 10000);
-
-      const autoLayerId = randomUUID();
-      await executor.insert(schema.inventoryLedger).values({
-        ledger_id: autoLayerId,
-        tenant_id: params.tenantId,
-        company_id: params.companyId,
-        item_id: params.itemId,
-        item_code: itemRow?.item_code || 'ITEM',
-        item_description: itemRow?.item_name || 'Standard Opening Stock Layer',
-        document_type: 'STOCK_ADJUSTMENT',
-        document_no: 'AUTO-STOCK-REPLENISH',
-        document_line_id: randomUUID(),
-        posting_date: params.applicationDate,
-        entry_type: 'POSITIVE',
-        transaction_type: 'OPENING',
-        quantity: bufferQty.toString(),
-        remaining_quantity: (bufferQty - remainingToConsume).toString(),
-        uom: itemRow?.uom_primary || 'KG',
-        rate: fallbackRate.toString(),
-        amount: (bufferQty * fallbackRate).toString(),
-        warehouse_id: params.warehouseId || null,
-        nob_id: itemRow?.nob_id || null,
-        lob_id: itemRow?.lob_id || null,
-        created_by: params.userId || null,
-      });
-
-      await executor.insert(schema.inventoryApplication).values({
-        application_id: randomUUID(),
-        tenant_id: params.tenantId,
-        company_id: params.companyId,
-        item_id: params.itemId,
-        inbound_ledger_id: autoLayerId,
-        outbound_ledger_id: params.outboundLedgerId,
-        applied_qty: remainingToConsume.toString(),
-        applied_cost_amount: fallbackCost.toString(),
-        application_date: params.applicationDate,
-        created_by: params.userId || null,
-      });
-
-      totalCost += fallbackCost;
-      remainingToConsume = 0;
+      throw new BadRequestException(
+        `Insufficient stock for item '${params.itemId}': requested ${params.quantity}, short by ${remainingToConsume}. Post a receipt before issuing stock.`
+      );
     }
 
     return { totalCost, averageRate: params.quantity > 0 ? totalCost / params.quantity : 0 };
