@@ -283,6 +283,11 @@ export class TreatmentDetailDto {
 }
 
 export class AddBatchTransactionDto {
+  @ApiProperty({ description: 'Lot number for consumption or output', required: false })
+  @IsString()
+  @IsOptional()
+  lot_no?: string;
+
   @ApiProperty({ description: 'Transaction date', example: '2026-08-07' })
   @IsDateString()
   @IsNotEmpty()

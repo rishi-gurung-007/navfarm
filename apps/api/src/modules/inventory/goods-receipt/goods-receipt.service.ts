@@ -1,3 +1,4 @@
+import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { eq, and, like, or, isNull, count } from 'drizzle-orm';
@@ -46,6 +47,7 @@ export class GoodsReceiptService {
   }
 
   async create(dto: CreateGoodsReceiptDto, tenantId: string, userPayload?: any) {
+    return withTenantTransaction(this.cls, async () => {
     const receiptId = randomUUID();
     const receiptNo = await this.db.transaction(async (tx) => {
       const no = await this.generateReceiptNo(tenantId, dto.company_id, tx);
@@ -79,6 +81,7 @@ export class GoodsReceiptService {
     });
 
     return this.findOne(receiptId);
+    });
   }
 
   private async insertLines(receiptId: string, lines: CreateGoodsReceiptDto['lines']) {
@@ -217,6 +220,7 @@ export class GoodsReceiptService {
    * new offsetting documents, not edits.
    */
   async post(id: string, tenantId: string, userPayload?: any) {
+    return withTenantTransaction(this.cls, async () => {
     const receipt = await this.findOne(id);
     this.assertDraft(receipt);
 
@@ -292,5 +296,6 @@ export class GoodsReceiptService {
     });
 
     return this.findOne(id);
+    });
   }
 }

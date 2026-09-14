@@ -88,6 +88,23 @@ export class GlPostingService {
     return mapping;
   }
 
+  /** Use the original journal accounts and values, even if mappings changed. */
+  async reverseInventoryJournal(originalLedgerId: string, reversal: typeof schema.inventoryLedger.$inferSelect, userId?: string) {
+    const [header] = await this.db.select().from(schema.journalHeader)
+      .where(and(eq(schema.journalHeader.source_ledger_id, originalLedgerId), eq(schema.journalHeader.status, 'POSTED'))).limit(1);
+    if (!header) throw new BadRequestException('The original issue has no posted journal to reverse.');
+    const lines = await this.db.select().from(schema.journalLine).where(eq(schema.journalLine.journal_id, header.journal_id));
+    if (!lines.length) throw new BadRequestException('The original journal has no lines to reverse.');
+    return this.journalService.createAndPostSystemJournal({
+      tenantId: reversal.tenant_id, companyId: reversal.company_id, postingDate: reversal.posting_date,
+      sourceDocumentType: reversal.document_type, sourceDocumentNo: reversal.document_no,
+      sourceLedgerId: reversal.ledger_id, description: `Reversal of ${header.journal_no}`, userId,
+      lines: lines.map(line => ({ glAccountId: line.gl_account_id,
+        debitAmount: Number(line.credit_amount), creditAmount: Number(line.debit_amount),
+        costCenterId: line.cost_center_id || undefined, nobId: line.nob_id || undefined, lobId: line.lob_id || undefined })),
+    });
+  }
+
   async postInventoryLedgerEntry(ledgerEntry: typeof schema.inventoryLedger.$inferSelect, userId?: string) {
     const [item] = await this.db
       .select({ valuation_method: schema.itemMaster.valuation_method })

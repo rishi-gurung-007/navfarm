@@ -1,3 +1,4 @@
+import { transactionCls } from '../../../test-utils/transaction-cls';
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConflictException, ForbiddenException, BadRequestException, NotFoundException } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
@@ -39,6 +40,7 @@ describe('BatchDailyDataService', () => {
       from: () => self,
       where: () => self,
       limit: () => self,
+      for: () => self,
       orderBy: () => self,
       innerJoin: () => self,
       leftJoin: () => self,
@@ -72,7 +74,7 @@ describe('BatchDailyDataService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         BatchDailyDataService,
-        { provide: ClsService, useValue: { get: jest.fn().mockReturnValue(mockDb) } },
+        { provide: ClsService, useValue: transactionCls(mockDb) },
         { provide: AuditLogService, useValue: { log: jest.fn().mockResolvedValue({}) } },
         { provide: BatchService, useValue: { addTransaction: jest.fn() } },
         { provide: BatchTransferService, useValue: { create: jest.fn() } },
@@ -93,6 +95,17 @@ describe('BatchDailyDataService', () => {
     }]);
   };
 
+  it('reverses the prior consumption before posting a corrected daily quantity', async () => {
+    line({ line_type: 'CONSUMPTION', item_id: 'item-feed', activity_name: 'Morning Feed' });
+    jest.spyOn(service as any, 'companyToday').mockResolvedValue(ENTRY_DATE);
+    rows.set(schema.batchDailyData, [{ posted: true, posting_reference: 'old-tx', entered_value: '4.6' }]);
+    rows.set(schema.itemMaster, [{ item_id: 'item-feed', uom_primary: 'KG' }]);
+    (batchService as any).reverseConsumption = jest.fn().mockResolvedValue({});
+    (batchService.addTransaction as jest.Mock).mockResolvedValue({ posting_transaction_id: 'new-tx', transactions: [] });
+    await service.postEntry('batch-1', { line_id: 'line-1', entry_date: ENTRY_DATE, entered_value: 5 } as any, 'tenant-123');
+    expect((batchService as any).reverseConsumption).toHaveBeenCalledWith('batch-1', 'old-tx', 'tenant-123', undefined);
+  });
+
   it('rejects an entry against a deactivated line', async () => {
     line({ is_active: false });
     await expect(
@@ -100,18 +113,19 @@ describe('BatchDailyDataService', () => {
     ).rejects.toThrow(ConflictException);
   });
 
-  it('delegates a CONSUMPTION entry to BatchService.addTransaction with the item\'s stock UOM', async () => {
+  it('delegates a CONSUMPTION entry with its selected lot and the item\'s stock UOM', async () => {
     line({ line_type: 'CONSUMPTION', item_id: 'item-feed', activity_name: 'Morning Feed' });
     rows.set(schema.itemMaster, [{ item_id: 'item-feed', uom_primary: 'KG' }]);
     (batchService.addTransaction as jest.Mock).mockResolvedValue({
+      posting_transaction_id: 'tx-1',
       transactions: [{ transaction_id: 'tx-1', transaction_date: ENTRY_DATE, item_id: 'item-feed', transaction_type: 'CONSUMPTION' }],
     });
 
-    await service.postEntry('batch-1', { line_id: 'line-1', entry_date: ENTRY_DATE, entered_value: 22.5 } as any, 'tenant-123', { userId: 'user-1' });
+    await service.postEntry('batch-1', { line_id: 'line-1', entry_date: ENTRY_DATE, entered_value: 22.5, lot_no: 'selected-lot' } as any, 'tenant-123', { userId: 'user-1' });
 
     expect(batchService.addTransaction).toHaveBeenCalledWith(
       'batch-1',
-      expect.objectContaining({ transaction_type: 'CONSUMPTION', item_id: 'item-feed', quantity: 22.5, uom: 'KG' }),
+      expect.objectContaining({ transaction_type: 'CONSUMPTION', item_id: 'item-feed', quantity: 22.5, uom: 'KG', lot_no: 'selected-lot' }),
       'tenant-123',
       { userId: 'user-1' },
     );

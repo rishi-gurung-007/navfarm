@@ -1,3 +1,5 @@
+import { withTenantTransaction } from '../../../common/tenant-transaction';
+import { batchTransactionCost } from './batch-transaction-cost';
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { eq, and, like, isNull, inArray, desc, SQL } from 'drizzle-orm';
@@ -888,12 +890,61 @@ export class BatchService {
     const inputTotal = (batch.input_lines || []).reduce((sum, l) => sum + Number(l.amount || 0), 0);
     const consumptionTotal = (batch.transactions || [])
       .filter((t) => t.transaction_type === 'CONSUMPTION' || t.transaction_type === 'OVERHEAD')
-      .reduce((sum, t) => sum + Math.abs(Number(t.amount || 0)), 0);
+      .reduce((sum, t) => sum + batchTransactionCost(t), 0);
     const opening = Number(batch.opening_quantity || 0);
     return opening > 0 ? (inputTotal + consumptionTotal) / opening : 0;
   }
 
+  async reverseConsumption(batchId: string, transactionId: string, tenantId: string, userPayload?: UserContext) {
+    return withTenantTransaction(this.cls, async () => {
+      const [batch] = await this.db.select().from(schema.batchHeader)
+        .where(and(eq(schema.batchHeader.batch_id, batchId), eq(schema.batchHeader.tenant_id, tenantId))).for('update');
+      if (!batch || batch.status !== 'ACTIVE') throw new BadRequestException('Only an active batch can be corrected.');
+      const [original] = await this.db.select().from(schema.batchTransaction)
+        .where(and(eq(schema.batchTransaction.transaction_id, transactionId), eq(schema.batchTransaction.batch_id, batchId))).limit(1);
+      if (!original || original.transaction_type !== 'CONSUMPTION' || !original.ledger_id) {
+        throw new BadRequestException('This consumption has no inventory posting to reverse.');
+      }
+      const reversal = await this.ledgerService.reverseEntry(original.ledger_id, tenantId, userPayload?.userId);
+      await this.glPostingService.reverseInventoryJournal(original.ledger_id, reversal, userPayload?.userId);
+      const [sourceLedger] = await this.db.select().from(schema.inventoryLedger)
+        .where(eq(schema.inventoryLedger.ledger_id, original.ledger_id)).limit(1);
+      if (sourceLedger.transaction_type === 'BIO_CONSUMPTION_PREMATURE') {
+        const [bio] = await this.db.select().from(schema.batchBioAssetState)
+          .where(eq(schema.batchBioAssetState.batch_id, batchId)).for('update');
+        if (!bio || bio.stage !== 'PREMATURE' || Number(bio.nca_book_value) < Math.abs(Number(original.amount))) {
+          throw new BadRequestException('The biological asset has moved beyond this consumption; review its cost before correcting.');
+        }
+        await this.db.update(schema.batchBioAssetState)
+          .set({ nca_book_value: (Number(bio.nca_book_value) - Math.abs(Number(original.amount))).toString(), updated_at: toMysqlTimestamp() })
+          .where(eq(schema.batchBioAssetState.batch_id, batchId));
+        await this.db.insert(schema.bioAssetLedger).values({
+          entry_id: randomUUID(), tenant_id: tenantId, company_id: batch.company_id,
+          bio_asset_item_id: original.item_id!, entry_type: 'CONSUMPTION', document_no: batch.batch_no,
+          batch_id: batchId, batch_no: batch.batch_no, posting_date: original.transaction_date,
+          stage: 'PREMATURE', quantity: (-Number(original.quantity)).toString(),
+          cost_amount: (-Math.abs(Number(original.amount))).toString(), costing_method: 'COST_ACCUMULATION',
+          nob_id: batch.nob_id, lob_id: batch.lob_id, created_by: userPayload?.userId || null,
+        });
+      }
+      const reversalTransactionId = randomUUID();
+      await this.db.insert(schema.batchTransaction).values({
+        ...original, transaction_id: reversalTransactionId, ledger_id: reversal.ledger_id,
+        quantity: (-Number(original.quantity)).toString(), amount: (-Number(original.amount)).toString(),
+        remarks: `Reversal of ${transactionId} — daily entry correction`,
+        created_at: toMysqlTimestamp(), created_by: userPayload?.userId || null,
+      });
+      await this.auditService.log({ tenantId, companyId: batch.company_id, userId: userPayload?.userId,
+        action: 'REVERSE', entityName: 'batch_transaction', entityId: reversalTransactionId,
+        newValues: { original_transaction_id: transactionId, ledger_id: reversal.ledger_id } });
+      return reversalTransactionId;
+    });
+  }
+
   async addTransaction(id: string, dto: AddBatchTransactionDto, tenantId: string, userPayload?: UserContext) {
+    return withTenantTransaction(this.cls, async () => {
+    await this.db.select({ batch_id: schema.batchHeader.batch_id }).from(schema.batchHeader)
+      .where(and(eq(schema.batchHeader.batch_id, id), eq(schema.batchHeader.tenant_id, tenantId))).for('update');
     const batch = await this.findOne(id);
     this.assertStatus(batch, 'ACTIVE');
 
@@ -1006,6 +1057,7 @@ export class BatchService {
         transactionType: bioTransactionType,
         quantity: dto.quantity,
         uom: dto.uom,
+        lotNo: dto.lot_no,
         batchNo: batch.batch_no,
         userId: userPayload?.userId,
       });
@@ -1064,6 +1116,7 @@ export class BatchService {
         transactionType: isBioAsset ? 'BIO_OUTPUT' : 'BATCH_OUTPUT',
         quantity: dto.quantity,
         uom: dto.uom,
+        lotNo: dto.lot_no,
         rate: isByProductRemoval ? dto.nrv_rate : dto.rate,
         batchNo: batch.batch_no,
         userId: userPayload?.userId,
@@ -1375,7 +1428,8 @@ export class BatchService {
       newValues: { batch_id: id, ...dto, amount },
     });
 
-    return this.findOne(id);
+    return { ...await this.findOne(id), posting_transaction_id: transactionId };
+    });
   }
 
   /**
@@ -1669,7 +1723,7 @@ export class BatchService {
     const costTransactions = (batch.transactions || []).filter(
       (t) => t.transaction_type === 'CONSUMPTION' || t.transaction_type === 'OVERHEAD'
     );
-    const transactionTotal = costTransactions.reduce((sum, t) => sum + Math.abs(Number(t.amount || 0)), 0);
+    const transactionTotal = costTransactions.reduce((sum, t) => sum + batchTransactionCost(t), 0);
     const totalCost = inputTotal + transactionTotal;
 
     const closingQuantity = dto.closing_quantity ?? Number(batch.opening_quantity);
@@ -1811,7 +1865,7 @@ export class BatchService {
         if (t.transaction_type !== 'CONSUMPTION' || !t.item_id) continue;
         const entry = consumptionByItem.get(t.item_id) || { qty: 0, amount: 0 };
         entry.qty += Number(t.quantity || 0);
-        entry.amount += Math.abs(Number(t.amount || 0));
+        entry.amount += batchTransactionCost(t);
         consumptionByItem.set(t.item_id, entry);
       }
 
@@ -2806,4 +2860,3 @@ export class BatchService {
     return { success: true };
   }
 }
-

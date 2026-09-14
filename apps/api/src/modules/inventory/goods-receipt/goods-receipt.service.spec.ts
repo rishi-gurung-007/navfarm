@@ -1,3 +1,4 @@
+import { transactionCls } from '../../../test-utils/transaction-cls';
 import { Test, TestingModule } from '@nestjs/testing';
 import { GoodsReceiptService } from './goods-receipt.service';
 import { ClsService } from 'nestjs-cls';
@@ -33,7 +34,7 @@ describe('GoodsReceiptService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         GoodsReceiptService,
-        { provide: ClsService, useValue: { get: jest.fn().mockReturnValue(mockDb) } },
+        { provide: ClsService, useValue: transactionCls(mockDb) },
         { provide: AuditLogService, useValue: { log: jest.fn().mockResolvedValue({}) } },
         { provide: InventoryLedgerService, useValue: { writePositiveEntry: jest.fn().mockResolvedValue({ entry_no: 1 }) } },
         { provide: GlPostingService, useValue: { postInventoryLedgerEntry: jest.fn().mockResolvedValue({}) } },

@@ -1,3 +1,4 @@
+import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { Injectable, NotFoundException, BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { eq, and, inArray, sql, desc } from 'drizzle-orm';
@@ -467,6 +468,12 @@ export class BatchDailyDataService {
     tenantId: string,
     userPayload?: UserContext,
   ) {
+    return withTenantTransaction(this.cls, async () => {
+    // Lock the batch before any consistent read establishes a snapshot.
+    await this.db.select({ batch_id: schema.batchHeader.batch_id }).from(schema.batchHeader)
+      .where(and(eq(schema.batchHeader.batch_id, batchId), eq(schema.batchHeader.tenant_id, tenantId))).for('update');
+    await this.db.select({ request_id: schema.approvalRequest.request_id }).from(schema.approvalRequest)
+      .where(and(eq(schema.approvalRequest.request_id, requestId), eq(schema.approvalRequest.tenant_id, tenantId))).for('update');
     const request: any = await this.approvalService.findOne(requestId, tenantId);
     if (request.doc_type !== UNSCHEDULED_HEALTH) {
       throw new BadRequestException('That request is not an unscheduled health event.');
@@ -491,6 +498,7 @@ export class BatchDailyDataService {
         eq(schema.itemMaster.tenant_id, tenantId),
       )).limit(1);
 
+      if (!item) throw new BadRequestException('The requested medicine no longer resolves; correct the request before approving.');
       if (item) {
         await this.batchService.addTransaction(batchId, {
           transaction_date: this.dateFromJustification(request.justification) ?? String(request.submitted_at).slice(0, 10),
@@ -504,6 +512,7 @@ export class BatchDailyDataService {
     }
 
     return this.approvalService.approve(requestId, tenantId, userPayload);
+    });
   }
 
   async rejectUnscheduledHealth(
@@ -643,6 +652,10 @@ export class BatchDailyDataService {
   }
 
   async postEntry(batchId: string, dto: CreateBatchDailyDataDto, tenantId: string, userPayload?: UserContext) {
+    return withTenantTransaction(this.cls, async () => {
+    // Serialize entries/corrections on the batch before taking any snapshot.
+    await this.db.select({ batch_id: schema.batchHeader.batch_id }).from(schema.batchHeader)
+      .where(and(eq(schema.batchHeader.batch_id, batchId), eq(schema.batchHeader.tenant_id, tenantId))).for('update');
     const [line] = await this.db.select().from(schema.schedulerLine).where(eq(schema.schedulerLine.line_id, dto.line_id)).limit(1);
     if (!line) throw new NotFoundException(`Scheduler line '${dto.line_id}' not found.`);
     if (!line.is_active) throw new ConflictException('This line has been deactivated and no longer accepts entries.');
@@ -656,6 +669,21 @@ export class BatchDailyDataService {
     }
 
     await this.assertMayRecord(batchId, header.company_id, line.line_id, dto.entry_date, tenantId, userPayload);
+
+    const [previous] = await this.db.select().from(schema.batchDailyData)
+      .where(and(eq(schema.batchDailyData.line_id, line.line_id), eq(schema.batchDailyData.entry_date, dto.entry_date))).limit(1);
+    if (previous?.posted) {
+      const sameValue = (previous.entered_value == null ? null : Number(previous.entered_value)) === (dto.entered_value ?? null);
+      const sameText = (previous.entered_text || null) === (dto.entered_text || null);
+      const sameLot = (previous.lot_no || null) === (dto.lot_no || null);
+      if (sameValue && sameText && sameLot && dto.rate == null && !dto.destination_batch_id) {
+        return this.findForDate(batchId, dto.entry_date, tenantId);
+      }
+      if (line.line_type !== 'CONSUMPTION' || !previous.posting_reference) {
+        throw new ConflictException('This posted entry requires a document-specific reversal before it can be changed.');
+      }
+      await this.batchService.reverseConsumption(batchId, previous.posting_reference, tenantId, userPayload);
+    }
 
     const entryId = randomUUID();
     let posted = false;
@@ -673,17 +701,14 @@ export class BatchDailyDataService {
           transaction_date: dto.entry_date,
           transaction_type: line.line_type,
           item_id: line.item_id,
+          lot_no: dto.lot_no,
           quantity: dto.entered_value,
           uom: item?.uom_primary || 'PCS',
           rate: dto.rate,
           remarks: dto.remarks || `${line.activity_name} — scheduled entry`,
         } as any, tenantId, userPayload);
-        // No created_at in this projection to sort by — the newly-inserted row is
-        // reliably last for a simple unordered SELECT against an append-only table.
-        const matchingTx = (updated.transactions || [])
-          .filter((t: any) => t.transaction_date === dto.entry_date && t.item_id === line.item_id && t.transaction_type === line.line_type);
         posted = true;
-        postingReference = matchingTx[matchingTx.length - 1]?.transaction_id || null;
+        postingReference = updated.posting_transaction_id;
         break;
       }
       case 'DESCRIPTIVE': {
@@ -798,10 +823,8 @@ export class BatchDailyDataService {
           rate,
           remarks: dto.remarks || `${line.activity_name} — scheduled entry`,
         } as any, tenantId, userPayload);
-        const matchingTx = (updated.transactions || [])
-          .filter((t: any) => t.transaction_date === dto.entry_date && t.transaction_type === 'OVERHEAD');
         posted = true;
-        postingReference = matchingTx[matchingTx.length - 1]?.transaction_id || null;
+        postingReference = updated.posting_transaction_id;
         break;
       }
       case 'TRANSFER': {
@@ -889,6 +912,7 @@ export class BatchDailyDataService {
     });
 
     return this.findForDate(batchId, dto.entry_date, tenantId);
+    });
   }
 
   async findForDate(batchId: string, entryDate: string, tenantId: string) {

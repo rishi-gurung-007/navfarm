@@ -1,3 +1,4 @@
+import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { eq, and, like, isNull, count, inArray } from 'drizzle-orm';
@@ -313,6 +314,7 @@ export class JournalService {
     lines: SystemJournalLineInput[];
     userId?: string;
   }) {
+    return withTenantTransaction(this.cls, async () => {
     const totalDebit = params.lines.reduce((sum, l) => sum + l.debitAmount, 0);
     const totalCredit = params.lines.reduce((sum, l) => sum + l.creditAmount, 0);
 
@@ -375,5 +377,6 @@ export class JournalService {
     });
 
     return this.findOne(journalId);
+    });
   }
 }

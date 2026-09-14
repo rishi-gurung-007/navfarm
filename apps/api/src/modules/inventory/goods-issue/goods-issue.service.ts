@@ -1,3 +1,4 @@
+import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { eq, and, like, isNull, count } from 'drizzle-orm';
@@ -45,6 +46,7 @@ export class GoodsIssueService {
   }
 
   async create(dto: CreateGoodsIssueDto, tenantId: string, userPayload?: any) {
+    return withTenantTransaction(this.cls, async () => {
     const issueId = randomUUID();
     const issueNo = await this.db.transaction(async (tx) => {
       const no = await this.generateIssueNo(tenantId, dto.company_id, tx);
@@ -77,6 +79,7 @@ export class GoodsIssueService {
     });
 
     return this.findOne(issueId);
+    });
   }
 
   private async insertLines(issueId: string, lines: CreateGoodsIssueDto['lines']) {
@@ -196,6 +199,7 @@ export class GoodsIssueService {
   }
 
   async post(id: string, tenantId: string, userPayload?: any) {
+    return withTenantTransaction(this.cls, async () => {
     const issue = await this.findOne(id);
     this.assertDraft(issue);
 
@@ -255,5 +259,6 @@ export class GoodsIssueService {
     });
 
     return this.findOne(id);
+    });
   }
 }

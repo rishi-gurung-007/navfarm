@@ -1,3 +1,4 @@
+import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { eq, and, gte, lte, asc, desc, sql, isNotNull } from 'drizzle-orm';
@@ -40,6 +41,7 @@ interface WriteNegativeEntryParams {
   transactionType: string;
   quantity: number; // positive number — the amount being consumed/shipped/written off
   uom: string;
+  lotNo?: string;
   batchNo?: string;
   warehouseId?: string;
   locationId?: string;
@@ -61,6 +63,45 @@ export class InventoryLedgerService {
       throw new Error('Tenant database connection context not established.');
     }
     return tenantDb;
+  }
+
+  /** Reverse an issue at its original cost and restore exactly the layers it drew.
+   * The positive reversal is not a new FIFO layer: the old layers regain stock.
+   * external_reference_no links the reversal to the original ledger UUID.
+   */
+  async reverseEntry(ledgerId: string, tenantId: string, userId?: string) {
+    return withTenantTransaction(this.cls, async () => {
+      const [original] = await this.db.select().from(schema.inventoryLedger)
+        .where(and(eq(schema.inventoryLedger.ledger_id, ledgerId), eq(schema.inventoryLedger.tenant_id, tenantId)))
+        .for('update');
+      if (!original || original.entry_type !== 'NEGATIVE') throw new BadRequestException('Only an existing issue can be reversed here.');
+      const [reversed] = await this.db.select().from(schema.inventoryLedger)
+        .where(and(eq(schema.inventoryLedger.external_reference_no, ledgerId), eq(schema.inventoryLedger.transaction_type, 'REVERSAL'))).limit(1);
+      if (reversed) throw new BadRequestException('This issue has already been reversed.');
+      const applications = await this.db.select().from(schema.inventoryApplication)
+        .where(eq(schema.inventoryApplication.outbound_ledger_id, ledgerId));
+      const appliedQty = applications.reduce((sum, a) => sum + Number(a.applied_qty), 0);
+      if (Math.abs(appliedQty + Number(original.quantity)) > 0.0001) throw new BadRequestException('The issue has incomplete FIFO applications; review before reversing.');
+      const reversalId = randomUUID();
+      await this.db.insert(schema.inventoryLedger).values({
+        ...original, ledger_id: reversalId, entry_type: 'POSITIVE', transaction_type: 'REVERSAL',
+        quantity: (-Number(original.quantity)).toString(), amount: (-Number(original.amount)).toString(),
+        remaining_quantity: '0', external_reference_no: ledgerId,
+        created_at: new Date().toISOString().slice(0, 19).replace('T', ' '), created_by: userId || null,
+      });
+      for (const application of applications) {
+        await this.db.update(schema.inventoryLedger)
+          .set({ remaining_quantity: sql`${schema.inventoryLedger.remaining_quantity} + ${application.applied_qty}` })
+          .where(eq(schema.inventoryLedger.ledger_id, application.inbound_ledger_id));
+        await this.db.insert(schema.inventoryApplication).values({
+          ...application, application_id: randomUUID(), outbound_ledger_id: reversalId,
+          applied_qty: (-Number(application.applied_qty)).toString(),
+          applied_cost_amount: (-Number(application.applied_cost_amount)).toString(),
+          created_at: new Date().toISOString().slice(0, 19).replace('T', ' '), created_by: userId || null,
+        });
+      }
+      return this.findOne(reversalId);
+    });
   }
 
   /** Writes a POSITIVE (inbound) ledger entry — Goods Receipt lines, and positive Stock Adjustment lines. */
@@ -131,6 +172,7 @@ export class InventoryLedgerService {
       itemId: string;
       outboundLedgerId: string;
       quantity: number;
+      lotNo?: string;
       applicationDate: string;
       userId?: string;
       // Batch consumption draws from a company-wide pool and never sets this
@@ -162,6 +204,9 @@ export class InventoryLedgerService {
     ];
     if (params.warehouseId) {
       layerConditions.push(eq(schema.inventoryLedger.warehouse_id, params.warehouseId));
+    }
+    if (params.lotNo) {
+      layerConditions.push(eq(schema.inventoryLedger.lot_no, params.lotNo));
     }
 
     // Row-locked so two concurrent consumptions against the same layers can't
@@ -260,6 +305,7 @@ export class InventoryLedgerService {
         entry_type: 'NEGATIVE',
         transaction_type: params.transactionType,
         quantity: (-Math.abs(params.quantity)).toString(),
+        lot_no: params.lotNo || null,
         uom: params.uom,
         uom_conversion_factor: item.uom_conversion_factor,
         batch_no: params.batchNo || null,
@@ -278,6 +324,7 @@ export class InventoryLedgerService {
           itemId: params.itemId,
           outboundLedgerId: ledgerId,
           quantity: params.quantity,
+          lotNo: params.lotNo,
           applicationDate: params.postingDate,
           userId: params.userId,
           warehouseId: params.warehouseId,

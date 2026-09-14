@@ -1,3 +1,4 @@
+import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { eq, and, like, isNull, count } from 'drizzle-orm';
@@ -45,6 +46,7 @@ export class StockAdjustmentService {
   }
 
   async create(dto: CreateStockAdjustmentDto, tenantId: string, userPayload?: any) {
+    return withTenantTransaction(this.cls, async () => {
     const adjustmentId = randomUUID();
     const adjustmentNo = await this.db.transaction(async (tx) => {
       const no = await this.generateAdjustmentNo(tenantId, dto.company_id, tx);
@@ -77,6 +79,7 @@ export class StockAdjustmentService {
     });
 
     return this.findOne(adjustmentId);
+    });
   }
 
   private async insertLines(adjustmentId: string, lines: CreateStockAdjustmentDto['lines']) {
@@ -197,6 +200,7 @@ export class StockAdjustmentService {
   }
 
   async post(id: string, tenantId: string, userPayload?: any) {
+    return withTenantTransaction(this.cls, async () => {
     const adjustment = await this.findOne(id);
     this.assertDraft(adjustment);
 
@@ -271,5 +275,6 @@ export class StockAdjustmentService {
     });
 
     return this.findOne(id);
+    });
   }
 }

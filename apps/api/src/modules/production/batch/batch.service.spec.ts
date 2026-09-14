@@ -1,3 +1,4 @@
+import { transactionCls } from '../../../test-utils/transaction-cls';
 import { Test, TestingModule } from '@nestjs/testing';
 import { BatchService } from './batch.service';
 import { ClsService } from 'nestjs-cls';
@@ -38,14 +39,16 @@ describe('BatchService', () => {
 
   beforeEach(async () => {
     mockDbSelect.mockReset();
+    mockDb.select = mockDbSelect;
     mockDbInsert.mockReset();
     mockDbUpdate.mockReset();
     mockDbTransaction.mockReset();
+    mockDbTransaction.mockImplementation(async work => work(mockDb));
 
     module = await Test.createTestingModule({
       providers: [
         BatchService,
-        { provide: ClsService, useValue: { get: jest.fn().mockReturnValue(mockDb) } },
+        { provide: ClsService, useValue: transactionCls(mockDb) },
         { provide: AuditLogService, useValue: { log: jest.fn().mockResolvedValue({}) } },
         { provide: InventoryLedgerService, useValue: {} },
         { provide: GlPostingService, useValue: {} },
@@ -54,6 +57,13 @@ describe('BatchService', () => {
       ],
     }).compile();
 
+    const originalSelect = mockDb.select;
+    mockDb.select = ((projection?: any) => {
+      if (projection && Object.keys(projection).length === 1 && projection.batch_id) {
+        return { from: () => ({ where: () => ({ for: async () => [{ batch_id: 'batch-1' }] }) }) };
+      }
+      return originalSelect(projection);
+    }) as any;
     service = module.get<BatchService>(BatchService);
     numberSeriesService = module.get<NumberSeriesService>(NumberSeriesService);
   });

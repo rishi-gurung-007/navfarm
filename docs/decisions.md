@@ -1389,3 +1389,27 @@ issuing company, which it previously omitted. Two focused tests pass, including
 the shortfall case observed returning a made-up cost before the fix. Existing
 historical AUTO-STOCK-REPLENISH rows are not silently deleted; their provenance
 and downstream applications will be reported during live verification.
+
+*F3/F4, 2026-09-14.* Posting owns one transaction across document status,
+FIFO, GL, batch/daily records and audit. Nested services join it through a
+child CLS context; request context is restored afterward. Consumption edits
+reverse the original FIFO applications and GL accounts, retain compensating
+history, then post the replacement atomically. Repeating the same daily entry
+is idempotent. Posted daily output/overhead/resource/transfer edits that need
+their own reversal are refused rather than double-posted; those correction
+workflows remain work to do. This is our integrity safeguard, not a new client
+process requirement.
+
+Review found that old cost calculations used absolute amounts and would count
+a reversal as a second cost. Negative consumption quantities now subtract the
+cost while positive legacy seed amounts remain compatible. Daily lot numbers
+now reach exact-lot FIFO and the ledger; an unavailable lot is refused and the
+whole correction rolls back. Health approval takes the batch lock before its
+first snapshot read so concurrent approvals cannot reuse stale capitalization.
+
+All five requested documents ran through the rebuilt API and were read back
+from MySQL, followed by daily correction/retry, failed multi-line issue,
+no-valuation overhead and failed dedicated health approval. Exact identifiers,
+amounts, retained diagnostic rows, and unverified paths are recorded in
+`docs/VERIFICATION-2026-09-14-foundation.md`. These are labelled demo tests, not
+client operations. F5/F6 and farm-access design were not started.

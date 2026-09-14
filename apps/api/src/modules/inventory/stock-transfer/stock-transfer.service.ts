@@ -1,3 +1,4 @@
+import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { eq, and, like, isNull, count } from 'drizzle-orm';
@@ -45,6 +46,7 @@ export class StockTransferService {
   }
 
   async create(dto: CreateStockTransferDto, tenantId: string, userPayload?: any) {
+    return withTenantTransaction(this.cls, async () => {
     if (dto.from_warehouse_id === dto.to_warehouse_id) {
       throw new BadRequestException('Source and destination warehouse must be different.');
     }
@@ -81,6 +83,7 @@ export class StockTransferService {
     });
 
     return this.findOne(transferId);
+    });
   }
 
   private async insertLines(transferId: string, lines: CreateStockTransferDto['lines']) {
@@ -205,6 +208,7 @@ export class StockTransferService {
   }
 
   async post(id: string, tenantId: string, userPayload?: any) {
+    return withTenantTransaction(this.cls, async () => {
     const transfer = await this.findOne(id);
     this.assertDraft(transfer);
 
@@ -264,5 +268,6 @@ export class StockTransferService {
     });
 
     return this.findOne(id);
+    });
   }
 }
