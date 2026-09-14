@@ -682,6 +682,24 @@ deployment.
 
 ---
 
+## Deployment
+
+### Windows test deployment keeps API and MySQL private behind the web origin
+*Decided 2026-09-10.*
+
+The initial Windows RDP test URL is `http://103.234.185.14:3002`. Next.js binds
+explicitly to `0.0.0.0:3002`; browser requests remain same-origin under
+`/api/v1` and Next proxies them to the API on `127.0.0.1:2877`. MySQL remains
+local on 3306/33060. Only web port 3002 needs a NAVFarm inbound firewall rule.
+
+Production startup does not share the generic `PORT` variable between apps.
+The API production target runs the built Node entry directly, without Nx's
+debug-by-default Node executor, and the web target passes its hostname and port
+on the `next start` command line. Redis is not used and is not introduced for
+deployment.
+
+---
+
 ## Master data lookup controls
 
 ### Entity-backed selections use a searchable code/name lookup
