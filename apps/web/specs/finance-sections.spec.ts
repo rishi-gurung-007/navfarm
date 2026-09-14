@@ -12,8 +12,10 @@ const shellSource = readFileSync(
   'utf8',
 );
 
+// \s* (not a literal space) so this matches whether prettier keeps an entry
+// on one line or wraps each field onto its own — and either quote style.
 const SECTION_RE =
-  /\{ key: "([a-z-]+)", href: "([^"]+)", labelKey: "([A-Za-z]+)" \}/g;
+  /\{\s*key:\s*["']([a-z-]+)["'],\s*href:\s*["']([^"']+)["'],\s*labelKey:\s*["']([A-Za-z]+)["'],?\s*\}/g;
 
 function sections() {
   return [...shellSource.matchAll(SECTION_RE)].map(
@@ -63,10 +65,14 @@ describe('Finance sections', () => {
 
   it('gives every section a title branch in the shell', () => {
     for (const section of sections()) {
-      // Either an explicit branch, or the final fallback (bio-asset).
+      // Either an explicit branch, or the final fallback (bio-asset). \s*
+      // (not a literal space) before the `?` — prettier's nested-ternary
+      // style puts the `?` on its own indented line, not right after the
+      // condition.
       const hasBranch =
-        shellSource.includes(`activeKey === "${section.key}" ?`) ||
-        section.key === 'bio-asset-reconciliation';
+        new RegExp(`activeKey === ["']${section.key}["']\\s*\\?`).test(
+          shellSource,
+        ) || section.key === 'bio-asset-reconciliation';
       expect({ key: section.key, hasBranch }).toEqual({
         key: section.key,
         hasBranch: true,

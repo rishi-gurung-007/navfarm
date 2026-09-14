@@ -12,14 +12,20 @@ import { join } from 'node:path';
  * register was ungrantable to any non-admin role.
  */
 
-const ROLES_TAB = join(__dirname, '../src/components/console/console-tabs/roles-tab.tsx');
+const ROLES_TAB = join(
+  __dirname,
+  '../src/components/console/console-tabs/roles-tab.tsx',
+);
 const API_MODULES = join(__dirname, '../../api/src/modules');
 
 function offeredByRolesScreen(): Set<string> {
   const source = readFileSync(ROLES_TAB, 'utf8');
   return new Set(
-    [...source.matchAll(/module_code:\s*"([A-Z_]+)",\s*resource:\s*"([A-Z_]+)"/g)]
-      .map((m) => `${m[1]}/${m[2]}`),
+    [
+      ...source.matchAll(
+        /module_code:\s*["']([A-Z_]+)["'],\s*resource:\s*["']([A-Z_]+)["']/g,
+      ),
+    ].map((m) => `${m[1]}/${m[2]}`),
   );
 }
 
@@ -31,7 +37,9 @@ function enforcedByApi(): Set<string> {
       if (statSync(full).isDirectory()) walk(full);
       else if (entry.endsWith('.ts') && !entry.endsWith('.spec.ts')) {
         const source = readFileSync(full, 'utf8');
-        for (const m of source.matchAll(/RequirePermission\(\s*'([A-Z_]+)'\s*,\s*'([A-Z_]+)'/g)) {
+        for (const m of source.matchAll(
+          /RequirePermission\(\s*'([A-Z_]+)'\s*,\s*'([A-Z_]+)'/g,
+        )) {
           pairs.add(`${m[1]}/${m[2]}`);
         }
       }
@@ -54,10 +62,17 @@ describe('Role permissions coverage', () => {
     // A missing key renders as the raw key string in the roles table — visible,
     // ugly, and easy to ship when a row is added without its label.
     const source = readFileSync(ROLES_TAB, 'utf8');
-    const keys = [...source.matchAll(/nameKey:\s*"([A-Za-z0-9_]+)"/g)].map((m) => m[1]);
-    const translations = readFileSync(join(__dirname, '../src/utils/translations.ts'), 'utf8');
+    const keys = [
+      ...source.matchAll(/nameKey:\s*["']([A-Za-z0-9_]+)["']/g),
+    ].map((m) => m[1]);
+    const translations = readFileSync(
+      join(__dirname, '../src/utils/translations.ts'),
+      'utf8',
+    );
 
-    const missing = keys.filter((k) => !new RegExp(`^\\s{4}${k}:`, 'm').test(translations)).sort();
+    const missing = keys
+      .filter((k) => !new RegExp(`^\\s{4}${k}:`, 'm').test(translations))
+      .sort();
 
     expect(missing).toEqual([]);
   });
