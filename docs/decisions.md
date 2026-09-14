@@ -1585,3 +1585,95 @@ formatting for operators. Every other wizard write is admin-only.
 Answering "locked" only to a correct password confirms each guess and makes the
 lockout useless. The generic message says accounts lock for 15 minutes after 5
 failures, so a real user knows to wait.
+
+## September 18 means an end-to-end MVP for all ten named areas
+*Decided 2026-09-14 by Rishi.*
+
+The deadline scope is Masters, Schedulers, Batch, Data Entry, Purchase and
+Receipt, Inventory Journal and Ledger, Requisition, Feed Forecast, Resource
+Ledger, and Animal breeding history and traceability. “Complete” for this date
+means a demonstrable end-to-end MVP, not every later production-hardening path.
+
+For each area, a real web → API → MySQL flow must create, validate, persist and
+read back its primary record or posting. A route, mock screen or passing unit
+test alone is not an MVP. The approved shared master, selector, dialog,
+navigation and table design still applies; a disposable UI is not acceptable.
+
+The current Approvals module is real and persisted, including feed-ration,
+receipt, stock-transfer and health decisions. It is infrastructure for
+Requisition, not the Requisition document itself: the first-class header/lines
+and the effect of approval still have to be connected.
+
+## Daily Data Entry is one Stage-aware workspace
+*Decided 2026-09-14 by Rishi from the supplied Miro wireframe.*
+
+Data Entry is one route with a Stage overview and a selected-Stage workspace.
+Company/Farm/Batch/Date context and Draft work survive switching between them.
+The workspace shows Stage counts, Activity cards in the centre and dated
+History at the side; narrow screens present the same hierarchy without a fixed
+side rail.
+
+Activities come from the Scheduler for the exact Batch + Stage. A parent card
+groups a Scheduler line type such as Consumption or Resource; every due
+Scheduler line is a sub-card. A Scheduler line is not itself the parent card.
+Each sub-card can be Not entered, Draft or Posted. The parent derives Not
+started/In progress/Complete, supplies individual actions and also atomically
+posts every completed valid Draft sub-card while leaving empty ones untouched.
+
+There is no Activity time field. The system stores the applicable date,
+Scheduler occurrence label when present, and automatic audit timestamps; it
+must not claim the entry timestamp is when the farm work happened. Users may
+enter the day's sub-cards in one or several sessions.
+
+For Registered Animals, animals may occupy different Stages within one Batch.
+Stage counts come from active Animal rows. An activity defaults to all animals
+in the selected Stage and can target selected animals where allowed. Count Only
+Batches have no Animal rows, occupy one Stage and always receive whole-Batch
+entry.
+
+Missing required sub-cards become Overdue/Missing after their date and notify
+the assigned farm worker and Operational Admin. A Standard User may enter a
+previously missing record through today without approval. Future entry is not
+allowed.
+
+Tenant, Company and Operational Admins may directly correct past entries inside
+their scope. A Standard User may correct today's Posted entry directly. For an
+older Posted date, the user requests a one-time correction for multiple chosen
+sub-cards from one Batch + Stage + Date. Only those cards unlock; successful
+correction automatically relocks them. Posted history is superseded and
+reversed/reposted, never overwritten.
+
+## Batch modes and transfers follow the same daily workflow
+*Decided 2026-09-14 by Rishi.*
+
+Batch creation exposes Registered Animals and Count Only. Their persisted codes
+remain the existing `REGISTERED` and `COUNT_ONLY`. Registered Animals
+may move individually, as a selected group, by Stage or as a whole. Count Only
+moves as one Batch; a partial move creates a new Count Only child Batch and
+transfers carrying value in proportion to headcount, with rounding remainder
+kept by the source so value reconciles.
+
+Scheduled transfers appear in the Transfer Activity card. Tenant, Company and
+Operational Admins may also start an unscheduled transfer from the primary
+Transfer action; Standard Users cannot. Tenant and Company Admin transfers
+auto-approve within scope. Operational Admin same-farm Stage/location transfers
+auto-approve, while their farm-to-farm transfers require approval. Every
+Standard User transfer is scheduled and requires approval.
+
+Transfers can change Stage, same-farm location, or farm, and create or select a
+destination Batch. Auto-approved still means validated, posted and audited.
+
+## Cross-farm movement changes to the matching farm-specific Breed profile
+*Decided 2026-09-14 by Rishi after identifying the farm/Breed conflict.*
+
+Breed Code is currently the Breed Name with spaces replaced by `_`. The same
+biological breed therefore has the same code at each farm, while its location,
+lifecycle and performance values differ. Uniqueness is Farm + Breed Code.
+
+A cross-farm transfer matches the destination profile by destination Farm +
+Breed Code and records both profile references in history. If none exists, the
+transfer stays Draft/blocked and preserves the user's work. It notifies
+administrators with Breed create/update permission and offers a prefilled
+destination-profile creation path. Farm-specific lifecycle/performance values
+are never copied automatically. After the profile is created, the transfer is
+revalidated and resumes its approval path.

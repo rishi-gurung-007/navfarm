@@ -32,7 +32,7 @@ Access is cumulative only within the boundary assigned to the user:
 | --- | --- | --- |
 | `TENANT_ADMIN` | Every company in the tenant | Every farm in those companies |
 | `COMPANY_ADMIN` | One company | Every farm in that company |
-| `OPERATIONAL_ADMIN` | One assigned operational area / LOB in one company | Every farm participating in that operational area; currently Piggery only |
+| `OPERATIONAL_ADMIN` | One assigned operational area whose company/LOB is verified; currently Piggery | Every farm in that company for the assigned LOB; there is no separate area-to-farm membership list |
 | `STANDARD_USER` | One company and the assigned operational context | Exactly one assigned farm |
 
 The API, not the browser, is authoritative for these boundaries. Every list,
@@ -63,12 +63,18 @@ not farm-restricted: their assigned Piggery operational area covers all farms
 in that company. Company and tenant administrators inherit their wider scopes
 from the table above.
 
+Operational authorization verifies the exact assigned `operational_area_id`
+and then uses that row's `company_id`, `nob_id` and `lob_id` as the trusted
+boundary. For the current product, the assigned Piggery area covers every farm
+in that company; it is not an area-to-farm join.
+
 Operational records carry or derive a farm boundary:
 
 - A batch selects and belongs to one farm explicitly.
 - A breed belongs to one farm through its required Location Master reference.
-- An animal requires a breed, and its farm is derived from that farm-specific
-  breed.
+- An animal requires a farm-specific Breed profile. Its current farm normally
+  matches that profile; a cross-farm transfer atomically changes it to the
+  matching destination-farm profile with the same Breed Code.
 - Any batch, shed, pen or current location selected for an animal must belong to
   the same derived farm.
 - Downstream records must retain a verifiable path to the owning batch, animal
@@ -76,6 +82,9 @@ Operational records carry or derive a farm boundary:
 
 The implementation must reject mismatched references server-side even if a
 client bypasses the selector UI.
+
+Cross-farm transfer behavior, including a missing destination Breed profile, is
+defined in `2026-09-14-daily-data-entry-and-transfers-design.md`.
 
 Changing an existing location's parent or changing a Location Type's allowed
 parents is not part of this design. This work must not silently introduce a new
