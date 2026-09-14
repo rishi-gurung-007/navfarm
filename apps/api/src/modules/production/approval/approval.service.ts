@@ -8,6 +8,7 @@ import { CreateApprovalRequestDto, DecideApprovalDto, QueryApprovalDto } from '.
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { BatchService } from '../batch/batch.service';
 import { withTenantTransaction } from '../../../common/tenant-transaction';
+import { farmScope, batchOnFarm } from '../../../common/farm-scope';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   const pad = (n: number) => String(n).padStart(2, '0');
@@ -104,8 +105,25 @@ export class ApprovalService {
     return this.findOne(requestId, tenantId);
   }
 
+  /**
+   * An approval reaches a farm only through its batch. One with no batch has no
+   * farm, so a restricted user never sees it; an admin sees it unless a farm is selected.
+   * A restricted user with no farm selected (an operational admin across farms)
+   * still sees only their own line of business.
+   */
+  private farmConditions(): SQL[] {
+    const { farmId, restricted, lobId } = farmScope(this.cls);
+    if (farmId) return [batchOnFarm(schema.approvalRequest.batch_id, farmId)];
+    if (restricted) {
+      const conditions: SQL[] = [sql`${schema.approvalRequest.batch_id} IS NOT NULL`];
+      if (lobId) conditions.push(sql`${schema.approvalRequest.batch_id} IN (SELECT bl.batch_id FROM batch_header bl WHERE bl.lob_id = ${lobId})`);
+      return conditions;
+    }
+    return [];
+  }
+
   async findAll(query: QueryApprovalDto, tenantId: string) {
-    const conditions: SQL[] = [eq(schema.approvalRequest.tenant_id, tenantId), isNull(schema.approvalRequest.deleted_at)];
+    const conditions: SQL[] = [eq(schema.approvalRequest.tenant_id, tenantId), isNull(schema.approvalRequest.deleted_at), ...this.farmConditions()];
     if (query.company_id) conditions.push(eq(schema.approvalRequest.company_id, query.company_id));
     if (query.operational_area_id) conditions.push(eq(schema.approvalRequest.operational_area_id, query.operational_area_id));
     if (query.status) conditions.push(eq(schema.approvalRequest.status, query.status));
@@ -143,7 +161,7 @@ export class ApprovalService {
 
   /** Pending/approved/rejected counts in one query, so the tab badges don't need three round trips. */
   async counts(query: QueryApprovalDto, tenantId: string) {
-    const conditions: SQL[] = [eq(schema.approvalRequest.tenant_id, tenantId), isNull(schema.approvalRequest.deleted_at)];
+    const conditions: SQL[] = [eq(schema.approvalRequest.tenant_id, tenantId), isNull(schema.approvalRequest.deleted_at), ...this.farmConditions()];
     if (query.company_id) conditions.push(eq(schema.approvalRequest.company_id, query.company_id));
     if (query.operational_area_id) conditions.push(eq(schema.approvalRequest.operational_area_id, query.operational_area_id));
 
@@ -162,7 +180,7 @@ export class ApprovalService {
       .select(this.listShape())
       .from(schema.approvalRequest)
       .leftJoin(schema.batchHeader, eq(schema.batchHeader.batch_id, schema.approvalRequest.batch_id))
-      .where(and(eq(schema.approvalRequest.request_id, requestId), eq(schema.approvalRequest.tenant_id, tenantId), isNull(schema.approvalRequest.deleted_at)))
+      .where(and(eq(schema.approvalRequest.request_id, requestId), eq(schema.approvalRequest.tenant_id, tenantId), isNull(schema.approvalRequest.deleted_at), ...this.farmConditions()))
       .limit(1);
     if (!row) throw new NotFoundException('Approval request not found.');
     return row;

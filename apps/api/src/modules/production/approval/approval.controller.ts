@@ -5,11 +5,13 @@ import { CreateApprovalRequestDto, DecideApprovalDto, QueryApprovalDto } from '.
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
+import { FarmScoped } from '../../../common/farm-scope';
 
 @ApiTags('Operational Approvals')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('approval')
+@FarmScoped()
 export class ApprovalController {
   constructor(private readonly approvalService: ApprovalService) {}
 

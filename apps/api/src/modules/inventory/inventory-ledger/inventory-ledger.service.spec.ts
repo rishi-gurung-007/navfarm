@@ -1,5 +1,6 @@
 import { InventoryLedgerService } from './inventory-ledger.service';
 import { MySqlDialect } from 'drizzle-orm/mysql-core';
+import { transactionCls, useFarmScope } from '../../../test-utils/transaction-cls';
 
 describe('Inventory FIFO', () => {
   it('requires the selected lot and refuses its shortage without retrying unrestricted FIFO', async () => {
@@ -62,5 +63,55 @@ describe('Inventory FIFO', () => {
       outboundLedgerId: 'out', quantity: 1, applicationDate: '2026-09-14' }, db).catch(() => undefined);
     expect(query.sql).toContain('`company_id` = ?');
     expect(query.params).toContain('company');
+  });
+});
+
+/**
+ * Phase 1 access foundation, Task 8: a ledger row's farm comes from its
+ * warehouse when it has one, or from its batch when it doesn't (a batch
+ * consumption entry — see writeNegativeEntry's callers in batch.service.ts —
+ * carries no warehouse_id). findAll's own .where() argument is captured and
+ * rendered back to SQL, same approach as breeding.service.spec.ts and
+ * batch-transfer.service.spec.ts.
+ */
+describe('InventoryLedgerService farm scope', () => {
+  let service: InventoryLedgerService;
+  let cls: ReturnType<typeof transactionCls>;
+  const dialect = new MySqlDialect();
+
+  let capturedWhere: unknown;
+  const renderedWhere = () => dialect.sqlToQuery(capturedWhere as any).sql;
+
+  const chain: any = {
+    from: () => chain,
+    where: (cond: unknown) => { capturedWhere = cond; return chain; },
+    orderBy: () => chain,
+    limit: () => chain,
+    offset: () => Promise.resolve([]),
+  };
+  const mockDb = { select: jest.fn(() => chain) };
+
+  beforeEach(() => {
+    capturedWhere = undefined;
+    cls = transactionCls(mockDb);
+    service = new InventoryLedgerService(cls);
+  });
+
+  it('includes batch issues with no warehouse through their batch farm', async () => {
+    useFarmScope(cls, { farmId: 'farm-g', restricted: true, companyId: 'co-1', lobId: 'lob-pig' });
+
+    await service.findAll({} as any, 'tenant-1');
+
+    const where = renderedWhere();
+    expect(where).toContain('location_master lf');
+    expect(where).toMatch(/warehouse_id` is null.*batch_header b/s);
+  });
+
+  it('returns every ledger row when no farm is selected', async () => {
+    useFarmScope(cls, { farmId: null, restricted: false, companyId: 'co-1', lobId: null });
+
+    await service.findAll({} as any, 'tenant-1');
+
+    expect(renderedWhere()).not.toContain('location_master lf');
   });
 });

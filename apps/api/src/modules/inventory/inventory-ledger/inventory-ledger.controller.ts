@@ -5,6 +5,7 @@ import { QueryInventoryLedgerDto, QueryStockBalanceDto } from './dto/inventory-l
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
+import { FarmScoped } from '../../../common/farm-scope';
 
 // Read-only: ledger rows are only ever written internally by document
 // posting (Goods Receipt now; Issue/Transfer/Adjustment later), never via a
@@ -13,6 +14,7 @@ import { RequirePermission } from '../../../common/decorators/require-permission
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('inventory-ledger')
+@FarmScoped()
 export class InventoryLedgerController {
   constructor(private readonly ledgerService: InventoryLedgerService) {}
 

@@ -1,8 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ClsService } from 'nestjs-cls';
+import { MySqlDialect } from 'drizzle-orm/mysql-core';
 import { ApprovalService } from './approval.service';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { BatchService } from '../batch/batch.service';
+import { transactionCls, useFarmScope } from '../../../test-utils/transaction-cls';
 
 /**
  * QueryApprovalDto advertises `limit` and `offset`, and the global
@@ -60,5 +62,72 @@ describe('ApprovalService.findAll pagination', () => {
     const [applied] = chain.limit.mock.calls[0];
     expect(typeof applied).toBe('number');
     expect(applied).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * Phase 1 access foundation, Task 8: an approval reaches a farm only through
+ * its batch (approval_request has no location of its own). findAll's own
+ * .where() argument is captured and rendered back to SQL, same approach as
+ * batch-transfer.service.spec.ts's findAll tests.
+ */
+describe('ApprovalService farm scope', () => {
+  let service: ApprovalService;
+  let cls: ReturnType<typeof transactionCls>;
+  const dialect = new MySqlDialect();
+
+  let capturedWhere: unknown;
+  const renderedWhere = () => dialect.sqlToQuery(capturedWhere as any).sql;
+
+  const chain: any = {
+    from: () => chain,
+    leftJoin: () => chain,
+    where: (cond: unknown) => { capturedWhere = cond; return chain; },
+    orderBy: () => chain,
+    limit: () => chain,
+    offset: () => Promise.resolve([]),
+  };
+  const mockDb = { select: jest.fn(() => chain) };
+
+  beforeEach(async () => {
+    capturedWhere = undefined;
+    cls = transactionCls(mockDb);
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        ApprovalService,
+        { provide: ClsService, useValue: cls },
+        { provide: AuditLogService, useValue: { log: jest.fn().mockResolvedValue({}) } },
+        { provide: BatchService, useValue: { addTransaction: jest.fn() } },
+      ],
+    }).compile();
+
+    service = module.get<ApprovalService>(ApprovalService);
+  });
+
+  it('hides approvals with no batch from a restricted user', async () => {
+    useFarmScope(cls, { farmId: 'farm-g', restricted: true, companyId: 'co-1', lobId: 'lob-pig' });
+
+    await service.findAll({} as any, 'tenant-1');
+
+    expect(renderedWhere()).toContain('batch_header bf');
+  });
+
+  it('shows every approval to an admin with no farm selected', async () => {
+    useFarmScope(cls, { farmId: null, restricted: false, companyId: 'co-1', lobId: null });
+
+    await service.findAll({} as any, 'tenant-1');
+
+    expect(renderedWhere()).not.toContain('batch_header bf');
+  });
+
+  it('limits a restricted user with no farm selected to approvals with a batch in their own LOB', async () => {
+    useFarmScope(cls, { farmId: null, restricted: true, companyId: 'co-1', lobId: 'lob-pig' });
+
+    await service.findAll({} as any, 'tenant-1');
+
+    const where = renderedWhere();
+    expect(where).toMatch(/batch_id` IS NOT NULL/);
+    expect(where).toContain('batch_header bl');
   });
 });

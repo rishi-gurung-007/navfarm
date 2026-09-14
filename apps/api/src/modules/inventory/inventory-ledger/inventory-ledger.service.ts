@@ -1,11 +1,12 @@
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, gte, lte, asc, desc, sql, isNotNull } from 'drizzle-orm';
+import { eq, and, or, isNull, gte, lte, asc, desc, sql, isNotNull, SQL } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
 import { QueryInventoryLedgerDto, QueryStockBalanceDto } from './dto/inventory-ledger.dto';
+import { farmScope, locationOnFarm } from '../../../common/farm-scope';
 
 interface WritePositiveEntryParams {
   tenantId: string;
@@ -394,17 +395,30 @@ export class InventoryLedgerService {
     return { shipment, receipt };
   }
 
+  /** Ledger rows on the active farm. Batch issues carry no warehouse, so they reach their farm through the batch. */
+  private farmConditions(): SQL[] {
+    const { farmId } = farmScope(this.cls);
+    if (!farmId) return [];
+    return [or(
+      locationOnFarm(schema.inventoryLedger.warehouse_id, farmId),
+      and(
+        isNull(schema.inventoryLedger.warehouse_id),
+        sql`EXISTS (SELECT 1 FROM batch_header b WHERE b.batch_no = ${schema.inventoryLedger.batch_no} AND b.company_id = ${schema.inventoryLedger.company_id} AND b.farm_id = ${farmId})`,
+      ),
+    )!];
+  }
+
   async findOne(ledgerId: string) {
     const [entry] = await this.db
       .select()
       .from(schema.inventoryLedger)
-      .where(eq(schema.inventoryLedger.ledger_id, ledgerId))
+      .where(and(eq(schema.inventoryLedger.ledger_id, ledgerId), ...this.farmConditions()))
       .limit(1);
     return entry;
   }
 
   async findAll(query: QueryInventoryLedgerDto, tenantId: string) {
-    const conditions: any[] = [eq(schema.inventoryLedger.tenant_id, tenantId)];
+    const conditions: any[] = [eq(schema.inventoryLedger.tenant_id, tenantId), ...this.farmConditions()];
 
     if (query.companyId) conditions.push(eq(schema.inventoryLedger.company_id, query.companyId));
     if (query.itemId) conditions.push(eq(schema.inventoryLedger.item_id, query.itemId));
@@ -441,6 +455,7 @@ export class InventoryLedgerService {
       eq(schema.inventoryLedger.company_id, query.companyId),
       eq(schema.inventoryLedger.entry_type, 'POSITIVE'),
       isNotNull(schema.inventoryLedger.remaining_quantity),
+      ...this.farmConditions(),
     ];
     if (query.warehouseId) conditions.push(eq(schema.inventoryLedger.warehouse_id, query.warehouseId));
     if (query.itemId) conditions.push(eq(schema.inventoryLedger.item_id, query.itemId));
