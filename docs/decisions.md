@@ -1484,3 +1484,24 @@ No API or database writes were made for this presentation change. Not every
 individual form was manually opened; company creation submission and narrow
 390px layout remain unverified. Existing foundation/health write-path evidence
 remains in the separate verification reports. Both dev servers were left up.
+
+## Farm scope restricts data entry and viewing, not master data
+*Decided 2026-09-14 by Rishi.*
+
+A normal user is scoped to the top-level location, which is the farm. That scope
+applies to **operational data entry and viewing only**. Master data is not
+filtered by farm: items, breeds, stages, activities, suppliers and the rest stay
+visible across farms under the existing tenant/company/NOB/LOB scope.
+
+So `masterScopeConditions` does **not** gain a farm dimension. The farm filter
+belongs where operational records are read and written — batches, daily entry,
+animals, breeding events, inventory movements — keyed off the farm that
+`operational_area_master.farm_id` already links.
+
+This was asked twice (original handoff §3, continuation handoff) and left open
+until now. It removes the riskiest version of item 2: master scope matching is
+exact, and adding a farm dimension on top of the existing company/tenant template
+split is where the bugs would have been.
+
+Still open and separate: whether MULTIPLIER and PORTA FARM become two top-level
+locations replacing the single `FARM-001` placeholder.

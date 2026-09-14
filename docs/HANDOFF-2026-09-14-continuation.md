@@ -11,11 +11,12 @@ phase was started after the dialog work. The next useful independent task is
 **item 1: audit login and role behavior by driving the app/API**. Do not repeat
 F1–F6 as if they were still untouched. They have commits and live evidence.
 
-**Before designing item 2, ask Rishi:** should farm scope restrict master data
-as well, or only operational data entry and viewing? This was asked and is
-still unanswered. Do not infer an answer from “proceed.” Whether MULTIPLIER
-and PORTA replace FARM-001 is also unresolved. Other client decisions remain
-in AGENTS and the original handoff; do not settle them silently.
+**Item 2 is decided (14 Sep, Rishi): farm scope restricts operational data
+entry and viewing only, NOT master data.** Do not add a farm dimension to
+`masterScopeConditions`. See `docs/decisions.md`, "Farm scope restricts data entry
+and viewing, not master data". Whether MULTIPLIER and PORTA replace FARM-001 is
+still unresolved. Other client decisions remain in AGENTS and the original
+handoff; do not settle them silently.
 
 Rishi wants working phases, actual app verification, and backend work too.
 He explicitly requested subagents to help with server-side work and reduce
@@ -110,8 +111,8 @@ These are backlog items from the original handoff, not newly verified absence
 claims. Audit each area before coding and search fragments/concepts as well as
 exact names; report spellings used before declaring a feature missing.
 
-1. **Logins/access:** audit each role and workspace transition; farm-access
-   implementation waits for the explicit scoping answer above.
+1. **Logins/access:** audit each role and workspace transition. Farm access is
+   now decided (data entry and viewing only, not masters) and can be designed.
 2. **Scheduler:** transactional/recoverable creation, then make one through UI
    and read MySQL. Original orphan-header/retry concern remains unaddressed.
 3. **Batch creation:** expose REGISTERED/COUNT_ONLY end to end; reconcile
