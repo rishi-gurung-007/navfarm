@@ -1735,3 +1735,18 @@ exist on each farm.
 the breed's code on other farms; a transfer between farms matches destination profiles
 by breed code, so a mistyped manual code is what would make a transfer block for a
 missing profile.
+
+## Internal review favours a coherent working cut over broad incomplete scope
+*Decided 2026-09-15 by Rishi for the 20:00 IST internal review and the
+18 September presentable-MVP checkpoint.*
+
+The immediate objective is a normally working, presentable review path. Features
+that cannot be made safe and coherent in time remain explicitly deferred rather
+than being exposed half-connected in the meeting. The implementation order is
+scope and data-integrity containment, the minimum farm/Breed/Batch-mode
+foundation, deterministic review data, then verified daily-entry, transfer and
+breeding paths as time permits.
+
+Registered-batch opening quantities must not manufacture client facts such as an
+animal's sex, type or value. Individual Animal rows used in the review must come
+from explicit data; no existing placeholder helper may invent those values.
