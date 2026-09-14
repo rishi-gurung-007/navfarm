@@ -35,3 +35,16 @@ wrong:
   templates and what Rishi says are. An older briefing said the opposite.
 - **Verify by driving the running app and reading MySQL, not by reading the
   code.** Every defect that mattered in this project passed its tests first.
+
+## Current work — read this before planning anything
+
+**`docs/HANDOFF-2026-09-14.md`** is the live handoff. It carries the client's own
+`Project task list.docx` scope (ten numbered items plus three follow-on), the
+four shared defects that block nine of them, the state of the tree, and how to
+drive the running app. Read it first; it will save you a day of re-deriving.
+
+The one finding to absorb before you touch anything: **no document has ever been
+posted through the API in this database.** Every inventory, journal and
+batch-cost row was inserted directly by a seed script. 582 tests pass over a
+write path that has never run. Rows being present is not evidence, and neither
+is a green suite.
