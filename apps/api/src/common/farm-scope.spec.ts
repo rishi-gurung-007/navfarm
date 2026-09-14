@@ -1,7 +1,6 @@
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { MySqlDialect } from 'drizzle-orm/mysql-core';
 import { and } from 'drizzle-orm';
-import * as schema from '../core/database/schema';
 import { batchScopeConditions, farmScope, resolveFarmScope, UNRESTRICTED_FARM_SCOPE } from './farm-scope';
 
 const dialect = new MySqlDialect();
