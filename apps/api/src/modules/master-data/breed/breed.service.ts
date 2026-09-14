@@ -509,18 +509,11 @@ export class BreedService {
     return this.db
       .select({
         ...getTableColumns(schema.breedMaster),
-        location_code: sql<string | null>`(
-          SELECT farm.location_code FROM location_master farm
-          WHERE farm.location_id = ${schema.breedMaster.location_id}
-          LIMIT 1
-        )`,
-        location_name: sql<string | null>`(
-          SELECT farm.location_name FROM location_master farm
-          WHERE farm.location_id = ${schema.breedMaster.location_id}
-          LIMIT 1
-        )`,
+        location_code: schema.locationMaster.location_code,
+        location_name: schema.locationMaster.location_name,
       })
       .from(schema.breedMaster)
+      .leftJoin(schema.locationMaster, eq(schema.locationMaster.location_id, schema.breedMaster.location_id))
       .where(and(...conditions))
       .orderBy(listOrderBy(schema.breedMaster, query, schema.breedMaster.breed_code))
       .limit(limit)
