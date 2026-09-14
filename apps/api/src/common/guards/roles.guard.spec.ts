@@ -3,6 +3,7 @@ import { Reflector } from '@nestjs/core';
 import { ClsService } from 'nestjs-cls';
 import { RolesGuard } from './roles.guard';
 import { CODE_PREVIEW_PERMISSION_KEY } from '../decorators/require-code-preview-permission.decorator';
+import { FARM_SCOPED_KEY } from '../farm-scope';
 
 describe('RolesGuard operational context', () => {
   const area = { area_id: 'area-1', company_id: 'company-1', nob_id: 'livestock', lob_id: 'piggery' };
@@ -93,5 +94,55 @@ describe('RolesGuard master code previews', () => {
   it('still validates company assignments before permissions', async () => {
     select.mockImplementationOnce(() => ({ from: () => ({ where: () => ({ limit: async () => [] }) }) }) as unknown as typeof query);
     await expect(guard.canActivate(context('UOM', true, { 'x-active-company-id': 'other-company' }))).rejects.toThrow('Not authorized for this company');
+  });
+});
+
+describe('RolesGuard farm scope', () => {
+  const select = jest.fn();
+  const set = jest.fn();
+
+  beforeEach(() => {
+    select.mockReset();
+    set.mockReset();
+  });
+
+  const buildGuard = (farmScoped: boolean) => new RolesGuard(
+    { getAllAndOverride: (key: string) => (key === FARM_SCOPED_KEY ? farmScoped : undefined) } as unknown as Reflector,
+    { get: (key: string) => (key === 'tenantDb' ? { select } : undefined), set } as unknown as ClsService,
+  );
+
+  const context = (headers: Record<string, string>, user: Record<string, unknown>) => ({
+    switchToHttp: () => ({ getRequest: () => ({ headers, user }) }),
+    getHandler: () => undefined,
+    getClass: () => undefined,
+  }) as unknown as ExecutionContext;
+
+  it('stores the resolved scope for a farm-scoped route', async () => {
+    const guard = buildGuard(true);
+    const ctx = context(
+      { 'x-active-company-id': 'co-1' },
+      { userType: 'COMPANY_ADMIN', tenantId: 'tenant-1', companyId: 'co-1' },
+    );
+    await expect(guard.canActivate(ctx)).resolves.toBe(true);
+    expect(set).toHaveBeenCalledWith('farmScope', { farmId: null, restricted: false, companyId: 'co-1', lobId: null });
+  });
+
+  it('refuses a standard user on a farm-scoped route without an area header', async () => {
+    const guard = buildGuard(true);
+    const ctx = context(
+      { 'x-active-company-id': 'co-1' },
+      { userType: 'STANDARD_USER', tenantId: 'tenant-1', companyId: 'co-1', farmId: 'farm-g' },
+    );
+    await expect(guard.canActivate(ctx)).rejects.toThrow('Select an operational area first.');
+  });
+
+  it('does not resolve a farm scope for routes that are not farm-scoped', async () => {
+    const guard = buildGuard(false);
+    const ctx = context(
+      { 'x-active-company-id': 'co-1' },
+      { userType: 'COMPANY_ADMIN', tenantId: 'tenant-1', companyId: 'co-1' },
+    );
+    await guard.canActivate(ctx);
+    expect(set).not.toHaveBeenCalledWith('farmScope', expect.anything());
   });
 });

@@ -9,6 +9,7 @@ import * as schema from '../../core/database/schema';
 import { REQUIRE_PERMISSION_KEY, RequiredPermission } from '../decorators/require-permission.decorator';
 import { grantsAny, isAdminUserType, loadUserPermissions } from '../permissions';
 import { CODE_PREVIEW_PERMISSION_KEY, codePreviewPermissions } from '../decorators/require-code-preview-permission.decorator';
+import { FARM_SCOPED_KEY, FARM_SCOPE_KEY, resolveFarmScope } from '../farm-scope';
 
 @Injectable()
 export class RolesGuard implements CanActivate {
@@ -40,6 +41,20 @@ export class RolesGuard implements CanActivate {
     const controller = context.getClass();
     const controllerPath = controller ? Reflect.getMetadata(PATH_METADATA, controller) as string | undefined : undefined;
     if (typeof controllerPath === 'string') await enforceMasterRequest(this.cls, request, controllerPath);
+
+    // Farm scope depends on the operational area validated by enforceScope
+    // above, so it must resolve after that call, never before it.
+    const farmScoped = this.reflector.getAllAndOverride<boolean>(FARM_SCOPED_KEY, [context.getHandler(), context.getClass()]);
+    if (farmScoped) {
+      const scope = await resolveFarmScope(this.db, {
+        user,
+        headers: request.headers,
+        activeArea: this.cls.get('activeOperationalArea'),
+        activeCompanyId: request.headers['x-active-company-id'] as string | undefined,
+        tenantId: request.tenantId || user.tenantId,
+      });
+      this.cls.set(FARM_SCOPE_KEY, scope);
+    }
 
     const requiredPermission = this.reflector.getAllAndOverride<RequiredPermission>(
       REQUIRE_PERMISSION_KEY,
