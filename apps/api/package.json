@@ -73,6 +73,14 @@
           "command": "node --env-file-if-exists=.env --import tsx src/scripts/align-production-permissions.ts"
         }
       },
+      "db-assign-operator-operational-area": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --env-file-if-exists=.env --import tsx src/scripts/assign-operator-operational-area.ts"
+        }
+      },
       "db-repair-demo-gl-dimensions": {
         "executor": "nx:run-commands",
         "cache": false,

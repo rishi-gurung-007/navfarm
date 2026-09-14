@@ -141,6 +141,7 @@ export async function seedPiggeryData() {
     const [tAdmin] = await db.select().from(schema.userMaster).where(eq(schema.userMaster.user_type, 'TENANT_ADMIN')).limit(1);
     const [c1Admin] = await db.select().from(schema.userMaster).where(eq(schema.userMaster.user_type, 'COMPANY_ADMIN')).limit(1);
     const [opAdmin] = await db.select().from(schema.userMaster).where(eq(schema.userMaster.user_type, 'OPERATIONAL_ADMIN')).limit(1);
+    const [stdUser] = await db.select().from(schema.userMaster).where(eq(schema.userMaster.user_type, 'STANDARD_USER')).limit(1);
     if (!tAdmin) throw new Error('No TENANT_ADMIN found — run the dev tenant seed first.');
 
     const tAdminId = tAdmin.user_id;
@@ -727,6 +728,9 @@ export async function seedPiggeryData() {
       { userId: tAdminId, areaId: area2Id!, companyId: comp2Id, isPrimary: false },
       { userId: opAdminId, areaId: area1Id!, companyId: comp1Id, isPrimary: true },
       { userId: c2AdminId, areaId: area2Id!, companyId: comp2Id, isPrimary: true },
+      // Without an area the operator is refused on every operational screen once
+      // the area header is sent, which makes the least-privileged role untestable.
+      ...(stdUser ? [{ userId: stdUser.user_id, areaId: area1Id!, companyId: comp1Id, isPrimary: true }] : []),
     ];
     for (const uaa of userAreaMap) {
       const [existingUAA] = await db.select().from(schema.userOperationalAreaAssignment)
