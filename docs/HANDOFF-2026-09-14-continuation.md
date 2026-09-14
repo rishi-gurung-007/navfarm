@@ -6,23 +6,24 @@ supersedes the original handoff's completion status, not its client scope.
 
 ## Start here
 
-Rishi asked to prepare this handoff for another agent. No new implementation
-phase was started after the dialog work. The next useful independent task is
-**item 1: audit login and role behavior by driving the app/API**. Do not repeat
-F1–F6 as if they were still untouched. They have commits and live evidence.
+**The work now runs from a plan.** Read, in order:
 
-**Item 2 is decided (14 Sep, Rishi): farm scope restricts operational data
-entry and viewing only, NOT master data.** Do not add a farm dimension to
-`masterScopeConditions`. See `docs/decisions.md`, "Farm scope restricts data entry
-and viewing, not master data". Whether MULTIPLIER and PORTA replace FARM-001 is
-still unresolved. Other client decisions remain in AGENTS and the original
-handoff; do not settle them silently.
+1. `docs/superpowers/plans/2026-09-14-mvp-delivery-plan.md` — the roadmap: every
+   phase to MVP, dependencies, estimates, the 18 September demo-ready line and
+   the machine rules.
+2. The detailed plan of the phase you are executing —
+   `docs/superpowers/plans/2026-09-14-phase-NN-*.md`. Phase 1 exists; each later
+   phase's plan is written when that phase starts.
+3. The two approved specs in `docs/superpowers/specs/2026-09-14-*` and the
+   14 September entries in `docs/decisions.md`.
 
-Rishi wants working phases, actual app verification, and backend work too.
-He explicitly requested subagents to help with server-side work and reduce
-local load. Agents were used for bounded backend review/fixes and UI changes;
-that does not move MySQL, browsers or builds off this Mac. Keep those local
-jobs serial. Do not create a separate user-owned task unless requested.
+**Settled on 14 September (do not re-ask):** Codex's access model — operational
+admins across every farm in their LOB, standard users on exactly one farm, breeds
+per farm, `operational_area_master.farm_id` meaningless for access. Backlog gate
+dropped. Requisitions approved by admin user types; farm-to-farm transfers only by
+tenant or company admins. All demo data is rebuilt from the seeds, operational
+records posted through services. The item 1 login fixes are done and verified
+(`docs/VERIFICATION-2026-09-14-logins.md`).
 
 ## Repository and completed commits
 

@@ -38,7 +38,7 @@ wrong:
 
 ## Current work — read this before planning anything
 
-Read **`docs/HANDOFF-2026-09-14-continuation.md`** first, then the original
+Work runs from **`docs/superpowers/plans/2026-09-14-mvp-delivery-plan.md`** (the roadmap) and the detailed plan of the current phase. Read **`docs/HANDOFF-2026-09-14-continuation.md`** first, then the original
 `docs/HANDOFF-2026-09-14.md` for the client scope (`Project task list.docx`:
 ten numbered items plus three follow-on). The continuation supersedes the
 original's *status*; it does not replace its scope.
