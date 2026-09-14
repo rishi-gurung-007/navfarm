@@ -5,6 +5,7 @@ import { eq, and, like, isNull, count } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
+import { farmScope, locationOnFarm, assertLocationOnActiveFarm } from '../../../common/farm-scope';
 import { CreateStockAdjustmentDto, UpdateStockAdjustmentDto, QueryStockAdjustmentDto } from './dto/stock-adjustment.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
@@ -46,6 +47,7 @@ export class StockAdjustmentService {
   }
 
   async create(dto: CreateStockAdjustmentDto, tenantId: string, userPayload?: any) {
+    await assertLocationOnActiveFarm(this.db, farmScope(this.cls), dto.warehouse_id, 'Warehouse');
     return withTenantTransaction(this.cls, async () => {
     const adjustmentId = randomUUID();
     const adjustmentNo = await this.db.transaction(async (tx) => {
@@ -98,10 +100,14 @@ export class StockAdjustmentService {
   }
 
   async findOne(id: string) {
+    const scope = farmScope(this.cls);
+    const conditions = [eq(schema.stockAdjustment.adjustment_id, id), isNull(schema.stockAdjustment.deleted_at)];
+    if (scope.farmId) conditions.push(locationOnFarm(schema.stockAdjustment.warehouse_id, scope.farmId));
+
     const [adjustment] = await this.db
       .select()
       .from(schema.stockAdjustment)
-      .where(and(eq(schema.stockAdjustment.adjustment_id, id), isNull(schema.stockAdjustment.deleted_at)))
+      .where(and(...conditions))
       .limit(1);
 
     if (!adjustment) {
@@ -118,6 +124,9 @@ export class StockAdjustmentService {
 
   async findAll(query: QueryStockAdjustmentDto, tenantId: string) {
     const conditions: any[] = [eq(schema.stockAdjustment.tenant_id, tenantId), isNull(schema.stockAdjustment.deleted_at)];
+
+    const scope = farmScope(this.cls);
+    if (scope.farmId) conditions.push(locationOnFarm(schema.stockAdjustment.warehouse_id, scope.farmId));
 
     if (query.companyId) conditions.push(eq(schema.stockAdjustment.company_id, query.companyId));
     if (query.status) conditions.push(eq(schema.stockAdjustment.status, query.status));
@@ -144,6 +153,9 @@ export class StockAdjustmentService {
   async update(id: string, dto: UpdateStockAdjustmentDto, tenantId: string, userPayload?: any) {
     const adjustment = await this.findOne(id);
     this.assertDraft(adjustment);
+    if (dto.warehouse_id !== undefined) {
+      await assertLocationOnActiveFarm(this.db, farmScope(this.cls), dto.warehouse_id, 'Warehouse');
+    }
 
     const updates: any = {
       updated_by: userPayload?.userId || null,

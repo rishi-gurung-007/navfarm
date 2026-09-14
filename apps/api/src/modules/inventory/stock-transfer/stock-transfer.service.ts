@@ -1,10 +1,11 @@
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, like, isNull, count } from 'drizzle-orm';
+import { eq, and, or, like, isNull, count } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
+import { farmScope, locationOnFarm, assertLocationOnActiveFarm } from '../../../common/farm-scope';
 import { CreateStockTransferDto, UpdateStockTransferDto, QueryStockTransferDto } from './dto/stock-transfer.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
@@ -50,6 +51,7 @@ export class StockTransferService {
     if (dto.from_warehouse_id === dto.to_warehouse_id) {
       throw new BadRequestException('Source and destination warehouse must be different.');
     }
+    await assertLocationOnActiveFarm(this.db, farmScope(this.cls), dto.from_warehouse_id, 'Source warehouse');
 
     const transferId = randomUUID();
     const transferNo = await this.db.transaction(async (tx) => {
@@ -101,10 +103,21 @@ export class StockTransferService {
   }
 
   async findOne(id: string) {
+    const scope = farmScope(this.cls);
+    const conditions = [eq(schema.stockTransfer.transfer_id, id), isNull(schema.stockTransfer.deleted_at)];
+    if (scope.farmId) {
+      conditions.push(
+        or(
+          locationOnFarm(schema.stockTransfer.from_warehouse_id, scope.farmId),
+          locationOnFarm(schema.stockTransfer.to_warehouse_id, scope.farmId)
+        )!
+      );
+    }
+
     const [transfer] = await this.db
       .select()
       .from(schema.stockTransfer)
-      .where(and(eq(schema.stockTransfer.transfer_id, id), isNull(schema.stockTransfer.deleted_at)))
+      .where(and(...conditions))
       .limit(1);
 
     if (!transfer) {
@@ -121,6 +134,16 @@ export class StockTransferService {
 
   async findAll(query: QueryStockTransferDto, tenantId: string) {
     const conditions: any[] = [eq(schema.stockTransfer.tenant_id, tenantId), isNull(schema.stockTransfer.deleted_at)];
+
+    const scope = farmScope(this.cls);
+    if (scope.farmId) {
+      conditions.push(
+        or(
+          locationOnFarm(schema.stockTransfer.from_warehouse_id, scope.farmId),
+          locationOnFarm(schema.stockTransfer.to_warehouse_id, scope.farmId)
+        )!
+      );
+    }
 
     if (query.companyId) conditions.push(eq(schema.stockTransfer.company_id, query.companyId));
     if (query.status) conditions.push(eq(schema.stockTransfer.status, query.status));
@@ -151,6 +174,9 @@ export class StockTransferService {
     const toWarehouseId = dto.to_warehouse_id ?? transfer.to_warehouse_id;
     if (fromWarehouseId === toWarehouseId) {
       throw new BadRequestException('Source and destination warehouse must be different.');
+    }
+    if (dto.from_warehouse_id !== undefined) {
+      await assertLocationOnActiveFarm(this.db, farmScope(this.cls), dto.from_warehouse_id, 'Source warehouse');
     }
 
     const updates: any = {

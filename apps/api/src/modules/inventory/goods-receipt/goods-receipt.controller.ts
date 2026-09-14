@@ -5,10 +5,12 @@ import { CreateGoodsReceiptDto, UpdateGoodsReceiptDto, QueryGoodsReceiptDto } fr
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
+import { FarmScoped } from '../../../common/farm-scope';
 
 @ApiTags('Goods Receipt')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
+@FarmScoped()
 @Controller('goods-receipt')
 export class GoodsReceiptController {
   constructor(private readonly goodsReceiptService: GoodsReceiptService) {}

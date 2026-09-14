@@ -5,10 +5,12 @@ import { CreateStockTransferDto, UpdateStockTransferDto, QueryStockTransferDto }
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
+import { FarmScoped } from '../../../common/farm-scope';
 
 @ApiTags('Stock Transfer')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
+@FarmScoped()
 @Controller('stock-transfer')
 export class StockTransferController {
   constructor(private readonly stockTransferService: StockTransferService) {}

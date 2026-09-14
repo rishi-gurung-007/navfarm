@@ -5,10 +5,12 @@ import { CreateStockAdjustmentDto, UpdateStockAdjustmentDto, QueryStockAdjustmen
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
+import { FarmScoped } from '../../../common/farm-scope';
 
 @ApiTags('Stock Adjustment')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
+@FarmScoped()
 @Controller('stock-adjustment')
 export class StockAdjustmentController {
   constructor(private readonly stockAdjustmentService: StockAdjustmentService) {}

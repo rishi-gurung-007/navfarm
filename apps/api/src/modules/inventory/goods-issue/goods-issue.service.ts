@@ -5,6 +5,7 @@ import { eq, and, like, isNull, count } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
+import { farmScope, locationOnFarm, assertLocationOnActiveFarm } from '../../../common/farm-scope';
 import { CreateGoodsIssueDto, UpdateGoodsIssueDto, QueryGoodsIssueDto } from './dto/goods-issue.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
@@ -46,6 +47,7 @@ export class GoodsIssueService {
   }
 
   async create(dto: CreateGoodsIssueDto, tenantId: string, userPayload?: any) {
+    await assertLocationOnActiveFarm(this.db, farmScope(this.cls), dto.warehouse_id, 'Warehouse');
     return withTenantTransaction(this.cls, async () => {
     const issueId = randomUUID();
     const issueNo = await this.db.transaction(async (tx) => {
@@ -97,10 +99,14 @@ export class GoodsIssueService {
   }
 
   async findOne(id: string) {
+    const scope = farmScope(this.cls);
+    const conditions = [eq(schema.goodsIssue.issue_id, id), isNull(schema.goodsIssue.deleted_at)];
+    if (scope.farmId) conditions.push(locationOnFarm(schema.goodsIssue.warehouse_id, scope.farmId));
+
     const [issue] = await this.db
       .select()
       .from(schema.goodsIssue)
-      .where(and(eq(schema.goodsIssue.issue_id, id), isNull(schema.goodsIssue.deleted_at)))
+      .where(and(...conditions))
       .limit(1);
 
     if (!issue) {
@@ -117,6 +123,9 @@ export class GoodsIssueService {
 
   async findAll(query: QueryGoodsIssueDto, tenantId: string) {
     const conditions: any[] = [eq(schema.goodsIssue.tenant_id, tenantId), isNull(schema.goodsIssue.deleted_at)];
+
+    const scope = farmScope(this.cls);
+    if (scope.farmId) conditions.push(locationOnFarm(schema.goodsIssue.warehouse_id, scope.farmId));
 
     if (query.companyId) conditions.push(eq(schema.goodsIssue.company_id, query.companyId));
     if (query.status) conditions.push(eq(schema.goodsIssue.status, query.status));
@@ -143,6 +152,9 @@ export class GoodsIssueService {
   async update(id: string, dto: UpdateGoodsIssueDto, tenantId: string, userPayload?: any) {
     const issue = await this.findOne(id);
     this.assertDraft(issue);
+    if (dto.warehouse_id !== undefined) {
+      await assertLocationOnActiveFarm(this.db, farmScope(this.cls), dto.warehouse_id, 'Warehouse');
+    }
 
     const updates: any = {
       updated_by: userPayload?.userId || null,
