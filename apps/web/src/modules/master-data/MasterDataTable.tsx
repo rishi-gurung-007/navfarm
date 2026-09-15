@@ -1465,6 +1465,7 @@ export function MasterDataTable({
           placeholder={t("selectPlaceholder")}
           searchPlaceholder={t("searchPlaceholder")}
           noMatchesLabel={t("mdNoMatches")}
+          onClear={!isFieldRequired(f, form) && value ? () => setField(f.key, "") : undefined}
         />
       );
     }
@@ -1544,6 +1545,7 @@ export function MasterDataTable({
           placeholder={placeholderText}
           searchPlaceholder={t("searchPlaceholder")}
           noMatchesLabel={t("mdNoMatches")}
+          onClear={!isFieldRequired(f, form) && value ? () => setField(f.key, "") : undefined}
           onCreate={relatedConfig ? () => setRelatedCreator({ field: f, config: relatedConfig }) : undefined}
           onViewAll={relatedConfig ? () => setRelatedPicker({ field: f, config: relatedConfig, options }) : undefined}
         />

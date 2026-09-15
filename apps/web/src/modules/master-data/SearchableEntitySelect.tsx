@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { Search, Check, Plus, List, Loader2 } from "lucide-react";
+import { Search, Check, Plus, List, Loader2, X } from "lucide-react";
 import { Popover, usePopoverSurface } from "@/components/ui/popover";
 
 type Row = Record<string, any>;
@@ -23,6 +23,7 @@ function SearchableEntityPanel({
   noMatchesLabel,
   ariaLabel,
   loading,
+  onClear,
   onCreate,
   onViewAll,
 }: {
@@ -36,6 +37,7 @@ function SearchableEntityPanel({
   noMatchesLabel: string;
   ariaLabel: string;
   loading: boolean;
+  onClear?: () => void;
   onCreate?: () => void;
   onViewAll?: () => void;
 }) {
@@ -221,8 +223,23 @@ function SearchableEntityPanel({
           );
         })}
       </div>
-      {(onCreate || onViewAll) && (
+      {(onClear || onCreate || onViewAll) && (
         <div className="flex shrink-0 items-center justify-end gap-2 border-t border-(--border-subtle) px-1 pt-2">
+          {/* The native <select> this replaced carried a blank option, which is
+              how an optional field was emptied again after a wrong pick. The
+              list has no blank row, so without this an optional field could be
+              changed but never un-set. Sits first, away from the actions. */}
+          {onClear && (
+            <button
+              type="button"
+              onClick={() => { close(); onClear(); }}
+              aria-label={`Clear ${ariaLabel}`}
+              className="nf-press me-auto inline-flex items-center gap-1 rounded-[var(--radius-sm)] border border-(--border) bg-(--surface-raised) px-2 py-1 text-xs font-semibold text-(--text-primary)"
+            >
+              <X className="h-3.5 w-3.5" aria-hidden />
+              Clear
+            </button>
+          )}
           {onCreate && (
             <button
               type="button"
@@ -270,6 +287,9 @@ export interface SearchableEntitySelectProps {
   placeholder: string;
   searchPlaceholder: string;
   noMatchesLabel: string;
+  /** Empties the field. Pass only for an optional field that currently holds a
+   * value — a required one has nothing valid to be cleared to. */
+  onClear?: () => void;
   onCreate?: () => void;
   onViewAll?: () => void;
 }
@@ -292,6 +312,7 @@ export function SearchableEntitySelect({
   placeholder,
   searchPlaceholder,
   noMatchesLabel,
+  onClear,
   onCreate,
   onViewAll,
 }: SearchableEntitySelectProps) {
@@ -312,6 +333,11 @@ export function SearchableEntitySelect({
       haspopup="listbox"
       className="w-full"
       panelClassName="nf-combobox-panel"
+      // Every one of these lives inside the Master create/edit Dialog, whose
+      // body scrolls. An anchored panel is clipped by that scroll container —
+      // the options below the fold simply could not be reached — so this is
+      // the case the floating layer exists for.
+      floating
       trigger={(triggerProps) => (
         <button
           {...triggerProps}
@@ -342,6 +368,7 @@ export function SearchableEntitySelect({
         noMatchesLabel={noMatchesLabel}
         ariaLabel={ariaLabel}
         loading={loading}
+        onClear={onClear}
         onCreate={onCreate}
         onViewAll={onViewAll}
       />
