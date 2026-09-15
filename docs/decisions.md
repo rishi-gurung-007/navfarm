@@ -1750,3 +1750,32 @@ breeding paths as time permits.
 Registered-batch opening quantities must not manufacture client facts such as an
 animal's sex, type or value. Individual Animal rows used in the review must come
 from explicit data; no existing placeholder helper may invent those values.
+
+## Prototype priorities and master corrections
+*Decided 2026-09-15 by Rishi.*
+
+The immediate prototype order is Masters first, then Batch/Scheduler and Daily
+Data Entry. Existing Goods Receipt, Inventory Journal and Approval flows are to
+be reviewed and corrected rather than rebuilt. Broad new test-script work is
+deferred; each representative write is still driven through the application and
+read back from MySQL before it is presented as working.
+
+Location Master has no user-facing **Feed in Bags** field. Only a top-level Farm
+stores a physical address; child locations inherit their context from the Farm
+hierarchy and do not repeat that address. Individual Animals are placed at Pens,
+not directly at a Farm, Shed, Store or Silo. Stage Master offers exactly two
+Transition Trigger choices: `AUTO_BY_DAY` and `MANUAL`.
+
+Animal breeding history and traceability stay in the right-side panel opened
+from Animal Register. Breeding content is sex-specific: a male shows sire/service
+and resulting litter performance; a female shows service, pregnancy, farrowing
+and weaning. Traceability is one chronological lifetime timeline built from the
+animal's real registration, lineage, breeding, Batch/Stage/Pen movement,
+transfers and disposal records.
+
+For this prototype, “Requisition” uses the existing persisted Approval request
+workflow and its agreed role/scope rules; a separate requisition header/line
+document is not required now. Feed Forecast is an estimate, with its final UI
+placement still open; prefer the Feed Activity card first and reuse the same
+calculation on the dashboard later if requested. Resource Ledger remains a new
+ledger posted by Resource activity entries.
