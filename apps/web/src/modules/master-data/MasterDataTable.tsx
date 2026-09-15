@@ -1271,18 +1271,35 @@ export default function MasterDataTable({ config }: { config: MasterDataConfig }
                 return (
                   <Field key={col.key} label={tLabel(col.label)} htmlFor={rowFieldId} className="min-w-[8rem] flex-1">
                     {col.type === "select-entity" ? (
-                      <EntityLookupField
-                        id={rowFieldId}
-                        label={tLabel(col.label)}
-                        options={entityOptions[col.entityEndpoint || ""] || []}
-                        value={String(row[col.key] ?? "")}
-                        valueKey={col.entityValueKey || "id"}
-                        labelKeys={col.entityLabelKeys || []}
-                        onChange={(next) => write(rows.map((r, i) => i === idx ? { ...r, [col.key]: next } : r))}
-                        disabled={readOnly || (isLocked(row) && col.key === req?.key)}
-                        loading={!!col.entityEndpoint && entityOptions[col.entityEndpoint] === undefined}
-                        placeholder={t("selectPlaceholder")}
-                      />
+                      col.multiple ? (
+                        <EntityLookupField
+                          id={rowFieldId}
+                          label={tLabel(col.label)}
+                          options={entityOptions[col.entityEndpoint || ""] || []}
+                          value={parseStringList(row[col.key])}
+                          valueKey={col.entityValueKey || "id"}
+                          labelKeys={col.entityLabelKeys || []}
+                          onChange={(next) => write(rows.map((r, i) => i === idx ? { ...r, [col.key]: next } : r))}
+                          multiple
+                          disabled={readOnly || (isLocked(row) && col.key === req?.key)}
+                          loading={!!col.entityEndpoint && entityOptions[col.entityEndpoint] === undefined}
+                          placeholder={t("selectPlaceholder")}
+                        />
+                      ) : (
+                        <SearchableEntitySelect
+                          id={rowFieldId}
+                          ariaLabel={tLabel(col.label)}
+                          value={String(row[col.key] ?? "")}
+                          onChange={(next) => write(rows.map((r, i) => i === idx ? { ...r, [col.key]: next } : r))}
+                          options={entityOptions[col.entityEndpoint || ""] || []}
+                          valueKey={col.entityValueKey || "id"}
+                          getLabel={(option) => entityLabel(option, col)}
+                          disabled={readOnly || (isLocked(row) && col.key === req?.key)}
+                          placeholder={t("selectPlaceholder")}
+                          searchPlaceholder={t("searchPlaceholder")}
+                          noMatchesLabel={t("mdNoMatches")}
+                        />
+                      )
                     ) : col.type === "select" ? (
                       // A closed set of values inside a row is a dropdown, not
                       // a free-text box. Without this branch a column declared
