@@ -675,12 +675,36 @@ export class AuthService {
       // Table will exist once migrated
     }
 
+    // A STANDARD_USER's farm is fixed at user_master.farm_id (never a switch —
+    // see farm-scope.ts). The web needs the farm's code/name to show it, not
+    // just its id, so it does not have to make a second round trip before it
+    // can render "Farm: <code — name>". Farm-less users (every admin type
+    // that has not been pinned to one) simply carry no farmId/farm at all.
+    let farm: { location_id: string; location_code: string; location_name: string } | null = null;
+    if (user.farm_id) {
+      try {
+        const [farmRow] = await this.db
+          .select({
+            location_id: schema.locationMaster.location_id,
+            location_code: schema.locationMaster.location_code,
+            location_name: schema.locationMaster.location_name,
+          })
+          .from(schema.locationMaster)
+          .where(eq(schema.locationMaster.location_id, user.farm_id))
+          .limit(1);
+        farm = farmRow ?? null;
+      } catch (e) {
+        console.error('Failed to load farm for login/refresh payload:', e);
+      }
+    }
+
     const payload = {
       email: user.email,
       sub: user.user_id,
       tenantId: user.tenant_id,
       companyId: user.company_id,
       userType: user.user_type,
+      farmId: user.farm_id ?? null,
       companies,
       operationalAreas,
     };
@@ -719,6 +743,9 @@ export class AuthService {
         companies,
         operationalAreas,
         permissions,
+        // Present only for a user who actually has one — an admin without a
+        // fixed farm carries neither key, rather than a farmId that is null.
+        ...(user.farm_id ? { farmId: user.farm_id, ...(farm ? { farm } : {}) } : {}),
       },
     };
   }

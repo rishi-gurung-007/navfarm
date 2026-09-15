@@ -19,6 +19,8 @@ import {
   setActiveCompanyId,
   getActiveOperationalAreaId,
   setActiveOperationalAreaId,
+  getActiveFarmId,
+  setActiveFarmId,
   getActiveLob,
   setActiveLob,
   WorkspaceScope,
@@ -40,6 +42,12 @@ interface OperationalAreaItem {
   lob_name?: string;
 }
 
+interface FarmItem {
+  location_id: string;
+  location_code: string;
+  location_name: string;
+}
+
 export default function WorkspaceScopeSwitcher({
   onScopeChanged
 }: {
@@ -54,6 +62,8 @@ export default function WorkspaceScopeSwitcher({
   const [activeCompId, setActiveCompId] = useState<string | null>(null);
   const [activeAreaId, setActiveAreaId] = useState<string | null>(null);
   const [activeLobCode, setActiveLobCode] = useState<string>("PIGGERY");
+  const [farms, setFarms] = useState<FarmItem[]>([]);
+  const [activeFarmIdState, setActiveFarmIdState] = useState<string | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -72,9 +82,14 @@ export default function WorkspaceScopeSwitcher({
     const lob = getActiveLob();
     setActiveLobCode(lob);
 
+    setActiveFarmIdState(getActiveFarmId());
+
     // Fetch companies and operational areas
     const tenantId = getStoredTenantId() || storedUser?.tenantId;
     const isTenantAdminUser = storedUser?.userType === "TENANT_ADMIN";
+    // A STANDARD_USER's farm is fixed (user_master.farm_id) — they never pick
+    // one, so there is nothing to fetch for them here (decided 2026-09-14/15).
+    const canSelectFarmUser = storedUser?.userType !== "STANDARD_USER";
 
     if (tenantId) {
       api.get(`/company/tenant/${tenantId}`).then((res: any) => {
@@ -119,6 +134,13 @@ export default function WorkspaceScopeSwitcher({
           setOperationalAreas(storedUser.operationalAreas);
         }
       });
+
+      if (canSelectFarmUser) {
+        api.get(`/location?locationType=FARM&rootOnly=true`).then((res: any) => {
+          const rows = Array.isArray(res) ? res : res?.data;
+          if (Array.isArray(rows)) setFarms(rows);
+        }).catch(() => {});
+      }
     }
 
     const handleClickOutside = (event: MouseEvent) => {
@@ -173,6 +195,13 @@ export default function WorkspaceScopeSwitcher({
     window.location.href = "/dashboard";
   };
 
+  const handleSelectFarm = (farmId: string | null) => {
+    setActiveFarmId(farmId);
+    setActiveFarmIdState(farmId);
+    setIsOpen(false);
+    window.location.href = "/dashboard";
+  };
+
   const activeCompanyObj = companies.find((c) => c.company_id === activeCompId) ||
     user?.companies?.find((c) => c.company_id === activeCompId) ||
     companies[0] ||
@@ -197,12 +226,24 @@ export default function WorkspaceScopeSwitcher({
 
   const isTenantAdmin = user?.userType === "TENANT_ADMIN";
   const isCompanyAdmin = user?.userType === "COMPANY_ADMIN" || isTenantAdmin;
+  // Every user type except STANDARD_USER may view every farm or select one
+  // (decided 2026-09-14/15) — a STANDARD_USER's farm is fixed to
+  // user_master.farm_id and is never a switch.
+  const canSelectFarm = !!user && user.userType !== "STANDARD_USER";
+
+  const standardUserFarm = user?.farm;
+  const fixedFarmLabel = user?.userType === "STANDARD_USER" && standardUserFarm
+    ? t("wsFixedFarmLabel", { code: standardUserFarm.location_code, name: standardUserFarm.location_name })
+    : null;
 
   // A switcher only makes sense when there's something to switch to. A
   // STANDARD_USER assigned to exactly one area, or a COMPANY_ADMIN of
   // exactly one company with no other areas, has no real choice — showing
-  // an interactive dropdown there implies capability that isn't there.
-  const canSwitch = isTenantAdmin || (isCompanyAdmin && companies.length > 1) || operationalAreas.length > 1;
+  // an interactive dropdown there implies capability that isn't there. A
+  // farm-selecting user with at least one farm to choose from (including
+  // "All farms" versus one) does have a real choice, even with one company.
+  const canSwitch = isTenantAdmin || (isCompanyAdmin && companies.length > 1) || operationalAreas.length > 1
+    || (canSelectFarm && farms.length > 0);
 
   const identityBlock = (
     <>
@@ -225,6 +266,11 @@ export default function WorkspaceScopeSwitcher({
       <p className="text-[10px] text-white/40 truncate mt-0.5">
         {secondarySubtitle}
       </p>
+      {fixedFarmLabel && (
+        <p className="text-[10px] text-white/40 truncate mt-0.5">
+          {fixedFarmLabel}
+        </p>
+      )}
     </>
   );
 
@@ -396,6 +442,67 @@ export default function WorkspaceScopeSwitcher({
                 </div>
               )}
             </div>
+
+            {/* 4. Farms — every user type but STANDARD_USER may view every
+                farm or pin the workspace to one (decided 2026-09-14/15). */}
+            {canSelectFarm && farms.length > 0 && (
+              <div>
+                <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>{t("wsFarms")}</div>
+                <div className="space-y-0.5">
+                  <button
+                    type="button"
+                    onClick={() => handleSelectFarm(null)}
+                    className={`w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-[var(--radius-sm)] text-xs transition-colors text-left ${
+                      activeFarmIdState === null ? "font-semibold" : "hover:bg-[var(--surface-raised)]"
+                    }`}
+                    style={
+                      activeFarmIdState === null
+                        ? { backgroundColor: "var(--accent-muted)", color: "var(--accent)" }
+                        : { color: "var(--text-primary)" }
+                    }
+                  >
+                    <span
+                      className="flex h-5 w-5 items-center justify-center rounded-[var(--radius-xs)] border"
+                      style={{ backgroundColor: "var(--surface-raised)", borderColor: "var(--border)" }}
+                    >
+                      <Layers className="h-3 w-3" style={{ color: "var(--accent)" }} />
+                    </span>
+                    <span className="flex-1 min-w-0 truncate font-medium">{t("wsAllFarms")}</span>
+                    {activeFarmIdState === null && <Check className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--accent)" }} />}
+                  </button>
+                  {farms.map((farm) => {
+                    const isSelected = activeFarmIdState === farm.location_id;
+                    return (
+                      <button
+                        key={farm.location_id}
+                        type="button"
+                        onClick={() => handleSelectFarm(farm.location_id)}
+                        className={`w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-[var(--radius-sm)] text-xs transition-colors text-left ${
+                          isSelected ? "font-semibold" : "hover:bg-[var(--surface-raised)]"
+                        }`}
+                        style={
+                          isSelected
+                            ? { backgroundColor: "var(--accent-muted)", color: "var(--accent)" }
+                            : { color: "var(--text-primary)" }
+                        }
+                      >
+                        <span
+                          className="flex h-5 w-5 items-center justify-center rounded-[var(--radius-xs)] border"
+                          style={{ backgroundColor: "var(--surface-raised)", borderColor: "var(--border)" }}
+                        >
+                          <Building className="h-3 w-3" style={{ color: "var(--accent)" }} />
+                        </span>
+                        <div className="flex-1 min-w-0">
+                          <p className="truncate font-medium">{farm.location_name}</p>
+                          <p className="text-[10px] truncate" style={{ color: "var(--text-secondary)" }}>{farm.location_code}</p>
+                        </div>
+                        {isSelected && <Check className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--accent)" }} />}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="p-2 border-t" style={{ backgroundColor: "var(--surface-raised)", borderColor: "var(--border)" }}>

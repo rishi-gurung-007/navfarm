@@ -80,6 +80,7 @@ const SESSION_KEYS = [
   'active_workspace_scope',
   'active_operational_area_id',
   'active_lob',
+  'active_farm_id',
   'tenant_company_mode',
 ] as const;
 
@@ -177,6 +178,13 @@ export async function apiRequest<T>(path: string, options: ApiOptions = {}): Pro
   const activeAreaId = stored('active_operational_area_id');
   if (activeAreaId && (!workspaceScope || workspaceScope === 'OPERATIONAL')) headers.set('x-active-operational-area-id', activeAreaId);
   else headers.delete('x-active-operational-area-id');
+  // A STANDARD_USER's farm is fixed server-side (user_master.farm_id) — the
+  // API derives it and 403s on a header naming a different farm, so the
+  // client must never send one for that user type. Every other user type may
+  // send it to select a single farm; absent means every farm in scope.
+  const activeFarmId = stored('active_farm_id');
+  if (activeFarmId && userType !== 'STANDARD_USER') headers.set('x-active-farm-id', activeFarmId);
+  else headers.delete('x-active-farm-id');
 
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...init,

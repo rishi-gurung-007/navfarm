@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
+  Building2,
   CalendarDays,
   Check,
   CheckCircle2,
@@ -16,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { EmptyState, LoadingState } from "@/components/ui/states";
 import { useLanguage } from "@/hooks/useLanguage";
+import { getStoredUser } from "@/hooks/useAuth";
 
 /**
  * The day's data entry, driven by the batch's scheduler.
@@ -92,6 +94,13 @@ interface BatchOption {
   batch_id: string;
   batch_no: string;
   animal_tracking?: string;
+  farm_id?: string | null;
+}
+
+interface FarmRef {
+  location_id: string;
+  location_code: string;
+  location_name: string;
 }
 
 /** What the worker has typed, before it is saved. */
@@ -127,6 +136,7 @@ export default function SchedulerBatchDataEntry() {
   const [batchId, setBatchId] = useState("");
   const [date, setDate] = useState("");
   const [stageId, setStageId] = useState<string | null>(null);
+  const [farms, setFarms] = useState<FarmRef[]>([]);
 
   const [form, setForm] = useState<EntryForm | null>(null);
   const [history, setHistory] = useState<string[]>([]);
@@ -151,6 +161,25 @@ export default function SchedulerBatchDataEntry() {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e));
       } finally {
         if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  /* ── The farm list, to resolve a batch's farm_id to a code/name ───────── */
+  // Only fetched for non-standard users: a STANDARD_USER's farm is fixed and
+  // is read straight off the stored session instead (see recordingFor below).
+  useEffect(() => {
+    if (getStoredUser()?.userType === "STANDARD_USER") return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await api.get("/location?locationType=FARM&rootOnly=true");
+        if (cancelled) return;
+        const rows = Array.isArray(res) ? res : res?.data;
+        if (Array.isArray(rows)) setFarms(rows);
+      } catch {
+        // The badge simply stays hidden if this can't be loaded.
       }
     })();
     return () => { cancelled = true; };
@@ -255,6 +284,21 @@ export default function SchedulerBatchDataEntry() {
   const currentStage = form?.stages.find((s) => s.stage_id === form.selected_stage_id) ?? null;
   const recorded = (form?.lines ?? []).filter((l) => l.entry).length;
 
+  /* ── Which farm this entry is being recorded for ─────────────────────── */
+  // The daily-data form response carries no farm fields (batchSummary() on
+  // the API only returns batch_id/batch_no/animal_tracking/start_date), so
+  // this is worked out on the client: for a STANDARD_USER it is always their
+  // one fixed farm; for everyone else it is the selected batch's farm_id
+  // (already on the /batch list row) resolved against the fetched farm list.
+  const storedUser = getStoredUser();
+  const selectedBatch = batches.find((b) => b.batch_id === batchId);
+  const recordingForFarm = storedUser?.userType === "STANDARD_USER"
+    ? storedUser.farm ?? null
+    : farms.find((f) => f.location_id === selectedBatch?.farm_id) ?? null;
+  const recordingForLabel = recordingForFarm
+    ? t("deRecordingForFarm", { code: recordingForFarm.location_code, name: recordingForFarm.location_name })
+    : null;
+
   /* The history rail, shared between the desktop column and the mobile strip. */
   const historyButtons = (
     <>
@@ -317,6 +361,11 @@ export default function SchedulerBatchDataEntry() {
               </div>
             </div>
           </div>
+          {recordingForLabel && (
+            <p className="mt-3 flex items-center gap-1.5 text-xs text-(--text-secondary)">
+              <Building2 size={13} className="shrink-0 text-(--accent)" /> {recordingForLabel}
+            </p>
+          )}
         </Card>
 
         {/* ── The backlog stands in front of today ───────────────────── */}

@@ -244,6 +244,26 @@ describe('AuthService', () => {
       expect(row()).toMatchObject({ failed_login_count: 0, locked_until: null });
     });
 
+    it("includes the standard user's fixed farm in the login payload", async () => {
+      row().farm_id = 'farm-1';
+      tables.location_master = [
+        { location_id: 'farm-1', location_code: 'FARM-01', location_name: 'Kintyre' },
+      ];
+      const result = await attempt(PASSWORD);
+      expect(result.user).toMatchObject({
+        farmId: 'farm-1',
+        farm: { location_id: 'farm-1', location_code: 'FARM-01', location_name: 'Kintyre' },
+      });
+    });
+
+    it('carries no farmId or farm for an admin with no farm assigned', async () => {
+      row().user_type = 'COMPANY_ADMIN';
+      row().farm_id = null;
+      const result = await attempt(PASSWORD);
+      expect(result.user).not.toHaveProperty('farmId');
+      expect(result.user).not.toHaveProperty('farm');
+    });
+
     it('answers an unknown email and a wrong password identically', async () => {
       userDirectory.lookupTenantId.mockResolvedValueOnce(null);
       const unknown = await attempt(PASSWORD, 'nobody@example.test');

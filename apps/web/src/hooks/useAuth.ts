@@ -20,6 +20,12 @@ export interface OperationalAreaRef {
   is_primary?:  boolean;
 }
 
+export interface FarmRef {
+  location_id:   string;
+  location_code: string;
+  location_name: string;
+}
+
 export interface NavUser {
   userId:              string;
   email:               string;
@@ -32,6 +38,7 @@ export interface NavUser {
   operational_area_id?: string;
   farmId?:             string;
   farm_id?:            string;
+  farm?:               FarmRef;
   companies?:          CompanyRef[];
   operationalAreas?:   OperationalAreaRef[];
   permissions?: Array<{
@@ -197,6 +204,34 @@ export function setActiveOperationalAreaId(areaId: string | null): void {
   if (typeof window === "undefined") return;
   if (areaId) localStorage.setItem("active_operational_area_id", areaId);
   else localStorage.removeItem("active_operational_area_id");
+}
+
+/**
+ * The active farm. A STANDARD_USER is bound to exactly one farm
+ * (user_master.farm_id, decided 2026-09-14/15) — it is never a switch, so
+ * this always answers with the user's own farm and ignores anything stored.
+ * Admin user types (system/tenant/company) and operational admins may view
+ * every farm or select one; `null` there means every farm in scope, matching
+ * the API's `x-active-farm-id` absent = unrestricted rule.
+ */
+export function getActiveFarmId(): string | null {
+  if (typeof window === "undefined") return null;
+  const user = getStoredUser();
+  if (!user) return null;
+  if (user.userType === "STANDARD_USER") {
+    return user.farmId ?? user.farm_id ?? null;
+  }
+  return localStorage.getItem("active_farm_id") || null;
+}
+
+export function setActiveFarmId(farmId: string | null): void {
+  if (typeof window === "undefined") return;
+  const user = getStoredUser();
+  // A standard user's farm is fixed — selecting one here would imply a
+  // choice that does not exist.
+  if (user?.userType === "STANDARD_USER") return;
+  if (farmId) localStorage.setItem("active_farm_id", farmId);
+  else localStorage.removeItem("active_farm_id");
 }
 
 /** The active LOB code/id for the active operational scope (e.g. 'PIGGERY', 'DAIRY', 'LVS_PIGGERY') */
