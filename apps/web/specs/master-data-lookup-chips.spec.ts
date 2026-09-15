@@ -152,6 +152,11 @@ describe("master-data lookup chips", () => {
 
       expect(await screen.findByRole("dialog", { name: "Add Test Lookup" })).toBeTruthy();
       expect(api.get).not.toHaveBeenCalled();
+      // Only the form. A nested creator that also rendered this master's
+      // toolbar, chips row, table and pager would put a second master page
+      // inside the form the user is already filling in.
+      expect(screen.queryByRole("table")).toBeNull();
+      expect(screen.queryByRole("searchbox")).toBeNull();
 
       fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
       expect(onCreateCancelled).toHaveBeenCalledTimes(1);

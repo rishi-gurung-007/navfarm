@@ -1547,6 +1547,12 @@ export function MasterDataTable({
       {/* Left-aligned, so the controls sit under the title they belong to
           rather than drifting to the far edge now that nothing balances them
           on the left (apple.design.md §23). */}
+      {/* A create-only instance is a form summoned from another form's field.
+          It has no record set of its own to show, so it renders the dialog
+          alone — the toolbar, chips, table and pager below would put a second
+          master page inside the form the user is already filling in. */}
+      {!createOnly && (
+      <>
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
           {config.supportsNobLobFilter && workspaceScope !== "OPERATIONAL" && (
@@ -1839,6 +1845,8 @@ export function MasterDataTable({
         </aside>
       )}
       </div>
+      </>
+      )}
 
       {viewingId && <MasterRecordView config={config} id={viewingId} onClose={() => setViewingId(null)} />}
 
