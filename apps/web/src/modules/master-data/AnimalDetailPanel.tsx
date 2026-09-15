@@ -29,6 +29,11 @@ const TABS = [
 type TabKey = (typeof TABS)[number]["key"];
 
 const fmt = (v: any) => (v === null || v === undefined || v === "" ? "" : String(v));
+const asObject = (value: any): Row => {
+  if (!value) return {};
+  if (typeof value !== "string") return value;
+  try { return JSON.parse(value); } catch { return {}; }
+};
 
 type TimelineEvent = {
   id: string;
@@ -37,6 +42,148 @@ type TimelineEvent = {
   summary: string;
   detail: [string, string][];
 };
+
+/**
+ * One mating, told from the point of view of the animal whose panel this is.
+ *
+ * The same record is two different facts depending on which side you are on:
+ * for a sow it is her service, so the pregnancy check, its result and the date
+ * she is due are what matter; for a boar it is a service he performed, so the
+ * sow he covered and whether it took are what matter, and her pregnancy check
+ * is her record and not his. Both tabs call this, so a boar cannot be shown a
+ * sow's detail on one tab and his own on the other.
+ */
+function matingTimelineEvent(m: Row, isMale: boolean): TimelineEvent {
+  const partner = isMale ? fmt(m.sow_code) : fmt(m.boar_code);
+  const parity = fmt(m.parity_number);
+  return {
+    id: `mating-${m.breeding_id}`,
+    date: fmt(m.mating_date),
+    title: isMale ? `Served ${partner || "a sow"}` : `Served by ${partner || "a boar"}`,
+    summary: [
+      fmt(m.mating_type),
+      parity ? `parity ${parity}` : "",
+      fmt(m.conception_result).toLowerCase(),
+    ].filter(Boolean).join(" · "),
+    detail: isMale
+      ? [
+          ["Sow", fmt(m.sow_code)], ["Mating type", fmt(m.mating_type)],
+          ["Mating date", fmt(m.mating_date)], ["Second mating", fmt(m.second_mating_date)],
+          ["Semen doses", fmt(m.semen_dose_qty)], ["Service outcome", fmt(m.conception_result)],
+          ["Sow parity", parity],
+        ]
+      : [
+          ["Mating type", fmt(m.mating_type)], ["Mating date", fmt(m.mating_date)],
+          ["Second mating", fmt(m.second_mating_date)], ["Semen doses", fmt(m.semen_dose_qty)],
+          ["Pregnancy check", [fmt(m.preg_check_date), fmt(m.preg_check_method)].filter(Boolean).join(" · ")],
+          ["Result", fmt(m.conception_result)], ["Expected farrowing", fmt(m.expected_farrowing_date)],
+          ["Parity", parity],
+        ],
+  };
+}
+
+/**
+ * One farrowing. A sow farrowed it; a boar is reached through the breeding_id
+ * of the service he sired, so for him the same row is a litter he produced.
+ * Counts are interpolated only when the column actually came back, otherwise
+ * the title reads "Farrowed  live" for a record that has yet to be counted.
+ */
+function farrowingTimelineEvent(f: Row, isMale: boolean): TimelineEvent {
+  const live = fmt(f.piglets_born_live);
+  const total = fmt(f.piglets_born_total);
+  return {
+    id: `farrow-${f.farrow_id}`,
+    date: fmt(f.farrowing_date),
+    title: isMale
+      ? (live ? `Sired a litter — ${live} live` : "Sired a litter")
+      : (live ? `Farrowed ${live} live` : "Farrowed"),
+    summary: [total ? `${total} born` : "", fmt(f.farrowing_status).toLowerCase()]
+      .filter(Boolean).join(" · "),
+    detail: [
+      ["Farrowing date", fmt(f.farrowing_date)], ["Born total", total],
+      ["Born live", live], ["Stillborn", fmt(f.piglets_stillborn)],
+      ["Mummified", fmt(f.piglets_mummified)], ["Avg birth weight", fmt(f.avg_birth_weight_kg)],
+      ["Litter weight", fmt(f.total_litter_weight_kg)], ["Status", fmt(f.farrowing_status)],
+      ["Weaning date", fmt(f.weaning_date)], ["Piglets weaned", fmt(f.piglets_weaned)],
+      ["Avg weaning weight", fmt(f.avg_weaning_weight_kg)], ["Parity", fmt(f.parity_number)],
+    ],
+  };
+}
+
+// Newest first: the most recent thing that happened is what someone opening
+// this panel is usually looking for.
+const newestFirst = (a: TimelineEvent, b: TimelineEvent) =>
+  a.date < b.date ? 1 : a.date > b.date ? -1 : 0;
+
+/**
+ * The timeline rail. Breeding and Traceability are the same reading of the
+ * same records at two zoom levels, so they are the same component: a fix to
+ * the marker, the rail or the expanded detail lands on both.
+ */
+function TimelineList({
+  events, emptyText, openEvent, onToggle,
+}: {
+  events: TimelineEvent[];
+  emptyText: string;
+  openEvent: string | null;
+  onToggle: (id: string) => void;
+}) {
+  if (!events.length) return <p className="text-xs" style={S.muted}>{emptyText}</p>;
+  return (
+    <ol className="relative flex flex-col gap-2 ps-5">
+      {/* The rail. Sits behind the markers rather than between the cards, so
+          it does not break where a card is expanded. */}
+      <span
+        aria-hidden="true"
+        className="absolute bottom-2 start-[5px] top-2 w-px"
+        style={{ backgroundColor: "var(--border)" }}
+      />
+      {events.map((ev) => {
+        const open = openEvent === ev.id;
+        const rows = ev.detail.filter(([, v]) => v);
+        return (
+          <li key={ev.id} className="relative">
+            <span
+              aria-hidden="true"
+              className="absolute -start-5 top-4 h-[9px] w-[9px] translate-x-[1px] rounded-full border-2"
+              style={{ backgroundColor: "var(--surface)", borderColor: "var(--accent)" }}
+            />
+            <button
+              type="button"
+              onClick={() => onToggle(ev.id)}
+              aria-expanded={open}
+              className="w-full rounded-[var(--radius-sm)] border p-3 text-left transition"
+              style={S.raised}
+            >
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="min-w-0 truncate text-sm font-medium" style={S.primary}>{ev.title}</span>
+                <span className="shrink-0 font-mono text-xs" style={S.sub}>{ev.date}</span>
+              </div>
+              <div className="mt-1 flex items-center justify-between gap-2">
+                <span className="min-w-0 truncate text-xs" style={S.sub}>{ev.summary}</span>
+                <ChevronRight
+                  className="h-3.5 w-3.5 shrink-0 transition-transform"
+                  style={{ color: "var(--text-muted)", transform: open ? "rotate(90deg)" : undefined }}
+                />
+              </div>
+
+              {open && (
+                <dl className="mt-3 grid grid-cols-1 gap-x-4 gap-y-1.5 border-t pt-3 sm:grid-cols-2" style={{ borderColor: "var(--border)" }}>
+                  {rows.map(([label, value]) => (
+                    <div key={label} className="flex min-w-0 flex-col">
+                      <dt className="text-[10px] uppercase tracking-wide" style={S.muted}>{label}</dt>
+                      <dd className="truncate text-xs" style={S.primary}>{value}</dd>
+                    </div>
+                  ))}
+                </dl>
+              )}
+            </button>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
 
 /**
  * The right-hand detail for one animal.
@@ -79,6 +226,10 @@ export default function AnimalDetailPanel({ row, onClose }: { row: Row; onClose:
 
   const matings: Row[] = breeding?.matings ?? [];
   const farrowings: Row[] = breeding?.farrowings ?? [];
+  const movements: Row[] = breeding?.movements ?? [];
+  const transfers: Row[] = breeding?.transfers ?? [];
+  const labels = breeding?.traceability_labels ?? { stages: {}, batches: {}, locations: {} };
+  const isMale = row.gender === "M" || row.animal_type === "BOAR";
 
   const timeline = useMemo<TimelineEvent[]>(() => {
     const events: TimelineEvent[] = [];
@@ -104,33 +255,40 @@ export default function AnimalDetailPanel({ row, onClose }: { row: Row; onClose:
         ],
       });
     }
-    for (const m of matings) {
-      const partner = m.role === "SIRE" ? fmt(m.sow_code) : fmt(m.boar_code);
+    // The same mapping the Breeding tab uses, so the two tabs cannot drift
+    // into telling different stories about one record.
+    events.push(...matings.map((m) => matingTimelineEvent(m, isMale)));
+    events.push(...farrowings.map((f) => farrowingTimelineEvent(f, isMale)));
+    for (const movement of movements) {
+      if (movement.action !== "TRANSITION_STAGE") continue;
+      const oldValues = asObject(movement.old_values);
+      const newValues = asObject(movement.new_values);
+      const fromStage = labels.stages?.[oldValues.current_stage_id] || "Previous stage";
+      const toStage = labels.stages?.[newValues.current_stage_id] || "New stage";
       events.push({
-        id: `mating-${m.breeding_id}`, date: fmt(m.mating_date),
-        title: m.role === "SIRE" ? `Served ${partner || "a sow"}` : `Served by ${partner || "a boar"}`,
-        summary: [fmt(m.mating_type), `parity ${fmt(m.parity_number)}`, fmt(m.conception_result).toLowerCase()].filter(Boolean).join(" · "),
+        id: `movement-${movement.occurred_at}-${toStage}`,
+        date: fmt(newValues.transition_date || movement.occurred_at).slice(0, 10),
+        title: `Stage moved to ${toStage}`,
+        summary: `${fromStage} → ${toStage}`,
         detail: [
-          ["Mating type", fmt(m.mating_type)], ["Mating date", fmt(m.mating_date)],
-          ["Second mating", fmt(m.second_mating_date)], ["Semen doses", fmt(m.semen_dose_qty)],
-          ["Pregnancy check", [fmt(m.preg_check_date), fmt(m.preg_check_method)].filter(Boolean).join(" · ")],
-          ["Result", fmt(m.conception_result)], ["Expected farrowing", fmt(m.expected_farrowing_date)],
-          ["Parity", fmt(m.parity_number)],
+          ["From stage", fromStage], ["To stage", toStage],
+          ["Batch", labels.batches?.[newValues.current_batch_id] || ""],
+          ["Pen", labels.locations?.[newValues.current_location_id] || ""],
+          ["Reason", fmt(newValues.reason)], ["Remarks", fmt(newValues.remarks)],
         ],
       });
     }
-    for (const f of farrowings) {
+    for (const transfer of transfers) {
       events.push({
-        id: `farrow-${f.farrow_id}`, date: fmt(f.farrowing_date),
-        title: `Farrowed ${fmt(f.piglets_born_live)} live`,
-        summary: [`${fmt(f.piglets_born_total)} born`, fmt(f.farrowing_status).toLowerCase()].filter(Boolean).join(" · "),
+        id: `transfer-${transfer.transfer_id}`,
+        date: fmt(transfer.transfer_date),
+        title: `Transferred — ${fmt(transfer.transfer_no)}`,
+        summary: `${fmt(transfer.from_batch_no) || "Previous batch"} → ${fmt(transfer.to_batch_no) || "New batch"}`,
         detail: [
-          ["Farrowing date", fmt(f.farrowing_date)], ["Born total", fmt(f.piglets_born_total)],
-          ["Born live", fmt(f.piglets_born_live)], ["Stillborn", fmt(f.piglets_stillborn)],
-          ["Mummified", fmt(f.piglets_mummified)], ["Avg birth weight", fmt(f.avg_birth_weight_kg)],
-          ["Litter weight", fmt(f.total_litter_weight_kg)], ["Status", fmt(f.farrowing_status)],
-          ["Weaning date", fmt(f.weaning_date)], ["Piglets weaned", fmt(f.piglets_weaned)],
-          ["Avg weaning weight", fmt(f.avg_weaning_weight_kg)], ["Parity", fmt(f.parity_number)],
+          ["Transfer", fmt(transfer.transfer_no)],
+          ["From batch", fmt(transfer.from_batch_no)], ["To batch", fmt(transfer.to_batch_no)],
+          ["From pen", fmt(transfer.from_pen_code)], ["To pen", fmt(transfer.to_pen_code)],
+          ["Reason", fmt(transfer.reason)], ["Remarks", fmt(transfer.remarks)],
         ],
       });
     }
@@ -145,10 +303,23 @@ export default function AnimalDetailPanel({ row, onClose }: { row: Row; onClose:
       });
     }
 
-    // Newest first: the most recent thing that happened is what someone opening
-    // this panel is usually looking for.
-    return events.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
-  }, [row, matings, farrowings]);
+    return events.sort(newestFirst);
+  }, [row, matings, farrowings, movements, transfers, labels, isMale]);
+
+  /**
+   * The Breeding tab is the same timeline narrowed to what this animal did
+   * reproductively — no birth, no stage moves, no disposal. Two cards of
+   * matings and farrowings side by side made the reader reconstruct the order
+   * of events themselves; a service and the litter it produced are one
+   * sequence and read as one.
+   */
+  const breedingTimeline = useMemo<TimelineEvent[]>(() => {
+    const events = [
+      ...matings.map((record) => matingTimelineEvent(record, isMale)),
+      ...farrowings.map((record) => farrowingTimelineEvent(record, isMale)),
+    ];
+    return events.sort(newestFirst);
+  }, [matings, farrowings, isMale]);
 
   return (
     <aside
@@ -237,62 +408,19 @@ export default function AnimalDetailPanel({ row, onClose }: { row: Row; onClose:
           loading ? (
             <div className="py-10 text-center"><Loader2 className="mx-auto h-4 w-4 animate-spin" style={S.muted} /></div>
           ) : (
-            <div className="flex flex-col gap-5">
-              <section>
-                <h3 className="nf-text-label-strong mb-2" style={S.primary}>Matings ({matings.length})</h3>
-                {!matings.length ? (
-                  <p className="text-xs" style={S.muted}>No mating recorded for this animal.</p>
-                ) : (
-                  <ul className="flex flex-col gap-2">
-                    {matings.map((m) => (
-                      <li key={m.breeding_id} className="rounded-[var(--radius-sm)] border p-3" style={S.raised}>
-                        <div className="flex flex-wrap items-baseline justify-between gap-2">
-                          <span className="text-sm font-medium" style={S.primary}>
-                            {m.role === "SIRE" ? `Served ${fmt(m.sow_code)}` : `Served by ${fmt(m.boar_code) || "—"}`}
-                          </span>
-                          <span className="font-mono text-xs" style={S.sub}>{fmt(m.mating_date)}</span>
-                        </div>
-                        <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs" style={S.sub}>
-                          <span>{fmt(m.mating_type)}</span>
-                          <span>Parity {fmt(m.parity_number)}</span>
-                          <span>Due {fmt(m.expected_farrowing_date)}</span>
-                          {m.conception_result && <span>{fmt(m.conception_result)}</span>}
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </section>
-
-              <section>
-                <h3 className="nf-text-label-strong mb-2" style={S.primary}>Farrowings ({farrowings.length})</h3>
-                {!farrowings.length ? (
-                  <p className="text-xs" style={S.muted}>
-                    {row.animal_type === "BOAR"
-                      ? "Boars do not farrow — his litters are the matings above."
-                      : "No farrowing recorded for this animal."}
-                  </p>
-                ) : (
-                  <ul className="flex flex-col gap-2">
-                    {farrowings.map((f) => (
-                      <li key={f.farrow_id} className="rounded-[var(--radius-sm)] border p-3" style={S.raised}>
-                        <div className="flex flex-wrap items-baseline justify-between gap-2">
-                          <span className="text-sm font-medium" style={S.primary}>
-                            {fmt(f.piglets_born_live)} born live of {fmt(f.piglets_born_total)}
-                          </span>
-                          <span className="font-mono text-xs" style={S.sub}>{fmt(f.farrowing_date)}</span>
-                        </div>
-                        <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs" style={S.sub}>
-                          <span>{fmt(f.farrowing_status)}</span>
-                          <span>Parity {fmt(f.parity_number)}</span>
-                          {Number(f.piglets_stillborn) > 0 && <span>{fmt(f.piglets_stillborn)} stillborn</span>}
-                          {f.weaning_date && <span>Weaned {fmt(f.weaning_date)} ({fmt(f.piglets_weaned)})</span>}
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </section>
+            <div className="flex flex-col gap-4">
+              {/* One sequence, not two lists. A service and the litter it
+                  produced belong on the same rail in date order; as separate
+                  "Services" and "Farrowings" cards the reader had to pair them
+                  up by parity number themselves. The wording of each card is
+                  already sex-specific, so the headings that used to say it —
+                  "Sire services" / "Resulting litters" — no longer have to. */}
+              <TimelineList
+                events={breedingTimeline}
+                emptyText="No breeding record."
+                openEvent={openEvent}
+                onToggle={(id) => setOpenEvent(openEvent === id ? null : id)}
+              />
             </div>
           )
         )}
@@ -302,63 +430,12 @@ export default function AnimalDetailPanel({ row, onClose }: { row: Row; onClose:
             <div className="py-10 text-center"><Loader2 className="mx-auto h-4 w-4 animate-spin" style={S.muted} /></div>
           ) : (
             <div className="flex flex-col gap-4">
-              {!timeline.length ? (
-                <p className="text-xs" style={S.muted}>Nothing recorded for this animal yet.</p>
-              ) : (
-                <ol className="relative flex flex-col gap-2 ps-5">
-                  {/* The rail. Sits behind the markers rather than between the
-                      cards, so it does not break where a card is expanded. */}
-                  <span
-                    aria-hidden="true"
-                    className="absolute bottom-2 start-[5px] top-2 w-px"
-                    style={{ backgroundColor: "var(--border)" }}
-                  />
-                  {timeline.map((ev) => {
-                    const open = openEvent === ev.id;
-                    const rows = ev.detail.filter(([, v]) => v);
-                    return (
-                      <li key={ev.id} className="relative">
-                        <span
-                          aria-hidden="true"
-                          className="absolute -start-5 top-4 h-[9px] w-[9px] translate-x-[1px] rounded-full border-2"
-                          style={{ backgroundColor: "var(--surface)", borderColor: "var(--accent)" }}
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setOpenEvent(open ? null : ev.id)}
-                          aria-expanded={open}
-                          className="w-full rounded-[var(--radius-sm)] border p-3 text-left transition"
-                          style={S.raised}
-                        >
-                          <div className="flex items-baseline justify-between gap-2">
-                            <span className="min-w-0 truncate text-sm font-medium" style={S.primary}>{ev.title}</span>
-                            <span className="shrink-0 font-mono text-xs" style={S.sub}>{ev.date}</span>
-                          </div>
-                          <div className="mt-1 flex items-center justify-between gap-2">
-                            <span className="min-w-0 truncate text-xs" style={S.sub}>{ev.summary}</span>
-                            <ChevronRight
-                              className="h-3.5 w-3.5 shrink-0 transition-transform"
-                              style={{ color: "var(--text-muted)", transform: open ? "rotate(90deg)" : undefined }}
-                            />
-                          </div>
-
-                          {open && (
-                            <dl className="mt-3 grid grid-cols-1 gap-x-4 gap-y-1.5 border-t pt-3 sm:grid-cols-2" style={{ borderColor: "var(--border)" }}>
-                              {rows.map(([label, value]) => (
-                                <div key={label} className="flex min-w-0 flex-col">
-                                  <dt className="text-[10px] uppercase tracking-wide" style={S.muted}>{label}</dt>
-                                  <dd className="truncate text-xs" style={S.primary}>{value}</dd>
-                                </div>
-                              ))}
-                            </dl>
-                          )}
-                        </button>
-                      </li>
-                    );
-                  })}
-                </ol>
-              )}
-
+              <TimelineList
+                events={timeline}
+                emptyText="Nothing recorded for this animal yet."
+                openEvent={openEvent}
+                onToggle={(id) => setOpenEvent(openEvent === id ? null : id)}
+              />
               {/* This used to list four "not yet in the chain" items, hardcoded
                   and unconditional, so every animal was told no batch carried
                   it and no transfer order had been raised whether or not that
