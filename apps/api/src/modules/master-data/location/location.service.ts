@@ -218,6 +218,10 @@ export class LocationService {
   ) {
     const { seriesCode, locationType, tenantId, companyId, parent, locationId, typeCode, locationLevel, dto, userPayload } = params;
 
+    if (typeCode === 'FARM' && !dto.location_address?.trim()) {
+      throw new BadRequestException('Location Address is required for a Farm.');
+    }
+
     // Code generation happens inside this transaction, using tx as the lock
     // executor, so the series row's SELECT ... FOR UPDATE (or, for a child
     // location, the sibling count it guards) stays locked until the insert
@@ -247,7 +251,7 @@ export class LocationService {
       warehouse_id: ['STORE', 'SILO'].includes(typeCode) ? locationId : parent ? (['STORE', 'SILO'].includes(parent.location_type) ? parent.location_id : parent.warehouse_id) : null,
       location_code: locationCode,
       location_name: dto.location_name,
-      location_address: dto.location_address,
+      location_address: typeCode === 'FARM' ? dto.location_address!.trim() : null,
       location_level: locationLevel,
       location_type: typeCode,
       parent_location_id: dto.parent_location_id || null,
@@ -264,7 +268,7 @@ export class LocationService {
       silo_reorder_days: dto.silo_reorder_days ?? null,
       downtime_days_required: dto.downtime_days_required ?? null,
       storage_name: dto.storage_name ?? null,
-      feed_in_bags: dto.feed_in_bags ?? null,
+      feed_in_bags: null,
       is_active: true,
       status: 'ACTIVE',
       extension_config: dto.extension_config ? JSON.stringify(dto.extension_config) : null,
@@ -696,7 +700,12 @@ export class LocationService {
     if (dto.nob_id !== undefined) updates.nob_id = dto.nob_id;
     if (dto.lob_id !== undefined) updates.lob_id = dto.lob_id;
     if (dto.location_name !== undefined) updates.location_name = dto.location_name;
-    if (dto.location_address !== undefined) updates.location_address = dto.location_address;
+    if (dto.location_address !== undefined) {
+      if (location.location_type === 'FARM' && !dto.location_address.trim()) {
+        throw new BadRequestException('Location Address is required for a Farm.');
+      }
+      updates.location_address = location.location_type === 'FARM' ? dto.location_address.trim() : null;
+    }
     if (dto.parent_location_id !== undefined) {
       updates.parent_location_id = dto.parent_location_id;
       updates.location_level = newLocationLevel;
@@ -721,7 +730,6 @@ export class LocationService {
     }
     if (dto.downtime_days_required !== undefined) updates.downtime_days_required = dto.downtime_days_required;
     if (dto.storage_name !== undefined) updates.storage_name = dto.storage_name;
-    if (dto.feed_in_bags !== undefined) updates.feed_in_bags = dto.feed_in_bags;
     if (dto.is_active !== undefined) updates.is_active = dto.is_active;
     if (dto.status !== undefined) updates.status = dto.status;
     if (dto.extension_config !== undefined) updates.extension_config = JSON.stringify(dto.extension_config);

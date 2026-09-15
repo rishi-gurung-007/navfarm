@@ -44,10 +44,10 @@ export class CreateLocationDto {
   @IsNotEmpty()
   location_name: string;
 
-  @ApiProperty({ description: 'Full postal/physical address shown on batch and reports', example: 'Porta Farm - ABC' })
+  @ApiProperty({ description: 'Farm postal/physical address. Required for FARM; omitted for child locations.', required: false })
   @IsString()
-  @IsNotEmpty()
-  location_address: string;
+  @IsOptional()
+  location_address?: string;
 
   @ApiProperty({ description: 'Location Type code from location_type_master', example: 'FARM' })
   @IsString()
@@ -125,11 +125,6 @@ export class CreateLocationDto {
   @IsString()
   @IsOptional()
   storage_name?: string;
-
-  @ApiProperty({ description: 'Whether feed reaches this location in bags rather than blown into a silo.', required: false })
-  @IsBoolean()
-  @IsOptional()
-  feed_in_bags?: boolean;
 
   @ApiProperty({ description: 'Flexible custom config configurations in JSON format', required: false })
   @IsOptional()
@@ -259,11 +254,6 @@ export class UpdateLocationDto {
   @IsString()
   @IsOptional()
   storage_name?: string;
-
-  @ApiProperty({ required: false })
-  @IsBoolean()
-  @IsOptional()
-  feed_in_bags?: boolean;
 
   @ApiProperty({ required: false })
   @IsBoolean()
