@@ -21,12 +21,18 @@ import { codeFieldOf } from "./useCodeSeries";
 import { useCodeSeries } from "./useCodeSeries";
 import { MasterRecordView } from "./MasterRecordView";
 import { BcOwnershipNotice } from "./BcOwnershipNotice";
-import { EntityLookupField } from "./EntityLookupField";
+import { EntityLookupDialog, EntityLookupField } from "./EntityLookupField";
 import { SearchableEntitySelect } from "./SearchableEntitySelect";
 
 const PAGE_SIZE = 25;
 
 type Row = Record<string, any>;
+
+type RelatedPicker = {
+  field: MasterDataField;
+  config: MasterDataConfig;
+  options: Row[];
+};
 
 const S = {
   surface: { backgroundColor: "var(--surface)", borderColor: "var(--border)" },
@@ -227,8 +233,8 @@ function endpointPath(endpoint: string): string {
 }
 
 /**
- * The masters that fill a screen's dropdowns — what the "Dropdown options come
- * from" row names, and what the dialog renders as inline lookup cards.
+ * The masters that fill a screen's dropdowns — what the "Dropdown options"
+ * row names, and what the dialog renders as inline lookup cards.
  *
  * Derived from the select-entity fields themselves, each one's endpoint being
  * another master's apiBase, and unioned with the hand-declared `lookupFor`.
@@ -320,6 +326,7 @@ export default function MasterDataTable({ config }: { config: MasterDataConfig }
   const [formError, setFormError] = useState("");
   const [entityReloadKey, setEntityReloadKey] = useState(0);
   const [lookupManager, setLookupManager] = useState<MasterDataConfig | null>(null);
+  const [relatedPicker, setRelatedPicker] = useState<RelatedPicker | null>(null);
   const lastEntityReloadKeyRef = useRef(entityReloadKey);
 
   const [confirmDelete, setConfirmDelete] = useState<Row | null>(null);
@@ -417,6 +424,12 @@ export default function MasterDataTable({ config }: { config: MasterDataConfig }
   const selectedRow = detailFor ? rows.find((r) => String(r[config.idKey]) === selectedId) : undefined;
   const statusActiveValues = config.statusActiveValues;
   const lookupConfigs = lookupMastersFor(config);
+  const relatedConfigFor = (field: MasterDataField, resolvedEndpoint: string | null) => {
+    if (!resolvedEndpoint || readOnly) return undefined;
+    return lookupConfigs.find((candidate) =>
+      endpointPath(candidate.apiBase) === endpointPath(resolvedEndpoint) && candidate.key !== config.key,
+    );
+  };
   const sectionCount = new Set(visibleFields.map((f) => f.section || "Identification")).size;
   // Business Central-style adaptive presentation: compact masters remain a
   // centred modal, while a dense or multi-card master gets a near-full-page
@@ -1442,40 +1455,22 @@ export default function MasterDataTable({ config }: { config: MasterDataConfig }
         );
       }
       const placeholderText = restrictedReason || (disabled ? t("selectXFirst", { name: parentLabel }) : t("selectPlaceholder"));
-      if (f.searchable) {
-        return (
-          <SearchableEntitySelect
-            id={accessibility.id}
-            ariaLabel={accessibility["aria-label"]}
-            ariaRequired={accessibility["aria-required"]}
-            value={value}
-            onChange={(v) => setField(f.key, v)}
-            options={options}
-            valueKey={f.entityValueKey || "id"}
-            getLabel={(o) => entityLabel(o, f)}
-            disabled={disabled}
-            placeholder={placeholderText}
-            searchPlaceholder={t("searchPlaceholder")}
-            noMatchesLabel={t("mdNoMatches")}
-          />
-        );
-      }
-      // Not a plain <select>: EntityLookupField opens a searchable picker, so a
-      // catalog that has grown long stays usable without anyone having to mark
-      // the field `searchable` first. The `searchable` branch above renders a
-      // popover instead for the fields that ask for it.
+      const relatedConfig = relatedConfigFor(f, resolvedEp);
       return (
-        <EntityLookupField
+        <SearchableEntitySelect
           id={accessibility.id}
-          label={accessibility["aria-label"]}
-          options={options}
+          ariaLabel={accessibility["aria-label"]}
+          ariaRequired={accessibility["aria-required"]}
           value={String(value ?? "")}
-          valueKey={f.entityValueKey || "id"}
-          labelKeys={f.entityLabelKeys || []}
           onChange={(next) => setField(f.key, next)}
+          options={options}
+          valueKey={f.entityValueKey || "id"}
+          getLabel={(o) => entityLabel(o, f)}
           disabled={disabled || !!f.readOnly}
-          loading={!!resolvedEp && loadedOptions === undefined}
-          placeholder={restrictedReason || (disabled ? t("selectXFirst", { name: parentLabel }) : t("selectPlaceholder"))}
+          placeholder={placeholderText}
+          searchPlaceholder={t("searchPlaceholder")}
+          noMatchesLabel={t("mdNoMatches")}
+          onViewAll={relatedConfig ? () => setRelatedPicker({ field: f, config: relatedConfig, options }) : undefined}
         />
       );
     }
@@ -1593,7 +1588,7 @@ export default function MasterDataTable({ config }: { config: MasterDataConfig }
       {administrationRestricted && <p className="rounded-lg border p-3 text-sm" style={S.raised}>Only a Tenant Admin or Company Admin can add, edit or deactivate reasons. You can view the shared catalog here.</p>}
       {manageableLookups.length > 0 && (
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs text-(--text-muted)">Dropdown options come from</span>
+          <span className="text-xs text-(--text-muted)">Dropdown options</span>
           {manageableLookups.map((c) => (
             <button
               key={c.key}
@@ -1886,6 +1881,22 @@ export default function MasterDataTable({ config }: { config: MasterDataConfig }
         onClose={() => { setLookupManager(null); setEntityReloadKey((k) => k + 1); numbering.refresh(); }}>
         {lookupManager && <MasterDataTable key={lookupManager.key} config={lookupManager} />}
       </Dialog>
+
+      {relatedPicker && (
+        <EntityLookupDialog
+          open
+          onClose={() => setRelatedPicker(null)}
+          label={tLabel(currentLabel(relatedPicker.field, form))}
+          options={relatedPicker.options}
+          value={String(form[relatedPicker.field.key] ?? "")}
+          valueKey={relatedPicker.field.entityValueKey || "id"}
+          labelKeys={relatedPicker.field.entityLabelKeys || []}
+          onChange={(value) => {
+            setField(relatedPicker.field.key, value);
+            setRelatedPicker(null);
+          }}
+        />
+      )}
 
       <Dialog
         open={!!confirmDelete}

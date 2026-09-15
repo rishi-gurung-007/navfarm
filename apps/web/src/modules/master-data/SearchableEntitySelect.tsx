@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { Search, Check } from "lucide-react";
+import { Search, Check, Plus, List } from "lucide-react";
 import { Popover, usePopoverSurface } from "@/components/ui/popover";
 
 type Row = Record<string, any>;
@@ -21,6 +21,8 @@ function SearchableEntityPanel({
   searchPlaceholder,
   noMatchesLabel,
   ariaLabel,
+  onCreate,
+  onViewAll,
 }: {
   options: Row[];
   valueKey: string;
@@ -30,6 +32,8 @@ function SearchableEntityPanel({
   searchPlaceholder: string;
   noMatchesLabel: string;
   ariaLabel: string;
+  onCreate?: () => void;
+  onViewAll?: () => void;
 }) {
   const { close } = usePopoverSurface();
   const [query, setQuery] = useState("");
@@ -153,6 +157,32 @@ function SearchableEntityPanel({
           );
         })}
       </div>
+      {(onCreate || onViewAll) && (
+        <div className="flex shrink-0 items-center justify-end gap-2 border-t border-(--border-subtle) px-1 pt-2">
+          {onCreate && (
+            <button
+              type="button"
+              onClick={() => { close(); onCreate(); }}
+              aria-label={`New ${ariaLabel}`}
+              className="nf-press inline-flex items-center gap-1 rounded-[var(--radius-sm)] border border-(--border) bg-(--surface-raised) px-2 py-1 text-xs font-semibold text-(--text-primary)"
+            >
+              <Plus className="h-3.5 w-3.5" aria-hidden />
+              New
+            </button>
+          )}
+          {onViewAll && (
+            <button
+              type="button"
+              onClick={() => { close(); onViewAll(); }}
+              aria-label={`View All ${ariaLabel}`}
+              className="nf-press inline-flex items-center gap-1 rounded-[var(--radius-sm)] border border-(--border) bg-(--surface-raised) px-2 py-1 text-xs font-semibold text-(--text-primary)"
+            >
+              <List className="h-3.5 w-3.5" aria-hidden />
+              View All
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -170,6 +200,8 @@ export interface SearchableEntitySelectProps {
   placeholder: string;
   searchPlaceholder: string;
   noMatchesLabel: string;
+  onCreate?: () => void;
+  onViewAll?: () => void;
 }
 
 /** A single-select entity dropdown with an in-panel text filter, for catalogs long enough that
@@ -188,6 +220,8 @@ export function SearchableEntitySelect({
   placeholder,
   searchPlaceholder,
   noMatchesLabel,
+  onCreate,
+  onViewAll,
 }: SearchableEntitySelectProps) {
   const [open, setOpen] = useState(false);
   // A field can go from enabled to disabled mid-interaction (e.g. its restrictOptionsBy
@@ -232,6 +266,8 @@ export function SearchableEntitySelect({
         searchPlaceholder={searchPlaceholder}
         noMatchesLabel={noMatchesLabel}
         ariaLabel={ariaLabel}
+        onCreate={onCreate}
+        onViewAll={onViewAll}
       />
     </Popover>
   );
