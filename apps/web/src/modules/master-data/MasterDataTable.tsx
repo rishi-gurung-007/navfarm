@@ -1295,6 +1295,7 @@ export default function MasterDataTable({ config }: { config: MasterDataConfig }
                           valueKey={col.entityValueKey || "id"}
                           getLabel={(option) => entityLabel(option, col)}
                           disabled={readOnly || (isLocked(row) && col.key === req?.key)}
+                          loading={!!col.entityEndpoint && entityOptions[col.entityEndpoint] === undefined}
                           placeholder={t("selectPlaceholder")}
                           searchPlaceholder={t("searchPlaceholder")}
                           noMatchesLabel={t("mdNoMatches")}
@@ -1484,6 +1485,7 @@ export default function MasterDataTable({ config }: { config: MasterDataConfig }
           valueKey={f.entityValueKey || "id"}
           getLabel={(o) => entityLabel(o, f)}
           disabled={disabled || !!f.readOnly}
+          loading={!!resolvedEp && loadedOptions === undefined}
           placeholder={placeholderText}
           searchPlaceholder={t("searchPlaceholder")}
           noMatchesLabel={t("mdNoMatches")}

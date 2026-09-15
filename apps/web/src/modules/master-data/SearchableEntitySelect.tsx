@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { Search, Check, Plus, List } from "lucide-react";
+import { Search, Check, Plus, List, Loader2 } from "lucide-react";
 import { Popover, usePopoverSurface } from "@/components/ui/popover";
 
 type Row = Record<string, any>;
@@ -21,6 +21,7 @@ function SearchableEntityPanel({
   searchPlaceholder,
   noMatchesLabel,
   ariaLabel,
+  loading,
   onCreate,
   onViewAll,
 }: {
@@ -32,6 +33,7 @@ function SearchableEntityPanel({
   searchPlaceholder: string;
   noMatchesLabel: string;
   ariaLabel: string;
+  loading: boolean;
   onCreate?: () => void;
   onViewAll?: () => void;
 }) {
@@ -125,7 +127,12 @@ function SearchableEntityPanel({
         className="flex min-h-0 flex-col overflow-y-auto overscroll-contain gap-0.5 pr-0.5"
         style={{ maxHeight: "240px" }}
       >
-        {filtered.length === 0 && (
+        {loading ? (
+          <div role="status" aria-live="polite" className="px-2.5 py-3 text-xs" style={{ color: "var(--text-muted)" }}>
+            <Loader2 className="mr-1.5 inline h-3.5 w-3.5 animate-spin" aria-hidden />
+            Loading records…
+          </div>
+        ) : filtered.length === 0 && (
           <div className="px-2.5 py-3 text-xs" style={{ color: "var(--text-muted)" }}>
             {noMatchesLabel}
           </div>
@@ -197,6 +204,7 @@ export interface SearchableEntitySelectProps {
   valueKey: string;
   getLabel: (row: Row) => string;
   disabled?: boolean;
+  loading?: boolean;
   placeholder: string;
   searchPlaceholder: string;
   noMatchesLabel: string;
@@ -217,6 +225,7 @@ export function SearchableEntitySelect({
   valueKey,
   getLabel,
   disabled,
+  loading = false,
   placeholder,
   searchPlaceholder,
   noMatchesLabel,
@@ -224,10 +233,11 @@ export function SearchableEntitySelect({
   onViewAll,
 }: SearchableEntitySelectProps) {
   const [open, setOpen] = useState(false);
+  const unavailable = disabled || loading;
   // A field can go from enabled to disabled mid-interaction (e.g. its restrictOptionsBy
-  // selector changes while this panel is open) — force it closed rather than leave an open
-  // panel over a now-disabled trigger.
-  useEffect(() => { if (disabled) setOpen(false); }, [disabled]);
+  // selector changes while this panel is open), or its options can begin loading — force it
+  // closed rather than leave an open panel over a now-disabled trigger.
+  useEffect(() => { if (unavailable) setOpen(false); }, [unavailable]);
 
   const selected = options.find((o) => String(o[valueKey]) === String(value));
 
@@ -245,7 +255,8 @@ export function SearchableEntitySelect({
           id={id}
           aria-label={ariaLabel}
           aria-required={ariaRequired}
-          disabled={disabled}
+          aria-busy={loading || undefined}
+          disabled={unavailable}
           className="nf-input nf-select w-full truncate text-left disabled:cursor-not-allowed disabled:opacity-70"
           style={{
             backgroundColor: "var(--input-bg)",
@@ -253,7 +264,7 @@ export function SearchableEntitySelect({
             borderColor: "var(--input-border)",
           }}
         >
-          {selected ? getLabel(selected) : placeholder}
+          {loading ? "Loading records…" : selected ? getLabel(selected) : placeholder}
         </button>
       )}
     >
@@ -266,6 +277,7 @@ export function SearchableEntitySelect({
         searchPlaceholder={searchPlaceholder}
         noMatchesLabel={noMatchesLabel}
         ariaLabel={ariaLabel}
+        loading={loading}
         onCreate={onCreate}
         onViewAll={onViewAll}
       />
