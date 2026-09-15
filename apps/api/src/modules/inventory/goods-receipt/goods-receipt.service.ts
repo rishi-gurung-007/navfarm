@@ -203,25 +203,32 @@ export class GoodsReceiptService {
     if (dto.external_reference_no !== undefined) updates.external_reference_no = dto.external_reference_no;
     if (dto.remarks !== undefined) updates.remarks = dto.remarks;
 
-    await this.db.update(schema.goodsReceipt).set(updates).where(eq(schema.goodsReceipt.receipt_id, id));
+    // The Edit panel always sends the full `lines` array, so every save
+    // deletes and reinserts them. Unwrapped, a failure mid-insertLines (a bad
+    // item_id, a UOM FK) leaves the header updated and the receipt with zero
+    // lines, which post() then refuses forever — matches create()/post(),
+    // which already run their multi-step writes inside one transaction.
+    return withTenantTransaction(this.cls, async () => {
+      await this.db.update(schema.goodsReceipt).set(updates).where(eq(schema.goodsReceipt.receipt_id, id));
 
-    if (dto.lines) {
-      await this.db.delete(schema.goodsReceiptLine).where(eq(schema.goodsReceiptLine.receipt_id, id));
-      await this.insertLines(id, dto.lines);
-    }
+      if (dto.lines) {
+        await this.db.delete(schema.goodsReceiptLine).where(eq(schema.goodsReceiptLine.receipt_id, id));
+        await this.insertLines(id, dto.lines);
+      }
 
-    await this.auditService.log({
-      tenantId,
-      companyId: receipt.company_id,
-      userId: userPayload?.userId,
-      action: 'UPDATE',
-      entityName: 'goods_receipt',
-      entityId: id,
-      oldValues: receipt,
-      newValues: updates,
+      await this.auditService.log({
+        tenantId,
+        companyId: receipt.company_id,
+        userId: userPayload?.userId,
+        action: 'UPDATE',
+        entityName: 'goods_receipt',
+        entityId: id,
+        oldValues: receipt,
+        newValues: updates,
+      });
+
+      return this.findOne(id);
     });
-
-    return this.findOne(id);
   }
 
   async remove(id: string, tenantId: string, userPayload?: any) {

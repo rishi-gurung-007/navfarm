@@ -166,19 +166,28 @@ export default function GoodsReceiptPanel() {
         }));
       if (cleanLines.length === 0) throw new Error(t("grpAddAtLeastOneLine"));
 
-      const payload = {
-        company_id: companyId,
-        warehouse_id: header.warehouse_id,
-        posting_date: header.posting_date,
-        supplier_id: header.supplier_id || undefined,
-        external_reference_no: header.external_reference_no || undefined,
-        remarks: header.remarks || undefined,
-        lines: cleanLines,
-      };
+      // UpdateGoodsReceiptDto does not declare company_id (it is create-only —
+      // an existing receipt's company cannot change) and the global pipe
+      // rejects any undeclared property, so the PUT payload must omit it.
       if (editingId) {
-        await api.put(`/goods-receipt/${editingId}`, payload);
+        await api.put(`/goods-receipt/${editingId}`, {
+          warehouse_id: header.warehouse_id,
+          posting_date: header.posting_date,
+          supplier_id: header.supplier_id || undefined,
+          external_reference_no: header.external_reference_no || undefined,
+          remarks: header.remarks || undefined,
+          lines: cleanLines,
+        });
       } else {
-        await api.post("/goods-receipt", payload);
+        await api.post("/goods-receipt", {
+          company_id: companyId,
+          warehouse_id: header.warehouse_id,
+          posting_date: header.posting_date,
+          supplier_id: header.supplier_id || undefined,
+          external_reference_no: header.external_reference_no || undefined,
+          remarks: header.remarks || undefined,
+          lines: cleanLines,
+        });
       }
       setModalOpen(false);
       setEditingId(null);

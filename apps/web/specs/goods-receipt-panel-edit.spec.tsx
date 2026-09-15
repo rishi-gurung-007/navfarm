@@ -77,4 +77,25 @@ describe('GoodsReceiptPanel — Edit a DRAFT receipt', () => {
     }));
     expect(post).not.toHaveBeenCalled();
   });
+
+  // C1: UpdateGoodsReceiptDto has no company_id property, and the global
+  // ValidationPipe runs with forbidNonWhitelisted — an extra key is a 400,
+  // not a silently dropped one. `objectContaining` above cannot see an
+  // extra key, so it kept passing while the panel sent one; this asserts
+  // the property set directly and fails against the unfixed panel, which
+  // hard-codes `company_id: companyId` onto the PUT payload.
+  it('never sends company_id on the PUT payload (UpdateGoodsReceiptDto forbids it)', async () => {
+    put.mockResolvedValue({ data: { ...fullDraft, status: 'DRAFT' } });
+    render(<GoodsReceiptPanel />);
+    await screen.findByText('GR-000001');
+
+    fireEvent.click(within(screen.getByText('GR-000001').closest('tr')!).getByTitle('grpEdit'));
+    const dialog = await screen.findByRole('dialog', { name: 'grpEditGoodsReceiptTitle' });
+    await within(dialog).findByDisplayValue('DC-1');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'grpSaveChanges' }));
+
+    await waitFor(() => expect(put).toHaveBeenCalledTimes(1));
+    const sentPayload = put.mock.calls[0][1];
+    expect(Object.keys(sentPayload)).not.toContain('company_id');
+  });
 });

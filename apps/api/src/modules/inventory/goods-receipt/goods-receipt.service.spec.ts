@@ -8,16 +8,28 @@ import { InventoryLedgerService } from '../inventory-ledger/inventory-ledger.ser
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
 import { BadRequestException } from '@nestjs/common';
 import * as schema from '../../../core/database/schema';
+import { plainToInstance } from 'class-transformer';
+import { validate } from 'class-validator';
+import { UpdateGoodsReceiptDto } from './dto/goods-receipt.dto';
 
 describe('GoodsReceiptService', () => {
   let service: GoodsReceiptService;
 
   const mockDbSelect = jest.fn();
   const mockDbUpdate = jest.fn();
+  const mockDbInsert = jest.fn();
+  const mockDbDelete = jest.fn();
+  // Declared up front (not left to transaction-cls's own default) so tests
+  // can assert on it directly — see the I4 "wraps ... in one transaction" spec.
+  let mockDb: Record<string, jest.Mock>;
+  const mockDbTransaction: jest.Mock = jest.fn((work: (tx: any) => Promise<any>) => work(mockDb));
 
-  const mockDb = {
+  mockDb = {
     select: mockDbSelect,
     update: mockDbUpdate,
+    insert: mockDbInsert,
+    delete: mockDbDelete,
+    transaction: mockDbTransaction,
   };
 
   const draftReceipt = {
@@ -219,6 +231,37 @@ describe('GoodsReceiptService', () => {
       rows.set(schema.goodsReceipt, [{ receipt_id: 'gr-1', status: 'DRAFT', company_id: 'co-1', warehouse_id: 'wh-1' }]);
       rows.set(schema.locationMaster, [{ location_id: 'wh-1', is_active: false, deleted_at: null }]);
       await expect(service.post('gr-1', 'tenant-1')).rejects.toThrow('The selected warehouse is inactive.');
+    });
+  });
+
+  // C1: main.ts's global ValidationPipe runs whitelist + forbidNonWhitelisted,
+  // so any property UpdateGoodsReceiptDto does not declare 400s the request
+  // instead of being silently dropped. A unit test that calls service.update()
+  // directly (as the tests above do) never goes through that pipe, so it
+  // cannot see this — hence exercising the DTO itself the same way Nest does.
+  describe('UpdateGoodsReceiptDto whitelist (regression for the edit-panel PUT 400)', () => {
+    it('rejects a payload carrying company_id, the property the edit panel used to send', async () => {
+      const instance = plainToInstance(UpdateGoodsReceiptDto, {
+        company_id: 'co-1',
+        warehouse_id: 'wh-1',
+        posting_date: '2026-09-01',
+        lines: [],
+      });
+      const errors = await validate(instance, { whitelist: true, forbidNonWhitelisted: true });
+      expect(errors.some((e) => e.property === 'company_id')).toBe(true);
+    });
+
+    it('accepts the same payload once company_id is dropped, as the fixed edit panel now sends', async () => {
+      const instance = plainToInstance(UpdateGoodsReceiptDto, {
+        warehouse_id: 'wh-1',
+        posting_date: '2026-09-01',
+        supplier_id: undefined,
+        external_reference_no: undefined,
+        remarks: undefined,
+        lines: [{ item_id: '11111111-1111-1111-1111-111111111111', quantity: 10, uom: 'KG' }],
+      });
+      const errors = await validate(instance, { whitelist: true, forbidNonWhitelisted: true });
+      expect(errors).toHaveLength(0);
     });
   });
 });
