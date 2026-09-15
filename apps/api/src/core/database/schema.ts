@@ -13,6 +13,7 @@ import {
   char,
   json,
   text,
+  tinyint,
   primaryKey,
   foreignKey,
   uniqueIndex,
@@ -2687,8 +2688,22 @@ export const batchDailyData = mysqlTable('batch_daily_data', {
   updated_by: varchar('updated_by', { length: 36 }),
   created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
   updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().notNull(),
+  // Phase 6 (drafts + history): a line/date can now be saved as DRAFT before it is
+  // POSTED, and re-editing a posted entry writes a new row that supersedes the old
+  // one rather than mutating it, so posted history stays intact. `version` counts the
+  // edits in that chain; `target_scope` records what resolveTarget() decided for this
+  // entry (BATCH / STAGE_ANIMALS / SELECTED_ANIMALS — the animal ids themselves live in
+  // batch_daily_data_target).
+  status: varchar('status', { length: 12 }).default('POSTED').notNull(), // DRAFT, POSTED, SUPERSEDED
+  version: int('version').default(1).notNull(),
+  target_scope: varchar('target_scope', { length: 20 }), // BATCH, STAGE_ANIMALS, SELECTED_ANIMALS
+  supersedes_entry_id: varchar('supersedes_entry_id', { length: 36 }), // prior entry_id in the edit chain, if any
+  superseded_at: timestamp('superseded_at', { mode: 'string' }),
+  // Collapses to NULL once a row is SUPERSEDED so the uniqueness below only ever
+  // sees one active row per (line, date) — superseded rows can repeat freely.
+  active_slot: tinyint('active_slot').generatedAlwaysAs(sql`IF(\`status\` = 'SUPERSEDED', NULL, 1)`, { mode: 'stored' }),
 }, (table) => ({
-  uqLineDate: uniqueIndex('uq_batch_daily_data_line_date').on(table.line_id, table.entry_date),
+  uqLineDateActive: uniqueIndex('uq_batch_daily_data_line_date_active').on(table.line_id, table.entry_date, table.active_slot),
 }));
 
 export const notificationAlertLog = mysqlTable('notification_alert_log', {
@@ -3157,6 +3172,32 @@ export const animalRegister = mysqlTable('animal_register', {
   }).onDelete('set null'),
   uqAnimalCode: uniqueIndex('uq_animal_register_tenant_code').on(table.tenant_id, table.animal_code),
   uqRfidTag: uniqueIndex('uq_animal_register_tenant_rfid').on(table.tenant_id, table.rfid_tag),
+}));
+
+/**
+ * Which animals a SELECTED_ANIMALS entry covers (resolveTarget()'s `animalIds`, spec §4).
+ * Only populated when batch_daily_data.target_scope = 'SELECTED_ANIMALS'; a BATCH or
+ * STAGE_ANIMALS entry has no rows here because it targets everything in scope, not a
+ * named list. Deleting the entry cascades here; an animal cannot be deleted while it is
+ * still targeted by a saved entry.
+ */
+export const batchDailyDataTarget = mysqlTable('batch_daily_data_target', {
+  target_id: varchar('target_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  entry_id: varchar('entry_id', { length: 36 }).notNull(),
+  animal_id: varchar('animal_id', { length: 36 }).notNull(),
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+}, (table) => ({
+  entryFk: foreignKey({
+    columns: [table.entry_id],
+    foreignColumns: [batchDailyData.entry_id],
+    name: 'bddt_entry_fk'
+  }).onDelete('cascade'),
+  animalFk: foreignKey({
+    columns: [table.animal_id],
+    foreignColumns: [animalRegister.animal_id],
+    name: 'bddt_animal_fk'
+  }).onDelete('restrict'),
+  uqEntryAnimal: uniqueIndex('uq_batch_daily_data_target_entry_animal').on(table.entry_id, table.animal_id),
 }));
 
 // Purpose-built per-animal medication event log — not derived from the batch-scoped

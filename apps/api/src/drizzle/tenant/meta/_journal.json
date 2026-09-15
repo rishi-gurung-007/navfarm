@@ -666,6 +666,13 @@
       "when": 1789234407180,
       "tag": "0094_breed_code_per_farm",
       "breakpoints": true
+    },
+    {
+      "idx": 95,
+      "version": "5",
+      "when": 1789234408180,
+      "tag": "0095_daily_entry_drafts",
+      "breakpoints": true
     }
   ]
 }
