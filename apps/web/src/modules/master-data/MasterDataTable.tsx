@@ -67,6 +67,21 @@ function entityLabel(row: Row, field: MasterDataField): string {
   return text || row[field.entityValueKey || "id"];
 }
 
+/**
+ * The same label, kept as its separate parts so the open option list can lay
+ * them out as aligned columns — a code column and a name column that line up
+ * down the list instead of one run-on line per row.
+ *
+ * Unlike `entityLabel` an empty value is kept rather than dropped: a row with no
+ * location name must still leave that column empty rather than sliding its farm
+ * name up into the breed column.
+ */
+function entityLabelPartsOf(row: Row, field: MasterDataField): string[] {
+  const keys = field.entityLabelKeys || [];
+  const parts = keys.map((k) => (row[k] === null || row[k] === undefined ? "" : String(row[k])));
+  return parts.some((p) => p !== "") ? parts : [String(entityLabel(row, field) ?? "")];
+}
+
 function parentKeys(f: MasterDataField): string[] {
   if (!f.dependsOn) return [];
   return Array.isArray(f.dependsOn) ? f.dependsOn : [f.dependsOn];
@@ -1316,6 +1331,7 @@ export function MasterDataTable({
                           options={entityOptions[col.entityEndpoint || ""] || []}
                           valueKey={col.entityValueKey || "id"}
                           getLabel={(option) => entityLabel(option, col)}
+                          getLabelParts={(option) => entityLabelPartsOf(option, col)}
                           disabled={readOnly || (isLocked(row) && col.key === req?.key)}
                           loading={!!col.entityEndpoint && entityOptions[col.entityEndpoint] === undefined}
                           placeholder={t("selectPlaceholder")}
@@ -1427,14 +1443,29 @@ export function MasterDataTable({
         </div>
       );
     }
+    // A closed set of values reads the same way a referenced master does: a
+    // search box with the options listed under it. A native <select> in a long
+    // list is the control the client asked us to stop using, and there is no
+    // reason a status or a trigger should behave differently from a location.
+    //
+    // No New / View All here: a static enum has no master behind it to create a
+    // row in. The value written is still the option's own string, exactly as the
+    // native control produced, so nothing downstream of this field changes.
     if (f.type === "select") {
       return (
-        <select {...accessibility} value={value} onChange={(e) => setField(f.key, e.target.value)} className={`${inputCls} nf-select`} style={S.input}>
-          <option value="">{t("selectPlaceholder")}</option>
-          {f.options?.map((o) => (
-            <option key={o.value} value={o.value}>{o.label}</option>
-          ))}
-        </select>
+        <SearchableEntitySelect
+          id={accessibility.id}
+          ariaLabel={accessibility["aria-label"]}
+          ariaRequired={accessibility["aria-required"]}
+          value={String(value ?? "")}
+          onChange={(next) => setField(f.key, next)}
+          options={f.options || []}
+          valueKey="value"
+          getLabel={(o) => String(o.label ?? "")}
+          placeholder={t("selectPlaceholder")}
+          searchPlaceholder={t("searchPlaceholder")}
+          noMatchesLabel={t("mdNoMatches")}
+        />
       );
     }
     if (f.type === "select-entity") {
@@ -1507,6 +1538,7 @@ export function MasterDataTable({
           options={options}
           valueKey={f.entityValueKey || "id"}
           getLabel={(o) => entityLabel(o, f)}
+          getLabelParts={(o) => entityLabelPartsOf(o, f)}
           disabled={disabled || !!f.readOnly}
           loading={!!resolvedEp && loadedOptions === undefined}
           placeholder={placeholderText}
