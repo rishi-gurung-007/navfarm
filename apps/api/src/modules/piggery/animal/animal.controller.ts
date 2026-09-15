@@ -97,7 +97,7 @@ export class AnimalController {
 
   @Get(':id/breeding')
   @RequirePermission('PIGGERY', 'ANIMAL', 'view')
-  @ApiOperation({ summary: "An animal's matings (from either side) and its farrowings" })
+  @ApiOperation({ summary: "An animal's sex-specific breeding history and lifetime traceability events" })
   @ApiParam({ name: 'id', description: 'Animal UUID' })
   async getBreedingHistory(@Param('id') id: string) {
     const result = await this.animalService.getBreedingHistory(id);
@@ -113,5 +113,4 @@ export class AnimalController {
     return { success: true, message: 'Bio-asset ledger entries retrieved.', data: result };
   }
 }
-
 

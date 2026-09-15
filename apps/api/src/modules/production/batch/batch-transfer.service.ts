@@ -311,6 +311,7 @@ export class BatchTransferService {
         eq(schema.locationMaster.company_id, parent.company_id),
         eq(schema.locationMaster.lob_id, parent.lob_id),
         eq(schema.locationMaster.is_active, true),
+        eq(schema.locationMaster.location_type, 'PEN'),
         isNull(schema.locationMaster.deleted_at),
         or(
           eq(schema.locationMaster.location_id, parent.farm_id),
@@ -328,8 +329,30 @@ export class BatchTransferService {
       ))
       .limit(1);
     if (!location) {
-      throw new ForbiddenException('Destination location is not on your active farm.');
+      throw new ForbiddenException('Destination location must be an active Pen on your farm.');
     }
+  }
+
+  /** Registered animals have a physical pen placement; a farm, shed or store is not a valid destination. */
+  private async assertDestinationPen(locationId: string | null, destination: BatchRow, tenantId: string): Promise<void> {
+    if (!locationId || !destination.farm_id) {
+      throw new BadRequestException('A destination Pen is required when moving registered animals.');
+    }
+    const [pen] = await this.db
+      .select({ location_id: schema.locationMaster.location_id })
+      .from(schema.locationMaster)
+      .where(and(
+        eq(schema.locationMaster.location_id, locationId),
+        eq(schema.locationMaster.tenant_id, tenantId),
+        eq(schema.locationMaster.company_id, destination.company_id),
+        eq(schema.locationMaster.lob_id, destination.lob_id),
+        eq(schema.locationMaster.farm_id, destination.farm_id),
+        eq(schema.locationMaster.location_type, 'PEN'),
+        eq(schema.locationMaster.is_active, true),
+        isNull(schema.locationMaster.deleted_at),
+      ))
+      .limit(1);
+    if (!pen) throw new BadRequestException('Animals can only be transferred to an active Pen.');
   }
 
   /**
@@ -370,6 +393,8 @@ export class BatchTransferService {
         lobId: destination.lob_id,
       }, dto.to_location_id, 'Destination location');
     }
+    const destinationLocationId = dto.to_location_id || destination.sub_location_id || destination.location_id || null;
+    await this.assertDestinationPen(destinationLocationId, destination, tenantId);
 
     const transferType = dto.transfer_type || (dto.animal_ids?.length ? 'PARTIAL' : 'FULL_BATCH');
     const pool = await this.listTransferableAnimalsFromAuthorizedBatch(fromBatchId, tenantId);
@@ -414,7 +439,7 @@ export class BatchTransferService {
       line_no: idx + 1,
       animal_id: a.animal_id,
       from_location_id: a.current_location_id || source.sub_location_id || source.location_id || null,
-      to_location_id: dto.to_location_id || destination.sub_location_id || destination.location_id || null,
+      to_location_id: destinationLocationId,
       book_value: valueOf(a).toFixed(4),
       remarks: null as string | null,
     }));
@@ -705,6 +730,7 @@ export class BatchTransferService {
     const headCount = animalIds.length;
     const totalValue = transfer.lines.reduce((sum, l) => sum + Number(l.book_value), 0);
     const toLocationId = transfer.lines[0]?.to_location_id || null;
+    await this.assertDestinationPen(toLocationId, destBatch, tenantId);
 
     // Guard against the pool shifting between draft and post (an animal that
     // died or was sold in the meantime).

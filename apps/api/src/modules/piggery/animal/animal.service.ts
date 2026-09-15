@@ -3,7 +3,7 @@ import { masterScopeConditions } from '../../../common/master-data-scope';
 import { farmScope, animalScopeConditions, batchScopeConditions, assertCompanyInScope, assertLobInScope, locationReferenceScopeConditions } from '../../../common/farm-scope';
 import { Injectable, NotFoundException, ConflictException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, or, like, desc, sql, isNull } from 'drizzle-orm';
+import { eq, and, or, like, desc, sql, isNull, inArray } from 'drizzle-orm';
 import { aliasedTable } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
@@ -262,6 +262,9 @@ export class AnimalService {
         .limit(1);
       if (!location) {
         throw new NotFoundException(`Current Location with ID '${animal.current_location_id}' not found.`);
+      }
+      if (location.location_type !== 'PEN') {
+        throw new BadRequestException('Animals can only be placed in a Pen.');
       }
       locationFarmId = location.parent_location_id === null ? location.location_id : location.farm_id;
       if (!locationFarmId) {
@@ -1049,15 +1052,103 @@ export class AnimalService {
       ))
       .orderBy(desc(schema.breedingRecord.mating_date));
 
-    // Farrowings hang off the sow only — a boar's litters are reachable through
-    // his matings, which the caller already has.
+    const breedingIds = matings.map((m) => m.breeding_id);
+    // A female owns her farrowing rows directly. A male reaches the resulting
+    // litter through the breeding_id of the service in which he was the sire.
+    // This keeps the panel sex-specific without hiding the outcome of a boar's
+    // mating after the sow farrows.
     const farrowings = await this.db
       .select()
       .from(schema.farrowingRecord)
-      .where(eq(schema.farrowingRecord.sow_animal_id, animalId))
+      .where(animal.gender === 'M'
+        ? (breedingIds.length ? inArray(schema.farrowingRecord.breeding_id, breedingIds) : sql`false`)
+        : eq(schema.farrowingRecord.sow_animal_id, animalId))
       .orderBy(desc(schema.farrowingRecord.farrowing_date));
 
-    return { animal_code: animal.animal_code, animal_type: animal.animal_type, matings, farrowings };
+    const auditMovements = await this.db
+      .select({
+        action: schema.auditLog.action,
+        old_values: schema.auditLog.old_values,
+        new_values: schema.auditLog.new_values,
+        occurred_at: schema.auditLog.created_at,
+      })
+      .from(schema.auditLog)
+      .where(and(
+        eq(schema.auditLog.tenant_id, animal.tenant_id),
+        eq(schema.auditLog.entity_name, 'animal_register'),
+        eq(schema.auditLog.entity_id, animalId),
+      ))
+      .orderBy(desc(schema.auditLog.created_at));
+
+    const jsonObject = (value: unknown): Record<string, unknown> => {
+      if (!value) return {};
+      if (typeof value === 'string') {
+        try { return JSON.parse(value) as Record<string, unknown>; } catch { return {}; }
+      }
+      return typeof value === 'object' ? value as Record<string, unknown> : {};
+    };
+    const referencedIds = (key: string) => [...new Set(auditMovements.flatMap((movement) => {
+      const oldId = jsonObject(movement.old_values)[key];
+      const newId = jsonObject(movement.new_values)[key];
+      return [oldId, newId].filter((id): id is string => typeof id === 'string' && id.length > 0);
+    }))];
+    const stageIds = referencedIds('current_stage_id');
+    const batchIds = referencedIds('current_batch_id');
+    const locationIds = referencedIds('current_location_id');
+    const [stageLabels, batchLabels, locationLabels] = await Promise.all([
+      stageIds.length
+        ? this.db.select({ id: schema.stageMaster.stage_id, label: schema.stageMaster.stage_name }).from(schema.stageMaster).where(inArray(schema.stageMaster.stage_id, stageIds))
+        : [],
+      batchIds.length
+        ? this.db.select({ id: schema.batchHeader.batch_id, label: schema.batchHeader.batch_no }).from(schema.batchHeader).where(inArray(schema.batchHeader.batch_id, batchIds))
+        : [],
+      locationIds.length
+        ? this.db.select({ id: schema.locationMaster.location_id, label: schema.locationMaster.location_code }).from(schema.locationMaster).where(inArray(schema.locationMaster.location_id, locationIds))
+        : [],
+    ]);
+
+    const fromBatch = aliasedTable(schema.batchHeader, 'from_batch');
+    const toBatch = aliasedTable(schema.batchHeader, 'to_batch');
+    const fromPen = aliasedTable(schema.locationMaster, 'from_pen');
+    const toPen = aliasedTable(schema.locationMaster, 'to_pen');
+    const transfers = await this.db
+      .select({
+        transfer_id: schema.batchTransfer.transfer_id,
+        transfer_no: schema.batchTransfer.transfer_no,
+        transfer_date: schema.batchTransfer.transfer_date,
+        reason: schema.batchTransfer.reason,
+        remarks: schema.batchTransferLine.remarks,
+        from_batch_no: fromBatch.batch_no,
+        to_batch_no: toBatch.batch_no,
+        from_pen_code: fromPen.location_code,
+        to_pen_code: toPen.location_code,
+      })
+      .from(schema.batchTransferLine)
+      .innerJoin(schema.batchTransfer, eq(schema.batchTransfer.transfer_id, schema.batchTransferLine.transfer_id))
+      .leftJoin(fromBatch, eq(fromBatch.batch_id, schema.batchTransfer.from_batch_id))
+      .leftJoin(toBatch, eq(toBatch.batch_id, schema.batchTransfer.to_batch_id))
+      .leftJoin(fromPen, eq(fromPen.location_id, schema.batchTransferLine.from_location_id))
+      .leftJoin(toPen, eq(toPen.location_id, schema.batchTransferLine.to_location_id))
+      .where(and(
+        eq(schema.batchTransferLine.animal_id, animalId),
+        eq(schema.batchTransfer.status, 'POSTED'),
+      ))
+      .orderBy(desc(schema.batchTransfer.transfer_date));
+
+    return {
+      animal_code: animal.animal_code,
+      animal_type: animal.animal_type,
+      gender: animal.gender,
+      matings,
+      farrowings,
+      movements: auditMovements,
+      transfers,
+      traceability_labels: {
+        stages: Object.fromEntries(stageLabels.map((value) => [value.id, value.label])),
+        batches: Object.fromEntries(batchLabels.map((value) => [value.id, value.label])),
+        locations: Object.fromEntries(locationLabels.map((value) => [value.id, value.label])),
+      },
+    };
   }
 
   async getBioAssetLedger(animalId: string) {
