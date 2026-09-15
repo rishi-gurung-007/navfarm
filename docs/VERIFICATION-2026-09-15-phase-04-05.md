@@ -14,9 +14,9 @@ API bundle rebuilt from the commit under test and restarted by exact PID.
 | # | Item | Result | Evidence |
 |---|---|---|---|
 | 1 | Scheduler header + lines in one transaction | Not live-probed | Unit tests only; rollback proven by mocks. Live probe owed |
-| 2 | `DELETE /scheduler-header/:id` for unused schedulers | Not live-probed | Unit tests only |
+| 2 | `DELETE /scheduler-header/:id` for unused schedulers | **Verified** | Deleted a scheduler with no entries: header and all 4 lines gone (both counts 0). Deleted one that has a recorded entry: 409 `This scheduler has recorded entries and cannot be deleted.`, header and its 3 lines intact |
 | 3 | `MONTHLY` and `CUSTOM` due-date rules | Not live-probed | Unit tests only, incl. the 31st in a 30-day month |
-| 4 | Create a scheduler through the UI | **Owed** | Needs the browser pass |
+| 4 | Create a scheduler through the UI | **Verified** | Create Scheduler modal at 1440px, batch PIG-BAT-2026-0003, stage Quarantine, count 2 → MySQL row `e3cba572` DRAFT with 4 auto-generated lines, notes carried. Deleted again afterwards. The stage list renders "Gestation (116 days)", so item 11 is visible on screen |
 | 5 | "Forgot password" reworded; MFA hidden | Not live-probed | Component test asserts no network call |
 | 6 | Sort and filter on UOM Conversions | **Verified** | `sort=conversion_code&dir=asc` → CONV-001..005; `dir=desc` → CONV-007..003; `total` 7 both ways |
 | 6 | Sort and filter on Breed Lifecycle Stages | **Verified** | `sort=lifecycle_code` asc → DUROC-BOAR_AI-001 first, desc → YORKSHIRE-WEANING-001 first; `search=Farrow` → 4 with matching total; `search=Yorkshire` → 9 |
@@ -37,12 +37,40 @@ API bundle rebuilt from the commit under test and restarted by exact PID.
 Every item is implemented and unit-tested; **none has had its browser pass**,
 which is what this phase's gate actually requires.
 
+The browser pass has now been done, at 1440px, 834px and 390px, as a tenant admin.
+It found three defects that no unit test could have caught. **The API is correct in
+all three cases** — every one is in the web layer.
+
 | # | Item | Result |
 |---|---|---|
 | 1 | `api-client` sends `x-active-farm-id` for admins, never for a standard user | Component test only |
-| 2 | Switcher: fixed farm label for a standard user, picker + "All farms" for admins | No component test; browser pass owed |
-| 3 | Data entry shows "Recording for: &lt;farm&gt;" | No component test; browser pass owed |
+| 2 | Switcher: fixed farm label for a standard user, picker + "All farms" for admins | **Renders**, but see F1-F3 below |
+| 3 | Data entry shows "Recording for: &lt;farm&gt;" | **Verified** — "Recording for: MUL100 — GRASMERE FARM NORTON" renders on `/batches/entry` at all three widths and wraps legibly at 390px |
 | 4 | Entry always has an explicit farm | Enforced by the Phase 1 farm scope, proved there |
+
+### Defects the browser pass found
+
+**F1 — the farm picker offers a farm that cannot be selected.** The Farms list
+includes `FARM-001` "Triple C Farm", whose `location_master.is_active` is 0.
+Phase 1 requires `x-active-farm-id` to name an *active* top-level location, and
+the API enforces it: `GET /batch` with that farm answers
+`403 Not authorized for this farm.` The control with active `MUL100` answers 200
+with one batch. So the picker offers a choice that is guaranteed to fail.
+
+**F2 — the resulting 403 is swallowed.** After picking that farm the dashboard
+renders 0 Active Herd, 0 Batches In View, 0 WIP and "No batches recorded yet."
+rather than surfacing the refusal. A user reads that as "my data is gone", not
+"wrong farm" — the opposite of what this project means by a screen that does not
+pretend.
+
+**F3 — the active farm is never named.** After selecting a farm the collapsed
+switcher still reads "AREA · PIGGERY / Piggery / Triple C Farm Operations". There
+is no indication of which farm is in scope and no visible way back; "All farms" is
+something the user has to know to look for.
+
+A fourth, found by the wave review rather than the browser: switching company
+leaves `active_farm_id` pointing at the previous company's farm, after which every
+farm-scoped request 403s with nothing on screen explaining why.
 
 ## Suite and gate state at the time of writing
 
@@ -57,14 +85,18 @@ which is what this phase's gate actually requires.
 
 ## What is NOT verified
 
-- Every row above marked "Not live-probed" or "Owed".
-- The whole of Phase 5 in a browser, at 1440px, 834px and 390px.
-- Creating a scheduler through the UI (Phase 4 item 4).
+- Every row above still marked "Not live-probed".
 - Seed placeholder cleanup in MySQL — the scripts are clean, the database is
   not, and will not be until the Phase 3 rebuild runs.
+- A standard user's fixed-farm label in the switcher: the pass was run as a
+  tenant admin, and the standard-user path has only its component test.
 
-Neither phase should be called closed until the browser pass is done and the
-"Not live-probed" rows above are either probed or consciously accepted.
+**Phase 4** is otherwise done: its last unproved item, the inventory journal, is
+verified above, and items 2 and 4 were proved live during the browser pass.
+
+**Phase 5 is not closed.** F1, F2 and F3 are open defects in the work this phase
+delivered, and the phase cannot be called done while its own switcher offers a
+farm that 403s and hides the refusal when it happens.
 
 ## Demo rows this verification created
 
