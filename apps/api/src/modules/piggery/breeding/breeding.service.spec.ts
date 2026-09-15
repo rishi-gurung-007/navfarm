@@ -58,6 +58,7 @@ describe('BreedingService', () => {
     rows.set(schema.breedingRecord, []);
     rows.set(schema.farrowingRecord, []);
     rows.set(schema.semenBatch, []);
+    rows.set(schema.breedMaster, []);
 
     mockDbSelect.mockReset();
     mockDbInsert.mockReset();
@@ -106,8 +107,8 @@ describe('BreedingService', () => {
       ).rejects.toThrow(BadRequestException);
     });
 
-    it('auto-computes 114 days expected farrowing date and 28 days preg check date', async () => {
-      rows.set(schema.animalRegister, [{ animal_id: 'sow-1', company_id: 'comp-1', parity_count: 1 }]);
+    it('defaults to 116 days expected farrowing date when the sow has no breed, and 28 days preg check date', async () => {
+      rows.set(schema.animalRegister, [{ animal_id: 'sow-1', company_id: 'comp-1', parity_count: 1, breed_id: null }]);
       // The lot is validated against the sow's company and the boar's farm scope (M4).
       rows.set(schema.semenBatch, [{ semen_batch_id: 'SEM-LOT-01' }]);
 
@@ -121,10 +122,24 @@ describe('BreedingService', () => {
         'tenant-1',
       );
 
-      expect(result.expected_farrowing_date).toBe('2026-06-23'); // 2026-03-01 + 114 days
+      expect(result.expected_farrowing_date).toBe('2026-06-25'); // 2026-03-01 + 116 days (BBP §1.7 default)
       expect(result.preg_check_date).toBe('2026-03-29'); // 2026-03-01 + 28 days
       expect(result.parity_number).toBe(2);
       expect(result.conception_result).toBe(ConceptionResult.PENDING);
+    });
+
+    // Without the fix, recordMating always added 114 days regardless of the
+    // sow's own breed — this is the write that decided 2026-09-14/15 replaced.
+    it("uses the sow's breed gestation_days over the 116-day default", async () => {
+      rows.set(schema.animalRegister, [{ animal_id: 'sow-1', company_id: 'comp-1', parity_count: 1, breed_id: 'breed-large-white' }]);
+      rows.set(schema.breedMaster, [{ breed_id: 'breed-large-white', gestation_days: 113 }]);
+
+      const result = await service.recordMating(
+        { sow_animal_id: 'sow-1', mating_type: MatingType.AI, mating_date: '2026-03-01' },
+        'tenant-1',
+      );
+
+      expect(result.expected_farrowing_date).toBe('2026-06-22'); // 2026-03-01 + 113 days, from the breed
     });
   });
 
@@ -176,6 +191,44 @@ describe('BreedingService', () => {
       expect(result.piglets_born_live).toBe(12);
       expect(result.total_litter_weight_kg).toBe('17.4'); // 12 * 1.45
       expect(result.parity_number).toBe(3);
+    });
+
+    // Without the fix, a GILT's first farrowing left animal_type untouched —
+    // she stayed a GILT forever, including on every later farrowing.
+    it('promotes a GILT to SOW on her first farrowing', async () => {
+      rows.set(schema.animalRegister, [{
+        animal_id: 'gilt-1',
+        company_id: 'comp-1',
+        animal_type: 'GILT',
+        parity_count: 0,
+        total_piglets_born_live: 0,
+      }]);
+
+      await service.recordFarrowing(
+        { sow_animal_id: 'gilt-1', farrowing_date: '2026-06-23', piglets_born_live: 10 },
+        'tenant-1',
+      );
+
+      const setArgs = mockDbUpdate.mock.results[0].value.set.mock.calls[0][0];
+      expect(setArgs.animal_type).toBe('SOW');
+    });
+
+    it('leaves an already-SOW animal_type alone on a later farrowing', async () => {
+      rows.set(schema.animalRegister, [{
+        animal_id: 'sow-1',
+        company_id: 'comp-1',
+        animal_type: 'SOW',
+        parity_count: 1,
+        total_piglets_born_live: 12,
+      }]);
+
+      await service.recordFarrowing(
+        { sow_animal_id: 'sow-1', farrowing_date: '2026-06-23', piglets_born_live: 10 },
+        'tenant-1',
+      );
+
+      const setArgs = mockDbUpdate.mock.results[0].value.set.mock.calls[0][0];
+      expect(setArgs.animal_type).toBeUndefined();
     });
   });
 

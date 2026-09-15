@@ -72,6 +72,16 @@ export class SchedulerHeaderController {
     return { success: true, message: 'Scheduler retrieved.', data: result };
   }
 
+  @Delete(':id')
+  @RequirePermission('PRODUCTION', 'BATCH_SCHEDULE', 'delete')
+  @ApiOperation({ summary: 'Delete an unused scheduler (refused with 409 if any of its lines has a recorded entry)' })
+  @ApiParam({ name: 'id', description: 'Scheduler UUID' })
+  async remove(@Param('id') id: string, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const result = await this.schedulerHeaderService.deleteHeader(id, tenantId, req.user);
+    return { success: true, message: 'Scheduler deleted successfully.', data: result };
+  }
+
   @Put(':id/status')
   @RequirePermission('PRODUCTION', 'BATCH_SCHEDULE', 'edit')
   @ApiOperation({ summary: 'Transition scheduler_status (DRAFT -> ACTIVE requires the calling user as approver)' })

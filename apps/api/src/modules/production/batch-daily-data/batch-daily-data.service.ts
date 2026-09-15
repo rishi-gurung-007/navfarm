@@ -63,6 +63,7 @@ export class BatchDailyDataService {
 
     const lines = await this.db.select().from(schema.schedulerLine)
       .where(inArray(schema.schedulerLine.scheduler_id, headers.map((h) => h.scheduler_id)));
+    const customDaysByLine = await this.loadCustomDays(lines.map((l) => l.line_id));
 
     const entered = new Set((await this.db.select({ line_id: schema.batchDailyData.line_id })
       .from(schema.batchDailyData)
@@ -71,17 +72,28 @@ export class BatchDailyDataService {
         eq(schema.batchDailyData.entry_date, date),
       ))).map((r) => r.line_id as string));
 
+    // A REGISTERED batch's animals move stage-by-stage, so the scheduler's own
+    // animal_count (a snapshot from whenever the stage started) drifts from
+    // reality; the live animal_register count is what "how many are here now"
+    // actually means for that kind of batch. A COUNT_ONLY batch has no register
+    // rows to re-derive from, so its scheduler figure is still all there is.
+    const perStageAnimals = batch.animal_tracking === 'REGISTERED'
+      ? await this.liveStageAnimalCounts(batchId)
+      : new Map<string, number>();
+
     // Per scheduler, because each has its own start date.
     const stages: (StageDayStatus & { animal_count: number | null; scheduler_id: string })[] = [];
     for (const header of headers) {
-      const own = lines.filter((l) => l.scheduler_id === header.scheduler_id).map(this.toDueLine);
+      const own = lines.filter((l) => l.scheduler_id === header.scheduler_id).map((l) => this.toDueLine(l, customDaysByLine));
       const from = String(header.effective_from).slice(0, 10);
       for (const status of stageDayStatus(own, from, date, entered)) {
+        const sid = status.stage_id ?? header.stage_id;
         stages.push({
           ...status,
-          stage_id: status.stage_id ?? header.stage_id,
+          stage_id: sid,
           // decimal(14,4) reaches here as a string; a headcount is a number.
-          animal_count: header.animal_count == null ? null : Number(header.animal_count),
+          animal_count: (sid && perStageAnimals.get(sid))
+            ?? (header.animal_count == null ? null : Number(header.animal_count)),
           scheduler_id: header.scheduler_id,
         });
       }
@@ -113,6 +125,7 @@ export class BatchDailyDataService {
 
     const lines = await this.db.select().from(schema.schedulerLine)
       .where(inArray(schema.schedulerLine.scheduler_id, headers.map((h) => h.scheduler_id)));
+    const customDaysByLine = await this.loadCustomDays(lines.map((l) => l.line_id));
 
     const rows = await this.db.select({
       line_id: schema.batchDailyData.line_id, entry_date: schema.batchDailyData.entry_date,
@@ -128,7 +141,7 @@ export class BatchDailyDataService {
     const batchStart = String(batch.start_date).slice(0, 10);
     const all = new Set<string>();
     for (const header of headers) {
-      const own = lines.filter((l) => l.scheduler_id === header.scheduler_id).map(this.toDueLine);
+      const own = lines.filter((l) => l.scheduler_id === header.scheduler_id).map((l) => this.toDueLine(l, customDaysByLine));
       const from = String(header.effective_from).slice(0, 10);
       for (const d of pendingDays(own, from, batchStart, upToDate, enteredByDate)) all.add(d);
     }
@@ -172,6 +185,7 @@ export class BatchDailyDataService {
     const schedulerIds = headers.map((h) => h.scheduler_id);
     const lines = await this.db.select().from(schema.schedulerLine)
       .where(and(inArray(schema.schedulerLine.scheduler_id, schedulerIds), eq(schema.schedulerLine.is_active, true)));
+    const customDaysByLine = await this.loadCustomDays(lines.map((l) => l.line_id));
 
     const entries = await this.findForDate(batchId, date, tenantId);
     const enteredIds = new Set(entries.map((e) => e.line_id as string));
@@ -179,18 +193,9 @@ export class BatchDailyDataService {
     // A batch that registers its animals can have them spread across stages, so
     // the count beside a stage is the animals actually standing in it. A count-
     // only batch moves as one, and the scheduler's own figure is all there is.
-    const perStageAnimals = new Map<string, number>();
-    if (batch.animal_tracking === 'REGISTERED') {
-      const counted = await this.db
-        .select({ stage_id: schema.animalRegister.current_stage_id, n: sql<number>`count(*)` })
-        .from(schema.animalRegister)
-        .where(and(
-          eq(schema.animalRegister.current_batch_id, batchId),
-          eq(schema.animalRegister.is_active, true),
-        ))
-        .groupBy(schema.animalRegister.current_stage_id);
-      for (const row of counted) if (row.stage_id) perStageAnimals.set(row.stage_id, Number(row.n));
-    }
+    const perStageAnimals = batch.animal_tracking === 'REGISTERED'
+      ? await this.liveStageAnimalCounts(batchId)
+      : new Map<string, number>();
 
     const backlog = mayEditAnyDay
       ? []
@@ -213,7 +218,7 @@ export class BatchDailyDataService {
     /* ── The stage strip ─────────────────────────────────────────────────── */
     const stages: any[] = [];
     for (const header of headers) {
-      const own = lines.filter((l) => l.scheduler_id === header.scheduler_id).map(this.toDueLine);
+      const own = lines.filter((l) => l.scheduler_id === header.scheduler_id).map((l) => this.toDueLine(l, customDaysByLine));
       const from = String(header.effective_from).slice(0, 10);
       for (const status of stageDayStatus(own, from, date, enteredIds)) {
         const sid = status.stage_id ?? header.stage_id;
@@ -261,7 +266,7 @@ export class BatchDailyDataService {
       if (!header) return false;
       const sid = l.stage_id ?? header.stage_id;
       if (chosen && sid !== chosen) return false;
-      return isLineDue(this.toDueLine(l), String(header.effective_from).slice(0, 10), date);
+      return isLineDue(this.toDueLine(l, customDaysByLine), String(header.effective_from).slice(0, 10), date);
     });
 
     const itemIds = [...new Set(dueLines.map((l) => l.item_id).filter(Boolean) as string[])];
@@ -521,7 +526,7 @@ export class BatchDailyDataService {
     };
   }
 
-  private toDueLine = (l: typeof schema.schedulerLine.$inferSelect): DueLine => ({
+  private toDueLine = (l: typeof schema.schedulerLine.$inferSelect, customDaysByLine?: Map<string, number[]>): DueLine => ({
     line_id: l.line_id,
     stage_id: l.stage_id ?? null,
     occurrence: l.occurrence ?? null,
@@ -529,7 +534,43 @@ export class BatchDailyDataService {
     end_day: l.end_day ?? null,
     day_of_week: l.day_of_week ?? null,
     is_mandatory: !!l.is_mandatory,
+    custom_days: customDaysByLine?.get(l.line_id) ?? null,
   });
+
+  /** scheduler_line_custom_days for a set of lines, keyed by line_id — CUSTOM
+   * occurrence's day list, day 1 = the header's own effective_from. */
+  private async loadCustomDays(lineIds: string[]): Promise<Map<string, number[]>> {
+    const map = new Map<string, number[]>();
+    if (!lineIds.length) return map;
+    const rows = await this.db
+      .select({ line_id: schema.schedulerLineCustomDays.line_id, day_number: schema.schedulerLineCustomDays.day_number })
+      .from(schema.schedulerLineCustomDays)
+      .where(inArray(schema.schedulerLineCustomDays.line_id, lineIds));
+    for (const r of rows) {
+      const list = map.get(r.line_id);
+      if (list) list.push(r.day_number);
+      else map.set(r.line_id, [r.day_number]);
+    }
+    return map;
+  }
+
+  /** The live count of active animals actually standing in each stage, for a
+   * REGISTERED-tracking batch — the same query entryForm() uses, so the
+   * Registered day status and the entry screen never disagree on "how many".
+   */
+  private async liveStageAnimalCounts(batchId: string): Promise<Map<string, number>> {
+    const perStageAnimals = new Map<string, number>();
+    const counted = await this.db
+      .select({ stage_id: schema.animalRegister.current_stage_id, n: sql<number>`count(*)` })
+      .from(schema.animalRegister)
+      .where(and(
+        eq(schema.animalRegister.current_batch_id, batchId),
+        eq(schema.animalRegister.is_active, true),
+      ))
+      .groupBy(schema.animalRegister.current_stage_id);
+    for (const row of counted) if (row.stage_id) perStageAnimals.set(row.stage_id, Number(row.n));
+    return perStageAnimals;
+  }
 
 
   /**

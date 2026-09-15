@@ -47,6 +47,7 @@ describe('BatchDailyDataService', () => {
       limit: () => self,
       for: () => self,
       orderBy: () => self,
+      groupBy: () => self,
       innerJoin: () => self,
       leftJoin: () => self,
       then: (ok: any, err: any) => Promise.resolve(result).then(ok, err),
@@ -196,6 +197,46 @@ describe('BatchDailyDataService', () => {
       'tenant-123',
       { userId: 'user-1' },
     );
+  });
+
+  describe('dayStatus', () => {
+    // Item 6: a REGISTERED batch's animals move stage-by-stage, so
+    // scheduler_header.animal_count (set once when the stage started) goes
+    // stale the moment anything transfers. Without the fix dayStatus always
+    // reported that stale header snapshot, same as a COUNT_ONLY batch.
+    it("reports the live animal_register count per stage for a REGISTERED batch, not the scheduler's own snapshot", async () => {
+      rows.set(schema.batchHeader, [{ batch_id: 'batch-1', tenant_id: 'tenant-123', start_date: ENTRY_DATE, animal_tracking: 'REGISTERED' }]);
+      line(); // default: stage_id 'stage-1', scheduler animal_count '40'
+      // The mock db doesn't run a real GROUP BY — set the already-grouped shape
+      // liveStageAnimalCounts()'s select({stage_id, n}) reads back.
+      rows.set(schema.animalRegister, [{ stage_id: 'stage-1', n: 12 }]);
+
+      const result = await service.dayStatus('batch-1', ENTRY_DATE, 'tenant-123');
+
+      expect(result.stages[0].animal_count).toBe(12); // live count, not the header's '40'
+    });
+
+    it('falls back to the scheduler snapshot for a COUNT_ONLY batch', async () => {
+      line();
+
+      const result = await service.dayStatus('batch-1', ENTRY_DATE, 'tenant-123');
+
+      expect(result.stages[0].animal_count).toBe(40); // header.animal_count — no animal_register rows to re-derive from
+    });
+
+    // Item 3: MONTHLY/CUSTOM wiring — day-completeness.spec.ts covers the pure
+    // rule; this covers that batch-daily-data.service actually loads
+    // scheduler_line_custom_days and hands it to isLineDue.
+    it('treats a CUSTOM-occurrence line as due only on its scheduler_line_custom_days entries', async () => {
+      line({ occurrence: 'CUSTOM', start_day: 1, end_day: null });
+      rows.set(schema.schedulerLineCustomDays, [{ line_id: 'line-1', day_number: 5 }]);
+
+      const notDue = await service.dayStatus('batch-1', ENTRY_DATE, 'tenant-123'); // day 1 of the scheduler
+      expect(notDue.stages).toEqual([]);
+
+      const due = await service.dayStatus('batch-1', '2026-09-12', 'tenant-123'); // effective_from + 4 = day 5
+      expect(due.stages[0].due).toBe(1);
+    });
   });
 
   describe('TRANSFER lines', () => {

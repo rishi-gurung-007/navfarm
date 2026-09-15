@@ -54,8 +54,39 @@ describe('isLineDue', () => {
     expect(isLineDue(line({ occurrence: 'FORTNIGHTLY' }), FROM, '2026-09-04')).toBe(true);
   });
 
-  it('leaves CUSTOM to its own day list rather than guessing', () => {
+  it('leaves CUSTOM to its own day list rather than guessing when no days are resolved', () => {
     expect(isLineDue(line({ occurrence: 'CUSTOM' }), FROM, '2026-09-04')).toBe(false);
+    expect(isLineDue(line({ occurrence: 'CUSTOM', custom_days: [] }), FROM, '2026-09-04')).toBe(false);
+  });
+
+  it('CUSTOM comes due only on its listed days', () => {
+    const l = line({ occurrence: 'CUSTOM', custom_days: [1, 8, 22] });
+    expect(isLineDue(l, FROM, '2026-09-01')).toBe(true);  // day 1
+    expect(isLineDue(l, FROM, '2026-09-08')).toBe(true);  // day 8
+    expect(isLineDue(l, FROM, '2026-09-22')).toBe(true);  // day 22
+    expect(isLineDue(l, FROM, '2026-09-02')).toBe(false); // day 2 — not listed
+    expect(isLineDue(l, FROM, '2026-09-09')).toBe(false); // day 9 — not listed
+  });
+
+  // FROM = 2026-09-01, so MONTHLY is due on the 1st of every month.
+  it('MONTHLY comes due on the same day-of-month the scheduler started', () => {
+    const l = line({ occurrence: 'MONTHLY' });
+    expect(isLineDue(l, FROM, '2026-09-01')).toBe(true);
+    expect(isLineDue(l, FROM, '2026-09-02')).toBe(false);
+    expect(isLineDue(l, FROM, '2026-10-01')).toBe(true);
+    expect(isLineDue(l, FROM, '2026-11-01')).toBe(true);
+  });
+
+  // A scheduler that started on the 31st has no 31st in a 30-day month (or
+  // February) — it falls back to that month's own last day rather than
+  // silently skipping the month.
+  it('MONTHLY falls back to the month\'s last day when the started-on day does not exist', () => {
+    const startedOn31st = '2026-08-31';
+    const l = line({ occurrence: 'MONTHLY', start_day: 1 });
+    expect(isLineDue(l, startedOn31st, '2026-08-31')).toBe(true);  // day 1, the 31st itself
+    expect(isLineDue(l, startedOn31st, '2026-09-30')).toBe(true);  // September has no 31st -> last day
+    expect(isLineDue(l, startedOn31st, '2026-09-29')).toBe(false);
+    expect(isLineDue(l, startedOn31st, '2026-10-31')).toBe(true); // October has a 31st again
   });
 });
 

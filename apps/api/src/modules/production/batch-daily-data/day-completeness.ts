@@ -21,6 +21,10 @@ export interface DueLine {
   end_day: number | null;
   day_of_week: number | null;
   is_mandatory: boolean;
+  /** scheduler_line_custom_days.day_number for this line, when occurrence is
+   * CUSTOM — day 1 = the scheduler's own effective_from, same convention as
+   * start_day/end_day. Absent/empty means "not resolved", not "every day". */
+  custom_days?: number[] | null;
 }
 
 /**
@@ -48,6 +52,17 @@ export function weekdayOf(date: string): number {
   return js === 0 ? 7 : js;
 }
 
+/** Calendar day-of-month for a YYYY-MM-DD string. */
+function dayOfMonth(date: string): number {
+  return Number(date.slice(8, 10));
+}
+
+/** Days in the given date string's month — day 0 of the next month is the last day of this one. */
+function daysInMonth(date: string): number {
+  const [y, m] = date.slice(0, 10).split('-').map(Number);
+  return new Date(Date.UTC(y, m, 0)).getUTCDate();
+}
+
 /**
  * Whether one line falls due on `date`.
  *
@@ -69,11 +84,18 @@ export function isLineDue(line: DueLine, effectiveFrom: string, date: string): b
       // Without a stated weekday, fall back to the weekday the line started on,
       // so a weekly line still recurs rather than never coming due.
       return weekdayOf(date) === (line.day_of_week ?? weekdayOf(effectiveFrom));
+    case 'MONTHLY': {
+      // Same day-of-month as the scheduler's own effective_from — e.g. started
+      // on the 31st, due on the 31st. A month too short for that day falls
+      // back to its own last day rather than skipping the month entirely.
+      const wantDay = Math.min(dayOfMonth(effectiveFrom), daysInMonth(date));
+      return dayOfMonth(date) === wantDay;
+    }
     case 'CUSTOM':
       // Custom days live in scheduler_line_custom_days; a line whose custom set
       // has not been resolved is not due, because guessing a schedule is worse
       // than showing none.
-      return false;
+      return (line.custom_days ?? []).includes(day);
     default:
       return true;
   }

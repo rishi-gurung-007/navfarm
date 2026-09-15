@@ -126,8 +126,18 @@ export class BreedingService {
       if (!lot) throw new NotFoundException(`Semen lot with ID '${dto.semen_lot_id}' not found.`);
     }
 
-    // Swine standard gestation: 114 days (3 months, 3 weeks, 3 days)
-    const expectedFarrowingDate = dto.expected_farrowing_date || addDaysToDate(dto.mating_date, 114);
+    // Gestation length is the sow's own breed (BBP §1.7, TDD row 52, decided
+    // 2026-09-14/15) — 116 days only when the breed row doesn't carry one.
+    let gestationDays = 116;
+    if (sow.breed_id) {
+      const [breed] = await this.db
+        .select({ gestation_days: schema.breedMaster.gestation_days })
+        .from(schema.breedMaster)
+        .where(eq(schema.breedMaster.breed_id, sow.breed_id))
+        .limit(1);
+      if (breed?.gestation_days != null) gestationDays = breed.gestation_days;
+    }
+    const expectedFarrowingDate = dto.expected_farrowing_date || addDaysToDate(dto.mating_date, gestationDays);
     // Standard ultrasound check: 28 days post-mating
     const pregCheckDate = dto.preg_check_date || addDaysToDate(dto.mating_date, 28);
     const parityNumber = dto.parity_number ?? (sow.parity_count + 1);
@@ -350,13 +360,16 @@ export class BreedingService {
 
     await this.db.insert(schema.farrowingRecord).values(newRecord);
 
-    // Update sow lifetime statistics and status
+    // Update sow lifetime statistics and status — a GILT (never farrowed)
+    // becomes a SOW on her first farrowing, in the same write, so a second
+    // farrowing recorded against her doesn't still read her as a GILT.
     await this.db
       .update(schema.animalRegister)
       .set({
         parity_count: parityNumber,
         total_piglets_born_live: (sow.total_piglets_born_live || 0) + live,
         status: 'LACTATING',
+        ...(sow.animal_type === 'GILT' ? { animal_type: 'SOW' } : {}),
       })
       .where(eq(schema.animalRegister.animal_id, dto.sow_animal_id));
 

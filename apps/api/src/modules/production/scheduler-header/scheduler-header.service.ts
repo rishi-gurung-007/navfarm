@@ -5,6 +5,7 @@ import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
 import { farmScope, batchScopeConditions, batchOnFarm, restrictedScopeConditions } from '../../../common/farm-scope';
+import { withTenantTransaction } from '../../../common/tenant-transaction';
 import {
   CreateSchedulerHeaderDto, UpdateSchedulerHeaderDto,
   CreateSchedulerLineDto, UpdateSchedulerLineDto, UpdateSchedulerHeaderStatusDto, QuerySchedulerHeaderDto,
@@ -336,6 +337,14 @@ export class SchedulerHeaderService {
    * and populates lifecycle standard lines if present.
    */
   async createManualHeader(dto: CreateSchedulerHeaderDto, tenantId: string, userPayload?: { userId?: string }) {
+    // Header, lines and custom days all land in one transaction: a line that
+    // fails assertLineTypeFields/assertNoConflictingLines used to throw after
+    // the header row was already committed, so the retry hit the (batch_id,
+    // stage_id) duplicate check below and 409'd on a header nobody could see.
+    return withTenantTransaction(this.cls, async () => this.createManualHeaderInternal(dto, tenantId, userPayload));
+  }
+
+  private async createManualHeaderInternal(dto: CreateSchedulerHeaderDto, tenantId: string, userPayload?: { userId?: string }) {
     const [existing] = await this.db
       .select()
       .from(schema.schedulerHeader)
@@ -513,6 +522,51 @@ export class SchedulerHeaderService {
     });
 
     return this.findOne(id);
+  }
+
+  /**
+   * Deletes an unused scheduler_header — header, lines and custom days
+   * together. Refused once any line has a batch_daily_data row against it: a
+   * recorded entry is history, not an unused draft, and deleting it would
+   * strand the posting it made (inventory/GL/transfer) with no schedule line
+   * behind it.
+   */
+  async deleteHeader(id: string, tenantId: string, userPayload?: { userId?: string }) {
+    // findOne() is the existing scoped lookup — a header outside the caller's
+    // farm 404s here exactly as every other by-id read on this service does.
+    const header = await this.findOne(id);
+    const lineIds = header.lines.map((l) => l.line_id);
+
+    if (lineIds.length) {
+      const [recorded] = await this.db
+        .select({ entry_id: schema.batchDailyData.entry_id })
+        .from(schema.batchDailyData)
+        .where(inArray(schema.batchDailyData.line_id, lineIds))
+        .limit(1);
+      if (recorded) {
+        throw new ConflictException('This scheduler has recorded entries and cannot be deleted.');
+      }
+    }
+
+    await withTenantTransaction(this.cls, async () => {
+      if (lineIds.length) {
+        await this.db.delete(schema.schedulerLineCustomDays).where(inArray(schema.schedulerLineCustomDays.line_id, lineIds));
+        await this.db.delete(schema.schedulerLine).where(inArray(schema.schedulerLine.line_id, lineIds));
+      }
+      await this.db.delete(schema.schedulerHeader).where(eq(schema.schedulerHeader.scheduler_id, id));
+    });
+
+    await this.auditService.log({
+      tenantId,
+      companyId: header.company_id,
+      userId: userPayload?.userId,
+      action: 'DELETE',
+      entityName: 'scheduler_header',
+      entityId: id,
+      oldValues: { batch_id: header.batch_id, stage_id: header.stage_id },
+    });
+
+    return { scheduler_id: id, deleted: true };
   }
 
   /** "Should also tell the SILO STOCK of that location" — checks if location is a SILO

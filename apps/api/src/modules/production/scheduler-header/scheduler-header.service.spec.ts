@@ -5,10 +5,12 @@ import { MySqlDialect } from 'drizzle-orm/mysql-core';
 import { SchedulerHeaderService } from './scheduler-header.service';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { FarmScope } from '../../../common/farm-scope';
+import { transactionCls, useFarmScope as useFarmScopeCls } from '../../../test-utils/transaction-cls';
 
 describe('SchedulerHeaderService', () => {
   const dialect = new MySqlDialect();
   let service: SchedulerHeaderService;
+  let cls: ClsService;
 
   const mockDbSelect = jest.fn();
   const mockDbInsert = jest.fn();
@@ -25,15 +27,16 @@ describe('SchedulerHeaderService', () => {
   // Unset (undefined) by default so farmScope() falls back to UNRESTRICTED_FARM_SCOPE,
   // matching every request-less/internal caller. Tests that need a bounded farm call
   // useFarmScope() to stub the CLS 'farmScope' key, same pattern as batch.service.spec.
+  //
+  // transactionCls() gives a real ClsService (cls.run/cls.set work) so
+  // withTenantTransaction's db.transaction(tx => cls.run(...)) — used by
+  // createManualHeader and deleteHeader — has something real to call, not just
+  // a bare .get() stub. It attaches mockDb's own methods as the "tx" handle,
+  // so mockDbSelect/Insert/Update/Delete keep seeing every call either way.
   let farmScopeValue: FarmScope | undefined;
   let capturedWhere: unknown;
   const renderedWhere = () => dialect.sqlToQuery(capturedWhere as any);
-  const useFarmScope = (scope: FarmScope) => { farmScopeValue = scope; };
-  const clsGet = jest.fn((key?: string) => {
-    if (key === 'tenantDb') return mockDb;
-    if (key === 'farmScope') return farmScopeValue;
-    return undefined;
-  });
+  const useFarmScope = (scope: FarmScope) => { farmScopeValue = scope; useFarmScopeCls(cls, scope); };
 
   /** findOne()'s scoped batch_id existence check — insert this between the header
    * select and the lines select in every mockDbSelect sequence that reaches findOne. */
@@ -62,20 +65,24 @@ describe('SchedulerHeaderService', () => {
     typical_duration_days: 114,
   };
 
+  const auditLog = { log: jest.fn().mockResolvedValue({}) };
+
   beforeEach(async () => {
     mockDbSelect.mockReset();
     mockDbInsert.mockReset();
     mockDbUpdate.mockReset();
     mockDbDelete.mockReset();
+    auditLog.log.mockClear();
     farmScopeValue = undefined;
     capturedWhere = undefined;
-    clsGet.mockClear();
+    delete (mockDb as any).transaction; // transactionCls() re-attaches it fresh each test
 
+    cls = transactionCls(mockDb);
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         SchedulerHeaderService,
-        { provide: ClsService, useValue: { get: clsGet } },
-        { provide: AuditLogService, useValue: { log: jest.fn().mockResolvedValue({}) } },
+        { provide: ClsService, useValue: cls },
+        { provide: AuditLogService, useValue: auditLog },
       ],
     }).compile();
 
@@ -218,6 +225,88 @@ describe('SchedulerHeaderService', () => {
 
       expect(mockDbInsert).toHaveBeenCalled();
       expect(result).toBeDefined();
+    });
+
+    // Before the fix, the header insert committed on its own ahead of the line
+    // validation loop, so a bad line threw after the header row already
+    // existed — a retry then hit the (batch_id, stage_id) duplicate check and
+    // 409'd on a header the caller never got back. The fix wraps the whole
+    // create in withTenantTransaction so a validation failure rolls the header
+    // back with it; a unit test can't see the rollback itself, but it can see
+    // that the entire create now runs inside one db.transaction() and that
+    // nothing past the failing line (the audit log write) ever runs.
+    it('runs header + line validation + line inserts inside one transaction, rolling back on a bad line', async () => {
+      const transactionSpy = jest.spyOn(mockDb as any, 'transaction');
+      mockDbInsert.mockReturnValue({ values: jest.fn().mockResolvedValue({}) });
+      mockDbSelect
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }) }) }) // existing check (none)
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ ...batch, lob_id: 'lob-1' }]) }) }) }) // batch lookup
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ ...stage, lob_id: 'lob-1' }]) }) }) }); // stage lookup
+
+      await expect(service.createManualHeader({
+        batch_id: 'batch-1',
+        stage_id: 'stage-gest',
+        effective_from: '2026-03-08',
+        animal_count: 20,
+        lines: [
+          { line_type: 'CONSUMPTION', activity_name: 'Evening Feed' } as any, // missing item_id/standard_qty/qty_basis
+        ],
+      } as any, 'tenant-123')).rejects.toThrow(ConflictException);
+
+      expect(transactionSpy).toHaveBeenCalledTimes(1);
+      expect(auditLog.log).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('deleteHeader', () => {
+    const headerRow = { scheduler_id: 'sched-1', batch_id: 'batch-1', company_id: 'comp-1', stage_id: 'stage-gest' };
+
+    it('refuses with 409 when a line under the scheduler has a recorded entry', async () => {
+      mockDbSelect
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([headerRow]) }) }) }) // findOne: header
+        .mockReturnValueOnce(batchInScopeRow('batch-1')) // findOne: farm-scope batch check
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ line_id: 'line-1' }]) }) }) // findOne: lines
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([]) }) }) // findOne: custom days
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }) }) }) // findOne: batch_no
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }) }) }) // findOne: stage_name
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ entry_id: 'entry-1' }]) }) }) }); // batch_daily_data existence check
+
+      await expect(service.deleteHeader('sched-1', 'tenant-123')).rejects.toThrow(
+        'This scheduler has recorded entries and cannot be deleted.',
+      );
+      expect(mockDbDelete).not.toHaveBeenCalled();
+    });
+
+    it('deletes custom days, lines and the header together when nothing has been recorded', async () => {
+      const deletedTables: unknown[] = [];
+      mockDbDelete.mockImplementation((table: unknown) => {
+        deletedTables.push(table);
+        return { where: jest.fn().mockResolvedValue({}) };
+      });
+      mockDbSelect
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([headerRow]) }) }) }) // findOne: header
+        .mockReturnValueOnce(batchInScopeRow('batch-1')) // findOne: farm-scope batch check
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ line_id: 'line-1' }]) }) }) // findOne: lines
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([]) }) }) // findOne: custom days
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }) }) }) // findOne: batch_no
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }) }) }) // findOne: stage_name
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }) }) }); // batch_daily_data existence check — none recorded
+
+      const result = await service.deleteHeader('sched-1', 'tenant-123', { userId: 'user-1' });
+
+      expect(result).toEqual({ scheduler_id: 'sched-1', deleted: true });
+      expect(deletedTables).toHaveLength(3); // custom days, lines, header — in that order
+      expect(auditLog.log).toHaveBeenCalledWith(expect.objectContaining({ action: 'DELETE', entityName: 'scheduler_header', entityId: 'sched-1' }));
+    });
+
+    it('answers 404 for a scheduler outside the caller\'s farm — the same scoped lookup every by-id read uses', async () => {
+      useFarmScope({ farmId: 'farm-g', restricted: true, companyId: 'co-1', lobId: 'lob-pig' });
+      mockDbSelect
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([headerRow]) }) }) }) // findOne: header
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }) }) }); // scoped batch check finds nothing
+
+      await expect(service.deleteHeader('sched-1', 'tenant-123')).rejects.toThrow(NotFoundException);
+      expect(mockDbDelete).not.toHaveBeenCalled();
     });
   });
 

@@ -40,7 +40,7 @@ export class BreedingController {
 
   @Post('mating')
   @RequirePermission('PIGGERY', 'ANIMAL', 'create')
-  @ApiOperation({ summary: 'Record sow mating or AI insemination event with auto 114-day farrowing date' })
+  @ApiOperation({ summary: "Record sow mating or AI insemination event with auto-scheduled farrowing date (sow's breed gestation_days, else 116)" })
   async recordMating(@Body() dto: CreateMatingDto, @Req() req: any) {
     const tenantId = req.user?.tenantId || req['tenantId'];
     return await this.breedingService.recordMating(dto, tenantId, req.user);
