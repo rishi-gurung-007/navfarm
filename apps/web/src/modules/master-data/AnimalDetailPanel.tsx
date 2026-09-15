@@ -54,18 +54,23 @@ type TimelineEvent = {
  * sow's detail on one tab and his own on the other.
  */
 function matingTimelineEvent(m: Row, isMale: boolean): TimelineEvent {
-  const partner = isMale ? fmt(m.sow_code) : fmt(m.boar_code);
+  // The API decides this per record — `role` is DAM exactly when this animal
+  // is the row's sow (animal.service.ts) — so it outranks the panel's guess
+  // from gender/animal_type, which is only a fallback for a record that
+  // arrived without one.
+  const sire = m.role === "SIRE" ? true : m.role === "DAM" ? false : isMale;
+  const partner = sire ? fmt(m.sow_code) : fmt(m.boar_code);
   const parity = fmt(m.parity_number);
   return {
     id: `mating-${m.breeding_id}`,
     date: fmt(m.mating_date),
-    title: isMale ? `Served ${partner || "a sow"}` : `Served by ${partner || "a boar"}`,
+    title: sire ? `Served ${partner || "a sow"}` : `Served by ${partner || "a boar"}`,
     summary: [
       fmt(m.mating_type),
       parity ? `parity ${parity}` : "",
       fmt(m.conception_result).toLowerCase(),
     ].filter(Boolean).join(" · "),
-    detail: isMale
+    detail: sire
       ? [
           ["Sow", fmt(m.sow_code)], ["Mating type", fmt(m.mating_type)],
           ["Mating date", fmt(m.mating_date)], ["Second mating", fmt(m.second_mating_date)],
