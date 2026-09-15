@@ -5,6 +5,9 @@ import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { ConflictException, BadRequestException, NotFoundException } from '@nestjs/common';
 import { MySqlDialect } from 'drizzle-orm/mysql-core';
+import { plainToInstance } from 'class-transformer';
+import { validate } from 'class-validator';
+import { QueryUomConversionDto } from './dto/uom.dto';
 
 describe('UomService', () => {
   let service: UomService;
@@ -284,6 +287,43 @@ describe('UomService', () => {
       const result = await service.findAllConversions({ limit: 25, offset: 50 } as any, 'tenant-1');
 
       expect(result).toEqual({ data: [], total: 4, limit: 25, offset: 50 });
+    });
+
+    // I2: the master-data table's NOB/LOB filter selects (config.supportsNobLobFilter)
+    // send `nobId`/`lobId` as top-level query params, not filter[nob_id]. Calling
+    // the service directly (as every test above does) bypasses Nest's
+    // ValidationPipe entirely, so it can never see a whitelist 400 — hence the
+    // separate DTO-level check below, which is what actually caught this.
+    it('narrows by nobId and lobId — real columns on uom_conversion_master', async () => {
+      const { dataWhereMock } = mockListChain();
+
+      await service.findAllConversions({ nobId: 'nob-1', lobId: 'lob-1' } as any, 'tenant-1');
+
+      const where = sqlOf(dataWhereMock.mock.calls[0][0]);
+      expect(where.sql).toContain('`nob_id`');
+      expect(where.sql).toContain('`lob_id`');
+      expect(where.params).toEqual(expect.arrayContaining(['nob-1', 'lob-1']));
+    });
+  });
+
+  // I2: main.ts's global ValidationPipe runs whitelist + forbidNonWhitelisted.
+  // Before nobId/lobId were declared on QueryUomConversionDto, this exact
+  // payload — what the web NOB/LOB filter selects actually send — was
+  // rejected with "property nobId should not exist" the instant either select
+  // was used, with no row returned. A service-level test cannot see this: it
+  // calls the service directly, skipping the pipe. Validating the DTO the
+  // same way Nest does is the only way to catch a whitelist regression.
+  describe('QueryUomConversionDto whitelist (regression for the NOB/LOB filter 400)', () => {
+    it('accepts nobId and lobId query params', async () => {
+      const instance = plainToInstance(QueryUomConversionDto, {
+        companyId: 'co-1',
+        nobId: 'nob-1',
+        lobId: 'lob-1',
+        limit: 25,
+        offset: 0,
+      });
+      const errors = await validate(instance, { whitelist: true, forbidNonWhitelisted: true });
+      expect(errors).toHaveLength(0);
     });
   });
 });

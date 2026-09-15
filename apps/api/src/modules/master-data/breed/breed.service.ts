@@ -1,7 +1,7 @@
 import { masterScopeConditions } from '../../../common/master-data-scope';
 import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, like, or, isNull, ne, inArray, sql, getTableColumns, count } from 'drizzle-orm';
+import { eq, and, like, or, isNull, ne, inArray, sql, getTableColumns, count, asc, desc } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
@@ -834,19 +834,39 @@ export class BreedService {
       ));
     }
 
-    conditions.push(...listFilterConditions(schema.breedLifecycleStages, query.filter));
+    // `stage` is not a column on breed_lifecycle_stages — it is the
+    // COALESCE(stage_name, stage_code) alias the select below computes.
+    // listFilterConditions/listOrderBy only know real table columns and 400
+    // on anything else, so `stage` is pulled out and matched against the
+    // same expression by hand before the rest of the filter is delegated.
+    const stageAlias = sql<string>`COALESCE(${schema.stageMaster.stage_name}, ${schema.stageMaster.stage_code})`;
+    const { stage: stageFilter, ...restFilter } = query.filter ?? {};
+    conditions.push(...listFilterConditions(schema.breedLifecycleStages, restFilter));
+    if (stageFilter !== undefined && stageFilter !== null && stageFilter !== '') {
+      if (Array.isArray(stageFilter)) {
+        const values = stageFilter.filter((value) => value !== '');
+        if (values.length) conditions.push(inArray(stageAlias, values));
+      } else {
+        const value = String(stageFilter);
+        conditions.push(value.includes('*') ? like(stageAlias, value.replace(/\*/g, '%')) : eq(stageAlias, value));
+      }
+    }
 
     const limit = query.limit || 50;
     const offset = query.offset || 0;
 
     const where = and(...conditions);
 
+    const orderBy = query.sort === 'stage'
+      ? ((query.dir === 'desc' ? desc(stageAlias) : asc(stageAlias)) as any)
+      : listOrderBy(schema.breedLifecycleStages, query, schema.breedLifecycleStages.period_from);
+
     const data = await this.db
       .select({
         ...getTableColumns(schema.breedLifecycleStages),
         stage_name: schema.stageMaster.stage_name,
         stage_code: schema.stageMaster.stage_code,
-        stage: sql<string>`COALESCE(${schema.stageMaster.stage_name}, ${schema.stageMaster.stage_code})`,
+        stage: stageAlias,
         breed_name: schema.breedMaster.breed_name,
         breed_code: schema.breedMaster.breed_code,
       })
@@ -854,7 +874,7 @@ export class BreedService {
       .leftJoin(schema.stageMaster, eq(schema.breedLifecycleStages.stage_id, schema.stageMaster.stage_id))
       .leftJoin(schema.breedMaster, eq(schema.breedLifecycleStages.breed_id, schema.breedMaster.breed_id))
       .where(where)
-      .orderBy(listOrderBy(schema.breedLifecycleStages, query, schema.breedLifecycleStages.period_from))
+      .orderBy(orderBy)
       .limit(limit)
       .offset(offset);
 

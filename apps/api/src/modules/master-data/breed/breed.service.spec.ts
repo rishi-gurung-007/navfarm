@@ -483,6 +483,36 @@ describe('BreedService', () => {
         expect(chain.countLeftJoin2Mock).toHaveBeenCalled();
         expect(result.total).toBe(6);
       });
+
+      // I1: `stage` is a select alias (COALESCE(stage_name, stage_code)), not a
+      // real column on breed_lifecycle_stages. Before the fix this reached
+      // listOrderBy/listFilterConditions unchanged, and both throw
+      // BadRequestException for any key absent from getTableColumns() — so
+      // clicking the "Stage" column header or typing into its filter 400ed.
+      // These calls would reject against the unfixed service.
+      it('sorts by the "Stage" column without 400ing — stage is a computed alias, not a table column', async () => {
+        const chain = mockListChain();
+
+        await expect(
+          service.findAllLifecycleStages({ sort: 'stage', dir: 'desc' } as any, 'tenant-123')
+        ).resolves.toBeDefined();
+
+        const orderSql = sqlOf(chain.orderByMock.mock.calls[0][0]).sql;
+        expect(orderSql).toContain('COALESCE');
+        expect(orderSql).toContain('desc');
+      });
+
+      it('filters by the "Stage" column without 400ing — stage is a computed alias, not a table column', async () => {
+        const chain = mockListChain();
+
+        await expect(
+          service.findAllLifecycleStages({ filter: { stage: 'Weaner' } } as any, 'tenant-123')
+        ).resolves.toBeDefined();
+
+        const where = sqlOf(chain.dataWhereMock.mock.calls[0][0]);
+        expect(where.sql).toContain('COALESCE');
+        expect(where.params).toContain('Weaner');
+      });
     });
   });
 });

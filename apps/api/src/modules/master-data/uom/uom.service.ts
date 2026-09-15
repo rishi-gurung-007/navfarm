@@ -456,6 +456,8 @@ export class UomService {
     // this table already holds.
     if (query.fromUom) conditions.push(eq(schema.uomConversionMaster.from_uom, query.fromUom.toUpperCase()));
     if (query.toUom) conditions.push(eq(schema.uomConversionMaster.to_uom, query.toUom.toUpperCase()));
+    if (query.nobId) conditions.push(eq(schema.uomConversionMaster.nob_id, query.nobId));
+    if (query.lobId) conditions.push(eq(schema.uomConversionMaster.lob_id, query.lobId));
 
     if (query.search) {
       const s = `%${query.search.trim()}%`;

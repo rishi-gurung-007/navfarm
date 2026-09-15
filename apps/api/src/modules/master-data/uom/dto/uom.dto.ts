@@ -200,6 +200,22 @@ export class QueryUomConversionDto extends MasterListQueryDto {
   @IsString()
   toUom?: string;
 
+  // uom_conversion_master carries real nob_id/lob_id columns (unlike company_id
+  // on breed_lifecycle_stages), and the master-data table's NOB/LOB filter
+  // selects (supportsNobLobFilter) send these as top-level query params, not
+  // filter[nob_id]/filter[lob_id]. Undeclared, the whole-object DTO change
+  // that replaced per-parameter @Query() extraction 400s the moment either
+  // select is used, under the global forbidNonWhitelisted pipe.
+  @ApiProperty({ description: 'Filter by Nature of Business UUID', required: false })
+  @IsOptional()
+  @IsString()
+  nobId?: string;
+
+  @ApiProperty({ description: 'Filter by Line of Business UUID', required: false })
+  @IsOptional()
+  @IsString()
+  lobId?: string;
+
   // The master-data table appends `search` to every list request and the global
   // pipe runs forbidNonWhitelisted, so leaving it undeclared 400s the whole
   // screen the moment anyone types in the search box.
