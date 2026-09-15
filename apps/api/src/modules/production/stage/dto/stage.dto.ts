@@ -4,7 +4,7 @@ import { Type } from 'class-transformer';
 import { MasterListQueryDto } from '../../../../common/master-list-query';
 
 const STAGE_CATEGORIES = ['PRE_PRODUCTIVE', 'PRODUCTIVE', 'OUTPUT', 'DISPOSAL'] as const;
-const TRANSITION_TRIGGERS = ['AUTO_BY_DAY', 'MANUAL', 'EVENT_BASED', 'KPI_BASED'] as const;
+const TRANSITION_TRIGGERS = ['AUTO_BY_DAY', 'MANUAL'] as const;
 const DATA_ENTRY_FORMS = ['STANDARD', 'FARROWING', 'WEANING', 'SLAUGHTER'] as const;
 
 export class CreateStageDto {
