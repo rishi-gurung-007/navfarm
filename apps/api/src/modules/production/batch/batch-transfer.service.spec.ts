@@ -2,7 +2,13 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException, ValidationPipe } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
 import { MySqlDialect } from 'drizzle-orm/mysql-core';
-import { BatchTransferService, FARM_TO_FARM_TRANSFER_REFUSAL, WORKER_TRANSFER_REFUSAL } from './batch-transfer.service';
+import {
+  BatchTransferService,
+  COUNT_ONLY_DESTINATION_REFUSAL,
+  DESTINATION_BREED_REFUSAL,
+  FARM_TO_FARM_TRANSFER_REFUSAL,
+  WORKER_TRANSFER_REFUSAL,
+} from './batch-transfer.service';
 import { CreateBatchTransferDto } from './dto/batch.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
@@ -77,7 +83,7 @@ describe('BatchTransferService', () => {
 
   const batchRow = (over: Record<string, unknown>) => ({
     batch_id: 'batch-x', batch_no: 'PIG-BAT-X', tenant_id: 'tenant-123', company_id: 'comp-1', lob_id: 'lob-1',
-    farm_id: 'farm-k', status: 'ACTIVE', stage_id: 'stage-1', ...over,
+    farm_id: 'farm-k', status: 'ACTIVE', stage_id: 'stage-1', animal_tracking: 'REGISTERED', ...over,
   });
   const kintyreSource = batchRow({ batch_id: 'batch-gest', farm_id: 'farm-k' });
   const grasmereDestination = batchRow({ batch_id: 'batch-farrow', farm_id: 'farm-g', stage_id: 'stage-farrowing' });
@@ -682,6 +688,42 @@ describe('BatchTransferService', () => {
         .rejects.toThrow(new ForbiddenException(FARM_TO_FARM_TRANSFER_REFUSAL));
       expect(mockDbUpdate).not.toHaveBeenCalled();
     });
+
+    // N-I1: the draft was made against a Registered batch that became Count Only
+    // before posting. The check at create is not enough; post re-reads the locked row.
+    it('refuses a destination switched to Count Only since the draft, writing nothing', async () => {
+      jest.spyOn(service as any, 'loadTransferForMutation').mockResolvedValue(draftTransfer);
+      jest.spyOn(service as any, 'lockTransferBatches').mockResolvedValue({
+        source: kintyreSource,
+        destination: { ...kintyreDestination, animal_tracking: 'COUNT_ONLY' },
+      });
+      stillLiveSelect();
+      updatesByTable();
+
+      await expect(service.post('tr-1', 'tenant-123', companyAdmin))
+        .rejects.toThrow(new BadRequestException(COUNT_ONLY_DESTINATION_REFUSAL));
+      expect(mockDbUpdate).not.toHaveBeenCalled();
+      expect(mockDbInsert).not.toHaveBeenCalled();
+      expect(mockAuditLog).not.toHaveBeenCalled();
+    });
+
+    it('refuses a destination whose breed no longer matches the locked animals, writing nothing', async () => {
+      jest.spyOn(service as any, 'loadTransferForMutation').mockResolvedValue(draftTransfer);
+      jest.spyOn(service as any, 'lockTransferBatches').mockResolvedValue({
+        source: kintyreSource,
+        destination: { ...kintyreDestination, breed_id: 'breed-landrace' },
+      });
+      mockDbSelect.mockReturnValueOnce(chain([
+        { animal_id: 'a-1', breed_id: 'breed-landrace' },
+        { animal_id: 'a-2', breed_id: 'breed-large-white' },
+      ]));
+      updatesByTable();
+
+      await expect(service.post('tr-1', 'tenant-123', companyAdmin))
+        .rejects.toThrow(new BadRequestException(DESTINATION_BREED_REFUSAL));
+      expect(mockDbUpdate).not.toHaveBeenCalled();
+      expect(mockDbInsert).not.toHaveBeenCalled();
+    });
   });
 
   describe('cancel', () => {
@@ -784,6 +826,162 @@ describe('BatchTransferService', () => {
       mockDbSelect.mockReturnValueOnce(chain([kintyreDestination])).mockReturnValueOnce(chain([]));
       await service.create(dto, 'tenant-123', 'batch-gest', companyAdmin, { autoTriggersStage: true });
       expect(post).toHaveBeenLastCalledWith(expect.any(String), 'tenant-123', companyAdmin, true);
+    });
+
+    // N-I1: Registered PIG-BAT-2026-0101 and Count Only PIG-BAT-2026-0003 share
+    // a farm, so nothing but this check stopped animals landing in 0003.
+    it('refuses a PARTIAL transfer into a Count Only batch before selecting or writing anything', async () => {
+      useFarmScope({ farmId: null, restricted: false, companyId: 'comp-1', lobId: null });
+      jest.spyOn(service as any, 'loadBatch').mockResolvedValue(kintyreSource);
+      mockDbSelect.mockReturnValueOnce(chain([{ ...kintyreDestination, animal_tracking: 'COUNT_ONLY' }]));
+      const selection = stopAtAnimalSelection();
+
+      await expect(service.create(
+        { ...dto, transfer_type: 'PARTIAL', animal_ids: ['a-1'] }, 'tenant-123', 'batch-gest', companyAdmin,
+      )).rejects.toThrow(new BadRequestException(COUNT_ONLY_DESTINATION_REFUSAL));
+      expect(selection).not.toHaveBeenCalled();
+      expect(mockDbInsert).not.toHaveBeenCalled();
+    });
+
+    it('refuses moving an animal into a same-farm batch of a different breed', async () => {
+      useFarmScope({ farmId: null, restricted: false, companyId: 'comp-1', lobId: null });
+      jest.spyOn(service as any, 'loadBatch').mockResolvedValue(kintyreSource);
+      mockDbSelect.mockReturnValueOnce(chain([{ ...kintyreDestination, breed_id: 'breed-landrace' }]));
+      jest.spyOn(service as any, 'listTransferableAnimalsFromAuthorizedBatch').mockResolvedValue([
+        { animal_id: 'a-1', breed_id: 'breed-large-white', current_location_id: 'pen-1', book_value: '100' },
+      ]);
+      const post = jest.spyOn(service, 'post').mockResolvedValue({} as any);
+
+      await expect(service.create(
+        { ...dto, transfer_type: 'PARTIAL', animal_ids: ['a-1'] }, 'tenant-123', 'batch-gest', companyAdmin,
+      )).rejects.toThrow(new BadRequestException(DESTINATION_BREED_REFUSAL));
+      expect(mockDbInsert).not.toHaveBeenCalled();
+      expect(post).not.toHaveBeenCalled();
+    });
+
+    it('still allows a same-breed, same-farm Registered to Registered transfer', async () => {
+      useFarmScope({ farmId: null, restricted: false, companyId: 'comp-1', lobId: null });
+      jest.spyOn(service as any, 'loadBatch').mockResolvedValue({ ...kintyreSource, breed_id: 'breed-landrace' });
+      mockDbSelect.mockReturnValueOnce(chain([{ ...kintyreDestination, breed_id: 'breed-landrace' }]));
+      jest.spyOn(service as any, 'listTransferableAnimalsFromAuthorizedBatch').mockResolvedValue([
+        { animal_id: 'a-1', breed_id: 'breed-landrace', current_location_id: 'pen-1', book_value: '100' },
+      ]);
+      mockDbSelect.mockReturnValueOnce(chain([])); // source bio-asset state
+      mockDbInsert.mockReturnValue({ values: jest.fn().mockResolvedValue({}) });
+      const post = jest.spyOn(service, 'post').mockResolvedValue({} as any);
+
+      await service.create(
+        { ...dto, transfer_type: 'PARTIAL', animal_ids: ['a-1'] }, 'tenant-123', 'batch-gest', companyAdmin,
+      );
+      expect(mockDbInsert).toHaveBeenCalledWith(schema.batchTransfer);
+      expect(post).toHaveBeenCalled();
+    });
+  });
+
+  // CF-4: the split child was inserted already holding n head, then the
+  // delegated transfer added n again. Runs the real create() and post() over an
+  // in-memory table so the assertion is on the quantities left behind, not on
+  // what the child insert happened to contain.
+  describe('split then post', () => {
+    const tables = {
+      headers: new Map<string, any>(),
+      states: new Map<string, any>(),
+      transfer: undefined as any,
+      lines: [] as any[],
+    };
+    let herd: any[];
+
+    const paramsOf = (cond: unknown): unknown[] => (cond ? dialect.sqlToQuery(cond as any).params : []);
+
+    const readTable = (table: unknown, cond: unknown): unknown[] => {
+      const params = paramsOf(cond);
+      if (table === schema.batchHeader) return tables.headers.has(params[0] as string) ? [tables.headers.get(params[0] as string)] : [];
+      if (table === schema.batchBioAssetState) return tables.states.has(params[0] as string) ? [tables.states.get(params[0] as string)] : [];
+      if (table === schema.animalRegister) {
+        // The post re-read names animal ids; the pool read names only the batch.
+        const named = herd.filter((a) => params.includes(a.animal_id));
+        return named.length ? named : herd.filter((a) => params.includes(a.current_batch_id));
+      }
+      if (table === schema.batchTransfer) return tables.transfer ? [tables.transfer] : [];
+      if (table === schema.batchTransferLine) return tables.lines;
+      if (table === schema.batchInputLine) return [{ item_id: 'bio-item-1' }];
+      return [];
+    };
+
+    beforeEach(() => {
+      tables.headers.clear();
+      tables.states.clear();
+      tables.transfer = undefined;
+      tables.lines = [];
+      tables.headers.set('batch-parent', batchRow({
+        batch_id: 'batch-parent', batch_no: 'PIG-BAT-P', nob_id: 'nob-1', breed_id: 'breed-landrace',
+        current_stage_code: 'DRY_SOW_GESTATION', stage_id: 'stage-gest', location_id: 'pen-1',
+        opening_quantity: '10.0000', closing_quantity: '10.0000', uom: 'HEAD',
+      }));
+      tables.states.set('batch-parent', { batch_id: 'batch-parent', stage: 'MATURE', current_quantity: '10.0000', nca_book_value: '280000.0000' });
+      herd = Array.from({ length: 10 }, (_, i) => ({
+        animal_id: `a-${i + 1}`, breed_id: 'breed-landrace', current_batch_id: 'batch-parent',
+        current_location_id: 'pen-1', book_value: '28000.0000',
+      }));
+
+      mockDbSelect.mockImplementation(() => {
+        let table: unknown;
+        let cond: unknown;
+        const q: any = {
+          from: (t: unknown) => { table = t; return q; },
+          leftJoin: () => q,
+          orderBy: () => q,
+          limit: () => q,
+          for: () => q,
+          where: (c: unknown) => { cond = c; return q; },
+          then: (ok: any, err: any) => Promise.resolve().then(() => readTable(table, cond)).then(ok, err),
+        };
+        return q;
+      });
+      mockDbInsert.mockImplementation((table: unknown) => ({
+        values: jest.fn((v: any) => {
+          if (table === schema.batchHeader) tables.headers.set(v.batch_id, { ...v });
+          if (table === schema.batchBioAssetState) tables.states.set(v.batch_id, { ...v });
+          if (table === schema.batchTransfer) tables.transfer = { ...v };
+          if (table === schema.batchTransferLine) tables.lines = v;
+          return Promise.resolve([{ affectedRows: Array.isArray(v) ? v.length : 1 }]);
+        }),
+      }));
+      mockDbUpdate.mockImplementation((table: unknown) => ({
+        set: jest.fn((v: any) => ({
+          where: jest.fn((cond: unknown) => {
+            const params = paramsOf(cond);
+            if (table === schema.batchHeader) Object.assign(tables.headers.get(params[0] as string), v);
+            if (table === schema.batchBioAssetState) Object.assign(tables.states.get(params[0] as string), v);
+            if (table === schema.batchTransfer) Object.assign(tables.transfer, v);
+            if (table === schema.animalRegister) {
+              const moved = herd.filter((a) => params.includes(a.animal_id));
+              moved.forEach((a) => { a.current_batch_id = v.current_batch_id; });
+              return Promise.resolve([{ affectedRows: moved.length }]);
+            }
+            return Promise.resolve([{ affectedRows: 1 }]);
+          }),
+        })),
+      }));
+    });
+
+    it('leaves the child with n head and the parent with N - n, moving the value once', async () => {
+      const result = await service.splitBatch(
+        'batch-parent',
+        { animal_ids: ['a-1', 'a-2', 'a-3'], transfer_date: '2026-09-15' } as any,
+        'tenant-123',
+        companyAdmin,
+      );
+
+      const childId = result.child.batch_id;
+      expect(tables.transfer.status).toBe('POSTED');
+      expect(Number(tables.headers.get(childId).closing_quantity)).toBe(3);
+      expect(Number(tables.states.get(childId).current_quantity)).toBe(3);
+      expect(Number(tables.states.get(childId).nca_book_value)).toBe(84000);
+      expect(Number(tables.headers.get('batch-parent').closing_quantity)).toBe(7);
+      expect(Number(tables.states.get('batch-parent').current_quantity)).toBe(7);
+      expect(Number(tables.states.get('batch-parent').nca_book_value)).toBe(196000);
+      expect(herd.filter((a) => a.current_batch_id === childId)).toHaveLength(3);
     });
   });
 

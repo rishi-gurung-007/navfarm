@@ -61,6 +61,33 @@ function assertFarmToFarmAllowed(actor: TransferActor | undefined, scope: FarmSc
   }
 }
 
+export const COUNT_ONLY_DESTINATION_REFUSAL = 'A Count Only batch has no individual animals.';
+export const DESTINATION_BREED_REFUSAL = 'The destination batch is for a different breed.';
+
+/**
+ * Every transfer here repoints animal_register rows, and a Count Only batch
+ * never holds Animal rows (animal create refuses the same placement). Checked
+ * as REGISTERED rather than "not COUNT_ONLY" so an unexpected tracking value
+ * fails closed.
+ */
+function assertDestinationTracksAnimals(destination: BatchRow): void {
+  if (destination.animal_tracking !== 'REGISTERED') {
+    throw new BadRequestException(COUNT_ONLY_DESTINATION_REFUSAL);
+  }
+}
+
+/**
+ * Moving an animal never changes its breed, so a destination batch with a
+ * breed must match every animal moved into it. Same-farm only: cross-farm is
+ * refused above until breed-profile remapping exists.
+ */
+function assertDestinationBreedMatches(destination: BatchRow, animals: Array<{ breed_id: string | null }>): void {
+  if (!destination.breed_id) return;
+  if (animals.some((a) => a.breed_id !== destination.breed_id)) {
+    throw new BadRequestException(DESTINATION_BREED_REFUSAL);
+  }
+}
+
 // Local time, not UTC. MySQL's own DEFAULT (now()) on created_at is local, so
 // formatting through toISOString() (as some older services here do) stamps
 // posted_at hours *before* created_at on any non-UTC machine.
@@ -243,6 +270,7 @@ export class BatchTransferService {
         ear_tag: schema.animalRegister.ear_tag,
         animal_type: schema.animalRegister.animal_type,
         gender: schema.animalRegister.gender,
+        breed_id: schema.animalRegister.breed_id,
         status: schema.animalRegister.status,
         current_location_id: schema.animalRegister.current_location_id,
         book_value: schema.animalRegister.book_value,
@@ -333,6 +361,7 @@ export class BatchTransferService {
     if (!['DRAFT', 'ACTIVE'].includes(destination.status)) {
       throw new BadRequestException(`Destination batch must be DRAFT or ACTIVE (it is ${destination.status}).`);
     }
+    assertDestinationTracksAnimals(destination);
     if (dto.to_location_id) {
       await assertLocationOnActiveFarm(this.db, {
         farmId: destination.farm_id,
@@ -364,6 +393,7 @@ export class BatchTransferService {
     if (!selected.length) {
       throw new BadRequestException('The source batch has no live animals to transfer.');
     }
+    assertDestinationBreedMatches(destination, selected);
 
     // Per-head carrying value: the animal's own book value when it has one,
     // otherwise the batch's carrying amount spread across its live head count.
@@ -539,8 +569,11 @@ export class BatchTransferService {
       parent_batch_id: parentBatchId,
       start_date: dto.transfer_date,
       expected_end_date: parent.expected_end_date,
+      // The child's starting headcount, which unit-cost and variance read. Live
+      // headcount (closing and bio state below) starts at zero because the
+      // transfer posted next adds the animals; seeding it at n counted them twice.
       opening_quantity: animalIds.length.toFixed(4),
-      closing_quantity: animalIds.length.toFixed(4),
+      closing_quantity: '0.0000',
       uom: parent.uom,
       status: 'ACTIVE',
       remarks: dto.remarks || `Split from ${parent.batch_no}${dto.reason ? ` — ${dto.reason}` : ''}.`,
@@ -551,7 +584,7 @@ export class BatchTransferService {
       state_id: randomUUID(),
       batch_id: childBatchId,
       stage: 'MATURE',
-      current_quantity: animalIds.length.toFixed(4),
+      current_quantity: '0.0000',
       nca_book_value: '0.0000',
     });
 
@@ -664,6 +697,9 @@ export class BatchTransferService {
     }
     const { source, destination: destBatch } = await this.lockTransferBatches(transfer, tenantId);
     assertFarmToFarmAllowed(userPayload, farmScope(this.cls), source, destBatch);
+    // Re-read on the locked row: the destination's tracking or breed may have
+    // been changed since the draft was created.
+    assertDestinationTracksAnimals(destBatch);
 
     const animalIds = transfer.lines.map((l) => l.animal_id);
     const headCount = animalIds.length;
@@ -673,7 +709,7 @@ export class BatchTransferService {
     // Guard against the pool shifting between draft and post (an animal that
     // died or was sold in the meantime).
     const stillLive = await this.db
-      .select({ animal_id: schema.animalRegister.animal_id })
+      .select({ animal_id: schema.animalRegister.animal_id, breed_id: schema.animalRegister.breed_id })
       .from(schema.animalRegister)
       .where(
         and(
@@ -689,6 +725,7 @@ export class BatchTransferService {
         `${headCount - stillLive.length} animal(s) on this transfer are no longer live members of the source batch. Re-create the transfer.`
       );
     }
+    assertDestinationBreedMatches(destBatch, stillLive);
 
     const [claim] = await this.db
       .update(schema.batchTransfer)
