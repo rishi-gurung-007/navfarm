@@ -1,5 +1,5 @@
 /** The rebuild drops databases. These guards are the difference between a demo reset and data loss. */
-export const NAVFARM_DATABASE = /^(navfarm_master|tenant_system|tenant_[a-z0-9_]+)$/;
+const NAVFARM_DATABASE = /^(navfarm_master|tenant_system|tenant_[a-z0-9_]+)$/;
 
 export function assertSafeRebuildTarget(env: Record<string, string | undefined>, databases: string[]): void {
   const host = (env.DATABASE_HOST || '127.0.0.1').trim();

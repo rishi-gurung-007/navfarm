@@ -20,7 +20,7 @@
  */
 import { execFileSync } from 'node:child_process';
 import * as mysql from 'mysql2/promise';
-import { assertSafeRebuildTarget, parseRebuildArgs, NAVFARM_DATABASE } from './lib/rebuild-guards';
+import { assertSafeRebuildTarget, parseRebuildArgs } from './lib/rebuild-guards';
 
 const host = process.env.DATABASE_HOST || '127.0.0.1';
 const port = Number(process.env.DATABASE_PORT || 3306);
@@ -42,20 +42,29 @@ interface Step {
 const RESET_STEP: Step = { label: 'Drop and rebuild schema + platform masters', script: 'setup-fresh-database.ts', args: [] };
 
 // Master-only path, in the order db-seed-demo builds them, minus everything
-// that seed-demo.ts does inline (company template adoption, documented
-// reasons/optional-field fill — see task-1-report.md) and minus every
-// operational stage. seed-farm-locations.ts / seed-farm-masters.ts overwrite
-// the synthetic demo farm with Triple C's submitted templates and are not
-// part of seed-demo.ts at all, but the client's real data is the source of
-// truth for masters now, so they belong in every rebuild regardless.
-// stamp-master-nob-lob.ts and align-production-permissions.ts are the two
-// alignment passes seed-demo.ts runs (the first inline, as its own last
-// stage) that touch masters only, never operational rows.
+// that seed-demo.ts does inline and minus every operational stage.
+// seed-company-master-templates.ts fills a gap seed-demo.ts does NOT have:
+// seed-demo.ts's own adoptCompanyTemplates runs copyCompanyMasterTemplates
+// after seedDevTenant, and seed-dev-tenant.ts raw-inserts the company without
+// ever calling it, so this step must run here too — right after the tenant
+// and its tenant-scope masters exist (seed-dev-tenant.ts, migrate-all-tenants.ts,
+// seed-system-master-data.ts, seed-activity-master.ts all only add tenant- or
+// already-company-scoped rows, never remove or add to no_series_master after
+// this point) and before the farm-data loaders, which switch off the
+// synthetic company-scoped rows this step creates.
+// seed-farm-locations.ts / seed-farm-masters.ts overwrite the synthetic demo
+// farm with Triple C's submitted templates and are not part of seed-demo.ts
+// at all, but the client's real data is the source of truth for masters now,
+// so they belong in every rebuild regardless. stamp-master-nob-lob.ts and
+// align-production-permissions.ts are the two alignment passes seed-demo.ts
+// runs (the first inline, as its own last stage) that touch masters only,
+// never operational rows.
 const MASTER_STEPS: Step[] = [
   { label: 'Dev tenant, companies, users, starter masters', script: 'seed-dev-tenant.ts', args: [] },
   { label: 'Apply pending tenant-schema migrations', script: 'migrate-all-tenants.ts', args: [] },
   { label: 'System reference masters (UOM, species, ...)', script: 'seed-system-master-data.ts', args: [] },
   { label: 'Standard activity master catalog', script: 'seed-activity-master.ts', args: [] },
+  { label: "Adopt tenant master templates into Triple C (no_series_master etc.)", script: 'seed-company-master-templates.ts', args: ['--apply'] },
   { label: "Triple C's real farms and locations", script: 'seed-farm-locations.ts', args: ['--apply'] },
   { label: "Triple C's real resource and breed masters", script: 'seed-farm-masters.ts', args: ['--apply'] },
   { label: 'Stamp NOB/LOB on every master', script: 'stamp-master-nob-lob.ts', args: ['--apply'] },
@@ -67,7 +76,7 @@ const MASTER_STEPS: Step[] = [
 // until it lands.
 const CHAPTERS_STEP: Step = { label: 'Post demo operational chapters (Task 2)', script: 'demo-chapters.ts', args: ['--apply'] };
 
-function buildPlan(opts: { chaptersOnly: boolean; skipReset: boolean }): Step[] {
+export function buildPlan(opts: { chaptersOnly: boolean; skipReset: boolean }): Step[] {
   // --chapters-only means exactly that: skip the reset and every master step,
   // and only re-post the chapters onto whatever masters already exist.
   if (opts.chaptersOnly) return [CHAPTERS_STEP];
@@ -77,13 +86,52 @@ function buildPlan(opts: { chaptersOnly: boolean; skipReset: boolean }): Step[] 
   return steps;
 }
 
-async function listCandidateDatabases(): Promise<string[]> {
+export interface ResetTargets {
+  masterDatabase: string;
+  systemDatabase: string;
+  tenantPrefix: string;
+}
+
+/**
+ * Derives the databases setup-fresh-database.ts is actually about to drop —
+ * by the same rule, from the same env vars (DATABASE_NAME, SYSTEM_TENANT_DATABASE),
+ * not by re-filtering SHOW DATABASES through the guard's own naming regex.
+ * Filtering by that regex first and only then asserting on what survived the
+ * filter meant the assert could never see a name the regex had already
+ * excluded — which is exactly the case that matters: DATABASE_NAME or
+ * SYSTEM_TENANT_DATABASE pointed at a navcrm_* database by mistake. Deriving
+ * the target list the same way the real drop does, and asserting on THAT
+ * before any subprocess runs, closes that gap.
+ *
+ * setup-fresh-database.ts also supports a `piggery_*` isolated naming mode
+ * (masterDatabase.startsWith('piggery_')) that assertSafeRebuildTarget's
+ * naming pattern has no allowance for. Rather than silently producing an
+ * empty candidate list under that mode — which is what re-filtering through
+ * NAVFARM_DATABASE did before this fix — this refuses to run at all under it,
+ * loudly, until it is deliberately supported.
+ */
+export function deriveResetTargets(env: NodeJS.ProcessEnv): ResetTargets {
+  const masterDatabase = env.DATABASE_NAME || 'navfarm_master';
+  const isPiggeryIsolated = masterDatabase.startsWith('piggery_');
+  if (isPiggeryIsolated) {
+    throw new Error(
+      `Demo rebuild does not support piggery-isolated database naming (DATABASE_NAME=${masterDatabase}). ` +
+      'It only targets navfarm_master/tenant_system/tenant_<name>. Refusing to run rather than silently ' +
+      'missing what setup-fresh-database.ts would drop under that naming.',
+    );
+  }
+  const tenantPrefix = 'tenant_';
+  const systemDatabase = env.SYSTEM_TENANT_DATABASE || 'tenant_system';
+  return { masterDatabase, systemDatabase, tenantPrefix };
+}
+
+async function listResetTargetDatabases(targets: ResetTargets): Promise<string[]> {
   const conn = await mysql.createConnection({ host, port, user, password, ssl });
   try {
     const [rows] = await conn.query<mysql.RowDataPacket[]>('SHOW DATABASES');
     return (rows as Array<{ Database: string }>)
       .map((r) => r.Database)
-      .filter((name) => NAVFARM_DATABASE.test(name));
+      .filter((name) => name === targets.masterDatabase || name === targets.systemDatabase || name.startsWith(targets.tenantPrefix));
   } finally {
     await conn.end();
   }
@@ -110,11 +158,12 @@ async function main() {
   const { apply, chaptersOnly, skipReset } = parseRebuildArgs(process.argv.slice(2));
   const plan = buildPlan({ chaptersOnly, skipReset });
 
-  // Guarded a second time with the real candidate list: confirms every
-  // database setup-fresh-database.ts would touch is one this guard allows —
-  // never navcrm_*, never anything outside the NAVFarm naming — before a
-  // single DROP DATABASE runs, whether or not this run will actually reset.
-  const candidates = await listCandidateDatabases();
+  // The real target list, derived the same way setup-fresh-database.ts
+  // derives it — not a list pre-filtered by the guard's own regex — asserted
+  // on before any subprocess runs, whether or not this run's plan actually
+  // includes the reset step.
+  const resetTargets = deriveResetTargets(process.env);
+  const candidates = await listResetTargetDatabases(resetTargets);
   assertSafeRebuildTarget(process.env, candidates);
 
   console.log('================================================================');
@@ -138,7 +187,9 @@ async function main() {
   console.log('\n✅ Demo rebuild complete.');
 }
 
-main().catch((err) => {
-  console.error(err instanceof Error ? err.message : err);
-  process.exitCode = 1;
-});
+if (require.main === module) {
+  main().catch((err) => {
+    console.error(err instanceof Error ? err.message : err);
+    process.exitCode = 1;
+  });
+}

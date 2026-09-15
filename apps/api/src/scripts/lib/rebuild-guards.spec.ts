@@ -25,4 +25,14 @@ describe('rebuild guards', () => {
     expect(parseRebuildArgs([])).toEqual({ apply: false, chaptersOnly: false, skipReset: false });
     expect(parseRebuildArgs(['--apply', '--skip-reset'])).toEqual({ apply: true, chaptersOnly: false, skipReset: true });
   });
+
+  // Added in fix round 1: a name that matches the NAVFarm regex (tenant_[a-z0-9_]+)
+  // AND contains "navcrm" isolates the `.includes('navcrm')` branch from the
+  // regex-mismatch branch above it — "refuses a database outside the NAVFarm
+  // naming" only proves a name failing BOTH checks is rejected; this proves the
+  // navcrm substring check still fires even when the regex alone would have let
+  // the name through.
+  it('refuses a NavCRM database even if it happens to match the NAVFarm naming shape', () => {
+    expect(() => assertSafeRebuildTarget(local, ['tenant_navcrm_x'])).toThrow('Refusing to drop tenant_navcrm_x');
+  });
 });
