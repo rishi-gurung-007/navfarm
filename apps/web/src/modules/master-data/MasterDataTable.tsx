@@ -15,7 +15,6 @@ import type { MasterDataConfig, MasterDataField } from "./types";
 import { CollapsibleCard } from "./CollapsibleCard";
 import { singularLabel } from "./labels";
 import AnimalDetailPanel from "./AnimalDetailPanel";
-import { LookupCard } from "./LookupCard";
 import { MASTER_DATA_CONFIGS } from "./configs";
 import { codeFieldOf } from "./useCodeSeries";
 import { useCodeSeries } from "./useCodeSeries";
@@ -32,6 +31,11 @@ type RelatedPicker = {
   field: MasterDataField;
   config: MasterDataConfig;
   options: Row[];
+};
+
+type RelatedCreator = {
+  field: MasterDataField;
+  config: MasterDataConfig;
 };
 
 const S = {
@@ -234,7 +238,7 @@ function endpointPath(endpoint: string): string {
 
 /**
  * The masters that fill a screen's dropdowns — what the "Dropdown options"
- * row names, and what the dialog renders as inline lookup cards.
+ * row names, and what each related selector can create or browse.
  *
  * Derived from the select-entity fields themselves, each one's endpoint being
  * another master's apiBase, and unioned with the hand-declared `lookupFor`.
@@ -249,7 +253,8 @@ function endpointPath(endpoint: string): string {
  * - It truncated an endpoint at its first slash, which credits "/uom" for a
  *   reference to "/uom/conversion". The longest matching apiBase wins instead.
  * - The caller filtered Business Central-owned masters out of the chips while
- *   rendering them as cards, on the reasoning that they could not be saved.
+ *   still exposing them to form selectors, on the reasoning that they could
+ *   not be saved.
  *   They can: `readOnly` here tracks administration rights, not BC ownership,
  *   and a BC catalog is created and edited locally until that integration is
  *   connected. BcOwnershipNotice still states the provenance.
@@ -292,7 +297,17 @@ export function lookupMastersFor(
   return ordered;
 }
 
-export default function MasterDataTable({ config }: { config: MasterDataConfig }) {
+export function MasterDataTable({
+  config,
+  createOnly = false,
+  onCreated,
+  onCreateCancelled,
+}: {
+  config: MasterDataConfig;
+  createOnly?: boolean;
+  onCreated?: (row: Row) => void;
+  onCreateCancelled?: () => void;
+}) {
   const { t, tLabel } = useLanguage();
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(false);
@@ -327,7 +342,9 @@ export default function MasterDataTable({ config }: { config: MasterDataConfig }
   const [entityReloadKey, setEntityReloadKey] = useState(0);
   const [lookupManager, setLookupManager] = useState<MasterDataConfig | null>(null);
   const [relatedPicker, setRelatedPicker] = useState<RelatedPicker | null>(null);
+  const [relatedCreator, setRelatedCreator] = useState<RelatedCreator | null>(null);
   const lastEntityReloadKeyRef = useRef(entityReloadKey);
+  const createOnlyOpenedRef = useRef(false);
 
   const [confirmDelete, setConfirmDelete] = useState<Row | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -430,10 +447,6 @@ export default function MasterDataTable({ config }: { config: MasterDataConfig }
       endpointPath(candidate.apiBase) === endpointPath(resolvedEndpoint) && candidate.key !== config.key,
     );
   };
-  const sectionCount = new Set(visibleFields.map((f) => f.section || "Identification")).size;
-  // Business Central-style adaptive presentation: compact masters remain a
-  // centred modal, while a dense or multi-card master gets a near-full-page
-  // dialog with its own scrolling body and pinned actions.
   /**
    * The chips, which are not quite the cards.
    *
@@ -441,18 +454,16 @@ export default function MasterDataTable({ config }: { config: MasterDataConfig }
    * tracks administration rights — and until the Business Central integration
    * is connected these are created and edited locally against our own
    * database. Withholding the chip while the dialog offered the very same
-   * master as a card said two different things about one catalog, and the card
-   * was the one telling the truth.
+   * master as a related selector action said two different things about one
+   * catalog.
    *
    * What does not belong here is a master sharing this screen's own tab bar.
    * Item Attributes is a tab of Items; offering a chip that opens it in a modal
-   * duplicates a tab sitting inches above it. The cards keep it, because a
-   * half-filled form cannot be abandoned to go and click a tab — which is
-   * exactly the difference between the two affordances.
+   * duplicates a tab sitting inches above it. The field selector still offers
+   * creation without requiring a half-filled form to be abandoned.
    */
   const tabGroup = (c: MasterDataConfig) => c.tabOf ?? c.key;
   const manageableLookups = lookupConfigs.filter((c) => tabGroup(c) !== tabGroup(config));
-  const usePageDialog = visibleFields.length > 10 || sectionCount > 3 || lookupConfigs.length > 2;
 
   const load = async () => {
     setLoading(true);
@@ -488,8 +499,9 @@ export default function MasterDataTable({ config }: { config: MasterDataConfig }
   };
 
   useEffect(() => {
+    if (createOnly) return;
     load();
-  }, [config.key, search, nobFilter, lobFilter, page, pageSize, sortKey, sortDir, colFilters]);
+  }, [config.key, search, nobFilter, lobFilter, page, pageSize, sortKey, sortDir, colFilters, createOnly]);
 
   // Anything that changes which rows match sends you back to the first page —
   // page 7 of a filtered list that now has two pages is not a page.
@@ -668,8 +680,8 @@ export default function MasterDataTable({ config }: { config: MasterDataConfig }
         setEntityOptions((prev) => ({ ...prev, [ep]: prev[ep] || [] }));
       }
     });
-    // entityReloadKey is included so a lookup card's inline "Add" (e.g. a
-    // new Item Category, Item Type or UOM) refetches this effect's
+    // entityReloadKey is included so creating a related record (e.g. a new
+    // Item Category, Item Type or UOM) refetches this effect's
     // non-dependent select-entity fields — category_id, item_type,
     // uom_primary/uom_secondary all have no dependsOn, so this is the
     // effect that actually powers those dropdowns, not the dependent-fields
@@ -778,7 +790,7 @@ export default function MasterDataTable({ config }: { config: MasterDataConfig }
   useEffect(() => {
     if (!modalOpen) return;
     const dependentFields = config.fields.filter((f) => f.type === "select-entity" && f.dependsOn);
-    // entityReloadKey changing means a lookup card just created a row that a
+    // entityReloadKey changing means a related selector just created a row that a
     // dependent dropdown here may need to see. The early return below skips
     // endpoints already cached in entityOptions, which would otherwise make
     // entityReloadKey a no-op dependency - so on a genuine key change, clear
@@ -822,6 +834,12 @@ export default function MasterDataTable({ config }: { config: MasterDataConfig }
     setChipDrafts({});
     setModalOpen(true);
   };
+
+  useEffect(() => {
+    if (!createOnly || createOnlyOpenedRef.current) return;
+    createOnlyOpenedRef.current = true;
+    openCreate();
+  }, [createOnly]);
 
   const openEdit = (row: Row) => {
     if (readOnly) return;
@@ -957,11 +975,15 @@ export default function MasterDataTable({ config }: { config: MasterDataConfig }
 
       if (editing) {
         await api.put(`${config.apiBase}/${editing[config.idKey]}`, payload);
+        setModalOpen(false);
+        load();
       } else {
-        await api.post(config.apiBase, payload);
+        const response = await api.post(config.apiBase, payload);
+        const created = unwrap<Row>(response);
+        setModalOpen(false);
+        onCreated?.(created);
+        if (!createOnly) load();
       }
-      setModalOpen(false);
-      load();
     } catch (err: any) {
       setFormError(err?.message || t("mdFailedToSave"));
       if (!editing) numbering.refresh();
@@ -1454,6 +1476,7 @@ export default function MasterDataTable({ config }: { config: MasterDataConfig }
         const taken = f.excludeValuesOf.map((k) => String(form[k] ?? "")).filter(Boolean);
         if (taken.length) options = options.filter((o) => !taken.includes(String(o[f.entityValueKey || "id"])));
       }
+      const relatedConfig = relatedConfigFor(f, resolvedEp);
       if (f.multiple) {
         const selected = parseStringList(form[f.key]);
         return (
@@ -1469,11 +1492,11 @@ export default function MasterDataTable({ config }: { config: MasterDataConfig }
             disabled={disabled || !!f.readOnly}
             loading={!!resolvedEp && loadedOptions === undefined}
             placeholder={restrictedReason || (disabled ? t("selectXFirst", { name: parentLabel }) : t("selectPlaceholder"))}
+            onCreate={relatedConfig ? () => setRelatedCreator({ field: f, config: relatedConfig }) : undefined}
           />
         );
       }
       const placeholderText = restrictedReason || (disabled ? t("selectXFirst", { name: parentLabel }) : t("selectPlaceholder"));
-      const relatedConfig = relatedConfigFor(f, resolvedEp);
       return (
         <SearchableEntitySelect
           id={accessibility.id}
@@ -1489,6 +1512,7 @@ export default function MasterDataTable({ config }: { config: MasterDataConfig }
           placeholder={placeholderText}
           searchPlaceholder={t("searchPlaceholder")}
           noMatchesLabel={t("mdNoMatches")}
+          onCreate={relatedConfig ? () => setRelatedCreator({ field: f, config: relatedConfig }) : undefined}
           onViewAll={relatedConfig ? () => setRelatedPicker({ field: f, config: relatedConfig, options }) : undefined}
         />
       );
@@ -1822,13 +1846,20 @@ export default function MasterDataTable({ config }: { config: MasterDataConfig }
           Section count changes its content layout, never the window size. */}
       <Dialog
         open={modalOpen && !readOnly}
-        onClose={() => !saving && setModalOpen(false)}
+        onClose={() => {
+          if (saving) return;
+          setModalOpen(false);
+          if (createOnly) onCreateCancelled?.();
+        }}
         title={editing ? t("editItem", { name: tLabel(singularLabel(config)) }) : t("addItem", { name: tLabel(singularLabel(config)) })}
-        maxWidth={sectionCount > 1 ? "xl" : "lg"}
-        presentation={usePageDialog ? "page" : "modal"}
+        maxWidth="xl"
+        presentation="modal"
         footer={
           <>
-            <button onClick={() => setModalOpen(false)} disabled={saving} className="rounded-lg border px-4 py-2 text-sm font-medium" style={S.surface}>
+            <button onClick={() => {
+              setModalOpen(false);
+              if (createOnly) onCreateCancelled?.();
+            }} disabled={saving} className="rounded-lg border px-4 py-2 text-sm font-medium" style={S.surface}>
               {t("cancel")}
             </button>
             <button
@@ -1888,11 +1919,6 @@ export default function MasterDataTable({ config }: { config: MasterDataConfig }
             ));
           })()}
 
-          {lookupConfigs.map((c) => (
-              <CollapsibleCard key={c.key} title={c.label} subtitle="Add one without leaving this form">
-                <LookupCard config={c} onCreated={() => { setEntityReloadKey((k) => k + 1); numbering.refresh(); }} onManage={() => setLookupManager(c)} />
-              </CollapsibleCard>
-            ))}
         </div>
       </Dialog>
 
@@ -1913,6 +1939,25 @@ export default function MasterDataTable({ config }: { config: MasterDataConfig }
           onChange={(value) => {
             setField(relatedPicker.field.key, value);
             setRelatedPicker(null);
+          }}
+          onCreate={() => {
+            setRelatedCreator({ field: relatedPicker.field, config: relatedPicker.config });
+            setRelatedPicker(null);
+          }}
+        />
+      )}
+
+      {relatedCreator && (
+        <MasterDataTable
+          config={relatedCreator.config}
+          createOnly
+          onCreateCancelled={() => setRelatedCreator(null)}
+          onCreated={(created) => {
+            const valueKey = relatedCreator.field.entityValueKey || relatedCreator.config.idKey;
+            const id = created?.[valueKey] ?? created?.[relatedCreator.config.idKey];
+            setEntityReloadKey((key) => key + 1);
+            if (id !== undefined && id !== null) setField(relatedCreator.field.key, String(id));
+            setRelatedCreator(null);
           }}
         />
       )}
@@ -1955,3 +2000,5 @@ export default function MasterDataTable({ config }: { config: MasterDataConfig }
     </div>
   );
 }
+
+export default MasterDataTable;

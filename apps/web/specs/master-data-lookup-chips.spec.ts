@@ -1,5 +1,29 @@
+import React from "react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MASTER_DATA_CONFIGS } from "@/modules/master-data/configs";
-import { lookupMastersFor } from "@/modules/master-data/MasterDataTable";
+import MasterDataTable, { lookupMastersFor } from "@/modules/master-data/MasterDataTable";
+import type { MasterDataConfig } from "@/modules/master-data/types";
+import { LanguageProvider } from "@/hooks/useLanguage";
+import { api } from "@/services/api-client";
+
+jest.mock("@/services/api-client", () => ({
+  api: {
+    get: jest.fn(),
+    post: jest.fn(),
+    put: jest.fn(),
+    patch: jest.fn(),
+    delete: jest.fn(),
+  },
+}));
+
+jest.mock("@/hooks/useAuth", () => ({
+  getActiveCompanyId: () => null,
+  getActiveWorkspaceScope: () => "TENANT",
+  getActiveOperationalAreaId: () => null,
+  getStoredUser: () => ({ userType: "TENANT_ADMIN" }),
+}));
+
+jest.mock("@/hooks/useMediaQuery", () => ({ useIsDesktop: () => true }));
 
 const config = (key: string) => MASTER_DATA_CONFIGS.find((c) => c.key === key)!;
 const chipKeys = (key: string) => lookupMastersFor(config(key)).map((c) => c.key);
@@ -31,8 +55,8 @@ describe("master-data lookup chips", () => {
   });
 
   // A tab of this same screen is one click away in the tab bar, so a chip that
-  // opens it in a modal is a second door to the same room. The dialog's cards
-  // still offer it: a half-filled form cannot be abandoned to click a tab.
+  // opens it in a modal is a second door to the same room. Related creation is
+  // now offered by the field that consumes the catalog, not by this page row.
   it("leaves out a master that is a tab of this screen", () => {
     const tabGroup = (key: string) => {
       const c = MASTER_DATA_CONFIGS.find((x) => x.key === key)!;
@@ -45,8 +69,8 @@ describe("master-data lookup chips", () => {
       ["uom", "uom-conversion"],
     ]) {
       expect(tabGroup(screen)).toBe(tabGroup(tab));
-      // lookupMastersFor still returns it — the cards need it. The chip row is
-      // what filters it, so assert the shared group rather than the absence.
+      // lookupMastersFor still returns it for selector creation. The chip row
+      // is what filters it, so assert the shared group rather than the absence.
       expect(tabGroup(tab)).toBe(tabGroup(screen));
     }
   });
@@ -95,5 +119,62 @@ describe("master-data lookup chips", () => {
     for (const c of MASTER_DATA_CONFIGS) {
       expect(lookupMastersFor(c).map((x) => x.key)).not.toContain(c.key);
     }
+  });
+
+  describe("create-only master form", () => {
+    const createConfig: MasterDataConfig = {
+      key: "test-lookup",
+      label: "Test Lookups",
+      singular: "Test Lookup",
+      apiBase: "/test-lookups",
+      idKey: "lookup_id",
+      group: "Test",
+      fields: [
+        { key: "lookup_name", label: "Name", type: "text", required: true },
+      ],
+    };
+
+    beforeEach(() => {
+      jest.clearAllMocks();
+      (api.get as jest.Mock).mockResolvedValue([]);
+      (api.post as jest.Mock).mockResolvedValue({
+        data: { lookup_id: "lookup-new", lookup_name: "New lookup" },
+      });
+    });
+
+    it("opens the standard create form without loading the list and reports cancellation", async () => {
+      const onCreateCancelled = jest.fn();
+      render(React.createElement(
+        LanguageProvider,
+        null,
+        React.createElement(MasterDataTable, { config: createConfig, createOnly: true, onCreateCancelled }),
+      ));
+
+      expect(await screen.findByRole("dialog", { name: "Add Test Lookup" })).toBeTruthy();
+      expect(api.get).not.toHaveBeenCalled();
+
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      expect(onCreateCancelled).toHaveBeenCalledTimes(1);
+    });
+
+    it("returns the unwrapped created row", async () => {
+      const onCreated = jest.fn();
+      render(React.createElement(
+        LanguageProvider,
+        null,
+        React.createElement(MasterDataTable, { config: createConfig, createOnly: true, onCreated }),
+      ));
+
+      fireEvent.change(await screen.findByRole("textbox", { name: "Name" }), {
+        target: { value: "New lookup" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Create" }));
+
+      await waitFor(() => expect(onCreated).toHaveBeenCalledWith({
+        lookup_id: "lookup-new",
+        lookup_name: "New lookup",
+      }));
+      expect(api.post).toHaveBeenCalledWith("/test-lookups", { lookup_name: "New lookup" });
+    });
   });
 });
