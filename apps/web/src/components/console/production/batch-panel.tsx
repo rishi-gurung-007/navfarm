@@ -9,7 +9,6 @@ import {
   Loader2,
   Inbox,
   Eye,
-  PlayCircle,
   Pencil,
   CheckCircle2,
   ClipboardCheck,
@@ -503,7 +502,8 @@ export default function BatchPanel() {
   const unassignedAnimalCandidates = animalCandidates.filter(
     (a) =>
       (showAllAnimals || !isAssignedElsewhere(a)) &&
-      (!header.lob_id || a.lob_id === header.lob_id),
+      (!header.lob_id || a.lob_id === header.lob_id) &&
+      (!header.breed_id || a.breed_id === header.breed_id),
   );
   // Stage options offered in the filter dropdown are only the stages actually
   // present among this LOB's unassigned candidates — no point listing a stage
@@ -738,6 +738,12 @@ export default function BatchPanel() {
         );
         continue;
       }
+      if (header.breed_id && animal.breed_id !== header.breed_id) {
+        errors.push(
+          `Row ${line}: '${key}' does not match the selected breed.`,
+        );
+        continue;
+      }
       if (isAssignedElsewhere(animal)) {
         errors.push(`Row ${line}: '${key}' is already assigned to a batch.`);
         continue;
@@ -916,19 +922,6 @@ export default function BatchPanel() {
     setViewing(unwrap<Row>(res));
   };
 
-  const handleActivate = async () => {
-    if (!viewing) return;
-    setActing(true);
-    try {
-      await api.post(`/batch/${viewing.batch_id}/activate`, {});
-      await refreshViewing();
-      load();
-    } catch (err: any) {
-      setError(err?.message || t('blErrActivateBatch'));
-    } finally {
-      setActing(false);
-    }
-  };
 
   const openClose = () => {
     setCloseDate(new Date().toISOString().slice(0, 10));
@@ -1562,76 +1555,13 @@ export default function BatchPanel() {
               disabled={saving}
               className="nf-btn-primary"
             >
-              {saving
-                ? t('blSaving')
-                : editingBatchId
-                  ? t('blActivateBatch')
-                  : t('create')}
+              {saving ? t('blSaving') : t('create')}
             </Button>
           </>
         }
       >
         <div className="flex flex-col gap-4">
           {formError && <InlineAlert>{formError}</InlineAlert>}
-
-          <div className="flex flex-col gap-1.5">
-            <label className="nf-text-label" style={S.sub}>
-              Tracking Mode
-            </label>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setTrackingMode('BATCH_WISE');
-                  setHeader((h) => ({
-                    ...h,
-                    uom: h.uom === 'HEAD' ? '' : h.uom,
-                  }));
-                }}
-                className="flex-1 rounded-lg border px-3 py-2 text-left text-xs"
-                style={
-                  trackingMode === 'BATCH_WISE'
-                    ? {
-                        borderColor: 'var(--accent)',
-                        backgroundColor: 'var(--surface-raised)',
-                      }
-                    : S.surface
-                }
-              >
-                <span className="font-semibold" style={S.primary}>
-                  Batch Wise
-                </span>
-                <p className="mt-0.5" style={S.muted}>
-                  The whole batch moves through one stage at a time. Opening
-                  quantity + input lines.
-                </p>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setTrackingMode('ANIMAL_WISE');
-                  setHeader((h) => ({ ...h, uom: 'HEAD' }));
-                }}
-                className="flex-1 rounded-lg border px-3 py-2 text-left text-xs"
-                style={
-                  trackingMode === 'ANIMAL_WISE'
-                    ? {
-                        borderColor: 'var(--accent)',
-                        backgroundColor: 'var(--surface-raised)',
-                      }
-                    : S.surface
-                }
-              >
-                <span className="font-semibold" style={S.primary}>
-                  Animal Wise
-                </span>
-                <p className="mt-0.5" style={S.muted}>
-                  Pick existing, unassigned animals — each keeps its own stage
-                  and location.
-                </p>
-              </button>
-            </div>
-          </div>
 
           {activeArea && (
             <div className="rounded-lg border border-primary/20 bg-primary/5 p-3 text-xs">
@@ -1701,6 +1631,31 @@ export default function BatchPanel() {
             )}
             <div className="flex flex-col gap-1.5">
               <label className="nf-text-label" style={S.sub}>
+                {t('blLabelBatchType')} <span className="text-(--danger)">*</span>
+              </label>
+              <select
+                value={trackingMode}
+                onChange={(e) => {
+                  const mode = e.target.value as 'BATCH_WISE' | 'ANIMAL_WISE';
+                  setTrackingMode(mode);
+                  if (mode === 'ANIMAL_WISE') {
+                    setHeader((h) => ({ ...h, uom: 'HEAD' }));
+                  } else {
+                    setHeader((h) => ({
+                      ...h,
+                      uom: h.uom === 'HEAD' ? '' : h.uom,
+                    }));
+                  }
+                }}
+                className={`${inputCls} nf-select`}
+                style={S.input}
+              >
+                <option value="BATCH_WISE">{t('blBatchWise')}</option>
+                <option value="ANIMAL_WISE">{t('blAnimalWise')}</option>
+              </select>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="nf-text-label" style={S.sub}>
                 {t('blLabelCostingMethod')}{' '}
                 <span className="text-(--danger)">*</span>
               </label>
@@ -1723,9 +1678,23 @@ export default function BatchPanel() {
               </label>
               <select
                 value={header.breed_id}
-                onChange={(e) =>
-                  setHeader((h) => ({ ...h, breed_id: e.target.value }))
-                }
+                onChange={(e) => {
+                  const newBreedId = e.target.value;
+                  setHeader((h) => ({ ...h, breed_id: newBreedId }));
+                  if (trackingMode === 'ANIMAL_WISE' && newBreedId) {
+                    setSelectedAnimalIds((prev) => {
+                      const next = new Set(
+                        [...prev].filter((id) => {
+                          const animal = animalCandidates.find(
+                            (a) => a.animal_id === id,
+                          );
+                          return !animal || animal.breed_id === newBreedId;
+                        }),
+                      );
+                      return next;
+                    });
+                  }
+                }}
                 className={`${inputCls} nf-select`}
                 style={S.input}
               >
@@ -1737,10 +1706,31 @@ export default function BatchPanel() {
                 ))}
               </select>
             </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="nf-text-label" style={S.sub}>
+                {t('blLabelShed')}
+              </label>
+              <select
+                value={header.shed_id}
+                onChange={(e) =>
+                  setHeader((h) => ({ ...h, shed_id: e.target.value }))
+                }
+                className={`${inputCls} nf-select`}
+                style={S.input}
+              >
+                <option value="">{t('blSelectEllipsis')}</option>
+                {sheds.map((s) => (
+                  <option key={s.shed_id} value={s.shed_id}>
+                    {s.shed_code} — {s.shed_name}
+                  </option>
+                ))}
+              </select>
+            </div>
             {trackingMode === 'BATCH_WISE' && (
-              <div className="flex flex-col gap-1.5">
+              <div className="flex flex-col gap-1.5 sm:col-span-2">
                 <label className="nf-text-label" style={S.sub}>
-                  Initial Stage <span className="text-(--danger)">*</span>
+                  {t('blLabelInitialStage')}{' '}
+                  <span className="text-(--danger)">*</span>
                 </label>
                 <select
                   value={header.stage_id}
@@ -1780,26 +1770,28 @@ export default function BatchPanel() {
                 </select>
               </div>
             )}
-            <div className="flex flex-col gap-1.5">
-              <label className="nf-text-label" style={S.sub}>
-                {t('blLabelShed')}
-              </label>
-              <select
-                value={header.shed_id}
-                onChange={(e) =>
-                  setHeader((h) => ({ ...h, shed_id: e.target.value }))
-                }
-                className={`${inputCls} nf-select`}
-                style={S.input}
-              >
-                <option value="">{t('blSelectEllipsis')}</option>
-                {sheds.map((s) => (
-                  <option key={s.shed_id} value={s.shed_id}>
-                    {s.shed_code} — {s.shed_name}
-                  </option>
-                ))}
-              </select>
-            </div>
+            {header.stage_id && trackingMode === 'BATCH_WISE' && (
+              <div className="sm:col-span-2 rounded-lg border border-primary/20 bg-primary/5 p-3 text-xs flex items-start gap-2.5">
+                <CalendarClock className="h-4 w-4 shrink-0 text-primary mt-0.5" />
+                <div className="flex flex-col gap-0.5">
+                  <span className="font-semibold text-primary">
+                    Stage 1 Scheduler Auto-Generation
+                  </span>
+                  <span style={S.sub}>
+                    Creating this batch will automatically generate its{' '}
+                    <strong>
+                      {
+                        stages.find((s) => s.stage_id === header.stage_id)
+                          ?.stage_name
+                      }
+                    </strong>{' '}
+                    scheduler with standard SOP activities (daily feed rations,
+                    health medications, and KPI limits) based on breed lifecycle
+                    standards.
+                  </span>
+                </div>
+              </div>
+            )}
             <div className="flex flex-col gap-1.5">
               <label className="nf-text-label" style={S.sub}>
                 {t('blLabelStartDate')}{' '}
@@ -1907,28 +1899,6 @@ export default function BatchPanel() {
                 style={S.input}
               />
             </div>
-            {header.stage_id && (
-              <div className="sm:col-span-2 rounded-lg border border-primary/20 bg-primary/5 p-3 text-xs flex items-start gap-2.5">
-                <CalendarClock className="h-4 w-4 shrink-0 text-primary mt-0.5" />
-                <div className="flex flex-col gap-0.5">
-                  <span className="font-semibold text-primary">
-                    Stage 1 Scheduler Auto-Generation
-                  </span>
-                  <span style={S.sub}>
-                    Creating this batch will automatically generate its{' '}
-                    <strong>
-                      {
-                        stages.find((s) => s.stage_id === header.stage_id)
-                          ?.stage_name
-                      }
-                    </strong>{' '}
-                    scheduler with standard SOP activities (daily feed rations,
-                    health medications, and KPI limits) based on breed lifecycle
-                    standards.
-                  </span>
-                </div>
-              </div>
-            )}
           </div>
 
           {trackingMode === 'BATCH_WISE' && (
@@ -2398,7 +2368,9 @@ export default function BatchPanel() {
                 </p>
               ) : filteredAnimalCandidates.length === 0 ? (
                 <p className="text-xs" style={S.muted}>
-                  No unassigned animals found for this Line of Business.
+                  {header.breed_id
+                    ? 'No unassigned animals found matching the selected breed.'
+                    : 'No unassigned animals found for this Line of Business.'}
                 </p>
               ) : (
                 <div
@@ -2682,20 +2654,10 @@ export default function BatchPanel() {
                   <div className="flex flex-wrap gap-2">
                     <Button
                       onClick={() => openEdit(viewing)}
-                      variant="outline"
                       size="sm"
-                      className="self-start gap-1.5"
+                      className="nf-btn-primary self-start gap-1.5"
                     >
                       <Pencil className="h-3.5 w-3.5" /> {t('edit')}
-                    </Button>
-                    <Button
-                      onClick={handleActivate}
-                      disabled={acting}
-                      size="sm"
-                      className="nf-btn-primary self-start"
-                    >
-                      <PlayCircle className="h-4 w-4" />{' '}
-                      {acting ? t('blActivating') : t('blActivateBatch')}
                     </Button>
                   </div>
                 )}
