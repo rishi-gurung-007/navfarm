@@ -778,6 +778,42 @@ html[data-scroll-locked] body {
   overflow: hidden;
 }
 
+/* ── Floating mode: `<Popover floating>` ──────────────────────────────────
+   Opt-in, and only for a trigger that sits inside something that scrolls or
+   clips. An absolutely positioned panel is clipped by its scrolling ancestor,
+   and the Master Data create/edit Dialog body is `overflow-y: auto` — a select
+   near the bottom of that form opened into a panel cut off at the dialog's
+   edge. In floating mode `popover.tsx` portals the panel to <body> so no
+   ancestor `overflow` can reach it, and writes `top`/`left` inline from the
+   trigger's viewport rect. Geometry therefore belongs to the component here;
+   this block contributes only the two things the cascade has to settle.
+
+   z-index 110 because Dialog, FullPageOverlay (`z-[100]` in their own files)
+   and `[data-drawer-root]` (100, below) are the highest surfaces in the
+   application, and a panel opened from a field inside one of them has to draw
+   over it — including over the Dialog's own full-bleed scrim, so a press on
+   the panel is a press on the panel and not a dismissal of the dialog behind
+   it. Nothing in the app sits between 100 and 110; the gap is headroom, not a
+   layer. Both the panel and those surfaces are children of <body>, so the
+   comparison is made in the root stacking context and actually holds.
+
+   The inset reset exists because `.nf-combobox-panel` above pins both inline
+   insets to 0 — right for a panel stretched inside its anchor, fatal for a
+   fixed one, which would stretch across the whole viewport. The selectors are
+   spelled out at that rule's specificity or higher so it loses cleanly; the
+   component also writes `right`/`bottom: auto` inline as the belt to this
+   brace. */
+[data-popover-panel][data-floating] {
+  position: fixed;
+  z-index: 110;
+}
+[data-popover-panel][data-floating],
+[data-popover-panel][data-floating][data-align='start'].nf-combobox-panel,
+[data-popover-panel][data-floating][data-align='end'].nf-combobox-panel {
+  inset: auto;
+  margin: 0;
+}
+
 /* Identity/caption block. Full-bleed rule, no card, no icon. */
 [data-popover-heading] {
   margin: 0 -4px 4px;
