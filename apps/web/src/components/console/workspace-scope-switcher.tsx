@@ -164,6 +164,13 @@ export default function WorkspaceScopeSwitcher({
     setActiveCompanyId(companyId);
     setActiveWorkspaceScope("COMPANY");
     setActiveOperationalAreaId(null);
+    // The farm pinned under the previous company is not a farm of this one.
+    // apiRequest keeps sending x-active-farm-id from storage regardless of
+    // company, and resolveFarmScope 403s any farm-scoped request once the
+    // farm no longer belongs to the active company — so it must be cleared
+    // here, not left for the user to notice and fix via "All farms".
+    setActiveFarmId(null);
+    setActiveFarmIdState(null);
     setCurrentScope("COMPANY");
     setActiveCompId(companyId);
 
@@ -177,7 +184,12 @@ export default function WorkspaceScopeSwitcher({
     setActiveCompanyId(area.company_id);
     setActiveOperationalAreaId(area.area_id);
     setActiveWorkspaceScope("OPERATIONAL");
-    
+    // Same reasoning as handleSelectCompany: switching the operational area
+    // can also switch the company underneath it, and a farm pinned to the
+    // old company must not survive the move.
+    setActiveFarmId(null);
+    setActiveFarmIdState(null);
+
     const normalizedLob = resolveLobFamily(area.lob_code, area.lob_name, area.area_name);
     setActiveLob(normalizedLob);
     setCurrentScope("OPERATIONAL");
