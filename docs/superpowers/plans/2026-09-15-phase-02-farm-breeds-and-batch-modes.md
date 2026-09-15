@@ -1,5 +1,15 @@
 # Phase 2 — Farm-specific Breeds and Batch Modes Implementation Plan
 
+> **STATUS 15 Sep 07:40 — read before executing anything.** Codex implemented most of
+> this phase's minimum in `40ebe1b` / `f3e9c8c` / `978adc1` for the 20:00 internal review,
+> including migration **`0094_breed_code_per_farm.sql`** (do NOT add a second 0094),
+> farm-aware breed uniqueness, breed codes via the series per farm, and batch create with
+> farm + tracking mode + initial stage. **Ruling 3 below is WITHDRAWN**: Rishi decided
+> (recorded 2026-09-15) that a Registered batch's opening quantity must not manufacture
+> animals — Animal rows come only from explicit data. A combined review is auditing which
+> tasks are done; execute only the remainder it names.
+
+
 > **For agentic workers:** REQUIRED SUB-SKILL: use superpowers:subagent-driven-development
 > (recommended) or superpowers:executing-plans. Steps use checkbox (`- [ ]`) syntax.
 > Roadmap: `2026-09-14-mvp-delivery-plan.md` — its Global constraints and Machine
@@ -40,7 +50,7 @@ decides whether Animal rows are registered. The farm-scope helpers from Phase 1
    are his to keep consistent across farms.
 2. **Tenant templates stay farm-less.** A breed with `company_id IS NULL` is a tenant
    template, not a farm profile; farm is required for company breeds only.
-3. **Registered Animals registers the opening headcount.** A `REGISTERED` batch with
+3. ~~**Registered Animals registers the opening headcount.**~~ **WITHDRAWN 2026-09-15 — see status banner.** A `REGISTERED` batch with
    `opening_quantity > 0` gets its Animal rows at create, whatever the costing method;
    a `COUNT_ONLY` batch never does — including `BIO_ASSET`, which today registers rows
    regardless. Registered requires a breed.
