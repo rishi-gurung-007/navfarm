@@ -4,6 +4,7 @@ import { ClsService } from 'nestjs-cls';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { ConflictException, BadRequestException, NotFoundException } from '@nestjs/common';
+import { MySqlDialect } from 'drizzle-orm/mysql-core';
 
 describe('UomService', () => {
   let service: UomService;
@@ -215,6 +216,74 @@ describe('UomService', () => {
       const res = await service.convertQuantity('BAG', 'KG', 3, 'item-feed');
       expect(res.conversionFactor).toBe(50);
       expect(res.convertedQuantity).toBe(150);
+    });
+  });
+
+  describe('findAllConversions', () => {
+    // Real SQL, not a spy: the list contract is only kept if the rendered
+    // ORDER BY and WHERE actually change. Same idiom as master-data-scope.spec.
+    const dialect = new MySqlDialect();
+    const sqlOf = (chunk: any) => dialect.sqlToQuery(chunk);
+
+    // Builds a fresh select() chain the two queries findAllConversions issues
+    // (page + count) consume in order.
+    const mockListChain = () => {
+      const limitMock = jest.fn().mockReturnValue({ offset: jest.fn().mockResolvedValue([]) });
+      const orderByMock = jest.fn().mockReturnValue({ limit: limitMock });
+      const dataWhereMock = jest.fn().mockReturnValue({ orderBy: orderByMock });
+      mockDbSelect.mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: dataWhereMock }) });
+      mockDbSelect.mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ total: 4 }]) }),
+      });
+      return { orderByMock, dataWhereMock };
+    };
+
+    it('orders by the requested column and direction — was hardcoded to from_uom asc, ignoring sort and dir', async () => {
+      const asc = mockListChain();
+      await service.findAllConversions({ sort: 'conversion_code', dir: 'asc' } as any, 'tenant-1');
+      const desc = mockListChain();
+      await service.findAllConversions({ sort: 'conversion_code', dir: 'desc' } as any, 'tenant-1');
+
+      const ascSql = sqlOf(asc.orderByMock.mock.calls[0][0]).sql;
+      const descSql = sqlOf(desc.orderByMock.mock.calls[0][0]).sql;
+
+      expect(ascSql).toContain('`conversion_code`');
+      expect(ascSql).toContain('asc');
+      expect(descSql).toContain('`conversion_code`');
+      expect(descSql).toContain('desc');
+      expect(ascSql).not.toEqual(descSql);
+    });
+
+    it('narrows by filter[from_uom] via the shared list contract — was never applied before', async () => {
+      const { dataWhereMock } = mockListChain();
+
+      await service.findAllConversions({ filter: { from_uom: 'KG' } } as any, 'tenant-1');
+
+      const where = sqlOf(dataWhereMock.mock.calls[0][0]);
+      expect(where.sql).toContain('`from_uom`');
+      expect(where.params).toContain('KG');
+    });
+
+    it('applies ?search across the code and both units — the list screen sends it on every keystroke', async () => {
+      const { dataWhereMock } = mockListChain();
+
+      await service.findAllConversions({ search: 'KG' } as any, 'tenant-1');
+
+      // Undeclared on the DTO this 400s the whole screen instead, because the
+      // global pipe runs forbidNonWhitelisted.
+      const where = sqlOf(dataWhereMock.mock.calls[0][0]);
+      expect(where.sql).toContain('`conversion_code` like');
+      expect(where.sql).toContain('`from_uom` like');
+      expect(where.sql).toContain('`to_uom` like');
+      expect(where.params).toContain('%KG%');
+    });
+
+    it('reports the total alongside the page, so the screen can page in SQL', async () => {
+      mockListChain();
+
+      const result = await service.findAllConversions({ limit: 25, offset: 50 } as any, 'tenant-1');
+
+      expect(result).toEqual({ data: [], total: 4, limit: 25, offset: 50 });
     });
   });
 });

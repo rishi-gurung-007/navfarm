@@ -179,6 +179,36 @@ export class CreateUomConversionDto {
   lob_id?: string;
 }
 
+export class QueryUomConversionDto extends MasterListQueryDto {
+  @ApiProperty({ description: 'Filter by item UUID (also returns global mappings)', required: false })
+  @IsOptional()
+  @IsString()
+  itemId?: string;
+
+  @ApiProperty({ description: 'Filter by company UUID', required: false })
+  @IsOptional()
+  @IsString()
+  companyId?: string;
+
+  @ApiProperty({ description: 'Filter by From UOM code', required: false })
+  @IsOptional()
+  @IsString()
+  fromUom?: string;
+
+  @ApiProperty({ description: 'Filter by To UOM code', required: false })
+  @IsOptional()
+  @IsString()
+  toUom?: string;
+
+  // The master-data table appends `search` to every list request and the global
+  // pipe runs forbidNonWhitelisted, so leaving it undeclared 400s the whole
+  // screen the moment anyone types in the search box.
+  @ApiProperty({ description: 'Search term for conversion code or either unit', required: false })
+  @IsOptional()
+  @IsString()
+  search?: string;
+}
+
 export class UpdateUomConversionDto {
   @ApiProperty({ description: 'Unique code within the tenant/company scope. Leave blank to keep the stored code unchanged.', required: false })
   @IsString()

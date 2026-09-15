@@ -37,6 +37,24 @@ export class GoodsReceiptService {
   // blocks until the first commits its insert, instead of both reading the
   // same count and generating the same receipt number (matches the pattern
   // already used by the other 3 document types' number generators).
+  /**
+   * A warehouse taken out of service (deactivated or soft-deleted in
+   * location_master) must not accept new stock. assertLocationOnActiveFarm
+   * only checks the warehouse is on the right farm/company/LOB — it says
+   * nothing about is_active, and skips entirely for unrestricted callers — so
+   * this runs independently on create, update and post.
+   */
+  private async assertWarehouseActive(warehouseId: string): Promise<void> {
+    const [row] = await this.db
+      .select({ is_active: schema.locationMaster.is_active, deleted_at: schema.locationMaster.deleted_at })
+      .from(schema.locationMaster)
+      .where(eq(schema.locationMaster.location_id, warehouseId))
+      .limit(1);
+    if (row && (row.is_active === false || row.deleted_at)) {
+      throw new BadRequestException('The selected warehouse is inactive.');
+    }
+  }
+
   private async generateReceiptNo(tenantId: string, companyId: string, executor: MySql2Database<typeof schema> = this.db): Promise<string> {
     const [row] = await executor
       .select({ total: count() })
@@ -50,6 +68,7 @@ export class GoodsReceiptService {
   async create(dto: CreateGoodsReceiptDto, tenantId: string, userPayload?: any) {
     assertCompanyInScope(farmScope(this.cls), dto.company_id);
     await assertLocationOnActiveFarm(this.db, farmScope(this.cls), dto.warehouse_id, 'Warehouse');
+    await this.assertWarehouseActive(dto.warehouse_id);
     return withTenantTransaction(this.cls, async () => {
     const receiptId = randomUUID();
     const receiptNo = await this.db.transaction(async (tx) => {
@@ -171,6 +190,7 @@ export class GoodsReceiptService {
     this.assertDraft(receipt);
     if (dto.warehouse_id !== undefined) {
       await assertLocationOnActiveFarm(this.db, farmScope(this.cls), dto.warehouse_id, 'Warehouse');
+      await this.assertWarehouseActive(dto.warehouse_id);
     }
 
     const updates: any = {
@@ -238,6 +258,9 @@ export class GoodsReceiptService {
     return withTenantTransaction(this.cls, async () => {
     const receipt = await this.findOne(id);
     this.assertDraft(receipt);
+    // The warehouse may have been deactivated after the receipt was drafted —
+    // re-checked here so posting can never land stock on a dead location.
+    await this.assertWarehouseActive(receipt.warehouse_id);
 
     if (!receipt.lines || receipt.lines.length === 0) {
       throw new BadRequestException('Cannot post a Goods Receipt with no lines.');

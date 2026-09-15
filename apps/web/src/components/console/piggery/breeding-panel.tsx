@@ -762,7 +762,7 @@ export function BreedingPanel() {
               <div className="p-3 rounded-[var(--radius-md)] border text-xs space-y-1" style={S.raised}>
                 <div className="flex justify-between">
                   <span style={S.sub}>{t("brpLabelScheduledGestation")}</span>
-                  <span className="font-semibold" style={S.primary}>{t("brpValue114Days")}</span>
+                  <span className="font-semibold" style={S.primary}>{t("brpValueGestationDays")}</span>
                 </div>
                 <div className="flex justify-between">
                   <span style={S.sub}>{t("brpLabelUltrasoundCheck")}</span>

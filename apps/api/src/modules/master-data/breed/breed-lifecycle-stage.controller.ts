@@ -28,7 +28,16 @@ export class BreedLifecycleStageController {
   async findAll(@Query() query: QueryBreedLifecycleStageDto, @Req() req: any) {
     const tenantId = req.user?.tenantId || req['tenantId'];
     const result = await this.breedService.findAllLifecycleStages(query, tenantId);
-    return { success: true, message: 'Breed lifecycle stages retrieved successfully.', data: result };
+    // `data` stays the array every caller already reads; total/limit/offset are
+    // siblings the list screen pages on (same envelope as Item).
+    return {
+      success: true,
+      message: 'Breed lifecycle stages retrieved successfully.',
+      data: result.data,
+      total: result.total,
+      limit: result.limit,
+      offset: result.offset,
+    };
   }
 
   @Get(':id')

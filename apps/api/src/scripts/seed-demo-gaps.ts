@@ -73,11 +73,15 @@ export async function seedDemoGaps() {
     /* ── Suppliers ─────────────────────────────────────────────────────── */
     await run('Suppliers', async () => {
       for (const { c, tag } of perCompany) {
+        // Clearly-demo Zimbabwe-appropriate placeholders (2026-09-15 lane B fix)
+        // — the previous rows used real-looking Indian company names, GSTIN-shaped
+        // tax numbers, and +91 phone numbers. No invented tax number/phone: both
+        // are left blank rather than replaced with a different fabricated value.
         const rows = [
-          { key: `SUP-${tag}-001`, name: 'Nutrimix Feed Industries Pvt Ltd', type: 'FEED_SUPPLIER', email: 'sales@nutrimix.example', phone: '+91 98200 11223', city: 'Pune', state: 'Maharashtra', terms: 'NET30', credit: 1500000 },
-          { key: `SUP-${tag}-002`, name: 'VetCare Pharmaceuticals', type: 'MEDICINE_SUPPLIER', email: 'orders@vetcare.example', phone: '+91 98200 44556', city: 'Hyderabad', state: 'Telangana', terms: 'NET15', credit: 500000 },
-          { key: `SUP-${tag}-003`, name: 'AgriEquip Machinery & Spares', type: 'EQUIPMENT_SUPPLIER', email: 'support@agriequip.example', phone: '+91 98200 77889', city: 'Ludhiana', state: 'Punjab', terms: 'NET45', credit: 800000 },
-          { key: `SUP-${tag}-004`, name: 'Premier Swine Genetics Import', type: 'ANIMAL_SUPPLIER', email: 'genetics@premierswine.example', phone: '+91 98200 33445', city: 'Bengaluru', state: 'Karnataka', terms: 'ADVANCE', credit: 2500000 },
+          { key: `SUP-${tag}-001`, name: 'Demo Feed Supplier', type: 'FEED_SUPPLIER', email: 'sales@nutrimix.example', phone: '', city: 'Harare', state: '', terms: 'NET30', credit: 1500000 },
+          { key: `SUP-${tag}-002`, name: 'Demo Veterinary Supplier', type: 'MEDICINE_SUPPLIER', email: 'orders@vetcare.example', phone: '', city: 'Harare', state: '', terms: 'NET15', credit: 500000 },
+          { key: `SUP-${tag}-003`, name: 'Demo Equipment Supplier', type: 'EQUIPMENT_SUPPLIER', email: 'support@agriequip.example', phone: '', city: 'Bulawayo', state: '', terms: 'NET45', credit: 800000 },
+          { key: `SUP-${tag}-004`, name: 'Demo Animal Supplier', type: 'ANIMAL_SUPPLIER', email: 'genetics@premierswine.example', phone: '', city: 'Harare', state: '', terms: 'ADVANCE', credit: 2500000 },
         ];
         for (const r of rows) {
           const [x] = await db.select().from(schema.supplierMaster)
@@ -86,8 +90,8 @@ export async function seedDemoGaps() {
           await db.insert(schema.supplierMaster).values({
             supplier_id: randomUUID(), tenant_id: tenantId, company_id: c.company_id,
             supplier_code: await seedCode(db, tenantId, c.company_id, 'SUPPLIER', schema.supplierMaster, schema.supplierMaster.supplier_code, r.key), supplier_name: r.name, email: r.email, phone: r.phone,
-            tax_number: `27AABCU${Math.floor(1000 + Math.random() * 8999)}M1Z5`, payment_terms: r.terms,
-            address_line1: 'Plot 14, Industrial Estate', city: r.city, state: r.state, country: 'India', pincode: '411019',
+            tax_number: '', payment_terms: r.terms,
+            address_line1: 'Demo Industrial Estate', city: r.city, state: r.state, country: 'Zimbabwe', pincode: '',
             vendor_type: r.type, is_approved: true, approved_by: by, credit_limit: d4(r.credit),
             is_active: true, created_by: by,
           });
@@ -98,10 +102,12 @@ export async function seedDemoGaps() {
     /* ── Customers ─────────────────────────────────────────────────────── */
     await run('Customers', async () => {
       for (const { c, tag } of perCompany) {
+        // Same demo-placeholder rule as suppliers above: no real-looking company
+        // name, no fabricated tax number/phone — Zimbabwe city, blank instead.
         const rows = [
-          { key: `CUS-${tag}-001`, name: 'Apex Meat Processors Pvt Ltd', mobile: '+91 99300 10101', city: 'Mumbai', credit: 2000000 },
-          { key: `CUS-${tag}-002`, name: 'Golden Pork Retail Chain', mobile: '+91 99300 20202', city: 'Pune', credit: 900000 },
-          { key: `CUS-${tag}-003`, name: 'Highland Hotels & Catering', mobile: '+91 99300 30303', city: 'Goa', credit: 450000 },
+          { key: `CUS-${tag}-001`, name: 'Demo Meat Processor', mobile: '', city: 'Harare', credit: 2000000 },
+          { key: `CUS-${tag}-002`, name: 'Demo Pork Retail Chain', mobile: '', city: 'Bulawayo', credit: 900000 },
+          { key: `CUS-${tag}-003`, name: 'Demo Hotels & Catering', mobile: '', city: 'Mutare', credit: 450000 },
         ];
         for (const r of rows) {
           const [x] = await db.select().from(schema.customerMaster)
@@ -111,9 +117,9 @@ export async function seedDemoGaps() {
             customer_id: randomUUID(), tenant_id: tenantId, company_id: c.company_id,
             customer_code: await seedCode(db, tenantId, c.company_id, 'CUSTOMER', schema.customerMaster, schema.customerMaster.customer_code, r.key), customer_name: r.name, mobile: r.mobile,
             email: `${r.key.toLowerCase()}@buyers.example`,
-            tax_number: `27AACCG${Math.floor(1000 + Math.random() * 8999)}K1Z2`,
-            credit_limit: d4(r.credit), address_line1: 'Unit 8, Cold Chain Park', city: r.city,
-            state: 'Maharashtra', country: 'India', pincode: '400072', is_active: true, created_by: by,
+            tax_number: '',
+            credit_limit: d4(r.credit), address_line1: 'Demo Cold Chain Park', city: r.city,
+            state: '', country: 'Zimbabwe', pincode: '', is_active: true, created_by: by,
           });
         }
       }
@@ -376,13 +382,15 @@ export async function seedDemoGaps() {
       for (const { c, tag } of perCompany) {
         const [addr] = await db.select().from(schema.companyAddress).where(eq(schema.companyAddress.company_id, c.company_id)).limit(1);
         if (!addr && country && state) {
+          // Zimbabwe-appropriate demo address (was Pune/Kolhapur, India) — no
+          // pincode invented, left blank like the supplier/customer rows above.
           await db.insert(schema.companyAddress).values({
             address_id: randomUUID(), company_id: c.company_id, address_type: 'REGISTERED',
             address_label: 'Head Office', line1: `${tag === 'APX' ? 'Survey 118, Nucleus Farm Road' : 'Plot 42, Grow-Finish Complex'}`,
-            line2: 'Taluka Haveli', city: tag === 'APX' ? 'Pune' : 'Kolhapur',
-            state_id: state.state_id, country_id: country.country_id, pincode: tag === 'APX' ? '412115' : '416003',
-            gps_latitude: tag === 'APX' ? '18.516700' : '16.705000',
-            gps_longitude: tag === 'APX' ? '73.856300' : '74.243300',
+            line2: '', city: tag === 'APX' ? 'Harare' : 'Bulawayo',
+            state_id: state.state_id, country_id: country.country_id, pincode: '',
+            gps_latitude: tag === 'APX' ? '-17.829200' : '-20.150000',
+            gps_longitude: tag === 'APX' ? '31.052200' : '28.583300',
             is_primary: true, is_active: true,
           });
         }
@@ -396,7 +404,8 @@ export async function seedDemoGaps() {
             await db.insert(schema.companyContacts).values({
               contact_id: randomUUID(), company_id: c.company_id, contact_type: p.type,
               full_name: p.name, designation: p.desig, email: p.email,
-              phone_primary: '+91 98220 10000', receives_alerts: true, receives_reports: p.type !== 'VETERINARY',
+              // No fabricated phone number — same rule as the supplier/customer rows.
+              phone_primary: '', receives_alerts: true, receives_reports: p.type !== 'VETERINARY',
               is_primary: p.primary, is_active: true,
             });
           }

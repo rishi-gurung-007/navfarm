@@ -420,7 +420,7 @@ export async function seedDevTenant() {
             company_code: cc.code,
             company_name: cc.name,
             company_display_name: cc.name,
-            company_type: 'Pvt Ltd',
+            company_type: 'Private Limited',
             industry_type: cc.industry,
             base_currency_id: defaultCurrId,
             default_language_id: defaultLangId,

@@ -1,7 +1,7 @@
 import { masterScopeConditions } from '../../../common/master-data-scope';
 import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, like, or, isNull, ne, inArray, sql, getTableColumns } from 'drizzle-orm';
+import { eq, and, like, or, isNull, ne, inArray, sql, getTableColumns, count } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
@@ -834,10 +834,14 @@ export class BreedService {
       ));
     }
 
+    conditions.push(...listFilterConditions(schema.breedLifecycleStages, query.filter));
+
     const limit = query.limit || 50;
     const offset = query.offset || 0;
 
-    return this.db
+    const where = and(...conditions);
+
+    const data = await this.db
       .select({
         ...getTableColumns(schema.breedLifecycleStages),
         stage_name: schema.stageMaster.stage_name,
@@ -849,10 +853,22 @@ export class BreedService {
       .from(schema.breedLifecycleStages)
       .leftJoin(schema.stageMaster, eq(schema.breedLifecycleStages.stage_id, schema.stageMaster.stage_id))
       .leftJoin(schema.breedMaster, eq(schema.breedLifecycleStages.breed_id, schema.breedMaster.breed_id))
-      .where(and(...conditions))
-      .orderBy(schema.breedLifecycleStages.period_from)
+      .where(where)
+      .orderBy(listOrderBy(schema.breedLifecycleStages, query, schema.breedLifecycleStages.period_from))
       .limit(limit)
       .offset(offset);
+
+    // The same two joins as the page query, because `search` matches on the
+    // joined stage and breed columns — counting from the bare table would ask
+    // MySQL for stage_master.stage_name with no stage_master in the FROM.
+    const [counted] = await this.db
+      .select({ total: count() })
+      .from(schema.breedLifecycleStages)
+      .leftJoin(schema.stageMaster, eq(schema.breedLifecycleStages.stage_id, schema.stageMaster.stage_id))
+      .leftJoin(schema.breedMaster, eq(schema.breedLifecycleStages.breed_id, schema.breedMaster.breed_id))
+      .where(where);
+
+    return { data, total: Number(counted?.total ?? 0), limit, offset };
   }
 
   async updateLifecycleStage(id: string, dto: UpdateBreedLifecycleStageDto, tenantId: string, userPayload?: any) {

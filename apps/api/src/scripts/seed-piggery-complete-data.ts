@@ -1124,14 +1124,14 @@ export async function seedPiggeryData() {
 
     console.log('\n✅ Piggery Multi-Company Dataset Successfully Seeded!');
     console.log('===========================================================');
-    console.log('Company 1 (APEXBREED): Apex Swine Genetics & Breeding Pvt Ltd');
+    console.log('Company 1 (APEXBREED): Apex Swine Genetics & Breeding');
     console.log('  - Area: APEX-BREED-01 (Apex Nucleus Breeding & Gestation Unit)');
     console.log('  - 15 Tagged Animals with RFIDs & Parity (Sows, Boars, Gilts)');
     console.log('  - 4 Breeding/Mating Records & 2 Farrowing Litters');
     console.log('  - 2 Boar Semen Batches with Cost-Per-Dose Split');
     console.log('  - 2 Batches (Gestation & Farrowing) with 30-Day Multi-Day Feeds');
     console.log('-----------------------------------------------------------');
-    console.log('Company 2 (HIGHLAND): Highland Commercial Porkers & Processing Pvt Ltd');
+    console.log('Company 2 (HIGHLAND): Highland Commercial Porkers & Processing');
     console.log('  - Area: HIGH-GROW-01 (Highland Grow-Finish Commercial Complex)');
     console.log('  - 2 Schedulers (60-Day Grower, 90-Day Porker Finisher)');
     console.log('  - 2 Batches (Active Commercial Grower & Closed Finisher)');

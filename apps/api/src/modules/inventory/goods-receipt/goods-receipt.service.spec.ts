@@ -23,11 +23,17 @@ describe('GoodsReceiptService', () => {
   const draftReceipt = {
     receipt_id: 'gr-1',
     company_id: 'comp-1',
+    warehouse_id: 'wh-1',
     status: 'DRAFT',
     lines: [{ line_id: 'line-1', item_id: 'item-1', quantity: '10', uom: 'KG' }],
   };
 
   const found = (row: any) => ({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([row]) }) }) });
+
+  // post() re-reads the warehouse before anything else, so a warehouse taken
+  // out of service after the receipt was drafted cannot receive stock. Every
+  // post test queues this first.
+  const activeWarehouse = () => found({ is_active: true, deleted_at: null });
 
   beforeEach(async () => {
     mockDbSelect.mockReset();
@@ -49,6 +55,7 @@ describe('GoodsReceiptService', () => {
   describe('post', () => {
     it('rejects posting when the ANIMAL_SUPPLIER vendor has no health_cert_url on file', async () => {
       jest.spyOn(service, 'findOne').mockResolvedValueOnce({ ...draftReceipt, supplier_id: 'sup-1' } as any);
+      mockDbSelect.mockReturnValueOnce(activeWarehouse());
       mockDbSelect.mockReturnValueOnce(found({ supplier_id: 'sup-1', vendor_type: 'ANIMAL_SUPPLIER', health_cert_url: null, supplier_name: 'Animal Farm Co' }));
 
       await expect(service.post('gr-1', 'tenant-123')).rejects.toThrow(BadRequestException);
@@ -59,6 +66,7 @@ describe('GoodsReceiptService', () => {
         .mockResolvedValueOnce({ ...draftReceipt, supplier_id: 'sup-1' } as any) // initial load
         .mockResolvedValueOnce({ ...draftReceipt, supplier_id: 'sup-1', status: 'POSTED' } as any); // final return
 
+      mockDbSelect.mockReturnValueOnce(activeWarehouse());
       mockDbSelect.mockReturnValueOnce(found({ supplier_id: 'sup-1', vendor_type: 'ANIMAL_SUPPLIER', health_cert_url: 'https://certs.example.com/farm.pdf' }));
       mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ affectedRows: 1 }]) }) });
 
@@ -72,6 +80,7 @@ describe('GoodsReceiptService', () => {
         .mockResolvedValueOnce({ ...draftReceipt, supplier_id: 'sup-2' } as any)
         .mockResolvedValueOnce({ ...draftReceipt, supplier_id: 'sup-2', status: 'POSTED' } as any);
 
+      mockDbSelect.mockReturnValueOnce(activeWarehouse());
       mockDbSelect.mockReturnValueOnce(found({ supplier_id: 'sup-2', vendor_type: 'FEED_SUPPLIER', health_cert_url: null }));
       mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ affectedRows: 1 }]) }) });
 
@@ -85,11 +94,12 @@ describe('GoodsReceiptService', () => {
         .mockResolvedValueOnce({ ...draftReceipt, supplier_id: null } as any)
         .mockResolvedValueOnce({ ...draftReceipt, supplier_id: null, status: 'POSTED' } as any);
 
+      mockDbSelect.mockReturnValueOnce(activeWarehouse());
       mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ affectedRows: 1 }]) }) });
 
       const result = await service.post('gr-3', 'tenant-123', { userId: 'user-1' });
 
-      expect(mockDbSelect).not.toHaveBeenCalled(); // no supplier lookup needed
+      expect(mockDbSelect).toHaveBeenCalledTimes(1); // the warehouse only — no supplier lookup needed
       expect(result.status).toBe('POSTED');
     });
   });
@@ -178,6 +188,37 @@ describe('GoodsReceiptService', () => {
       rows.set(schema.locationMaster, [{ location_id: 'store-k', parent: 'farm-k', farm_id: 'farm-k', company_id: 'co-1', lob_id: 'lob-pig' }]);
       await expect(service.create({ ...validReceiptDto, warehouse_id: 'store-k' } as any, 'tenant-1'))
         .rejects.toThrow('Warehouse is not on your active farm.');
+    });
+
+    // Item 2: an inactive/soft-deleted warehouse must not accept new stock.
+    // assertLocationOnActiveFarm only checks the warehouse is on the right
+    // farm/company/LOB, so these rows are on-farm (pass that check) but
+    // is_active: false — before the fix, create/update/post never looked at
+    // is_active at all and would have proceeded.
+    it('refuses to create a receipt into an inactive warehouse', async () => {
+      useFarmScope(cls, grasmere);
+      rows.set(schema.locationMaster, [
+        { location_id: 'wh-1', parent: 'farm-g', farm_id: 'farm-g', company_id: 'co-1', lob_id: 'lob-pig', is_active: false, deleted_at: null },
+      ]);
+      await expect(service.create({ ...validReceiptDto, warehouse_id: 'wh-1' } as any, 'tenant-1'))
+        .rejects.toThrow('The selected warehouse is inactive.');
+    });
+
+    it('refuses to move a draft receipt into an inactive warehouse on update', async () => {
+      useFarmScope(cls, grasmere);
+      rows.set(schema.goodsReceipt, [{ receipt_id: 'gr-1', status: 'DRAFT', company_id: 'co-1', warehouse_id: 'wh-1' }]);
+      rows.set(schema.locationMaster, [
+        { location_id: 'wh-2', parent: 'farm-g', farm_id: 'farm-g', company_id: 'co-1', lob_id: 'lob-pig', is_active: false, deleted_at: null },
+      ]);
+      await expect(service.update('gr-1', { warehouse_id: 'wh-2' } as any, 'tenant-1'))
+        .rejects.toThrow('The selected warehouse is inactive.');
+    });
+
+    it('refuses to post a draft receipt whose warehouse was deactivated after the draft was created', async () => {
+      useFarmScope(cls, grasmere);
+      rows.set(schema.goodsReceipt, [{ receipt_id: 'gr-1', status: 'DRAFT', company_id: 'co-1', warehouse_id: 'wh-1' }]);
+      rows.set(schema.locationMaster, [{ location_id: 'wh-1', is_active: false, deleted_at: null }]);
+      await expect(service.post('gr-1', 'tenant-1')).rejects.toThrow('The selected warehouse is inactive.');
     });
   });
 });

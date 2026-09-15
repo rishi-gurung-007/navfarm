@@ -88,11 +88,14 @@ export class BatchDailyDataService {
       const from = String(header.effective_from).slice(0, 10);
       for (const status of stageDayStatus(own, from, date, entered)) {
         const sid = status.stage_id ?? header.stage_id;
+        // Guarded rather than `sid && get(sid)`: with no stage the && yields the
+        // empty string itself, which ?? passes straight through as a headcount.
+        const liveCount = sid ? perStageAnimals.get(sid) : undefined;
         stages.push({
           ...status,
           stage_id: sid,
           // decimal(14,4) reaches here as a string; a headcount is a number.
-          animal_count: (sid && perStageAnimals.get(sid))
+          animal_count: liveCount
             ?? (header.animal_count == null ? null : Number(header.animal_count)),
           scheduler_id: header.scheduler_id,
         });

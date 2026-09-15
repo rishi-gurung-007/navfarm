@@ -5,6 +5,7 @@ import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { NobLobResolutionService } from '../../core/operational-area/nob-lob-resolution.service';
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import { MySqlDialect } from 'drizzle-orm/mysql-core';
 
 describe('BreedService', () => {
   let service: BreedService;
@@ -416,6 +417,72 @@ describe('BreedService', () => {
 
       expect(mockDbInsert).toHaveBeenCalled();
       expect(result.lifecycle_id).toBe('lc-1');
+    });
+
+    describe('findAllLifecycleStages', () => {
+      // Real SQL, not a spy: the list contract is only kept if the rendered
+      // ORDER BY and WHERE actually change. Same idiom as master-data-scope.spec.
+      const dialect = new MySqlDialect();
+      const sqlOf = (chunk: any) => dialect.sqlToQuery(chunk);
+
+      // findAllLifecycleStages joins stage_master and breed_master before the
+      // where/orderBy, so the chain needs two leftJoin hops ahead of the rest.
+      // The count repeats those joins, because `search` matches on the joined
+      // stage/breed columns.
+      const mockListChain = () => {
+        const limitMock = jest.fn().mockReturnValue({ offset: jest.fn().mockResolvedValue([]) });
+        const orderByMock = jest.fn().mockReturnValue({ limit: limitMock });
+        const dataWhereMock = jest.fn().mockReturnValue({ orderBy: orderByMock });
+        const leftJoin2Mock = jest.fn().mockReturnValue({ where: dataWhereMock });
+        const leftJoin1Mock = jest.fn().mockReturnValue({ leftJoin: leftJoin2Mock });
+        mockDbSelect.mockReturnValueOnce({ from: jest.fn().mockReturnValue({ leftJoin: leftJoin1Mock }) });
+
+        const countWhereMock = jest.fn().mockResolvedValue([{ total: 6 }]);
+        const countLeftJoin2Mock = jest.fn().mockReturnValue({ where: countWhereMock });
+        const countLeftJoin1Mock = jest.fn().mockReturnValue({ leftJoin: countLeftJoin2Mock });
+        mockDbSelect.mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({ leftJoin: countLeftJoin1Mock }),
+        });
+        return { orderByMock, dataWhereMock, countLeftJoin1Mock, countLeftJoin2Mock };
+      };
+
+      it('orders by the requested column and direction — was hardcoded to period_from asc, ignoring sort and dir', async () => {
+        const asc = mockListChain();
+        await service.findAllLifecycleStages({ sort: 'period_from', dir: 'asc' } as any, 'tenant-123');
+        const desc = mockListChain();
+        await service.findAllLifecycleStages({ sort: 'period_from', dir: 'desc' } as any, 'tenant-123');
+
+        const ascSql = sqlOf(asc.orderByMock.mock.calls[0][0]).sql;
+        const descSql = sqlOf(desc.orderByMock.mock.calls[0][0]).sql;
+
+        expect(ascSql).toContain('`period_from`');
+        expect(ascSql).toContain('asc');
+        expect(descSql).toContain('`period_from`');
+        expect(descSql).toContain('desc');
+        expect(ascSql).not.toEqual(descSql);
+      });
+
+      it('narrows by filter[calc_unit] via the shared list contract — was never applied before', async () => {
+        const { dataWhereMock } = mockListChain();
+
+        await service.findAllLifecycleStages({ filter: { calc_unit: 'WEEK' } } as any, 'tenant-123');
+
+        const where = sqlOf(dataWhereMock.mock.calls[0][0]);
+        expect(where.sql).toContain('`calc_unit`');
+        expect(where.params).toContain('WEEK');
+      });
+
+      it('counts through the same joins it pages through — a search matches stage_master and breed_master columns', async () => {
+        const chain = mockListChain();
+
+        const result = await service.findAllLifecycleStages({ search: 'sow' } as any, 'tenant-123');
+
+        // Counting from the bare table would ask MySQL for stage_master.stage_name
+        // with no stage_master in the FROM, so a searched list 500s instead of paging.
+        expect(chain.countLeftJoin1Mock).toHaveBeenCalled();
+        expect(chain.countLeftJoin2Mock).toHaveBeenCalled();
+        expect(result.total).toBe(6);
+      });
     });
   });
 });

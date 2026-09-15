@@ -33,10 +33,9 @@ describe('SchedulerHeaderService', () => {
   // createManualHeader and deleteHeader — has something real to call, not just
   // a bare .get() stub. It attaches mockDb's own methods as the "tx" handle,
   // so mockDbSelect/Insert/Update/Delete keep seeing every call either way.
-  let farmScopeValue: FarmScope | undefined;
   let capturedWhere: unknown;
   const renderedWhere = () => dialect.sqlToQuery(capturedWhere as any);
-  const useFarmScope = (scope: FarmScope) => { farmScopeValue = scope; useFarmScopeCls(cls, scope); };
+  const useFarmScope = (scope: FarmScope) => useFarmScopeCls(cls, scope);
 
   /** findOne()'s scoped batch_id existence check — insert this between the header
    * select and the lines select in every mockDbSelect sequence that reaches findOne. */
@@ -73,7 +72,6 @@ describe('SchedulerHeaderService', () => {
     mockDbUpdate.mockReset();
     mockDbDelete.mockReset();
     auditLog.log.mockClear();
-    farmScopeValue = undefined;
     capturedWhere = undefined;
     delete (mockDb as any).transaction; // transactionCls() re-attaches it fresh each test
 

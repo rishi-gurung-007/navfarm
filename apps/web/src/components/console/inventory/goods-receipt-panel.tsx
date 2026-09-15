@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Plus, Trash2, Search, Loader2, Inbox, Eye, CheckCircle2 } from "lucide-react";
+import { Plus, Trash2, Search, Loader2, Inbox, Eye, CheckCircle2, Pencil } from "lucide-react";
 import { api } from "@/services/api-client";
 import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -54,6 +54,11 @@ export default function GoodsReceiptPanel() {
   const [formError, setFormError] = useState("");
   const [header, setHeader] = useState<Row>({ warehouse_id: "", posting_date: "", supplier_id: "", external_reference_no: "", remarks: "" });
   const [lines, setLines] = useState<Row[]>([emptyLine()]);
+  // Set only when the form was opened from Edit on a DRAFT row — drives
+  // handleSave toward PUT /goods-receipt/:id instead of POST, and the modal's
+  // title/button copy. A POSTED receipt never sets this: its row offers View
+  // only, and the Edit action itself never appears for it (see the table).
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   const [viewing, setViewing] = useState<Row | null>(null);
   const [posting, setPosting] = useState(false);
@@ -99,10 +104,41 @@ export default function GoodsReceiptPanel() {
   }, []);
 
   const openCreate = () => {
+    setEditingId(null);
     setHeader({ warehouse_id: "", posting_date: new Date().toISOString().slice(0, 10), supplier_id: "", external_reference_no: "", remarks: "" });
     setLines([emptyLine()]);
     setFormError("");
     setModalOpen(true);
+  };
+
+  // DRAFT-only: fetches the full receipt (list rows carry no lines) and
+  // reopens the same create form prefilled, saving through PUT on submit.
+  const openEdit = async (row: Row) => {
+    setFormError("");
+    try {
+      const res = await api.get(`/goods-receipt/${row.receipt_id}`);
+      const full = unwrap<Row>(res);
+      setEditingId(full.receipt_id);
+      setHeader({
+        warehouse_id: full.warehouse_id || "",
+        posting_date: full.posting_date || "",
+        supplier_id: full.supplier_id || "",
+        external_reference_no: full.external_reference_no || "",
+        remarks: full.remarks || "",
+      });
+      const fullLines = (full.lines || []).map((l: Row) => ({
+        item_id: l.item_id || "",
+        quantity: l.quantity ?? "",
+        uom: l.uom || "",
+        rate: l.rate ?? "",
+        lot_no: l.lot_no || "",
+        expiry_date: l.expiry_date || "",
+      }));
+      setLines(fullLines.length ? fullLines : [emptyLine()]);
+      setModalOpen(true);
+    } catch (err: any) {
+      setError(err?.message || t("grpFailedToLoadReceiptDetails"));
+    }
   };
 
   const setLineField = (idx: number, key: string, value: any) => {
@@ -130,7 +166,7 @@ export default function GoodsReceiptPanel() {
         }));
       if (cleanLines.length === 0) throw new Error(t("grpAddAtLeastOneLine"));
 
-      await api.post("/goods-receipt", {
+      const payload = {
         company_id: companyId,
         warehouse_id: header.warehouse_id,
         posting_date: header.posting_date,
@@ -138,8 +174,14 @@ export default function GoodsReceiptPanel() {
         external_reference_no: header.external_reference_no || undefined,
         remarks: header.remarks || undefined,
         lines: cleanLines,
-      });
+      };
+      if (editingId) {
+        await api.put(`/goods-receipt/${editingId}`, payload);
+      } else {
+        await api.post("/goods-receipt", payload);
+      }
       setModalOpen(false);
+      setEditingId(null);
       load();
     } catch (err: any) {
       setFormError(err?.message || t("grpFailedToSaveReceipt"));
@@ -237,6 +279,13 @@ export default function GoodsReceiptPanel() {
                       <button onClick={() => openView(row)} title={t("grpView")} className="rounded-lg p-1.5 transition hover:bg-(--surface-raised)" style={S.sub}>
                         <Eye className="h-3.5 w-3.5" />
                       </button>
+                      {/* Only a DRAFT is editable — a POSTED receipt has already
+                          moved stock and written its ledger and GL legs. */}
+                      {row.status === "DRAFT" && (
+                        <button onClick={() => openEdit(row)} title={t("grpEdit")} className="rounded-lg p-1.5 transition hover:bg-(--surface-raised)" style={S.sub}>
+                          <Pencil className="h-3.5 w-3.5" />
+                        </button>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))
@@ -254,14 +303,14 @@ export default function GoodsReceiptPanel() {
       {/* Create modal */}
       <Dialog
         open={modalOpen}
-        onClose={() => !saving && setModalOpen(false)}
-        title={t("grpNewGoodsReceiptTitle")}
+        onClose={() => { if (!saving) { setModalOpen(false); setEditingId(null); } }}
+        title={editingId ? t("grpEditGoodsReceiptTitle") : t("grpNewGoodsReceiptTitle")}
         maxWidth="xl"
         footer={
           <>
-            <Button variant="outline" size="sm" onClick={() => setModalOpen(false)} disabled={saving}>{t("grpCancel")}</Button>
+            <Button variant="outline" size="sm" onClick={() => { setModalOpen(false); setEditingId(null); }} disabled={saving}>{t("grpCancel")}</Button>
             <Button size="sm" onClick={handleSave} disabled={saving} className="nf-btn-primary">
-              {saving ? t("grpSaving") : t("grpSaveDraft")}
+              {saving ? t("grpSaving") : editingId ? t("grpSaveChanges") : t("grpSaveDraft")}
             </Button>
           </>
         }

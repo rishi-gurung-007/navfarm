@@ -84,21 +84,37 @@ export class InventoryLedgerService {
       const appliedQty = applications.reduce((sum, a) => sum + Number(a.applied_qty), 0);
       if (Math.abs(appliedQty + Number(original.quantity)) > 0.0001) throw new BadRequestException('The issue has incomplete FIFO applications; review before reversing.');
       const reversalId = randomUUID();
+      // No explicit created_at here — every other ledger write (writePositiveEntry,
+      // writeNegativeEntry, applyFifo) leaves it to inventory_ledger.created_at's
+      // own DEFAULT (local server time). This insert used to compute
+      // `new Date().toISOString()...`, which is UTC, so a same-day reversal could
+      // sort *before* the entry it reverses once the server's local offset was
+      // applied to every other row's timestamp. Letting the column default apply
+      // keeps every write on the same clock.
+      //
+      // `...original` is destructured to drop its own created_at first — spreading
+      // the original row as-is would otherwise carry the *original entry's*
+      // timestamp onto the reversal (the row being spread already has a real
+      // value, so `undefined` never comes into it), which is wrong in a different
+      // way: the reversal would appear to have been written back when the
+      // original was, not now.
+      const { created_at: _originalCreatedAt, ...originalForReversal } = original;
       await this.db.insert(schema.inventoryLedger).values({
-        ...original, ledger_id: reversalId, entry_type: 'POSITIVE', transaction_type: 'REVERSAL',
+        ...originalForReversal, ledger_id: reversalId, entry_type: 'POSITIVE', transaction_type: 'REVERSAL',
         quantity: (-Number(original.quantity)).toString(), amount: (-Number(original.amount)).toString(),
         remaining_quantity: '0', external_reference_no: ledgerId,
-        created_at: new Date().toISOString().slice(0, 19).replace('T', ' '), created_by: userId || null,
+        created_by: userId || null,
       });
       for (const application of applications) {
         await this.db.update(schema.inventoryLedger)
           .set({ remaining_quantity: sql`${schema.inventoryLedger.remaining_quantity} + ${application.applied_qty}` })
           .where(eq(schema.inventoryLedger.ledger_id, application.inbound_ledger_id));
+        const { created_at: _appCreatedAt, ...applicationForReversal } = application;
         await this.db.insert(schema.inventoryApplication).values({
-          ...application, application_id: randomUUID(), outbound_ledger_id: reversalId,
+          ...applicationForReversal, application_id: randomUUID(), outbound_ledger_id: reversalId,
           applied_qty: (-Number(application.applied_qty)).toString(),
           applied_cost_amount: (-Number(application.applied_cost_amount)).toString(),
-          created_at: new Date().toISOString().slice(0, 19).replace('T', ' '), created_by: userId || null,
+          created_by: userId || null,
         });
       }
       return this.loadOne(reversalId);

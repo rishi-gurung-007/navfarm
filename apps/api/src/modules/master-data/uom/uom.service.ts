@@ -1,16 +1,17 @@
 import { masterScopeConditions } from '../../../common/master-data-scope';
 import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, like, or, isNull, ne } from 'drizzle-orm';
+import { eq, and, like, or, isNull, ne, count } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
-import { 
-  CreateUomDto, 
-  UpdateUomDto, 
-  QueryUomDto, 
-  CreateUomConversionDto, 
-  UpdateUomConversionDto 
+import {
+  CreateUomDto,
+  UpdateUomDto,
+  QueryUomDto,
+  CreateUomConversionDto,
+  UpdateUomConversionDto,
+  QueryUomConversionDto,
 } from './dto/uom.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
@@ -433,7 +434,7 @@ export class UomService {
     return conv;
   }
 
-  async findAllConversions(query: { itemId?: string; companyId?: string; fromUom?: string; toUom?: string; limit?: number; offset?: number }, tenantId: string) {
+  async findAllConversions(query: QueryUomConversionDto, tenantId: string) {
     // No isNull(deleted_at) filter — list view shows both Active/Inactive states (toggle switch) so a blocked row can be found again and restored.
     const conditions: any[] = [
       eq(schema.uomConversionMaster.tenant_id, tenantId),
@@ -456,16 +457,35 @@ export class UomService {
     if (query.fromUom) conditions.push(eq(schema.uomConversionMaster.from_uom, query.fromUom.toUpperCase()));
     if (query.toUom) conditions.push(eq(schema.uomConversionMaster.to_uom, query.toUom.toUpperCase()));
 
+    if (query.search) {
+      const s = `%${query.search.trim()}%`;
+      conditions.push(or(
+        like(schema.uomConversionMaster.conversion_code, s),
+        like(schema.uomConversionMaster.from_uom, s),
+        like(schema.uomConversionMaster.to_uom, s),
+      ));
+    }
+
+    conditions.push(...listFilterConditions(schema.uomConversionMaster, query.filter));
+
     const limit = query.limit || 50;
     const offset = query.offset || 0;
+    const where = and(...conditions);
 
-    return this.db
+    const data = await this.db
       .select()
       .from(schema.uomConversionMaster)
-      .where(and(...conditions))
-      .orderBy(schema.uomConversionMaster.from_uom)
+      .where(where)
+      .orderBy(listOrderBy(schema.uomConversionMaster, query, schema.uomConversionMaster.from_uom))
       .limit(limit)
       .offset(offset);
+
+    const [counted] = await this.db
+      .select({ total: count() })
+      .from(schema.uomConversionMaster)
+      .where(where);
+
+    return { data, total: Number(counted?.total ?? 0), limit, offset };
   }
 
   async updateConversion(id: string, dto: UpdateUomConversionDto, tenantId: string, userPayload?: any) {

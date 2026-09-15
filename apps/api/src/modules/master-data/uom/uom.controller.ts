@@ -13,12 +13,13 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiParam, ApiResponse } from '@nestjs/swagger';
 import { UomService } from './uom.service';
-import { 
-  CreateUomDto, 
-  UpdateUomDto, 
-  QueryUomDto, 
-  CreateUomConversionDto, 
-  UpdateUomConversionDto 
+import {
+  CreateUomDto,
+  UpdateUomDto,
+  QueryUomDto,
+  CreateUomConversionDto,
+  UpdateUomConversionDto,
+  QueryUomConversionDto,
 } from './dto/uom.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
@@ -61,20 +62,20 @@ export class UomController {
   @RequirePermission('MASTER_DATA', 'UOM', 'view')
   @ApiOperation({ summary: 'List all UOM Conversion factors' })
   async findAllConversions(
-    @Query('itemId') itemId: string,
-    @Query('companyId') companyId: string,
-    @Query('fromUom') fromUom: string,
-    @Query('toUom') toUom: string,
-    @Query('limit') limit: number,
-    @Query('offset') offset: number,
+    @Query() query: QueryUomConversionDto,
     @Req() req: any
   ) {
     const tenantId = req.user?.tenantId || req['tenantId'];
-    const result = await this.uomService.findAllConversions({ itemId, companyId, fromUom, toUom, limit, offset }, tenantId);
+    const result = await this.uomService.findAllConversions(query, tenantId);
     return {
       success: true,
       message: 'UOM conversion factors retrieved successfully.',
-      data: result
+      // `data` stays the array every caller already reads; total/limit/offset
+      // are siblings the list screen pages on (same envelope as Item).
+      data: result.data,
+      total: result.total,
+      limit: result.limit,
+      offset: result.offset,
     };
   }
 

@@ -3,6 +3,46 @@ import { MySqlDialect } from 'drizzle-orm/mysql-core';
 import { transactionCls, useFarmScope } from '../../../test-utils/transaction-cls';
 import * as schema from '../../../core/database/schema';
 
+/**
+ * Item 3: reverseEntry used to stamp its two inserts with
+ * `new Date().toISOString().slice(0,19)` — UTC — while every other ledger
+ * write (writePositiveEntry, writeNegativeEntry, applyFifo) leaves created_at
+ * to the column's own DEFAULT, which resolves to the DB server's local time.
+ * On a server whose local time is ahead of UTC, a same-day reversal's
+ * created_at could sort *before* the entry it reverses. Asserting no
+ * created_at key at all (rather than a specific value) is the direct
+ * regression check: before the fix the insert always carried one.
+ */
+describe('InventoryLedgerService reverseEntry — created_at', () => {
+  const original = {
+    ledger_id: 'ledger-1', tenant_id: 'tenant-1', entry_type: 'NEGATIVE',
+    quantity: '0', amount: '0', created_at: '2026-09-14 08:00:00',
+  };
+
+  it('lets the column default supply created_at on the reversal ledger row instead of stamping UTC', async () => {
+    const insertedValues: any[] = [];
+    const db: any = {
+      select: jest.fn()
+        .mockReturnValueOnce({ from: () => ({ where: () => ({ for: async () => [original] }) }) }) // original, locked
+        .mockReturnValueOnce({ from: () => ({ where: () => ({ limit: async () => [] }) }) }) // not already reversed
+        .mockReturnValueOnce({ from: () => ({ where: async () => [] }) }) // no FIFO applications to unwind
+        .mockReturnValueOnce({ from: () => ({ where: () => ({ limit: async () => [{ ledger_id: 'reversal-1' }] }) }) }), // loadOne read-back
+      insert: jest.fn(() => ({ values: async (v: any) => { insertedValues.push(v); return undefined; } })),
+      update: jest.fn(() => ({ set: () => ({ where: async () => undefined }) })),
+    };
+    const service = new InventoryLedgerService(transactionCls(db));
+
+    await service.reverseEntry('ledger-1', 'tenant-1', 'user-1');
+
+    expect(insertedValues).toHaveLength(1);
+    expect(insertedValues[0]).not.toHaveProperty('created_at');
+    // The original row's own created_at must not leak through the `...original`
+    // spread either — that would silently backdate the reversal to look as if
+    // it were written when the original entry was.
+    expect(insertedValues[0].created_at).not.toBe('2026-09-14 08:00:00');
+  });
+});
+
 describe('Inventory FIFO', () => {
   it('requires the selected lot and refuses its shortage without retrying unrestricted FIFO', async () => {
     const queries: any[] = [];

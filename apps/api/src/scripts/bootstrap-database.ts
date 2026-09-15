@@ -587,7 +587,10 @@ export async function bootstrap() {
         email: adminEmail.toLowerCase(),
         password_hash: passwordHash,
         user_type: 'SYSTEM_ADMIN',
-        timezone_pref_id: 'Asia/Kolkata',
+        // Matches the platform company's own default_timezone_id fix above —
+        // the system admin row was still defaulting to India's timezone even
+        // after the company locale moved to Zimbabwe.
+        timezone_pref_id: 'Africa/Harare',
       })
       .onDuplicateKeyUpdate({
         set: { password_hash: passwordHash, user_type: 'SYSTEM_ADMIN', is_active: true },
