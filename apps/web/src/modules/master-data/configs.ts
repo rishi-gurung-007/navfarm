@@ -61,7 +61,13 @@ const location: MasterDataConfig = {
     { key: "company_id", label: "Company", type: "text", hideInForm: true },
     { key: "location_code", label: "Location Code", type: "text", readOnly: true, helpText: "Generated from the selected Location Type prefix and kept permanently.", section: "Identification" },
     { key: "location_name", label: "Location Name", type: "text", required: true, placeholder: "Porta Farm", section: "Identification" },
-    { key: "location_address", label: "Location Address", type: "text", required: true, placeholder: "48 Peg, Bulawayo Road", section: "Identification" },
+    {
+      key: "location_address", label: "Location Address", type: "text",
+      visibleWhen: { anyOf: [{ key: "location_type", equals: "FARM" }] },
+      requiredWhen: { anyOf: [{ key: "location_type", equals: "FARM" }] },
+      helpText: "Stored on the Farm only. Child locations inherit their physical context from the Farm hierarchy.",
+      section: "Identification",
+    },
     {
       key: "location_type", label: "Location Type", type: "select-entity", required: true,
       entityEndpoint: "/location-type", entityValueKey: "type_code", entityLabelKeys: ["type_code", "type_name"], section: "Identification",
@@ -90,9 +96,6 @@ const location: MasterDataConfig = {
     // store this is; this says which one — MULTIPLIER writes MGH1 against each
     // grower house, Porta writes PSL FS - 01 and STORE.
     { key: "storage_name", label: "Silo / Store Name", type: "text", placeholder: "MGH1", visibleWhen: { anyOf: [{ key: "storage_type", equals: ["STORE", "SILO"] }] }, helpText: "The name or number this silo or store is known by on the farm.", section: "Identification" },
-    // Both Location Master templates carry this per location, and the breed
-    // lifecycle sheets read it: a stage's feed is "bagged" at MFH, "Bulk" at MSL.
-    { key: "feed_in_bags", label: "Feed in Bags", type: "boolean", helpText: "On when feed arrives here in bags rather than blown into a silo.", section: "Identification" },
   ],
 };
 
@@ -133,7 +136,7 @@ const stage: MasterDataConfig = {
     { key: "auto_move_on_day", label: "Auto-Move On Day", type: "number", helpText: "Required when Transition Trigger is Auto By Day.", section: "Duration" },
     {
       key: "transition_trigger", label: "Transition Trigger", type: "select", required: true, section: "Transitions",
-      options: ["AUTO_BY_DAY", "MANUAL", "EVENT_BASED", "KPI_BASED"].map((v) => ({ value: v, label: v.replace(/_/g, " ") })),
+      options: ["AUTO_BY_DAY", "MANUAL"].map((v) => ({ value: v, label: v.replace(/_/g, " ") })),
     },
     { key: "next_stage_id", label: "Next Stage", type: "select-entity", entityEndpoint: "/stage", entityValueKey: "stage_id", entityLabelKeys: ["stage_code", "stage_name"], helpText: "Leave blank for a terminal stage.", section: "Transitions" },
     { key: "alt_next_stage_id", label: "Alternate Next Stage", type: "select-entity", entityEndpoint: "/stage", entityValueKey: "stage_id", entityLabelKeys: ["stage_code", "stage_name"], section: "Transitions" },
@@ -406,7 +409,7 @@ const animal: MasterDataConfig = {
     { key: "grading", label: "Grading", type: "text", visibleWhen: { anyOf: [{ key: "gender", equals: "F" }] }, section: "Bio-Asset" },
     { key: "current_stage_id", label: "Current Stage", type: "select-entity", entityEndpoint: "/stage", entityValueKey: "stage_id", entityLabelKeys: ["stage_code", "stage_name"], section: "Current Position" },
     { key: "current_batch_id", label: "Current Batch", type: "select-entity", searchable: true, entityEndpoint: "/batch", entityValueKey: "batch_id", entityLabelKeys: ["batch_no"], section: "Current Position" },
-    { key: "current_location_id", label: "Current Location", type: "select-entity", searchable: true, entityEndpoint: "/location", entityValueKey: "location_id", entityLabelKeys: ["location_code", "location_name"], section: "Current Position" },
+    { key: "current_location_id", label: "Current Pen", type: "select-entity", searchable: true, entityEndpoint: "/location?locationType=PEN", entityValueKey: "location_id", entityLabelKeys: ["location_code", "location_name"], helpText: "Animals are placed in Pens only.", section: "Current Position" },
     {
       key: "status", label: "Status", type: "select", section: "Current Position",
       // The four disposal statuses are absent on purpose: the API refuses them
