@@ -21,9 +21,10 @@ import * as masterSchema from '../core/database/master-schema';
 import * as schema from '../core/database/schema';
 import { bootApp, buildDemoContext, inTenant } from './demo/harness';
 import { identityChapter } from './demo/chapters/identity';
+import { storesAndItemsChapter } from './demo/chapters/01-stores-and-items';
 import type { DemoChapter, DemoContext } from './demo/chapter';
 
-const CHAPTERS: DemoChapter[] = [identityChapter];
+const CHAPTERS: DemoChapter[] = [identityChapter, storesAndItemsChapter];
 
 function parseArgs(argv: string[]): { apply: boolean; chapter?: string; forceOnExisting: boolean } {
   let apply = false;
@@ -94,8 +95,18 @@ async function main() {
 
     if (!apply) log('\nRead-only plan — pass --apply to run.');
   } finally {
-    await app.close();
+    // Drizzle's mysql2 pools never fully drain on close, so a plain await
+    // hangs the script forever after the work is done. Give the shutdown a
+    // bounded window — everything durable is already committed by now — and
+    // let process.exit below reap whatever is left.
+    await Promise.race([app.close(), new Promise((resolve) => setTimeout(resolve, 5000))]);
   }
 }
 
-void main();
+void main().then(
+  () => process.exit(0),
+  (err) => {
+    console.error(err instanceof Error ? err.message : err);
+    process.exit(1);
+  },
+);
