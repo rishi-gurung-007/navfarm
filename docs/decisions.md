@@ -1779,3 +1779,48 @@ document is not required now. Feed Forecast is an estimate, with its final UI
 placement still open; prefer the Feed Activity card first and reuse the same
 calculation on the dashboard later if requested. Resource Ledger remains a new
 ledger posted by Resource activity entries.
+
+## Nine-farm demo data and the 15 September master corrections
+*Decided 2026-09-15 evening by Rishi.*
+
+**Demo data.** Nine farms, not ten — the nine that submitted templates, under
+their real names and codes (MUL100, POR100, AI100, LEA100, LEX100, VIL100, and
+GRA100 / LIO100 / RIC100 where the template left the code blank). Everything
+inside them is synthetic and marked demo. Roles: Multiplier breeds and sends
+gilts; AI Station holds boars only; Lionshead Extension holds weaners and
+growers only; the other six are farrow-to-finish. Locations are Farm → Sheds →
+Pens, with a Silo attached to each shed. Breeds per farm: the farm's sow line
+(TN-70-Sow; Z-Line-Sow at Multiplier) plus boar lines, benchmarks from that
+farm's own Breed sheet; AI Station boar lines only. Stage Master gains
+**WEANER, GROWER and FINISHER**. Lifecycle periods are converted to days, the
+client's words kept as a note: Quarantine 0–28, Gilt grower to ~210, Flush 14,
+Insemination 2, Gestation 116, Farrowing+Lactation 28, Weaner 28–70 of age,
+Grower 70–140, Finisher 140–170. Schedulers carry a daily feed line per stage,
+vaccinations on fixed days, a manual health-check line, and every activity
+available on that farm. Volume ~40 sows, 3 boars, 15 gilts, 3–4 batches, ~30
+days of posted entries per full farm — less if it costs too much time.
+Every operational record is dropped and rebuilt.
+
+**Test scripts are deferred until after the MVP presentation.** Writes are still
+proven by driving the app and reading MySQL.
+
+**Master and screen corrections:**
+1. Admin audit stores before and after values and shows who made the change.
+2. Team management: real users, role assignment.
+3. Animal detail panel has three tabs: Details, Breeding record history, Traceability.
+4. Ear tag fields are Ear Tag Number and Ear Tag Image URL.
+5. Animal registration shows the bio-asset card for males too; No. of Teats is
+   asked for females only; Expected Cull Date is an input.
+6. Breeding / AI service entry captures Batch, Expected Farrowing Date,
+   Pregnancy Check Date, Result (CONFIRMED / REPEAT / FAILED / PENDING) and the
+   parity number of the sow and of the boar.
+7. Breed lifecycle vaccination rows carry a withdrawal period in days, as
+   medication rows do.
+8. Lifecycle resource requirements select from Resource Master; KPIs are rows
+   (KPI selection, Lower Limit, Upper Limit, Alert Severity), not typed arrays;
+   each stage has Stage Notes.
+9. Item Master tracking card takes the lot or serial input for whichever is selected.
+10. Item Master withdrawal period applies to vaccines and medicines only
+    (supersedes the "Inventoriable or MEDICINE/VACCINE" rule above).
+11. Resource type loses OTHER and VEHICLE.
+12. Location parent lookup offers only locations one level above (Farm 1, Shed 2, Pen 3).
