@@ -24,6 +24,17 @@ function renderLookup(onChange = jest.fn()) {
 }
 
 describe("EntityLookupField", () => {
+  const baseProps = {
+    id: "breed-id",
+    label: "Breed",
+    options: breeds,
+    value: "",
+    valueKey: "breed_id",
+    labelKeys: ["breed_code", "breed_name"],
+    onChange: jest.fn(),
+    placeholder: "Select an option",
+  } as const;
+
   it("opens a searchable code-and-name table", () => {
     renderLookup();
 
@@ -83,5 +94,23 @@ describe("EntityLookupField", () => {
 
     expect(onChange).toHaveBeenCalledWith(["WEANER", "GROWER"]);
     expect(screen.getByRole("dialog", { name: "Select Applicable Stages" })).toBeTruthy();
+  });
+
+  it("calls onCreate from the dialog creation affordance", () => {
+    const onCreate = jest.fn();
+    render(<EntityLookupField {...baseProps} onCreate={onCreate} />);
+
+    fireEvent.click(screen.getByRole("button", { name: baseProps.label }));
+    fireEvent.click(screen.getByRole("button", { name: `Create New ${baseProps.label}` }));
+
+    expect(onCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not render a creation affordance without onCreate", () => {
+    render(<EntityLookupField {...baseProps} />);
+
+    fireEvent.click(screen.getByRole("button", { name: baseProps.label }));
+
+    expect(screen.queryByRole("button", { name: `Create New ${baseProps.label}` })).toBeNull();
   });
 });
