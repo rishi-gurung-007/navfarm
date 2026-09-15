@@ -327,6 +327,14 @@
           "cwd": "apps/api"
         }
       },
+      "db-demo-chapters": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "command": "../../node_modules/.bin/ts-node --transpile-only --project tsconfig.app.json -O '{\"module\":\"node16\",\"moduleResolution\":\"node16\",\"esModuleInterop\":true,\"ignoreDeprecations\":\"6.0\"}' src/scripts/demo-chapters.ts",
+          "cwd": "apps/api"
+        }
+      },
       "db-rebuild-demo": {
         "executor": "nx:run-commands",
         "cache": false,

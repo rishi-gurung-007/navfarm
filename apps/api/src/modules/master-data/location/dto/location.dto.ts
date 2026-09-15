@@ -315,6 +315,16 @@ export class QueryLocationDto extends MasterListQueryDto {
   @IsString()
   locationType?: string;
 
+  @ApiProperty({
+    description: 'Only locations that may be the parent of a new location of this type — those whose type is in that '
+      + "Location Type's allowed_parent_types. A root type (empty list) returns no rows.",
+    required: false,
+    example: 'SHED',
+  })
+  @IsOptional()
+  @IsString()
+  parentForType?: string;
+
   @ApiProperty({ description: 'Only locations without a parent', required: false })
   @IsOptional()
   @Transform(({ value }) => value === 'true' ? true : value === 'false' ? false : value)

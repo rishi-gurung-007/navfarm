@@ -48,6 +48,10 @@ describe("master-data lookup chips", () => {
       "item-type",
       "item-category",
       "uom",
+      // 15 Sep correction 9: the tracking card takes a lot/serial No. Series
+      // for whichever of the two is selected, so Number Series is a lookup the
+      // Item form now names.
+      "number-series",
       "gl-account",
       "item-attribute",
       "feed-formula",

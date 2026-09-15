@@ -1,4 +1,4 @@
-import { entryVerdict, EntryRequest, todayIn, todayAtOffset } from './entry-window';
+import { entryVerdict, EntryRequest, isCorrectableLineType, todayIn, todayAtOffset } from './entry-window';
 
 const req = (over: Partial<EntryRequest> = {}): EntryRequest => ({
   entryDate: '2026-09-13',
@@ -68,5 +68,29 @@ describe('todayAtOffset', () => {
     expect(todayAtOffset(120, at)).toBe('2026-09-14');
     expect(todayAtOffset(0, at)).toBe('2026-09-13');
     expect(todayAtOffset(-330, at)).toBe('2026-09-13');
+  });
+});
+
+describe('isCorrectableLineType', () => {
+  it('lets a consumption entry be corrected — there is a reversal for it today', () => {
+    expect(isCorrectableLineType({ line_type: 'CONSUMPTION', kpi_metric: null })).toBe(true);
+  });
+
+  it('lets a plain descriptive reading be corrected — it changed nothing to undo', () => {
+    expect(isCorrectableLineType({ line_type: 'DESCRIPTIVE', kpi_metric: 'AVG_WEIGHT' })).toBe(true);
+    expect(isCorrectableLineType({ line_type: 'DESCRIPTIVE', kpi_metric: null })).toBe(true);
+  });
+
+  // These two move animal_register and scheduler_header.animal_count, and
+  // nothing reverses either yet (Ruling 3 — Phase 13).
+  it('refuses the descriptive lines that move animals', () => {
+    expect(isCorrectableLineType({ line_type: 'DESCRIPTIVE', kpi_metric: 'HEAD_COUNT' })).toBe(false);
+    expect(isCorrectableLineType({ line_type: 'DESCRIPTIVE', kpi_metric: 'MORTALITY_COUNT' })).toBe(false);
+  });
+
+  it('refuses every line type whose posting has no reversal yet', () => {
+    for (const line_type of ['OUTPUT', 'OVERHEAD', 'RESOURCE', 'TRANSFER']) {
+      expect(isCorrectableLineType({ line_type, kpi_metric: null })).toBe(false);
+    }
   });
 });

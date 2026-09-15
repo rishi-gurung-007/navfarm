@@ -54,7 +54,10 @@ describe('BreedingService', () => {
   beforeEach(async () => {
     rows.clear();
     capturedWhere = undefined;
-    rows.set(schema.animalRegister, [{ animal_id: 'sow-1', tenant_id: 'tenant-1', company_id: 'co-1', parity_count: 0, current_batch_id: null, total_piglets_born_live: 0, total_piglets_weaned: 0 }]);
+    // gender and animal_code are read by the resolveSowAndBoar guard: a fixture
+    // without them reads as a non-female animal and refuses before the test's
+    // own assertion point.
+    rows.set(schema.animalRegister, [{ animal_id: 'sow-1', tenant_id: 'tenant-1', company_id: 'co-1', animal_code: 'SOW-001', gender: 'F', parity_count: 0, current_batch_id: null, total_piglets_born_live: 0, total_piglets_weaned: 0 }]);
     rows.set(schema.breedingRecord, []);
     rows.set(schema.farrowingRecord, []);
     rows.set(schema.semenBatch, []);
@@ -108,7 +111,7 @@ describe('BreedingService', () => {
     });
 
     it('defaults to 116 days expected farrowing date when the sow has no breed, and 28 days preg check date', async () => {
-      rows.set(schema.animalRegister, [{ animal_id: 'sow-1', company_id: 'comp-1', parity_count: 1, breed_id: null }]);
+      rows.set(schema.animalRegister, [{ animal_id: 'sow-1', company_id: 'comp-1', animal_code: 'SOW-001', gender: 'F', parity_count: 1, breed_id: null }]);
       // The lot is validated against the sow's company and the boar's farm scope (M4).
       rows.set(schema.semenBatch, [{ semen_batch_id: 'SEM-LOT-01' }]);
 
@@ -131,7 +134,7 @@ describe('BreedingService', () => {
     // Without the fix, recordMating always added 114 days regardless of the
     // sow's own breed — this is the write that decided 2026-09-14/15 replaced.
     it("uses the sow's breed gestation_days over the 116-day default", async () => {
-      rows.set(schema.animalRegister, [{ animal_id: 'sow-1', company_id: 'comp-1', parity_count: 1, breed_id: 'breed-large-white' }]);
+      rows.set(schema.animalRegister, [{ animal_id: 'sow-1', company_id: 'comp-1', animal_code: 'SOW-001', gender: 'F', parity_count: 1, breed_id: 'breed-large-white' }]);
       rows.set(schema.breedMaster, [{ breed_id: 'breed-large-white', gestation_days: 113 }]);
 
       const result = await service.recordMating(

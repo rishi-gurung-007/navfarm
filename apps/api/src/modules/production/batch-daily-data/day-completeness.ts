@@ -162,6 +162,16 @@ export function datesBetween(from: string, to: string): string[] {
 }
 
 /**
+ * `date` moved by `days` whole days, as YYYY-MM-DD.
+ *
+ * Through utcOf so the month is read 0-based — the same trap datesBetween
+ * avoids, and the one a window reaching back across a month end falls into.
+ */
+export function addDays(date: string, days: number): string {
+  return new Date(utcOf(date) + days * 86_400_000).toISOString().slice(0, 10);
+}
+
+/**
  * The days between the batch's start and `upTo` that still have an unanswered
  * mandatory line — oldest first.
  *

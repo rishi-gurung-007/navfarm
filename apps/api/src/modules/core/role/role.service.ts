@@ -1,6 +1,6 @@
 import { Injectable, ConflictException, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, or, isNull } from 'drizzle-orm';
+import { eq, and, or, isNull, inArray, sql } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
@@ -28,6 +28,37 @@ export class RoleService {
     return tenantDb;
   }
 
+  /**
+   * Role and assignment changes are access changes, so each writes an audit
+   * row with what it was and what it became. A failed audit write is logged,
+   * not raised — the access change has already committed.
+   */
+  private async record(params: { companyId?: string | null; userId?: string; action: string; entityName: string; entityId: string; oldValues?: unknown; newValues?: unknown }, tx?: any) {
+    try {
+      await this.auditLogService.log({
+        tenantId: this.cls.get('tenantId'),
+        companyId: params.companyId || undefined,
+        userId: params.userId,
+        action: params.action,
+        entityName: params.entityName,
+        entityId: params.entityId,
+        oldValues: params.oldValues,
+        newValues: params.newValues,
+      }, tx);
+    } catch (e) {
+      console.error(`Failed to log ${params.action} audit event:`, e);
+    }
+  }
+
+  /** Active role assignments of a user, as the audit trail shows them. */
+  private async activeRolesOf(userId: string, client: any = this.db) {
+    return client
+      .select({ assign_id: schema.userRoleAssignment.assign_id, role_id: schema.roleMaster.role_id, role_code: schema.roleMaster.role_code, role_name: schema.roleMaster.role_name })
+      .from(schema.userRoleAssignment)
+      .innerJoin(schema.roleMaster, eq(schema.userRoleAssignment.role_id, schema.roleMaster.role_id))
+      .where(and(eq(schema.userRoleAssignment.user_id, userId), eq(schema.userRoleAssignment.is_active, true)));
+  }
+
   async createRole(companyId: string, roleCode: string, roleName: string, description?: string) {
     const existing = await this.db
       .select()
@@ -51,24 +82,13 @@ export class RoleService {
         is_system_role: false,
       });
 
-    try {
-      await this.auditLogService.log({
-        tenantId: this.cls.get('tenantId'),
-        companyId: companyId,
-        action: 'CREATE_ROLE',
-        entityName: 'ROLE',
-        entityId: roleId,
-        newValues: { roleCode, roleName, description }
-      });
-    } catch (e) {
-      console.error('Failed to log CREATE_ROLE audit event:', e);
-    }
-
     const [role] = await this.db
       .select()
       .from(schema.roleMaster)
       .where(eq(schema.roleMaster.role_id, roleId))
       .limit(1);
+
+    await this.record({ companyId, action: 'CREATE', entityName: 'role_master', entityId: roleId, newValues: role });
 
     return role;
   }
@@ -106,8 +126,9 @@ export class RoleService {
     }
 
     const assignedBy = requester.userId;
+    const previousRoles = await this.activeRolesOf(userId);
 
-    return this.db.transaction(async (tx) => {
+    const assignment = await this.db.transaction(async (tx) => {
       await tx
         .delete(schema.userRoleAssignment)
         .where(eq(schema.userRoleAssignment.user_id, userId));
@@ -130,6 +151,18 @@ export class RoleService {
 
       return assignment;
     });
+
+    await this.record({
+      companyId: role[0].company_id || target.company_id,
+      userId: requester.userId,
+      action: 'ASSIGN_ROLE',
+      entityName: 'user_role_assignment',
+      entityId: userId,
+      oldValues: { user_id: userId, roles: previousRoles.map((r: any) => r.role_code).join(', ') || null },
+      newValues: { user_id: userId, roles: role[0].role_code, role_name: role[0].role_name },
+    });
+
+    return assignment;
   }
 
   async updateRolePermissions(roleId: string, requester: RoleRequester, permissions: Array<{
@@ -164,6 +197,14 @@ export class RoleService {
       throw new ForbiddenException('Only a tenant administrator can grant unrestricted (ALL) permissions.');
     }
 
+    const previous = await this.db.select().from(schema.rolePermissions).where(eq(schema.rolePermissions.role_id, roleId));
+    const grants = (rows: any[]) => Object.fromEntries(
+      rows
+        .map((p) => [`${p.module_code}.${p.resource}`, ['view', 'create', 'edit', 'delete', 'approve', 'export', 'print'].filter((a) => p[`can_${a}`]).join(',')] as const)
+        .filter(([, actions]) => actions)
+        .sort(([a], [b]) => a.localeCompare(b)),
+    );
+
     return this.db.transaction(async (tx) => {
       // 1. Delete old permission rows
       await tx.delete(schema.rolePermissions).where(eq(schema.rolePermissions.role_id, roleId));
@@ -187,18 +228,16 @@ export class RoleService {
         await tx.insert(schema.rolePermissions).values(insertRows);
       }
 
-      try {
-        await this.auditLogService.log({
-          tenantId: this.cls.get('tenantId'),
-          companyId: role[0]?.company_id || undefined,
-          action: 'UPDATE_PERMISSIONS',
-          entityName: 'ROLE',
-          entityId: roleId,
-          newValues: { permissionsCount: permissions.length },
-        }, tx);
-      } catch (e) {
-        console.error('Failed to log UPDATE_PERMISSIONS audit event:', e);
-      }
+      // Before and after as "MODULE.RESOURCE: actions", so the ledger shows which grant changed.
+      await this.record({
+        companyId: role[0]?.company_id,
+        userId: requester.userId,
+        action: 'UPDATE_PERMISSIONS',
+        entityName: 'role_master',
+        entityId: roleId,
+        oldValues: { role_code: role[0].role_code, ...grants(previous) },
+        newValues: { role_code: role[0].role_code, ...grants(permissions) },
+      }, tx);
 
       return { success: true, message: 'Permissions updated successfully.' };
     });
@@ -222,10 +261,47 @@ export class RoleService {
   }
 
   async getCompanyRoles(companyId: string) {
-    return this.db
+    const roles = await this.db
       .select()
       .from(schema.roleMaster)
       .where(eq(schema.roleMaster.company_id, companyId));
+    if (roles.length === 0) return roles;
+
+    // How many live accounts hold each role, so the Roles screen can say who a change affects.
+    const counts = await this.db
+      .select({ role_id: schema.userRoleAssignment.role_id, user_count: sql<number>`count(*)` })
+      .from(schema.userRoleAssignment)
+      .innerJoin(schema.userMaster, eq(schema.userMaster.user_id, schema.userRoleAssignment.user_id))
+      .where(and(
+        inArray(schema.userRoleAssignment.role_id, roles.map((r) => r.role_id)),
+        eq(schema.userRoleAssignment.is_active, true),
+        isNull(schema.userMaster.deleted_at),
+      ))
+      .groupBy(schema.userRoleAssignment.role_id);
+    const countByRole = new Map(counts.map((c) => [c.role_id, Number(c.user_count)]));
+    return roles.map((r) => ({ ...r, user_count: countByRole.get(r.role_id) ?? 0 }));
+  }
+
+  /** The users who currently hold a role. */
+  async getRoleMembers(roleId: string) {
+    return this.db
+      .select({
+        assign_id: schema.userRoleAssignment.assign_id,
+        user_id: schema.userMaster.user_id,
+        full_name: schema.userMaster.full_name,
+        email: schema.userMaster.email,
+        user_type: schema.userMaster.user_type,
+        is_active: schema.userMaster.is_active,
+        assigned_at: schema.userRoleAssignment.assigned_at,
+      })
+      .from(schema.userRoleAssignment)
+      .innerJoin(schema.userMaster, eq(schema.userMaster.user_id, schema.userRoleAssignment.user_id))
+      .where(and(
+        eq(schema.userRoleAssignment.role_id, roleId),
+        eq(schema.userRoleAssignment.is_active, true),
+        isNull(schema.userMaster.deleted_at),
+      ))
+      .orderBy(schema.userMaster.full_name);
   }
 
   async updateRole(roleId: string, data: { roleName?: string; description?: string; isActive?: boolean }) {
@@ -260,6 +336,10 @@ export class RoleService {
       .from(schema.roleMaster)
       .where(eq(schema.roleMaster.role_id, roleId))
       .limit(1);
+
+    if (Object.keys(updateData).length > 0) {
+      await this.record({ companyId: role.company_id, action: 'UPDATE', entityName: 'role_master', entityId: roleId, oldValues: role, newValues: updated });
+    }
 
     return updated;
   }
@@ -299,6 +379,8 @@ export class RoleService {
     await this.db.delete(schema.rolePermissions).where(eq(schema.rolePermissions.role_id, roleId));
     await this.db.delete(schema.roleMaster).where(eq(schema.roleMaster.role_id, roleId));
 
+    await this.record({ companyId: role.company_id, action: 'DELETE', entityName: 'role_master', entityId: roleId, oldValues: role });
+
     return { success: true, message: `Role '${role.role_code}' deleted successfully.` };
   }
 
@@ -323,6 +405,21 @@ export class RoleService {
       .update(schema.userRoleAssignment)
       .set({ is_active: false })
       .where(eq(schema.userRoleAssignment.assign_id, assignId));
+
+    const [removedRole] = await this.db
+      .select({ role_code: schema.roleMaster.role_code, role_name: schema.roleMaster.role_name, company_id: schema.roleMaster.company_id })
+      .from(schema.roleMaster)
+      .where(eq(schema.roleMaster.role_id, assignment.role_id))
+      .limit(1);
+    await this.record({
+      companyId: removedRole?.company_id || target.company_id,
+      userId: requester.userId,
+      action: 'UNASSIGN_ROLE',
+      entityName: 'user_role_assignment',
+      entityId: assignment.user_id,
+      oldValues: { user_id: assignment.user_id, roles: removedRole?.role_code ?? assignment.role_id, role_name: removedRole?.role_name ?? null },
+      newValues: { user_id: assignment.user_id, roles: null },
+    });
 
     return { success: true, message: 'Role unassigned successfully.' };
   }

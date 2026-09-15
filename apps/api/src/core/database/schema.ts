@@ -3431,6 +3431,9 @@ export const breedingRecord = mysqlTable('breeding_record', {
   pregnancy_confirmed: boolean('pregnancy_confirmed'), // null = pending, true = confirmed, false = failed
   conception_result: varchar('conception_result', { length: 20 }).default('PENDING').notNull(), // CONFIRMED, REPEAT, FAILED, PENDING
   parity_number: int('parity_number').notNull(),
+  // 15 Sep correction 6: the boar's own service count at this mating. Nullable
+  // because an AI service with no known boar has no honest value to store.
+  boar_parity_number: int('boar_parity_number'),
   notes: text('notes'),
   created_by: varchar('created_by', { length: 36 }),
   created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),

@@ -17,6 +17,7 @@ describe('BreedingController authorization metadata', () => {
 
   it.each([
     ['recordMating', RequestMethod.POST, 'mating', 'create'],
+    ['getMatingDefaults', RequestMethod.GET, 'mating/defaults', 'view'],
     ['recordPregnancyCheck', RequestMethod.PATCH, 'mating/:id/preg-check', 'edit'],
     ['getMatingRecords', RequestMethod.GET, 'mating', 'view'],
     ['recordFarrowing', RequestMethod.POST, 'farrowing', 'create'],
@@ -32,7 +33,7 @@ describe('BreedingController authorization metadata', () => {
 
   it('leaves no route without a permission, so a new route cannot slip in open', () => {
     const routes = handlers.filter((name) => Reflect.getMetadata(PATH_METADATA, handler(name)) !== undefined);
-    expect(routes).toHaveLength(8);
+    expect(routes).toHaveLength(9);
     for (const name of routes) {
       expect(Reflect.getMetadata(REQUIRE_PERMISSION_KEY, handler(name))).toMatchObject({ moduleCode: 'PIGGERY', resource: 'ANIMAL' });
     }

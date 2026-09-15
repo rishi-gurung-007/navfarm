@@ -30,6 +30,17 @@ export class AuditLogController {
       query.tenantId = user.tenantId;
     }
 
+    // Below tenant level the ledger is one company's: the active company header
+    // (RolesGuard has already checked it against the user's assignments) or the
+    // home company. A query naming another company was honoured before this.
+    if (!['SYSTEM_ADMIN', 'TENANT_ADMIN'].includes(user.userType)) {
+      const activeCompanyId = (req.headers?.['x-active-company-id'] as string | undefined) || user.companyId;
+      if (query.companyId && query.companyId !== activeCompanyId) {
+        throw new ForbiddenException('Access denied. You can only view audit logs for your own company.');
+      }
+      query.companyId = activeCompanyId;
+    }
+
     return this.auditLogService.findLogs({
       tenantId: query.tenantId,
       companyId: query.companyId,

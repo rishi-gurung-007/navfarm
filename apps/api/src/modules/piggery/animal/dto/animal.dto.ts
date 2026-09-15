@@ -108,7 +108,7 @@ export class CreateAnimalDto {
   @IsOptional()
   rfid_tag?: string;
 
-  @ApiProperty({ description: 'Visual ear tag number', required: false })
+  @ApiProperty({ description: 'Ear tag number', required: false })
   @IsString()
   @IsOptional()
   ear_tag?: string;
@@ -168,7 +168,12 @@ export class CreateAnimalDto {
   @IsIn(STATUSES)
   status?: string;
 
-  @ApiProperty({ description: 'Teat count — BBP: below 15 is a hard block on gilt selection regardless of TSI score', required: false })
+  @ApiProperty({ description: 'Expected cull date, entered at registration. Nothing derives it.', required: false })
+  @IsDateString()
+  @IsOptional()
+  expected_cull_date?: string;
+
+  @ApiProperty({ description: 'Teat count, females only — ignored for a male. BBP: below 15 is a hard block on gilt selection regardless of TSI score', required: false })
   @IsInt()
   @Min(0)
   @IsOptional()

@@ -1,10 +1,10 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, desc, isNull, sql } from 'drizzle-orm';
+import { eq, and, desc, isNull, lt, sql, aliasedTable } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
-import { farmScope, animalScopeConditions, batchScopeConditions } from '../../../common/farm-scope';
+import { farmScope, animalScopeConditions, batchScopeConditions, farmOfLocation } from '../../../common/farm-scope';
 import {
   CreateMatingDto,
   UpdatePregCheckDto,
@@ -12,6 +12,8 @@ import {
   UpdateWeaningDto,
   CreateSemenCollectionDto,
   ConceptionResult,
+  MatingType,
+  MatingDefaultsQueryDto,
 } from './dto/breeding.dto';
 
 function addDaysToDate(dateStr: string, days: number): string {
@@ -69,65 +71,93 @@ export class BreedingService {
   // MATING & INSEMINATION
   // ==========================================
 
-  async recordMating(dto: CreateMatingDto, tenantId: string, userPayload?: any) {
-    // 1. Verify sow
-    const [sow] = await this.db
+  /**
+   * The farm the sow stands on: her pen's farm, or her batch's when she has no
+   * pen. Null when neither says — the request's own farm scope is then the only
+   * boundary, which assertScopedBatch already applies.
+   */
+  private async farmOfAnimal(animal: { current_location_id: string | null; current_batch_id: string | null }): Promise<string | null> {
+    if (animal.current_location_id) {
+      const farm = await farmOfLocation(this.db, animal.current_location_id);
+      if (farm) return farm;
+    }
+    if (animal.current_batch_id) {
+      const [batch] = await this.db
+        .select({ farm_id: schema.batchHeader.farm_id })
+        .from(schema.batchHeader)
+        .where(eq(schema.batchHeader.batch_id, animal.current_batch_id))
+        .limit(1);
+      return batch?.farm_id ?? null;
+    }
+    return null;
+  }
+
+  /**
+   * A service happens in a batch on the sow's farm (15 Sep correction 6). A
+   * batch the caller can see on another of the company's farms would file the
+   * service, and later its litter, under the wrong farm.
+   */
+  private async assertBatchOnSowFarm(batchId: string, sow: typeof schema.animalRegister.$inferSelect, tenantId: string): Promise<void> {
+    await this.assertScopedBatch(batchId, sow.company_id, tenantId);
+    const sowFarm = await this.farmOfAnimal(sow);
+    if (!sowFarm) return;
+    const [batch] = await this.db
+      .select({ farm_id: schema.batchHeader.farm_id, batch_no: schema.batchHeader.batch_no })
+      .from(schema.batchHeader)
+      .where(eq(schema.batchHeader.batch_id, batchId))
+      .limit(1);
+    if (batch && batch.farm_id !== sowFarm) {
+      throw new BadRequestException(`Batch '${batch.batch_no}' is not on the sow's farm.`);
+    }
+  }
+
+  private async findScopedAnimal(animalId: string, tenantId: string) {
+    const [animal] = await this.db
       .select()
       .from(schema.animalRegister)
-      .where(
-        and(
-          eq(schema.animalRegister.animal_id, dto.sow_animal_id),
-          eq(schema.animalRegister.tenant_id, tenantId),
-          ...animalScopeConditions(farmScope(this.cls)),
-        )
-      )
+      .where(and(
+        eq(schema.animalRegister.animal_id, animalId),
+        eq(schema.animalRegister.tenant_id, tenantId),
+        ...animalScopeConditions(farmScope(this.cls)),
+      ))
       .limit(1);
+    return animal;
+  }
 
-    if (!sow) {
-      throw new NotFoundException(`Sow animal with ID '${dto.sow_animal_id}' not found.`);
-    }
+  /** The boar behind an AI dose is the boar its semen lot was collected from. */
+  private async boarOfSemenLot(semenLotId: string, companyId: string, tenantId: string): Promise<string> {
+    // semen_batch has no farm of its own; it reaches one through its boar.
+    const [lot] = await this.db
+      .select({ boar_animal_id: schema.semenBatch.boar_animal_id })
+      .from(schema.semenBatch)
+      .innerJoin(schema.animalRegister, eq(schema.semenBatch.boar_animal_id, schema.animalRegister.animal_id))
+      .where(and(
+        eq(schema.semenBatch.semen_batch_id, semenLotId),
+        eq(schema.semenBatch.tenant_id, tenantId),
+        eq(schema.semenBatch.company_id, companyId),
+        ...animalScopeConditions(farmScope(this.cls)),
+      ))
+      .limit(1);
+    if (!lot) throw new NotFoundException(`Semen lot with ID '${semenLotId}' not found.`);
+    return lot.boar_animal_id;
+  }
 
-    // 2. If natural mating, verify boar
-    if (dto.mating_type === 'NATURAL_MATING') {
-      if (!dto.boar_animal_id) {
-        throw new BadRequestException('boar_animal_id is required for NATURAL_MATING.');
-      }
-      const [boar] = await this.db
-        .select()
-        .from(schema.animalRegister)
-        .where(
-          and(
-            eq(schema.animalRegister.animal_id, dto.boar_animal_id),
-            eq(schema.animalRegister.tenant_id, tenantId),
-            ...animalScopeConditions(farmScope(this.cls)),
-          )
-        )
-        .limit(1);
-      if (!boar || boar.company_id !== sow.company_id) {
-        throw new NotFoundException(`Boar animal with ID '${dto.boar_animal_id}' not found.`);
-      }
-    }
-
-    const companyId = this.assertAnimalCompany(dto.company_id, sow, 'sow');
-    await this.assertScopedBatch(dto.batch_id, companyId, tenantId);
-    if (dto.semen_lot_id) {
-      // semen_batch has no farm of its own; it reaches one through its boar.
-      const [lot] = await this.db
-        .select({ semen_batch_id: schema.semenBatch.semen_batch_id })
-        .from(schema.semenBatch)
-        .innerJoin(schema.animalRegister, eq(schema.semenBatch.boar_animal_id, schema.animalRegister.animal_id))
-        .where(and(
-          eq(schema.semenBatch.semen_batch_id, dto.semen_lot_id),
-          eq(schema.semenBatch.tenant_id, tenantId),
-          eq(schema.semenBatch.company_id, companyId),
-          ...animalScopeConditions(farmScope(this.cls)),
-        ))
-        .limit(1);
-      if (!lot) throw new NotFoundException(`Semen lot with ID '${dto.semen_lot_id}' not found.`);
-    }
-
-    // Gestation length is the sow's own breed (BBP §1.7, TDD row 52, decided
-    // 2026-09-14/15) — 116 days only when the breed row doesn't carry one.
+  /**
+   * What the service form prefills, computed once here so the form and the
+   * write cannot disagree:
+   * - expected farrowing: mating date + the sow's breed gestation_days (BBP
+   *   §1.7, TDD row 52), 116 only when the breed row carries none;
+   * - pregnancy check: mating date + 28;
+   * - sow parity: her completed parities + 1, the litter this service is for;
+   * - boar parity: his services recorded before this mating date + 1, counted
+   *   the same way so the two numbers read alike. Null with no known boar.
+   */
+  private async matingDefaults(
+    sow: typeof schema.animalRegister.$inferSelect,
+    boarAnimalId: string | null,
+    matingDate: string,
+    tenantId: string,
+  ) {
     let gestationDays = 116;
     if (sow.breed_id) {
       const [breed] = await this.db
@@ -137,10 +167,103 @@ export class BreedingService {
         .limit(1);
       if (breed?.gestation_days != null) gestationDays = breed.gestation_days;
     }
-    const expectedFarrowingDate = dto.expected_farrowing_date || addDaysToDate(dto.mating_date, gestationDays);
-    // Standard ultrasound check: 28 days post-mating
-    const pregCheckDate = dto.preg_check_date || addDaysToDate(dto.mating_date, 28);
-    const parityNumber = dto.parity_number ?? (sow.parity_count + 1);
+
+    let boarParityNumber: number | null = null;
+    if (boarAnimalId) {
+      const [prior] = await this.db
+        .select({ services: sql<number>`COUNT(*)` })
+        .from(schema.breedingRecord)
+        .where(and(
+          eq(schema.breedingRecord.tenant_id, tenantId),
+          eq(schema.breedingRecord.boar_animal_id, boarAnimalId),
+          lt(schema.breedingRecord.mating_date, matingDate),
+        ));
+      boarParityNumber = Number(prior?.services ?? 0) + 1;
+    }
+
+    return {
+      gestation_days: gestationDays,
+      expected_farrowing_date: addDaysToDate(matingDate, gestationDays),
+      preg_check_date: addDaysToDate(matingDate, 28),
+      parity_number: (sow.parity_count || 0) + 1,
+      boar_parity_number: boarParityNumber,
+      batch_id: sow.current_batch_id || null,
+    };
+  }
+
+  /**
+   * conception_result is the field of record; pregnancy_confirmed is its
+   * boolean shadow, kept because the KPI and older screens read it:
+   * CONFIRMED → true, FAILED/REPEAT → false, PENDING → null.
+   */
+  private pregnancyConfirmedFor(result: ConceptionResult): boolean | null {
+    if (result === ConceptionResult.CONFIRMED) return true;
+    if (result === ConceptionResult.PENDING) return null;
+    return false;
+  }
+
+  private async resolveSowAndBoar(
+    dto: { sow_animal_id: string; boar_animal_id?: string; semen_lot_id?: string; mating_type?: MatingType; company_id?: string },
+    tenantId: string,
+  ) {
+    const sow = await this.findScopedAnimal(dto.sow_animal_id, tenantId);
+    if (!sow) {
+      throw new NotFoundException(`Sow animal with ID '${dto.sow_animal_id}' not found.`);
+    }
+    if (sow.gender !== 'F') {
+      throw new BadRequestException(`Animal '${sow.animal_code}' is not female and cannot be served as a sow.`);
+    }
+    const companyId = this.assertAnimalCompany(dto.company_id, sow, 'sow');
+
+    if (dto.mating_type === MatingType.NATURAL_MATING && !dto.boar_animal_id) {
+      throw new BadRequestException('boar_animal_id is required for NATURAL_MATING.');
+    }
+
+    let boarAnimalId = dto.boar_animal_id || null;
+    if (dto.semen_lot_id) {
+      const lotBoar = await this.boarOfSemenLot(dto.semen_lot_id, companyId, tenantId);
+      if (boarAnimalId && boarAnimalId !== lotBoar) {
+        throw new BadRequestException('The semen lot was not collected from the selected boar.');
+      }
+      boarAnimalId = lotBoar;
+    }
+
+    // Verified whenever one is named, AI included — an unverified boar id used
+    // to be stored as sent on an AI service.
+    if (boarAnimalId) {
+      const boar = await this.findScopedAnimal(boarAnimalId, tenantId);
+      if (!boar || boar.company_id !== sow.company_id) {
+        throw new NotFoundException(`Boar animal with ID '${boarAnimalId}' not found.`);
+      }
+      if (boar.gender !== 'M') {
+        throw new BadRequestException(`Animal '${boar.animal_code}' is not male and cannot be the boar on a service.`);
+      }
+    }
+
+    return { sow, companyId, boarAnimalId };
+  }
+
+  async getMatingDefaults(query: MatingDefaultsQueryDto, tenantId: string) {
+    const { sow, boarAnimalId } = await this.resolveSowAndBoar(query, tenantId);
+    return this.matingDefaults(sow, boarAnimalId, query.mating_date, tenantId);
+  }
+
+  async recordMating(dto: CreateMatingDto, tenantId: string, userPayload?: any) {
+    const { sow, companyId, boarAnimalId } = await this.resolveSowAndBoar(dto, tenantId);
+    if (dto.batch_id) await this.assertBatchOnSowFarm(dto.batch_id, sow, tenantId);
+
+    const defaults = await this.matingDefaults(sow, boarAnimalId, dto.mating_date, tenantId);
+    // Every default is editable on the form, so a sent value wins — but a
+    // farrowing due before the service, or a check before it, is a typo.
+    const expectedFarrowingDate = dto.expected_farrowing_date || defaults.expected_farrowing_date;
+    const pregCheckDate = dto.preg_check_date || defaults.preg_check_date;
+    if (expectedFarrowingDate <= dto.mating_date) {
+      throw new BadRequestException('Expected farrowing date must be after the mating date.');
+    }
+    if (pregCheckDate < dto.mating_date) {
+      throw new BadRequestException('Pregnancy check date cannot be before the mating date.');
+    }
+    const conceptionResult = dto.conception_result ?? ConceptionResult.PENDING;
 
     const breedingId = randomUUID();
     const newRecord = {
@@ -148,9 +271,9 @@ export class BreedingService {
       tenant_id: tenantId,
       company_id: companyId,
       sow_animal_id: dto.sow_animal_id,
-      batch_id: dto.batch_id || sow.current_batch_id || null,
+      batch_id: dto.batch_id || defaults.batch_id,
       mating_type: dto.mating_type,
-      boar_animal_id: dto.boar_animal_id || null,
+      boar_animal_id: boarAnimalId,
       semen_lot_id: dto.semen_lot_id || null,
       semen_dose_qty: dto.semen_dose_qty ? String(dto.semen_dose_qty) : '1.00',
       mating_date: dto.mating_date,
@@ -158,14 +281,21 @@ export class BreedingService {
       expected_farrowing_date: expectedFarrowingDate,
       preg_check_date: pregCheckDate,
       preg_check_method: dto.preg_check_method || 'ULTRASOUND',
-      pregnancy_confirmed: null,
-      conception_result: ConceptionResult.PENDING,
-      parity_number: parityNumber,
+      pregnancy_confirmed: this.pregnancyConfirmedFor(conceptionResult),
+      conception_result: conceptionResult,
+      parity_number: dto.parity_number ?? defaults.parity_number,
+      boar_parity_number: boarAnimalId ? (dto.boar_parity_number ?? defaults.boar_parity_number) : null,
       notes: dto.notes || null,
       created_by: userPayload?.userId || null,
     };
 
     await this.db.insert(schema.breedingRecord).values(newRecord);
+    if (conceptionResult === ConceptionResult.CONFIRMED) {
+      await this.db
+        .update(schema.animalRegister)
+        .set({ status: 'PREGNANT' })
+        .where(eq(schema.animalRegister.animal_id, dto.sow_animal_id));
+    }
 
     return {
       ...newRecord,
@@ -194,7 +324,7 @@ export class BreedingService {
     // not-found message keeps another farm's breeding id indistinguishable
     // from one that never existed.
     const [scopedSow] = await this.db
-      .select({ animal_id: schema.animalRegister.animal_id })
+      .select({ animal_id: schema.animalRegister.animal_id, status: schema.animalRegister.status })
       .from(schema.animalRegister)
       .where(and(eq(schema.animalRegister.animal_id, breeding.sow_animal_id), ...animalScopeConditions(farmScope(this.cls))))
       .limit(1);
@@ -202,12 +332,28 @@ export class BreedingService {
       throw new NotFoundException(`Breeding record with ID '${breedingId}' not found.`);
     }
 
-    const conceptionResult = dto.conception_result || (dto.pregnancy_confirmed ? ConceptionResult.CONFIRMED : ConceptionResult.FAILED);
+    // The result may be sent alone (CONFIRMED / REPEAT / FAILED / PENDING) or,
+    // from an older client, as the boolean alone. Both at once must agree.
+    let conceptionResult: ConceptionResult;
+    if (dto.conception_result) {
+      conceptionResult = dto.conception_result;
+      if (dto.pregnancy_confirmed !== undefined && dto.pregnancy_confirmed !== this.pregnancyConfirmedFor(conceptionResult)) {
+        throw new BadRequestException(`pregnancy_confirmed contradicts conception_result ${conceptionResult}.`);
+      }
+    } else if (dto.pregnancy_confirmed !== undefined) {
+      conceptionResult = dto.pregnancy_confirmed ? ConceptionResult.CONFIRMED : ConceptionResult.FAILED;
+    } else {
+      throw new BadRequestException('conception_result is required.');
+    }
+    const pregnancyConfirmed = this.pregnancyConfirmedFor(conceptionResult);
+    if (dto.preg_check_date && dto.preg_check_date < breeding.mating_date) {
+      throw new BadRequestException('Pregnancy check date cannot be before the mating date.');
+    }
 
     await this.db
       .update(schema.breedingRecord)
       .set({
-        pregnancy_confirmed: dto.pregnancy_confirmed,
+        pregnancy_confirmed: pregnancyConfirmed,
         conception_result: conceptionResult,
         preg_check_date: dto.preg_check_date || breeding.preg_check_date,
         preg_check_method: dto.preg_check_method || breeding.preg_check_method,
@@ -215,13 +361,15 @@ export class BreedingService {
       })
       .where(eq(schema.breedingRecord.breeding_id, breedingId));
 
-    // Update sow status based on confirmation
-    if (dto.pregnancy_confirmed) {
+    // Sow status follows the result. A result that is not CONFIRMED returns her
+    // to ACTIVE only from PREGNANT: correcting an old service must not pull a
+    // lactating sow out of LACTATING.
+    if (conceptionResult === ConceptionResult.CONFIRMED) {
       await this.db
         .update(schema.animalRegister)
         .set({ status: 'PREGNANT' })
         .where(eq(schema.animalRegister.animal_id, breeding.sow_animal_id));
-    } else if (conceptionResult === ConceptionResult.FAILED) {
+    } else if (scopedSow.status === 'PREGNANT') {
       await this.db
         .update(schema.animalRegister)
         .set({ status: 'ACTIVE' })
@@ -230,7 +378,7 @@ export class BreedingService {
 
     return {
       breeding_id: breedingId,
-      pregnancy_confirmed: dto.pregnancy_confirmed,
+      pregnancy_confirmed: pregnancyConfirmed,
       conception_result: conceptionResult,
       message: `Pregnancy check recorded (${conceptionResult}). Sow status updated.`,
     };
@@ -244,6 +392,9 @@ export class BreedingService {
     }
     conditions.push(...animalScopeConditions(scope));
 
+    // The boar and the batch are named on the list, so a service can be read
+    // without opening it; left joins because AI services may carry neither.
+    const boar = aliasedTable(schema.animalRegister, 'boar');
     const records = await this.db
       .select({
         breeding_id: schema.breedingRecord.breeding_id,
@@ -256,16 +407,24 @@ export class BreedingService {
         pregnancy_confirmed: schema.breedingRecord.pregnancy_confirmed,
         conception_result: schema.breedingRecord.conception_result,
         parity_number: schema.breedingRecord.parity_number,
+        boar_parity_number: schema.breedingRecord.boar_parity_number,
         semen_dose_qty: schema.breedingRecord.semen_dose_qty,
+        semen_lot_id: schema.breedingRecord.semen_lot_id,
         notes: schema.breedingRecord.notes,
         created_at: schema.breedingRecord.created_at,
         sow_id: schema.breedingRecord.sow_animal_id,
         sow_code: schema.animalRegister.animal_code,
         sow_tag: schema.animalRegister.ear_tag,
         sow_status: schema.animalRegister.status,
+        boar_id: schema.breedingRecord.boar_animal_id,
+        boar_code: boar.animal_code,
+        batch_id: schema.breedingRecord.batch_id,
+        batch_no: schema.batchHeader.batch_no,
       })
       .from(schema.breedingRecord)
       .innerJoin(schema.animalRegister, eq(schema.breedingRecord.sow_animal_id, schema.animalRegister.animal_id))
+      .leftJoin(boar, eq(boar.animal_id, schema.breedingRecord.boar_animal_id))
+      .leftJoin(schema.batchHeader, eq(schema.batchHeader.batch_id, schema.breedingRecord.batch_id))
       .where(and(...conditions))
       .orderBy(desc(schema.breedingRecord.mating_date));
 

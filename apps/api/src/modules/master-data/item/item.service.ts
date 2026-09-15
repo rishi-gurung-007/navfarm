@@ -15,6 +15,9 @@ const toMysqlTimestamp = (date: Date = new Date()) => {
   return date.toISOString().slice(0, 19).replace('T', ' ');
 };
 
+/** The item types a withdrawal period applies to. Every other type stores none. */
+const carriesWithdrawal = (itemType?: string | null) => itemType === 'MEDICINE' || itemType === 'VACCINE';
+
 @Injectable()
 export class ItemService {
   constructor(
@@ -109,8 +112,28 @@ export class ItemService {
 
   /** withdrawal_days is mandatory for MEDICINE/VACCINE item types per spec. */
   private assertWithdrawalDays(itemType: string, withdrawalDays?: number | null) {
-    if ((itemType === 'MEDICINE' || itemType === 'VACCINE') && withdrawalDays == null) {
+    if (carriesWithdrawal(itemType) && withdrawalDays == null) {
       throw new BadRequestException(`${itemType} items require withdrawal_days to be set.`);
+    }
+  }
+
+  /**
+   * The series has to be one that issues the kind of number the item is
+   * tracked by. The form filters the picker by ?documentType=LOT / SERIAL; this
+   * is the same rule for a caller that does not use the form, so a lot-tracked
+   * item cannot point at the BREED series.
+   */
+  private async assertTrackingSeriesKind(isLotTracked?: boolean | null, isSerialTracked?: boolean | null, trackingSeriesId?: string | null) {
+    if (!trackingSeriesId || (!isLotTracked && !isSerialTracked)) return;
+    const expected = isLotTracked ? 'LOT' : 'SERIAL';
+    const [series] = await this.db
+      .select({ document_type: schema.noSeriesMaster.document_type })
+      .from(schema.noSeriesMaster)
+      .where(and(eq(schema.noSeriesMaster.series_id, trackingSeriesId), isNull(schema.noSeriesMaster.deleted_at)))
+      .limit(1);
+    if (!series) throw new NotFoundException(`Number Series '${trackingSeriesId}' not found.`);
+    if (series.document_type !== expected) {
+      throw new BadRequestException(`A ${expected === 'LOT' ? 'lot' : 'serial'}-tracked item needs a ${expected} number series.`);
     }
   }
 
@@ -208,6 +231,7 @@ export class ItemService {
     this.assertWithdrawalDays(dto.item_type, dto.withdrawal_days);
     this.assertStandardCost(dto.valuation_method, dto.standard_cost);
     this.assertTrackingSeries(dto.is_lot_tracked, dto.is_serial_tracked, dto.tracking_series_id);
+    await this.assertTrackingSeriesKind(dto.is_lot_tracked, dto.is_serial_tracked, dto.tracking_series_id);
 
     // NOB/LOB are no longer asked on the form — derive them from the company's
     // operational areas (an explicit dto value, if a caller still sends one,
@@ -258,7 +282,8 @@ export class ItemService {
       shelf_life_days: dto.shelf_life_days ?? null,
       storage_temp_min: dto.storage_temp_min?.toString() || null,
       storage_temp_max: dto.storage_temp_max?.toString() || null,
-      withdrawal_days: dto.withdrawal_days ?? null,
+      // Medicines and vaccines only (2026-09-15); anything sent for another type is dropped.
+      withdrawal_days: carriesWithdrawal(dto.item_type) ? dto.withdrawal_days ?? null : null,
       is_qr_enabled: dto.is_qr_enabled || false,
       qr_trigger_event: dto.qr_trigger_event || null,
       item_image_url: dto.item_image_url || null,
@@ -474,6 +499,9 @@ export class ItemService {
     const effectiveIsSerialTracked = dto.is_serial_tracked !== undefined ? dto.is_serial_tracked : item.is_serial_tracked;
     const effectiveTrackingSeriesId = dto.tracking_series_id !== undefined ? dto.tracking_series_id : item.tracking_series_id;
     this.assertTrackingSeries(effectiveIsLotTracked, effectiveIsSerialTracked, effectiveTrackingSeriesId);
+    if (dto.tracking_series_id !== undefined || dto.is_lot_tracked !== undefined || dto.is_serial_tracked !== undefined) {
+      await this.assertTrackingSeriesKind(effectiveIsLotTracked, effectiveIsSerialTracked, effectiveTrackingSeriesId);
+    }
 
     const updates: any = {
       updated_by: userPayload?.userId || null,
@@ -510,6 +538,9 @@ export class ItemService {
     if (dto.storage_temp_min !== undefined) updates.storage_temp_min = dto.storage_temp_min?.toString() || null;
     if (dto.storage_temp_max !== undefined) updates.storage_temp_max = dto.storage_temp_max?.toString() || null;
     if (dto.withdrawal_days !== undefined) updates.withdrawal_days = dto.withdrawal_days;
+    // Only a medicine or vaccine carries one. An item re-typed away from those
+    // loses it, rather than keeping a slaughter block nothing shows any more.
+    if (!carriesWithdrawal(effectiveItemType)) updates.withdrawal_days = null;
     if (dto.is_qr_enabled !== undefined) updates.is_qr_enabled = dto.is_qr_enabled;
     if (dto.qr_trigger_event !== undefined) updates.qr_trigger_event = dto.qr_trigger_event;
     if (dto.item_image_url !== undefined) updates.item_image_url = dto.item_image_url;

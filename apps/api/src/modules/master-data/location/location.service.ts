@@ -3,7 +3,7 @@ import { listFilterConditions, runMasterList } from '../../../common/master-list
 import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { alias } from 'drizzle-orm/mysql-core';
-import { eq, and, like, or, isNull, sql } from 'drizzle-orm';
+import { eq, and, like, or, isNull, sql, inArray } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
@@ -582,6 +582,19 @@ export class LocationService {
     }
     if (query.locationType) {
       conditions.push(eq(schema.locationMaster.location_type, query.locationType));
+    }
+    // The Parent Location picker. Filtering in SQL, before the page is cut, is
+    // the point: the form used to narrow the first 50 rows by type in the
+    // browser, and those were all pens and sheds. The type is resolved in the
+    // same company scope create() resolves it in, so the list offers exactly
+    // the parents create() will accept.
+    if (query.parentForType) {
+      const scope = this.cls.get<{ kind?: string; companyId?: string | null }>('masterScope');
+      const companyId = scope?.kind ? scope.companyId : query.companyId;
+      const allowed = await this.resolveLocationType(query.parentForType, tenantId, companyId)
+        .then((type) => this.allowedParentTypes(type.allowed_parent_types))
+        .catch(() => [] as string[]);
+      conditions.push(allowed.length ? inArray(schema.locationMaster.location_type, allowed) : sql`1 = 0`);
     }
     if (query.rootOnly) {
       conditions.push(isNull(schema.locationMaster.parent_location_id));

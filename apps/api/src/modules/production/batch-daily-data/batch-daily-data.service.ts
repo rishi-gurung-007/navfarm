@@ -1,18 +1,20 @@
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { Injectable, NotFoundException, BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, inArray, sql, desc } from 'drizzle-orm';
+import { eq, and, inArray, sql, desc, ne, gte, lte } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
-import { CreateBatchDailyDataDto } from './dto/batch-daily-data.dto';
+import { CorrectDailyEntryDto, CreateBatchDailyDataDto, PostDailyDraftsDto, SaveDailyDraftDto } from './dto/batch-daily-data.dto';
 import { CreateUnscheduledHealthDto } from './dto/unscheduled-health.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { BatchService, type UserContext } from '../batch/batch.service';
 import { BatchTransferService, assertWorkerMayTransfer } from '../batch/batch-transfer.service';
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
-import { DueLine, stageDayStatus, pendingDays, isLineDue, StageDayStatus } from './day-completeness';
-import { entryVerdict, todayIn, todayAtOffset } from './entry-window';
+import { DueLine, stageDayStatus, pendingDays, isLineDue, StageDayStatus, addDays, datesBetween } from './day-completeness';
+import { entryVerdict, isCorrectableLineType, todayIn, todayAtOffset } from './entry-window';
+import { resolveTarget, TargetScope } from './entry-targeting';
+import { activityStates, dayState, DayState } from './entry-history-state';
 import { userHasPermission } from '../../../common/permissions';
 import { ApprovalService } from '../approval/approval.service';
 import { batchReferenceScopeConditions, batchScopeConditions, farmScope, restrictedScopeConditions } from '../../../common/farm-scope';
@@ -21,6 +23,49 @@ import { batchReferenceScopeConditions, batchScopeConditions, farmScope, restric
 export const UNSCHEDULED_HEALTH = 'UNSCHEDULED_HEALTH';
 
 const toMysqlTimestamp = (date: Date = new Date()) => date.toISOString().slice(0, 19).replace('T', ' ');
+
+/* Phase 6 messages — the web shows these as written, so they are fixed text. */
+const STALE_ENTRY = 'This entry was changed by someone else. Reload to see the latest.';
+const ALREADY_POSTED = 'This line is already posted. Use Correct to change it.';
+const NOTHING_TO_POST = 'Nothing to post.';
+
+type DailyRow = typeof schema.batchDailyData.$inferSelect;
+type BatchRow = typeof schema.batchHeader.$inferSelect;
+type LineRow = typeof schema.schedulerLine.$inferSelect;
+type HeaderRow = typeof schema.schedulerHeader.$inferSelect;
+/** What a posting needs from an entry, whether it arrives in a request or from a saved draft. */
+type EntryValues = Omit<CreateBatchDailyDataDto, 'line_id'>;
+type ResolvedTarget = { scope: TargetScope; animalIds: string[]; stageAnimalIds: string[] };
+
+/** GET form / PUT draft / POST post / POST correct — the contract's EntryView (plus the alert it raised). */
+export interface EntryView {
+  entry_id: string;
+  status: 'DRAFT' | 'POSTED';
+  version: number;
+  entered_value: number | null;
+  entered_text: string | null;
+  lot_no: string | null;
+  remarks: string | null;
+  target_scope: TargetScope;
+  animal_ids: string[];
+  supersedes_entry_id: string | null;
+  posted: boolean;
+  alert_triggered: boolean;
+  alert_note: string | null;
+}
+
+/**
+ * A row's place in DRAFT → POSTED → SUPERSEDED. Every row written before
+ * Phase 6 went through save-is-post, which is why the column defaults to
+ * POSTED (Ruling 2); a row read without the column is read the same way.
+ */
+const statusOf = (row: Partial<DailyRow> | null | undefined) => (row ? (row.status ?? 'POSTED') : null);
+
+/** mysql2 answers an UPDATE with [ResultSetHeader, fields]; undefined when the driver says nothing. */
+const affectedRows = (result: unknown): number | undefined => {
+  const header = Array.isArray(result) ? result[0] : result;
+  return (header as { affectedRows?: number } | undefined)?.affectedRows;
+};
 
 /**
  * Turns one scheduler_line checklist answer into whatever the "LINE TYPE
@@ -70,6 +115,8 @@ export class BatchDailyDataService {
       .where(and(
         eq(schema.batchDailyData.batch_id, batchId),
         eq(schema.batchDailyData.entry_date, date),
+        // A draft is not an answer: only a posted line ticks the stage.
+        eq(schema.batchDailyData.status, 'POSTED'),
       ))).map((r) => r.line_id as string));
 
     // A REGISTERED batch's animals move stage-by-stage, so the scheduler's own
@@ -132,7 +179,10 @@ export class BatchDailyDataService {
 
     const rows = await this.db.select({
       line_id: schema.batchDailyData.line_id, entry_date: schema.batchDailyData.entry_date,
-    }).from(schema.batchDailyData).where(eq(schema.batchDailyData.batch_id, batchId));
+    }).from(schema.batchDailyData).where(and(
+      eq(schema.batchDailyData.batch_id, batchId),
+      eq(schema.batchDailyData.status, 'POSTED'),
+    ));
     const enteredByDate = new Map<string, Set<string>>();
     for (const r of rows) {
       const key = String(r.entry_date).slice(0, 10);
@@ -178,10 +228,12 @@ export class BatchDailyDataService {
 
     const headers = await this.db.select().from(schema.schedulerHeader)
       .where(and(eq(schema.schedulerHeader.batch_id, batchId), eq(schema.schedulerHeader.tenant_id, tenantId)));
+    const mode: 'COUNT_ONLY' | 'REGISTERED' = batch.animal_tracking === 'REGISTERED' ? 'REGISTERED' : 'COUNT_ONLY';
     if (!headers.length) {
       return {
         batch: this.batchSummary(batch), date, today, hasScheduler: false,
-        mayEditAnyDay, backlog: [], stages: [], lines: [],
+        mayEditAnyDay, backlog: [], stages: [], lines: [], activities: [],
+        targeting: { mode, default_scope: mode === 'REGISTERED' ? 'STAGE_ANIMALS' : 'BATCH', stage_animals: [] },
       };
     }
 
@@ -191,7 +243,9 @@ export class BatchDailyDataService {
     const customDaysByLine = await this.loadCustomDays(lines.map((l) => l.line_id));
 
     const entries = await this.findForDate(batchId, date, tenantId);
-    const enteredIds = new Set(entries.map((e) => e.line_id as string));
+    // The stage ticks count postings only; a draft shows on its sub-card but owes the day still.
+    const enteredIds = new Set(entries.filter((e) => statusOf(e) === 'POSTED').map((e) => e.line_id as string));
+    const targetsByEntry = await this.loadTargets(entries.map((e) => e.entry_id));
 
     // A batch that registers its animals can have them spread across stages, so
     // the count beside a stage is the animals actually standing in it. A count-
@@ -223,16 +277,19 @@ export class BatchDailyDataService {
     for (const header of headers) {
       const own = lines.filter((l) => l.scheduler_id === header.scheduler_id).map((l) => this.toDueLine(l, customDaysByLine));
       const from = String(header.effective_from).slice(0, 10);
-      for (const status of stageDayStatus(own, from, date, enteredIds)) {
-        const sid = status.stage_id ?? header.stage_id;
-        stages.push({
-          ...status,
-          stage_id: sid,
-          stage_name: sid ? stageNames.get(sid) ?? null : null,
-          scheduler_id: header.scheduler_id,
-          animal_count: (sid && perStageAnimals.get(sid))
-            ?? (header.animal_count == null ? null : Number(header.animal_count)),
-        });
+      for (const status of stageDayStatus(own, from, date, enteredIds)) {          const sid = status.stage_id ?? header.stage_id;
+          // Guarded rather than `sid && get(sid)`, matching dayStatus: with no
+          // stage the && yields the empty string itself, which ?? passes
+          // straight through as a headcount.
+          const liveCount = sid ? perStageAnimals.get(sid) : undefined;
+          stages.push({
+            ...status,
+            stage_id: sid,
+            stage_name: sid ? stageNames.get(sid) ?? null : null,
+            scheduler_id: header.scheduler_id,
+            animal_count: liveCount
+              ?? (header.animal_count == null ? null : Number(header.animal_count)),
+          });
       }
     }
 
@@ -294,8 +351,10 @@ export class BatchDailyDataService {
           ? Number((standard * headcount).toFixed(4))
           : standard;
 
+        const isPosted = statusOf(entry) === 'POSTED';
+        // Only a posting fences the worker off a past day; finishing a draft is still entry.
         const verdict = entryVerdict({
-          entryDate: date, today, exists: !!entry, mayEditAnyDay,
+          entryDate: date, today, exists: isPosted, mayEditAnyDay,
         });
 
         return {
@@ -318,22 +377,26 @@ export class BatchDailyDataService {
           lower_alert_limit: l.lower_alert_limit == null ? null : Number(l.lower_alert_limit),
           upper_alert_limit: l.upper_alert_limit == null ? null : Number(l.upper_alert_limit),
           resource_id: l.resource_id,
-          entry: entry
-            ? {
-                entry_id: entry.entry_id,
-                entered_value: entry.entered_value == null ? null : Number(entry.entered_value),
-                entered_text: entry.entered_text,
-                lot_no: entry.lot_no,
-                remarks: entry.remarks,
-                posted: !!entry.posted,
-                alert_triggered: !!entry.alert_triggered,
-                alert_note: entry.alert_note,
-              }
-            : null,
+          entry: entry ? this.toEntryView(entry, targetsByEntry.get(entry.entry_id) ?? []) : null,
           editable: verdict.allowed,
           locked_reason: verdict.allowed ? null : verdict.message,
+          // Correct is offered where the window allows a change and a reversal exists (Ruling 3).
+          correctable: isPosted && verdict.allowed && isCorrectableLineType(l),
         };
       });
+
+    // Parent Activity cards, derived from their sub-cards by the shared rule.
+    const activities = activityStates(formLines.map((l) => ({
+      line_id: l.line_id,
+      line_type: l.line_type,
+      line_seq: l.line_seq ?? 0,
+      is_mandatory: l.is_mandatory,
+      status: l.entry?.status ?? null,
+    })));
+
+    // Who a line may be recorded against (spec §4): a Registered batch's animals
+    // standing in the chosen stage, or nothing to choose on a Count Only batch.
+    const stageAnimals = mode === 'REGISTERED' && chosen ? await this.stageAnimals(batchId, chosen) : [];
 
     return {
       batch: this.batchSummary(batch),
@@ -343,6 +406,12 @@ export class BatchDailyDataService {
       stages,
       lines: formLines,
       complete: stages.some((s) => s.scheduled) && stages.every((s) => s.complete),
+      activities,
+      targeting: {
+        mode,
+        default_scope: mode === 'REGISTERED' ? 'STAGE_ANIMALS' : 'BATCH',
+        stage_animals: stageAnimals,
+      },
     };
   }
 
@@ -510,6 +579,8 @@ export class BatchDailyDataService {
       .where(and(
         eq(schema.batchDailyData.batch_id, batchId),
         eq(schema.batchDailyData.tenant_id, tenantId),
+        // A corrected line keeps its old row for the trail (Ruling 1); it is not a date of its own.
+        ne(schema.batchDailyData.status, 'SUPERSEDED'),
         ...batchReferenceScopeConditions(scope, schema.batchDailyData.batch_id),
         ...restrictedScopeConditions(scope, { companyId: schema.batchDailyData.company_id }),
       ))
@@ -616,11 +687,10 @@ export class BatchDailyDataService {
    * or adds roles does not have to come back to this code.
    */
   private async assertMayRecord(
-    batchId: string,
     companyId: string,
-    lineId: string,
     entryDate: string,
-    tenantId: string,
+    /** Whether the line already has a *posted* entry that date — a draft is still entry, not a change. */
+    postedExists: boolean,
     userPayload?: UserContext,
   ): Promise<void> {
     const today = await this.companyToday(companyId);
@@ -628,17 +698,8 @@ export class BatchDailyDataService {
       moduleCode: 'PRODUCTION', resource: 'BATCH_ENTRY', action: 'edit',
     });
 
-    const [existing] = await this.db
-      .select({ entry_id: schema.batchDailyData.entry_id })
-      .from(schema.batchDailyData)
-      .where(and(
-        eq(schema.batchDailyData.line_id, lineId),
-        eq(schema.batchDailyData.entry_date, entryDate),
-      ))
-      .limit(1);
-
     const verdict = entryVerdict({
-      entryDate, today, exists: !!existing, mayEditAnyDay,
+      entryDate, today, exists: postedExists, mayEditAnyDay,
     });
     if (verdict.allowed) return;
 
@@ -654,45 +715,319 @@ export class BatchDailyDataService {
     return tenantDb;
   }
 
+  /* ──────────────────────────────────────────────────────────────────────
+   * Phase 6: Draft → Post → Correct.
+   *
+   * A sub-card saves as a DRAFT row with no side effect at all; posting runs
+   * the per-line-type switch below for a set of drafts inside one transaction;
+   * a correction supersedes a posted row — it is never edited — reverses what
+   * it did, and posts a replacement linked to it. The switch itself is the one
+   * proven live on 14 September, moved rather than rewritten.
+   * ────────────────────────────────────────────────────────────────────── */
+
+  /**
+   * PUT draft. Values and who they are about, saved so a reload or another
+   * worker's phone finds them — and nothing else: no batch transaction, no
+   * ledger, no journal, no animal or alert row.
+   */
+  async saveDraft(batchId: string, body: SaveDailyDraftDto, tenantId: string, userPayload?: UserContext): Promise<EntryView> {
+    return withTenantTransaction(this.cls, async () => {
+      const batch = await this.lockBatch(batchId, tenantId);
+      const { line, header } = await this.loadLine(batchId, body.line_id);
+      const active = await this.activeRow(line.line_id, body.entry_date);
+      await this.assertMayRecord(header.company_id, body.entry_date, statusOf(active) === 'POSTED', userPayload);
+      if (active && statusOf(active) === 'POSTED') throw new ConflictException(ALREADY_POSTED);
+      // The version is what stops two phones on one line overwriting each other.
+      if (active && body.version !== Number(active.version ?? 1)) throw new ConflictException(STALE_ENTRY);
+
+      const target = await this.resolveEntryTarget(batch, line.stage_id ?? header.stage_id, body.target_scope, body.animal_ids);
+      const values = {
+        entered_value: body.entered_value?.toString() ?? null,
+        entered_text: body.entered_text || null,
+        lot_no: body.lot_no || null,
+        remarks: body.remarks || null,
+        target_scope: target.scope,
+        updated_by: userPayload?.userId || null,
+      };
+
+      let row: Partial<DailyRow>;
+      if (active) {
+        const version = Number(active.version ?? 1) + 1;
+        const result = await this.db.update(schema.batchDailyData)
+          .set({ ...values, version, updated_at: toMysqlTimestamp() })
+          .where(and(
+            eq(schema.batchDailyData.entry_id, active.entry_id),
+            eq(schema.batchDailyData.version, Number(active.version ?? 1)),
+          ));
+        if (affectedRows(result) === 0) throw new ConflictException(STALE_ENTRY);
+        row = { ...active, ...values, version };
+      } else {
+        row = {
+          entry_id: randomUUID(), tenant_id: tenantId, company_id: header.company_id,
+          line_id: line.line_id, batch_id: batchId, entry_date: body.entry_date,
+          ...values, status: 'DRAFT', version: 1, posted: false, created_by: userPayload?.userId || null,
+        };
+        await this.db.insert(schema.batchDailyData).values(row as typeof schema.batchDailyData.$inferInsert);
+      }
+
+      // Only a selection is stored on a draft; the stage-wide set is taken at post (Ruling 5).
+      await this.replaceTargets(row.entry_id!, target.scope === 'SELECTED_ANIMALS' ? target.animalIds : [], !!active);
+
+      await this.auditService.log({
+        tenantId,
+        companyId: header.company_id,
+        userId: userPayload?.userId,
+        action: active ? 'UPDATE' : 'CREATE',
+        entityName: 'batch_daily_data',
+        entityId: row.entry_id!,
+        newValues: { line_id: line.line_id, batch_id: batchId, entry_date: body.entry_date, status: 'DRAFT', version: row.version },
+      });
+
+      return this.toEntryView(row, target.scope === 'SELECTED_ANIMALS' ? target.animalIds : []);
+    });
+  }
+
+  /**
+   * POST post. Every named line's draft for the date posts, or none does: the
+   * whole set runs inside one transaction, so a failure on the third sub-card
+   * rolls back the inventory and GL the first two had already written.
+   */
+  async postDrafts(batchId: string, body: PostDailyDraftsDto, tenantId: string, userPayload?: UserContext): Promise<EntryView[]> {
+    return withTenantTransaction(this.cls, async () => {
+      const batch = await this.lockBatch(batchId, tenantId);
+      const lineIds = [...new Set(body.line_ids)];
+      const drafts = await this.db.select().from(schema.batchDailyData)
+        .where(and(
+          eq(schema.batchDailyData.batch_id, batchId),
+          eq(schema.batchDailyData.entry_date, body.entry_date),
+          inArray(schema.batchDailyData.line_id, lineIds),
+          ne(schema.batchDailyData.status, 'SUPERSEDED'),
+        ))
+        .for('update');
+      const byLine = new Map(drafts.map((d) => [d.line_id, d]));
+      if (!lineIds.length || lineIds.some((id) => statusOf(byLine.get(id)) !== 'DRAFT')) {
+        throw new BadRequestException(NOTHING_TO_POST);
+      }
+      const selections = await this.loadTargets(drafts.map((d) => d.entry_id));
+
+      const posted: EntryView[] = [];
+      for (const lineId of lineIds) {
+        const draft = byLine.get(lineId)!;
+        const { line, header } = await this.loadLine(batchId, lineId);
+        await this.assertMayRecord(header.company_id, body.entry_date, false, userPayload);
+        // Targeting is decided again now: a selected animal may have moved since the draft.
+        const scope = (draft.target_scope ?? undefined) as TargetScope | undefined;
+        const target = await this.resolveEntryTarget(
+          batch, line.stage_id ?? header.stage_id, scope,
+          scope === 'SELECTED_ANIMALS' ? selections.get(draft.entry_id) ?? [] : undefined,
+        );
+        posted.push(await this.commitEntry({
+          batch, line, header, target, tenantId, userPayload,
+          values: {
+            entry_date: body.entry_date,
+            entered_value: draft.entered_value == null ? undefined : Number(draft.entered_value),
+            entered_text: draft.entered_text ?? undefined,
+            lot_no: draft.lot_no ?? undefined,
+            remarks: draft.remarks ?? undefined,
+          },
+          draft,
+        }));
+      }
+      return posted;
+    });
+  }
+
+  /**
+   * POST correct. The posted row is superseded, not edited; what it did is
+   * reversed; the replacement posts and names the row it replaced. Offered
+   * only where a reversal exists today (Ruling 3) and inside the entry window.
+   */
+  async correctEntry(batchId: string, body: CorrectDailyEntryDto, tenantId: string, userPayload?: UserContext): Promise<EntryView> {
+    return withTenantTransaction(this.cls, async () => {
+      const batch = await this.lockBatch(batchId, tenantId);
+      const { line, header } = await this.loadLine(batchId, body.line_id);
+      const active = await this.activeRow(line.line_id, body.entry_date);
+      if (statusOf(active) !== 'POSTED') throw new ConflictException('Only a posted entry can be corrected.');
+      await this.assertMayRecord(header.company_id, body.entry_date, true, userPayload);
+      if (body.version !== Number(active!.version ?? 1)) throw new ConflictException(STALE_ENTRY);
+      return this.supersede(batch, line, header, active!, body, tenantId, userPayload);
+    });
+  }
+
+  /**
+   * POST /batch/:batchId/daily-data — the original save-is-post route, kept:
+   * a draft saved and posted in one transaction. The same values again return
+   * the day unchanged; different values on a posted line go through the same
+   * correction as POST correct.
+   */
   async postEntry(batchId: string, dto: CreateBatchDailyDataDto, tenantId: string, userPayload?: UserContext) {
     return withTenantTransaction(this.cls, async () => {
-    // Serialize entries/corrections on the batch before taking any snapshot.
-    // The scope filter means this lock also doubles as the out-of-farm guard —
-    // nothing after here checks the batch's farm again.
-    const [lockedBatch] = await this.db.select({ batch_id: schema.batchHeader.batch_id }).from(schema.batchHeader)
-      .where(and(eq(schema.batchHeader.batch_id, batchId), eq(schema.batchHeader.tenant_id, tenantId), ...batchScopeConditions(farmScope(this.cls))))
-      .for('update');
-    if (!lockedBatch) throw new NotFoundException('Batch not found.');
-    const [line] = await this.db.select().from(schema.schedulerLine).where(eq(schema.schedulerLine.line_id, dto.line_id)).limit(1);
-    if (!line) throw new NotFoundException(`Scheduler line '${dto.line_id}' not found.`);
-    if (!line.is_active) throw new ConflictException('This line has been deactivated and no longer accepts entries.');
+      // Serialize entries/corrections on the batch before taking any snapshot.
+      // The scope filter means this lock also doubles as the out-of-farm guard —
+      // nothing after here checks the batch's farm again.
+      const batch = await this.lockBatch(batchId, tenantId);
+      const { line, header } = await this.loadLine(batchId, dto.line_id);
+      if (line.lot_required && !dto.lot_no) {
+        throw new BadRequestException(`'${line.activity_name}' requires a lot number.`);
+      }
 
-    const [header] = await this.db.select().from(schema.schedulerHeader).where(eq(schema.schedulerHeader.scheduler_id, line.scheduler_id)).limit(1);
-    if (!header || header.batch_id !== batchId) {
-      throw new BadRequestException(`Line '${dto.line_id}' does not belong to batch '${batchId}'.`);
-    }
-    if (line.lot_required && !dto.lot_no) {
-      throw new BadRequestException(`'${line.activity_name}' requires a lot number.`);
-    }
+      const previous = await this.activeRow(line.line_id, dto.entry_date);
+      await this.assertMayRecord(header.company_id, dto.entry_date, statusOf(previous) === 'POSTED', userPayload);
 
-    await this.assertMayRecord(batchId, header.company_id, line.line_id, dto.entry_date, tenantId, userPayload);
-
-    const [previous] = await this.db.select().from(schema.batchDailyData)
-      .where(and(eq(schema.batchDailyData.line_id, line.line_id), eq(schema.batchDailyData.entry_date, dto.entry_date))).limit(1);
-    if (previous?.posted) {
-      const sameValue = (previous.entered_value == null ? null : Number(previous.entered_value)) === (dto.entered_value ?? null);
-      const sameText = (previous.entered_text || null) === (dto.entered_text || null);
-      const sameLot = (previous.lot_no || null) === (dto.lot_no || null);
-      if (sameValue && sameText && sameLot && dto.rate == null && !dto.destination_batch_id) {
+      if (previous && statusOf(previous) === 'POSTED') {
+        const sameValue = (previous.entered_value == null ? null : Number(previous.entered_value)) === (dto.entered_value ?? null);
+        const sameText = (previous.entered_text || null) === (dto.entered_text || null);
+        const sameLot = (previous.lot_no || null) === (dto.lot_no || null);
+        if (sameValue && sameText && sameLot && dto.rate == null && !dto.destination_batch_id) {
+          return this.findForDate(batchId, dto.entry_date, tenantId);
+        }
+        await this.supersede(batch, line, header, previous, dto, tenantId, userPayload);
         return this.findForDate(batchId, dto.entry_date, tenantId);
       }
-      if (line.line_type !== 'CONSUMPTION' || !previous.posting_reference) {
+
+      const target = await this.resolveEntryTarget(batch, line.stage_id ?? header.stage_id);
+      await this.commitEntry({
+        batch, line, header, target, tenantId, userPayload,
+        values: dto,
+        draft: previous && statusOf(previous) === 'DRAFT' ? previous : null,
+      });
+      return this.findForDate(batchId, dto.entry_date, tenantId);
+    });
+  }
+
+  /** Marks `previous` superseded, reverses it, and posts the replacement. Runs inside the caller's transaction. */
+  private async supersede(
+    batch: BatchRow, line: LineRow, header: HeaderRow, previous: DailyRow,
+    body: CreateBatchDailyDataDto & { target_scope?: TargetScope; animal_ids?: string[] },
+    tenantId: string, userPayload?: UserContext,
+  ): Promise<EntryView> {
+    if (!isCorrectableLineType(line)) {
+      throw new ConflictException(`Correction of ${line.line_type} entries is not available yet.`);
+    }
+    const target = await this.resolveEntryTarget(batch, line.stage_id ?? header.stage_id, body.target_scope, body.animal_ids);
+
+    const previousVersion = Number(previous.version ?? 1);
+    const result = await this.db.update(schema.batchDailyData)
+      .set({
+        status: 'SUPERSEDED',
+        superseded_at: toMysqlTimestamp(),
+        updated_by: userPayload?.userId || null,
+        updated_at: toMysqlTimestamp(),
+      })
+      .where(and(
+        eq(schema.batchDailyData.entry_id, previous.entry_id),
+        eq(schema.batchDailyData.version, previousVersion),
+      ));
+    if (affectedRows(result) === 0) throw new ConflictException(STALE_ENTRY);
+
+    if (line.line_type === 'CONSUMPTION') {
+      if (!previous.posting_reference) {
         throw new ConflictException('This posted entry requires a document-specific reversal before it can be changed.');
       }
-      await this.batchService.reverseConsumption(batchId, previous.posting_reference, tenantId, userPayload);
+      await this.batchService.reverseConsumption(batch.batch_id, previous.posting_reference, tenantId, userPayload);
     }
 
-    const entryId = randomUUID();
+    const { line_id: _lineId, target_scope: _scope, animal_ids: _animals, ...values } = body as any;
+    return this.commitEntry({
+      batch, line, header, target, tenantId, userPayload,
+      values: values as EntryValues,
+      draft: null,
+      supersedes: previous,
+    });
+  }
+
+  /**
+   * Runs the posting for one entry and writes its row as POSTED: the draft
+   * promoted in place, or a new row (after a supersession, linked to the row it
+   * replaces). A Registered entry's target set is written here and is not
+   * touched again — the snapshot is immutable after post.
+   */
+  private async commitEntry(args: {
+    batch: BatchRow; line: LineRow; header: HeaderRow;
+    values: EntryValues; target: ResolvedTarget;
+    draft: DailyRow | null; supersedes?: DailyRow;
+    tenantId: string; userPayload?: UserContext;
+  }): Promise<EntryView> {
+    const { batch, line, header, values, target, draft, supersedes, tenantId, userPayload } = args;
+    const outcome = await this.applyPosting(batch.batch_id, line, header, values, tenantId, userPayload, 0);
+
+    const snapshot = target.scope === 'STAGE_ANIMALS' ? target.stageAnimalIds
+      : target.scope === 'SELECTED_ANIMALS' ? target.animalIds : [];
+    const written = {
+      entered_value: values.entered_value?.toString() ?? null,
+      entered_text: values.entered_text || null,
+      lot_no: values.lot_no || null,
+      remarks: values.remarks || null,
+      status: 'POSTED',
+      target_scope: target.scope,
+      posted: outcome.posted,
+      posting_reference: outcome.postingReference,
+      alert_triggered: outcome.alertTriggered,
+      alert_note: outcome.alertNote,
+      updated_by: userPayload?.userId || null,
+    };
+
+    let row: Partial<DailyRow>;
+    if (draft) {
+      const version = Number(draft.version ?? 1) + 1;
+      const result = await this.db.update(schema.batchDailyData)
+        .set({ ...written, version, updated_at: toMysqlTimestamp() })
+        .where(and(
+          eq(schema.batchDailyData.entry_id, draft.entry_id),
+          eq(schema.batchDailyData.version, Number(draft.version ?? 1)),
+        ));
+      if (affectedRows(result) === 0) throw new ConflictException(STALE_ENTRY);
+      row = { ...draft, ...written, version };
+    } else {
+      row = {
+        entry_id: randomUUID(),
+        tenant_id: tenantId,
+        company_id: header.company_id,
+        line_id: line.line_id,
+        batch_id: batch.batch_id,
+        entry_date: values.entry_date,
+        ...written,
+        version: supersedes ? Number(supersedes.version ?? 1) + 1 : 1,
+        supersedes_entry_id: supersedes?.entry_id ?? null,
+        created_by: userPayload?.userId || null,
+      };
+      await this.db.insert(schema.batchDailyData).values(row as typeof schema.batchDailyData.$inferInsert);
+    }
+    await this.replaceTargets(row.entry_id!, snapshot, !!draft && !!draft.target_scope && draft.target_scope !== 'BATCH');
+
+    await this.auditService.log({
+      tenantId,
+      companyId: header.company_id,
+      userId: userPayload?.userId,
+      action: supersedes ? 'UPDATE' : 'CREATE',
+      entityName: 'batch_daily_data',
+      entityId: row.entry_id!,
+      oldValues: supersedes ? { entry_id: supersedes.entry_id, entered_value: supersedes.entered_value, status: 'SUPERSEDED' } : undefined,
+      newValues: {
+        line_id: line.line_id, batch_id: batch.batch_id, entry_date: values.entry_date,
+        status: 'POSTED', target_scope: target.scope, supersedes_entry_id: supersedes?.entry_id ?? null,
+      },
+    } as any);
+
+    return this.toEntryView(row, snapshot);
+  }
+
+  /**
+   * Turns one scheduler_line answer into whatever the "LINE TYPE REFERENCE"
+   * sheet says that line_type does on posting. Extracted unchanged from the
+   * pre-Phase-6 postEntry; it writes no batch_daily_data row itself.
+   *
+   * `previousPostedValue` is what the line had posted before on that date, for
+   * MORTALITY_COUNT's delta. A correction of a count line is refused until
+   * Phase 13, so today every caller passes 0.
+   */
+  private async applyPosting(
+    batchId: string, line: LineRow, header: HeaderRow, values: EntryValues,
+    tenantId: string, userPayload: UserContext | undefined, previousPostedValue: number,
+  ): Promise<{ posted: boolean; postingReference: string | null; alertTriggered: boolean; alertNote: string | null }> {
+    if (line.lot_required && !values.lot_no) {
+      throw new BadRequestException(`'${line.activity_name}' requires a lot number.`);
+    }
     let posted = false;
     let postingReference: string | null = null;
     let alertTriggered = false;
@@ -702,32 +1037,32 @@ export class BatchDailyDataService {
       case 'CONSUMPTION':
       case 'OUTPUT': {
         if (!line.item_id) throw new ConflictException(`'${line.activity_name}' has no item configured — fix the line before posting entries against it.`);
-        if (dto.entered_value == null) throw new BadRequestException('entered_value is required for this line.');
+        if (values.entered_value == null) throw new BadRequestException('entered_value is required for this line.');
         const [item] = await this.db.select().from(schema.itemMaster).where(eq(schema.itemMaster.item_id, line.item_id)).limit(1);
         const updated = await this.batchService.addTransaction(batchId, {
-          transaction_date: dto.entry_date,
+          transaction_date: values.entry_date,
           transaction_type: line.line_type,
           item_id: line.item_id,
-          lot_no: dto.lot_no,
-          quantity: dto.entered_value,
+          lot_no: values.lot_no,
+          quantity: values.entered_value,
           uom: item?.uom_primary || 'PCS',
-          rate: dto.rate,
-          remarks: dto.remarks || `${line.activity_name} — scheduled entry`,
+          rate: values.rate,
+          remarks: values.remarks || `${line.activity_name} — scheduled entry`,
         } as any, tenantId, userPayload);
         posted = true;
         postingReference = updated.posting_transaction_id;
         break;
       }
       case 'DESCRIPTIVE': {
-        if (dto.entered_value == null && !dto.entered_text) {
+        if (values.entered_value == null && !values.entered_text) {
           throw new BadRequestException('entered_value or entered_text is required for this line.');
         }
-        if (dto.entered_value != null) {
+        if (values.entered_value != null) {
           const minVal = line.lower_alert_limit != null ? Number(line.lower_alert_limit) : -Infinity;
           const maxVal = line.upper_alert_limit != null ? Number(line.upper_alert_limit) : Infinity;
-          if (dto.entered_value < minVal || dto.entered_value > maxVal) {
+          if (values.entered_value < minVal || values.entered_value > maxVal) {
             alertTriggered = true;
-            alertNote = `${line.activity_name}: ${dto.entered_value} outside [${line.lower_alert_limit ?? '-∞'}, ${line.upper_alert_limit ?? '∞'}]`;
+            alertNote = `${line.activity_name}: ${values.entered_value} outside [${line.lower_alert_limit ?? '-∞'}, ${line.upper_alert_limit ?? '∞'}]`;
             await this.db.insert(schema.notificationAlertLog).values({
               alert_id: randomUUID(),
               tenant_id: tenantId,
@@ -742,7 +1077,7 @@ export class BatchDailyDataService {
               activity_name: line.activity_name,
               kpi_mode: 'VALUE',
               expected_value: line.std_value,
-              actual_value: dto.entered_value.toString(),
+              actual_value: values.entered_value.toString(),
               kpi_min: line.lower_alert_limit,
               kpi_max: line.upper_alert_limit,
             });
@@ -752,17 +1087,15 @@ export class BatchDailyDataService {
         // HEAD_COUNT is an absolute daily count; MORTALITY_COUNT is a delta against
         // whatever was already recorded for this line+date, so a farmer correcting
         // today's mortality entry doesn't double-decrement animal_count.
-        if (dto.entered_value != null && (line.kpi_metric === 'HEAD_COUNT' || line.kpi_metric === 'MORTALITY_COUNT')) {
+        if (values.entered_value != null && (line.kpi_metric === 'HEAD_COUNT' || line.kpi_metric === 'MORTALITY_COUNT')) {
           let newCount: number;
           if (line.kpi_metric === 'HEAD_COUNT') {
-            newCount = dto.entered_value;
+            newCount = values.entered_value;
           } else {
-            const [existing] = await this.db.select({ entered_value: schema.batchDailyData.entered_value })
-              .from(schema.batchDailyData)
-              .where(and(eq(schema.batchDailyData.line_id, line.line_id), eq(schema.batchDailyData.entry_date, dto.entry_date)))
-              .limit(1);
-            const previousEntered = existing?.entered_value != null ? Number(existing.entered_value) : 0;
-            const delta = dto.entered_value - previousEntered;
+            // Measured against what was posted before, which the caller hands in:
+            // the active row is by now this entry's own draft, so reading it back
+            // would make every delta zero.
+            const delta = values.entered_value - previousPostedValue;
             newCount = Math.max(0, Number(header.animal_count) - delta);
 
             // Keep animal_register in step with the reported death count — without
@@ -789,7 +1122,7 @@ export class BatchDailyDataService {
                     is_active: false,
                     status: 'DEAD',
                     disposal_type: 'DIED',
-                    disposal_date: dto.entry_date,
+                    disposal_date: values.entry_date,
                     updated_by: userPayload?.userId || null,
                     updated_at: toMysqlTimestamp(),
                   })
@@ -805,9 +1138,9 @@ export class BatchDailyDataService {
       }
       case 'OVERHEAD':
       case 'RESOURCE': {
-        if (dto.entered_value == null) throw new BadRequestException('entered_value is required for this line.');
-        let quantity = dto.entered_value;
-        let rate = dto.rate ?? null;
+        if (values.entered_value == null) throw new BadRequestException('entered_value is required for this line.');
+        let quantity = values.entered_value;
+        let rate = values.rate ?? null;
         if (line.line_type === 'RESOURCE') {
           if (!line.resource_id) throw new ConflictException(`'${line.activity_name}' has no resource configured.`);
           if (rate == null) {
@@ -823,20 +1156,20 @@ export class BatchDailyDataService {
         }
         if (rate == null) throw new BadRequestException(`'${line.activity_name}' needs a rate to post — supply one or set it on the resource.`);
         const updated = await this.batchService.addTransaction(batchId, {
-          transaction_date: dto.entry_date,
+          transaction_date: values.entry_date,
           transaction_type: 'OVERHEAD',
           resource_id: line.resource_id || undefined,
           quantity,
           rate,
-          remarks: dto.remarks || `${line.activity_name} — scheduled entry`,
+          remarks: values.remarks || `${line.activity_name} — scheduled entry`,
         } as any, tenantId, userPayload);
         posted = true;
         postingReference = updated.posting_transaction_id;
         break;
       }
       case 'TRANSFER': {
-        if (!dto.destination_batch_id) throw new BadRequestException("TRANSFER lines require destination_batch_id.");
-        if (dto.entered_value == null && line.standard_qty == null) {
+        if (!values.destination_batch_id) throw new BadRequestException("TRANSFER lines require destination_batch_id.");
+        if (values.entered_value == null && line.standard_qty == null) {
           throw new BadRequestException('entered_value (or the line\'s standard_qty) is required to know how many head to move.');
         }
         // destination_batch_id comes from the request body, so this is the same
@@ -844,7 +1177,7 @@ export class BatchDailyDataService {
         // farm worker holding only BATCH_ENTRY create cannot move animals.
         // create() re-checks; refusing here also skips the candidate read.
         assertWorkerMayTransfer(userPayload, farmScope(this.cls));
-        const headcount = Math.round(dto.entered_value ?? Number(line.standard_qty));
+        const headcount = Math.round(values.entered_value ?? Number(line.standard_qty));
         // Auto-select the oldest still-in-this-batch animals up to the requested
         // headcount — the schedule line only says how many move, not which ones;
         // FIFO-by-registration is the same order the rest of the app already
@@ -861,12 +1194,12 @@ export class BatchDailyDataService {
         const transferResult = await this.batchTransferService.create(
           {
             company_id: header.company_id,
-            to_batch_id: dto.destination_batch_id,
-            transfer_date: dto.entry_date,
+            to_batch_id: values.destination_batch_id,
+            transfer_date: values.entry_date,
             transfer_type: 'PARTIAL',
             animal_ids: candidates.map((c) => c.animal_id),
             reason: line.activity_name,
-            remarks: dto.remarks,
+            remarks: values.remarks,
           } as any,
           tenantId,
           batchId,
@@ -875,56 +1208,206 @@ export class BatchDailyDataService {
           { autoTriggersStage: line.auto_triggers_stage },
         );
         posted = true;
-        postingReference = (transferResult as any)?.transfer_id || dto.destination_batch_id;
+        postingReference = (transferResult as any)?.transfer_id || values.destination_batch_id;
         break;
       }
       default:
         throw new BadRequestException(`Unknown line_type '${line.line_type}'.`);
     }
 
-    await this.db.insert(schema.batchDailyData).values({
-      entry_id: entryId,
-      tenant_id: tenantId,
-      company_id: header.company_id,
-      line_id: line.line_id,
-      batch_id: batchId,
-      entry_date: dto.entry_date,
-      entered_value: dto.entered_value?.toString() ?? null,
-      entered_text: dto.entered_text || null,
-      lot_no: dto.lot_no || null,
-      posted,
-      posting_reference: postingReference,
-      alert_triggered: alertTriggered,
-      alert_note: alertNote,
-      remarks: dto.remarks || null,
-      created_by: userPayload?.userId || null,
-      updated_by: userPayload?.userId || null,
-    }).onDuplicateKeyUpdate({
-      set: {
-        entered_value: dto.entered_value?.toString() ?? null,
-        entered_text: dto.entered_text || null,
-        lot_no: dto.lot_no || null,
-        posted,
-        posting_reference: postingReference,
-        alert_triggered: alertTriggered,
-        alert_note: alertNote,
-        remarks: dto.remarks || null,
-        updated_by: userPayload?.userId || null,
-        updated_at: toMysqlTimestamp(),
-      },
-    });
+    return { posted, postingReference, alertTriggered, alertNote };
+  }
 
-    await this.auditService.log({
-      tenantId,
-      companyId: header.company_id,
-      userId: userPayload?.userId,
-      action: 'CREATE',
-      entityName: 'batch_daily_data',
-      entityId: entryId,
-      newValues: { line_id: line.line_id, batch_id: batchId, entry_date: dto.entry_date },
-    });
+  /** The batch, locked for the rest of the transaction, through the farm scope — out of scope reads as not found. */
+  private async lockBatch(batchId: string, tenantId: string): Promise<BatchRow> {
+    const [batch] = await this.db.select().from(schema.batchHeader)
+      .where(and(eq(schema.batchHeader.batch_id, batchId), eq(schema.batchHeader.tenant_id, tenantId), ...batchScopeConditions(farmScope(this.cls))))
+      .for('update');
+    if (!batch) throw new NotFoundException('Batch not found.');
+    return batch;
+  }
 
-    return this.findForDate(batchId, dto.entry_date, tenantId);
+  /** An active line of one of this batch's schedulers; the stage is the line's, never the client's. */
+  private async loadLine(batchId: string, lineId: string): Promise<{ line: LineRow; header: HeaderRow }> {
+    const [line] = await this.db.select().from(schema.schedulerLine).where(eq(schema.schedulerLine.line_id, lineId)).limit(1);
+    if (!line) throw new NotFoundException(`Scheduler line '${lineId}' not found.`);
+    if (!line.is_active) throw new ConflictException('This line has been deactivated and no longer accepts entries.');
+    const [header] = await this.db.select().from(schema.schedulerHeader).where(eq(schema.schedulerHeader.scheduler_id, line.scheduler_id)).limit(1);
+    if (!header || header.batch_id !== batchId) {
+      throw new BadRequestException(`Line '${lineId}' does not belong to batch '${batchId}'.`);
+    }
+    return { line, header };
+  }
+
+  /** The one non-superseded row for a line and date, locked. */
+  private async activeRow(lineId: string, entryDate: string): Promise<DailyRow | null> {
+    const [row] = await this.db.select().from(schema.batchDailyData)
+      .where(and(
+        eq(schema.batchDailyData.line_id, lineId),
+        eq(schema.batchDailyData.entry_date, entryDate),
+        ne(schema.batchDailyData.status, 'SUPERSEDED'),
+      ))
+      .limit(1)
+      .for('update');
+    return row ?? null;
+  }
+
+  /** Active animals standing in a stage of this batch, with the codes a worker recognises. */
+  private async stageAnimals(batchId: string, stageId: string | null) {
+    if (!stageId) return [];
+    const animals = await this.db
+      .select({
+        animal_id: schema.animalRegister.animal_id,
+        animal_code: schema.animalRegister.animal_code,
+        ear_tag: schema.animalRegister.ear_tag,
+      })
+      .from(schema.animalRegister)
+      .where(and(
+        eq(schema.animalRegister.current_batch_id, batchId),
+        eq(schema.animalRegister.current_stage_id, stageId),
+        eq(schema.animalRegister.is_active, true),
+      ))
+      .orderBy(schema.animalRegister.animal_code);
+    return animals.map((a) => ({ animal_id: a.animal_id, animal_code: a.animal_code, ear_tag: a.ear_tag ?? null }));
+  }
+
+  /**
+   * resolveTarget with the stage's animals as of now. The rule's message names
+   * an animal by id; when the animal belongs to this batch it is renamed by its
+   * code, which is what the worker can find in the pen.
+   */
+  private async resolveEntryTarget(
+    batch: BatchRow, stageId: string | null, requestedScope?: TargetScope, animalIds?: string[],
+  ): Promise<ResolvedTarget> {
+    const mode = batch.animal_tracking === 'REGISTERED' ? 'REGISTERED' : 'COUNT_ONLY';
+    const stageAnimalIds = mode === 'REGISTERED' ? (await this.stageAnimals(batch.batch_id, stageId)).map((a) => a.animal_id) : [];
+    try {
+      return { ...resolveTarget({ mode, requestedScope, animalIds, stageAnimalIds }), stageAnimalIds };
+    } catch (error) {
+      const stranger = error instanceof BadRequestException ? /^Animal (\S+) is not/.exec(error.message)?.[1] : undefined;
+      if (stranger) {
+        const [animal] = await this.db.select({ code: schema.animalRegister.animal_code })
+          .from(schema.animalRegister)
+          .where(and(eq(schema.animalRegister.animal_id, stranger), eq(schema.animalRegister.current_batch_id, batch.batch_id)))
+          .limit(1);
+        if (animal?.code) throw new BadRequestException(`Animal ${animal.code} is not an active animal in this stage.`);
+      }
+      throw error;
+    }
+  }
+
+  /** batch_daily_data_target rows for a set of entries, keyed by entry. */
+  private async loadTargets(entryIds: string[]): Promise<Map<string, string[]>> {
+    const map = new Map<string, string[]>();
+    if (!entryIds.length) return map;
+    const rows = await this.db
+      .select({ entry_id: schema.batchDailyDataTarget.entry_id, animal_id: schema.batchDailyDataTarget.animal_id })
+      .from(schema.batchDailyDataTarget)
+      .where(inArray(schema.batchDailyDataTarget.entry_id, entryIds));
+    for (const r of rows) {
+      const list = map.get(r.entry_id);
+      if (list) list.push(r.animal_id);
+      else map.set(r.entry_id, [r.animal_id]);
+    }
+    return map;
+  }
+
+  /** Replaces an entry's target rows. `hadRows` skips the delete for an entry that cannot have any. */
+  private async replaceTargets(entryId: string, animalIds: string[], hadRows: boolean): Promise<void> {
+    if (hadRows) {
+      await this.db.delete(schema.batchDailyDataTarget).where(eq(schema.batchDailyDataTarget.entry_id, entryId));
+    }
+    if (!animalIds.length) return;
+    await this.db.insert(schema.batchDailyDataTarget).values(
+      animalIds.map((animal_id) => ({ target_id: randomUUID(), entry_id: entryId, animal_id })),
+    );
+  }
+
+  private toEntryView(row: Partial<DailyRow>, animalIds: string[]): EntryView {
+    return {
+      entry_id: row.entry_id!,
+      status: statusOf(row) === 'DRAFT' ? 'DRAFT' : 'POSTED',
+      version: Number(row.version ?? 1),
+      entered_value: row.entered_value == null ? null : Number(row.entered_value),
+      entered_text: row.entered_text ?? null,
+      lot_no: row.lot_no ?? null,
+      remarks: row.remarks ?? null,
+      // A row from before Phase 6 was posted against the whole batch.
+      target_scope: (row.target_scope ?? 'BATCH') as TargetScope,
+      animal_ids: [...animalIds].sort(),
+      supersedes_entry_id: row.supersedes_entry_id ?? null,
+      posted: !!row.posted,
+      alert_triggered: !!row.alert_triggered,
+      alert_note: row.alert_note ?? null,
+    };
+  }
+
+  /**
+   * GET history. One row per day from `to` back `days` days (at most sixty,
+   * never before the batch started), newest first, each with the state
+   * dayState() gives it from the required lines due that day across all the
+   * batch's schedulers and the posted and draft rows against them.
+   */
+  async history(batchId: string, to: string | undefined, days: number | undefined, tenantId: string): Promise<Array<{
+    date: string; state: DayState; required: number; posted: number; drafts: number;
+  }>> {
+    const [batch] = await this.db.select().from(schema.batchHeader)
+      .where(and(eq(schema.batchHeader.batch_id, batchId), eq(schema.batchHeader.tenant_id, tenantId), ...batchScopeConditions(farmScope(this.cls))))
+      .limit(1);
+    if (!batch) throw new NotFoundException('Batch not found.');
+
+    const today = await this.companyToday(batch.company_id);
+    // A day that has not happened owes nothing yet.
+    const end = to && to < today ? to : today;
+    const span = Math.min(60, Math.max(1, Math.floor(Number(days) || 30)));
+    const batchStart = String(batch.start_date).slice(0, 10);
+    const reach = addDays(end, -(span - 1));
+    const start = reach > batchStart ? reach : batchStart;
+    if (start > end) return [];
+
+    const headers = await this.db.select().from(schema.schedulerHeader)
+      .where(and(eq(schema.schedulerHeader.batch_id, batchId), eq(schema.schedulerHeader.tenant_id, tenantId)));
+    if (!headers.length) return [];
+
+    // Active lines, as the form shows them, so the rail and the day it opens agree.
+    const lines = await this.db.select().from(schema.schedulerLine)
+      .where(and(inArray(schema.schedulerLine.scheduler_id, headers.map((h) => h.scheduler_id)), eq(schema.schedulerLine.is_active, true)));
+    const customDaysByLine = await this.loadCustomDays(lines.map((l) => l.line_id));
+
+    const rows = await this.db.select({
+      line_id: schema.batchDailyData.line_id,
+      entry_date: schema.batchDailyData.entry_date,
+      status: schema.batchDailyData.status,
+    }).from(schema.batchDailyData).where(and(
+      eq(schema.batchDailyData.batch_id, batchId),
+      ne(schema.batchDailyData.status, 'SUPERSEDED'),
+      gte(schema.batchDailyData.entry_date, start),
+      lte(schema.batchDailyData.entry_date, end),
+    ));
+    const statusByDate = new Map<string, Map<string, string>>();
+    for (const r of rows) {
+      const key = String(r.entry_date).slice(0, 10);
+      (statusByDate.get(key) ?? statusByDate.set(key, new Map()).get(key)!).set(r.line_id as string, r.status ?? 'POSTED');
+    }
+
+    return datesBetween(start, end).reverse().map((date) => {
+      const saved = statusByDate.get(date) ?? new Map<string, string>();
+      let required = 0;
+      let posted = 0;
+      let drafts = 0;
+      for (const header of headers) {
+        const from = String(header.effective_from).slice(0, 10);
+        for (const l of lines) {
+          if (l.scheduler_id !== header.scheduler_id) continue;
+          if (!isLineDue(this.toDueLine(l, customDaysByLine), from, date)) continue;
+          const status = saved.get(l.line_id);
+          if (status === 'DRAFT') drafts += 1;
+          if (!l.is_mandatory) continue;
+          required += 1;
+          if (status === 'POSTED') posted += 1;
+        }
+      }
+      return { date, state: dayState({ date, today, required, posted, drafts }), required, posted, drafts };
     });
   }
 
@@ -938,6 +1421,8 @@ export class BatchDailyDataService {
         eq(schema.batchDailyData.batch_id, batchId),
         eq(schema.batchDailyData.entry_date, entryDate),
         eq(schema.batchDailyData.tenant_id, tenantId),
+        // The active row per line: a draft or a posting, never what it replaced.
+        ne(schema.batchDailyData.status, 'SUPERSEDED'),
         ...batchReferenceScopeConditions(scope, schema.batchDailyData.batch_id),
         ...restrictedScopeConditions(scope, { companyId: schema.batchDailyData.company_id }),
       ));

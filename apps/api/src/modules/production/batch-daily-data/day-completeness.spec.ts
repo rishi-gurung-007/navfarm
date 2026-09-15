@@ -1,5 +1,5 @@
 import {
-  DueLine, isLineDue, stageDayStatus, pendingDays, datesBetween, weekdayOf,
+  DueLine, addDays, isLineDue, stageDayStatus, pendingDays, datesBetween, weekdayOf,
 } from './day-completeness';
 
 const line = (over: Partial<DueLine> = {}): DueLine => ({
@@ -164,5 +164,16 @@ describe('datesBetween', () => {
   it('crosses a month boundary', () => {
     expect(datesBetween('2026-08-30', '2026-09-02'))
       .toEqual(['2026-08-30', '2026-08-31', '2026-09-01', '2026-09-02']);
+  });
+});
+
+describe('addDays', () => {
+  // The whole point: a window that starts inside one month and ends in another.
+  // Reading the month as written (rather than 0-based) shifts both ends together
+  // and still looks right until the range crosses a boundary.
+  it('walks backwards across a month boundary', () => {
+    expect(addDays('2026-12-31', -59)).toBe('2026-11-02');
+    expect(addDays('2026-03-01', -1)).toBe('2026-02-28');
+    expect(addDays('2026-09-10', 0)).toBe('2026-09-10');
   });
 });

@@ -56,13 +56,17 @@ describe('RoleService assignment authority', () => {
     });
 
     it('lets a company admin give a standard user a bounded role', async () => {
-      selectResults.push([role('MANAGER')], [user('STANDARD_USER')], [], [{ assign_id: 'a-1' }]);
+      // role, target user, the unrestricted-access check, the previous roles
+      // read for the audit row, then the transaction's re-read of the insert.
+      selectResults.push([role('MANAGER')], [user('STANDARD_USER')], [], [], [{ assign_id: 'a-1' }]);
       await expect(service.assignRoleToUser('target-1', 'role-1', as('COMPANY_ADMIN'))).resolves.toEqual({ assign_id: 'a-1' });
       expect(db.insert).toHaveBeenCalled();
     });
 
     it('lets a tenant admin assign SUPER_ADMIN', async () => {
-      selectResults.push([role('SUPER_ADMIN')], [user('COMPANY_ADMIN')], [{ assign_id: 'a-2' }]);
+      // SUPER_ADMIN skips the unrestricted-access check by its code; the
+      // previous-roles read and the transaction's re-read still run.
+      selectResults.push([role('SUPER_ADMIN')], [user('COMPANY_ADMIN')], [], [{ assign_id: 'a-2' }]);
       await expect(service.assignRoleToUser('target-1', 'role-1', as('TENANT_ADMIN'))).resolves.toEqual({ assign_id: 'a-2' });
     });
 

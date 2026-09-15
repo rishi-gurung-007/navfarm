@@ -673,6 +673,13 @@
       "when": 1789234408180,
       "tag": "0095_daily_entry_drafts",
       "breakpoints": true
+    },
+    {
+      "idx": 97,
+      "version": "5",
+      "when": 1789234410180,
+      "tag": "0097_breeding_boar_parity",
+      "breakpoints": true
     }
   ]
 }

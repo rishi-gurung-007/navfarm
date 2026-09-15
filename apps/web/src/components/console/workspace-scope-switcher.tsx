@@ -136,7 +136,10 @@ export default function WorkspaceScopeSwitcher({
       });
 
       if (canSelectFarmUser) {
-        api.get(`/location?locationType=FARM&rootOnly=true`).then((res: any) => {
+        // isActive=true: a retired farm (FARM-001 sits at is_active=0) must not
+        // be offered as a choice, because pinning it 403s every farm-scoped
+        // request and the screens read as if the data were gone.
+        api.get(`/location?locationType=FARM&rootOnly=true&isActive=true`).then((res: any) => {
           const rows = Array.isArray(res) ? res : res?.data;
           if (Array.isArray(rows)) setFarms(rows);
         }).catch(() => {});
@@ -236,6 +239,12 @@ export default function WorkspaceScopeSwitcher({
     secondarySubtitle = `${activeCompanyObj?.company_name || "Company"} Farm Operations`;
   }
 
+  // A pinned farm is part of the answer to "where am I?": without it the
+  // collapsed trigger reads the same whether the workspace is showing every
+  // farm or one, and there is no visible way to tell which farm failed when
+  // a farm-scoped request is refused.
+  const activeFarmObj = farms.find((f) => f.location_id === activeFarmIdState) || null;
+
   const isTenantAdmin = user?.userType === "TENANT_ADMIN";
   const isCompanyAdmin = user?.userType === "COMPANY_ADMIN" || isTenantAdmin;
   // Every user type except STANDARD_USER may view every farm or select one
@@ -278,6 +287,14 @@ export default function WorkspaceScopeSwitcher({
       <p className="text-[10px] text-white/40 truncate mt-0.5">
         {secondarySubtitle}
       </p>
+      {/* F3: name the pinned farm on the collapsed trigger. A farm pin is a
+          scope like any other — leaving it invisible made a farm-filtered
+          screen read as "my data is gone" instead of "this is another farm". */}
+      {activeFarmObj && (
+        <p className="text-[10px] truncate mt-0.5" style={{ color: "var(--sidebar-active-accent)" }}>
+          {activeFarmObj.location_code} — {activeFarmObj.location_name}
+        </p>
+      )}
       {fixedFarmLabel && (
         <p className="text-[10px] text-white/40 truncate mt-0.5">
           {fixedFarmLabel}

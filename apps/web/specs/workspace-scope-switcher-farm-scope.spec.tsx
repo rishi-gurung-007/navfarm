@@ -89,4 +89,26 @@ describe('WorkspaceScopeSwitcher — switching company clears the pinned farm', 
     expect(localStorage.getItem('active_farm_id')).toBeNull();
     expect(localStorage.getItem('active_company_id')).toBe('co-2');
   });
+
+  // F1: the picker fetched every farm regardless of state, so a retired farm
+  // (FARM-001 sits at is_active=0) was offered as a choice, and pinning it
+  // 403'd every farm-scoped request — which the screens then rendered as an
+  // empty farm. The fetch must ask the API for active farms only.
+  it('fetches only active farms for the picker', async () => {
+    render(<WorkspaceScopeSwitcher />);
+
+    await screen.findByRole('button', { name: 'wsSwitchScope' });
+
+    const farmCall = get.mock.calls.map((c) => c[0] as string).find((p) => p.startsWith('/location?locationType=FARM'));
+    expect(farmCall).toBeDefined();
+    expect(farmCall).toContain('isActive=true');
+  });
+
+  // F3: the collapsed trigger never named the pinned farm, so a farm-filtered
+  // screen read as "my data is gone" and there was no visible scope to leave.
+  it('names the pinned farm on the collapsed trigger', async () => {
+    render(<WorkspaceScopeSwitcher />);
+
+    await screen.findByText('F1 — Farm One');
+  });
 });

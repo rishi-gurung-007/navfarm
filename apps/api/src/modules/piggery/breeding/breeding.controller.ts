@@ -21,6 +21,7 @@ import {
   CreateFarrowingDto,
   UpdateWeaningDto,
   CreateSemenCollectionDto,
+  MatingDefaultsQueryDto,
 } from './dto/breeding.dto';
 
 @ApiTags('Piggery Breeding & Reproduction')
@@ -46,9 +47,17 @@ export class BreedingController {
     return await this.breedingService.recordMating(dto, tenantId, req.user);
   }
 
+  @Get('mating/defaults')
+  @RequirePermission('PIGGERY', 'ANIMAL', 'view')
+  @ApiOperation({ summary: "Prefill for a service: expected farrowing (sow's breed gestation_days, else 116), pregnancy check (+28), sow and boar parity, sow's batch" })
+  async getMatingDefaults(@Query() query: MatingDefaultsQueryDto, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    return await this.breedingService.getMatingDefaults(query, tenantId);
+  }
+
   @Patch('mating/:id/preg-check')
   @RequirePermission('PIGGERY', 'ANIMAL', 'edit')
-  @ApiOperation({ summary: 'Record pregnancy confirmation ultrasound check result' })
+  @ApiOperation({ summary: 'Record or correct the pregnancy check result: CONFIRMED / REPEAT / FAILED / PENDING' })
   async recordPregnancyCheck(
     @Param('id') id: string,
     @Body() dto: UpdatePregCheckDto,

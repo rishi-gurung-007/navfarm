@@ -87,7 +87,10 @@ describe('BatchTransferService', () => {
   });
   const kintyreSource = batchRow({ batch_id: 'batch-gest', farm_id: 'farm-k' });
   const grasmereDestination = batchRow({ batch_id: 'batch-farrow', farm_id: 'farm-g', stage_id: 'stage-farrowing' });
-  const kintyreDestination = batchRow({ batch_id: 'batch-farrow', farm_id: 'farm-k', stage_id: 'stage-farrowing' });
+  // sub_location_id: the destination-Pen rule resolves the batch's pen when the
+  // draft names none, so a Registered destination carries where its animals stand.
+  const kintyreDestination = batchRow({ batch_id: 'batch-farrow', farm_id: 'farm-k', stage_id: 'stage-farrowing', sub_location_id: 'pen-k-1' });
+  const penRow = { location_id: 'pen-k-1' };
 
   const draftTransfer = {
     transfer_id: 'tr-1',
@@ -273,7 +276,7 @@ describe('BatchTransferService', () => {
         { animal_ids: ['a-1'], transfer_date: '2026-09-01', to_location_id: 'other-farm-pen' } as any,
         'tenant-123',
         operationalAdmin,
-      )).rejects.toThrow(new ForbiddenException('Destination location is not on your active farm.'));
+      )      ).rejects.toThrow(new ForbiddenException('Destination location must be an active Pen on your farm.'));
 
       const { sql: text, params } = dialect.sqlToQuery(capturedWhere as any);
       expect(text).toContain('`location_master`.`tenant_id` = ?');
@@ -462,7 +465,9 @@ describe('BatchTransferService', () => {
   describe('post', () => {
     const lockedBatches = { source: kintyreSource, destination: kintyreDestination };
 
-    const stillLiveSelect = () => mockDbSelect.mockReturnValueOnce(chain([{ animal_id: 'a-1' }, { animal_id: 'a-2' }]));
+    const stillLiveSelect = () => mockDbSelect
+      .mockReturnValueOnce(chain([penRow])) // assertDestinationPen
+      .mockReturnValueOnce(chain([{ animal_id: 'a-1' }, { animal_id: 'a-2' }]));
 
     it('moves the transferred animals onto the destination batch stage', async () => {
       jest.spyOn(service as any, 'loadTransferForMutation').mockResolvedValue(draftTransfer);
@@ -572,7 +577,7 @@ describe('BatchTransferService', () => {
       jest.spyOn(service as any, 'lockTransferBatches').mockResolvedValue(lockedBatches);
       const shiftState = jest.spyOn(service as any, 'shiftBioAssetState').mockResolvedValue(undefined);
       const ledger = jest.spyOn(service as any, 'writeLedgerLegs').mockResolvedValue(undefined);
-      mockDbSelect.mockReturnValueOnce(chain([{ animal_id: 'a-1' }]));
+      mockDbSelect.mockReturnValueOnce(chain([penRow])).mockReturnValueOnce(chain([{ animal_id: 'a-1' }]));
       let animalClaimWhere: unknown;
       mockDbUpdate.mockImplementation((table: unknown) => ({
         set: jest.fn().mockReturnValue({
@@ -606,6 +611,7 @@ describe('BatchTransferService', () => {
       jest.spyOn(service as any, 'shiftBioAssetState').mockResolvedValue(undefined);
       jest.spyOn(service as any, 'shiftClosingQuantity').mockResolvedValue(undefined);
       mockDbSelect
+        .mockReturnValueOnce(chain([penRow]))
         .mockReturnValueOnce(chain([{ animal_id: 'a-1' }, { animal_id: 'a-2' }]))
         .mockReturnValueOnce(chain([]))
         .mockReturnValueOnce(chain([]));
@@ -628,6 +634,7 @@ describe('BatchTransferService', () => {
       jest.spyOn(service as any, 'shiftBioAssetState').mockResolvedValue(undefined);
       jest.spyOn(service as any, 'shiftClosingQuantity').mockResolvedValue(undefined);
       mockDbSelect
+        .mockReturnValueOnce(chain([penRow]))
         .mockReturnValueOnce(chain([{ animal_id: 'a-1' }]))
         .mockReturnValueOnce(chain([{ item_id: 'bio-item-1' }]));
       updatesByTable(1, 1);
@@ -713,7 +720,7 @@ describe('BatchTransferService', () => {
         source: kintyreSource,
         destination: { ...kintyreDestination, breed_id: 'breed-landrace' },
       });
-      mockDbSelect.mockReturnValueOnce(chain([
+      mockDbSelect.mockReturnValueOnce(chain([penRow])).mockReturnValueOnce(chain([
         { animal_id: 'a-1', breed_id: 'breed-landrace' },
         { animal_id: 'a-2', breed_id: 'breed-large-white' },
       ]));
@@ -770,7 +777,7 @@ describe('BatchTransferService', () => {
     it('lets an operational admin move animals within one farm', async () => {
       useFarmScope(kintyreScope);
       jest.spyOn(service as any, 'loadBatch').mockResolvedValue(kintyreSource);
-      mockDbSelect.mockReturnValueOnce(chain([kintyreDestination]));
+      mockDbSelect.mockReturnValueOnce(chain([kintyreDestination])).mockReturnValueOnce(chain([penRow]));
       stopAtAnimalSelection();
 
       await expect(service.create(dto, 'tenant-123', 'batch-gest', operationalAdmin)).rejects.toThrow('reached animal selection');
@@ -812,7 +819,7 @@ describe('BatchTransferService', () => {
     it('passes auto_triggers_stage to post() only as a service option', async () => {
       useFarmScope({ farmId: null, restricted: false, companyId: 'comp-1', lobId: null });
       jest.spyOn(service as any, 'loadBatch').mockResolvedValue(kintyreSource);
-      mockDbSelect.mockReturnValueOnce(chain([kintyreDestination]));
+      mockDbSelect.mockReturnValueOnce(chain([kintyreDestination])).mockReturnValueOnce(chain([penRow]));
       jest.spyOn(service as any, 'listTransferableAnimalsFromAuthorizedBatch').mockResolvedValue([
         { animal_id: 'a-1', current_location_id: 'pen-1', book_value: '100' },
       ]);
@@ -823,7 +830,7 @@ describe('BatchTransferService', () => {
       await service.create({ ...dto, auto_triggers_stage: true }, 'tenant-123', 'batch-gest', companyAdmin);
       expect(post).toHaveBeenLastCalledWith(expect.any(String), 'tenant-123', companyAdmin, undefined);
 
-      mockDbSelect.mockReturnValueOnce(chain([kintyreDestination])).mockReturnValueOnce(chain([]));
+      mockDbSelect.mockReturnValueOnce(chain([kintyreDestination])).mockReturnValueOnce(chain([penRow])).mockReturnValueOnce(chain([]));
       await service.create(dto, 'tenant-123', 'batch-gest', companyAdmin, { autoTriggersStage: true });
       expect(post).toHaveBeenLastCalledWith(expect.any(String), 'tenant-123', companyAdmin, true);
     });
@@ -846,7 +853,7 @@ describe('BatchTransferService', () => {
     it('refuses moving an animal into a same-farm batch of a different breed', async () => {
       useFarmScope({ farmId: null, restricted: false, companyId: 'comp-1', lobId: null });
       jest.spyOn(service as any, 'loadBatch').mockResolvedValue(kintyreSource);
-      mockDbSelect.mockReturnValueOnce(chain([{ ...kintyreDestination, breed_id: 'breed-landrace' }]));
+      mockDbSelect.mockReturnValueOnce(chain([{ ...kintyreDestination, breed_id: 'breed-landrace' }])).mockReturnValueOnce(chain([penRow]));
       jest.spyOn(service as any, 'listTransferableAnimalsFromAuthorizedBatch').mockResolvedValue([
         { animal_id: 'a-1', breed_id: 'breed-large-white', current_location_id: 'pen-1', book_value: '100' },
       ]);
@@ -862,7 +869,7 @@ describe('BatchTransferService', () => {
     it('still allows a same-breed, same-farm Registered to Registered transfer', async () => {
       useFarmScope({ farmId: null, restricted: false, companyId: 'comp-1', lobId: null });
       jest.spyOn(service as any, 'loadBatch').mockResolvedValue({ ...kintyreSource, breed_id: 'breed-landrace' });
-      mockDbSelect.mockReturnValueOnce(chain([{ ...kintyreDestination, breed_id: 'breed-landrace' }]));
+      mockDbSelect.mockReturnValueOnce(chain([{ ...kintyreDestination, breed_id: 'breed-landrace' }])).mockReturnValueOnce(chain([penRow]));
       jest.spyOn(service as any, 'listTransferableAnimalsFromAuthorizedBatch').mockResolvedValue([
         { animal_id: 'a-1', breed_id: 'breed-landrace', current_location_id: 'pen-1', book_value: '100' },
       ]);
@@ -905,6 +912,10 @@ describe('BatchTransferService', () => {
       if (table === schema.batchTransfer) return tables.transfer ? [tables.transfer] : [];
       if (table === schema.batchTransferLine) return tables.lines;
       if (table === schema.batchInputLine) return [{ item_id: 'bio-item-1' }];
+      // The destination-Pen check resolves the batch's own pen by id.
+      if (table === schema.locationMaster) {
+        return params.includes('pen-1') ? [{ location_id: 'pen-1', location_type: 'PEN', farm_id: 'farm-k' }] : [];
+      }
       return [];
     };
 

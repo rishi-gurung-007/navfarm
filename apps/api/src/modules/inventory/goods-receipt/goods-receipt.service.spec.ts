@@ -252,13 +252,15 @@ describe('GoodsReceiptService', () => {
     });
 
     it('accepts the same payload once company_id is dropped, as the fixed edit panel now sends', async () => {
+      // The warehouse and item ids must themselves satisfy the DTO's UUID
+      // constraints, which the warehouse-integrity work tightened.
       const instance = plainToInstance(UpdateGoodsReceiptDto, {
-        warehouse_id: 'wh-1',
+        warehouse_id: '55555555-5555-4555-8555-555555555555',
         posting_date: '2026-09-01',
         supplier_id: undefined,
         external_reference_no: undefined,
         remarks: undefined,
-        lines: [{ item_id: '11111111-1111-1111-1111-111111111111', quantity: 10, uom: 'KG' }],
+        lines: [{ item_id: '11111111-1111-4111-8111-111111111111', quantity: 10, uom: 'KG' }],
       });
       const errors = await validate(instance, { whitelist: true, forbidNonWhitelisted: true });
       expect(errors).toHaveLength(0);

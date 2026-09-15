@@ -722,6 +722,55 @@ export class BreedService {
     }
   }
 
+  /**
+   * What the row shapes cannot say on their own. The DTO already holds each KPI
+   * row to a known metric and severity and each resource row to a UUID; this
+   * checks a KPI's limits are the right way round, that each resource is a real
+   * resource in this tenant, and that a protocol row's withdrawal period — on
+   * vaccination rows as on medication rows — is a whole number of days within
+   * the two digits TDD row 21 allows an item's.
+   *
+   * Protocol rows are otherwise left as they are: the seeded rows carry an
+   * older { day, vaccine, dose, route } shape, and refusing unknown keys would
+   * make those records impossible to edit.
+   */
+  private async assertLifecycleRows(
+    dto: Pick<CreateBreedLifecycleStageDto, 'kpi_thresholds' | 'resource_requirements' | 'vaccination_protocol' | 'medication_protocol'>,
+    tenantId: string,
+  ) {
+    for (const row of dto.kpi_thresholds || []) {
+      if (row.lower_limit == null && row.upper_limit == null) {
+        throw new BadRequestException(`KPI ${row.metric} needs a Lower Limit, an Upper Limit, or both.`);
+      }
+      if (row.lower_limit != null && row.upper_limit != null && row.lower_limit > row.upper_limit) {
+        throw new BadRequestException(`KPI ${row.metric}: Lower Limit ${row.lower_limit} is above Upper Limit ${row.upper_limit}.`);
+      }
+    }
+    const resourceIds = [...new Set((dto.resource_requirements || []).map((row) => row.resource_id))];
+    if (resourceIds.length) {
+      const found = await this.db
+        .select({ resource_id: schema.resourceMaster.resource_id })
+        .from(schema.resourceMaster)
+        .where(and(
+          eq(schema.resourceMaster.tenant_id, tenantId),
+          inArray(schema.resourceMaster.resource_id, resourceIds),
+          isNull(schema.resourceMaster.deleted_at),
+        ));
+      const missing = resourceIds.filter((resourceId) => !found.some((row) => row.resource_id === resourceId));
+      if (missing.length) throw new NotFoundException(`Resource with ID '${missing[0]}' not found.`);
+    }
+    for (const [label, rows] of [['Vaccination', dto.vaccination_protocol], ['Medication', dto.medication_protocol]] as const) {
+      if (!Array.isArray(rows)) continue;
+      for (const row of rows) {
+        const days = row && typeof row === 'object' ? (row as Record<string, unknown>).withdrawal_days : undefined;
+        if (days === undefined || days === null || days === '') continue;
+        if (typeof days !== 'number' || !Number.isInteger(days) || days < 0 || days > 99) {
+          throw new BadRequestException(`${label} protocol withdrawal period must be a whole number of days from 0 to 99.`);
+        }
+      }
+    }
+  }
+
   async createLifecycleStage(dto: CreateBreedLifecycleStageDto, tenantId: string, userPayload?: any) {
     await this.findOneBreed(dto.breed_id, tenantId);
 
@@ -736,6 +785,7 @@ export class BreedService {
 
     if (dto.feed_item_id) await this.assertItemExists(dto.feed_item_id);
     if (dto.output_item_id) await this.assertItemExists(dto.output_item_id);
+    await this.assertLifecycleRows(dto, tenantId);
 
     // breed_lifecycle_stages has no company_id — a row is scoped through its breed —
     // so the code resolves against the tenant-wide series scope. Manual today,
@@ -906,6 +956,7 @@ export class BreedService {
     }
     if (dto.feed_item_id) await this.assertItemExists(dto.feed_item_id);
     if (dto.output_item_id) await this.assertItemExists(dto.output_item_id);
+    await this.assertLifecycleRows(dto, tenantId);
 
     const updates: any = {};
     // Blank means "untouched": the form posts "" for every optional field, and the

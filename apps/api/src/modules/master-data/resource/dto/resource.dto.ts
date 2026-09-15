@@ -1,7 +1,14 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsInt, Min, IsNumber, IsDateString } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsInt, Min, IsNumber, IsDateString, IsIn } from 'class-validator';
 import { Type } from 'class-transformer';
 import { MasterListQueryDto } from '../../../../common/master-list-query';
+
+/**
+ * MANPOWER, EQUIPMENT and UTILITY. The client template also listed VEHICLE and
+ * OTHER; both were removed on 15 September (Rishi). LABOR, the old alias for
+ * MANPOWER, went earlier.
+ */
+export const RESOURCE_TYPES = ['MANPOWER', 'EQUIPMENT', 'UTILITY'] as const;
 
 export class CreateResourceDto {
   @ApiProperty({ description: 'Company UUID scope ownership' })
@@ -29,9 +36,9 @@ export class CreateResourceDto {
   @IsNotEmpty()
   resource_name: string;
 
-  @ApiProperty({ description: 'Resource category; LABOR remains a legacy alias', example: 'MANPOWER', enum: ['MANPOWER', 'EQUIPMENT', 'VEHICLE', 'UTILITY', 'OTHER', 'LABOR'] })
+  @ApiProperty({ description: 'Resource category', example: 'MANPOWER', enum: RESOURCE_TYPES })
   @IsString()
-  @IsNotEmpty()
+  @IsIn(RESOURCE_TYPES)
   resource_type: string;
 
   @ApiProperty({ description: 'Sub-classification: PERMANENT/CONTRACT/DAILY for labor, OWNED/LEASED/RENTED for equipment', required: false })
@@ -161,7 +168,10 @@ export class UpdateResourceDto {
   @IsOptional()
   resource_name?: string;
 
-  @ApiProperty({ required: false })
+  // Not @IsIn here: a row created before VEHICLE and OTHER were removed is
+  // re-sent with its own type on every edit, and refusing that would lock the
+  // whole record. The service refuses a change TO a removed type instead.
+  @ApiProperty({ required: false, enum: RESOURCE_TYPES })
   @IsString()
   @IsOptional()
   resource_type?: string;

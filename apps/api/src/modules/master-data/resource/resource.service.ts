@@ -10,7 +10,8 @@ import {
   UpdateResourceDto, 
   QueryResourceDto,
   CreateMaintenanceLogDto,
-  UpdateMaintenanceLogDto
+  UpdateMaintenanceLogDto,
+  RESOURCE_TYPES,
 } from './dto/resource.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
@@ -191,6 +192,10 @@ export class ResourceService {
 
     if (dto.resource_code && dto.resource_code.toUpperCase() !== resource.resource_code) {
       throw new ConflictException('Resource Code is generated from the company-wide RESOURCE sequence and cannot be changed.');
+    }
+    if (dto.resource_type !== undefined && dto.resource_type !== resource.resource_type
+      && !(RESOURCE_TYPES as readonly string[]).includes(dto.resource_type)) {
+      throw new BadRequestException(`Resource Type must be one of ${RESOURCE_TYPES.join(', ')}.`);
     }
 
     const updates: any = {

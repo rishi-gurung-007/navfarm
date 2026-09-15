@@ -139,8 +139,12 @@ export default function DashboardPage() {
         isTenantScope ? api.get(`/tenant/${tenantId}`).catch(() => null) : Promise.resolve(null),
         isTenantScope ? api.get(`/company/tenant/${tenantId}`).catch(() => []) : Promise.resolve(storedUser.companies || []),
         api.get(`/operational-area${compId && currentScope !== "TENANT" ? `?company_id=${compId}` : ""}`).catch(() => []),
-        api.get(`/batch${compId && currentScope !== "TENANT" ? `?companyId=${compId}&limit=100` : "?limit=100"}`).catch(() => []),
-        api.get(`/animal${compId && currentScope !== "TENANT" ? `?companyId=${compId}&limit=500` : "?limit=500"}`).catch(() => []),
+        // Batch and herd are the dashboard's substance, so their failures are
+        // not swallowed into empty arrays: a farm-scoped 403 rendered as
+        // "0 herd / no batches recorded yet", which reads as lost data rather
+        // than as the wrong-farm refusal it is.
+        api.get(`/batch${compId && currentScope !== "TENANT" ? `?companyId=${compId}&limit=100` : "?limit=100"}`),
+        api.get(`/animal${compId && currentScope !== "TENANT" ? `?companyId=${compId}&limit=500` : "?limit=500"}`),
       ]);
 
       setTenantInfo(tenant);

@@ -33,10 +33,17 @@ describe('UserService user-type hierarchy', () => {
 
   let service: UserService;
 
-  const requester = (userType: string, userId = 'requester-1'): RequestingUser => ({ userId, tenantId: TENANT, userType });
+  // companyId rides along because the company-reach check reads it to
+  // short-circuit to the requester's own company before consulting assignments.
+  const requester = (userType: string, userId = 'requester-1'): RequestingUser => ({ userId, tenantId: TENANT, userType, companyId: COMPANY });
   const target = (user_type: string, user_id = 'target-1') => ({ user_id, user_type, tenant_id: TENANT, company_id: COMPANY, is_active: true });
-  /** findById does two selects: the user row, then its roles. */
-  const queueUser = (row: object) => selectResults.push([row], []);
+  /**
+   * findById does four selects: the user row, then enrich()'s companies,
+   * operational areas and roles — its farms lookup is skipped because these
+   * fixtures carry no farm_id. update() re-reads the user after its write,
+   * so tests that reach the re-read queue this twice.
+   */
+  const queueUser = (row: object) => selectResults.push([row], [], [], []);
 
   const createDto = (user_type?: string): CreateUserDto => ({
     company_id: COMPANY,
@@ -86,6 +93,7 @@ describe('UserService user-type hierarchy', () => {
     });
 
     it.each(['OPERATIONAL_ADMIN', 'STANDARD_USER'])('lets a COMPANY_ADMIN create a %s', async (type) => {
+      selectResults.push([{ tenant_id: TENANT }]); // the named company is in the requester's tenant
       if (type === 'STANDARD_USER') selectResults.push([{ location_id: FARM }]);
       selectResults.push([]); // no existing email
       queueUser(target(type, 'created'));
@@ -94,6 +102,7 @@ describe('UserService user-type hierarchy', () => {
     });
 
     it('defaults an omitted user_type to STANDARD_USER, not the legacy STAFF', async () => {
+      selectResults.push([{ tenant_id: TENANT }]); // company in reach
       selectResults.push([{ location_id: FARM }]);
       selectResults.push([]);
       queueUser(target('STANDARD_USER', 'created'));
@@ -150,6 +159,7 @@ describe('UserService user-type hierarchy', () => {
 
     it('lets a COMPANY_ADMIN move a STANDARD_USER to OPERATIONAL_ADMIN', async () => {
       queueUser(target('STANDARD_USER'));
+      selectResults.push([{ tenant_id: TENANT }]); // the target's company is in reach
       queueUser(target('OPERATIONAL_ADMIN'));
       await service.update('target-1', { user_type: 'OPERATIONAL_ADMIN' }, requester('COMPANY_ADMIN'));
       expect(set).toHaveBeenCalledWith({ user_type: 'OPERATIONAL_ADMIN' });
@@ -157,6 +167,7 @@ describe('UserService user-type hierarchy', () => {
 
     it('lets a TENANT_ADMIN deactivate a COMPANY_ADMIN', async () => {
       queueUser(target('COMPANY_ADMIN'));
+      selectResults.push([{ tenant_id: TENANT }]); // the target's company is in reach
       queueUser(target('COMPANY_ADMIN'));
       await service.update('target-1', { is_active: false }, requester('TENANT_ADMIN'));
       expect(set).toHaveBeenCalledWith({ is_active: false });
@@ -177,6 +188,7 @@ describe('UserService user-type hierarchy', () => {
 
     it('lets a COMPANY_ADMIN delete a STANDARD_USER', async () => {
       queueUser(target('STANDARD_USER'));
+      selectResults.push([{ tenant_id: TENANT }]); // the target's company is in reach
       await expect(service.remove('target-1', requester('COMPANY_ADMIN'))).resolves.toEqual({ deleted: true, user_id: 'target-1' });
     });
   });

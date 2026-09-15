@@ -1,7 +1,7 @@
-import { Controller, Get, Post, Param, Body, Query, Req, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Put, Param, Body, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiParam, ApiQuery } from '@nestjs/swagger';
 import { BatchDailyDataService } from './batch-daily-data.service';
-import { CreateBatchDailyDataDto } from './dto/batch-daily-data.dto';
+import { CreateBatchDailyDataDto, SaveDailyDraftDto, PostDailyDraftsDto, CorrectDailyEntryDto } from './dto/batch-daily-data.dto';
 import { CreateUnscheduledHealthDto, RejectUnscheduledHealthDto } from './dto/unscheduled-health.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
@@ -34,6 +34,56 @@ export class BatchDailyDataController {
     const tenantId = req.user?.tenantId || req['tenantId'];
     const result = await this.batchDailyDataService.postEntry(batchId, dto, tenantId, req.user);
     return { success: true, message: 'Entry posted.', data: result };
+  }
+
+  /*
+   * The draft/post/correct split (Phase 6). Saving a draft deliberately has no
+   * side effects — no ledger, no transaction, no animals — so a worker can hold
+   * half a day's work without inventing facts the farm has not given. Posting
+   * is the only write that touches the world, and it runs inside one
+   * transaction so a bulk post cannot half-land.
+   */
+  @Put('draft')
+  @RequirePermission('PRODUCTION', 'BATCH_ENTRY', 'create')
+  @ApiOperation({ summary: 'Save one line as a DRAFT — no side effects; requires the row version when a draft already exists' })
+  @ApiParam({ name: 'batchId', description: 'Batch UUID' })
+  async saveDraft(@Param('batchId') batchId: string, @Body() dto: SaveDailyDraftDto, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const data = await this.batchDailyDataService.saveDraft(batchId, dto, tenantId, req.user);
+    return { success: true, message: 'Draft saved.', data };
+  }
+
+  @Post('post')
+  @RequirePermission('PRODUCTION', 'BATCH_ENTRY', 'create')
+  @ApiOperation({ summary: 'Post 1..n saved drafts all-or-nothing — side effects and row status commit together or not at all' })
+  @ApiParam({ name: 'batchId', description: 'Batch UUID' })
+  async postDrafts(@Param('batchId') batchId: string, @Body() dto: PostDailyDraftsDto, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const data = await this.batchDailyDataService.postDrafts(batchId, dto, tenantId, req.user);
+    return { success: true, message: 'Entries posted.', data };
+  }
+
+  @Post('correct')
+  @RequirePermission('PRODUCTION', 'BATCH_ENTRY', 'create')
+  @ApiOperation({ summary: 'Correct a POSTED entry — supersedes it, reverses its side effects and posts the replacement in one transaction' })
+  @ApiParam({ name: 'batchId', description: 'Batch UUID' })
+  async correctEntry(@Param('batchId') batchId: string, @Body() dto: CorrectDailyEntryDto, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const data = await this.batchDailyDataService.correctEntry(batchId, dto, tenantId, req.user);
+    return { success: true, message: 'Entry corrected.', data };
+  }
+
+  @Get('history')
+  @RequirePermission('PRODUCTION', 'BATCH_ENTRY', 'view')
+  @ApiOperation({ summary: 'The last few days and where each stands: Complete, In progress, Missing or Not started, newest first' })
+  @ApiParam({ name: 'batchId', description: 'Batch UUID' })
+  @ApiQuery({ name: 'to', description: 'YYYY-MM-DD; defaults to today on the farm', required: false })
+  @ApiQuery({ name: 'days', description: 'How many days back, capped at 60', required: false })
+  async history(@Param('batchId') batchId: string, @Req() req: any, @Query('to') to?: string, @Query('days') days?: string) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const parsedDays = days ? Number(days) : undefined;
+    const data = await this.batchDailyDataService.history(batchId, to, parsedDays, tenantId);
+    return { success: true, message: 'History retrieved.', data };
   }
 
   @Get('day-status')

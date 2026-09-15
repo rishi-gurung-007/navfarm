@@ -667,7 +667,9 @@ export class AnimalService {
       current_location_id: dto.current_location_id || null,
       productive_life_start: dto.productive_life_start || null,
       status: dto.status || 'ACTIVE',
-      no_of_teats: dto.no_of_teats ?? null,
+      // A teat count is recorded for a female only; one sent for a male is dropped.
+      no_of_teats: dto.gender === 'F' ? dto.no_of_teats ?? null : null,
+      expected_cull_date: dto.expected_cull_date || null,
       tsi: dto.tsi?.toString() ?? null,
       grading: dto.grading || null,
       serial_number: dto.serial_number || null,
@@ -900,7 +902,7 @@ export class AnimalService {
     if (dto.productive_life_start !== undefined) updates.productive_life_start = dto.productive_life_start;
     if (dto.expected_cull_date !== undefined) updates.expected_cull_date = dto.expected_cull_date;
     if (dto.status !== undefined) updates.status = dto.status;
-    if (dto.no_of_teats !== undefined) updates.no_of_teats = dto.no_of_teats;
+    if (dto.no_of_teats !== undefined) updates.no_of_teats = animal.gender === 'F' ? dto.no_of_teats : null;
     if (dto.tsi !== undefined) updates.tsi = dto.tsi?.toString() ?? null;
     if (dto.grading !== undefined) updates.grading = dto.grading;
     if (dto.serial_number !== undefined) updates.serial_number = dto.serial_number;
@@ -1039,13 +1041,19 @@ export class AnimalService {
         pregnancy_confirmed: schema.breedingRecord.pregnancy_confirmed,
         conception_result: schema.breedingRecord.conception_result,
         parity_number: schema.breedingRecord.parity_number,
+        boar_parity_number: schema.breedingRecord.boar_parity_number,
         semen_dose_qty: schema.breedingRecord.semen_dose_qty,
+        semen_lot_id: schema.breedingRecord.semen_lot_id,
+        notes: schema.breedingRecord.notes,
+        batch_id: schema.breedingRecord.batch_id,
+        batch_no: schema.batchHeader.batch_no,
         sow_code: sow.animal_code,
         boar_code: boar.animal_code,
       })
       .from(schema.breedingRecord)
       .leftJoin(sow, eq(sow.animal_id, schema.breedingRecord.sow_animal_id))
       .leftJoin(boar, eq(boar.animal_id, schema.breedingRecord.boar_animal_id))
+      .leftJoin(schema.batchHeader, eq(schema.batchHeader.batch_id, schema.breedingRecord.batch_id))
       .where(or(
         eq(schema.breedingRecord.sow_animal_id, animalId),
         eq(schema.breedingRecord.boar_animal_id, animalId),
@@ -1107,6 +1115,51 @@ export class AnimalService {
         : [],
     ]);
 
+    // Lineage for the Traceability timeline and the Details tab: the parents
+    // this animal was registered with, and the animals registered with it as a
+    // parent. Codes only — the ids are meaningless to a reader.
+    const parentIds = [animal.sire_animal_id, animal.dam_animal_id].filter((id): id is string => Boolean(id));
+    const [parents, offspring] = await Promise.all([
+      parentIds.length
+        ? this.db.select({ animal_id: schema.animalRegister.animal_id, animal_code: schema.animalRegister.animal_code })
+          .from(schema.animalRegister).where(inArray(schema.animalRegister.animal_id, parentIds))
+        : [],
+      this.db
+        .select({
+          animal_id: schema.animalRegister.animal_id,
+          animal_code: schema.animalRegister.animal_code,
+          dob: schema.animalRegister.dob,
+          entry_date: schema.animalRegister.entry_date,
+          gender: schema.animalRegister.gender,
+        })
+        .from(schema.animalRegister)
+        .where(and(
+          eq(schema.animalRegister.tenant_id, animal.tenant_id),
+          animal.gender === 'M'
+            ? eq(schema.animalRegister.sire_animal_id, animalId)
+            : eq(schema.animalRegister.dam_animal_id, animalId),
+          // Offspring sent to another farm stay behind that farm's boundary.
+          ...animalScopeConditions(farmScope(this.cls)),
+        ))
+        .orderBy(desc(schema.animalRegister.entry_date)),
+    ]);
+    const parentCode = (id: string | null) => (id ? parents.find((p) => p.animal_id === id)?.animal_code ?? null : null);
+
+    // The current placement, named, for the Details tab — the register row
+    // carries only ids.
+    const [breedRow, stageRow, batchRow, locationRow] = await Promise.all([
+      this.db.select({ name: schema.breedMaster.breed_name }).from(schema.breedMaster).where(eq(schema.breedMaster.breed_id, animal.breed_id)).limit(1),
+      animal.current_stage_id
+        ? this.db.select({ name: schema.stageMaster.stage_name }).from(schema.stageMaster).where(eq(schema.stageMaster.stage_id, animal.current_stage_id)).limit(1)
+        : [],
+      animal.current_batch_id
+        ? this.db.select({ name: schema.batchHeader.batch_no }).from(schema.batchHeader).where(eq(schema.batchHeader.batch_id, animal.current_batch_id)).limit(1)
+        : [],
+      animal.current_location_id
+        ? this.db.select({ code: schema.locationMaster.location_code, name: schema.locationMaster.location_name }).from(schema.locationMaster).where(eq(schema.locationMaster.location_id, animal.current_location_id)).limit(1)
+        : [],
+    ]);
+
     const fromBatch = aliasedTable(schema.batchHeader, 'from_batch');
     const toBatch = aliasedTable(schema.batchHeader, 'to_batch');
     const fromPen = aliasedTable(schema.locationMaster, 'from_pen');
@@ -1143,6 +1196,17 @@ export class AnimalService {
       farrowings,
       movements: auditMovements,
       transfers,
+      lineage: {
+        sire_code: parentCode(animal.sire_animal_id),
+        dam_code: parentCode(animal.dam_animal_id),
+        offspring,
+      },
+      current_labels: {
+        breed: breedRow[0]?.name ?? null,
+        stage: stageRow[0]?.name ?? null,
+        batch: batchRow[0]?.name ?? null,
+        location: locationRow[0] ? `${locationRow[0].code} — ${locationRow[0].name}` : null,
+      },
       traceability_labels: {
         stages: Object.fromEntries(stageLabels.map((value) => [value.id, value.label])),
         batches: Object.fromEntries(batchLabels.map((value) => [value.id, value.label])),

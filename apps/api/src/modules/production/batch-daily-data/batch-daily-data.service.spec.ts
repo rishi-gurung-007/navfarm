@@ -10,6 +10,7 @@ import { BatchTransferService } from '../batch/batch-transfer.service';
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
 import { ApprovalService } from '../approval/approval.service';
 import * as schema from '../../../core/database/schema';
+import { activityStates } from './entry-history-state';
 
 /**
  * The db mock answers by table rather than by call order. The previous version
@@ -402,5 +403,277 @@ describe('BatchDailyDataService', () => {
       expect(approvalService.approve).not.toHaveBeenCalled();
     });
 
+  });
+  /* ──────────────────────────────────────────────────────────────────────
+   * Phase 6: what the Daily Data Entry screen argues from.
+   *
+   * The form now carries the active entry as the contract's EntryView, the
+   * parent Activity cards, and who a line may be recorded against; History
+   * answers the rail beside it. All three are read-only — they decide what the
+   * screen may offer, never what it writes.
+   * ────────────────────────────────────────────────────────────────────── */
+  describe('the Phase 6 entry form', () => {
+    /** A scheduler of n daily lines, all due from the scheduler's own start. */
+    const formLines = (specs: Array<Record<string, unknown>>) => {
+      rows.set(schema.schedulerLine, specs.map((spec, i) => ({
+        line_id: `line-${i + 1}`, scheduler_id: 'sched-1', is_active: true, lot_required: false,
+        occurrence: 'DAILY', start_day: 1, end_day: null, day_of_week: null, is_mandatory: true,
+        stage_id: 'stage-1', line_seq: i + 1, line_type: 'DESCRIPTIVE',
+        activity_name: `Activity ${i + 1}`, kpi_metric: null, ...spec,
+      })));
+    };
+    const onDay = (day: string) => jest.spyOn(service as any, 'companyToday').mockResolvedValue(day);
+    const form = (date = ENTRY_DATE, user: unknown = { userId: 'u' }) =>
+      service.entryForm('batch-1', date, 'tenant-123', user as any);
+
+    it("hands each line its active entry in the contract's EntryView shape", async () => {
+      onDay(ENTRY_DATE);
+      formLines([{ line_type: 'CONSUMPTION', item_id: 'item-feed' }]);
+      rows.set(schema.batchDailyData, [{
+        entry_id: 'e-1', line_id: 'line-1', entry_date: ENTRY_DATE, status: 'DRAFT', version: 3,
+        entered_value: '12.5', entered_text: null, lot_no: 'LOT-9', remarks: 'am feed',
+        target_scope: 'SELECTED_ANIMALS', supersedes_entry_id: null, posted: false,
+      }]);
+      // Deliberately out of order: the screen shows a stable selection.
+      rows.set(schema.batchDailyDataTarget, [
+        { entry_id: 'e-1', animal_id: 'a-2' }, { entry_id: 'e-1', animal_id: 'a-1' },
+      ]);
+
+      const result = await form();
+
+      expect(result.lines[0].entry).toEqual(expect.objectContaining({
+        entry_id: 'e-1', status: 'DRAFT', version: 3, entered_value: 12.5, entered_text: null,
+        lot_no: 'LOT-9', remarks: 'am feed', target_scope: 'SELECTED_ANIMALS',
+        animal_ids: ['a-1', 'a-2'], supersedes_entry_id: null,
+      }));
+    });
+
+    // A row written before Phase 6 has no target_scope and no version of its own;
+    // it was posted against the whole batch, and must still read as one.
+    it('reads a pre-Phase-6 row as a posted, version 1, whole-batch entry', async () => {
+      onDay(ENTRY_DATE);
+      formLines([{ line_type: 'CONSUMPTION', item_id: 'item-feed' }]);
+      rows.set(schema.batchDailyData, [{
+        entry_id: 'e-old', line_id: 'line-1', entry_date: ENTRY_DATE, entered_value: '4',
+        posted: true, status: 'POSTED', version: 1, target_scope: null,
+      }]);
+
+      const result = await form();
+
+      expect(result.lines[0].entry).toEqual(expect.objectContaining({
+        status: 'POSTED', version: 1, target_scope: 'BATCH', animal_ids: [],
+      }));
+    });
+
+    it('offers Correct only for the line types a correction can reverse today', async () => {
+      onDay(ENTRY_DATE);
+      formLines([
+        { line_type: 'CONSUMPTION', item_id: 'item-feed' },
+        { line_type: 'OUTPUT', item_id: 'item-pig' },
+        { line_type: 'DESCRIPTIVE', kpi_metric: 'MORTALITY_COUNT' },
+        { line_type: 'DESCRIPTIVE', kpi_metric: 'AVG_WEIGHT' },
+      ]);
+      rows.set(schema.batchDailyData, ['line-1', 'line-2', 'line-3', 'line-4'].map((line_id, i) => ({
+        entry_id: `e-${i + 1}`, line_id, entry_date: ENTRY_DATE, status: 'POSTED', version: 1, posted: true,
+      })));
+
+      const result = await form();
+
+      expect(result.lines.map((l) => l.correctable)).toEqual([true, false, false, true]);
+    });
+
+    it('never offers Correct for a line that is only a draft, or has nothing on it', async () => {
+      onDay(ENTRY_DATE);
+      formLines([{ line_type: 'CONSUMPTION', item_id: 'item-feed' }, { line_type: 'CONSUMPTION', item_id: 'item-feed' }]);
+      rows.set(schema.batchDailyData, [{
+        entry_id: 'e-1', line_id: 'line-1', entry_date: ENTRY_DATE, status: 'DRAFT', version: 1,
+      }]);
+
+      const result = await form();
+
+      expect(result.lines.map((l) => l.correctable)).toEqual([false, false]);
+    });
+
+    // Correction obeys the same window as every other change: a worker owns
+    // today, a supervisor owns any day.
+    it('closes Correct on a past day for a worker and leaves it open for a supervisor', async () => {
+      onDay('2026-09-10');
+      formLines([{ line_type: 'CONSUMPTION', item_id: 'item-feed' }]);
+      rows.set(schema.batchDailyData, [{
+        entry_id: 'e-1', line_id: 'line-1', entry_date: ENTRY_DATE, status: 'POSTED', version: 1, posted: true,
+      }]);
+
+      expect((await form()).lines[0].correctable).toBe(false);
+
+      rows.set(schema.userRoleAssignment, [{
+        moduleCode: 'PRODUCTION', resource: 'BATCH_ENTRY',
+        canView: true, canCreate: true, canEdit: true, canDelete: false, canApprove: true, canExport: true, canPrint: true,
+      }]);
+      expect((await form()).lines[0].correctable).toBe(true);
+    });
+
+    it('groups the day into Activity parent cards through the shared rule', async () => {
+      onDay(ENTRY_DATE);
+      formLines([
+        { line_type: 'CONSUMPTION', item_id: 'item-feed', is_mandatory: true },
+        { line_type: 'CONSUMPTION', item_id: 'item-feed', is_mandatory: true },
+        { line_type: 'DESCRIPTIVE', is_mandatory: false },
+      ]);
+      rows.set(schema.batchDailyData, [
+        { entry_id: 'e-1', line_id: 'line-1', entry_date: ENTRY_DATE, status: 'POSTED', version: 1 },
+        { entry_id: 'e-3', line_id: 'line-3', entry_date: ENTRY_DATE, status: 'DRAFT', version: 1 },
+      ]);
+
+      const result = await form();
+
+      expect(result.activities).toEqual(activityStates([
+        { line_id: 'line-1', line_type: 'CONSUMPTION', line_seq: 1, is_mandatory: true, status: 'POSTED' },
+        { line_id: 'line-2', line_type: 'CONSUMPTION', line_seq: 2, is_mandatory: true, status: null },
+        { line_id: 'line-3', line_type: 'DESCRIPTIVE', line_seq: 3, is_mandatory: false, status: 'DRAFT' },
+      ]));
+      expect(result.activities[0]).toEqual({
+        line_type: 'CONSUMPTION', state: 'IN_PROGRESS', required: 2, posted: 1, drafts: 0,
+        line_ids: ['line-1', 'line-2'],
+      });
+    });
+
+    it('tells a Count Only batch it has a batch to record against and no animals', async () => {
+      onDay(ENTRY_DATE);
+      formLines([{}]);
+
+      const result = await form();
+
+      expect(result.targeting).toEqual({ mode: 'COUNT_ONLY', default_scope: 'BATCH', stage_animals: [] });
+    });
+
+    it('offers a Registered batch the animals standing in the chosen stage, with their codes', async () => {
+      onDay(ENTRY_DATE);
+      rows.set(schema.batchHeader, [{ batch_id: 'batch-1', tenant_id: 'tenant-123', start_date: ENTRY_DATE, animal_tracking: 'REGISTERED' }]);
+      formLines([{}]);
+      // The mock runs no GROUP BY, so one fixture serves both reads: the grouped
+      // shape liveStageAnimalCounts() selects and the animal rows targeting needs.
+      rows.set(schema.animalRegister, [
+        { stage_id: 'stage-1', n: 2, animal_id: 'a-1', animal_code: 'PIG-2026-0001', ear_tag: 'E-1' },
+        { stage_id: 'stage-1', n: 2, animal_id: 'a-2', animal_code: 'PIG-2026-0002', ear_tag: null },
+      ]);
+
+      const result = await form();
+
+      expect(result.targeting).toEqual({
+        mode: 'REGISTERED',
+        default_scope: 'STAGE_ANIMALS',
+        stage_animals: [
+          { animal_id: 'a-1', animal_code: 'PIG-2026-0001', ear_tag: 'E-1' },
+          { animal_id: 'a-2', animal_code: 'PIG-2026-0002', ear_tag: null },
+        ],
+      });
+    });
+
+    it('still answers a batch with no scheduler, with nothing to do and nothing to target', async () => {
+      onDay(ENTRY_DATE);
+      rows.set(schema.schedulerHeader, []);
+
+      const result = await form();
+
+      expect(result.hasScheduler).toBe(false);
+      expect(result.activities).toEqual([]);
+      expect(result.targeting).toEqual({ mode: 'COUNT_ONLY', default_scope: 'BATCH', stage_animals: [] });
+    });
+
+    // Ruling 1: a corrected line keeps its old row for the audit trail. Reading
+    // it back would show the day twice and count it twice.
+    it('never reads a superseded row back as the day\'s entry', async () => {
+      await service.findForDate('batch-1', ENTRY_DATE, 'tenant-123');
+
+      const { sql, params } = renderedWhereFor(schema.batchDailyData);
+      expect(sql).toContain('`batch_daily_data`.`status` <> ?');
+      expect(params).toContain('SUPERSEDED');
+    });
+
+    it('leaves superseded dates out of the history list of dates', async () => {
+      await service.entryDates('batch-1', 'tenant-123');
+
+      const { sql, params } = renderedWhereFor(schema.batchDailyData);
+      expect(sql).toContain('`batch_daily_data`.`status` <> ?');
+      expect(params).toContain('SUPERSEDED');
+    });
+  });
+
+  describe('history', () => {
+    const dailyMandatory = () => rows.set(schema.schedulerLine, [{
+      line_id: 'line-1', scheduler_id: 'sched-1', is_active: true, lot_required: false,
+      occurrence: 'DAILY', start_day: 1, end_day: null, day_of_week: null, is_mandatory: true,
+      stage_id: 'stage-1', line_seq: 1, line_type: 'DESCRIPTIVE', activity_name: 'Head Count',
+    }]);
+
+    it('answers newest first, with the state the rule module decides for each day', async () => {
+      dailyMandatory();
+      jest.spyOn(service as any, 'companyToday').mockResolvedValue('2026-09-10');
+      rows.set(schema.batchDailyData, [
+        { entry_id: 'e-1', line_id: 'line-1', entry_date: '2026-09-08', status: 'POSTED', version: 1 },
+        { entry_id: 'e-2', line_id: 'line-1', entry_date: '2026-09-10', status: 'DRAFT', version: 1 },
+      ]);
+
+      const data = await service.history('batch-1', '2026-09-10', 30, 'tenant-123');
+
+      expect(data.map((d) => d.date)).toEqual(['2026-09-10', '2026-09-09', '2026-09-08']);
+      expect(data.map((d) => d.state)).toEqual(['IN_PROGRESS', 'MISSING', 'COMPLETE']);
+      expect(data[0]).toEqual({ date: '2026-09-10', state: 'IN_PROGRESS', required: 1, posted: 0, drafts: 1 });
+      expect(data[2]).toEqual({ date: '2026-09-08', state: 'COMPLETE', required: 1, posted: 1, drafts: 0 });
+    });
+
+    // Ruling 1 again, from the other side: a draft is not an answer, so it
+    // cannot clear a day the farm still owes.
+    it('leaves a past day Missing when all it has is a draft', async () => {
+      dailyMandatory();
+      jest.spyOn(service as any, 'companyToday').mockResolvedValue('2026-09-10');
+      rows.set(schema.batchDailyData, [{ entry_id: 'e-1', line_id: 'line-1', entry_date: '2026-09-09', status: 'DRAFT', version: 1 }]);
+
+      const data = await service.history('batch-1', '2026-09-09', 1, 'tenant-123');
+
+      expect(data).toEqual([{ date: '2026-09-09', state: 'MISSING', required: 1, posted: 0, drafts: 1 }]);
+    });
+
+    it('never reaches past sixty days, and never before the batch started', async () => {
+      dailyMandatory();
+      jest.spyOn(service as any, 'companyToday').mockResolvedValue('2026-12-31');
+
+      const bounded = await service.history('batch-1', '2026-12-31', 500, 'tenant-123');
+      expect(bounded).toHaveLength(60);
+      expect(bounded[59].date).toBe('2026-11-02');
+
+      // The batch starts on 2026-09-08; thirty days back from the 10th is not.
+      const clipped = await service.history('batch-1', '2026-09-10', 30, 'tenant-123');
+      expect(clipped.map((d) => d.date)).toEqual(['2026-09-10', '2026-09-09', '2026-09-08']);
+    });
+
+    it('reads superseded rows as gone, not as an answer', async () => {
+      dailyMandatory();
+      jest.spyOn(service as any, 'companyToday').mockResolvedValue('2026-09-08');
+
+      await service.history('batch-1', ENTRY_DATE, 1, 'tenant-123');
+
+      const { sql, params } = renderedWhereFor(schema.batchDailyData);
+      expect(sql).toContain('`batch_daily_data`.`status` <> ?');
+      expect(params).toContain('SUPERSEDED');
+    });
+
+    it('loads its batch through the farm scope, so another farm\'s history is not found', async () => {
+      useFarmScope({ farmId: 'farm-g', restricted: true, companyId: 'comp-1', lobId: 'lob-1' });
+      rows.set(schema.batchHeader, []);
+
+      await expect(service.history('batch-1', ENTRY_DATE, 30, 'tenant-123')).rejects.toThrow(NotFoundException);
+
+      const { sql, params } = renderedWhereFor(schema.batchHeader);
+      expect(sql).toContain('`batch_header`.`farm_id` = ?');
+      expect(params).toEqual(expect.arrayContaining(['farm-g']));
+    });
+
+    it('has nothing to say about a batch with no scheduler', async () => {
+      rows.set(schema.schedulerHeader, []);
+      jest.spyOn(service as any, 'companyToday').mockResolvedValue('2026-09-10');
+
+      expect(await service.history('batch-1', '2026-09-10', 30, 'tenant-123')).toEqual([]);
+    });
   });
 });

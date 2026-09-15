@@ -1,7 +1,8 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsInt, Min, Max, IsNumber, IsIn } from 'class-validator';
-import { Type } from 'class-transformer';
+import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsInt, Min, Max, IsNumber, IsIn, IsArray, ValidateNested } from 'class-validator';
+import { Transform, Type } from 'class-transformer';
 import { MasterListQueryDto } from '../../../../common/master-list-query';
+import { KPI_METRICS } from '../../../production/scheduler-header/dto/scheduler-header.dto';
 
 // ==========================================
 // SPECIES DTOs
@@ -500,6 +501,59 @@ const LIFECYCLE_CATEGORIES = ['SOW', 'GILT', 'BOAR', 'PIGLET', 'COMMERCIAL_PIG']
 const MAX_TEATS = 99;
 const SEASON_TYPES = ['ALL', 'SUMMER', 'WINTER'] as const;
 
+// The row editor writes "" when a number box is cleared. Treated as not given,
+// so an open-ended limit is simply absent rather than a failed number check.
+const blankToNull = ({ value }: { value: unknown }) => (value === '' ? null : value);
+
+/**
+ * One KPI row: which metric, its limits and how loud the alert is. The metric
+ * is the Scheduler's own KPI vocabulary (scheduler-header.dto KPI_METRICS), so
+ * a lifecycle threshold and the DESCRIPTIVE line that captures the value name
+ * the same thing. Either limit may be left open, not both.
+ */
+export class KpiThresholdRowDto {
+  @ApiProperty({ enum: KPI_METRICS })
+  @IsString()
+  @IsIn(KPI_METRICS)
+  metric: string;
+
+  @ApiProperty({ required: false, nullable: true })
+  @Transform(blankToNull)
+  @IsNumber()
+  @IsOptional()
+  lower_limit?: number | null;
+
+  @ApiProperty({ required: false, nullable: true })
+  @Transform(blankToNull)
+  @IsNumber()
+  @IsOptional()
+  upper_limit?: number | null;
+
+  @ApiProperty({ enum: ALERT_SEVERITIES })
+  @IsString()
+  @IsIn(ALERT_SEVERITIES)
+  severity: string;
+}
+
+/** One resource this breed needs at this stage, chosen from Resource Master. */
+export class ResourceRequirementRowDto {
+  @ApiProperty({ description: 'resource_master.resource_id' })
+  @IsUUID()
+  resource_id: string;
+
+  @ApiProperty({ required: false, nullable: true })
+  @Transform(blankToNull)
+  @IsNumber()
+  @Min(0)
+  @IsOptional()
+  quantity?: number | null;
+
+  @ApiProperty({ required: false, nullable: true })
+  @IsString()
+  @IsOptional()
+  notes?: string | null;
+}
+
 export class CreateBreedLifecycleStageDto {
   @ApiProperty({ description: 'Unique code for this record within the tenant/company scope. Optional: no breed lifecycle stage number series is configured yet, so a code is only stored when one is typed. Once a series is configured the code is generated instead.', required: false, example: 'BLS-001' })
   @IsString()
@@ -602,23 +656,30 @@ export class CreateBreedLifecycleStageDto {
   @IsOptional()
   medication_protocol?: any;
 
-  @ApiProperty({ description: 'Standard vaccination schedule for this stage', required: false })
+  @ApiProperty({ description: 'Standard vaccination schedule for this stage. Each row may carry withdrawal_days, as medication rows do (0–99).', required: false })
   @IsOptional()
   vaccination_protocol?: any;
 
-  @ApiProperty({ description: 'Labour standard for this stage, used in resource planning', required: false })
+  @ApiProperty({ description: 'Resources this stage needs, each chosen from Resource Master: [{ resource_id, quantity, notes }]', required: false, type: [ResourceRequirementRowDto] })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ResourceRequirementRowDto)
   @IsOptional()
-  resource_requirements?: any;
+  resource_requirements?: ResourceRequirementRowDto[];
 
   @ApiProperty({
     description: 'KPI thresholds for this stage, each naming its own metric and carrying its own alert: '
       + '[{ metric, lower_limit, upper_limit, severity }]. Supersedes the single unnamed '
       + 'kpi_lower_limit/kpi_upper_limit/alert_severity trio, which could not say which metric it bounded.',
     required: false,
-    example: [{ metric: 'ADG_GPD', lower_limit: 450, upper_limit: null, severity: 'WARNING' }],
+    type: [KpiThresholdRowDto],
+    example: [{ metric: 'ADG', lower_limit: 450, upper_limit: null, severity: 'WARNING' }],
   })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => KpiThresholdRowDto)
   @IsOptional()
-  kpi_thresholds?: any;
+  kpi_thresholds?: KpiThresholdRowDto[];
 
   @ApiProperty({ description: 'Alert if actual KPI falls below this', required: false })
   @IsNumber()
@@ -756,19 +817,26 @@ export class UpdateBreedLifecycleStageDto {
   @IsOptional()
   vaccination_protocol?: any;
 
-  @ApiProperty({ required: false })
+  @ApiProperty({ required: false, type: [ResourceRequirementRowDto] })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ResourceRequirementRowDto)
   @IsOptional()
-  resource_requirements?: any;
+  resource_requirements?: ResourceRequirementRowDto[];
 
   @ApiProperty({
     description: 'KPI thresholds for this stage, each naming its own metric and carrying its own alert: '
       + '[{ metric, lower_limit, upper_limit, severity }]. Supersedes the single unnamed '
       + 'kpi_lower_limit/kpi_upper_limit/alert_severity trio, which could not say which metric it bounded.',
     required: false,
-    example: [{ metric: 'ADG_GPD', lower_limit: 450, upper_limit: null, severity: 'WARNING' }],
+    type: [KpiThresholdRowDto],
+    example: [{ metric: 'ADG', lower_limit: 450, upper_limit: null, severity: 'WARNING' }],
   })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => KpiThresholdRowDto)
   @IsOptional()
-  kpi_thresholds?: any;
+  kpi_thresholds?: KpiThresholdRowDto[];
 
   @ApiProperty({ required: false })
   @IsNumber()

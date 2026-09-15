@@ -249,7 +249,9 @@ describe('AnimalService', () => {
 
     it('refuses placing an animal on another farm', async () => {
       useFarmScope(cls, { farmId: 'farm-g', restricted: true, companyId: 'co-1', lobId: 'lob-pig' });
-      const penOnKintyre = { location_id: 'pen-k', parent: 'shed-k', farm_id: 'farm-k' };
+      // location_type matters since the pen-only placement rule: a non-Pen row
+      // is refused before the farm assertion this test exists to exercise.
+      const penOnKintyre = { location_id: 'pen-k', parent: 'shed-k', farm_id: 'farm-k', location_type: 'PEN' };
       mockDbSelect
         .mockReturnValueOnce(found({ company_id: 'comp-1' }))
         .mockReturnValueOnce(found({ nob_id: 'nob-1' }))
@@ -268,7 +270,7 @@ describe('AnimalService', () => {
     it('refuses a location-only placement when the Breed belongs to another farm', async () => {
       useFarmScope(cls, { farmId: 'farm-g', restricted: true, companyId: 'co-1', lobId: 'lob-pig' });
       const penOnGrasmere = {
-        location_id: 'pen-g', parent_location_id: 'shed-g', farm_id: 'farm-g',
+        location_id: 'pen-g', parent_location_id: 'shed-g', farm_id: 'farm-g', location_type: 'PEN',
         tenant_id: 'tenant-1', company_id: 'co-1', nob_id: 'nob-1', lob_id: 'lob-pig',
         is_active: true, deleted_at: null,
       };
@@ -297,7 +299,7 @@ describe('AnimalService', () => {
    */
   describe('create is bounded by the caller scope before anything is written', () => {
     const grasmereOperator = { farmId: 'farm-g', restricted: true, companyId: 'co-1', lobId: 'lob-pig' };
-    const penOnGrasmere = { location_id: 'pen-g', parent: 'shed-g', parent_location_id: 'shed-g', farm_id: 'farm-g', company_id: 'co-1', lob_id: null };
+    const penOnGrasmere = { location_id: 'pen-g', parent: 'shed-g', parent_location_id: 'shed-g', farm_id: 'farm-g', company_id: 'co-1', lob_id: null, location_type: 'PEN' };
     const recordInserts = () => mockDbInsert.mockReturnValue({ values: jest.fn().mockResolvedValue({}) });
 
     it("refuses another LOB's lob_id before any insert", async () => {
@@ -946,6 +948,7 @@ describe('AnimalService', () => {
         .mockReturnValueOnce(found({
           location_id: 'pen-2', tenant_id: 'tenant-123', company_id: 'comp-1',
           nob_id: 'nob-1', lob_id: 'lob-1', farm_id: 'farm-2', parent_location_id: 'shed-2',
+          location_type: 'PEN',
         }));
 
       await expect(service.transitionStage(
@@ -1049,6 +1052,7 @@ describe('AnimalService', () => {
         .mockReturnValueOnce(found({
           location_id: 'loc-1', tenant_id: 'tenant-123', company_id: 'comp-1',
           nob_id: 'nob-1', lob_id: 'lob-1', farm_id: 'farm-1', parent_location_id: 'shed-1',
+          location_type: 'PEN',
         })) // effective location
         .mockReturnValueOnce(found({
           location_id: 'farm-1', tenant_id: 'tenant-123', company_id: 'comp-1',
@@ -1119,6 +1123,7 @@ describe('AnimalService', () => {
         .mockReturnValueOnce(found({
           location_id: 'loc-1', tenant_id: 'tenant-123', company_id: 'comp-1',
           nob_id: 'nob-1', lob_id: 'lob-1', farm_id: 'farm-1', parent_location_id: 'shed-1',
+          location_type: 'PEN',
         }))
         .mockReturnValueOnce(found({
           location_id: 'farm-1', tenant_id: 'tenant-123', company_id: 'comp-1',

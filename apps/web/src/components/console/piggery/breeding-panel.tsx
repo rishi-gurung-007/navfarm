@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Heart,
   Baby,
@@ -37,6 +37,9 @@ const S = {
   input:   { backgroundColor: "var(--surface)", borderColor: "var(--border)", color: "var(--text-primary)" },
 };
 
+// breeding_record.conception_result (15 Sep correction 6).
+const CONCEPTION_RESULTS = ["CONFIRMED", "REPEAT", "FAILED", "PENDING"] as const;
+
 export function BreedingPanel() {
   const { formatMoney } = useCompanyCurrency();
   const { t } = useLanguage();
@@ -50,6 +53,7 @@ export function BreedingPanel() {
   const [farrowings, setFarrowings] = useState<Row[]>([]);
   const [semenBatches, setSemenBatches] = useState<Row[]>([]);
   const [animals, setAnimals] = useState<Row[]>([]);
+  const [batches, setBatches] = useState<Row[]>([]);
 
   // Modals
   const [showMatingModal, setShowMatingModal] = useState(false);
@@ -61,7 +65,7 @@ export function BreedingPanel() {
   const [selectedFarrow, setSelectedFarrow] = useState<Row | null>(null);
 
   // Forms
-  const [matingForm, setMatingForm] = useState({
+  const emptyMatingForm = () => ({
     sow_animal_id: "",
     mating_type: "AI",
     boar_animal_id: "",
@@ -69,11 +73,26 @@ export function BreedingPanel() {
     semen_dose_qty: "1.00",
     mating_date: new Date().toISOString().slice(0, 10),
     second_mating_date: "",
+    batch_id: "",
+    expected_farrowing_date: "",
+    preg_check_date: "",
+    conception_result: "PENDING",
+    parity_number: "",
+    boar_parity_number: "",
     notes: "",
   });
+  const [matingForm, setMatingForm] = useState(emptyMatingForm);
+  // Fields the user has typed over. The API's defaults refill only the rest, so
+  // changing the sow or the date does not wipe an edited farrowing date.
+  const editedMatingFields = useRef<Set<string>>(new Set());
+  const [gestationDays, setGestationDays] = useState<number | null>(null);
+  const editMating = (field: string, value: string) => {
+    editedMatingFields.current.add(field);
+    setMatingForm((form) => ({ ...form, [field]: value }));
+  };
 
   const [pregCheckForm, setPregCheckForm] = useState({
-    pregnancy_confirmed: true,
+    conception_result: "CONFIRMED",
     preg_check_method: "ULTRASOUND",
     preg_check_date: new Date().toISOString().slice(0, 10),
     notes: "",
@@ -121,16 +140,20 @@ export function BreedingPanel() {
     setLoading(true);
     setError(null);
     try {
-      const [mRes, fRes, sRes, aRes] = await Promise.all([
+      const [mRes, fRes, sRes, aRes, bRes] = await Promise.all([
         api.get("/piggery/breeding/mating").catch(() => []),
         api.get("/piggery/breeding/farrowing").catch(() => []),
         api.get("/piggery/breeding/semen-collection").catch(() => []),
         api.get("/animal").catch(() => []),
+        // The API bounds this to the active farm; the service write checks
+        // again that the batch is on the sow's own farm.
+        api.get("/batch?limit=100").catch(() => []),
       ]);
       setMatings(unwrap<Row[]>(mRes) || []);
       setFarrowings(unwrap<Row[]>(fRes) || []);
       setSemenBatches(unwrap<Row[]>(sRes) || []);
       setAnimals(unwrap<Row[]>(aRes) || []);
+      setBatches((unwrap<Row[]>(bRes) || []).filter((b) => b.status !== "CLOSED" && b.status !== "CANCELLED"));
     } catch (e: any) {
       setError(e.message || t("brpErrorLoadFailed"));
     } finally {
@@ -149,15 +172,55 @@ export function BreedingPanel() {
     (a) => a.animal_type === "BOAR" || a.gender === "M"
   );
 
+  // Prefill from the API, which owns the rules: the sow's breed gestation
+  // days (116 when the breed has none), check at +28, sow parity from her
+  // completed parities, boar parity from his prior services, her own batch.
+  useEffect(() => {
+    if (!showMatingModal || !matingForm.sow_animal_id || !matingForm.mating_date) return;
+    let cancelled = false;
+    const params = new URLSearchParams({ sow_animal_id: matingForm.sow_animal_id, mating_date: matingForm.mating_date });
+    if (matingForm.boar_animal_id) params.set("boar_animal_id", matingForm.boar_animal_id);
+    if (matingForm.semen_lot_id) params.set("semen_lot_id", matingForm.semen_lot_id);
+    api.get(`/piggery/breeding/mating/defaults?${params.toString()}`)
+      .then((res) => {
+        if (cancelled) return;
+        const d = unwrap<Row>(res) || {};
+        setGestationDays(d.gestation_days ?? null);
+        const edited = editedMatingFields.current;
+        setMatingForm((form) => ({
+          ...form,
+          expected_farrowing_date: edited.has("expected_farrowing_date") ? form.expected_farrowing_date : (d.expected_farrowing_date ?? ""),
+          preg_check_date: edited.has("preg_check_date") ? form.preg_check_date : (d.preg_check_date ?? ""),
+          parity_number: edited.has("parity_number") ? form.parity_number : (d.parity_number != null ? String(d.parity_number) : ""),
+          boar_parity_number: edited.has("boar_parity_number") ? form.boar_parity_number : (d.boar_parity_number != null ? String(d.boar_parity_number) : ""),
+          batch_id: edited.has("batch_id") ? form.batch_id : (d.batch_id ?? ""),
+        }));
+      })
+      .catch((err: any) => { if (!cancelled) setError(err?.message || t("brpErrorMatingFailed")); });
+    return () => { cancelled = true; };
+  }, [showMatingModal, matingForm.sow_animal_id, matingForm.mating_date, matingForm.boar_animal_id, matingForm.semen_lot_id]);
+
+  const openMatingModal = () => {
+    editedMatingFields.current = new Set();
+    setGestationDays(null);
+    setMatingForm(emptyMatingForm());
+    setShowMatingModal(true);
+  };
+
   // Handlers
   const handleCreateMating = async (e: React.FormEvent) => {
     e.preventDefault();
     setSubmitting(true);
     setError(null);
     try {
+      // Blank optionals are left out rather than sent as "": the API validates
+      // ids as UUIDs, and "" is not a missing value to it.
+      const body: Row = Object.fromEntries(Object.entries(matingForm).filter(([, v]) => v !== ""));
       await api.post("/piggery/breeding/mating", {
-        ...matingForm,
+        ...body,
         semen_dose_qty: Number(matingForm.semen_dose_qty) || 1,
+        parity_number: matingForm.parity_number !== "" ? Number(matingForm.parity_number) : undefined,
+        boar_parity_number: matingForm.boar_parity_number !== "" ? Number(matingForm.boar_parity_number) : undefined,
       });
       setSuccess(t("brpSuccessMatingRecorded"));
       setShowMatingModal(false);
@@ -177,7 +240,12 @@ export function BreedingPanel() {
     try {
       await api.patch(
         `/piggery/breeding/mating/${selectedMating.breeding_id}/preg-check`,
-        pregCheckForm
+        {
+          conception_result: pregCheckForm.conception_result,
+          preg_check_method: pregCheckForm.preg_check_method,
+          preg_check_date: pregCheckForm.preg_check_date || undefined,
+          notes: pregCheckForm.notes || undefined,
+        }
       );
       setSuccess(t("brpSuccessPregCheckUpdated"));
       setShowPregCheckModal(false);
@@ -270,7 +338,7 @@ export function BreedingPanel() {
 
   // KPIs
   const activeInseminations = matings.filter(
-    (m) => m.pregnancy_confirmed !== false && m.days_until_farrowing >= 0
+    (m) => (m.conception_result === "CONFIRMED" || m.conception_result === "PENDING") && m.days_until_farrowing >= 0
   ).length;
   const totalLitters = farrowings.length;
   const totalBornLive = farrowings.reduce(
@@ -307,7 +375,7 @@ export function BreedingPanel() {
           <Button
             size="sm"
             onClick={() => {
-              if (subTab === "mating") setShowMatingModal(true);
+              if (subTab === "mating") openMatingModal();
               else if (subTab === "farrowing") setShowFarrowModal(true);
               else setShowSemenModal(true);
             }}
@@ -424,6 +492,8 @@ export function BreedingPanel() {
                   <tr>
                     <th className="py-3 px-4">{t("brpColSow")}</th>
                     <th className="py-3 px-4">{t("brpColType")}</th>
+                    <th className="py-3 px-4">{t("brpColBoar")}</th>
+                    <th className="py-3 px-4">{t("brpColBatch")}</th>
                     <th className="py-3 px-4">{t("brpColMatingDate")}</th>
                     <th className="py-3 px-4">{t("brpColPregCheck")}</th>
                     <th className="py-3 px-4">{t("brpColExpectedFarrowing")}</th>
@@ -434,7 +504,7 @@ export function BreedingPanel() {
                 <tbody className="divide-y" style={{ borderColor: "var(--border)" }}>
                   {matings.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="py-12 text-center" style={S.muted}>
+                      <td colSpan={9} className="py-12 text-center" style={S.muted}>
                         {t("brpEmptyMatings")}
                       </td>
                     </tr>
@@ -457,6 +527,15 @@ export function BreedingPanel() {
                             {m.mating_type}
                           </span>
                         </td>
+                        <td className="py-3.5 px-4">
+                          <div className="text-xs font-semibold" style={m.boar_code ? S.primary : S.muted}>{m.boar_code || "--"}</div>
+                          {m.boar_parity_number != null && (
+                            <div className="text-[11px]" style={S.sub}>{t("brpBoarParity", { parity: m.boar_parity_number })}</div>
+                          )}
+                        </td>
+                        <td className="py-3.5 px-4 font-mono text-xs" style={m.batch_no ? S.sub : S.muted}>
+                          {m.batch_no || "--"}
+                        </td>
                         <td className="py-3.5 px-4 font-mono text-xs" style={S.sub}>
                           {m.mating_date}
                           {m.second_mating_date && (
@@ -464,13 +543,20 @@ export function BreedingPanel() {
                           )}
                         </td>
                         <td className="py-3.5 px-4">
-                          {m.pregnancy_confirmed === true ? (
+                          {/* conception_result is the field of record; REPEAT (back
+                              on heat) and FAILED are both not-pregnant but not
+                              the same outcome, which the boolean could not say. */}
+                          {m.conception_result === "CONFIRMED" ? (
                             <span className="inline-flex items-center gap-1 text-xs font-medium" style={S.success}>
                               <CheckCircle2 className="w-3.5 h-3.5" /> {t("brpStatusConfirmed")}
                             </span>
-                          ) : m.pregnancy_confirmed === false ? (
+                          ) : m.conception_result === "FAILED" ? (
                             <span className="inline-flex items-center gap-1 text-xs font-medium" style={S.danger}>
                               <XCircle className="w-3.5 h-3.5" /> {t("brpStatusFailed")}
+                            </span>
+                          ) : m.conception_result === "REPEAT" ? (
+                            <span className="inline-flex items-center gap-1 text-xs font-medium" style={S.warning}>
+                              <XCircle className="w-3.5 h-3.5" /> {t("brpStatusRepeat")}
                             </span>
                           ) : (
                             <span className="inline-flex items-center gap-1 text-xs font-medium" style={S.warning}>
@@ -502,6 +588,12 @@ export function BreedingPanel() {
                             size="sm"
                             onClick={() => {
                               setSelectedMating(m);
+                              setPregCheckForm({
+                                conception_result: m.conception_result && m.conception_result !== "PENDING" ? m.conception_result : "CONFIRMED",
+                                preg_check_method: m.preg_check_method || "ULTRASOUND",
+                                preg_check_date: m.preg_check_date || new Date().toISOString().slice(0, 10),
+                                notes: "",
+                              });
                               setShowPregCheckModal(true);
                             }}
                           >
@@ -703,15 +795,20 @@ export function BreedingPanel() {
                 </div>
               </div>
 
-              {matingForm.mating_type === "NATURAL_MATING" ? (
+              {/* The boar is asked for AI too, and optional there: his parity on
+                  this service needs him. An AI dose picked from a semen lot
+                  names its boar by itself. */}
+              <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold mb-1" style={S.sub}>{t("brpLabelBoarAnimal")}</label>
+                  <label className="block text-xs font-semibold mb-1" style={S.sub}>
+                    {matingForm.mating_type === "NATURAL_MATING" ? t("brpLabelBoarAnimal") : t("brpLabelBoarOptional")}
+                  </label>
                   <select
                     className="nf-input w-full text-sm"
                     style={S.input}
                     value={matingForm.boar_animal_id}
                     onChange={(e) => setMatingForm({ ...matingForm, boar_animal_id: e.target.value })}
-                    required
+                    required={matingForm.mating_type === "NATURAL_MATING"}
                   >
                     <option value="">{t("brpSelectBoar")}</option>
                     {boars.map((b) => (
@@ -721,18 +818,42 @@ export function BreedingPanel() {
                     ))}
                   </select>
                 </div>
-              ) : (
+                <div>
+                  <label className="block text-xs font-semibold mb-1" style={S.sub}>{t("brpLabelBatch")}</label>
+                  <select
+                    className="nf-input w-full text-sm"
+                    style={S.input}
+                    value={matingForm.batch_id}
+                    onChange={(e) => editMating("batch_id", e.target.value)}
+                  >
+                    <option value="">{t("brpSelectBatch")}</option>
+                    {batches.map((b) => (
+                      <option key={b.batch_id} value={b.batch_id}>{b.batch_no}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {matingForm.mating_type === "AI" && (
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-semibold mb-1" style={S.sub}>{t("brpLabelSemenLotId")}</label>
-                    <input
-                      type="text"
-                      placeholder={t("brpPlaceholderSemenLot")}
+                    {/* A select of logged collections, not free text: the API
+                        accepts only a semen_batch id, so a typed lot name was
+                        always refused. */}
+                    <select
                       className="nf-input w-full text-sm"
                       style={S.input}
                       value={matingForm.semen_lot_id}
                       onChange={(e) => setMatingForm({ ...matingForm, semen_lot_id: e.target.value })}
-                    />
+                    >
+                      <option value="">{t("brpSelectSemenLot")}</option>
+                      {semenBatches.map((sb) => (
+                        <option key={sb.semen_batch_id} value={sb.semen_batch_id}>
+                          {t("brpSemenLotOptionLabel", { boar: sb.boar_code, date: sb.collection_date })}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                   <div>
                     <label className="block text-xs font-semibold mb-1" style={S.sub}>{t("brpLabelDoseQuantity")}</label>
@@ -759,14 +880,73 @@ export function BreedingPanel() {
                 />
               </div>
 
-              <div className="p-3 rounded-[var(--radius-md)] border text-xs space-y-1" style={S.raised}>
-                <div className="flex justify-between">
-                  <span style={S.sub}>{t("brpLabelScheduledGestation")}</span>
-                  <span className="font-semibold" style={S.primary}>{t("brpValueGestationDays")}</span>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold mb-1" style={S.sub}>{t("brpLabelExpectedFarrowingDate")}</label>
+                  <input
+                    type="date"
+                    className="nf-input w-full text-sm"
+                    style={S.input}
+                    value={matingForm.expected_farrowing_date}
+                    min={matingForm.mating_date}
+                    onChange={(e) => editMating("expected_farrowing_date", e.target.value)}
+                  />
+                  {gestationDays != null && (
+                    <p className="text-[11px] mt-1" style={S.muted}>{t("brpHintGestationDays", { days: gestationDays })}</p>
+                  )}
                 </div>
-                <div className="flex justify-between">
-                  <span style={S.sub}>{t("brpLabelUltrasoundCheck")}</span>
-                  <span className="font-semibold" style={S.primary}>{t("brpValue28DaysPostMating")}</span>
+                <div>
+                  <label className="block text-xs font-semibold mb-1" style={S.sub}>{t("brpLabelPregCheckDate")}</label>
+                  <input
+                    type="date"
+                    className="nf-input w-full text-sm"
+                    style={S.input}
+                    value={matingForm.preg_check_date}
+                    min={matingForm.mating_date}
+                    onChange={(e) => editMating("preg_check_date", e.target.value)}
+                  />
+                  <p className="text-[11px] mt-1" style={S.muted}>{t("brpValue28DaysPostMating")}</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold mb-1" style={S.sub}>{t("brpLabelResultShort")}</label>
+                  <select
+                    className="nf-input w-full text-sm"
+                    style={S.input}
+                    value={matingForm.conception_result}
+                    onChange={(e) => editMating("conception_result", e.target.value)}
+                  >
+                    {CONCEPTION_RESULTS.map((r) => (
+                      <option key={r} value={r}>{t(`brpResult${r}`)}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold mb-1" style={S.sub}>{t("brpLabelSowParity")}</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    className="nf-input w-full text-sm"
+                    style={S.input}
+                    value={matingForm.parity_number}
+                    onChange={(e) => editMating("parity_number", e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold mb-1" style={S.sub}>{t("brpLabelBoarParity")}</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    className="nf-input w-full text-sm"
+                    style={S.input}
+                    value={matingForm.boar_parity_number}
+                    disabled={!matingForm.boar_animal_id && !matingForm.semen_lot_id}
+                    onChange={(e) => editMating("boar_parity_number", e.target.value)}
+                  />
                 </div>
               </div>
 
@@ -799,22 +979,20 @@ export function BreedingPanel() {
               <div>
                 <label className="block text-xs font-semibold mb-1" style={S.sub}>{t("brpLabelResult")}</label>
                 <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setPregCheckForm({ ...pregCheckForm, pregnancy_confirmed: true })}
-                    className="py-2 px-3 rounded-lg text-xs font-semibold border flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
-                    style={pregCheckForm.pregnancy_confirmed ? S.success : S.surface}
-                  >
-                    <CheckCircle2 className="w-4 h-4" /> {t("brpOptionConfirmedPregnant")}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setPregCheckForm({ ...pregCheckForm, pregnancy_confirmed: false })}
-                    className="py-2 px-3 rounded-lg text-xs font-semibold border flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
-                    style={!pregCheckForm.pregnancy_confirmed ? S.danger : S.surface}
-                  >
-                    <XCircle className="w-4 h-4" /> {t("brpOptionFailedNotPregnant")}
-                  </button>
+                  {CONCEPTION_RESULTS.map((r) => (
+                    <button
+                      key={r}
+                      type="button"
+                      onClick={() => setPregCheckForm({ ...pregCheckForm, conception_result: r })}
+                      className="py-2 px-3 rounded-lg text-xs font-semibold border flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
+                      style={pregCheckForm.conception_result === r
+                        ? (r === "CONFIRMED" ? S.success : r === "PENDING" ? S.raised : r === "REPEAT" ? S.warning : S.danger)
+                        : S.surface}
+                    >
+                      {r === "CONFIRMED" ? <CheckCircle2 className="w-4 h-4" /> : r === "PENDING" ? <Clock className="w-4 h-4" /> : <XCircle className="w-4 h-4" />}
+                      {t(`brpResult${r}`)}
+                    </button>
+                  ))}
                 </div>
               </div>
 

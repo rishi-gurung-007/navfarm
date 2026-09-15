@@ -537,33 +537,34 @@ export class SchedulerHeaderService {
     const header = await this.findOne(id);
     const lineIds = header.lines.map((l) => l.line_id);
 
-    if (lineIds.length) {
-      const [recorded] = await this.db
-        .select({ entry_id: schema.batchDailyData.entry_id })
-        .from(schema.batchDailyData)
-        .where(inArray(schema.batchDailyData.line_id, lineIds))
-        .limit(1);
-      if (recorded) {
-        throw new ConflictException('This scheduler has recorded entries and cannot be deleted.');
-      }
-    }
-
+    // The entry gate sits INSIDE the transaction it guards: read outside it,
+    // a line could gain its first entry between the check and the delete and
+    // the scheduler would vanish over a recorded day. The audit row joins the
+    // same transaction so a rolled-back delete leaves no DELETE behind.
     await withTenantTransaction(this.cls, async () => {
       if (lineIds.length) {
+        const [recorded] = await this.db
+          .select({ entry_id: schema.batchDailyData.entry_id })
+          .from(schema.batchDailyData)
+          .where(inArray(schema.batchDailyData.line_id, lineIds))
+          .limit(1);
+        if (recorded) {
+          throw new ConflictException('This scheduler has recorded entries and cannot be deleted.');
+        }
         await this.db.delete(schema.schedulerLineCustomDays).where(inArray(schema.schedulerLineCustomDays.line_id, lineIds));
         await this.db.delete(schema.schedulerLine).where(inArray(schema.schedulerLine.line_id, lineIds));
       }
       await this.db.delete(schema.schedulerHeader).where(eq(schema.schedulerHeader.scheduler_id, id));
-    });
 
-    await this.auditService.log({
-      tenantId,
-      companyId: header.company_id,
-      userId: userPayload?.userId,
-      action: 'DELETE',
-      entityName: 'scheduler_header',
-      entityId: id,
-      oldValues: { batch_id: header.batch_id, stage_id: header.stage_id },
+      await this.auditService.log({
+        tenantId,
+        companyId: header.company_id,
+        userId: userPayload?.userId,
+        action: 'DELETE',
+        entityName: 'scheduler_header',
+        entityId: id,
+        oldValues: { batch_id: header.batch_id, stage_id: header.stage_id },
+      });
     });
 
     return { scheduler_id: id, deleted: true };

@@ -57,6 +57,22 @@ export function entryVerdict(req: EntryRequest): EntryVerdict {
 }
 
 /**
+ * Whether a posted line can be corrected today (Phase 6, Ruling 3).
+ *
+ * A correction supersedes the posting and reverses what it did, so it is only
+ * offered where there is a reversal to run: consumption has one
+ * (reverseConsumption), and a plain descriptive reading changed nothing that
+ * needs undoing. HEAD_COUNT and MORTALITY_COUNT readings move animal_register
+ * and the scheduler's head count, and output, overhead, resource and transfer
+ * postings have no reversal yet — those wait for Phase 13.
+ */
+export function isCorrectableLineType(line: { line_type: string | null; kpi_metric: string | null }): boolean {
+  if (line.line_type === 'CONSUMPTION') return true;
+  if (line.line_type !== 'DESCRIPTIVE') return false;
+  return line.kpi_metric !== 'HEAD_COUNT' && line.kpi_metric !== 'MORTALITY_COUNT';
+}
+
+/**
  * Today's date in a company's timezone.
  *
  * The farm's day, not the server's. A worker in Harare entering at 01:00 is

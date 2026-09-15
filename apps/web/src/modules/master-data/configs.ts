@@ -1,5 +1,15 @@
 import type { MasterDataConfig } from "./types";
 
+// The Scheduler's KPI metric vocabulary, as KPI_METRICS in
+// apps/api/src/modules/production/scheduler-header/dto/scheduler-header.dto.ts
+// (the scheduler screens carry the same copy). Breed lifecycle KPI rows use it
+// so a threshold names a metric a DESCRIPTIVE line can capture.
+const KPI_METRICS = [
+  "BODY_WEIGHT", "FCR", "ADG", "BCS_SCORE", "MORTALITY_COUNT", "TEMPERATURE",
+  "HEAD_COUNT", "LITTER_SIZE", "WEANING_WEIGHT", "PIGLETS_BORN", "SEMEN_MOTILITY",
+  "EGG_COUNT", "MILK_LITRES", "CUSTOM",
+];
+
 const STATUS_OPTIONS = [
   { value: "ACTIVE", label: "Active" },
   { value: "INACTIVE", label: "Inactive" },
@@ -73,8 +83,13 @@ const location: MasterDataConfig = {
       entityEndpoint: "/location-type", entityValueKey: "type_code", entityLabelKeys: ["type_code", "type_name"], section: "Identification",
     },
     {
+      // Filtered by the API, not only here. The picker used to fetch "/location"
+      // and narrow it in the browser — but the list is paged at 50 rows sorted by
+      // code, which on the nine-farm data is 48 pens and 12 sheds, so choosing
+      // SHED filtered 50 rows that held no Farm and offered nothing. parentForType
+      // asks for exactly the allowed parent types, whatever the table's size.
       key: "parent_location_id", label: "Parent Location", type: "select-entity", required: true, searchable: true,
-      entityEndpoint: "/location", entityValueKey: "location_id", entityLabelKeys: ["location_code", "location_name"],
+      entityEndpoint: "/location?parentForType={value}", entityValueKey: "location_id", entityLabelKeys: ["location_code", "location_name"],
       dependsOn: "location_type",
       restrictOptionsBy: {
         selectorKey: "location_type", selectorEntityEndpoint: "/location-type", selectorCodeKey: "type_code",
@@ -353,7 +368,7 @@ const animal: MasterDataConfig = {
     { key: "dob", label: "Date of Birth", type: "date", helpText: "Leave blank if born on this farm and unknown, or imported/unknown.", section: "Identification" },
     { key: "serial_number", label: "Serial Number", type: "text", helpText: "Asset tag from item_lot_serials, distinct from RFID/ear tag.", section: "Identification" },
     { key: "rfid_tag", label: "RFID Tag", type: "text", helpText: "Unique if set.", section: "Identification" },
-    { key: "ear_tag", label: "Ear Tag (Visual)", type: "text", section: "Identification" },
+    { key: "ear_tag", label: "Ear Tag Number", type: "text", section: "Identification" },
     { key: "ear_tag_image_url", label: "Ear Tag Image URL", type: "text", placeholder: "https://cdn.navfarm.io/ear-tags/...", helpText: "Paste an image URL for now; direct file upload to Cloudflare R2 is planned for later.", section: "Identification" },
     { key: "sire_animal_id", label: "Sire (Father)", type: "select-entity", searchable: true, entityEndpoint: "/animal", entityValueKey: "animal_id", entityLabelKeys: ["animal_code"], section: "Lineage" },
     { key: "dam_animal_id", label: "Dam (Mother)", type: "select-entity", searchable: true, entityEndpoint: "/animal", entityValueKey: "animal_id", entityLabelKeys: ["animal_code"], section: "Lineage" },
@@ -390,23 +405,27 @@ const animal: MasterDataConfig = {
     // the two numbers that make it are. Read-only: the service recomputes it
     // from those two on every write, so an entered figure would be overwritten.
     { key: "total_opening_asset_value", label: "Total Opening Asset Value", type: "number", step: "0.01", readOnly: true, helpText: "Acquisition Cost + Landing Cost. Calculated on save.", section: "Acquisition" },
-    // Bio-Asset is female-only on Rishi's call (2026-09-08). Note the section
-    // mixes two kinds of field: no_of_teats / tsi / grading are gilt-selection
-    // measures and are genuinely female-only, while book value, amortisation
-    // and residual value are IAS 41 figures that apply to any biological asset
-    // — a boar included. dispose() still computes gain/loss against book_value
-    // for a male, so that number is now used but not visible on his form.
-    { key: "current_bio_asset_value", label: "Current Bio-Asset Value", type: "number", step: "0.01", editOnly: true, helpText: "Set from acquisition cost at creation; adjust here afterward. Reconciles with D365BC: each animal is a Child Fixed Asset there, and BC posts acquisition and returns the FA Ledger Entry reference (Bio Asset BBP). No BC connector yet \u2014 this is a local figure.", visibleWhen: { anyOf: [{ key: "gender", equals: "F" }] }, section: "Bio-Asset" },
-    { key: "book_value", label: "Book Value NBV", type: "number", step: "0.01", editOnly: true, helpText: "Reconciles with D365BC: each animal is a Child Fixed Asset there, and BC posts acquisition and returns the FA Ledger Entry reference (Bio Asset BBP). No BC connector yet \u2014 this is a local figure.", visibleWhen: { anyOf: [{ key: "gender", equals: "F" }] }, section: "Bio-Asset" },
-    { key: "total_amortised", label: "Total Amortised", type: "number", step: "0.01", editOnly: true, visibleWhen: { anyOf: [{ key: "gender", equals: "F" }] }, section: "Bio-Asset" },
-    { key: "amortisation_monthly", label: "Monthly Amortisation", type: "number", step: "0.01", editOnly: true, visibleWhen: { anyOf: [{ key: "gender", equals: "F" }] }, section: "Bio-Asset" },
-    { key: "residual_value", label: "Residual Value", type: "number", step: "0.01", editOnly: true, visibleWhen: { anyOf: [{ key: "gender", equals: "F" }] }, section: "Bio-Asset" },
-    { key: "expected_cull_date", label: "Expected Cull Date", type: "date", editOnly: true, helpText: "Derived from the productive life start and the breed's productive life.", section: "Production" },
+    // Bio-Asset shows for males too (Rishi, 2026-09-15, reversing the
+    // female-only call of 2026-09-08). Book value, amortisation and residual
+    // value are IAS 41 figures that apply to any biological asset — a boar
+    // included — and dispose() computes his gain or loss against book_value.
+    // No. of Teats stays female-only: it is a gilt-selection measure (BBP §6).
+    // Parity and litter totals below stay female-only as well; they count a
+    // sow's farrowings.
+    { key: "current_bio_asset_value", label: "Current Bio-Asset Value", type: "number", step: "0.01", editOnly: true, helpText: "Set from acquisition cost at creation; adjust here afterward. Reconciles with D365BC: each animal is a Child Fixed Asset there, and BC posts acquisition and returns the FA Ledger Entry reference (Bio Asset BBP). No BC connector yet \u2014 this is a local figure.", section: "Bio-Asset" },
+    { key: "book_value", label: "Book Value NBV", type: "number", step: "0.01", editOnly: true, helpText: "Reconciles with D365BC: each animal is a Child Fixed Asset there, and BC posts acquisition and returns the FA Ledger Entry reference (Bio Asset BBP). No BC connector yet \u2014 this is a local figure.", section: "Bio-Asset" },
+    { key: "total_amortised", label: "Total Amortised", type: "number", step: "0.01", editOnly: true, section: "Bio-Asset" },
+    { key: "amortisation_monthly", label: "Monthly Amortisation", type: "number", step: "0.01", editOnly: true, section: "Bio-Asset" },
+    { key: "residual_value", label: "Residual Value", type: "number", step: "0.01", editOnly: true, section: "Bio-Asset" },
+    // An input, on create as well as edit (2026-09-15). The old help text said
+    // it was derived from the breed's productive life; nothing derives it, so
+    // the date is whatever is entered here.
+    { key: "expected_cull_date", label: "Expected Cull Date", type: "date", section: "Production" },
     { key: "disposal_date", label: "Disposal Date", type: "date", hideInForm: true, helpText: "Set via the Dispose action, not direct edit.", section: "Bio-Asset" },
     { key: "disposal_type", label: "Disposal Type", type: "text", hideInForm: true, helpText: "Set via the Dispose action, not direct edit.", section: "Bio-Asset" },
     { key: "no_of_teats", label: "No. of Teats", type: "number", helpText: "BBP §6: below 15 blocks this gilt from selection regardless of TSI score.", visibleWhen: { anyOf: [{ key: "gender", equals: "F" }] }, section: "Bio-Asset" },
-    { key: "tsi", label: "TSI", type: "number", step: "0.01", helpText: "Total Sow Index score.", visibleWhen: { anyOf: [{ key: "gender", equals: "F" }] }, section: "Bio-Asset" },
-    { key: "grading", label: "Grading", type: "text", visibleWhen: { anyOf: [{ key: "gender", equals: "F" }] }, section: "Bio-Asset" },
+    { key: "tsi", label: "TSI", type: "number", step: "0.01", helpText: "Total Sow Index score.", section: "Bio-Asset" },
+    { key: "grading", label: "Grading", type: "text", section: "Bio-Asset" },
     { key: "current_stage_id", label: "Current Stage", type: "select-entity", entityEndpoint: "/stage", entityValueKey: "stage_id", entityLabelKeys: ["stage_code", "stage_name"], section: "Current Position" },
     { key: "current_batch_id", label: "Current Batch", type: "select-entity", searchable: true, entityEndpoint: "/batch", entityValueKey: "batch_id", entityLabelKeys: ["batch_no"], section: "Current Position" },
     { key: "current_location_id", label: "Current Pen", type: "select-entity", searchable: true, entityEndpoint: "/location?locationType=PEN", entityValueKey: "location_id", entityLabelKeys: ["location_code", "location_name"], helpText: "Animals are placed in Pens only.", section: "Current Position" },
@@ -632,7 +651,7 @@ const itemAttribute: MasterDataConfig = {
 // TDD row 13's inventory flag decides whether any of the stock-control numbers
 // mean anything: an item that is not held in inventory has no balance to carry a
 // minimum, a maximum, a reorder point or a shelf life. One shared gate, so the
-// eight fields cannot drift apart.
+// seven fields cannot drift apart.
 const WHEN_INVENTORIED = { anyOf: [{ key: "is_inventoriable", equals: true }] };
 
 const item: MasterDataConfig = {
@@ -747,12 +766,24 @@ const item: MasterDataConfig = {
       requiredWhen: { anyOf: [{ key: "is_tracked", equals: true }] },
       section: "Tracking",
     },
-    // No Tracking No. Series field. It pointed at LOT / SERIAL series that
-    // generated nothing, because a lot number is not a property of the item —
-    // one item has many lots, and the number belongs to the receipt that
-    // delivered it (goods_receipt_line.lot_no). The switch above still says
-    // WHETHER this item is tracked, and by lot or by serial, which is the part
-    // the item owns. Rishi's call, 2026-09-09.
+    // The lot or serial number series, filtered to whichever Tracked By says.
+    // It was removed on 2026-09-09 because the picker offered BREED and
+    // CUSTOMER and no LOT or SERIAL series existed; restored 2026-09-15 on
+    // Rishi's call, as decisions.md "Item tracking is one three-way choice"
+    // already records. The segmented value passes straight through as
+    // ?documentType=, so a Lot item is only ever offered LOT series. Tracked By
+    // is its parent, so switching Lot to Serial clears the choice, and the API
+    // clears the column when tracking is turned off.
+    {
+      key: "tracking_series_id", label: "Tracking No. Series", type: "select-entity",
+      entityEndpoint: "/number-series", entityValueKey: "series_id", entityLabelKeys: ["series_code", "series_name"],
+      dependsOn: "tracking_type", dependsOnMode: "query", queryParams: { tracking_type: "documentType" }, requiresParent: true,
+      labelWhen: { key: "tracking_type", labels: { LOT: "Lot No. Series", SERIAL: "Serial No. Series" } },
+      visibleWhen: { anyOf: [{ key: "is_tracked", equals: true }] },
+      requiredWhen: { anyOf: [{ key: "is_tracked", equals: true }] },
+      helpText: "The number series lot or serial numbers for this item are issued from.",
+      section: "Tracking",
+    },
     // The columns the segmented control above writes. Kept in the config so the
     // record view can still state which kind of tracking is in force — each is
     // shown only when it is the one that is set, so an item never reads back a
@@ -769,13 +800,12 @@ const item: MasterDataConfig = {
     { key: "storage_temp_min", label: "Storage Temp Min (°C)", type: "number", step: "0.01", visibleWhen: WHEN_INVENTORIED, section: "Inventory" },
     { key: "storage_temp_max", label: "Storage Temp Max (°C)", type: "number", step: "0.01", visibleWhen: WHEN_INVENTORIED, section: "Inventory" },
     {
-      // Shown on either condition, not on the inventory flag alone. The
-      // withdrawal period is a food-safety block — animal disposal reads it
-      // before a slaughter is allowed — so a medicine that happens not to be
-      // inventoried still has to carry one, and the API rejects the save
-      // without it either way.
+      // Medicines and vaccines only (Rishi, 2026-09-15 — supersedes showing it
+      // for any inventoried item). The withdrawal period is a food-safety block
+      // that animal disposal reads before a slaughter is allowed; on feed or a
+      // consumable it means nothing, and the API now clears it for other types.
       key: "withdrawal_days", label: "Withdrawal Period (days)", type: "number", min: 0, max: 99, section: "Inventory",
-      visibleWhen: { anyOf: [{ key: "is_inventoriable", equals: true }, { key: "item_type", equals: ["MEDICINE", "VACCINE"] }] },
+      visibleWhen: { anyOf: [{ key: "item_type", equals: ["MEDICINE", "VACCINE"] }] },
       requiredWhen: { anyOf: [{ key: "item_type", equals: ["MEDICINE", "VACCINE"] }] },
       helpText: "Up to 99 days. Required for MEDICINE/VACCINE items — minimum days after last administration before an animal treated with this item may be slaughtered.",
     },
@@ -928,13 +958,36 @@ const breedLifecycleStage: MasterDataConfig = {
     { key: "output_item_id", label: "Output Item", type: "select-entity", searchable: true, entityEndpoint: "/item", entityValueKey: "item_id", entityLabelKeys: ["item_code", "item_name"] },
     { key: "output_uom", label: "Output UOM", type: "text" },
     { key: "std_output_qty", label: "Std Output Qty", type: "number", step: "0.001" },
-    { key: "kpi_thresholds", label: "KPIs & Alerts", type: "json", helpText: "One entry per KPI, each with its own alert: [{ metric, lower_limit, upper_limit, severity }]. Severity is INFO, WARNING or CRITICAL." },
+    // Rows, not a typed array (Rishi, 2026-09-15). The metric list is the
+    // Scheduler's KPI vocabulary — KPI_METRICS in scheduler-header.dto.ts, the
+    // same words a DESCRIPTIVE line captures — so a threshold names a value
+    // the daily entry actually records. The API validates both lists.
+    {
+      key: "kpi_thresholds", label: "KPIs & Alerts", type: "json",
+      jsonRow: [
+        { key: "metric", label: "KPI", type: "select", options: KPI_METRICS.map((v) => ({ value: v, label: v.replace(/_/g, " ") })) },
+        { key: "lower_limit", label: "Lower Limit", type: "number", step: "0.001" },
+        { key: "upper_limit", label: "Upper Limit", type: "number", step: "0.001" },
+        { key: "severity", label: "Alert Severity", type: "select", options: ["INFO", "WARNING", "CRITICAL"].map((v) => ({ value: v, label: v })) },
+      ],
+      helpText: "One row per KPI. Leave a limit empty for a one-sided threshold.",
+    },
     // These two columns have existed on breed_lifecycle_stages since the schema
     // was written but were never exposed, so there was no way to record a
     // vaccination or medication plan for a breed at a stage at all.
     // Breed Master Template, Lifecycle sheet: "Resource Requirements". The
-    // column existed and nothing on the form could fill it.
-    { key: "resource_requirements", label: "Resource Requirements", type: "json", helpText: "Resources this breed needs at this stage, from the resource planner." },
+    // column existed and nothing on the form could fill it. Each row picks a
+    // Resource Master record, as Feed Item picks an item; no row had been
+    // written before this, so the shape is new: { resource_id, quantity, notes }.
+    {
+      key: "resource_requirements", label: "Resource Requirements", type: "json",
+      jsonRow: [
+        { key: "resource_id", label: "Resource", type: "select-entity", entityEndpoint: "/resource", entityValueKey: "resource_id", entityLabelKeys: ["resource_code", "resource_name"] },
+        { key: "quantity", label: "Quantity", type: "number", step: "0.01" },
+        { key: "notes", label: "Notes", type: "text" },
+      ],
+      helpText: "One row per resource this breed needs at this stage.",
+    },
     // Rows, not a JSON textarea. The Breed Master workbook's Vaccination
     // Schedule was filled in as five repeated columns — "1st vaccine -
     // farrowsure (gilt) 25 weeks", "Vaccine porcillis 11 weeks pregnant every
@@ -962,6 +1015,9 @@ const breedLifecycleStage: MasterDataConfig = {
         { key: "trigger_value", label: "At", type: "number", step: "0.5" },
         { key: "dose_ml", label: "Dose (ml)", type: "number", step: "0.01" },
         { key: "route", label: "Route", type: "select", options: ["IM", "SC", "IN", "ORAL"].map((v) => ({ value: v, label: v })) },
+        // As on medication rows (2026-09-15): a vaccine can hold an animal back
+        // from slaughter just as a drug can.
+        { key: "withdrawal_days", label: "Withdrawal (days)", type: "number" },
       ],
       helpText: "One row per vaccination. Triggered by tells the scheduler what to count from — the animal's age, weeks pregnant, or every pregnancy cycle.",
     },
@@ -982,7 +1038,7 @@ const breedLifecycleStage: MasterDataConfig = {
       ],
       helpText: "One row per problem, as the farm's treatment card is written. Dose is free text because the card records it per head and per kg both.",
     },
-    { key: "notes", label: "Notes", type: "textarea", helpText: "Shown as a tooltip on the data entry screen." },
+    { key: "notes", label: "Stage Notes", type: "textarea", helpText: "Shown as a tooltip on the data entry screen." },
     // TDD row 102 — traceability. The column has always been written; nothing
     // ever displayed it. hideInForm keeps it off the create/edit form while
     // readOnly lets the detail view through, which is the filter it checks.
@@ -1162,7 +1218,7 @@ const customer: MasterDataConfig = {
 const resource: MasterDataConfig = {
   key: "resource",
   label: "Resources",
-  description: "Labor, equipment and vehicles used in operations.",
+  description: "Manpower, equipment and utilities used in operations.",
   apiBase: "/resource",
   idKey: "resource_id",
   group: "Business Partners",
@@ -1185,22 +1241,23 @@ const resource: MasterDataConfig = {
       key: "resource_type", label: "Resource Type", type: "select", required: true, section: "Identification",
       // The client template lists MANPOWER, EQUIPMENT, VEHICLE, UTILITY, OTHER.
       // LABOR was a legacy alias for MANPOWER and offering both made the list
-      // read as two ways to say the same thing. No resource uses LABOR — the
-      // live counts are MANPOWER 4, EQUIPMENT 2, UTILITY 2 — so it is dropped
-      // as a choice. Restore it here if a legacy row ever turns up needing it.
-      options: ["MANPOWER", "EQUIPMENT", "VEHICLE", "UTILITY", "OTHER"].map((v) => ({ value: v, label: v })),
+      // read as two ways to say the same thing, so it was dropped as a choice.
+      // VEHICLE and OTHER were removed on 15 September on Rishi's call. The API
+      // refuses them as a new value; a row already holding one keeps it until
+      // its type is changed.
+      options: ["MANPOWER", "EQUIPMENT", "UTILITY"].map((v) => ({ value: v, label: v })),
     },
     {
       key: "resource_sub_type", label: "Sub-Type", type: "select", section: "Identification",
       options: ["PERMANENT", "CONTRACT", "DAILY", "OWNED", "LEASED", "RENTED"].map((v) => ({ value: v, label: v })),
-      helpText: "PERMANENT/CONTRACT/DAILY for labor; OWNED/LEASED/RENTED for equipment or vehicles.",
+      helpText: "PERMANENT/CONTRACT/DAILY for labor; OWNED/LEASED/RENTED for equipment.",
     },
     { key: "employee_id", label: "Employee ID", type: "text", placeholder: "EMP-001", helpText: "Labor/manpower only.", section: "People", visibleWhen: { anyOf: [{ key: "resource_type", equals: ["MANPOWER", "LABOR"] }] } },
     { key: "designation", label: "Designation", type: "text", placeholder: "Senior Farm Worker", helpText: "Labor/manpower only.", section: "People", visibleWhen: { anyOf: [{ key: "resource_type", equals: ["MANPOWER", "LABOR"] }] } },
     { key: "department", label: "Department", type: "text", placeholder: "Farm Operations", helpText: "Department or team.", section: "People", visibleWhen: { anyOf: [{ key: "resource_type", equals: ["MANPOWER", "LABOR"] }] } },
     { key: "capacity", label: "Capacity", type: "number", step: "0.01", section: "Capacity & Cost" },
-    // Left unfiltered: a resource's capacity spans LABOR (HEAD), EQUIPMENT (KG,
-    // LITER for a tank, BAG for a mixer) and VEHICLE (TONNE) — no single type fits.
+    // Left unfiltered: a resource's capacity spans MANPOWER (HEAD), EQUIPMENT (KG,
+    // LITER for a tank, BAG for a mixer) and UTILITY — no single type fits.
     { key: "capacity_uom", label: "Capacity UOM", type: "select-entity", entityEndpoint: "/uom", entityValueKey: "uom_code", entityLabelKeys: ["uom_code", "uom_name"], section: "Capacity & Cost" },
     // Left unfiltered: cost rate is quoted per HOUR (labor), per KG/LITER (material
     // consumption), or per HEAD/trip — spans every type.
@@ -1208,18 +1265,18 @@ const resource: MasterDataConfig = {
     { key: "cost_rate", label: "Cost Rate", type: "number", step: "0.01", section: "Capacity & Cost" },
     { key: "cost_element", label: "Cost Element", type: "text", placeholder: "DIRECT_LABOR", helpText: "GL cost classification, e.g. DIRECT_LABOR / INDIRECT_LABOR / EQUIPMENT_HIRE / FUEL / MAINTENANCE.", section: "Capacity & Cost" },
     { key: "gl_cost_account", label: "GL Cost Account", type: "select-entity", searchable: true, entityEndpoint: "/gl-account", entityValueKey: "gl_account_id", entityLabelKeys: ["account_code", "account_name"], helpText: "GL account this resource posts cost to.", section: "Capacity & Cost" },
-    { key: "asset_code", label: "Asset Code", type: "text", placeholder: "ASSET-PELLETISER-01", helpText: "Equipment/vehicle only.", section: "Asset", visibleWhen: { anyOf: [{ key: "resource_type", equals: ["EQUIPMENT", "VEHICLE"] }] } },
-    { key: "asset_make", label: "Asset Make", type: "text", section: "Asset", visibleWhen: { anyOf: [{ key: "resource_type", equals: ["EQUIPMENT", "VEHICLE"] }] } },
-    { key: "asset_model", label: "Asset Model", type: "text", section: "Asset", visibleWhen: { anyOf: [{ key: "resource_type", equals: ["EQUIPMENT", "VEHICLE"] }] } },
-    { key: "asset_serial_no", label: "Asset Serial No.", type: "text", section: "Asset", visibleWhen: { anyOf: [{ key: "resource_type", equals: ["EQUIPMENT", "VEHICLE"] }] } },
-    { key: "purchase_date", label: "Purchase Date", type: "date", section: "Asset", visibleWhen: { anyOf: [{ key: "resource_type", equals: ["EQUIPMENT", "VEHICLE"] }] } },
-    { key: "warranty_expiry_date", label: "Warranty Expiry", type: "date", section: "Asset", visibleWhen: { anyOf: [{ key: "resource_type", equals: ["EQUIPMENT", "VEHICLE"] }] } },
-    { key: "maintenance_frequency_days", label: "Maintenance Frequency (days)", type: "number", helpText: "Days between scheduled services. Logging a completed service auto-calculates the next due date.", section: "Maintenance", visibleWhen: { anyOf: [{ key: "resource_type", equals: ["EQUIPMENT", "VEHICLE"] }] } },
-    { key: "maintenance_cost_per_service", label: "Est. Cost per Service", type: "number", step: "0.01", section: "Maintenance", visibleWhen: { anyOf: [{ key: "resource_type", equals: ["EQUIPMENT", "VEHICLE"] }] } },
-    { key: "maintenance_vendor", label: "Preferred Maintenance Vendor", type: "text", section: "Maintenance", visibleWhen: { anyOf: [{ key: "resource_type", equals: ["EQUIPMENT", "VEHICLE"] }] } },
+    { key: "asset_code", label: "Asset Code", type: "text", placeholder: "ASSET-PELLETISER-01", helpText: "Equipment only.", section: "Asset", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
+    { key: "asset_make", label: "Asset Make", type: "text", section: "Asset", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
+    { key: "asset_model", label: "Asset Model", type: "text", section: "Asset", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
+    { key: "asset_serial_no", label: "Asset Serial No.", type: "text", section: "Asset", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
+    { key: "purchase_date", label: "Purchase Date", type: "date", section: "Asset", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
+    { key: "warranty_expiry_date", label: "Warranty Expiry", type: "date", section: "Asset", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
+    { key: "maintenance_frequency_days", label: "Maintenance Frequency (days)", type: "number", helpText: "Days between scheduled services. Logging a completed service auto-calculates the next due date.", section: "Maintenance", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
+    { key: "maintenance_cost_per_service", label: "Est. Cost per Service", type: "number", step: "0.01", section: "Maintenance", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
+    { key: "maintenance_vendor", label: "Preferred Maintenance Vendor", type: "text", section: "Maintenance", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
     { key: "last_maintenance_date", label: "Last Maintenance (system-tracked)", type: "date", hideInForm: true, section: "Maintenance" },
     { key: "next_maintenance_date", label: "Next Maintenance (system-tracked)", type: "date", hideInForm: true, section: "Maintenance" },
-    { key: "license_expiry", label: "License Expiry", type: "date", helpText: "License/certification expiry — alert 30 days before.", section: "Maintenance", visibleWhen: { anyOf: [{ key: "resource_type", equals: ["EQUIPMENT", "VEHICLE"] }] } },
+    { key: "license_expiry", label: "License Expiry", type: "date", helpText: "License/certification expiry — alert 30 days before.", section: "Maintenance", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
   ],
 };
 

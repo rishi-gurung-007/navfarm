@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsEnum, IsNumber, IsDateString, IsBoolean, Min, IsUUID } from 'class-validator';
+import { IsString, IsOptional, IsEnum, IsNumber, IsInt, IsDateString, IsBoolean, Min, IsUUID } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export enum MatingType {
@@ -76,14 +76,42 @@ export class CreateMatingDto {
   preg_check_method?: PregCheckMethod;
 
   @IsOptional()
-  @IsNumber()
+  @IsInt()
   @Min(0)
   @Type(() => Number)
   parity_number?: number;
 
+  /** The boar's service count at this mating. Defaults to his prior services + 1. */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Type(() => Number)
+  boar_parity_number?: number;
+
+  /** Usually PENDING at service; may be entered now when the check is already known. */
+  @IsOptional()
+  @IsEnum(ConceptionResult)
+  conception_result?: ConceptionResult;
+
   @IsOptional()
   @IsString()
   notes?: string;
+}
+
+export class MatingDefaultsQueryDto {
+  @IsUUID()
+  sow_animal_id: string;
+
+  @IsOptional()
+  @IsUUID()
+  boar_animal_id?: string;
+
+  @IsOptional()
+  @IsString()
+  semen_lot_id?: string;
+
+  @IsDateString()
+  mating_date: string;
 }
 
 export class UpdatePregCheckDto {
@@ -95,8 +123,13 @@ export class UpdatePregCheckDto {
   @IsEnum(PregCheckMethod)
   preg_check_method?: PregCheckMethod;
 
+  /**
+   * Kept for older clients. conception_result is the field of record; when both
+   * are sent they must agree (CONFIRMED ⇔ true), and one of the two is required.
+   */
+  @IsOptional()
   @IsBoolean()
-  pregnancy_confirmed: boolean;
+  pregnancy_confirmed?: boolean;
 
   @IsOptional()
   @IsEnum(ConceptionResult)

@@ -829,7 +829,10 @@ export function MasterDataTable({
         // Same active-only rule as the non-dependent effect above — a picker
         // must not offer a row the API will reject. ep may already carry a
         // query string (dependsOnMode "query"), so append rather than assume.
-        const activeOnlyEp = `${ep}${ep.includes("?") ? "&" : "?"}isActive=true`;
+        // limit=500 as the effect above sends. Without it the list API's default
+        // page of 50 was the whole option list, so a dependent picker silently
+        // offered whichever 50 rows sorted first.
+        const activeOnlyEp = `${ep}${ep.includes("?") ? "&" : "?"}isActive=true&limit=500`;
         const res = await api.get(activeOnlyEp);
         const list = unwrap<Row[]>(res);
         setEntityOptions((prev) => ({ ...prev, [ep]: Array.isArray(list) ? list : [] }));

@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsEmail, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsIn, IsInt, Min, MinLength, MaxLength } from 'class-validator';
+import { IsString, IsEmail, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsIn, IsInt, IsArray, Min, MinLength, MaxLength } from 'class-validator';
 import { Type } from 'class-transformer';
 import { USER_TYPES } from '../../../../common/user-type-hierarchy';
 
@@ -67,6 +67,12 @@ export class CreateUserDto {
   @IsUUID()
   @IsOptional()
   farm_id?: string;
+
+  @ApiProperty({ description: 'Operational areas the user works in (replaces the current set on update)', required: false, type: [String] })
+  @IsArray()
+  @IsUUID('all', { each: true })
+  @IsOptional()
+  operational_area_ids?: string[];
 }
 
 export class UpdateUserDto {
@@ -111,6 +117,12 @@ export class UpdateUserDto {
   @IsOptional()
   farm_id?: string;
 
+  @ApiProperty({ description: 'Operational areas the user works in; replaces the current set', required: false, type: [String] })
+  @IsArray()
+  @IsUUID('all', { each: true })
+  @IsOptional()
+  operational_area_ids?: string[];
+
   @ApiProperty({ description: 'Activate or deactivate user account', required: false, example: true })
   @IsBoolean()
   @IsOptional()
@@ -138,7 +150,7 @@ export class QueryUserDto {
   @IsString()
   search?: string;
 
-  @ApiProperty({ description: 'Results per page', default: 50, required: false })
+  @ApiProperty({ description: 'Results per page', default: 200, required: false })
   @IsOptional()
   @Type(() => Number)
   @IsInt()
