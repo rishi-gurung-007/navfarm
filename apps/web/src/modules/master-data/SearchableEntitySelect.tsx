@@ -16,6 +16,7 @@ function SearchableEntityPanel({
   options,
   valueKey,
   getLabel,
+  getLabelParts,
   value,
   onPick,
   searchPlaceholder,
@@ -28,6 +29,7 @@ function SearchableEntityPanel({
   options: Row[];
   valueKey: string;
   getLabel: (row: Row) => string;
+  getLabelParts?: (row: Row) => string[];
   value: string;
   onPick: (row: Row) => void;
   searchPlaceholder: string;
@@ -42,11 +44,37 @@ function SearchableEntityPanel({
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
+  // One row's columns. Without `getLabelParts` there is exactly one column and
+  // the list looks as it always did.
+  const partsOf = (row: Row) => {
+    const parts = getLabelParts?.(row);
+    return parts && parts.length ? parts : [getLabel(row)];
+  };
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return options;
-    return options.filter((o) => getLabel(o).toLowerCase().includes(q));
-  }, [options, query, getLabel]);
+    // Matched against every column as well as the joined label, so typing the
+    // farm name still finds a breed whose only match is in the last column.
+    return options.filter((o) =>
+      [getLabel(o), ...(getLabelParts?.(o) || [])].join(" ").toLowerCase().includes(q),
+    );
+  }, [options, query, getLabel, getLabelParts]);
+
+  // The widest row decides the column count, so a row missing its last value
+  // still lines its first columns up with the rows around it.
+  const columnCount = useMemo(
+    () => (getLabelParts ? filtered.reduce((widest, o) => Math.max(widest, getLabelParts(o).length), 1) : 1),
+    [filtered, getLabelParts],
+  );
+  // The code column sizes to its content; the prose columns share what is left
+  // and truncate. `subgrid` is what keeps the boundary in the same place down
+  // the whole list — each option is its own button, so without it every row
+  // would size its own columns and nothing would line up.
+  const columnar = columnCount > 1;
+  const listTemplate = columnar
+    ? ["max-content", ...Array(columnCount - 1).fill("minmax(0,1fr)"), "auto"].join(" ")
+    : undefined;
 
   const selectedIdx = useMemo(() => {
     return filtered.findIndex((o) => String(o[valueKey]) === String(value));
@@ -54,10 +82,16 @@ function SearchableEntityPanel({
 
   const [highlight, setHighlight] = useState(selectedIdx >= 0 ? selectedIdx : 0);
 
+  // The option elements, not every child: the loading and empty-state rows are
+  // children of the same list, so indexing children directly can point one row
+  // off the highlighted option.
+  const optionEl = (idx: number) =>
+    listRef.current?.querySelectorAll<HTMLElement>('[role="option"]')[idx];
+
   useEffect(() => {
     inputRef.current?.focus({ preventScroll: true });
     if (selectedIdx >= 0 && listRef.current) {
-      const activeEl = listRef.current.children[selectedIdx] as HTMLElement | undefined;
+      const activeEl = listRef.current.querySelectorAll<HTMLElement>('[role="option"]')[selectedIdx];
       activeEl?.scrollIntoView({ block: "nearest" });
     }
   }, []);
@@ -76,16 +110,14 @@ function SearchableEntityPanel({
       event.preventDefault();
       setHighlight((h) => {
         const next = Math.min(h + 1, Math.max(0, filtered.length - 1));
-        const el = listRef.current?.children[next] as HTMLElement | undefined;
-        el?.scrollIntoView({ block: "nearest" });
+        optionEl(next)?.scrollIntoView({ block: "nearest" });
         return next;
       });
     } else if (event.key === "ArrowUp") {
       event.preventDefault();
       setHighlight((h) => {
         const prev = Math.max(h - 1, 0);
-        const el = listRef.current?.children[prev] as HTMLElement | undefined;
-        el?.scrollIntoView({ block: "nearest" });
+        optionEl(prev)?.scrollIntoView({ block: "nearest" });
         return prev;
       });
     } else if (event.key === "Enter") {
@@ -124,16 +156,16 @@ function SearchableEntityPanel({
         ref={listRef}
         role="listbox"
         aria-label={ariaLabel}
-        className="flex min-h-0 flex-col overflow-y-auto overscroll-contain gap-0.5 pr-0.5"
-        style={{ maxHeight: "240px" }}
+        className={`min-h-0 overflow-y-auto overscroll-contain gap-0.5 pr-0.5 ${columnar ? "grid" : "flex flex-col"}`}
+        style={columnar ? { maxHeight: "240px", gridTemplateColumns: listTemplate } : { maxHeight: "240px" }}
       >
         {loading ? (
-          <div role="status" aria-live="polite" className="px-2.5 py-3 text-xs" style={{ color: "var(--text-muted)" }}>
+          <div role="status" aria-live="polite" className="px-2.5 py-3 text-xs" style={{ color: "var(--text-muted)", gridColumn: "1 / -1" }}>
             <Loader2 className="mr-1.5 inline h-3.5 w-3.5 animate-spin" aria-hidden />
             Loading records…
           </div>
         ) : filtered.length === 0 && (
-          <div className="px-2.5 py-3 text-xs" style={{ color: "var(--text-muted)" }}>
+          <div className="px-2.5 py-3 text-xs" style={{ color: "var(--text-muted)", gridColumn: "1 / -1" }}>
             {noMatchesLabel}
           </div>
         )}
@@ -141,24 +173,49 @@ function SearchableEntityPanel({
           const v = String(o[valueKey]);
           const isSelected = v === String(value);
           const isHighlighted = idx === highlight;
+          const cells = partsOf(o);
           return (
             <button
               key={v}
               type="button"
               role="option"
               aria-selected={isSelected}
+              // The columns would otherwise be read out as separate words. The
+              // option keeps naming itself with the same joined label the
+              // trigger shows, so screen readers and specs see no change.
+              aria-label={getLabel(o)}
               onMouseEnter={() => setHighlight(idx)}
               onClick={() => pick(o)}
-              className="shrink-0 flex items-center justify-between w-full min-h-[34px] rounded-[var(--radius-sm)] px-2.5 py-1.5 text-left text-sm transition-colors cursor-pointer"
+              className={`shrink-0 items-center w-full min-h-[34px] rounded-[var(--radius-sm)] px-2.5 py-1.5 text-left text-sm transition-colors cursor-pointer ${columnar ? "grid gap-x-3" : "flex justify-between"}`}
               style={{
                 backgroundColor: isHighlighted ? "var(--surface-secondary)" : "transparent",
                 color: "var(--text-primary)",
                 fontWeight: isSelected ? 600 : 400,
+                ...(columnar ? { gridColumn: "1 / -1", gridTemplateColumns: "subgrid" } : null),
               }}
             >
-              <span className="truncate pr-2">{getLabel(o)}</span>
-              {isSelected && (
-                <Check className="h-4 w-4 shrink-0" style={{ color: "var(--accent)" }} />
+              {columnar ? (
+                <>
+                  {Array.from({ length: columnCount }, (_, col) => (
+                    <span
+                      key={col}
+                      className={col === 0 ? "whitespace-nowrap" : "truncate"}
+                      style={col === 0 ? undefined : { color: "var(--text-secondary)" }}
+                    >
+                      {cells[col] ?? ""}
+                    </span>
+                  ))}
+                  <span className="flex w-4 shrink-0 justify-end">
+                    {isSelected && <Check className="h-4 w-4" style={{ color: "var(--accent)" }} />}
+                  </span>
+                </>
+              ) : (
+                <>
+                  <span className="truncate pr-2">{cells[0]}</span>
+                  {isSelected && (
+                    <Check className="h-4 w-4 shrink-0" style={{ color: "var(--accent)" }} />
+                  )}
+                </>
               )}
             </button>
           );
@@ -203,6 +260,11 @@ export interface SearchableEntitySelectProps {
   options: Row[];
   valueKey: string;
   getLabel: (row: Row) => string;
+  /** One option row's columns, in order — the open list renders them as aligned
+   * columns instead of one joined line. Omitted, the list stays single-column
+   * on `getLabel`, so every existing call site is unaffected. The trigger always
+   * shows `getLabel`. */
+  getLabelParts?: (row: Row) => string[];
   disabled?: boolean;
   loading?: boolean;
   placeholder: string;
@@ -224,6 +286,7 @@ export function SearchableEntitySelect({
   options,
   valueKey,
   getLabel,
+  getLabelParts,
   disabled,
   loading = false,
   placeholder,
@@ -272,6 +335,7 @@ export function SearchableEntitySelect({
         options={options}
         valueKey={valueKey}
         getLabel={getLabel}
+        getLabelParts={getLabelParts}
         value={value}
         onPick={(row) => onChange(String(row[valueKey]))}
         searchPlaceholder={searchPlaceholder}

@@ -334,7 +334,15 @@ const animal: MasterDataConfig = {
       key: "animal_type", label: "Animal Type", type: "select", required: true, section: "Identification",
       options: ["SOW", "BOAR", "GILT", "PIGLET", "COMMERCIAL_PIG"].map((v) => ({ value: v, label: v.replace(/_/g, " ") })),
     },
-    { key: "breed_id", label: "Breed", type: "select-entity", required: true, searchable: true, entityEndpoint: "/breed", entityValueKey: "breed_id", entityLabelKeys: ["breed_code", "breed_name", "location_code", "location_name"], section: "Identification" },
+    // A Breed profile is per-farm, so the farm is what tells two otherwise
+    // identical breed rows apart — which is why the option shows the breed and
+    // the farm it belongs to. The code said nothing the name does not, and four
+    // columns of code, name, farm code and farm name read as one run-on line.
+    {
+      key: "breed_id", label: "Breed", type: "select-entity", required: true, searchable: true,
+      entityEndpoint: "/breed", entityValueKey: "breed_id", entityLabelKeys: ["breed_name", "location_name"],
+      section: "Identification",
+    },
     {
       key: "gender", label: "Gender", type: "select", required: true, section: "Identification",
       options: [{ value: "F", label: "Female" }, { value: "M", label: "Male" }],
