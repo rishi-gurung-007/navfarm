@@ -792,6 +792,7 @@ export class AnimalService {
     if (query.animalType) conditions.push(eq(schema.animalRegister.animal_type, query.animalType));
     if (query.status) conditions.push(eq(schema.animalRegister.status, query.status));
     if (query.currentBatchId) conditions.push(eq(schema.animalRegister.current_batch_id, query.currentBatchId));
+    if (query.unassignedOnly) conditions.push(isNull(schema.animalRegister.current_batch_id));
     if (query.currentLocationId) conditions.push(eq(schema.animalRegister.current_location_id, query.currentLocationId));
     if (query.search) {
       conditions.push(

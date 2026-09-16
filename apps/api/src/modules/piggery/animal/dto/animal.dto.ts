@@ -411,6 +411,12 @@ export class QueryAnimalDto extends MasterListQueryDto {
   @IsBoolean()
   includeDisposed?: boolean;
 
+  @ApiProperty({ description: 'Filter only animals not assigned to any batch', required: false })
+  @IsOptional()
+  @IsBoolean()
+  @Type(() => Boolean)
+  unassignedOnly?: boolean;
+
   @ApiProperty({ description: 'Filter by active status (findAll already excludes disposed animals unless includeDisposed is set; declared so pickers can send the same isActive param every other list endpoint accepts without a 400)', required: false })
   @IsOptional()
   @IsBoolean()

@@ -326,6 +326,47 @@ export class BatchService {
 
     }
 
+    if (dto.animal_tracking === 'COUNT_ONLY' && dto.animal_ids?.length) {
+      throw new BadRequestException('Count-only batches track headcount only and cannot link individual registered animals.');
+    }
+    if (dto.animal_tracking === 'REGISTERED' && dto.animal_ids?.length) {
+      const assignedAnimals = await this.db
+        .select({
+          animal_id: schema.animalRegister.animal_id,
+          current_batch_id: schema.animalRegister.current_batch_id,
+          breed_id: schema.animalRegister.breed_id,
+        })
+        .from(schema.animalRegister)
+        .where(and(
+          inArray(schema.animalRegister.animal_id, dto.animal_ids),
+          eq(schema.animalRegister.tenant_id, tenantId),
+          eq(schema.animalRegister.is_active, true),
+        ));
+
+      if (assignedAnimals.length !== dto.animal_ids.length) {
+        throw new BadRequestException('One or more selected animals were not found or are inactive.');
+      }
+
+      for (const a of assignedAnimals) {
+        if (dto.breed_id && a.breed_id !== dto.breed_id) {
+          throw new BadRequestException(`Selected animal ${a.animal_id} breed does not match batch breed.`);
+        }
+        if (a.current_batch_id) {
+          throw new BadRequestException(`Selected animal ${a.animal_id} is already assigned to another batch.`);
+        }
+      }
+
+      await this.db
+        .update(schema.animalRegister)
+        .set({
+          current_batch_id: batchId,
+          current_stage_id: initialStage?.stage_id || null,
+          updated_by: userPayload?.userId || null,
+          updated_at: toMysqlTimestamp(),
+        })
+        .where(inArray(schema.animalRegister.animal_id, dto.animal_ids));
+    }
+
     if (initialStage && dto.auto_generate_scheduler !== false) {
       await this.schedulerHeaderService.createForStage(batchId, initialStage.stage_id, tenantId, userPayload);
     }
@@ -511,6 +552,24 @@ export class BatchService {
     const alerts = await this.db.select().from(schema.notificationAlertLog).where(eq(schema.notificationAlertLog.batch_id, id));
     const stageLog = await this.db.select().from(schema.batchStageLog).where(eq(schema.batchStageLog.batch_id, id));
 
+    const animals = batch.animal_tracking === 'REGISTERED'
+      ? await this.db
+          .select({
+            animal_id: schema.animalRegister.animal_id,
+            animal_code: schema.animalRegister.animal_code,
+            ear_tag: schema.animalRegister.ear_tag,
+            rfid_tag: schema.animalRegister.rfid_tag,
+            animal_type: schema.animalRegister.animal_type,
+            gender: schema.animalRegister.gender,
+            status: schema.animalRegister.status,
+            current_location_id: schema.animalRegister.current_location_id,
+            location_name: schema.locationMaster.location_name,
+          })
+          .from(schema.animalRegister)
+          .leftJoin(schema.locationMaster, eq(schema.animalRegister.current_location_id, schema.locationMaster.location_id))
+          .where(and(eq(schema.animalRegister.current_batch_id, id), eq(schema.animalRegister.is_active, true)))
+      : [];
+
     return {
       ...batch,
       input_lines: inputLines,
@@ -524,6 +583,7 @@ export class BatchService {
       scheduler: schedulerHeader ? { ...schedulerHeader, lines: schedulerLines } : null,
       alerts,
       stage_log: stageLog,
+      animals,
     };
   }
 

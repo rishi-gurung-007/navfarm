@@ -185,6 +185,12 @@ export class CreateBatchDto {
   @Type(() => BatchStandardInput)
   @IsOptional()
   standard?: BatchStandardInput;
+
+  @ApiProperty({ description: 'Existing registered animals to place into this batch at creation (REGISTERED tracking only)', required: false, type: [String] })
+  @IsArray()
+  @IsUUID('4', { each: true })
+  @IsOptional()
+  animal_ids?: string[];
 }
 
 export class RenewBatchDto {

@@ -77,7 +77,11 @@ export default function BatchPanel() {
   const [acting, setActing] = useState(false);
   const [txForm, setTxForm] = useState<Row>(emptyTxForm());
 
-  const [detailTab, setDetailTab] = useState<"overview" | "transactions" | "data-entry" | "curves">("overview");
+  const [detailTab, setDetailTab] = useState<"overview" | "transactions" | "data-entry" | "curves" | "animals">("overview");
+  const [availableAnimals, setAvailableAnimals] = useState<Row[]>([]);
+  const [selectedAnimalIds, setSelectedAnimalIds] = useState<string[]>([]);
+  const [animalSelectionMode, setAnimalSelectionMode] = useState<"available" | "explicit">("explicit");
+  const [loadingAnimals, setLoadingAnimals] = useState(false);
 
   // A batch split out of another can be merged back once the group is ready —
   // every live animal returns to the parent and this child closes.
@@ -258,14 +262,50 @@ export default function BatchPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeNobId, activeLobId]);
 
+  useEffect(() => {
+    if (modalOpen && header.animal_tracking === "REGISTERED" && header.farm_id) {
+      setLoadingAnimals(true);
+      const params = new URLSearchParams();
+      if (companyId) params.set("companyId", companyId);
+      if (header.breed_id) params.set("breedId", header.breed_id);
+      params.set("unassignedOnly", "true");
+      api
+        .get(`/animal?${params.toString()}`)
+        .then((res) => {
+          setAvailableAnimals(unwrap<Row[]>(res) || []);
+        })
+        .catch(() => setAvailableAnimals([]))
+        .finally(() => setLoadingAnimals(false));
+    } else {
+      setAvailableAnimals([]);
+    }
+  }, [modalOpen, header.animal_tracking, header.farm_id, header.breed_id, companyId]);
+
   const openCreate = () => {
     setNobId("");
-    setHeader({ lob_id: "", farm_id: farmIsFixed ? assignedFarmId : "", animal_tracking: "", costing_method: "STANDARD", breed_id: "", stage_id: "", shed_id: "", start_date: new Date().toISOString().slice(0, 10), expected_end_date: "", opening_quantity: "", uom: "", remarks: "" });
+    setHeader({ lob_id: "", farm_id: farmIsFixed ? assignedFarmId : "", animal_tracking: "", costing_method: "STANDARD", breed_id: "", stage_id: "", shed_id: "", start_date: new Date().toISOString().slice(0, 10), expected_end_date: "", opening_quantity: "", uom: "HEAD", remarks: "" });
     setInputLines([emptyInputLine()]);
     setStdForm({ std_output_quantity: "", std_output_cost_per_unit: "", std_overhead_rate_per_unit: "" });
     setStdConsumptionLines([emptyStdConsumptionLine()]);
+    setSelectedAnimalIds([]);
+    setAnimalSelectionMode("explicit");
+    setAvailableAnimals([]);
     setFormError("");
     setModalOpen(true);
+  };
+
+  const toggleAnimalSelection = (animalId: string) => {
+    setSelectedAnimalIds((prev) => {
+      const next = prev.includes(animalId) ? prev.filter((id) => id !== animalId) : [...prev, animalId];
+      if (animalSelectionMode === "available") {
+        setHeader((h) => ({
+          ...h,
+          opening_quantity: next.length > 0 ? next.length.toString() : "",
+          uom: "HEAD",
+        }));
+      }
+      return next;
+    });
   };
 
   const setInputLineField = (idx: number, key: string, value: any) => {
@@ -321,6 +361,13 @@ export default function BatchPanel() {
         }
       }
 
+      if (header.animal_tracking === "REGISTERED" && animalSelectionMode === "available" && selectedAnimalIds.length === 0) {
+        throw new Error("Select at least one registered animal, or switch to explicit headcount entry.");
+      }
+      if (header.animal_tracking === "REGISTERED" && animalSelectionMode === "available" && Number(header.opening_quantity) !== selectedAnimalIds.length) {
+        throw new Error(`Opening quantity (${header.opening_quantity}) must match the count of selected animals (${selectedAnimalIds.length}).`);
+      }
+
       await api.post("/batch", {
         company_id: companyId,
         lob_id: header.lob_id,
@@ -337,6 +384,7 @@ export default function BatchPanel() {
         remarks: header.remarks || undefined,
         input_lines: cleanLines,
         standard,
+        animal_ids: header.animal_tracking === "REGISTERED" && selectedAnimalIds.length > 0 ? selectedAnimalIds : undefined,
       });
       setModalOpen(false);
       load();
@@ -887,7 +935,15 @@ export default function BatchPanel() {
                 pagedRows.map((row) => (
                   <TableRow key={row.batch_id}>
                     <TableCell className="whitespace-nowrap font-semibold" style={S.primary}>
-                      {row.batch_no}
+                      <div className="flex items-center gap-1.5">
+                        <span>{row.batch_no}</span>
+                        <Badge
+                          variant={row.animal_tracking === "REGISTERED" ? "accent" : "neutral"}
+                          className="text-[9px] px-1.5 py-0 font-normal"
+                        >
+                          {row.animal_tracking === "REGISTERED" ? "Registered" : "Count Only"}
+                        </Badge>
+                      </div>
                       {row.parent_batch_id && (
                         <span className="ml-1.5 text-[10px] font-medium" style={S.muted}>↳ split group</span>
                       )}
@@ -988,16 +1044,132 @@ export default function BatchPanel() {
               </select>
               {farmIsFixed && <p className="text-[11px]" style={S.muted}>Your assigned farm is fixed for operational entry.</p>}
             </div>
-            <div className="flex flex-col gap-1.5">
+            <div className="flex flex-col gap-1.5 sm:col-span-2">
               <label className="nf-text-label" style={S.sub}>Animal Tracking <span className="text-(--danger)">*</span></label>
-              <select value={header.animal_tracking} onChange={(e) => setHeader((h) => ({ ...h, animal_tracking: e.target.value }))} className={`${inputCls} nf-select`} style={S.input}>
+              <select
+                value={header.animal_tracking}
+                onChange={(e) => {
+                  const mode = e.target.value;
+                  setHeader((h) => ({
+                    ...h,
+                    animal_tracking: mode,
+                    opening_quantity: mode === "REGISTERED" && selectedAnimalIds.length > 0 ? selectedAnimalIds.length.toString() : h.opening_quantity,
+                    uom: mode ? "HEAD" : h.uom,
+                  }));
+                }}
+                className={`${inputCls} nf-select`}
+                style={S.input}
+              >
                 <option value="">Select…</option>
                 <option value="REGISTERED">Registered Animals</option>
                 <option value="COUNT_ONLY">Count Only</option>
               </select>
-              <p className="text-[11px]" style={S.muted}>
-                Registered Animals are entered individually; Count Only stores the Batch headcount without Animal records.
-              </p>
+              {header.animal_tracking === "COUNT_ONLY" && (
+                <div className="rounded-lg border border-primary/20 bg-primary/5 p-2.5 text-xs">
+                  <span className="font-semibold text-primary">Headcount-Only Tracking:</span>
+                  <span className="block mt-0.5" style={S.sub}>
+                    Tracks total opening headcount ({header.opening_quantity || "—"} {header.uom || "HEAD"}) and aggregate group consumption without creating individual animal register records.
+                  </span>
+                </div>
+              )}
+              {header.animal_tracking === "REGISTERED" && (
+                <div className="flex flex-col gap-2 rounded-lg border p-3" style={S.surface}>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <span className="font-semibold" style={S.primary}>Registered Animals Tracking</span>
+                      <p className="text-[11px]" style={S.muted}>
+                        Each animal is identified individually by ear tag or animal code.
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAnimalSelectionMode("available");
+                          if (selectedAnimalIds.length > 0) {
+                            setHeader((h) => ({ ...h, opening_quantity: selectedAnimalIds.length.toString(), uom: "HEAD" }));
+                          }
+                        }}
+                        className={`px-2.5 py-1 text-xs rounded-md font-medium border transition ${
+                          animalSelectionMode === "available"
+                            ? "bg-primary text-primary-foreground border-primary"
+                            : "border-border hover:bg-(--surface-raised)"
+                        }`}
+                      >
+                        Choose Available
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setAnimalSelectionMode("explicit")}
+                        className={`px-2.5 py-1 text-xs rounded-md font-medium border transition ${
+                          animalSelectionMode === "explicit"
+                            ? "bg-primary text-primary-foreground border-primary"
+                            : "border-border hover:bg-(--surface-raised)"
+                        }`}
+                      >
+                        Explicit Entry
+                      </button>
+                    </div>
+                  </div>
+
+                  {animalSelectionMode === "available" ? (
+                    <div className="flex flex-col gap-2 mt-1">
+                      {loadingAnimals ? (
+                        <div className="py-4 text-center text-xs" style={S.sub}>
+                          <Loader2 className="inline-block mr-1 h-3.5 w-3.5 animate-spin" /> Loading unassigned registered animals on this farm…
+                        </div>
+                      ) : availableAnimals.length === 0 ? (
+                        <div className="py-3 text-center text-xs text-amber-700 bg-amber-500/10 rounded-md border border-amber-500/20">
+                          No unassigned registered animals found on this farm and breed. Use <strong>Explicit Entry</strong> to specify opening headcount and register animals afterwards or upon arrival.
+                        </div>
+                      ) : (
+                        <div className="flex flex-col gap-1.5">
+                          <div className="flex items-center justify-between text-[11px]" style={S.sub}>
+                            <span>Select animals to place into this batch ({selectedAnimalIds.length} selected):</span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const allIds = availableAnimals.map((a) => a.animal_id);
+                                const isAll = selectedAnimalIds.length === allIds.length;
+                                const next = isAll ? [] : allIds;
+                                setSelectedAnimalIds(next);
+                                setHeader((h) => ({ ...h, opening_quantity: next.length > 0 ? next.length.toString() : "", uom: "HEAD" }));
+                              }}
+                              className="text-primary hover:underline font-semibold"
+                            >
+                              {selectedAnimalIds.length === availableAnimals.length ? "Deselect All" : "Select All"}
+                            </button>
+                          </div>
+                          <div className="max-h-44 overflow-y-auto border rounded-md p-1 divide-y divide-(--row-border)" style={S.input}>
+                            {availableAnimals.map((a) => {
+                              const isChecked = selectedAnimalIds.includes(a.animal_id);
+                              return (
+                                <label key={a.animal_id} className="flex items-center gap-2.5 p-1.5 hover:bg-(--surface-raised) cursor-pointer rounded text-xs">
+                                  <input
+                                    type="checkbox"
+                                    checked={isChecked}
+                                    onChange={() => toggleAnimalSelection(a.animal_id)}
+                                    className="rounded border-border"
+                                  />
+                                  <span className="font-semibold" style={S.primary}>{a.ear_tag || a.animal_code}</span>
+                                  <span className="text-[11px]" style={S.sub}>({a.animal_type})</span>
+                                  <span className="text-[11px] ml-auto" style={S.muted}>
+                                    {a.gender === "F" ? "Female" : a.gender === "M" ? "Male" : ""} • {a.status}
+                                  </span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="text-[11px] mt-1" style={S.muted}>
+                      Enter the opening headcount below. Individual animals can be registered to this batch directly from the Animal Register or via birth/import receipts.
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
             <div className="flex flex-col gap-1.5">
               <label className="nf-text-label" style={S.sub}>{t("blLabelBreed")}</label>
@@ -1259,6 +1431,14 @@ export default function BatchPanel() {
                   <Badge variant="accent" className="mt-1">{viewing.current_stage_code}</Badge>
                 </div>
               )}
+              {viewing.animal_tracking && (
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-wider" style={S.muted}>Animal Tracking</p>
+                  <Badge variant={viewing.animal_tracking === "REGISTERED" ? "accent" : "neutral"} className="mt-1">
+                    {viewing.animal_tracking === "REGISTERED" ? "Registered Animals" : "Count Only"}
+                  </Badge>
+                </div>
+              )}
               {viewing.total_cost != null && (
                 <div>
                   <p className="text-[10px] font-bold uppercase tracking-wider" style={S.muted}>{t("blLabelTotalCost")}</p>
@@ -1271,13 +1451,16 @@ export default function BatchPanel() {
             <div className="flex items-center gap-2 border-b" style={{ borderColor: "var(--border)" }}>
               {([
                 ["overview", t("blTabOverview")],
+                ...(viewing.animal_tracking === "REGISTERED"
+                  ? [["animals", `Animals (${viewing.animals?.length ?? 0})`]]
+                  : []),
                 ["curves", t("blTabCurves")],
                 ["transactions", t("blTabTransactions")],
                 ["data-entry", t("blTabDataEntry")],
-              ] as const).map(([key, label]) => (
+              ] as [string, string][]).map(([key, label]) => (
                 <button
                   key={key}
-                  onClick={() => setDetailTab(key)}
+                  onClick={() => setDetailTab(key as any)}
                   className="px-3.5 py-2 text-xs font-semibold transition-colors relative"
                   style={
                     detailTab === key
@@ -1705,6 +1888,61 @@ export default function BatchPanel() {
                     api.get(`/batch/${viewing.batch_id}`).then((r) => setViewing(unwrap<Row>(r)));
                   }}
                 />
+              </div>
+            )}
+
+            {detailTab === "animals" && (
+              <div className="flex flex-col gap-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h4 className="text-xs font-semibold" style={S.primary}>Registered Animals in Batch</h4>
+                    <p className="text-[11px]" style={S.muted}>
+                      Individual animals tracked with ear tags and clinical history in this batch.
+                    </p>
+                  </div>
+                  <span className="text-[11px] font-medium" style={S.sub}>
+                    {viewing.animals?.length ?? 0} head registered
+                  </span>
+                </div>
+
+                {(!viewing.animals || viewing.animals.length === 0) ? (
+                  <div className="py-8 text-center rounded-[var(--radius-md)] border" style={S.surface}>
+                    <Inbox className="mx-auto mb-2 h-6 w-6" style={S.muted} />
+                    <p className="text-xs" style={S.sub}>No individual animal records linked to this batch yet.</p>
+                    <p className="text-[11px] mt-1" style={S.muted}>
+                      Animals can be registered to this batch from the Animal Register or via birth/import records.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto rounded-[var(--radius-sm)] border" style={S.surface}>
+                    <table className="w-full border-collapse text-left text-xs">
+                      <TableHeader>
+                        <tr className="border-b border-[var(--row-border)]">
+                          <TableHead className="h-auto px-3 py-2">Ear Tag</TableHead>
+                          <TableHead className="h-auto px-3 py-2">Animal Code</TableHead>
+                          <TableHead className="h-auto px-3 py-2">Kind / Type</TableHead>
+                          <TableHead className="h-auto px-3 py-2">Gender</TableHead>
+                          <TableHead className="h-auto px-3 py-2">Location / Pen</TableHead>
+                          <TableHead className="h-auto px-3 py-2 text-right">Status</TableHead>
+                        </tr>
+                      </TableHeader>
+                      <TableBody>
+                        {viewing.animals.map((a: any) => (
+                          <TableRow key={a.animal_id}>
+                            <TableCell className="px-3 py-2 font-medium" style={S.primary}>{a.ear_tag || "—"}</TableCell>
+                            <TableCell className="px-3 py-2" style={S.sub}>{a.animal_code}</TableCell>
+                            <TableCell className="px-3 py-2" style={S.primary}>{a.animal_type}</TableCell>
+                            <TableCell className="px-3 py-2" style={S.sub}>{a.gender === "F" ? "Female" : a.gender === "M" ? "Male" : a.gender}</TableCell>
+                            <TableCell className="px-3 py-2" style={S.sub}>{a.location_name || a.current_location_id || "—"}</TableCell>
+                            <TableCell className="px-3 py-2 text-right">
+                              <StatusBadge status={a.status || "ACTIVE"} />
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </table>
+                  </div>
+                )}
               </div>
             )}
           </div>

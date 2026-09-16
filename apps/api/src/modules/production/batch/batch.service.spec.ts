@@ -261,6 +261,44 @@ describe('BatchService', () => {
 
       expect(insertedTables).not.toContain(schema.animalRegister);
     });
+
+    it('rejects animal_ids when animal_tracking is COUNT_ONLY', async () => {
+      primeCreate({ breed: {
+        breed_id: 'breed-1', tenant_id: 'tenant-123', company_id: 'comp-1', lob_id: 'lob-piggery',
+        location_id: 'farm-1', is_active: true, deleted_at: null,
+      } });
+
+      await expect(service.create({ ...validDto, animal_tracking: 'COUNT_ONLY', animal_ids: ['a-1'] } as any, 'tenant-123'))
+        .rejects.toThrow('Count-only batches track headcount only and cannot link individual registered animals.');
+    });
+
+    it('links existing animals when animal_tracking is REGISTERED and animal_ids are provided', async () => {
+      primeCreate({ breed: {
+        breed_id: 'breed-1', tenant_id: 'tenant-123', company_id: 'comp-1', lob_id: 'lob-piggery',
+        location_id: 'farm-1', is_active: true, deleted_at: null,
+      } });
+
+      // Mock finding assigned animals
+      mockDbSelect.mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockResolvedValue([
+            { animal_id: 'a-1', current_batch_id: null, breed_id: 'breed-1' },
+            { animal_id: 'a-2', current_batch_id: null, breed_id: 'breed-1' },
+          ]),
+        }),
+      });
+
+      const updatedTables: unknown[] = [];
+      mockDbUpdate.mockImplementation((table: unknown) => ({
+        set: jest.fn().mockReturnValue({
+          where: jest.fn(async () => { updatedTables.push(table); return {}; }),
+        }),
+      }));
+
+      await service.create({ ...validDto, animal_tracking: 'REGISTERED', breed_id: 'breed-1', animal_ids: ['a-1', 'a-2'] } as any, 'tenant-123');
+
+      expect(updatedTables).toContain(schema.animalRegister);
+    });
   });
 
   describe('transferStage', () => {
