@@ -22,9 +22,14 @@ import * as schema from '../core/database/schema';
 import { bootApp, buildDemoContext, inTenant } from './demo/harness';
 import { identityChapter } from './demo/chapters/identity';
 import { storesAndItemsChapter } from './demo/chapters/01-stores-and-items';
+import { inventoryChapter } from './demo/chapters/02-inventory';
+import { batchesAndAnimalsChapter } from './demo/chapters/03-batches-and-animals';
+import { dailyEntriesChapter } from './demo/chapters/04-daily-entries';
+import { breedingChapter } from './demo/chapters/05-breeding';
+import { approvalsChapter } from './demo/chapters/06-approvals';
 import type { DemoChapter, DemoContext } from './demo/chapter';
 
-const CHAPTERS: DemoChapter[] = [identityChapter, storesAndItemsChapter];
+const CHAPTERS: DemoChapter[] = [identityChapter, storesAndItemsChapter, inventoryChapter, batchesAndAnimalsChapter, dailyEntriesChapter, breedingChapter, approvalsChapter];
 
 function parseArgs(argv: string[]): { apply: boolean; chapter?: string; forceOnExisting: boolean } {
   let apply = false;

@@ -327,6 +327,22 @@
           "cwd": "apps/api"
         }
       },
+      "db-seed-triplec-breed-lifecycles": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "command": "node --env-file-if-exists=.env --import tsx src/scripts/seed-triplec-breed-lifecycles.ts",
+          "cwd": "apps/api"
+        }
+      },
+      "db-repair-demo-schedulers": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "command": "../../node_modules/.bin/ts-node --transpile-only --project tsconfig.app.json -O '{\"module\":\"node16\",\"moduleResolution\":\"node16\",\"esModuleInterop\":true,\"ignoreDeprecations\":\"6.0\"}' src/scripts/repair-demo-schedulers.ts",
+          "cwd": "apps/api"
+        }
+      },
       "db-demo-chapters": {
         "executor": "nx:run-commands",
         "cache": false,
