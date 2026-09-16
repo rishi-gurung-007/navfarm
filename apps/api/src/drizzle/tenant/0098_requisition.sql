@@ -9,6 +9,7 @@
 -- remarks, budget checks) is ours, kept minimal, and listed for Rishi in
 -- docs/decisions.md.
 ALTER TABLE `approval_request` ADD COLUMN `linked_po_no` varchar(50) NULL AFTER `batch_id`;
+--> statement-breakpoint
 
 CREATE TABLE `requisition` (
   `requisition_id` varchar(36) NOT NULL PRIMARY KEY,
@@ -34,7 +35,7 @@ CREATE TABLE `requisition` (
   CONSTRAINT `requisition_farm_fk` FOREIGN KEY (`farm_id`) REFERENCES `location_master`(`location_id`) ON DELETE SET NULL,
   CONSTRAINT `requisition_approval_fk` FOREIGN KEY (`approval_request_id`) REFERENCES `approval_request`(`request_id`) ON DELETE SET NULL
 );
-
+--> statement-breakpoint
 CREATE TABLE `requisition_line` (
   `line_id` varchar(36) NOT NULL PRIMARY KEY,
   `requisition_id` varchar(36) NOT NULL,
