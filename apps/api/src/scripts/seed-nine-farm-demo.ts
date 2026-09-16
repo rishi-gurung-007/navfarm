@@ -585,6 +585,16 @@ async function run() {
     if (!scopeRows.length) throw new Error('No company-scoped locations — run db-seed-farm-locations first.');
     const scope = scopeRows[0] as { tenant_id: string; company_id: string; nob_id: string; lob_id: string };
 
+    // The operational area these users record in. Read, not assumed: a farm
+    // user with no area is refused at every data-entry route.
+    const [areaRows] = await db.query<RowDataPacket[]>(
+      `SELECT area_id FROM operational_area_master
+        WHERE company_id = ? AND is_active = 1 ORDER BY (lob_id = ?) DESC LIMIT 1`,
+      [scope.company_id, scope.lob_id],
+    );
+    const areaId = areaRows.length ? (areaRows[0].area_id as string) : null;
+    if (!areaId) throw new Error('No active operational area for this company — the farm users would be unable to record anything.');
+
     const plan: Record<string, unknown> = {
       database,
       mode: apply ? 'APPLY' : verify ? 'VERIFY' : 'READ-ONLY',
@@ -1117,6 +1127,19 @@ async function run() {
               'INSERT INTO user_role_assignment (assign_id, user_id, role_id, assigned_by, assigned_at, is_active) VALUES (?, ?, ?, ?, NOW(), 1)',
               [randomUUID(), userId, roleId, assignedBy]);
           }
+        }
+
+        // Without an operational area a standard user is refused at every
+        // data-entry route (the scope header has nothing to resolve), so the
+        // farm's own users are put in the same area the existing farm workers
+        // stand in rather than being created unable to record anything.
+        const [existingArea] = await db.query<RowDataPacket[]>(
+          'SELECT assignment_id FROM user_operational_area_assignment WHERE user_id = ? AND area_id = ?',
+          [userId, areaId]);
+        if (!existingArea.length && write) {
+          await db.query(
+            'INSERT INTO user_operational_area_assignment (assignment_id, user_id, area_id, company_id, is_primary, created_at) VALUES (?, ?, ?, ?, 1, NOW())',
+            [randomUUID(), userId, areaId, scope.company_id]);
         }
 
         const [existingCompany] = await db.query<RowDataPacket[]>(
