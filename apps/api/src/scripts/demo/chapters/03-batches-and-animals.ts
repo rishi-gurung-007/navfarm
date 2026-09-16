@@ -1,23 +1,41 @@
 /**
- * Chapter `03-batches-and-animals` — Phase 3 Task 5. Everything through the
- * services (Ruling 1):
+ * Chapter `03-batches-and-animals` — Phase 3 Task 5, now over all nine farms.
+ * Everything through the services (Ruling 1):
  *
- *   Grasmere: one **Registered Animals** breeding batch (BIO_ASSET costing,
- *   Gilt Grower stage, Grasmere breed profile, `auto_generate_scheduler`)
- *   whose 9 animals (8 sows + 1 boar) are then created one by one through
- *   `AnimalService.create` with explicit demo facts — never derived from
- *   opening quantity (Ruling 3); plus one **Count Only** grower batch.
- *   Kintyre: one **Count Only** grower batch.
+ *   - one **Registered Animals** batch per farm that may hold breeding stock
+ *     (BIO_ASSET costing, the farm's own breed profile,
+ *     `auto_generate_scheduler`), whose sows, gilts and boars are then created
+ *     one by one through `AnimalService.create` with explicit demo facts —
+ *     never derived from opening quantity (Ruling 3);
+ *   - one to three **Count Only** batches per farm, one per stage the farm's
+ *     role allows *and* the farm's breed actually carries a lifecycle row for.
+ *
+ * What a farm may do comes from its role (docs/decisions.md, last section):
+ *   MUL100  multiplier — gilt production, no grow-out;
+ *   AI100   boars only — no farrowing and no grow-out, so one registered boar
+ *           batch at Boar AI and one quarantine intake, nothing else;
+ *   LEX100  weaners and growers only — count-only batches, no registered
+ *           breeding stock at all;
+ *   the other six farrow-to-finish.
+ * A stage the farm's breed has no `breed_lifecycle_stages` row for is skipped
+ * rather than invented: without one the auto-generated scheduler is born empty
+ * and chapter 04 would have nothing to post.
+ *
+ * Animals stand at Pens, never at a shed or a farm: sows in the Dry Sow house's
+ * pens, gilts in the Gilt house's, boars in the Boar house's, each herd spread
+ * round-robin across that shed's pens. Batches carry their farm, their tracking
+ * mode and their stage.
  *
  * Batch create leaves the batch DRAFT; `BatchService.activate` takes it
  * through BIO_ACQUISITION GL + bio-asset ledger posting. Registered animals
- * carry `entry_type: 'PURCHASED_LOCAL'` with the chapter's livestock goods
- * receipt (posted in 02-inventory) as their `source_receipt_id` — the
- * acquisition cost is read off that receipt line by the service.
+ * carry `entry_type: 'PURCHASED_LOCAL'` with the farm's livestock goods
+ * receipt as their `source_receipt_id` — the acquisition cost is read off that
+ * receipt line by the service.
  *
  * Resume semantics like 02-inventory: batches are located by their DEMO
  * remarks token; DRAFT batches are activated, absent batches are created.
- * Animals are keyed by ear_tag and skipped when already present.
+ * Animals are keyed by ear_tag and skipped when already present, so MUL100's
+ * nine existing demo animals are adopted rather than duplicated.
  */
 import { and, eq, isNull } from 'drizzle-orm';
 import { ClsService } from 'nestjs-cls';
@@ -27,6 +45,15 @@ import { AnimalService } from '../../../modules/piggery/animal/animal.service';
 import { GoodsReceiptService } from '../../../modules/inventory/goods-receipt/goods-receipt.service';
 import * as schema from '../../../core/database/schema';
 import type { DemoChapter, DemoContext } from '../chapter';
+import {
+  batchBreedOf,
+  batchRef,
+  earTag,
+  farmCanRegisterAnimals,
+  pensForRole,
+  tagOf,
+  type DemoFarm,
+} from '../farms';
 
 /**
  * `item_master.standard_cost` is a MySQL decimal, so Drizzle hands it back as
@@ -37,29 +64,52 @@ function rateOf(standardCost: string | null | undefined): number | undefined {
   return standardCost == null ? undefined : Number(standardCost);
 }
 
-
 const PIGGERY_LOB_ID = '60000000-6000-6000-6000-000000000007';
 
-/** Demo animals — explicit facts per plan Task 5 Step 2, not client data. */
-const DEMO_ANIMALS = [
-  // Grasmere's only farm-bound breed profile is Z-Line-Sow (Phase 2 made
-  // breeds farm-specific); all 9 animals use it.
-  { ear_tag: 'DEMO-SOW-01', animal_type: 'SOW', gender: 'F', breed_code: 'Z-Line-Sow', item_code: 'LIVESTOCK-BIOLOGICAL_ASSETS-BREEDING_STOCK-SOW-ITM-0001', age_at_entry_weeks: 120, no_of_teats: 16 },
-  { ear_tag: 'DEMO-SOW-02', animal_type: 'SOW', gender: 'F', breed_code: 'Z-Line-Sow', item_code: 'LIVESTOCK-BIOLOGICAL_ASSETS-BREEDING_STOCK-SOW-ITM-0001', age_at_entry_weeks: 115, no_of_teats: 14 },
-  { ear_tag: 'DEMO-SOW-03', animal_type: 'SOW', gender: 'F', breed_code: 'Z-Line-Sow', item_code: 'LIVESTOCK-BIOLOGICAL_ASSETS-BREEDING_STOCK-SOW-ITM-0001', age_at_entry_weeks: 110, no_of_teats: 16 },
-  { ear_tag: 'DEMO-SOW-04', animal_type: 'SOW', gender: 'F', breed_code: 'Z-Line-Sow', item_code: 'LIVESTOCK-BIOLOGICAL_ASSETS-BREEDING_STOCK-SOW-ITM-0001', age_at_entry_weeks: 105, no_of_teats: 15 },
-  { ear_tag: 'DEMO-SOW-05', animal_type: 'SOW', gender: 'F', breed_code: 'Z-Line-Sow', item_code: 'LIVESTOCK-BIOLOGICAL_ASSETS-BREEDING_STOCK-SOW-ITM-0001', age_at_entry_weeks: 118, no_of_teats: 16 },
-  { ear_tag: 'DEMO-SOW-06', animal_type: 'SOW', gender: 'F', breed_code: 'Z-Line-Sow', item_code: 'LIVESTOCK-BIOLOGICAL_ASSETS-BREEDING_STOCK-SOW-ITM-0001', age_at_entry_weeks: 112, no_of_teats: 15 },
-  { ear_tag: 'DEMO-SOW-07', animal_type: 'SOW', gender: 'F', breed_code: 'Z-Line-Sow', item_code: 'LIVESTOCK-BIOLOGICAL_ASSETS-BREEDING_STOCK-SOW-ITM-0001', age_at_entry_weeks: 108, no_of_teats: 14 },
-  { ear_tag: 'DEMO-SOW-08', animal_type: 'SOW', gender: 'F', breed_code: 'Z-Line-Sow', item_code: 'LIVESTOCK-BIOLOGICAL_ASSETS-BREEDING_STOCK-SOW-ITM-0001', age_at_entry_weeks: 114, no_of_teats: 16 },
-  { ear_tag: 'DEMO-BOAR-01', animal_type: 'BOAR', gender: 'M', breed_code: 'Z-Line-Sow', item_code: 'LIVESTOCK-BIOLOGICAL_ASSETS-BREEDING_STOCK-BOAR-ITM-0001', age_at_entry_weeks: 90 },
-] as const;
+const ITEM_SOW = 'LIVESTOCK-BIOLOGICAL_ASSETS-BREEDING_STOCK-SOW-ITM-0001';
+const ITEM_BOAR = 'LIVESTOCK-BIOLOGICAL_ASSETS-BREEDING_STOCK-BOAR-ITM-0001';
+const ITEM_GILT = 'LIVESTOCK-BIOLOGICAL_ASSETS-BREEDING_STOCK-GILT-ITM-0001';
+const ITEM_SUCKLING = 'LIVESTOCK-BIOLOGICAL_ASSETS-GROWER_FINISHER-PIGLET-ITM-0001';
+const ITEM_WEANED = 'LIVESTOCK-BIOLOGICAL_ASSETS-GROWER_FINISHER-PIGLET-ITM-0002';
 
+/** The registered batch's stage, by farm role, first match the breed carries. */
+const REGISTERED_STAGE_PREFERENCE: Record<DemoFarm['role'], string[]> = {
+  MULTIPLIER: ['GILT_GROWER', 'GESTATION'],
+  FARROW_TO_FINISH: ['GILT_GROWER', 'GESTATION'],
+  AI_STATION: ['BOAR_AI', 'QUARANTINE'],
+  GROW_OUT: [],
+};
 
-interface BatchRefs {
-  registeredGrasmere: string;
-  countOnlyGrasmere: string;
-  countOnlyKintyre: string;
+/** Count-only stages a farm of each role may run, in priority order. */
+const COUNT_ONLY_STAGE_PREFERENCE: Record<DemoFarm['role'], string[]> = {
+  MULTIPLIER: ['GESTATION', 'WEANER', 'LACTATION'],
+  FARROW_TO_FINISH: ['GESTATION', 'WEANER', 'GROWER', 'FINISHER'],
+  AI_STATION: ['QUARANTINE'],
+  GROW_OUT: ['WEANER', 'GROWER'],
+};
+
+/** What a count-only batch of a stage opens with, before the farm's herd scale. */
+const COUNT_ONLY_STAGE_FACTS: Record<string, { baseQuantity: number; itemCode: string }> = {
+  GESTATION: { baseQuantity: 120, itemCode: ITEM_GILT },
+  WEANER: { baseQuantity: 240, itemCode: ITEM_WEANED },
+  GROWER: { baseQuantity: 200, itemCode: ITEM_WEANED },
+  FINISHER: { baseQuantity: 180, itemCode: ITEM_WEANED },
+  LACTATION: { baseQuantity: 60, itemCode: ITEM_SUCKLING },
+  QUARANTINE: { baseQuantity: 8, itemCode: ITEM_BOAR },
+};
+
+type AnimalKind = 'SOW' | 'BOAR' | 'GILT';
+
+/** Demo facts per animal kind — ages and teat counts, varied deterministically. */
+const ANIMAL_FACTS: Record<AnimalKind, { gender: 'F' | 'M'; itemCode: string; baseAgeWeeks: number; ageSpread: number; teats?: number }> = {
+  SOW: { gender: 'F', itemCode: ITEM_SOW, baseAgeWeeks: 104, ageSpread: 16, teats: 14 },
+  GILT: { gender: 'F', itemCode: ITEM_GILT, baseAgeWeeks: 30, ageSpread: 6, teats: 15 },
+  BOAR: { gender: 'M', itemCode: ITEM_BOAR, baseAgeWeeks: 88, ageSpread: 8 },
+};
+
+export interface BatchRefs {
+  /** Farm code -> the remarks tokens of every demo batch on that farm. */
+  byFarm: Map<string, { registered?: string; countOnly: string[] }>;
 }
 
 export const batchesAndAnimalsChapter: DemoChapter<BatchRefs> = {
@@ -68,40 +118,39 @@ export const batchesAndAnimalsChapter: DemoChapter<BatchRefs> = {
   async run(ctx: DemoContext): Promise<BatchRefs> {
     const batches = ctx.app.get(BatchService);
     const animals = ctx.app.get(AnimalService);
+    const receipts = ctx.app.get(GoodsReceiptService);
     const cls = ctx.app.get(ClsService);
     const db = cls.get<MySql2Database<typeof schema>>('tenantDb');
     if (!db) throw new Error('03-batches-and-animals: tenantDb is not set — run through the harness.');
 
-    // Fourteen days back, so the scheduler owes a 14-day history ending
-    // yesterday — what the daily-entries chapter (04) posts and what the demo
-    // needs to show Missing days and a backlog on screen.
-    const startDate = new Date(Date.now() - 14 * 86_400_000).toISOString().slice(0, 10);
+    /** Livestock item rows, read once. */
+    const itemCache = new Map<string, { item_id: string; standard_cost: string | null }>();
+    async function item(code: string) {
+      const cached = itemCache.get(code);
+      if (cached) return cached;
+      const [row] = await db
+        .select({ item_id: schema.itemMaster.item_id, standard_cost: schema.itemMaster.standard_cost })
+        .from(schema.itemMaster)
+        .where(and(eq(schema.itemMaster.item_code, code), eq(schema.itemMaster.company_id, ctx.companyId), eq(schema.itemMaster.is_active, true), isNull(schema.itemMaster.deleted_at)))
+        .limit(1);
+      if (!row) throw new Error(`03-batches: item '${code}' not found for the demo company — the master stages must load it first.`);
+      itemCache.set(code, row);
+      return row;
+    }
 
     /** Create-activate a batch per its DEMO remarks token, resume-safe. */
     async function ensureBatch(opts: {
       ref: string;
-      farmId: string;
-      farmCode: string;
+      farm: DemoFarm;
       animalTracking: 'REGISTERED' | 'COUNT_ONLY';
-      stageCode: 'GILT_GROWER' | 'GESTATION';
-      breedId?: string;
+      stageId: string;
+      stageCode: string;
+      breedId: string;
+      startDate: string;
       openingQuantity: number;
       inputLines: { item_id: string; quantity: number; uom: string; rate?: number }[];
-      remarks: string;
     }): Promise<string> {
-      const [stage] = await db
-        .select({ stage_id: schema.stageMaster.stage_id })
-        .from(schema.stageMaster)
-        .where(and(
-          eq(schema.stageMaster.stage_code, opts.stageCode),
-          eq(schema.stageMaster.lob_id, PIGGERY_LOB_ID),
-          eq(schema.stageMaster.company_id, ctx.companyId),
-          eq(schema.stageMaster.is_active, true),
-          isNull(schema.stageMaster.deleted_at),
-        ))
-        .limit(1);
-      if (!stage) throw new Error(`03-batches: stage ${opts.stageCode} (company-scoped) not found.`);
-
+      const tag = tagOf(opts.farm);
       const [existing] = await db
         .select({ batch_id: schema.batchHeader.batch_id, status: schema.batchHeader.status })
         .from(schema.batchHeader)
@@ -110,9 +159,9 @@ export const batchesAndAnimalsChapter: DemoChapter<BatchRefs> = {
       if (existing) {
         if (existing.status === 'DRAFT') {
           await batches.activate(existing.batch_id, ctx.tenantId);
-          ctx.log(`${opts.farmCode}: batch ${opts.ref} was DRAFT — activated now`);
+          ctx.log(`${tag} batch ${opts.ref} was DRAFT — activated now`);
         } else {
-          ctx.log(`${opts.farmCode}: batch ${opts.ref} already ${existing.status} — skipped`);
+          ctx.log(`${tag} batch ${opts.ref} already ${existing.status} — skipped`);
         }
         return existing.batch_id;
       }
@@ -121,13 +170,13 @@ export const batchesAndAnimalsChapter: DemoChapter<BatchRefs> = {
         {
           company_id: ctx.companyId,
           lob_id: PIGGERY_LOB_ID,
-          farm_id: opts.farmId,
+          farm_id: opts.farm.farmId,
           animal_tracking: opts.animalTracking,
           costing_method: 'BIO_ASSET',
           breed_id: opts.breedId,
-          stage_id: stage.stage_id,
+          stage_id: opts.stageId,
           auto_generate_scheduler: true,
-          start_date: startDate,
+          start_date: opts.startDate,
           opening_quantity: opts.openingQuantity,
           uom: 'HEAD',
           remarks: opts.ref,
@@ -136,182 +185,228 @@ export const batchesAndAnimalsChapter: DemoChapter<BatchRefs> = {
         ctx.tenantId,
       );
       await batches.activate(created.batch_id, ctx.tenantId);
-      ctx.log(`${opts.farmCode}: created + activated ${opts.animalTracking} batch ${created.batch_no} (${opts.ref})`);
+      ctx.log(`${tag} created + activated ${opts.animalTracking} batch ${created.batch_no} at ${opts.stageCode} (${opts.openingQuantity} head)`);
       return created.batch_id;
     }
 
-    const [giltItem] = await db
-      .select({ item_id: schema.itemMaster.item_id, standard_cost: schema.itemMaster.standard_cost })
-      .from(schema.itemMaster)
-      .where(and(eq(schema.itemMaster.item_code, 'LIVESTOCK-BIOLOGICAL_ASSETS-GROWER_FINISHER-PIGLET-ITM-0002'), eq(schema.itemMaster.is_active, true)))
-      .limit(1);
-    const [sowItem] = await db
-      .select({ item_id: schema.itemMaster.item_id, standard_cost: schema.itemMaster.standard_cost })
-      .from(schema.itemMaster)
-      .where(and(eq(schema.itemMaster.item_code, 'LIVESTOCK-BIOLOGICAL_ASSETS-BREEDING_STOCK-SOW-ITM-0001'), eq(schema.itemMaster.is_active, true)))
-      .limit(1);
-    const [boarItem] = await db
-      .select({ item_id: schema.itemMaster.item_id, standard_cost: schema.itemMaster.standard_cost })
-      .from(schema.itemMaster)
-      .where(and(eq(schema.itemMaster.item_code, 'LIVESTOCK-BIOLOGICAL_ASSETS-BREEDING_STOCK-BOAR-ITM-0001'), eq(schema.itemMaster.is_active, true)))
-      .limit(1);
+    const byFarm = new Map<string, { registered?: string; countOnly: string[] }>();
 
-    const [grasmereBreed] = await db
-      .select({ breed_id: schema.breedMaster.breed_id })
-      .from(schema.breedMaster)
-      .where(and(eq(schema.breedMaster.breed_code, 'Z-Line-Sow'), eq(schema.breedMaster.location_id, ctx.farms.grasmere), isNull(schema.breedMaster.deleted_at)))
-      .limit(1);
-    if (!grasmereBreed) throw new Error('03-batches: Grasmere breed profile Z-Line-Sow not found — the master stages must load Triple C breeds first.');
+    for (const farm of ctx.demoFarms) {
+      const tag = tagOf(farm);
+      const breed = batchBreedOf(farm);
+      const refs: { registered?: string; countOnly: string[] } = { countOnly: [] };
+      byFarm.set(farm.code, refs);
 
-    // Kintyre's farm-bound breed (Phase 2 made breeds farm-specific).
-    const [kintyreBreed] = await db
-      .select({ breed_id: schema.breedMaster.breed_id })
-      .from(schema.breedMaster)
-      .where(and(eq(schema.breedMaster.breed_code, 'TN-70-Sow'), eq(schema.breedMaster.location_id, ctx.farms.kintyre), isNull(schema.breedMaster.deleted_at)))
-      .limit(1);
-    if (!kintyreBreed) throw new Error('03-batches: Kintyre breed profile TN-70-Sow not found — the master stages must load Triple C breeds first.');
+      if (!breed) {
+        ctx.log(`${tag} no active breed profile on this farm — no batches (nothing to grow a scheduler from)`);
+        continue;
+      }
 
-    // A Grasmere pen under a grower shed for the registered animals.
-    const [pen] = await db
-      .select({ location_id: schema.locationMaster.location_id })
-      .from(schema.locationMaster)
-      .where(and(
-        eq(schema.locationMaster.location_type, 'PEN'),
-        eq(schema.locationMaster.is_active, true),
-        isNull(schema.locationMaster.deleted_at),
-        eq(schema.locationMaster.parent_location_id,
-          db.select({ id: schema.locationMaster.location_id }).from(schema.locationMaster).where(and(eq(schema.locationMaster.location_code, 'MUGR9'), isNull(schema.locationMaster.deleted_at))).limit(1),
-        ),
-      ))
-      .limit(1);
-    if (!pen) throw new Error('03-batches: no active pen under Grasmere MUGR9.');
+      // The window ends yesterday, so the scheduler owes a full history and
+      // the demo shows Missing days and a backlog on screen. Each farm's
+      // window is its volume profile's.
+      const startDate = new Date(Date.now() - farm.volume.days * 86_400_000).toISOString().slice(0, 10);
 
-    // The breeding stock's purchase document: a goods receipt of 8 sows and
-    // 1 boar into the Grasmere farm. AnimalService reads each animal's
-    // acquisition cost off this receipt's line rate. Resume-safe by
-    // external_reference_no; a DRAFT from an interrupted run is posted.
-    const livestockReceiptRef = 'DEMO-MUL100-LIVESTOCK';
-    const receipts = ctx.app.get(GoodsReceiptService);
-    let [livestockReceipt] = await db
-      .select({ receipt_id: schema.goodsReceipt.receipt_id, status: schema.goodsReceipt.status })
-      .from(schema.goodsReceipt)
-      .where(eq(schema.goodsReceipt.external_reference_no, livestockReceiptRef))
-      .limit(1);
-    if (!livestockReceipt) {
-      const createdReceipt = await receipts.create(
-        {
-          company_id: ctx.companyId,
-          warehouse_id: ctx.farms.grasmere,
-          posting_date: startDate,
-          external_reference_no: livestockReceiptRef,
-          remarks: 'DEMO breeding stock purchase (8 sows, 1 boar) into Grasmere',
-          lines: [
-            { item_id: sowItem.item_id, quantity: 8, uom: 'HEAD', rate: rateOf(sowItem.standard_cost), lot_no: 'DEMO-SOW-LOT' },
-            { item_id: boarItem.item_id, quantity: 1, uom: 'HEAD', rate: rateOf(boarItem.standard_cost), lot_no: 'DEMO-BOAR-LOT' },
-          ],
-        },
-        ctx.tenantId,
-      );
-      livestockReceipt = { receipt_id: createdReceipt.receipt_id, status: 'DRAFT' };
-      ctx.log('MUL100: breeding stock goods receipt created');
+      // ── Registered breeding stock.
+      const herd: Array<{ kind: AnimalKind; count: number }> = [
+        { kind: 'SOW', count: farm.volume.sows },
+        { kind: 'GILT', count: farm.volume.gilts },
+        { kind: 'BOAR', count: farm.volume.boars },
+      ].filter((h) => h.count > 0);
+
+      if (farmCanRegisterAnimals(farm) && herd.length > 0) {
+        const stageCode = REGISTERED_STAGE_PREFERENCE[farm.role].find((code) => breed.lifecycleStages.has(code));
+        if (!stageCode) {
+          ctx.log(`${tag} breed ${breed.code} carries no lifecycle row for any of ${REGISTERED_STAGE_PREFERENCE[farm.role].join('/')} — no registered batch`);
+        } else {
+          const stageId = breed.lifecycleStages.get(stageCode)!;
+          const ref = batchRef(farm.code, 'REG');
+          refs.registered = ref;
+
+          // The breeding stock's purchase document, one line per item kind.
+          // AnimalService reads each animal's acquisition cost off this
+          // receipt's line rate, so every kind in the herd needs a line —
+          // including on a farm whose receipt was posted by an earlier,
+          // narrower run of this chapter, which is what the top-up covers.
+          const receiptRef = `DEMO-${farm.code}-LIVESTOCK`;
+          const receiptLines: { item_id: string; quantity: number; uom: string; rate?: number; lot_no: string }[] = [];
+          for (const { kind, count } of herd) {
+            const row = await item(ANIMAL_FACTS[kind].itemCode);
+            receiptLines.push({ item_id: row.item_id, quantity: count, uom: 'HEAD', rate: rateOf(row.standard_cost), lot_no: `DEMO-${farm.code}-${kind}-LOT` });
+          }
+
+          /** Create the named receipt with these lines if absent, then post it if DRAFT. */
+          async function ensureReceipt(ref: string, lines: typeof receiptLines, remarks: string): Promise<string> {
+            let [row] = await db
+              .select({ receipt_id: schema.goodsReceipt.receipt_id, status: schema.goodsReceipt.status })
+              .from(schema.goodsReceipt)
+              .where(eq(schema.goodsReceipt.external_reference_no, ref))
+              .limit(1);
+            if (!row) {
+              const created = await receipts.create(
+                {
+                  company_id: ctx.companyId,
+                  warehouse_id: farm.farmId,
+                  posting_date: startDate,
+                  external_reference_no: ref,
+                  remarks,
+                  lines,
+                },
+                ctx.tenantId,
+              );
+              row = { receipt_id: created.receipt_id, status: 'DRAFT' };
+              ctx.log(`${tag} ${ref} created`);
+            }
+            if (row.status === 'DRAFT') {
+              await receipts.post(row.receipt_id, ctx.tenantId);
+              ctx.log(`${tag} ${ref} posted`);
+            }
+            return row.receipt_id;
+          }
+
+          const mainReceiptId = await ensureReceipt(
+            receiptRef,
+            receiptLines,
+            `DEMO breeding stock purchase (${herd.map((h) => `${h.count} ${h.kind.toLowerCase()}`).join(', ')}) into ${farm.code}`,
+          );
+
+          // Which items that receipt actually carries — an adopted receipt from
+          // an earlier run may predate a kind this profile asks for (MUL100's
+          // existing receipt has sows and a boar but no gilts).
+          const carried = new Set(
+            (await db
+              .select({ item_id: schema.goodsReceiptLine.item_id })
+              .from(schema.goodsReceiptLine)
+              .where(eq(schema.goodsReceiptLine.receipt_id, mainReceiptId))).map((l) => l.item_id),
+          );
+          const receiptIdByItem = new Map<string, string>();
+          for (const line of receiptLines) {
+            if (carried.has(line.item_id)) receiptIdByItem.set(line.item_id, mainReceiptId);
+          }
+          const missing = receiptLines.filter((line) => !carried.has(line.item_id));
+          if (missing.length) {
+            const topUpId = await ensureReceipt(
+              `${receiptRef}-TOPUP`,
+              missing,
+              `DEMO breeding stock top-up purchase into ${farm.code} — kinds the first receipt did not carry`,
+            );
+            for (const line of missing) receiptIdByItem.set(line.item_id, topUpId);
+          }
+
+          const total = herd.reduce((n, h) => n + h.count, 0);
+          const batchId = await ensureBatch({
+            ref,
+            farm,
+            animalTracking: 'REGISTERED',
+            stageId,
+            stageCode,
+            breedId: breed.breedId,
+            startDate,
+            openingQuantity: total,
+            inputLines: receiptLines.map(({ item_id, quantity, uom, rate }) => ({ item_id, quantity, uom, rate })),
+          });
+
+          // ── The animals themselves, one by one (Ruling 3), standing at pens.
+          const [batchRow] = await db
+            .select({ stage_id: schema.batchHeader.stage_id })
+            .from(schema.batchHeader)
+            .where(eq(schema.batchHeader.batch_id, batchId))
+            .limit(1);
+          if (!batchRow?.stage_id) throw new Error(`03-batches: registered batch on ${farm.code} carries no stage_id.`);
+
+          // An animal's breed must match its batch's, so every head on the
+          // farm's registered batch carries the farm's one batch breed —
+          // boars included. Flagged for Rishi: a boar of its own sire line on
+          // a sow-line batch is not expressible today.
+          let created = 0;
+          for (const { kind, count } of herd) {
+            const facts = ANIMAL_FACTS[kind];
+            const pens = kind === 'BOAR'
+              ? pensForRole(farm, 'BOAR')
+              : kind === 'GILT'
+                ? pensForRole(farm, 'GILT', 'GILT_REARING')
+                : pensForRole(farm, 'DRY_SOW', 'GILT');
+            if (pens.length === 0) throw new Error(`03-batches: ${farm.code} has no pens to stand a ${kind} in.`);
+            const itemRow = await item(facts.itemCode);
+
+            for (let i = 1; i <= count; i++) {
+              const tagNo = earTag(farm.code, kind, i);
+              const [already] = await db
+                .select({ animal_id: schema.animalRegister.animal_id })
+                .from(schema.animalRegister)
+                .where(eq(schema.animalRegister.ear_tag, tagNo))
+                .limit(1);
+              if (already) continue;
+
+              await animals.create(
+                {
+                  company_id: ctx.companyId,
+                  animal_type: kind,
+                  breed_id: breed.breedId,
+                  gender: facts.gender,
+                  entry_type: 'PURCHASED_LOCAL',
+                  entry_date: startDate,
+                  age_at_entry_weeks: facts.baseAgeWeeks + (i % facts.ageSpread),
+                  source_receipt_id: receiptIdByItem.get(itemRow.item_id)!,
+                  item_id: itemRow.item_id,
+                  ear_tag: tagNo,
+                  current_batch_id: batchId,
+                  current_location_id: pens[(i - 1) % pens.length],
+                  current_stage_id: batchRow.stage_id,
+                  no_of_teats: facts.teats === undefined ? undefined : facts.teats + (i % 3),
+                },
+                ctx.tenantId,
+              );
+              created += 1;
+            }
+          }
+          ctx.log(
+            created > 0
+              ? `${tag} registered ${created} animal(s) onto ${ref} (${herd.map((h) => `${h.count} ${h.kind.toLowerCase()}`).join(', ')})`
+              : `${tag} every demo animal on ${ref} already registered — skipped`,
+          );
+        }
+      } else if (!farmCanRegisterAnimals(farm)) {
+        ctx.log(`${tag} role ${farm.role} holds no registered breeding stock — registered batch skipped`);
+      }
+
+      // ── Count-only batches, one per allowed stage the breed carries.
+      const stageCodes = COUNT_ONLY_STAGE_PREFERENCE[farm.role]
+        .filter((code) => breed.lifecycleStages.has(code))
+        .slice(0, farm.volume.countOnlyBatches);
+      const unavailable = COUNT_ONLY_STAGE_PREFERENCE[farm.role].filter((code) => !breed.lifecycleStages.has(code));
+      if (unavailable.length) {
+        ctx.log(`${tag} no lifecycle row on ${breed.code} for ${unavailable.join(', ')} — those count-only batches skipped`);
+      }
+
+      for (const stageCode of stageCodes) {
+        const facts = COUNT_ONLY_STAGE_FACTS[stageCode];
+        if (!facts) {
+          ctx.log(`${tag} no demo opening quantity defined for stage ${stageCode} — skipped`);
+          continue;
+        }
+        const input = await item(facts.itemCode);
+        const quantity = Math.max(1, Math.round(facts.baseQuantity * farm.volume.herdScale));
+        const ref = batchRef(farm.code, `CO-${stageCode}`);
+        refs.countOnly.push(ref);
+        await ensureBatch({
+          ref,
+          farm,
+          animalTracking: 'COUNT_ONLY',
+          stageId: breed.lifecycleStages.get(stageCode)!,
+          stageCode,
+          // A count-only batch still carries its farm's breed: the
+          // auto-generated scheduler only grows lines from
+          // breed_lifecycle_stages, which are keyed by breed — without it the
+          // scheduler is born empty.
+          breedId: breed.breedId,
+          startDate,
+          openingQuantity: quantity,
+          inputLines: [{ item_id: input.item_id, quantity, uom: 'HEAD', rate: rateOf(input.standard_cost) }],
+        });
+      }
     }
-    if (livestockReceipt.status === 'DRAFT') {
-      await receipts.post(livestockReceipt.receipt_id, ctx.tenantId);
-      ctx.log('MUL100: breeding stock goods receipt posted');
-    }
 
-    const registeredId = await ensureBatch({
-      ref: 'DEMO-BATCH-REG-GRASMERE',
-      farmId: ctx.farms.grasmere,
-      farmCode: 'MUL100',
-      animalTracking: 'REGISTERED',
-      stageCode: 'GILT_GROWER',
-      breedId: grasmereBreed.breed_id,
-      openingQuantity: DEMO_ANIMALS.length,
-      // Sows + the boar as the batch's opening inputs (BIO_ASSET acquisition
-      // at activate). Rates read from item standard_cost.
-      inputLines: [
-        { item_id: sowItem.item_id, quantity: 8, uom: 'HEAD', rate: rateOf(sowItem.standard_cost) },
-        { item_id: boarItem.item_id, quantity: 1, uom: 'HEAD', rate: rateOf(boarItem.standard_cost) },
-      ],
-      remarks: 'DEMO-BATCH-REG-GRASMERE',
-    });
-
-    const countOnlyGrasmereId = await ensureBatch({
-      ref: 'DEMO-BATCH-CO-GRASMERE',
-      farmId: ctx.farms.grasmere,
-      farmCode: 'MUL100',
-      animalTracking: 'COUNT_ONLY',
-      stageCode: 'GESTATION',
-      // A count-only batch still carries its farm's breed: the auto-generated
-      // scheduler only grows lines from breed_lifecycle_stages, which are
-      // keyed by breed — without it the scheduler is born empty.
-      breedId: grasmereBreed.breed_id,
-      openingQuantity: 120,
-      inputLines: [{ item_id: giltItem.item_id, quantity: 120, uom: 'HEAD', rate: rateOf(giltItem.standard_cost) }],
-      remarks: 'DEMO-BATCH-CO-GRASMERE',
-    });
-
-    const countOnlyKintyreId = await ensureBatch({
-      ref: 'DEMO-BATCH-CO-KINTYRE',
-      farmId: ctx.farms.kintyre,
-      farmCode: 'POR100',
-      animalTracking: 'COUNT_ONLY',
-      stageCode: 'GESTATION',
-      breedId: kintyreBreed.breed_id,
-      openingQuantity: 100,
-      inputLines: [{ item_id: giltItem.item_id, quantity: 100, uom: 'HEAD', rate: rateOf(giltItem.standard_cost) }],
-      remarks: 'DEMO-BATCH-CO-KINTYRE',
-    });
-
-    // --- Registered animals, one by one (Ruling 3).
-    const [registeredBatch] = await db
-      .select({ stage_id: schema.batchHeader.stage_id })
-      .from(schema.batchHeader)
-      .where(eq(schema.batchHeader.batch_id, registeredId))
-      .limit(1);
-    if (!registeredBatch?.stage_id) throw new Error('03-batches: registered batch carries no stage_id.');
-
-    let created = 0;
-    for (const spec of DEMO_ANIMALS) {
-      const [already] = await db
-        .select({ animal_id: schema.animalRegister.animal_id })
-        .from(schema.animalRegister)
-        .where(eq(schema.animalRegister.ear_tag, spec.ear_tag))
-        .limit(1);
-      if (already) continue;
-
-      const [breed] = await db
-        .select({ breed_id: schema.breedMaster.breed_id })
-        .from(schema.breedMaster)
-        .where(and(eq(schema.breedMaster.breed_code, spec.breed_code), eq(schema.breedMaster.company_id, ctx.companyId), isNull(schema.breedMaster.deleted_at)))
-        .limit(1);
-      if (!breed) throw new Error(`03-batches: breed ${spec.breed_code} not found for animal ${spec.ear_tag}.`);
-
-      await animals.create(
-        {
-          company_id: ctx.companyId,
-          animal_type: spec.animal_type,
-          breed_id: breed.breed_id,
-          gender: spec.gender,
-          entry_type: 'PURCHASED_LOCAL',
-          entry_date: startDate,
-          age_at_entry_weeks: spec.age_at_entry_weeks,
-          source_receipt_id: livestockReceipt.receipt_id,
-          item_id: spec.animal_type === 'BOAR' ? boarItem.item_id : sowItem.item_id,
-          ear_tag: spec.ear_tag,
-          current_batch_id: registeredId,
-          current_location_id: pen.location_id,
-          current_stage_id: registeredBatch.stage_id,
-          no_of_teats: 'no_of_teats' in spec ? spec.no_of_teats : undefined,
-        },
-        ctx.tenantId,
-      );
-      created += 1;
-      ctx.log(`MUL100: registered ${spec.ear_tag} (${spec.animal_type}, ${spec.breed_code})`);
-    }
-    if (created > 0) ctx.log(`MUL100: ${created} animal(s) registered onto the batch`);
-
-    return { registeredGrasmere: registeredId, countOnlyGrasmere: countOnlyGrasmereId, countOnlyKintyre: countOnlyKintyreId };
+    return { byFarm };
   },
 };

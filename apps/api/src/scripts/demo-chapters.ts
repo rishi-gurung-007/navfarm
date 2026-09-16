@@ -12,6 +12,13 @@
  *   pnpm nx run api:db-demo-chapters -- --apply             # run every chapter
  *   pnpm nx run api:db-demo-chapters -- --apply --chapter=identity
  *   pnpm nx run api:db-demo-chapters -- --apply --force-on-existing
+ *   pnpm nx run api:db-demo-chapters -- --apply --volume=full
+ *
+ * `--volume` picks how much data each of the nine farms gets:
+ *   standard (default) — Rishi's full numbers on POR100/RIC100/VIL100, lighter
+ *                        on the other four sow farms, minimum on AI100/LEX100;
+ *   full               — Rishi's full numbers on every sow farm;
+ *   light              — the quickest pass that still exercises every write path.
  */
 import { eq, sql } from 'drizzle-orm';
 import type { MySql2Database } from 'drizzle-orm/mysql2';
@@ -27,21 +34,29 @@ import { batchesAndAnimalsChapter } from './demo/chapters/03-batches-and-animals
 import { dailyEntriesChapter } from './demo/chapters/04-daily-entries';
 import { breedingChapter } from './demo/chapters/05-breeding';
 import { approvalsChapter } from './demo/chapters/06-approvals';
+import { VOLUME_PROFILES, type VolumeProfileName } from './demo/farms';
 import type { DemoChapter, DemoContext } from './demo/chapter';
 
 const CHAPTERS: DemoChapter[] = [identityChapter, storesAndItemsChapter, inventoryChapter, batchesAndAnimalsChapter, dailyEntriesChapter, breedingChapter, approvalsChapter];
 
-function parseArgs(argv: string[]): { apply: boolean; chapter?: string; forceOnExisting: boolean } {
+function parseArgs(argv: string[]): { apply: boolean; chapter?: string; forceOnExisting: boolean; volume: VolumeProfileName } {
   let apply = false;
   let chapter: string | undefined;
   let forceOnExisting = false;
+  let volume: VolumeProfileName = 'standard';
   for (const arg of argv) {
     if (arg === '--apply') apply = true;
     else if (arg === '--force-on-existing') forceOnExisting = true;
     else if (arg.startsWith('--chapter=')) chapter = arg.slice('--chapter='.length);
-    else throw new Error(`Unknown flag: ${arg}. Use --apply, --chapter=<name>, --force-on-existing.`);
+    else if (arg.startsWith('--volume=')) {
+      const value = arg.slice('--volume='.length) as VolumeProfileName;
+      if (!VOLUME_PROFILES.includes(value)) {
+        throw new Error(`Unknown volume '${value}'. Use one of: ${VOLUME_PROFILES.join(', ')}.`);
+      }
+      volume = value;
+    } else throw new Error(`Unknown flag: ${arg}. Use --apply, --chapter=<name>, --force-on-existing, --volume=<${VOLUME_PROFILES.join('|')}>.`);
   }
-  return { apply, chapter, forceOnExisting };
+  return { apply, chapter, forceOnExisting, volume };
 }
 
 async function resolveTenantDbForGuard(app: Awaited<ReturnType<typeof bootApp>>) {
@@ -62,7 +77,7 @@ const DEMO_TENANT_CODE = 'devco';
 type MySql2MasterDb = MySql2Database<typeof masterSchema>;
 
 async function main() {
-  const { apply, chapter: only, forceOnExisting } = parseArgs(process.argv.slice(2));
+  const { apply, chapter: only, forceOnExisting, volume } = parseArgs(process.argv.slice(2));
 
   const app = await bootApp();
   const log = (line: string) => console.log(line);
@@ -82,7 +97,7 @@ async function main() {
       );
     }
 
-    ctx = await buildDemoContext(app, log);
+    ctx = await buildDemoContext(app, log, volume);
 
     const runnable = CHAPTERS.filter((c) => !only || c.name === only);
     if (only && runnable.length === 0) {

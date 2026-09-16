@@ -1,19 +1,24 @@
 /**
- * Chapter `02-inventory` — Phase 3 Task 4. Per farm, every document is
- * created and posted through the application's own services (Ruling 1 — no
- * raw inserts for anything the app would post):
+ * Chapter `02-inventory` — Phase 3 Task 4. Per farm — all nine, not two —
+ * every document is created and posted through the application's own services
+ * (Ruling 1 — no raw inserts for anything the app would post):
  *
- *   - a goods receipt of gestation feed and grower feed into the farm's two
- *     feed silos, and of two medicines and one vaccine into the farm's
- *     Demo Medicine Store (Task 3 chapter);
+ *   - a goods receipt of feed into each of the farm's first two silos, the
+ *     diet chosen from the silo's own shed role (a farrowing house takes
+ *     lactation feed, a finisher house finisher feed, and so on), and of two
+ *     medicines and one vaccine into the farm's Demo Medicine Store;
  *   - one goods issue of a medicine from the Demo Medicine Store;
- *   - one stock transfer between the farm's two silos;
+ *   - one stock transfer between the farm's first two silos;
  *   - one positive and one negative stock adjustment with reason text
  *     carrying DEMO.
  *
  * Rates come from `item_master.standard_cost` (plan Task 4) — the chapter
  * reads them, never invents them. Quantities are demo facts from
  * DEMO_OPERATIONS. Every document's remarks/reason carries DEMO.
+ *
+ * Silos are resolved from the farm's seeded sheds (`<CODE>/SHED-00n/SILO-001`),
+ * not from hard-coded location codes; every seeded farm has at least two,
+ * including the AI station and the grow-out site.
  *
  * Resume semantics, not skip-on-existence: each document is located by its
  * DEMO reference (external_reference_no on receipts; remarks/reason token on
@@ -36,6 +41,7 @@ import { StockAdjustmentService } from '../../../modules/inventory/stock-adjustm
 import * as schema from '../../../core/database/schema';
 import type { GoodsReceiptLineInput } from '../../../modules/inventory/goods-receipt/dto/goods-receipt.dto';
 import type { DemoChapter, DemoContext } from '../chapter';
+import { silosOf, tagOf, type DemoFarm, type ShedRole } from '../farms';
 
 /**
  * `item_master.standard_cost` is a MySQL decimal, so Drizzle hands it back as
@@ -51,13 +57,28 @@ function rateOf(standardCost: string | null | undefined): number | undefined {
 const MED_ANTIBIOTIC_1 = 'MEDICINE-VETERINARY_MEDICINES_ANTIBIOTICS-ANTIBIOTIC-ITM-0001'; // Penicillin G
 const MED_ANTIBIOTIC_2 = 'MEDICINE-VETERINARY_MEDICINES_ANTIBIOTICS-ANTIBIOTIC-ITM-0002'; // Tylosin
 const VACCINE_BREEDING = 'VACCINE-SWINE_IMMUNIZATION_VACCINES-BREEDING-ITM-0001'; // Parvo-Shield L5
-/** Feed items receipted into silos. */
-const FEED_GESTATION = 'FEED-FINISHED_SWINE_FEEDS_DIETS-GESTATION-ITM-0001';
-const FEED_GROWER = 'FEED-FINISHED_SWINE_FEEDS_DIETS-GROWER-ITM-0001';
+
+/**
+ * The diet a silo is stocked with, from the shed it hangs off. Same mapping
+ * the breed lifecycles use: gestation mash for dry sows, gilts and boars,
+ * lactation for farrowing, grower mash for weaners and growers, finisher feed
+ * for finishers.
+ */
+const FEED_BY_SHED_ROLE: Record<ShedRole, string> = {
+  DRY_SOW: 'FEED-FINISHED_SWINE_FEEDS_DIETS-GESTATION-ITM-0001',
+  GILT: 'FEED-FINISHED_SWINE_FEEDS_DIETS-GROWER-ITM-0001',
+  GILT_REARING: 'FEED-FINISHED_SWINE_FEEDS_DIETS-GROWER-ITM-0001',
+  BOAR: 'FEED-FINISHED_SWINE_FEEDS_DIETS-GESTATION-ITM-0001',
+  FARROWING: 'FEED-FINISHED_SWINE_FEEDS_DIETS-LACTATION-ITM-0001',
+  WEANER: 'FEED-FINISHED_SWINE_FEEDS_DIETS-GROWER-ITM-0001',
+  GROWER: 'FEED-FINISHED_SWINE_FEEDS_DIETS-GROWER-ITM-0001',
+  FINISHER: 'FEED-FINISHED_SWINE_FEEDS_DIETS-FINISHER-ITM-0001',
+};
+const FEED_DEFAULT = 'FEED-FINISHED_SWINE_FEEDS_DIETS-GESTATION-ITM-0001';
 
 /** The demo quantities — labelled demo facts, not client data. */
 const DEMO_OPERATIONS = {
-  feedReceipt: { gestationKgPerSilo: 2000, growerKgPerSilo: 1500 },
+  feedReceiptKgPerSilo: 2000,
   storeReceipt: [
     { item_code: MED_ANTIBIOTIC_1, quantity: 20, uom: 'PCS' },
     { item_code: MED_ANTIBIOTIC_2, quantity: 15, uom: 'PCS' },
@@ -71,10 +92,8 @@ const DEMO_OPERATIONS = {
   },
 } as const;
 
-/** Grasmere's two feed silos (grower houses), from location_master. */
-const GRASMERE_SILO_CODES = ['MUGR1', 'MUGR2'];
-/** Kintyre's two feed silos (weaner houses), from location_master. */
-const KINTYRE_SILO_CODES = ['PWH01', 'PWH02'];
+/** How many of a farm's silos the chapter stocks. Two is enough to transfer between. */
+const SILOS_STOCKED_PER_FARM = 2;
 
 const TODAY = () => new Date().toISOString().slice(0, 10);
 
@@ -91,6 +110,17 @@ async function itemByCode(db: MySql2Database<typeof schema>, code: string) {
   return row;
 }
 
+/** The silos this chapter stocks on a farm, with the diet each one takes. */
+function stockedSilos(farm: DemoFarm): Array<{ id: string; code: string; feedCode: string }> {
+  const shedBySilo = new Map(farm.sheds.filter((s) => s.siloId).map((s) => [s.siloId!, s]));
+  return silosOf(farm)
+    .slice(0, SILOS_STOCKED_PER_FARM)
+    .map((silo) => {
+      const role = shedBySilo.get(silo.id)?.role;
+      return { ...silo, feedCode: (role && FEED_BY_SHED_ROLE[role]) || FEED_DEFAULT };
+    });
+}
+
 export const inventoryChapter: DemoChapter = {
   name: '02-inventory',
 
@@ -105,54 +135,37 @@ export const inventoryChapter: DemoChapter = {
 
     const postingDate = TODAY();
 
-    for (const [farmKey, farmId] of [
-      ['grasmere', ctx.farms.grasmere],
-      ['kintyre', ctx.farms.kintyre],
-    ] as const) {
-      const [farm] = await db
-        .select({ location_code: schema.locationMaster.location_code })
-        .from(schema.locationMaster)
-        .where(eq(schema.locationMaster.location_id, farmId))
-        .limit(1);
+    for (const farm of ctx.demoFarms) {
+      const tag = tagOf(farm);
 
-      // The farm's Demo Medicine Store (created by 01-stores-and-items) and
-      // its two feed silos.
+      // The farm's Demo Medicine Store (01-stores-and-items) and its silos.
       const [store] = await db
         .select({ location_id: schema.locationMaster.location_id })
         .from(schema.locationMaster)
         .where(and(
-          eq(schema.locationMaster.parent_location_id, farmId),
+          eq(schema.locationMaster.parent_location_id, farm.farmId),
           eq(schema.locationMaster.location_name, 'Demo Medicine Store'),
           isNull(schema.locationMaster.deleted_at),
         ))
         .limit(1);
-      if (!store) throw new Error(`02-inventory: no Demo Medicine Store under ${farm.location_code} — run chapter 01-stores-and-items first.`);
+      if (!store) throw new Error(`02-inventory: no Demo Medicine Store under ${farm.code} — run chapter 01-stores-and-items first.`);
 
-      const siloCodes = farmKey === 'grasmere' ? GRASMERE_SILO_CODES : KINTYRE_SILO_CODES;
-      const farmChildren = await db
-        .select({ location_id: schema.locationMaster.location_id, location_code: schema.locationMaster.location_code })
-        .from(schema.locationMaster)
-        .where(and(eq(schema.locationMaster.parent_location_id, farmId), isNull(schema.locationMaster.deleted_at)));
-      const siloByCode = new Map(farmChildren.map((s) => [s.location_code, s.location_id]));
-      const siloIds = siloCodes.map((code) => {
-        const id = siloByCode.get(code);
-        if (!id) throw new Error(`02-inventory: silo '${code}' not found under ${farm.location_code}.`);
-        return { code, id };
-      });
+      const siloIds = stockedSilos(farm);
+      if (siloIds.length < 2) {
+        throw new Error(`02-inventory: ${farm.code} has ${siloIds.length} silo(s); the chapter needs two to transfer between.`);
+      }
 
-      const ref = (doc: string) => `DEMO-${farm.location_code}-${doc}`;
-      const tag = `  ${farm.location_code}:`;
+      const ref = (doc: string) => `DEMO-${farm.code}-${doc}`;
 
-      // --- 1. Feed receipts into the two silos (one document per silo).
+      // --- 1. Feed receipts into the stocked silos (one document per silo).
       {
         const existing = await db
           .select({ id: schema.goodsReceipt.receipt_id, status: schema.goodsReceipt.status })
           .from(schema.goodsReceipt)
           .where(eq(schema.goodsReceipt.external_reference_no, ref('SILORCP')));
         if (existing.length === 0) {
-          const gest = await itemByCode(db, FEED_GESTATION);
-          const grow = await itemByCode(db, FEED_GROWER);
           for (const silo of siloIds) {
+            const feed = await itemByCode(db, silo.feedCode);
             await receipts.create(
               {
                 company_id: ctx.companyId,
@@ -161,8 +174,13 @@ export const inventoryChapter: DemoChapter = {
                 external_reference_no: ref('SILORCP'),
                 remarks: `DEMO feed receipt into silo ${silo.code}`,
                 lines: [
-                  { item_id: gest.item_id, quantity: DEMO_OPERATIONS.feedReceipt.gestationKgPerSilo, uom: 'KG', rate: rateOf(gest.standard_cost), lot_no: `DEMO-GEST-${silo.code}` },
-                  { item_id: grow.item_id, quantity: DEMO_OPERATIONS.feedReceipt.growerKgPerSilo, uom: 'KG', rate: rateOf(grow.standard_cost), lot_no: `DEMO-GROW-${silo.code}` },
+                  {
+                    item_id: feed.item_id,
+                    quantity: DEMO_OPERATIONS.feedReceiptKgPerSilo,
+                    uom: 'KG',
+                    rate: rateOf(feed.standard_cost),
+                    lot_no: `DEMO-${farm.code}-${feed.item_code.split('-')[2] ?? 'FEED'}`,
+                  },
                 ],
               },
               ctx.tenantId,
@@ -192,7 +210,7 @@ export const inventoryChapter: DemoChapter = {
           const storeLines: GoodsReceiptLineInput[] = [];
           for (const line of DEMO_OPERATIONS.storeReceipt) {
             const item = await itemByCode(db, line.item_code);
-            storeLines.push({ item_id: item.item_id, quantity: line.quantity, uom: line.uom, rate: rateOf(item.standard_cost), lot_no: `DEMO-${line.item_code.split('-').pop()}` });
+            storeLines.push({ item_id: item.item_id, quantity: line.quantity, uom: line.uom, rate: rateOf(item.standard_cost), lot_no: `DEMO-${farm.code}-${line.item_code.split('-').pop()}` });
           }
           const created = await receipts.create(
             {
@@ -230,7 +248,7 @@ export const inventoryChapter: DemoChapter = {
               warehouse_id: store.location_id,
               posting_date: postingDate,
               remarks: ref('ISSUE'),
-              lines: [{ item_id: med.item_id, quantity: DEMO_OPERATIONS.medicineIssue.quantity, uom: DEMO_OPERATIONS.medicineIssue.uom, remarks: 'DEMO medicine issue for routine sow treatment' }],
+              lines: [{ item_id: med.item_id, quantity: DEMO_OPERATIONS.medicineIssue.quantity, uom: DEMO_OPERATIONS.medicineIssue.uom, remarks: 'DEMO medicine issue for routine treatment' }],
             },
             ctx.tenantId,
           );
@@ -244,7 +262,9 @@ export const inventoryChapter: DemoChapter = {
         }
       }
 
-      // --- 4. Stock transfer between the farm's two silos.
+      // --- 4. Stock transfer between the farm's first two silos. The item is
+      // the one the source silo was stocked with — the destination's own diet
+      // may differ, and a transfer of feed it holds none of would be refused.
       {
         const [existing] = await db
           .select({ id: schema.stockTransfer.transfer_id, status: schema.stockTransfer.status })
@@ -252,7 +272,7 @@ export const inventoryChapter: DemoChapter = {
           .where(eq(schema.stockTransfer.remarks, ref('XSILO')))
           .limit(1);
         if (!existing) {
-          const feed = await itemByCode(db, FEED_GESTATION);
+          const feed = await itemByCode(db, siloIds[0].feedCode);
           const created = await transfers.create(
             {
               company_id: ctx.companyId,

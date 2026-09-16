@@ -5,6 +5,7 @@
  * raw inserts — so the demo proves the write path it shows.
  */
 import type { INestApplicationContext } from '@nestjs/common';
+import type { DemoFarm, VolumeProfileName } from './farms';
 
 export interface DemoContext {
   app: INestApplicationContext;
@@ -17,8 +18,15 @@ export interface DemoContext {
     tenantId: string;
     email: string;
   };
-  /** Farm location ids, resolved by location_code (MUL100 / POR100). */
+  /**
+   * The two farms the chapters were originally written around, kept so the
+   * old names still resolve. Everything the chapters do now walks `demoFarms`.
+   */
   farms: { grasmere: string; kintyre: string };
+  /** All nine Triple C farms with their sheds, pens, silos, store, breeds and volume. */
+  demoFarms: DemoFarm[];
+  /** Which volume profile this run was asked for — `--volume=`, default 'standard'. */
+  volume: VolumeProfileName;
   log(line: string): void;
 }
 

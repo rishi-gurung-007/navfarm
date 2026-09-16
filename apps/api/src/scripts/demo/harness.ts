@@ -13,7 +13,7 @@
 import { NestFactory } from '@nestjs/core';
 import type { INestApplicationContext } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
-import { eq, inArray } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { AppModule } from '../../app.module';
 import { MASTER_CONNECTION } from '../../core/database/database.module';
 import * as masterSchema from '../../core/database/master-schema';
@@ -21,6 +21,7 @@ import { ConnectionManagerService } from '../../core/database/connection-manager
 import type { MySql2Database } from 'drizzle-orm/mysql2';
 import * as schema from '../../core/database/schema';
 import type { DemoContext } from './chapter';
+import { resolveDemoFarms, type VolumeProfileName } from './farms';
 
 type MasterDb = MySql2Database<typeof masterSchema>;
 
@@ -40,11 +41,15 @@ export async function bootApp(): Promise<INestApplicationContext> {
 /**
  * Resolve the demo tenant from navfarm_master exactly as TenantMiddleware
  * does (by tenant_code) and build the chapter context: company id, the
- * company-admin actor, and the two Triple C farms by their real location
+ * company-admin actor, and all nine Triple C farms by their real location
  * codes. Throws — never guesses — on anything missing, because a chapter that
  * silently skipped a fact is worse than a rebuild that stopped.
  */
-export async function buildDemoContext(app: INestApplicationContext, log: (line: string) => void): Promise<DemoContext> {
+export async function buildDemoContext(
+  app: INestApplicationContext,
+  log: (line: string) => void,
+  volume: VolumeProfileName = 'standard',
+): Promise<DemoContext> {
   const masterDb = app.get<MasterDb>(MASTER_CONNECTION);
   const [tenant] = await masterDb
     .select()
@@ -70,21 +75,23 @@ export async function buildDemoContext(app: INestApplicationContext, log: (line:
     .limit(1);
   if (!actor) throw new Error(`Demo actor '${DEMO_ACTOR_EMAIL}' not found — the master stages must seed the company admin before the chapters run.`);
 
-  const farmRows = await tenantDb
-    .select({ location_id: schema.locationMaster.location_id, location_code: schema.locationMaster.location_code })
-    .from(schema.locationMaster)
-    .where(inArray(schema.locationMaster.location_code, ['MUL100', 'POR100']));
-  const byCode = new Map(farmRows.map((f) => [f.location_code, f.location_id]));
-  const grasmere = byCode.get('MUL100');
-  const kintyre = byCode.get('POR100');
-  if (!grasmere || !kintyre) {
-    throw new Error(
-      `Triple C farms MUL100/POR100 not found (found: ${[...byCode.keys()].join(', ') || 'none'}) — run seed-farm-locations.ts before the chapters.`,
-    );
-  }
+  // All nine farms, with their sheds, silos, pens, store, breeds and the
+  // volume this profile asks of each — resolved by code, never named.
+  const demoFarms = await resolveDemoFarms(tenantDb, company.company_id, volume);
+  const byCode = new Map(demoFarms.map((f) => [f.code, f]));
+  const grasmere = byCode.get('MUL100')!.farmId;
+  const kintyre = byCode.get('POR100')!.farmId;
 
   log(`Tenant ${tenant.tenant_code} (${tenant.tenant_id}) · company ${company.company_name} · actor ${actor.email}`);
-  log(`Farms: Grasmere MUL100 ${grasmere} · Kintyre POR100 ${kintyre}`);
+  log(`Volume profile: ${volume}`);
+  for (const farm of demoFarms) {
+    const v = farm.volume;
+    log(
+      `  ${farm.code.padEnd(6)} ${farm.role.padEnd(18)} ${farm.sheds.length} shed(s), ${farm.sheds.reduce((n, sh) => n + sh.penIds.length, 0)} pen(s)` +
+        ` · breed ${farm.sowBreed?.code ?? farm.boarBreed?.code ?? 'none'}` +
+        ` · ${v.sows} sow/${v.boars} boar/${v.gilts} gilt, ${v.countOnlyBatches} count-only batch(es), ${v.days}d`,
+    );
+  }
 
   return {
     app,
@@ -97,6 +104,8 @@ export async function buildDemoContext(app: INestApplicationContext, log: (line:
       email: actor.email,
     },
     farms: { grasmere, kintyre },
+    demoFarms,
+    volume,
     log,
   };
 }

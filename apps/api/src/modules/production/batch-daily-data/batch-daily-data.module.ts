@@ -4,9 +4,10 @@ import { BatchDailyDataService } from './batch-daily-data.service';
 import { BatchModule } from '../batch/batch.module';
 import { JournalModule } from '../../finance/journal/journal.module';
 import { ApprovalModule } from '../approval/approval.module';
+import { ResourceLedgerModule } from '../resource-ledger/resource-ledger.module';
 
 @Module({
-  imports: [BatchModule, JournalModule, ApprovalModule],
+  imports: [BatchModule, JournalModule, ApprovalModule, ResourceLedgerModule],
   controllers: [BatchDailyDataController],
   providers: [BatchDailyDataService],
   exports: [BatchDailyDataService],

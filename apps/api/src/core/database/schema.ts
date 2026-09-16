@@ -3218,6 +3218,58 @@ export const animalMedicationLog = mysqlTable('animal_medication_log', {
   created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
 });
 
+/**
+ * Resource Ledger — what `inventory_ledger` is for stocked items, this is for
+ * resources (labour, equipment): booked, costed and never held in stock.
+ * Decided 2026-09-15 by Rishi: "Resource Ledger remains a new ledger posted by
+ * Resource activity entries."
+ *
+ * Append-only for the same reason inventory_ledger is: a correction writes an
+ * offsetting REVERSAL row naming the original in `external_reference_no`,
+ * rather than editing the row it disagrees with. The column names are
+ * inventory_ledger's wherever the same thing is being recorded; `stage_id` and
+ * `line_id` are the only additions, and they are what a resource booking has
+ * that an item movement does not — the scheduler line it answered.
+ */
+export const resourceLedger = mysqlTable('resource_ledger', {
+  ledger_id: varchar('ledger_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+  company_id: varchar('company_id', { length: 36 }).notNull().references(() => companyMaster.company_id, { onDelete: 'restrict' }),
+  // The farm the usage happened on, taken from the batch. Held directly (not
+  // derived through a location) because a resource booking has no warehouse.
+  farm_id: varchar('farm_id', { length: 36 }).references(() => locationMaster.location_id, { onDelete: 'restrict' }),
+  resource_id: varchar('resource_id', { length: 36 }).notNull().references(() => resourceMaster.resource_id, { onDelete: 'restrict' }),
+  resource_code: varchar('resource_code', { length: 255 }).notNull(), // denormalized snapshot at posting time
+  resource_name: varchar('resource_name', { length: 150 }).notNull(),
+  resource_type: varchar('resource_type', { length: 30 }),
+  document_type: varchar('document_type', { length: 30 }).notNull(), // DAILY_ENTRY
+  document_no: varchar('document_no', { length: 50 }).notNull(), // batch_header.batch_no
+  document_line_id: varchar('document_line_id', { length: 36 }), // batch_transaction.transaction_id
+  posting_date: date('posting_date', { mode: 'string' }).notNull(),
+  external_reference_no: varchar('external_reference_no', { length: 50 }), // on a REVERSAL, the ledger_id it reverses
+  entry_type: varchar('entry_type', { length: 20 }).notNull(), // USAGE, REVERSAL
+  transaction_type: varchar('transaction_type', { length: 30 }).notNull(), // RESOURCE_USAGE, OVERHEAD, REVERSAL
+  batch_id: varchar('batch_id', { length: 36 }).references(() => batchHeader.batch_id, { onDelete: 'restrict' }),
+  batch_no: varchar('batch_no', { length: 50 }),
+  stage_id: varchar('stage_id', { length: 36 }),
+  line_id: varchar('line_id', { length: 36 }), // scheduler_line.line_id
+  quantity: decimal('quantity', { precision: 18, scale: 4 }).notNull(), // signed
+  uom: varchar('uom', { length: 20 }),
+  rate: decimal('rate', { precision: 18, scale: 6 }),
+  amount: decimal('amount', { precision: 18, scale: 4 }),
+  remarks: text('remarks'),
+  nob_id: varchar('nob_id', { length: 36 }).references(() => nobMaster.nob_id, { onDelete: 'restrict' }),
+  lob_id: varchar('lob_id', { length: 36 }).references(() => lobMaster.lob_id, { onDelete: 'restrict' }),
+  created_by: varchar('created_by', { length: 36 }),
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+});
+
+export const resourceLedgerRelations = relations(resourceLedger, ({ one }) => ({
+  resource: one(resourceMaster, { fields: [resourceLedger.resource_id], references: [resourceMaster.resource_id] }),
+  batch: one(batchHeader, { fields: [resourceLedger.batch_id], references: [batchHeader.batch_id] }),
+  farm: one(locationMaster, { fields: [resourceLedger.farm_id], references: [locationMaster.location_id] }),
+}));
+
 export const inventoryLedgerRelations = relations(inventoryLedger, ({ one, many }) => ({
   item: one(itemMaster, { fields: [inventoryLedger.item_id], references: [itemMaster.item_id] }),
   location: one(locationMaster, { fields: [inventoryLedger.location_id], references: [locationMaster.location_id] }),

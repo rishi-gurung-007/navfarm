@@ -54,6 +54,7 @@ import { ParameterModule } from './modules/production/parameter/parameter.module
 import { StageModule } from './modules/production/stage/stage.module';
 import { SchedulerHeaderModule } from './modules/production/scheduler-header/scheduler-header.module';
 import { BatchDailyDataModule } from './modules/production/batch-daily-data/batch-daily-data.module';
+import { ResourceLedgerModule } from './modules/production/resource-ledger/resource-ledger.module';
 import { AlertModule } from './modules/production/alert/alert.module';
 import { ApprovalModule } from './modules/production/approval/approval.module';
 import { MilkModule } from './modules/production/milk/milk.module';
@@ -137,6 +138,7 @@ import { SystemController } from './system/system.controller';
     StageModule,
     SchedulerHeaderModule,
     BatchDailyDataModule,
+    ResourceLedgerModule,
     AlertModule,
     ApprovalModule,
     MilkModule,
