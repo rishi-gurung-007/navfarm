@@ -67,6 +67,13 @@ const MASTER_STEPS: Step[] = [
   { label: "Adopt tenant master templates into Triple C (no_series_master etc.)", script: 'seed-company-master-templates.ts', args: ['--apply'] },
   { label: "Triple C's real farms and locations", script: 'seed-farm-locations.ts', args: ['--apply'] },
   { label: "Triple C's real resource and breed masters", script: 'seed-farm-masters.ts', args: ['--apply'] },
+  // The demo item catalog (feed/vaccine/medicine/bio items) must exist before
+  // the nine-farm lifecycles: seed-nine-farm-demo.ts refuses to seed a
+  // lifecycle whose feed items are missing. It once pulled these rows from
+  // seed-piggery-complete-data.ts — the old two-company placeholder seed the
+  // rebuild excludes — so the chain as first committed could never run clean
+  // from empty.
+  { label: "Demo item catalog for Triple C's company scope", script: 'seed-demo-item-catalog.ts', args: ['--apply'] },
   // The nine-farm demo master set (decision of 2026-09-15). It sits here, and
   // nowhere else, for three reasons. It reuses MUL100 and POR100 by id, so it
   // must follow seed-farm-locations.ts; it copies its tenant/company/NOB/LOB
@@ -84,7 +91,14 @@ const MASTER_STEPS: Step[] = [
 // Task 2. Does not exist yet at the time this orchestrator was written —
 // referenced here so the plan is complete; --apply will fail at this step
 // until it lands.
-const CHAPTERS_STEP: Step = { label: 'Post demo operational chapters (Task 2)', script: 'demo-chapters.ts', args: ['--apply'] };
+// --force-on-existing: the guard inside demo-chapters.ts refuses to post when
+// batch_header already holds rows. That is the right refusal for a bare run of
+// the chapter script, but inside the orchestrator an earlier --apply that died
+// mid-chapters (the item-catalog gap it once had) leaves exactly that state,
+// and the chapters themselves are resume-safe — each document is located by
+// its DEMO reference and skipped if already posted. Force is therefore always
+// correct here; the guard's value is preserved for direct invocations.
+const CHAPTERS_STEP: Step = { label: 'Post demo operational chapters (Task 2)', script: 'demo-chapters.ts', args: ['--apply', '--force-on-existing'] };
 
 export function buildPlan(opts: { chaptersOnly: boolean; skipReset: boolean }): Step[] {
   // --chapters-only means exactly that: skip the reset and every master step,
@@ -155,8 +169,16 @@ function runStep(step: Step) {
   console.log(`\n⏳ ${formatStep(step)} — ${step.label}`);
   execFileSync(
     'node',
-    ['--env-file-if-exists=.env', '--import', 'tsx', `src/scripts/${step.script}`, ...step.args],
-    { stdio: 'inherit', cwd: process.cwd() },
+    // ts-node, not tsx: every step is plain TS, but the chapters step boots the
+    // full Nest AppModule, and Nest DI reads design:paramtypes decorator
+    // metadata — which esbuild (tsx's transpiler) never emits. The API's own
+    // serve path is webpack+tsc, so only these scripts ever hit the gap.
+    // ts-node (even transpile-only) drives the real TypeScript compiler and
+    // emits it. TS_NODE_PROJECT points at tsconfig.app.json because the
+    // nearest tsconfig (the solution-style apps/api/tsconfig.json) carries no
+    // compilerOptions, so decorators would be read under the wrong defaults.
+    ['--env-file-if-exists=.env', '-r', 'ts-node/register/transpile-only', `src/scripts/${step.script}`, ...step.args],
+    { stdio: 'inherit', cwd: process.cwd(), env: { ...process.env, TS_NODE_PROJECT: 'tsconfig.app.json' } },
   );
 }
 

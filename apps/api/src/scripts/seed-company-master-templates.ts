@@ -91,4 +91,13 @@ async function run() {
   }
 }
 
-run().catch((err) => { console.error(err instanceof Error ? err.message : err); process.exit(1); });
+run().catch((err) => {
+  // Drizzle's error.message carries only the failed query text, not the
+  // driver's errno/SQLSTATE — print the underlying cause too, or a duplicate
+  // key and a foreign-key violation look identical here.
+  console.error(err instanceof Error ? err.message : err);
+  const cause = (err as any)?.cause;
+  if (cause) console.error('Caused by:', cause instanceof Error ? cause.message : cause);
+  if (err instanceof Error && err.stack) console.error(err.stack);
+  process.exit(1);
+});

@@ -22,6 +22,7 @@ describe('ItemTypeService', () => {
     resolveSeriesFor: jest.fn(),
     generateNext: jest.fn(),
     lockSeries: jest.fn(),
+    renameCode: jest.fn(),
   };
 
   const makeSelectResult = (rows: any[]) => ({
@@ -39,7 +40,9 @@ describe('ItemTypeService', () => {
     numberSeries.resolveSeriesFor.mockReset();
     numberSeries.generateNext.mockReset();
     numberSeries.lockSeries.mockReset();
+    numberSeries.renameCode.mockReset();
     numberSeries.resolveSeriesFor.mockResolvedValue(null); // default: manual, as today
+    numberSeries.renameCode.mockResolvedValue('RENAMED');
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -112,8 +115,9 @@ describe('ItemTypeService', () => {
     };
 
     // item.service.ts gates withdrawal_days on the literal strings 'MEDICINE'
-    // and 'VACCINE', so a renamed code silently disables that food-safety rule.
-    it('never writes a type_code, even when a caller smuggles one past the DTO', async () => {
+    // and 'VACCINE', so a caller-supplied code smuggled past the DTO must
+    // never reach the database — the series rename is the only writer.
+    it('never writes a type_code when no name change is requested, even when a caller smuggles one past the DTO', async () => {
       mockDbSelect
         .mockReturnValueOnce(makeSelectResult([systemType])) // findOne
         .mockReturnValueOnce(makeSelectResult([systemType])); // findOne after update
@@ -122,6 +126,26 @@ describe('ItemTypeService', () => {
       await service.update('type-1', { type_name: 'Medicine', type_code: 'MED' } as any, 'tenant-123');
 
       expect(set.mock.calls[0][0].type_code).toBeUndefined();
+      expect(numberSeries.renameCode).not.toHaveBeenCalled();
+    });
+
+    // The ITEM_TYPE series is a named one: the code derives from the type
+    // name, so renaming the type recomposes the code from the new name.
+    it('recomposes the type_code from the new name via the series rename on a real rename', async () => {
+      mockDbSelect
+        .mockReturnValueOnce(makeSelectResult([tenantType])) // findOne
+        .mockReturnValueOnce(makeSelectResult([{ ...tenantType, type_name: 'Feed concentrate' }])); // findOne after update
+      const set = mockUpdateChain();
+
+      await service.update('type-2', { type_name: 'Feed concentrate' }, 'tenant-123');
+
+      expect(numberSeries.renameCode).toHaveBeenCalledWith(
+        'ITEM_TYPE',
+        expect.objectContaining({ type_name: 'Feed concentrate' }),
+        'tenant-123',
+        tenantType.company_id,
+      );
+      expect(set.mock.calls[0][0].type_code).toBe('RENAMED');
     });
 
     it('refuses to deactivate a system item type', async () => {

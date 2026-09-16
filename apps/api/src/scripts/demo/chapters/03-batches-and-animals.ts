@@ -42,6 +42,7 @@ import { ClsService } from 'nestjs-cls';
 import type { MySql2Database } from 'drizzle-orm/mysql2';
 import { BatchService } from '../../../modules/production/batch/batch.service';
 import { AnimalService } from '../../../modules/piggery/animal/animal.service';
+import { SchedulerHeaderService } from '../../../modules/production/scheduler-header/scheduler-header.service';
 import { GoodsReceiptService } from '../../../modules/inventory/goods-receipt/goods-receipt.service';
 import * as schema from '../../../core/database/schema';
 import type { DemoChapter, DemoContext } from '../chapter';
@@ -55,6 +56,11 @@ import {
   type DemoFarm,
 } from '../farms';
 
+/** N days ago, YYYY-MM-DD — the flow dates animals' stage transitions back to. */
+function dateNdaysAgo(days: number): string {
+  return new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
+}
+
 /**
  * `item_master.standard_cost` is a MySQL decimal, so Drizzle hands it back as
  * a string; the document DTOs take `rate?: number`. Convert once here rather
@@ -66,17 +72,27 @@ function rateOf(standardCost: string | null | undefined): number | undefined {
 
 const PIGGERY_LOB_ID = '60000000-6000-6000-6000-000000000007';
 
-const ITEM_SOW = 'LIVESTOCK-BIOLOGICAL_ASSETS-BREEDING_STOCK-SOW-ITM-0001';
-const ITEM_BOAR = 'LIVESTOCK-BIOLOGICAL_ASSETS-BREEDING_STOCK-BOAR-ITM-0001';
-const ITEM_GILT = 'LIVESTOCK-BIOLOGICAL_ASSETS-BREEDING_STOCK-GILT-ITM-0001';
-const ITEM_SUCKLING = 'LIVESTOCK-BIOLOGICAL_ASSETS-GROWER_FINISHER-PIGLET-ITM-0001';
-const ITEM_WEANED = 'LIVESTOCK-BIOLOGICAL_ASSETS-GROWER_FINISHER-PIGLET-ITM-0002';
+/**
+ * Livestock items resolve by the shared catalog's item NAME (the one property
+ * code generation cannot move), not by literal item_code: the ITEM series
+ * composes codes from the category tree, and these literal codes went stale
+ * the moment the catalog step composed its own. Mapped to names at lookup.
+ */
+const ITEM_SOW = 'Mature Parity Breeding Sow';
+const ITEM_BOAR = 'Mature Herd Sire Boar';
+const ITEM_GILT = 'Replacement Breeding Gilt';
+const ITEM_SUCKLING = 'Suckling Live Piglet (0-4 Wks)';
+const ITEM_WEANED = 'Weaned Feeder Piglet (7-10kg)';
 
 /** The registered batch's stage, by farm role, first match the breed carries. */
 const REGISTERED_STAGE_PREFERENCE: Record<DemoFarm['role'], string[]> = {
-  MULTIPLIER: ['GILT_GROWER', 'GESTATION'],
-  FARROW_TO_FINISH: ['GILT_GROWER', 'GESTATION'],
-  AI_STATION: ['BOAR_AI', 'QUARANTINE'],
+  // The gilt/sow flow a farrow-to-finish or multiplier farm walks, in order.
+  // The opening stage is the first the breed carries; the rest are the stages
+  // the farm's animals spread across (03's flow walk). A stage the breed has
+  // no lifecycle row for is skipped, as everywhere else.
+  MULTIPLIER: ['GILT_GROWER', 'FLUSH', 'INSEMINATION', 'GESTATION'],
+  FARROW_TO_FINISH: ['GILT_GROWER', 'FLUSH', 'INSEMINATION', 'GESTATION', 'FARROWING', 'LACTATION'],
+  AI_STATION: ['BOAR_AI'],
   GROW_OUT: [],
 };
 
@@ -118,23 +134,24 @@ export const batchesAndAnimalsChapter: DemoChapter<BatchRefs> = {
   async run(ctx: DemoContext): Promise<BatchRefs> {
     const batches = ctx.app.get(BatchService);
     const animals = ctx.app.get(AnimalService);
+    const schedulers = ctx.app.get(SchedulerHeaderService);
     const receipts = ctx.app.get(GoodsReceiptService);
     const cls = ctx.app.get(ClsService);
     const db = cls.get<MySql2Database<typeof schema>>('tenantDb');
     if (!db) throw new Error('03-batches-and-animals: tenantDb is not set — run through the harness.');
 
-    /** Livestock item rows, read once. */
+    /** Livestock item rows, read once, by item NAME (see the constants above). */
     const itemCache = new Map<string, { item_id: string; standard_cost: string | null }>();
-    async function item(code: string) {
-      const cached = itemCache.get(code);
+    async function item(name: string) {
+      const cached = itemCache.get(name);
       if (cached) return cached;
       const [row] = await db
         .select({ item_id: schema.itemMaster.item_id, standard_cost: schema.itemMaster.standard_cost })
         .from(schema.itemMaster)
-        .where(and(eq(schema.itemMaster.item_code, code), eq(schema.itemMaster.company_id, ctx.companyId), eq(schema.itemMaster.is_active, true), isNull(schema.itemMaster.deleted_at)))
+        .where(and(eq(schema.itemMaster.item_name, name), eq(schema.itemMaster.company_id, ctx.companyId), eq(schema.itemMaster.is_active, true), isNull(schema.itemMaster.deleted_at)))
         .limit(1);
-      if (!row) throw new Error(`03-batches: item '${code}' not found for the demo company — the master stages must load it first.`);
-      itemCache.set(code, row);
+      if (!row) throw new Error(`03-batches: item '${name}' not found for the demo company — run db-seed-demo-item-catalog first.`);
+      itemCache.set(name, row);
       return row;
     }
 
@@ -365,6 +382,58 @@ export const batchesAndAnimalsChapter: DemoChapter<BatchRefs> = {
               ? `${tag} registered ${created} animal(s) onto ${ref} (${herd.map((h) => `${h.count} ${h.kind.toLowerCase()}`).join(', ')})`
               : `${tag} every demo animal on ${ref} already registered — skipped`,
           );
+
+          // ── The farm's pig flow, walked once through the services.
+          //
+          // The batch's auto-generated scheduler covers only its opening stage,
+          // and daily entry draws its work from schedulers — so a batch that
+          // never moves shows the entry screen one stage forever. Walking the
+          // farm's real flow (gilt grower → flush → insemination → gestation →
+          // farrowing/lactation) through the same calls a user's click makes
+          // gives the batch a scheduler per stage it passed through and animals
+          // spread across the chain — which is what the stage overview shows.
+          const flowStages = REGISTERED_STAGE_PREFERENCE[farm.role]
+            .filter((code) => breed.lifecycleStages.has(code));
+          const openingIdx = flowStages.indexOf(stageCode);
+          const destStages = flowStages.slice(openingIdx + 1).map((code) => breed.lifecycleStages.get(code)!);
+          if (destStages.length) {
+            // This batch's animals, tagged and ready to move. Ear tags are the
+            // resume key, so the map is stable across rebuilds.
+            const batchAnimals = await db
+              .select({ animal_id: schema.animalRegister.animal_id, ear_tag: schema.animalRegister.ear_tag })
+              .from(schema.animalRegister)
+              .where(and(
+                eq(schema.animalRegister.current_batch_id, batchId),
+                eq(schema.animalRegister.current_stage_id, batchRow.stage_id),
+                eq(schema.animalRegister.is_active, true),
+              ));
+            if (batchAnimals.length) {
+              // Sows and gilts round-robin across the whole remaining chain;
+              // boars stop at the first stage — they do not farrow.
+              let cursor = 0;
+              for (const { animal_id, ear_tag } of batchAnimals) {
+                const isBoar = (ear_tag ?? '').includes('BOAR');
+                const target = destStages[isBoar ? 0 : cursor % destStages.length];
+                cursor += 1;
+                try {
+                  await animals.transitionStage(animal_id, {
+                    to_stage_id: target,
+                    transition_date: dateNdaysAgo(5),
+                    reason: 'DEMO_FLOW',
+                    remarks: `DEMO nine-farm flow on ${farm.code}`,
+                  }, ctx.tenantId);
+                } catch (err) {
+                  ctx.log(`${tag} ${ear_tag}: stage transition refused — ${err instanceof Error ? err.message : String(err)}`);
+                }
+              }
+              // A scheduler per stage the batch now occupies — createForStage
+              // is idempotent on (batch, stage), so re-runs never duplicate.
+              for (const stageId of new Set(destStages)) {
+                await schedulers.createForStage(batchId, stageId, ctx.tenantId);
+              }
+              ctx.log(`${tag} spread ${batchAnimals.length} animal(s) and grew ${destStages.length} scheduler(s) across ${ref}'s flow`);
+            }
+          }
         }
       } else if (!farmCanRegisterAnimals(farm)) {
         ctx.log(`${tag} role ${farm.role} holds no registered breeding stock — registered batch skipped`);

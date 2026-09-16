@@ -38,7 +38,7 @@ const locationType: MasterDataConfig = {
     { key: "nob_id", label: "Nature of Business", type: "select-entity", entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], helpText: "Leave blank if this location type is shared across all business verticals." },
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank if this location type is shared across all LOBs under the selected NOB." },
     { key: "company_id", label: "Company", type: "text", hideInForm: true },
-    { key: "type_code", label: "Type Code", type: "text", required: true, placeholder: "FARM", createOnly: true },
+    { key: "type_code", label: "Type Code", type: "text", required: true, placeholder: "FARM", createOnly: true, helpText: "The type's own identity code. Fixed after create — locations reference it by this code." },
     { key: "type_name", label: "Type Name", type: "text", required: true, placeholder: "Farm" },
     { key: "code_prefix", label: "Code Prefix", type: "text", required: true, placeholder: "FARM", helpText: "Future locations use PREFIX-001, PREFIX-002, and so on." },
     {
@@ -138,7 +138,7 @@ const stage: MasterDataConfig = {
     { key: "company_id", label: "Company", type: "text", hideInForm: true },
     { key: "nob_id", label: "Nature of Business", type: "select-entity", required: true, entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], section: "Identification" },
     { key: "lob_id", label: "Line of Business", type: "select-entity", required: true, entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", section: "Identification" },
-    { key: "stage_code", label: "Stage Code", type: "text", required: true, placeholder: "QUARANTINE", section: "Identification" },
+    { key: "stage_code", label: "Stage Code", type: "text", required: true, createOnly: true, helpText: "Leave blank to derive from the stage name via the number series. After create, the code follows the series when the name changes — refused while a batch or log still uses the old code.", placeholder: "QUARANTINE", section: "Identification" },
     { key: "stage_name", label: "Stage Name", type: "text", required: true, placeholder: "Quarantine", section: "Identification" },
     {
       key: "stage_category", label: "Category", type: "select", required: true, section: "Identification",
@@ -469,7 +469,7 @@ const itemCategory: MasterDataConfig = {
     { key: "nob_id", label: "Nature of Business", type: "select-entity", entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], helpText: "Leave blank if this category is shared across all business verticals." },
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank if this category is shared across all LOBs under the selected NOB." },
     { key: "company_id", label: "Company", type: "text", hideInForm: true },
-    { key: "category_code", label: "Category Code", type: "text", required: true, placeholder: "FEED" },
+    { key: "category_code", label: "Category Code", type: "text", required: true, createOnly: true, helpText: "Leave blank to derive from the category name via the number series. After create, the code follows the series when the name changes.", placeholder: "FEED" },
     { key: "category_name", label: "Category Name", type: "text", required: true, placeholder: "Animal Feed Products" },
     {
       key: "item_type", label: "Item Type", type: "select-entity", entityEndpoint: "/item-type", entityValueKey: "type_code", entityLabelKeys: ["type_code", "type_name"],
@@ -496,11 +496,12 @@ const itemType: MasterDataConfig = {
     { key: "nob_id", label: "Nature of Business", type: "select-entity", entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], helpText: "Leave blank if this item type is shared across all business verticals." },
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank if this item type is shared across all LOBs under the selected NOB." },
     { key: "company_id", label: "Company", type: "text", hideInForm: true },
-    // createOnly: items reference a type by its code string, so the code is
-    // immutable after create (UpdateItemTypeDto has no type_code, and the
-    // global pipe's forbidNonWhitelisted would 400 the whole edit if the form
-    // kept resending it).
-    { key: "type_code", label: "Type Code", type: "text", required: true, placeholder: "RAW_MATERIAL", createOnly: true },
+    // createOnly: the code follows the ITEM_TYPE series after create — renaming
+    // the type name recomposes it, refused while an item still carries the old
+    // code. The field is create-only because UpdateItemTypeDto has no type_code,
+    // and the global pipe's forbidNonWhitelisted would 400 the whole edit if the
+    // form kept resending it.
+    { key: "type_code", label: "Type Code", type: "text", required: true, placeholder: "RAW_MATERIAL", createOnly: true, helpText: "Leave blank to derive from the type name via the number series. After create, the code follows the series when the name changes — refused while an item still uses the old code." },
     { key: "type_name", label: "Type Name", type: "text", required: true, placeholder: "Raw Material" },
     { key: "description", label: "Description", type: "textarea" },
   ],
@@ -527,7 +528,7 @@ const uom: MasterDataConfig = {
     { key: "nob_id", label: "Nature of Business", type: "select-entity", entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], helpText: "Leave blank if this unit is shared across all business verticals." },
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank if this unit is shared across all LOBs under the selected NOB." },
     { key: "company_id", label: "Company (blank = global)", type: "text", hideInForm: true },
-    { key: "uom_code", label: "UOM Code", type: "text", required: true, placeholder: "KG" },
+    { key: "uom_code", label: "UOM Code", type: "text", required: true, createOnly: true, helpText: "Leave blank to derive from the unit name via the number series — or type a standard symbol such as KG, which then stays fixed. After create, a series-derived code follows the series when the name changes.", placeholder: "KG" },
     { key: "uom_name", label: "UOM Name", type: "text", required: true, placeholder: "Kilogram" },
     {
       key: "uom_type", label: "UOM Type", type: "select", required: true,
@@ -623,7 +624,7 @@ const itemAttribute: MasterDataConfig = {
     { key: "company_id", label: "Company (blank = global)", type: "text", hideInForm: true },
     { key: "nob_id", label: "Nature of Business", type: "select-entity", entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], helpText: "Leave blank to make this attribute available across all NOBs." },
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank to make this attribute available across all LOBs under the selected NOB." },
-    { key: "attribute_code", label: "Attribute Code", type: "text", required: true, placeholder: "PROTEIN_PCT" },
+    { key: "attribute_code", label: "Attribute Code", type: "text", required: true, createOnly: true, helpText: "Leave blank to derive from the attribute name via the number series. After create, the code follows the series when the name changes.", placeholder: "PROTEIN_PCT" },
     { key: "attribute_name", label: "Attribute Name", type: "text", required: true, placeholder: "Protein %" },
     {
       // TDD row 130 has a fifth type, LIST, with row 131's List Values behind
@@ -849,7 +850,7 @@ const species: MasterDataConfig = {
     { key: "nob_id", label: "Nature of Business", type: "select-entity", entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], helpText: "Leave blank if this species is shared across all business verticals." },
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank if this species is shared across all LOBs under the selected NOB." },
     { key: "company_id", label: "Company (blank = global)", type: "text", hideInForm: true },
-    { key: "species_code", label: "Species Code", type: "text", required: true, placeholder: "PIG" },
+    { key: "species_code", label: "Species Code", type: "text", required: true, createOnly: true, helpText: "Leave blank to derive from the species name via the number series. After create, the code follows the series when the name changes.", placeholder: "PIG" },
     { key: "species_name", label: "Species Name", type: "text", required: true, placeholder: "Domestic Pig" },
   ],
 };
@@ -876,7 +877,7 @@ const breed: MasterDataConfig = {
     { key: "company_id", label: "Company (blank = global)", type: "text", hideInForm: true },
     { key: "nob_id", label: "Nature of Business", type: "select-entity", required: true, entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], section: "Identification" },
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank if this breed applies to all LOBs under the selected NOB.", section: "Identification" },
-    { key: "breed_code", label: "Breed Code", type: "text", required: true, section: "Identification" },
+    { key: "breed_code", label: "Breed Code", type: "text", required: true, createOnly: true, helpText: "Leave blank to derive from the breed name via the BREED series. After create, the code follows the series when the name changes — the same breed keeps the same code on every farm.", section: "Identification" },
     { key: "breed_name", label: "Breed Name", type: "text", required: true, placeholder: "Yorkshire", section: "Identification" },
     { key: "species_id", label: "Species", type: "select-entity", required: true, entityEndpoint: "/species", entityValueKey: "species_id", entityLabelKeys: ["species_code", "species_name"], section: "Identification" },
     {

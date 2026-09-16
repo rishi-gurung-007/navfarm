@@ -53,28 +53,49 @@ function rateOf(standardCost: string | null | undefined): number | undefined {
 }
 
 
-/** Medicine/vaccine items (company-scoped codes from the Triple C template). */
-const MED_ANTIBIOTIC_1 = 'MEDICINE-VETERINARY_MEDICINES_ANTIBIOTICS-ANTIBIOTIC-ITM-0001'; // Penicillin G
-const MED_ANTIBIOTIC_2 = 'MEDICINE-VETERINARY_MEDICINES_ANTIBIOTICS-ANTIBIOTIC-ITM-0002'; // Tylosin
-const VACCINE_BREEDING = 'VACCINE-SWINE_IMMUNIZATION_VACCINES-BREEDING-ITM-0001'; // Parvo-Shield L5
+/**
+ * Items resolve by seed handle and item NAME, never by literal code: the ITEM
+ * series composes <type>-<category>-<sub>-ITM-<seq> from the category tree,
+ * so the code moves whenever the category vocabulary does and a literal here
+ * went stale the moment the catalog step composed its own. Handles are local
+ * to this chapter; names are the shared catalog's (scripts/lib/seed-item-catalog.ts)
+ * — the one property of a seeded item code generation cannot move.
+ */
+const NAME_BY_HANDLE: Record<string, string> = {
+  MED_ANTIBIOTIC_1: 'Penicillin G Procaine 300K IU 100ml',
+  MED_ANTIBIOTIC_2: 'Tylosin Tartrate 100g Soluble Powder',
+  VACCINE_BREEDING: 'Parvo-Shield L5 Swine Vaccine (50 Doses)',
+  FEED_GESTATION: 'Dry Sow Gestation Mash (14% CP)',
+  FEED_LACTATION: 'High-Density Lactation Diet (17.5% CP)',
+  FEED_GROWER: 'Weaner Grower Mash (18% CP)',
+  FEED_FINISHER: 'Finisher High-Gain Porker Feed (15.5% CP)',
+};
+const MED_ANTIBIOTIC_1 = 'MED_ANTIBIOTIC_1';
+const MED_ANTIBIOTIC_2 = 'MED_ANTIBIOTIC_2';
+const VACCINE_BREEDING = 'VACCINE_BREEDING';
+const FEED_GESTATION = 'FEED_GESTATION';
+const FEED_LACTATION = 'FEED_LACTATION';
+const FEED_GROWER = 'FEED_GROWER';
+const FEED_FINISHER = 'FEED_FINISHER';
 
 /**
  * The diet a silo is stocked with, from the shed it hangs off. Same mapping
  * the breed lifecycles use: gestation mash for dry sows, gilts and boars,
  * lactation for farrowing, grower mash for weaners and growers, finisher feed
- * for finishers.
+ * for finishers. Values are the catalog handles above, resolved to item names
+ * when the item is looked up.
  */
 const FEED_BY_SHED_ROLE: Record<ShedRole, string> = {
-  DRY_SOW: 'FEED-FINISHED_SWINE_FEEDS_DIETS-GESTATION-ITM-0001',
-  GILT: 'FEED-FINISHED_SWINE_FEEDS_DIETS-GROWER-ITM-0001',
-  GILT_REARING: 'FEED-FINISHED_SWINE_FEEDS_DIETS-GROWER-ITM-0001',
-  BOAR: 'FEED-FINISHED_SWINE_FEEDS_DIETS-GESTATION-ITM-0001',
-  FARROWING: 'FEED-FINISHED_SWINE_FEEDS_DIETS-LACTATION-ITM-0001',
-  WEANER: 'FEED-FINISHED_SWINE_FEEDS_DIETS-GROWER-ITM-0001',
-  GROWER: 'FEED-FINISHED_SWINE_FEEDS_DIETS-GROWER-ITM-0001',
-  FINISHER: 'FEED-FINISHED_SWINE_FEEDS_DIETS-FINISHER-ITM-0001',
+  DRY_SOW: FEED_GESTATION,
+  GILT: FEED_GROWER,
+  GILT_REARING: FEED_GROWER,
+  BOAR: FEED_GESTATION,
+  FARROWING: FEED_LACTATION,
+  WEANER: FEED_GROWER,
+  GROWER: FEED_GROWER,
+  FINISHER: FEED_FINISHER,
 };
-const FEED_DEFAULT = 'FEED-FINISHED_SWINE_FEEDS_DIETS-GESTATION-ITM-0001';
+const FEED_DEFAULT = FEED_GESTATION;
 
 /** The demo quantities — labelled demo facts, not client data. */
 const DEMO_OPERATIONS = {
@@ -97,27 +118,35 @@ const SILOS_STOCKED_PER_FARM = 2;
 
 const TODAY = () => new Date().toISOString().slice(0, 10);
 
-async function itemByCode(db: MySql2Database<typeof schema>, code: string) {
+/**
+ * Look an item up by its NAME — the one property of a seeded item that code
+ * generation cannot move (see NAME_BY_HANDLE). Throws with the handle when
+ * the catalog step has not run, so the failure names the missing prerequisite
+ * instead of a code nothing composes any more.
+ */
+async function itemByHandle(db: MySql2Database<typeof schema>, handle: string) {
+  const name = NAME_BY_HANDLE[handle];
+  if (!name) throw new Error(`02-inventory: no item name mapped for handle '${handle}'.`);
   // Company-scoped row when present (company wins for an operational caller),
   // else the tenant row.
   const [row] = await db
     .select({ item_id: schema.itemMaster.item_id, item_code: schema.itemMaster.item_code, standard_cost: schema.itemMaster.standard_cost })
     .from(schema.itemMaster)
-    .where(and(eq(schema.itemMaster.item_code, code), eq(schema.itemMaster.is_active, true), isNull(schema.itemMaster.deleted_at)))
+    .where(and(eq(schema.itemMaster.item_name, name), eq(schema.itemMaster.is_active, true), isNull(schema.itemMaster.deleted_at)))
     .orderBy(schema.itemMaster.company_id)
     .limit(1);
-  if (!row) throw new Error(`02-inventory: item '${code}' not found — the master stages must load it before this chapter.`);
+  if (!row) throw new Error(`02-inventory: item '${name}' (handle ${handle}) not found — run db-seed-demo-item-catalog first.`);
   return row;
 }
 
 /** The silos this chapter stocks on a farm, with the diet each one takes. */
-function stockedSilos(farm: DemoFarm): Array<{ id: string; code: string; feedCode: string }> {
+function stockedSilos(farm: DemoFarm): Array<{ id: string; code: string; feedHandle: string }> {
   const shedBySilo = new Map(farm.sheds.filter((s) => s.siloId).map((s) => [s.siloId!, s]));
   return silosOf(farm)
     .slice(0, SILOS_STOCKED_PER_FARM)
     .map((silo) => {
       const role = shedBySilo.get(silo.id)?.role;
-      return { ...silo, feedCode: (role && FEED_BY_SHED_ROLE[role]) || FEED_DEFAULT };
+      return { ...silo, feedHandle: (role && FEED_BY_SHED_ROLE[role]) || FEED_DEFAULT };
     });
 }
 
@@ -165,7 +194,7 @@ export const inventoryChapter: DemoChapter = {
           .where(eq(schema.goodsReceipt.external_reference_no, ref('SILORCP')));
         if (existing.length === 0) {
           for (const silo of siloIds) {
-            const feed = await itemByCode(db, silo.feedCode);
+            const feed = await itemByHandle(db, silo.feedHandle);
             await receipts.create(
               {
                 company_id: ctx.companyId,
@@ -209,8 +238,8 @@ export const inventoryChapter: DemoChapter = {
         if (!existing) {
           const storeLines: GoodsReceiptLineInput[] = [];
           for (const line of DEMO_OPERATIONS.storeReceipt) {
-            const item = await itemByCode(db, line.item_code);
-            storeLines.push({ item_id: item.item_id, quantity: line.quantity, uom: line.uom, rate: rateOf(item.standard_cost), lot_no: `DEMO-${farm.code}-${line.item_code.split('-').pop()}` });
+            const item = await itemByHandle(db, line.item_code);
+            storeLines.push({ item_id: item.item_id, quantity: line.quantity, uom: line.uom, rate: rateOf(item.standard_cost), lot_no: `DEMO-${farm.code}-${item.item_code.split('-').pop()}` });
           }
           const created = await receipts.create(
             {
@@ -241,7 +270,7 @@ export const inventoryChapter: DemoChapter = {
           .where(eq(schema.goodsIssue.remarks, ref('ISSUE')))
           .limit(1);
         if (!existing) {
-          const med = await itemByCode(db, DEMO_OPERATIONS.medicineIssue.item_code);
+          const med = await itemByHandle(db, DEMO_OPERATIONS.medicineIssue.item_code);
           const created = await issues.create(
             {
               company_id: ctx.companyId,
@@ -272,7 +301,7 @@ export const inventoryChapter: DemoChapter = {
           .where(eq(schema.stockTransfer.remarks, ref('XSILO')))
           .limit(1);
         if (!existing) {
-          const feed = await itemByCode(db, siloIds[0].feedCode);
+          const feed = await itemByHandle(db, siloIds[0].feedHandle);
           const created = await transfers.create(
             {
               company_id: ctx.companyId,
@@ -302,8 +331,8 @@ export const inventoryChapter: DemoChapter = {
           .where(eq(schema.stockAdjustment.reason, ref('ADJ')))
           .limit(1);
         if (!existing) {
-          const posItem = await itemByCode(db, DEMO_OPERATIONS.adjustments.positive.item_code);
-          const negItem = await itemByCode(db, DEMO_OPERATIONS.adjustments.negative.item_code);
+          const posItem = await itemByHandle(db, DEMO_OPERATIONS.adjustments.positive.item_code);
+          const negItem = await itemByHandle(db, DEMO_OPERATIONS.adjustments.negative.item_code);
           const created = await adjustments.create(
             {
               company_id: ctx.companyId,

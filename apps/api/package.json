@@ -359,6 +359,14 @@
           "cwd": "apps/api"
         }
       },
+      "db-seed-demo-item-catalog": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "command": "node --env-file-if-exists=.env --import tsx src/scripts/seed-demo-item-catalog.ts",
+          "cwd": "apps/api"
+        }
+      },
       "db-rebuild-demo": {
         "executor": "nx:run-commands",
         "cache": false,

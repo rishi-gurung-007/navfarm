@@ -238,6 +238,20 @@ export class StageService {
       updated_by: userPayload?.userId || null,
     };
 
+    // STAGE is a named series (code = the uppercased name). A rename recomposes
+    // the code from the new name — but stage codes are held as strings across
+    // the operational tables (batch_header.current_stage_code, stage logs, farm
+    // records, reason applicability), so the rename is refused while anything
+    // still references the old one.
+    if (dto.stage_name !== undefined && dto.stage_name.trim() !== stage.stage_name
+        && stage.stage_code === stage.stage_name.replaceAll(/\s+/g, '_').toUpperCase()) {
+      updates.stage_code = await this.numberSeriesService.renameCode(
+        'STAGE',
+        { ...stage, stage_name: dto.stage_name },
+        tenantId,
+        stage.company_id,
+      );
+    }
     if (dto.stage_name !== undefined) updates.stage_name = dto.stage_name;
     if (dto.stage_category !== undefined) updates.stage_category = dto.stage_category;
     if (dto.stage_sequence !== undefined) updates.stage_sequence = dto.stage_sequence;

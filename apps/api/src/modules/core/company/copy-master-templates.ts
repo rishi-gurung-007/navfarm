@@ -1,5 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
-import { and, eq, getTableColumns, getTableName, inArray, isNull } from 'drizzle-orm';
+import { and, count, eq, getTableColumns, getTableName, inArray, isNull } from 'drizzle-orm';
 import { AnyMySqlTable, getTableConfig } from 'drizzle-orm/mysql-core';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { randomUUID } from 'crypto';
@@ -90,8 +90,24 @@ export async function copyCompanyMasterTemplates(tx: Pick<MySql2Database<typeof 
 
 export async function loadCompanyTemplateCopies(tx: Pick<MySql2Database<typeof schema>, 'select'>, tenantId: string, companyId: string): Promise<TemplateCopy[]> {
   const sets: TemplateRows[] = [];
+  // Per-table idempotency, not a single probe on no_series_master: company
+  // creation and seed-activity-master.ts (called from seed-dev-tenant.ts)
+  // both write company-scoped master rows, so a fresh company can already
+  // hold rows in one template table (activity_master) while another
+  // (no_series_master) is still empty. Gating the whole run on one table
+  // assumed a rowless company and died on uq_activity_scope_code the moment
+  // that assumption broke. Snapshot, not sync, still holds — per table:
+  // adopt only the tables the company has none of, never merge copies into
+  // rows it already owns.
+  const skipped = new Set<AnyMySqlTable>();
   for (const table of companyTemplateTables) {
     const c = getTableColumns(table);
+    const [{ n }] = await tx.select({ n: count() }).from(table)
+      .where(and(eq(c.tenant_id, tenantId), eq(c.company_id, companyId)));
+    if (Number(n) > 0) {
+      skipped.add(table);
+      continue;
+    }
     const conditions = [eq(c.tenant_id, tenantId), isNull(c.company_id)];
     if (c.is_active) conditions.push(eq(c.is_active, true));
     if (c.deleted_at) conditions.push(isNull(c.deleted_at));
@@ -108,6 +124,7 @@ export async function loadCompanyTemplateCopies(tx: Pick<MySql2Database<typeof s
     [schema.itemAttributeValues, schema.itemMaster, 'item_id'],
     [schema.feedFormulaIngredients, schema.feedFormulaMaster, 'formula_id'],
   ] as const) {
+    if (skipped.has(parent)) continue; // children exist only through their parent
     const ids = sets.find((s) => s.table === parent)?.rows.map((r) => r[key]) || [];
     if (ids.length) sets.push({ table, rows: await tx.select().from(table).where(inArray(getTableColumns(table)[key], ids)) });
   }

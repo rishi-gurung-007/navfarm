@@ -13,6 +13,14 @@ import { NumberSeriesService } from '../../system/number-series/number-series.se
 import { generateCompositeCode } from '../../system/number-series/composite-code.util';
 import { segmentFields } from '../../system/number-series/code-format.util';
 
+/**
+ * The location types a warehouse reads as. WarehouseService projects exactly
+ * these types out of location_master, so the list is shared rather than typed
+ * twice — a new type that inventory should hold (a tenant's own BINS, say)
+ * joins this list once and both the tree and the /warehouse projection agree.
+ */
+export const WAREHOUSE_LOCATION_TYPES = ['STORE', 'SILO'];
+
 const toMysqlTimestamp = (date: Date = new Date()) => {
   return date.toISOString().slice(0, 19).replace('T', ' ');
 };
@@ -246,9 +254,16 @@ export class LocationService {
       company_id: companyId,
       nob_id: dto.nob_id || null,
       lob_id: dto.lob_id || null,
-      farm_id: typeCode === 'FARM' ? locationId : parent ? (parent.location_type === 'FARM' ? parent.location_id : parent.farm_id) : null,
+      // Ancestry comes from the parent chain and the derived level, not from a
+      // hard-coded FARM→SHED→PEN ladder. farm_id is "the level-1 ancestor" —
+      // any root type anchors a farm's subtree, so a tenant's custom root type
+      // scopes its children exactly as FARM does. shed_id and warehouse_id keep
+      // their type names (SHED is a fixed stage of the housing chain; the
+      // warehouse projection is shared with WarehouseService), but every child
+      // inherits through its parent rather than through a type ladder.
+      farm_id: locationLevel === 1 ? locationId : parent ? (parent.location_level === 1 ? parent.location_id : parent.farm_id) : null,
       shed_id: typeCode === 'SHED' ? locationId : parent ? (parent.location_type === 'SHED' ? parent.location_id : parent.shed_id) : null,
-      warehouse_id: ['STORE', 'SILO'].includes(typeCode) ? locationId : parent ? (['STORE', 'SILO'].includes(parent.location_type) ? parent.location_id : parent.warehouse_id) : null,
+      warehouse_id: WAREHOUSE_LOCATION_TYPES.includes(typeCode) ? locationId : parent ? (WAREHOUSE_LOCATION_TYPES.includes(parent.location_type) ? parent.location_id : parent.warehouse_id) : null,
       location_code: locationCode,
       location_name: dto.location_name,
       location_address: typeCode === 'FARM' ? dto.location_address!.trim() : null,
@@ -722,9 +737,11 @@ export class LocationService {
     if (dto.parent_location_id !== undefined) {
       updates.parent_location_id = dto.parent_location_id;
       updates.location_level = newLocationLevel;
-      updates.farm_id = location.location_type === 'FARM' ? id : parent ? (parent.location_type === 'FARM' ? parent.location_id : parent.farm_id) : null;
+      // Same level-1 derivation as create(): reparenting under any root type
+      // re-anchors the subtree's farm, not just under a literal FARM row.
+      updates.farm_id = newLocationLevel === 1 ? id : parent ? (parent.location_level === 1 ? parent.location_id : parent.farm_id) : null;
       updates.shed_id = location.location_type === 'SHED' ? id : parent ? (parent.location_type === 'SHED' ? parent.location_id : parent.shed_id) : null;
-      updates.warehouse_id = ['STORE', 'SILO'].includes(location.location_type) ? id : parent ? (['STORE', 'SILO'].includes(parent.location_type) ? parent.location_id : parent.warehouse_id) : null;
+      updates.warehouse_id = WAREHOUSE_LOCATION_TYPES.includes(location.location_type) ? id : parent ? (WAREHOUSE_LOCATION_TYPES.includes(parent.location_type) ? parent.location_id : parent.warehouse_id) : null;
     }
     if (dto.area_size !== undefined) updates.area_size = dto.area_size?.toString() || null;
     if (dto.area_unit !== undefined) updates.area_unit = dto.area_unit;

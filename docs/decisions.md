@@ -1824,3 +1824,48 @@ proven by driving the app and reading MySQL.
     (supersedes the "Inventoriable or MEDICINE/VACCINE" rule above).
 11. Resource type loses OTHER and VEHICLE.
 12. Location parent lookup offers only locations one level above (Farm 1, Shed 2, Pen 3).
+
+## 2026-09-16 — Seed-data audit and repair (user's call)
+
+The seeded demo was audited end to end at Rishi's direction and rebuilt from
+empty. Decisions recorded:
+
+**1. Data-entry stage overview: fix the demo data, not the screen.** The
+stage-aware workspace (stage tiles -> workspace -> History rail, decided
+14 Sep) is correct. The "only one stage" symptom was data: no batch had more
+than one scheduler, and the old seed never moved a batch through its flow.
+Chapter 03 now walks every registered batch through its farm-role's stage
+flow with real service calls (stage transfer + per-stage scheduler), so
+registered batches carry 4-6 stage schedulers and their animals are spread
+across the stages. Count-only batches stay single-stage by design.
+
+**2. Series-backed codes follow the series on rename, refused while
+referenced.** A new `NumberSeriesService.renameCode` recomposes a named
+series' code from the record (via the same create-path formatter) and refuses
+while operational rows still hold the old code. Wired into item-type, uom,
+species, stage, item-category, item-attribute, location-type and breed.
+A code derived from the series follows the rename; a manually entered code
+(`allow_manual`) stays. `type_code` remains unwritable through any DTO.
+Web master configs state the rule per field (createOnly + helpText).
+
+**3. Location ancestry is hierarchical, not hard-coded.** location.service
+computed farm_id/shed_id/warehouse_id from literal type codes. It now walks
+the parent chain: a CRATE under a SHED under a FARM gets farm_id and shed_id
+with no farm/shed/store literal in sight. Verified in MySQL: all 89 seeded
+CRATE rows carry farm_id.
+
+**4. The rebuild chain now runs clean from empty.** Three gaps closed:
+- Template adoption is per-table idempotent (copy-master-templates) — the
+  per-company activity rows from seed-dev-tenant no longer trip
+  uq_activity_scope_code.
+- New master step `db-seed-demo-item-catalog` seeds the shared demo item
+  catalog into Triple C's scope through the ITEM series; the nine-farm
+  lifecycles and chapters consume items by NAME, never by literal code.
+- demo-chapters runs with --force-on-existing inside the orchestrator
+  (chapters are resume-safe by DEMO reference); the double-post guard stays
+  for direct runs. All steps run under ts-node, not tsx: Nest DI needs
+  design:paramtypes metadata, which esbuild (tsx) never emits.
+
+**5. Full demo rebuild applied.** 28 batches (7 with multi-stage flows),
+260 animals across 6 stages, 28 company items, 804 daily entries. Fossil
+rows (old BATCH-0000xx family with invented names, PIG-BAT-2026 seed) gone.

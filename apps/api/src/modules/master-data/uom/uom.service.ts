@@ -15,6 +15,7 @@ import {
 } from './dto/uom.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
+import { normalizeSegment } from '../../system/number-series/code-format.util';
 import { listFilterConditions, listOrderBy } from '../../../common/master-list-query';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
@@ -196,29 +197,26 @@ export class UomService {
   async update(id: string, dto: UpdateUomDto, tenantId: string, userPayload?: any) {
     const uom = await this.findOne(id);
 
-    // Validate unique code if code is changed
-    if (dto.uom_code && dto.uom_code.toUpperCase() !== uom.uom_code) {
-      const codeConditions = [
-        eq(schema.uomMaster.tenant_id, tenantId),
-        eq(schema.uomMaster.uom_code, dto.uom_code.toUpperCase()),
-        ne(schema.uomMaster.uom_id, id),
-        isNull(schema.uomMaster.deleted_at),
-      ];
-      if (uom.company_id) {
-        codeConditions.push(eq(schema.uomMaster.company_id, uom.company_id));
-      } else {
-        codeConditions.push(isNull(schema.uomMaster.company_id));
-      }
-
-      const existing = await this.db
-        .select()
-        .from(schema.uomMaster)
-        .where(and(...codeConditions))
-        .limit(1);
-
-      if (existing.length > 0) {
-        throw new ConflictException(`UOM with code '${dto.uom_code}' already exists in this scope.`);
-      }
+    // The code belongs to the UOM series, not to the form. When the name changes
+    // and the current code is what the series derives from the name, the code
+    // follows it to the new name — refused while any item still buys or issues
+    // in the old code (item_master.uom_primary/secondary hold the code string).
+    // A code that was typed by hand (KG, ML — standard symbols the series cannot
+    // derive, which is what allow_manual exists for) stays as it is: it was never
+    // following the series, so it has nothing to follow.
+    let uomCode = uom.uom_code;
+    if (dto.uom_name !== undefined && dto.uom_name.trim() !== uom.uom_name
+        && uom.uom_code === normalizeSegment(uom.uom_name)) {
+      uomCode = await this.numberSeriesService.renameCode(
+        'UOM',
+        { ...uom, uom_name: dto.uom_name },
+        tenantId,
+        uom.company_id,
+      );
+    } else if (dto.uom_code !== undefined && dto.uom_code.toUpperCase() !== uom.uom_code) {
+      throw new ConflictException(
+        `UOM codes follow the number series and cannot be typed over. Rename the unit's name and the code follows it, or create a new unit with the code you need.`,
+      );
     }
 
     // Handle is_base_uom rule: only one base UOM per type
@@ -254,8 +252,8 @@ export class UomService {
       updated_at: toMysqlTimestamp(),
     };
 
-    if (dto.uom_code !== undefined) updates.uom_code = dto.uom_code.toUpperCase();
     if (dto.uom_name !== undefined) updates.uom_name = dto.uom_name;
+    updates.uom_code = uomCode;
     if (dto.uom_type !== undefined) updates.uom_type = dto.uom_type;
     if (dto.decimal_places !== undefined) updates.decimal_places = dto.decimal_places;
     if (dto.is_base_uom !== undefined) updates.is_base_uom = dto.is_base_uom;

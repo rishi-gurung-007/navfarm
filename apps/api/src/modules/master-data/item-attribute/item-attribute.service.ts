@@ -173,9 +173,23 @@ export class ItemAttributeService {
       updated_at: toMysqlTimestamp(),
     };
 
+    // ITEM_ATTRIBUTE is a named series (code = the uppercased name). Renaming an
+    // attribute recomposes its code from the new name. Item attribute values
+    // reference the attribute by UUID, not by code, so the code follows freely.
+    if (dto.attribute_name !== undefined && dto.attribute_name.trim() !== attribute.attribute_name) {
+      updates.attribute_code = await this.numberSeriesService.renameCode(
+        'ITEM_ATTRIBUTE',
+        { ...attribute, attribute_name: dto.attribute_name },
+        tenantId,
+        attribute.company_id,
+      );
+    } else if (dto.attribute_code !== undefined && dto.attribute_code.toUpperCase() !== attribute.attribute_code) {
+      throw new ConflictException(
+        `Attribute codes follow the number series and cannot be typed over. Rename the attribute's name and the code follows it.`,
+      );
+    }
     if (dto.nob_id !== undefined) updates.nob_id = dto.nob_id;
     if (dto.lob_id !== undefined) updates.lob_id = dto.lob_id;
-    if (dto.attribute_code !== undefined) updates.attribute_code = dto.attribute_code.toUpperCase();
     if (dto.attribute_name !== undefined) updates.attribute_name = dto.attribute_name;
     if (dto.data_type !== undefined) updates.data_type = dto.data_type;
     if (dto.list_values !== undefined) updates.list_values = JSON.stringify(dto.list_values);

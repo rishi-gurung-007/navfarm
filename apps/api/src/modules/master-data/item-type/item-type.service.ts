@@ -166,9 +166,28 @@ export class ItemTypeService {
   async update(id: string, dto: UpdateItemTypeDto, tenantId: string, userPayload?: any) {
     const itemType = await this.findOne(id);
 
-    // type_code is immutable (UpdateItemTypeDto no longer carries it), and
-    // blocking the row is the same outcome by another route: an inactive
-    // MEDICINE type is what remove() refuses to allow.
+    // type_code is not sent by the form (UpdateItemTypeDto does not carry it):
+    // it follows the ITEM_TYPE series instead. That series is a named one — the
+    // code is the uppercased type name — so renaming the type recomposes the
+    // code from the new name, refused while any item still carries the old code
+    // (item_master.item_type holds the code string with no foreign key, so a
+    // silent rename would orphan every item filed under it). The rename is the
+    // ONLY writer of type_code here: a caller-supplied dto.type_code cast past
+    // the DTO is ignored, because item.service gates withdrawal_days on the
+    // literal MEDICINE/VACCINE codes and a smuggled rename would silently
+    // disable that food-safety rule.
+    let typeCode: string | undefined;
+    if (dto.type_name !== undefined && dto.type_name.trim() !== itemType.type_name) {
+      typeCode = await this.numberSeriesService.renameCode(
+        'ITEM_TYPE',
+        { ...itemType, type_name: dto.type_name },
+        tenantId,
+        itemType.company_id,
+      );
+    }
+
+    // Blocking the row is unchanged: an inactive MEDICINE type is what
+    // remove() refuses to allow.
     if (itemType.is_system && (dto.is_active === false || (dto.status !== undefined && dto.status.toUpperCase() !== 'ACTIVE'))) {
       throw new ConflictException(`Item type '${itemType.type_code}' is a system type and cannot be deactivated.`);
     }
@@ -180,6 +199,7 @@ export class ItemTypeService {
 
     if (dto.code_prefix !== undefined) updates.code_prefix = dto.code_prefix.toUpperCase();
     if (dto.type_name !== undefined) updates.type_name = dto.type_name;
+    if (typeCode !== undefined) updates.type_code = typeCode;
     if (dto.description !== undefined) updates.description = dto.description;
     if (dto.is_active !== undefined) updates.is_active = dto.is_active;
     if (dto.status !== undefined) updates.status = dto.status;

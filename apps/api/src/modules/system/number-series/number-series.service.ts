@@ -1,7 +1,7 @@
 import { companyCondition, MASTER_TABLES, masterScopeConditions } from '../../../common/master-data-scope';
 import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, like, or, isNull, sql, getTableColumns } from 'drizzle-orm';
+import { eq, and, like, ne, or, isNull, sql, getTableColumns } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
@@ -559,6 +559,144 @@ export class NumberSeriesService {
     const series = await this.resolveSeriesFor(master, type, tenantId, companyId);
     if (!series) throw new BadRequestException('Enter a manual code or configure a number series for this master.');
     return this.generateNext(series, tenantId, companyId, undefined, record);
+  }
+
+  /**
+   * Whether the master's identity is referenced by any other table — the guard
+   * behind renameCode(). A code that is still referenced would become ambiguous
+   * everywhere it is stored as a string: item_master.uom_primary reads a UOM
+   * code, item_master.item_type reads a type code, batch_header.current_stage_code
+   * reads a stage code.
+   *
+   * Listed per master rather than discovered dynamically so the check is exact
+   * and auditable; adding a reference means adding it here. A master absent
+   * from this map has no string-held references, so its code is always free to
+   * follow its series.
+   */
+  private static readonly CODE_REFERENCES: Record<string, Array<{ table: string; column: string; label: string; isUuid?: boolean; jsonArrayOfCodes?: boolean }>> = {
+    ITEM_TYPE: [{ table: 'itemMaster', column: 'item_type', label: 'an item' }],
+    UOM: [
+      { table: 'itemMaster', column: 'uom_primary', label: 'an item' },
+      { table: 'itemMaster', column: 'uom_secondary', label: 'an item' },
+    ],
+    STAGE: [
+      { table: 'batchHeader', column: 'current_stage_code', label: 'a batch' },
+      { table: 'batchStageLog', column: 'to_stage_code', label: 'a stage log' },
+      { table: 'farmRecord', column: 'stage_code', label: 'a farm record' },
+      { table: 'reasonMaster', column: 'applicable_stages', label: 'a reason', jsonArrayOfCodes: true },
+    ],
+    SPECIES: [{ table: 'breedMaster', column: 'species_id', label: 'a breed', isUuid: true }],
+    ITEM_CATEGORY: [{ table: 'itemMaster', column: 'sub_category', label: 'an item' }],
+    ITEM_ATTRIBUTE: [
+      { table: 'itemAttributeValues', column: 'attribute_id', label: 'an item attribute value', isUuid: true },
+    ],
+  };
+
+  /**
+   * A named master's code, recomposed from its own number series as if the row
+   * were being created today — the same formatter, the same segment values read
+   * from the row's current fields, the same stem-scoped next number. Called on
+   * rename so the code follows the series the way create() built it, instead of
+   * going stale when a name changes.
+   *
+   * Only meaningful for "named" series — codes composed from the record's own
+   * fields (type_name, uom_name, breed_name…). A sequence-only series' code
+   * carries nothing from the record, so there is nothing to recompute and its
+   * code never moves.
+   *
+   * The row's own current code is excluded from the occupied set downstream, so
+   * a rename that recomposes to the same code is a no-op rather than a clash.
+   */
+  async recomposeCode(
+    master: string,
+    row: Record<string, unknown>,
+    tenantId: string,
+    companyId?: string | null,
+  ): Promise<string> {
+    const seriesCode = await this.resolveSeriesFor(master, undefined, tenantId, companyId);
+    if (!seriesCode) throw new BadRequestException(`No number series is configured for ${master}.`);
+    const [series] = await this.db.select().from(schema.noSeriesMaster).where(and(
+      eq(schema.noSeriesMaster.tenant_id, tenantId),
+      eq(schema.noSeriesMaster.series_code, seriesCode),
+      isNull(schema.noSeriesMaster.deleted_at),
+    )).orderBy(sql`${schema.noSeriesMaster.company_id} IS NULL`).limit(1);
+    if (!series) throw new BadRequestException(`Number series '${seriesCode}' not found.`);
+
+    // Sequence-only series: nothing in the code came from the record, so a
+    // rename has nothing to follow. The code stays as it is.
+    if (!segmentFields(series).length) return String(row[MASTER_CODE_COLUMNS[master]] ?? '');
+
+    const { code } = await this.nextAvailableCode(series, tenantId, companyId, this.db, new Date(), row);
+    return code;
+  }
+
+  /**
+   * Rename a master's code: recompose it from the series (above), refuse while
+   * anything still references the old one, and validate the result for width
+   * and uniqueness exactly as manualCode does — the same guarantees, because a
+   * generated identity is still an identity.
+   *
+   * Returns the new code, or the old one unchanged when the series recomposes
+   * to it — the common case of a row saved without a rename.
+   */
+  async renameCode(
+    master: string,
+    row: Record<string, unknown>,
+    tenantId: string,
+    companyId?: string | null,
+  ): Promise<string> {
+    const codeColumn = MASTER_CODE_COLUMNS[master];
+    const oldCode = String(row[codeColumn] ?? '');
+    const refs = NumberSeriesService.CODE_REFERENCES[master] ?? [];
+    const tableKey = master.toLowerCase().replaceAll('_', '-');
+    const table0 = MASTER_TABLES[tableKey];
+    if (!table0 || !codeColumn) throw new BadRequestException('Unsupported master code.');
+    const columns0 = getTableColumns(table0);
+    const codeCol = columns0[codeColumn];
+    const idKey = Object.keys(columns0).find((k) => k.endsWith('_id')) ?? 'id';
+    const idValue = row[idKey];
+
+    // Does anything still point at the old code? Checked per reference table so
+    // the message can name what is holding it.
+    if (refs.length) {
+      for (const ref of refs) {
+        const refTable = (schema as Record<string, any>)[ref.table];
+        if (!refTable) continue;
+        const refCols = getTableColumns(refTable);
+        const col = refCols[ref.column];
+        if (!col) continue;
+        const conditions: any[] = [];
+        if (ref.jsonArrayOfCodes) {
+          // applicable_stages holds stage codes as a JSON array — a JSON_CONTAINS,
+          // not an equality.
+          conditions.push(sql`JSON_CONTAINS(${col}, ${JSON.stringify(oldCode)})`);
+        } else {
+          conditions.push(eq(col, ref.isUuid ? idValue : oldCode));
+        }
+        if (refCols.tenant_id) conditions.push(eq(refCols.tenant_id, tenantId));
+        const [hit] = await this.db.select({ one: sql`1` }).from(refTable).where(and(...conditions)).limit(1);
+        if (hit) {
+          throw new ConflictException(
+            `Code cannot follow the series while '${oldCode}' is still used by ${ref.label}. Retire the row or clear the references first.`,
+          );
+        }
+      }
+    }
+
+    const newCode = await this.recomposeCode(master, row, tenantId, companyId);
+    if (newCode === oldCode) return oldCode;
+
+    // Width and uniqueness, the same gate a manual code passes. The row itself
+    // is excluded so keeping the code is never a self-collision.
+    const width = Number(codeCol.getSQLType().match(/\((\d+)\)/)?.[1] || 255);
+    if (!newCode || newCode.length > width) throw new BadRequestException(`Code must contain 1 to ${width} characters.`);
+    const [duplicate] = await this.db.select().from(table0).where(and(
+      ...scopeKeyConditions(columns0, tenantId, companyId),
+      eq(codeCol, newCode),
+      ne(codeCol, oldCode),
+    )).limit(1);
+    if (duplicate) throw new ConflictException(`Code '${newCode}' already exists in this scope.`);
+    return newCode;
   }
 
   /** Validate an explicit manual identity without consuming the series. */

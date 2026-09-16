@@ -25,7 +25,7 @@ const isPiggeryIsolated = masterDatabase.startsWith('piggery_');
 const tenantCode = process.env.DEV_TENANT_CODE || 'devco';
 const dbName = isPiggeryIsolated ? `piggery_tenant_${tenantCode}` : `tenant_${tenantCode}`;
 
-async function seedItemCategoryTree(
+export async function seedItemCategoryTree(
   db: any,
   ctx: { tenantId: string; companyId: string; nobId: string; lobId: string },
 ) {

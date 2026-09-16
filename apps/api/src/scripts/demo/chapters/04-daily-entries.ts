@@ -62,6 +62,9 @@ function dateNdaysAgo(days: number): string {
 }
 
 interface DemoLine {
+  scheduler_id: string;
+  effective_from: string | Date;
+  animal_count: string | null;
   line_id: string;
   activity_name: string;
   line_type: string | null;
@@ -148,10 +151,17 @@ export const dailyEntriesChapter: DemoChapter = {
       }
     }
 
-    // ── Lines per batch (the schedulers chapter 03 generated).
+    // ── Lines per batch (the schedulers chapters 03 generated — one scheduler
+    // per stage the batch's flow walked, so a batch carries several, each with
+    // its own effective_from: day 3 of farrowing is not day 3 of gestation).
+    // Day numbers are computed per scheduler below, from that scheduler's own
+    // effective_from, the same way day-completeness.ts counts them.
     const allLines = await db
       .select({
         batch_id: schema.schedulerHeader.batch_id,
+        scheduler_id: schema.schedulerHeader.scheduler_id,
+        effective_from: schema.schedulerHeader.effective_from,
+        animal_count: schema.schedulerHeader.animal_count,
         line_id: schema.schedulerLine.line_id,
         activity_name: schema.schedulerLine.activity_name,
         line_type: schema.schedulerLine.line_type,
@@ -174,15 +184,14 @@ export const dailyEntriesChapter: DemoChapter = {
       linesByBatch.set(line.batch_id, list);
     }
 
-    // Headcount per batch (scheduler_header.animal_count), read once.
-    const headcountByBatch = new Map<string, number>();
-    for (const [batchId] of linesByBatch) {
-      const [header] = await db
-        .select({ animal_count: schema.schedulerHeader.animal_count })
-        .from(schema.schedulerHeader)
-        .where(eq(schema.schedulerHeader.batch_id, batchId))
-        .limit(1);
-      headcountByBatch.set(batchId, Number(header?.animal_count ?? 0));
+    // Headcount per scheduler, not per batch: each stage's scheduler snapshots
+    // the head standing in its own stage, and a feed line draws against the
+    // stage it is scheduled in.
+    const headcountByScheduler = new Map<string, number>();
+    for (const line of allLines) {
+      if (!headcountByScheduler.has(line.scheduler_id)) {
+        headcountByScheduler.set(line.scheduler_id, Number(line.animal_count ?? 0));
+      }
     }
 
     /**
@@ -223,13 +232,15 @@ export const dailyEntriesChapter: DemoChapter = {
       ));
     const postedKeys = new Set(posted.map((p) => `${p.line_id}|${p.entry_date}`));
 
-    // Day index within the window: the scheduler's effective_from is day 1
-    // (day-completeness convention), and the demo schedulers' effective_from
-    // equals the batch start date (14 days back = firstDay).
+    // The calendar days of the window, ending yesterday.
     const days: string[] = [];
     for (let i = 14; i >= 1; i--) days.push(dateNdaysAgo(i));
-    const dayIndexOf = (date: string): number =>
-      Math.round((Date.parse(`${date}T00:00:00Z`) - Date.parse(`${firstDay}T00:00:00Z`)) / 86_400_000) + 1;
+    // Day number within a scheduler: its own effective_from is day 1 (the
+    // day-completeness convention). Each scheduler counts from the day its
+    // stage began, so the same calendar day is a different day number under
+    // different stages of the same batch.
+    const dayIndexOf = (effectiveFrom: string, date: string): number =>
+      Math.round((Date.parse(`${date}T00:00:00Z`) - Date.parse(`${effectiveFrom}T00:00:00Z`)) / 86_400_000) + 1;
 
     let postedCount = 0;
     let skippedCount = 0;
@@ -241,8 +252,12 @@ export const dailyEntriesChapter: DemoChapter = {
       }
 
       for (const date of days) {
-        const day = dayIndexOf(date);
         for (const line of lines) {
+          // Day number under this line's own scheduler — a batch with several
+          // schedulers counts each from its own effective_from.
+          const effectiveFrom = String(line.effective_from).slice(0, 10);
+          const day = dayIndexOf(effectiveFrom, date);
+          if (day < 1) continue; // the stage had not begun on this calendar day
           if (!isDue(line, day, date)) continue;
 
           const key = `${line.line_id}|${date}`;
@@ -260,7 +275,7 @@ export const dailyEntriesChapter: DemoChapter = {
           const actor = { userId: ctx.actor.userId, userType: ctx.actor.userType, email: ctx.actor.email };
 
           if (line.line_type === 'CONSUMPTION' && line.item_id) {
-            const headcount = headcountByBatch.get(batch.batch_id) ?? 0;
+            const headcount = headcountByScheduler.get(line.scheduler_id) ?? 0;
             const standard = Number(line.standard_qty ?? 0);
             if (standard <= 0 || !batch.farm_id) {
               skippedCount += 1;

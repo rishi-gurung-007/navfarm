@@ -223,7 +223,22 @@ export class BreedService {
       updated_at: toMysqlTimestamp(),
     };
 
-    if (dto.species_code !== undefined) updates.species_code = dto.species_code.toUpperCase();
+    // SPECIES is a named series (code = the uppercased name) and breeds point at
+    // a species by UUID, so a rename's code follows freely — no string-held
+    // reference can go stale.
+    if (dto.species_name !== undefined && dto.species_name.trim() !== species.species_name
+        && species.species_code === species.species_name.replaceAll(/\s+/g, '_').toUpperCase()) {
+      updates.species_code = await this.numberSeriesService.renameCode(
+        'SPECIES',
+        { ...species, species_name: dto.species_name },
+        tenantId,
+        species.company_id,
+      );
+    } else if (dto.species_code !== undefined && dto.species_code.toUpperCase() !== species.species_code) {
+      throw new ConflictException(
+        `Species codes follow the number series and cannot be typed over. Rename the species' name and the code follows it.`,
+      );
+    }
     if (dto.species_name !== undefined) updates.species_name = dto.species_name;
     if (dto.is_active !== undefined) updates.is_active = dto.is_active;
     if (dto.status !== undefined) updates.status = dto.status;
@@ -542,7 +557,9 @@ export class BreedService {
     }
     assertLobInScope(farmScope(this.cls), dto.lob_id ?? breed.lob_id);
 
-    const effectiveCode = dto.breed_code?.toUpperCase() ?? breed.breed_code;
+    // dto.breed_code is no longer writable (the code follows the BREED series —
+    // see below), so the effective code here is the row's own.
+    const effectiveCode = breed.breed_code;
     if (effectiveCode !== breed.breed_code || locationId !== breed.location_id) {
       const duplicateConditions = [
         eq(schema.breedMaster.tenant_id, tenantId),
@@ -580,7 +597,23 @@ export class BreedService {
     if (dto.location_id !== undefined) updates.location_id = dto.location_id;
     if (dto.nob_id !== undefined) updates.nob_id = dto.nob_id;
     if (dto.lob_id !== undefined) updates.lob_id = dto.lob_id;
-    if (dto.breed_code !== undefined) updates.breed_code = dto.breed_code.toUpperCase();
+
+    // The code belongs to the BREED series (Rishi, 2026-09-15): a named series
+    // with a `breed_name` segment, so "Large White" -> LARGE_WHITE on every
+    // farm. Renaming a breed recomposes its code from the new name — animals,
+    // batches and transfers reference a breed by UUID, so nothing can go stale.
+    // A hand-typed code (Rishi enters codes matching the breed's code on other
+    // farms; allow_manual is for exactly that) is left alone: it was never
+    // following the series, so it has nothing to follow.
+    if (dto.breed_name !== undefined && dto.breed_name.trim() !== breed.breed_name
+        && breed.breed_code === breed.breed_name.replaceAll(/\s+/g, '_').toUpperCase()) {
+      updates.breed_code = await this.numberSeriesService.renameCode(
+        'BREED',
+        { ...breed, breed_name: dto.breed_name },
+        tenantId,
+        breed.company_id,
+      );
+    }
     if (dto.breed_name !== undefined) updates.breed_name = dto.breed_name;
     if (dto.species_id !== undefined) updates.species_id = dto.species_id;
     if (dto.species !== undefined) updates.species = dto.species;

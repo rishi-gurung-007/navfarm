@@ -263,26 +263,33 @@ const BREED_TYPE = 'MEAT';
 /* Lifecycle stages                                                           */
 /* ------------------------------------------------------------------------- */
 
-/** The real company feed items each stage draws, by item_code. */
+/**
+ * The real company feed/vaccine/medicine items each lifecycle stage draws, by
+ * the shared catalog's item NAME (scripts/lib/seed-item-catalog.ts) — never by
+ * literal code. The ITEM series composes <type>-<category>-<sub>-ITM-<seq>
+ * from the category tree, so a hand-written code here went stale the moment
+ * the catalog step composed its own; the name is the one property code
+ * generation cannot move. Resolved to item_id at seed time below.
+ */
 const FEED = {
-  CREEP: 'FEED-FINISHED_SWINE_FEEDS_DIETS-CREEP-ITM-0001',
-  GESTATION: 'FEED-FINISHED_SWINE_FEEDS_DIETS-GESTATION-ITM-0001',
-  GROWER: 'FEED-FINISHED_SWINE_FEEDS_DIETS-GROWER-ITM-0001',
-  LACTATION: 'FEED-FINISHED_SWINE_FEEDS_DIETS-LACTATION-ITM-0001',
-  FINISHER: 'FEED-FINISHED_SWINE_FEEDS_DIETS-FINISHER-ITM-0001',
+  CREEP: 'Creep Feed Pre-Starter (22% CP)',
+  GESTATION: 'Dry Sow Gestation Mash (14% CP)',
+  GROWER: 'Weaner Grower Mash (18% CP)',
+  LACTATION: 'High-Density Lactation Diet (17.5% CP)',
+  FINISHER: 'Finisher High-Gain Porker Feed (15.5% CP)',
 } as const;
 
 const VACCINE = {
-  PARVO: 'VACCINE-SWINE_IMMUNIZATION_VACCINES-BREEDING-ITM-0001',
-  PRRS: 'VACCINE-SWINE_IMMUNIZATION_VACCINES-RESPIRATORY-ITM-0001',
+  PARVO: 'Parvo-Shield L5 Swine Vaccine (50 Doses)',
+  PRRS: 'Ingelvac PRRS MLV Swine Vaccine (50 Doses)',
 } as const;
 
 const MEDICINE = {
-  PENICILLIN: 'MEDICINE-VETERINARY_MEDICINES_ANTIBIOTICS-ANTIBIOTIC-ITM-0001',
-  TYLOSIN: 'MEDICINE-VETERINARY_MEDICINES_ANTIBIOTICS-ANTIBIOTIC-ITM-0002',
-  IVERMECTIN: 'MEDICINE-VETERINARY_MEDICINES_ANTIBIOTICS-ANTIPARASITIC-ITM-0001',
-  OXYTOCIN: 'MEDICINE-VETERINARY_MEDICINES_ANTIBIOTICS-HORMONE-ITM-0001',
-  IRON: 'MEDICINE-VETERINARY_MEDICINES_ANTIBIOTICS-INJECTABLE-ITM-0001',
+  PENICILLIN: 'Penicillin G Procaine 300K IU 100ml',
+  TYLOSIN: 'Tylosin Tartrate 100g Soluble Powder',
+  IVERMECTIN: 'Ivermectin 1% Swine Dewormer 100ml',
+  OXYTOCIN: 'Oxytocin 10 IU/ml 50ml Injection',
+  IRON: 'Iron Dextran 100mg/ml 100ml Injection',
 } as const;
 
 interface VaccinationRow {
@@ -944,17 +951,17 @@ async function run() {
     /* ---- 5. Lifecycle stages per breed ------------------------------------ */
 
     const [itemRows] = await db.query<RowDataPacket[]>(
-      `SELECT item_id, item_code FROM item_master
+      `SELECT item_id, item_name FROM item_master
         WHERE tenant_id = ? AND company_id = ? AND is_active = 1 AND deleted_at IS NULL`,
       [scope.tenant_id, scope.company_id],
     );
-    const itemByCode = new Map(itemRows.map((r) => [r.item_code as string, r.item_id as string]));
+    const itemByName = new Map(itemRows.map((r) => [r.item_name as string, r.item_id as string]));
     const missingItems = [...Object.values(FEED), ...Object.values(VACCINE), ...Object.values(MEDICINE)]
-      .filter((code) => !itemByCode.has(code));
+      .filter((name) => !itemByName.has(name));
     if (missingItems.length) {
       throw new Error(
         `These item_master rows the lifecycle points at are missing from the company scope: ${missingItems.join(', ')}. ` +
-        'Run db-seed-system-master-data / db-seed-company-master-templates first rather than seeding a lifecycle with no feed behind it.',
+        'Run db-seed-demo-item-catalog first rather than seeding a lifecycle with no feed behind it.',
       );
     }
 
@@ -988,7 +995,7 @@ async function run() {
 
         const vaccination = s.vaccinations.length
           ? s.vaccinations.map((v) => ({
-              vaccine_item_id: itemByCode.get(v.vaccine),
+              vaccine_item_id: itemByName.get(v.vaccine),
               trigger_type: v.trigger_type,
               trigger_value: v.trigger_value,
               dose_ml: v.dose_ml,
@@ -1000,7 +1007,7 @@ async function run() {
           ? s.medications.map((m) => ({
               problem: m.problem,
               symptom: m.symptom,
-              medicine_item_id: itemByCode.get(m.medicine),
+              medicine_item_id: itemByName.get(m.medicine),
               dose: m.dose,
               repeat: m.repeat,
               withdrawal_days: m.withdrawal_days,
@@ -1019,7 +1026,7 @@ async function run() {
 
         const vals = [
           scope.company_id, scope.nob_id, scope.lob_id, s.category, 'DAY', s.from, s.to,
-          itemByCode.get(s.feed)!, dec(s.feedKgPerHeadPerDay), '2.00',
+          itemByName.get(s.feed)!, dec(s.feedKgPerHeadPerDay), '2.00',
           dec(s.bodyWeightKg), dec(s.adgGpd), dec(s.fcr), dec(s.mortalityPct),
           vaccination ? JSON.stringify(vaccination) : null,
           medication ? JSON.stringify(medication) : null,
