@@ -349,6 +349,7 @@ export class UomService {
       action: 'RESTORE',
       entityName: 'uom_master',
       entityId: id,
+      oldValues: uom,
       newValues: { status: 'ACTIVE', deleted_at: null },
     });
 

@@ -247,6 +247,7 @@ export class CustomerService {
       action: 'RESTORE',
       entityName: 'customer_master',
       entityId: id,
+      oldValues: customer,
       newValues: { status: 'ACTIVE', deleted_at: null },
     });
 

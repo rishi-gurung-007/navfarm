@@ -38,8 +38,8 @@ export class OperationalAreaController {
 
   @Delete(':id')
   @RequirePermission('MASTER_DATA', 'OPERATIONAL_AREA', 'delete')
-  async delete(@Param('id') id: string) {
-    return this.areaService.delete(id);
+  async delete(@Param('id') id: string, @Req() req: any) {
+    return this.areaService.delete(id, req.user?.sub);
   }
 
   @Post('preseed-company/:companyId')

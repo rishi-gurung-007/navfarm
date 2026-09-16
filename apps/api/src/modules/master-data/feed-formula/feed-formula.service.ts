@@ -389,6 +389,7 @@ export class FeedFormulaService {
       action: 'RESTORE',
       entityName: 'feed_formula_master',
       entityId: id,
+      oldValues: formula,
       newValues: { status: 'ACTIVE', deleted_at: null },
     });
 

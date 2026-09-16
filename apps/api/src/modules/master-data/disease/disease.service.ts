@@ -278,6 +278,7 @@ export class DiseaseService {
       action: 'RESTORE',
       entityName: 'disease_master',
       entityId: id,
+      oldValues: disease,
       newValues: { status: 'ACTIVE', deleted_at: null },
     });
 

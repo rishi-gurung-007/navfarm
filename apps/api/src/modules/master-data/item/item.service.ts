@@ -664,6 +664,7 @@ export class ItemService {
       action: 'RESTORE',
       entityName: 'item_master',
       entityId: id,
+      oldValues: item,
       newValues: { status: 'ACTIVE', deleted_at: null },
     });
 

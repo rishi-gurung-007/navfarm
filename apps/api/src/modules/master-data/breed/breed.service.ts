@@ -309,6 +309,7 @@ export class BreedService {
       action: 'RESTORE',
       entityName: 'species_master',
       entityId: id,
+      oldValues: species,
       newValues: { status: 'ACTIVE', deleted_at: null },
     });
 
@@ -701,6 +702,7 @@ export class BreedService {
       action: 'RESTORE',
       entityName: 'breed_master',
       entityId: id,
+      oldValues: breed,
       newValues: { status: 'ACTIVE', deleted_at: null },
     });
 

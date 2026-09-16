@@ -1001,6 +1001,23 @@ export const translations = {
     noResultsMatch: "No results match.",
     noAuditEntriesFound: "No audit entries found.",
     failedToLoadAuditLogs: "Failed to load audit logs.",
+    // Audit ledger — before/after detail
+    auditBefore: "Before",
+    auditAfter: "After",
+    auditChangedFields: "Changed fields",
+    auditShowAllFields: "Show all fields",
+    auditHideUnchangedFields: "Hide unchanged fields",
+    auditUnchangedFields: "Unchanged fields",
+    auditNoFieldChanges: "No field values were recorded for this event.",
+    auditPerformedBy: "Performed by",
+    auditRecord: "Record",
+    auditIpAddress: "IP address",
+    auditUserAgent: "User agent",
+    auditNoRoleAssigned: "No role assigned",
+    auditSystemActor: "System",
+    auditExpandRow: "Show what changed",
+    auditCollapseRow: "Hide what changed",
+    auditDetails: "Details",
 
     // Console — Navigation & Shell
     company: "Company",

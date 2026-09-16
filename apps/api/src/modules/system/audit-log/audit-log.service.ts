@@ -99,6 +99,58 @@ export class AuditLogService {
     return entry;
   }
 
+  /**
+   * The before/after form of `log`, for a service that has the row in hand on
+   * both sides of a write. Two things it does that a raw `log` call site kept
+   * forgetting: it always carries `oldValues` (a restore used to record only
+   * the new state, so the ledger could not say what was restored from), and it
+   * never lets a failed audit write abort the business write that succeeded.
+   */
+  async recordChange(params: {
+    action: string;
+    entityName: string;
+    entityId: string;
+    before?: Record<string, any> | null;
+    after?: Record<string, any> | null;
+    tenantId?: string;
+    companyId?: string;
+    userId?: string;
+  }) {
+    const row = params.after ?? params.before ?? null;
+    try {
+      await this.log({
+        tenantId: params.tenantId || (row?.tenant_id as string | undefined),
+        companyId: params.companyId || (row?.company_id as string | undefined) || undefined,
+        userId: params.userId,
+        action: params.action,
+        entityName: params.entityName,
+        entityId: params.entityId,
+        oldValues: params.before ?? undefined,
+        newValues: params.after ?? undefined,
+      });
+    } catch (e) {
+      console.error(`Failed to write ${params.action} audit row for ${params.entityName} ${params.entityId}:`, e);
+    }
+  }
+
+  /**
+   * A human handle for the row the entry is about, read out of the values the
+   * entry already carries — the ledger stores only an id, and an admin reading
+   * it should not have to look up which disease `9f3a…` was.
+   */
+  private entityLabel(values: unknown): { code: string | null; name: string | null } {
+    if (!values || typeof values !== 'object' || Array.isArray(values)) return { code: null, name: null };
+    const row = values as Record<string, unknown>;
+    const pick = (suffix: string) => {
+      for (const [key, v] of Object.entries(row)) {
+        if (key.endsWith(suffix) && typeof v === 'string' && v.trim()) return v;
+      }
+      return null;
+    };
+    // `full_name` on a user snapshot ends in _name too, so one pass covers both.
+    return { code: pick('_code'), name: pick('_name') };
+  }
+
   async findLogs(filters: {
     tenantId?: string;
     companyId?: string;
@@ -178,6 +230,16 @@ export class AuditLogService {
       }
     }
 
-    return rows.map((r) => ({ ...r, user_roles: r.user_id ? rolesByUser.get(r.user_id) ?? [] : [] }));
+    return rows.map((r) => {
+      // Prefer the after state's handle; a delete has only the before state.
+      const after = this.entityLabel(r.new_values);
+      const before = this.entityLabel(r.old_values);
+      return {
+        ...r,
+        user_roles: r.user_id ? rolesByUser.get(r.user_id) ?? [] : [],
+        entity_code: after.code ?? before.code,
+        entity_label: after.name ?? before.name,
+      };
+    });
   }
 }

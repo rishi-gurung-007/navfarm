@@ -840,6 +840,7 @@ export class LocationService {
       action: 'RESTORE',
       entityName: 'location_master',
       entityId: id,
+      oldValues: location,
       newValues: { status: 'ACTIVE', deleted_at: null },
     });
 

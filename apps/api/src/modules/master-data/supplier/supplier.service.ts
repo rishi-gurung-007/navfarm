@@ -347,6 +347,7 @@ export class SupplierService {
       action: 'RESTORE',
       entityName: 'supplier_master',
       entityId: id,
+      oldValues: supplier,
       newValues: { status: 'ACTIVE', deleted_at: null },
     });
 

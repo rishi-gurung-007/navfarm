@@ -191,7 +191,7 @@ export class LocationTypeService {
     const [existing] = await this.db.select().from(schema.locationTypeMaster).where(eq(schema.locationTypeMaster.location_type_id, id)).limit(1);
     if (!existing) throw new NotFoundException(`Location type '${id}' not found.`);
     await this.db.update(schema.locationTypeMaster).set({ is_active: true, status: 'ACTIVE', deleted_at: null, updated_by: user?.userId || null }).where(eq(schema.locationTypeMaster.location_type_id, id));
-    await this.auditService.log({ tenantId, companyId: existing.company_id || undefined, userId: user?.userId, action: 'RESTORE', entityName: 'location_type_master', entityId: id });
+    await this.auditService.log({ tenantId, companyId: existing.company_id || undefined, userId: user?.userId, action: 'RESTORE', entityName: 'location_type_master', entityId: id, oldValues: existing, newValues: { is_active: true, status: 'ACTIVE', deleted_at: null } });
     return this.findOne(id, tenantId);
   }
 }

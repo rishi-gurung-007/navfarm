@@ -402,6 +402,7 @@ export class ItemCategoryService {
       action: 'RESTORE',
       entityName: 'item_category_master',
       entityId: id,
+      oldValues: category,
       newValues: { status: 'ACTIVE', deleted_at: null },
     });
 

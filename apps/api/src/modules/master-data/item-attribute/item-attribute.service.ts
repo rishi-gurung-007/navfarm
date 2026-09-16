@@ -266,6 +266,7 @@ export class ItemAttributeService {
       action: 'RESTORE',
       entityName: 'item_attribute_master',
       entityId: id,
+      oldValues: attribute,
       newValues: { status: 'ACTIVE', deleted_at: null },
     });
 

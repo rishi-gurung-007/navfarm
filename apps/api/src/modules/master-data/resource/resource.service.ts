@@ -307,6 +307,7 @@ export class ResourceService {
       action: 'RESTORE',
       entityName: 'resource_master',
       entityId: id,
+      oldValues: resource,
       newValues: { status: 'ACTIVE', deleted_at: null },
     });
 

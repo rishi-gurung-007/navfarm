@@ -1,14 +1,18 @@
-import { Injectable, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ConflictException, Optional } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { eq, and, desc } from 'drizzle-orm';
 import * as schema from '../../../core/database/schema';
 import { CreateOperationalAreaDto, UpdateOperationalAreaDto, UpdateAreaSettingsDto, AssignAreaStaffDto, PreseedSource } from './dto/operational-area.dto';
 import * as crypto from 'crypto';
+import { AuditLogService } from '../../system/audit-log/audit-log.service';
 
 @Injectable()
 export class OperationalAreaService {
-  constructor(private readonly cls: ClsService) {}
+  constructor(
+    private readonly cls: ClsService,
+    @Optional() private readonly audit?: AuditLogService,
+  ) {}
 
   private get db(): MySql2Database<typeof schema> {
     const tenantDb = this.cls.get<MySql2Database<typeof schema>>('tenantDb');
@@ -152,7 +156,17 @@ export class OperationalAreaService {
     // Areas share company-owned masters filtered by their LOB. Creating a
     // second area must not clone items or invent physical farms and sheds.
 
-    return this.findOne(areaId);
+    const created = await this.findOne(areaId);
+    await this.audit?.recordChange({
+      action: 'CREATE',
+      entityName: 'operational_area_master',
+      entityId: areaId,
+      after: created as Record<string, any>,
+      tenantId: this.tenantId,
+      companyId: dto.company_id,
+      userId,
+    });
+    return created;
   }
 
   async update(id: string, dto: UpdateOperationalAreaDto, userId?: string) {
@@ -169,15 +183,36 @@ export class OperationalAreaService {
       })
       .where(eq(schema.operationalAreaMaster.area_id, id));
 
-    return this.findOne(id);
+    const updated = await this.findOne(id);
+    await this.audit?.recordChange({
+      action: 'UPDATE',
+      entityName: 'operational_area_master',
+      entityId: id,
+      before: area as Record<string, any>,
+      after: updated as Record<string, any>,
+      tenantId: this.tenantId,
+      companyId: (area as any).company_id,
+      userId,
+    });
+    return updated;
   }
 
-  async delete(id: string) {
+  async delete(id: string, userId?: string) {
     const area = await this.findOne(id);
     await this.db
       .update(schema.operationalAreaMaster)
       .set({ is_active: false })
       .where(eq(schema.operationalAreaMaster.area_id, id));
+    await this.audit?.recordChange({
+      action: 'DELETE',
+      entityName: 'operational_area_master',
+      entityId: id,
+      before: area as Record<string, any>,
+      after: { ...(area as Record<string, any>), is_active: false },
+      tenantId: this.tenantId,
+      companyId: (area as any).company_id,
+      userId,
+    });
     return { success: true, message: `Operational Area '${area.area_name}' deactivated.` };
   }
 
@@ -266,8 +301,10 @@ export class OperationalAreaService {
       updated_by: userId || null,
     };
 
+    // The whole settings row, not just its id: the audit entry has to say what
+    // the thresholds and the costing method were before this call changed them.
     const [existing] = await this.db
-      .select({ setting_id: schema.operationalAreaSettings.setting_id })
+      .select()
       .from(schema.operationalAreaSettings)
       .where(eq(schema.operationalAreaSettings.area_id, areaId))
       .limit(1);
@@ -287,6 +324,17 @@ export class OperationalAreaService {
         ...values,
       });
     }
+
+    await this.audit?.recordChange({
+      action: existing ? 'UPDATE' : 'CREATE',
+      entityName: 'operational_area_settings',
+      entityId: areaId,
+      before: existing ?? null,
+      after: { ...(existing ?? {}), ...values },
+      tenantId: area.tenant_id,
+      companyId: area.company_id ?? undefined,
+      userId,
+    });
 
     return this.getSettings(areaId);
   }

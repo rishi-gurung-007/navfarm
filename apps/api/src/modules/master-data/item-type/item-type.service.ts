@@ -287,6 +287,7 @@ export class ItemTypeService {
       action: 'RESTORE',
       entityName: 'item_type_master',
       entityId: id,
+      oldValues: itemType,
       newValues: { status: 'ACTIVE', deleted_at: null },
     });
 
