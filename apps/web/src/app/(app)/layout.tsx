@@ -35,6 +35,8 @@ import {
   setActiveWorkspaceScope,
   getActiveLob,
   NavUser,
+  hasPermission,
+  hasAnyPermissionInModule,
 } from '../../hooks/useAuth';
 import { useLanguage } from '../../hooks/useLanguage';
 import { api } from '../../services/api-client';
@@ -192,7 +194,10 @@ export default function ConsoleLayout({
       const [langList, currList, tzList, countryList, nobList] =
         await Promise.all([
           api.get('/language').catch(() => []),
-          api.get('/currency').catch(() => []),
+          api
+            .get('/currency')
+            .then((r: any) => r?.data ?? r)
+            .catch(() => []),
           api.get('/timezone').catch(() => []),
           // /country now answers with the shared list envelope, like every
           // other master; take the rows out of it.
@@ -574,6 +579,129 @@ export default function ConsoleLayout({
     </span>
   );
 
+function filterNavItems(items: AppShellNavItem[], user: NavUser | null): AppShellNavItem[] {
+  if (!user) return [];
+  if (
+    user.userType === 'SYSTEM_ADMIN' ||
+    user.userType === 'TENANT_ADMIN' ||
+    user.userType === 'COMPANY_ADMIN'
+  ) {
+    return items;
+  }
+
+  const isAllowed = (item: AppShellNavItem): boolean => {
+    const href = item.href;
+
+    if (href === '/dashboard') return true;
+
+    if (href === '/master-data') {
+      return hasAnyPermissionInModule(user, 'MASTER_DATA', 'can_view');
+    }
+
+    if (href === '/batches') {
+      return (
+        hasPermission(user, 'PRODUCTION', 'BATCH', 'can_view') ||
+        hasAnyPermissionInModule(user, 'PRODUCTION', 'can_view')
+      );
+    }
+
+    if (href === '/schedulers') {
+      return (
+        hasPermission(user, 'PRODUCTION', 'BATCH_SCHEDULE', 'can_view') ||
+        hasAnyPermissionInModule(user, 'PRODUCTION', 'can_view')
+      );
+    }
+
+    if (href === '/livestock') {
+      return (
+        hasPermission(user, 'PIGGERY', 'ANIMAL', 'can_view') ||
+        hasPermission(user, 'DAIRY', 'ANIMAL', 'can_view') ||
+        hasPermission(user, 'POULTRY', 'ANIMAL', 'can_view') ||
+        hasPermission(user, 'POULTRY', 'FLOCK', 'can_view')
+      );
+    }
+
+    if (href.startsWith('/inventory')) {
+      return hasAnyPermissionInModule(user, 'INVENTORY', 'can_view');
+    }
+
+    if (href.startsWith('/finance')) {
+      return hasAnyPermissionInModule(user, 'FINANCE', 'can_view');
+    }
+
+    if (href === '/operational-areas') {
+      return hasPermission(user, 'MASTER_DATA', 'OPERATIONAL_AREA', 'can_view');
+    }
+
+    if (href.startsWith('/company/settings') || href === '/companies') {
+      return hasPermission(user, 'COMPANY', 'SETTINGS', 'can_view');
+    }
+
+    if (href === '/users' || href === '/roles') {
+      return false;
+    }
+
+    if (href === '/notifications' || href === '/alerts') {
+      return true;
+    }
+
+    if (href === '/audit') {
+      return hasPermission(user, 'AUDIT', 'LOGS', 'can_view');
+    }
+
+    if (href === '/traceability') {
+      return hasPermission(user, 'PRODUCTION', 'QR_CODE', 'can_view');
+    }
+
+    if (href === '/approvals') {
+      return hasPermission(user, 'PRODUCTION', 'APPROVAL', 'can_view');
+    }
+
+    if (href.startsWith('/settings')) {
+      if (user.userType === 'OPERATIONAL_ADMIN') return true;
+      return (
+        hasPermission(user, 'PRODUCTION', 'PARAMETER', 'can_view') ||
+        hasPermission(user, 'PRODUCTION', 'QC_PARAMETER', 'can_view')
+      );
+    }
+
+    return true;
+  };
+
+  const isChildAllowed = (child: { label: string; href: string }): boolean => {
+    if (child.href === '/batches') return hasPermission(user, 'PRODUCTION', 'BATCH', 'can_view');
+    if (child.href === '/batches/stages') return hasPermission(user, 'PRODUCTION', 'STAGE', 'can_view');
+    if (child.href === '/batches/animals') return hasPermission(user, 'PIGGERY', 'ANIMAL', 'can_view');
+    if (child.href === '/batches/entry' || child.href === '/batches/records') {
+      return hasPermission(user, 'PRODUCTION', 'BATCH', 'can_view');
+    }
+    if (child.href === '/batches/transfers') return hasPermission(user, 'INVENTORY', 'STOCK_TRANSFER', 'can_view');
+    if (child.href === '/settings/area') {
+      return user.userType === 'OPERATIONAL_ADMIN';
+    }
+    if (child.href === '/settings/parameters') {
+      return hasPermission(user, 'PRODUCTION', 'PARAMETER', 'can_view');
+    }
+    if (child.href === '/settings/qc') {
+      return hasPermission(user, 'PRODUCTION', 'QC_PARAMETER', 'can_view');
+    }
+    return true;
+  };
+
+  return items
+    .filter(isAllowed)
+    .map((item) => {
+      if (!item.children) return item;
+      const filteredChildren = item.children.filter(isChildAllowed);
+      return {
+        ...item,
+        children: filteredChildren.length > 0 ? filteredChildren : undefined,
+      };
+    });
+}
+
+  const visibleNavItems = filterNavItems(navItems, user);
+
   return (
     // The module index is a shell region — it has to sit outside <main> to hold
     // still while the content scrolls — but which sections exist is page state.
@@ -588,7 +716,7 @@ export default function ConsoleLayout({
             brandSubtitle="Management console"
             sidebarSummary={sidebarSummary}
             navSectionLabel="Organization"
-            navItems={navItems}
+            navItems={visibleNavItems}
             pathname={pathname}
             userInitials={initials}
             userName={user.fullName}

@@ -156,11 +156,7 @@ export default function OperationalBatchDataEntry() {
   // whenever the batch changes, so re-selecting a batch re-defaults to "the
   // first open day" instead of wherever the picker was left.
   const userPickedDateRef = React.useRef(false);
-  // Floor for the date picker: the day after the most recent locked date
-  // we've actually observed this session.
-  const [minSelectableDate, setMinSelectableDate] = useState<string | null>(
-    null,
-  );
+
 
   // Real lifecycle for the selected batch, built from stage_master + this
   // batch's stage_log — BATCH_WISE only (ANIMAL_WISE has no single stage).
@@ -202,9 +198,7 @@ export default function OperationalBatchDataEntry() {
   const [dataEntryDestBatches, setDataEntryDestBatches] = useState<
     Record<string, string>
   >({});
-  const [dataEntrySavingId, setDataEntrySavingId] = useState<string | null>(
-    null,
-  );
+
   const [stageActionBusy, setStageActionBusy] = useState(false);
   const [stageActionError, setStageActionError] = useState('');
   const [reopenBoxOpen, setReopenBoxOpen] = useState(false);
@@ -222,6 +216,16 @@ export default function OperationalBatchDataEntry() {
     lockedAt?: string | null;
   }>({ status: null });
   const locked = lockInfo.status === 'LOCKED';
+
+  // Compute local today string (YYYY-MM-DD) and check whether selectedDate is in the future
+  const todayStr = (() => {
+    const d = new Date();
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  })();
+  const isFutureDate = selectedDate > todayStr;
 
   // ── Weight/BCS and general-notes quick capture — OBSERVATION transactions,
   // confirmed to never touch inventory_ledger/GL, so they post immediately
@@ -631,7 +635,7 @@ export default function OperationalBatchDataEntry() {
             );
             if (nextOpen) return nextOpen.stage_id;
             const anyActive = progress.find((p: Row) => p.animal_count > 0);
-            return anyActive?.stage_id || null;
+            return anyActive?.stage_id || stages[0]?.stage_id || null;
           });
 
           // Once every active stage for this date is LOCKED, the day is done
@@ -650,6 +654,7 @@ export default function OperationalBatchDataEntry() {
             const dayAfter = new Date(Date.UTC(ly, lm - 1, ld + 1))
               .toISOString()
               .slice(0, 10);
+
             setSelectedDate(dayAfter);
             setDataEntryValues(values);
             setDataEntryLoading(false);
@@ -676,9 +681,7 @@ export default function OperationalBatchDataEntry() {
             const dayAfter = new Date(Date.UTC(ly, lm - 1, ld + 1))
               .toISOString()
               .slice(0, 10);
-            setMinSelectableDate((prev) =>
-              !prev || dayAfter > prev ? dayAfter : prev,
-            );
+
             if (!userPickedDateRef.current) {
               setSelectedDate(dayAfter);
               setDataEntryValues(values);
@@ -779,7 +782,7 @@ export default function OperationalBatchDataEntry() {
     setReopenReason('');
     setStageActionError('');
     setEntryScope('ALL');
-  }, [selectedStageId]);
+  }, [selectedStageId, selectedDate]);
 
   // History dropdown: dates that already have a real posting on record,
   // scoped to the selected stage for ANIMAL_WISE (locks are per stage there)
@@ -797,6 +800,8 @@ export default function OperationalBatchDataEntry() {
     loadPostedDates();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedBatchId, selectedStageId]);
+
+
 
   const loadAttachments = () => {
     if (!selectedBatchId) return;
@@ -855,175 +860,104 @@ export default function OperationalBatchDataEntry() {
     return true;
   };
 
-  // Every save from this screen carries draft:true — the backend records the
-  // value in batch_daily_data but does NOT touch inventory/GL/animal-count
-  // until the explicit Post action re-dispatches it for real. This is the
-  // fix for the bug that used to post to the ledger on every keystroke-save.
-  const handleDataEntrySave = async (line: Row, animalId?: string) => {
-    if (!currentBatch) return;
-    if (!dataEntryCanSave(line, animalId)) return;
-    const key = entryKey(line.line_id, animalId);
-    setDataEntrySavingId(key);
-    setDataEntryError('');
-    try {
+
+
+  // Collect and save all filled input fields as draft entries so they exist in batch_daily_data
+  const saveDraftEntries = async (): Promise<number> => {
+    if (!currentBatch) return 0;
+    const buildPayload = (line: Row, key: string, animalId?: string): Row => {
       const payload: Row = {
         line_id: line.line_id,
         entry_date: selectedDate,
         draft: true,
       };
       if (animalId) payload.animal_id = animalId;
-      if (isTextCapture(line)) {
-        payload.entered_text = dataEntryTexts[key];
-      } else {
-        payload.entered_value = Number(dataEntryValues[key]);
-      }
+      if (isTextCapture(line)) payload.entered_text = dataEntryTexts[key];
+      else payload.entered_value = Number(dataEntryValues[key]);
       if (line.lot_required) payload.lot_no = dataEntryLotNos[key];
       if (line.line_type === 'TRANSFER')
         payload.destination_batch_id = dataEntryDestBatches[key];
-      await api.post(`/batch/${currentBatch.id}/daily-data`, payload);
-      loadDataEntry();
-    } catch (err: any) {
-      setDataEntryError(err?.message || t('blErrRecordEntry'));
-    } finally {
-      setDataEntrySavingId(null);
-    }
-  };
+      return payload;
+    };
+    const tasks: Promise<any>[] = [];
 
-  // "All animals in this stage" mode — one entered value, posted as its own
-  // draft row for every animal currently in the stage (each animal still
-  // gets its own batch_daily_data row; this just saves typing it N times
-  // when the whole cohort genuinely got the same treatment).
-  const handleDataEntrySaveAllAnimals = async (line: Row) => {
-    if (!currentBatch || !selectedStage) return;
-    if (!dataEntryCanSave(line, '__ALL__')) return;
-    const key = entryKey(line.line_id, '__ALL__');
-    setDataEntrySavingId(key);
-    setDataEntryError('');
-    try {
-      const animalIds = (selectedStage.animals || []).map(
-        (a: Row) => a.animal_id,
-      );
-      await Promise.all(
-        animalIds.map((animalId: string) => {
-          const payload: Row = {
-            line_id: line.line_id,
-            entry_date: selectedDate,
-            draft: true,
-            animal_id: animalId,
-          };
-          if (isTextCapture(line)) {
-            payload.entered_text = dataEntryTexts[key];
-          } else {
-            payload.entered_value = Number(dataEntryValues[key]);
-          }
-          if (line.lot_required) payload.lot_no = dataEntryLotNos[key];
-          if (line.line_type === 'TRANSFER')
-            payload.destination_batch_id = dataEntryDestBatches[key];
-          return api.post(`/batch/${currentBatch.id}/daily-data`, payload);
-        }),
-      );
-      loadDataEntry();
-    } catch (err: any) {
-      setDataEntryError(err?.message || t('blErrRecordEntry'));
-    } finally {
-      setDataEntrySavingId(null);
-    }
-  };
-
-  // A single "Save to Draft" for the whole screen instead of clicking every
-  // line's own Save one at a time — same draft:true dispatch each row's
-  // button already makes, just fired for every line (and, in "all animals"
-  // scope, every animal) that currently has something entered. Lines left
-  // blank are silently skipped rather than erroring, the same as leaving a
-  // row's own Save button unclicked.
-  const handleSaveAllToDraft = async () => {
-    if (!currentBatch) return;
-    setSavingAllDraft(true);
-    setSaveErrorMsg('');
-    try {
-      const buildPayload = (line: Row, key: string, animalId?: string): Row => {
-        const payload: Row = {
-          line_id: line.line_id,
-          entry_date: selectedDate,
-          draft: true,
-        };
-        if (animalId) payload.animal_id = animalId;
-        if (isTextCapture(line)) payload.entered_text = dataEntryTexts[key];
-        else payload.entered_value = Number(dataEntryValues[key]);
-        if (line.lot_required) payload.lot_no = dataEntryLotNos[key];
-        if (line.line_type === 'TRANSFER')
-          payload.destination_batch_id = dataEntryDestBatches[key];
-        return payload;
-      };
-      const tasks: Promise<any>[] = [];
-
-      if (isAnimalWise) {
-        if (!selectedStage) return;
-        if (entryScope === 'ALL') {
-          const templateAnimal = (selectedStage.animals || [])[0];
-          const lines: Row[] = templateAnimal?.lines || [];
-          const animalIds = (selectedStage.animals || []).map(
-            (a: Row) => a.animal_id,
-          );
-          for (const line of lines) {
-            if (!dataEntryCanSave(line, '__ALL__')) continue;
-            const key = entryKey(line.line_id, '__ALL__');
-            for (const animalId of animalIds) {
-              tasks.push(
-                api.post(
-                  `/batch/${currentBatch.id}/daily-data`,
-                  buildPayload(line, key, animalId),
-                ),
-              );
-            }
-          }
-        } else {
-          const animal = (selectedStage.animals || []).find(
-            (a: Row) => a.animal_id === entryScope,
-          );
-          const lines: Row[] = animal?.lines || [];
-          for (const line of lines) {
-            if (!dataEntryCanSave(line, entryScope)) continue;
-            const key = entryKey(line.line_id, entryScope);
+    if (isAnimalWise) {
+      if (!selectedStage) return 0;
+      if (entryScope === 'ALL') {
+        const templateAnimal = (selectedStage.animals || [])[0];
+        const lines: Row[] = templateAnimal?.lines || [];
+        const animalIds = (selectedStage.animals || []).map(
+          (a: Row) => a.animal_id,
+        );
+        for (const line of lines) {
+          if (!dataEntryCanSave(line, '__ALL__')) continue;
+          const key = entryKey(line.line_id, '__ALL__');
+          for (const animalId of animalIds) {
             tasks.push(
               api.post(
                 `/batch/${currentBatch.id}/daily-data`,
-                buildPayload(line, key, entryScope),
+                buildPayload(line, key, animalId),
               ),
             );
           }
         }
       } else {
-        for (const line of dataEntryLines) {
-          if (!dataEntryCanSave(line, undefined)) continue;
-          const key = entryKey(line.line_id, undefined);
+        const animal = (selectedStage.animals || []).find(
+          (a: Row) => a.animal_id === entryScope,
+        );
+        const lines: Row[] = animal?.lines || [];
+        for (const line of lines) {
+          if (!dataEntryCanSave(line, entryScope)) continue;
+          const key = entryKey(line.line_id, entryScope);
           tasks.push(
             api.post(
               `/batch/${currentBatch.id}/daily-data`,
-              buildPayload(line, key, undefined),
+              buildPayload(line, key, entryScope),
             ),
           );
         }
       }
+    } else {
+      for (const line of dataEntryLines) {
+        if (!dataEntryCanSave(line, undefined)) continue;
+        const key = entryKey(line.line_id, undefined);
+        tasks.push(
+          api.post(
+            `/batch/${currentBatch.id}/daily-data`,
+            buildPayload(line, key, undefined),
+          ),
+        );
+      }
+    }
 
-      if (!tasks.length) {
+    if (!tasks.length) return 0;
+    const results = await Promise.allSettled(tasks);
+    return results.filter((r) => r.status === 'fulfilled').length;
+  };
+
+  const handleSaveAllToDraft = async () => {
+    if (!currentBatch) return;
+    if (selectedDate > todayStr) {
+      setSaveErrorMsg(
+        `Cannot save draft for future date (${selectedDate}). Today is ${todayStr}.`,
+      );
+      return;
+    }
+    setSavingAllDraft(true);
+    setSaveErrorMsg('');
+    try {
+      const savedCount = await saveDraftEntries();
+      if (!savedCount) {
         setSaveErrorMsg('Nothing to save — enter at least one value first.');
         return;
       }
-
-      const results = await Promise.allSettled(tasks);
-      const failed = results.filter((r) => r.status === 'rejected').length;
-      if (failed) {
-        setSaveErrorMsg(
-          `${failed} of ${tasks.length} ${tasks.length === 1 ? 'entry' : 'entries'} failed to save — the rest saved as drafts.`,
-        );
-      } else {
-        setSaveSuccessMsg(
-          `✓ Saved ${tasks.length} ${tasks.length === 1 ? 'entry' : 'entries'} to draft.`,
-        );
-        setTimeout(() => setSaveSuccessMsg(''), 3500);
-      }
+      setSaveSuccessMsg(
+        `✓ Saved ${savedCount} ${savedCount === 1 ? 'entry' : 'entries'} to draft.`,
+      );
+      setTimeout(() => setSaveSuccessMsg(''), 3500);
       loadDataEntry();
+    } catch (err: any) {
+      setSaveErrorMsg(err?.message || 'Failed to save drafts.');
     } finally {
       setSavingAllDraft(false);
     }
@@ -1031,17 +965,70 @@ export default function OperationalBatchDataEntry() {
 
   const handlePostStageDay = async () => {
     if (!currentBatch || !selectedStageId) return;
+    if (selectedDate > todayStr) {
+      setStageActionError(
+        `Cannot post data entry for future date (${selectedDate}). Today is ${todayStr}.`,
+      );
+      setSaveErrorMsg(
+        `Cannot post data entry for future date (${selectedDate}). Today is ${todayStr}.`,
+      );
+      return;
+    }
     setStageActionBusy(true);
     setStageActionError('');
     try {
+      // Auto-save any entered values as draft before posting so backend receives complete data
+      await saveDraftEntries();
+
       await api.post(
         `/batch/${currentBatch.id}/stage/${selectedStageId}/post-day?date=${selectedDate}`,
         {},
       );
-      loadDataEntry();
-      loadPostedDates();
+
+      // Check remaining unposted stages with animals for this date
+      const activeStages = dataEntryStages.filter(
+        (s) => (s.animal_count ?? 0) > 0,
+      );
+      const remainingUnposted = activeStages.filter(
+        (s) => s.stage_id !== selectedStageId && s.lock_status !== 'LOCKED',
+      );
+
+      if (remainingUnposted.length > 0) {
+        // More stages still need data entry on this date: switch to next stage, stay on date
+        const nextStage = remainingUnposted[0];
+        setSelectedStageId(nextStage.stage_id);
+        setSaveSuccessMsg(
+          `✓ Stage posted. Switched to ${nextStage.stage_name || 'next stage'} to complete entry for ${selectedDate}.`,
+        );
+        setTimeout(() => setSaveSuccessMsg(''), 5000);
+        loadDataEntry();
+        loadPostedDates();
+      } else {
+        // ALL stages for this date are completed and posted! Automatically advance posting date
+        const [y, m, d] = selectedDate.split('-').map(Number);
+        const nextDate = new Date(Date.UTC(y, m - 1, d + 1))
+          .toISOString()
+          .slice(0, 10);
+        userPickedDateRef.current = false;
+
+        setSaveSuccessMsg(
+          `✓ All stages posted for ${selectedDate}. Moved to ${nextDate} for the next entry.`,
+        );
+        setTimeout(() => setSaveSuccessMsg(''), 5000);
+        // Clear previous entries so stale inputs don't linger on new date
+        setDataEntryValues({});
+        setDataEntryTexts({});
+        setDataEntryLotNos({});
+        setDataEntryDestBatches({});
+        setSelectedDate(nextDate);
+        loadPostedDates();
+      }
     } catch (err: any) {
-      setStageActionError(err?.message || 'Could not post stage data.');
+      const errMsg =
+        err?.message || err?.error || 'Could not post stage data.';
+      setStageActionError(
+        typeof errMsg === 'string' ? errMsg : JSON.stringify(errMsg),
+      );
     } finally {
       setStageActionBusy(false);
     }
@@ -1111,24 +1098,32 @@ export default function OperationalBatchDataEntry() {
   // final on this path — no reopen action, matching the backend.
   const handlePostEntry = async () => {
     if (!currentBatch) return;
-    const todayStr = new Date().toISOString().slice(0, 10);
     if (selectedDate > todayStr) {
-      const proceed = window.confirm(
-        `${selectedDate} is a future date — today is ${todayStr}. Post & lock it anyway?`,
+      setSaveErrorMsg(
+        `Cannot post data entry for future date (${selectedDate}). Today is ${todayStr}.`,
       );
-      if (!proceed) return;
+      return;
     }
     setPosting(true);
     setSaveErrorMsg('');
     try {
+      // Auto-save any entered values as draft before posting
+      await saveDraftEntries();
+
       await api.post(`/batch/${currentBatch.id}/post-day?date=${selectedDate}`);
       const [y, m, d] = selectedDate.split('-').map(Number);
       const nextDate = new Date(Date.UTC(y, m - 1, d + 1))
         .toISOString()
         .slice(0, 10);
+      userPickedDateRef.current = false;
+
       setSaveSuccessMsg(
         `✓ ${selectedDate} posted and locked for batch ${currentBatch.code}. Moved to ${nextDate} for the next entry.`,
       );
+      setDataEntryValues({});
+      setDataEntryTexts({});
+      setDataEntryLotNos({});
+      setDataEntryDestBatches({});
       setSelectedDate(nextDate);
       loadPostedDates();
       setTimeout(() => setSaveSuccessMsg(''), 5000);
@@ -1149,6 +1144,12 @@ export default function OperationalBatchDataEntry() {
   // draft/post cycle above.
   const handleSaveWeightSample = async () => {
     if (!currentBatch || avgWeight <= 0) return;
+    if (selectedDate > todayStr) {
+      setSaveErrorMsg(
+        `Cannot record weight sample for future date (${selectedDate}). Today is ${todayStr}.`,
+      );
+      return;
+    }
     setSavingWeight(true);
     setSaveErrorMsg('');
     try {
@@ -1172,6 +1173,12 @@ export default function OperationalBatchDataEntry() {
 
   const handleSaveNotes = async () => {
     if (!currentBatch || !generalNotes.trim()) return;
+    if (selectedDate > todayStr) {
+      setSaveErrorMsg(
+        `Cannot record note for future date (${selectedDate}). Today is ${todayStr}.`,
+      );
+      return;
+    }
     setSavingNotes(true);
     setSaveErrorMsg('');
     try {
@@ -1324,7 +1331,6 @@ export default function OperationalBatchDataEntry() {
         </TableHead>
         <TableHead className="h-auto px-3 py-2">{t('blColExpected')}</TableHead>
         <TableHead className="h-auto px-3 py-2">{t('blColActual')}</TableHead>
-        <TableHead className="h-auto px-3 py-2"></TableHead>
       </tr>
     </TableHeader>
   );
@@ -1418,24 +1424,6 @@ export default function OperationalBatchDataEntry() {
                 ))}
             </select>
           )}
-        </TableCell>
-        <TableCell className="px-2 py-1.5">
-          <button
-            onClick={() =>
-              broadcast
-                ? handleDataEntrySaveAllAnimals(line)
-                : handleDataEntrySave(line, animalId)
-            }
-            disabled={
-              rowLocked ||
-              dataEntrySavingId === key ||
-              !dataEntryCanSave(line, animalId)
-            }
-            className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
-            style={{ backgroundColor: 'var(--accent)' }}
-          >
-            {dataEntrySavingId === key ? t('blSaving') : t('blSave')}
-          </button>
         </TableCell>
       </TableRow>
     );
@@ -1612,7 +1600,6 @@ export default function OperationalBatchDataEntry() {
                   value={selectedBatchId}
                   onChange={(e) => {
                     userPickedDateRef.current = false;
-                    setMinSelectableDate(null);
                     setSelectedBatchId(e.target.value);
                   }}
                   className="max-w-[280px] sm:max-w-[360px] truncate rounded-[var(--radius-xs)] border border-[var(--input-border)] bg-[var(--input-bg)] px-3 py-1.5 text-xs font-bold text-[var(--text-primary)] focus:outline-none"
@@ -1926,8 +1913,8 @@ export default function OperationalBatchDataEntry() {
           )}
 
           {/* ── Date & Weather Bar ── */}
-          <div className="rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface)] p-4 flex flex-wrap items-center justify-between gap-4 shadow-2xs">
-            <div className="flex items-center gap-4 flex-wrap">
+          <div className="rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface)] p-4 flex flex-wrap items-end justify-between gap-4 shadow-2xs">
+            <div className="flex items-end gap-4 flex-wrap">
               <div>
                 <label className="nf-text-label mb-1 block text-[var(--text-muted)]">
                   {t('logEntryDate')}
@@ -1935,13 +1922,10 @@ export default function OperationalBatchDataEntry() {
                 <input
                   type="date"
                   value={selectedDate}
-                  min={minSelectableDate || undefined}
-                  disabled={posting}
-                  onChange={(e) => {
-                    userPickedDateRef.current = true;
-                    setSelectedDate(e.target.value);
-                  }}
-                  className="rounded-[var(--radius-xs)] border border-[var(--border)] bg-[var(--surface-raised)] px-3 py-1.5 text-xs font-semibold text-[var(--text-primary)] focus:outline-none disabled:opacity-60"
+                  disabled
+                  readOnly
+                  className="h-8 rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--surface-raised)] px-3 text-xs font-semibold text-[var(--text-secondary)] focus:outline-none opacity-80 cursor-not-allowed select-none"
+                  title="Posting date is managed automatically upon posting data entry"
                 />
               </div>
 
@@ -1959,7 +1943,7 @@ export default function OperationalBatchDataEntry() {
                       setSelectedDate(e.target.value);
                       e.target.value = '';
                     }}
-                    className="nf-select rounded-[var(--radius-xs)] border border-[var(--border)] bg-[var(--surface-raised)] px-3 py-1.5 text-xs font-semibold text-[var(--text-primary)] focus:outline-none disabled:opacity-60"
+                    className="nf-select h-8 rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--surface-raised)] px-3 text-xs font-semibold text-[var(--text-primary)] focus:outline-none disabled:opacity-60 cursor-pointer shadow-2xs hover:bg-[var(--surface-secondary)] transition-colors"
                   >
                     <option value="">
                       {postedDates.length} posted date
@@ -1980,10 +1964,12 @@ export default function OperationalBatchDataEntry() {
               )}
 
               {dataEntryLoading && (
-                <Loader2
-                  className="h-3.5 w-3.5 animate-spin"
-                  style={S.accent}
-                />
+                <div className="flex h-8 items-center">
+                  <Loader2
+                    className="h-3.5 w-3.5 animate-spin"
+                    style={S.accent}
+                  />
+                </div>
               )}
             </div>
 
@@ -1994,8 +1980,13 @@ export default function OperationalBatchDataEntry() {
                     size="sm"
                     variant="outline"
                     onClick={handleSaveAllToDraft}
-                    disabled={savingAllDraft || posting}
-                    className="text-xs h-8 gap-1.5 font-semibold"
+                    disabled={savingAllDraft || posting || isFutureDate}
+                    title={
+                      isFutureDate
+                        ? `Cannot save draft for future date (${selectedDate})`
+                        : undefined
+                    }
+                    className="text-xs h-8 gap-1.5 font-semibold rounded-[var(--radius-sm)] shadow-2xs"
                   >
                     {savingAllDraft ? (
                       <RefreshCw className="w-3.5 h-3.5 animate-spin" />
@@ -2008,8 +1999,13 @@ export default function OperationalBatchDataEntry() {
                 <Button
                   size="sm"
                   onClick={handlePostEntry}
-                  disabled={posting || locked}
-                  className="nf-btn-primary text-xs h-8 gap-1.5 font-semibold"
+                  disabled={posting || locked || isFutureDate}
+                  title={
+                    isFutureDate
+                      ? `Cannot post data entry for future date (${selectedDate}). Today is ${todayStr}.`
+                      : undefined
+                  }
+                  className="nf-btn-primary text-xs h-8 gap-1.5 font-semibold rounded-[var(--radius-sm)] shadow-2xs"
                 >
                   {posting ? (
                     <RefreshCw className="w-3.5 h-3.5 animate-spin" />
@@ -2018,36 +2014,25 @@ export default function OperationalBatchDataEntry() {
                   )}
                   {locked
                     ? 'Posted & Locked'
-                    : posting
-                      ? 'Posting…'
-                      : 'Post Entry'}
+                    : isFutureDate
+                      ? 'Future Date — Cannot Post'
+                      : posting
+                        ? 'Posting…'
+                        : 'Post Entry'}
                 </Button>
               </div>
             )}
 
             {isAnimalWise && selectedStage && (
               <div className="flex items-center gap-2 flex-wrap">
-                {(selectedStage.animals || []).length > 0 && (
-                  <select
-                    value={entryScope}
-                    onChange={(e) => setEntryScope(e.target.value)}
-                    className={`${inputCls} nf-select w-auto`}
-                    style={S.input}
-                  >
-                    <option value="ALL">
-                      All animals in this stage ({selectedStage.animal_count})
-                    </option>
-                    {selectedStage.animals.map((a: Row) => (
-                      <option key={a.animal_id} value={a.animal_id}>
-                        {a.animal_code}
-                      </option>
-                    ))}
-                  </select>
-                )}
                 {selectedStage.lock_status === 'LOCKED' ? (
                   <span
-                    className="text-xs font-semibold inline-flex items-center gap-1.5 px-3 py-1.5"
-                    style={{ color: 'var(--success, #16a34a)' }}
+                    className="text-xs font-semibold inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[var(--radius-sm)] border h-8"
+                    style={{
+                      color: 'var(--success, #16a34a)',
+                      borderColor: 'var(--border)',
+                      backgroundColor: 'var(--surface-raised)',
+                    }}
                   >
                     <Lock className="h-3.5 w-3.5" /> Posted & Locked
                   </span>
@@ -2057,8 +2042,13 @@ export default function OperationalBatchDataEntry() {
                       size="sm"
                       variant="outline"
                       onClick={handleSaveAllToDraft}
-                      disabled={savingAllDraft || stageActionBusy}
-                      className="text-xs h-8 gap-1.5 font-semibold"
+                      disabled={savingAllDraft || stageActionBusy || isFutureDate}
+                      title={
+                        isFutureDate
+                          ? `Cannot save draft for future date (${selectedDate})`
+                          : undefined
+                      }
+                      className="text-xs h-8 gap-1.5 font-semibold rounded-[var(--radius-sm)] shadow-2xs"
                     >
                       {savingAllDraft ? (
                         <RefreshCw className="w-3.5 h-3.5 animate-spin" />
@@ -2070,17 +2060,42 @@ export default function OperationalBatchDataEntry() {
                     <Button
                       size="sm"
                       onClick={handlePostStageDay}
-                      disabled={stageActionBusy}
-                      className="nf-btn-primary text-xs h-8 gap-1.5 font-semibold"
+                      disabled={stageActionBusy || isFutureDate}
+                      title={
+                        isFutureDate
+                          ? `Cannot post data entry for future date (${selectedDate}). Today is ${todayStr}.`
+                          : undefined
+                      }
+                      className="nf-btn-primary text-xs h-8 gap-1.5 font-semibold rounded-[var(--radius-sm)] shadow-2xs"
                     >
                       {stageActionBusy ? (
                         <RefreshCw className="w-3.5 h-3.5 animate-spin" />
                       ) : (
                         <Lock className="w-3.5 h-3.5" />
                       )}
-                      {stageActionBusy ? t('blSaving') : 'Post Stage Data'}
+                      {stageActionBusy
+                        ? t('blSaving')
+                        : isFutureDate
+                          ? 'Future Date — Cannot Post'
+                          : 'Post Stage Data'}
                     </Button>
                   </>
+                )}
+                {(selectedStage.animals || []).length > 0 && (
+                  <select
+                    value={entryScope}
+                    onChange={(e) => setEntryScope(e.target.value)}
+                    className="nf-select h-8 rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--surface-raised)] px-3 text-xs font-semibold text-[var(--text-primary)] focus:outline-none disabled:opacity-60 cursor-pointer shadow-2xs hover:bg-[var(--surface-secondary)] transition-colors"
+                  >
+                    <option value="ALL">
+                      All animals in this stage ({selectedStage.animal_count})
+                    </option>
+                    {selectedStage.animals.map((a: Row) => (
+                      <option key={a.animal_id} value={a.animal_id}>
+                        {a.animal_code}
+                      </option>
+                    ))}
+                  </select>
                 )}
               </div>
             )}
@@ -2103,6 +2118,22 @@ export default function OperationalBatchDataEntry() {
                   : ''}
                 . Fields below are read-only — pick a different date to enter
                 new data.
+              </span>
+            </div>
+          )}
+
+          {isFutureDate && (
+            <div
+              className="p-3 text-xs font-semibold rounded-[var(--radius-sm)] flex items-center gap-2 animate-in fade-in"
+              style={{
+                backgroundColor: 'rgba(245, 158, 11, 0.1)',
+                color: 'var(--warning-text, #b45309)',
+                border: '1px solid rgba(245, 158, 11, 0.25)',
+              }}
+            >
+              <AlertTriangle className="h-4 w-4 shrink-0" style={{ color: '#d97706' }} />
+              <span>
+                Cannot post data entry for future date ({selectedDate}). Today is {todayStr}.
               </span>
             </div>
           )}
@@ -2336,7 +2367,13 @@ export default function OperationalBatchDataEntry() {
                   {entryScope === 'ALL'
                     ? (() => {
                         const templateAnimal = (selectedStage.animals || [])[0];
-                        if (!templateAnimal) return null;
+                        if (!templateAnimal) {
+                          return (
+                            <div className="py-8 text-center text-xs" style={S.muted}>
+                              No activities scheduled for this stage on {selectedDate}.
+                            </div>
+                          );
+                        }
                         const stageAnimals: Row[] = selectedStage.animals || [];
                         return (
                           <div>
@@ -2359,7 +2396,7 @@ export default function OperationalBatchDataEntry() {
                             {renderActivityBoxes(
                               templateAnimal.lines || [],
                               '__ALL__',
-                              selectedStage.lock_status === 'LOCKED',
+                              selectedStage.lock_status === 'LOCKED' || isFutureDate,
                               true,
                             )}
                           </div>
@@ -2369,7 +2406,13 @@ export default function OperationalBatchDataEntry() {
                         const animal = (selectedStage.animals || []).find(
                           (a: Row) => a.animal_id === entryScope,
                         );
-                        if (!animal) return null;
+                        if (!animal) {
+                          return (
+                            <div className="py-8 text-center text-xs" style={S.muted}>
+                              Selected animal not found in this stage on {selectedDate}.
+                            </div>
+                          );
+                        }
                         const rosterAnimal = batchAnimalRoster.find(
                           (a) => a.animal_id === animal.animal_id,
                         );
@@ -2383,7 +2426,8 @@ export default function OperationalBatchDataEntry() {
                                 {animal.animal_code}
                               </p>
                               {rosterAnimal &&
-                                selectedStage.lock_status !== 'LOCKED' && (
+                                selectedStage.lock_status !== 'LOCKED' &&
+                                !isFutureDate && (
                                   <button
                                     type="button"
                                     onClick={() =>
@@ -2399,13 +2443,17 @@ export default function OperationalBatchDataEntry() {
                             {renderActivityBoxes(
                               animal.lines || [],
                               animal.animal_id,
-                              selectedStage.lock_status === 'LOCKED',
+                              selectedStage.lock_status === 'LOCKED' || isFutureDate,
                             )}
                           </div>
                         );
                       })()}
                 </div>
-              ) : null}
+              ) : (
+                <InlineAlert variant="info">
+                  {t('blNoParamsScheduled')}
+                </InlineAlert>
+              )}
             </div>
           ) : noScheduler ? (
             <InlineAlert variant="info">
@@ -2414,7 +2462,7 @@ export default function OperationalBatchDataEntry() {
               module.
             </InlineAlert>
           ) : dataEntryLoading ? null : (
-            renderActivityBoxes(dataEntryLines, undefined, locked)
+            renderActivityBoxes(dataEntryLines, undefined, locked || isFutureDate)
           )}
 
           {/* ── Weight/BCS, Notes & Attachments — quick, non-scheduled captures,

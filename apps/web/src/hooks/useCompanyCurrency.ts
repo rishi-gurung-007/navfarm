@@ -79,7 +79,11 @@ export function useCompanyCurrency(companyId?: string) {
       if (cancelled) return;
 
       const baseId = details?.company?.base_currency_id;
-      const list: CompanyCurrency[] = Array.isArray(currencies) ? currencies : [];
+      const list: CompanyCurrency[] = Array.isArray(currencies)
+        ? currencies
+        : Array.isArray((currencies as any)?.data)
+          ? (currencies as any).data
+          : [];
       setCurrency(list.find((c) => c.currency_id === baseId) || null);
       setReady(true);
     })();

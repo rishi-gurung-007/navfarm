@@ -141,7 +141,7 @@ export default function TenantDetailPage() {
       setUsers(Array.isArray(usersList) ? usersList : []);
       setPlans(Array.isArray(plansList) ? plansList : []);
       setSelectedPlan(tenantData?.plan_id || "");
-      setCurrencies(currenciesList || []);
+      setCurrencies(Array.isArray(currenciesList) ? currenciesList : currenciesList?.data ?? []);
       setNobs(nobsList || []);
       setEditNobIds(Array.isArray(tenantData?.allowed_nob_ids) ? tenantData.allowed_nob_ids : nobsList.map((n: any) => n.nob_id));
       setEditLobIds(Array.isArray(tenantData?.allowed_lob_ids) ? tenantData.allowed_lob_ids : []);

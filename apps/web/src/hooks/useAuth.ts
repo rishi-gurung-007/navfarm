@@ -222,14 +222,27 @@ export function clearSession() {
   clearAuthSession();
 }
 
+export type PermissionAction =
+  | "can_view"
+  | "can_create"
+  | "can_edit"
+  | "can_delete"
+  | "can_approve";
+
 export function hasPermission(
   user: NavUser | null,
   moduleCode: string,
   resource: string,
-  action: "can_view" | "can_create" | "can_edit"
+  action: PermissionAction = "can_view"
 ): boolean {
   if (!user) return false;
-  if (user.userType === "TENANT_ADMIN" || user.userType === "COMPANY_ADMIN") return true;
+  if (
+    user.userType === "SYSTEM_ADMIN" ||
+    user.userType === "TENANT_ADMIN" ||
+    user.userType === "COMPANY_ADMIN"
+  ) {
+    return true;
+  }
   if (user.userType === "OPERATIONAL_ADMIN") {
     // Operational admins have full operational and master permissions within their assigned area
     if (
@@ -248,9 +261,105 @@ export function hasPermission(
     const matchModule   = p.moduleCode === "ALL" || p.moduleCode === moduleCode;
     const matchResource = p.resource   === "ALL" || p.resource   === resource;
     if (!matchModule || !matchResource) return false;
-    if (action === "can_view")   return !!p.canView;
-    if (action === "can_create") return !!p.canCreate;
-    if (action === "can_edit")   return !!p.canEdit;
+    if (action === "can_view")    return !!p.canView;
+    if (action === "can_create")  return !!p.canCreate;
+    if (action === "can_edit")    return !!p.canEdit;
+    if (action === "can_delete")  return !!p.canDelete;
+    if (action === "can_approve") return !!p.canApprove;
     return false;
   });
+}
+
+export function hasAnyPermissionInModule(
+  user: NavUser | null,
+  moduleCode: string,
+  action: PermissionAction = "can_view"
+): boolean {
+  if (!user) return false;
+  if (
+    user.userType === "SYSTEM_ADMIN" ||
+    user.userType === "TENANT_ADMIN" ||
+    user.userType === "COMPANY_ADMIN"
+  ) {
+    return true;
+  }
+  if (user.userType === "OPERATIONAL_ADMIN") {
+    if (
+      moduleCode === "PRODUCTION" ||
+      moduleCode === "PIGGERY" ||
+      moduleCode === "DAIRY" ||
+      moduleCode === "POULTRY" ||
+      moduleCode === "MASTER_DATA" ||
+      moduleCode === "INVENTORY"
+    ) {
+      return true;
+    }
+  }
+  const perms = user.permissions || [];
+  return perms.some((p) => {
+    const matchModule = p.moduleCode === "ALL" || p.moduleCode === moduleCode;
+    if (!matchModule) return false;
+    if (action === "can_view")    return !!p.canView;
+    if (action === "can_create")  return !!p.canCreate;
+    if (action === "can_edit")    return !!p.canEdit;
+    if (action === "can_delete")  return !!p.canDelete;
+    if (action === "can_approve") return !!p.canApprove;
+    return false;
+  });
+}
+
+export function canAccessMasterDataConfig(
+  user: NavUser | null,
+  configKey: string,
+  action: PermissionAction = "can_view"
+): boolean {
+  if (!user) return false;
+  if (
+    user.userType === "SYSTEM_ADMIN" ||
+    user.userType === "TENANT_ADMIN" ||
+    user.userType === "COMPANY_ADMIN" ||
+    user.userType === "OPERATIONAL_ADMIN"
+  ) {
+    return true;
+  }
+
+  const mapping: Record<string, { module: string; resource: string }> = {
+    "location-type": { module: "MASTER_DATA", resource: "LOCATION" },
+    location: { module: "MASTER_DATA", resource: "LOCATION" },
+    farm: { module: "MASTER_DATA", resource: "FARM" },
+    shed: { module: "MASTER_DATA", resource: "SHED" },
+    warehouse: { module: "MASTER_DATA", resource: "WAREHOUSE" },
+    stage: { module: "PRODUCTION", resource: "STAGE" },
+    "number-series": { module: "SYSTEM", resource: "NUMBER_SERIES" },
+    activity: { module: "MASTER_DATA", resource: "ACTIVITY" },
+    animal: { module: "PIGGERY", resource: "ANIMAL" },
+    "item-category": { module: "MASTER_DATA", resource: "ITEM_CATEGORY" },
+    "item-type": { module: "MASTER_DATA", resource: "ITEM_TYPE" },
+    uom: { module: "MASTER_DATA", resource: "UOM" },
+    "uom-conversion": { module: "MASTER_DATA", resource: "UOM" },
+    item: { module: "MASTER_DATA", resource: "ITEM" },
+    "item-attribute": { module: "MASTER_DATA", resource: "ITEM_ATTRIBUTE" },
+    species: { module: "MASTER_DATA", resource: "SPECIES" },
+    breed: { module: "MASTER_DATA", resource: "BREED" },
+    "breed-lifecycle-stage": { module: "MASTER_DATA", resource: "BREED_LIFECYCLE_STAGE" },
+    reason: { module: "MASTER_DATA", resource: "REASON" },
+    disease: { module: "MASTER_DATA", resource: "DISEASE" },
+    "feed-formula": { module: "MASTER_DATA", resource: "FEED_FORMULA" },
+    supplier: { module: "MASTER_DATA", resource: "SUPPLIER" },
+    customer: { module: "MASTER_DATA", resource: "CUSTOMER" },
+    resource: { module: "MASTER_DATA", resource: "RESOURCE" },
+    "gl-account": { module: "MASTER_DATA", resource: "GL_ACCOUNT" },
+    "gl-mapping": { module: "MASTER_DATA", resource: "GL_MAPPING" },
+    "cost-center": { module: "MASTER_DATA", resource: "COST_CENTER" },
+    country: { module: "MASTER_DATA", resource: "LOCATION" },
+    currency: { module: "MASTER_DATA", resource: "CURRENCY" },
+    "exchange-rate": { module: "MASTER_DATA", resource: "CURRENCY" },
+    "operational-area": { module: "MASTER_DATA", resource: "OPERATIONAL_AREA" },
+  };
+
+  const target = mapping[configKey];
+  if (!target) {
+    return hasAnyPermissionInModule(user, "MASTER_DATA", action);
+  }
+  return hasPermission(user, target.module, target.resource, action);
 }

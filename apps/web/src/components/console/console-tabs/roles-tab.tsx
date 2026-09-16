@@ -437,6 +437,45 @@ export default function RolesTab({
     }
   }, [visibleRoles]);
 
+  const PERMISSION_KEYS = [
+    'can_view',
+    'can_create',
+    'can_edit',
+    'can_delete',
+    'can_approve',
+  ] as const;
+
+  const isRowAllChecked = (row: any) =>
+    PERMISSION_KEYS.every((k) => !!row[k]);
+
+  const isRowSomeChecked = (row: any) =>
+    PERMISSION_KEYS.some((k) => !!row[k]) && !isRowAllChecked(row);
+
+  const handleToggleRow = (index: number) => {
+    const updated = [...permissions];
+    const targetState = !isRowAllChecked(updated[index]);
+    PERMISSION_KEYS.forEach((k) => {
+      updated[index][k] = targetState;
+    });
+    setPermissions(updated);
+  };
+
+
+  const isAllChecked =
+    permissions.length > 0 && permissions.every((p) => isRowAllChecked(p));
+
+  const handleToggleAll = () => {
+    const targetState = !isAllChecked;
+    const updated = permissions.map((p) => {
+      const row = { ...p };
+      PERMISSION_KEYS.forEach((k) => {
+        row[k] = targetState;
+      });
+      return row;
+    });
+    setPermissions(updated);
+  };
+
   const handleToggleCheckbox = (index: number, key: string) => {
     const updated = [...permissions];
     updated[index][key] = !updated[index][key];
@@ -725,6 +764,29 @@ export default function RolesTab({
                       className="border-b"
                       style={{ borderColor: 'var(--row-border)' }}
                     >
+                      <TableHead className="h-auto px-0 pb-3 text-center w-10">
+                        <input
+                          type="checkbox"
+                          checked={isAllChecked}
+                          ref={(el) => {
+                            if (el) {
+                              el.indeterminate =
+                                !isAllChecked &&
+                                permissions.some((p) =>
+                                  PERMISSION_KEYS.some((k) => !!p[k]),
+                                );
+                            }
+                          }}
+                          disabled={selectedRole.is_system_role}
+                          onChange={handleToggleAll}
+                          title="Select / Deselect all permissions across all rows"
+                          className="w-4 h-4 rounded-[var(--radius-xs)] border accent-[var(--accent)] cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 focus:ring-0 focus:ring-offset-0"
+                          style={{
+                            backgroundColor: 'var(--input-bg)',
+                            borderColor: 'var(--input-border)',
+                          }}
+                        />
+                      </TableHead>
                       <TableHead className="h-auto px-0 pb-3">
                         {t('roleColModuleResource')}
                       </TableHead>
@@ -747,6 +809,23 @@ export default function RolesTab({
                   <TableBody>
                     {permissions.map((p, idx) => (
                       <TableRow key={idx} style={S.textPrimary}>
+                        <TableCell className="px-0 py-3.5 text-center w-10">
+                          <input
+                            type="checkbox"
+                            checked={isRowAllChecked(p)}
+                            ref={(el) => {
+                              if (el) el.indeterminate = isRowSomeChecked(p);
+                            }}
+                            disabled={selectedRole.is_system_role}
+                            onChange={() => handleToggleRow(idx)}
+                            title="Select / Deselect all permissions for this row"
+                            className="w-4 h-4 rounded-[var(--radius-xs)] border accent-[var(--accent)] cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 focus:ring-0 focus:ring-offset-0"
+                            style={{
+                              backgroundColor: 'var(--input-bg)',
+                              borderColor: 'var(--input-border)',
+                            }}
+                          />
+                        </TableCell>
                         <TableCell className="px-0 py-3.5 font-semibold">
                           <div style={S.textPrimary}>
                             {p.nameKey
@@ -769,7 +848,7 @@ export default function RolesTab({
                         ].map((key) => (
                           <TableCell
                             key={key}
-                            className="px-0 py-3.5 text-center"
+                            className="px-0 py-3.5 text-center w-20"
                           >
                             <input
                               type="checkbox"

@@ -2,7 +2,15 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { getStoredUser, NavUser, getActiveCompanyId, getActiveWorkspaceScope, getActiveOperationalAreaId } from "@/hooks/useAuth";
+import {
+  getStoredUser,
+  NavUser,
+  getActiveCompanyId,
+  getActiveWorkspaceScope,
+  getActiveOperationalAreaId,
+  hasAnyPermissionInModule,
+  canAccessMasterDataConfig,
+} from "@/hooks/useAuth";
 import { useLanguage } from "@/hooks/useLanguage";
 import { MASTER_DATA_CONFIGS, MASTER_DATA_GROUPS, getConfig } from "@/modules/master-data/configs";
 import type { MasterDataConfig } from "@/modules/master-data/types";
@@ -40,11 +48,15 @@ function useMasterDataPageState() {
     setReady(true);
   }, [router]);
 
-  const mayView =
-    user?.userType === "COMPANY_ADMIN" ||
-    user?.userType === "SYSTEM_ADMIN" ||
-    user?.userType === "TENANT_ADMIN" ||
-    user?.userType === "OPERATIONAL_ADMIN";
+  const mayView = Boolean(
+    user && (
+      user.userType === "COMPANY_ADMIN" ||
+      user.userType === "SYSTEM_ADMIN" ||
+      user.userType === "TENANT_ADMIN" ||
+      user.userType === "OPERATIONAL_ADMIN" ||
+      hasAnyPermissionInModule(user, "MASTER_DATA", "can_view")
+    )
+  );
 
   return { ready, user, mayView, scopeKey };
 }
@@ -61,29 +73,40 @@ export function MasterDataPageShell({ activeKey }: { activeKey: string }) {
     if (legacyLocation) router.replace("/master-data/location");
   }, [legacyLocation, router]);
   const parentConfig = (activeConfig.tabOf && getConfig(activeConfig.tabOf)) || activeConfig;
-  const tabConfigs = MASTER_DATA_CONFIGS.filter((c) => c.tabOf === parentConfig.key);
+  const tabConfigs = MASTER_DATA_CONFIGS.filter(
+    (c) => c.tabOf === parentConfig.key && (!user || canAccessMasterDataConfig(user, c.key, "can_view"))
+  );
   const parentKey = parentConfig.key;
 
+  const canViewActiveConfig = Boolean(
+    user && canAccessMasterDataConfig(user, activeConfig.key, "can_view")
+  );
+
   const contextNav = useMemo<ContextNavModel | null>(() => {
-    if (!ready || !mayView) return null;
+    if (!ready || !mayView || !user) return null;
     return {
       label: t("moduleSections", { module: t("masterData") }),
       groups: MASTER_DATA_GROUPS.map((group) => ({
         label: tLabel(group),
         items: MASTER_DATA_CONFIGS
-          .filter((c) => c.group === group && c.isPrimary)
+          .filter(
+            (c) =>
+              c.group === group &&
+              c.isPrimary &&
+              canAccessMasterDataConfig(user, c.key, "can_view")
+          )
           .map((c) => ({ key: c.key, label: tLabel(c.label) })),
       })).filter((g) => g.items.length > 0),
       activeKey: parentKey,
       onSelect: (key) => router.push(`/master-data/${key}`),
     };
-  }, [ready, mayView, parentKey, t, tLabel, router]);
+  }, [ready, mayView, user, parentKey, t, tLabel, router]);
 
   useContextNav(contextNav);
 
   if (!ready || !user) return null;
 
-  if (!mayView) {
+  if (!mayView || !canViewActiveConfig) {
     return (
       <ConsolePage size="narrow">
         <PageHeader title={t("masterData")} sticky={false} />

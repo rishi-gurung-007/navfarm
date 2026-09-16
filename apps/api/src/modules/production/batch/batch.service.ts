@@ -2686,6 +2686,13 @@ export class BatchService {
     tenantId: string,
     userPayload?: UserContext,
   ) {
+    const today = new Date().toISOString().slice(0, 10);
+    if (dateStr > today) {
+      throw new BadRequestException(
+        `Cannot post data entry for future date ${dateStr}. Today is ${today}.`,
+      );
+    }
+
     const batch = await this.findOne(batchId);
     if (batch.tracking_mode === 'ANIMAL_WISE') {
       throw new BadRequestException(
@@ -2998,6 +3005,13 @@ export class BatchService {
     tenantId: string,
     userPayload?: UserContext,
   ) {
+    const today = new Date().toISOString().slice(0, 10);
+    if (dateStr > today) {
+      throw new BadRequestException(
+        `Cannot post data entry for future date ${dateStr}. Today is ${today}.`,
+      );
+    }
+
     const batch = await this.findOne(batchId);
     if (batch.tracking_mode !== 'ANIMAL_WISE') {
       throw new BadRequestException(

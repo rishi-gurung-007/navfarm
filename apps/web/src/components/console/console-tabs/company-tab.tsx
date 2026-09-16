@@ -66,6 +66,11 @@ export default function CompanyTab({
   section,
 }: CompanyTabProps & { section?: string }) {
   const { t } = useLanguage();
+  const currencyList: any[] = Array.isArray(currencies)
+    ? currencies
+    : Array.isArray((currencies as any)?.data)
+      ? (currencies as any).data
+      : [];
   const isTenantAdmin = currentUser?.userType === 'TENANT_ADMIN';
   const isCompanyAdmin = currentUser?.userType === 'COMPANY_ADMIN';
   const canEditCompany = isTenantAdmin || isCompanyAdmin;
@@ -502,7 +507,7 @@ export default function CompanyTab({
       };
 
       const firstCurrencyId =
-        currencies && currencies.length > 0 ? currencies[0]?.currency_id : null;
+        currencyList && currencyList.length > 0 ? currencyList[0]?.currency_id : null;
       if (
         firstCurrencyId &&
         typeof firstCurrencyId === 'string' &&
@@ -1884,8 +1889,8 @@ export default function CompanyTab({
                   <ReadField
                     label={t('ctBaseCurrency')}
                     value={
-                      currencies.find(
-                        (c) =>
+                      currencyList.find(
+                        (c: any) =>
                           c.currency_id ===
                           setupDetails?.company?.base_currency_id,
                       )?.currency_name ||
@@ -1948,7 +1953,7 @@ export default function CompanyTab({
                         }
                       >
                         <option value="">{t('ctSelectCurrency')}</option>
-                        {currencies.map((c: any) => (
+                        {currencyList.map((c: any) => (
                           <option key={c.currency_id} value={c.currency_id}>
                             {c.currency_name} ({c.currency_code})
                           </option>

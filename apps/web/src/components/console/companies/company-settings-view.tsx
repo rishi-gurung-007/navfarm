@@ -102,7 +102,7 @@ export function CompanySettingsView({ companyId, section = "profile", basePath =
 
       <CompanyTab
         activeCompany={targetCompany}
-        currencies={currencies}
+        currencies={Array.isArray(currencies) ? currencies : (currencies as any)?.data ?? []}
         tenantId={tenantId}
         onRefreshCompany={reload as any}
         companies={[targetCompany]}
