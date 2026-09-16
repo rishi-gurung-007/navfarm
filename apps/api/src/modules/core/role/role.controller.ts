@@ -47,6 +47,17 @@ export class RoleController {
     return this.roleService.getRolePermissions(roleId);
   }
 
+  // The Roles screen needs the holders of a role to say who a permission
+  // change affects and to revoke one of them. RoleService already read them
+  // for its own use; nothing exposed them.
+  @Get('members/:roleId')
+  @RequirePermission('RBAC', 'ROLE', 'view')
+  @ApiOperation({ summary: 'List the users who currently hold a role' })
+  @ApiParam({ name: 'roleId', description: 'Role UUID' })
+  async getRoleMembers(@Param('roleId') roleId: string) {
+    return this.roleService.getRoleMembers(roleId);
+  }
+
   @Get('company/:companyId')
   @RequirePermission('RBAC', 'ROLE', 'view')
   @ApiOperation({ summary: 'List all custom and system roles of a company' })

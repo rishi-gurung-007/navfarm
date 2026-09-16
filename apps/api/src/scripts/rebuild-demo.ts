@@ -67,6 +67,16 @@ const MASTER_STEPS: Step[] = [
   { label: "Adopt tenant master templates into Triple C (no_series_master etc.)", script: 'seed-company-master-templates.ts', args: ['--apply'] },
   { label: "Triple C's real farms and locations", script: 'seed-farm-locations.ts', args: ['--apply'] },
   { label: "Triple C's real resource and breed masters", script: 'seed-farm-masters.ts', args: ['--apply'] },
+  // The nine-farm demo master set (decision of 2026-09-15). It sits here, and
+  // nowhere else, for three reasons. It reuses MUL100 and POR100 by id, so it
+  // must follow seed-farm-locations.ts; it copies its tenant/company/NOB/LOB
+  // scope from the company-scoped locations those two steps establish, and
+  // seed-farm-masters.ts switches off every breed that is not in its own seed
+  // list — running before it would have that step deactivate the nine farms'
+  // breeds the moment they were created. It must also precede the two
+  // alignment passes below, which are what stamp NOB/LOB on, and grant
+  // PRODUCTION permissions over, the masters it adds.
+  { label: 'Nine-farm demo masters (farms, sheds/pens/silos, stages, breeds, lifecycles, logins)', script: 'seed-nine-farm-demo.ts', args: ['--apply'] },
   { label: 'Stamp NOB/LOB on every master', script: 'stamp-master-nob-lob.ts', args: ['--apply'] },
   { label: 'Align PRODUCTION role permissions', script: 'align-production-permissions.ts', args: ['--apply'] },
 ];
