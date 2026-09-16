@@ -88,8 +88,12 @@ describe('isCorrectableLineType', () => {
     expect(isCorrectableLineType({ line_type: 'DESCRIPTIVE', kpi_metric: 'MORTALITY_COUNT' })).toBe(false);
   });
 
+  it('lets a resource entry be corrected — resource ledger reverses it', () => {
+    expect(isCorrectableLineType({ line_type: 'RESOURCE', kpi_metric: null })).toBe(true);
+  });
+
   it('refuses every line type whose posting has no reversal yet', () => {
-    for (const line_type of ['OUTPUT', 'OVERHEAD', 'RESOURCE', 'TRANSFER']) {
+    for (const line_type of ['OUTPUT', 'OVERHEAD', 'TRANSFER']) {
       expect(isCorrectableLineType({ line_type, kpi_metric: null })).toBe(false);
     }
   });

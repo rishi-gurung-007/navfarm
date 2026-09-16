@@ -23,6 +23,8 @@ import { QrCodeController } from '../modules/production/qr-code/qr-code.controll
 import { BioAssetLedgerController } from '../modules/inventory/bio-asset-ledger/bio-asset-ledger.controller';
 import { FinancialReportsController } from '../modules/finance/financial-reports/financial-reports.controller';
 import { BreedController } from '../modules/master-data/breed/breed.controller';
+import { RequisitionController } from '../modules/procurement/requisition/requisition.controller';
+import { ResourceLedgerController } from '../modules/production/resource-ledger/resource-ledger.controller';
 
 /**
  * Farm scope is opt-in per controller, and a controller that forgets it reads
@@ -52,6 +54,8 @@ const SCOPED = {
   BioAssetLedgerController,
   FinancialReportsController,
   BreedController,
+  RequisitionController,
+  ResourceLedgerController,
 };
 
 const EXEMPT: Record<string, string> = {

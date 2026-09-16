@@ -68,6 +68,7 @@ export function entryVerdict(req: EntryRequest): EntryVerdict {
  */
 export function isCorrectableLineType(line: { line_type: string | null; kpi_metric: string | null }): boolean {
   if (line.line_type === 'CONSUMPTION') return true;
+  if (line.line_type === 'RESOURCE') return true;
   if (line.line_type !== 'DESCRIPTIVE') return false;
   return line.kpi_metric !== 'HEAD_COUNT' && line.kpi_metric !== 'MORTALITY_COUNT';
 }

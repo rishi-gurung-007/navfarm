@@ -36,6 +36,7 @@ import { BatchDailyDataService } from '../../../modules/production/batch-daily-d
 import { GoodsReceiptService } from '../../../modules/inventory/goods-receipt/goods-receipt.service';
 import * as schema from '../../../core/database/schema';
 import type { DemoChapter, DemoContext } from '../chapter';
+import { tagOf } from '../farms';
 
 /**
  * `item_master.standard_cost` is a MySQL decimal, so Drizzle hands it back as
@@ -82,59 +83,69 @@ export const dailyEntriesChapter: DemoChapter = {
     const db = cls.get<MySql2Database<typeof schema>>('tenantDb');
     if (!db) throw new Error('04-daily-entries: tenantDb is not set — run through the harness.');
 
-    // The three demo batches, by their chapter-03 remarks tokens.
-    const batchRefs = ['DEMO-BATCH-REG-GRASMERE', 'DEMO-BATCH-CO-GRASMERE', 'DEMO-BATCH-CO-KINTYRE'];
+    // All active demo batches across the nine farms
     const batches = await db
-      .select({ batch_id: schema.batchHeader.batch_id, batch_no: schema.batchHeader.batch_no, remarks: schema.batchHeader.remarks, farm_id: schema.batchHeader.farm_id })
+      .select({
+        batch_id: schema.batchHeader.batch_id,
+        batch_no: schema.batchHeader.batch_no,
+        remarks: schema.batchHeader.remarks,
+        farm_id: schema.batchHeader.farm_id,
+        start_date: schema.batchHeader.start_date,
+      })
       .from(schema.batchHeader)
-      .where(inArray(schema.batchHeader.remarks, batchRefs));
-    if (batches.length !== batchRefs.length) {
-      throw new Error(`04-daily-entries: expected ${batchRefs.length} demo batches, found ${batches.length} — run 03-batches-and-animals first.`);
+      .where(and(
+        sql`${schema.batchHeader.remarks} LIKE 'DEMO-%'`,
+        eq(schema.batchHeader.status, 'ACTIVE'),
+      ));
+
+    if (batches.length === 0) {
+      throw new Error('04-daily-entries: no demo batches found — run 03-batches-and-animals first.');
     }
-    const registered = batches.find((b) => b.remarks === 'DEMO-BATCH-REG-GRASMERE')!;
-    const growerGrasmere = batches.find((b) => b.remarks === 'DEMO-BATCH-CO-GRASMERE')!;
-    const growerKintyre = batches.find((b) => b.remarks === 'DEMO-BATCH-CO-KINTYRE')!;
+
+    const registeredBatches = new Set(batches.filter((b) => b.remarks?.includes('-REG')).map((b) => b.batch_id));
 
     // The 14-day window ends yesterday (Harare is UTC+2 — 1h offset from the
     // server; yesterday is yesterday either way, but compute it honestly).
     const yesterdayHarare = dateNdaysAgo(1);
     const firstDay = dateNdaysAgo(14);
 
-    // ── Feed top-up: FIFO on a farm is bounded to that farm's warehouses, and
-    // 14 days of Grasmere demand exceeds what 02-inventory receipted.
-    const feedItemCode = 'FEED-FINISHED_SWINE_FEEDS_DIETS-GESTATION-ITM-0001';
-    const [feedItem] = await db
-      .select({ item_id: schema.itemMaster.item_id, standard_cost: schema.itemMaster.standard_cost })
-      .from(schema.itemMaster)
-      .where(and(eq(schema.itemMaster.item_code, feedItemCode), eq(schema.itemMaster.is_active, true)))
-      .limit(1);
-    if (!feedItem) throw new Error(`04-daily-entries: item ${feedItemCode} not found.`);
-    if (!growerGrasmere.farm_id) throw new Error('04-daily-entries: Grasmere grower batch carries no farm_id.');
-
-    const ref = 'DEMO-MUL100-FEED-TOPUP';
-    const [existingTopup] = await db
-      .select({ receipt_id: schema.goodsReceipt.receipt_id, status: schema.goodsReceipt.status })
-      .from(schema.goodsReceipt)
-      .where(eq(schema.goodsReceipt.external_reference_no, ref))
-      .limit(1);
-    if (!existingTopup) {
-      const created = await receipts.create(
-        {
-          company_id: ctx.companyId,
-          warehouse_id: growerGrasmere.farm_id,
-          posting_date: firstDay,
-          external_reference_no: ref,
-          remarks: 'DEMO feed top-up so the 14-day consumption history can draw on-farm',
-          lines: [
-            { item_id: feedItem.item_id, quantity: 2000, uom: 'KG', rate: rateOf(feedItem.standard_cost), lot_no: 'DEMO-FEED-TOPUP' },
-          ],
-        },
-        ctx.tenantId,
-      );
-      await receipts.post(created.receipt_id, ctx.tenantId);
-      ctx.log('MUL100: feed top-up receipt posted (+2,000 kg gestation feed)');
-    } else {
-      ctx.log('MUL100: feed top-up receipt already present — skipped');
+    // Ensure every farm with active batches has a feed buffer for the 14-day history
+    for (const farm of ctx.demoFarms) {
+      const topupRef = `DEMO-${farm.code}-FEED-BUFFER`;
+      const [existing] = await db
+        .select({ receipt_id: schema.goodsReceipt.receipt_id })
+        .from(schema.goodsReceipt)
+        .where(eq(schema.goodsReceipt.external_reference_no, topupRef))
+        .limit(1);
+      if (!existing) {
+        const silo = farm.sheds.find((s) => s.siloId)?.siloId || farm.farmId;
+        const feedItems = await db
+          .select({ item_id: schema.itemMaster.item_id, standard_cost: schema.itemMaster.standard_cost, item_code: schema.itemMaster.item_code })
+          .from(schema.itemMaster)
+          .where(and(
+            sql`${schema.itemMaster.item_code} LIKE 'FEED-%'`,
+            eq(schema.itemMaster.is_active, true),
+          ));
+        if (feedItems.length > 0) {
+          const lines = feedItems.map((f) => ({
+            item_id: f.item_id,
+            quantity: 15000,
+            uom: 'KG',
+            rate: rateOf(f.standard_cost),
+            lot_no: `DEMO-${farm.code}-FEED-BUF`,
+          }));
+          const created = await receipts.create({
+            company_id: ctx.companyId,
+            warehouse_id: silo,
+            posting_date: firstDay,
+            external_reference_no: topupRef,
+            remarks: `DEMO feed buffer for 14-day historical consumption on ${farm.code}`,
+            lines,
+          }, ctx.tenantId);
+          await receipts.post(created.receipt_id, ctx.tenantId);
+          ctx.log(`${tagOf(farm)} feed buffer receipt posted (+15,000 kg/diet)`);
+        }
+      }
     }
 
     // ── Lines per batch (the schedulers chapter 03 generated).
@@ -180,7 +191,11 @@ export const dailyEntriesChapter: DemoChapter = {
      * per batch once, a lot can run dry mid-window and the FIFO check correctly
      * refuses — so each feed entry picks the fullest on-farm lot at post time.
      */
-    async function pickLot(batchId: string, farmId: string, itemId: string, needed: number): Promise<string | undefined> {
+    /**
+     * Lot per entry: the on-farm lot (locationOnFarm — the warehouse is the
+     * farm itself or hangs off it) holding the most remaining stock.
+     */
+    async function pickLot(batchId: string, farmId: string, itemId: string, needed: number): Promise<string | null> {
       const lots = await db
         .select({ lot_no: schema.inventoryLedger.lot_no, total: sql<number>`SUM(${schema.inventoryLedger.remaining_quantity})` })
         .from(schema.inventoryLedger)
@@ -192,10 +207,10 @@ export const dailyEntriesChapter: DemoChapter = {
         ))
         .groupBy(schema.inventoryLedger.lot_no)
         .orderBy(desc(sql`SUM(${schema.inventoryLedger.remaining_quantity})`));
+
       const usable = lots.filter((l) => l.lot_no && Number(l.total) >= needed);
       const chosen = usable[0] ?? lots.find((l) => l.lot_no);
-      if (!chosen?.lot_no) throw new Error(`04-daily-entries: no lot on farm for batch ${batchId} — receipt stock first.`);
-      return chosen.lot_no;
+      return chosen?.lot_no ?? null;
     }
 
     // Already-posted day/line pairs — the resume probe.
@@ -222,15 +237,12 @@ export const dailyEntriesChapter: DemoChapter = {
     for (const batch of batches) {
       const lines = linesByBatch.get(batch.batch_id) ?? [];
       if (lines.length === 0) {
-        ctx.log(`${batch.batch_no}: scheduler has no lines — nothing to post (run the scheduler repair first)`);
         continue;
       }
 
       for (const date of days) {
         const day = dayIndexOf(date);
         for (const line of lines) {
-          // Feed lines post only once a line has started (start_day); the
-          // day-56 medication CUSTOM line is far outside the window.
           if (!isDue(line, day, date)) continue;
 
           const key = `${line.line_id}|${date}`;
@@ -239,9 +251,8 @@ export const dailyEntriesChapter: DemoChapter = {
             continue;
           }
 
-          // The plan's Missing days: skip one mandatory line on two distinct
-          // days on the registered batch.
-          if (batch.batch_id === registered.batch_id && line.is_mandatory && SKIP_DAYS_ON_REGISTERED.includes(day)) {
+          // Skip one mandatory line on two distinct days on registered batches for missing backlog demonstration
+          if (registeredBatches.has(batch.batch_id) && line.is_mandatory && SKIP_DAYS_ON_REGISTERED.includes(day)) {
             skippedCount += 1;
             continue;
           }
@@ -249,28 +260,27 @@ export const dailyEntriesChapter: DemoChapter = {
           const actor = { userId: ctx.actor.userId, userType: ctx.actor.userType, email: ctx.actor.email };
 
           if (line.line_type === 'CONSUMPTION' && line.item_id) {
-            // standard_qty is per-head-per-day; the scheduler's animal_count is
-            // the batch's headcount. Deterministic ±2% day pattern.
             const headcount = headcountByBatch.get(batch.batch_id) ?? 0;
             const standard = Number(line.standard_qty ?? 0);
-            if (standard <= 0) {
-              ctx.log(`${batch.batch_no}: feed line '${line.activity_name}' has standard_qty 0 — skipped`);
+            if (standard <= 0 || !batch.farm_id) {
+              skippedCount += 1;
               continue;
             }
             const value = round2(standard * headcount * feedFactor(day));
-            const lot = await pickLot(batch.batch_id, batch.farm_id!, feedItem.item_id, value);
+            const lot = await pickLot(batch.batch_id, batch.farm_id, line.item_id, value);
+            if (!lot) {
+              skippedCount += 1;
+              continue;
+            }
             await entries.postEntry(batch.batch_id, { line_id: line.line_id, entry_date: date, entered_value: value, lot_no: lot }, ctx.tenantId, actor);
             postedCount += 1;
           } else if (line.line_type === 'DESCRIPTIVE' && line.kpi_metric === 'MORTALITY_COUNT') {
-            // Mortality mostly 0; two single deaths on the Grasmere grower.
-            const value = batch.batch_id === growerGrasmere.batch_id ? mortalityDays(day) : 0;
+            const value = batch.remarks === 'DEMO-BATCH-CO-GRASMERE' ? mortalityDays(day) : 0;
             await entries.postEntry(batch.batch_id, { line_id: line.line_id, entry_date: date, entered_value: value }, ctx.tenantId, actor);
             postedCount += 1;
           } else if (line.line_type === 'DESCRIPTIVE' && line.kpi_metric === 'BODY_WEIGHT') {
-            // Weekly non-mandatory check — a plausible weight for the stock:
-            // mature breeding stock on the registered batch, growing pigs on
-            // the grower batches.
-            const value = batch.batch_id === registered.batch_id ? 160 + day : 62 + day;
+            const isReg = registeredBatches.has(batch.batch_id);
+            const value = isReg ? 160 + day : 62 + day;
             await entries.postEntry(batch.batch_id, { line_id: line.line_id, entry_date: date, entered_value: value }, ctx.tenantId, actor);
             postedCount += 1;
           } else {

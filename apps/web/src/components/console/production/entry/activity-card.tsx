@@ -49,6 +49,26 @@ export function ActivityCard({
         ? { label: t("deWInProgress"), cls: "bg-amber-600/10 text-amber-700" }
         : { label: t("deWNotStarted"), cls: "bg-[var(--surface-raised)] text-(--text-muted)" };
 
+  const currentStage = form.stages.find((s) => s.stage_id === form.selected_stage_id);
+  const stageHeadCount = currentStage?.animal_count ?? 0;
+
+  const feedForecast = React.useMemo(() => {
+    if (group.line_type !== "CONSUMPTION" || stageHeadCount <= 0) return null;
+    let dailyKg = 0;
+    for (const line of groupLines) {
+      if (line.standard_qty != null && Number(line.standard_qty) > 0) {
+        dailyKg += Number(line.standard_qty) * stageHeadCount;
+      }
+    }
+    if (dailyKg <= 0) return null;
+    return {
+      dailyKg: Math.round(dailyKg * 10) / 10,
+      sevenDaysKg: Math.round(dailyKg * 7),
+      thirtyDaysKg: Math.round(dailyKg * 30),
+      stageHeadCount,
+    };
+  }, [group.line_type, groupLines, stageHeadCount]);
+
   const draftIds = groupLines
     .filter((l) => l.entry?.status === "DRAFT")
     .filter((l) => isValidDraft(l))
@@ -91,6 +111,31 @@ export function ActivityCard({
           )}
         </div>
       </div>
+
+      {feedForecast && (
+        <div className="mt-3 rounded-[var(--radius-md)] border border-emerald-600/20 bg-emerald-600/5 p-3 text-[12px]">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="font-semibold text-emerald-800 dark:text-emerald-300">
+              {t("deWFeedForecastStage", { count: String(feedForecast.stageHeadCount) })}
+            </span>
+            <span className="text-[11px] text-(--text-muted)">{t("deWFeedProjectionHint")}</span>
+          </div>
+          <div className="mt-2 grid grid-cols-3 gap-2 text-center">
+            <div className="rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--surface)] p-2">
+              <div className="text-[10px] text-(--text-muted)">{t("deWFeedDailyDemand")}</div>
+              <div className="font-semibold text-(--text-primary)">{feedForecast.dailyKg} kg</div>
+            </div>
+            <div className="rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--surface)] p-2">
+              <div className="text-[10px] text-(--text-muted)">{t("deWFeed7DayForecast")}</div>
+              <div className="font-semibold text-(--text-primary)">{feedForecast.sevenDaysKg} kg</div>
+            </div>
+            <div className="rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--surface)] p-2">
+              <div className="text-[10px] text-(--text-muted)">{t("deWFeed30DayForecast")}</div>
+              <div className="font-semibold text-(--text-primary)">{feedForecast.thirtyDaysKg} kg</div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="mt-3 space-y-2">
         {groupLines.map((line) => (

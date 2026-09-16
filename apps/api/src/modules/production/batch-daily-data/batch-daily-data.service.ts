@@ -1,5 +1,5 @@
 import { withTenantTransaction } from '../../../common/tenant-transaction';
-import { Injectable, NotFoundException, BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ConflictException, ForbiddenException, Optional } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { eq, and, inArray, sql, desc, ne, gte, lte } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
@@ -17,6 +17,7 @@ import { resolveTarget, TargetScope } from './entry-targeting';
 import { activityStates, dayState, DayState } from './entry-history-state';
 import { userHasPermission } from '../../../common/permissions';
 import { ApprovalService } from '../approval/approval.service';
+import { ResourceLedgerService } from '../resource-ledger/resource-ledger.service';
 import { batchReferenceScopeConditions, batchScopeConditions, farmScope, restrictedScopeConditions } from '../../../common/farm-scope';
 
 /** approval_request.doc_type for a health event outside the schedule. */
@@ -83,6 +84,7 @@ export class BatchDailyDataService {
     private readonly batchTransferService: BatchTransferService,
     private readonly glPostingService: GlPostingService,
     private readonly approvalService: ApprovalService,
+    @Optional() private readonly resourceLedgerService?: ResourceLedgerService,
   ) {}
 
   /**
@@ -927,6 +929,13 @@ export class BatchDailyDataService {
       await this.batchService.reverseConsumption(batch.batch_id, previous.posting_reference, tenantId, userPayload);
     }
 
+    if (line.line_type === 'RESOURCE' && previous.posting_reference && this.resourceLedgerService) {
+      const usageRow = await this.resourceLedgerService.findByDocumentLine(previous.posting_reference);
+      if (usageRow) {
+        await this.resourceLedgerService.reverseEntry(usageRow.ledger_id, tenantId, userPayload?.userId);
+      }
+    }
+
     const { line_id: _lineId, target_scope: _scope, animal_ids: _animals, ...values } = body as any;
     return this.commitEntry({
       batch, line, header, target, tenantId, userPayload,
@@ -1165,6 +1174,36 @@ export class BatchDailyDataService {
         } as any, tenantId, userPayload);
         posted = true;
         postingReference = updated.posting_transaction_id;
+
+        if (line.line_type === 'RESOURCE' && line.resource_id && updated.posting_transaction_id && this.resourceLedgerService) {
+          const [batchRow] = await this.db
+            .select({ farm_id: schema.batchHeader.farm_id, batch_no: schema.batchHeader.batch_no, nob_id: schema.batchHeader.nob_id, lob_id: schema.batchHeader.lob_id })
+            .from(schema.batchHeader)
+            .where(eq(schema.batchHeader.batch_id, batchId))
+            .limit(1);
+          await this.resourceLedgerService.writeUsageEntry({
+            tenantId,
+            companyId: header.company_id,
+            farmId: batchRow?.farm_id ?? null,
+            resourceId: line.resource_id,
+            documentType: 'DAILY_ENTRY',
+            documentNo: batchRow?.batch_no || batchId,
+            documentLineId: updated.posting_transaction_id,
+            postingDate: values.entry_date,
+            transactionType: 'RESOURCE_USAGE',
+            batchId,
+            batchNo: batchRow?.batch_no || null,
+            stageId: line.stage_id ?? header.stage_id,
+            lineId: line.line_id,
+            quantity,
+            uom: line.kpi_uom || undefined,
+            rate,
+            remarks: values.remarks || `${line.activity_name} — scheduled entry`,
+            nobId: batchRow?.nob_id,
+            lobId: batchRow?.lob_id,
+            userId: userPayload?.userId,
+          });
+        }
         break;
       }
       case 'TRANSFER': {

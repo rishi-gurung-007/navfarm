@@ -41,6 +41,7 @@ const DEFAULT_RESOURCES = [
   { module_code: "INVENTORY", resource: "STOCK_ADJUSTMENT", name: "Stock Adjustment", nameKey: "invStockAdjustment" },
   { module_code: "INVENTORY", resource: "LEDGER", name: "Inventory Ledger", nameKey: "invLedger" },
   { module_code: "INVENTORY", resource: "BIO_ASSET_LEDGER", name: "Bio-Asset Ledger", nameKey: "blBioAssetLedgerTitle" },
+  { module_code: "PROCUREMENT", resource: "REQUISITION", name: "Procurement Requisitions", nameKey: "rolProcurementRequisitions" },
   // MASTER_DATA (Phase 2)
   { module_code: "MASTER_DATA", resource: "UOM", name: "Units of Measure", nameKey: "rolUnitsOfMeasure" },
   { module_code: "MASTER_DATA", resource: "SPECIES", name: "Species", nameKey: "rolSpecies" },

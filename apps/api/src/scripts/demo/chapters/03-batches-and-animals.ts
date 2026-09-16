@@ -209,9 +209,9 @@ export const batchesAndAnimalsChapter: DemoChapter<BatchRefs> = {
 
       // ── Registered breeding stock.
       const herd: Array<{ kind: AnimalKind; count: number }> = [
-        { kind: 'SOW', count: farm.volume.sows },
-        { kind: 'GILT', count: farm.volume.gilts },
-        { kind: 'BOAR', count: farm.volume.boars },
+        { kind: 'SOW' as const, count: farm.volume.sows },
+        { kind: 'GILT' as const, count: farm.volume.gilts },
+        { kind: 'BOAR' as const, count: farm.volume.boars },
       ].filter((h) => h.count > 0);
 
       if (farmCanRegisterAnimals(farm) && herd.length > 0) {
