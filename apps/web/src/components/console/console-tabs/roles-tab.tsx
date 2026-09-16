@@ -3,12 +3,14 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { ShieldAlert, Plus, Save, RefreshCw, Edit3, Trash2 } from "lucide-react";
+import { ShieldAlert, Plus, Save, RefreshCw, Edit3, Trash2, Users, X } from "lucide-react";
 import { api } from "../../../services/api-client";
 import { useLanguage } from "../../../hooks/useLanguage";
 import type { TranslationKeys } from "../../../utils/translations";
 import { Dialog } from "../../ui/dialog";
+import { Badge } from "../../ui/badge";
 import { TableHeader, TableBody, TableRow, TableHead, TableCell } from "../../ui/table";
+import { SearchableEntitySelect } from "../../../modules/master-data/SearchableEntitySelect";
 
 interface RolesTabProps {
   roles: any[];
@@ -127,8 +129,73 @@ export default function RolesTab({
   const [deletingRoleId, setDeletingRoleId] = useState<string | null>(null);
   const [deletingRole, setDeletingRole] = useState(false);
 
+  // Who holds the selected role. A permission matrix without this reads as a
+  // policy document; with it, it says who a change is about to affect.
+  const [panel, setPanel] = useState<"permissions" | "members">("permissions");
+  const [members, setMembers] = useState<any[]>([]);
+  const [membersLoading, setMembersLoading] = useState(false);
+  const [companyUsers, setCompanyUsers] = useState<any[]>([]);
+  const [addUserId, setAddUserId] = useState("");
+  const [assigningMember, setAssigningMember] = useState(false);
+
+  // The pool of people a role can be given to, as the API scopes it.
+  useEffect(() => {
+    api.get("/user?limit=500")
+      .then((rows: any[]) => setCompanyUsers(Array.isArray(rows) ? rows : []))
+      .catch(() => setCompanyUsers([]));
+  }, []);
+
+  const loadMembers = async (roleId: string) => {
+    setMembersLoading(true);
+    try {
+      const rows = await api.get(`/role/members/${roleId}`);
+      setMembers(Array.isArray(rows) ? rows : []);
+    } catch (err: any) {
+      setMembers([]);
+      setActionError(err?.message || t("rolMembersLoadFailed"));
+    } finally {
+      setMembersLoading(false);
+    }
+  };
+
+  const handleAssignMember = async () => {
+    if (!selectedRole || !addUserId) return;
+    setAssigningMember(true);
+    setActionError("");
+    setActionSuccess("");
+    try {
+      await api.post("/role/assign", { userId: addUserId, roleId: selectedRole.role_id });
+      setAddUserId("");
+      setActionSuccess(t("rolMemberAdded"));
+      await loadMembers(selectedRole.role_id);
+      await onRefreshRoles();
+    } catch (err: any) {
+      // Shown, not hidden: whether this user is out of reach, out of company or
+      // this role grants unrestricted access is the API's call to explain.
+      setActionError(err?.message || t("rolMemberAssignFailed"));
+    } finally {
+      setAssigningMember(false);
+    }
+  };
+
+  const handleRemoveMember = async (assignId: string) => {
+    if (!selectedRole) return;
+    setActionError("");
+    setActionSuccess("");
+    try {
+      await api.delete(`/role/assign/${assignId}`);
+      setActionSuccess(t("rolMemberRemoved"));
+      await loadMembers(selectedRole.role_id);
+      await onRefreshRoles();
+    } catch (err: any) {
+      setActionError(err?.message || t("rolMemberRemoveFailed"));
+    }
+  };
+
   const handleSelectRole = async (role: any) => {
     setSelectedRole(role);
+    setAddUserId("");
+    loadMembers(role.role_id);
     setLoadingPerms(true);
     setActionError("");
     try {
@@ -315,6 +382,11 @@ export default function RolesTab({
                       </span>
                     </div>
                     <p className="text-xs mt-1.5 line-clamp-2" style={S.textMuted}>{r.role_description || t("roleCustomOperatorScopes")}</p>
+                    {/* How many live accounts hold it — `getCompanyRoles` counts
+                        them, so the list says who a policy change affects. */}
+                    <div className="mt-2">
+                      <Badge variant="neutral"><Users className="w-3 h-3" /> {t("rolHoldersBadge", { n: r.user_count ?? 0 })}</Badge>
+                    </div>
                   </div>
                   <div className="flex items-center gap-4 pt-2.5 border-t" style={S.border} onClick={e => e.stopPropagation()}>
                     {!r.is_system_role && (
@@ -361,7 +433,7 @@ export default function RolesTab({
                 </h3>
                 <p className="text-[9px] mt-1 font-mono" style={S.textMuted}>{t("roleIdLabel", { id: selectedRole.role_id })}</p>
               </div>
-              {selectedRole.is_system_role ? (
+              {panel === "permissions" && (selectedRole.is_system_role ? (
                 <span className="flex items-center gap-1.5 self-start py-2 px-3 text-[11px] font-semibold rounded-[var(--radius-sm)]" style={{ color: "var(--text-muted)", backgroundColor: "var(--badge-bg)" }}>
                   <ShieldAlert className="w-3.5 h-3.5" /> {t("roleSystemPermissionsFixed")}
                 </span>
@@ -375,10 +447,106 @@ export default function RolesTab({
                   <Save className="w-3.5 h-3.5" />
                   {savingPerms ? t("saving") : t("roleSavePolicies")}
                 </Button>
-              )}
+              ))}
             </div>
 
-            {loadingPerms ? (
+            {/* What a role is, and who holds it — the two questions this screen
+                answers. They are separate panels because the permission matrix
+                is long enough that a members list under it would never be seen. */}
+            <div className="flex gap-2" role="tablist">
+              {([
+                { key: "permissions", label: t("rolTabPermissions") },
+                { key: "members", label: t("rolTabMembers") },
+              ] as const).map(({ key, label }) => (
+                <button
+                  key={key}
+                  type="button"
+                  role="tab"
+                  aria-selected={panel === key}
+                  onClick={() => setPanel(key)}
+                  className="rounded-[var(--radius-pill)] border px-3.5 py-1.5 text-xs font-semibold transition-colors"
+                  style={{
+                    backgroundColor: panel === key ? "var(--accent-muted)" : "var(--surface)",
+                    borderColor: panel === key ? "var(--accent)" : "var(--border)",
+                    color: panel === key ? "var(--accent)" : "var(--text-secondary)",
+                  }}
+                >
+                  {label}
+                  {key === "members" && <span className="ml-1.5 font-mono">{selectedRole.user_count ?? members.length}</span>}
+                </button>
+              ))}
+            </div>
+
+            {panel === "members" ? (
+              <div className="flex flex-col gap-4">
+                <p className="text-xs font-semibold" style={S.textPrimary}>
+                  {t("rolMembersTitle", { name: selectedRole.role_name })}
+                </p>
+
+                {/* Assigning is left enabled for everyone who can reach this
+                    screen: the rules that could refuse it — rank, company,
+                    unrestricted access — depend on the pair of records, and the
+                    API's message is the only accurate account of which applied. */}
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <div className="min-w-0 flex-1">
+                    <SearchableEntitySelect
+                      ariaLabel={t("rolMemberAdd")}
+                      value={addUserId}
+                      onChange={setAddUserId}
+                      options={companyUsers}
+                      valueKey="user_id"
+                      getLabel={(row) => `${row.full_name ?? ""} — ${row.email ?? ""}`}
+                      getLabelParts={(row) => [String(row.full_name ?? ""), String(row.email ?? "")]}
+                      placeholder={t("rolMemberAdd")}
+                      searchPlaceholder={t("searchPlaceholder")}
+                      noMatchesLabel={t("mdNoMatches")}
+                      onClear={addUserId ? () => setAddUserId("") : undefined}
+                    />
+                  </div>
+                  <Button
+                    onClick={handleAssignMember}
+                    disabled={!addUserId || assigningMember}
+                    className="self-start py-2 px-4 text-xs font-semibold text-white"
+                    style={{ backgroundColor: "var(--accent)" }}
+                  >
+                    {assigningMember ? t("saving") : t("tmRoleAssign")}
+                  </Button>
+                </div>
+                <p className="text-[11px]" style={S.textMuted}>{t("rolMemberSingleRoleNote")}</p>
+
+                {membersLoading ? (
+                  <div className="flex items-center justify-center gap-2.5 p-10" style={S.textMuted}>
+                    <RefreshCw className="w-4 h-4 animate-spin" style={S.accent} />
+                    <span className="text-xs font-medium">{t("loadingEllipsis")}</span>
+                  </div>
+                ) : members.length === 0 ? (
+                  <p className="p-8 text-center text-xs border border-dashed rounded-[var(--radius-sm)]" style={{ ...S.surface, ...S.textMuted }}>
+                    {t("rolMembersEmpty")}
+                  </p>
+                ) : (
+                  <ul className="flex flex-col divide-y" style={{ borderColor: "var(--row-border)" }}>
+                    {members.map((m) => (
+                      <li key={m.assign_id} className="flex flex-wrap items-center justify-between gap-3 py-3">
+                        <div className="min-w-0">
+                          <p className="truncate text-xs font-semibold" style={S.textPrimary}>{m.full_name}</p>
+                          <p className="truncate text-[11px]" style={S.textMuted}>{m.email} · {String(m.user_type || "").replace(/_/g, " ")}</p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {m.is_active === false && <Badge variant="danger" dot>{t("statusInactive")}</Badge>}
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveMember(m.assign_id)}
+                            className="flex items-center gap-1 text-[11px] font-semibold text-rose-500 transition-colors hover:text-rose-600"
+                          >
+                            <X className="w-3 h-3" /> {t("rolMemberRemove")}
+                          </button>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            ) : loadingPerms ? (
               <div className="p-16 text-center flex items-center justify-center gap-2.5" style={S.textMuted}>
                 <RefreshCw className="w-4 h-4 animate-spin" style={S.accent} />
                 <span className="text-xs font-medium">{t("roleReadingPermissions")}</span>
