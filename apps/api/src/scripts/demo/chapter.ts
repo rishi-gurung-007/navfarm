@@ -22,7 +22,14 @@ export interface DemoContext {
   log(line: string): void;
 }
 
-export interface DemoChapter {
+/**
+ * A chapter step. Most chapters post rows and return nothing; a few (01
+ * stores, 03 batches) hand the ids they created to the chapters that follow,
+ * so the result type is a parameter. The runner holds them as
+ * `DemoChapter[]` — i.e. `DemoChapter<unknown>` — which every chapter
+ * satisfies whatever it returns.
+ */
+export interface DemoChapter<TResult = unknown> {
   name: string;
-  run(ctx: DemoContext): Promise<void>;
+  run(ctx: DemoContext): Promise<TResult>;
 }

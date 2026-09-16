@@ -34,7 +34,18 @@ import { GoodsIssueService } from '../../../modules/inventory/goods-issue/goods-
 import { StockTransferService } from '../../../modules/inventory/stock-transfer/stock-transfer.service';
 import { StockAdjustmentService } from '../../../modules/inventory/stock-adjustment/stock-adjustment.service';
 import * as schema from '../../../core/database/schema';
+import type { GoodsReceiptLineInput } from '../../../modules/inventory/goods-receipt/dto/goods-receipt.dto';
 import type { DemoChapter, DemoContext } from '../chapter';
+
+/**
+ * `item_master.standard_cost` is a MySQL decimal, so Drizzle hands it back as
+ * a string; the document DTOs take `rate?: number`. Convert once here rather
+ * than pushing a string through a numeric field.
+ */
+function rateOf(standardCost: string | null | undefined): number | undefined {
+  return standardCost == null ? undefined : Number(standardCost);
+}
+
 
 /** Medicine/vaccine items (company-scoped codes from the Triple C template). */
 const MED_ANTIBIOTIC_1 = 'MEDICINE-VETERINARY_MEDICINES_ANTIBIOTICS-ANTIBIOTIC-ITM-0001'; // Penicillin G
@@ -150,8 +161,8 @@ export const inventoryChapter: DemoChapter = {
                 external_reference_no: ref('SILORCP'),
                 remarks: `DEMO feed receipt into silo ${silo.code}`,
                 lines: [
-                  { item_id: gest.item_id, quantity: DEMO_OPERATIONS.feedReceipt.gestationKgPerSilo, uom: 'KG', rate: gest.standard_cost ?? undefined, lot_no: `DEMO-GEST-${silo.code}` },
-                  { item_id: grow.item_id, quantity: DEMO_OPERATIONS.feedReceipt.growerKgPerSilo, uom: 'KG', rate: grow.standard_cost ?? undefined, lot_no: `DEMO-GROW-${silo.code}` },
+                  { item_id: gest.item_id, quantity: DEMO_OPERATIONS.feedReceipt.gestationKgPerSilo, uom: 'KG', rate: rateOf(gest.standard_cost), lot_no: `DEMO-GEST-${silo.code}` },
+                  { item_id: grow.item_id, quantity: DEMO_OPERATIONS.feedReceipt.growerKgPerSilo, uom: 'KG', rate: rateOf(grow.standard_cost), lot_no: `DEMO-GROW-${silo.code}` },
                 ],
               },
               ctx.tenantId,
@@ -178,10 +189,10 @@ export const inventoryChapter: DemoChapter = {
           .where(eq(schema.goodsReceipt.external_reference_no, ref('STORERCP')))
           .limit(1);
         if (!existing) {
-          const storeLines = [];
+          const storeLines: GoodsReceiptLineInput[] = [];
           for (const line of DEMO_OPERATIONS.storeReceipt) {
             const item = await itemByCode(db, line.item_code);
-            storeLines.push({ item_id: item.item_id, quantity: line.quantity, uom: line.uom, rate: item.standard_cost ?? undefined, lot_no: `DEMO-${line.item_code.split('-').pop()}` });
+            storeLines.push({ item_id: item.item_id, quantity: line.quantity, uom: line.uom, rate: rateOf(item.standard_cost), lot_no: `DEMO-${line.item_code.split('-').pop()}` });
           }
           const created = await receipts.create(
             {
@@ -281,7 +292,7 @@ export const inventoryChapter: DemoChapter = {
               reason: ref('ADJ'),
               remarks: 'DEMO positive (found stock) and negative (damaged) adjustment',
               lines: [
-                { item_id: posItem.item_id, quantity: DEMO_OPERATIONS.adjustments.positive.quantity, uom: DEMO_OPERATIONS.adjustments.positive.uom, rate: posItem.standard_cost ?? undefined, remarks: 'DEMO found stock' },
+                { item_id: posItem.item_id, quantity: DEMO_OPERATIONS.adjustments.positive.quantity, uom: DEMO_OPERATIONS.adjustments.positive.uom, rate: rateOf(posItem.standard_cost), remarks: 'DEMO found stock' },
                 { item_id: negItem.item_id, quantity: DEMO_OPERATIONS.adjustments.negative.quantity, uom: DEMO_OPERATIONS.adjustments.negative.uom, remarks: 'DEMO damaged vial' },
               ],
             },

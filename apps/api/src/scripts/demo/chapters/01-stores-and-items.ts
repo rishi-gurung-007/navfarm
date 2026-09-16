@@ -37,7 +37,7 @@ interface FarmStores {
 
 export interface StoresAndItemsResult extends FarmStores {}
 
-export const storesAndItemsChapter: DemoChapter & { run: (ctx: DemoContext) => Promise<StoresAndItemsResult> } = {
+export const storesAndItemsChapter: DemoChapter<StoresAndItemsResult> = {
   name: '01-stores-and-items',
 
   async run(ctx: DemoContext): Promise<StoresAndItemsResult> {

@@ -3615,6 +3615,68 @@ export const approvalRequestRelations = relations(approvalRequest, ({ one }) => 
 }));
 
 /**
+ * Phase 9 Requisition MVP — a first-class requisition document (header +
+ * lines) that rides the approval engine instead of the old free-text request.
+ *
+ * Documented basis (BBP1 §16, §7.2, §17.2): "Requisition for Items/FA/Services
+ * with approval"; the feed flow auto-drafts a requisition from a forecast
+ * shortfall, the Farm Manager approves it from a REQUISITION REVIEW alert, and
+ * an approved requisition is sent to D365BC whose returned PO number lands in
+ * `linked_po_no`. Statuses follow that flow: DRAFT → PENDING_APPROVAL →
+ * APPROVED (PO received) / REJECTED. The number series, line shape and
+ * `est_rate` are ours (no field spec exists) — listed for Rishi in
+ * docs/decisions.md.
+ *
+ * The approval itself is the existing approval_request row: the link is real
+ * (approval_request_id FK), not a label — a requisition and its decision are
+ * always readable together.
+ */
+export const requisition = mysqlTable('requisition', {
+  requisition_id: varchar('requisition_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+  company_id: varchar('company_id', { length: 36 }).notNull().references(() => companyMaster.company_id, { onDelete: 'cascade' }),
+  farm_id: varchar('farm_id', { length: 36 }).references(() => locationMaster.location_id, { onDelete: 'set null' }),
+  req_no: varchar('req_no', { length: 50 }).notNull().unique(),
+  doc_type: varchar('doc_type', { length: 40 }).notNull().default('ITEM'), // ITEM, FA, SERVICE
+  status: varchar('status', { length: 30 }).notNull().default('DRAFT'), // DRAFT, PENDING_APPROVAL, APPROVED, REJECTED
+  required_date: date('required_date', { mode: 'string' }),
+  justification: text('justification'),
+  approval_request_id: varchar('approval_request_id', { length: 36 }).references(() => approvalRequest.request_id, { onDelete: 'set null' }),
+  linked_po_no: varchar('linked_po_no', { length: 50 }),
+  created_by: varchar('created_by', { length: 36 }),
+  updated_by: varchar('updated_by', { length: 36 }),
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+  updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().onUpdateNow().notNull(),
+  deleted_at: timestamp('deleted_at', { mode: 'string' }),
+});
+
+export const requisitionLine = mysqlTable('requisition_line', {
+  line_id: varchar('line_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  requisition_id: varchar('requisition_id', { length: 36 }).notNull().references(() => requisition.requisition_id, { onDelete: 'cascade' }),
+  line_seq: int('line_seq').notNull().default(1),
+  item_id: varchar('item_id', { length: 36 }).references(() => itemMaster.item_id, { onDelete: 'set null' }),
+  resource_id: varchar('resource_id', { length: 36 }).references(() => resourceMaster.resource_id, { onDelete: 'set null' }),
+  description: varchar('description', { length: 200 }),
+  quantity: decimal('quantity', { precision: 18, scale: 4 }).notNull(),
+  uom: varchar('uom', { length: 20 }).notNull(),
+  est_rate: decimal('est_rate', { precision: 18, scale: 6 }),
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+});
+
+export const requisitionRelations = relations(requisition, ({ one, many }) => ({
+  company: one(companyMaster, { fields: [requisition.company_id], references: [companyMaster.company_id] }),
+  farm: one(locationMaster, { fields: [requisition.farm_id], references: [locationMaster.location_id] }),
+  approval: one(approvalRequest, { fields: [requisition.approval_request_id], references: [approvalRequest.request_id] }),
+  lines: many(requisitionLine),
+}));
+
+export const requisitionLineRelations = relations(requisitionLine, ({ one }) => ({
+  requisition: one(requisition, { fields: [requisitionLine.requisition_id], references: [requisition.requisition_id] }),
+  item: one(itemMaster, { fields: [requisitionLine.item_id], references: [itemMaster.item_id] }),
+  resource: one(resourceMaster, { fields: [requisitionLine.resource_id], references: [resourceMaster.resource_id] }),
+}));
+
+/**
  * Daily milk production.
  *
  * The Dairy screens were rendering invented numbers — eight named cows, four

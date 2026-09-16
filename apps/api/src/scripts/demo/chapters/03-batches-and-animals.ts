@@ -28,6 +28,16 @@ import { GoodsReceiptService } from '../../../modules/inventory/goods-receipt/go
 import * as schema from '../../../core/database/schema';
 import type { DemoChapter, DemoContext } from '../chapter';
 
+/**
+ * `item_master.standard_cost` is a MySQL decimal, so Drizzle hands it back as
+ * a string; the document DTOs take `rate?: number`. Convert once here rather
+ * than pushing a string through a numeric field.
+ */
+function rateOf(standardCost: string | null | undefined): number | undefined {
+  return standardCost == null ? undefined : Number(standardCost);
+}
+
+
 const PIGGERY_LOB_ID = '60000000-6000-6000-6000-000000000007';
 
 /** Demo animals — explicit facts per plan Task 5 Step 2, not client data. */
@@ -52,7 +62,7 @@ interface BatchRefs {
   countOnlyKintyre: string;
 }
 
-export const batchesAndAnimalsChapter: DemoChapter & { run: (ctx: DemoContext) => Promise<BatchRefs> } = {
+export const batchesAndAnimalsChapter: DemoChapter<BatchRefs> = {
   name: '03-batches-and-animals',
 
   async run(ctx: DemoContext): Promise<BatchRefs> {
@@ -196,8 +206,8 @@ export const batchesAndAnimalsChapter: DemoChapter & { run: (ctx: DemoContext) =
           external_reference_no: livestockReceiptRef,
           remarks: 'DEMO breeding stock purchase (8 sows, 1 boar) into Grasmere',
           lines: [
-            { item_id: sowItem.item_id, quantity: 8, uom: 'HEAD', rate: sowItem.standard_cost ?? undefined, lot_no: 'DEMO-SOW-LOT' },
-            { item_id: boarItem.item_id, quantity: 1, uom: 'HEAD', rate: boarItem.standard_cost ?? undefined, lot_no: 'DEMO-BOAR-LOT' },
+            { item_id: sowItem.item_id, quantity: 8, uom: 'HEAD', rate: rateOf(sowItem.standard_cost), lot_no: 'DEMO-SOW-LOT' },
+            { item_id: boarItem.item_id, quantity: 1, uom: 'HEAD', rate: rateOf(boarItem.standard_cost), lot_no: 'DEMO-BOAR-LOT' },
           ],
         },
         ctx.tenantId,
@@ -221,8 +231,8 @@ export const batchesAndAnimalsChapter: DemoChapter & { run: (ctx: DemoContext) =
       // Sows + the boar as the batch's opening inputs (BIO_ASSET acquisition
       // at activate). Rates read from item standard_cost.
       inputLines: [
-        { item_id: sowItem.item_id, quantity: 8, uom: 'HEAD', rate: sowItem.standard_cost ?? undefined },
-        { item_id: boarItem.item_id, quantity: 1, uom: 'HEAD', rate: boarItem.standard_cost ?? undefined },
+        { item_id: sowItem.item_id, quantity: 8, uom: 'HEAD', rate: rateOf(sowItem.standard_cost) },
+        { item_id: boarItem.item_id, quantity: 1, uom: 'HEAD', rate: rateOf(boarItem.standard_cost) },
       ],
       remarks: 'DEMO-BATCH-REG-GRASMERE',
     });
@@ -238,7 +248,7 @@ export const batchesAndAnimalsChapter: DemoChapter & { run: (ctx: DemoContext) =
       // keyed by breed — without it the scheduler is born empty.
       breedId: grasmereBreed.breed_id,
       openingQuantity: 120,
-      inputLines: [{ item_id: giltItem.item_id, quantity: 120, uom: 'HEAD', rate: giltItem.standard_cost ?? undefined }],
+      inputLines: [{ item_id: giltItem.item_id, quantity: 120, uom: 'HEAD', rate: rateOf(giltItem.standard_cost) }],
       remarks: 'DEMO-BATCH-CO-GRASMERE',
     });
 
@@ -250,7 +260,7 @@ export const batchesAndAnimalsChapter: DemoChapter & { run: (ctx: DemoContext) =
       stageCode: 'GESTATION',
       breedId: kintyreBreed.breed_id,
       openingQuantity: 100,
-      inputLines: [{ item_id: giltItem.item_id, quantity: 100, uom: 'HEAD', rate: giltItem.standard_cost ?? undefined }],
+      inputLines: [{ item_id: giltItem.item_id, quantity: 100, uom: 'HEAD', rate: rateOf(giltItem.standard_cost) }],
       remarks: 'DEMO-BATCH-CO-KINTYRE',
     });
 

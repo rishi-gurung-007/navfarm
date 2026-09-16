@@ -680,6 +680,13 @@
       "when": 1789234410180,
       "tag": "0097_breeding_boar_parity",
       "breakpoints": true
+    },
+    {
+      "idx": 98,
+      "version": "5",
+      "when": 1789320000000,
+      "tag": "0098_requisition",
+      "breakpoints": true
     }
   ]
 }

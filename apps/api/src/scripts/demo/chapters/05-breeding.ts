@@ -20,7 +20,7 @@ import { and, eq } from 'drizzle-orm';
 import { ClsService } from 'nestjs-cls';
 import type { MySql2Database } from 'drizzle-orm/mysql2';
 import { BreedingService } from '../../../modules/piggery/breeding/breeding.service';
-import { MatingType, ConceptionResult } from '../../../modules/piggery/breeding/dto/breeding.dto';
+import { MatingType, PregCheckMethod, ConceptionResult } from '../../../modules/piggery/breeding/dto/breeding.dto';
 import * as schema from '../../../core/database/schema';
 import type { DemoChapter, DemoContext } from '../chapter';
 
@@ -125,7 +125,7 @@ export const breedingChapter: DemoChapter = {
           const result = plan.outcome === 'FAILED' ? ConceptionResult.FAILED : ConceptionResult.CONFIRMED;
           await breeding.recordPregnancyCheck(
             record.breeding_id,
-            { preg_check_date: checkDate, preg_check_method: 'ULTRASOUND', conception_result: result },
+            { preg_check_date: checkDate, preg_check_method: PregCheckMethod.ULTRASOUND, conception_result: result },
             ctx.tenantId,
             actor,
           );

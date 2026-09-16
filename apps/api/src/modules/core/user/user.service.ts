@@ -248,6 +248,14 @@ export class UserService {
     const companyIds = [...new Set(users.map((u) => u.company_id).filter((id): id is string => Boolean(id)))];
     const farmIds = [...new Set(users.map((u) => u.farm_id).filter((id): id is string => Boolean(id)))];
 
+    // Each branch below is either a Drizzle query or a plain array, so the
+    // inferred element type is a union that collapses to `{}`. The four row
+    // shapes are named here instead, which is also what the return type shows.
+    type CompanyRow = { company_id: string; company_code: string; company_name: string };
+    type FarmRow = { location_id: string; location_code: string; location_name: string };
+    type AreaRow = { user_id: string; area_id: string; area_code: string; area_name: string; is_primary: boolean | null };
+    type RoleRow = { user_id: string; assign_id: string; role_id: string; role_code: string; role_name: string };
+
     const [companies, farms, areas, roles] = await Promise.all([
       companyIds.length
         ? this.db.select({ company_id: schema.companyMaster.company_id, company_code: schema.companyMaster.company_code, company_name: schema.companyMaster.company_name })
@@ -281,8 +289,10 @@ export class UserService {
         .where(and(inArray(schema.userRoleAssignment.user_id, userIds), eq(schema.userRoleAssignment.is_active, true))),
     ]);
 
-    const companyById = new Map(companies.map((c) => [c.company_id, c]));
-    const farmById = new Map(farms.map((f) => [f.location_id, f]));
+    const companyById = new Map((companies as CompanyRow[]).map((c) => [c.company_id, c] as const));
+    const farmById = new Map((farms as FarmRow[]).map((f) => [f.location_id, f] as const));
+    const areaRows = areas as AreaRow[];
+    const roleRows = roles as RoleRow[];
 
     return users.map((user) => ({
       ...user,
@@ -290,8 +300,8 @@ export class UserService {
       company_name: user.company_id ? companyById.get(user.company_id)?.company_name ?? null : null,
       farm_code: user.farm_id ? farmById.get(user.farm_id)?.location_code ?? null : null,
       farm_name: user.farm_id ? farmById.get(user.farm_id)?.location_name ?? null : null,
-      operational_areas: areas.filter((a) => a.user_id === user.user_id).map(({ user_id: _u, ...a }) => a),
-      roles: roles.filter((r) => r.user_id === user.user_id).map(({ user_id: _u, ...r }) => r),
+      operational_areas: areaRows.filter((a) => a.user_id === user.user_id).map(({ user_id: _u, ...a }) => a),
+      roles: roleRows.filter((r) => r.user_id === user.user_id).map(({ user_id: _u, ...r }) => r),
     }));
   }
 

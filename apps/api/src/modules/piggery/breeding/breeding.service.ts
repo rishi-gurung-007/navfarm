@@ -428,9 +428,14 @@ export class BreedingService {
       .where(and(...conditions))
       .orderBy(desc(schema.breedingRecord.mating_date));
 
-    // Calculate days remaining to farrowing
+    // Calculate days remaining to farrowing.
+    // The row type is written out rather than inferred: with the boar alias and
+    // the batch join this select is past the depth Drizzle's inference handles
+    // here, and it collapses to `never`. The shape below is the select above.
+    type MatingRow = Record<string, unknown> & { expected_farrowing_date: string };
+    const rows = records as unknown as MatingRow[];
     const today = new Date();
-    return records.map((r) => {
+    return rows.map((r) => {
       const farrowDate = new Date(r.expected_farrowing_date);
       const daysUntilFarrowing = Math.ceil((farrowDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
       return {

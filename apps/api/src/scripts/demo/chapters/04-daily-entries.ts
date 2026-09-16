@@ -37,6 +37,16 @@ import { GoodsReceiptService } from '../../../modules/inventory/goods-receipt/go
 import * as schema from '../../../core/database/schema';
 import type { DemoChapter, DemoContext } from '../chapter';
 
+/**
+ * `item_master.standard_cost` is a MySQL decimal, so Drizzle hands it back as
+ * a string; the document DTOs take `rate?: number`. Convert once here rather
+ * than pushing a string through a numeric field.
+ */
+function rateOf(standardCost: string | null | undefined): number | undefined {
+  return standardCost == null ? undefined : Number(standardCost);
+}
+
+
 /** The two days the Grasmere registered batch shows a Missing mandatory line. */
 const SKIP_DAYS_ON_REGISTERED = [4, 9];
 
@@ -116,7 +126,7 @@ export const dailyEntriesChapter: DemoChapter = {
           external_reference_no: ref,
           remarks: 'DEMO feed top-up so the 14-day consumption history can draw on-farm',
           lines: [
-            { item_id: feedItem.item_id, quantity: 2000, uom: 'KG', rate: feedItem.standard_cost ?? undefined, lot_no: 'DEMO-FEED-TOPUP' },
+            { item_id: feedItem.item_id, quantity: 2000, uom: 'KG', rate: rateOf(feedItem.standard_cost), lot_no: 'DEMO-FEED-TOPUP' },
           ],
         },
         ctx.tenantId,
