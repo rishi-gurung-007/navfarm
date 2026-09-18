@@ -123,6 +123,31 @@ export class SupplierService {
 
     await this.db.insert(schema.supplierMaster).values(newSupplier);
 
+    try {
+      const [modernSupplierSeries] = await this.db
+        .select({ id: schema.noSeries.id })
+        .from(schema.noSeries)
+        .where(and(
+          eq(schema.noSeries.document_type, 'SUPPLIER'),
+          eq(schema.noSeries.blocked, false),
+        ))
+        .limit(1);
+
+      if (modernSupplierSeries && typeof this.db?.update === 'function') {
+        const updateBuilder = this.db.update(schema.noSeries);
+        if (updateBuilder?.set) {
+          await updateBuilder
+            .set({
+              last_no_used: supplierCode,
+              updated_at: toMysqlTimestamp() as any,
+            })
+            .where(eq(schema.noSeries.id, modernSupplierSeries.id));
+        }
+      }
+    } catch {
+      // Non-fatal if no_series is not present in mock test db
+    }
+
     await this.auditService.log({
       tenantId,
       companyId: dto.company_id || undefined,

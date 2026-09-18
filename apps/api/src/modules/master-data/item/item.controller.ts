@@ -13,7 +13,7 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiParam } from '@nestjs/swagger';
 import { ItemService } from './item.service';
-import { CreateItemDto, UpdateItemDto, QueryItemDto } from './dto/item.dto';
+import { CreateItemDto, UpdateItemDto, QueryItemDto, CreateItemFromTemplateDto } from './dto/item.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
@@ -24,9 +24,23 @@ import { RequirePermission } from '../../../common/decorators/require-permission
 // so the catalog stays writable here and the frontend notice states the blueprint's
 // position. Re-add a write guard when the BC sync endpoint lands.
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Controller('item')
+@Controller(['item', 'items'])
 export class ItemController {
   constructor(private readonly itemService: ItemService) {}
+
+  @Post('from-template')
+  @RequirePermission('MASTER_DATA', 'ITEM', 'create')
+  @ApiOperation({ summary: 'Generate Item Number from Template and create draft Item Card' })
+  async createFromTemplate(@Body() dto: CreateItemFromTemplateDto, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const companyId = req.headers?.['x-active-company-id'] || req.user?.companyId;
+    const result = await this.itemService.createFromTemplate(dto, tenantId, companyId, req.user);
+    return {
+      success: true,
+      message: 'Item generated from template successfully.',
+      data: result,
+    };
+  }
 
   @Post()
   @RequirePermission('MASTER_DATA', 'ITEM', 'create')

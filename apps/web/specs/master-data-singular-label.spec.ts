@@ -21,6 +21,7 @@ const EXPECTED: Record<string, string> = {
   "item-type": "Item Type",
   "item-category": "Item Category",
   "item-attribute": "Item Attribute",
+  "item-template": "Item Template",
   uom: "Unit of Measure",
   "uom-conversion": "UOM Conversion",
   species: "Species",

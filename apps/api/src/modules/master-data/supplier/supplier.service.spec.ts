@@ -104,6 +104,13 @@ describe('SupplierService', () => {
         .mockReturnValueOnce({
           from: jest.fn().mockReturnValue({
             where: jest.fn().mockReturnValue({
+              limit: jest.fn().mockResolvedValue([]),
+            }),
+          }),
+        })
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            where: jest.fn().mockReturnValue({
               limit: jest.fn().mockResolvedValue([{ supplier_code: 'SUP-001', supplier_name: 'Supplier 1' }]),
             }),
           }),
@@ -152,6 +159,7 @@ describe('SupplierService', () => {
     it('should encrypt bank_account_no before insert and never store it as plaintext', async () => {
       mockDbSelect
         .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ company_id: 'comp-1' }]) }) }) })
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }) }) })
         .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ supplier_code: 'SUP-001', bank_account_no_enc: 'enc(1234567890)' }]) }) }) });
 
       let insertedValues: any;

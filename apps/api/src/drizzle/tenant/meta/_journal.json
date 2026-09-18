@@ -694,6 +694,20 @@
       "when": 1789330000000,
       "tag": "0099_resource_ledger",
       "breakpoints": true
+    },
+    {
+      "idx": 100,
+      "version": "5",
+      "when": 1789340000000,
+      "tag": "0100_item_template_no_series",
+      "breakpoints": true
+    },
+    {
+      "idx": 101,
+      "version": "5",
+      "when": 1789350000000,
+      "tag": "0101_item_tracking_series_fk",
+      "breakpoints": true
     }
   ]
 }

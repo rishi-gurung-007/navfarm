@@ -170,111 +170,65 @@ const numberSeries: MasterDataConfig = {
   key: "number-series",
   label: "Number Series",
   singular: "Number Series",
-  description: "Concurrency-safe business-code generators (e.g. \"BATCH\" → BATCH-000001) — other modules call these by series code instead of counting rows themselves.",
-  apiBase: "/number-series",
-  idKey: "series_id",
+  description: "Sequential business number generators for all master entities.",
+  apiBase: "/no-series",
+  idKey: "id",
   group: "Production",
   isPrimary: true,
+  supportsNobLobFilter: false,
   supportsRestore: false,
   columns: [
-    { key: "series_code", label: "Applies To" },
-    { key: "series_name", label: "Name" },
-    { key: "document_type", label: "Document Type" },
-    { key: "last_generated_code", label: "Last Generated" },
+    { key: "code", label: "Code" },
+    { key: "document_type", label: "Applies To" },
+    { key: "description", label: "Description" },
+    { key: "no_series_code", label: "Prefix / Pattern" },
+    { key: "seq_length", label: "Digits" },
+    { key: "last_no_used", label: "Last No. Used" },
+    { key: "manual_nos", label: "Allow Manual" },
+    { key: "blocked", label: "Blocked" },
   ],
   fields: [
     { key: "company_id", label: "Company", type: "text", hideInForm: true },
-    { key: "nob_id", label: "Nature of Business", type: "select-entity", entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], helpText: "Leave blank for a series shared across all business verticals." },
-    { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id" },
+    { key: "code", label: "Series Code", type: "text", required: true, createOnly: true, maxLength: 20, placeholder: "NS-SUP", helpText: "Unique identifier for this number series (max 20 characters)." },
     {
-      // The binding is by string convention: resolveSeriesFor() looks for a row
-      // whose series_code equals the master key (ITEM), or `MASTER_TYPE` for a
-      // type-scoped one (LOCATION_SHED, ANIMAL_PIGGERY). Typed by hand that was
-      // silent to get wrong — a series named ITEMS applies to nothing and
-      // nothing says so. Picked from the API's own registry instead.
-      key: "series_code", label: "Applies To", type: "select-entity", required: true, createOnly: true,
-      entityEndpoint: "/number-series/masters", entityValueKey: "master_key", entityLabelKeys: ["master_key"],
-      helpText: "The master this series generates codes for. For a type-scoped series (e.g. sheds only) create it as MASTER_TYPE — LOCATION_SHED.",
+      key: "document_type",
+      label: "Applies To (Master)",
+      type: "select",
+      required: true,
+      options: [
+        { value: "ITEM", label: "Item" },
+        { value: "SUPPLIER", label: "Supplier" },
+        { value: "CUSTOMER", label: "Customer" },
+        { value: "LOCATION", label: "Location" },
+        { value: "LOCATION_TYPE", label: "Location Type" },
+        { value: "ANIMAL", label: "Animal" },
+        { value: "SPECIES", label: "Species" },
+        { value: "BREED", label: "Breed" },
+        { value: "BREED_LIFECYCLE_STAGE", label: "Breed Lifecycle Stage" },
+        { value: "FEED_FORMULA", label: "Feed Formula" },
+        { value: "DISEASE", label: "Disease" },
+        { value: "REASON", label: "Reason" },
+        { value: "RESOURCE", label: "Resource" },
+        { value: "STAGE", label: "Stage" },
+        { value: "UOM", label: "Unit of Measure" },
+        { value: "UOM_CONVERSION", label: "UOM Conversion" },
+        { value: "ITEM_CATEGORY", label: "Item Category" },
+        { value: "ITEM_TYPE", label: "Item Type" },
+        { value: "ITEM_ATTRIBUTE", label: "Item Attribute" },
+        { value: "GL_ACCOUNT", label: "GL Account" },
+        { value: "GL_MAPPING", label: "GL Mapping" },
+        { value: "COST_CENTER", label: "Cost Center" },
+        { value: "BATCH", label: "Batch" },
+      ],
+      helpText: "Select which master entity this number sequence generates codes for.",
     },
-    { key: "series_name", label: "Series Name", type: "text", required: true, placeholder: "Batch Number" },
-    // Was a free text box, so a typo here silently pointed the series at a master
-    // that does not exist and the whole thing quietly stopped generating. The
-    // list is the masters without a series yet, plus whichever this series
-    // already uses — `current` keeps an edit able to show its own value.
-    {
-      key: "document_type", label: "Master This Codes", type: "select-entity", required: true,
-      // Every master, not only those without a series: several series share one
-      // document_type (LOCATION_FARM, LOCATION_SHED, LOCATION_PEN are all
-      // LOCATION), and the unique-per-master rule belongs to Applies To above.
-      entityEndpoint: "/number-series/masters?all=true", entityValueKey: "master_key", entityLabelKeys: ["master_key"],
-      helpText: "The master these codes belong to. Code Built From then offers that master's own fields.",
-    },
-    // Two switches, because "no prefix" and "no number" were only ever
-    // expressible by leaving a box empty or typing 0 — a rule the form never
-    // stated. On means the part is in the code; off clears it, so nothing
-    // invisible survives in the value.
-    {
-      key: "use_prefix", label: "Use a Prefix", type: "boolean", filterOnly: true,
-      seedFromValueOf: "prefix", clearsWhenOff: { prefix: "", prefix_position: "END" },
-      helpText: "A fixed piece of text in the code, like ITM. Off for masters coded entirely from their own fields.",
-    },
-    { key: "prefix", label: "Prefix", type: "text", placeholder: "ITM", visibleWhen: { anyOf: [{ key: "use_prefix", equals: true }] }, requiredWhen: { anyOf: [{ key: "use_prefix", equals: true }] } },
-    // Two positions and no more: anywhere in the middle and the prefix is buried
-    // where it identifies nothing. Ignored when no prefix is set.
-    {
-      key: "prefix_position", label: "Prefix Position", type: "select",
-      options: [{ value: "END", label: "Last — just before the number" }, { value: "START", label: "First — at the start of the code" }],
-      helpText: "Where the prefix sits among the fields below.",
-      visibleWhen: { anyOf: [{ key: "use_prefix", equals: true }] },
-    },
-
-    {
-      // Free text accepted anything — a space, a letter, a character the
-      // sequence parser would then fail to split on. Three that read cleanly in
-      // a code and none of which appear in a normalised segment.
-      key: "separator", label: "Separator", type: "select",
-      options: [{ value: "-", label: "-  (hyphen)" }, { value: "/", label: "/  (slash)" }, { value: "|", label: "|  (pipe)" }],
-      helpText: "Joins the parts below.",
-    },
-    // Location needs both: "/" between the levels of the path and "-" before the
-    // number, so FARM-001/SHED-001/PEN-001 reads as a path ending in a count.
-    // One separator cannot say both — with only "/" a root reads FARM/001.
-    {
-      key: "seq_separator", label: "Separator Before the Number", type: "select",
-      visibleWhen: { anyOf: [{ key: "use_sequence", equals: true }] },
-      options: [{ value: "-", label: "-  (hyphen)" }, { value: "/", label: "/  (slash)" }, { value: "|", label: "|  (pipe)" }],
-      placeholder: "Same as the separator",
-      helpText: "Only when it differs — Location joins its path with / but its number with -.",
-    },
-    // 0 means no number at all — Breed codes are the breed name, and LARGEWHITE-001
-    // would be counting something already unique. Only usable when the code is
-    // built from a field, and a repeat is then rejected rather than numbered.
-    {
-      key: "use_sequence", label: "Use a Running Number", type: "boolean", filterOnly: true,
-      seedFromValueOf: "seq_length", clearsWhenOff: { seq_length: 0, seq_separator: "" },
-      helpText: "Off when the fields alone make the code unique — a breed IS Large White, and LARGE_WHITE-001 would count something already unique. A repeat is then refused rather than numbered.",
-    },
-    { key: "seq_length", label: "Sequence Digits", type: "number", min: 1, max: 12, placeholder: "3", visibleWhen: { anyOf: [{ key: "use_sequence", equals: true }] }, requiredWhen: { anyOf: [{ key: "use_sequence", equals: true }] }, helpText: "A minimum width, not a limit — after 999 the next is 1000." },
-    {
-      key: "reset_frequency", label: "Reset Frequency", type: "select",
-      options: ["NEVER", "MONTHLY", "YEARLY"].map((v) => ({ value: v, label: v })),
-    },
-    // What the code is built from, in order, before the number. The options are
-    // the Prefix above plus the fields of whatever master "Applies To" names —
-    // LOCATION offers parent_location_id and location_type, ITEM offers
-    // item_type, category_id and sub_category. Prefix is an entry in the same
-    // list rather than a fixed position, so it can lead, follow, or be left out:
-    // ITEM wants it after the type and category, BREED wants only the name,
-    // LOCATION wants none. A field naming a related record contributes that
-    // record's code; any other field contributes its own value.
-    // Keyed off Document Type, not Applies To: LOCATION_SHED and LOCATION_FARM are
-    // both document_type LOCATION, so the type-specific series offer the same
-    // fields as the master they belong to. Document Type is also on the form for
-    // both create and edit, where Applies To is create-only.
-    { key: "code_segments", label: "Code Built From", type: "field-list", fieldsOf: "document_type", helpText: "Ordered, and any mix. Leave empty for prefix then number. Location: parent location, then location type, then the number." },
-    { key: "allow_manual", label: "Allow Manual Entry", type: "boolean", helpText: "Let a user type their own code instead of generating one." },
-    { key: "current_seq", label: "Current Sequence", type: "number", hideInForm: true },
-    { key: "last_generated_code", label: "Last Generated Code", type: "text", hideInForm: true },
+    { key: "description", label: "Description", type: "text", maxLength: 100, placeholder: "Vendor Supplier Series", helpText: "Human readable label (max 100 characters)." },
+    { key: "no_series_code", label: "Prefix / Code Pattern", type: "text", required: true, maxLength: 20, placeholder: "SUP-", helpText: "Prefix pattern (max 20 characters, e.g. SUP- with 3 digits generates SUP-001)." },
+    { key: "seq_length", label: "Digits (Sequence Length)", type: "number", defaultValue: "4", min: 1, max: 10, step: "1", required: true, helpText: "Length of digits for zero-padding (1 to 10 digits, e.g. 3 for -001, 4 for -0001)." },
+    { key: "increment_by", label: "Increment By", type: "number", defaultValue: "1", min: 1, step: "1", required: true, helpText: "How much to add on each generation (must be at least 1)." },
+    { key: "is_default", label: "Is Default for this Master", type: "boolean", defaultValue: "true", helpText: "If checked, forms for this master will use this number series by default." },
+    { key: "manual_nos", label: "Allow Manual Numbers", type: "boolean", helpText: "If checked, users can overwrite the generated number on the form." },
+    { key: "blocked", label: "Blocked", type: "boolean", helpText: "If checked, this series cannot be used to generate numbers." },
   ],
 };
 
@@ -649,6 +603,146 @@ const itemAttribute: MasterDataConfig = {
   ],
 };
 
+const itemTemplateConfig: MasterDataConfig = {
+  key: "item-template",
+  label: "Item Templates",
+  singular: "Item Template",
+  description: "Templates to standardize item card creation and pre-populate accounting and tracking defaults.",
+  apiBase: "/item-template",
+  idKey: "id",
+  group: "Inventory",
+  tabOf: "item",
+  tabLabel: "Item Templates",
+  supportsNobLobFilter: false,
+  supportsRestore: false,
+  columns: [
+    { key: "template_code", label: "Template Code" },
+    { key: "template_description", label: "Description" },
+    { key: "item_type", label: "Item Type" },
+    { key: "category_code", label: "Category" },
+    { key: "sub_category", label: "Sub Category" },
+    { key: "valuation_method", label: "Valuation Method" },
+    { key: "is_active", label: "Active" },
+  ],
+  fields: [
+    { key: "company_id", label: "Company", type: "text", hideInForm: true },
+    { key: "template_code", label: "Template Code", type: "text", required: true, createOnly: true, placeholder: "FEED-BROILER", helpText: "Unique template identifier code." },
+    { key: "template_description", label: "Description", type: "text", placeholder: "Broiler Starter Feed Template" },
+    {
+      key: "no_series_id",
+      label: "Number Series",
+      type: "select-entity",
+      required: true,
+      entityEndpoint: "/no-series",
+      entityValueKey: "id",
+      entityLabelKeys: ["code", "description"],
+      helpText: "The sequential number series used to auto-generate item codes from this template.",
+    },
+    {
+      key: "item_type",
+      label: "Item Type",
+      type: "select-entity",
+      required: true,
+      entityEndpoint: "/item-type",
+      entityValueKey: "type_code",
+      entityLabelKeys: ["type_code", "type_name"],
+      helpText: "Selected from Item Type Master.",
+    },
+    {
+      key: "category",
+      label: "Category",
+      type: "select-entity",
+      entityEndpoint: "/item-category?rootOnly=true",
+      entityValueKey: "category_id",
+      entityLabelKeys: ["category_code", "category_name"],
+      dependsOn: "item_type",
+      dependsOnMode: "query",
+      queryParams: { item_type: "itemType" },
+      requiresParent: true,
+      helpText: "Root category belonging to the selected Item Type.",
+    },
+    {
+      key: "sub_category",
+      label: "Sub Category",
+      type: "select-entity",
+      entityEndpoint: "/item-category",
+      entityValueKey: "category_code",
+      entityLabelKeys: ["category_code", "category_name"],
+      dependsOn: "category",
+      dependsOnMode: "query",
+      queryParams: { category: "parentCategoryId" },
+      requiresParent: true,
+      helpText: "Sub-category belonging to the selected Category.",
+    },
+    {
+      key: "valuation_method",
+      label: "Valuation Method",
+      type: "select",
+      options: [
+        { value: "FIFO", label: "FIFO" },
+        { value: "LIFO", label: "LIFO" },
+        { value: "AVERAGE", label: "Average" },
+        { value: "STANDARD", label: "Standard" },
+      ],
+      defaultValue: "FIFO",
+      required: true,
+    },
+    {
+      key: "item_tracking",
+      label: "Item Tracking",
+      type: "select",
+      options: [
+        { value: "NONE", label: "None" },
+        { value: "LOT", label: "Lot" },
+        { value: "SERIAL", label: "Serial" },
+      ],
+      defaultValue: "NONE",
+    },
+    {
+      key: "item_tracking_no_series_id",
+      label: "Tracking No. Series",
+      type: "select-entity",
+      entityEndpoint: "/no-series",
+      entityValueKey: "id",
+      entityLabelKeys: ["code", "description"],
+      helpText: "Required when Item Tracking is LOT or SERIAL.",
+    },
+    {
+      key: "inventory_type",
+      label: "Inventory Type",
+      type: "select",
+      options: [
+        { value: "INVENTORY", label: "Inventory" },
+        { value: "NON_INVENTORY", label: "Non-Inventory" },
+        { value: "SERVICE", label: "Service" },
+      ],
+      defaultValue: "INVENTORY",
+    },
+    {
+      key: "inventory_gl_account",
+      label: "Inventory GL Account",
+      type: "select-entity",
+      entityEndpoint: "/gl-account",
+      entityValueKey: "account_code",
+      entityLabelKeys: ["account_code", "account_name"],
+      helpText: "Default Chart of Accounts code for inventory valuation.",
+    },
+    {
+      key: "cogs_gl_account",
+      label: "COGS GL Account",
+      type: "select-entity",
+      entityEndpoint: "/gl-account",
+      entityValueKey: "account_code",
+      entityLabelKeys: ["account_code", "account_name"],
+      helpText: "Default Chart of Accounts code for Cost of Goods Sold.",
+    },
+    { key: "qr_code_enabled", label: "QR Code Enabled", type: "boolean" },
+    { key: "is_active", label: "Is Active", type: "boolean" },
+  ],
+};
+
+
+
 // TDD row 13's inventory flag decides whether any of the stock-control numbers
 // mean anything: an item that is not held in inventory has no balance to carry a
 // minimum, a maximum, a reorder point or a shelf life. One shared gate, so the
@@ -693,10 +787,12 @@ const item: MasterDataConfig = {
     { key: "item_type", label: "Type" },
     { key: "category_code", label: "Category" },
     { key: "sub_category", label: "Sub Category" },
+    { key: "template_code", label: "Template" },
     { key: "uom_primary", label: "UOM" },
   ],
   fields: [
     { key: "company_id", label: "Company", type: "text", hideInForm: true },
+    { key: "item_template_id", label: "Item Template ID", type: "text", hideInForm: true },
     { key: "nob_id", label: "Nature of Business", type: "select-entity", entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], helpText: "Leave blank if this item is used across all business verticals.", section: "Classification" },
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank if this item is used across all LOBs under the selected NOB.", section: "Classification" },
     { key: "item_code", label: "Item Code", type: "text", readOnly: true, helpText: "Assigned from the Item number series unless manual entry is selected.", section: "Identification" },
@@ -777,8 +873,8 @@ const item: MasterDataConfig = {
     // clears the column when tracking is turned off.
     {
       key: "tracking_series_id", label: "Tracking No. Series", type: "select-entity",
-      entityEndpoint: "/number-series", entityValueKey: "series_id", entityLabelKeys: ["series_code", "series_name"],
-      dependsOn: "tracking_type", dependsOnMode: "query", queryParams: { tracking_type: "documentType" }, requiresParent: true,
+      entityEndpoint: "/no-series", entityValueKey: "id", entityLabelKeys: ["code", "description"],
+      dependsOn: "tracking_type", dependsOnMode: "query", queryParams: { tracking_type: "document_type" }, requiresParent: true,
       labelWhen: { key: "tracking_type", labels: { LOT: "Lot No. Series", SERIAL: "Serial No. Series" } },
       visibleWhen: { anyOf: [{ key: "is_tracked", equals: true }] },
       requiredWhen: { anyOf: [{ key: "is_tracked", equals: true }] },
@@ -1561,7 +1657,7 @@ export const MASTER_DATA_CONFIGS: MasterDataConfig[] = [
   locationType, location,
   stage, numberSeries, activity,
   animal,
-  itemCategory, itemType, uom, uomConversion, item, itemAttribute,
+  itemCategory, itemType, uom, uomConversion, item, itemAttribute, itemTemplateConfig,
   species, breed, breedLifecycleStage, reason, disease, feedFormula,
   supplier, customer, resource,
   glAccount, glMapping, costCenter, country, currency, exchangeRate,
@@ -1570,6 +1666,7 @@ export const MASTER_DATA_CONFIGS: MasterDataConfig[] = [
 export const MASTER_DATA_GROUPS = ["Farm Operations", "Production", "Piggery", "Inventory", "Livestock & Health", "Business Partners", "Finance"] as const;
 
 export function getConfig(key: string): MasterDataConfig | undefined {
+  if (key === "no-series") return MASTER_DATA_CONFIGS.find((c) => c.key === "number-series");
   return MASTER_DATA_CONFIGS.find((c) => c.key === key);
 }
 

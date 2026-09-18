@@ -30,6 +30,8 @@ import { ShedModule } from './modules/master-data/shed/shed.module';
 import { ItemCategoryModule } from './modules/master-data/item-category/item-category.module';
 import { ItemTypeModule } from './modules/master-data/item-type/item-type.module';
 import { ItemModule } from './modules/master-data/item/item.module';
+import { NoSeriesModule } from './modules/master-data/no-series/no-series.module';
+import { ItemTemplateModule } from './modules/master-data/item-template/item-template.module';
 import { ItemAttributeModule } from './modules/master-data/item-attribute/item-attribute.module';
 import { SupplierModule } from './modules/master-data/supplier/supplier.module';
 import { CustomerModule } from './modules/master-data/customer/customer.module';
@@ -47,6 +49,7 @@ import { BioAssetLedgerModule } from './modules/inventory/bio-asset-ledger/bio-a
 import { GoodsIssueModule } from './modules/inventory/goods-issue/goods-issue.module';
 import { StockTransferModule } from './modules/inventory/stock-transfer/stock-transfer.module';
 import { StockAdjustmentModule } from './modules/inventory/stock-adjustment/stock-adjustment.module';
+import { InventorySetupModule } from './modules/inventory/inventory-setup/inventory-setup.module';
 import { JournalModule } from './modules/finance/journal/journal.module';
 import { FinancialReportsModule } from './modules/finance/financial-reports/financial-reports.module';
 import { BatchModule } from './modules/production/batch/batch.module';
@@ -114,6 +117,8 @@ import { SystemController } from './system/system.controller';
     ItemCategoryModule,
     ItemTypeModule,
     ItemModule,
+    NoSeriesModule,
+    ItemTemplateModule,
     ItemAttributeModule,
     SupplierModule,
     CustomerModule,
@@ -131,6 +136,7 @@ import { SystemController } from './system/system.controller';
     GoodsIssueModule,
     StockTransferModule,
     StockAdjustmentModule,
+    InventorySetupModule,
     JournalModule,
     FinancialReportsModule,
     BatchModule,

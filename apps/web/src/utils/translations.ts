@@ -1234,6 +1234,7 @@ export const translations = {
     navPacks: "Packs & Traceability",
     navParameters: "Parameters",
     navQcParameters: "QC Parameters",
+    navInventorySetup: "Inventory Setup",
     financeCosting: "Finance & Costing",
     approvals: "Approvals",
 
@@ -4572,6 +4573,7 @@ export const translations = {
     navPacks: "पैक व ट्रेसेबिलिटी",
     navParameters: "पैरामीटर",
     navQcParameters: "क्यूसी पैरामीटर",
+    navInventorySetup: "इन्वेंटरी सेटअप",
     financeCosting: "वित्त एवं लागत",
     approvals: "अनुमोदन",
 
@@ -7655,6 +7657,7 @@ export const translations = {
     navPacks: "पॅक व ट्रेसेबिलिटी",
     navParameters: "पॅरामीटर्स",
     navQcParameters: "क्यूसी पॅरामीटर्स",
+    navInventorySetup: "इन्व्हेंटरी सेटअप",
     financeCosting: "वित्त आणि खर्च",
     approvals: "मंजुरी",
 
@@ -10847,6 +10850,7 @@ export const translations = {
     navPacks: "Paquetes y Trazabilidad",
     navParameters: "Parámetros",
     navQcParameters: "Parámetros de Calidad",
+    navInventorySetup: "Configuración de Inventario",
     financeCosting: "Finanzas y Costeo",
     approvals: "Aprobaciones",
 
@@ -14039,6 +14043,7 @@ export const translations = {
     navPacks: "Lots et Traçabilité",
     navParameters: "Paramètres",
     navQcParameters: "Paramètres Qualité",
+    navInventorySetup: "Configuration de Stock",
     financeCosting: "Finance et Coûts",
     approvals: "Approbations",
 
@@ -17231,6 +17236,7 @@ export const translations = {
     navPacks: "প্যাক ও ট্রেসেবিলিটি",
     navParameters: "প্যারামিটার",
     navQcParameters: "কিউসি প্যারামিটার",
+    navInventorySetup: "ইনভেন্টরি সেটআপ",
     financeCosting: "অর্থ ও ব্যয়",
     approvals: "অনুমোদন",
 
@@ -20423,6 +20429,7 @@ export const translations = {
     navPacks: "ప్యాక్‌లు & ట్రేసబిలిటీ",
     navParameters: "పారామితులు",
     navQcParameters: "క్యూసీ పారామితులు",
+    navInventorySetup: "ఇన్వెంటరీ సెటప్",
     financeCosting: "ఆర్థిక & వ్యయ నిర్ధారణ",
     approvals: "ఆమోదాలు",
 
@@ -23615,6 +23622,7 @@ export const translations = {
     navPacks: "பேக்குகள் & கண்காணிப்பு",
     navParameters: "அளவுருக்கள்",
     navQcParameters: "தரக் கட்டுப்பாட்டு அளவுருக்கள்",
+    navInventorySetup: "சரக்கு அமைவு",
     financeCosting: "நிதி & செலவு",
     approvals: "ஒப்புதல்கள்",
 

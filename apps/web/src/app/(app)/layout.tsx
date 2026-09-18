@@ -154,13 +154,13 @@ export default function ConsoleLayout({ children, modal }: { children: React.Rea
         }
       }
       const [langList, currList, tzList, countryList, nobList] = await Promise.all([
-        api.get("/language").catch(() => []),
-        api.get("/currency").catch(() => []),
-        api.get("/timezone").catch(() => []),
+        api.get("/language").then((r: any) => r?.data ?? r).catch(() => []),
+        api.get("/currency").then((r: any) => r?.data ?? r).catch(() => []),
+        api.get("/timezone").then((r: any) => r?.data ?? r).catch(() => []),
         // /country now answers with the shared list envelope, like every
         // other master; take the rows out of it.
         api.get("/country").then((r: any) => r?.data ?? r).catch(() => []),
-        api.get("/setup/wizard/nobs").catch(() => []),
+        api.get("/setup/wizard/nobs").then((r: any) => r?.data ?? r).catch(() => []),
       ]);
       setLanguages(langList);
       setCurrencies(currList);
@@ -318,13 +318,18 @@ export default function ConsoleLayout({ children, modal }: { children: React.Rea
       // are not the same kind of thing as the three area configuration screens
       // that operational scope collects there.
       { label: t("operationalAreas"), href: "/operational-areas", icon: Layers },
-      // Company scope has exactly one company and this route lands on its
-      // settings page, not a list — "Companies" was the tenant-scope label
-      // leaking into a scope where it describes the wrong thing.
-      { label: t("companySettings"), href: "/company/settings", icon: Building2 },
       { label: t("teamManagement"),  href: "/users",          icon: Users },
       { label: t("rolePermissions"), href: "/roles",          icon: ShieldAlert },
       { label: t("notifications"),   href: "/notifications",  icon: Bell, activePrefix: "/notifications" },
+      {
+        label: t("settings"),
+        href: "/company/settings",
+        icon: Settings,
+        children: [
+          { label: t("companySettings"), href: "/company/settings" },
+          { label: t("navInventorySetup"), href: "/settings/inventory-setup" },
+        ],
+      },
     ];
   } else {
     /**

@@ -1,4 +1,4 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsInt, Min, Max, MaxLength, IsNumber, IsArray, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 import { MasterListQueryDto } from '../../../../common/master-list-query';
@@ -179,14 +179,19 @@ export class CreateItemDto {
   item_image_url?: string;
 
   @ApiProperty({ description: 'GL account this item posts inventory value to', required: false })
-  @IsUUID()
+  @IsString()
   @IsOptional()
   inventory_gl_account?: string;
 
   @ApiProperty({ description: 'GL account this item posts cost of goods sold to', required: false })
-  @IsUUID()
+  @IsString()
   @IsOptional()
   cogs_gl_account?: string;
+
+  @ApiProperty({ description: 'Item template UUID link', required: false })
+  @IsString()
+  @IsOptional()
+  item_template_id?: string;
 
   @ApiProperty({ description: 'Blocked items stay visible/historical but cannot be transacted', default: false, required: false })
   @IsBoolean()
@@ -195,6 +200,7 @@ export class CreateItemDto {
 
   @ApiProperty({ description: 'Flexible custom config configurations in JSON format', required: false })
   @IsOptional()
+  @IsString()
   extension_config?: any;
 
   @ApiProperty({ description: 'Item attribute values map', type: [ItemAttributeValueInput], required: false })
@@ -203,6 +209,18 @@ export class CreateItemDto {
   @ValidateNested({ each: true })
   @Type(() => ItemAttributeValueInput)
   attributes?: ItemAttributeValueInput[];
+}
+
+export class CreateItemFromTemplateDto {
+  @ApiProperty({ description: 'Item Template UUID' })
+  @IsNotEmpty()
+  @IsString()
+  template_id: string;
+
+  @ApiPropertyOptional({ description: 'Company UUID' })
+  @IsOptional()
+  @IsString()
+  company_id?: string;
 }
 
 export class UpdateItemDto {
@@ -361,14 +379,19 @@ export class UpdateItemDto {
   item_image_url?: string;
 
   @ApiProperty({ description: 'GL account this item posts inventory value to', required: false })
-  @IsUUID()
+  @IsString()
   @IsOptional()
   inventory_gl_account?: string;
 
   @ApiProperty({ description: 'GL account this item posts cost of goods sold to', required: false })
-  @IsUUID()
+  @IsString()
   @IsOptional()
   cogs_gl_account?: string;
+
+  @ApiProperty({ description: 'Item template UUID link', required: false })
+  @IsString()
+  @IsOptional()
+  item_template_id?: string;
 
   @ApiProperty({ description: 'Blocked items stay visible/historical but cannot be transacted', required: false })
   @IsBoolean()

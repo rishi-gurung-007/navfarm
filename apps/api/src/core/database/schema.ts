@@ -17,6 +17,7 @@ import {
   primaryKey,
   foreignKey,
   uniqueIndex,
+  index,
   AnyMySqlColumn,
 } from 'drizzle-orm/mysql-core';
 import { relations, sql } from 'drizzle-orm';
@@ -610,6 +611,69 @@ export const itemTypeMaster = mysqlTable('item_type_master', {
   ),
 }));
 
+export const noSeries = mysqlTable('no_series', {
+  id: varchar('id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  tenant_id: varchar('tenant_id', { length: 36 }),
+  company_id: varchar('company_id', { length: 36 }),
+  code: varchar('code', { length: 20 }).notNull(),
+  description: varchar('description', { length: 100 }),
+  document_type: varchar('document_type', { length: 50 }),
+  no_series_code: varchar('no_series_code', { length: 20 }),
+  seq_length: int('seq_length').default(4).notNull(),
+  increment_by: int('increment_by').default(1).notNull(),
+  is_default: boolean('is_default').default(true).notNull(),
+  manual_nos: boolean('manual_nos').default(false).notNull(),
+  last_no_used: varchar('last_no_used', { length: 20 }),
+  blocked: boolean('blocked').default(false).notNull(),
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+  updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().notNull(),
+}, (table) => ({
+  uqCode: uniqueIndex('uq_no_series_code').on(table.code),
+  idxCode: index('idx_no_series_code').on(table.code),
+  idxDocumentType: index('idx_no_series_document_type').on(table.tenant_id, table.document_type),
+}));
+
+export const inventorySetup = mysqlTable('inventory_setup', {
+  id: varchar('id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+  company_id: varchar('company_id', { length: 36 }).notNull(),
+  numbering_config: json('numbering_config'),
+  general_config: json('general_config'),
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+  updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  uqCompany: uniqueIndex('uq_inventory_setup_company').on(table.tenant_id, table.company_id),
+  idxCompany: index('idx_inventory_setup_company').on(table.company_id),
+}));
+
+export const itemTemplate = mysqlTable('item_template', {
+  id: varchar('id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  tenant_id: varchar('tenant_id', { length: 36 }),
+  company_id: varchar('company_id', { length: 36 }),
+  template_code: varchar('template_code', { length: 20 }).notNull(),
+  template_description: varchar('template_description', { length: 100 }),
+  no_series_id: varchar('no_series_id', { length: 36 }).notNull().references(() => noSeries.id, { onDelete: 'restrict' }),
+  item_type: varchar('item_type', { length: 30 }),
+  category: varchar('category', { length: 50 }),
+  sub_category: varchar('sub_category', { length: 50 }),
+  valuation_method: varchar('valuation_method', { length: 20 }),
+  item_tracking: varchar('item_tracking', { length: 10 }),
+  item_tracking_no_series_id: varchar('item_tracking_no_series_id', { length: 36 }).references(() => noSeries.id, { onDelete: 'restrict' }),
+  inventory_type: varchar('inventory_type', { length: 20 }),
+  qr_code_enabled: boolean('qr_code_enabled').default(false).notNull(),
+  inventory_gl_account: varchar('inventory_gl_account', { length: 20 }),
+  cogs_gl_account: varchar('cogs_gl_account', { length: 20 }),
+  is_active: boolean('is_active').default(true).notNull(),
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+  updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().notNull(),
+}, (table) => ({
+  uqTemplateCode: uniqueIndex('uq_item_template_code').on(table.template_code),
+  idxTemplateCode: index('idx_item_template_code').on(table.template_code),
+  idxNoSeriesId: index('idx_item_template_no_series_id').on(table.no_series_id),
+  idxIsActive: index('idx_item_template_is_active').on(table.is_active),
+  idxItemType: index('idx_item_template_item_type').on(table.item_type),
+}));
+
 export const itemMaster = mysqlTable('item_master', {
   item_id: varchar('item_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
   tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
@@ -633,13 +697,8 @@ export const itemMaster = mysqlTable('item_master', {
   is_lot_tracked: boolean('is_lot_tracked').default(false).notNull(),
   is_serial_tracked: boolean('is_serial_tracked').default(false).notNull(),
   // Lot/serial number series for this item's tracking numbers — separate from item_code's
-  // own 'ITEM' series (item.service.ts).
-  // The series lot/serial numbers are drawn from, not a number itself: an item
-  // has many lots, so no single lot number is a property of the item. The
-  // numbers are recorded per transaction (goods_receipt_line.lot_no,
-  // inventory_ledger.lot_no). The foreign key is back with it — it was dropped
-  // in 0075 when this briefly held typed text. Rishi's call, 2026-09-08.
-  tracking_series_id: varchar('tracking_series_id', { length: 36 }).references(() => noSeriesMaster.series_id, { onDelete: 'restrict' }),
+  // own 'ITEM' series (item.service.ts). Can reference noSeriesMaster.series_id or modern noSeries.id.
+  tracking_series_id: varchar('tracking_series_id', { length: 36 }),
   is_biological_asset: boolean('is_biological_asset').default(false).notNull(),
   is_biological_costing_method: varchar('is_biological_costing_method', { length: 30 }),
   is_inventoriable: boolean('is_inventoriable').default(true).notNull(),
@@ -662,6 +721,7 @@ export const itemMaster = mysqlTable('item_master', {
   inventory_gl_account: varchar('inventory_gl_account', { length: 36 }),
   cogs_gl_account: varchar('cogs_gl_account', { length: 36 }),
   is_blocked: boolean('is_blocked').default(false).notNull(),
+  item_template_id: varchar('item_template_id', { length: 36 }).references(() => itemTemplate.id, { onDelete: 'set null' }),
   is_active: boolean('is_active').default(true).notNull(),
   status: varchar('status', { length: 20 }).default('ACTIVE').notNull(),
   created_by: varchar('created_by', { length: 36 }),
@@ -670,7 +730,10 @@ export const itemMaster = mysqlTable('item_master', {
   updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().notNull(),
   deleted_at: timestamp('deleted_at', { mode: 'string' }),
   extension_config: json('extension_config')
-}, (table) => [ uniqueIndex('uq_item_master_scope_code').on(table.tenant_id, sql`(coalesce(${table.company_id}, ''))`, table.item_code) ]);
+}, (table) => [
+  uniqueIndex('uq_item_master_scope_code').on(table.tenant_id, sql`(coalesce(${table.company_id}, ''))`, table.item_code),
+  index('idx_item_master_item_template_id').on(table.item_template_id),
+]);
 
 export const uomConversionMaster = mysqlTable('uom_conversion_master', {
   conversion_id: varchar('conversion_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
@@ -1059,7 +1122,27 @@ export const itemMasterRelations = relations(itemMaster, ({ one, many }) => ({
     fields: [itemMaster.category_id],
     references: [itemCategoryMaster.category_id]
   }),
+  template: one(itemTemplate, {
+    fields: [itemMaster.item_template_id],
+    references: [itemTemplate.id]
+  }),
   attributes: many(itemAttributeValues)
+}));
+
+export const noSeriesRelations = relations(noSeries, ({ many }) => ({
+  templates: many(itemTemplate),
+}));
+
+export const itemTemplateRelations = relations(itemTemplate, ({ one, many }) => ({
+  noSeries: one(noSeries, {
+    fields: [itemTemplate.no_series_id],
+    references: [noSeries.id],
+  }),
+  itemTrackingNoSeries: one(noSeries, {
+    fields: [itemTemplate.item_tracking_no_series_id],
+    references: [noSeries.id],
+  }),
+  items: many(itemMaster),
 }));
 
 export const itemAttributeMasterRelations = relations(itemAttributeMaster, ({ many }) => ({

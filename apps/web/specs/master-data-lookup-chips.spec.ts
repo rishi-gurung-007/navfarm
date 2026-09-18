@@ -21,6 +21,7 @@ jest.mock("@/hooks/useAuth", () => ({
   getActiveWorkspaceScope: () => "TENANT",
   getActiveOperationalAreaId: () => null,
   getStoredUser: () => ({ userType: "TENANT_ADMIN" }),
+  hasPermission: () => true,
 }));
 
 jest.mock("@/hooks/useMediaQuery", () => ({ useIsDesktop: () => true }));

@@ -4,6 +4,7 @@ import { ClsService } from 'nestjs-cls';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { NobLobResolutionService } from '../../core/operational-area/nob-lob-resolution.service';
+import { NoSeriesService } from '../no-series/no-series.service';
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 
 describe('ItemService', () => {
@@ -67,6 +68,12 @@ describe('ItemService', () => {
           useValue: {
             generateNext: mockGenerateNext,
             resolveSeriesFor: jest.fn().mockResolvedValue('ITEM'),
+          },
+        },
+        {
+          provide: NoSeriesService,
+          useValue: {
+            generateNextNumber: jest.fn().mockResolvedValue({ next_number: 'FEED-0001', series: { manual_nos: false } }),
           },
         },
         { provide: NobLobResolutionService, useValue: nobLobResolution },
@@ -329,20 +336,25 @@ describe('ItemService', () => {
     // the sequence is stable between loads, and runs a second query for the
     // total so the pager knows how many pages there really are.
     it('still lists rows whose stored item_type is unknown', async () => {
+      const mockQueryBuilder: any = {
+        leftJoin: jest.fn().mockImplementation(() => mockQueryBuilder),
+        where: jest.fn().mockReturnValue({
+          orderBy: jest.fn().mockReturnValue({
+            limit: jest.fn().mockReturnValue({ offset: jest.fn().mockResolvedValue([legacyItem]) }),
+          }),
+        }),
+      };
+      const mockCountBuilder: any = {
+        leftJoin: jest.fn().mockImplementation(() => mockCountBuilder),
+        where: jest.fn().mockResolvedValue([{ total: 1 }]),
+      };
+
       mockDbSelect
         .mockReturnValueOnce({
-          from: jest.fn().mockReturnValue({
-            leftJoin: jest.fn().mockReturnValue({
-              where: jest.fn().mockReturnValue({
-                orderBy: jest.fn().mockReturnValue({
-                  limit: jest.fn().mockReturnValue({ offset: jest.fn().mockResolvedValue([legacyItem]) }),
-                }),
-              }),
-            }),
-          }),
+          from: jest.fn().mockReturnValue(mockQueryBuilder),
         })
         .mockReturnValueOnce({
-          from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ total: 1 }]) }),
+          from: jest.fn().mockReturnValue(mockCountBuilder),
         });
 
       await expect(service.findAll({}, 'tenant-123')).resolves.toEqual({
@@ -401,4 +413,209 @@ describe('ItemService', () => {
       company_id: 'comp-1', series_code: 'ITEM', current_seq: 9,
     }));
   });
+
+  describe('createFromTemplate', () => {
+    it('should generate draft item with next number from linked template and series', async () => {
+      const templateRow = {
+        id: 'tmpl-feed-1',
+        template_code: 'TMPL-FEED',
+        template_description: 'Standard Feed Template',
+        no_series_id: 'series-feed-1',
+        item_type: 'FEED',
+        category: 'FEED_CAT',
+        sub_category: 'BROILER',
+        valuation_method: 'FIFO',
+        item_tracking: 'NONE',
+        inventory_type: 'INVENTORY',
+        qr_code_enabled: true,
+        inventory_gl_account: 'GL-1001',
+        cogs_gl_account: 'GL-5001',
+        is_active: true,
+      };
+
+      // 1. Template select
+      mockDbSelect.mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockReturnValue({
+            limit: jest.fn().mockResolvedValue([templateRow]),
+          }),
+        }),
+      });
+
+      // 2. Check existing item code uniqueness in item_master
+      mockDbSelect.mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockReturnValue({
+            limit: jest.fn().mockResolvedValue([]),
+          }),
+        }),
+      });
+
+      // 3. Insert draft item
+      mockDbInsert.mockReturnValueOnce({
+        values: jest.fn().mockResolvedValue({}),
+      });
+
+      const result = await service.createFromTemplate(
+        { template_id: 'tmpl-feed-1' },
+        'tenant-123',
+        'comp-1'
+      );
+
+      expect(result.status).toBe('DRAFT');
+      expect(result.item_no).toBe('FEED-0001');
+      expect(result.template_code).toBe('TMPL-FEED');
+      expect(result.valuation_method).toBe('FIFO');
+    });
+
+    it('should reject when template is not found', async () => {
+      mockDbSelect.mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockReturnValue({
+            limit: jest.fn().mockResolvedValue([]),
+          }),
+        }),
+      });
+
+      await expect(
+        service.createFromTemplate({ template_id: 'non-existent' }, 'tenant-123', 'comp-1')
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('should reject when template is inactive', async () => {
+      mockDbSelect.mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockReturnValue({
+            limit: jest.fn().mockResolvedValue([{ id: 'tmpl-1', is_active: false }]),
+          }),
+        }),
+      });
+
+      await expect(
+        service.createFromTemplate({ template_id: 'tmpl-1' }, 'tenant-123', 'comp-1')
+      ).rejects.toThrow(new BadRequestException('Item Template is inactive.'));
+    });
+  });
+
+  describe('update draft validations', () => {
+    it('should require item description when updating a draft item', async () => {
+      const draftItem = {
+        item_id: 'item-draft-1',
+        item_code: 'FEED-0001',
+        item_name: '',
+        uom_primary: '',
+        item_type: 'FEED',
+        status: 'DRAFT',
+        company_id: 'comp-1',
+        is_active: false,
+      };
+
+      // findOne
+      mockDbSelect
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            where: jest.fn().mockReturnValue({
+              limit: jest.fn().mockResolvedValue([draftItem]),
+            }),
+          }),
+        })
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            leftJoin: jest.fn().mockReturnValue({
+              where: jest.fn().mockResolvedValue([]),
+            }),
+          }),
+        });
+
+      await expect(
+        service.update('item-draft-1', { item_name: '' }, 'tenant-123')
+      ).rejects.toThrow(new BadRequestException('Item Description is mandatory.'));
+    });
+
+    it('should require unit of measure when description is provided', async () => {
+      const draftItem = {
+        item_id: 'item-draft-1',
+        item_code: 'FEED-0001',
+        item_name: '',
+        uom_primary: '',
+        item_type: 'FEED',
+        status: 'DRAFT',
+        company_id: 'comp-1',
+        is_active: false,
+      };
+
+      // findOne
+      mockDbSelect
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            where: jest.fn().mockReturnValue({
+              limit: jest.fn().mockResolvedValue([draftItem]),
+            }),
+          }),
+        })
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            leftJoin: jest.fn().mockReturnValue({
+              where: jest.fn().mockResolvedValue([]),
+            }),
+          }),
+        });
+
+      await expect(
+        service.update('item-draft-1', { item_name: 'Starter Feed', uom_primary: '' }, 'tenant-123')
+      ).rejects.toThrow(new BadRequestException('Unit of Measure is mandatory.'));
+    });
+
+    it('should validate inventory GL account exists in COA', async () => {
+      const draftItem = {
+        item_id: 'item-draft-1',
+        item_code: 'FEED-0001',
+        item_name: '',
+        uom_primary: '',
+        item_type: 'FEED',
+        status: 'DRAFT',
+        company_id: 'comp-1',
+        is_active: false,
+      };
+
+      // findOne
+      mockDbSelect
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            where: jest.fn().mockReturnValue({
+              limit: jest.fn().mockResolvedValue([draftItem]),
+            }),
+          }),
+        })
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            leftJoin: jest.fn().mockReturnValue({
+              where: jest.fn().mockResolvedValue([]),
+            }),
+          }),
+        });
+
+      // assertGlAccountExists -> not found
+      mockDbSelect.mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockReturnValue({
+            limit: jest.fn().mockResolvedValue([]),
+          }),
+        }),
+      });
+
+      await expect(
+        service.update(
+          'item-draft-1',
+          {
+            item_name: 'Starter Feed',
+            uom_primary: 'KG',
+            inventory_gl_account: 'INVALID-GL',
+          },
+          'tenant-123'
+        )
+      ).rejects.toThrow(new BadRequestException('Inventory GL Account not found in Chart of Accounts.'));
+    });
+  });
 });
+

@@ -22,8 +22,10 @@ export function useCompaniesPageData() {
         api.get(`/company/tenant/${tid}`),
         api.get("/currency"),
       ]);
-      setCurrencies(currList);
-      setCompanies(companiesList);
+      const rawCurrencies = (currList as any)?.data ?? currList;
+      setCurrencies(Array.isArray(rawCurrencies) ? rawCurrencies : []);
+      const rawCompanies = (companiesList as any)?.data ?? companiesList;
+      setCompanies(Array.isArray(rawCompanies) ? rawCompanies : []);
     } catch (e: any) {
       setError(e?.message || "Failed to load companies.");
     } finally {

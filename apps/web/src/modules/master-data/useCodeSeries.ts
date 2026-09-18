@@ -72,9 +72,8 @@ export function useCodeSeries(key: string, form: Record<string, unknown>, enable
   const scopeKey = `${getActiveWorkspaceScope()}:${getActiveCompanyId()}:${getActiveOperationalAreaId()}`;
   const requestKey = `${scopeKey}:${key}:${type}:${parentId}:${lobId}:${settledRecord}:${revision}`;
   const [result, setResult] = useState<{ key: string; settings?: Settings; error?: string }>();
-  const [selection, setSelection] = useState<{ key: string; mode: "serial" | "manual" }>();
   useEffect(() => {
-    if (!enabled) { setSelection(undefined); setResult(undefined); return; }
+    if (!enabled) { setResult(undefined); return; }
     if (!definition || !canGenerate) return;
     let cancelled = false;
     const params = new URLSearchParams({ master: definition[0] });
@@ -83,28 +82,65 @@ export function useCodeSeries(key: string, form: Record<string, unknown>, enable
     if (lobId) params.set("lobId", lobId);
     // 4000 is the DTO's cap; past it the preview asks without the record rather
     // than being rejected, and falls back to the prefix-only shape.
-    if (settledRecord.length > 2 && settledRecord.length <= 4000) params.set("record", settledRecord);
-    api.get(`/number-series/preview?${params}`).then((res) => {
-      const data = res?.data || res;
-      if (!cancelled) setResult({ key: requestKey, settings: { generated: data.generated === true, allowManual: data.allowManual !== false, preview: data.preview } });
-    }).catch((err: Error) => { if (!cancelled) setResult({ key: requestKey, error: err.message || "Could not check code numbering." }); });
+    const masterType = definition[0];
+    const compId = getActiveCompanyId();
+    const previewUrl = `/no-series/preview-by-master?masterType=${masterType}${compId ? `&companyId=${compId}` : ''}`;
+    api.get(previewUrl)
+      .then((modernRes: any) => {
+        const modernData = modernRes?.data || modernRes;
+        if (modernData?.generated) {
+          if (!cancelled) {
+            setResult({
+              key: requestKey,
+              settings: {
+                generated: true,
+                allowManual: modernData.allowManual !== false,
+                preview: modernData.preview || modernData.next_number,
+              },
+            });
+          }
+          return;
+        }
+        return api.get(`/number-series/preview?${params}`).then((res) => {
+          const data = res?.data || res;
+          if (!cancelled) setResult({ key: requestKey, settings: { generated: data.generated === true, allowManual: data.allowManual !== false, preview: data.preview } });
+        });
+      })
+      .catch(() => {
+        return api.get(`/number-series/preview?${params}`).then((res) => {
+          const data = res?.data || res;
+          if (!cancelled) setResult({ key: requestKey, settings: { generated: data.generated === true, allowManual: data.allowManual !== false, preview: data.preview } });
+        }).catch((err: Error) => { if (!cancelled) setResult({ key: requestKey, error: err.message || "Could not check code numbering." }); });
+      });
     return () => { cancelled = true; };
   }, [key, type, parentId, lobId, settledRecord, scopeKey, enabled, canGenerate, requestKey]);
   const current = result?.key === requestKey ? result : undefined;
-  const modeKey = `${scopeKey}:${key}`;
-  const mode = selection?.key === modeKey ? selection.mode : "serial";
-  // Locations use type-specific series. Choosing an entry mode must not wait
-  // for a type (or its preview request); the resolved series policy still wins.
+  // Locations use type-specific series.
   const awaitingLocationType = key === "location" && !type;
   const managedCode = awaitingLocationType || current?.settings?.generated;
+  /**
+   * allowManual reflects the Number Series's own `manual_nos` flag.
+   * When true the user types the code themselves; when false it is auto-generated
+   * and read-only. There is no user-facing dropdown — this is purely driven by
+   * how the Number Series is configured.
+   */
   const allowManual = awaitingLocationType || current?.settings?.allowManual;
-  const serial = enabled && managedCode && !(allowManual && mode === "manual");
+  // serial = true means show a preview and lock the field; false means the field
+  // is editable because manual_nos is set on the linked series.
+  const serial = enabled && managedCode && !allowManual;
   return {
-    canChoose: enabled && canGenerate && managedCode && allowManual,
-    mode,
-    chooseMode: (mode: "serial" | "manual") => setSelection({ key: modeKey, mode }),
     refresh: () => setRevision((value) => value + 1),
-    value: (fieldKey: string, value: unknown) => serial && fieldKey === definition?.[1] ? current?.settings?.preview || "" : value,
+    value: (fieldKey: string, value: unknown) => {
+      if (!managedCode || fieldKey !== definition?.[1]) return value;
+      // Auto-generated (manual_nos = false): always show the live preview
+      if (serial) return current?.settings?.preview || "";
+      // Manual (manual_nos = true): pre-fill with preview when the field is blank
+      // so the user sees the next number as a suggestion. Once they type their
+      // own code, their value takes over and the preview no longer replaces it.
+      const raw = typeof value === "string" ? value : "";
+      if (!raw) return current?.settings?.preview || "";
+      return value;
+    },
     loading: canGenerate && enabled && !current,
     error: canGenerate && enabled ? current?.error : undefined,
     /** The config field this hook drives, so a caller can tell whether a failed
@@ -112,10 +148,12 @@ export function useCodeSeries(key: string, form: Record<string, unknown>, enable
     codeKey: definition?.[1],
     field: (field: MasterDataField): MasterDataField => {
       if (!enabled || !canGenerate || field.key !== definition?.[1] || !managedCode) return field;
-      const manual = allowManual && mode === "manual";
+      // allowManual (manual_nos = true on the series) → editable, pre-filled with preview
+      // !allowManual (manual_nos = false)             → read-only, shows live preview
+      const manual = !!allowManual;
       return { ...field, required: manual, readOnly: !manual,
-        placeholder: manual ? "Enter a unique code" : awaitingLocationType ? "Select Location Type to preview code" : "Calculating code…",
-        helpText: manual ? "Enter a unique manual code for this master." : awaitingLocationType ? "The selected Location Type determines the numbering series." : "Live preview — allocated when saved. Another user's save may change the final number." };
+        placeholder: manual ? "Enter a unique code or keep the suggestion" : awaitingLocationType ? "Select Location Type to preview code" : "Calculating code…",
+        helpText: manual ? "Pre-filled with the next series number. Edit if you need a different code." : awaitingLocationType ? "The selected Location Type determines the numbering series." : "Live preview — allocated when saved. Another user's save may change the final number." };
     },
   };
 }

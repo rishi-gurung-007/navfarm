@@ -173,11 +173,13 @@ export interface MasterDataField {
   /** Excluded from the list table */
   hideInTable?: boolean;
   /** Column width hint for number inputs supporting decimals */
-  step?: string;
+  step?: number | string;
   /** Bounds for type "number". Mirror whatever the DTO enforces, so the form
    *  refuses a value the API would reject rather than round-tripping a 400. */
   min?: number;
   max?: number;
+  /** Maximum length for text inputs */
+  maxLength?: number;
   /**
    * Keys this switch clears when it is turned off, and the value to clear them
    * to. A form-only Yes/No that gates real columns: "Use a prefix" off must

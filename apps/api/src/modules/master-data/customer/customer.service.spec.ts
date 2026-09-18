@@ -94,6 +94,13 @@ describe('CustomerService', () => {
         .mockReturnValueOnce({
           from: jest.fn().mockReturnValue({
             where: jest.fn().mockReturnValue({
+              limit: jest.fn().mockResolvedValue([]),
+            }),
+          }),
+        })
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            where: jest.fn().mockReturnValue({
               limit: jest.fn().mockResolvedValue([{ customer_code: 'CUS-001', customer_name: 'Customer 1' }]),
             }),
           }),

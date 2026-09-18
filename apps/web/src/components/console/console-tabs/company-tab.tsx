@@ -50,7 +50,7 @@ export const SETTINGS_SECTIONS = [
 
 export default function CompanyTab({
   activeCompany,
-  currencies,
+  currencies: rawCurrencies = [],
   tenantId,
   onRefreshCompany,
   companies = [],
@@ -59,6 +59,11 @@ export default function CompanyTab({
   skipDirectory = false,
   section,
 }: CompanyTabProps & { section?: string }) {
+  const currencies: any[] = Array.isArray(rawCurrencies)
+    ? rawCurrencies
+    : Array.isArray((rawCurrencies as any)?.data)
+    ? (rawCurrencies as any).data
+    : [];
   const { t } = useLanguage();
   const isTenantAdmin = currentUser?.userType === "TENANT_ADMIN";
   const isCompanyAdmin = currentUser?.userType === "COMPANY_ADMIN";
@@ -199,8 +204,14 @@ export default function CompanyTab({
         api.get("/language"),
         api.get("/setup/wizard/nobs"),
       ]);
-      if (langsResult.status === "fulfilled") setLanguages(langsResult.value || []);
-      if (nobsResult.status  === "fulfilled") setNobs(nobsResult.value  || []);
+      if (langsResult.status === "fulfilled") {
+        const val = (langsResult.value as any)?.data ?? langsResult.value;
+        setLanguages(Array.isArray(val) ? val : []);
+      }
+      if (nobsResult.status === "fulfilled") {
+        const val = (nobsResult.value as any)?.data ?? nobsResult.value;
+        setNobs(Array.isArray(val) ? val : []);
+      }
     };
     fetchCatalogs();
   }, []);

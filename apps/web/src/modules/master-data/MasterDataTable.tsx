@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Plus, Pencil, Trash2, Search, Loader2, Inbox, Eye, SlidersHorizontal, ArrowUpDown, X } from "lucide-react";
+import { Plus, Pencil, Trash2, Search, Loader2, Inbox, Eye, SlidersHorizontal, ArrowUpDown, X, FileText } from "lucide-react";
 import { api } from "@/services/api-client";
 import { Dialog } from "@/components/ui/dialog";
 import { Field } from "@/components/ui/field";
@@ -9,7 +9,7 @@ import { useIsDesktop } from "@/hooks/useMediaQuery";
 import { InlineAlert } from "@/components/ui/alert";
 import { Pagination } from "@/components/ui/pagination";
 import { TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
-import { getActiveCompanyId, getActiveWorkspaceScope, getStoredUser } from "@/hooks/useAuth";
+import { getActiveCompanyId, getActiveWorkspaceScope, getStoredUser, hasPermission } from "@/hooks/useAuth";
 import { useLanguage } from "@/hooks/useLanguage";
 import type { MasterDataConfig, MasterDataField } from "./types";
 import { CollapsibleCard } from "./CollapsibleCard";
@@ -22,6 +22,7 @@ import { MasterRecordView } from "./MasterRecordView";
 import { BcOwnershipNotice } from "./BcOwnershipNotice";
 import { EntityLookupDialog, EntityLookupField } from "./EntityLookupField";
 import { SearchableEntitySelect } from "./SearchableEntitySelect";
+import { ItemTemplateSelectModal } from "./ItemTemplateSelectModal";
 
 const PAGE_SIZE = 25;
 
@@ -389,7 +390,22 @@ export function MasterDataTable({
   const [colFilters, setColFilters] = useState<Record<string, string>>({});
   const [filterDraft, setFilterDraft] = useState<Record<string, string>>({});
   const [filterOpen, setFilterOpen] = useState(false);
+  const [templateModalOpen, setTemplateModalOpen] = useState(false);
+  const [isManualNoAllowed, setIsManualNoAllowed] = useState(false);
+  /**
+   * The set of form-field keys that were filled by the last template selection.
+   * These fields are locked (disabled) so the user cannot accidentally override
+   * the template's intent. Fields the template left blank are NOT in this set
+   * and remain freely editable.
+   * Cleared when the modal closes or when a normal (non-template) create is opened.
+   */
+  const [templateLockedFields, setTemplateLockedFields] = useState<Set<string>>(new Set());
   const isDesktop = useIsDesktop();
+
+  const currentUser = getStoredUser();
+  const canCreateItem = typeof hasPermission === "function"
+    ? hasPermission(currentUser, "MASTER_DATA", "ITEM", "can_create")
+    : ["TENANT_ADMIN", "COMPANY_ADMIN"].includes(currentUser?.userType || "");
 
   const workspaceScope = getActiveWorkspaceScope();
   const companyId = workspaceScope === "TENANT" ? null : getActiveCompanyId();
@@ -399,7 +415,7 @@ export function MasterDataTable({
   // locally editable and the notice states the blueprint's position rather than
   // the screen pretending a BC connection exists. Rishi's call, 2026-09-06.
   const bcOwned = config.owner === "BC";
-  const administrationRestricted = !!config.businessAdminOnly && !["TENANT_ADMIN", "COMPANY_ADMIN"].includes(getStoredUser()?.userType || "");
+  const administrationRestricted = !!config.businessAdminOnly && !["TENANT_ADMIN", "COMPANY_ADMIN"].includes(currentUser?.userType || "");
   const readOnly = administrationRestricted;
   const numbering = useCodeSeries(config.key, form, modalOpen && !editing);
   // A failed code preview used to disable Create outright. For a master whose
@@ -418,7 +434,36 @@ export function MasterDataTable({
     if (state === "missing") return { ...f, readOnly: false, required: true, helpText: f.derivedFrom.missingHelpText || f.helpText };
     return { ...f, readOnly: true, helpText: f.helpText };
   };
-  const formFields = config.fields.map(numbering.field).map(applyDerived).filter((f) => !f.hideInForm && !(workspaceScope === "OPERATIONAL" && ["nob_id", "lob_id"].includes(f.key)));
+  const [inventorySetupNumbering, setInventorySetupNumbering] = useState<Record<string, { enabled?: boolean }> | null>(null);
+
+  useEffect(() => {
+    if ((config.key === "number-series" || config.key === "no-series") && (modalOpen || !inventorySetupNumbering)) {
+      const compId = getActiveCompanyId();
+      api.get(`/inventory-setup${compId ? `?companyId=${compId}` : ""}`)
+        .then((res: any) => {
+          const data = res?.data ?? res;
+          if (data?.numbering_config) {
+            setInventorySetupNumbering(data.numbering_config);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [config.key, companyId, modalOpen, inventorySetupNumbering]);
+
+  const formFields = config.fields
+    .map(numbering.field)
+    .map(applyDerived)
+    .map((f) => {
+      if ((config.key === "number-series" || config.key === "no-series") && f.key === "document_type" && inventorySetupNumbering) {
+        const filteredOptions = (f.options || []).filter((opt) => {
+          const cfg = inventorySetupNumbering[opt.value];
+          return cfg !== undefined ? cfg.enabled === true : true;
+        });
+        return { ...f, options: filteredOptions };
+      }
+      return f;
+    })
+    .filter((f) => !f.hideInForm && !(workspaceScope === "OPERATIONAL" && ["nob_id", "lob_id"].includes(f.key)));
   // A master can be exhausted: Number Series takes exactly one row per master,
   // so once every master has one there is nothing left to add and the button
   // should go rather than open a form whose only required picker is empty.
@@ -549,7 +594,16 @@ export function MasterDataTable({
     const field = config.fields.find((f) => f.key === key);
     if (!field) return undefined;
     if (field.type === "boolean") return [{ value: "true", label: t("mdYes") }, { value: "false", label: t("mdNo") }];
-    if (field.type === "select") return field.options?.length ? field.options : undefined;
+    if (field.type === "select") {
+      let opts = field.options?.length ? field.options : undefined;
+      if ((config.key === "number-series" || config.key === "no-series") && key === "document_type" && inventorySetupNumbering && opts) {
+        opts = opts.filter((opt) => {
+          const cfg = inventorySetupNumbering[opt.value];
+          return cfg !== undefined ? cfg.enabled === true : true;
+        });
+      }
+      return opts;
+    }
     if (field.type !== "select-entity" || field.dependsOn || !field.entityEndpoint) return undefined;
     const loaded = entityOptions[field.entityEndpoint];
     if (!loaded?.length) return undefined;
@@ -845,8 +899,86 @@ export function MasterDataTable({
   const openCreate = () => {
     if (readOnly) return;
     setEditing(null);
+    setIsManualNoAllowed(false);
+    setTemplateLockedFields(new Set());
     const initial: Row = {};
     formFields.forEach((f) => { initial[f.key] = f.type === "boolean" ? false : f.type === "string-list" || f.type === "field-list" || f.multiple ? [] : ""; });
+    setForm(initial);
+    setFormError("");
+    setChipDrafts({});
+    setModalOpen(true);
+  };
+
+  const onConfirmTemplate = (generatedItem: any) => {
+    setEditing(generatedItem);
+    const initial: Row = {};
+    formFields.forEach((f) => {
+      initial[f.key] = f.type === "boolean" ? false : f.type === "string-list" || f.type === "field-list" || f.multiple ? [] : "";
+    });
+
+    initial.item_code = generatedItem.item_no || generatedItem.item_code || "";
+    initial.item_type = generatedItem.item_type || "";
+    initial.category_id = generatedItem.category || "";
+    initial.sub_category = generatedItem.sub_category || "";
+    initial.valuation_method = generatedItem.valuation_method || "";
+
+    if (generatedItem.item_tracking === "LOT") {
+      initial.is_tracked = true;
+      initial.tracking_type = "LOT";
+      initial.tracking_series_id = generatedItem.item_tracking_no_series_id || "";
+      initial.is_lot_tracked = true;
+      initial.is_serial_tracked = false;
+    } else if (generatedItem.item_tracking === "SERIAL") {
+      initial.is_tracked = true;
+      initial.tracking_type = "SERIAL";
+      initial.tracking_series_id = generatedItem.item_tracking_no_series_id || "";
+      initial.is_lot_tracked = false;
+      initial.is_serial_tracked = true;
+    } else {
+      initial.is_tracked = false;
+      initial.tracking_type = "LOT";
+      initial.tracking_series_id = "";
+      initial.is_lot_tracked = false;
+      initial.is_serial_tracked = false;
+    }
+
+    initial.is_inventoriable = generatedItem.inventory_type !== "NON_INVENTORY";
+    initial.is_qr_enabled = generatedItem.qr_code_enabled ?? false;
+    initial.inventory_gl_account = generatedItem.inventory_gl_account || "";
+    initial.cogs_gl_account = generatedItem.cogs_gl_account || "";
+    initial.item_template_id = generatedItem.item_template_id || generatedItem.id || "";
+
+    // Fields not provided by the template remain empty
+    initial.item_name = "";
+    initial.uom_primary = "";
+    initial.withdrawal_days = "";
+
+    // Build the locked-field set: any key that received a non-empty, non-false
+    // value from the template is locked so the user cannot override it.
+    // item_code is always locked (auto-generated); all other locks are data-driven.
+    const locked = new Set<string>();
+    // item_code is always locked when coming from template
+    if (initial.item_code) locked.add("item_code");
+    if (initial.item_type) locked.add("item_type");
+    if (initial.category_id) locked.add("category_id");
+    if (initial.sub_category) locked.add("sub_category");
+    if (initial.valuation_method) locked.add("valuation_method");
+    // Tracking: lock the gate switch and its children when tracking is configured
+    if (generatedItem.item_tracking && generatedItem.item_tracking !== "NONE") {
+      locked.add("is_tracked");
+      locked.add("tracking_type");
+      if (initial.tracking_series_id) locked.add("tracking_series_id");
+    }
+    // Inventory type switch
+    locked.add("is_inventoriable");
+    // QR is always supplied by template (true or false)
+    locked.add("is_qr_enabled");
+    // GL accounts — only lock if the template actually set them
+    if (initial.inventory_gl_account) locked.add("inventory_gl_account");
+    if (initial.cogs_gl_account) locked.add("cogs_gl_account");
+
+    setTemplateLockedFields(locked);
+    setIsManualNoAllowed(!!generatedItem.manual_nos);
     setForm(initial);
     setFormError("");
     setChipDrafts({});
@@ -862,6 +994,7 @@ export function MasterDataTable({
   const openEdit = (row: Row) => {
     if (readOnly) return;
     setEditing(row);
+    setIsManualNoAllowed(false);
     const initial: Row = {};
     // MySQL tinyint reaches here as 1 as readily as true, and both mean set.
     const columnIsOn = (key: string) => row[key] === true || row[key] === 1;
@@ -943,6 +1076,7 @@ export function MasterDataTable({
     setSaving(true);
     setFormError("");
     try {
+      const isNumberSeriesForm = config.key === "number-series" || config.key === "no-series";
       for (const f of visibleFields) {
         // filterOnly normally means "not saved, so nothing to check". A control
         // standing in for real columns is the exception: it is not sent under
@@ -952,6 +1086,25 @@ export function MasterDataTable({
         const isEmpty = v === "" || v === undefined || v === null || (Array.isArray(v) && !v.length);
         if (isEmpty && isFieldRequired(f, form)) {
           throw new Error(`"${tLabel(currentLabel(f, form))}" is required.`);
+        }
+        if (isNumberSeriesForm && !isEmpty) {
+          if (f.maxLength && typeof v === "string" && v.length > f.maxLength) {
+            throw new Error(`"${tLabel(currentLabel(f, form))}" cannot exceed ${f.maxLength} characters.`);
+          }
+          if (f.type === "number") {
+            const num = Number(v);
+            if (!isNaN(num)) {
+              if ((f.key === "seq_length" || f.key === "increment_by") && !Number.isInteger(num)) {
+                throw new Error(`"${tLabel(currentLabel(f, form))}" must be a whole number.`);
+              }
+              if (f.min !== undefined && num < f.min) {
+                throw new Error(`"${tLabel(currentLabel(f, form))}" must be at least ${f.min}.`);
+              }
+              if (f.max !== undefined && num > f.max) {
+                throw new Error(`"${tLabel(currentLabel(f, form))}" cannot exceed ${f.max}.`);
+              }
+            }
+          }
         }
       }
 
@@ -965,7 +1118,7 @@ export function MasterDataTable({
         for (const [k, v] of Object.entries(f.clearsWhenOff)) payload[k] = v;
       }
       for (const f of visibleFields) {
-        if (f.filterOnly || f.readOnly) continue;
+        if (f.filterOnly || (f.readOnly && !(f.key === "item_code" && isManualNoAllowed))) continue;
         let v = form[f.key];
         if (v === "" || v === undefined) continue;
         if (f.type === "number") v = Number(v);
@@ -986,6 +1139,19 @@ export function MasterDataTable({
         if (!f.booleanColumns) continue;
         const chosen = visibleFields.some((v) => v.key === f.key) ? String(form[f.key] ?? "") : "";
         for (const [option, column] of Object.entries(f.booleanColumns)) payload[column] = chosen === option;
+      }
+
+      if (form.item_template_id || editing?.item_template_id) {
+        payload.item_template_id = form.item_template_id || editing?.item_template_id;
+      }
+      if (form.inventory_gl_account) {
+        payload.inventory_gl_account = form.inventory_gl_account;
+      }
+      if (form.cogs_gl_account) {
+        payload.cogs_gl_account = form.cogs_gl_account;
+      }
+      if (editing?.status === "DRAFT") {
+        payload.status = "ACTIVE";
       }
 
       const hasCompanyField = config.fields.some((f) => f.key === "company_id");
@@ -1047,6 +1213,7 @@ export function MasterDataTable({
   };
 
   const renderField = (f: MasterDataField) => {
+    const isLockedByTemplate = templateLockedFields.has(f.key);
     const value = numbering.value(f.key, form[f.key] ?? "") as any;
     const accessibility = { id: `master-${config.key}-${f.key}`, "aria-label": tLabel(currentLabel(f, form)), "aria-required": isFieldRequired(f, form) };
     // No caption beside the box: every field in this form already carries its
@@ -1061,7 +1228,8 @@ export function MasterDataTable({
             type="checkbox"
             checked={!!value}
             onChange={(e) => setField(f.key, e.target.checked)}
-            className="h-5 w-5 rounded-[var(--radius-xs)] accent-[var(--accent)]"
+            disabled={isLockedByTemplate}
+            className="h-5 w-5 rounded-[var(--radius-xs)] accent-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-60"
           />
         </div>
       );
@@ -1431,7 +1599,7 @@ export function MasterDataTable({
                 role="radio"
                 aria-checked={active}
                 tabIndex={active || (current < 0 && o === segments[0]) ? 0 : -1}
-                disabled={f.readOnly}
+                disabled={f.readOnly || isLockedByTemplate}
                 onClick={() => setField(f.key, o.value)}
                 className="nf-press h-full flex-1 rounded-[var(--radius-xs)] text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
                 style={{
@@ -1455,6 +1623,13 @@ export function MasterDataTable({
     // row in. The value written is still the option's own string, exactly as the
     // native control produced, so nothing downstream of this field changes.
     if (f.type === "select") {
+      let options = f.options || [];
+      if ((config.key === "number-series" || config.key === "no-series") && f.key === "document_type" && inventorySetupNumbering) {
+        options = options.filter((opt) => {
+          const cfg = inventorySetupNumbering[opt.value];
+          return cfg !== undefined ? cfg.enabled === true : true;
+        });
+      }
       return (
         <SearchableEntitySelect
           id={accessibility.id}
@@ -1462,13 +1637,14 @@ export function MasterDataTable({
           ariaRequired={accessibility["aria-required"]}
           value={String(value ?? "")}
           onChange={(next) => setField(f.key, next)}
-          options={f.options || []}
+          options={options}
           valueKey="value"
           getLabel={(o) => String(o.label ?? "")}
           placeholder={t("selectPlaceholder")}
           searchPlaceholder={t("searchPlaceholder")}
           noMatchesLabel={t("mdNoMatches")}
-          onClear={!isFieldRequired(f, form) && value ? () => setField(f.key, "") : undefined}
+          disabled={isLockedByTemplate}
+          onClear={!isFieldRequired(f, form) && value && !isLockedByTemplate ? () => setField(f.key, "") : undefined}
         />
       );
     }
@@ -1524,7 +1700,7 @@ export function MasterDataTable({
             labelKeys={f.entityLabelKeys || []}
             onChange={(next) => setField(f.key, next)}
             multiple
-            disabled={disabled || !!f.readOnly}
+            disabled={disabled || !!f.readOnly || isLockedByTemplate}
             loading={!!resolvedEp && loadedOptions === undefined}
             placeholder={restrictedReason || (disabled ? t("selectXFirst", { name: parentLabel }) : t("selectPlaceholder"))}
             onCreate={relatedConfig ? () => setRelatedCreator({ field: f, config: relatedConfig }) : undefined}
@@ -1543,17 +1719,19 @@ export function MasterDataTable({
           valueKey={f.entityValueKey || "id"}
           getLabel={(o) => entityLabel(o, f)}
           getLabelParts={(o) => entityLabelPartsOf(o, f)}
-          disabled={disabled || !!f.readOnly}
+          disabled={disabled || !!f.readOnly || isLockedByTemplate}
           loading={!!resolvedEp && loadedOptions === undefined}
           placeholder={placeholderText}
           searchPlaceholder={t("searchPlaceholder")}
           noMatchesLabel={t("mdNoMatches")}
-          onClear={!isFieldRequired(f, form) && value ? () => setField(f.key, "") : undefined}
+          onClear={!isFieldRequired(f, form) && value && !isLockedByTemplate ? () => setField(f.key, "") : undefined}
           onCreate={relatedConfig ? () => setRelatedCreator({ field: f, config: relatedConfig }) : undefined}
           onViewAll={relatedConfig ? () => setRelatedPicker({ field: f, config: relatedConfig, options }) : undefined}
         />
       );
     }
+    const isNumberSeriesForm = config.key === "number-series" || config.key === "no-series";
+    const isDisabled = (f.readOnly && !(f.key === "item_code" && isManualNoAllowed)) || isLockedByTemplate;
     return (
       <input
         {...accessibility}
@@ -1561,12 +1739,13 @@ export function MasterDataTable({
         step={f.step}
         min={f.min}
         max={f.max}
+        maxLength={isNumberSeriesForm ? f.maxLength : undefined}
         value={value}
         onChange={(e) => setField(f.key, e.target.value)}
         placeholder={f.placeholder}
-        disabled={f.readOnly}
+        disabled={isDisabled}
         className={`${inputCls} disabled:cursor-not-allowed disabled:opacity-70`}
-        style={f.readOnly ? { ...S.input, backgroundColor: "var(--surface-raised)" } : S.input}
+        style={isDisabled ? { ...S.input, backgroundColor: "var(--surface-raised)" } : S.input}
       />
     );
   };
@@ -1656,6 +1835,16 @@ export function MasterDataTable({
                   {appliedFilterCount}
                 </span>
               )}
+            </button>
+          )}
+          {config.key === "item" && !readOnly && canCreateItem && (
+            <button
+              type="button"
+              onClick={() => setTemplateModalOpen(true)}
+              className="flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-(--accent) hover:text-(--accent)"
+              style={S.surface}
+            >
+              <FileText className="h-3.5 w-3.5" /> Template
             </button>
           )}
           {!readOnly && !exhausted && <button
@@ -1893,7 +2082,11 @@ export function MasterDataTable({
         open={modalOpen && !readOnly}
         onClose={() => {
           if (saving) return;
+          if (editing?.status === "DRAFT" && (!form.item_name || !String(form.item_name).trim())) {
+            api.delete(`${config.apiBase}/${editing[config.idKey]}`).catch(() => {});
+          }
           setModalOpen(false);
+          setTemplateLockedFields(new Set());
           if (createOnly) onCreateCancelled?.();
         }}
         title={editing ? t("editItem", { name: tLabel(singularLabel(config)) }) : t("addItem", { name: tLabel(singularLabel(config)) })}
@@ -1902,14 +2095,23 @@ export function MasterDataTable({
         footer={
           <>
             <button onClick={() => {
+              if (editing?.status === "DRAFT" && (!form.item_name || !String(form.item_name).trim())) {
+                api.delete(`${config.apiBase}/${editing[config.idKey]}`).catch(() => {});
+              }
               setModalOpen(false);
+              setTemplateLockedFields(new Set());
               if (createOnly) onCreateCancelled?.();
             }} disabled={saving} className="rounded-lg border px-4 py-2 text-sm font-medium" style={S.surface}>
               {t("cancel")}
             </button>
             <button
               onClick={handleSave}
-              disabled={saving || numbering.loading || numberingBlocks}
+              disabled={
+                saving ||
+                numbering.loading ||
+                numberingBlocks ||
+                (config.key === "item" && (!form.item_name?.trim() || !form.uom_primary?.trim()))
+              }
               className="rounded-lg px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
               style={{ backgroundColor: "var(--accent)" }}
             >
@@ -1921,11 +2123,6 @@ export function MasterDataTable({
         <div className="flex flex-col gap-4">
           {formError && <InlineAlert>{formError}</InlineAlert>}
           {numbering.error && <InlineAlert>{numbering.error}</InlineAlert>}
-          {numbering.canChoose && <label className="grid gap-1 text-sm">Code Entry
-            <select aria-label="Code Entry" className="nf-input nf-select" value={numbering.mode} onChange={(e) => numbering.chooseMode(e.target.value as "serial" | "manual")}>
-              <option value="serial">Follow number series</option><option value="manual">Enter manually</option>
-            </select>
-          </label>}
           {(() => {
             const DEFAULT = "Identification";
             const order: string[] = [];
@@ -1953,7 +2150,7 @@ export function MasterDataTable({
                       label={tLabel(currentLabel(f, form))}
                       htmlFor={`master-${config.key}-${f.key}`}
                       required={isFieldRequired(f, form)}
-                      hint={f.helpText}
+                      hint={templateLockedFields.has(f.key) ? "🔒 Set by template" : f.helpText}
                       className={f.type === "textarea" || f.type === "json" || f.type === "string-list" ? "sm:col-span-2" : undefined}
                     >
                       {renderField(f)}
@@ -2041,6 +2238,14 @@ export function MasterDataTable({
       >
         {filterFields}
       </Dialog>
+
+      {config.key === "item" && (
+        <ItemTemplateSelectModal
+          open={templateModalOpen}
+          onClose={() => setTemplateModalOpen(false)}
+          onConfirm={onConfirmTemplate}
+        />
+      )}
 
     </div>
   );
