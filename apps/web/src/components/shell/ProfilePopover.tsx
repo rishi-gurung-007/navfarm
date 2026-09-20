@@ -64,6 +64,7 @@ export function ProfilePopover({
       open={open}
       onOpenChange={setOpen}
       align="end"
+      floating
       haspopup="menu"
       trigger={(props) => (
         <button

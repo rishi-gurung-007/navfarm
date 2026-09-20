@@ -19,11 +19,11 @@ export function InlineAlert({ variant = "danger", children }: { variant?: AlertV
   const Icon = v.icon;
   return (
     <div
-      className="flex items-start gap-2 rounded-lg border px-3 py-2 text-xs"
-      style={{ backgroundColor: v.bg, borderColor: v.color, color: v.color }}
+      className="flex items-start gap-2 rounded-lg border px-3 py-2 text-xs text-[var(--text-primary)]"
+      style={{ backgroundColor: v.bg, borderColor: v.color }}
     >
-      <Icon className="h-3.5 w-3.5 shrink-0 mt-px" />
-      <span>{children}</span>
+      <Icon className="h-3.5 w-3.5 shrink-0 mt-px" style={{ color: v.color }} />
+      <span className="leading-normal">{children}</span>
     </div>
   );
 }

@@ -101,29 +101,27 @@ export function MasterDataPageShell({ activeKey }: { activeKey: string }) {
     );
   }
 
+  const tabsNode = tabConfigs.length > 0 ? (
+    <Tabs
+      panelId="master-data-sheet"
+      items={[parentConfig, ...tabConfigs].map((config) => ({
+        value: config.key,
+        label: tLabel(config.tabLabel || config.label),
+      }))}
+      value={activeConfig.key}
+      onChange={(key) => router.push(`/master-data/${key}`)}
+    />
+  ) : undefined;
+
   return (
     <ConsolePage>
-      <div className="flex flex-col gap-3 min-w-0">
-        <PageHeader
-          title={tLabel(activeConfig.label)}
-          description={activeConfig.description ? tLabel(activeConfig.description) : undefined}
-        />
-
-      </div>
-
-      {tabConfigs.length > 0 && (
-        <Tabs
-          panelId="master-data-sheet"
-          items={[parentConfig, ...tabConfigs].map((config) => ({
-            value: config.key,
-            label: tLabel(config.tabLabel || config.label),
-          }))}
-          value={activeConfig.key}
-          onChange={(key) => router.push(`/master-data/${key}`)}
-        />
-      )}
       <div id="master-data-sheet" role={tabConfigs.length ? "tabpanel" : undefined} aria-label={tLabel(activeConfig.tabLabel || activeConfig.label)}>
-        <MasterDataTable key={`${activeConfig.key}-${scopeKey}`} config={activeConfig} />
+        <MasterDataTable
+          key={`${activeConfig.key}-${scopeKey}`}
+          config={activeConfig}
+          showHeader={true}
+          tabs={tabsNode}
+        />
       </div>
     </ConsolePage>
   );

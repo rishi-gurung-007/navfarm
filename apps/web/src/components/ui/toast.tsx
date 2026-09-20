@@ -1,46 +1,72 @@
 'use client';
 
-import { CheckCircle2, AlertCircle, Info, X } from 'lucide-react';
-import { cn } from '@/lib/utils';
-import { useLanguage } from "@/hooks/useLanguage";
+import { useEffect, useRef } from 'react';
+import { toast as rtToast, type ToastOptions } from 'react-toastify';
 
-export type ToastVariant = 'success' | 'danger' | 'info';
+export type ToastVariant = 'success' | 'danger' | 'info' | 'warning';
 
-interface ToastProps {
+export interface ToastProps {
   variant?: ToastVariant;
+  title?: string;
   message: string;
   onClose?: () => void;
+  duration?: number;
   className?: string;
 }
 
-const icons: Record<ToastVariant, typeof CheckCircle2> = {
-  success: CheckCircle2,
-  danger: AlertCircle,
-  info: Info,
+/**
+ * Compatibility JSX Component:
+ * Allows rendering `<Toast variant="danger" message={error} onClose={() => setError("")} />`
+ * while internally dispatching to react-toastify configured with NavFarm's theme.
+ */
+export function Toast({
+  variant = 'info',
+  message,
+  onClose,
+  duration = 4500,
+}: ToastProps) {
+  const lastFiredRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!message) {
+      lastFiredRef.current = null;
+      return;
+    }
+    if (lastFiredRef.current === message) return;
+    lastFiredRef.current = message;
+
+    const fn =
+      variant === 'danger'
+        ? rtToast.error
+        : variant === 'success'
+        ? rtToast.success
+        : variant === 'warning'
+        ? rtToast.warn
+        : rtToast.info;
+
+    fn(message, {
+      toastId: message,
+      autoClose: duration,
+      onClose: () => {
+        lastFiredRef.current = null;
+        onClose?.();
+      },
+    });
+  }, [message, variant, duration, onClose]);
+
+  return null;
+}
+
+/** Programmatic notification API powered by react-toastify with NavFarm theme */
+export const showToast = {
+  success: (message: string, options?: ToastOptions) =>
+    rtToast.success(message, { toastId: options?.toastId || message, ...options }),
+  error: (message: string, options?: ToastOptions) =>
+    rtToast.error(message, { toastId: options?.toastId || message, ...options }),
+  info: (message: string, options?: ToastOptions) =>
+    rtToast.info(message, { toastId: options?.toastId || message, ...options }),
+  warn: (message: string, options?: ToastOptions) =>
+    rtToast.warn(message, { toastId: options?.toastId || message, ...options }),
 };
 
-/** Presentational toast — render conditionally from local page state (no global provider). */
-export function Toast({ variant = 'info', message, onClose, className }: ToastProps) {
-  const { t } = useLanguage();
-  const Icon = icons[variant];
-  const colorVar = variant === 'success' ? '--success' : variant === 'danger' ? '--danger' : '--info';
-
-  return (
-    <div
-      role="status"
-      className={cn(
-        'flex items-center gap-3 rounded-[var(--radius-sm)] border bg-(--surface) px-4 py-3 text-[13px] shadow-[var(--shadow-md)]',
-        className
-      )}
-      style={{ borderColor: `var(${colorVar})`, color: `var(${colorVar})` }}
-    >
-      <Icon size={16} className="shrink-0" />
-      <span className="flex-1 text-(--text-primary)">{message}</span>
-      {onClose && (
-        <button onClick={onClose} aria-label={t("gDismiss")} className="nf-press shrink-0 text-(--text-muted) hover:text-(--text-primary)">
-          <X size={14} />
-        </button>
-      )}
-    </div>
-  );
-}
+export { rtToast as toast };

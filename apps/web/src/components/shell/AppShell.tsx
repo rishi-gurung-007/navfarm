@@ -11,7 +11,7 @@ import {
 } from "react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-import { Menu, X, ChevronDown, ChevronLeft } from "lucide-react";
+import { Menu, X, ChevronDown, ChevronLeft, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { useScrollLock } from "../../hooks/useScrollLock";
 import { ProfilePopover, type ProfileMenuItem } from "./ProfilePopover";
 import { useLanguage } from "@/hooks/useLanguage";
@@ -152,12 +152,16 @@ function PrimaryNavContent({
   pathname,
   searchParams,
   onItemClick,
+  isCollapsed,
+  onExpand,
 }: {
   navItems: AppShellNavItem[];
   navSectionLabel: string;
   pathname: string;
   searchParams: URLSearchParams | null;
   onItemClick: () => void;
+  isCollapsed?: boolean;
+  onExpand?: () => void;
 }) {
   const { t } = useLanguage();
   const [expandedItems, setExpandedItems] = useState<Record<string, boolean>>({});
@@ -177,11 +181,19 @@ function PrimaryNavContent({
   }, [navItems]);
 
   return (
-    <nav aria-label={t("ntPrimary")} data-shell-nav-scroll className="p-3">
-      <p className="px-3 pb-2 pt-2 text-[10px] font-normal uppercase tracking-[0.18em] text-white/35">
-        {navSectionLabel}
-      </p>
-      <ul className="space-y-0.5">
+    <nav
+      aria-label={t("ntPrimary")}
+      data-shell-nav-scroll
+      className={`transition-all duration-200 ${isCollapsed ? "px-1.5 py-2.5" : "p-3"}`}
+    >
+      {!isCollapsed ? (
+        <p className="px-3 pb-2 pt-2 text-[10px] font-normal uppercase tracking-[0.18em] text-white/35">
+          {navSectionLabel}
+        </p>
+      ) : (
+        <div className="mx-auto my-2 h-[1px] w-6 bg-white/10" />
+      )}
+      <ul className="space-y-1">
         {navItems.map((item) => {
           const hasChildren = Boolean(item.children && item.children.length > 0);
 
@@ -208,20 +220,44 @@ function PrimaryNavContent({
             : false;
           const isDirectActive =
             isPrefixActive || isHrefActive(item.href, pathname, searchParams, allNavHrefs);
-          const isExpanded = expandedItems[item.label] ?? (isChildActive || true);
+          const isExpanded = expandedItems[item.label] ?? isChildActive;
 
           if (hasChildren) {
             return (
               <li key={item.label}>
                 <button
                   type="button"
+                  title={isCollapsed ? item.label : undefined}
                   onClick={() => {
-                    setExpandedItems((prev) => ({
-                      ...prev,
-                      [item.label]: !(prev[item.label] ?? isChildActive ?? true),
-                    }));
+                    if (isCollapsed) {
+                      onExpand?.();
+                      setExpandedItems({ [item.label]: true });
+                      return;
+                    }
+                    setExpandedItems((prev) => {
+                      const currentlyOpen = prev[item.label] ?? isChildActive;
+                      if (!currentlyOpen) {
+                        // Expanding this item -> collapse other sections (accordion)
+                        const nextState: Record<string, boolean> = {};
+                        for (const other of navItems) {
+                          if (other.children && other.children.length > 0) {
+                            nextState[other.label] = false;
+                          }
+                        }
+                        nextState[item.label] = true;
+                        return nextState;
+                      } else {
+                        // Collapsing this item
+                        return {
+                          ...prev,
+                          [item.label]: false,
+                        };
+                      }
+                    });
                   }}
-                  className={`nf-press group relative flex w-full min-h-10 items-center justify-between gap-2.5 rounded-[var(--radius-sm)] px-3 py-2 text-[12.5px] transition-colors ${
+                  className={`nf-press group relative flex w-full min-h-10 items-center ${
+                    isCollapsed ? "justify-center px-0 py-2" : "justify-between gap-2.5 px-3 py-2"
+                  } rounded-[var(--radius-sm)] text-[12.5px] transition-all duration-150 ${
                     isDirectActive
                       ? "font-semibold text-white bg-[var(--sidebar-active-bg)]"
                       : isChildActive
@@ -229,29 +265,31 @@ function PrimaryNavContent({
                       : "font-normal text-[var(--sidebar-text)] hover:bg-white/[0.06] hover:text-white"
                   }`}
                 >
-                  <div className="flex items-center gap-2.5 min-w-0">
+                  <div className={`flex items-center ${isCollapsed ? "justify-center" : "gap-2.5"} min-w-0`}>
                     {(isDirectActive || isChildActive) && (
                       <span
-                        className="absolute left-0 top-1/2 h-4 w-[2px] -translate-y-1/2 rounded-r-full"
+                        className="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full"
                         style={{ backgroundColor: "var(--sidebar-active-accent)" }}
                       />
                     )}
                     <item.icon
-                      size={16}
+                      size={17}
                       strokeWidth={isDirectActive || isChildActive ? 2 : 1.5}
                       color={isDirectActive || isChildActive ? "var(--sidebar-active-accent)" : undefined}
                       className="shrink-0"
                     />
-                    <span className="truncate">{item.label}</span>
+                    {!isCollapsed && <span className="truncate">{item.label}</span>}
                   </div>
-                  <ChevronDown
-                    size={13}
-                    className={`shrink-0 text-white/40 group-hover:text-white transition-transform duration-200 ${
-                      isExpanded ? "rotate-0 text-white/80" : "-rotate-90 text-white/40"
-                    }`}
-                  />
+                  {!isCollapsed && (
+                    <ChevronDown
+                      size={13}
+                      className={`shrink-0 text-white/40 group-hover:text-white transition-transform duration-200 ${
+                        isExpanded ? "rotate-0 text-white/80" : "-rotate-90 text-white/40"
+                      }`}
+                    />
+                  )}
                 </button>
-                {isExpanded && (
+                {!isCollapsed && isExpanded && (
                   <ul className="mt-0.5 space-y-0.5 pl-6 pr-1">
                     {item.children!.map((child) => {
                       const childActive = isHrefActive(child.href, pathname, searchParams, allNavHrefs);
@@ -285,26 +323,29 @@ function PrimaryNavContent({
                 href={item.href}
                 onClick={onItemClick}
                 aria-current={isActive ? "page" : undefined}
-                className={`nf-press group relative flex min-h-10 items-center justify-between gap-2.5 rounded-[var(--radius-sm)] px-3 py-2 text-[12.5px] transition-colors ${
+                title={isCollapsed ? item.label : undefined}
+                className={`nf-press group relative flex min-h-10 items-center ${
+                  isCollapsed ? "justify-center px-0 py-2" : "justify-between gap-2.5 px-3 py-2"
+                } rounded-[var(--radius-sm)] text-[12.5px] transition-all duration-150 ${
                   isActive
                     ? "font-semibold text-white bg-[var(--sidebar-active-bg)]"
                     : "font-normal text-[var(--sidebar-text)] hover:bg-white/[0.06] hover:text-white"
                 }`}
               >
-                <div className="flex items-center gap-2.5 min-w-0">
+                <div className={`flex items-center ${isCollapsed ? "justify-center" : "gap-2.5"} min-w-0`}>
                   {isActive && (
                     <span
-                      className="absolute left-0 top-1/2 h-4 w-[2px] -translate-y-1/2 rounded-r-full"
+                      className="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full"
                       style={{ backgroundColor: "var(--sidebar-active-accent)" }}
                     />
                   )}
                   <item.icon
-                    size={16}
+                    size={17}
                     strokeWidth={isActive ? 2 : 1.5}
                     color={isActive ? "var(--sidebar-active-accent)" : undefined}
                     className="shrink-0"
                   />
-                  <span className="truncate">{item.label}</span>
+                  {!isCollapsed && <span className="truncate">{item.label}</span>}
                 </div>
               </Link>
             </li>
@@ -320,11 +361,15 @@ function PrimaryNavInner({
   navSectionLabel,
   fallbackPathname,
   onItemClick,
+  isCollapsed,
+  onExpand,
 }: {
   navItems: AppShellNavItem[];
   navSectionLabel: string;
   fallbackPathname: string;
   onItemClick: () => void;
+  isCollapsed?: boolean;
+  onExpand?: () => void;
 }) {
   const pathnameHook = usePathname();
   const searchParamsHook = useSearchParams();
@@ -337,6 +382,8 @@ function PrimaryNavInner({
       pathname={pathname}
       searchParams={searchParamsHook}
       onItemClick={onItemClick}
+      isCollapsed={isCollapsed}
+      onExpand={onExpand}
     />
   );
 }
@@ -346,11 +393,15 @@ function PrimaryNav({
   navSectionLabel,
   fallbackPathname,
   onItemClick,
+  isCollapsed,
+  onExpand,
 }: {
   navItems: AppShellNavItem[];
   navSectionLabel: string;
   fallbackPathname: string;
   onItemClick: () => void;
+  isCollapsed?: boolean;
+  onExpand?: () => void;
 }) {
   return (
     <Suspense
@@ -361,6 +412,8 @@ function PrimaryNav({
           pathname={fallbackPathname}
           searchParams={null}
           onItemClick={onItemClick}
+          isCollapsed={isCollapsed}
+          onExpand={onExpand}
         />
       }
     >
@@ -369,6 +422,8 @@ function PrimaryNav({
         navSectionLabel={navSectionLabel}
         fallbackPathname={fallbackPathname}
         onItemClick={onItemClick}
+        isCollapsed={isCollapsed}
+        onExpand={onExpand}
       />
     </Suspense>
   );
@@ -414,6 +469,41 @@ export function AppShell(props: AppShellProps) {
   } = props;
 
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [isCollapsed, setIsCollapsed] = useState(false);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("navfarm_sidebar_collapsed");
+      if (saved === "true") setIsCollapsed(true);
+    } catch {}
+  }, []);
+
+  const toggleCollapsed = () => {
+    setIsCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem("navfarm_sidebar_collapsed", String(next));
+      } catch {}
+      return next;
+    });
+  };
+
+  // Keyboard shortcut: Cmd+B or Ctrl+B to toggle sidebar
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "b") {
+        e.preventDefault();
+        if (window.innerWidth >= 1024) {
+          toggleCollapsed();
+        } else {
+          setMobileOpen((m) => !m);
+        }
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
   /**
    * Which level the drawer is showing. On a module route the drawer used to
    * stack both navigations — every main item, then every section of the module
@@ -470,7 +560,11 @@ export function AppShell(props: AppShellProps) {
   }, [mobileOpen]);
 
   return (
-    <div data-shell-root data-shell-ready={ready ? "true" : "false"}>
+    <div
+      data-shell-root
+      data-shell-ready={ready ? "true" : "false"}
+      data-sidebar-collapsed={isCollapsed ? "true" : "false"}
+    >
       {mobileOpen && (
         <button
           type="button"
@@ -503,19 +597,49 @@ export function AppShell(props: AppShellProps) {
           </button>
         )}
 
-        <div className="border-b border-[var(--sidebar-border)] px-5 pb-4 pt-5">
-          <Link href={brandHref} className="flex items-center gap-2.5">
-            <img src={NAVFARM_LOGO_SRC} alt="Navfarm" className="h-7 w-7 rounded-[var(--radius-xs)]" />
-            <span>
-              <span className="block text-[17px] font-semibold tracking-tight text-white">
-                NAV<span style={{ color: "var(--sidebar-active-accent)" }}>Farm</span>
-              </span>
-              <span className="block text-[10px] font-normal uppercase tracking-[0.16em] text-white/40">
-                {brandSubtitle}
-              </span>
-            </span>
-          </Link>
-          {sidebarSummary && <div className="mt-4">{sidebarSummary}</div>}
+        <div
+          className={`border-b border-[var(--sidebar-border)] transition-all duration-200 ${
+            isCollapsed ? "px-2.5 py-4 flex flex-col items-center gap-3" : "px-5 pb-4 pt-5"
+          }`}
+        >
+          <div className={`flex items-center ${isCollapsed ? "justify-center w-full" : "justify-between"}`}>
+            <Link href={brandHref} className="flex items-center gap-2.5 min-w-0" title="NavFarm">
+              <img src={NAVFARM_LOGO_SRC} alt="Navfarm" className="h-7 w-7 rounded-[var(--radius-xs)] shrink-0" />
+              {!isCollapsed && (
+                <span className="truncate">
+                  <span className="block text-[17px] font-semibold tracking-tight text-white leading-tight">
+                    NAV<span style={{ color: "var(--sidebar-active-accent)" }}>Farm</span>
+                  </span>
+                  <span className="block text-[10px] font-normal uppercase tracking-[0.16em] text-white/40 leading-tight">
+                    {brandSubtitle}
+                  </span>
+                </span>
+              )}
+            </Link>
+            {!isCollapsed && (
+              <button
+                type="button"
+                onClick={toggleCollapsed}
+                aria-label="Collapse sidebar"
+                title="Collapse sidebar (Ctrl+B)"
+                className="hidden lg:flex h-7 w-7 items-center justify-center rounded-md text-white/50 hover:bg-white/10 hover:text-white transition-colors"
+              >
+                <PanelLeftClose size={16} />
+              </button>
+            )}
+          </div>
+          {isCollapsed && (
+            <button
+              type="button"
+              onClick={toggleCollapsed}
+              aria-label="Expand sidebar"
+              title="Expand sidebar (Ctrl+B)"
+              className="hidden lg:flex h-7 w-7 items-center justify-center rounded-md text-white/50 hover:bg-white/10 hover:text-white transition-colors"
+            >
+              <PanelLeftOpen size={16} />
+            </button>
+          )}
+          {sidebarSummary && !isCollapsed && <div className="mt-4">{sidebarSummary}</div>}
         </div>
 
         {/* Below the desktop breakpoint the drawer shows one level at a time.
@@ -541,6 +665,8 @@ export function AppShell(props: AppShellProps) {
             navSectionLabel={navSectionLabel}
             fallbackPathname={pathname}
             onItemClick={close}
+            isCollapsed={isCollapsed}
+            onExpand={() => setIsCollapsed(false)}
           />
         </div>
 
@@ -581,9 +707,6 @@ export function AppShell(props: AppShellProps) {
           </div>
         )}
 
-        {/* No account footer here. Identity and Sign out are account actions,
-            not navigation, and they live behind the header avatar — see
-            ProfilePopover. The rail carries navigation only. */}
       </div>
 
       <header data-shell-region="header" className="px-4 backdrop-blur-xl sm:px-6">
@@ -592,9 +715,9 @@ export function AppShell(props: AppShellProps) {
           onClick={() => setMobileOpen(true)}
           aria-label={t("shOpenNavigation")}
           aria-expanded={mobileOpen}
-          className="mr-3 flex h-11 w-11 shrink-0 items-center justify-center -ml-2.5 text-[var(--text-secondary)] lg:hidden"
+          className="mr-3 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-secondary)] border border-transparent hover:border-[var(--border)] transition-all lg:hidden"
         >
-          <Menu size={20} />
+          <Menu size={18} />
         </button>
         {/* The breadcrumb used to sit here, with its current segment set in
             semibold primary text. That made it a second title competing with

@@ -128,9 +128,11 @@ export function EntityLookupDialog({
               Clear selection{multiple ? "s" : ""}
             </Button>
           )}
-          <Button type="button" variant="outline" size="sm" onClick={onClose}>
-            {multiple ? "Done" : "Cancel"}
-          </Button>
+          {multiple && (
+            <Button type="button" variant="outline" size="sm" onClick={onClose}>
+              Done
+            </Button>
+          )}
         </>
       )}
     >

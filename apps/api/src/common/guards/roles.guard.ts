@@ -61,14 +61,15 @@ export class RolesGuard implements CanActivate {
       [context.getHandler(), context.getClass()],
     );
 
-    const previewPermission = this.reflector.getAllAndOverride<boolean>(CODE_PREVIEW_PERMISSION_KEY, [context.getHandler(), context.getClass()]);
-    const requiredPermissions = previewPermission ? codePreviewPermissions(request.query?.master) : requiredPermission ? [requiredPermission] : [];
-
-    if (!requiredPermissions.length) {
+    if (isAdminUserType(user.userType)) {
       return true;
     }
 
-    if (isAdminUserType(user.userType)) {
+    const previewPermission = this.reflector.getAllAndOverride<boolean>(CODE_PREVIEW_PERMISSION_KEY, [context.getHandler(), context.getClass()]);
+    const masterParam = request.query?.master || request.query?.masterType;
+    const requiredPermissions = previewPermission ? codePreviewPermissions(masterParam) : requiredPermission ? [requiredPermission] : [];
+
+    if (!requiredPermissions.length) {
       return true;
     }
 

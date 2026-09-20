@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect } from "react";
 import {
   Building2,
   ChevronDown,
@@ -9,6 +9,7 @@ import {
   Plus,
   Layers,
 } from "lucide-react";
+import { Popover } from "@/components/ui/popover";
 import {
   getStoredUser,
   getStoredTenantId,
@@ -64,7 +65,6 @@ export default function WorkspaceScopeSwitcher({
   const [activeLobCode, setActiveLobCode] = useState<string>("PIGGERY");
   const [farms, setFarms] = useState<FarmItem[]>([]);
   const [activeFarmIdState, setActiveFarmIdState] = useState<string | null>(null);
-  const dropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const storedUser = getStoredUser();
@@ -145,14 +145,6 @@ export default function WorkspaceScopeSwitcher({
         }).catch(() => {});
       }
     }
-
-    const handleClickOutside = (event: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-        setIsOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
   const handleSelectTenantScope = () => {
@@ -314,40 +306,49 @@ export default function WorkspaceScopeSwitcher({
   }
 
   return (
-    <div className="relative w-full" ref={dropdownRef}>
-      {/* Switcher Button Trigger */}
-      <button
-        onClick={() => setIsOpen(!isOpen)}
-        className="w-full text-left transition-all duration-150 rounded-[var(--radius-sm)] border border-white/10 bg-white/[0.05] hover:bg-white/[0.08] p-2.5 group focus:outline-none focus:ring-1 focus:ring-white/20"
-        aria-label={t("wsSwitchScope")}
+    <Popover
+      open={isOpen}
+      onOpenChange={setIsOpen}
+      align="start"
+      side="bottom"
+      floating
+      haspopup="dialog"
+      panelRole="dialog"
+      label={t("wsWorkspaceScope")}
+      className="w-full"
+      panelClassName="nf-scope-popover-panel"
+      trigger={(props) => (
+        <button
+          {...props}
+          className="w-full text-left transition-all duration-150 rounded-[var(--radius-sm)] border border-white/10 bg-white/[0.05] hover:bg-white/[0.08] p-2.5 group focus:outline-none focus:ring-1 focus:ring-white/20 cursor-pointer"
+          aria-label={t("wsSwitchScope")}
+        >
+          {identityBlock}
+        </button>
+      )}
+    >
+      <div
+        className="px-3.5 py-2.5 border-b flex items-center justify-between shrink-0"
+        style={{
+          backgroundColor: "var(--surface-raised)",
+          borderColor: "var(--border)",
+        }}
       >
-        {identityBlock}
-      </button>
-
-      {/* Dropdown Popup */}
-      {isOpen && (
-        <div
-          className="absolute left-0 top-full mt-2 w-72 max-w-[90vw] rounded-[var(--radius-md)] border shadow-xl z-50 overflow-hidden"
+        <span className="text-[11px] font-semibold tracking-wide uppercase" style={{ color: "var(--text-secondary)" }}>
+          {t("wsWorkspaceScope")}
+        </span>
+        <span
+          className="text-[10px] font-semibold px-2 py-0.5 rounded tracking-wide uppercase shrink-0"
           style={{
-            backgroundColor: "var(--surface)",
-            borderColor: "var(--border)",
-            color: "var(--text-primary)",
+            backgroundColor: "var(--accent-muted)",
+            color: "var(--accent)",
           }}
         >
-          <div
-            className="px-3 py-2 border-b flex items-center justify-between"
-            style={{
-              backgroundColor: "var(--surface-raised)",
-              borderColor: "var(--border)",
-            }}
-          >
-            <span className="text-[11px] font-semibold tracking-wide uppercase" style={{ color: "var(--text-secondary)" }}>{t("wsWorkspaceScope")}</span>
-            <span className="text-[10px] font-medium" style={{ color: "var(--text-muted)" }}>
-              {user?.userType?.replace(/_/g, " ")}
-            </span>
-          </div>
+          {user?.userType?.replace(/_/g, " ")}
+        </span>
+      </div>
 
-          <div className="max-h-[380px] overflow-y-auto p-1.5 space-y-2">
+      <div className="flex-1 min-h-0 overflow-y-auto p-2 space-y-2.5">
             {/* 1. Tenant Scope (Available for TENANT_ADMIN) */}
             {isTenantAdmin && (
               <div>
@@ -531,14 +532,20 @@ export default function WorkspaceScopeSwitcher({
                   })}
                 </div>
               </div>
-            )}
-          </div>
+        )}
+      </div>
 
-          <div className="p-2 border-t" style={{ backgroundColor: "var(--surface-raised)", borderColor: "var(--border)" }}>
-            <p className="text-[10px] text-center" style={{ color: "var(--text-muted)" }}>{t("wsActiveScopeNote")}</p>
-          </div>
-        </div>
-      )}
-    </div>
+      <div
+        className="p-2.5 border-t shrink-0"
+        style={{
+          backgroundColor: "var(--surface-raised)",
+          borderColor: "var(--border)",
+        }}
+      >
+        <p className="text-[10px] text-center leading-normal" style={{ color: "var(--text-muted)" }}>
+          {t("wsActiveScopeNote")}
+        </p>
+      </div>
+    </Popover>
   );
 }

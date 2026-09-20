@@ -423,6 +423,90 @@ export class LocationService {
     }
   }
 
+  /**
+   * Asserts that a sub-location's max_capacity does not exceed its parent location's capacity,
+   * nor does the cumulative total of all children exceed the parent.
+   */
+  private async assertCapacityFitsInParent(
+    childCapacity: number | string | null | undefined,
+    childCapacityUom: string | null | undefined,
+    parent: { location_id: string; max_capacity: string | null; capacity_uom: string | null; location_code: string } | undefined,
+    tenantId: string,
+    excludeLocationId?: string,
+  ) {
+    if (childCapacity == null || childCapacity === '' || !parent?.max_capacity) return;
+    if (childCapacityUom && parent.capacity_uom && childCapacityUom.toUpperCase() !== parent.capacity_uom.toUpperCase()) return;
+    const childCap = Number(childCapacity);
+    const parentCap = Number(parent.max_capacity);
+    if (!Number.isFinite(childCap) || !Number.isFinite(parentCap)) return;
+
+    if (childCap > parentCap) {
+      const uomStr = childCapacityUom ? ` ${childCapacityUom}` : '';
+      throw new BadRequestException(
+        `Sub-location capacity (${childCap}${uomStr}) cannot exceed parent location '${parent.location_code}' capacity (${parentCap}${uomStr}).`,
+      );
+    }
+
+    // Check sibling cumulative capacity
+    const siblings = await this.db.select({
+      location_id: schema.locationMaster.location_id,
+      max_capacity: schema.locationMaster.max_capacity,
+      capacity_uom: schema.locationMaster.capacity_uom,
+    }).from(schema.locationMaster).where(and(
+      eq(schema.locationMaster.parent_location_id, parent.location_id),
+      eq(schema.locationMaster.tenant_id, tenantId),
+      eq(schema.locationMaster.is_active, true),
+      isNull(schema.locationMaster.deleted_at),
+    ));
+
+    let siblingTotal = 0;
+    for (const sib of siblings) {
+      if (excludeLocationId && sib.location_id === excludeLocationId) continue;
+      if (!sib.max_capacity) continue;
+      if (childCapacityUom && sib.capacity_uom && childCapacityUom.toUpperCase() !== sib.capacity_uom.toUpperCase()) continue;
+      siblingTotal += Number(sib.max_capacity) || 0;
+    }
+
+    if (siblingTotal + childCap > parentCap) {
+      const uomStr = parent.capacity_uom ? ` ${parent.capacity_uom}` : '';
+      throw new BadRequestException(
+        `Total capacity of sub-locations under '${parent.location_code}' would be ${siblingTotal + childCap}${uomStr}, which exceeds parent capacity (${parentCap}${uomStr}).`,
+      );
+    }
+  }
+
+  /**
+   * Asserts that reducing a location's capacity does not leave its children claiming more than the new capacity.
+   */
+  private async assertChildTotalFitsWithinCapacity(
+    locationId: string,
+    newCapacity: number | string | null | undefined,
+    tenantId: string,
+  ) {
+    if (newCapacity == null || newCapacity === '') return;
+    const parentCap = Number(newCapacity);
+    if (!Number.isFinite(parentCap)) return;
+
+    const children = await this.db.select({
+      max_capacity: schema.locationMaster.max_capacity,
+    }).from(schema.locationMaster).where(and(
+      eq(schema.locationMaster.parent_location_id, locationId),
+      eq(schema.locationMaster.tenant_id, tenantId),
+      eq(schema.locationMaster.is_active, true),
+      isNull(schema.locationMaster.deleted_at),
+    ));
+
+    let childTotal = 0;
+    for (const child of children) {
+      childTotal += Number(child.max_capacity) || 0;
+    }
+    if (childTotal > parentCap) {
+      throw new BadRequestException(
+        `Cannot reduce parent capacity to ${parentCap}; child locations currently claim a total capacity of ${childTotal}.`,
+      );
+    }
+  }
+
   /** Validates the UOM belongs to the same template/company scope. */
   private async assertUomExists(uomCode: string | null | undefined, tenantId: string, companyId?: string | null) {
     if (!uomCode) return;
@@ -495,6 +579,7 @@ export class LocationService {
     // 3.5. This location's area, plus everything already under the same parent,
     //      must fit inside that parent.
     await this.assertAreaFitsInParent(dto.area_size, dto.area_unit, parent, tenantId);
+    await this.assertCapacityFitsInParent(dto.max_capacity, dto.capacity_uom, parent, tenantId);
 
     // 4. SILO locations must carry silo tracking fields
     if (!dto.storage_type && typeCode === 'SILO') dto.storage_type = 'SILO';
@@ -609,7 +694,8 @@ export class LocationService {
       const allowed = await this.resolveLocationType(query.parentForType, tenantId, companyId)
         .then((type) => this.allowedParentTypes(type.allowed_parent_types))
         .catch(() => [] as string[]);
-      conditions.push(allowed.length ? inArray(schema.locationMaster.location_type, allowed) : sql`1 = 0`);
+      const eligibleParents = allowed.filter((t) => !['PEN', 'CAGE'].includes(t.toUpperCase()));
+      conditions.push(eligibleParents.length ? inArray(schema.locationMaster.location_type, eligibleParents) : sql`1 = 0`);
     }
     if (query.rootOnly) {
       conditions.push(isNull(schema.locationMaster.parent_location_id));
@@ -720,6 +806,15 @@ export class LocationService {
       }
     }
 
+    if (dto.max_capacity !== undefined || dto.capacity_uom !== undefined || dto.parent_location_id !== undefined) {
+      const effectiveCapacity = dto.max_capacity !== undefined ? dto.max_capacity : location.max_capacity;
+      const effectiveCapacityUom = dto.capacity_uom !== undefined ? dto.capacity_uom : location.capacity_uom;
+      await this.assertCapacityFitsInParent(effectiveCapacity, effectiveCapacityUom, parent, tenantId, id);
+      if (dto.max_capacity !== undefined) {
+        await this.assertChildTotalFitsWithinCapacity(id, effectiveCapacity, tenantId);
+      }
+    }
+
     const updates: any = {
       updated_by: userPayload?.userId || null,
       updated_at: toMysqlTimestamp(),
@@ -787,14 +882,22 @@ export class LocationService {
     const location = await this.findOne(id, tenantId);
     const deletedTime = toMysqlTimestamp();
 
-    const [child] = await this.db.select({ location_id: schema.locationMaster.location_id })
+    const [child] = await this.db.select({
+      location_id: schema.locationMaster.location_id,
+      location_name: schema.locationMaster.location_name,
+      location_code: schema.locationMaster.location_code,
+    })
       .from(schema.locationMaster).where(and(
         eq(schema.locationMaster.parent_location_id, id),
         eq(schema.locationMaster.tenant_id, tenantId),
         eq(schema.locationMaster.is_active, true),
         isNull(schema.locationMaster.deleted_at),
       )).limit(1);
-    if (child) throw new ConflictException('Deactivate or move this location\'s child locations first.');
+    if (child) {
+      throw new ConflictException(
+        `Cannot deactivate location '${location.location_name}' because it contains active child location '${child.location_name || child.location_code}'. Please deactivate child locations first.`,
+      );
+    }
 
     const updates = {
         is_active: false,

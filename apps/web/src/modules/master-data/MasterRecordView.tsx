@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { api } from "@/services/api-client";
 import { Dialog } from "@/components/ui/dialog";
 import { InlineAlert } from "@/components/ui/alert";
+import { showToast } from "@/components/ui/toast";
 import type { MasterDataConfig } from "./types";
 import { singularLabel } from "./labels";
 import { BcOwnershipNotice } from "./BcOwnershipNotice";
@@ -20,7 +21,13 @@ export function MasterRecordView({ config, id, onClose }: { config: MasterDataCo
     setError("");
     api.get(`${config.apiBase}/${encodeURIComponent(id)}`).then((result) => {
       if (!cancelled) setRecord(result?.data ?? result);
-    }).catch((err: Error) => { if (!cancelled) setError(err.message || "Could not load record."); });
+    }).catch((err: Error) => {
+      if (!cancelled) {
+        const msg = err.message || "Could not load record.";
+        setError(msg);
+        showToast.error(msg);
+      }
+    });
     return () => { cancelled = true; };
   }, [config.apiBase, id]);
   // A form-only gate (Item Tracking) has no column of its own: it is whether any
@@ -49,8 +56,7 @@ export function MasterRecordView({ config, id, onClose }: { config: MasterDataCo
       return condition.equals === undefined ? !!value : (Array.isArray(condition.equals) ? condition.equals : [condition.equals]).includes(value as string | boolean);
     })));
   return <Dialog open onClose={onClose} title={`View ${singularLabel(config)}`} maxWidth="xl"
-    presentation={fields.length > 10 ? "page" : "modal"}
-    footer={<button type="button" className="nf-button" onClick={onClose}>Close</button>}>
+    presentation={fields.length > 10 ? "page" : "modal"}>
     {error ? <InlineAlert>{error}</InlineAlert> : !record ? <p role="status">Loading record…</p> : <div className="grid gap-6">
       {/* A blocked record still reads in full — the label says what it is, and
           every field stays where it was. Blocking is not a reason to hide the

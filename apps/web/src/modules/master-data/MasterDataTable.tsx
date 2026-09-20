@@ -1,19 +1,24 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { Plus, Pencil, Trash2, Search, Loader2, Inbox, Eye, SlidersHorizontal, ArrowUpDown, X, FileText } from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  Plus, Pencil, Trash2, Search, Loader2, Inbox, Eye, SlidersHorizontal,
+  ArrowUpDown, X, FileText, Info, Users, Boxes, Activity, Layers, MapPin,
+  Scale, QrCode, Landmark, Clock, ArrowRight, Edit3, Building2, Coins
+} from "lucide-react";
 import { api } from "@/services/api-client";
 import { Dialog } from "@/components/ui/dialog";
 import { Field } from "@/components/ui/field";
 import { useIsDesktop } from "@/hooks/useMediaQuery";
 import { InlineAlert } from "@/components/ui/alert";
+import { showToast } from "@/components/ui/toast";
 import { Pagination } from "@/components/ui/pagination";
 import { TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { getActiveCompanyId, getActiveWorkspaceScope, getStoredUser, hasPermission } from "@/hooks/useAuth";
 import { useLanguage } from "@/hooks/useLanguage";
-import type { MasterDataConfig, MasterDataField } from "./types";
-import { CollapsibleCard } from "./CollapsibleCard";
 import { singularLabel } from "./labels";
+import { cn } from "@/lib/utils";
+import type { MasterDataConfig, MasterDataField } from "./types";
 import AnimalDetailPanel from "./AnimalDetailPanel";
 import { MASTER_DATA_CONFIGS } from "./configs";
 import { codeFieldOf } from "./useCodeSeries";
@@ -313,21 +318,117 @@ export function lookupMastersFor(
   return ordered;
 }
 
+function DescriptionTooltip({
+  title,
+  description,
+}: {
+  title: string;
+  description: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handlePointerDown = (e: PointerEvent) => {
+      const target = e.target as Node | null;
+      if (
+        triggerRef.current?.contains(target) ||
+        popoverRef.current?.contains(target)
+      ) {
+        return;
+      }
+      setOpen(false);
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [open]);
+
+  return (
+    <div className="relative inline-flex items-center">
+      <button
+        ref={triggerRef}
+        type="button"
+        onClick={() => setOpen((prev) => !prev)}
+        onMouseEnter={() => setOpen(true)}
+        onMouseLeave={() => setOpen(false)}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
+        aria-label={`About ${title}`}
+        aria-expanded={open}
+        className="group inline-flex items-center justify-center h-6 w-6 rounded-full text-[var(--text-muted)] hover:text-[var(--accent)] hover:bg-[var(--surface-raised)] transition-all focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)] cursor-pointer"
+      >
+        <Info className="h-4 w-4 transition-transform group-hover:scale-110" />
+      </button>
+
+      {open && (
+        <div
+          ref={popoverRef}
+          role="tooltip"
+          className="absolute left-0 top-full mt-2 w-72 sm:w-80 max-w-[calc(100vw-3rem)] rounded-xl p-3.5 shadow-2xl border z-50 text-xs leading-relaxed pointer-events-auto transition-all animate-in fade-in zoom-in-95"
+          style={{
+            backgroundColor: "var(--surface-raised)",
+            borderColor: "var(--border)",
+            color: "var(--text-primary)",
+          }}
+        >
+          <div className="flex items-center gap-2 mb-1.5 font-semibold text-[var(--text-primary)]">
+            <Info className="h-3.5 w-3.5 text-[var(--accent)] shrink-0" />
+            <span className="truncate">About {title}</span>
+          </div>
+          <p className="text-[var(--text-secondary)]">{description}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function getSectionIcon(section: string) {
+  const s = section.toLowerCase();
+  if (s.includes("identif")) return FileText;
+  if (s.includes("lineage") || s.includes("parent") || s.includes("pedigree")) return Users;
+  if (s.includes("acqui") || s.includes("purchas") || s.includes("source") || s.includes("receipt")) return Boxes;
+  if (s.includes("product") || s.includes("perform") || s.includes("operat")) return Activity;
+  if (s.includes("bio") || s.includes("asset") || s.includes("health")) return Layers;
+  if (s.includes("position") || s.includes("locat") || s.includes("place")) return MapPin;
+  if (s.includes("unit") || s.includes("valuat") || s.includes("uom") || s.includes("weight")) return Scale;
+  if (s.includes("track") || s.includes("code") || s.includes("qr") || s.includes("rfid") || s.includes("lot")) return QrCode;
+  if (s.includes("gl") || s.includes("account") || s.includes("ledger")) return Landmark;
+  if (s.includes("duration") || s.includes("time") || s.includes("schedul")) return Clock;
+  if (s.includes("transit") || s.includes("move") || s.includes("flow")) return ArrowRight;
+  if (s.includes("data") || s.includes("entry") || s.includes("kpi")) return Edit3;
+  if (s.includes("address") || s.includes("contact") || s.includes("supplier") || s.includes("customer")) return Building2;
+  if (s.includes("financ") || s.includes("cost") || s.includes("price") || s.includes("curr")) return Coins;
+  if (s.includes("setting") || s.includes("config") || s.includes("setup")) return SlidersHorizontal;
+  return FileText;
+}
+
 export function MasterDataTable({
   config,
   createOnly = false,
+  showHeader = !createOnly,
+  tabs,
   onCreated,
   onCreateCancelled,
 }: {
   config: MasterDataConfig;
   createOnly?: boolean;
+  showHeader?: boolean;
+  tabs?: ReactNode;
   onCreated?: (row: Row) => void;
   onCreateCancelled?: () => void;
 }) {
   const { t, tLabel } = useLanguage();
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
   const [search, setSearch] = useState("");
   const [entityOptions, setEntityOptions] = useState<Record<string, Row[]>>({});
   /**
@@ -354,13 +455,14 @@ export function MasterDataTable({
   // Pending, not-yet-added input text for each "string-list" field's chip editor, keyed by field key.
   const [chipDrafts, setChipDrafts] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
-  const [formError, setFormError] = useState("");
+  const [activeFormTab, setActiveFormTab] = useState<string>("");
   const [entityReloadKey, setEntityReloadKey] = useState(0);
   const [lookupManager, setLookupManager] = useState<MasterDataConfig | null>(null);
   const [relatedPicker, setRelatedPicker] = useState<RelatedPicker | null>(null);
   const [relatedCreator, setRelatedCreator] = useState<RelatedCreator | null>(null);
   const lastEntityReloadKeyRef = useRef(entityReloadKey);
   const createOnlyOpenedRef = useRef(false);
+  const codeFieldTouchedRef = useRef(false);
 
   const [confirmDelete, setConfirmDelete] = useState<Row | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -522,12 +624,9 @@ export function MasterDataTable({
    * duplicates a tab sitting inches above it. The field selector still offers
    * creation without requiring a half-filled form to be abandoned.
    */
-  const tabGroup = (c: MasterDataConfig) => c.tabOf ?? c.key;
-  const manageableLookups = lookupConfigs.filter((c) => tabGroup(c) !== tabGroup(config));
 
   const load = async () => {
     setLoading(true);
-    setError("");
     try {
       const params = new URLSearchParams();
       if (companyId) params.set("companyId", companyId);
@@ -552,7 +651,7 @@ export function MasterDataTable({
       const total = (res as { total?: unknown })?.total;
       setServerTotal(typeof total === "number" ? total : null);
     } catch (err: any) {
-      setError(err?.message || t("mdFailedToLoad"));
+      showToast.error(err?.message || t("mdFailedToLoad"));
     } finally {
       setLoading(false);
     }
@@ -902,12 +1001,38 @@ export function MasterDataTable({
     setIsManualNoAllowed(false);
     setTemplateLockedFields(new Set());
     const initial: Row = {};
-    formFields.forEach((f) => { initial[f.key] = f.type === "boolean" ? false : f.type === "string-list" || f.type === "field-list" || f.multiple ? [] : ""; });
+    formFields.forEach((f) => {
+      if (f.defaultValue !== undefined) {
+        initial[f.key] = f.defaultValue;
+      } else {
+        initial[f.key] = f.type === "boolean" ? false : f.type === "string-list" || f.type === "field-list" || f.multiple ? [] : "";
+      }
+    });
+    codeFieldTouchedRef.current = false;
+    if (numbering.codeKey) {
+      const currentPreview = numbering.preview || (numbering.value(numbering.codeKey, "") as string);
+      if (currentPreview) initial[numbering.codeKey] = currentPreview;
+    }
     setForm(initial);
-    setFormError("");
+    setActiveFormTab("");
     setChipDrafts({});
     setModalOpen(true);
   };
+
+  // When a number series code preview arrives or updates, populate it into the form
+  // only if the user has not manually touched/cleared the field.
+  useEffect(() => {
+    if (!modalOpen || editing || !numbering.codeKey) return;
+    if (codeFieldTouchedRef.current) return;
+    const preview = numbering.preview || (numbering.value(numbering.codeKey, "") as string);
+    if (preview && (!form[numbering.codeKey] || !codeFieldTouchedRef.current)) {
+      setForm((prev) => {
+        if (codeFieldTouchedRef.current) return prev;
+        if (prev[numbering.codeKey!] === preview) return prev;
+        return { ...prev, [numbering.codeKey!]: preview };
+      });
+    }
+  }, [modalOpen, editing, numbering.codeKey, numbering.preview]);
 
   const onConfirmTemplate = (generatedItem: any) => {
     setEditing(generatedItem);
@@ -980,7 +1105,7 @@ export function MasterDataTable({
     setTemplateLockedFields(locked);
     setIsManualNoAllowed(!!generatedItem.manual_nos);
     setForm(initial);
-    setFormError("");
+    setActiveFormTab("");
     setChipDrafts({});
     setModalOpen(true);
   };
@@ -1034,12 +1159,17 @@ export function MasterDataTable({
       initial[f.key] = v ?? (f.type === "boolean" ? false : "");
     });
     setForm(initial);
-    setFormError("");
+    codeFieldTouchedRef.current = false;
+    setActiveFormTab("");
     setChipDrafts({});
     setModalOpen(true);
   };
 
-  const setField = (key: string, value: any) => setForm((prev) => {
+  const setField = (key: string, value: any) => {
+    if (key === numbering.codeKey) {
+      codeFieldTouchedRef.current = true;
+    }
+    setForm((prev) => {
     const next = { ...prev, [key]: value };
     if (config.key === "location" && key === "location_type" && value === "SILO") next.storage_type = "SILO";
     if (config.key === "location" && key === "storage_type" && value !== "SILO") {
@@ -1070,11 +1200,11 @@ export function MasterDataTable({
     });
     return next;
   });
+};
 
   const handleSave = async () => {
     if (readOnly) return;
     setSaving(true);
-    setFormError("");
     try {
       const isNumberSeriesForm = config.key === "number-series" || config.key === "no-series";
       for (const f of visibleFields) {
@@ -1082,13 +1212,22 @@ export function MasterDataTable({
         // standing in for real columns is the exception: it is not sent under
         // its own key, but it does decide what gets written.
         if (f.filterOnly && !f.booleanColumns) continue;
-        const v = form[f.key];
+        let v = form[f.key];
+        if ((v === "" || v === undefined || v === null) && f.key === numbering.codeKey && !codeFieldTouchedRef.current) {
+          const fallbackVal = numbering.preview || numbering.value(f.key, "");
+          if (fallbackVal) {
+            v = fallbackVal;
+            form[f.key] = fallbackVal;
+          }
+        }
         const isEmpty = v === "" || v === undefined || v === null || (Array.isArray(v) && !v.length);
         if (isEmpty && isFieldRequired(f, form)) {
+          setActiveFormTab(f.section || "Identification");
           throw new Error(`"${tLabel(currentLabel(f, form))}" is required.`);
         }
         if (isNumberSeriesForm && !isEmpty) {
           if (f.maxLength && typeof v === "string" && v.length > f.maxLength) {
+            setActiveFormTab(f.section || "Identification");
             throw new Error(`"${tLabel(currentLabel(f, form))}" cannot exceed ${f.maxLength} characters.`);
           }
           if (f.type === "number") {
@@ -1120,7 +1259,11 @@ export function MasterDataTable({
       for (const f of visibleFields) {
         if (f.filterOnly || (f.readOnly && !(f.key === "item_code" && isManualNoAllowed))) continue;
         let v = form[f.key];
-        if (v === "" || v === undefined) continue;
+        if ((v === "" || v === undefined || v === null) && f.key === numbering.codeKey && !codeFieldTouchedRef.current) {
+          const fallbackVal = numbering.preview || numbering.value(f.key, "");
+          if (fallbackVal) v = fallbackVal;
+        }
+        if (v === "" || v === undefined || v === null) continue;
         if (f.type === "number") v = Number(v);
         if (f.type === "json") {
           try {
@@ -1160,16 +1303,19 @@ export function MasterDataTable({
       if (editing) {
         await api.put(`${config.apiBase}/${editing[config.idKey]}`, payload);
         setModalOpen(false);
+        showToast.success("Updated successfully");
         load();
       } else {
         const response = await api.post(config.apiBase, payload);
         const created = unwrap<Row>(response);
         setModalOpen(false);
+        showToast.success("Created successfully");
         onCreated?.(created);
         if (!createOnly) load();
       }
     } catch (err: any) {
-      setFormError(err?.message || t("mdFailedToSave"));
+      const msg = err?.message || t("mdFailedToSave");
+      showToast.error(msg);
       if (!editing) numbering.refresh();
     } finally {
       setSaving(false);
@@ -1183,9 +1329,11 @@ export function MasterDataTable({
     try {
       await api.delete(`${config.apiBase}/${confirmDelete[config.idKey]}`);
       setConfirmDelete(null);
+      showToast.success("Deleted successfully");
       load();
     } catch (err: any) {
-      setError(err?.message || t("mdFailedToDelete"));
+      const msg = err?.message || t("mdFailedToDelete");
+      showToast.error(msg);
     } finally {
       setDeleting(false);
     }
@@ -1201,12 +1349,15 @@ export function MasterDataTable({
     try {
       if (row.is_active === false) {
         await api.patch(`${config.apiBase}/${id}/restore`);
+        showToast.success("Activated successfully");
       } else {
         await api.delete(`${config.apiBase}/${id}`);
+        showToast.success("Deactivated successfully");
       }
       load();
     } catch (err: any) {
-      setError(err?.message || t("mdFailedToSave"));
+      const msg = err?.message || t("mdFailedToSave");
+      showToast.error(msg);
     } finally {
       setTogglingId(null);
     }
@@ -1730,8 +1881,9 @@ export function MasterDataTable({
         />
       );
     }
-    const isNumberSeriesForm = config.key === "number-series" || config.key === "no-series";
     const isDisabled = (f.readOnly && !(f.key === "item_code" && isManualNoAllowed)) || isLockedByTemplate;
+    const isInteger = f.type === "number" && (f.step === "1" || !f.step);
+
     return (
       <input
         {...accessibility}
@@ -1739,9 +1891,31 @@ export function MasterDataTable({
         step={f.step}
         min={f.min}
         max={f.max}
-        maxLength={isNumberSeriesForm ? f.maxLength : undefined}
+        maxLength={f.maxLength}
         value={value}
-        onChange={(e) => setField(f.key, e.target.value)}
+        onKeyDown={(e) => {
+          if (f.type === "number") {
+            // Block scientific notation 'e', 'E' and sign keys '+', '-'
+            if (e.key === "e" || e.key === "E" || e.key === "+" || e.key === "-") {
+              e.preventDefault();
+            }
+            // Block decimal point on integer-only fields
+            if (isInteger && e.key === ".") {
+              e.preventDefault();
+            }
+          }
+        }}
+        onChange={(e) => {
+          const val = e.target.value;
+          // Guard for max length if input type is number (browser ignores maxLength on type=number)
+          if (f.type === "number" && f.maxLength && val.length > f.maxLength) {
+            return;
+          }
+          if (f.type === "number" && f.max !== undefined && val !== "" && Number(val) > Number(f.max)) {
+            return;
+          }
+          setField(f.key, val);
+        }}
         placeholder={f.placeholder}
         disabled={isDisabled}
         className={`${inputCls} disabled:cursor-not-allowed disabled:opacity-70`}
@@ -1752,142 +1926,251 @@ export function MasterDataTable({
 
   return (
     <div className="flex flex-col gap-4">
-      {/* No heading here any more. The record set's name and description are
-          the page's own H1 and description, rendered by PageHeader above this
-          component — this used to restate both as an <h2> immediately under a
-          "Master Data" <h1>, so every screen carried two titles for one thing.
-          What remains is this component's own toolbar: the filters, the search
-          and the create action that operate on the table below. They belong to
-          the work surface, so they stay with it. Nothing about their state,
-          their handlers or the requests they make has changed. */}
-      {/* Left-aligned, so the controls sit under the title they belong to
-          rather than drifting to the far edge now that nothing balances them
-          on the left (apple.design.md §23). */}
+      {showHeader && !createOnly && (
+        <div
+          data-master-sticky-header="true"
+          className="sticky top-0 z-20 -mx-4 px-4 sm:-mx-6 sm:px-6 lg:-mx-7 lg:px-7 pt-2.5 pb-3.5 bg-[var(--bg)]/95 backdrop-blur-md border-b border-[var(--border)] shadow-xs transition-all flex flex-col gap-3"
+        >
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 min-w-0">
+            {/* Title, Badges, Description Tooltip */}
+            <div className="flex items-center flex-wrap gap-2.5 min-w-0">
+              <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-[var(--text-primary)] truncate">
+                {tLabel(config.label)}
+              </h1>
+
+              {config.group && (
+                <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium bg-[var(--surface-raised)] border border-[var(--border)] text-[var(--text-secondary)]">
+                  {tLabel(config.group)}
+                </span>
+              )}
+
+              {typeof serverTotal === "number" && serverTotal >= 0 && (
+                <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-semibold bg-[var(--surface)] border border-[var(--border)] text-[var(--text-muted)]">
+                  {serverTotal} {serverTotal === 1 ? "record" : "records"}
+                </span>
+              )}
+
+              {config.description && (
+                <DescriptionTooltip
+                  title={tLabel(config.label)}
+                  description={tLabel(config.description)}
+                />
+              )}
+            </div>
+
+            {/* Header Action Buttons */}
+            <div className="flex items-center gap-2 shrink-0 self-start sm:self-auto">
+              {config.key === "item" && !readOnly && canCreateItem && (
+                <button
+                  type="button"
+                  onClick={() => setTemplateModalOpen(true)}
+                  className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold shadow-xs transition-colors hover:border-[var(--accent)] hover:text-[var(--accent)] active:scale-95 cursor-pointer"
+                  style={S.surface}
+                  title="Select item template"
+                >
+                  <FileText className="h-3.5 w-3.5" />
+                  <span>Template</span>
+                </button>
+              )}
+
+              {!readOnly && !exhausted && (
+                <button
+                  type="button"
+                  onClick={openCreate}
+                  className="inline-flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-xs font-semibold text-white shadow-xs transition-all hover:opacity-95 active:scale-95 cursor-pointer"
+                  style={{ backgroundColor: "var(--accent)" }}
+                >
+                  <Plus className="h-4 w-4" />
+                  <span>{t("addItem", { name: tLabel(singularLabel(config)) })}</span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Sub-navigation tabs (if any) pinned directly below the title and action row */}
+          {tabs && (
+            <div className="pt-0.5">
+              {tabs}
+            </div>
+          )}
+
+          {/* Controls toolbar: Search, Filters, NOB/LOB */}
+          <div className="flex flex-wrap items-center justify-between gap-2.5 pt-1.5 border-t border-[var(--border)]/60">
+            <div className="flex flex-wrap items-center gap-2">
+              {config.supportsNobLobFilter && workspaceScope !== "OPERATIONAL" && (
+                <>
+                  <select
+                    aria-label="Filter by nature of business"
+                    value={nobFilter}
+                    onChange={(e) => { setNobFilter(e.target.value); setLobFilter(""); }}
+                    className="nf-input-sm nf-select"
+                    style={S.input}
+                  >
+                    <option value="">{t("allNob")}</option>
+                    {nobFilterOptions.map((n) => (
+                      <option key={n.nob_id} value={n.nob_id}>{n.nob_code}</option>
+                    ))}
+                  </select>
+                  <select
+                    aria-label="Filter by line of business"
+                    value={lobFilter}
+                    onChange={(e) => setLobFilter(e.target.value)}
+                    className="nf-input-sm nf-select"
+                    style={S.input}
+                    disabled={!nobFilter}
+                  >
+                    <option value="">{nobFilter ? t("allLob") : t("selectNobFirst")}</option>
+                    {lobFilterOptions.map((l) => (
+                      <option key={l.lob_id} value={l.lob_id}>{l.lob_code}</option>
+                    ))}
+                  </select>
+                </>
+              )}
+
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2" style={S.muted} />
+                <input
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder={t("searchPlaceholder")}
+                  className="nf-input-sm w-44 sm:w-60"
+                  style={{ ...S.input, paddingLeft: "1.75rem", paddingRight: search ? "1.75rem" : undefined }}
+                />
+                {search && (
+                  <button
+                    type="button"
+                    onClick={() => setSearch("")}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
+                    title="Clear search"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                )}
+              </div>
+
+              {columns.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => { setFilterDraft(colFilters); setFilterOpen(true); }}
+                  className="flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-(--accent) hover:text-(--accent) cursor-pointer"
+                  style={appliedFilterCount ? { ...S.surface, borderColor: "var(--accent)", color: "var(--accent)" } : S.surface}
+                >
+                  <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden />
+                  <span>{t("mdFilters")}</span>
+                  {appliedFilterCount > 0 && (
+                    <span
+                      className="rounded-full px-1.5 py-0.5 text-[10px] font-bold leading-none text-white"
+                      style={{ backgroundColor: "var(--accent)" }}
+                    >
+                      {appliedFilterCount}
+                    </span>
+                  )}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* A create-only instance is a form summoned from another form's field.
           It has no record set of its own to show, so it renders the dialog
           alone — the toolbar, chips, table and pager below would put a second
           master page inside the form the user is already filling in. */}
       {!createOnly && (
       <>
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
-          {config.supportsNobLobFilter && workspaceScope !== "OPERATIONAL" && (
-            <>
-              <select
-                aria-label="Filter by nature of business"
-                value={nobFilter}
-                onChange={(e) => { setNobFilter(e.target.value); setLobFilter(""); }}
-                className="nf-input-sm nf-select"
-                style={S.input}
-              >
-                <option value="">{t("allNob")}</option>
-                {nobFilterOptions.map((n) => (
-                  <option key={n.nob_id} value={n.nob_id}>{n.nob_code}</option>
-                ))}
-              </select>
-              <select
-                aria-label="Filter by line of business"
-                value={lobFilter}
-                onChange={(e) => setLobFilter(e.target.value)}
-                className="nf-input-sm nf-select"
-                style={S.input}
-                disabled={!nobFilter}
-              >
-                <option value="">{nobFilter ? t("allLob") : t("selectNobFirst")}</option>
-                {lobFilterOptions.map((l) => (
-                  <option key={l.lob_id} value={l.lob_id}>{l.lob_code}</option>
-                ))}
-              </select>
-            </>
-          )}
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2" style={S.muted} />
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder={t("searchPlaceholder")}
-              className="nf-input-sm"
-              // `.nf-input-sm` sets `padding` as a shorthand, which overrode
-              // the `pl-8` utility that was here and left the icon sitting on
-              // top of the placeholder. Setting it alongside the other inline
-              // styles keeps the fix on this one field.
-              style={{ ...S.input, paddingLeft: "1.75rem" }}
-            />
-          </div>
-          {/* The search box above narrows on every keystroke because it is one
-              field and the whole list is its subject. Column filters are a set
-              of decisions taken together, so they live behind this button and
-              take effect on Apply — see the drawer at the foot of this file. */}
-          {columns.length > 0 && (
-            <button
-              type="button"
-              onClick={() => { setFilterDraft(colFilters); setFilterOpen(true); }}
-              className="flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-(--accent) hover:text-(--accent)"
-              style={appliedFilterCount ? { ...S.surface, borderColor: "var(--accent)", color: "var(--accent)" } : S.surface}
-            >
-              <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden />
-              {t("mdFilters")}
-              {appliedFilterCount > 0 && (
-                <span
-                  className="rounded-full px-1.5 py-0.5 text-[10px] font-bold leading-none text-white"
-                  style={{ backgroundColor: "var(--accent)" }}
+      {!showHeader && (
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
+            {config.supportsNobLobFilter && workspaceScope !== "OPERATIONAL" && (
+              <>
+                <select
+                  aria-label="Filter by nature of business"
+                  value={nobFilter}
+                  onChange={(e) => { setNobFilter(e.target.value); setLobFilter(""); }}
+                  className="nf-input-sm nf-select"
+                  style={S.input}
                 >
-                  {appliedFilterCount}
-                </span>
-              )}
-            </button>
-          )}
-          {config.key === "item" && !readOnly && canCreateItem && (
-            <button
-              type="button"
-              onClick={() => setTemplateModalOpen(true)}
-              className="flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-(--accent) hover:text-(--accent)"
-              style={S.surface}
+                  <option value="">{t("allNob")}</option>
+                  {nobFilterOptions.map((n) => (
+                    <option key={n.nob_id} value={n.nob_id}>{n.nob_code}</option>
+                  ))}
+                </select>
+                <select
+                  aria-label="Filter by line of business"
+                  value={lobFilter}
+                  onChange={(e) => setLobFilter(e.target.value)}
+                  className="nf-input-sm nf-select"
+                  style={S.input}
+                  disabled={!nobFilter}
+                >
+                  <option value="">{nobFilter ? t("allLob") : t("selectNobFirst")}</option>
+                  {lobFilterOptions.map((l) => (
+                    <option key={l.lob_id} value={l.lob_id}>{l.lob_code}</option>
+                  ))}
+                </select>
+              </>
+            )}
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2" style={S.muted} />
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder={t("searchPlaceholder")}
+                className="nf-input-sm"
+                style={{ ...S.input, paddingLeft: "1.75rem" }}
+              />
+            </div>
+            {columns.length > 0 && (
+              <button
+                type="button"
+                onClick={() => { setFilterDraft(colFilters); setFilterOpen(true); }}
+                className="flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-(--accent) hover:text-(--accent)"
+                style={appliedFilterCount ? { ...S.surface, borderColor: "var(--accent)", color: "var(--accent)" } : S.surface}
+              >
+                <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden />
+                {t("mdFilters")}
+                {appliedFilterCount > 0 && (
+                  <span
+                    className="rounded-full px-1.5 py-0.5 text-[10px] font-bold leading-none text-white"
+                    style={{ backgroundColor: "var(--accent)" }}
+                  >
+                    {appliedFilterCount}
+                  </span>
+                )}
+              </button>
+            )}
+            {config.key === "item" && !readOnly && canCreateItem && (
+              <button
+                type="button"
+                onClick={() => setTemplateModalOpen(true)}
+                className="flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-(--accent) hover:text-(--accent)"
+                style={S.surface}
+              >
+                <FileText className="h-3.5 w-3.5" /> Template
+              </button>
+            )}
+            {!readOnly && !exhausted && <button
+              onClick={openCreate}
+              className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-white"
+              style={{ backgroundColor: "var(--accent)" }}
             >
-              <FileText className="h-3.5 w-3.5" /> Template
-            </button>
-          )}
-          {!readOnly && !exhausted && <button
-            onClick={openCreate}
-            className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-white"
-            style={{ backgroundColor: "var(--accent)" }}
-          >
-            <Plus className="h-3.5 w-3.5" /> {t("addItem", { name: tLabel(singularLabel(config)) })}
-          </button>}
+              <Plus className="h-3.5 w-3.5" /> {t("addItem", { name: tLabel(singularLabel(config)) })}
+            </button>}
+          </div>
         </div>
-      </div>
-
-      {error && <InlineAlert>{error}</InlineAlert>}
+      )}
 
       {bcOwned && <BcOwnershipNotice config={config} />}
       {administrationRestricted && <p className="rounded-lg border p-3 text-sm" style={S.raised}>Only a Tenant Admin or Company Admin can add, edit or deactivate reasons. You can view the shared catalog here.</p>}
-      {manageableLookups.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs text-(--text-muted)">Dropdown options</span>
-          {manageableLookups.map((c) => (
-            <button
-              key={c.key}
-              type="button"
-              onClick={() => setLookupManager(c)}
-              title={`Manage ${tLabel(c.label)}`}
-              className="inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors hover:border-(--accent) hover:text-(--accent) focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--accent)"
-              style={S.surface}
-            >
-              <SlidersHorizontal className="h-3 w-3" aria-hidden />
-              {tLabel(c.label)}
-            </button>
-          ))}
-        </div>
-      )}
 
       {/* The filter panel is a second column of this grid, not a layer over
           it: the table narrows and the panel takes the space, so the rows
           being filtered stay visible and nothing is buried behind a scrim. */}
       <div className={selectedRow || filterOpen ? "grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_340px]" : undefined}>
-      <div className="min-w-0 overflow-hidden rounded-[var(--radius-md)] border" style={S.surface}>
-        <div className="overflow-x-auto">
+      <div className="min-w-0 overflow-hidden rounded-[var(--radius-md)] border flex flex-col" style={S.surface}>
+        <div className="overflow-x-auto max-h-[calc(100vh-270px)] overflow-y-auto">
           <table className="w-full border-collapse text-left text-sm">
-            <TableHeader>
+            <TableHeader className="sticky top-0 z-10 bg-[var(--surface-raised)] shadow-xs">
               <tr className="border-b" style={{ borderColor: "var(--row-border)" }}>
                 {columns.map((c) => {
                   const active = sortKey === c.key;
@@ -2038,7 +2321,7 @@ export function MasterDataTable({
           </table>
         </div>
         {!loading && rows.length > 0 && (
-          <div className="border-t px-2" style={{ borderColor: "var(--border)" }}>
+          <div className="sticky bottom-0 z-10 bg-[var(--surface)] border-t px-2 shadow-xs" style={{ borderColor: "var(--border)" }}>
             <Pagination page={page} pageSize={pageSize} total={pagerTotal} onPageChange={setPage} onPageSizeChange={setPageSize} pageSizeOptions={[25, 50, 100]} />
           </div>
         )}
@@ -2086,6 +2369,7 @@ export function MasterDataTable({
             api.delete(`${config.apiBase}/${editing[config.idKey]}`).catch(() => {});
           }
           setModalOpen(false);
+          setActiveFormTab("");
           setTemplateLockedFields(new Set());
           if (createOnly) onCreateCancelled?.();
         }}
@@ -2093,36 +2377,22 @@ export function MasterDataTable({
         maxWidth="xl"
         presentation="modal"
         footer={
-          <>
-            <button onClick={() => {
-              if (editing?.status === "DRAFT" && (!form.item_name || !String(form.item_name).trim())) {
-                api.delete(`${config.apiBase}/${editing[config.idKey]}`).catch(() => {});
-              }
-              setModalOpen(false);
-              setTemplateLockedFields(new Set());
-              if (createOnly) onCreateCancelled?.();
-            }} disabled={saving} className="rounded-lg border px-4 py-2 text-sm font-medium" style={S.surface}>
-              {t("cancel")}
-            </button>
-            <button
-              onClick={handleSave}
-              disabled={
-                saving ||
-                numbering.loading ||
-                numberingBlocks ||
-                (config.key === "item" && (!form.item_name?.trim() || !form.uom_primary?.trim()))
-              }
-              className="rounded-lg px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
-              style={{ backgroundColor: "var(--accent)" }}
-            >
-              {saving ? t("saving") : editing ? t("saveChanges") : t("create")}
-            </button>
-          </>
+          <button
+            onClick={handleSave}
+            disabled={
+              saving ||
+              numbering.loading ||
+              numberingBlocks ||
+              (config.key === "item" && (!form.item_name?.trim() || !form.uom_primary?.trim()))
+            }
+            className="rounded-lg px-5 py-2 text-sm font-semibold text-white shadow-xs transition-all hover:opacity-95 active:scale-95 disabled:opacity-50 cursor-pointer"
+            style={{ backgroundColor: "var(--accent)" }}
+          >
+            {saving ? t("saving") : editing ? t("saveChanges") : t("create")}
+          </button>
         }
       >
         <div className="flex flex-col gap-4">
-          {formError && <InlineAlert>{formError}</InlineAlert>}
-          {numbering.error && <InlineAlert>{numbering.error}</InlineAlert>}
           {(() => {
             const DEFAULT = "Identification";
             const order: string[] = [];
@@ -2132,19 +2402,14 @@ export function MasterDataTable({
               if (!bySection.has(s)) { bySection.set(s, []); order.push(s); }
               bySection.get(s)!.push(f);
             }
-            // A master with no sections configured renders one card, which looks the
-            // same as today's flat form once expanded.
             const identificationIndex = order.indexOf(DEFAULT);
             if (identificationIndex > 0) order.unshift(...order.splice(identificationIndex, 1));
-            return order.map((s, i) => (
-              // Open the first card, and any card holding a field the form
-              // will refuse to save without. Primary UOM is required and lives
-              // in "Units & Valuation", so with only the first card open a
-              // mandatory field sat collapsed below optional ones like Storage
-              // Temp — invisible until you went looking for it.
-              <CollapsibleCard key={s} title={s} defaultOpen={i === 0 || bySection.get(s)!.some((f) => isFieldRequired(f, form))}>
+
+            // If only one tab/section, show directly without tabs
+            if (order.length <= 1) {
+              return (
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  {bySection.get(s)!.map((f) => (
+                  {visibleFields.map((f) => (
                     <Field
                       key={f.key}
                       label={tLabel(currentLabel(f, form))}
@@ -2157,16 +2422,94 @@ export function MasterDataTable({
                     </Field>
                   ))}
                 </div>
-              </CollapsibleCard>
-            ));
-          })()}
+              );
+            }
 
+            // Multiple sections -> show horizontal tabs across the top
+            const currentTab = (activeFormTab && order.includes(activeFormTab)) ? activeFormTab : order[0];
+            const activeFields = bySection.get(currentTab) || [];
+
+            return (
+              <div className="flex flex-col gap-4">
+                {/* Horizontal Tab Bar */}
+                <div className="flex shrink-0 items-center gap-1 overflow-x-auto border-b border-[var(--border)] -mx-5 px-5 sm:-mx-6 sm:px-6 -mt-1 pb-px scrollbar-none" role="tablist">
+                  {order.map((section) => {
+                    const isSelected = currentTab === section;
+                    const fieldsInSection = bySection.get(section) || [];
+                    const missingRequired = fieldsInSection.some((f) => {
+                      if (!isFieldRequired(f, form)) return false;
+                      const val = f.key === numbering.codeKey
+                        ? (form[f.key] || (!codeFieldTouchedRef.current ? numbering.preview : ""))
+                        : form[f.key];
+                      return val === "" || val === undefined || val === null;
+                    });
+
+                    const Icon = getSectionIcon(section);
+
+                    return (
+                      <button
+                        key={section}
+                        type="button"
+                        role="tab"
+                        aria-selected={isSelected}
+                        tabIndex={isSelected ? 0 : -1}
+                        onKeyDown={(e) => {
+                          const idx = order.indexOf(section);
+                          if (e.key === "ArrowRight") {
+                            e.preventDefault();
+                            const next = order[(idx + 1) % order.length];
+                            setActiveFormTab(next);
+                          } else if (e.key === "ArrowLeft") {
+                            e.preventDefault();
+                            const prev = order[(idx - 1 + order.length) % order.length];
+                            setActiveFormTab(prev);
+                          }
+                        }}
+                        onClick={() => setActiveFormTab(section)}
+                        className={cn(
+                          "relative shrink-0 whitespace-nowrap px-3.5 py-2.5 text-xs transition-colors cursor-pointer flex items-center gap-2 rounded-t-md",
+                          isSelected
+                            ? "font-semibold text-[var(--text-primary)]"
+                            : "font-normal text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-raised)]/50"
+                        )}
+                      >
+                        <Icon className={cn("h-3.5 w-3.5 shrink-0 transition-colors", isSelected ? "text-[var(--accent)]" : "text-[var(--text-muted)]")} />
+                        <span>{section}</span>
+                        {missingRequired && (
+                          <span className="h-1.5 w-1.5 rounded-full bg-[var(--accent)]" title="Contains incomplete required fields" />
+                        )}
+                        {isSelected && (
+                          <span className="absolute inset-x-2 -bottom-px h-[2px] rounded-full bg-[var(--accent)]" />
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Form fields for the active tab */}
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 pt-1">
+                  {activeFields.map((f) => (
+                    <Field
+                      key={f.key}
+                      label={tLabel(currentLabel(f, form))}
+                      htmlFor={`master-${config.key}-${f.key}`}
+                      required={isFieldRequired(f, form)}
+                      hint={templateLockedFields.has(f.key) ? "🔒 Set by template" : f.helpText}
+                      className={f.type === "textarea" || f.type === "json" || f.type === "string-list" ? "sm:col-span-2" : undefined}
+                    >
+                      {renderField(f)}
+                    </Field>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
         </div>
       </Dialog>
 
       <Dialog open={!!lookupManager} title={`Manage ${lookupManager?.label || ""}`} maxWidth="xl"
         onClose={() => { setLookupManager(null); setEntityReloadKey((k) => k + 1); numbering.refresh(); }}>
-        {lookupManager && <MasterDataTable key={lookupManager.key} config={lookupManager} />}
+        {lookupManager && <MasterDataTable key={lookupManager.key} config={lookupManager} showHeader={false} />}
       </Dialog>
 
       {relatedPicker && (
@@ -2193,6 +2536,7 @@ export function MasterDataTable({
         <MasterDataTable
           config={relatedCreator.config}
           createOnly
+          showHeader={false}
           onCreateCancelled={() => setRelatedCreator(null)}
           onCreated={(created) => {
             const valueKey = relatedCreator.field.entityValueKey || relatedCreator.config.idKey;
@@ -2212,14 +2556,9 @@ export function MasterDataTable({
         description={confirmDelete ? t("deactivateRecordDesc", { name: confirmDelete[columns[0]?.key] ?? confirmDelete[config.idKey], label: tLabel(config.label) }) : undefined}
         maxWidth="sm"
         footer={
-          <>
-            <button onClick={() => setConfirmDelete(null)} disabled={deleting} className="rounded-lg border px-4 py-2 text-sm font-medium" style={S.surface}>
-              {t("cancel")}
-            </button>
-            <button onClick={handleDelete} disabled={deleting} className="rounded-lg px-4 py-2 text-sm font-semibold text-white disabled:opacity-50" style={{ backgroundColor: "var(--danger)" }}>
-              {deleting ? t("deactivating") : t("deactivate")}
-            </button>
-          </>
+          <button onClick={handleDelete} disabled={deleting} className="rounded-lg px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 cursor-pointer" style={{ backgroundColor: "var(--danger)" }}>
+            {deleting ? t("deactivating") : t("deactivate")}
+          </button>
         }
       >
         <p className="text-sm" style={S.sub}>{t("confirmDeactivate")}</p>

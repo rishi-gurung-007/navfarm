@@ -60,8 +60,8 @@ const location: MasterDataConfig = {
   isPrimary: true,
   columns: [
     { key: "location_code", label: "Code" },
-    { key: "location_name", label: "Name" },
     { key: "location_type", label: "Type" },
+    { key: "location_name", label: "Name" },
     { key: "location_level", label: "Level" },
   ],
   supportsNobLobFilter: true,
@@ -70,17 +70,17 @@ const location: MasterDataConfig = {
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank if this location is shared across all LOBs under the selected NOB." },
     { key: "company_id", label: "Company", type: "text", hideInForm: true },
     { key: "location_code", label: "Location Code", type: "text", readOnly: true, helpText: "Generated from the selected Location Type prefix and kept permanently.", section: "Identification" },
-    { key: "location_name", label: "Location Name", type: "text", required: true, placeholder: "Porta Farm", section: "Identification" },
     {
-      key: "location_address", label: "Location Address", type: "text",
+      key: "location_type", label: "Location Type", type: "select-entity", required: true,
+      entityEndpoint: "/location-type", entityValueKey: "type_code", entityLabelKeys: ["type_code", "type_name"], section: "Identification",
+    },
+    { key: "location_name", label: "Location Name", type: "text", required: true, maxLength: 100, placeholder: "Porta Farm", section: "Identification" },
+    {
+      key: "location_address", label: "Location Address", type: "text", maxLength: 255,
       visibleWhen: { anyOf: [{ key: "location_type", equals: "FARM" }] },
       requiredWhen: { anyOf: [{ key: "location_type", equals: "FARM" }] },
       helpText: "Stored on the Farm only. Child locations inherit their physical context from the Farm hierarchy.",
       section: "Identification",
-    },
-    {
-      key: "location_type", label: "Location Type", type: "select-entity", required: true,
-      entityEndpoint: "/location-type", entityValueKey: "type_code", entityLabelKeys: ["type_code", "type_name"], section: "Identification",
     },
     {
       // Filtered by the API, not only here. The picker used to fetch "/location"
@@ -99,18 +99,18 @@ const location: MasterDataConfig = {
       section: "Identification",
     },
     { key: "location_level", label: "Hierarchy Level", type: "number", hideInForm: true, helpText: "Computed from the parent location." },
-    { key: "area_size", label: "Area Size", type: "number", step: "0.01", section: "Identification" },
+    { key: "area_size", label: "Area Size", type: "number", min: 0, max: 999999.99, step: "0.01", section: "Identification" },
     { key: "area_unit", label: "Area UOM", type: "select-entity", entityEndpoint: "/uom?uomType=AREA", entityValueKey: "uom_code", entityLabelKeys: ["uom_code", "uom_name"], section: "Identification" },
-    { key: "max_capacity", label: "Max Capacity", type: "number", step: "0.01", required: true, section: "Identification" },
+    { key: "max_capacity", label: "Max Capacity", type: "number", min: 0, max: 9999999, step: "1", required: true, section: "Identification" },
     { key: "capacity_uom", label: "Capacity UOM", type: "select-entity", required: true, entityEndpoint: "/uom?uomType=COUNT", entityValueKey: "uom_code", entityLabelKeys: ["uom_code", "uom_name"], section: "Identification" },
     { key: "storage_type", label: "Storage Location", type: "select", options: ["STORE", "SILO"].map((v) => ({ value: v, label: v })), section: "Identification" },
-    { key: "silo_capacity_kg", label: "Silo Capacity (KG)", type: "number", step: "0.01", visibleWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, requiredWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, helpText: "Required when Storage Location is SILO.", section: "Identification" },
-    { key: "silo_reorder_days", label: "Silo Reorder Days", type: "number", visibleWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, requiredWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, helpText: "Required when Storage Location is SILO.", section: "Identification" },
-    { key: "downtime_days_required", label: "Downtime Days Required", type: "number", helpText: "Empty days required between batches for biosecurity.", section: "Identification" },
+    { key: "silo_capacity_kg", label: "Silo Capacity (KG)", type: "number", min: 0, max: 999999.99, step: "0.01", visibleWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, requiredWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, helpText: "Required when Storage Location is SILO.", section: "Identification" },
+    { key: "silo_reorder_days", label: "Silo Reorder Days", type: "number", min: 0, max: 365, step: "1", visibleWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, requiredWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, helpText: "Required when Storage Location is SILO.", section: "Identification" },
+    { key: "downtime_days_required", label: "Downtime Days Required", type: "number", min: 0, max: 365, step: "1", helpText: "Empty days required between batches for biosecurity.", section: "Identification" },
     // The silo or store's own name-number. storage_type says which kind of
     // store this is; this says which one — MULTIPLIER writes MGH1 against each
     // grower house, Porta writes PSL FS - 01 and STORE.
-    { key: "storage_name", label: "Silo / Store Name", type: "text", placeholder: "MGH1", visibleWhen: { anyOf: [{ key: "storage_type", equals: ["STORE", "SILO"] }] }, helpText: "The name or number this silo or store is known by on the farm.", section: "Identification" },
+    { key: "storage_name", label: "Silo / Store Name", type: "text", maxLength: 100, placeholder: "MGH1", visibleWhen: { anyOf: [{ key: "storage_type", equals: ["STORE", "SILO"] }] }, helpText: "The name or number this silo or store is known by on the farm.", section: "Identification" },
   ],
 };
 
@@ -222,10 +222,10 @@ const numberSeries: MasterDataConfig = {
       ],
       helpText: "Select which master entity this number sequence generates codes for.",
     },
-    { key: "description", label: "Description", type: "text", maxLength: 100, placeholder: "Vendor Supplier Series", helpText: "Human readable label (max 100 characters)." },
+    { key: "description", label: "Description", type: "text", maxLength: 50, placeholder: "Vendor Supplier Series", helpText: "Human readable label (max 50 characters)." },
     { key: "no_series_code", label: "Prefix / Code Pattern", type: "text", required: true, maxLength: 20, placeholder: "SUP-", helpText: "Prefix pattern (max 20 characters, e.g. SUP- with 3 digits generates SUP-001)." },
     { key: "seq_length", label: "Digits (Sequence Length)", type: "number", defaultValue: "4", min: 1, max: 10, step: "1", required: true, helpText: "Length of digits for zero-padding (1 to 10 digits, e.g. 3 for -001, 4 for -0001)." },
-    { key: "increment_by", label: "Increment By", type: "number", defaultValue: "1", min: 1, step: "1", required: true, helpText: "How much to add on each generation (must be at least 1)." },
+    { key: "increment_by", label: "Increment By", type: "number", defaultValue: "1", min: 1, max: 100, step: "1", required: true, helpText: "How much to add on each generation (between 1 and 100)." },
     { key: "is_default", label: "Is Default for this Master", type: "boolean", defaultValue: "true", helpText: "If checked, forms for this master will use this number series by default." },
     { key: "manual_nos", label: "Allow Manual Numbers", type: "boolean", helpText: "If checked, users can overwrite the generated number on the form." },
     { key: "blocked", label: "Blocked", type: "boolean", helpText: "If checked, this series cannot be used to generate numbers." },

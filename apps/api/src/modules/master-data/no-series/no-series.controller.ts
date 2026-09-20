@@ -16,6 +16,7 @@ import { CreateNoSeriesDto, UpdateNoSeriesDto } from './dto/no-series.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
+import { RequireCodePreviewPermission } from '../../../common/decorators/require-code-preview-permission.decorator';
 
 @ApiTags('No. Series')
 @ApiBearerAuth()
@@ -39,16 +40,17 @@ export class NoSeriesController {
   }
 
   @Get('preview-by-master')
-  @RequirePermission('MASTER_DATA', 'ITEM', 'view')
+  @RequireCodePreviewPermission()
   @ApiOperation({ summary: 'Preview the next number for a specific master type (e.g. SUPPLIER, CUSTOMER)' })
   async previewByMaster(
     @Query('masterType') masterType: string,
     @Query('companyId') queryCompanyId: string,
+    @Query('type') type: string,
     @Req() req: any,
   ) {
     const tenantId = req.user?.tenantId || req['tenantId'];
     const companyId = queryCompanyId || req.headers?.['x-active-company-id'] || req.user?.companyId;
-    const result = await this.noSeriesService.previewByMaster(masterType, tenantId, companyId);
+    const result = await this.noSeriesService.previewByMaster(masterType, tenantId, companyId, type);
     return {
       success: true,
       message: 'Preview retrieved successfully.',
@@ -57,7 +59,7 @@ export class NoSeriesController {
   }
 
   @Get('by-master')
-  @RequirePermission('MASTER_DATA', 'ITEM', 'view')
+  @RequirePermission('SYSTEM', 'NUMBER_SERIES', 'view')
   @ApiOperation({ summary: 'List all No. Series grouped by master/document type — used by Inventory Setup' })
   async byMaster(
     @Query('companyId') queryCompanyId: string,

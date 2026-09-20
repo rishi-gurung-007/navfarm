@@ -3,7 +3,7 @@
 import { useEffect, useState, useMemo } from "react";
 import { Search, Loader2, CheckCircle2 } from "lucide-react";
 import { Dialog } from "@/components/ui/dialog";
-import { InlineAlert } from "@/components/ui/alert";
+import { showToast } from "@/components/ui/toast";
 import { api } from "@/services/api-client";
 
 export interface ItemTemplateItem {
@@ -41,7 +41,6 @@ export function ItemTemplateSelectModal({
   const [templates, setTemplates] = useState<ItemTemplateItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [confirming, setConfirming] = useState(false);
-  const [error, setError] = useState("");
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
@@ -49,14 +48,12 @@ export function ItemTemplateSelectModal({
     if (!open) {
       setSelectedId(null);
       setSearch("");
-      setError("");
       return;
     }
 
     let isMounted = true;
     const fetchTemplates = async () => {
       setLoading(true);
-      setError("");
       try {
         const response: any = await api.get("/item-templates");
         const list = Array.isArray(response) ? response : response?.data ?? [];
@@ -66,7 +63,8 @@ export function ItemTemplateSelectModal({
         }
       } catch (err: any) {
         if (isMounted) {
-          setError(err?.message || "Failed to load Item Templates.");
+          const msg = err?.message || "Failed to load Item Templates.";
+          showToast.error(msg);
         }
       } finally {
         if (isMounted) setLoading(false);
@@ -92,7 +90,6 @@ export function ItemTemplateSelectModal({
   const handleConfirm = async () => {
     if (!selectedId) return;
     setConfirming(true);
-    setError("");
     try {
       const response: any = await api.post("/items/from-template", {
         template_id: selectedId,
@@ -101,7 +98,8 @@ export function ItemTemplateSelectModal({
       onConfirm(generated);
       onClose();
     } catch (err: any) {
-      setError(err?.message || "Failed to generate item from template.");
+      const msg = err?.message || "Failed to generate item from template.";
+      showToast.error(msg);
     } finally {
       setConfirming(false);
     }
@@ -115,21 +113,12 @@ export function ItemTemplateSelectModal({
       description="Choose an active template to auto-generate the next Item Number and initialize defaults."
       maxWidth="lg"
       footer={
-        <div className="flex w-full items-center justify-end gap-2">
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={confirming}
-            className="rounded-lg border px-4 py-2 text-xs font-semibold hover:bg-(--surface-raised)"
-            style={{ borderColor: "var(--border)", color: "var(--text-secondary)" }}
-          >
-            Cancel
-          </button>
+        <div className="flex w-full items-center justify-end">
           <button
             type="button"
             onClick={handleConfirm}
             disabled={!selectedId || confirming}
-            className="flex items-center gap-1.5 rounded-lg px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"
+            className="flex items-center gap-1.5 rounded-lg px-4 py-2 text-xs font-semibold text-white disabled:opacity-50 cursor-pointer"
             style={{ backgroundColor: "var(--accent)" }}
           >
             {confirming && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
@@ -139,7 +128,6 @@ export function ItemTemplateSelectModal({
       }
     >
       <div className="space-y-4">
-        {error && <InlineAlert>{error}</InlineAlert>}
 
         {/* Search Bar */}
         <div className="relative">

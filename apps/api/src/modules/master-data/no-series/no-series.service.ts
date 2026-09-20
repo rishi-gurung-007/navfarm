@@ -303,10 +303,39 @@ export class NoSeriesService {
 
   /**
    * Finds the default active No. Series for a given Master Type (e.g. SUPPLIER, CUSTOMER, ITEM),
-   * respecting company-level Inventory Setup configuration.
+   * respecting company-level Inventory Setup configuration and optional master type subtype.
    */
-  async findDefaultSeries(masterType: string, tenantId?: string, companyId?: string | null) {
+  async findDefaultSeries(masterType: string, tenantId?: string, companyId?: string | null, type?: string | null) {
     const normalizedType = masterType.toUpperCase().replaceAll('-', '_');
+    const normalizedSubType = type ? type.toUpperCase().replaceAll('-', '_') : null;
+
+    // 0. If a subtype is passed, check if a specific series exists for it (e.g. NS-FEED, NS-MED, ITEM_FEED)
+    if (normalizedSubType) {
+      const subConditions = [
+        or(
+          eq(schema.noSeries.code, `NS-${normalizedSubType}`),
+          eq(schema.noSeries.code, normalizedSubType),
+          eq(schema.noSeries.code, `${normalizedType}_${normalizedSubType}`),
+          eq(schema.noSeries.code, `${normalizedType}-${normalizedSubType}`),
+        ),
+        eq(schema.noSeries.blocked, false),
+      ];
+      if (tenantId) subConditions.push(eq(schema.noSeries.tenant_id, tenantId));
+      if (companyId) {
+        subConditions.push(or(
+          eq(schema.noSeries.company_id, companyId),
+          sql`${schema.noSeries.company_id} IS NULL`,
+        )!);
+      }
+      const [typeSeries] = await this.db
+        .select()
+        .from(schema.noSeries)
+        .where(and(...subConditions))
+        .orderBy(sql`${schema.noSeries.is_default} DESC, ${schema.noSeries.created_at} ASC`)
+        .limit(1);
+
+      if (typeSeries) return typeSeries;
+    }
 
     // 1. Check if Company-specific Inventory Setup defines whether this master has number series applied
     if (tenantId && companyId) {
@@ -376,8 +405,8 @@ export class NoSeriesService {
   /**
    * Previews the next code by Master Type directly.
    */
-  async previewByMaster(masterType: string, tenantId?: string, companyId?: string | null) {
-    const series = await this.findDefaultSeries(masterType, tenantId, companyId);
+  async previewByMaster(masterType: string, tenantId?: string, companyId?: string | null, type?: string | null) {
+    const series = await this.findDefaultSeries(masterType, tenantId, companyId, type);
     if (!series) {
       return {
         generated: false,

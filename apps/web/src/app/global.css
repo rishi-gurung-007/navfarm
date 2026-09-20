@@ -187,7 +187,7 @@ body {
 [data-shell-region='header'] {
   position: sticky;
   top: 0;
-  z-index: 30;
+  z-index: 40;
   display: flex;
   align-items: center;
   height: 56px;
@@ -394,11 +394,17 @@ body {
     height: 100%;
     visibility: visible;
     transform: none;
-    transition: none;
+    transition: width 240ms cubic-bezier(0.22, 1, 0.36, 1);
+    overflow: hidden;
+  }
+
+  [data-shell-root][data-sidebar-collapsed='true'] [data-shell-region='primary-nav'] {
+    width: 72px;
   }
 
   [data-shell-region='header'] {
-    position: static;
+    position: relative;
+    z-index: 40;
     grid-column: 2;
     grid-row: 1;
   }
@@ -813,6 +819,20 @@ html[data-scroll-locked] body {
   inset: auto;
   margin: 0;
 }
+
+/* Workspace scope switcher popover panel */
+[data-popover-panel].nf-scope-popover-panel {
+  width: 320px;
+  min-width: 300px;
+  max-width: min(360px, calc(100vw - 24px));
+  max-height: min(85vh, 580px);
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.5), 0 0 0 1px var(--border);
+}
+
 
 /* Identity/caption block. Full-bleed rule, no card, no icon. */
 [data-popover-heading] {
@@ -1488,4 +1508,113 @@ html[data-theme='dark'] {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* ==========================================================================
+   React Toastify Theme Customization
+   ========================================================================== */
+:root {
+  --toastify-color-light: var(--surface);
+  --toastify-color-dark: var(--surface);
+  --toastify-color-info: var(--info);
+  --toastify-color-success: var(--success);
+  --toastify-color-warning: var(--warning);
+  --toastify-color-error: var(--danger);
+  --toastify-text-color-light: var(--text-primary);
+  --toastify-text-color-dark: var(--text-primary);
+  --toastify-toast-width: 380px;
+  --toastify-toast-bd-radius: 12px;
+  --toastify-font-family: inherit;
+}
+
+.Toastify__toast-container--top-right {
+  top: 1.25rem !important;
+  right: 1.25rem !important;
+  z-index: 99999 !important;
+}
+
+.Toastify__toast {
+  background-color: var(--surface-raised) !important;
+  color: var(--text-primary) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 12px !important;
+  box-shadow: 0 12px 36px -4px rgba(0, 0, 0, 0.45), 0 4px 12px -2px rgba(0, 0, 0, 0.25) !important;
+  backdrop-filter: blur(16px) !important;
+  padding: 14px 16px !important;
+  font-size: 13px !important;
+  font-family: inherit !important;
+  min-height: 52px !important;
+}
+
+.Toastify__toast--error {
+  border-left: 4px solid var(--danger) !important;
+}
+
+.Toastify__toast--success {
+  border-left: 4px solid var(--success) !important;
+}
+
+.Toastify__toast--warning {
+  border-left: 5px solid var(--warning) !important;
+}
+
+.Toastify__toast--info {
+  border-left: 5px solid var(--info) !important;
+}
+
+.Toastify__toast-body {
+  color: var(--text-primary) !important;
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  line-height: 1.45 !important;
+  padding: 0 4px !important;
+  margin: 0 !important;
+}
+
+.Toastify__toast-icon {
+  width: 20px !important;
+  margin-right: 12px !important;
+}
+
+.Toastify__toast--error .Toastify__toast-icon svg {
+  fill: var(--danger) !important;
+}
+
+.Toastify__toast--success .Toastify__toast-icon svg {
+  fill: var(--success) !important;
+}
+
+.Toastify__toast--warning .Toastify__toast-icon svg {
+  fill: var(--warning) !important;
+}
+
+.Toastify__toast--info .Toastify__toast-icon svg {
+  fill: var(--info) !important;
+}
+
+.Toastify__progress-bar--error {
+  background: var(--danger) !important;
+}
+
+.Toastify__progress-bar--success {
+  background: var(--success) !important;
+}
+
+.Toastify__progress-bar--warning {
+  background: var(--warning) !important;
+}
+
+.Toastify__progress-bar--info {
+  background: var(--info) !important;
+}
+
+.Toastify__close-button {
+  color: var(--text-muted) !important;
+  opacity: 0.75 !important;
+  align-self: center !important;
+}
+
+.Toastify__close-button:hover {
+  color: var(--text-primary) !important;
+  opacity: 1 !important;
 }

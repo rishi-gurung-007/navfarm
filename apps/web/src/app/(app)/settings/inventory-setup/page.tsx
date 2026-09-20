@@ -23,6 +23,7 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { ConsolePage } from "@/components/ui/console-page";
 import { Button } from "@/components/ui/button";
 import { InlineAlert } from "@/components/ui/alert";
+import { Toast } from "@/components/ui/toast";
 import { Dialog } from "@/components/ui/dialog";
 import { LoadingState, ErrorState, EmptyState } from "@/components/ui/states";
 
@@ -387,11 +388,11 @@ export default function InventorySetupPage() {
 
       {/* Toast feedback */}
       {toast && (
-        <div className="mb-4">
-          <InlineAlert variant={toast.type === "error" ? "danger" : "success"}>
-            {toast.message}
-          </InlineAlert>
-        </div>
+        <Toast
+          variant={toast.type === "error" ? "danger" : "success"}
+          message={toast.message}
+          onClose={() => setToast(null)}
+        />
       )}
 
       {/* Unsaved Changes Banner */}
