@@ -72,6 +72,7 @@ export class CreateItemDto {
   @ApiProperty({ description: 'UOM conversion multiplier from primary to secondary', required: false })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   uom_conversion_factor?: number;
 
   @ApiProperty({ description: 'Valuation method model — code from costing_method_config (GET /costing-method)', required: false, example: 'FIFO', enum: ['STANDARD', 'FIFO', 'BIO_ASSET', 'AVG'] })
@@ -87,6 +88,7 @@ export class CreateItemDto {
   @ApiProperty({ description: 'Standard unit cost valuation', required: false })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   standard_cost?: number;
 
   @ApiProperty({ description: 'Is item tracked by lot numbers', default: false, required: false })
@@ -122,16 +124,19 @@ export class CreateItemDto {
   @ApiProperty({ description: 'Minimum stock count limit', required: false })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   min_stock_level?: number;
 
   @ApiProperty({ description: 'Maximum stock count limit', required: false })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   max_stock_level?: number;
 
   @ApiProperty({ description: 'Reorder alert stock count limit', required: false })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   reorder_level?: number;
 
   @ApiProperty({ description: 'Procurement lead time in days, for feed/stock forecast planning', required: false })
@@ -272,6 +277,7 @@ export class UpdateItemDto {
   @ApiProperty({ required: false })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   uom_conversion_factor?: number;
 
   @ApiProperty({ required: false, enum: ['STANDARD', 'FIFO', 'BIO_ASSET', 'AVG'] })
@@ -287,6 +293,7 @@ export class UpdateItemDto {
   @ApiProperty({ required: false })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   standard_cost?: number;
 
   @ApiProperty({ required: false })
@@ -322,16 +329,19 @@ export class UpdateItemDto {
   @ApiProperty({ required: false })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   min_stock_level?: number;
 
   @ApiProperty({ required: false })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   max_stock_level?: number;
 
   @ApiProperty({ required: false })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   reorder_level?: number;
 
   @ApiProperty({ required: false })

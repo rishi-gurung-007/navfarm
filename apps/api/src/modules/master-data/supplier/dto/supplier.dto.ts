@@ -95,6 +95,7 @@ export class CreateSupplierDto {
   @ApiProperty({ description: 'Maximum outstanding payable before a new PO is blocked', required: false })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   credit_limit?: number;
 
   @ApiProperty({ description: 'Flexible custom config configurations in JSON format', required: false })
@@ -197,6 +198,7 @@ export class UpdateSupplierDto {
   @ApiProperty({ required: false })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   credit_limit?: number;
 
   @ApiProperty({ required: false })

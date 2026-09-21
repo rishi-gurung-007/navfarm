@@ -150,6 +150,7 @@ export class CreateUomConversionDto {
 
   @ApiProperty({ description: 'Multiplier conversion factor: From * Factor = To', example: 1000.00000000 })
   @IsNumber()
+  @Min(0)
   @IsNotEmpty()
   conversion_factor: number;
 
@@ -234,6 +235,7 @@ export class UpdateUomConversionDto {
   @ApiProperty({ description: 'Conversion factor multiplier', required: false })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   conversion_factor?: number;
 
   @ApiProperty({ description: 'Effective start date', required: false })

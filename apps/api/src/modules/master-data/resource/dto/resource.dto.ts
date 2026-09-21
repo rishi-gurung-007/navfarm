@@ -59,6 +59,7 @@ export class CreateResourceDto {
   @ApiProperty({ description: 'Operating capacity count/limit', required: false })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   capacity?: number;
 
   @ApiProperty({ description: 'UOM for the capacity value (e.g. KG_PER_HOUR)', required: false })
@@ -74,6 +75,7 @@ export class CreateResourceDto {
   @ApiProperty({ description: 'Standard billing cost rate per unit', required: false })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   cost_rate?: number;
 
   @ApiProperty({ description: 'Fixed asset register code (equipment/vehicle only)', required: false })
@@ -115,6 +117,7 @@ export class CreateResourceDto {
   @ApiProperty({ description: 'Expected cost per maintenance service', required: false })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   maintenance_cost_per_service?: number;
 
   @ApiProperty({ description: 'Preferred maintenance vendor/engineer', required: false })
@@ -194,6 +197,7 @@ export class UpdateResourceDto {
   @ApiProperty({ required: false })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   capacity?: number;
 
   @ApiProperty({ required: false })
@@ -209,6 +213,7 @@ export class UpdateResourceDto {
   @ApiProperty({ required: false })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   cost_rate?: number;
 
   @ApiProperty({ required: false })
@@ -250,6 +255,7 @@ export class UpdateResourceDto {
   @ApiProperty({ required: false })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   maintenance_cost_per_service?: number;
 
   @ApiProperty({ required: false })

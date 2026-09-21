@@ -75,6 +75,7 @@ export class CreateItemAttributeDto {
   @ApiProperty({ description: 'Optional default/example value shown on the master — informational only, not enforced on items', required: false })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   default_value?: number;
 
   @ApiProperty({ description: 'Must every item in scope provide this attribute?', default: false, required: false })
@@ -140,6 +141,7 @@ export class UpdateItemAttributeDto {
   @ApiProperty({ required: false })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   default_value?: number;
 
   @ApiProperty({ required: false })

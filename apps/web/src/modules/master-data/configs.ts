@@ -98,7 +98,7 @@ const location: MasterDataConfig = {
       helpText: "Only locations from the immediately preceding hierarchy level are available. Level 1 root types, such as Farm, have no Parent Location field.",
       section: "Identification",
     },
-    { key: "location_level", label: "Hierarchy Level", type: "number", hideInForm: true, helpText: "Computed from the parent location." },
+    { key: "location_level", label: "Hierarchy Level", type: "number", min: 0, hideInForm: true, helpText: "Computed from the parent location." },
     { key: "area_size", label: "Area Size", type: "number", min: 0, max: 999999.99, step: "0.01", section: "Identification" },
     { key: "area_unit", label: "Area UOM", type: "select-entity", entityEndpoint: "/uom?uomType=AREA", entityValueKey: "uom_code", entityLabelKeys: ["uom_code", "uom_name"], section: "Identification" },
     { key: "max_capacity", label: "Max Capacity", type: "number", min: 0, max: 9999999, step: "1", required: true, section: "Identification" },
@@ -144,10 +144,10 @@ const stage: MasterDataConfig = {
       key: "stage_category", label: "Category", type: "select", required: true, section: "Identification",
       options: ["PRE_PRODUCTIVE", "PRODUCTIVE", "OUTPUT", "DISPOSAL"].map((v) => ({ value: v, label: v.replace(/_/g, " ") })),
     },
-    { key: "stage_sequence", label: "Display Order", type: "number", required: true, helpText: "Must be unique per Line of Business.", section: "Identification" },
+    { key: "stage_sequence", label: "Display Order", type: "number", min: 1, required: true, helpText: "Must be unique per Line of Business.", section: "Identification" },
     { key: "stage_description", label: "Description", type: "text", section: "Identification" },
-    { key: "typical_duration_days", label: "Typical Duration (days)", type: "number", section: "Duration" },
-    { key: "min_days_before_move", label: "Min Days Before Move", type: "number", helpText: "Minimum days in this stage before a transition is allowed.", section: "Duration" },
+    { key: "typical_duration_days", label: "Typical Duration (days)", type: "number", min: 0, section: "Duration" },
+    { key: "min_days_before_move", label: "Min Days Before Move", type: "number", min: 0, helpText: "Minimum days in this stage before a transition is allowed.", section: "Duration" },
     {
       // KPI_BASED/EVENT_BASED added 2026-09-21, client review — the schema
       // column comment already named them; nothing wired them until now. This
@@ -162,7 +162,7 @@ const stage: MasterDataConfig = {
     // that reveals it, not back in Duration where filling it in meant
     // switching tabs.
     {
-      key: "auto_move_on_day", label: "Auto-Move On Day", type: "number", section: "Transitions",
+      key: "auto_move_on_day", label: "Auto-Move On Day", type: "number", min: 1, section: "Transitions",
       helpText: "Required when Transition Trigger is Auto By Day.",
       visibleWhen: { anyOf: [{ key: "transition_trigger", equals: "AUTO_BY_DAY" }] },
       requiredWhen: { anyOf: [{ key: "transition_trigger", equals: "AUTO_BY_DAY" }] },
@@ -363,7 +363,7 @@ const animal: MasterDataConfig = {
     // two dates it is computed from are the ones either side of it here.
     // readOnly: the API computes it on every write and discards anything sent
     // alongside a DOB, so an editable box would take input it then throws away.
-    { key: "age_at_entry_weeks", label: "Age at Entry (Weeks)", type: "number", readOnly: true, helpText: "Computed from Date of Birth and Entry Date.", section: "Acquisition" },
+    { key: "age_at_entry_weeks", label: "Age at Entry (Weeks)", type: "number", min: 0, readOnly: true, helpText: "Computed from Date of Birth and Entry Date.", section: "Acquisition" },
     // Shown only for the entry types they belong to. The API has always
     // enforced these as COND rules and rejected the wrong combination; the form
     // asked for both from everyone, so a born-on-farm piglet was offered a
@@ -380,15 +380,15 @@ const animal: MasterDataConfig = {
     // max mirrors the DTO's @Max — animal_register.acquisition_cost/landing_cost
     // are decimal(18,4) (schema.ts); this is that column's own ceiling, not a
     // client-specified business limit.
-    { key: "acquisition_cost", label: "Acquisition Cost", type: "number", step: "0.01", max: 99999999999999, readOnly: true, visibleWhen: { anyOf: [{ key: "entry_type", equals: ["PURCHASED_IMPORTED", "PURCHASED_LOCAL"] }] }, helpText: "Taken from the rate on the source goods receipt.", section: "Acquisition" },
-    { key: "acquisition_cost", label: "Acquisition Cost", type: "number", step: "0.01", max: 99999999999999, requiredWhen: { anyOf: [{ key: "entry_type", equals: ["BORN_ON_FARM", "TRANSFERRED_IN"] }] }, visibleWhen: { anyOf: [{ key: "entry_type", equals: ["BORN_ON_FARM", "TRANSFERRED_IN"] }] }, section: "Acquisition" },
-    { key: "landing_cost", label: "Landing Cost", type: "number", step: "0.01", max: 99999999999999, helpText: "Transport/import duty/quarantine charges for imported animals.", section: "Acquisition" },
+    { key: "acquisition_cost", label: "Acquisition Cost", type: "number", step: "0.01", min: 0, max: 99999999999999, readOnly: true, visibleWhen: { anyOf: [{ key: "entry_type", equals: ["PURCHASED_IMPORTED", "PURCHASED_LOCAL"] }] }, helpText: "Taken from the rate on the source goods receipt.", section: "Acquisition" },
+    { key: "acquisition_cost", label: "Acquisition Cost", type: "number", step: "0.01", min: 0, max: 99999999999999, requiredWhen: { anyOf: [{ key: "entry_type", equals: ["BORN_ON_FARM", "TRANSFERRED_IN"] }] }, visibleWhen: { anyOf: [{ key: "entry_type", equals: ["BORN_ON_FARM", "TRANSFERRED_IN"] }] }, section: "Acquisition" },
+    { key: "landing_cost", label: "Landing Cost", type: "number", step: "0.01", min: 0, max: 99999999999999, helpText: "Transport/import duty/quarantine charges for imported animals.", section: "Acquisition" },
     // Acquisition Cost + Landing Cost, computed by the service on save. Shown
     // rather than hidden because it is the figure the opening bio-asset value
     // and the whole amortisation schedule are built from, so it belongs where
     // the two numbers that make it are. Read-only: the service recomputes it
     // from those two on every write, so an entered figure would be overwritten.
-    { key: "total_opening_asset_value", label: "Total Opening Asset Value", type: "number", step: "0.01", readOnly: true, helpText: "Acquisition Cost + Landing Cost. Calculated on save.", section: "Acquisition" },
+    { key: "total_opening_asset_value", label: "Total Opening Asset Value", type: "number", step: "0.01", min: 0, readOnly: true, helpText: "Acquisition Cost + Landing Cost. Calculated on save.", section: "Acquisition" },
     // Bio-Asset shows for males too (Rishi, 2026-09-15, reversing the
     // female-only call of 2026-09-08). Book value, amortisation and residual
     // value are IAS 41 figures that apply to any biological asset — a boar
@@ -396,19 +396,19 @@ const animal: MasterDataConfig = {
     // No. of Teats stays female-only: it is a gilt-selection measure (BBP §6).
     // Parity and litter totals below stay female-only as well; they count a
     // sow's farrowings.
-    { key: "current_bio_asset_value", label: "Current Bio-Asset Value", type: "number", step: "0.01", editOnly: true, helpText: "Set from acquisition cost at creation; adjust here afterward. Reconciles with D365BC: each animal is a Child Fixed Asset there, and BC posts acquisition and returns the FA Ledger Entry reference (Bio Asset BBP). No BC connector yet \u2014 this is a local figure.", section: "Bio-Asset" },
-    { key: "book_value", label: "Book Value NBV", type: "number", step: "0.01", editOnly: true, helpText: "Reconciles with D365BC: each animal is a Child Fixed Asset there, and BC posts acquisition and returns the FA Ledger Entry reference (Bio Asset BBP). No BC connector yet \u2014 this is a local figure.", section: "Bio-Asset" },
-    { key: "total_amortised", label: "Total Amortised", type: "number", step: "0.01", editOnly: true, section: "Bio-Asset" },
-    { key: "amortisation_monthly", label: "Monthly Amortisation", type: "number", step: "0.01", editOnly: true, section: "Bio-Asset" },
-    { key: "residual_value", label: "Residual Value", type: "number", step: "0.01", editOnly: true, section: "Bio-Asset" },
+    { key: "current_bio_asset_value", label: "Current Bio-Asset Value", type: "number", step: "0.01", min: 0, editOnly: true, helpText: "Set from acquisition cost at creation; adjust here afterward. Reconciles with D365BC: each animal is a Child Fixed Asset there, and BC posts acquisition and returns the FA Ledger Entry reference (Bio Asset BBP). No BC connector yet \u2014 this is a local figure.", section: "Bio-Asset" },
+    { key: "book_value", label: "Book Value NBV", type: "number", step: "0.01", min: 0, editOnly: true, helpText: "Reconciles with D365BC: each animal is a Child Fixed Asset there, and BC posts acquisition and returns the FA Ledger Entry reference (Bio Asset BBP). No BC connector yet \u2014 this is a local figure.", section: "Bio-Asset" },
+    { key: "total_amortised", label: "Total Amortised", type: "number", step: "0.01", min: 0, editOnly: true, section: "Bio-Asset" },
+    { key: "amortisation_monthly", label: "Monthly Amortisation", type: "number", step: "0.01", min: 0, editOnly: true, section: "Bio-Asset" },
+    { key: "residual_value", label: "Residual Value", type: "number", step: "0.01", min: 0, editOnly: true, section: "Bio-Asset" },
     // An input, on create as well as edit (2026-09-15). The old help text said
     // it was derived from the breed's productive life; nothing derives it, so
     // the date is whatever is entered here.
     { key: "expected_cull_date", label: "Expected Cull Date", type: "date", section: "Production" },
     { key: "disposal_date", label: "Disposal Date", type: "date", hideInForm: true, helpText: "Set via the Dispose action, not direct edit.", section: "Bio-Asset" },
     { key: "disposal_type", label: "Disposal Type", type: "text", hideInForm: true, helpText: "Set via the Dispose action, not direct edit.", section: "Bio-Asset" },
-    { key: "no_of_teats", label: "No. of Teats", type: "number", helpText: "BBP §6: below 15 blocks this gilt from selection regardless of TSI score.", visibleWhen: { anyOf: [{ key: "gender", equals: "F" }] }, section: "Bio-Asset" },
-    { key: "tsi", label: "TSI", type: "number", step: "0.01", helpText: "Total Sow Index score.", section: "Bio-Asset" },
+    { key: "no_of_teats", label: "No. of Teats", type: "number", min: 0, helpText: "BBP §6: below 15 blocks this gilt from selection regardless of TSI score.", visibleWhen: { anyOf: [{ key: "gender", equals: "F" }] }, section: "Bio-Asset" },
+    { key: "tsi", label: "TSI", type: "number", step: "0.01", min: 0, helpText: "Total Sow Index score.", section: "Bio-Asset" },
     { key: "grading", label: "Grading", type: "text", section: "Bio-Asset" },
     { key: "current_stage_id", label: "Current Stage", type: "select-entity", entityEndpoint: "/stage", entityValueKey: "stage_id", entityLabelKeys: ["stage_code", "stage_name"], section: "Current Position" },
     { key: "current_batch_id", label: "Current Batch", type: "select-entity", searchable: true, entityEndpoint: "/batch", entityValueKey: "batch_id", entityLabelKeys: ["batch_no"], section: "Current Position" },
@@ -425,9 +425,9 @@ const animal: MasterDataConfig = {
     // CreateAnimalDto does not accept them and the API runs
     // forbidNonWhitelisted — sending them on create would 400 the whole form.
     // A sow transferred in with a parity history gets it on the first edit.
-    { key: "parity_count", label: "Parity Count", type: "number", editOnly: true, visibleWhen: { anyOf: [{ key: "gender", equals: "F" }] }, helpText: "Completed pregnancies, incremented on weaning. Rolled up from farrowing records, so a manual figure is replaced at the next weaning.", section: "Bio-Asset" },
-    { key: "total_piglets_born_live", label: "Total Piglets Born Live", type: "number", editOnly: true, visibleWhen: { anyOf: [{ key: "gender", equals: "F" }] }, section: "Bio-Asset" },
-    { key: "total_piglets_weaned", label: "Total Piglets Weaned", type: "number", editOnly: true, visibleWhen: { anyOf: [{ key: "gender", equals: "F" }] }, section: "Bio-Asset" },
+    { key: "parity_count", label: "Parity Count", type: "number", min: 0, editOnly: true, visibleWhen: { anyOf: [{ key: "gender", equals: "F" }] }, helpText: "Completed pregnancies, incremented on weaning. Rolled up from farrowing records, so a manual figure is replaced at the next weaning.", section: "Bio-Asset" },
+    { key: "total_piglets_born_live", label: "Total Piglets Born Live", type: "number", min: 0, editOnly: true, visibleWhen: { anyOf: [{ key: "gender", equals: "F" }] }, section: "Bio-Asset" },
+    { key: "total_piglets_weaned", label: "Total Piglets Weaned", type: "number", min: 0, editOnly: true, visibleWhen: { anyOf: [{ key: "gender", equals: "F" }] }, section: "Bio-Asset" },
     { key: "productive_life_start", label: "Productive Life Start", type: "date", section: "Production" },
     { key: "notes", label: "Notes", type: "textarea", section: "Production" },
   ],
@@ -518,7 +518,7 @@ const uom: MasterDataConfig = {
       key: "uom_type", label: "UOM Type", type: "select", required: true,
       options: ["WEIGHT", "VOLUME", "COUNT", "AREA", "TIME", "OTHER"].map((v) => ({ value: v, label: v })),
     },
-    { key: "decimal_places", label: "Decimal Places", type: "number" },
+    { key: "decimal_places", label: "Decimal Places", type: "number", min: 0 },
     { key: "is_base_uom", label: "Is Base Unit", type: "boolean" },
   ],
 };
@@ -580,7 +580,7 @@ const uomConversion: MasterDataConfig = {
       helpText: "Base UOM. A factor always converts TO the base unit.",
     },
     {
-      key: "conversion_factor", label: "Conversion Factor", type: "number", required: true,
+      key: "conversion_factor", label: "Conversion Factor", type: "number", min: 0, required: true,
       placeholder: "50",
       helpText: "Multiply the From quantity to get the base quantity. 1 BAG = 50 KG, so the factor is 50.",
     },
@@ -626,7 +626,7 @@ const itemAttribute: MasterDataConfig = {
       entityEndpoint: "/uom", entityValueKey: "uom_id", entityLabelKeys: ["uom_code", "uom_name"],
       helpText: "The unit this attribute is measured in, if it has one.",
     },
-    { key: "default_value", label: "Value", type: "number", step: "0.0001", helpText: "Optional default/example value — informational only. The actual value for each item is still entered on the Item form." },
+    { key: "default_value", label: "Value", type: "number", step: "0.0001", min: 0, helpText: "Optional default/example value — informational only. The actual value for each item is still entered on the Item form." },
     // Data Type and Unit are off the form (data_type defaults to NUMBER at
     // create; unit is superseded by uom_id above) but kept for any row that
     // still carries them and for API/script use — not deleted, just not on
@@ -874,7 +874,7 @@ const item: MasterDataConfig = {
       // Item Master Template: "Auto-filled from uom_conversion_master. 1
       // secondary = N primary." Shown read-only when that table already holds
       // the pair; asked for, and recorded there, when it does not.
-      key: "uom_conversion_factor", label: "UOM Conversion Factor", type: "number", step: "0.000001",
+      key: "uom_conversion_factor", label: "UOM Conversion Factor", type: "number", step: "0.000001", min: 0,
       section: "Units & Valuation",
       derivedFrom: {
         endpoint: "/uom/conversion", params: { uom_primary: "fromUom", uom_secondary: "toUom" },
@@ -886,7 +886,7 @@ const item: MasterDataConfig = {
     { key: "valuation_method", label: "Valuation Method", type: "select-entity", entityEndpoint: "/costing-method", entityValueKey: "method_code", entityLabelKeys: ["method_code", "method_name"], helpText: "Leave blank to inherit the LOB default.", section: "Units & Valuation" },
     // Asked immediately after the method that demands it, and only then: on any
     // other method the cost is not merely optional, it has no meaning.
-    { key: "standard_cost", label: "Standard Cost", type: "number", step: "0.01", section: "Units & Valuation", visibleWhen: { anyOf: [{ key: "valuation_method", equals: "STANDARD" }] }, requiredWhen: { anyOf: [{ key: "valuation_method", equals: "STANDARD" }] }, helpText: "Per Primary UOM. Required when Valuation Method is STANDARD." },
+    { key: "standard_cost", label: "Standard Cost", type: "number", step: "0.01", min: 0, section: "Units & Valuation", visibleWhen: { anyOf: [{ key: "valuation_method", equals: "STANDARD" }] }, requiredWhen: { anyOf: [{ key: "valuation_method", equals: "STANDARD" }] }, helpText: "Per Primary UOM. Required when Valuation Method is STANDARD." },
     // TDD row 11 asks for one three-way choice — LOT, SERIAL or neither. The
     // table carries two independent flags, so the form could tick both, a state
     // the requirement has no name for and no downstream code reads. Neither
@@ -932,11 +932,12 @@ const item: MasterDataConfig = {
     { key: "is_serial_tracked", label: "Serial Tracked", type: "boolean", hideInForm: true, readOnly: true, hideInTable: true, visibleWhen: { anyOf: [{ key: "is_serial_tracked", equals: true }] }, section: "Tracking" },
     { key: "is_biological_asset", label: "Biological Asset", type: "boolean" },
     { key: "is_inventoriable", label: "Inventoriable", type: "boolean", helpText: "Held as stock, with a balance and a valuation. Off for services and consumables that are expensed on receipt.", section: "Inventory" },
-    { key: "min_stock_level", label: "Min Stock Level", type: "number", step: "0.01", visibleWhen: WHEN_INVENTORIED, section: "Inventory" },
-    { key: "max_stock_level", label: "Max Stock Level", type: "number", step: "0.01", visibleWhen: WHEN_INVENTORIED, section: "Inventory" },
-    { key: "reorder_level", label: "Reorder Level", type: "number", step: "0.01", visibleWhen: WHEN_INVENTORIED, section: "Inventory" },
-    { key: "lead_time_days", label: "Lead Time (days)", type: "number", visibleWhen: WHEN_INVENTORIED, helpText: "Procurement lead time, for feed/stock forecast planning.", section: "Inventory" },
-    { key: "shelf_life_days", label: "Shelf Life (days)", type: "number", visibleWhen: WHEN_INVENTORIED, section: "Inventory" },
+    { key: "min_stock_level", label: "Min Stock Level", type: "number", step: "0.01", min: 0, visibleWhen: WHEN_INVENTORIED, section: "Inventory" },
+    { key: "max_stock_level", label: "Max Stock Level", type: "number", step: "0.01", min: 0, visibleWhen: WHEN_INVENTORIED, section: "Inventory" },
+    { key: "reorder_level", label: "Reorder Level", type: "number", step: "0.01", min: 0, visibleWhen: WHEN_INVENTORIED, section: "Inventory" },
+    { key: "lead_time_days", label: "Lead Time (days)", type: "number", min: 0, visibleWhen: WHEN_INVENTORIED, helpText: "Procurement lead time, for feed/stock forecast planning.", section: "Inventory" },
+    { key: "shelf_life_days", label: "Shelf Life (days)", type: "number", min: 0, visibleWhen: WHEN_INVENTORIED, section: "Inventory" },
+    // Genuinely sub-zero (frozen vaccine/semen storage) — no min.
     { key: "storage_temp_min", label: "Storage Temp Min (°C)", type: "number", step: "0.01", visibleWhen: WHEN_INVENTORIED, section: "Inventory" },
     { key: "storage_temp_max", label: "Storage Temp Max (°C)", type: "number", step: "0.01", visibleWhen: WHEN_INVENTORIED, section: "Inventory" },
     {
@@ -1028,22 +1029,22 @@ const breed: MasterDataConfig = {
       options: ["MEAT", "BREEDER", "DUAL_PURPOSE"].map((v) => ({ value: v, label: v.replace(/_/g, " ") })),
     },
     { key: "description", label: "Description", type: "textarea", section: "Identification" },
-    { key: "avg_growth_rate_g_day", label: "Avg Growth Rate (g/day)", type: "number", step: "0.01", section: "Growth & Performance" },
-    { key: "avg_fcr", label: "Avg FCR", type: "number", step: "0.01", section: "Growth & Performance" },
-    { key: "avg_mortality_pct", label: "Avg Mortality %", type: "number", step: "0.01", section: "Growth & Performance" },
-    { key: "avg_yield_per_unit", label: "Avg Yield per Unit", type: "number", step: "0.01", section: "Growth & Performance" },
-    { key: "gestation_days", label: "Gestation Days", type: "number", section: "Reproduction — Female (Sow)" },
-    { key: "lactation_days", label: "Lactation Days", type: "number", section: "Reproduction — Female (Sow)" },
-    { key: "avg_litter_size_born", label: "Avg Litter Size Born", type: "number", step: "0.01", section: "Reproduction — Female (Sow)" },
-    { key: "avg_litter_size_weaned", label: "Avg Litter Size Weaned", type: "number", step: "0.01", section: "Reproduction — Female (Sow)" },
-    { key: "avg_weaning_weight_kg", label: "Avg Weaning Weight (KG)", type: "number", step: "0.001", section: "Reproduction — Female (Sow)" },
-    { key: "farrowing_rate_pct", label: "Farrowing Rate %", type: "number", step: "0.01", section: "Reproduction — Female (Sow)" },
-    { key: "productive_life_months", label: "Productive Life (months)", type: "number", section: "Reproduction — Female (Sow)" },
-    { key: "productive_life_cycles", label: "Productive Life Cycles", type: "number", helpText: "Expected number of parities in productive life. A parity count only applies to a female.", section: "Reproduction — Female (Sow)" },
-    { key: "boar_doses_per_week", label: "Doses per Week", type: "number", step: "0.01", helpText: "Semen doses collected per week — a male KPI.", section: "Reproduction — Male (Boar)" },
-    { key: "boar_productive_life_months", label: "Productive Life (months)", type: "number", helpText: "How long a boar stays productive — amortisation input for a male.", section: "Reproduction — Male (Boar)" },
-    { key: "mature_age_months", label: "Mature Age (months)", type: "number", section: "Productive Life" },
-    { key: "residual_value_pct", label: "Residual Value %", type: "number", step: "0.01", helpText: "Salvage value as percent of opening asset value — amortisation input.", section: "Productive Life" },
+    { key: "avg_growth_rate_g_day", label: "Avg Growth Rate (g/day)", type: "number", step: "0.01", min: 0, section: "Growth & Performance" },
+    { key: "avg_fcr", label: "Avg FCR", type: "number", step: "0.01", min: 0, section: "Growth & Performance" },
+    { key: "avg_mortality_pct", label: "Avg Mortality %", type: "number", step: "0.01", min: 0, section: "Growth & Performance" },
+    { key: "avg_yield_per_unit", label: "Avg Yield per Unit", type: "number", step: "0.01", min: 0, section: "Growth & Performance" },
+    { key: "gestation_days", label: "Gestation Days", type: "number", min: 0, section: "Reproduction — Female (Sow)" },
+    { key: "lactation_days", label: "Lactation Days", type: "number", min: 0, section: "Reproduction — Female (Sow)" },
+    { key: "avg_litter_size_born", label: "Avg Litter Size Born", type: "number", step: "0.01", min: 0, section: "Reproduction — Female (Sow)" },
+    { key: "avg_litter_size_weaned", label: "Avg Litter Size Weaned", type: "number", step: "0.01", min: 0, section: "Reproduction — Female (Sow)" },
+    { key: "avg_weaning_weight_kg", label: "Avg Weaning Weight (KG)", type: "number", step: "0.001", min: 0, section: "Reproduction — Female (Sow)" },
+    { key: "farrowing_rate_pct", label: "Farrowing Rate %", type: "number", step: "0.01", min: 0, section: "Reproduction — Female (Sow)" },
+    { key: "productive_life_months", label: "Productive Life (months)", type: "number", min: 0, section: "Reproduction — Female (Sow)" },
+    { key: "productive_life_cycles", label: "Productive Life Cycles", type: "number", min: 0, helpText: "Expected number of parities in productive life. A parity count only applies to a female.", section: "Reproduction — Female (Sow)" },
+    { key: "boar_doses_per_week", label: "Doses per Week", type: "number", step: "0.01", min: 0, helpText: "Semen doses collected per week — a male KPI.", section: "Reproduction — Male (Boar)" },
+    { key: "boar_productive_life_months", label: "Productive Life (months)", type: "number", min: 0, helpText: "How long a boar stays productive — amortisation input for a male.", section: "Reproduction — Male (Boar)" },
+    { key: "mature_age_months", label: "Mature Age (months)", type: "number", min: 0, section: "Productive Life" },
+    { key: "residual_value_pct", label: "Residual Value %", type: "number", step: "0.01", min: 0, helpText: "Salvage value as percent of opening asset value — amortisation input.", section: "Productive Life" },
     { key: "age_labels", label: "Stage Age Labels", type: "json", section: "Productive Life", helpText: "Stage labels by week range (JSON), shown on the data entry screen header." },
     { key: "is_blocked", label: "Blocked", type: "boolean", helpText: "A blocked breed stays visible/historical but cannot be used on new animals.", section: "Productive Life" },
   ],
@@ -1082,14 +1083,14 @@ const breedLifecycleStage: MasterDataConfig = {
       key: "calc_unit", label: "Period Unit", type: "select", required: true,
       options: ["DAY", "WEEK", "MONTH"].map((v) => ({ value: v, label: v })),
     },
-    { key: "period_from", label: "Period From", type: "number", required: true },
-    { key: "period_to", label: "Period To", type: "number", required: true },
+    { key: "period_from", label: "Period From", type: "number", min: 0, required: true },
+    { key: "period_to", label: "Period To", type: "number", min: 0, required: true },
     // Breed Master Template, Lifecycle sheet: "Teats" (mandatory). The standard
     // for the stage; BBP §6 hard-blocks gilt selection below 15. Shown only for
     // Category SOW (2026-09-21) — the same restriction Animal Register's own
     // No. of Teats field applies (female-only there, by gender).
     {
-      key: "std_teats", label: "Standard Teat Count", type: "number",
+      key: "std_teats", label: "Standard Teat Count", type: "number", min: 0,
       helpText: "Minimum teat count expected at this stage. BBP §6 blocks gilt selection below 15.",
       visibleWhen: { anyOf: [{ key: "category", equals: "SOW" }] },
     },
@@ -1098,18 +1099,18 @@ const breedLifecycleStage: MasterDataConfig = {
     // typed value outside these three only failed after submit.
     {
       key: "season_type", label: "Season", type: "select",
-      options: [ "SUMMER", "WINTER"].map((v) => ({ value: v, label: v.charAt(0) + v.slice(1).toLowerCase() })),
+      options: ["ALL", "SUMMER", "WINTER"].map((v) => ({ value: v, label: v.charAt(0) + v.slice(1).toLowerCase() })),
     },
     { key: "feed_item_id", label: "Feed Item", type: "select-entity", searchable: true, entityEndpoint: "/item", entityValueKey: "item_id", entityLabelKeys: ["item_code", "item_name"] },
-    { key: "feed_qty_per_head_per_day_kg", label: "Feed Qty per Head per Day (KG)", type: "number", step: "0.0001" },
-    { key: "feed_wastage_pct", label: "Feed Wastage %", type: "number", step: "0.01" },
-    { key: "std_body_weight_kg", label: "Std Body Weight (KG)", type: "number", step: "0.001" },
-    { key: "std_adg_gpd", label: "Std ADG (g/day)", type: "number", step: "0.01" },
-    { key: "std_fcr", label: "Std FCR", type: "number", step: "0.001" },
-    { key: "std_mortality_rate_pct", label: "Std Mortality Rate %", type: "number", step: "0.001" },
+    { key: "feed_qty_per_head_per_day_kg", label: "Feed Qty per Head per Day (KG)", type: "number", step: "0.0001", min: 0 },
+    { key: "feed_wastage_pct", label: "Feed Wastage %", type: "number", step: "0.01", min: 0 },
+    { key: "std_body_weight_kg", label: "Std Body Weight (KG)", type: "number", step: "0.001", min: 0 },
+    { key: "std_adg_gpd", label: "Std ADG (g/day)", type: "number", step: "0.01", min: 0 },
+    { key: "std_fcr", label: "Std FCR", type: "number", step: "0.001", min: 0 },
+    { key: "std_mortality_rate_pct", label: "Std Mortality Rate %", type: "number", step: "0.001", min: 0 },
     { key: "output_item_id", label: "Output Item", type: "select-entity", searchable: true, entityEndpoint: "/item", entityValueKey: "item_id", entityLabelKeys: ["item_code", "item_name"] },
     { key: "output_uom", label: "Output UOM", type: "text" },
-    { key: "std_output_qty", label: "Std Output Qty", type: "number", step: "0.001" },
+    { key: "std_output_qty", label: "Std Output Qty", type: "number", step: "0.001", min: 0 },
     // Rows, not a typed array (Rishi, 2026-09-15). The metric list is the
     // Scheduler's KPI vocabulary — KPI_METRICS in scheduler-header.dto.ts, the
     // same words a DESCRIPTIVE line captures — so a threshold names a value
@@ -1135,7 +1136,7 @@ const breedLifecycleStage: MasterDataConfig = {
       key: "resource_requirements", label: "Resource Requirements", type: "json",
       jsonRow: [
         { key: "resource_id", label: "Resource", type: "select-entity", entityEndpoint: "/resource", entityValueKey: "resource_id", entityLabelKeys: ["resource_code", "resource_name"] },
-        { key: "quantity", label: "Quantity", type: "number", step: "0.01" },
+        { key: "quantity", label: "Quantity", type: "number", step: "0.01", min: 0 },
         { key: "notes", label: "Notes", type: "text" },
       ],
       helpText: "One row per resource this breed needs at this stage.",
@@ -1164,12 +1165,12 @@ const breedLifecycleStage: MasterDataConfig = {
           { value: "WEEKS_PREGNANT", label: "Weeks pregnant" },
           { value: "PER_CYCLE", label: "Every pregnancy cycle" },
         ] },
-        { key: "trigger_value", label: "At", type: "number", step: "0.5" },
-        { key: "dose_ml", label: "Dose (ml)", type: "number", step: "0.01" },
+        { key: "trigger_value", label: "At", type: "number", step: "0.5", min: 0 },
+        { key: "dose_ml", label: "Dose (ml)", type: "number", step: "0.01", min: 0 },
         { key: "route", label: "Route", type: "select", options: ["IM", "SC", "IN", "ORAL"].map((v) => ({ value: v, label: v })) },
         // As on medication rows (2026-09-15): a vaccine can hold an animal back
         // from slaughter just as a drug can.
-        { key: "withdrawal_days", label: "Withdrawal (days)", type: "number" },
+        { key: "withdrawal_days", label: "Withdrawal (days)", type: "number", min: 0 },
       ],
       helpText: "One row per vaccination. Triggered by tells the scheduler what to count from — the animal's age, weeks pregnant, or every pregnancy cycle.",
     },
@@ -1186,7 +1187,7 @@ const breedLifecycleStage: MasterDataConfig = {
         { key: "medicine_item_id", label: "Drug", type: "select-entity", entityEndpoint: "/item?itemType=MEDICINE", entityValueKey: "item_id", entityLabelKeys: ["item_code", "item_name"] },
         { key: "dose", label: "Dose", type: "text", placeholder: "0.5ml" },
         { key: "repeat", label: "Repeat", type: "text", placeholder: "every day for 3 days" },
-        { key: "withdrawal_days", label: "Withdrawal (days)", type: "number" },
+        { key: "withdrawal_days", label: "Withdrawal (days)", type: "number", min: 0 },
       ],
       helpText: "One row per problem, as the farm's treatment card is written. Dose is free text because the card records it per head and per kg both.",
     },
@@ -1299,7 +1300,7 @@ const feedFormula: MasterDataConfig = {
       key: "target_item_id", label: "Produced Item", type: "select-entity", required: true, searchable: true, entityEndpoint: "/item", entityValueKey: "item_id", entityLabelKeys: ["item_code", "item_name"],
       dependsOn: ["nob_id", "lob_id"], dependsOnMode: "query", queryParams: { nob_id: "nobId", lob_id: "lobId" },
     },
-    { key: "batch_size", label: "Batch Size", type: "number", required: true, step: "0.01" },
+    { key: "batch_size", label: "Batch Size", type: "number", required: true, step: "0.01", min: 0 },
     // Feed batches are always weighed out (KG/TONNE), never counted or measured
     // by volume, so this is filtered — unlike Item's Primary/Secondary UOM below,
     // which legitimately spans every type.
@@ -1309,9 +1310,9 @@ const feedFormula: MasterDataConfig = {
       key: "ingredients", label: "Ingredients", type: "json", required: true, createOnly: true,
       jsonRow: [
         { key: "item_id", label: "Item", type: "select-entity", searchable: true, entityEndpoint: "/item", entityValueKey: "item_id", entityLabelKeys: ["item_code", "item_name"] },
-        { key: "quantity", label: "Quantity", type: "number", step: "0.001" },
+        { key: "quantity", label: "Quantity", type: "number", step: "0.001", min: 0 },
         { key: "unit", label: "Unit", type: "select-entity", entityEndpoint: "/uom?uomType=WEIGHT", entityValueKey: "uom_code", entityLabelKeys: ["uom_code", "uom_name"] },
-        { key: "inclusion_pct", label: "Inclusion %", type: "number", step: "0.01" },
+        { key: "inclusion_pct", label: "Inclusion %", type: "number", step: "0.01", min: 0 },
       ],
       helpText: 'Array of { item_id, quantity, unit, inclusion_pct?, loss_pct? }. Example: [{"item_id":"...","quantity":650,"unit":"KG"}]. Set at creation only — the API does not yet support editing ingredients after a formula is created.',
     },
@@ -1357,7 +1358,7 @@ const supplier: MasterDataConfig = {
     { key: "pincode", label: "Postal code", type: "text", section: "Contact" },
     { key: "tax_number", label: "Tax number", type: "text", section: "Commercial" },
     { key: "payment_terms", label: "Payment Terms", type: "text", placeholder: "NET30", section: "Commercial" },
-    { key: "credit_limit", label: "Credit Limit", type: "number", step: "0.01", section: "Commercial" },
+    { key: "credit_limit", label: "Credit Limit", type: "number", step: "0.01", min: 0, section: "Commercial" },
     { key: "bank_account_no", label: "Bank Account Number", type: "text", helpText: "Stored encrypted. Enter a value here to replace it; leave blank to keep the existing one.", section: "Banking" },
     { key: "bank_ifsc", label: "Bank IFSC / Routing Code", type: "text", section: "Banking" },
     { key: "bank_account_last4", label: "Bank Account (masked)", type: "text", hideInForm: true, section: "Banking" },
@@ -1395,7 +1396,7 @@ const customer: MasterDataConfig = {
     { key: "country", label: "Country", type: "text", section: "Contact" },
     { key: "pincode", label: "Postal code", type: "text", section: "Contact" },
     { key: "tax_number", label: "Tax number", type: "text", section: "Commercial" },
-    { key: "credit_limit", label: "Credit Limit", type: "number", step: "0.01", section: "Commercial" },
+    { key: "credit_limit", label: "Credit Limit", type: "number", step: "0.01", min: 0, section: "Commercial" },
   ],
 };
 
@@ -1439,14 +1440,14 @@ const resource: MasterDataConfig = {
     { key: "employee_id", label: "Employee ID", type: "text", placeholder: "EMP-001", helpText: "Labor/manpower only.", section: "People", visibleWhen: { anyOf: [{ key: "resource_type", equals: ["MANPOWER", "LABOR"] }] } },
     { key: "designation", label: "Designation", type: "text", placeholder: "Senior Farm Worker", helpText: "Labor/manpower only.", section: "People", visibleWhen: { anyOf: [{ key: "resource_type", equals: ["MANPOWER", "LABOR"] }] } },
     { key: "department", label: "Department", type: "text", placeholder: "Farm Operations", helpText: "Department or team.", section: "People", visibleWhen: { anyOf: [{ key: "resource_type", equals: ["MANPOWER", "LABOR"] }] } },
-    { key: "capacity", label: "Capacity", type: "number", step: "0.01", section: "Capacity & Cost" },
+    { key: "capacity", label: "Capacity", type: "number", step: "0.01", min: 0, section: "Capacity & Cost" },
     // Left unfiltered: a resource's capacity spans MANPOWER (HEAD), EQUIPMENT (KG,
     // LITER for a tank, BAG for a mixer) and UTILITY — no single type fits.
     { key: "capacity_uom", label: "Capacity UOM", type: "select-entity", entityEndpoint: "/uom", entityValueKey: "uom_code", entityLabelKeys: ["uom_code", "uom_name"], section: "Capacity & Cost" },
     // Left unfiltered: cost rate is quoted per HOUR (labor), per KG/LITER (material
     // consumption), or per HEAD/trip — spans every type.
     { key: "unit", label: "Cost UOM", type: "select-entity", entityEndpoint: "/uom", entityValueKey: "uom_code", entityLabelKeys: ["uom_code", "uom_name"], section: "Capacity & Cost" },
-    { key: "cost_rate", label: "Cost Rate", type: "number", step: "0.01", section: "Capacity & Cost" },
+    { key: "cost_rate", label: "Cost Rate", type: "number", step: "0.01", min: 0, section: "Capacity & Cost" },
     { key: "cost_element", label: "Cost Element", type: "text", placeholder: "DIRECT_LABOR", helpText: "GL cost classification, e.g. DIRECT_LABOR / INDIRECT_LABOR / EQUIPMENT_HIRE / FUEL / MAINTENANCE.", section: "Capacity & Cost" },
     { key: "gl_cost_account", label: "GL Cost Account", type: "select-entity", searchable: true, entityEndpoint: "/gl-account", entityValueKey: "gl_account_id", entityLabelKeys: ["account_code", "account_name"], helpText: "GL account this resource posts cost to.", section: "Capacity & Cost" },
     { key: "asset_code", label: "Asset Code", type: "text", placeholder: "ASSET-PELLETISER-01", helpText: "Equipment only.", section: "Asset", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
@@ -1455,8 +1456,8 @@ const resource: MasterDataConfig = {
     { key: "asset_serial_no", label: "Asset Serial No.", type: "text", section: "Asset", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
     { key: "purchase_date", label: "Purchase Date", type: "date", section: "Asset", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
     { key: "warranty_expiry_date", label: "Warranty Expiry", type: "date", section: "Asset", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
-    { key: "maintenance_frequency_days", label: "Maintenance Frequency (days)", type: "number", helpText: "Days between scheduled services. Logging a completed service auto-calculates the next due date.", section: "Maintenance", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
-    { key: "maintenance_cost_per_service", label: "Est. Cost per Service", type: "number", step: "0.01", section: "Maintenance", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
+    { key: "maintenance_frequency_days", label: "Maintenance Frequency (days)", type: "number", min: 0, helpText: "Days between scheduled services. Logging a completed service auto-calculates the next due date.", section: "Maintenance", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
+    { key: "maintenance_cost_per_service", label: "Est. Cost per Service", type: "number", step: "0.01", min: 0, section: "Maintenance", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
     { key: "maintenance_vendor", label: "Preferred Maintenance Vendor", type: "text", section: "Maintenance", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
     { key: "last_maintenance_date", label: "Last Maintenance (system-tracked)", type: "date", hideInForm: true, section: "Maintenance" },
     { key: "next_maintenance_date", label: "Next Maintenance (system-tracked)", type: "date", hideInForm: true, section: "Maintenance" },
@@ -1729,7 +1730,7 @@ const exchangeRate: MasterDataConfig = {
       helpText: "The currency being quoted against the US dollar.",
     },
     {
-      key: "rate", label: "Rate (1 USD =)", type: "number", required: true, step: "0.000001", placeholder: "36.25",
+      key: "rate", label: "Rate (1 USD =)", type: "number", min: 0, required: true, step: "0.000001", placeholder: "36.25",
       helpText: "How many units of the chosen currency one US dollar buys. 1 USD = 36.25 ZWL is entered as 36.25.",
     },
     {

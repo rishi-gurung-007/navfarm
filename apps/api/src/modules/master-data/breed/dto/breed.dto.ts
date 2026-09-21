@@ -133,16 +133,19 @@ export class CreateBreedDto {
   @ApiProperty({ description: 'Average daily growth rate in grams', required: false, example: 52.4 })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   avg_growth_rate_g_day?: number;
 
   @ApiProperty({ description: 'Benchmark Feed Conversion Ratio (FCR)', required: false, example: 1.6500 })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   avg_fcr?: number;
 
   @ApiProperty({ description: 'Expected benchmark mortality %', required: false, example: 3.50 })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   avg_mortality_pct?: number;
 
   @ApiProperty({ description: 'Laying hens benchmark lay rate %', required: false, example: 85.00 })
@@ -187,6 +190,7 @@ export class CreateBreedDto {
   @ApiProperty({ description: 'Average yield per unit (eggs/day, L milk/day, etc.)', required: false, example: 1.00 })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   avg_yield_per_unit?: number;
 
   @ApiProperty({ description: 'Nursing/lactation duration in days', required: false, example: 28 })
@@ -198,6 +202,7 @@ export class CreateBreedDto {
   @ApiProperty({ description: 'Salvage value as percent of total opening asset value — amortisation denominator input', required: false, example: 10.0 })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   residual_value_pct?: number;
 
   @ApiProperty({ description: 'Expected number of parities/cycles in productive life', required: false, example: 7 })
@@ -209,26 +214,31 @@ export class CreateBreedDto {
   @ApiProperty({ description: 'Average piglets born live per farrowing', required: false, example: 11.5 })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   avg_litter_size_born?: number;
 
   @ApiProperty({ description: 'Average piglets weaned per litter', required: false, example: 10.0 })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   avg_litter_size_weaned?: number;
 
   @ApiProperty({ description: 'Standard piglet weight at weaning, KG', required: false, example: 7.0 })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   avg_weaning_weight_kg?: number;
 
   @ApiProperty({ description: 'Percent of matings/AI resulting in a successful farrowing', required: false, example: 85.0 })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   farrowing_rate_pct?: number;
 
   @ApiProperty({ description: 'Boar species only: expected semen doses collected per week', required: false, example: 4.0 })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   boar_doses_per_week?: number;
 
   @ApiProperty({ description: 'Boar species only: productive life in months for amortisation', required: false, example: 24 })
@@ -307,16 +317,19 @@ export class UpdateBreedDto {
   @ApiProperty({ required: false, example: 52.4 })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   avg_growth_rate_g_day?: number;
 
   @ApiProperty({ required: false, example: 1.65 })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   avg_fcr?: number;
 
   @ApiProperty({ required: false, example: 3.5 })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   avg_mortality_pct?: number;
 
   @ApiProperty({ required: false, example: 85.0 })
@@ -361,6 +374,7 @@ export class UpdateBreedDto {
   @ApiProperty({ required: false, example: 1.0 })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   avg_yield_per_unit?: number;
 
   @ApiProperty({ required: false, example: 28 })
@@ -372,6 +386,7 @@ export class UpdateBreedDto {
   @ApiProperty({ required: false, example: 10.0 })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   residual_value_pct?: number;
 
   @ApiProperty({ required: false, example: 7 })
@@ -383,26 +398,31 @@ export class UpdateBreedDto {
   @ApiProperty({ required: false, example: 11.5 })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   avg_litter_size_born?: number;
 
   @ApiProperty({ required: false, example: 10.0 })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   avg_litter_size_weaned?: number;
 
   @ApiProperty({ required: false, example: 7.0 })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   avg_weaning_weight_kg?: number;
 
   @ApiProperty({ required: false, example: 85.0 })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   farrowing_rate_pct?: number;
 
   @ApiProperty({ required: false, example: 4.0 })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   boar_doses_per_week?: number;
 
   @ApiProperty({ required: false, example: 24 })
@@ -582,10 +602,12 @@ export class CreateBreedLifecycleStageDto {
 
   @ApiProperty({ description: 'Start of this standard range in calc_unit', example: 1 })
   @IsInt()
+  @Min(0)
   period_from: number;
 
   @ApiProperty({ description: 'End of this standard range in calc_unit', example: 11 })
   @IsInt()
+  @Min(0)
   period_to: number;
   @ApiProperty({ description: 'Standard teat count for this line at this stage. BBP §6 hard-blocks gilt selection below 15.', required: false, example: 15, maximum: MAX_TEATS })
   @IsInt()
@@ -609,31 +631,37 @@ export class CreateBreedLifecycleStageDto {
   @ApiProperty({ description: 'Standard feed quantity per animal per day, KG', required: false })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   feed_qty_per_head_per_day_kg?: number;
 
   @ApiProperty({ description: 'Allowance for feed wastage in forecast calculation, %', required: false })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   feed_wastage_pct?: number;
 
   @ApiProperty({ description: 'Expected average body weight at end of this range, KG', required: false })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   std_body_weight_kg?: number;
 
   @ApiProperty({ description: 'Standard Average Daily Gain, grams/day', required: false })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   std_adg_gpd?: number;
 
   @ApiProperty({ description: 'Standard Feed Conversion Ratio', required: false })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   std_fcr?: number;
 
   @ApiProperty({ description: 'Acceptable mortality percentage for this stage/range', required: false })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   std_mortality_rate_pct?: number;
 
   @ApiProperty({ description: 'Expected output item UUID at this stage', required: false })
@@ -649,6 +677,7 @@ export class CreateBreedLifecycleStageDto {
   @ApiProperty({ description: 'Expected output per animal/sow at end of this range', required: false })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   std_output_qty?: number;
 
   @ApiProperty({ description: 'Standard medication schedule for this stage', required: false })
@@ -738,11 +767,13 @@ export class UpdateBreedLifecycleStageDto {
   @ApiProperty({ required: false })
   @IsInt()
   @IsOptional()
+  @Min(0)
   period_from?: number;
 
   @ApiProperty({ required: false })
   @IsInt()
   @IsOptional()
+  @Min(0)
   period_to?: number;
   @ApiProperty({ description: 'Standard teat count for this line at this stage. BBP §6 hard-blocks gilt selection below 15.', required: false, example: 15, maximum: MAX_TEATS })
   @IsInt()
@@ -766,31 +797,37 @@ export class UpdateBreedLifecycleStageDto {
   @ApiProperty({ required: false })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   feed_qty_per_head_per_day_kg?: number;
 
   @ApiProperty({ required: false })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   feed_wastage_pct?: number;
 
   @ApiProperty({ required: false })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   std_body_weight_kg?: number;
 
   @ApiProperty({ required: false })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   std_adg_gpd?: number;
 
   @ApiProperty({ required: false })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   std_fcr?: number;
 
   @ApiProperty({ required: false })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   std_mortality_rate_pct?: number;
 
   @ApiProperty({ required: false })
@@ -806,6 +843,7 @@ export class UpdateBreedLifecycleStageDto {
   @ApiProperty({ required: false })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   std_output_qty?: number;
 
   @ApiProperty({ required: false })

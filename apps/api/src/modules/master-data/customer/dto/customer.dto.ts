@@ -37,6 +37,7 @@ export class CreateCustomerDto {
   @ApiProperty({ description: 'Approved credit limit amount', required: false })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   credit_limit?: number;
 
   @ApiProperty({ description: 'Customer street address line 1', required: false })
@@ -108,6 +109,7 @@ export class UpdateCustomerDto {
   @ApiProperty({ required: false })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   credit_limit?: number;
 
   @ApiProperty({ required: false })

@@ -138,12 +138,14 @@ export class CreateAnimalDto {
     required: false,
   })
   @IsNumber({ maxDecimalPlaces: 4 })
+  @Min(0)
   @Max(99999999999999.9999)
   @IsOptional()
   acquisition_cost?: number;
 
   @ApiProperty({ description: 'Transport/import duty/quarantine charges per head for imported animals', required: false })
   @IsNumber({ maxDecimalPlaces: 4 })
+  @Min(0)
   @Max(99999999999999.9999)
   @IsOptional()
   landing_cost?: number;
@@ -188,6 +190,7 @@ export class CreateAnimalDto {
   @ApiProperty({ description: 'Total Sow Index score', required: false })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   tsi?: number;
 
   @ApiProperty({ description: 'Conformation/quality grading', required: false })
@@ -290,26 +293,31 @@ export class UpdateAnimalDto {
   @ApiProperty({ description: 'Not ledger-derived yet — settable directly until per-animal bio-asset ledger integration exists', required: false })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   current_bio_asset_value?: number;
 
   @ApiProperty({ required: false })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   total_amortised?: number;
 
   @ApiProperty({ required: false })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   book_value?: number;
 
   @ApiProperty({ required: false })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   residual_value?: number;
 
   @ApiProperty({ required: false })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   amortisation_monthly?: number;
 
   @ApiProperty({ required: false })
@@ -337,6 +345,7 @@ export class UpdateAnimalDto {
   @ApiProperty({ description: 'Total Sow Index score', required: false })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   tsi?: number;
 
   @ApiProperty({ description: 'Conformation/quality grading', required: false })

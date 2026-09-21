@@ -1707,8 +1707,13 @@ export function MasterDataTable({
                       </select>
                     ) : (
                       <input id={rowFieldId} className={inputCls} style={S.input} disabled={readOnly}
-                        type={col.type === "number" ? "number" : "text"} step={col.step} placeholder={col.placeholder}
+                        type={col.type === "number" ? "number" : "text"} step={col.step} min={col.min} max={col.max} placeholder={col.placeholder}
                         value={String(row[col.key] ?? "")}
+                        onKeyDown={(e) => {
+                          if (col.type !== "number") return;
+                          if (e.key === "e" || e.key === "E") e.preventDefault();
+                          if ((e.key === "+" || e.key === "-") && col.min !== undefined && col.min >= 0) e.preventDefault();
+                        }}
                         onChange={(e) => write(rows.map((r, i) => i === idx ? { ...r, [col.key]: col.type === "number" ? (e.target.value === "" ? "" : Number(e.target.value)) : e.target.value } : r))} />
                     )}
                   </Field>
@@ -1926,8 +1931,15 @@ export function MasterDataTable({
         value={value}
         onKeyDown={(e) => {
           if (f.type === "number") {
-            // Block scientific notation 'e', 'E' and sign keys '+', '-'
-            if (e.key === "e" || e.key === "E" || e.key === "+" || e.key === "-") {
+            // Block scientific notation 'e'/'E' always. '+' and '-' only when
+            // this field has a non-negative floor — min unset (or negative)
+            // means the field is one of the few that genuinely needs a
+            // negative value (e.g. Storage Temp Min/Max, a temperature-based
+            // KPI threshold), so the sign key stays live for those.
+            if (e.key === "e" || e.key === "E") {
+              e.preventDefault();
+            }
+            if ((e.key === "+" || e.key === "-") && f.min !== undefined && f.min >= 0) {
               e.preventDefault();
             }
             // Block decimal point on integer-only fields

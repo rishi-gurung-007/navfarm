@@ -62,6 +62,7 @@ export class CreateLocationDto {
   @ApiProperty({ description: 'Size of the physical area', required: false })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   area_size?: number;
 
   @ApiProperty({ description: 'Unit of area size (e.g. SQFT, SQM)', required: false })
@@ -71,6 +72,7 @@ export class CreateLocationDto {
 
   @ApiProperty({ description: 'Maximum storage or bird/animal capacity limit' })
   @IsNumber()
+  @Min(0)
   max_capacity: number;
 
   @ApiProperty({ description: 'Capacity unit representation' })
@@ -190,6 +192,7 @@ export class UpdateLocationDto {
   @ApiProperty({ required: false })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   area_size?: number;
 
   @ApiProperty({ required: false })
@@ -200,6 +203,7 @@ export class UpdateLocationDto {
   @ApiProperty({ required: false })
   @IsNumber()
   @IsOptional()
+  @Min(0)
   max_capacity?: number;
 
   @ApiProperty({ required: false })
