@@ -1093,7 +1093,13 @@ const breedLifecycleStage: MasterDataConfig = {
       helpText: "Minimum teat count expected at this stage. BBP §6 blocks gilt selection below 15.",
       visibleWhen: { anyOf: [{ key: "category", equals: "SOW" }] },
     },
-    { key: "season_type", label: "Season", type: "text", placeholder: "Winter" },
+    // Matches breed.dto.ts's SEASON_TYPES exactly — the API already rejected
+    // anything else via @IsIn; this was free text on the form until now, so a
+    // typed value outside these three only failed after submit.
+    {
+      key: "season_type", label: "Season", type: "select",
+      options: [ "SUMMER", "WINTER"].map((v) => ({ value: v, label: v.charAt(0) + v.slice(1).toLowerCase() })),
+    },
     { key: "feed_item_id", label: "Feed Item", type: "select-entity", searchable: true, entityEndpoint: "/item", entityValueKey: "item_id", entityLabelKeys: ["item_code", "item_name"] },
     { key: "feed_qty_per_head_per_day_kg", label: "Feed Qty per Head per Day (KG)", type: "number", step: "0.0001" },
     { key: "feed_wastage_pct", label: "Feed Wastage %", type: "number", step: "0.01" },
