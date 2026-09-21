@@ -170,6 +170,7 @@ export default function AnimalPanel() {
   const [batches, setBatches] = useState<Row[]>([]);
   const [stages, setStages]   = useState<Row[]>([]);
   const [locations, setLocations] = useState<Row[]>([]);
+  const [reasons, setReasons] = useState<Row[]>([]);
 
   // ── Fast Scanner Modal ──────────────────────────────────────────────────
   const [scannerOpen, setScannerOpen] = useState(false);
@@ -219,7 +220,7 @@ export default function AnimalPanel() {
   const [disposeIsWithdrawal, setDisposeIsWithdrawal] = useState(false);
   const [disposeForm, setDisposeForm]   = useState<Row>({
     disposal_type: "SOLD", disposal_date: new Date().toISOString().slice(0, 10),
-    disposal_value: "", notes: "",
+    disposal_value: "", disposal_reason_id: "", notes: "",
   });
 
   // ── Data loading ────────────────────────────────────────────────────────────
@@ -254,6 +255,10 @@ export default function AnimalPanel() {
     api.get(`/batch${qs}`).then((r) => setBatches(unwrap<Row[]>(r) || [])).catch(() => {});
     api.get(`/stage?limit=100`).then((r) => setStages(unwrap<Row[]>(r) || [])).catch(() => {});
     api.get(`/location${qs}`).then((r) => setLocations(unwrap<Row[]>(r) || [])).catch(() => {});
+    // Reason Master Template (Master Templates/, added 2026-09-21) — MORTALITY
+    // and CULL reasons belong on this same Dispose action; isActive filters to
+    // rows the admin hasn't blocked.
+    api.get(`/reason?${qs.replace(/^\?/, "?isActive=true&")}`).then((r) => setReasons(unwrap<Row[]>(r) || [])).catch(() => {});
     // Items — scoped for medicine/vaccine picker separately from living-asset picker
     api.get(`/item${qs}`).then((r) => {
       const all = unwrap<Row[]>(r) || [];
@@ -415,6 +420,7 @@ export default function AnimalPanel() {
       await api.patch(`/animal/${viewing.animal_id}/dispose`, {
         disposal_type: disposeForm.disposal_type,
         disposal_date: disposeForm.disposal_date,
+        disposal_reason_id: disposeForm.disposal_reason_id || undefined,
         disposal_value: disposeForm.disposal_value ? Number(disposeForm.disposal_value) : undefined,
         notes: disposeForm.notes || undefined,
       });
@@ -717,7 +723,7 @@ export default function AnimalPanel() {
                   size="sm"
                   disabled={!viewing.is_active}
                   onClick={() => {
-                    setDisposeForm({ disposal_type: "SOLD", disposal_date: new Date().toISOString().slice(0, 10), disposal_value: "", notes: "" });
+                    setDisposeForm({ disposal_type: "SOLD", disposal_date: new Date().toISOString().slice(0, 10), disposal_value: "", disposal_reason_id: "", notes: "" });
                     setDisposeError("");
                     setDisposeIsWithdrawal(false);
                     setDisposeOpen(true);
@@ -1048,7 +1054,7 @@ export default function AnimalPanel() {
         <div className="space-y-4 mt-1">
           <div>
             <label className="nf-label" htmlFor="dispose-type">{t("anpDisposalType")}</label>
-            <select id="dispose-type" className={inputCls} value={disposeForm.disposal_type} onChange={(e) => { setDisposeForm((f) => ({ ...f, disposal_type: e.target.value })); setDisposeError(""); setDisposeIsWithdrawal(false); }}>
+            <select id="dispose-type" className={inputCls} value={disposeForm.disposal_type} onChange={(e) => { setDisposeForm((f) => ({ ...f, disposal_type: e.target.value, disposal_reason_id: "" })); setDisposeError(""); setDisposeIsWithdrawal(false); }}>
               {DISPOSAL_TYPES.map((tp) => <option key={tp} value={tp}>{disposalTypeLabel(tp)}</option>)}
             </select>
           </div>
@@ -1056,6 +1062,21 @@ export default function AnimalPanel() {
           <div>
             <label className="nf-label" htmlFor="dispose-date">{t("anpDate")}</label>
             <input id="dispose-date" type="date" className={inputCls} value={disposeForm.disposal_date} onChange={(e) => setDisposeForm((f) => ({ ...f, disposal_date: e.target.value }))} />
+          </div>
+
+          {/* Reason Master Template (Master Templates/, 2026-09-21): a DIED
+              disposal must pick a MORTALITY reason (enforced server-side);
+              other disposal types offer the DISPOSAL/TRANSFER destinations
+              the template gives for them (e.g. "Colcom Abattoir"). Optional —
+              SOLD/TRANSFERRED commonly has no catalog reason behind it. */}
+          <div>
+            <label className="nf-label" htmlFor="dispose-reason">{t("anpDisposalReason")}</label>
+            <select id="dispose-reason" className={inputCls} value={disposeForm.disposal_reason_id} onChange={(e) => setDisposeForm((f) => ({ ...f, disposal_reason_id: e.target.value }))}>
+              <option value="">{t("anpDisposalReasonNone")}</option>
+              {reasons
+                .filter((r) => disposeForm.disposal_type === "DIED" ? r.category === "MORTALITY" : ["DISPOSAL", "TRANSFER"].includes(r.category))
+                .map((r) => <option key={r.reason_id} value={r.reason_id}>{r.reason_code} — {r.reason_name}</option>)}
+            </select>
           </div>
 
           <div>

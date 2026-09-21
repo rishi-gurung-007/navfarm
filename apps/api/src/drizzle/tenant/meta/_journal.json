@@ -708,6 +708,20 @@
       "when": 1789350000000,
       "tag": "0101_item_tracking_series_fk",
       "breakpoints": true
+    },
+    {
+      "idx": 102,
+      "version": "5",
+      "when": 1789360000000,
+      "tag": "0104_reason_master_fields",
+      "breakpoints": true
+    },
+    {
+      "idx": 103,
+      "version": "5",
+      "when": 1789370000000,
+      "tag": "0105_item_attribute_uom_value",
+      "breakpoints": true
     }
   ]
 }

@@ -1869,3 +1869,111 @@ CRATE rows carry farm_id.
 **5. Full demo rebuild applied.** 28 batches (7 with multi-stage flows),
 260 animals across 6 stages, 28 company items, 804 daily entries. Fossil
 rows (old BATCH-0000xx family with invented names, PIG-BAT-2026 seed) gone.
+
+## 2026-09-21 — Reason Master built from the client's own template, not invented
+
+`Reason Master Template.xlsx` was added to `Master Templates/` this session —
+the document AGENTS.md's open questions once said did not exist ("47 reason
+codes were promised; 3 exist"). It gives 57 rows across nine categories
+(MORTALITY 21, CULL 10, RETURN 3, SELECTION 4, DISPOSAL 6, TRANSFER 3, SCAN 3,
+ADJUSTMENT 4, REQUISITION 3) — MORTALITY's count matches that old citation
+exactly. `reason-code-seed.ts`'s three placeholders (DOA, RATION_PIG,
+CULLED_PROC — deliberately not a guessed 47, per that same file's prior
+comment) are replaced with all 57, transcribed mechanically from the workbook
+XML, not hand-typed. Verified in MySQL: 57 rows, category counts matching,
+`tenant_devco` (Triple C).
+
+**Schema gained three columns** (`sub_category`, `stage_filter_note`,
+`mandatory_comment` on `reason_master`; `disposal_reason_id` FK on
+`animal_register`), migration `0104_reason_master_fields.sql`, applied
+directly to `tenant_devco` the same way `0102`/`0103` evidently were —
+**`meta/_journal.json` was already stale at idx 101** (`__drizzle_migrations`
+tops out at idx 100) before this session touched it; `0102_add_master_type_to_no_series.sql`,
+`0102_no_series_starting_no.sql` and `0103_inventory_setup.sql` all exist
+unregistered, so `db-migrate-all-tenants`'s tracked `migrate()` would silently
+skip them on any tenant besides the one they were hand-applied to. Not fixed
+here — out of scope for this change — but worth knowing before trusting that
+target on a new tenant.
+
+**The template's "Stage Filter" column doesn't reduce cleanly to our stage
+codes.** "SOW" names an animal type, not a `stage_master` row, and has no
+equivalent; "LACTATION (piglet)" and "GROWER / SOW" are compound. Kept as two
+columns rather than guessing: `applicable_stages` holds only the tokens that
+are real stage codes (what `reason.service.ts` actually filters/validates on),
+`stage_filter_note` keeps the client's text verbatim. Worth a client question
+if reason filtering needs to key off animal type as well as stage.
+
+**Reason master had zero consumers anywhere in the schema before this** — no
+table referenced `reason_id` or `reason_code` as a foreign key, confirmed by
+grep. `batch_transfer.reason` and `stock_adjustment.reason` are still free
+text (TRANSFER and ADJUSTMENT categories exist for them in the template but
+were not wired — those modules weren't touched this session, flagged as a
+follow-up). What *was* wired: `DisposeAnimalDto.disposal_reason_id` — the
+single highest-value link, since MORTALITY + CULL is 31 of the 57 codes and
+`animal.dispose()` already had one clean call site. A DIED disposal with a
+reason attached is rejected if that reason isn't category MORTALITY
+(`animal.service.ts`); the dispose modal (`animal-panel.tsx`) offers
+MORTALITY reasons for DIED and DISPOSAL/TRANSFER reasons otherwise. CULL has
+no dispose path yet — `DISPOSAL_TYPES` is SOLD/SLAUGHTERED/DIED/TRANSFERRED,
+no CULLED — so the 10 CULL reasons are loaded and selectable in the master
+but nothing in the app offers them at point of use yet.
+
+`mandatory_weight` (ours, not the template's) is unaffected — confirmed no
+code reads it anywhere outside its own tests before touching it.
+
+## 2026-09-21 — Reason Master's Stage Filter is a multi-select with an "All" option
+
+Client feedback after the above: Stage Filter should be the multi-select
+picker (what had briefly been split into a hidden `applicable_stages` picker
+plus a visible free-text field), and it should offer an explicit "All Stages"
+choice rather than meaning "all" only by leaving everything unchecked.
+
+Added a small reusable capability rather than a one-off for this field:
+`MasterDataField.allOption` (`types.ts`) — a synthetic option merged into a
+`multiple` select-entity field's list, mutually exclusive with every real
+option (`MasterDataTable.tsx`'s `setField`), pre-selected when the stored
+value is empty, and stripped back to empty before it reaches the API. Any
+other master's multi-select can opt in the same way later. `stage_filter_note`
+(the template's literal wording — "SOW", "LACTATION (piglet)") stays, but off
+the form; it was never meant to be independently editable, just a record of
+what the client wrote for values the picker can't fully express.
+
+## 2026-09-21 — Item Attribute: UOM + Value replace Data Type + Unit
+
+Client instruction: replace the Data Type dropdown and free-text Unit field
+with a UOM picker and an optional default/example Value, and drop Mandatory/
+Affects Costing/Distinguishes Variants from the form. Asked first what "Value"
+should mean, since an attribute *definition* holding one value is a different
+thing from the per-item value already entered on the Item form — client chose
+"default/example value, informational only, real value stays on the Item
+form."
+
+This reverses the 2026-09-08 decision that kept Unit as free text specifically
+*against* reusing `uom_master` (TDD row 132's "(UOM master)"), on the
+reasoning that doing so would pollute the picker Primary/Output UOM also use
+with specification units like "PCT". The client's own instruction now
+supersedes that — `uom_id` reuses the same `/uom` master and picker every
+other UOM field in the app uses.
+
+`data_type` (varchar NOT NULL, no prior default) couldn't simply be hidden —
+a create would 400 with nothing to send. Column default changed to `'NUMBER'`
+via migration `0105_item_attribute_uom_value.sql`, and the service sets it
+explicitly too (`dto.data_type || 'NUMBER'`) rather than relying on the ORM
+omitting an `undefined` property cleanly. `unit`, `is_mandatory`,
+`affects_costing`, `is_variant` stay — nullable/defaulted already, hidden
+rather than deleted, confirmed (again) to have no consumer anywhere in the app
+before hiding them.
+
+`item-attribute.service.ts`'s `findAll` moved off the generic `runMasterList`
+to a hand-built query with `leftJoin(uomMaster, ...)`, matching
+`item.service.ts`'s own category/template join — otherwise the UOM list
+column would have shown `uom_id`'s raw UUID, which nothing else in this app
+does.
+
+Verified in MySQL directly (`tenant_devco`, inserted and read back a test row,
+deleted after): `data_type` defaults to `NUMBER` when omitted, the
+uom_master join resolves `uom_code`/`uom_name` correctly. Full API suite:
+1111/1115 pass; the 4 failures (`farm-scope-coverage.spec.ts`,
+`piggery-bbp-stage-seed.spec.ts`, 2 in `item-template.service.spec.ts`)
+reproduce identically with this session's changes stashed out — pre-existing,
+unrelated.

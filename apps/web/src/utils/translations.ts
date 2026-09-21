@@ -2920,6 +2920,8 @@ export const translations = {
     anpSlaughterWithdrawalHint: "Slaughter is blocked if any medicine withdrawal period has not elapsed. Check the Medication Log tab to confirm clearance before proceeding.",
     anpDisposalType: "Disposal Type *",
     anpDate: "Date *",
+    anpDisposalReason: "Reason",
+    anpDisposalReasonNone: "— None —",
     anpDisposalValue: "Disposal Value (sale/salvage)",
     anpGenderFemale: "Female",
     anpGenderMale: "Male",

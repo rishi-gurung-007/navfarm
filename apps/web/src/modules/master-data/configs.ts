@@ -148,14 +148,41 @@ const stage: MasterDataConfig = {
     { key: "stage_description", label: "Description", type: "text", section: "Identification" },
     { key: "typical_duration_days", label: "Typical Duration (days)", type: "number", section: "Duration" },
     { key: "min_days_before_move", label: "Min Days Before Move", type: "number", helpText: "Minimum days in this stage before a transition is allowed.", section: "Duration" },
-    { key: "auto_move_on_day", label: "Auto-Move On Day", type: "number", helpText: "Required when Transition Trigger is Auto By Day.", section: "Duration" },
     {
+      // KPI_BASED/EVENT_BASED added 2026-09-21, client review — the schema
+      // column comment already named them; nothing wired them until now. This
+      // records intent only: no transition engine evaluates a KPI or event and
+      // acts on alt_next_stage_id yet, so selecting either trigger here does
+      // not by itself move a batch or animal automatically.
       key: "transition_trigger", label: "Transition Trigger", type: "select", required: true, section: "Transitions",
-      options: ["AUTO_BY_DAY", "MANUAL"].map((v) => ({ value: v, label: v.replace(/_/g, " ") })),
+      options: ["AUTO_BY_DAY", "MANUAL", "KPI_BASED", "EVENT_BASED"].map((v) => ({ value: v, label: v.replace(/_/g, " ") })),
     },
-    { key: "next_stage_id", label: "Next Stage", type: "select-entity", entityEndpoint: "/stage", entityValueKey: "stage_id", entityLabelKeys: ["stage_code", "stage_name"], helpText: "Leave blank for a terminal stage.", section: "Transitions" },
-    { key: "alt_next_stage_id", label: "Alternate Next Stage", type: "select-entity", entityEndpoint: "/stage", entityValueKey: "stage_id", entityLabelKeys: ["stage_code", "stage_name"], section: "Transitions" },
-    { key: "alt_trigger_condition", label: "Alternate Trigger Condition", type: "text", placeholder: "PREGNANCY_FAILED", section: "Transitions" },
+    // Moved into Transitions (2026-09-21) — it only ever shows once Transition
+    // Trigger above is set to Auto By Day, so it belongs beside the control
+    // that reveals it, not back in Duration where filling it in meant
+    // switching tabs.
+    {
+      key: "auto_move_on_day", label: "Auto-Move On Day", type: "number", section: "Transitions",
+      helpText: "Required when Transition Trigger is Auto By Day.",
+      visibleWhen: { anyOf: [{ key: "transition_trigger", equals: "AUTO_BY_DAY" }] },
+      requiredWhen: { anyOf: [{ key: "transition_trigger", equals: "AUTO_BY_DAY" }] },
+    },
+    {
+      key: "next_stage_id", label: "Next Stage", type: "select-entity", entityEndpoint: "/stage", entityValueKey: "stage_id", entityLabelKeys: ["stage_code", "stage_name"], section: "Transitions",
+      helpText: "Leave blank for a terminal stage. Applicable only when Transition Trigger is Auto By Day.",
+      visibleWhen: { anyOf: [{ key: "transition_trigger", equals: "AUTO_BY_DAY" }] },
+    },
+    {
+      key: "alt_next_stage_id", label: "Alternate Next Stage", type: "select-entity", entityEndpoint: "/stage", entityValueKey: "stage_id", entityLabelKeys: ["stage_code", "stage_name"], section: "Transitions",
+      visibleWhen: { anyOf: [{ key: "transition_trigger", equals: ["KPI_BASED", "EVENT_BASED"] }] },
+      requiredWhen: { anyOf: [{ key: "transition_trigger", equals: ["KPI_BASED", "EVENT_BASED"] }] },
+    },
+    {
+      key: "alt_trigger_condition", label: "Alternate Trigger Condition", type: "select", section: "Transitions",
+      options: ["PREGNANCY_FAILED", "WEIGHT_NOT_ACHIEVED", "PARITY_LIMIT_REACHED"].map((v) => ({ value: v, label: v.replace(/_/g, " ") })),
+      visibleWhen: { anyOf: [{ key: "transition_trigger", equals: ["KPI_BASED", "EVENT_BASED"] }] },
+      requiredWhen: { anyOf: [{ key: "transition_trigger", equals: ["KPI_BASED", "EVENT_BASED"] }] },
+    },
     {
       key: "data_entry_form", label: "Data Entry Form", type: "select", section: "Data Entry",
       options: ["STANDARD", "FARROWING", "WEANING", "SLAUGHTER"].map((v) => ({ value: v, label: v })),
@@ -320,7 +347,7 @@ const animal: MasterDataConfig = {
       options: [{ value: "F", label: "Female" }, { value: "M", label: "Male" }],
     },
     { key: "dob", label: "Date of Birth", type: "date", helpText: "Leave blank if born on this farm and unknown, or imported/unknown.", section: "Identification" },
-    { key: "serial_number", label: "Serial Number", type: "text", helpText: "Asset tag from item_lot_serials, distinct from RFID/ear tag.", section: "Identification" },
+    { key: "serial_number", label: "Serial Number", type: "text", maxLength: 50, helpText: "Asset tag from item_lot_serials, distinct from RFID/ear tag.", section: "Identification" },
     { key: "rfid_tag", label: "RFID Tag", type: "text", helpText: "Unique if set.", section: "Identification" },
     { key: "ear_tag", label: "Ear Tag Number", type: "text", section: "Identification" },
     { key: "ear_tag_image_url", label: "Ear Tag Image URL", type: "text", placeholder: "https://cdn.navfarm.io/ear-tags/...", helpText: "Paste an image URL for now; direct file upload to Cloudflare R2 is planned for later.", section: "Identification" },
@@ -350,9 +377,12 @@ const animal: MasterDataConfig = {
     // receipt by the API and anything typed here is discarded, so offering an
     // editable box for it would take input it then throws away. Everything else
     // has no document behind it and is entered by hand.
-    { key: "acquisition_cost", label: "Acquisition Cost", type: "number", step: "0.01", readOnly: true, visibleWhen: { anyOf: [{ key: "entry_type", equals: ["PURCHASED_IMPORTED", "PURCHASED_LOCAL"] }] }, helpText: "Taken from the rate on the source goods receipt.", section: "Acquisition" },
-    { key: "acquisition_cost", label: "Acquisition Cost", type: "number", step: "0.01", requiredWhen: { anyOf: [{ key: "entry_type", equals: ["BORN_ON_FARM", "TRANSFERRED_IN"] }] }, visibleWhen: { anyOf: [{ key: "entry_type", equals: ["BORN_ON_FARM", "TRANSFERRED_IN"] }] }, section: "Acquisition" },
-    { key: "landing_cost", label: "Landing Cost", type: "number", step: "0.01", helpText: "Transport/import duty/quarantine charges for imported animals.", section: "Acquisition" },
+    // max mirrors the DTO's @Max — animal_register.acquisition_cost/landing_cost
+    // are decimal(18,4) (schema.ts); this is that column's own ceiling, not a
+    // client-specified business limit.
+    { key: "acquisition_cost", label: "Acquisition Cost", type: "number", step: "0.01", max: 99999999999999, readOnly: true, visibleWhen: { anyOf: [{ key: "entry_type", equals: ["PURCHASED_IMPORTED", "PURCHASED_LOCAL"] }] }, helpText: "Taken from the rate on the source goods receipt.", section: "Acquisition" },
+    { key: "acquisition_cost", label: "Acquisition Cost", type: "number", step: "0.01", max: 99999999999999, requiredWhen: { anyOf: [{ key: "entry_type", equals: ["BORN_ON_FARM", "TRANSFERRED_IN"] }] }, visibleWhen: { anyOf: [{ key: "entry_type", equals: ["BORN_ON_FARM", "TRANSFERRED_IN"] }] }, section: "Acquisition" },
+    { key: "landing_cost", label: "Landing Cost", type: "number", step: "0.01", max: 99999999999999, helpText: "Transport/import duty/quarantine charges for imported animals.", section: "Acquisition" },
     // Acquisition Cost + Landing Cost, computed by the service on save. Shown
     // rather than hidden because it is the figure the opening bio-asset value
     // and the whole amortisation schedule are built from, so it belongs where
@@ -514,7 +544,11 @@ const uomConversion: MasterDataConfig = {
     { key: "conversion_code", label: "Code" },
     { key: "from_uom", label: "From" },
     { key: "to_uom", label: "To" },
-    { key: "conversion_factor", label: "Factor" },
+    // Column is decimal(18,8) — shows 2 places by default, or the To UOM's
+    // own Decimal Places setting when one is configured (uom.service.ts joins
+    // it in as to_uom_decimal_places). Display only; the stored value and the
+    // form keep full precision.
+    { key: "conversion_factor", label: "Factor", decimals: 2, decimalsFromKey: "to_uom_decimal_places" },
     { key: "effective_from", label: "Effective From" },
     { key: "effective_to", label: "Effective To" },
   ],
@@ -571,35 +605,42 @@ const itemAttribute: MasterDataConfig = {
   columns: [
     { key: "attribute_code", label: "Code" },
     { key: "attribute_name", label: "Name" },
-    { key: "data_type", label: "Type" },
-    { key: "is_mandatory", label: "Mandatory" },
+    // uom_code/uom_name come from item-attribute.service.ts's findAll join —
+    // uom_id itself is a UUID and would render raw if used here directly.
+    { key: "uom_code", label: "UOM" },
+    { key: "default_value", label: "Value" },
   ],
   fields: [
     { key: "company_id", label: "Company (blank = global)", type: "text", hideInForm: true },
     { key: "nob_id", label: "Nature of Business", type: "select-entity", entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], helpText: "Leave blank to make this attribute available across all NOBs." },
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank to make this attribute available across all LOBs under the selected NOB." },
-    { key: "attribute_code", label: "Attribute Code", type: "text", required: true, createOnly: true, helpText: "Leave blank to derive from the attribute name via the number series. After create, the code follows the series when the name changes.", placeholder: "PROTEIN_PCT" },
-    { key: "attribute_name", label: "Attribute Name", type: "text", required: true, placeholder: "Protein %" },
+    { key: "attribute_code", label: "Attribute Code", type: "text", required: true, createOnly: true, maxLength: 255, helpText: "Leave blank to derive from the attribute name via the number series. After create, the code follows the series when the name changes.", placeholder: "PROTEIN_PCT" },
+    { key: "attribute_name", label: "Attribute Name", type: "text", required: true, maxLength: 100, placeholder: "Protein %" },
+    // Client review, 2026-09-21: replaces Data Type + Unit on the form. This
+    // reverses the 2026-09-08 call below (TDD row 132's "(UOM master)")
+    // against reusing uom_master here, on the client's own instruction — if
+    // "PCT" or similar needs to exist for an attribute, it now goes into UOM
+    // Master like any other unit, the same picker Primary/Output UOM use.
     {
-      // TDD row 130 has a fifth type, LIST, with row 131's List Values behind
-      // it. Both are out: the item's Attribute Value is a free text input
-      // whatever the attribute's type, so LIST would define a set of allowed
-      // values that no screen enforces. STRING went too — TEXT is the same type
-      // under the client's own word.
-      key: "data_type", label: "Data Type", type: "select", required: true,
-      options: ["TEXT", "NUMBER", "DATE", "BOOLEAN"].map((v) => ({ value: v, label: v })),
+      key: "uom_id", label: "UOM", type: "select-entity", searchable: true,
+      entityEndpoint: "/uom", entityValueKey: "uom_id", entityLabelKeys: ["uom_code", "uom_name"],
+      helpText: "The unit this attribute is measured in, if it has one.",
     },
-    // TDD row 132 says "(UOM master)", and this is deliberately not that. An
-    // attribute's unit is a specification — %, °C, mm — not something you
-    // transact in, and uom_master holds the units stock moves in (KG, BAG,
-    // DOSE). Putting % there to satisfy this field would offer it on Primary
-    // UOM, Output UOM and Feed Formula too, where receiving "18 PCT" is
-    // meaningless. Free text until the client asks otherwise. Rishi's call,
-    // 2026-09-08.
-    { key: "unit", label: "Unit", type: "text", placeholder: "%", helpText: "The unit this attribute is measured in, if it has one." },
-    { key: "is_mandatory", label: "Mandatory on every item in scope", type: "boolean" },
-    { key: "affects_costing", label: "Affects Costing", type: "boolean" },
-    { key: "is_variant", label: "Distinguishes Item Variants", type: "boolean" },
+    { key: "default_value", label: "Value", type: "number", step: "0.0001", helpText: "Optional default/example value — informational only. The actual value for each item is still entered on the Item form." },
+    // Data Type and Unit are off the form (data_type defaults to NUMBER at
+    // create; unit is superseded by uom_id above) but kept for any row that
+    // still carries them and for API/script use — not deleted, just not on
+    // this screen. is_mandatory/affects_costing/is_variant likewise: none of
+    // the three has a downstream consumer anywhere in the app (checked
+    // 2026-09-21, same as mandatory_weight on Reason).
+    {
+      key: "data_type", label: "Data Type", type: "select", hideInForm: true,
+      options: ["TEXT", "NUMBER"].map((v) => ({ value: v, label: v })),
+    },
+    { key: "unit", label: "Unit", type: "text", hideInForm: true },
+    { key: "is_mandatory", label: "Mandatory on every item in scope", type: "boolean", hideInForm: true },
+    { key: "affects_costing", label: "Affects Costing", type: "boolean", hideInForm: true },
+    { key: "is_variant", label: "Distinguishes Item Variants", type: "boolean", hideInForm: true },
   ],
 };
 
@@ -626,7 +667,7 @@ const itemTemplateConfig: MasterDataConfig = {
   ],
   fields: [
     { key: "company_id", label: "Company", type: "text", hideInForm: true },
-    { key: "template_code", label: "Template Code", type: "text", required: true, createOnly: true, placeholder: "FEED-BROILER", helpText: "Unique template identifier code." },
+    { key: "template_code", label: "Template Code", type: "text", required: true, createOnly: true, maxLength: 20, placeholder: "FEED-BROILER", helpText: "Unique template identifier code (max 20 characters)." },
     { key: "template_description", label: "Description", type: "text", placeholder: "Broiler Starter Feed Template" },
     {
       key: "no_series_id",
@@ -706,6 +747,8 @@ const itemTemplateConfig: MasterDataConfig = {
       entityValueKey: "id",
       entityLabelKeys: ["code", "description"],
       helpText: "Required when Item Tracking is LOT or SERIAL.",
+      visibleWhen: { anyOf: [{ key: "item_tracking", equals: ["LOT", "SERIAL"] }] },
+      requiredWhen: { anyOf: [{ key: "item_tracking", equals: ["LOT", "SERIAL"] }] },
     },
     {
       key: "inventory_type",
@@ -796,8 +839,8 @@ const item: MasterDataConfig = {
     { key: "nob_id", label: "Nature of Business", type: "select-entity", entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], helpText: "Leave blank if this item is used across all business verticals.", section: "Classification" },
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank if this item is used across all LOBs under the selected NOB.", section: "Classification" },
     { key: "item_code", label: "Item Code", type: "text", readOnly: true, helpText: "Assigned from the Item number series unless manual entry is selected.", section: "Identification" },
-    { key: "item_name", label: "Item Name", type: "text", required: true, placeholder: "Sow lactation feed", section: "Identification" },
     { key: "item_type", label: "Item Type", type: "select-entity", required: true, entityEndpoint: "/item-type", entityValueKey: "type_code", entityLabelKeys: ["type_code", "type_name"], section: "Identification" },
+    { key: "item_name", label: "Item Name", type: "text", required: true, placeholder: "Sow lactation feed", section: "Identification" },
     {
       // Depends on Item Type via the query mechanism, not path substitution — a
       // category is not nested under a type in the URL, it's filtered by it. See
@@ -1042,8 +1085,14 @@ const breedLifecycleStage: MasterDataConfig = {
     { key: "period_from", label: "Period From", type: "number", required: true },
     { key: "period_to", label: "Period To", type: "number", required: true },
     // Breed Master Template, Lifecycle sheet: "Teats" (mandatory). The standard
-    // for the stage; BBP §6 hard-blocks gilt selection below 15.
-    { key: "std_teats", label: "Standard Teat Count", type: "number", helpText: "Minimum teat count expected at this stage. BBP §6 blocks gilt selection below 15." },
+    // for the stage; BBP §6 hard-blocks gilt selection below 15. Shown only for
+    // Category SOW (2026-09-21) — the same restriction Animal Register's own
+    // No. of Teats field applies (female-only there, by gender).
+    {
+      key: "std_teats", label: "Standard Teat Count", type: "number",
+      helpText: "Minimum teat count expected at this stage. BBP §6 blocks gilt selection below 15.",
+      visibleWhen: { anyOf: [{ key: "category", equals: "SOW" }] },
+    },
     { key: "season_type", label: "Season", type: "text", placeholder: "Winter" },
     { key: "feed_item_id", label: "Feed Item", type: "select-entity", searchable: true, entityEndpoint: "/item", entityValueKey: "item_id", entityLabelKeys: ["item_code", "item_name"] },
     { key: "feed_qty_per_head_per_day_kg", label: "Feed Qty per Head per Day (KG)", type: "number", step: "0.0001" },
@@ -1146,18 +1195,50 @@ const breedLifecycleStage: MasterDataConfig = {
 const reason: MasterDataConfig = {
   key: "reason", label: "Reasons", singular: "Reason", apiBase: "/reason", idKey: "reason_id",
   group: "Livestock & Health", isPrimary: true, businessAdminOnly: true,
-  description: "Shared company reasons for mortality, culling, returns, selection, disposal and transfers. Only documented examples are loaded; Tenant and Company Admins maintain this catalog.",
-  columns: [{ key: "reason_code", label: "Code" }, { key: "reason_name", label: "Name" }, { key: "category", label: "Category" }, { key: "mandatory_weight", label: "Weight Required" }],
+  description: "Shared company reasons for mortality, culling, returns, selection, disposal, transfers, scans, adjustments and requisitions — the client's Reason Master Template, verbatim: Reason Code, Category, Sub-Category, Description, Stage Filter, Mandatory Comment, Blocked.",
+  // "Blocked" is the row's own Active/Inactive toggle (is_active/status) —
+  // every master in this app surfaces it that way, not as a data column, so
+  // it isn't repeated here as a field.
+  columns: [
+    { key: "reason_code", label: "Reason Code" }, { key: "category", label: "Category" }, { key: "sub_category", label: "Sub-Category" },
+    { key: "reason_name", label: "Description" }, { key: "applicable_stages", label: "Stage Filter" }, { key: "mandatory_comment", label: "Mandatory Comment" },
+  ],
   supportsNobLobFilter: true,
   fields: [
     { key: "nob_id", label: "Nature of Business", type: "select-entity", entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], helpText: "Leave blank if this reason is shared across all business verticals." },
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank if this reason is shared across all LOBs under the selected NOB." },
     { key: "company_id", label: "Company", type: "text", hideInForm: true },
     { key: "reason_code", label: "Reason Code", type: "text", required: true, createOnly: true },
-    { key: "reason_name", label: "Reason Name", type: "text", required: true },
-    { key: "category", label: "Category", type: "select", required: true, options: ["MORTALITY", "CULL", "RETURN", "SELECTION", "DISPOSAL", "TRANSFER"].map((value) => ({ value, label: value })) },
-    { key: "applicable_stages", label: "Applicable Stages", type: "select-entity", multiple: true, entityEndpoint: "/stage", entityValueKey: "stage_code", entityLabelKeys: ["stage_code", "stage_name"], helpText: "Select the stages where this reason is available. Leave all unchecked for all stages." },
-    { key: "mandatory_weight", label: "Weight Required", type: "boolean", helpText: "Reason requires a positive KG value when posting. Posting-screen integration is separate from this catalog." },
+    {
+      key: "category", label: "Category", type: "select", required: true,
+      options: ["MORTALITY", "CULL", "RETURN", "SELECTION", "DISPOSAL", "TRANSFER", "SCAN", "ADJUSTMENT", "REQUISITION"].map((value) => ({ value, label: value })),
+    },
+    { key: "sub_category", label: "Sub-Category", type: "text", maxLength: 50, placeholder: "Disease" },
+    // Template column D is "Description"; the schema/API field is reason_name
+    // (entrenched elsewhere — unique index, seed scripts, tests) — relabelled
+    // here rather than renamed, so this is the only place the word "Name" is gone.
+    { key: "reason_name", label: "Description", type: "text", required: true, maxLength: 150 },
+    // Multi-select over real stage_master rows, with an "All Stages" option
+    // standing in for "no restriction" (the column's own meaning when empty —
+    // see allOption in types.ts). This is what reason.service.ts actually
+    // filters/validates on, so unlike the fields below it is the real thing,
+    // not a display convenience.
+    {
+      key: "applicable_stages", label: "Stage Filter", type: "select-entity", multiple: true,
+      entityEndpoint: "/stage", entityValueKey: "stage_code", entityLabelKeys: ["stage_code", "stage_name"],
+      allOption: { stage_code: "ALL", stage_name: "All Stages" },
+    },
+    { key: "mandatory_comment", label: "Mandatory Comment", type: "boolean" },
+    // Both below are ours, not template columns — kept off the form so it
+    // matches the template's seven fields exactly.
+    // stage_filter_note keeps the template's own Stage Filter wording verbatim
+    // ("SOW", "LACTATION (piglet)") for the 57 seeded rows — several values
+    // don't reduce to a stage_master code, so the picker above can only ever
+    // hold part of what this text says. Not re-editable here; it's a record of
+    // what the client wrote, not a second place to set the same thing.
+    { key: "stage_filter_note", label: "Stage Filter (template text)", type: "text", maxLength: 100, hideInForm: true },
+    // mandatory_weight has no consumer anywhere in the app (checked 2026-09-21).
+    { key: "mandatory_weight", label: "Weight Required", type: "boolean", hideInForm: true },
   ],
 };
 

@@ -136,6 +136,45 @@ function assertGiltTeatCount(animalType: string | undefined, noOfTeats: number |
   }
 }
 
+/**
+ * Client review, 2026-09-21: "Expected Cull Date should be more than Productive
+ * Life Start, DOB" / "Productive Life Start should be less than Expected Cull
+ * Date, more than DOB". Neither field had any cross-field check before this —
+ * same gap the dob/entry_date check above closed on 2026-09-08, left open here.
+ * Only compares pairs where both sides are actually supplied — none of the
+ * three fields is mandatory, so a partial record is not an error.
+ */
+function assertProductionDatesOrdered(
+  dob: string | null | undefined,
+  productiveLifeStart: string | null | undefined,
+  expectedCullDate: string | null | undefined,
+): void {
+  const parse = (label: string, value: string) => {
+    const ms = Date.parse(`${String(value).slice(0, 10)}T00:00:00Z`);
+    if (Number.isNaN(ms)) throw new BadRequestException(`${label} must be a valid date.`);
+    return ms;
+  };
+  const dobMs = dob ? parse('Date of birth', dob) : null;
+  const startMs = productiveLifeStart ? parse('Productive life start', productiveLifeStart) : null;
+  const cullMs = expectedCullDate ? parse('Expected cull date', expectedCullDate) : null;
+
+  if (dobMs !== null && startMs !== null && startMs <= dobMs) {
+    throw new BadRequestException(
+      `Productive life start '${productiveLifeStart!.slice(0, 10)}' must be after the date of birth '${dob!.slice(0, 10)}'.`,
+    );
+  }
+  if (dobMs !== null && cullMs !== null && cullMs <= dobMs) {
+    throw new BadRequestException(
+      `Expected cull date '${expectedCullDate!.slice(0, 10)}' must be after the date of birth '${dob!.slice(0, 10)}'.`,
+    );
+  }
+  if (startMs !== null && cullMs !== null && cullMs <= startMs) {
+    throw new BadRequestException(
+      `Expected cull date '${expectedCullDate!.slice(0, 10)}' must be after productive life start '${productiveLifeStart!.slice(0, 10)}'.`,
+    );
+  }
+}
+
 @Injectable()
 export class AnimalService {
   constructor(
@@ -463,6 +502,7 @@ export class AnimalService {
     // did — a create refused for an out-of-range age still burned PIG-2026-0022,
     // and the register jumped straight from 0021 to 0023.
     const ageAtEntryWeeks = resolveAgeAtEntryWeeks(dto.dob, dto.entry_date, dto.age_at_entry_weeks);
+    assertProductionDatesOrdered(dto.dob, dto.productive_life_start, dto.expected_cull_date);
 
     const scope = farmScope(this.cls);
     // Every refusal below lands before the insert: the create used to write the
@@ -887,6 +927,11 @@ export class AnimalService {
         dto.age_at_entry_weeks,
       );
     }
+    assertProductionDatesOrdered(
+      dto.dob !== undefined ? dto.dob : animal.dob,
+      dto.productive_life_start !== undefined ? dto.productive_life_start : animal.productive_life_start,
+      dto.expected_cull_date !== undefined ? dto.expected_cull_date : animal.expected_cull_date,
+    );
     if (dto.rfid_tag !== undefined) updates.rfid_tag = dto.rfid_tag;
     if (dto.ear_tag !== undefined) updates.ear_tag = dto.ear_tag;
     if (dto.ear_tag_image_url !== undefined) updates.ear_tag_image_url = dto.ear_tag_image_url;
@@ -956,6 +1001,23 @@ export class AnimalService {
       await this.assertWithdrawalPeriodsElapsed(id, dto.disposal_date);
     }
 
+    // Reason Master Template, MORTALITY category: a DIED disposal with a reason
+    // attached must use one of the 21 mortality codes, not a cull/return/scan
+    // reason meant for a different action — the category is the only signal
+    // this catalog carries for "which picker should offer this row".
+    if (dto.disposal_reason_id) {
+      const [reason] = await this.db.select().from(schema.reasonMaster).where(and(
+        eq(schema.reasonMaster.reason_id, dto.disposal_reason_id),
+        eq(schema.reasonMaster.tenant_id, tenantId),
+        eq(schema.reasonMaster.is_active, true),
+        ...masterScopeConditions(this.cls, schema.reasonMaster, animal.company_id),
+      )).limit(1);
+      if (!reason) throw new BadRequestException(`Reason '${dto.disposal_reason_id}' is not available in this workspace.`);
+      if (dto.disposal_type === 'DIED' && reason.category !== 'MORTALITY') {
+        throw new BadRequestException(`Reason '${reason.reason_name}' is category ${reason.category}, not MORTALITY — a DIED disposal needs a mortality reason.`);
+      }
+    }
+
     const bookValue = animal.book_value != null ? Number(animal.book_value) : null;
     const gainLoss = dto.disposal_value != null && bookValue != null ? dto.disposal_value - bookValue : null;
     const mappedStatus = DISPOSAL_STATUS_MAP[dto.disposal_type];
@@ -964,6 +1026,7 @@ export class AnimalService {
       is_active: false,
       disposal_date: dto.disposal_date,
       disposal_type: dto.disposal_type,
+      disposal_reason_id: dto.disposal_reason_id ?? null,
       disposal_value: dto.disposal_value?.toString() ?? null,
       gain_loss_on_disposal: gainLoss != null ? gainLoss.toString() : null,
       notes: dto.notes !== undefined ? dto.notes : animal.notes,

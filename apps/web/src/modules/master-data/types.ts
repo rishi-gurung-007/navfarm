@@ -51,6 +51,19 @@ export interface MasterDataField {
   /** Select multiple related values with checkboxes (submitted as an array). */
   multiple?: boolean;
   /**
+   * A synthetic "All" row prepended to a `multiple` field's options, shaped
+   * like a real one (e.g. `{ stage_code: "ALL", stage_name: "All Stages" }`)
+   * so `entityValueKey`/`entityLabelKeys` render it exactly like the rest.
+   * Selecting it clears every other selection and vice versa (MasterDataTable
+   * enforces this in `setField`); it never reaches the API — an edit whose
+   * value is only this option submits the field as empty, and a stored empty
+   * value opens the form with this option pre-selected. Reason Master's Stage
+   * Filter is the first use: the template asks for one field, and the
+   * underlying column already treats empty as "no restriction" — this makes
+   * that state pickable instead of implicit in leaving everything unchecked.
+   */
+  allOption?: Record<string, unknown>;
+  /**
    * What an empty `multiple` value means on the record view. It defaults to
    * "All (no restriction)", which is right where empty widens the rule —
    * Allowed Parent Types, Applicable Stages — and wrong where empty just means
@@ -172,6 +185,10 @@ export interface MasterDataField {
   readOnly?: boolean;
   /** Excluded from the list table */
   hideInTable?: boolean;
+  /** When this field stands in as a list column (config.columns is omitted):
+   *  same meaning as columns[].decimals/decimalsFromKey below. */
+  decimals?: number;
+  decimalsFromKey?: string;
   /** Column width hint for number inputs supporting decimals */
   step?: number | string;
   /** Bounds for type "number". Mirror whatever the DTO enforces, so the form
@@ -315,8 +332,17 @@ export interface MasterDataConfig {
   bcNote?: string;
   /** BBP business administrator mapped to Tenant/Company Admin by the user. */
   businessAdminOnly?: boolean;
-  /** Table columns; defaults to all non-hidden fields plus status if omitted */
-  columns?: { key: string; label: string }[];
+  /**
+   * Table columns; defaults to all non-hidden fields plus status if omitted.
+   * `decimals`/`decimalsFromKey` are for a stored-precision numeric column
+   * (e.g. `decimal(18,8)`) whose raw value is more precision than a list
+   * should show. `decimals` is the fallback shown count; `decimalsFromKey`
+   * names a sibling field on the same row (typically joined in by the
+   * service, e.g. a linked UOM's own `decimal_places`) that overrides it when
+   * present and greater than 0. Neither affects the form or the API payload —
+   * display only.
+   */
+  columns?: { key: string; label: string; decimals?: number; decimalsFromKey?: string }[];
   group: string;
   /** Show a Nature of Business / Line of Business filter pair in the list toolbar (for entities whose table carries nob_id/lob_id). */
   supportsNobLobFilter?: boolean;

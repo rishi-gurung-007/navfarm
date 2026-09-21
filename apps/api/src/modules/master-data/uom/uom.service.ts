@@ -1,7 +1,7 @@
 import { masterScopeConditions } from '../../../common/master-data-scope';
 import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, like, or, isNull, ne, count } from 'drizzle-orm';
+import { eq, and, like, or, isNull, ne, count, inArray } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
@@ -485,6 +485,29 @@ export class UomService {
       .select({ total: count() })
       .from(schema.uomConversionMaster)
       .where(where);
+
+    // Client review, 2026-09-21: the list showed conversion_factor's full
+    // decimal(18,8) precision (e.g. "50.00000000"). Display should default to
+    // 2 places, or the To UOM's own configured decimal_places when it's set
+    // (>0) — "A factor always converts TO the base unit", so that unit's own
+    // precision setting is the relevant one. A join on uom_code risks
+    // fan-out: uom_code is not unique (two tenant_devco rows are both "KG"),
+    // so this is a separate scoped lookup instead, mapped in after.
+    const toUomCodes = [...new Set(data.map((r) => r.to_uom).filter(Boolean))];
+    if (toUomCodes.length) {
+      const uomRows = await this.db
+        .select({ uom_code: schema.uomMaster.uom_code, decimal_places: schema.uomMaster.decimal_places, company_id: schema.uomMaster.company_id })
+        .from(schema.uomMaster)
+        .where(and(eq(schema.uomMaster.tenant_id, tenantId), inArray(schema.uomMaster.uom_code, toUomCodes)));
+      const decimalsByCode = new Map<string, number>();
+      for (const u of uomRows) {
+        // Prefer a company-scoped row over a tenant-wide one for the same code.
+        if (!decimalsByCode.has(u.uom_code) || u.company_id) decimalsByCode.set(u.uom_code, u.decimal_places);
+      }
+      for (const row of data as any[]) {
+        row.to_uom_decimal_places = decimalsByCode.get(row.to_uom) ?? null;
+      }
+    }
 
     return { data, total: Number(counted?.total ?? 0), limit, offset };
   }

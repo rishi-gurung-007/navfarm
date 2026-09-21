@@ -1,14 +1,14 @@
 import { masterScopeConditions } from '../../../common/master-data-scope';
 import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, like, or, isNull, ne } from 'drizzle-orm';
+import { eq, and, like, or, isNull, ne, getTableColumns, count } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
 import { CreateItemAttributeDto, UpdateItemAttributeDto, QueryItemAttributeDto } from './dto/item-attribute.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
-import { listFilterConditions, runMasterList } from '../../../common/master-list-query';
+import { listFilterConditions, listOrderBy } from '../../../common/master-list-query';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   return date.toISOString().slice(0, 19).replace('T', ' ');
@@ -68,9 +68,12 @@ export class ItemAttributeService {
       lob_id: dto.lob_id || null,
       attribute_code: attributeCode,
       attribute_name: dto.attribute_name,
-      data_type: dto.data_type,
+      // Client review, 2026-09-21: Data Type is off the form, defaults to NUMBER.
+      data_type: dto.data_type || 'NUMBER',
       list_values: dto.list_values ? JSON.stringify(dto.list_values) : null,
       unit: dto.unit || null,
+      uom_id: dto.uom_id || null,
+      default_value: dto.default_value != null ? dto.default_value.toString() : null,
       is_mandatory: dto.is_mandatory ?? false,
       affects_costing: dto.affects_costing ?? false,
       is_variant: dto.is_variant ?? false,
@@ -136,9 +139,32 @@ export class ItemAttributeService {
 
     conditions.push(...listFilterConditions(schema.itemAttributeMaster, query.filter));
 
-    // Rows and the matching count together, so the pager knows how many
-    // pages there really are rather than guessing from a full page.
-    return runMasterList(this.db, schema.itemAttributeMaster, conditions, query, schema.itemAttributeMaster.attribute_code);
+    const limit = query.limit || 50;
+    const offset = query.offset || 0;
+
+    // Left-joined for uom_code/uom_name (client review, 2026-09-21: UOM
+    // replaces the old free-text Unit on the form) — same pattern item.service.ts
+    // uses for category_code/template_code. A plain runMasterList() call
+    // would otherwise leave the list column showing uom_id's raw UUID.
+    const data = await this.db
+      .select({
+        ...getTableColumns(schema.itemAttributeMaster),
+        uom_code: schema.uomMaster.uom_code,
+        uom_name: schema.uomMaster.uom_name,
+      })
+      .from(schema.itemAttributeMaster)
+      .leftJoin(schema.uomMaster, eq(schema.uomMaster.uom_id, schema.itemAttributeMaster.uom_id))
+      .where(and(...conditions))
+      .orderBy(listOrderBy(schema.itemAttributeMaster, query, schema.itemAttributeMaster.attribute_code))
+      .limit(limit)
+      .offset(offset);
+
+    const [counted] = await this.db
+      .select({ total: count() })
+      .from(schema.itemAttributeMaster)
+      .where(and(...conditions));
+
+    return { data, total: Number(counted?.total ?? 0), limit, offset };
   }
 
   async update(id: string, dto: UpdateItemAttributeDto, tenantId: string, userPayload?: any) {
@@ -194,6 +220,8 @@ export class ItemAttributeService {
     if (dto.data_type !== undefined) updates.data_type = dto.data_type;
     if (dto.list_values !== undefined) updates.list_values = JSON.stringify(dto.list_values);
     if (dto.unit !== undefined) updates.unit = dto.unit;
+    if (dto.uom_id !== undefined) updates.uom_id = dto.uom_id;
+    if (dto.default_value !== undefined) updates.default_value = dto.default_value != null ? dto.default_value.toString() : null;
     if (dto.is_mandatory !== undefined) updates.is_mandatory = dto.is_mandatory;
     if (dto.affects_costing !== undefined) updates.affects_costing = dto.affects_costing;
     if (dto.is_variant !== undefined) updates.is_variant = dto.is_variant;

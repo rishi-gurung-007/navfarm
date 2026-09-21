@@ -756,6 +756,32 @@ describe('AnimalService', () => {
       ).rejects.toThrow(BadRequestException);
     });
 
+    // Reason Master Template (Master Templates/, 2026-09-21): MORTALITY/CULL
+    // reasons attach here — the two tests below cover the new disposal_reason_id
+    // validation in dispose().
+    it('stores disposal_reason_id when the reason is a matching MORTALITY code', async () => {
+      mockDbSelect
+        .mockReturnValueOnce(found({ animal_id: 'a-1', company_id: 'comp-1', is_active: true, book_value: null, animal_code: 'PIG-2026-0004' }))
+        .mockReturnValueOnce(found({ reason_id: 'r-mrt-007', category: 'MORTALITY' }))
+        .mockReturnValueOnce(found({ animal_id: 'a-1', is_active: false, disposal_reason_id: 'r-mrt-007' }));
+      mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) }) });
+
+      await service.dispose('a-1', { disposal_type: 'DIED', disposal_date: '2026-06-01', disposal_reason_id: 'r-mrt-007' }, 'tenant-123');
+
+      const setArg = (mockDbUpdate.mock.results[0].value.set as jest.Mock).mock.calls[0][0];
+      expect(setArg.disposal_reason_id).toBe('r-mrt-007');
+    });
+
+    it('rejects a DIED disposal against a non-MORTALITY reason', async () => {
+      mockDbSelect
+        .mockReturnValueOnce(found({ animal_id: 'a-1', company_id: 'comp-1', is_active: true, book_value: null, animal_code: 'PIG-2026-0005' }))
+        .mockReturnValueOnce(found({ reason_id: 'r-cul-005', category: 'CULL', reason_name: 'Leg / Feet / Structural Unsoundness' }));
+
+      await expect(
+        service.dispose('a-1', { disposal_type: 'DIED', disposal_date: '2026-06-01', disposal_reason_id: 'r-cul-005' }, 'tenant-123'),
+      ).rejects.toThrow(BadRequestException);
+    });
+
     const joinedMedicationRows = (rows: any[]) => ({
       from: jest.fn().mockReturnValue({
         innerJoin: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue(rows) }),

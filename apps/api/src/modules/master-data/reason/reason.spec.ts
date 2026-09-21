@@ -21,10 +21,28 @@ describe('Reason Master contract', () => {
     for (const verb of ['POST', 'PUT', 'DELETE', 'PATCH']) expect(guard.canActivate(context(verb, role))).toBe(true);
     expect(Reflect.getMetadata(GUARDS_METADATA, ReasonController)).toContain(ReasonAdministrationGuard);
   });
-  it('seeds exactly the three approved examples, not an invented list of 47', () => {
-    expect(DOCUMENTED_REASONS.map((r) => r.reason_code)).toEqual(['DOA', 'RATION_PIG', 'CULLED_PROC']);
-    expect(DOCUMENTED_REASONS.find((r) => r.reason_code === 'RATION_PIG')?.mandatory_weight).toBe(true);
-    expect(REASON_CATEGORIES).toHaveLength(6);
+  it('seeds exactly the Reason Master Template\'s 57 rows, transcribed not invented', () => {
+    // Reason Master Template.xlsx, Master Templates/, added 2026-09-21 — the
+    // client document this file's own comment once said did not exist. MORTALITY
+    // alone is 21 rows, matching AGENTS.md's "Mortality alone is specified as 21"
+    // citation of that (then-missing) document exactly.
+    expect(DOCUMENTED_REASONS).toHaveLength(57);
+    expect(new Set(DOCUMENTED_REASONS.map((r) => r.reason_code)).size).toBe(57);
+    expect(DOCUMENTED_REASONS.filter((r) => r.category === 'MORTALITY')).toHaveLength(21);
+    expect(REASON_CATEGORIES).toHaveLength(9);
+    expect(REASON_CATEGORIES).toContain('SCAN');
+    expect(REASON_CATEGORIES).toContain('ADJUSTMENT');
+    expect(REASON_CATEGORIES).toContain('REQUISITION');
+    // Every reason_code, reason_name and sub_category fits its column
+    // (schema.ts: 255 / 150 / 50) and applicable_stages holds only real
+    // stage_master codes GILT_GROWER on down uses ("GILT_REARING" in the
+    // template's own wording, not a stage_master code).
+    for (const r of DOCUMENTED_REASONS) {
+      expect(r.reason_code.length).toBeLessThanOrEqual(255);
+      expect(r.reason_name.length).toBeLessThanOrEqual(150);
+      expect(r.sub_category?.length ?? 0).toBeLessThanOrEqual(50);
+      expect(r.stage_filter_note?.length ?? 0).toBeLessThanOrEqual(100);
+    }
   });
   it('registers independent company templates and code generation', () => {
     expect(MASTER_TABLES.reason).toBe(reasonMaster);

@@ -4,8 +4,16 @@ import { Type } from 'class-transformer';
 import { MasterListQueryDto } from '../../../../common/master-list-query';
 
 const STAGE_CATEGORIES = ['PRE_PRODUCTIVE', 'PRODUCTIVE', 'OUTPUT', 'DISPOSAL'] as const;
-const TRANSITION_TRIGGERS = ['AUTO_BY_DAY', 'MANUAL'] as const;
+// KPI_BASED/EVENT_BASED added 2026-09-21 per client review — the schema column
+// comment (schema.ts, transition_trigger) already named them; nothing wired
+// them until now. Recording a stage as one of these two only captures intent:
+// no scheduler or transition engine currently evaluates a KPI or event and
+// acts on alt_next_stage_id — that is separate, unbuilt work.
+const TRANSITION_TRIGGERS = ['AUTO_BY_DAY', 'MANUAL', 'KPI_BASED', 'EVENT_BASED'] as const;
 const DATA_ENTRY_FORMS = ['STANDARD', 'FARROWING', 'WEANING', 'SLAUGHTER'] as const;
+// The client's own wording for the alt_trigger_condition dropdown, 2026-09-21
+// review. Column is varchar(50) (schema.ts) — all three fit.
+const ALT_TRIGGER_CONDITIONS = ['PREGNANCY_FAILED', 'WEIGHT_NOT_ACHIEVED', 'PARITY_LIMIT_REACHED'] as const;
 
 export class CreateStageDto {
   @ApiProperty({ description: 'Company UUID scope (omit for a tenant-wide stage)', required: false })
@@ -76,9 +84,10 @@ export class CreateStageDto {
   @IsOptional()
   alt_next_stage_id?: string;
 
-  @ApiProperty({ description: 'Condition that triggers alt_next_stage_id instead of next_stage_id', required: false, example: 'PREGNANCY_FAILED' })
+  @ApiProperty({ description: 'Condition that triggers alt_next_stage_id instead of next_stage_id — required when transition_trigger is KPI_BASED or EVENT_BASED', required: false, enum: ALT_TRIGGER_CONDITIONS })
   @IsString()
   @IsOptional()
+  @IsIn(ALT_TRIGGER_CONDITIONS)
   alt_trigger_condition?: string;
 
   @ApiProperty({ description: 'KPI checks validated before allowing a stage transition', required: false })
@@ -169,9 +178,10 @@ export class UpdateStageDto {
   @IsOptional()
   alt_next_stage_id?: string;
 
-  @ApiProperty({ required: false })
+  @ApiProperty({ required: false, enum: ALT_TRIGGER_CONDITIONS })
   @IsString()
   @IsOptional()
+  @IsIn(ALT_TRIGGER_CONDITIONS)
   alt_trigger_condition?: string;
 
   @ApiProperty({ required: false })

@@ -344,11 +344,11 @@ export async function enrichDemoMasters(conn: mysql.Connection, tenantId: string
   return out;
 }
 
-/** The three reasons the BBP documents, seeded per company. */
+/** The Reason Master Template's 57 rows, seeded per company. */
 export async function seedDocumentedReasons(
   conn: mysql.Connection,
   tenantId: string,
-  reasons: ReadonlyArray<{ reason_code: string; reason_name: string; category: string; applicable_stages: string[] | null; mandatory_weight: boolean }>,
+  reasons: ReadonlyArray<{ reason_code: string; reason_name: string; category: string; sub_category: string | null; applicable_stages: string[] | null; stage_filter_note: string | null; mandatory_comment: boolean; mandatory_weight: boolean }>,
 ): Promise<number> {
   const [companies] = await conn.query<RowDataPacket[]>(
     'SELECT company_id FROM company_master WHERE tenant_id = ?', [tenantId]);
@@ -363,11 +363,12 @@ export async function seedDocumentedReasons(
       if (existing) continue;
       await conn.query(
         `INSERT INTO reason_master (reason_id, tenant_id, company_id, nob_id, lob_id, reason_code, reason_name,
-           category, applicable_stages, mandatory_weight, is_active)
-         VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+           category, sub_category, applicable_stages, stage_filter_note, mandatory_comment, mandatory_weight, is_active)
+         VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
         [tenantId, company.company_id, area?.nob_id ?? null, area?.lob_id ?? null,
-         r.reason_code, r.reason_name, r.category,
-         r.applicable_stages ? JSON.stringify(r.applicable_stages) : null, r.mandatory_weight ? 1 : 0]);
+         r.reason_code, r.reason_name, r.category, r.sub_category,
+         r.applicable_stages ? JSON.stringify(r.applicable_stages) : null, r.stage_filter_note,
+         r.mandatory_comment ? 1 : 0, r.mandatory_weight ? 1 : 0]);
       created++;
     }
   }

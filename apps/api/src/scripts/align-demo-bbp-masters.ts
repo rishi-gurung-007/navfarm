@@ -82,7 +82,7 @@ async function run() {
       for (const reason of DOCUMENTED_REASONS) {
         if (reasons.some((r) => r.reason_code === reason.reason_code)) continue;
         actions.push({ scope: scope || 'TENANT', reason: reason.reason_code, action: 'ADD_DOCUMENTED_EXAMPLE' });
-        if (write) await db.execute('INSERT INTO reason_master (reason_id,tenant_id,company_id,reason_code,reason_name,category,applicable_stages,mandatory_weight) VALUES (?,?,?,?,?,?,?,?)', [randomUUID(), tenant, scope, reason.reason_code, reason.reason_name, reason.category, reason.applicable_stages ? JSON.stringify(reason.applicable_stages) : null, reason.mandatory_weight]);
+        if (write) await db.execute('INSERT INTO reason_master (reason_id,tenant_id,company_id,reason_code,reason_name,category,sub_category,applicable_stages,stage_filter_note,mandatory_comment,mandatory_weight) VALUES (?,?,?,?,?,?,?,?,?,?,?)', [randomUUID(), tenant, scope, reason.reason_code, reason.reason_name, reason.category, reason.sub_category, reason.applicable_stages ? JSON.stringify(reason.applicable_stages) : null, reason.stage_filter_note, reason.mandatory_comment, reason.mandatory_weight]);
       }
       const [series] = await db.query<RowDataPacket[]>("SELECT series_id FROM no_series_master WHERE tenant_id=? AND company_id <=> ? AND series_code='REASON'", [tenant, scope]);
       if (series.length > 1) throw new Error('Duplicate REASON series; review required.');

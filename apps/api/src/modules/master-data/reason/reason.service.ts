@@ -34,7 +34,7 @@ export class ReasonService {
     if (query.isActive !== undefined) conditions.push(eq(table.is_active, query.isActive));
     if (query.category) conditions.push(eq(table.category, query.category));
     if (query.stageCode) conditions.push(sql`(${table.applicable_stages} IS NULL OR JSON_LENGTH(${table.applicable_stages}) = 0 OR JSON_CONTAINS(${table.applicable_stages}, ${JSON.stringify(query.stageCode)}))`);
-    if (query.search) conditions.push(or(like(table.reason_code, `%${query.search}%`), like(table.reason_name, `%${query.search}%`))!);
+    if (query.search) conditions.push(or(like(table.reason_code, `%${query.search}%`), like(table.reason_name, `%${query.search}%`), like(table.sub_category, `%${query.search}%`))!);
     conditions.push(...listFilterConditions(table, query.filter));
     return this.db.select().from(table).where(and(...conditions)).orderBy(listOrderBy(table, query, table.reason_code)).limit(query.limit || 50).offset(query.offset || 0);
   }

@@ -51,6 +51,15 @@ export class StageService {
     }
   }
 
+  /** KPI_BASED/EVENT_BASED stages must name where they go on failure and why —
+   * mirrors assertAutoMoveDayWhenAutoByDay above, same reasoning applied to the
+   * alt-path fields instead of auto_move_on_day. */
+  private assertAltFieldsWhenConditional(transitionTrigger: string, altNextStageId?: string | null, altTriggerCondition?: string | null) {
+    if ((transitionTrigger === 'KPI_BASED' || transitionTrigger === 'EVENT_BASED') && (!altNextStageId || !altTriggerCondition)) {
+      throw new ConflictException('alt_next_stage_id and alt_trigger_condition are required when transition_trigger is KPI_BASED or EVENT_BASED.');
+    }
+  }
+
   private async assertStageExists(stageId: string) {
     const [stage] = await this.db
       .select()
@@ -100,6 +109,7 @@ export class StageService {
     }
 
     this.assertAutoMoveDayWhenAutoByDay(dto.transition_trigger, dto.auto_move_on_day);
+    this.assertAltFieldsWhenConditional(dto.transition_trigger, dto.alt_next_stage_id, dto.alt_trigger_condition);
 
     if (dto.next_stage_id) await this.assertStageExists(dto.next_stage_id);
     if (dto.alt_next_stage_id) await this.assertStageExists(dto.alt_next_stage_id);
@@ -230,6 +240,9 @@ export class StageService {
     const effectiveTrigger = dto.transition_trigger ?? stage.transition_trigger;
     const effectiveAutoMoveDay = dto.auto_move_on_day !== undefined ? dto.auto_move_on_day : stage.auto_move_on_day;
     this.assertAutoMoveDayWhenAutoByDay(effectiveTrigger, effectiveAutoMoveDay as any);
+    const effectiveAltNextStageId = dto.alt_next_stage_id !== undefined ? dto.alt_next_stage_id : stage.alt_next_stage_id;
+    const effectiveAltTriggerCondition = dto.alt_trigger_condition !== undefined ? dto.alt_trigger_condition : stage.alt_trigger_condition;
+    this.assertAltFieldsWhenConditional(effectiveTrigger, effectiveAltNextStageId as any, effectiveAltTriggerCondition as any);
 
     if (dto.next_stage_id) await this.assertStageExists(dto.next_stage_id);
     if (dto.alt_next_stage_id) await this.assertStageExists(dto.alt_next_stage_id);

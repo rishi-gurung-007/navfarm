@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsIn, IsInt, Min, IsNumber, IsDateString, IsArray, ArrayNotEmpty, MaxLength } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsIn, IsInt, Min, Max, IsNumber, IsDateString, IsArray, ArrayNotEmpty, MaxLength } from 'class-validator';
 import { Type } from 'class-transformer';
 import { MasterListQueryDto } from '../../../../common/master-list-query';
 
@@ -128,17 +128,23 @@ export class CreateAnimalDto {
   @IsOptional()
   dam_animal_id?: string;
 
+  // animal_register.acquisition_cost/landing_cost are decimal(18,4) (schema.ts);
+  // the bound below is that column's own ceiling (14 integer digits), not a
+  // client-specified business limit — it stops an unbounded typed number from
+  // overflowing the column, nothing more.
   @ApiProperty({
     description:
       "Purchase price per animal. Omit for a purchased entry — the API reads it off the source goods receipt line and discards anything sent. Required for every other entry type, which has no document to read it from; the service enforces that rather than this DTO, because the form legitimately omits the field for purchases.",
     required: false,
   })
-  @IsNumber()
+  @IsNumber({ maxDecimalPlaces: 4 })
+  @Max(99999999999999.9999)
   @IsOptional()
   acquisition_cost?: number;
 
   @ApiProperty({ description: 'Transport/import duty/quarantine charges per head for imported animals', required: false })
-  @IsNumber()
+  @IsNumber({ maxDecimalPlaces: 4 })
+  @Max(99999999999999.9999)
   @IsOptional()
   landing_cost?: number;
 
@@ -189,9 +195,11 @@ export class CreateAnimalDto {
   @IsOptional()
   grading?: string;
 
-  @ApiProperty({ description: 'Serial number (asset tag), distinct from RFID/ear tag', required: false })
+  // Column is varchar(50) (schema.ts).
+  @ApiProperty({ description: 'Serial number (asset tag), distinct from RFID/ear tag', required: false, maxLength: 50 })
   @IsString()
   @IsOptional()
+  @MaxLength(50)
   serial_number?: string;
 
   @ApiProperty({ description: 'Notes', required: false })
@@ -336,9 +344,11 @@ export class UpdateAnimalDto {
   @IsOptional()
   grading?: string;
 
-  @ApiProperty({ description: 'Serial number (asset tag), distinct from RFID/ear tag', required: false })
+  // Column is varchar(50) (schema.ts).
+  @ApiProperty({ description: 'Serial number (asset tag), distinct from RFID/ear tag', required: false, maxLength: 50 })
   @IsString()
   @IsOptional()
+  @MaxLength(50)
   serial_number?: string;
 
   @ApiProperty({ required: false })
@@ -352,6 +362,15 @@ export class DisposeAnimalDto {
   @IsString()
   @IsIn(DISPOSAL_TYPES)
   disposal_type: string;
+
+  // Reason Master Template (Master Templates/, added 2026-09-21) MORTALITY (21
+  // codes) and CULL (10 codes) categories exist to be picked at exactly this
+  // point — nothing referenced reason_master anywhere before this. Optional:
+  // a SOLD/TRANSFERRED disposal commonly has no catalog reason behind it.
+  @ApiProperty({ description: 'Reason Master UUID — category should match disposal_type (MORTALITY for DIED, CULL for CULLED)', required: false })
+  @IsUUID()
+  @IsOptional()
+  disposal_reason_id?: string;
 
   @ApiProperty({ description: 'Date of sale/slaughter/death' })
   @IsDateString()

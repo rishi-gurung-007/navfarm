@@ -151,7 +151,7 @@ function resolveEndpoint(f: MasterDataField, form: Row): string | null {
   return f.entityEndpoint.replace("{value}", parentVal);
 }
 
-function displayValue(row: Row, key: string, yesLabel: string, noLabel: string): string {
+function displayValue(row: Row, key: string, yesLabel: string, noLabel: string, col?: { decimals?: number; decimalsFromKey?: string }): string {
   if ((key === "stage" || key === "stage_id") && (row.stage || row.stage_name || row.stage_code)) {
     return String(row.stage || row.stage_name || row.stage_code);
   }
@@ -168,6 +168,15 @@ function displayValue(row: Row, key: string, yesLabel: string, noLabel: string):
   // all, because every object fell through to JSON.stringify.
   if (Array.isArray(v)) return v.length ? v.map((entry) => String(entry)).join(", ") : "—";
   if (typeof v === "object") return JSON.stringify(v);
+  // Opt-in only (col.decimals set) — a plain numeric column still prints
+  // whatever the API returned, same as always. The stored precision (e.g.
+  // UOM Conversion's conversion_factor, decimal(18,8)) is real and stays
+  // exact in the form and the API; this only trims the list's display.
+  if (col?.decimals !== undefined && !isNaN(Number(v)) && String(v).trim() !== "") {
+    const fromSibling = col.decimalsFromKey ? Number(row[col.decimalsFromKey]) : undefined;
+    const places = fromSibling !== undefined && !isNaN(fromSibling) && fromSibling > 0 ? fromSibling : col.decimals;
+    return Number(v).toFixed(places);
+  }
   return String(v);
 }
 
@@ -1004,6 +1013,8 @@ export function MasterDataTable({
     formFields.forEach((f) => {
       if (f.defaultValue !== undefined) {
         initial[f.key] = f.defaultValue;
+      } else if (f.multiple && f.allOption) {
+        initial[f.key] = [String(f.allOption[f.entityValueKey || "id"])];
       } else {
         initial[f.key] = f.type === "boolean" ? false : f.type === "string-list" || f.type === "field-list" || f.multiple ? [] : "";
       }
@@ -1143,7 +1154,10 @@ export function MasterDataTable({
       }
       let v = row[f.key];
       if (f.type === "string-list" || f.type === "field-list" || f.multiple) {
-        initial[f.key] = parseStringList(v);
+        const parsed = parseStringList(v);
+        initial[f.key] = f.multiple && f.allOption && parsed.length === 0
+          ? [String(f.allOption[f.entityValueKey || "id"])]
+          : parsed;
         return;
       }
       if (f.type === "json" && v && typeof v !== "string") {
@@ -1188,6 +1202,16 @@ export function MasterDataTable({
     if (value) {
       const changedField = config.fields.find((f) => f.key === key);
       (changedField?.exclusiveWith || []).forEach((otherKey) => { next[otherKey] = ""; });
+    }
+    // allOption ("All Stages" etc.) is exclusive with every real option in the
+    // same multi-select: picking a specific one while All was checked drops
+    // All, and picking All drops whatever specific ones were checked.
+    if (toggled?.multiple && toggled.allOption && Array.isArray(value)) {
+      const allVal = String(toggled.allOption[toggled.entityValueKey || "id"]);
+      if (value.includes(allVal) && value.length > 1) {
+        const hadAll = parseStringList(prev[key]).includes(allVal);
+        next[key] = hadAll ? value.filter((v: string) => v !== allVal) : [allVal];
+      }
     }
     // A control that appears part-way through the form starts on its stated
     // default rather than on nothing. Tracked By is a choice between two, not
@@ -1262,6 +1286,12 @@ export function MasterDataTable({
         if ((v === "" || v === undefined || v === null) && f.key === numbering.codeKey && !codeFieldTouchedRef.current) {
           const fallbackVal = numbering.preview || numbering.value(f.key, "");
           if (fallbackVal) v = fallbackVal;
+        }
+        // allOption is a display-only sentinel — "All Stages" selected alone
+        // means the same as nothing selected (the API's own convention for
+        // "no restriction"), so it is never actually sent.
+        if (f.multiple && f.allOption && Array.isArray(v) && v.length === 1 && v[0] === String(f.allOption[f.entityValueKey || "id"])) {
+          v = [];
         }
         if (v === "" || v === undefined || v === null) continue;
         if (f.type === "number") v = Number(v);
@@ -1840,6 +1870,7 @@ export function MasterDataTable({
       }
       const relatedConfig = relatedConfigFor(f, resolvedEp);
       if (f.multiple) {
+        if (f.allOption) options = [f.allOption, ...options];
         const selected = parseStringList(form[f.key]);
         return (
           <EntityLookupField
@@ -2259,7 +2290,7 @@ export function MasterDataTable({
                             </span>
                           </TableCell>
                         ) : (
-                        <TableCell key={c.key} className="whitespace-nowrap" style={S.primary}>{displayValue(row, c.key, t("mdYes"), t("mdNo"))}</TableCell>
+                        <TableCell key={c.key} className="whitespace-nowrap" style={S.primary}>{displayValue(row, c.key, t("mdYes"), t("mdNo"), c)}</TableCell>
                         )
                       ))}
                       {!ownsStatusColumn && <TableCell className="text-right">

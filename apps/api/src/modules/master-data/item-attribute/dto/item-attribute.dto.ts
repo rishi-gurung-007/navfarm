@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsInt, Min, IsIn, IsArray } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsInt, Min, IsIn, IsArray, IsNumber, MaxLength } from 'class-validator';
 import { Type } from 'class-transformer';
 import { MasterListQueryDto } from '../../../../common/master-list-query';
 
@@ -8,7 +8,12 @@ import { MasterListQueryDto } from '../../../../common/master-list-query';
 // Attribute Value is a free text input whatever the attribute's type — so LIST
 // defined options that no screen could apply. TEXT replaces the old STRING, the
 // same type under the client's own word. Rishi's call, 2026-09-08.
-const DATA_TYPES = ['TEXT', 'NUMBER', 'DATE', 'BOOLEAN'] as const;
+// BOOLEAN and DATE removed 2026-09-21 per client review of the Attributes
+// screen — neither type is distinguishable from TEXT on the value input (that
+// gap is unchanged, still Rishi's 2026-09-08 call above), so offering them was
+// a promise the form could not keep. attribute_id_master held zero rows of
+// either type, confirmed in tenant_devco before removal.
+const DATA_TYPES = ['TEXT', 'NUMBER'] as const;
 
 export class CreateItemAttributeDto {
   @ApiProperty({ description: 'Company UUID scope (null means tenant-wide, usable by all companies)', required: false })
@@ -26,32 +31,51 @@ export class CreateItemAttributeDto {
   @IsOptional()
   lob_id?: string;
 
-  @ApiProperty({ description: 'Unique short code for this attribute', example: 'PROTEIN_PCT' })
+  // Column is varchar(255) (schema.ts) — a series-derived code stays short, but
+  // a manually typed one should not be able to overflow it.
+  @ApiProperty({ description: 'Unique short code for this attribute', example: 'PROTEIN_PCT', maxLength: 255 })
   @IsOptional()
   @IsString()
   @IsNotEmpty()
+  @MaxLength(255)
   attribute_code?: string;
 
-  @ApiProperty({ description: 'Display name shown on the item form', example: 'Protein %' })
+  // Column is varchar(100) (schema.ts).
+  @ApiProperty({ description: 'Display name shown on the item form', example: 'Protein %', maxLength: 100 })
+  @MaxLength(100)
   @IsString()
   @IsNotEmpty()
   attribute_name: string;
 
-  @ApiProperty({ description: 'Value type for this attribute', example: 'NUMBER', enum: DATA_TYPES })
+  // Not on the form since 2026-09-21 — defaults to NUMBER (service and the
+  // column itself) when omitted.
+  @ApiProperty({ description: 'Value type for this attribute', example: 'NUMBER', enum: DATA_TYPES, required: false })
   @IsString()
-  @IsNotEmpty()
+  @IsOptional()
   @IsIn(DATA_TYPES)
-  data_type: string;
+  data_type?: string;
 
   @ApiProperty({ description: 'Selectable options, required when data_type=LIST', required: false, example: ['Grade A', 'Grade B'] })
   @IsArray()
   @IsOptional()
   list_values?: string[];
 
-  @ApiProperty({ description: 'Unit label for the value (e.g. PCT, KG)', required: false, example: 'PCT' })
+  @ApiProperty({ description: 'Unit label for the value (e.g. PCT, KG) — superseded on the form by uom_id, kept for rows with no matching UOM master entry', required: false, example: 'PCT' })
   @IsString()
   @IsOptional()
   unit?: string;
+
+  // Client review, 2026-09-21: replaces Data Type/Unit on the form. Both
+  // purely informational — the per-item value is still typed on the Item form.
+  @ApiProperty({ description: 'UOM master UUID this attribute is measured in', required: false })
+  @IsUUID()
+  @IsOptional()
+  uom_id?: string;
+
+  @ApiProperty({ description: 'Optional default/example value shown on the master — informational only, not enforced on items', required: false })
+  @IsNumber()
+  @IsOptional()
+  default_value?: number;
 
   @ApiProperty({ description: 'Must every item in scope provide this attribute?', default: false, required: false })
   @IsBoolean()
@@ -80,14 +104,16 @@ export class UpdateItemAttributeDto {
   @IsOptional()
   lob_id?: string;
 
-  @ApiProperty({ required: false })
+  @ApiProperty({ required: false, maxLength: 255 })
   @IsString()
   @IsOptional()
+  @MaxLength(255)
   attribute_code?: string;
 
-  @ApiProperty({ required: false })
+  @ApiProperty({ required: false, maxLength: 100 })
   @IsString()
   @IsOptional()
+  @MaxLength(100)
   attribute_name?: string;
 
   @ApiProperty({ required: false, enum: DATA_TYPES })
@@ -105,6 +131,16 @@ export class UpdateItemAttributeDto {
   @IsString()
   @IsOptional()
   unit?: string;
+
+  @ApiProperty({ required: false })
+  @IsUUID()
+  @IsOptional()
+  uom_id?: string;
+
+  @ApiProperty({ required: false })
+  @IsNumber()
+  @IsOptional()
+  default_value?: number;
 
   @ApiProperty({ required: false })
   @IsBoolean()

@@ -772,9 +772,22 @@ export const itemAttributeMaster = mysqlTable('item_attribute_master', {
   lob_id: varchar('lob_id', { length: 36 }).references(() => lobMaster.lob_id, { onDelete: 'cascade' }),
   attribute_code: varchar('attribute_code', { length: 255 }).notNull(),
   attribute_name: varchar('attribute_name', { length: 100 }).notNull(),
-  data_type: varchar('data_type', { length: 20 }).notNull(), // STRING, NUMBER, BOOLEAN, LIST
+  // Not on the form since 2026-09-21 (client review) — defaults to NUMBER so
+  // existing NOT NULL rows and any direct insert still get a valid value.
+  // BOOLEAN/LIST were already dead per the comment above; STRING is the old
+  // name for TEXT.
+  data_type: varchar('data_type', { length: 20 }).default('NUMBER').notNull(), // STRING, NUMBER, BOOLEAN, LIST
   list_values: json('list_values'),
+  // Free text, superseded on the form by uom_id below (2026-09-21) but kept —
+  // some existing rows carry a unit symbol this doesn't have a UOM master row
+  // for yet (e.g. a bespoke "PCT").
   unit: varchar('unit', { length: 20 }),
+  // Client review, 2026-09-21: replaces the Data Type/Unit pair on the form
+  // with a UOM picker + an optional default/example value. Both are purely
+  // informational — nothing computes against them, same as unit/data_type
+  // never did; the per-item value is still typed on the Item form.
+  uom_id: varchar('uom_id', { length: 36 }).references(() => uomMaster.uom_id, { onDelete: 'restrict' }),
+  default_value: decimal('default_value', { precision: 18, scale: 4 }),
   is_mandatory: boolean('is_mandatory').default(false).notNull(),
   affects_costing: boolean('affects_costing').default(false).notNull(),
   is_variant: boolean('is_variant').default(false).notNull(),
@@ -1440,7 +1453,26 @@ export const reasonMaster = mysqlTable('reason_master', {
   reason_code: varchar('reason_code', { length: 255 }).notNull(),
   reason_name: varchar('reason_name', { length: 150 }).notNull(),
   category: varchar('category', { length: 20 }).notNull(),
+  // Reason Master Template (added to Master Templates/ 2026-09-21): column C,
+  // "Sub-Category" — e.g. category MORTALITY breaks into Disease/Trauma/
+  // Stillbirth/Starvation/Heart-Organ/DOA/Ration Pig/Euthanasia/Unknown/Other.
+  // Free text, not a master of its own — the template gives no separate
+  // sub-category catalog, just a value per row.
+  sub_category: varchar('sub_category', { length: 50 }),
   applicable_stages: json('applicable_stages').$type<string[] | null>(),
+  // Template column E, "Stage Filter" — the client's literal wording (e.g.
+  // "LACTATION (piglet)", "SOW / GILT_REARING", "GROWER / SOW"). Several values
+  // don't reduce cleanly to our stage_master codes: "SOW" names an animal type,
+  // not a production stage, and has no equivalent here. applicable_stages holds
+  // the best-effort subset of tokens that ARE real stage codes (used for actual
+  // filtering); this column keeps the template's own text in full so nothing
+  // is silently dropped or guessed.
+  stage_filter_note: varchar('stage_filter_note', { length: 100 }),
+  // Template column F, "Mandatory Comment" — distinct from mandatory_weight
+  // below (ours, unrelated to the template): whether a free-text comment must
+  // be captured when this reason is selected, e.g. MRT-021 "Other Mortality
+  // (specify in comment)".
+  mandatory_comment: boolean('mandatory_comment').default(false).notNull(),
   mandatory_weight: boolean('mandatory_weight').default(false).notNull(),
   is_active: boolean('is_active').default(true).notNull(),
   status: varchar('status', { length: 20 }).default('ACTIVE').notNull(),
@@ -3228,6 +3260,12 @@ export const animalRegister = mysqlTable('animal_register', {
   status: varchar('status', { length: 20 }).default('ACTIVE').notNull(), // ACTIVE, QUARANTINE, SICK, PREGNANT, LACTATING, DRY, CULLED, DEAD, SOLD, SLAUGHTERED
   disposal_date: date('disposal_date', { mode: 'string' }),
   disposal_type: varchar('disposal_type', { length: 20 }), // SOLD, SLAUGHTERED, DIED, TRANSFERRED
+  // Reason Master Template (added 2026-09-21): MORTALITY (21 codes) and CULL
+  // (10 codes) exist to be picked here, at the point an animal leaves the
+  // register — the reason master had no consumer anywhere before this. Nullable:
+  // SOLD/TRANSFERRED disposals commonly have no catalog reason behind them, and
+  // existing disposed animals predate this column.
+  disposal_reason_id: varchar('disposal_reason_id', { length: 36 }).references(() => reasonMaster.reason_id, { onDelete: 'restrict' }),
   disposal_value: decimal('disposal_value', { precision: 18, scale: 4 }),
   gain_loss_on_disposal: decimal('gain_loss_on_disposal', { precision: 18, scale: 4 }), // CALC at disposal
   notes: text('notes'),
