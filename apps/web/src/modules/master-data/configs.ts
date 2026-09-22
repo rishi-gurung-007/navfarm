@@ -111,6 +111,8 @@ const location: MasterDataConfig = {
     // store this is; this says which one — MULTIPLIER writes MGH1 against each
     // grower house, Porta writes PSL FS - 01 and STORE.
     { key: "storage_name", label: "Silo / Store Name", type: "text", maxLength: 100, placeholder: "MGH1", visibleWhen: { anyOf: [{ key: "storage_type", equals: ["STORE", "SILO"] }] }, helpText: "The name or number this silo or store is known by on the farm.", section: "Identification" },
+    { key: "gps_latitude", label: "Latitude", type: "number", min: -90, max: 90, step: "0.00000001", placeholder: "-17.82722000", helpText: "GPS latitude in decimal degrees, e.g. -17.82722000.", section: "Identification" },
+    { key: "gps_longitude", label: "Longitude", type: "number", min: -180, max: 180, step: "0.00000001", placeholder: "30.99755000", helpText: "GPS longitude in decimal degrees, e.g. 30.99755000.", section: "Identification" },
   ],
 };
 
@@ -146,16 +148,17 @@ const stage: MasterDataConfig = {
     },
     { key: "stage_sequence", label: "Display Order", type: "number", min: 1, required: true, helpText: "Must be unique per Line of Business.", section: "Identification" },
     { key: "stage_description", label: "Description", type: "text", section: "Identification" },
-    { key: "typical_duration_days", label: "Typical Duration (days)", type: "number", min: 0, section: "Duration" },
+    { key: "typical_duration_days", label: "Duration (days)", type: "number", min: 0, section: "Duration" },
     { key: "min_days_before_move", label: "Min Days Before Move", type: "number", min: 0, helpText: "Minimum days in this stage before a transition is allowed.", section: "Duration" },
     {
-      // KPI_BASED/EVENT_BASED added 2026-09-21, client review — the schema
-      // column comment already named them; nothing wired them until now. This
-      // records intent only: no transition engine evaluates a KPI or event and
-      // acts on alt_next_stage_id yet, so selecting either trigger here does
-      // not by itself move a batch or animal automatically.
+      // EVENT_BASED added 2026-09-21, client review — the schema column
+      // comment already named it; nothing wired it until now. This records
+      // intent only: no transition engine evaluates an event and acts on
+      // alt_next_stage_id yet, so selecting it here does not by itself move a
+      // batch or animal automatically. KPI_BASED was removed (2026-09-22) —
+      // never wired to anything and not offered as a choice.
       key: "transition_trigger", label: "Transition Trigger", type: "select", required: true, section: "Transitions",
-      options: ["AUTO_BY_DAY", "MANUAL", "KPI_BASED", "EVENT_BASED"].map((v) => ({ value: v, label: v.replace(/_/g, " ") })),
+      options: ["AUTO_BY_DAY", "MANUAL", "EVENT_BASED"].map((v) => ({ value: v, label: v.replace(/_/g, " ") })),
     },
     // Moved into Transitions (2026-09-21) — it only ever shows once Transition
     // Trigger above is set to Auto By Day, so it belongs beside the control
@@ -174,20 +177,24 @@ const stage: MasterDataConfig = {
     },
     {
       key: "alt_next_stage_id", label: "Alternate Next Stage", type: "select-entity", entityEndpoint: "/stage", entityValueKey: "stage_id", entityLabelKeys: ["stage_code", "stage_name"], section: "Transitions",
-      visibleWhen: { anyOf: [{ key: "transition_trigger", equals: ["KPI_BASED", "EVENT_BASED"] }] },
-      requiredWhen: { anyOf: [{ key: "transition_trigger", equals: ["KPI_BASED", "EVENT_BASED"] }] },
+      visibleWhen: { anyOf: [{ key: "transition_trigger", equals: "EVENT_BASED" }] },
+      requiredWhen: { anyOf: [{ key: "transition_trigger", equals: "EVENT_BASED" }] },
     },
     {
       key: "alt_trigger_condition", label: "Alternate Trigger Condition", type: "select", section: "Transitions",
       options: ["PREGNANCY_FAILED", "WEIGHT_NOT_ACHIEVED", "PARITY_LIMIT_REACHED"].map((v) => ({ value: v, label: v.replace(/_/g, " ") })),
-      visibleWhen: { anyOf: [{ key: "transition_trigger", equals: ["KPI_BASED", "EVENT_BASED"] }] },
-      requiredWhen: { anyOf: [{ key: "transition_trigger", equals: ["KPI_BASED", "EVENT_BASED"] }] },
+      visibleWhen: { anyOf: [{ key: "transition_trigger", equals: "EVENT_BASED" }] },
+      requiredWhen: { anyOf: [{ key: "transition_trigger", equals: "EVENT_BASED" }] },
     },
     {
       key: "data_entry_form", label: "Data Entry Form", type: "select", section: "Data Entry",
       options: ["STANDARD", "FARROWING", "WEANING", "SLAUGHTER"].map((v) => ({ value: v, label: v })),
     },
-    { key: "scheduler_auto_create", label: "Auto-Create Scheduler", type: "boolean", section: "Data Entry" },
+    // Only this one moved (2026-09-22, client correction) — the client
+    // specifically wants Auto-Create Scheduler up front on Identification;
+    // the other three Data Entry fields stay put, so the Data Entry tab
+    // still exists for them.
+    { key: "scheduler_auto_create", label: "Auto-Create Scheduler", type: "boolean", section: "Identification" },
     { key: "show_on_animal_card", label: "Show on Animal Card", type: "boolean", section: "Data Entry" },
     { key: "required_kpi_to_pass", label: "Required KPI to Pass", type: "json", section: "Data Entry", helpText: 'KPI checks validated before a stage transition, e.g. [{"metric":"BODY_WEIGHT","min_value":100}]. A failure warns; a farmer may override with approval.' },
   ],
@@ -655,7 +662,6 @@ const itemTemplateConfig: MasterDataConfig = {
   tabOf: "item",
   tabLabel: "Item Templates",
   supportsNobLobFilter: false,
-  supportsRestore: false,
   columns: [
     { key: "template_code", label: "Template Code" },
     { key: "template_description", label: "Description" },
@@ -780,7 +786,9 @@ const itemTemplateConfig: MasterDataConfig = {
       helpText: "Default Chart of Accounts code for Cost of Goods Sold.",
     },
     { key: "qr_code_enabled", label: "QR Code Enabled", type: "boolean" },
-    { key: "is_active", label: "Is Active", type: "boolean" },
+    // No is_active checkbox here — new templates are always active; the row
+    // toggle switch (supportsRestore now left at its default true) is how a
+    // template is deactivated afterward.
   ],
 };
 
@@ -1743,15 +1751,23 @@ const exchangeRate: MasterDataConfig = {
 
 export const MASTER_DATA_CONFIGS: MasterDataConfig[] = [
   locationType, location,
-  stage, numberSeries, activity,
+  numberSeries, stage, activity,
+  item, itemCategory, itemType, itemAttribute, itemTemplateConfig, uom, uomConversion,
   animal,
-  itemCategory, itemType, uom, uomConversion, item, itemAttribute, itemTemplateConfig,
   species, breed, breedLifecycleStage, reason, disease, feedFormula,
   supplier, customer, resource,
   glAccount, glMapping, costCenter, country, currency, exchangeRate,
 ];
 
-export const MASTER_DATA_GROUPS = ["Farm Operations", "Production", "Piggery", "Inventory", "Livestock & Health", "Business Partners", "Finance"] as const;
+export const MASTER_DATA_GROUPS = ["Farm Operations", "Production", "Inventory", "Piggery", "Livestock & Health", "Business Partners", "Finance"] as const;
+
+/**
+ * Client-specified top-nav sequence (2026-09-22): Location, Number Series,
+ * Item, Stage, Breed, Animal Register, Activity — a flat order, not grouped
+ * by module. Masters not named here still appear; they're appended after, in
+ * their existing relative order, so this only pins the front of the list.
+ */
+export const MASTER_DATA_NAV_ORDER: string[] = ["location", "number-series", "item", "stage", "breed", "animal", "activity"];
 
 export function getConfig(key: string): MasterDataConfig | undefined {
   if (key === "no-series") return MASTER_DATA_CONFIGS.find((c) => c.key === "number-series");

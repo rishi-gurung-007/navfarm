@@ -14,6 +14,8 @@ import { usePathname, useSearchParams } from "next/navigation";
 import { Menu, X, ChevronDown, ChevronLeft, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { useScrollLock } from "../../hooks/useScrollLock";
 import { ProfilePopover, type ProfileMenuItem } from "./ProfilePopover";
+import { Popover } from "../ui/popover";
+import { Menu as PopoverMenu, MenuItem, PopoverHeading } from "../ui/menu";
 import { useLanguage } from "@/hooks/useLanguage";
 
 export const NAVFARM_LOGO_SRC = "https://nav-cdn.pages.dev/images/favicon.png";
@@ -31,6 +33,14 @@ export interface AppShellNavItem {
   href: string;
   icon: ElementType;
   children?: AppShellNavChild[];
+  /**
+   * Shows `children` as a floating menu that opens on hover, instead of the
+   * inline expand/collapse accordion `children` gets by default. For an index
+   * too flat and too long (Master Data's ~14 primary masters) to read as one
+   * level of hierarchy the way Batches/Livestock's accordion does, and not
+   * worth a permanently-docked second column either.
+   */
+  flyout?: boolean;
   /**
    * Path prefix that counts as "inside this module", for items whose href is a
    * deep link rather than a module root. Inventory points at
@@ -166,6 +176,10 @@ function PrimaryNavContent({
   const { t } = useLanguage();
   const [expandedItems, setExpandedItems] = useState<Record<string, boolean>>({});
 
+  // Opens only on click (the trigger button's own onClick, wired through
+  // Popover) — not on hover. One open at a time, like `expandedItems` above.
+  const [flyoutOpen, setFlyoutOpen] = useState<string | null>(null);
+
   const allNavHrefs = useMemo(() => {
     const hrefs: string[] = [];
     for (const item of navItems) {
@@ -221,6 +235,77 @@ function PrimaryNavContent({
           const isDirectActive =
             isPrefixActive || isHrefActive(item.href, pathname, searchParams, allNavHrefs);
           const isExpanded = expandedItems[item.label] ?? isChildActive;
+
+          if (hasChildren && item.flyout) {
+            const isFlyoutOpen = flyoutOpen === item.label;
+            return (
+              <li key={item.label}>
+                <Popover
+                  open={isFlyoutOpen}
+                  onOpenChange={(next) => {
+                    setFlyoutOpen(next ? item.label : null);
+                  }}
+                  side="bottom"
+                  align="start"
+                  floating
+                  haspopup="menu"
+                  // The anchor wrapper Popover renders is `inline-flex` (sized to
+                  // its trigger's own content) by default, which is right for a
+                  // header icon but left this row visibly narrower than every
+                  // sibling item's plain full-width button. `w-full` here is the
+                  // same fix ContextNavSelector already applies for the same reason.
+                  className="w-full"
+                  trigger={(props) => (
+                    <button
+                      {...props}
+                      title={isCollapsed ? item.label : undefined}
+                      className={`nf-press group relative flex w-full min-h-10 items-center ${
+                        isCollapsed ? "justify-center px-0 py-2" : "justify-between gap-2.5 px-3 py-2"
+                      } rounded-[var(--radius-sm)] text-[12.5px] transition-all duration-150 ${
+                        isDirectActive || isChildActive
+                          ? "font-semibold text-white bg-[var(--sidebar-active-bg)]"
+                          : "font-normal text-[var(--sidebar-text)] hover:bg-white/[0.06] hover:text-white"
+                      }`}
+                    >
+                      <div className={`flex items-center ${isCollapsed ? "justify-center" : "gap-2.5"} min-w-0`}>
+                        {(isDirectActive || isChildActive) && (
+                          <span
+                            className="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full"
+                            style={{ backgroundColor: "var(--sidebar-active-accent)" }}
+                          />
+                        )}
+                        <item.icon
+                          size={17}
+                          strokeWidth={isDirectActive || isChildActive ? 2 : 1.5}
+                          color={isDirectActive || isChildActive ? "var(--sidebar-active-accent)" : undefined}
+                          className="shrink-0"
+                        />
+                        {!isCollapsed && <span className="truncate">{item.label}</span>}
+                      </div>
+                      {!isCollapsed && (
+                        <ChevronDown
+                          size={13}
+                          className="shrink-0 -rotate-90 text-white/40 transition-colors group-hover:text-white"
+                        />
+                      )}
+                    </button>
+                  )}
+                >
+                  <PopoverHeading title={item.label} variant="caption" />
+                  <PopoverMenu label={item.label}>
+                    {item.children!.map((child) => {
+                      const childActive = isHrefActive(child.href, pathname, searchParams, allNavHrefs);
+                      return (
+                        <MenuItem key={child.label} href={child.href} checked={childActive} onSelect={onItemClick}>
+                          {child.label}
+                        </MenuItem>
+                      );
+                    })}
+                  </PopoverMenu>
+                </Popover>
+              </li>
+            );
+          }
 
           if (hasChildren) {
             return (

@@ -15,8 +15,8 @@ import { FarmScoped } from '../../../common/farm-scope';
 @ApiTags('Production Batch Transfers')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Controller('batch-transfer')
 @FarmScoped()
+@Controller('batch-transfer')
 export class BatchTransferController {
   constructor(private readonly transferService: BatchTransferService) {}
 

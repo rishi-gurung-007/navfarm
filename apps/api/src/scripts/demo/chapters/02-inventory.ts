@@ -208,7 +208,7 @@ export const inventoryChapter: DemoChapter = {
                     quantity: DEMO_OPERATIONS.feedReceiptKgPerSilo,
                     uom: 'KG',
                     rate: rateOf(feed.standard_cost),
-                    lot_no: `DEMO-${farm.code}-${feed.item_code.split('-')[2] ?? 'FEED'}`,
+                    lot_no: `DEMO-${farm.code}-${silo.feedHandle}`,
                   },
                 ],
               },
@@ -239,7 +239,7 @@ export const inventoryChapter: DemoChapter = {
           const storeLines: GoodsReceiptLineInput[] = [];
           for (const line of DEMO_OPERATIONS.storeReceipt) {
             const item = await itemByHandle(db, line.item_code);
-            storeLines.push({ item_id: item.item_id, quantity: line.quantity, uom: line.uom, rate: rateOf(item.standard_cost), lot_no: `DEMO-${farm.code}-${item.item_code.split('-').pop()}` });
+            storeLines.push({ item_id: item.item_id, quantity: line.quantity, uom: line.uom, rate: rateOf(item.standard_cost), lot_no: `DEMO-${farm.code}-${line.item_code}` });
           }
           const created = await receipts.create(
             {

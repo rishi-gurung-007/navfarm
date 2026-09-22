@@ -187,8 +187,10 @@ export const batchesAndAnimalsChapter: DemoChapter<BatchRefs> = {
         {
           company_id: ctx.companyId,
           lob_id: PIGGERY_LOB_ID,
-          farm_id: opts.farm.farmId,
-          animal_tracking: opts.animalTracking,
+          // BATCH_WISE always — this seed always supplies input_lines/opening_quantity
+          // (never animal_ids), and BIO_ASSET + breed_id already registers one
+          // animal_register placeholder row per head via registerPlaceholderAnimals().
+          tracking_mode: 'BATCH_WISE',
           costing_method: 'BIO_ASSET',
           breed_id: opts.breedId,
           stage_id: opts.stageId,
@@ -201,6 +203,19 @@ export const batchesAndAnimalsChapter: DemoChapter<BatchRefs> = {
         },
         ctx.tenantId,
       );
+      // BatchService.create() (picked up from arun_new) never sets animal_tracking
+      // or farm_id — both stay at their column defaults (COUNT_ONLY / NULL).
+      // AnimalService.create() reads both to decide whether, and where, an
+      // individual animal may be placed in this batch, so a REGISTERED batch
+      // (sows/gilts/boars created one by one below) needs them set explicitly.
+      // Count-only batches keep animal_tracking's default and still need farm_id.
+      await db
+        .update(schema.batchHeader)
+        .set({
+          farm_id: opts.farm.farmId,
+          ...(opts.animalTracking === 'REGISTERED' ? { animal_tracking: 'REGISTERED' as const } : {}),
+        })
+        .where(eq(schema.batchHeader.batch_id, created.batch_id));
       await batches.activate(created.batch_id, ctx.tenantId);
       ctx.log(`${tag} created + activated ${opts.animalTracking} batch ${created.batch_no} at ${opts.stageCode} (${opts.openingQuantity} head)`);
       return created.batch_id;

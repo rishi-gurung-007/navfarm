@@ -228,7 +228,7 @@ export const dailyEntriesChapter: DemoChapter = {
       .from(schema.batchDailyData)
       .where(and(
         inArray(schema.batchDailyData.batch_id, batches.map((b) => b.batch_id)),
-        eq(schema.batchDailyData.status, 'POSTED'),
+        eq(schema.batchDailyData.posted, true),
       ));
     const postedKeys = new Set(posted.map((p) => `${p.line_id}|${p.entry_date}`));
 

@@ -462,6 +462,16 @@ export class QueryItemDto extends MasterListQueryDto {
   @Type(() => Boolean)
   isActive?: boolean;
 
+  @ApiProperty({ description: 'Filter by item template code (supports trailing * wildcard)', required: false })
+  @IsOptional()
+  @IsString()
+  templateCode?: string;
+
+  @ApiProperty({ description: 'Filter by item template UUID', required: false })
+  @IsOptional()
+  @IsUUID()
+  itemTemplateId?: string;
+
   @ApiProperty({ description: 'Search item code or name', required: false })
   @IsOptional()
   @IsString()

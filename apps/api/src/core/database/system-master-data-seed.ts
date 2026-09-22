@@ -453,7 +453,11 @@ export const SYSTEM_NO_SERIES_SEED: Array<{
   { series_code: 'SPECIES', series_name: 'Species Code', document_type: 'SPECIES', separator: '-', seq_length: 0, reset_frequency: 'NEVER', allow_manual: true, code_segments: ['species_name'] },
 
   // built
-  { series_code: 'ITEM', series_name: 'Item Code', document_type: 'ITEM', prefix: 'ITM', separator: '-', seq_length: 4, reset_frequency: 'NEVER', allow_manual: true, code_segments: ['item_type', 'category_id', 'sub_category'] },
+  // Category alone, not item_type-category-sub_category: category is already
+  // specific enough to be meaningful (SWINE_FEEDS, VET_MEDICINES, BREEDING_STOCK)
+  // and the three-segment form produced codes past 40 characters once a
+  // sub-category was set (FINISHED_GOODS-GROWER_FINISHER-CARCASS-ITM-0001).
+  { series_code: 'ITEM', series_name: 'Item Code', document_type: 'ITEM', prefix: 'ITM', separator: '-', seq_length: 4, reset_frequency: 'NEVER', allow_manual: true, code_segments: ['category_id'] },
   // The year comes off the animal's own dob, not off the clock: an animal
   // entered late used to be stamped with the year of typing.
   { series_code: 'ANIMAL', series_name: 'Animal Code', document_type: 'ANIMAL', nob_code: 'LIVESTOCK', lob_code: 'LVS_PIGGERY', prefix: 'PIG', separator: '-', seq_length: 4, reset_frequency: 'NEVER', allow_manual: true, code_segments: ['dob:YEAR'], prefix_position: 'START' },

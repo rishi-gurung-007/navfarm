@@ -163,6 +163,30 @@ export async function seedDevTenant() {
         });
       }
 
+      // Mirror every series into the modern no_series table too — Master Data →
+      // Number Series and the Inventory Setup screen read from here, not from
+      // noSeriesMaster, and used to show only whatever generateNext() happened
+      // to lazily create (just 'ITEM'), never the full set the legacy table has
+      // carried since seed-system-master-data. no_series.code is unique with no
+      // tenant column, so this only ever runs for the one dev/demo tenant.
+      const existingModernCodes = new Set((await tenantDb.select({ c: tenant.noSeries.code }).from(tenant.noSeries)).map((r) => r.c));
+      for (const series of SYSTEM_NO_SERIES_SEED) {
+        if (existingModernCodes.has(series.series_code)) continue;
+        await tenantDb.insert(tenant.noSeries).values({
+          id: randomUUID(),
+          tenant_id: tenantId,
+          company_id: null,
+          code: series.series_code,
+          description: series.series_name,
+          document_type: series.document_type,
+          master_type: series.document_type,
+          no_series_code: series.prefix || null,
+          seq_length: Math.max(series.seq_length, 1),
+          manual_nos: series.allow_manual ?? false,
+          blocked: series.is_active === false,
+        });
+      }
+
       const [existingUom] = await tenantDb.select().from(tenant.uomMaster).limit(1);
       if (!existingUom) {
         await tenantDb.insert(tenant.uomMaster).values(SYSTEM_UOM_SEED.map((u) => ({ ...u, tenant_id: tenantId })));

@@ -32,14 +32,14 @@ export interface SeedItem {
  * seed handle; the stored code is generated from ITEM_CATEGORY.
  */
 export const ITEM_CATEGORY_CATALOG = [
-  { key: 'CAT-RAW-GRAINS', name: 'Raw Grains & Cereals', itemType: 'RAW_MATERIAL' },
-  { key: 'CAT-PROTEIN-SUPP', name: 'Protein Meals & Supplements', itemType: 'RAW_MATERIAL' },
-  { key: 'CAT-FEED-PREMIX', name: 'Vitamins & Mineral Premixes', itemType: 'RAW_MATERIAL' },
-  { key: 'CAT-SWINE-FEEDS', name: 'Finished Swine Feeds & Diets', itemType: 'FEED' },
-  { key: 'CAT-VET-MEDS', name: 'Veterinary Medicines & Antibiotics', itemType: 'MEDICINE' },
-  { key: 'CAT-VET-VACCINES', name: 'Swine Immunization Vaccines', itemType: 'VACCINE' },
-  { key: 'CAT-BIO-BREEDING', name: 'Biological Assets - Breeding Stock', itemType: 'LIVESTOCK' },
-  { key: 'CAT-BIO-COMMERCIAL', name: 'Biological Assets - Grower & Finisher', itemType: 'LIVESTOCK' },
+  { key: 'CAT-RAW-GRAINS', name: 'Raw Grains', itemType: 'RAW_MATERIAL' },
+  { key: 'CAT-PROTEIN-SUPP', name: 'Protein Supplements', itemType: 'RAW_MATERIAL' },
+  { key: 'CAT-FEED-PREMIX', name: 'Feed Premixes', itemType: 'RAW_MATERIAL' },
+  { key: 'CAT-SWINE-FEEDS', name: 'Swine Feeds', itemType: 'FEED' },
+  { key: 'CAT-VET-MEDS', name: 'Vet Medicines', itemType: 'MEDICINE' },
+  { key: 'CAT-VET-VACCINES', name: 'Swine Vaccines', itemType: 'VACCINE' },
+  { key: 'CAT-BIO-BREEDING', name: 'Breeding Stock', itemType: 'LIVESTOCK' },
+  { key: 'CAT-BIO-COMMERCIAL', name: 'Grower Finisher', itemType: 'LIVESTOCK' },
 ] as const;
 
 /**
@@ -57,18 +57,18 @@ export const ITEM_SUBCATEGORY_CATALOG = [
   { key: 'LACTATION_FEED', parent: 'CAT-SWINE-FEEDS', name: 'Lactation Feed' },
   { key: 'GROWER_FEED', parent: 'CAT-SWINE-FEEDS', name: 'Grower Feed' },
   { key: 'FINISHER_FEED', parent: 'CAT-SWINE-FEEDS', name: 'Finisher Feed' },
-  { key: 'INJECTABLE', parent: 'CAT-VET-MEDS', name: 'Injectable Medicine' },
+  { key: 'INJECTABLE', parent: 'CAT-VET-MEDS', name: 'Injectable' },
   { key: 'ANTIBIOTIC', parent: 'CAT-VET-MEDS', name: 'Antibiotics' },
   { key: 'HORMONE', parent: 'CAT-VET-MEDS', name: 'Hormones' },
   { key: 'ANTIPARASITIC', parent: 'CAT-VET-MEDS', name: 'Antiparasitics' },
-  { key: 'BREEDING_VACCINE', parent: 'CAT-VET-VACCINES', name: 'Breeding Vaccines' },
-  { key: 'RESPIRATORY_VACCINE', parent: 'CAT-VET-VACCINES', name: 'Respiratory Vaccines' },
+  { key: 'BREEDING_VACCINE', parent: 'CAT-VET-VACCINES', name: 'Breeding Vaccine' },
+  { key: 'RESPIRATORY_VACCINE', parent: 'CAT-VET-VACCINES', name: 'Resp Vaccine' },
   { key: 'PIGLET_LIVESTOCK', parent: 'CAT-BIO-COMMERCIAL', name: 'Piglets' },
   { key: 'GILT_LIVESTOCK', parent: 'CAT-BIO-BREEDING', name: 'Gilts' },
   { key: 'SOW_LIVESTOCK', parent: 'CAT-BIO-BREEDING', name: 'Sows' },
   { key: 'BOAR_LIVESTOCK', parent: 'CAT-BIO-BREEDING', name: 'Boars' },
   { key: 'FINISHER_LIVESTOCK', parent: 'CAT-BIO-COMMERCIAL', name: 'Finisher Pigs' },
-  { key: 'CARCASS', parent: 'CAT-BIO-COMMERCIAL', name: 'Finished Carcass' },
+  { key: 'CARCASS', parent: 'CAT-BIO-COMMERCIAL', name: 'Carcass' },
 ] as const;
 
 export const ITEM_CATALOG_1: SeedItem[] = [

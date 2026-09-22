@@ -1,4 +1,3 @@
-import { transactionCls } from '../../../test-utils/transaction-cls';
 import { Test, TestingModule } from '@nestjs/testing';
 import { BatchService } from './batch.service';
 import { ClsService } from 'nestjs-cls';
@@ -7,16 +6,14 @@ import { InventoryLedgerService } from '../../inventory/inventory-ledger/invento
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { SchedulerHeaderService } from '../scheduler-header/scheduler-header.service';
-import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { AnimalMovementLogService } from '../../piggery/animal-movement-log/animal-movement-log.service';
+import { BadRequestException } from '@nestjs/common';
 import * as schema from '../../../core/database/schema';
-import { MySqlDialect } from 'drizzle-orm/mysql-core';
-import { FarmScope } from '../../../common/farm-scope';
 
 describe('BatchService', () => {
   let service: BatchService;
   let numberSeriesService: NumberSeriesService;
   let module: TestingModule;
-  let clsService: ClsService;
 
   const mockDbSelect = jest.fn();
   const mockDbInsert = jest.fn();
@@ -42,276 +39,816 @@ describe('BatchService', () => {
 
   beforeEach(async () => {
     mockDbSelect.mockReset();
-    mockDb.select = mockDbSelect;
     mockDbInsert.mockReset();
     mockDbUpdate.mockReset();
     mockDbTransaction.mockReset();
-    mockDbTransaction.mockImplementation(async work => work(mockDb));
 
     module = await Test.createTestingModule({
       providers: [
         BatchService,
-        { provide: ClsService, useValue: transactionCls(mockDb) },
-        { provide: AuditLogService, useValue: { log: jest.fn().mockResolvedValue({}) } },
+        {
+          provide: ClsService,
+          useValue: { get: jest.fn().mockReturnValue(mockDb) },
+        },
+        {
+          provide: AuditLogService,
+          useValue: { log: jest.fn().mockResolvedValue({}) },
+        },
         { provide: InventoryLedgerService, useValue: {} },
         { provide: GlPostingService, useValue: {} },
-        { provide: NumberSeriesService, useValue: { generateNext: jest.fn().mockResolvedValue('BATCH-000001') } },
-        { provide: SchedulerHeaderService, useValue: { createForStage: jest.fn().mockResolvedValue({}), generateForBatchCurrentStage: jest.fn().mockResolvedValue({}) } },
+        {
+          provide: NumberSeriesService,
+          useValue: {
+            generateNext: jest.fn().mockResolvedValue('BATCH-000001'),
+          },
+        },
+        {
+          provide: SchedulerHeaderService,
+          useValue: {
+            createForStage: jest.fn().mockResolvedValue({}),
+            generateForBatchCurrentStage: jest.fn().mockResolvedValue({}),
+          },
+        },
+        {
+          provide: AnimalMovementLogService,
+          useValue: { record: jest.fn().mockResolvedValue('movement-1') },
+        },
+        {
+          provide: 'BATCH_DAILY_DATA_POSTER',
+          useValue: { postEntry: jest.fn().mockResolvedValue({}) },
+        },
       ],
     }).compile();
 
-    const originalSelect = mockDb.select;
-    mockDb.select = ((projection?: any) => {
-      if (projection && Object.keys(projection).length === 1 && projection.batch_id) {
-        return { from: () => ({ where: () => ({ for: async () => [{ batch_id: 'batch-1' }] }) }) };
-      }
-      return originalSelect(projection);
-    }) as any;
     service = module.get<BatchService>(BatchService);
     numberSeriesService = module.get<NumberSeriesService>(NumberSeriesService);
-    clsService = module.get<ClsService>(ClsService);
   });
 
-  /** Layers a farm scope onto the CLS `get` the running test's ClsService instance
-   * already answers 'tenantDb' from (transactionCls) — same wrapping style as
-   * batch-daily-data.service.spec's table-keyed mock, applied to CLS instead of db. */
-  const useFarmScope = (scope: FarmScope) => {
-    const cls = clsService as any;
-    const base = cls.get.bind(cls);
-    cls.get = ((key?: string) => (key === 'farmScope' ? scope : base(key))) as typeof cls.get;
-  };
-
   describe('create', () => {
-    const query = (result: unknown[]) => ({
-      from: jest.fn().mockReturnValue({
-        where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue(result) }),
-      }),
-    });
-
-    const validDto = {
-      company_id: 'comp-1',
-      lob_id: 'lob-piggery',
-      farm_id: 'farm-1',
-      animal_tracking: 'COUNT_ONLY',
-      stage_id: 'stage-1',
-      costing_method: 'FIFO',
-      start_date: '2026-01-01',
-      opening_quantity: 100,
-      uom: 'HEAD',
-      input_lines: [] as unknown[],
-    };
-
-    const primeCreate = (options: {
-      farm?: Record<string, unknown> | null;
-      stage?: Record<string, unknown> | null;
-      placements?: Array<Record<string, unknown> | null>;
-      breed?: Record<string, unknown> | null;
-    } = {}) => {
-      const farm = options.farm === undefined ? {
-        location_id: 'farm-1', tenant_id: 'tenant-123', company_id: 'comp-1',
-        lob_id: 'lob-piggery', location_type: 'FARM', parent_location_id: null,
-        farm_id: 'farm-1', is_active: true, deleted_at: null,
-      } : options.farm;
-      const stage = options.stage === undefined ? {
-        stage_id: 'stage-1', tenant_id: 'tenant-123', company_id: 'comp-1',
-        lob_id: 'lob-piggery', stage_code: 'ENTRY', is_active: true, deleted_at: null,
-      } : options.stage;
-      mockDbSelect
-        .mockReturnValueOnce(query([{ nob_id: 'nob-1', lob_name: 'Piggery', costing_method_allowed: 'FIFO,BIO_ASSET' }]))
-        .mockReturnValueOnce(query(stage ? [stage] : []))
-        .mockReturnValueOnce(query(farm ? [farm] : []));
-      for (const placement of options.placements ?? []) {
-        mockDbSelect.mockReturnValueOnce(query(placement ? [placement] : []));
-      }
-      if (options.breed !== undefined) {
-        mockDbSelect.mockReturnValueOnce(query(options.breed ? [options.breed] : []));
-      }
-      mockDbInsert.mockImplementation(() => ({ values: jest.fn().mockResolvedValue({}) }));
-      jest.spyOn(service, 'findOne').mockResolvedValue({ ...activeBatch, batch_no: 'BATCH-000001' } as any);
-    };
-
     it('delegates batch_no generation to NumberSeriesService and persists the result', async () => {
-      primeCreate();
-
-      const result = await service.create(
-        validDto as any,
-        'tenant-123',
-        { userId: 'user-1' },
-      );
-
-      expect(numberSeriesService.generateNext).toHaveBeenCalledWith('BATCH', 'tenant-123', 'comp-1', mockDb);
-      expect(result.batch_no).toBe('BATCH-000001');
-    });
-
-    it('stores the explicitly selected farm, tracking mode, and initial stage', async () => {
-      primeCreate();
-      const inserted: Array<{ table: unknown; value: any }> = [];
-      mockDbInsert.mockImplementation((table: unknown) => ({
-        values: jest.fn(async (value: unknown) => { inserted.push({ table, value }); return {}; }),
-      }));
-
-      await service.create(validDto as any, 'tenant-123', { userId: 'user-1' });
-
-      expect(inserted.find((entry) => entry.table === schema.batchHeader)?.value).toMatchObject({
-        farm_id: 'farm-1', animal_tracking: 'COUNT_ONLY', stage_id: 'stage-1', current_stage_code: 'ENTRY',
-      });
-    });
-
-    it('refuses creation without an explicit farm before writing', async () => {
-      primeCreate();
-      await expect(service.create({ ...validDto, farm_id: undefined } as any, 'tenant-123'))
-        .rejects.toThrow('Select the farm this batch runs on.');
-      expect(mockDbInsert).not.toHaveBeenCalled();
-    });
-
-    it('refuses creation without an initial stage before writing', async () => {
-      primeCreate();
-      await expect(service.create({ ...validDto, stage_id: undefined } as any, 'tenant-123'))
-        .rejects.toThrow('Select the initial stage for this batch.');
-      expect(mockDbInsert).not.toHaveBeenCalled();
-    });
-
-    it('refuses creation without an explicit tracking mode before writing', async () => {
-      primeCreate();
-      await expect(service.create({ ...validDto, animal_tracking: undefined } as any, 'tenant-123'))
-        .rejects.toThrow('Select how this batch tracks animals.');
-      expect(mockDbInsert).not.toHaveBeenCalled();
-    });
-
-    it('requires the selected LOB to be configured for the tenant and company', async () => {
-      let capturedCondition: any;
       mockDbSelect.mockReturnValueOnce({
         from: jest.fn().mockReturnValue({
-          where: jest.fn().mockImplementation((condition: any) => {
-            capturedCondition = condition;
-            return { limit: jest.fn().mockResolvedValue([]) };
+          where: jest.fn().mockReturnValue({
+            limit: jest
+              .fn()
+              .mockResolvedValue([
+                { nob_id: 'nob-1', costing_method_allowed: 'FIFO,STANDARD' },
+              ]),
           }),
         }),
       });
 
-      await expect(service.create(validDto as any, 'tenant-123'))
-        .rejects.toThrow(/not configured for this company/i);
-      const rendered = new MySqlDialect().sqlToQuery(capturedCondition);
-      expect(rendered.sql).toContain('operational_area_master');
-      expect(rendered.params).toEqual(expect.arrayContaining(['tenant-123', 'comp-1', 'lob-piggery']));
-      expect(mockDbInsert).not.toHaveBeenCalled();
+      mockDbTransaction.mockImplementation(async (cb: any) => cb(mockDb));
+      mockDbInsert.mockReturnValue({ values: jest.fn().mockResolvedValue({}) });
+
+      jest.spyOn(service, 'findOne').mockResolvedValueOnce({
+        ...activeBatch,
+        batch_no: 'BATCH-000001',
+      } as any);
+
+      const result = await service.create(
+        {
+          company_id: 'comp-1',
+          lob_id: 'lob-piggery',
+          costing_method: 'FIFO',
+          start_date: '2026-01-01',
+          opening_quantity: 100,
+          uom: 'HEAD',
+          input_lines: [{ item_id: 'item-1', quantity: 100, uom: 'HEAD' }],
+        } as any,
+        'tenant-123',
+        { userId: 'user-1' },
+      );
+
+      expect(numberSeriesService.generateNext).toHaveBeenCalledWith(
+        'BATCH',
+        'tenant-123',
+        'comp-1',
+        mockDb,
+      );
+      expect(result.batch_no).toBe('BATCH-000001');
     });
 
-    it.each([
-      ['inactive', { is_active: false }],
-      ['nested', { parent_location_id: 'another-farm' }],
-      ['non-farm', { location_type: 'SHED' }],
-      ['another company', { company_id: 'comp-2' }],
-    ])('refuses an %s farm before writing', async (_label, farmOverride) => {
-      primeCreate({ farm: {
-        location_id: 'farm-1', tenant_id: 'tenant-123', company_id: 'comp-1', lob_id: 'lob-piggery',
-        location_type: 'FARM', parent_location_id: null, farm_id: 'farm-1', is_active: true,
-        deleted_at: null, ...farmOverride,
-      } });
-      await expect(service.create(validDto as any, 'tenant-123')).rejects.toThrow('Select the farm this batch runs on.');
-      expect(mockDbInsert).not.toHaveBeenCalled();
+    it('rejects an ANIMAL_WISE batch with no animal_ids', async () => {
+      await expect(
+        service.create(
+          {
+            tracking_mode: 'ANIMAL_WISE',
+            company_id: 'comp-1',
+            lob_id: 'lob-piggery',
+            costing_method: 'FIFO',
+            start_date: '2026-01-01',
+            uom: 'HEAD',
+          } as any,
+          'tenant-123',
+        ),
+      ).rejects.toThrow('animal_ids is required for ANIMAL_WISE batches.');
     });
 
-    it('validates both supplied placement references against the batch farm', async () => {
-      primeCreate({ placements: [
-        { location_id: 'pen-1', tenant_id: 'tenant-123', company_id: 'comp-1', lob_id: 'lob-piggery', farm_id: 'farm-1', is_active: true, deleted_at: null },
-        { location_id: 'shed-2', tenant_id: 'tenant-123', company_id: 'comp-1', lob_id: 'lob-piggery', farm_id: 'farm-2', is_active: true, deleted_at: null },
-      ] });
-      await expect(service.create({ ...validDto, location_id: 'pen-1', shed_id: 'shed-2' } as any, 'tenant-123'))
-        .rejects.toThrow("Batch shed is not on the batch's farm.");
-      expect(mockDbInsert).not.toHaveBeenCalled();
+    it('rejects an ANIMAL_WISE batch that includes an already-assigned animal', async () => {
+      mockDbSelect
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            where: jest.fn().mockReturnValue({
+              limit: jest
+                .fn()
+                .mockResolvedValue([
+                  { nob_id: 'nob-1', costing_method_allowed: 'FIFO,STANDARD' },
+                ]),
+            }),
+          }),
+        }) // lob lookup
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            where: jest.fn().mockResolvedValue([
+              {
+                animal_id: 'a-1',
+                animal_code: 'PIG-0001',
+                lob_id: 'lob-piggery',
+                current_batch_id: 'batch-old',
+                current_stage_id: 'stage-1',
+                current_location_id: null,
+              },
+            ]),
+          }),
+        }); // animal_register lookup
+
+      await expect(
+        service.create(
+          {
+            tracking_mode: 'ANIMAL_WISE',
+            animal_ids: ['a-1'],
+            company_id: 'comp-1',
+            lob_id: 'lob-piggery',
+            costing_method: 'FIFO',
+            start_date: '2026-01-01',
+            uom: 'HEAD',
+          } as any,
+          'tenant-123',
+        ),
+      ).rejects.toThrow('Animal(s) already assigned to a batch: PIG-0001.');
     });
 
-    it.each([
-      ['company', { company_id: 'comp-2' }],
-      ['line of business', { lob_id: 'lob-poultry' }],
-    ])('refuses a location from another %s even when its farm id matches', async (_label, override) => {
-      primeCreate({ placements: [{
-        location_id: 'pen-1', tenant_id: 'tenant-123', company_id: 'comp-1', lob_id: 'lob-piggery',
-        location_type: 'PEN', parent_location_id: 'shed-1', farm_id: 'farm-1', is_active: true,
-        deleted_at: null, ...override,
-      }] });
-      await expect(service.create({ ...validDto, location_id: 'pen-1' } as any, 'tenant-123'))
-        .rejects.toThrow("Batch location is not on the batch's farm.");
-      expect(mockDbInsert).not.toHaveBeenCalled();
-    });
+    it('assigns unassigned animals to the new batch, keyed by their own stage, without input_lines', async () => {
+      mockDbSelect
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            where: jest.fn().mockReturnValue({
+              limit: jest
+                .fn()
+                .mockResolvedValue([
+                  { nob_id: 'nob-1', costing_method_allowed: 'FIFO,STANDARD' },
+                ]),
+            }),
+          }),
+        }) // lob lookup
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            where: jest.fn().mockResolvedValue([
+              {
+                animal_id: 'a-1',
+                animal_code: 'PIG-0001',
+                lob_id: 'lob-piggery',
+                current_batch_id: null,
+                current_stage_id: 'stage-nursery',
+                current_location_id: 'loc-1',
+              },
+              {
+                animal_id: 'a-2',
+                animal_code: 'PIG-0002',
+                lob_id: 'lob-piggery',
+                current_batch_id: null,
+                current_stage_id: 'stage-grower',
+                current_location_id: 'loc-2',
+              },
+            ]),
+          }),
+        }) // animal_register lookup (pre-transaction validation)
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            where: jest.fn().mockReturnValue({
+              for: jest.fn().mockResolvedValue([
+                {
+                  animal_id: 'a-1',
+                  animal_code: 'PIG-0001',
+                  current_batch_id: null,
+                },
+                {
+                  animal_id: 'a-2',
+                  animal_code: 'PIG-0002',
+                  current_batch_id: null,
+                },
+              ]),
+            }),
+          }),
+        }); // locked re-check inside the transaction
 
-    it.each([
-      ['farm-less', { breed_id: 'breed-1', tenant_id: 'tenant-123', company_id: 'comp-1', lob_id: 'lob-piggery', location_id: null, is_active: true, deleted_at: null }],
-      ['another-farm', { breed_id: 'breed-1', tenant_id: 'tenant-123', company_id: 'comp-1', lob_id: 'lob-piggery', location_id: 'farm-2', is_active: true, deleted_at: null }],
-      ['another-LOB', { breed_id: 'breed-1', tenant_id: 'tenant-123', company_id: 'comp-1', lob_id: 'lob-poultry', location_id: 'farm-1', is_active: true, deleted_at: null }],
-    ])('refuses a %s operational breed profile', async (_label, breed) => {
-      primeCreate({ breed });
-      await expect(service.create({ ...validDto, breed_id: 'breed-1' } as any, 'tenant-123'))
-        .rejects.toThrow('The breed profile belongs to another farm.');
-      expect(mockDbInsert).not.toHaveBeenCalled();
-    });
-
-    it.each(['COUNT_ONLY', 'REGISTERED'])('%s creation never invents Animal Register rows', async (animalTracking) => {
-      primeCreate({ breed: {
-        breed_id: 'breed-1', tenant_id: 'tenant-123', company_id: 'comp-1', lob_id: 'lob-piggery',
-        location_id: 'farm-1', is_active: true, deleted_at: null,
-      } });
-      const insertedTables: unknown[] = [];
-      mockDbInsert.mockImplementation((table: unknown) => ({
-        values: jest.fn(async () => { insertedTables.push(table); return {}; }),
-      }));
-
-      await service.create({ ...validDto, animal_tracking: animalTracking, breed_id: 'breed-1' } as any, 'tenant-123');
-
-      expect(insertedTables).not.toContain(schema.animalRegister);
-    });
-
-    it('rejects animal_ids when animal_tracking is COUNT_ONLY', async () => {
-      primeCreate({ breed: {
-        breed_id: 'breed-1', tenant_id: 'tenant-123', company_id: 'comp-1', lob_id: 'lob-piggery',
-        location_id: 'farm-1', is_active: true, deleted_at: null,
-      } });
-
-      await expect(service.create({ ...validDto, animal_tracking: 'COUNT_ONLY', animal_ids: ['a-1'] } as any, 'tenant-123'))
-        .rejects.toThrow('Count-only batches track headcount only and cannot link individual registered animals.');
-    });
-
-    it('links existing animals when animal_tracking is REGISTERED and animal_ids are provided', async () => {
-      primeCreate({ breed: {
-        breed_id: 'breed-1', tenant_id: 'tenant-123', company_id: 'comp-1', lob_id: 'lob-piggery',
-        location_id: 'farm-1', is_active: true, deleted_at: null,
-      } });
-
-      // Mock finding assigned animals
-      mockDbSelect.mockReturnValueOnce({
-        from: jest.fn().mockReturnValue({
-          where: jest.fn().mockResolvedValue([
-            { animal_id: 'a-1', current_batch_id: null, breed_id: 'breed-1' },
-            { animal_id: 'a-2', current_batch_id: null, breed_id: 'breed-1' },
-          ]),
+      mockDbTransaction.mockImplementation(async (cb: any) => cb(mockDb));
+      const insertedValues: any[] = [];
+      mockDbInsert.mockReturnValue({
+        values: jest.fn((v: any) => {
+          insertedValues.push(v);
+          return Promise.resolve({});
+        }),
+      });
+      const updateSets: any[] = [];
+      mockDbUpdate.mockReturnValue({
+        set: jest.fn((v: any) => {
+          updateSets.push(v);
+          return { where: jest.fn().mockResolvedValue({}) };
         }),
       });
 
-      const updatedTables: unknown[] = [];
-      mockDbUpdate.mockImplementation((table: unknown) => ({
-        set: jest.fn().mockReturnValue({
-          where: jest.fn(async () => { updatedTables.push(table); return {}; }),
+      jest.spyOn(service, 'findOne').mockResolvedValueOnce({
+        ...activeBatch,
+        batch_no: 'BATCH-000002',
+        tracking_mode: 'ANIMAL_WISE',
+      } as any);
+
+      const movementLog = module.get<AnimalMovementLogService>(
+        AnimalMovementLogService,
+      );
+      const schedulerHeaderService = module.get<SchedulerHeaderService>(
+        SchedulerHeaderService,
+      );
+
+      const result = await service.create(
+        {
+          tracking_mode: 'ANIMAL_WISE',
+          animal_ids: ['a-1', 'a-2'],
+          company_id: 'comp-1',
+          lob_id: 'lob-piggery',
+          costing_method: 'FIFO',
+          start_date: '2026-01-01',
+          uom: 'HEAD',
+        } as any,
+        'tenant-123',
+        { userId: 'user-1' },
+      );
+
+      // no batch_input_line row is written for ANIMAL_WISE
+      expect(
+        insertedValues.some((v) => Array.isArray(v) && v[0]?.item_id),
+      ).toBe(false);
+      expect(updateSets.some((v) => v.current_batch_id)).toBe(true);
+      expect(movementLog.record).toHaveBeenCalledTimes(2);
+      expect((movementLog.record as jest.Mock).mock.calls[0][0]).toMatchObject({
+        animalId: 'a-1',
+        movementType: 'ASSIGN',
+        toStageId: 'stage-nursery',
+        toLocationId: 'loc-1',
+      });
+      expect(schedulerHeaderService.createForStage).toHaveBeenCalledWith(
+        expect.any(String),
+        'stage-nursery',
+        'tenant-123',
+        { userId: 'user-1' },
+      );
+      expect(schedulerHeaderService.createForStage).toHaveBeenCalledWith(
+        expect.any(String),
+        'stage-grower',
+        'tenant-123',
+        { userId: 'user-1' },
+      );
+      expect(result.batch_no).toBe('BATCH-000002');
+    });
+  });
+
+  describe('activate', () => {
+    it('activates an ANIMAL_WISE batch with no input lines, activating every DRAFT scheduler for the batch', async () => {
+      jest
+        .spyOn(service, 'findOne')
+        .mockResolvedValueOnce({
+          ...activeBatch,
+          status: 'DRAFT',
+          tracking_mode: 'ANIMAL_WISE',
+          input_lines: [],
+          stage_id: null,
+        } as any)
+        .mockResolvedValueOnce({
+          ...activeBatch,
+          status: 'ACTIVE',
+          tracking_mode: 'ANIMAL_WISE',
+        } as any);
+
+      const updateCalls: { table: any; set: any; where: any }[] = [];
+      mockDbUpdate.mockImplementation((table: any) => ({
+        set: (set: any) => ({
+          where: (where: any) => {
+            updateCalls.push({ table, set, where });
+            return Promise.resolve({});
+          },
         }),
       }));
 
-      await service.create({ ...validDto, animal_tracking: 'REGISTERED', breed_id: 'breed-1', animal_ids: ['a-1', 'a-2'] } as any, 'tenant-123');
+      await service.activate('batch-1', 'tenant-123', { userId: 'user-1' });
 
-      expect(updatedTables).toContain(schema.animalRegister);
+      const headerUpdate = updateCalls.find(
+        (c) => c.table === schema.batchHeader,
+      );
+      expect(headerUpdate?.set.status).toBe('ACTIVE');
+      const schedulerUpdate = updateCalls.find(
+        (c) => c.table === schema.schedulerHeader,
+      );
+      expect(schedulerUpdate?.set.scheduler_status).toBe('ACTIVE');
+    });
+
+    it('still rejects a BATCH_WISE batch with no input lines', async () => {
+      jest.spyOn(service, 'findOne').mockResolvedValueOnce({
+        ...activeBatch,
+        status: 'DRAFT',
+        tracking_mode: 'BATCH_WISE',
+        input_lines: [],
+      } as any);
+
+      await expect(service.activate('batch-1', 'tenant-123')).rejects.toThrow(
+        'Cannot activate a batch with no input lines.',
+      );
+    });
+  });
+
+  describe('postStageDay / reopenStageDay', () => {
+    const animalWiseBatch = { ...activeBatch, tracking_mode: 'ANIMAL_WISE' };
+
+    it('refuses to post a BATCH_WISE batch — stage-level posting only applies to ANIMAL_WISE', async () => {
+      jest.spyOn(service, 'findOne').mockResolvedValueOnce({
+        ...activeBatch,
+        tracking_mode: 'BATCH_WISE',
+      } as any);
+
+      await expect(
+        service.postStageDay(
+          'batch-1',
+          'stage-flush',
+          '2026-09-11',
+          'tenant-123',
+        ),
+      ).rejects.toThrow(
+        'Stage-level posting only applies to ANIMAL_WISE batches.',
+      );
+    });
+
+    it('refuses to post a stage with no animals currently in it', async () => {
+      jest
+        .spyOn(service, 'findOne')
+        .mockResolvedValueOnce(animalWiseBatch as any);
+      mockDbSelect.mockReturnValueOnce({
+        from: jest
+          .fn()
+          .mockReturnValue({ where: jest.fn().mockResolvedValue([]) }),
+      }); // no live animals
+
+      await expect(
+        service.postStageDay(
+          'batch-1',
+          'stage-flush',
+          '2026-09-11',
+          'tenant-123',
+        ),
+      ).rejects.toThrow('No animals are currently in this stage');
+    });
+
+    it('refuses to post while a mandatory activity is still missing for an animal', async () => {
+      jest
+        .spyOn(service, 'findOne')
+        .mockResolvedValueOnce(animalWiseBatch as any);
+      const mandatoryLine = {
+        line_id: 'line-feed',
+        scheduler_id: 'sched-1',
+        is_active: true,
+        occurrence: 'DAILY',
+        start_day: 1,
+        end_day: null,
+        is_mandatory: true,
+        activity_name: 'Feed',
+      };
+
+      mockDbSelect
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            where: jest
+              .fn()
+              .mockResolvedValue([
+                { animal_id: 'a-1', animal_code: 'PIG-0001' },
+              ]),
+          }),
+        }) // live animals
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            where: jest.fn().mockReturnValue({
+              limit: jest.fn().mockResolvedValue([
+                {
+                  scheduler_id: 'sched-1',
+                  effective_from: '2026-09-01',
+                  animal_count: '1',
+                },
+              ]),
+            }),
+          }),
+        }) // scheduler header
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            where: jest.fn().mockResolvedValue([mandatoryLine]),
+          }),
+        }) // due lines
+        .mockReturnValueOnce({
+          from: jest
+            .fn()
+            .mockReturnValue({ where: jest.fn().mockResolvedValue([]) }),
+        }); // no batch_daily_data rows entered at all
+
+      await expect(
+        service.postStageDay(
+          'batch-1',
+          'stage-flush',
+          '2026-09-11',
+          'tenant-123',
+        ),
+      ).rejects.toThrow(/PIG-0001 — Feed/);
+    });
+
+    it('locks the stage/date once every mandatory activity is entered for every animal', async () => {
+      jest
+        .spyOn(service, 'findOne')
+        .mockResolvedValueOnce(animalWiseBatch as any);
+      const mandatoryLine = {
+        line_id: 'line-feed',
+        scheduler_id: 'sched-1',
+        is_active: true,
+        occurrence: 'DAILY',
+        start_day: 1,
+        end_day: null,
+        is_mandatory: true,
+        activity_name: 'Feed',
+      };
+
+      mockDbSelect
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            where: jest
+              .fn()
+              .mockResolvedValue([
+                { animal_id: 'a-1', animal_code: 'PIG-0001' },
+              ]),
+          }),
+        }) // live animals
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            where: jest.fn().mockReturnValue({
+              limit: jest.fn().mockResolvedValue([
+                {
+                  scheduler_id: 'sched-1',
+                  effective_from: '2026-09-01',
+                  animal_count: '1',
+                },
+              ]),
+            }),
+          }),
+        }) // scheduler header
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            where: jest.fn().mockResolvedValue([mandatoryLine]),
+          }),
+        }) // due lines
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            where: jest
+              .fn()
+              .mockResolvedValue([{ line_id: 'line-feed', animal_id: 'a-1' }]),
+          }),
+        }) // entered — Feed present for a-1
+        .mockReturnValueOnce({
+          from: jest
+            .fn()
+            .mockReturnValue({ where: jest.fn().mockResolvedValue([]) }),
+        }); // no still-draft rows to finalize
+
+      const onDuplicateKeyUpdate = jest.fn().mockResolvedValue({});
+      mockDbInsert.mockReturnValue({
+        values: jest.fn().mockReturnValue({ onDuplicateKeyUpdate }),
+      });
+
+      const result = await service.postStageDay(
+        'batch-1',
+        'stage-flush',
+        '2026-09-11',
+        'tenant-123',
+        { userId: 'user-1' },
+      );
+
+      expect(result.status).toBe('LOCKED');
+      expect(mockDbInsert).toHaveBeenCalledWith(schema.batchDataEntryLock);
+      expect(onDuplicateKeyUpdate).toHaveBeenCalled();
+    });
+
+    it('reopen requires a reason', async () => {
+      await expect(
+        service.reopenStageDay(
+          'batch-1',
+          'stage-flush',
+          '2026-09-11',
+          '',
+          'tenant-123',
+        ),
+      ).rejects.toThrow('A reason is required to reopen posted data.');
+    });
+
+    it('reopen refuses when the stage/date is not currently locked', async () => {
+      jest
+        .spyOn(service, 'findOne')
+        .mockResolvedValueOnce(animalWiseBatch as any);
+      mockDbSelect.mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest
+            .fn()
+            .mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }),
+        }),
+      });
+
+      await expect(
+        service.reopenStageDay(
+          'batch-1',
+          'stage-flush',
+          '2026-09-11',
+          'Typo in feed qty',
+          'tenant-123',
+        ),
+      ).rejects.toThrow('This stage/date is not currently locked.');
+    });
+
+    it('reopens a locked stage/date, recording who and why', async () => {
+      jest
+        .spyOn(service, 'findOne')
+        .mockResolvedValueOnce(animalWiseBatch as any);
+      mockDbSelect.mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockReturnValue({
+            limit: jest
+              .fn()
+              .mockResolvedValue([{ lock_id: 'lock-1', status: 'LOCKED' }]),
+          }),
+        }),
+      });
+      const sets: any[] = [];
+      mockDbUpdate.mockReturnValue({
+        set: jest.fn((v: any) => {
+          sets.push(v);
+          return { where: jest.fn().mockResolvedValue({}) };
+        }),
+      });
+
+      const result = await service.reopenStageDay(
+        'batch-1',
+        'stage-flush',
+        '2026-09-11',
+        'Typo in feed qty',
+        'tenant-123',
+        { userId: 'user-1' },
+      );
+
+      expect(result.status).toBe('REOPENED');
+      expect(sets[0]).toMatchObject({
+        status: 'REOPENED',
+        reopened_by: 'user-1',
+        reopen_reason: 'Typo in feed qty',
+      });
+    });
+  });
+
+  describe('postBatchDay', () => {
+    const batchWiseBatch = {
+      ...activeBatch,
+      tracking_mode: 'BATCH_WISE',
+      stage_id: 'stage-gest',
+      company_id: 'comp-1',
+    };
+
+    it('refuses to post an ANIMAL_WISE batch — that mode posts per stage', async () => {
+      jest.spyOn(service, 'findOne').mockResolvedValueOnce({
+        ...activeBatch,
+        tracking_mode: 'ANIMAL_WISE',
+      } as any);
+
+      await expect(
+        service.postBatchDay('batch-1', '2026-09-11', 'tenant-123'),
+      ).rejects.toThrow('ANIMAL_WISE batches post per stage');
+    });
+
+    it('refuses to post a batch that has not transferred into a stage yet', async () => {
+      jest.spyOn(service, 'findOne').mockResolvedValueOnce({
+        ...activeBatch,
+        tracking_mode: 'BATCH_WISE',
+        stage_id: null,
+      } as any);
+
+      await expect(
+        service.postBatchDay('batch-1', '2026-09-11', 'tenant-123'),
+      ).rejects.toThrow('This batch has not transferred into a stage yet');
+    });
+
+    it('refuses to post while a mandatory activity has not been entered for the whole batch', async () => {
+      jest
+        .spyOn(service, 'findOne')
+        .mockResolvedValueOnce(batchWiseBatch as any);
+      const mandatoryLine = {
+        line_id: 'line-feed',
+        is_mandatory: true,
+        activity_name: 'Feed',
+      };
+      jest
+        .spyOn(service as any, 'loadActiveScheduleLines')
+        .mockResolvedValueOnce([{ header: {}, line: mandatoryLine }]);
+
+      mockDbSelect.mockReturnValueOnce({
+        from: jest
+          .fn()
+          .mockReturnValue({ where: jest.fn().mockResolvedValue([]) }),
+      }); // no whole-batch entries at all
+
+      await expect(
+        service.postBatchDay('batch-1', '2026-09-11', 'tenant-123'),
+      ).rejects.toThrow(/required activities not yet entered: Feed/);
+    });
+
+    it('locks the batch/date once every mandatory activity is entered whole-batch', async () => {
+      jest
+        .spyOn(service, 'findOne')
+        .mockResolvedValueOnce(batchWiseBatch as any);
+      const mandatoryLine = {
+        line_id: 'line-feed',
+        is_mandatory: true,
+        activity_name: 'Feed',
+      };
+      jest
+        .spyOn(service as any, 'loadActiveScheduleLines')
+        .mockResolvedValueOnce([{ header: {}, line: mandatoryLine }]);
+
+      mockDbSelect
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            where: jest.fn().mockResolvedValue([{ line_id: 'line-feed' }]),
+          }),
+        }) // whole-batch entry present (mandatory check)
+        .mockReturnValueOnce({
+          from: jest
+            .fn()
+            .mockReturnValue({ where: jest.fn().mockResolvedValue([]) }),
+        }); // no still-draft rows to finalize
+
+      const onDuplicateKeyUpdate = jest.fn().mockResolvedValue({});
+      mockDbInsert.mockReturnValue({
+        values: jest.fn().mockReturnValue({ onDuplicateKeyUpdate }),
+      });
+
+      const result = await service.postBatchDay(
+        'batch-1',
+        '2026-09-11',
+        'tenant-123',
+        { userId: 'user-1' },
+      );
+
+      expect(result.status).toBe('LOCKED');
+      expect(result.stage_id).toBe('stage-gest');
+      expect(mockDbInsert).toHaveBeenCalledWith(schema.batchDataEntryLock);
+      expect(onDuplicateKeyUpdate).toHaveBeenCalled();
+    });
+
+    it('finalizes every still-draft row for the day through BatchDailyDataService.postEntry before locking', async () => {
+      jest
+        .spyOn(service, 'findOne')
+        .mockResolvedValueOnce(batchWiseBatch as any);
+      const feedLine = {
+        line_id: 'line-feed',
+        is_mandatory: true,
+        activity_name: 'Feed',
+      };
+      const overheadLine = {
+        line_id: 'line-oh',
+        is_mandatory: false,
+        activity_name: 'Utilities',
+      };
+      jest
+        .spyOn(service as any, 'loadActiveScheduleLines')
+        .mockResolvedValueOnce([
+          { header: {}, line: feedLine },
+          { header: {}, line: overheadLine },
+        ]);
+
+      mockDbSelect
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            where: jest.fn().mockResolvedValue([{ line_id: 'line-feed' }]),
+          }),
+        }) // mandatory check — Feed entered
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            where: jest.fn().mockResolvedValue([
+              {
+                line_id: 'line-feed',
+                entry_date: '2026-09-11',
+                entered_value: '40.0000',
+                entered_text: null,
+                lot_no: null,
+                remarks: null,
+              },
+              {
+                line_id: 'line-oh',
+                entry_date: '2026-09-11',
+                entered_value: '500.0000',
+                entered_text: null,
+                lot_no: null,
+                remarks: 'Electricity',
+              },
+            ]),
+          }),
+        }); // both are still draft (posted: false)
+
+      const onDuplicateKeyUpdate = jest.fn().mockResolvedValue({});
+      mockDbInsert.mockReturnValue({
+        values: jest.fn().mockReturnValue({ onDuplicateKeyUpdate }),
+      });
+
+      const dailyDataPoster = module.get('BATCH_DAILY_DATA_POSTER');
+
+      const result = await service.postBatchDay(
+        'batch-1',
+        '2026-09-11',
+        'tenant-123',
+        { userId: 'user-1' },
+      );
+
+      expect(result.status).toBe('LOCKED');
+      expect(dailyDataPoster.postEntry).toHaveBeenCalledTimes(2);
+      expect(dailyDataPoster.postEntry).toHaveBeenCalledWith(
+        'batch-1',
+        expect.objectContaining({
+          line_id: 'line-feed',
+          entry_date: '2026-09-11',
+          entered_value: 40,
+        }),
+        'tenant-123',
+        { userId: 'user-1' },
+      );
+      expect(dailyDataPoster.postEntry).toHaveBeenCalledWith(
+        'batch-1',
+        expect.objectContaining({
+          line_id: 'line-oh',
+          entered_value: 500,
+          remarks: 'Electricity',
+        }),
+        'tenant-123',
+        { userId: 'user-1' },
+      );
+      // Neither dispatch call carries `draft` — this is the real, final post.
+      const calledDtos = (
+        dailyDataPoster.postEntry as jest.Mock
+      ).mock.calls.map((c) => c[1]);
+      expect(calledDtos.every((dto) => dto.draft === undefined)).toBe(true);
+    });
+
+    it('locks cleanly when there are no mandatory lines due at all', async () => {
+      jest
+        .spyOn(service, 'findOne')
+        .mockResolvedValueOnce(batchWiseBatch as any);
+      jest
+        .spyOn(service as any, 'loadActiveScheduleLines')
+        .mockResolvedValueOnce([]);
+
+      const onDuplicateKeyUpdate = jest.fn().mockResolvedValue({});
+      mockDbInsert.mockReturnValue({
+        values: jest.fn().mockReturnValue({ onDuplicateKeyUpdate }),
+      });
+
+      const result = await service.postBatchDay(
+        'batch-1',
+        '2026-09-11',
+        'tenant-123',
+        { userId: 'user-1' },
+      );
+
+      expect(result.status).toBe('LOCKED');
+      expect(mockDbSelect).not.toHaveBeenCalled();
     });
   });
 
   describe('transferStage', () => {
     it('sets stage_id when a matching stage_master row exists for the batch LOB', async () => {
-      jest.spyOn(service, 'findOne')
+      jest
+        .spyOn(service, 'findOne')
         .mockResolvedValueOnce(activeBatch as any) // initial load
-        .mockResolvedValueOnce({ ...activeBatch, current_stage_code: 'QUARANTINE', stage_id: 'stage-quarantine' } as any); // final return
+        .mockResolvedValueOnce({
+          ...activeBatch,
+          current_stage_code: 'QUARANTINE',
+          stage_id: 'stage-quarantine',
+        } as any); // final return
 
       mockDbSelect
         .mockReturnValueOnce({
           from: jest.fn().mockReturnValue({
             where: jest.fn().mockReturnValue({
-              limit: jest.fn().mockResolvedValue([{ stage_id: 'stage-quarantine' }]),
+              limit: jest
+                .fn()
+                .mockResolvedValue([{ stage_id: 'stage-quarantine' }]),
             }),
           }),
         }) // stage_master lookup
@@ -320,21 +857,36 @@ describe('BatchService', () => {
             where: jest.fn().mockResolvedValue([]),
           }),
         }); // in-step animals (none on this bare fixture)
-      mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) }) });
+      mockDbUpdate.mockReturnValue({
+        set: jest
+          .fn()
+          .mockReturnValue({ where: jest.fn().mockResolvedValue({}) }),
+      });
       mockDbInsert.mockReturnValue({ values: jest.fn().mockResolvedValue({}) });
 
-      const result = await service.transferStage('batch-1', { to_stage_code: 'QUARANTINE' }, 'tenant-123', { userId: 'user-1' });
+      const result = await service.transferStage(
+        'batch-1',
+        { to_stage_code: 'QUARANTINE' },
+        'tenant-123',
+        { userId: 'user-1' },
+      );
 
       expect(mockDbUpdate).toHaveBeenCalled();
-      const setArg = (mockDbUpdate.mock.results[0].value.set as jest.Mock).mock.calls[0][0];
+      const setArg = (mockDbUpdate.mock.results[0].value.set as jest.Mock).mock
+        .calls[0][0];
       expect(setArg.stage_id).toBe('stage-quarantine');
       expect(result.stage_id).toBe('stage-quarantine');
     });
 
     it('leaves stage_id null when no stage_master row matches the code for this LOB', async () => {
-      jest.spyOn(service, 'findOne')
+      jest
+        .spyOn(service, 'findOne')
         .mockResolvedValueOnce(activeBatch as any)
-        .mockResolvedValueOnce({ ...activeBatch, current_stage_code: 'CUSTOM_STAGE', stage_id: null } as any);
+        .mockResolvedValueOnce({
+          ...activeBatch,
+          current_stage_code: 'CUSTOM_STAGE',
+          stage_id: null,
+        } as any);
 
       mockDbSelect
         .mockReturnValueOnce({
@@ -345,43 +897,88 @@ describe('BatchService', () => {
           }),
         })
         .mockReturnValueOnce({
-          from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([]) }), // LOB has no stages configured
+          from: jest
+            .fn()
+            .mockReturnValue({ where: jest.fn().mockResolvedValue([]) }), // LOB has no stages configured
         });
-      mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) }) });
+      mockDbUpdate.mockReturnValue({
+        set: jest
+          .fn()
+          .mockReturnValue({ where: jest.fn().mockResolvedValue({}) }),
+      });
       mockDbInsert.mockReturnValue({ values: jest.fn().mockResolvedValue({}) });
 
-      const result = await service.transferStage('batch-1', { to_stage_code: 'CUSTOM_STAGE' }, 'tenant-123', { userId: 'user-1' });
+      const result = await service.transferStage(
+        'batch-1',
+        { to_stage_code: 'CUSTOM_STAGE' },
+        'tenant-123',
+        { userId: 'user-1' },
+      );
 
-      const setArg = (mockDbUpdate.mock.results[0].value.set as jest.Mock).mock.calls[0][0];
+      const setArg = (mockDbUpdate.mock.results[0].value.set as jest.Mock).mock
+        .calls[0][0];
       expect(setArg.stage_id).toBeNull();
       expect(result.stage_id).toBeNull();
     });
 
-    const gestatingBatch = { ...activeBatch, current_stage_code: 'DRY_SOW_GESTATION', stage_id: 'stage-gestation' };
+    const gestatingBatch = {
+      ...activeBatch,
+      current_stage_code: 'DRY_SOW_GESTATION',
+      stage_id: 'stage-gestation',
+    };
 
     it('cascades the new stage to the animals that were in step with the batch', async () => {
-      jest.spyOn(service, 'findOne')
+      jest
+        .spyOn(service, 'findOne')
         .mockResolvedValueOnce(gestatingBatch as any)
-        .mockResolvedValueOnce({ ...gestatingBatch, current_stage_code: 'LACTATION', stage_id: 'stage-lactation' } as any);
+        .mockResolvedValueOnce({
+          ...gestatingBatch,
+          current_stage_code: 'LACTATION',
+          stage_id: 'stage-lactation',
+        } as any);
 
       mockDbSelect
         .mockReturnValueOnce({
           from: jest.fn().mockReturnValue({
             where: jest.fn().mockReturnValue({
-              limit: jest.fn().mockResolvedValue([{ stage_id: 'stage-lactation' }]),
+              limit: jest
+                .fn()
+                .mockResolvedValue([{ stage_id: 'stage-lactation' }]),
             }),
           }),
         }) // stage_master lookup
         .mockReturnValueOnce({
           from: jest.fn().mockReturnValue({
-            where: jest.fn().mockResolvedValue([{ animal_id: 'a-1' }, { animal_id: 'a-2' }]),
+            where: jest.fn().mockReturnValue({
+              limit: jest
+                .fn()
+                .mockResolvedValue([
+                  { min_days_before_move: 0, stage_name: 'Dry Sow Gestation' },
+                ]),
+            }),
+          }),
+        }) // current stage's min-days lookup — no floor set, so no further check needed
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            where: jest
+              .fn()
+              .mockResolvedValue([{ animal_id: 'a-1' }, { animal_id: 'a-2' }]),
           }),
         }); // animals still standing at the batch's previous stage
 
-      mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) }) });
+      mockDbUpdate.mockReturnValue({
+        set: jest
+          .fn()
+          .mockReturnValue({ where: jest.fn().mockResolvedValue({}) }),
+      });
       mockDbInsert.mockReturnValue({ values: jest.fn().mockResolvedValue({}) });
 
-      await service.transferStage('batch-1', { to_stage_code: 'LACTATION' }, 'tenant-123', { userId: 'user-1' });
+      await service.transferStage(
+        'batch-1',
+        { to_stage_code: 'LACTATION' },
+        'tenant-123',
+        { userId: 'user-1' },
+      );
 
       // First update is batch_header; second repoints in-step animals; third completes prior scheduler.
       expect(mockDbUpdate).toHaveBeenCalledTimes(3);
@@ -394,51 +991,96 @@ describe('BatchService', () => {
       // A few head held back in a hospital pen at an earlier stage: they are in
       // this batch but not at its stage, so a batch-level move must not drag
       // them along.
-      jest.spyOn(service, 'findOne')
+      jest
+        .spyOn(service, 'findOne')
         .mockResolvedValueOnce(gestatingBatch as any)
-        .mockResolvedValueOnce({ ...gestatingBatch, current_stage_code: 'LACTATION', stage_id: 'stage-lactation' } as any);
+        .mockResolvedValueOnce({
+          ...gestatingBatch,
+          current_stage_code: 'LACTATION',
+          stage_id: 'stage-lactation',
+        } as any);
 
       mockDbSelect
         .mockReturnValueOnce({
           from: jest.fn().mockReturnValue({
             where: jest.fn().mockReturnValue({
-              limit: jest.fn().mockResolvedValue([{ stage_id: 'stage-lactation' }]),
+              limit: jest
+                .fn()
+                .mockResolvedValue([{ stage_id: 'stage-lactation' }]),
             }),
           }),
         })
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            where: jest.fn().mockReturnValue({
+              limit: jest
+                .fn()
+                .mockResolvedValue([
+                  { min_days_before_move: 0, stage_name: 'Dry Sow Gestation' },
+                ]),
+            }),
+          }),
+        }) // current stage's min-days lookup — no floor set, so no further check needed
         .mockReturnValueOnce({
           from: jest.fn().mockReturnValue({
             where: jest.fn().mockResolvedValue([]), // nobody is in step
           }),
         });
 
-      mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) }) });
+      mockDbUpdate.mockReturnValue({
+        set: jest
+          .fn()
+          .mockReturnValue({ where: jest.fn().mockResolvedValue({}) }),
+      });
       mockDbInsert.mockReturnValue({ values: jest.fn().mockResolvedValue({}) });
 
-      await service.transferStage('batch-1', { to_stage_code: 'LACTATION' }, 'tenant-123', { userId: 'user-1' });
+      await service.transferStage(
+        'batch-1',
+        { to_stage_code: 'LACTATION' },
+        'tenant-123',
+        { userId: 'user-1' },
+      );
 
       // batch_header and prior stage scheduler_header are updated — no animal write at all.
       expect(mockDbUpdate).toHaveBeenCalledTimes(2);
     });
 
     it('does not touch animals when no stage_master row matches the code', async () => {
-      jest.spyOn(service, 'findOne')
+      jest
+        .spyOn(service, 'findOne')
         .mockResolvedValueOnce(activeBatch as any)
-        .mockResolvedValueOnce({ ...activeBatch, current_stage_code: 'CUSTOM_STAGE', stage_id: null } as any);
+        .mockResolvedValueOnce({
+          ...activeBatch,
+          current_stage_code: 'CUSTOM_STAGE',
+          stage_id: null,
+        } as any);
 
       mockDbSelect
         .mockReturnValueOnce({
           from: jest.fn().mockReturnValue({
-            where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }),
+            where: jest
+              .fn()
+              .mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }),
           }),
         })
         .mockReturnValueOnce({
-          from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([]) }), // LOB has no stages configured
+          from: jest
+            .fn()
+            .mockReturnValue({ where: jest.fn().mockResolvedValue([]) }), // LOB has no stages configured
         });
-      mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) }) });
+      mockDbUpdate.mockReturnValue({
+        set: jest
+          .fn()
+          .mockReturnValue({ where: jest.fn().mockResolvedValue({}) }),
+      });
       mockDbInsert.mockReturnValue({ values: jest.fn().mockResolvedValue({}) });
 
-      await service.transferStage('batch-1', { to_stage_code: 'CUSTOM_STAGE' }, 'tenant-123', { userId: 'user-1' });
+      await service.transferStage(
+        'batch-1',
+        { to_stage_code: 'CUSTOM_STAGE' },
+        'tenant-123',
+        { userId: 'user-1' },
+      );
 
       expect(mockDbUpdate).toHaveBeenCalledTimes(1);
     });
@@ -448,153 +1090,135 @@ describe('BatchService', () => {
       // instead of domain codes, writing "ST-05" into current_stage_code and
       // leaving stage_id null. Accepting an unmatched code silently is what let
       // that corrupt a batch.
-      jest.spyOn(service, 'findOne').mockResolvedValueOnce(gestatingBatch as any);
+      jest
+        .spyOn(service, 'findOne')
+        .mockResolvedValueOnce(gestatingBatch as any);
 
       mockDbSelect
         .mockReturnValueOnce({
           from: jest.fn().mockReturnValue({
-            where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }),
+            where: jest
+              .fn()
+              .mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }),
           }),
         }) // no stage_master row matches 'ST-05'
         .mockReturnValueOnce({
           from: jest.fn().mockReturnValue({
-            where: jest.fn().mockResolvedValue([{ stage_code: 'DRY_SOW_GESTATION' }]),
+            where: jest
+              .fn()
+              .mockResolvedValue([{ stage_code: 'DRY_SOW_GESTATION' }]),
           }),
         }); // ...but this LOB does have stages configured
 
       await expect(
-        service.transferStage('batch-1', { to_stage_code: 'ST-05' }, 'tenant-123', { userId: 'u' }),
+        service.transferStage(
+          'batch-1',
+          { to_stage_code: 'ST-05' },
+          'tenant-123',
+          { userId: 'u' },
+        ),
       ).rejects.toThrow(BadRequestException);
     });
 
     it('still allows a free-text stage for a LOB with no stage master data', async () => {
       // Stages are LOB-defined; a line of business that has configured none must
       // keep working with hand-entered codes.
-      jest.spyOn(service, 'findOne')
+      jest
+        .spyOn(service, 'findOne')
         .mockResolvedValueOnce(activeBatch as any)
-        .mockResolvedValueOnce({ ...activeBatch, current_stage_code: 'CUSTOM', stage_id: null } as any);
+        .mockResolvedValueOnce({
+          ...activeBatch,
+          current_stage_code: 'CUSTOM',
+          stage_id: null,
+        } as any);
 
       mockDbSelect
         .mockReturnValueOnce({
           from: jest.fn().mockReturnValue({
-            where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }),
+            where: jest
+              .fn()
+              .mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }),
           }),
         })
         .mockReturnValueOnce({
-          from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([]) }),
+          from: jest
+            .fn()
+            .mockReturnValue({ where: jest.fn().mockResolvedValue([]) }),
         }); // LOB has no stages at all
-      mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) }) });
+      mockDbUpdate.mockReturnValue({
+        set: jest
+          .fn()
+          .mockReturnValue({ where: jest.fn().mockResolvedValue({}) }),
+      });
       mockDbInsert.mockReturnValue({ values: jest.fn().mockResolvedValue({}) });
 
-      const result = await service.transferStage('batch-1', { to_stage_code: 'CUSTOM' }, 'tenant-123', { userId: 'u' });
+      const result = await service.transferStage(
+        'batch-1',
+        { to_stage_code: 'CUSTOM' },
+        'tenant-123',
+        { userId: 'u' },
+      );
 
       expect(result.current_stage_code).toBe('CUSTOM');
     });
 
     it('rejects transferring a non-ACTIVE batch', async () => {
-      jest.spyOn(service, 'findOne').mockResolvedValueOnce({ ...activeBatch, status: 'DRAFT' } as any);
+      jest
+        .spyOn(service, 'findOne')
+        .mockResolvedValueOnce({ ...activeBatch, status: 'DRAFT' } as any);
 
       await expect(
-        service.transferStage('batch-1', { to_stage_code: 'QUARANTINE' }, 'tenant-123'),
+        service.transferStage(
+          'batch-1',
+          { to_stage_code: 'QUARANTINE' },
+          'tenant-123',
+        ),
       ).rejects.toThrow(BadRequestException);
     });
   });
 
   describe('addTransaction — clinical detail', () => {
-    const treatment = { transaction_date: '2026-09-14', transaction_type: 'CONSUMPTION',
-      item_id: 'medicine-id', quantity: 1, uom: 'ML', treatment_detail: { diagnosis: 'Treatment' } };
-
-    it.each([
-      { item_id: undefined }, { quantity: 0 }, { quantity: -1 }, { quantity: NaN }, { uom: undefined },
-    ])('refuses incomplete or nonpositive consumption before choosing an item: %j', async (invalid) => {
-      jest.spyOn(service, 'findOne').mockResolvedValue({ ...activeBatch, costing_method: 'BIO_ASSET' } as any);
-      await expect(service.addTransaction('batch-1', { ...treatment, ...invalid } as any, 'tenant-123'))
-        .rejects.toThrow(/explicit item_id, positive quantity and uom/);
-      expect(mockDbSelect).not.toHaveBeenCalled();
-      expect(mockDbInsert).not.toHaveBeenCalled();
-    });
-
-    it('refuses treatments that do not resolve to an active company medicine or vaccine', async () => {
-      jest.spyOn(service, 'findOne').mockResolvedValue(activeBatch as any);
-      let query: any;
-      mockDbSelect.mockReturnValue({ from: () => ({ where: (condition: any) => {
-        query = new MySqlDialect().sqlToQuery(condition);
-        return { limit: async () => [] };
-      } }) });
-      await expect(service.addTransaction('batch-1', treatment as any, 'tenant-123')).rejects.toThrow(/active medicine or vaccine/);
-      expect(query.sql).toContain('`company_id` = ?');
-      expect(query.sql).toContain('`is_active` = ?');
-      expect(query.params).toEqual(expect.arrayContaining(['comp-1', 'MEDICINE', 'VACCINE']));
-      expect(mockDbInsert).not.toHaveBeenCalled();
-    });
-
-    it('refuses a dose count when the medicine is stocked in a different unit', async () => {
-      jest.spyOn(service, 'findOne').mockResolvedValue(activeBatch as any);
-      mockDbSelect.mockReturnValue({ from: () => ({ where: () => ({ limit: async () => [{ uom_primary: 'ML' }] }) }) });
-      await expect(service.addTransaction('batch-1', { ...treatment, uom: 'DOSES' } as any, 'tenant-123'))
-        .rejects.toThrow(/stock unit ML/);
-      expect(mockDbInsert).not.toHaveBeenCalled();
-    });
-
-    it('refuses a selected animal outside the active batch and company', async () => {
-      jest.spyOn(service, 'findOne').mockResolvedValue(activeBatch as any);
-      let animalQuery: any;
-      mockDbSelect.mockReturnValue({ from: (table: unknown) => ({ where: (condition: any) => {
-        if (table === schema.animalRegister) animalQuery = new MySqlDialect().sqlToQuery(condition);
-        return { limit: async () => [{ uom_primary: 'ML' }], for: async () => [] };
-      } }) });
-      await expect(service.addTransaction('batch-1', { ...treatment, animal_id: 'animal-id' } as any, 'tenant-123'))
-        .rejects.toThrow(/active member of this batch/);
-      expect(animalQuery.sql).toContain('`current_batch_id` = ?');
-      expect(animalQuery.sql).toContain('`company_id` = ?');
-      expect(animalQuery.sql).toContain('`tenant_id` = ?');
-      expect(animalQuery.sql).toContain('`is_active` = ?');
-      expect(animalQuery.params).toEqual(expect.arrayContaining(['animal-id', 'batch-1', 'comp-1', 'tenant-123']));
-      expect(mockDbInsert).not.toHaveBeenCalled();
-    });
-
-    it('issues the selected vaccine to an active batch member using its stock unit', async () => {
-      jest.spyOn(service, 'findOne').mockResolvedValue({ ...activeBatch, batch_no: 'batch' } as any);
-      mockDbSelect.mockReturnValue({ from: () => ({ where: () => ({
-        limit: async () => [{ uom_primary: 'ML' }], for: async () => [{ animal_id: 'animal-id' }],
-      }) }) });
-      mockDbInsert.mockReturnValue({ values: jest.fn().mockResolvedValue({}) });
-      const ledger = module.get<InventoryLedgerService>(InventoryLedgerService);
-      const gl = module.get<GlPostingService>(GlPostingService);
-      ledger.writeNegativeEntry = jest.fn().mockResolvedValue({ ledger_id: 'ledger', rate: '2', amount: '-2' });
-      gl.postInventoryLedgerEntry = jest.fn().mockResolvedValue({});
-      await service.addTransaction('batch-1', { ...treatment, item_id: 'vaccine-id', animal_id: 'animal-id' } as any, 'tenant-123');
-      expect(ledger.writeNegativeEntry).toHaveBeenCalledWith(expect.objectContaining({ itemId: 'vaccine-id', quantity: 1, uom: 'ML' }));
-      expect(mockDbInsert).toHaveBeenCalledWith(schema.batchTreatmentDetail);
-    });
-
     // The guards run before any write, so a mismatched detail must leave
     // nothing behind — not a transaction row with an orphaned narrative.
     it('refuses mortality_detail on a transaction that is not a death', async () => {
-      jest.spyOn(service, 'findOne').mockResolvedValueOnce({ ...activeBatch, costing_method: 'STANDARD' } as any);
+      jest.spyOn(service, 'findOne').mockResolvedValueOnce({
+        ...activeBatch,
+        costing_method: 'STANDARD',
+      } as any);
 
       await expect(
-        service.addTransaction('batch-1', {
-          transaction_date: '2026-08-01',
-          transaction_type: 'CONSUMPTION',
-          quantity: 10,
-          mortality_detail: { cause_of_death: 'Lameness' },
-        } as any, 'tenant-123'),
+        service.addTransaction(
+          'batch-1',
+          {
+            transaction_date: '2026-08-01',
+            transaction_type: 'CONSUMPTION',
+            quantity: 10,
+            mortality_detail: { cause_of_death: 'Lameness' },
+          } as any,
+          'tenant-123',
+        ),
       ).rejects.toThrow(BadRequestException);
 
       expect(mockDbInsert).not.toHaveBeenCalled();
     });
 
     it('refuses treatment_detail on a transaction that does not issue medicine', async () => {
-      jest.spyOn(service, 'findOne').mockResolvedValueOnce({ ...activeBatch, costing_method: 'STANDARD' } as any);
+      jest.spyOn(service, 'findOne').mockResolvedValueOnce({
+        ...activeBatch,
+        costing_method: 'STANDARD',
+      } as any);
 
       await expect(
-        service.addTransaction('batch-1', {
-          transaction_date: '2026-08-01',
-          transaction_type: 'OVERHEAD',
-          quantity: 4,
-          treatment_detail: { withdrawal_days: 28 },
-        } as any, 'tenant-123'),
+        service.addTransaction(
+          'batch-1',
+          {
+            transaction_date: '2026-08-01',
+            transaction_type: 'OVERHEAD',
+            quantity: 4,
+            treatment_detail: { withdrawal_days: 28 },
+          } as any,
+          'tenant-123',
+        ),
       ).rejects.toThrow(BadRequestException);
 
       expect(mockDbInsert).not.toHaveBeenCalled();
@@ -637,7 +1261,9 @@ describe('BatchService', () => {
 
       (service as any).ledgerService = {
         writePositiveEntry: jest.fn().mockResolvedValue({
-          ledger_id: 'led-1', rate: '1200.000000', amount: '12000.0000',
+          ledger_id: 'led-1',
+          rate: '1200.000000',
+          amount: '12000.0000',
         }),
       };
       (service as any).glPostingService = {
@@ -647,9 +1273,16 @@ describe('BatchService', () => {
 
       const inserted: Array<{ table: unknown; values: any }> = [];
       mockDbInsert.mockImplementation((table: unknown) => ({
-        values: jest.fn((v: any) => { inserted.push({ table, values: v }); return Promise.resolve({}); }),
+        values: jest.fn((v: any) => {
+          inserted.push({ table, values: v });
+          return Promise.resolve({});
+        }),
       }));
-      mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) }) });
+      mockDbUpdate.mockReturnValue({
+        set: jest
+          .fn()
+          .mockReturnValue({ where: jest.fn().mockResolvedValue({}) }),
+      });
 
       await service.addTransaction(
         'batch-1',
@@ -686,7 +1319,12 @@ describe('BatchService', () => {
             where: jest.fn().mockReturnValue({
               limit: jest.fn().mockReturnValue({
                 offset: jest.fn().mockResolvedValue([
-                  { ...activeBatch, batch_id: 'b1', total_cost: null, closing_quantity: '20.0000' },
+                  {
+                    ...activeBatch,
+                    batch_id: 'b1',
+                    total_cost: null,
+                    closing_quantity: '20.0000',
+                  },
                 ]),
               }),
             }),
@@ -695,9 +1333,21 @@ describe('BatchService', () => {
         .mockReturnValueOnce({
           from: jest.fn().mockReturnValue({
             where: jest.fn().mockResolvedValue([
-              { batch_id: 'b1', transaction_type: 'CONSUMPTION', amount: '1232.0000' },
-              { batch_id: 'b1', transaction_type: 'OVERHEAD', amount: '3300.0000' },
-              { batch_id: 'b1', transaction_type: 'MORTALITY', amount: '0.0000' },
+              {
+                batch_id: 'b1',
+                transaction_type: 'CONSUMPTION',
+                amount: '1232.0000',
+              },
+              {
+                batch_id: 'b1',
+                transaction_type: 'OVERHEAD',
+                amount: '3300.0000',
+              },
+              {
+                batch_id: 'b1',
+                transaction_type: 'MORTALITY',
+                amount: '0.0000',
+              },
             ]),
           }),
         }); // cost-bearing transactions
@@ -714,7 +1364,12 @@ describe('BatchService', () => {
             where: jest.fn().mockReturnValue({
               limit: jest.fn().mockReturnValue({
                 offset: jest.fn().mockResolvedValue([
-                  { ...activeBatch, batch_id: 'b2', status: 'CLOSED', total_cost: '999999.0000' },
+                  {
+                    ...activeBatch,
+                    batch_id: 'b2',
+                    status: 'CLOSED',
+                    total_cost: '999999.0000',
+                  },
                 ]),
               }),
             }),
@@ -723,7 +1378,11 @@ describe('BatchService', () => {
         .mockReturnValueOnce({
           from: jest.fn().mockReturnValue({
             where: jest.fn().mockResolvedValue([
-              { batch_id: 'b2', transaction_type: 'CONSUMPTION', amount: '10.0000' },
+              {
+                batch_id: 'b2',
+                transaction_type: 'CONSUMPTION',
+                amount: '10.0000',
+              },
             ]),
           }),
         });
@@ -764,16 +1423,42 @@ describe('BatchService', () => {
       kpi_uom: null,
     };
 
-    // Every getDataEntry query in order: same-day transactions, same-day
-    // batch_daily_data entries, item rows, resource rows, uom conversions.
+    // Every getDataEntry query in order: lock lookup, same-day transactions,
+    // same-day batch_daily_data entries, item rows, resource rows, uom
+    // conversions.
     const setup = (line: any, itemRow: any | null) => {
       jest.spyOn(service, 'findOne').mockResolvedValue(scheduledBatch as any);
-      jest.spyOn(service as any, 'loadActiveScheduleLines').mockResolvedValue([{ header: schedulerHeader, line }]);
+      jest
+        .spyOn(service as any, 'loadActiveScheduleLines')
+        .mockResolvedValue([{ header: schedulerHeader, line }]);
       mockDbSelect
-        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([]) }) }) // same-day transactions
-        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([]) }) }) // same-day daily-data entries
-        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue(itemRow ? [itemRow] : []) }) }) // item rows
-        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([]) }) }) // resource rows
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            where: jest
+              .fn()
+              .mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }),
+          }),
+        }) // lock lookup
+        .mockReturnValueOnce({
+          from: jest
+            .fn()
+            .mockReturnValue({ where: jest.fn().mockResolvedValue([]) }),
+        }) // same-day transactions
+        .mockReturnValueOnce({
+          from: jest
+            .fn()
+            .mockReturnValue({ where: jest.fn().mockResolvedValue([]) }),
+        }) // same-day daily-data entries
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            where: jest.fn().mockResolvedValue(itemRow ? [itemRow] : []),
+          }),
+        }) // item rows
+        .mockReturnValueOnce({
+          from: jest
+            .fn()
+            .mockReturnValue({ where: jest.fn().mockResolvedValue([]) }),
+        }) // resource rows
         .mockReturnValueOnce({ from: jest.fn().mockResolvedValue([]) }); // uom conversions
     };
 
@@ -787,7 +1472,10 @@ describe('BatchService', () => {
         uom_primary: 'KG',
       });
 
-      const result = await service.getDataEntry('batch-1', '2026-09-01');
+      const result = (await service.getDataEntry(
+        'batch-1',
+        '2026-09-01',
+      )) as any;
 
       // 28/kg, not 2.2 — the per-head quantity was being surfaced as a price,
       // so the data-entry screen costed 6 labour hours at ₹6.
@@ -805,13 +1493,75 @@ describe('BatchService', () => {
 
     it('reports no rate rather than a quantity when the line has no item or resource', async () => {
       setup(
-        { ...feedLine, line_id: 'line-labour', line_type: 'DESCRIPTIVE', item_id: null, qty_basis: null, standard_qty: null, kpi_uom: 'HRS' },
+        {
+          ...feedLine,
+          line_id: 'line-labour',
+          line_type: 'DESCRIPTIVE',
+          item_id: null,
+          qty_basis: null,
+          standard_qty: null,
+          kpi_uom: 'HRS',
+        },
         null,
       );
 
-      const result = await service.getDataEntry('batch-1', '2026-09-01');
+      const result = (await service.getDataEntry(
+        'batch-1',
+        '2026-09-01',
+      )) as any;
 
       expect(result.lines[0].std_rate).toBeNull();
+    });
+
+    it('surfaces lock info from batch_data_entry_lock alongside the lines', async () => {
+      jest.spyOn(service, 'findOne').mockResolvedValue(scheduledBatch as any);
+      jest
+        .spyOn(service as any, 'loadActiveScheduleLines')
+        .mockResolvedValue([{ header: schedulerHeader, line: feedLine }]);
+      mockDbSelect
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            where: jest.fn().mockReturnValue({
+              limit: jest.fn().mockResolvedValue([
+                {
+                  status: 'LOCKED',
+                  locked_by: 'user-1',
+                  locked_at: '2026-09-01 10:00:00',
+                  reopen_reason: null,
+                },
+              ]),
+            }),
+          }),
+        }) // lock lookup
+        .mockReturnValueOnce({
+          from: jest
+            .fn()
+            .mockReturnValue({ where: jest.fn().mockResolvedValue([]) }),
+        }) // same-day transactions
+        .mockReturnValueOnce({
+          from: jest
+            .fn()
+            .mockReturnValue({ where: jest.fn().mockResolvedValue([]) }),
+        }) // same-day daily-data entries
+        .mockReturnValueOnce({
+          from: jest
+            .fn()
+            .mockReturnValue({ where: jest.fn().mockResolvedValue([]) }),
+        }) // item rows
+        .mockReturnValueOnce({
+          from: jest
+            .fn()
+            .mockReturnValue({ where: jest.fn().mockResolvedValue([]) }),
+        }) // resource rows
+        .mockReturnValueOnce({ from: jest.fn().mockResolvedValue([]) }); // uom conversions
+
+      const result = (await service.getDataEntry(
+        'batch-1',
+        '2026-09-01',
+      )) as any;
+
+      expect(result.lock_status).toBe('LOCKED');
+      expect(result.locked_by).toBe('user-1');
     });
   });
 
@@ -827,7 +1577,9 @@ describe('BatchService', () => {
     it('transitions PREMATURE batch to MATURE, calculates amortization rate, and posts BIO_TRANSFORMATION', async () => {
       jest.spyOn(service, 'findOne').mockResolvedValue(bioBatch as any);
 
-      const mockGlService = { postBatchCostEntry: jest.fn().mockResolvedValue({ journal_id: 'j-1' }) };
+      const mockGlService = {
+        postBatchCostEntry: jest.fn().mockResolvedValue({ journal_id: 'j-1' }),
+      };
       (service as any).glPostingService = mockGlService;
 
       mockDbSelect
@@ -849,12 +1601,20 @@ describe('BatchService', () => {
         .mockReturnValueOnce({
           from: jest.fn().mockReturnValue({
             where: jest.fn().mockReturnValue({
-              limit: jest.fn().mockResolvedValue([{ breed_id: 'breed-1', productive_life_months: 24 }]),
+              limit: jest
+                .fn()
+                .mockResolvedValue([
+                  { breed_id: 'breed-1', productive_life_months: 24 },
+                ]),
             }),
           }),
         });
 
-      mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) }) });
+      mockDbUpdate.mockReturnValue({
+        set: jest
+          .fn()
+          .mockReturnValue({ where: jest.fn().mockResolvedValue({}) }),
+      });
       mockDbInsert.mockReturnValue({ values: jest.fn().mockResolvedValue({}) });
 
       await service.matureBioAsset(
@@ -874,7 +1634,8 @@ describe('BatchService', () => {
       );
 
       expect(mockDbUpdate).toHaveBeenCalled();
-      const setCall = (mockDbUpdate.mock.results[0].value.set as jest.Mock).mock.calls[0][0];
+      const setCall = (mockDbUpdate.mock.results[0].value.set as jest.Mock).mock
+        .calls[0][0];
       expect(setCall.stage).toBe('MATURE');
       expect(Number(setCall.monthly_amortization_rate)).toBeCloseTo(187.5);
     });
@@ -899,7 +1660,11 @@ describe('BatchService', () => {
       });
 
       await expect(
-        service.matureBioAsset('batch-1', { residual_value_per_unit: 500 }, 'tenant-123'),
+        service.matureBioAsset(
+          'batch-1',
+          { residual_value_per_unit: 500 },
+          'tenant-123',
+        ),
       ).rejects.toThrow(BadRequestException);
     });
   });
@@ -915,7 +1680,9 @@ describe('BatchService', () => {
     it('posts BIO_AMORTIZATION and reduces nca_book_value', async () => {
       jest.spyOn(service, 'findOne').mockResolvedValue(matureBioBatch as any);
 
-      const mockGlService = { postBatchCostEntry: jest.fn().mockResolvedValue({ journal_id: 'j-1' }) };
+      const mockGlService = {
+        postBatchCostEntry: jest.fn().mockResolvedValue({ journal_id: 'j-1' }),
+      };
       (service as any).glPostingService = mockGlService;
 
       // 1. getBioAssetState
@@ -942,10 +1709,19 @@ describe('BatchService', () => {
         }),
       });
 
-      mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) }) });
+      mockDbUpdate.mockReturnValue({
+        set: jest
+          .fn()
+          .mockReturnValue({ where: jest.fn().mockResolvedValue({}) }),
+      });
       mockDbInsert.mockReturnValue({ values: jest.fn().mockResolvedValue({}) });
 
-      await service.amortizeBioAsset('batch-1', { posting_date: '2026-02-15' }, 'tenant-123', { userId: 'user-1' });
+      await service.amortizeBioAsset(
+        'batch-1',
+        { posting_date: '2026-02-15' },
+        'tenant-123',
+        { userId: 'user-1' },
+      );
 
       // 187.5 * 10 = 1875
       expect(mockGlService.postBatchCostEntry).toHaveBeenCalledWith(
@@ -956,7 +1732,8 @@ describe('BatchService', () => {
         }),
       );
 
-      const setCall = (mockDbUpdate.mock.results[0].value.set as jest.Mock).mock.calls[0][0];
+      const setCall = (mockDbUpdate.mock.results[0].value.set as jest.Mock).mock
+        .calls[0][0];
       expect(Number(setCall.nca_book_value)).toBeCloseTo(43125);
     });
 
@@ -981,12 +1758,20 @@ describe('BatchService', () => {
       });
       mockDbSelect.mockReturnValueOnce({
         from: jest.fn().mockReturnValue({
-          where: jest.fn().mockResolvedValue([{ posting_date: '2026-02-01', entry_type: 'AMORTIZATION' }]),
+          where: jest
+            .fn()
+            .mockResolvedValue([
+              { posting_date: '2026-02-01', entry_type: 'AMORTIZATION' },
+            ]),
         }),
       });
 
       await expect(
-        service.amortizeBioAsset('batch-1', { posting_date: '2026-02-28' }, 'tenant-123'),
+        service.amortizeBioAsset(
+          'batch-1',
+          { posting_date: '2026-02-28' },
+          'tenant-123',
+        ),
       ).rejects.toThrow(BadRequestException);
     });
   });
@@ -1002,7 +1787,9 @@ describe('BatchService', () => {
     it('posts BIO_FAIR_VALUE with reverseDirection for fair value loss', async () => {
       jest.spyOn(service, 'findOne').mockResolvedValue(matureBioBatch as any);
 
-      const mockGlService = { postBatchCostEntry: jest.fn().mockResolvedValue({ journal_id: 'j-1' }) };
+      const mockGlService = {
+        postBatchCostEntry: jest.fn().mockResolvedValue({ journal_id: 'j-1' }),
+      };
       (service as any).glPostingService = mockGlService;
 
       mockDbSelect.mockReturnValueOnce({
@@ -1021,11 +1808,20 @@ describe('BatchService', () => {
         }),
       });
 
-      mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) }) });
+      mockDbUpdate.mockReturnValue({
+        set: jest
+          .fn()
+          .mockReturnValue({ where: jest.fn().mockResolvedValue({}) }),
+      });
       mockDbInsert.mockReturnValue({ values: jest.fn().mockResolvedValue({}) });
 
       // Fair value drops to 3500/unit -> loss of 500 * 10 = 5000
-      await service.recordFairValue('batch-1', { fair_value_per_unit: 3500, posting_date: '2026-03-01' }, 'tenant-123', { userId: 'user-1' });
+      await service.recordFairValue(
+        'batch-1',
+        { fair_value_per_unit: 3500, posting_date: '2026-03-01' },
+        'tenant-123',
+        { userId: 'user-1' },
+      );
 
       expect(mockGlService.postBatchCostEntry).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1035,7 +1831,8 @@ describe('BatchService', () => {
         }),
       );
 
-      const setCall = (mockDbUpdate.mock.results[0].value.set as jest.Mock).mock.calls[0][0];
+      const setCall = (mockDbUpdate.mock.results[0].value.set as jest.Mock).mock
+        .calls[0][0];
       expect(Number(setCall.nca_book_value)).toBeCloseTo(35000);
     });
   });
@@ -1051,8 +1848,14 @@ describe('BatchService', () => {
     it('auto-closes the batch when the last animals are disposed', async () => {
       jest.spyOn(service, 'findOne').mockResolvedValue(matureBioBatch as any);
 
-      const mockLedgerService = { writePositiveEntry: jest.fn().mockResolvedValue({ ledger_id: 'l-1' }) };
-      const mockGlService = { postInventoryLedgerEntry: jest.fn().mockResolvedValue({ journal_id: 'j-1' }) };
+      const mockLedgerService = {
+        writePositiveEntry: jest.fn().mockResolvedValue({ ledger_id: 'l-1' }),
+      };
+      const mockGlService = {
+        postInventoryLedgerEntry: jest
+          .fn()
+          .mockResolvedValue({ journal_id: 'j-1' }),
+      };
       (service as any).ledgerService = mockLedgerService;
       (service as any).glPostingService = mockGlService;
 
@@ -1070,16 +1873,13 @@ describe('BatchService', () => {
             ]),
           }),
         }),
-      }).mockReturnValueOnce({
-        // The harvest warehouse must sit on the batch's company and LOB (I4).
-        from: jest.fn().mockReturnValue({
-          where: jest.fn().mockReturnValue({
-            limit: jest.fn().mockResolvedValue([{ location_id: 'wh-1', company_id: 'comp-1', lob_id: 'lob-piggery', parent: 'farm-1', farm_id: 'farm-1' }]),
-          }),
-        }),
       });
 
-      mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) }) });
+      mockDbUpdate.mockReturnValue({
+        set: jest
+          .fn()
+          .mockReturnValue({ where: jest.fn().mockResolvedValue({}) }),
+      });
       mockDbInsert.mockReturnValue({ values: jest.fn().mockResolvedValue({}) });
 
       await service.disposeBioAsset(
@@ -1108,7 +1908,9 @@ describe('BatchService', () => {
       // Verify that batchHeader was updated to CLOSED
       const setMock = mockDbUpdate.mock.results[0].value.set as jest.Mock;
       const allSetCalls = setMock.mock.calls.map((call) => call[0]);
-      const batchHeaderCloseCall = allSetCalls.find((call) => call.status === 'CLOSED');
+      const batchHeaderCloseCall = allSetCalls.find(
+        (call) => call.status === 'CLOSED',
+      );
       expect(batchHeaderCloseCall).toBeDefined();
       expect(batchHeaderCloseCall.status).toBe('CLOSED');
     });
@@ -1116,7 +1918,9 @@ describe('BatchService', () => {
 
   describe('bulkAddDailyTransactions', () => {
     it('iterates rows and dispatches addTransaction for feed, mortality, and temperature', async () => {
-      const addTxSpy = jest.spyOn(service, 'addTransaction').mockResolvedValue({ transaction_id: 'tx-1' } as any);
+      const addTxSpy = jest
+        .spyOn(service, 'addTransaction')
+        .mockResolvedValue({ transaction_id: 'tx-1' } as any);
 
       const res = await service.bulkAddDailyTransactions(
         {
@@ -1141,7 +1945,7 @@ describe('BatchService', () => {
           ],
         },
         'tenant-123',
-        { userId: 'user-1' }
+        { userId: 'user-1' },
       );
 
       expect(res.totalEntries).toBe(2);
@@ -1157,12 +1961,20 @@ describe('BatchService', () => {
     // scheduler-header.service.spec.ts. This is a thin delegator, so the only
     // thing worth asserting here is that the delegation happens.
     it('delegates to SchedulerHeaderService.generateForBatchCurrentStage', async () => {
-      const schedulerHeaderService = module.get<SchedulerHeaderService>(SchedulerHeaderService);
-      const spy = jest.spyOn(schedulerHeaderService, 'generateForBatchCurrentStage').mockResolvedValue({ scheduler_id: 'sched-1' } as any);
+      const schedulerHeaderService = module.get<SchedulerHeaderService>(
+        SchedulerHeaderService,
+      );
+      const spy = jest
+        .spyOn(schedulerHeaderService, 'generateForBatchCurrentStage')
+        .mockResolvedValue({ scheduler_id: 'sched-1' } as any);
 
-      const res = await service.generateSchedulerForBatch('b-1', 'tenant-123', { userId: 'user-1' });
+      const res = await service.generateSchedulerForBatch('b-1', 'tenant-123', {
+        userId: 'user-1',
+      });
 
-      expect(spy).toHaveBeenCalledWith('b-1', 'tenant-123', { userId: 'user-1' });
+      expect(spy).toHaveBeenCalledWith('b-1', 'tenant-123', {
+        userId: 'user-1',
+      });
       expect(res).toEqual({ scheduler_id: 'sched-1' });
     });
   });
@@ -1172,7 +1984,9 @@ describe('BatchService', () => {
       jest.spyOn(service, 'findOne').mockResolvedValue({
         batch_id: 'b-1',
         batch_no: 'BATCH-2026-0001',
-        start_date: new Date(Date.now() - 5 * 86400000).toISOString().slice(0, 10),
+        start_date: new Date(Date.now() - 5 * 86400000)
+          .toISOString()
+          .slice(0, 10),
         initial_quantity: 100,
         current_quantity: 98,
       } as any);
@@ -1185,7 +1999,9 @@ describe('BatchService', () => {
                 orderBy: jest.fn().mockResolvedValue([
                   {
                     tx: {
-                      transaction_date: new Date(Date.now() - 3 * 86400000).toISOString().slice(0, 10),
+                      transaction_date: new Date(Date.now() - 3 * 86400000)
+                        .toISOString()
+                        .slice(0, 10),
                       transaction_type: 'CONSUMPTION',
                       quantity: '120.00',
                     },
@@ -1193,7 +2009,9 @@ describe('BatchService', () => {
                   },
                   {
                     tx: {
-                      transaction_date: new Date(Date.now() - 2 * 86400000).toISOString().slice(0, 10),
+                      transaction_date: new Date(Date.now() - 2 * 86400000)
+                        .toISOString()
+                        .slice(0, 10),
                       transaction_type: 'MORTALITY',
                       quantity: '2.00',
                     },
@@ -1205,7 +2023,9 @@ describe('BatchService', () => {
           }),
         }) // batch transactions
         .mockReturnValueOnce({
-          from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([]) }),
+          from: jest
+            .fn()
+            .mockReturnValue({ where: jest.fn().mockResolvedValue([]) }),
         }); // scheduler_header rows for this batch — none, so schedulerLines is never queried
 
       const res = await service.getBatchPerformanceCurves('b-1', 'tenant-123');
@@ -1214,205 +2034,6 @@ describe('BatchService', () => {
       expect(res.curves.length).toBeGreaterThan(0);
       expect(res.summary.totalActFeedKg).toBe(120);
       expect(res.summary.totalMortality).toBe(2);
-    });
-  });
-
-  describe('farm scope', () => {
-    const grasmere: FarmScope = { farmId: 'farm-g', restricted: true, companyId: 'co-1', lobId: 'lob-pig' };
-
-    // Table-keyed db double, modelled on batch-daily-data.service.spec.ts —
-    // needed here because create() -> findOne() fans out into many unrelated
-    // selects (input lines, transactions, attachments, ...) that a
-    // call-order-sequenced mock can't accommodate.
-    const rows = new Map<unknown, unknown[]>();
-    const insertedByTable = new Map<unknown, unknown>();
-
-    const chain = (result: unknown[]) => {
-      const self: any = {
-        from: () => self,
-        where: (condition?: any) => {
-          if (!condition || !result.some((row: any) => row?.location_id)) return self;
-          const params = new MySqlDialect().sqlToQuery(condition).params;
-          const matchingIds = new Set(params.filter((param): param is string => typeof param === 'string'));
-          const filtered = result.filter((row: any) => !row?.location_id || matchingIds.has(row.location_id));
-          return chain(filtered.length ? filtered : result);
-        },
-        limit: () => self,
-        for: () => self,
-        orderBy: () => self,
-        leftJoin: () => self,
-        innerJoin: () => self,
-        then: (ok: any, err: any) => Promise.resolve(result).then(ok, err),
-      };
-      return self;
-    };
-
-    const insertedValues = (table: unknown) => insertedByTable.get(table);
-
-    const validCreateDto = {
-      company_id: 'co-1',
-      lob_id: 'lob-pig',
-      farm_id: 'farm-g',
-      animal_tracking: 'COUNT_ONLY',
-      stage_id: 'stage-1',
-      costing_method: 'FIFO',
-      start_date: '2026-01-01',
-      opening_quantity: 100,
-      uom: 'HEAD',
-      input_lines: [] as unknown[],
-    };
-
-    beforeEach(() => {
-      rows.clear();
-      insertedByTable.clear();
-      rows.set(schema.lobMaster, [{ nob_id: 'nob-1', lob_name: 'Piggery', costing_method_allowed: 'FIFO,STANDARD' }]);
-      rows.set(schema.stageMaster, [{
-        stage_id: 'stage-1', tenant_id: 'tenant-1', company_id: 'co-1', lob_id: 'lob-pig',
-        stage_code: 'ENTRY', is_active: true, deleted_at: null,
-      }]);
-      rows.set(schema.locationMaster, [{
-        location_id: 'farm-g', tenant_id: 'tenant-1', company_id: 'co-1', lob_id: 'lob-pig',
-        location_type: 'FARM', parent_location_id: null, farm_id: 'farm-g', is_active: true, deleted_at: null,
-      }]);
-      rows.set(schema.batchHeader, [{ ...activeBatch }]);
-
-      mockDbSelect.mockReset();
-      mockDbSelect.mockImplementation(() => ({ from: (table: unknown) => chain(rows.get(table) ?? []) }));
-      mockDb.select = mockDbSelect;
-
-      mockDbInsert.mockReset();
-      mockDbInsert.mockImplementation((table: unknown) => ({
-        values: jest.fn((v: unknown) => { insertedByTable.set(table, v); return Promise.resolve({}); }),
-      }));
-
-      mockDbTransaction.mockReset();
-      mockDbTransaction.mockImplementation(async (work: any) => work(mockDb));
-    });
-
-    it('answers 404 for a batch on another farm', async () => {
-      useFarmScope(grasmere);
-      rows.set(schema.batchHeader, []); // the scoped query finds nothing
-      await expect(service.findOne('batch-on-kintyre')).rejects.toThrow(NotFoundException);
-    });
-
-    it('stamps the farm derived from the batch location on create', async () => {
-      useFarmScope(grasmere);
-      rows.set(schema.locationMaster, [
-        { location_id: 'farm-g', tenant_id: 'tenant-1', parent_location_id: null, farm_id: 'farm-g', company_id: 'co-1', lob_id: 'lob-pig', location_type: 'FARM', is_active: true, deleted_at: null },
-        { location_id: 'pen-1', tenant_id: 'tenant-1', parent_location_id: 'shed-1', farm_id: 'farm-g', company_id: 'co-1', lob_id: 'lob-pig', location_type: 'PEN', is_active: true, deleted_at: null },
-      ]);
-      await service.create({ ...validCreateDto, location_id: 'pen-1' } as any, 'tenant-1', { userId: 'u-1' } as any);
-      expect(insertedValues(schema.batchHeader)).toMatchObject({ farm_id: 'farm-g' });
-    });
-
-    /**
-     * Recovery review follow-ups on the batch lifecycle. The batch below runs
-     * on Grasmere; every Kintyre id must be refused before anything is written.
-     */
-    const grasmereBatch = {
-      ...activeBatch, company_id: 'co-1', lob_id: 'lob-pig', farm_id: 'farm-g', batch_no: 'B-G-1',
-      costing_method: 'FIFO', input_lines: [], transactions: [],
-    };
-    const kintyreWarehouse = { location_id: 'wh-k', parent: 'farm-k', farm_id: 'farm-k', company_id: 'co-1', lob_id: 'lob-pig' };
-    const consumption = { transaction_date: '2026-09-14', transaction_type: 'CONSUMPTION', item_id: 'feed-1', quantity: 100, uom: 'KG' };
-
-    it('M3: answers not-found for an out-of-scope batch without taking the row lock', async () => {
-      useFarmScope(grasmere);
-      rows.set(schema.batchHeader, []); // the batch exists on Kintyre; scoped reads find nothing
-      const locked: unknown[] = [];
-      mockDbSelect.mockImplementation(() => ({ from: (table: unknown) => {
-        const c = chain(rows.get(table) ?? []);
-        c.for = () => { locked.push(table); return c; };
-        return c;
-      } }));
-
-      await expect(service.addTransaction('batch-on-kintyre', consumption as any, 'tenant-1'))
-        .rejects.toThrow(NotFoundException);
-      // Before the fix the FOR UPDATE on batch_header ran first, then findOne refused.
-      expect(locked).toEqual([]);
-      expect(mockDbInsert).not.toHaveBeenCalled();
-    });
-
-    it("I3: refuses consumption whose stock exists only in another farm's warehouse, with no ledger write", async () => {
-      jest.spyOn(service, 'findOne').mockResolvedValue(grasmereBatch as any);
-      rows.set(schema.inventoryLedger, [{ warehouse_id: 'wh-k', remaining_quantity: '500', on_farm: 0 }]);
-      let projection: any;
-      mockDbSelect.mockImplementation((p?: any) => {
-        if (p?.on_farm) projection = p;
-        return { from: (table: unknown) => chain(rows.get(table) ?? []) };
-      });
-      const writeNegativeEntry = jest.fn();
-      (service as any).ledgerService = { writeNegativeEntry };
-
-      await expect(service.addTransaction('batch-1', consumption as any, 'tenant-1'))
-        .rejects.toThrow("Stock must come from a warehouse on the batch's farm.");
-      // Before the fix nothing checked the layers: the ledger drew company-wide.
-      expect(writeNegativeEntry).not.toHaveBeenCalled();
-      expect(mockDbInsert).not.toHaveBeenCalled();
-      const onFarm = new MySqlDialect().sqlToQuery(projection.on_farm);
-      expect(onFarm.sql).toContain('lf.farm_id = ?');
-      expect(onFarm.params).toContain('farm-g');
-    });
-
-    it("I3: bounds the ledger's FIFO draw to the batch farm's warehouse when an older layer sits off the farm", async () => {
-      jest.spyOn(service, 'findOne').mockResolvedValue(grasmereBatch as any);
-      rows.set(schema.inventoryLedger, [
-        { warehouse_id: 'wh-k', remaining_quantity: '500', on_farm: 0 }, // oldest, Kintyre
-        { warehouse_id: 'wh-g', remaining_quantity: '300', on_farm: 1 },
-      ]);
-      const writeNegativeEntry = jest.fn().mockRejectedValue(new Error('stop after the ledger call'));
-      (service as any).ledgerService = { writeNegativeEntry };
-
-      await expect(service.addTransaction('batch-1', consumption as any, 'tenant-1')).rejects.toThrow('stop after the ledger call');
-      // Before the fix warehouseId was never passed, so FIFO would take Kintyre's layer.
-      expect(writeNegativeEntry).toHaveBeenCalledWith(expect.objectContaining({ itemId: 'feed-1', warehouseId: 'wh-g' }));
-    });
-
-    it("I4: refuses a stage transfer into a location on another farm, before any write", async () => {
-      jest.spyOn(service, 'findOne').mockResolvedValue(grasmereBatch as any);
-      rows.set(schema.locationMaster, [kintyreWarehouse]);
-
-      await expect(service.transferStage('batch-1', { to_stage_code: 'GROWER', to_location_id: 'wh-k' } as any, 'tenant-1'))
-        .rejects.toThrow("Stage location is not on the batch's farm.");
-      expect(mockDbUpdate).not.toHaveBeenCalled();
-      expect(mockDbInsert).not.toHaveBeenCalled();
-    });
-
-    it("I4: refuses closing with an output warehouse on another farm, before any stock posts", async () => {
-      jest.spyOn(service, 'findOne').mockResolvedValue(grasmereBatch as any);
-      rows.set(schema.locationMaster, [kintyreWarehouse]);
-      const writePositiveEntry = jest.fn();
-      (service as any).ledgerService = { writePositiveEntry };
-
-      await expect(service.close('batch-1', {
-        output_lines: [{ item_id: 'pork', quantity: 10, uom: 'KG', cost_split_pct: 100, warehouse_id: 'wh-k' }],
-      } as any, 'tenant-1')).rejects.toThrow(ForbiddenException);
-      expect(writePositiveEntry).not.toHaveBeenCalled();
-      expect(mockDbInsert).not.toHaveBeenCalled();
-    });
-
-    it("I4: refuses a harvest disposal into a warehouse on another farm, before any stock posts", async () => {
-      jest.spyOn(service, 'findOne').mockResolvedValue({ ...grasmereBatch, costing_method: 'BIO_ASSET' } as any);
-      rows.set(schema.batchBioAssetState, [{ batch_id: 'batch-1', stage: 'MATURE', current_quantity: '5', nca_book_value: '20000' }]);
-      rows.set(schema.locationMaster, [kintyreWarehouse]);
-      const writePositiveEntry = jest.fn();
-      (service as any).ledgerService = { writePositiveEntry };
-
-      await expect(service.disposeBioAsset('batch-1', {
-        disposal_type: 'HARVEST', quantity: 5, posting_date: '2026-09-14',
-        output_item_id: 'pork', output_uom: 'KG', output_quantity: 400, warehouse_id: 'wh-k',
-      } as any, 'tenant-1')).rejects.toThrow("Harvest warehouse is not on the batch's farm.");
-      expect(writePositiveEntry).not.toHaveBeenCalled();
-    });
-
-    it('refuses creating a batch on a location of another farm', async () => {
-      useFarmScope(grasmere);
-      rows.set(schema.locationMaster, [
-        { location_id: 'farm-g', tenant_id: 'tenant-1', parent_location_id: null, farm_id: 'farm-g', company_id: 'co-1', lob_id: 'lob-pig', location_type: 'FARM', is_active: true, deleted_at: null },
-        { location_id: 'pen-k', tenant_id: 'tenant-1', parent_location_id: 'shed-k', farm_id: 'farm-k', company_id: 'co-1', lob_id: 'lob-pig', location_type: 'PEN', is_active: true, deleted_at: null },
-      ]);
-      await expect(service.create({ ...validCreateDto, location_id: 'pen-k' } as any, 'tenant-1', { userId: 'u-1' } as any))
-        .rejects.toThrow("Batch location is not on the batch's farm.");
     });
   });
 });

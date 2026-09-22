@@ -47,11 +47,12 @@ import { PROFILE_ITEMS } from "../../components/shell/ProfilePopover";
 import { ThemeIconButton } from "../../components/shell/ThemeIconButton";
 import { resolveLobFamily } from "@/lib/lob";
 import { LIVESTOCK_SECTIONS } from "@/components/console/livestock/livestock-page-shell";
+import { MASTER_DATA_CONFIGS, MASTER_DATA_NAV_ORDER } from "@/modules/master-data/configs";
 
 export default function ConsoleLayout({ children, modal }: { children: React.ReactNode; modal: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
-  const { t, tLob } = useLanguage();
+  const { t, tLob, tLabel } = useLanguage();
   const [user, setUser] = useState<NavUser | null>(null);
   const [ready, setReady] = useState(false);
 
@@ -283,6 +284,20 @@ export default function ConsoleLayout({ children, modal }: { children: React.Rea
         : t(section.labelKey),
     href: section.href,
   }));
+  // Same list master-data-page-shell.tsx used to render as its own docked
+  // column — folded into the primary nav's hover flyout instead, in the
+  // client-requested order (MASTER_DATA_NAV_ORDER), so there is exactly one
+  // place a master's link lives rather than two.
+  const masterDataChildren = MASTER_DATA_CONFIGS.filter((c) => c.isPrimary)
+    .sort((a, b) => {
+      const ai = MASTER_DATA_NAV_ORDER.indexOf(a.key);
+      const bi = MASTER_DATA_NAV_ORDER.indexOf(b.key);
+      if (ai === -1 && bi === -1) return 0;
+      if (ai === -1) return 1;
+      if (bi === -1) return -1;
+      return ai - bi;
+    })
+    .map((c) => ({ label: tLabel(c.label), href: `/master-data/${c.key}` }));
 
   let navItems: AppShellNavItem[] = [];
 
@@ -290,7 +305,7 @@ export default function ConsoleLayout({ children, modal }: { children: React.Rea
     navItems = [
       { label: t("dashboard"),       href: "/dashboard",      icon: LayoutDashboard },
       { label: t("companies"),       href: "/companies",      icon: Building2 },
-      { label: t("masterData"),      href: "/master-data",    icon: Database, activePrefix: "/master-data" },
+      { label: t("masterData"),      href: "/master-data",    icon: Database, activePrefix: "/master-data", children: masterDataChildren, flyout: true },
       { label: t("teamManagement"),  href: "/users",          icon: Users },
       { label: t("auditLedger"),     href: "/audit",          icon: History },
       { label: t("notifications"),   href: "/notifications",  icon: Bell, activePrefix: "/notifications" },
@@ -312,7 +327,7 @@ export default function ConsoleLayout({ children, modal }: { children: React.Rea
       { label: t("navLivestock"), href: "/livestock", icon: Pill, children: livestockChildren },
       { label: t("inventoryStock"), href: "/inventory/balance", icon: Boxes, activePrefix: "/inventory" },
       { label: t("financeCosting"), href: "/finance/journal", icon: Landmark, activePrefix: "/finance" },
-      { label: t("masterData"),      href: "/master-data",    icon: Database, activePrefix: "/master-data" },
+      { label: t("masterData"),      href: "/master-data",    icon: Database, activePrefix: "/master-data", children: masterDataChildren, flyout: true },
       // A company is the entity under the tenant; an operational area is only a
       // scope for one LOB inside it. Neither is grouped under Settings — they
       // are not the same kind of thing as the three area configuration screens
@@ -378,7 +393,7 @@ export default function ConsoleLayout({ children, modal }: { children: React.Rea
       { label: t("navAlerts"), href: "/alerts", icon: AlertTriangle },
       { label: t("navTraceability"), href: "/traceability", icon: Package },
       { label: t("approvals"), href: "/approvals", icon: CheckSquare, activePrefix: "/approvals" },
-      { label: t("masterData"), href: "/master-data", icon: Database, activePrefix: "/master-data" },
+      { label: t("masterData"), href: "/master-data", icon: Database, activePrefix: "/master-data", children: masterDataChildren, flyout: true },
       {
         label: t("settings"),
         href: "/settings/area",

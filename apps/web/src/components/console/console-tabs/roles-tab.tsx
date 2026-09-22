@@ -74,7 +74,6 @@ const DEFAULT_RESOURCES = [
   // PRODUCTION (Phase 6)
   { module_code: "PRODUCTION", resource: "PARAMETER", name: "Production Parameters", nameKey: "rolProductionParameters" },
   { module_code: "PRODUCTION", resource: "BATCH_SCHEDULE", name: "Production Schedulers", nameKey: "rolProductionSchedulers" },
-  { module_code: "PRODUCTION", resource: "BATCH_ENTRY", name: "Daily Data Entry", nameKey: "rolDailyDataEntry" },
   // PRODUCTION (QC/QR)
   { module_code: "PRODUCTION", resource: "QC_PARAMETER", name: "QC Parameters", nameKey: "navQcParameters" },
   { module_code: "PRODUCTION", resource: "QC", name: "QC Inspections", nameKey: "rolQcInspections" },

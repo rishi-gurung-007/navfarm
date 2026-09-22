@@ -660,14 +660,14 @@ export default function CompanyTab({
                     required
                   />
                 </Field>
-                <Field label={t("ctOperatingCountry")} htmlFor="create-country-id" hint={t("ctHintCountryIso")}>
+                <Field label={t("ctOperatingCountry")} htmlFor="create-country-id" tooltip={t("ctHintCountryIso")}>
                   <Input
                     id="create-country-id"
                     value={createForm.country_id}
                     onChange={(e) => setCreateForm({ ...createForm, country_id: e.target.value })}
                   />
                 </Field>
-                <Field label={t("ctTimezone")} htmlFor="create-timezone" hint={t("ctHintTimezoneIana")}>
+                <Field label={t("ctTimezone")} htmlFor="create-timezone" tooltip={t("ctHintTimezoneIana")}>
                   <Input
                     id="create-timezone"
                     value={createForm.default_timezone_id}
@@ -829,7 +829,7 @@ export default function CompanyTab({
                     ) : (
                       <form onSubmit={handleSaveTab} className="flex flex-col gap-8">
                         <FieldGroup title={t("ctGrpIdentity")}>
-                          <Field className="sm:col-span-3" label={t("ctCompanyCode")} htmlFor="profile-company-code" hint={t("ctHintCodeFixed")}>
+                          <Field className="sm:col-span-3" label={t("ctCompanyCode")} htmlFor="profile-company-code" tooltip={t("ctHintCodeFixed")}>
                             <Input id="profile-company-code" value={profileForm.company_code} disabled />
                           </Field>
                           <Field className="sm:col-span-9" label={t("ctLegalEntityName")} htmlFor="profile-company-name" required>
@@ -840,7 +840,7 @@ export default function CompanyTab({
                               required
                             />
                           </Field>
-                          <Field className="sm:col-span-5" label={t("coFieldDisplayName")} htmlFor="profile-company-display-name" hint={t("ctHintDisplayName")}>
+                          <Field className="sm:col-span-5" label={t("coFieldDisplayName")} htmlFor="profile-company-display-name" tooltip={t("ctHintDisplayName")}>
                             <Input
                               id="profile-company-display-name"
                               value={profileForm.company_display_name}
@@ -915,7 +915,7 @@ export default function CompanyTab({
                               onChange={(e) => setProfileForm({ ...profileForm, website: e.target.value })}
                             />
                           </Field>
-                          <Field className="sm:col-span-6" label={t("ctEmailDomainAutoVerify")} htmlFor="profile-email-domain" hint={t("ctHintEmailDomain")}>
+                          <Field className="sm:col-span-6" label={t("ctEmailDomainAutoVerify")} htmlFor="profile-email-domain" tooltip={t("ctHintEmailDomain")}>
                             <Input
                               id="profile-email-domain"
                               value={profileForm.email_domain}
@@ -1075,7 +1075,7 @@ export default function CompanyTab({
                               required
                             />
                           </Field>
-                          <Field className="sm:col-span-2" label={t("country")} htmlFor="address-country" required hint={t("ctHintCountryIso")}>
+                          <Field className="sm:col-span-2" label={t("country")} htmlFor="address-country" required tooltip={t("ctHintCountryIso")}>
                             <Input
                               id="address-country"
                               value={addressForm.country_id}
@@ -1237,7 +1237,7 @@ export default function CompanyTab({
                           </Field>
                           {/* BBP-1 §1.1: "USD. All financial values stored in USD."
                               Changing this restates every amount in the company. */}
-                          <Field className="sm:col-span-6" label={t("ctBaseCurrency")} htmlFor="cfg-ct-base-currency" hint={t("ctHintBaseCurrency")}>
+                          <Field className="sm:col-span-6" label={t("ctBaseCurrency")} htmlFor="cfg-ct-base-currency" tooltip={t("ctHintBaseCurrency")}>
                             <Select
                               id="cfg-ct-base-currency"
                               value={localizationForm.base_currency_id}
@@ -1252,7 +1252,7 @@ export default function CompanyTab({
                         </FieldGroup>
 
                         <FieldGroup title={t("ctGrpPlaceTime")}>
-                          <Field className="sm:col-span-5" label={t("ctTimezoneId")} htmlFor="localization-timezone" required hint={t("ctHintTimezoneIana")}>
+                          <Field className="sm:col-span-5" label={t("ctTimezoneId")} htmlFor="localization-timezone" required tooltip={t("ctHintTimezoneIana")}>
                             <Input
                               id="localization-timezone"
                               className="font-mono"
@@ -1261,7 +1261,7 @@ export default function CompanyTab({
                               required
                             />
                           </Field>
-                          <Field className="sm:col-span-3" label={t("ctOperatingCountryCode")} htmlFor="localization-country" required hint={t("ctHintCountryIso")}>
+                          <Field className="sm:col-span-3" label={t("ctOperatingCountryCode")} htmlFor="localization-country" required tooltip={t("ctHintCountryIso")}>
                             <Input
                               id="localization-country"
                               className="font-mono uppercase"

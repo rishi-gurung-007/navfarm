@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, or, isNull } from 'drizzle-orm';
+import { eq, and, or, isNull, SQL } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
@@ -97,7 +97,7 @@ export class ItemTemplateService {
   }
 
   async findAll(tenantId?: string, companyId?: string | null) {
-    const conditions = [];
+    const conditions: SQL[] = [];
 
     if (tenantId) {
       conditions.push(

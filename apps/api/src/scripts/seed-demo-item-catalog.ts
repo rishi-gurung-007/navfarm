@@ -170,6 +170,59 @@ async function run() {
         });
       }
 
+      // Item Templates (Master Data → Items → Item Templates tab) — one per
+      // item type this catalog uses, short-coded (TPL-<TYPE>) same as every
+      // other series here. Each gets its OWN modern no_series row (NS-<TYPE>,
+      // matching the NS-FEED/NS-MED/NS-RAW naming 0102_add_master_type_to_no_series
+      // already seeded master_type for) rather than sharing the generic ITEM
+      // series above — a Feed item and a Medicine item created from their own
+      // template get their own numbering, not one shared counter.
+      const templates: Array<{ code: string; description: string; itemType: string; valuation: string; seriesCode: string; seriesPrefix: string }> = [
+        { code: 'TPL-FEED', description: 'Feed', itemType: 'FEED', valuation: 'FIFO', seriesCode: 'NS-FEED', seriesPrefix: 'FEED' },
+        { code: 'TPL-RAW', description: 'Raw Material', itemType: 'RAW_MATERIAL', valuation: 'FIFO', seriesCode: 'NS-RAW', seriesPrefix: 'RAW' },
+        { code: 'TPL-MED', description: 'Medicine', itemType: 'MEDICINE', valuation: 'FIFO', seriesCode: 'NS-MED', seriesPrefix: 'MED' },
+        { code: 'TPL-VAC', description: 'Vaccine', itemType: 'VACCINE', valuation: 'FIFO', seriesCode: 'NS-VAC', seriesPrefix: 'VAC' },
+        { code: 'TPL-LVS', description: 'Livestock', itemType: 'LIVESTOCK', valuation: 'STANDARD', seriesCode: 'NS-LVS', seriesPrefix: 'LVS' },
+      ];
+      const existingModernSeries = await tx.select({ id: schema.noSeries.id, code: schema.noSeries.code })
+        .from(schema.noSeries);
+      const noSeriesIdByCode = new Map(existingModernSeries.map((r) => [r.code, r.id]));
+      const existingTemplates = await tx.select({ template_code: schema.itemTemplate.template_code })
+        .from(schema.itemTemplate);
+      const existingTemplateCodes = new Set(existingTemplates.map((r) => r.template_code));
+      for (const t of templates) {
+        let noSeriesId = noSeriesIdByCode.get(t.seriesCode);
+        if (!noSeriesId) {
+          noSeriesId = randomUUID();
+          await tx.insert(schema.noSeries).values({
+            id: noSeriesId,
+            tenant_id: scope.tenantId,
+            company_id: scope.companyId,
+            code: t.seriesCode,
+            description: `${t.description} Item Code`,
+            document_type: 'ITEM',
+            master_type: 'ITEM',
+            no_series_code: t.seriesPrefix,
+            seq_length: 4,
+            manual_nos: false,
+          });
+          noSeriesIdByCode.set(t.seriesCode, noSeriesId);
+        }
+        if (existingTemplateCodes.has(t.code)) continue;
+        await tx.insert(schema.itemTemplate).values({
+          id: randomUUID(),
+          tenant_id: scope.tenantId,
+          company_id: scope.companyId,
+          template_code: t.code,
+          template_description: t.description,
+          no_series_id: noSeriesId,
+          item_type: t.itemType,
+          valuation_method: t.valuation,
+          inventory_type: 'INVENTORY',
+          is_active: true,
+        });
+      }
+
       if (verify) throw VERIFY_ROLLBACK;
       });
     } catch (err) {

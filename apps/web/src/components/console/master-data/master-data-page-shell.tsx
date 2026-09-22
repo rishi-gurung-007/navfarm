@@ -1,13 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getStoredUser, NavUser, getActiveCompanyId, getActiveWorkspaceScope, getActiveOperationalAreaId } from "@/hooks/useAuth";
 import { useLanguage } from "@/hooks/useLanguage";
-import { MASTER_DATA_CONFIGS, MASTER_DATA_GROUPS, getConfig } from "@/modules/master-data/configs";
+import { MASTER_DATA_CONFIGS, getConfig } from "@/modules/master-data/configs";
 import type { MasterDataConfig } from "@/modules/master-data/types";
 import MasterDataTable from "@/modules/master-data/MasterDataTable";
-import { useContextNav, type ContextNavModel } from "@/components/shell/ContextNav";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { ConsolePage } from "@/components/ui/console-page";
 import { Tabs } from "@/components/ui/tabs";
@@ -62,24 +61,11 @@ export function MasterDataPageShell({ activeKey }: { activeKey: string }) {
   }, [legacyLocation, router]);
   const parentConfig = (activeConfig.tabOf && getConfig(activeConfig.tabOf)) || activeConfig;
   const tabConfigs = MASTER_DATA_CONFIGS.filter((c) => c.tabOf === parentConfig.key);
-  const parentKey = parentConfig.key;
 
-  const contextNav = useMemo<ContextNavModel | null>(() => {
-    if (!ready || !mayView) return null;
-    return {
-      label: t("moduleSections", { module: t("masterData") }),
-      groups: MASTER_DATA_GROUPS.map((group) => ({
-        label: tLabel(group),
-        items: MASTER_DATA_CONFIGS
-          .filter((c) => c.group === group && c.isPrimary)
-          .map((c) => ({ key: c.key, label: tLabel(c.label) })),
-      })).filter((g) => g.items.length > 0),
-      activeKey: parentKey,
-      onSelect: (key) => router.push(`/master-data/${key}`),
-    };
-  }, [ready, mayView, parentKey, t, tLabel, router]);
-
-  useContextNav(contextNav);
+  // The index of masters used to be a second column here (ContextNav), always
+  // docked beside the table. It's now the primary sidebar's own Master Data
+  // hover flyout (see app/(app)/layout.tsx's masterDataChildren) — one list,
+  // not two — so this shell no longer registers a module index of its own.
 
   if (!ready || !user) return null;
 

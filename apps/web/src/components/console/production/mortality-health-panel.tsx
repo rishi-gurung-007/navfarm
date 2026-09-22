@@ -1022,11 +1022,11 @@ export default function MortalityHealthPanel() {
             <EntityLookupField id="treatment-item" label={t("mhMedicineVaccineAdministered")} options={healthItems} value={treatmentItemId} valueKey="item_id" labelKeys={["item_code", "item_name"]} onChange={(value) => setTreatmentItemId(String(value))} loading={healthItemsLoading} placeholder="Select medicine or vaccine" />
           </Field>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Field label="Stock quantity per animal" htmlFor="treatment-quantity" required hint="Enter stock issued for each selected animal, in the item's stock unit.">
+            <Field label="Stock quantity per animal" htmlFor="treatment-quantity" required tooltip="Enter stock issued for each selected animal, in the item's stock unit.">
               <input id="treatment-quantity" type="number" min="0" step="any" value={treatmentQuantity} onChange={(e) => setTreatmentQuantity(e.target.value)} className="nf-input w-full" />
             </Field>
             <ReadField label="Stock unit" value={selectedHealthItem?.uom_primary as string | undefined} />
-            <Field label="Lot number" htmlFor="treatment-lot" hint="Leave blank to use the oldest available stock.">
+            <Field label="Lot number" htmlFor="treatment-lot" tooltip="Leave blank to use the oldest available stock.">
               <input id="treatment-lot" value={treatmentLot} onChange={(e) => setTreatmentLot(e.target.value)} className="nf-input w-full" />
             </Field>
             <Field label="Dosage notes" htmlFor="treatment-dosage">

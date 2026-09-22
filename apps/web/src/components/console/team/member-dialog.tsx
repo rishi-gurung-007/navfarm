@@ -246,7 +246,7 @@ export function MemberDialog({
               </Field>
             )}
             {!isEdit && (
-              <Field label={t("usrTempPassword")} htmlFor="tm-password" hint={t("tmPasswordHint")} required>
+              <Field label={t("usrTempPassword")} htmlFor="tm-password" tooltip={t("tmPasswordHint")} required>
                 <PasswordInput id="tm-password" required minLength={8} value={form.password}
                   onChange={(e) => setForm({ ...form, password: e.target.value })} />
               </Field>
@@ -327,7 +327,7 @@ export function MemberDialog({
                   value={[member?.farm_code, member?.farm_name].filter(Boolean).join(" — ")}
                 />
               ) : (
-                <Field label={t("tmFieldFarm")} htmlFor="tm-farm" hint={t("tmFarmHint")} required className="sm:col-span-2">
+                <Field label={t("tmFieldFarm")} htmlFor="tm-farm" tooltip={t("tmFarmHint")} required className="sm:col-span-2">
                   <SearchableEntitySelect
                     id="tm-farm"
                     ariaLabel={t("tmFieldFarm")}

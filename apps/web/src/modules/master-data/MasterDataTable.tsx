@@ -8,8 +8,8 @@ import {
 } from "lucide-react";
 import { api } from "@/services/api-client";
 import { Dialog } from "@/components/ui/dialog";
-import { Field } from "@/components/ui/field";
-import { useIsDesktop } from "@/hooks/useMediaQuery";
+import { Drawer } from "@/components/ui/drawer";
+import { Field, FieldGroup } from "@/components/ui/field";
 import { InlineAlert } from "@/components/ui/alert";
 import { showToast } from "@/components/ui/toast";
 import { Pagination } from "@/components/ui/pagination";
@@ -456,6 +456,12 @@ export function MasterDataTable({
   const [lobFilterOptions, setLobFilterOptions] = useState<Row[]>([]);
   const [nobFilter, setNobFilter] = useState("");
   const [lobFilter, setLobFilter] = useState("");
+  // Location-only cascading filter: pick a Farm, then a Shed narrows to that
+  // farm's sheds — both resolve to the real `parent_location_id` column at
+  // request time (see `load()`), not a filter key of their own.
+  const [locationFarmOptions, setLocationFarmOptions] = useState<Row[]>([]);
+  const [locationShedOptions, setLocationShedOptions] = useState<Row[]>([]);
+  const [locationPenOptions, setLocationPenOptions] = useState<Row[]>([]);
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Row | null>(null);
@@ -511,7 +517,6 @@ export function MasterDataTable({
    * Cleared when the modal closes or when a normal (non-template) create is opened.
    */
   const [templateLockedFields, setTemplateLockedFields] = useState<Set<string>>(new Set());
-  const isDesktop = useIsDesktop();
 
   const currentUser = getStoredUser();
   const canCreateItem = typeof hasPermission === "function"
@@ -649,7 +654,14 @@ export function MasterDataTable({
       params.set("offset", String((page - 1) * pageSize));
       if (sortKey) { params.set("sort", sortKey); params.set("dir", sortDir); }
       for (const [key, value] of Object.entries(colFilters)) {
+        if (key === "__farm" || key === "__shed" || key === "__pen") continue;
         if (value !== "") params.set(`filter[${key}]`, value);
+      }
+      // Farm/Shed/Pen are UI-only synthetic filters (see the location-only
+      // state above) — whichever is most specific resolves to the real column.
+      if (config.key === "location") {
+        const parent = colFilters.__pen || colFilters.__shed || colFilters.__farm;
+        if (parent) params.set("filter[parent_location_id]", parent);
       }
       const res = await api.get(`${config.apiBase}?${params.toString()}`);
       const list = unwrap<Row[]>(res);
@@ -748,6 +760,84 @@ export function MasterDataTable({
    */
   const filterFields = (
     <div className="flex flex-col gap-4">
+      {config.key === "location" && (
+        <FieldGroup title={t("mdFilterLocationHierarchy")} className="gap-y-4">
+          <Field label={t("mdFilterFarm")} htmlFor={`master-${config.key}-filter-farm`} className="sm:col-span-6">
+            <select
+              id={`master-${config.key}-filter-farm`}
+              className={`${inputCls} nf-select`}
+              style={S.input}
+              value={filterDraft.__farm ?? ""}
+              onChange={(e) => {
+                const nextFarm = e.target.value;
+                setFilterDraft((prev) => {
+                  const out = { ...prev };
+                  if (nextFarm === "") delete out.__farm; else out.__farm = nextFarm;
+                  delete out.__shed; // a new farm invalidates whatever shed/pen was picked under the old one
+                  delete out.__pen;
+                  return out;
+                });
+              }}
+            >
+              <option value="">{t("mdFilterAll")}</option>
+              {locationFarmOptions.map((f) => (
+                <option key={String(f.location_id)} value={String(f.location_id)}>
+                  {String(f.location_code ?? f.location_name ?? f.location_id)}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label={t("mdFilterShed")} htmlFor={`master-${config.key}-filter-shed`} className="sm:col-span-6">
+            <select
+              id={`master-${config.key}-filter-shed`}
+              className={`${inputCls} nf-select`}
+              style={S.input}
+              value={filterDraft.__shed ?? ""}
+              disabled={!filterDraft.__farm}
+              onChange={(e) => {
+                const next = e.target.value;
+                setFilterDraft((prev) => {
+                  const out = { ...prev };
+                  if (next === "") delete out.__shed; else out.__shed = next;
+                  delete out.__pen; // a new shed invalidates whatever pen was picked under the old one
+                  return out;
+                });
+              }}
+            >
+              <option value="">{t("mdFilterAll")}</option>
+              {locationShedOptions.map((s) => (
+                <option key={String(s.location_id)} value={String(s.location_id)}>
+                  {String(s.location_code ?? s.location_name ?? s.location_id)}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label={t("mdFilterPen")} htmlFor={`master-${config.key}-filter-pen`} className="sm:col-span-6">
+            <select
+              id={`master-${config.key}-filter-pen`}
+              className={`${inputCls} nf-select`}
+              style={S.input}
+              value={filterDraft.__pen ?? ""}
+              disabled={!filterDraft.__shed}
+              onChange={(e) => {
+                const next = e.target.value;
+                setFilterDraft((prev) => {
+                  const out = { ...prev };
+                  if (next === "") delete out.__pen; else out.__pen = next;
+                  return out;
+                });
+              }}
+            >
+              <option value="">{t("mdFilterAll")}</option>
+              {locationPenOptions.map((p) => (
+                <option key={String(p.location_id)} value={String(p.location_id)}>
+                  {String(p.location_code ?? p.location_name ?? p.location_id)}
+                </option>
+              ))}
+            </select>
+          </Field>
+        </FieldGroup>
+      )}
       {columns.map((c) => {
         const choices = filterChoicesFor(c.key);
         const value = filterDraft[c.key] ?? "";
@@ -781,15 +871,15 @@ export function MasterDataTable({
     </div>
   );
 
-  // Apply closes the dialog on a phone, where the list is behind it;
-  // on a desktop the panel stays open beside the rows it just filtered.
+  // The drawer covers the table, so Apply always closes it back to the
+  // filtered rows rather than leaving it open over them.
   const filterActions = (
     <>
       <button type="button" onClick={() => { setFilterDraft({}); setColFilters({}); }}
         className="rounded-lg border px-3 py-1.5 text-xs font-medium" style={S.surface}>
         {t("mdFiltersReset")}
       </button>
-      <button type="button" onClick={() => { setColFilters(filterDraft); if (!isDesktop) setFilterOpen(false); }}
+      <button type="button" onClick={() => { setColFilters(filterDraft); setFilterOpen(false); }}
         className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white"
         style={{ backgroundColor: "var(--accent)" }}>
         {t("mdFiltersApply")}
@@ -824,6 +914,25 @@ export function MasterDataTable({
     if (!config.supportsNobLobFilter || !nobFilter) { setLobFilterOptions([]); return; }
     api.get(`/setup/wizard/lobs/${nobFilter}`).then((r) => setLobFilterOptions(unwrap<Row[]>(r) || [])).catch(() => setLobFilterOptions([]));
   }, [config.supportsNobLobFilter, nobFilter]);
+
+  useEffect(() => {
+    if (config.key !== "location") { setLocationFarmOptions([]); return; }
+    api.get(`/location?filter[location_type]=FARM&limit=500`).then((r) => setLocationFarmOptions(unwrap<Row[]>(r) || [])).catch(() => setLocationFarmOptions([]));
+  }, [config.key]);
+
+  useEffect(() => {
+    if (config.key !== "location" || !filterDraft.__farm) { setLocationShedOptions([]); return; }
+    api.get(`/location?filter[parent_location_id]=${filterDraft.__farm}&filter[location_type]=SHED&limit=500`)
+      .then((r) => setLocationShedOptions(unwrap<Row[]>(r) || []))
+      .catch(() => setLocationShedOptions([]));
+  }, [config.key, filterDraft.__farm]);
+
+  useEffect(() => {
+    if (config.key !== "location" || !filterDraft.__shed) { setLocationPenOptions([]); return; }
+    api.get(`/location?filter[parent_location_id]=${filterDraft.__shed}&filter[location_type]=PEN&limit=500`)
+      .then((r) => setLocationPenOptions(unwrap<Row[]>(r) || []))
+      .catch(() => setLocationPenOptions([]));
+  }, [config.key, filterDraft.__shed]);
 
   useEffect(() => {
     // Includes the select-entity columns nested inside a jsonRow, whose
@@ -2209,7 +2318,7 @@ export function MasterDataTable({
       {/* The filter panel is a second column of this grid, not a layer over
           it: the table narrows and the panel takes the space, so the rows
           being filtered stay visible and nothing is buried behind a scrim. */}
-      <div className={selectedRow || filterOpen ? "grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_340px]" : undefined}>
+      <div className={selectedRow ? "grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_340px]" : undefined}>
       <div className="min-w-0 overflow-hidden rounded-[var(--radius-md)] border flex flex-col" style={S.surface}>
         <div className="overflow-x-auto max-h-[calc(100vh-270px)] overflow-y-auto">
           <table className="w-full border-collapse text-left text-sm">
@@ -2374,28 +2483,6 @@ export function MasterDataTable({
           <AnimalDetailPanel row={selectedRow} onClose={() => setSelectedId(null)} />
         </div>
       )}
-      {filterOpen && isDesktop && (
-        <aside className="min-w-0 lg:sticky lg:top-4" aria-label={t("mdFilters")}>
-          <div className="flex max-h-[calc(100dvh-8rem)] flex-col overflow-hidden rounded-[var(--radius-md)] border" style={S.surface}>
-            <div className="flex items-start justify-between gap-2 border-b px-4 py-3" style={{ borderColor: "var(--border)" }}>
-              <div>
-                <h2 className="text-sm font-semibold" style={S.primary}>{t("mdFilters")}</h2>
-                <p className="mt-0.5 text-xs" style={S.sub}>{t("mdFiltersDesc", { label: tLabel(config.label) })}</p>
-              </div>
-              <button type="button" onClick={() => setFilterOpen(false)} aria-label={t("close")}
-                className="rounded-lg p-1 transition-colors hover:text-(--accent)" style={S.muted}>
-                <X className="h-4 w-4" aria-hidden />
-              </button>
-            </div>
-            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
-              {filterFields}
-            </div>
-            <div className="flex items-center justify-end gap-2 border-t px-4 py-3" style={{ borderColor: "var(--border)" }}>
-              {filterActions}
-            </div>
-          </div>
-        </aside>
-      )}
       </div>
       </>
       )}
@@ -2458,7 +2545,8 @@ export function MasterDataTable({
                       label={tLabel(currentLabel(f, form))}
                       htmlFor={`master-${config.key}-${f.key}`}
                       required={isFieldRequired(f, form)}
-                      hint={templateLockedFields.has(f.key) ? "🔒 Set by template" : f.helpText}
+                      hint={templateLockedFields.has(f.key) ? "🔒 Set by template" : undefined}
+                      tooltip={f.helpText}
                       className={f.type === "textarea" || f.type === "json" || f.type === "string-list" ? "sm:col-span-2" : undefined}
                     >
                       {renderField(f)}
@@ -2537,7 +2625,8 @@ export function MasterDataTable({
                       label={tLabel(currentLabel(f, form))}
                       htmlFor={`master-${config.key}-${f.key}`}
                       required={isFieldRequired(f, form)}
-                      hint={templateLockedFields.has(f.key) ? "🔒 Set by template" : f.helpText}
+                      hint={templateLockedFields.has(f.key) ? "🔒 Set by template" : undefined}
+                      tooltip={f.helpText}
                       className={f.type === "textarea" || f.type === "json" || f.type === "string-list" ? "sm:col-span-2" : undefined}
                     >
                       {renderField(f)}
@@ -2607,19 +2696,19 @@ export function MasterDataTable({
         <p className="text-sm" style={S.sub}>{t("confirmDeactivate")}</p>
       </Dialog>
 
-      {/* Below `lg` the same filters interrupt as a dialog: a 340px side column
-          would leave the table too narrow to read, so the honest presentation
-          is to cover it and hand it back on Apply. */}
-      <Dialog
-        open={filterOpen && !isDesktop}
+      {/* Filters float over the table as an overlay drawer rather than a
+          docked side column, so the table never gets squeezed narrower while
+          filtering. Desktop gets a right-edge panel, mobile a bottom sheet —
+          Drawer handles both from one definition. */}
+      <Drawer
+        open={filterOpen}
         onClose={() => setFilterOpen(false)}
         title={t("mdFilters")}
         description={t("mdFiltersDesc", { label: tLabel(config.label) })}
-        maxWidth="sm"
         footer={filterActions}
       >
         {filterFields}
-      </Dialog>
+      </Drawer>
 
       {config.key === "item" && (
         <ItemTemplateSelectModal

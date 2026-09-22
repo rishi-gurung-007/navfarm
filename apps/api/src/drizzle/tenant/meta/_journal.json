@@ -675,52 +675,94 @@
       "breakpoints": true
     },
     {
-      "idx": 97,
+      "idx": 96,
       "version": "5",
       "when": 1789234410180,
       "tag": "0097_breeding_boar_parity",
       "breakpoints": true
     },
     {
-      "idx": 98,
+      "idx": 97,
       "version": "5",
       "when": 1789320000000,
       "tag": "0098_requisition",
       "breakpoints": true
     },
     {
-      "idx": 99,
+      "idx": 98,
       "version": "5",
       "when": 1789330000000,
       "tag": "0099_resource_ledger",
       "breakpoints": true
     },
     {
-      "idx": 100,
+      "idx": 99,
       "version": "5",
       "when": 1789340000000,
       "tag": "0100_item_template_no_series",
       "breakpoints": true
     },
     {
-      "idx": 101,
+      "idx": 100,
       "version": "5",
       "when": 1789350000000,
       "tag": "0101_item_tracking_series_fk",
       "breakpoints": true
     },
     {
-      "idx": 102,
+      "version": "5",
+      "when": 1789350001000,
+      "tag": "0102_add_master_type_to_no_series",
+      "breakpoints": true,
+      "idx": 101
+    },
+    {
+      "version": "5",
+      "when": 1789350002000,
+      "tag": "0102_no_series_starting_no",
+      "breakpoints": true,
+      "idx": 102
+    },
+    {
+      "version": "5",
+      "when": 1789350003000,
+      "tag": "0103_inventory_setup",
+      "breakpoints": true,
+      "idx": 103
+    },
+    {
+      "idx": 104,
       "version": "5",
       "when": 1789360000000,
       "tag": "0104_reason_master_fields",
       "breakpoints": true
     },
     {
-      "idx": 103,
+      "idx": 105,
       "version": "5",
       "when": 1789370000000,
       "tag": "0105_item_attribute_uom_value",
+      "breakpoints": true
+    },
+    {
+      "idx": 106,
+      "version": "5",
+      "when": 1789370010000,
+      "tag": "0106_batch_pages_from_arun_new",
+      "breakpoints": true
+    },
+    {
+      "idx": 107,
+      "version": "5",
+      "when": 1789370020000,
+      "tag": "0107_no_series_document_type",
+      "breakpoints": true
+    },
+    {
+      "idx": 108,
+      "version": "5",
+      "when": 1789370030000,
+      "tag": "0108_no_series_code_widen",
       "breakpoints": true
     }
   ]

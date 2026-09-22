@@ -20,6 +20,7 @@ import { useLanguage } from "@/hooks/useLanguage";
 import type { TranslationKeys } from "@/utils/translations";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { ConsolePage } from "@/components/ui/console-page";
+import { Field } from "@/components/ui/field";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { InlineAlert } from "@/components/ui/alert";
@@ -434,10 +435,10 @@ export default function AreaSettingsPage() {
                   </div>
                 </div>
 
-                <div>
-                  <label className="nf-text-label">{t("asAutoApproveUnder")}</label>
+                <Field label={t("asAutoApproveUnder")} htmlFor="area-auto-approve-qty" tooltip={t("asAutoApproveHint")}>
                   <div className="relative">
                     <input
+                      id="area-auto-approve-qty"
                       type="number"
                       step="1"
                       min={0}
@@ -449,8 +450,7 @@ export default function AreaSettingsPage() {
                       {settings.default_feed_uom}
                     </span>
                   </div>
-                  <p className="mt-1 text-[10px] text-[var(--text-muted)]">{t("asAutoApproveHint")}</p>
-                </div>
+                </Field>
               </div>
             </section>
           </div>

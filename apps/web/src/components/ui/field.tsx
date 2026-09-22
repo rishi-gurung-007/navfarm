@@ -1,10 +1,14 @@
-import { type ReactNode } from 'react';
+'use client';
+
+import { type ReactNode, useEffect, useRef, useState } from 'react';
+import { Info } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface FieldProps {
   label: string;
   htmlFor?: string;
   hint?: string;
+  tooltip?: string;
   error?: string;
   required?: boolean;
   className?: string;
@@ -12,16 +16,80 @@ interface FieldProps {
 }
 
 /**
+ * Hover/focus/click info affordance anchored next to a field's label —
+ * the "read more" for a field's description, so the description itself
+ * doesn't have to sit as permanent caption text under every control.
+ */
+function FieldInfoTooltip({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handlePointerDown = (e: PointerEvent) => {
+      const target = e.target as Node | null;
+      if (triggerRef.current?.contains(target) || popoverRef.current?.contains(target)) return;
+      setOpen(false);
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [open]);
+
+  return (
+    <span className="relative inline-flex shrink-0 items-center">
+      <button
+        ref={triggerRef}
+        type="button"
+        onClick={() => setOpen((prev) => !prev)}
+        onMouseEnter={() => setOpen(true)}
+        onMouseLeave={() => setOpen(false)}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
+        aria-label="More information"
+        aria-expanded={open}
+        className="inline-flex h-4 w-4 cursor-pointer items-center justify-center rounded-full text-(--text-muted) transition-colors hover:text-(--accent)"
+      >
+        <Info className="h-3.5 w-3.5" />
+      </button>
+      {open && (
+        <span
+          ref={popoverRef}
+          role="tooltip"
+          className="absolute left-0 top-full z-50 mt-1.5 w-64 max-w-[calc(100vw-2rem)] rounded-lg border p-2.5 text-xs leading-relaxed shadow-lg"
+          style={{ backgroundColor: 'var(--surface-raised)', borderColor: 'var(--border)', color: 'var(--text-secondary)' }}
+        >
+          {text}
+        </span>
+      )}
+    </span>
+  );
+}
+
+/**
  * Label + control + supporting text, in the one arrangement the application
  * uses. Forms across the console previously repeated this markup inline, which
  * is how their label sizes and spacing drifted apart from each other.
+ *
+ * `tooltip` is a field's description, shown on hover/focus of a small info
+ * affordance next to the label. `hint` stays for short-lived state messages
+ * (e.g. "set by template") that should always be visible, not hidden behind
+ * a hover — the two are not interchangeable.
  */
-export function Field({ label, htmlFor, hint, error, required, className, children }: FieldProps) {
+export function Field({ label, htmlFor, hint, tooltip, error, required, className, children }: FieldProps) {
   return (
     <div className={cn('flex min-w-0 flex-col gap-1.5', className)}>
-      <label htmlFor={htmlFor} className="nf-text-label text-(--text-secondary)">
+      <label htmlFor={htmlFor} className="nf-text-label flex items-center gap-1 text-(--text-secondary)">
         {label}
         {required && <span className="ml-0.5 text-(--accent)">*</span>}
+        {tooltip && <FieldInfoTooltip text={tooltip} />}
       </label>
       {children}
       {error ? (
