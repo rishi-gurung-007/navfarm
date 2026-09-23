@@ -66,7 +66,7 @@ const stages: Array<{ label: string; fn: () => Promise<unknown> }> = [
   { label: 'Tenant, companies, users, starter master data', fn: seedDevTenant },
   // Between the tenant's masters and any company data: the tenant rows are the
   // draft, and a company works from its own copy. copyCompanyMasterTemplates is
-  // what makes that copy — including no_series_master, which is why a series
+  // what makes that copy — including no_series, which is why a series
   // resolved to nothing at company scope until this ran.
   { label: 'Adopt tenant master templates into the company', fn: adoptCompanyTemplates },
   { label: 'Piggery operational dataset (both companies)', fn: seedPiggeryData },
@@ -110,7 +110,7 @@ async function adoptCompanyTemplates() {
       // seed command is idempotent, so do not attempt to insert the same
       // company-scoped master codes again on its second run.
       const [existing] = await pool.query<any[]>(
-        'SELECT series_id FROM no_series_master WHERE company_id = ? LIMIT 1',
+        'SELECT id AS series_id FROM no_series WHERE company_id = ? LIMIT 1',
         [company.company_id],
       );
       if (existing.length) {

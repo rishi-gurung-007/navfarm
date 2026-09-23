@@ -117,7 +117,7 @@ describe('CostCenterService', () => {
   describe('create — auto-generated (a series is configured for COST_CENTER[_type])', () => {
     it('prefers the cost_center_type series and generates a root code with no parent', async () => {
       numberSeries.resolveSeriesFor.mockResolvedValue('COST_CENTER_DEPARTMENT');
-      numberSeries.lockSeries.mockResolvedValue({ allow_manual: false, seq_length: 3, prefix: 'DEPT' });
+      numberSeries.lockSeries.mockResolvedValue({ manual_nos: false, seq_length: 3, prefix: 'DEPT' });
       numberSeries.generateNext.mockResolvedValue('DEPT-001');
       mockDbSelect
         .mockReturnValueOnce(makeSelectResult([{ company_id: 'comp-1' }])) // company found
@@ -136,7 +136,7 @@ describe('CostCenterService', () => {
 
     it('generates a composite code under a parent cost center', async () => {
       numberSeries.resolveSeriesFor.mockResolvedValue('COST_CENTER_DEPARTMENT');
-      numberSeries.lockSeries.mockResolvedValue({ allow_manual: false, seq_length: 3, prefix: 'SUB' });
+      numberSeries.lockSeries.mockResolvedValue({ manual_nos: false, seq_length: 3, prefix: 'SUB' });
       const parentRow = { cost_center_id: 'parent-1', cost_center_code: 'DEPT-001', cost_center_name: 'Production', deleted_at: null };
       mockDbSelect
         .mockReturnValueOnce(makeSelectResult([{ company_id: 'comp-1' }])) // company found
@@ -156,7 +156,7 @@ describe('CostCenterService', () => {
 
     it('uses the user-supplied code without generating when the series has allow_manual set', async () => {
       numberSeries.resolveSeriesFor.mockResolvedValue('COST_CENTER_DEPARTMENT');
-      numberSeries.lockSeries.mockResolvedValue({ allow_manual: true, seq_length: 3, prefix: 'DEPT' });
+      numberSeries.lockSeries.mockResolvedValue({ manual_nos: true, seq_length: 3, prefix: 'DEPT' });
       mockDbSelect
         .mockReturnValueOnce(makeSelectResult([{ company_id: 'comp-1' }])) // company found
         .mockReturnValueOnce(makeSelectResult([{ cost_center_code: 'CUSTOM-CC', cost_center_name: 'Production Dept' }])); // findOne
@@ -172,7 +172,7 @@ describe('CostCenterService', () => {
 
     it('rejects a generated code that would exceed 255 characters, without inserting', async () => {
       numberSeries.resolveSeriesFor.mockResolvedValue('COST_CENTER_DEPARTMENT');
-      numberSeries.lockSeries.mockResolvedValue({ allow_manual: false, seq_length: 3, prefix: 'DEPT' });
+      numberSeries.lockSeries.mockResolvedValue({ manual_nos: false, seq_length: 3, prefix: 'DEPT' });
       numberSeries.generateNext.mockResolvedValue('DEPT-' + '9'.repeat(253));
       mockDbSelect.mockReturnValueOnce(makeSelectResult([{ company_id: 'comp-1' }]));
 
@@ -183,7 +183,7 @@ describe('CostCenterService', () => {
 
     it('retries once on a duplicate-key collision then raises ConflictException on a second collision', async () => {
       numberSeries.resolveSeriesFor.mockResolvedValue('COST_CENTER_DEPARTMENT');
-      numberSeries.lockSeries.mockResolvedValue({ allow_manual: false, seq_length: 3, prefix: 'DEPT' });
+      numberSeries.lockSeries.mockResolvedValue({ manual_nos: false, seq_length: 3, prefix: 'DEPT' });
       numberSeries.generateNext.mockResolvedValueOnce('DEPT-001').mockResolvedValueOnce('DEPT-002');
       mockDbSelect.mockReturnValueOnce(makeSelectResult([{ company_id: 'comp-1' }]));
 

@@ -84,11 +84,11 @@ async function run() {
         actions.push({ scope: scope || 'TENANT', reason: reason.reason_code, action: 'ADD_DOCUMENTED_EXAMPLE' });
         if (write) await db.execute('INSERT INTO reason_master (reason_id,tenant_id,company_id,reason_code,reason_name,category,sub_category,applicable_stages,stage_filter_note,mandatory_comment,mandatory_weight) VALUES (?,?,?,?,?,?,?,?,?,?,?)', [randomUUID(), tenant, scope, reason.reason_code, reason.reason_name, reason.category, reason.sub_category, reason.applicable_stages ? JSON.stringify(reason.applicable_stages) : null, reason.stage_filter_note, reason.mandatory_comment, reason.mandatory_weight]);
       }
-      const [series] = await db.query<RowDataPacket[]>("SELECT series_id FROM no_series_master WHERE tenant_id=? AND company_id <=> ? AND series_code='REASON'", [tenant, scope]);
+      const [series] = await db.query<RowDataPacket[]>("SELECT id AS series_id FROM no_series WHERE tenant_id=? AND company_id <=> ? AND code='REASON'", [tenant, scope]);
       if (series.length > 1) throw new Error('Duplicate REASON series; review required.');
       if (!series.length) {
         actions.push({ scope: scope || 'TENANT', series: 'REASON', action: 'ADD_RSN_PREFIX' });
-        if (write) await db.execute("INSERT INTO no_series_master (series_id,tenant_id,company_id,series_code,series_name,document_type,prefix,`separator`,seq_length,current_seq,reset_frequency,allow_manual) VALUES (?,?,?,'REASON','Reason Code','REASON','RSN','-',3,0,'NEVER',1)", [randomUUID(), tenant, scope]);
+        if (write) await db.execute("INSERT INTO no_series (id,tenant_id,company_id,code,description,document_type,prefix,`separator`,seq_length,current_seq,reset_frequency,manual_nos) VALUES (?,?,?,'REASON','Reason Code','REASON','RSN','-',3,0,'NEVER',1)", [randomUUID(), tenant, scope]);
       }
       if (write) {
         const [active] = await db.query<RowDataPacket[]>('SELECT stage_code FROM stage_master WHERE tenant_id=? AND company_id <=> ? AND lob_id=? AND is_active=1', [tenant, scope, lob.lob_id]);

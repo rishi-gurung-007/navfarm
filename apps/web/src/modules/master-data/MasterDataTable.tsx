@@ -37,11 +37,19 @@ type RelatedPicker = {
   field: MasterDataField;
   config: MasterDataConfig;
   options: Row[];
+  // Set only for a jsonRow column's picker: writes the chosen id into that
+  // one row instead of the top-level form field a plain select-entity field
+  // would otherwise assume (setField(field.key, value)), and currentValue
+  // stands in for form[field.key] the same way.
+  currentValue?: string;
+  onApply?: (value: string) => void;
 };
 
 type RelatedCreator = {
   field: MasterDataField;
   config: MasterDataConfig;
+  // See RelatedPicker.onApply — same reason, same jsonRow case.
+  onApply?: (value: string) => void;
 };
 
 const S = {
@@ -109,6 +117,10 @@ function isFieldRequired(f: MasterDataField, form: Row): boolean {
     if (cond.equals !== undefined) {
       const list = Array.isArray(cond.equals) ? cond.equals : [cond.equals];
       return list.includes(depValue);
+    }
+    if (cond.notEquals !== undefined) {
+      const list = Array.isArray(cond.notEquals) ? cond.notEquals : [cond.notEquals];
+      return !list.includes(depValue);
     }
     return depValue !== undefined && depValue !== "" && depValue !== false && depValue !== null;
   });
@@ -1281,6 +1293,14 @@ export function MasterDataTable({
       }
       initial[f.key] = v ?? (f.type === "boolean" ? false : "");
     });
+    // storage_type is hidden from the form (see configs.ts) and derived from
+    // location_type — but it's hidden from formFields too, so the loop above
+    // never seeded it from the row at all. Derive it fresh here rather than
+    // trust row.storage_type, since older STORE rows predate this field ever
+    // being auto-set for anything but SILO and may still carry it as null.
+    if (config.key === "location") {
+      initial.storage_type = row.location_type === "SILO" || row.location_type === "STORE" ? row.location_type : "";
+    }
     setForm(initial);
     codeFieldTouchedRef.current = false;
     setActiveFormTab("");
@@ -1294,10 +1314,16 @@ export function MasterDataTable({
     }
     setForm((prev) => {
     const next = { ...prev, [key]: value };
-    if (config.key === "location" && key === "location_type" && value === "SILO") next.storage_type = "SILO";
-    if (config.key === "location" && key === "storage_type" && value !== "SILO") {
-      next.silo_capacity_kg = "";
-      next.silo_reorder_days = "";
+    // Storage Location duplicated Location Type (STORE/SILO were already
+    // choices there) and confused users into thinking they were two separate
+    // decisions, so the field itself is hidden (configs.ts) and its value is
+    // now derived entirely from location_type instead of asked for again.
+    if (config.key === "location" && key === "location_type") {
+      next.storage_type = value === "SILO" || value === "STORE" ? value : "";
+      if (value !== "SILO") {
+        next.silo_capacity_kg = "";
+        next.silo_reorder_days = "";
+      }
     }
     config.fields.forEach((f) => {
       if (parentKeys(f).includes(key) && next[f.key]) next[f.key] = "";
@@ -1326,8 +1352,15 @@ export function MasterDataTable({
     // default rather than on nothing. Tracked By is a choice between two, not
     // three: "neither" is what the switch above it already says, so turning
     // tracking on lands on Lot until someone says otherwise.
+    //
+    // Excludes the field the user is actually editing (f.key === key): this
+    // ran on every keystroke of every field carrying a defaultValue, so
+    // clearing e.g. Increment By (default "1") to type a different number
+    // snapped it straight back to "1" the instant it went empty — the field
+    // fought its own edit instead of only defaulting a *different* field that
+    // just became visible as a side effect of this change.
     config.fields.forEach((f) => {
-      if (f.defaultValue === undefined) return;
+      if (f.defaultValue === undefined || f.key === key) return;
       const shown = !f.visibleWhen || isFieldRequired({ ...f, required: false, requiredWhen: f.visibleWhen }, next);
       if (shown && (next[f.key] === "" || next[f.key] === undefined)) next[f.key] = f.defaultValue;
     });
@@ -1391,6 +1424,16 @@ export function MasterDataTable({
       }
       for (const f of visibleFields) {
         if (f.filterOnly || (f.readOnly && !(f.key === "item_code" && isManualNoAllowed))) continue;
+        // A managed, manual-allowed code field is pre-filled with the series'
+        // own next-number preview so the user always sees a value, but that is
+        // a suggestion, not a choice. Sending it back untouched made every save
+        // look like a manual override to the API (manualCode(), never
+        // generateNext()), so the series' current_seq never advanced no matter
+        // how many records were created — only a genuinely edited code should
+        // take the manual path.
+        if (f.key === numbering.codeKey && numbering.managed && numbering.allowManual && !codeFieldTouchedRef.current) {
+          continue;
+        }
         let v = form[f.key];
         if ((v === "" || v === undefined || v === null) && f.key === numbering.codeKey && !codeFieldTouchedRef.current) {
           const fallbackVal = numbering.preview || numbering.value(f.key, "");
@@ -1439,6 +1482,16 @@ export function MasterDataTable({
       const hasCompanyField = config.fields.some((f) => f.key === "company_id");
       if (!editing && companyId && hasCompanyField) payload.company_id = companyId;
 
+      // storage_type is hidden from the form (derived from location_type, see
+      // setField/openEdit above) and so excluded from visibleFields — without
+      // this it would never reach the payload loop above at all. Only sent
+      // when it actually applies (STORE/SILO): the generic loop above skips
+      // every other empty field rather than sending "", and update() writes
+      // whatever it's given with no null-normalization of its own, so sending
+      // "" here for every other location type would overwrite a correct null
+      // with a stored empty string on the next unrelated edit.
+      if (config.key === "location" && form.storage_type) payload.storage_type = form.storage_type;
+
       if (editing) {
         await api.put(`${config.apiBase}/${editing[config.idKey]}`, payload);
         setModalOpen(false);
@@ -1450,7 +1503,31 @@ export function MasterDataTable({
         setModalOpen(false);
         showToast.success("Created successfully");
         onCreated?.(created);
-        if (!createOnly) load();
+        // The Farm/Shed/Pen filter narrows the list to one parent's children.
+        // A location just created under a different parent — most visibly a
+        // brand-new root Farm, which has no parent at all — can never match
+        // that filter, so it would report success and then silently vanish
+        // from view. Clearing it here, instead of reloading under the stale
+        // filter, is what lets the record the user just created actually show
+        // up; the colFilters-watching effect above reloads once it's cleared.
+        const activeParentFilter = config.key === "location"
+          ? colFilters.__pen || colFilters.__shed || colFilters.__farm
+          : undefined;
+        const createdParentId = (created as any)?.parent_location_id || "";
+        if (activeParentFilter && activeParentFilter !== createdParentId) {
+          setColFilters((prev) => {
+            const next = { ...prev };
+            delete next.__farm; delete next.__shed; delete next.__pen;
+            return next;
+          });
+          setFilterDraft((prev) => {
+            const next = { ...prev };
+            delete next.__farm; delete next.__shed; delete next.__pen;
+            return next;
+          });
+        } else if (!createOnly) {
+          load();
+        }
       }
     } catch (err: any) {
       const msg = err?.message || t("mdFailedToSave");
@@ -1784,21 +1861,29 @@ export function MasterDataTable({
                           placeholder={t("selectPlaceholder")}
                         />
                       ) : (
-                        <SearchableEntitySelect
-                          id={rowFieldId}
-                          ariaLabel={tLabel(col.label)}
-                          value={String(row[col.key] ?? "")}
-                          onChange={(next) => write(rows.map((r, i) => i === idx ? { ...r, [col.key]: next } : r))}
-                          options={entityOptions[col.entityEndpoint || ""] || []}
-                          valueKey={col.entityValueKey || "id"}
-                          getLabel={(option) => entityLabel(option, col)}
-                          getLabelParts={(option) => entityLabelPartsOf(option, col)}
-                          disabled={readOnly || (isLocked(row) && col.key === req?.key)}
-                          loading={!!col.entityEndpoint && entityOptions[col.entityEndpoint] === undefined}
-                          placeholder={t("selectPlaceholder")}
-                          searchPlaceholder={t("searchPlaceholder")}
-                          noMatchesLabel={t("mdNoMatches")}
-                        />
+                        (() => {
+                          const rowRelatedConfig = relatedConfigFor(col, resolveEndpoint(col, row) || col.entityEndpoint || null);
+                          const applyToRow = (value: string) => write(rows.map((r, i) => i === idx ? { ...r, [col.key]: value } : r));
+                          return (
+                            <SearchableEntitySelect
+                              id={rowFieldId}
+                              ariaLabel={tLabel(col.label)}
+                              value={String(row[col.key] ?? "")}
+                              onChange={applyToRow}
+                              options={entityOptions[col.entityEndpoint || ""] || []}
+                              valueKey={col.entityValueKey || "id"}
+                              getLabel={(option) => entityLabel(option, col)}
+                              getLabelParts={(option) => entityLabelPartsOf(option, col)}
+                              disabled={readOnly || (isLocked(row) && col.key === req?.key)}
+                              loading={!!col.entityEndpoint && entityOptions[col.entityEndpoint] === undefined}
+                              placeholder={t("selectPlaceholder")}
+                              searchPlaceholder={t("searchPlaceholder")}
+                              noMatchesLabel={t("mdNoMatches")}
+                              onCreate={rowRelatedConfig ? () => setRelatedCreator({ field: col, config: rowRelatedConfig, onApply: applyToRow }) : undefined}
+                              onViewAll={rowRelatedConfig ? () => setRelatedPicker({ field: col, config: rowRelatedConfig, options: entityOptions[col.entityEndpoint || ""] || [], currentValue: String(row[col.key] ?? ""), onApply: applyToRow }) : undefined}
+                            />
+                          );
+                        })()
                       )
                     ) : col.type === "select" ? (
                       // A closed set of values inside a row is a dropdown, not
@@ -2028,11 +2113,26 @@ export function MasterDataTable({
     }
     const isDisabled = (f.readOnly && !(f.key === "item_code" && isManualNoAllowed)) || isLockedByTemplate;
     const isInteger = f.type === "number" && (f.step === "1" || !f.step);
+    // A field like GPS Latitude/Longitude allows a negative sign only when its
+    // floor is unset or itself negative — same rule the keydown guard below uses.
+    const allowNegative = f.type === "number" && (f.min === undefined || f.min < 0);
+    // native <input type="number"> reformats a very small magnitude (e.g. a
+    // longitude near the equator, 0.00000099) into scientific notation the
+    // moment it loses focus — a browser-level quirk with no attribute to turn
+    // off. type="text" with digit-only filtering below sidesteps it entirely:
+    // the field only ever holds exactly what was typed. A field marked
+    // nativeNumber (a small bounded integer, e.g. sequence digits) never gets
+    // near that quirk, so it keeps the native input — spinner included.
+    const useNativeNumber = f.type === "number" && !!f.nativeNumber;
+    const numberPattern = f.type === "number" && !useNativeNumber
+      ? new RegExp(`^${allowNegative ? "-?" : ""}\\d*${isInteger ? "" : "\\.?\\d*"}$`)
+      : undefined;
 
     return (
       <input
         {...accessibility}
-        type={f.type === "number" ? "number" : f.type === "email" ? "email" : f.type === "date" ? "date" : "text"}
+        type={f.type === "number" ? (useNativeNumber ? "number" : "text") : f.type === "email" ? "email" : f.type === "date" ? "date" : "text"}
+        inputMode={f.type === "number" && !useNativeNumber ? (isInteger ? "numeric" : "decimal") : undefined}
         step={f.step}
         min={f.min}
         max={f.max}
@@ -2059,13 +2159,23 @@ export function MasterDataTable({
         }}
         onChange={(e) => {
           const val = e.target.value;
+          // Reject anything that isn't a valid (possibly partial) plain decimal —
+          // catches paste/autofill too, not just keystrokes, so 'e'/'E' can never
+          // land in state regardless of how it arrived.
+          if (numberPattern && !numberPattern.test(val)) {
+            return;
+          }
           // Guard for max length if input type is number (browser ignores maxLength on type=number)
           if (f.type === "number" && f.maxLength && val.length > f.maxLength) {
             return;
           }
-          if (f.type === "number" && f.max !== undefined && val !== "" && Number(val) > Number(f.max)) {
-            return;
-          }
+          // No max-value rejection here on purpose. Editing "4" into "10" by
+          // typing at the end (not clearing first) passes through "40" for one
+          // keystroke — silently swallowing that keystroke, as this used to,
+          // reads as the field refusing to accept typing at all (reported for
+          // Digits/Sequence Length, min 1 max 10). Out-of-range values are
+          // still caught, just at save — see the isNumberSeriesForm check
+          // above, and the backend's own validation for every other master.
           setField(f.key, val);
         }}
         placeholder={f.placeholder}
@@ -2650,15 +2760,19 @@ export function MasterDataTable({
           onClose={() => setRelatedPicker(null)}
           label={tLabel(currentLabel(relatedPicker.field, form))}
           options={relatedPicker.options}
-          value={String(form[relatedPicker.field.key] ?? "")}
+          value={relatedPicker.currentValue ?? String(form[relatedPicker.field.key] ?? "")}
           valueKey={relatedPicker.field.entityValueKey || "id"}
           labelKeys={relatedPicker.field.entityLabelKeys || []}
           onChange={(value) => {
-            setField(relatedPicker.field.key, value);
+            // This dialog's onChange is typed for its `multiple` mode too, but
+            // relatedPicker never sets it — always a single id in practice.
+            const picked = Array.isArray(value) ? value[0] ?? "" : value;
+            if (relatedPicker.onApply) relatedPicker.onApply(picked);
+            else setField(relatedPicker.field.key, picked);
             setRelatedPicker(null);
           }}
           onCreate={() => {
-            setRelatedCreator({ field: relatedPicker.field, config: relatedPicker.config });
+            setRelatedCreator({ field: relatedPicker.field, config: relatedPicker.config, onApply: relatedPicker.onApply });
             setRelatedPicker(null);
           }}
         />
@@ -2674,7 +2788,10 @@ export function MasterDataTable({
             const valueKey = relatedCreator.field.entityValueKey || relatedCreator.config.idKey;
             const id = created?.[valueKey] ?? created?.[relatedCreator.config.idKey];
             setEntityReloadKey((key) => key + 1);
-            if (id !== undefined && id !== null) setField(relatedCreator.field.key, String(id));
+            if (id !== undefined && id !== null) {
+              if (relatedCreator.onApply) relatedCreator.onApply(String(id));
+              else setField(relatedCreator.field.key, String(id));
+            }
             setRelatedCreator(null);
           }}
         />

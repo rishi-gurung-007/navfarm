@@ -60,14 +60,14 @@ describe('company template snapshot', () => {
 
   it('preserves global taxonomy and resets company number counters independently', () => {
     const inputs = [
-      { table: schema.noSeriesMaster, rows: [{ series_id: 'series', current_seq: 99, prefix: 'FARM', nob_id: 'livestock' }] },
+      { table: schema.noSeries, rows: [{ id: 'series', current_seq: 99, prefix: 'FARM', nob_id: 'livestock' }] },
     ];
     const one = planTemplateCopies(inputs, 'one')[0].row;
     const two = planTemplateCopies(inputs, 'two')[0].row;
     expect(one.current_seq).toBe(0);
     expect(one.nob_id).toBe('livestock');
     expect(one.prefix).toBe('FARM');
-    expect(one.series_id).not.toBe(two.series_id);
+    expect(one.id).not.toBe(two.id);
     expect(inputs[0].rows[0].current_seq).toBe(99);
   });
 });

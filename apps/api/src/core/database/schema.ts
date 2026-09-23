@@ -610,14 +610,21 @@ export const itemTypeMaster = mysqlTable('item_type_master', {
   ),
 }));
 
+// The single number-series table (widened from a thinner mirror to absorb
+// no_series_master's full feature set — composite/segment codes, NOB/LOB
+// scoping, tenant-draft/company-copy duplication — so item_template's
+// existing FKs into this table's id never needed to move). no_series_master
+// is retired once every reference to it is gone; see migration 0111/0112.
 export const noSeries = mysqlTable('no_series', {
   id: varchar('id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
   tenant_id: varchar('tenant_id', { length: 36 }),
-  company_id: varchar('company_id', { length: 36 }),
-  // 30, matching noSeriesMaster.series_code — BREED_LIFECYCLE_STAGE (21) is
-  // the longest legacy series_code this table mirrors and overflowed 20.
+  company_id: varchar('company_id', { length: 36 }), // null = tenant-wide template
+  nob_id: varchar('nob_id', { length: 36 }).references(() => nobMaster.nob_id, { onDelete: 'restrict' }),
+  lob_id: varchar('lob_id', { length: 36 }).references(() => lobMaster.lob_id, { onDelete: 'restrict' }),
+  // 30, matching the legacy series_code this table absorbed —
+  // BREED_LIFECYCLE_STAGE (21) is the longest and overflowed 20.
   code: varchar('code', { length: 30 }).notNull(),
-  description: varchar('description', { length: 100 }),
+  description: varchar('description', { length: 150 }),
   document_type: varchar('document_type', { length: 50 }),
   // Which master this series numbers (ITEM, SUPPLIER, CUSTOMER, ...) — distinct
   // from document_type, which the same code also filters on for the same
@@ -626,20 +633,39 @@ export const noSeries = mysqlTable('no_series', {
   // the app (customer/supplier services) queries document_type.
   master_type: varchar('master_type', { length: 50 }),
   no_series_code: varchar('no_series_code', { length: 50 }),
+  prefix: varchar('prefix', { length: 20 }),
+  separator: varchar('separator', { length: 1 }).default('-').notNull(),
   seq_length: int('seq_length').default(4).notNull(),
   // A typed starting point ("ITM-0100") for a series that must not restart at
   // 1 — e.g. adopting numbers already in use outside NAVFarm. Only read when
-  // last_no_used is still empty; see NumberSeriesService.calculateModernNextNumber().
+  // last_no_used is still empty; see NumberSeriesService.generateNextNumberById().
   starting_no: varchar('starting_no', { length: 50 }),
   increment_by: int('increment_by').default(1).notNull(),
+  current_seq: bigint('current_seq', { mode: 'number' }).default(0).notNull(),
+  reset_frequency: varchar('reset_frequency', { length: 20 }).default('NEVER').notNull(), // YEARLY, MONTHLY, NEVER
+  /**
+   * The ordered parts of a generated code, before the sequence. Each entry is
+   * either a field of the master being coded, or the token __PREFIX__ standing
+   * for this series' own `prefix` — so prefix, one field, several fields, or any
+   * mix of them, in whatever order the author wants. A field naming a related
+   * record contributes that record's code; any other field contributes its own
+   * value. Null or empty leaves the code exactly as it was before segments.
+   */
+  code_segments: json('code_segments'),
+  prefix_position: varchar('prefix_position', { length: 10 }).default('END').notNull(),
+  seq_separator: varchar('seq_separator', { length: 1 }),
   is_default: boolean('is_default').default(true).notNull(),
   manual_nos: boolean('manual_nos').default(false).notNull(),
   last_no_used: varchar('last_no_used', { length: 50 }),
   blocked: boolean('blocked').default(false).notNull(),
+  created_by: varchar('created_by', { length: 36 }),
+  updated_by: varchar('updated_by', { length: 36 }),
   created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
   updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().notNull(),
+  deleted_at: timestamp('deleted_at', { mode: 'string' }),
+  extension_config: json('extension_config'),
 }, (table) => ({
-  uqCode: uniqueIndex('uq_no_series_code').on(table.code),
+  uqScopedCode: uniqueIndex('uq_no_series_scope_code').on(table.tenant_id, sql`(coalesce(${table.company_id}, ''))`, table.code),
   idxCode: index('idx_no_series_code').on(table.code),
   idxDocumentType: index('idx_no_series_document_type').on(table.tenant_id, table.document_type),
   idxMasterType: index('idx_no_series_master_type').on(table.tenant_id, table.master_type),
@@ -709,7 +735,7 @@ export const itemMaster = mysqlTable('item_master', {
   is_lot_tracked: boolean('is_lot_tracked').default(false).notNull(),
   is_serial_tracked: boolean('is_serial_tracked').default(false).notNull(),
   // Lot/serial number series for this item's tracking numbers — separate from item_code's
-  // own 'ITEM' series (item.service.ts). Can reference noSeriesMaster.series_id or modern noSeries.id.
+  // own 'ITEM' series (item.service.ts). References noSeries.id.
   tracking_series_id: varchar('tracking_series_id', { length: 36 }),
   is_biological_asset: boolean('is_biological_asset').default(false).notNull(),
   is_biological_costing_method: varchar('is_biological_costing_method', { length: 30 }),
@@ -851,7 +877,6 @@ export const breedMaster = mysqlTable('breed_master', {
   company_id: varchar('company_id', { length: 36 }),
   nob_id: varchar('nob_id', { length: 36 }).notNull().references(() => nobMaster.nob_id, { onDelete: 'restrict' }),
   lob_id: varchar('lob_id', { length: 36 }).references(() => lobMaster.lob_id, { onDelete: 'restrict' }),
-  location_id: varchar('location_id', { length: 36 }).references((): AnyMySqlColumn => locationMaster.location_id, { onDelete: 'restrict' }),
   breed_code: varchar('breed_code', { length: 255 }).notNull(),
   breed_name: varchar('breed_name', { length: 100 }).notNull(),
   species_id: varchar('species_id', { length: 36 }).references(() => speciesMaster.species_id, { onDelete: 'restrict' }),
@@ -890,12 +915,7 @@ export const breedMaster = mysqlTable('breed_master', {
   updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().notNull(),
   deleted_at: timestamp('deleted_at', { mode: 'string' }),
   extension_config: json('extension_config')
-}, (table) => [ uniqueIndex('uq_breed_master_scope_code').on(
-  table.tenant_id,
-  sql`(coalesce(${table.company_id}, ''))`,
-  sql`(coalesce(${table.location_id}, ''))`,
-  table.breed_code,
-) ]);
+});
 
 
 export const operationalAreaMaster = mysqlTable('operational_area_master', {
@@ -1452,6 +1472,37 @@ export const resourceMaintenanceLogRelations = relations(resourceMaintenanceLog,
     references: [resourceMaster.resource_id]
   })
 }));
+
+/**
+ * The KPI vocabulary breed_lifecycle_stages.kpi_thresholds names its metrics
+ * from, and the same words a scheduler_line's DESCRIPTIVE kpi_metric records
+ * against — so a threshold and the daily entry it's meant to bound actually
+ * match. Used to be a hardcoded array (KPI_METRICS in scheduler-header.dto.ts,
+ * duplicated in three more places across the frontend) with no way for a
+ * tenant to add one of their own; this is that array made into a real,
+ * per-tenant-extensible master. is_system marks the rows every tenant starts
+ * with (seeded from the old array) so they can't be renamed out from under
+ * kpi_thresholds rows that already reference them, the same protection
+ * REASON's own code carries.
+ */
+export const kpiMetricMaster = mysqlTable('kpi_metric_master', {
+  kpi_metric_id: varchar('kpi_metric_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+  company_id: varchar('company_id', { length: 36 }).references(() => companyMaster.company_id, { onDelete: 'restrict' }),
+  nob_id: varchar('nob_id', { length: 36 }).references(() => nobMaster.nob_id, { onDelete: 'restrict' }),
+  lob_id: varchar('lob_id', { length: 36 }).references(() => lobMaster.lob_id, { onDelete: 'restrict' }),
+  metric_code: varchar('metric_code', { length: 50 }).notNull(),
+  metric_name: varchar('metric_name', { length: 150 }).notNull(),
+  default_uom: varchar('default_uom', { length: 20 }),
+  is_system: boolean('is_system').default(false).notNull(),
+  is_active: boolean('is_active').default(true).notNull(),
+  status: varchar('status', { length: 20 }).default('ACTIVE').notNull(),
+  created_by: varchar('created_by', { length: 36 }),
+  updated_by: varchar('updated_by', { length: 36 }),
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+  updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().notNull(),
+  deleted_at: timestamp('deleted_at', { mode: 'string' }),
+}, (table) => [uniqueIndex('uq_kpi_metric_master_scope_code').on(table.tenant_id, sql`(coalesce(${table.company_id}, ''))`, table.metric_code)]);
 
 export const reasonMaster = mysqlTable('reason_master', {
   reason_id: varchar('reason_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
@@ -2061,61 +2112,10 @@ export const breedLifecycleStages = mysqlTable('breed_lifecycle_stages', {
   // scope key carries it the same way the other 22 masters do.
 }, (table) => [ uniqueIndex('uq_breed_lifecycle_stages_scope_code').on(table.tenant_id, sql`(coalesce(${table.company_id}, ''))`, table.lifecycle_code) ]);
 
-// Reusable, concurrency-safe business-code generator. generateNext() in
-// number-series.service.ts locks a single row here (SELECT ... FOR UPDATE) rather
-// than the range-lock generateBatchNo() in batch.service.ts currently does on
-// batch_header directly — that call site is being migrated onto this table.
-export const noSeriesMaster = mysqlTable('no_series_master', {
-  series_id: varchar('series_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
-  tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
-  company_id: varchar('company_id', { length: 36 }), // null = tenant-wide
-  nob_id: varchar('nob_id', { length: 36 }).references(() => nobMaster.nob_id, { onDelete: 'restrict' }),
-  lob_id: varchar('lob_id', { length: 36 }).references(() => lobMaster.lob_id, { onDelete: 'restrict' }),
-  series_code: varchar('series_code', { length: 30 }).notNull(),
-  series_name: varchar('series_name', { length: 150 }).notNull(),
-  document_type: varchar('document_type', { length: 50 }).notNull(),
-  prefix: varchar('prefix', { length: 20 }),
-  separator: varchar('separator', { length: 1 }).default('-').notNull(),
-  seq_length: int('seq_length').notNull(),
-  current_seq: bigint('current_seq', { mode: 'number' }).default(0).notNull(),
-  last_generated_code: varchar('last_generated_code', { length: 255 }),
-  reset_frequency: varchar('reset_frequency', { length: 20 }).default('NEVER').notNull(), // YEARLY, MONTHLY, NEVER
-  /**
-   * The ordered parts of a generated code, before the sequence. Each entry is
-   * either a field of the master being coded, or the token __PREFIX__ standing
-   * for this series' own `prefix` — so prefix, one field, several fields, or any
-   * mix of them, in whatever order the author wants. A field naming a related
-   * record contributes that record's code; any other field contributes its own
-   * value. Null or empty leaves the code exactly as it was before segments.
-   */
-  code_segments: json('code_segments'),
-  /**
-   * Where the prefix sits relative to the segments: START for BRD-LARGEWHITE-001,
-   * END for FEED-STARTER-ITM-001. Only those two — anywhere else and the prefix
-   * is buried mid-code where it identifies nothing. Ignored when no prefix is set.
-   */
-  prefix_position: varchar('prefix_position', { length: 10 }).default('END').notNull(),
-  /**
-   * The separator before the sequence, when it differs from the one joining the
-   * segments. Location is FARM-001/SHED-001/PEN-001 — "/" between path levels,
-   * "-" before the number. Null falls back to `separator`, which is every series
-   * that only ever needed one.
-   */
-  seq_separator: varchar('seq_separator', { length: 1 }),
-  allow_manual: boolean('allow_manual').default(false).notNull(),
-  is_active: boolean('is_active').default(true).notNull(),
-  created_by: varchar('created_by', { length: 36 }),
-  updated_by: varchar('updated_by', { length: 36 }),
-  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
-  updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().notNull(),
-  deleted_at: timestamp('deleted_at', { mode: 'string' }),
-  extension_config: json('extension_config'),
-}, (table) => ({
-  uqScopedCode: uniqueIndex('uq_no_series_master_scope_code').on(table.tenant_id, sql`(coalesce(${table.company_id}, ''))`, table.series_code),
-  uqSeriesCode: uniqueIndex('uq_no_series_master_tenant_company_code').on(
-    table.tenant_id, table.company_id, table.series_code
-  ),
-}));
+// no_series_master was dropped 2026-09-23 (migration 0112) once the
+// no_series_master -> no_series consolidation (docs/decisions.md) moved every
+// reference onto the widened no_series table above. This table's shape lives
+// on there — see noSeries's own comment for the history.
 
 export const batchHeader = mysqlTable('batch_header', {
   /**

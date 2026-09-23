@@ -108,7 +108,7 @@ describe('ItemCategoryService', () => {
   describe('create — auto-generated (a series is configured for ITEM_CATEGORY)', () => {
     it('generates a root code via generateNext when there is no parent', async () => {
       numberSeries.resolveSeriesFor.mockResolvedValue('ITEM_CATEGORY');
-      numberSeries.lockSeries.mockResolvedValue({ allow_manual: false, seq_length: 3, prefix: 'CAT' });
+      numberSeries.lockSeries.mockResolvedValue({ manual_nos: false, seq_length: 3, prefix: 'CAT' });
       numberSeries.generateNext.mockResolvedValue('CAT-001');
       mockDbSelect
         .mockReturnValueOnce(makeSelectResult([{ company_id: 'comp-1' }])) // company exists
@@ -123,7 +123,7 @@ describe('ItemCategoryService', () => {
 
     it('generates a composite code under a parent category, prefixed with the parent code', async () => {
       numberSeries.resolveSeriesFor.mockResolvedValue('ITEM_CATEGORY');
-      numberSeries.lockSeries.mockResolvedValue({ allow_manual: false, seq_length: 3, prefix: 'CAT' });
+      numberSeries.lockSeries.mockResolvedValue({ manual_nos: false, seq_length: 3, prefix: 'CAT' });
       const parentRow = { category_id: 'parent-1', category_code: 'FEED', category_name: 'Feed' };
       mockDbSelect
         .mockReturnValueOnce(makeSelectResult([{ company_id: 'comp-1' }])) // company exists
@@ -144,7 +144,7 @@ describe('ItemCategoryService', () => {
 
     it('uses the user-supplied code without generating when the series has allow_manual set', async () => {
       numberSeries.resolveSeriesFor.mockResolvedValue('ITEM_CATEGORY');
-      numberSeries.lockSeries.mockResolvedValue({ allow_manual: true, seq_length: 3, prefix: 'CAT' });
+      numberSeries.lockSeries.mockResolvedValue({ manual_nos: true, seq_length: 3, prefix: 'CAT' });
       mockDbSelect
         .mockReturnValueOnce(makeSelectResult([{ company_id: 'comp-1' }])) // company exists
         .mockReturnValueOnce(makeSelectResult([{ category_code: 'CUSTOM', category_name: 'Feed' }])); // findOne
@@ -162,7 +162,7 @@ describe('ItemCategoryService', () => {
 
     it('rejects a generated code that would exceed 255 characters, without inserting', async () => {
       numberSeries.resolveSeriesFor.mockResolvedValue('ITEM_CATEGORY');
-      numberSeries.lockSeries.mockResolvedValue({ allow_manual: false, seq_length: 3, prefix: 'CAT' });
+      numberSeries.lockSeries.mockResolvedValue({ manual_nos: false, seq_length: 3, prefix: 'CAT' });
       numberSeries.generateNext.mockResolvedValue('CAT-' + '9'.repeat(252)); // 256 chars total
       mockDbSelect.mockReturnValueOnce(makeSelectResult([{ company_id: 'comp-1' }]));
 
@@ -174,7 +174,7 @@ describe('ItemCategoryService', () => {
 
     it('retries once with a freshly generated code on a duplicate-key collision, then raises ConflictException if it collides again', async () => {
       numberSeries.resolveSeriesFor.mockResolvedValue('ITEM_CATEGORY');
-      numberSeries.lockSeries.mockResolvedValue({ allow_manual: false, seq_length: 3, prefix: 'CAT' });
+      numberSeries.lockSeries.mockResolvedValue({ manual_nos: false, seq_length: 3, prefix: 'CAT' });
       numberSeries.generateNext.mockResolvedValueOnce('CAT-001').mockResolvedValueOnce('CAT-002');
       mockDbSelect.mockReturnValueOnce(makeSelectResult([{ company_id: 'comp-1' }]));
 

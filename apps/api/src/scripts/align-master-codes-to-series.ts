@@ -102,7 +102,7 @@ async function run() {
     await db.beginTransaction();
 
     const [allSeries] = await db.query<RowDataPacket[]>(
-      'SELECT * FROM no_series_master WHERE deleted_at IS NULL',
+      'SELECT *, id AS series_id, code AS series_code, NOT blocked AS is_active FROM no_series WHERE deleted_at IS NULL',
     );
     if (!allSeries.length) throw new Error('No number series found — run db-seed-dev-tenant first.');
 
@@ -121,7 +121,7 @@ async function run() {
         if (already) { skipped.push({ series: code, why: 'already named' }); continue; }
         if (apply || verify) {
           await db.query(
-            'UPDATE no_series_master SET prefix = NULL, seq_length = 0, code_segments = ?, allow_manual = 1 WHERE series_id = ?',
+            'UPDATE no_series SET prefix = NULL, seq_length = 0, code_segments = ?, manual_nos = 1 WHERE id = ?',
             [JSON.stringify([field]), row.series_id],
           );
         }
@@ -140,7 +140,7 @@ async function run() {
       for (const row of rows) {
         if (!row.is_active) { skipped.push({ series: code, why: 'already inactive' }); continue; }
         if (apply || verify) {
-          await db.query('UPDATE no_series_master SET is_active = 0 WHERE series_id = ?', [row.series_id]);
+          await db.query('UPDATE no_series SET blocked = 1 WHERE id = ?', [row.series_id]);
         }
         deactivated.push({ series: code, reason: 'codes are typed, not generated' });
       }
@@ -170,7 +170,7 @@ async function run() {
     // follows. Widened to 255 by migration 0082, so the longest of these
     // (BIOLOGICAL_ASSETS-GROWER_FINISHER, 33) has room.
     const [categorySeries] = await db.query<RowDataPacket[]>(
-      "SELECT * FROM no_series_master WHERE series_code = 'ITEM_CATEGORY' AND is_active = 1 AND deleted_at IS NULL LIMIT 1",
+      "SELECT * FROM no_series WHERE code = 'ITEM_CATEGORY' AND blocked = 0 AND deleted_at IS NULL LIMIT 1",
     );
     const recodedCategories: unknown[] = [];
     if (!categorySeries[0]) {
@@ -212,7 +212,7 @@ async function run() {
     // The new code is written back into the working map as each row is done, so
     // a pen composes against the shed's NEW code, never its old one.
     const [locationSeries] = await db.query<RowDataPacket[]>(
-      "SELECT * FROM no_series_master WHERE series_code = 'LOCATION' AND deleted_at IS NULL LIMIT 1",
+      "SELECT * FROM no_series WHERE code = 'LOCATION' AND deleted_at IS NULL LIMIT 1",
     );
     const series = locationSeries[0];
     if (!series) {
@@ -284,10 +284,10 @@ async function run() {
     }
 
     const [after] = await db.query<RowDataPacket[]>(
-      `SELECT series_code, prefix, seq_length, is_active, code_segments
-         FROM no_series_master WHERE deleted_at IS NULL
-          AND series_code IN ('SPECIES','STAGE','GL_ACCOUNT','COST_CENTER','LOCATION')
-        ORDER BY series_code`,
+      `SELECT code AS series_code, prefix, seq_length, NOT blocked AS is_active, code_segments
+         FROM no_series WHERE deleted_at IS NULL
+          AND code IN ('SPECIES','STAGE','GL_ACCOUNT','COST_CENTER','LOCATION')
+        ORDER BY code`,
     );
 
     console.log(JSON.stringify({

@@ -40,7 +40,7 @@ export class FeedFormulaService {
       return dto.formula_code.toUpperCase();
     }
     const series = await this.numberSeriesService.lockSeries(seriesCode, tenantId, dto.company_id);
-    if (series.allow_manual && dto.formula_code) {
+    if (series.manual_nos && dto.formula_code) {
       return dto.formula_code.toUpperCase();
     }
     return this.numberSeriesService.generateNext(seriesCode, tenantId, dto.company_id, undefined, dto as unknown as Record<string, unknown>);

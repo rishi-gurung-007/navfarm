@@ -7,7 +7,7 @@ import { migrate } from 'drizzle-orm/mysql2/migrator';
 import * as mysql from 'mysql2/promise';
 import * as master from '../core/database/master-schema';
 import * as tenant from '../core/database/schema';
-import { forSeededLobs, SYSTEM_UOM_SEED, SYSTEM_SPECIES_SEED, SYSTEM_ITEM_TYPE_SEED, SYSTEM_LOCATION_TYPE_SEED, SYSTEM_BREED_SEED, SYSTEM_ITEM_SEED, SYSTEM_PARAMETER_SEED, SYSTEM_STAGE_SEED, SYSTEM_NO_SERIES_SEED, SYSTEM_BREED_LIFECYCLE_SEED } from '../core/database/system-master-data-seed';
+import { forSeededLobs, SYSTEM_UOM_SEED, SYSTEM_SPECIES_SEED, SYSTEM_ITEM_TYPE_SEED, SYSTEM_LOCATION_TYPE_SEED, SYSTEM_BREED_SEED, SYSTEM_ITEM_SEED, SYSTEM_PARAMETER_SEED, SYSTEM_STAGE_SEED, SYSTEM_NO_SERIES_SEED, SYSTEM_BREED_LIFECYCLE_SEED, SYSTEM_KPI_METRIC_SEED } from '../core/database/system-master-data-seed';
 import { seedLocation } from './lib/seed-location';
 import { seedCode } from './lib/seed-series-code';
 import { seedDefaultCompanyRoles } from '../modules/core/role/default-role-seed';
@@ -135,53 +135,31 @@ export async function seedDevTenant() {
       // to a hand-written code. That is exactly what happened to the starter
       // items and the breed-lifecycle rows, which were seeded above this block
       // and came out as LVS-PIGLET and LANDRACE-WEANING instead of series codes.
-      const existingSeriesCodes = new Set((await tenantDb.select({ c: tenant.noSeriesMaster.series_code }).from(tenant.noSeriesMaster)).map((r) => r.c));
+      const existingSeriesCodes = new Set((await tenantDb.select({ c: tenant.noSeries.code }).from(tenant.noSeries)).map((r) => r.c));
       for (const series of SYSTEM_NO_SERIES_SEED) {
         if (existingSeriesCodes.has(series.series_code)) continue;
         const seriesNobId = series.nob_code ? nobIdByCode.get(series.nob_code) : undefined;
         const seriesLobId = series.lob_code ? lobIdByCode.get(series.lob_code) : undefined;
         if ((series.nob_code && !seriesNobId) || (series.lob_code && !seriesLobId)) continue;
-        await tenantDb.insert(tenant.noSeriesMaster).values({
-          series_id: randomUUID(),
-          tenant_id: tenantId,
-          company_id: null,
-          nob_id: seriesNobId || null,
-          lob_id: seriesLobId || null,
-          series_code: series.series_code,
-          series_name: series.series_name,
-          document_type: series.document_type,
-          prefix: series.prefix || null,
-          separator: series.separator,
-          seq_separator: series.seq_separator || null,
-          code_segments: series.code_segments ?? null,
-          prefix_position: series.prefix_position ?? 'END',
-          seq_length: series.seq_length,
-          current_seq: 0,
-          reset_frequency: series.reset_frequency,
-          allow_manual: series.allow_manual ?? false,
-          is_active: series.is_active ?? true,
-        });
-      }
-
-      // Mirror every series into the modern no_series table too — Master Data →
-      // Number Series and the Inventory Setup screen read from here, not from
-      // noSeriesMaster, and used to show only whatever generateNext() happened
-      // to lazily create (just 'ITEM'), never the full set the legacy table has
-      // carried since seed-system-master-data. no_series.code is unique with no
-      // tenant column, so this only ever runs for the one dev/demo tenant.
-      const existingModernCodes = new Set((await tenantDb.select({ c: tenant.noSeries.code }).from(tenant.noSeries)).map((r) => r.c));
-      for (const series of SYSTEM_NO_SERIES_SEED) {
-        if (existingModernCodes.has(series.series_code)) continue;
         await tenantDb.insert(tenant.noSeries).values({
           id: randomUUID(),
           tenant_id: tenantId,
           company_id: null,
+          nob_id: seriesNobId || null,
+          lob_id: seriesLobId || null,
           code: series.series_code,
           description: series.series_name,
           document_type: series.document_type,
           master_type: series.document_type,
           no_series_code: series.prefix || null,
+          prefix: series.prefix || null,
+          separator: series.separator,
+          seq_separator: series.seq_separator || null,
+          code_segments: series.code_segments ?? null,
+          prefix_position: series.prefix_position ?? 'END',
           seq_length: Math.max(series.seq_length, 1),
+          current_seq: 0,
+          reset_frequency: series.reset_frequency,
           manual_nos: series.allow_manual ?? false,
           blocked: series.is_active === false,
         });
@@ -190,6 +168,10 @@ export async function seedDevTenant() {
       const [existingUom] = await tenantDb.select().from(tenant.uomMaster).limit(1);
       if (!existingUom) {
         await tenantDb.insert(tenant.uomMaster).values(SYSTEM_UOM_SEED.map((u) => ({ ...u, tenant_id: tenantId })));
+      }
+      const [existingKpiMetric] = await tenantDb.select().from(tenant.kpiMetricMaster).limit(1);
+      if (!existingKpiMetric) {
+        await tenantDb.insert(tenant.kpiMetricMaster).values(SYSTEM_KPI_METRIC_SEED.map((m) => ({ ...m, tenant_id: tenantId })));
       }
       const [existingSpecies] = await tenantDb.select().from(tenant.speciesMaster).limit(1);
       if (!existingSpecies) {

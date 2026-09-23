@@ -22,6 +22,7 @@ import {
   AlertTriangle,
   Package,
   CalendarClock,
+  Gauge,
 } from "lucide-react";
 import {
   getStoredUser,
@@ -304,6 +305,7 @@ export default function ConsoleLayout({ children, modal }: { children: React.Rea
   if (activeScope === "TENANT") {
     navItems = [
       { label: t("dashboard"),       href: "/dashboard",      icon: LayoutDashboard },
+      { label: t("execDashboard"),   href: "/executive-dashboard", icon: Gauge },
       { label: t("companies"),       href: "/companies",      icon: Building2 },
       { label: t("masterData"),      href: "/master-data",    icon: Database, activePrefix: "/master-data", children: masterDataChildren, flyout: true },
       { label: t("teamManagement"),  href: "/users",          icon: Users },
@@ -313,6 +315,7 @@ export default function ConsoleLayout({ children, modal }: { children: React.Rea
   } else if (activeScope === "COMPANY") {
     navItems = [
       { label: t("companyDashboard"), href: "/dashboard",      icon: LayoutDashboard },
+      { label: t("execDashboard"),    href: "/executive-dashboard", icon: Gauge },
       // The work-shaped spine first, in the order an operational area lists it,
       // then the company's own entities. Master Data used to sit 4th here and
       // 10th in an area, Batches 7th and 2nd, Livestock 8th and 4th — so what
@@ -364,6 +367,7 @@ export default function ConsoleLayout({ children, modal }: { children: React.Rea
      */
     navItems = [
       { label: t("lobDashboard", { lob: tLob(activeLob) }), href: "/dashboard", icon: LayoutDashboard },
+      { label: t("execDashboard"), href: "/executive-dashboard", icon: Gauge },
       {
         label: t("navBatches"),
         href: "/batches",

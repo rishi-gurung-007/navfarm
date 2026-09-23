@@ -61,31 +61,15 @@ async function main() {
     const targets = demoBatches.filter((b) => b.remarks?.startsWith('DEMO-BATCH-'));
     if (targets.length === 0) throw new Error('No DEMO-BATCH-* rows found — nothing to repair.');
 
-    // Farm-bound breed per farm (Phase 2 made breeds farm-specific), used to
-    // backfill count-only batches that were created breed-less.
-    const breedsByFarm = new Map<string, string>();
-    for (const breed of await tenantDb
-      .select({ breed_id: schema.breedMaster.breed_id, location_id: schema.breedMaster.location_id })
-      .from(schema.breedMaster)
-      .where(isNull(schema.breedMaster.deleted_at))) {
-      if (breed.location_id) breedsByFarm.set(breed.location_id, breed.breed_id);
-    }
-
     await cls.run(async () => {
       cls.set('tenantId', tenant.tenant_id);
       cls.set('tenantDb', tenantDb);
       for (const batch of targets) {
         if (!batch.breed_id && batch.farm_id) {
-          const farmBreed = breedsByFarm.get(batch.farm_id);
-          if (farmBreed) {
-            console.log(`${batch.batch_no}: breed-less (${batch.animal_tracking ?? 'unknown tracking'}) -> backfill breed from farm`);
-            if (apply) {
-              await tenantDb.update(schema.batchHeader)
-                .set({ breed_id: farmBreed })
-                .where(eq(schema.batchHeader.batch_id, batch.batch_id));
-              batch.breed_id = farmBreed;
-            }
-          }
+          // Breed is company-wide now, not farm-specific, so a farm no longer
+          // implies a single breed to backfill from — a breed-less batch stays
+          // breed-less here; assign one by hand if this batch needs it.
+          console.log(`${batch.batch_no}: breed-less (${batch.animal_tracking ?? 'unknown tracking'}) — no farm-implied breed to backfill from`);
         }
 
         // Backdate the batch so 14 days are owed (see header note).

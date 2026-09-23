@@ -15,4 +15,5 @@ export const MASTER_CODE_COLUMNS: Record<string, string> = {
   // is identified by its item's code (BBP-1 §1.5).
   UOM_CONVERSION: 'conversion_code',
   GL_MAPPING: 'mapping_code', BREED_LIFECYCLE_STAGE: 'lifecycle_code',
+  KPI_METRIC: 'metric_code',
 };

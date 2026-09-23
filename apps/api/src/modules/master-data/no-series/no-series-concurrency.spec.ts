@@ -1,9 +1,11 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { NoSeriesService } from './no-series.service';
+import { NumberSeriesService } from '../../system/number-series/number-series.service';
+import { AuditLogService } from '../../system/audit-log/audit-log.service';
+import { NobLobResolutionService } from '../../core/operational-area/nob-lob-resolution.service';
 import { ClsService } from 'nestjs-cls';
 
 describe('NoSeries Concurrency', () => {
-  let service: NoSeriesService;
+  let service: NumberSeriesService;
 
   // Simulate a real database row with concurrency queue simulating row-level lock (SELECT FOR UPDATE)
   let simulatedRow = {
@@ -79,17 +81,19 @@ describe('NoSeries Concurrency', () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
-        NoSeriesService,
+        NumberSeriesService,
         {
           provide: ClsService,
           useValue: {
             get: jest.fn().mockReturnValue(mockDb),
           },
         },
+        { provide: AuditLogService, useValue: { log: jest.fn() } },
+        { provide: NobLobResolutionService, useValue: { resolve: jest.fn() } },
       ],
     }).compile();
 
-    service = module.get<NoSeriesService>(NoSeriesService);
+    service = module.get<NumberSeriesService>(NumberSeriesService);
   });
 
   it('should safely generate sequential unique numbers for concurrent requests without collisions', async () => {
@@ -97,7 +101,7 @@ describe('NoSeries Concurrency', () => {
 
     // Fire 10 requests simultaneously
     const requests = Array.from({ length: concurrentRequestsCount }, () =>
-      service.generateNextNumber('series-feed-1')
+      service.generateNextNumberById('series-feed-1')
     );
 
     const results = await Promise.all(requests);

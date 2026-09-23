@@ -5,7 +5,7 @@
  * company.service.ts calls copyCompanyMasterTemplates inside the same
  * transaction that creates a company (company.service.ts:182). seed-dev-tenant.ts
  * raw-inserts the Triple C company row directly and never calls it — so a
- * rebuild from empty leaves every nullable-company_id master (no_series_master
+ * rebuild from empty leaves every nullable-company_id master (no_series
  * included) sitting at tenant scope only. masterScopeConditions requires an
  * EXACT company_id match once a request carries a COMPANY scope (unlike
  * nob_id/lob_id, a NULL company_id row is not a visible fallback) — so without
@@ -14,7 +14,7 @@
  *
  * Default is read-only; --verify applies and rolls back; --apply commits.
  * Idempotent, same rule as seed-demo.ts's own adoptCompanyTemplates: a company
- * already holding at least one company-scoped no_series_master row is left
+ * already holding at least one company-scoped no_series row is left
  * alone — copyCompanyMasterTemplates is a one-time snapshot, not a repeated
  * sync (see its own docstring), so re-running it against an already-adopted
  * company would duplicate every template row.
@@ -61,7 +61,7 @@ async function run() {
 
     for (const company of companies) {
       const [existing] = await pool.query<RowDataPacket[]>(
-        'SELECT series_id FROM no_series_master WHERE company_id = ? LIMIT 1',
+        'SELECT id AS series_id FROM no_series WHERE company_id = ? LIMIT 1',
         [company.company_id],
       );
       if (existing.length) {

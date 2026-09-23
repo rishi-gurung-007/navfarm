@@ -11,7 +11,7 @@ export const MASTER_TABLES: Record<string, AnyMySqlTable> = {
   // map to locationMaster so scope checks on those routes still resolve.
   farm: schema.locationMaster, warehouse: schema.locationMaster, shed: schema.locationMaster,
   location: schema.locationMaster, 'location-type': schema.locationTypeMaster,
-  stage: schema.stageMaster, 'number-series': schema.noSeriesMaster, animal: schema.animalRegister,
+  stage: schema.stageMaster, 'number-series': schema.noSeries, animal: schema.animalRegister,
   item: schema.itemMaster, 'item-type': schema.itemTypeMaster, 'item-category': schema.itemCategoryMaster,
   'item-attribute': schema.itemAttributeMaster, uom: schema.uomMaster,
   // Two keys, one table: 'uom/conversion' is the controller route enforceMasterRequest
@@ -21,6 +21,7 @@ export const MASTER_TABLES: Record<string, AnyMySqlTable> = {
   species: schema.speciesMaster,
   breed: schema.breedMaster, 'breed-lifecycle-stage': schema.breedLifecycleStages,
   reason: schema.reasonMaster, disease: schema.diseaseMaster, 'feed-formula': schema.feedFormulaMaster,
+  'kpi-metric': schema.kpiMetricMaster,
   activity: schema.activityMaster,
   supplier: schema.supplierMaster, customer: schema.customerMaster, resource: schema.resourceMaster,
   'gl-account': schema.glAccountMaster, 'gl-mapping': schema.glMappingMaster, 'cost-center': schema.costCenterMaster,

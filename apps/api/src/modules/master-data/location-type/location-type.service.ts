@@ -150,17 +150,17 @@ export class LocationTypeService {
     await this.db.transaction(async (tx) => {
       await tx.update(schema.locationTypeMaster).set(updates).where(eq(schema.locationTypeMaster.location_type_id, id));
       if (dto.code_prefix !== undefined || dto.type_name !== undefined) {
-        await tx.update(schema.noSeriesMaster).set({
+        await tx.update(schema.noSeries).set({
           ...(dto.code_prefix !== undefined ? { prefix: dto.code_prefix.toUpperCase() } : {}),
-          ...(dto.type_name !== undefined ? { series_name: `${dto.type_name.trim()} Location` } : {}),
+          ...(dto.type_name !== undefined ? { description: `${dto.type_name.trim()} Location` } : {}),
           updated_by: user?.userId || null,
         }).where(and(
-          eq(schema.noSeriesMaster.tenant_id, tenantId),
-          eq(schema.noSeriesMaster.series_code, seriesCodeFor(existing.type_code)),
+          eq(schema.noSeries.tenant_id, tenantId),
+          eq(schema.noSeries.code, seriesCodeFor(existing.type_code)),
           // A tenant-wide type owns one independent series per company. Keep
           // those company counters on the new prefix as well; their numeric
           // positions remain unchanged.
-          ...(existing.company_id ? [eq(schema.noSeriesMaster.company_id, existing.company_id)] : []),
+          ...(existing.company_id ? [eq(schema.noSeries.company_id, existing.company_id)] : []),
         ));
       }
     });

@@ -13,6 +13,7 @@ import { getActiveCompanyId } from "@/hooks/useAuth";
 import { useLanguage } from "@/hooks/useLanguage";
 import SchedulerDetailPanel from "@/components/console/production/scheduler-detail-panel";
 import CreateSchedulerModal from "./create-scheduler-modal";
+import { formatQuantity } from "@/lib/utils";
 
 type Row = Record<string, any>;
 
@@ -128,7 +129,7 @@ export default function SchedulerListPanel() {
                   <TableCell className="px-3 py-2"><StatusBadge status={r.scheduler_status} /></TableCell>
                   <TableCell className="px-3 py-2" style={S.sub}>{r.effective_from || "—"}</TableCell>
                   <TableCell className="px-3 py-2" style={S.sub}>{r.effective_to || "—"}</TableCell>
-                  <TableCell className="px-3 py-2" style={S.primary}>{r.animal_count ?? "—"}</TableCell>
+                  <TableCell className="px-3 py-2" style={S.primary}>{r.animal_count != null ? formatQuantity(r.animal_count, "HEAD") : "—"}</TableCell>
                   <TableCell className="px-3 py-2" style={S.sub}>{r.line_count ?? 0}</TableCell>
                   <TableCell className="px-3 py-2" style={S.sub}>{r.location_name || "—"}</TableCell>
                   <TableCell className="px-3 py-2">

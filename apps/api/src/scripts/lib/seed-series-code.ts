@@ -43,19 +43,19 @@ export async function seriesCodeFor(
   // Mirrors NumberSeriesService.generateNext's `ORDER BY company_id IS NULL`.
   const [series] = await db
     .select()
-    .from(schema.noSeriesMaster)
+    .from(schema.noSeries)
     .where(
       and(
-        eq(schema.noSeriesMaster.tenant_id, ctx.tenantId),
-        eq(schema.noSeriesMaster.series_code, seriesCode),
-        eq(schema.noSeriesMaster.is_active, true),
-        isNull(schema.noSeriesMaster.deleted_at),
+        eq(schema.noSeries.tenant_id, ctx.tenantId),
+        eq(schema.noSeries.code, seriesCode),
+        eq(schema.noSeries.blocked, false),
+        isNull(schema.noSeries.deleted_at),
         ctx.companyId
-          ? or(eq(schema.noSeriesMaster.company_id, ctx.companyId), isNull(schema.noSeriesMaster.company_id))
-          : isNull(schema.noSeriesMaster.company_id),
+          ? or(eq(schema.noSeries.company_id, ctx.companyId), isNull(schema.noSeries.company_id))
+          : isNull(schema.noSeries.company_id),
       ),
     )
-    .orderBy(sql`${schema.noSeriesMaster.company_id} IS NULL`)
+    .orderBy(sql`${schema.noSeries.company_id} IS NULL`)
     .limit(1);
 
   if (!series) return null;
@@ -112,9 +112,9 @@ export async function seriesCodeFor(
   // is exactly the state this whole exercise started from.
   if (series.seq_length > 0) {
     await db
-      .update(schema.noSeriesMaster)
-      .set({ current_seq: sequence, last_generated_code: code })
-      .where(eq(schema.noSeriesMaster.series_id, series.series_id));
+      .update(schema.noSeries)
+      .set({ current_seq: sequence, last_no_used: code })
+      .where(eq(schema.noSeries.id, series.id));
   }
 
   return code;

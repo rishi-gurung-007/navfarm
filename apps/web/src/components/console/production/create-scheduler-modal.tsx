@@ -15,6 +15,7 @@ import { InlineAlert } from "@/components/ui/alert";
 import { TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { useLanguage } from "@/hooks/useLanguage";
 import { findConflictingSchedulerLine } from "./scheduler-line-overlap";
+import { formatQuantity } from "@/lib/utils";
 
 type Row = Record<string, any>;
 
@@ -208,7 +209,7 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
 
     const today = new Date().toISOString().slice(0, 10);
     setEffectiveFrom(selectedBatch.start_date || today);
-    setAnimalCount(String(selectedBatch.closing_quantity ?? selectedBatch.opening_quantity ?? ""));
+    setAnimalCount(formatQuantity(selectedBatch.closing_quantity ?? selectedBatch.opening_quantity ?? "", "HEAD"));
 
     if (selectedBatch.lob_id) {
       setLoadingStages(true);
@@ -528,7 +529,7 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
                 <input
                   type="number"
                   min={0}
-                  step="any"
+                  step="1"
                   value={animalCount}
                   onChange={(e) => setAnimalCount(e.target.value)}
                   placeholder="e.g. 20"

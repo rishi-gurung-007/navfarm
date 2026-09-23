@@ -2,7 +2,6 @@ import { ApiProperty } from '@nestjs/swagger';
 import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsInt, Min, Max, IsNumber, IsIn, IsArray, ValidateNested } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import { MasterListQueryDto } from '../../../../common/master-list-query';
-import { KPI_METRICS } from '../../../production/scheduler-header/dto/scheduler-header.dto';
 
 // ==========================================
 // SPECIES DTOs
@@ -91,10 +90,6 @@ export class QuerySpeciesDto extends MasterListQueryDto {
 // ==========================================
 
 export class CreateBreedDto {
-  @ApiProperty({ description: 'Active first-level farm where this breed profile applies.' })
-  @IsUUID()
-  @IsNotEmpty()
-  location_id: string;
   @ApiProperty({ description: 'Nature of Business UUID scope. Omit to derive it from the company\'s operational areas.', required: false, example: '50000000-5000-5000-5000-000000000001' })
   @IsString()
   @IsOptional()
@@ -276,10 +271,6 @@ export class CreateBreedDto {
 }
 
 export class UpdateBreedDto {
-  @ApiProperty({ description: 'Location where this breed is kept. Existing codes are not renumbered.', required: false })
-  @IsUUID()
-  @IsOptional()
-  location_id?: string | null;
   @ApiProperty({ required: false })
   @IsString()
   @IsOptional()
@@ -470,11 +461,6 @@ export class QueryBreedDto extends MasterListQueryDto {
   @IsString()
   companyId?: string;
 
-  @ApiProperty({ description: 'Filter by farm UUID', required: false })
-  @IsOptional()
-  @IsUUID()
-  locationId?: string;
-
   @ApiProperty({ description: 'Filter by species UUID', required: false })
   @IsOptional()
   @IsString()
@@ -526,14 +512,19 @@ const blankToNull = ({ value }: { value: unknown }) => (value === '' ? null : va
 
 /**
  * One KPI row: which metric, its limits and how loud the alert is. The metric
- * is the Scheduler's own KPI vocabulary (scheduler-header.dto KPI_METRICS), so
- * a lifecycle threshold and the DESCRIPTIVE line that captures the value name
- * the same thing. Either limit may be left open, not both.
+ * is a real, tenant-extensible catalog now — kpi_metric_master, not a
+ * hardcoded enum — so a lifecycle threshold and the DESCRIPTIVE line that
+ * captures the value name the same thing whether it's one of the seeded
+ * system metrics or one a tenant added of their own. Existence is checked
+ * dynamically against that table in BreedService.assertLifecycleRows, the
+ * same way resource_requirements' resource_id is checked here — a static
+ * @IsIn can't see a row added after the API started. Either limit may be
+ * left open, not both.
  */
 export class KpiThresholdRowDto {
-  @ApiProperty({ enum: KPI_METRICS })
+  @ApiProperty({ description: 'A kpi_metric_master metric_code' })
   @IsString()
-  @IsIn(KPI_METRICS)
+  @IsNotEmpty()
   metric: string;
 
   @ApiProperty({ required: false, nullable: true })
@@ -574,6 +565,17 @@ export class ResourceRequirementRowDto {
 }
 
 export class CreateBreedLifecycleStageDto {
+  // breed_lifecycle_stages has a company_id column but the service never reads
+  // it — a row is scoped through its breed instead (see createLifecycleStage).
+  // Still has to be accepted here, not rejected: enforceMasterRequest injects
+  // it into every create for a table that carries the column, whatever the
+  // DTO does with it, and forbidNonWhitelisted turns an unrecognized property
+  // into a hard 400 rather than silently stripping it.
+  @ApiProperty({ description: 'Accepted but unused — a row is scoped through its breed.', required: false })
+  @IsUUID()
+  @IsOptional()
+  company_id?: string;
+
   @ApiProperty({ description: 'Unique code for this record within the tenant/company scope. Optional: no breed lifecycle stage number series is configured yet, so a code is only stored when one is typed. Once a series is configured the code is generated instead.', required: false, example: 'BLS-001' })
   @IsString()
   @IsOptional()

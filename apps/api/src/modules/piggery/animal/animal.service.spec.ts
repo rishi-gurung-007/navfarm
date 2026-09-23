@@ -267,7 +267,7 @@ describe('AnimalService', () => {
       ).rejects.toThrow('Animal placement is not on your active farm.');
     });
 
-    it('refuses a location-only placement when the Breed belongs to another farm', async () => {
+    it('refuses a location-only placement when the Breed is not available in this operational scope', async () => {
       useFarmScope(cls, { farmId: 'farm-g', restricted: true, companyId: 'co-1', lobId: 'lob-pig' });
       const penOnGrasmere = {
         location_id: 'pen-g', parent_location_id: 'shed-g', farm_id: 'farm-g', location_type: 'PEN',
@@ -286,7 +286,7 @@ describe('AnimalService', () => {
 
       await expect(
         service.create({ ...baseDto, company_id: 'co-1', lob_id: 'lob-pig', breed_id: 'breed-k', current_location_id: 'pen-g' } as any, 'tenant-1'),
-      ).rejects.toThrow(/Breed.*not available.*farm/i);
+      ).rejects.toThrow(/Breed.*not available.*operational scope/i);
       expect(mockDbInsert).not.toHaveBeenCalled();
       expect(numberSeriesService.generateNext).not.toHaveBeenCalled();
     });
@@ -1005,7 +1005,7 @@ describe('AnimalService', () => {
       expect(mockDbUpdate).not.toHaveBeenCalled();
     });
 
-    it('requires the Breed profile to match the animal farm, company, NOB and LOB', async () => {
+    it('requires the Breed profile to match the animal company, NOB and LOB', async () => {
       let captured: any;
       mockDbSelect
         .mockReturnValueOnce(found({
@@ -1038,7 +1038,7 @@ describe('AnimalService', () => {
 
       const rendered = new MySqlDialect().sqlToQuery(captured);
       expect(rendered.params).toEqual(expect.arrayContaining([
-        'breed-other-lob', 'tenant-123', 'comp-1', 'nob-1', 'lob-pig', 'farm-1',
+        'breed-other-lob', 'tenant-123', 'comp-1', 'nob-1', 'lob-pig',
       ]));
       expect(mockDbUpdate).not.toHaveBeenCalled();
     });

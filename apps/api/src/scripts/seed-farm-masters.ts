@@ -142,26 +142,26 @@ async function run() {
     };
 
     // ---- Breeds ------------------------------------------------------------
-    // Company-scoped only. These are farm-specific breeds with a location, not
-    // tenant-wide templates, so they get one row rather than the tenant/company
-    // pair the system lookups are held as.
+    // Company-scoped only. Breed no longer carries a farm/location (removed
+    // 2026-09-23, migration 0110_remove_breed_farm.sql — a breed profile is
+    // company-wide now, not one row per farm), so FARM_BREED_SEED's `.farm`
+    // is used only to group the report below, never written to the row.
     let brdInserted = 0, brdUpdated = 0;
     for (const b of FARM_BREED_SEED) {
-      const loc = farmId.get(FARM_CODE[b.farm])!;
       const [existing] = await db.query<RowDataPacket[]>(
         'SELECT breed_id FROM breed_master WHERE tenant_id = ? AND breed_code = ? AND company_id IS NOT NULL',
         [scope.tenant_id, b.code]);
       const vals = [
         b.name, n(b.gestationDays), n(b.lactationDays), n(b.productiveLifeMonths),
         n(b.productiveLifeCycles), n(b.avgLitterSizeBorn), n(b.avgLitterSizeWeaned),
-        n(b.avgWeaningWeightKg), n(b.boarProductiveLifeMonths), n(b.residualValuePct), loc,
+        n(b.avgWeaningWeightKg), n(b.boarProductiveLifeMonths), n(b.residualValuePct),
       ];
       if (existing.length) {
         if (write) {
           await db.query(
             `UPDATE breed_master SET breed_name=?, gestation_days=?, lactation_days=?, productive_life_months=?,
                productive_life_cycles=?, avg_litter_size_born=?, avg_litter_size_weaned=?, avg_weaning_weight_kg=?,
-               boar_productive_life_months=?, residual_value_pct=?, location_id=?,
+               boar_productive_life_months=?, residual_value_pct=?,
                is_active=1, status='ACTIVE', deleted_at=NULL, updated_at=NOW()
              WHERE breed_id=?`, [...vals, existing[0].breed_id]);
         }
@@ -172,9 +172,9 @@ async function run() {
             `INSERT INTO breed_master (breed_id, tenant_id, company_id, nob_id, lob_id, breed_code, breed_name,
                gestation_days, lactation_days, productive_life_months, productive_life_cycles,
                avg_litter_size_born, avg_litter_size_weaned, avg_weaning_weight_kg,
-               boar_productive_life_months, residual_value_pct, location_id, breed_type,
+               boar_productive_life_months, residual_value_pct, breed_type,
                is_active, status, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'ACTIVE', NOW(), NOW())`,
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'ACTIVE', NOW(), NOW())`,
             [randomUUID(), scope.tenant_id, scope.company_id, scope.nob_id, scope.lob_id, b.code, ...vals, BREED_TYPE]);
         }
         brdInserted++;

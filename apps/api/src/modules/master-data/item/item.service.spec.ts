@@ -4,7 +4,6 @@ import { ClsService } from 'nestjs-cls';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { NobLobResolutionService } from '../../core/operational-area/nob-lob-resolution.service';
-import { NoSeriesService } from '../no-series/no-series.service';
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 
 describe('ItemService', () => {
@@ -68,12 +67,9 @@ describe('ItemService', () => {
           useValue: {
             generateNext: mockGenerateNext,
             resolveSeriesFor: jest.fn().mockResolvedValue('ITEM'),
-          },
-        },
-        {
-          provide: NoSeriesService,
-          useValue: {
-            generateNextNumber: jest.fn().mockResolvedValue({ next_number: 'FEED-0001', series: { manual_nos: false } }),
+            previewNextNumberById: jest.fn().mockResolvedValue({ next_number: 'FEED-0001', series: { manual_nos: false } }),
+            generateNextNumberById: jest.fn().mockResolvedValue({ next_number: 'FEED-0001', series: { manual_nos: false } }),
+            recordNumberUsedById: jest.fn().mockResolvedValue(undefined),
           },
         },
         { provide: NobLobResolutionService, useValue: nobLobResolution },
@@ -392,7 +388,7 @@ describe('ItemService', () => {
         from: jest.fn().mockReturnValue({
           where: jest.fn().mockReturnValue({
             limit: jest.fn().mockResolvedValue([{
-              series_name: 'Item Code', document_type: 'ITEM', prefix: 'ITM', date_format: null,
+              description: 'Item Code', document_type: 'ITEM', prefix: 'ITM', date_format: null,
               separator: '-', seq_length: 4, reset_frequency: 'NEVER',
             }]),
           }),
@@ -410,7 +406,7 @@ describe('ItemService', () => {
     await (service as any).ensureCompanyItemSeries('tenant-123', 'comp-1');
 
     expect(values).toHaveBeenCalledWith(expect.objectContaining({
-      company_id: 'comp-1', series_code: 'ITEM', current_seq: 9,
+      company_id: 'comp-1', code: 'ITEM', current_seq: 9,
     }));
   });
 

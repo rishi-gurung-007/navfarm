@@ -1,5 +1,5 @@
 /**
- * Drops every number series row and reseeds from SYSTEM_NO_SERIES_SEED.
+ * Drops every SYSTEM_NO_SERIES_SEED-defined number series row and reseeds it.
  *
  * The table had drifted a long way from its own seed: a row per variant rather
  * than per master (six LOCATION_* rows, one more with every location type
@@ -7,8 +7,14 @@
  * a dozen masters configured only by later patch scripts. The seed is now the
  * one description of what the table should hold; this makes the table match it.
  *
- * HARD delete, not soft: uq_no_series_master_scope_code ignores deleted_at, so
- * a soft-deleted row keeps its series_code and the reseed collides with it.
+ * Scoped to `code IN (SYSTEM_NO_SERIES_SEED codes)`, not a blind DELETE FROM
+ * no_series: since the no_series_master/no_series merge (2026-09-23), no_series
+ * also carries rows this script never owned (the NS-FEED/NS-LVS/etc item-type
+ * sub-series from seed-demo-item-catalog.ts) and item_template.no_series_id now
+ * holds a real FK (ON DELETE RESTRICT) into this table. A row still referenced
+ * by an item template fails the DELETE with a normal FK error and aborts the
+ * whole transaction uncommitted — deliberately: recreating a still-referenced
+ * row under a new id would silently orphan that template.
  *
  * current_seq is carried over per document_type — the highest any of a master's
  * variants had reached — so numbering continues rather than restarting into
@@ -40,8 +46,10 @@ async function run() {
   try {
     await db.beginTransaction();
 
+    const seededCodes = SYSTEM_NO_SERIES_SEED.map((s) => s.series_code);
     const [existing] = await db.query<RowDataPacket[]>(
-      'SELECT series_id, series_code, document_type, tenant_id, company_id, nob_id, lob_id, current_seq FROM no_series_master'
+      'SELECT id, code, document_type, tenant_id, company_id, nob_id, lob_id, current_seq FROM no_series WHERE code IN (?)',
+      [seededCodes],
     );
     if (!existing.length) throw new Error('No series rows found — refusing to seed into an unknown state.');
 
@@ -54,9 +62,9 @@ async function run() {
       scopes.set(`${r.tenant_id}::${r.company_id ?? 'GLOBAL'}`, r);
     }
 
-    console.log(`\n${TENANT_DB}.no_series_master — dropping ${existing.length} rows, seeding ${SYSTEM_NO_SERIES_SEED.length} per scope across ${scopes.size} scope(s)\n`);
+    console.log(`\n${TENANT_DB}.no_series — dropping ${existing.length} seeded rows, reseeding ${SYSTEM_NO_SERIES_SEED.length} per scope across ${scopes.size} scope(s)\n`);
 
-    if (apply || verify) await db.execute('DELETE FROM no_series_master');
+    if (apply || verify) await db.query('DELETE FROM no_series WHERE code IN (?)', [seededCodes]);
 
     let created = 0;
     for (const [, scope] of scopes) {
@@ -69,9 +77,9 @@ async function run() {
         created++;
         if (apply || verify) {
           await db.execute(
-            'INSERT INTO no_series_master (series_id, tenant_id, company_id, nob_id, lob_id, series_code, series_name, document_type,' +
-            ' prefix, `separator`, seq_separator, seq_length, current_seq, reset_frequency, allow_manual, is_active, code_segments, prefix_position)' +
-            ' VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)',
+            'INSERT INTO no_series (id, tenant_id, company_id, nob_id, lob_id, code, description, document_type,' +
+            ' prefix, `separator`, seq_separator, seq_length, current_seq, reset_frequency, manual_nos, blocked, code_segments, prefix_position)' +
+            ' VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)',
             [randomUUID(), scope.tenant_id, scope.company_id, scope.nob_id, scope.lob_id, s.series_code, s.series_name, s.document_type,
              s.prefix ?? null, s.separator, s.seq_separator ?? null, s.seq_length, carried, s.reset_frequency,
              s.allow_manual ?? false, s.code_segments ? JSON.stringify(s.code_segments) : null, s.prefix_position ?? 'END']

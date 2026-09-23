@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, like, or } from 'drizzle-orm';
+import { eq, and, like, or, desc } from 'drizzle-orm';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
 import { QueryShedDto } from './dto/shed.dto';
@@ -71,6 +71,7 @@ export class ShedService {
       .select()
       .from(schema.locationMaster)
       .where(and(...conditions))
+      .orderBy(desc(schema.locationMaster.created_at))
       .limit(query.limit || 50)
       .offset(query.offset || 0);
 

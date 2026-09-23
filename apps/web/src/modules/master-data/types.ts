@@ -17,11 +17,14 @@ export interface SelectOption {
 }
 
 /** One condition for `requiredWhen`: matches when `key`'s current form value equals `equals`
- * (or one of `equals`, if an array), or — when `equals` is omitted — simply has any non-empty
+ * (or one of `equals`, if an array), or when it's anything OTHER than `notEquals` (or none of
+ * them, if an array) — useful for "every type except this one," where enumerating every other
+ * value would silently miss one added later. With neither given, matches on any non-empty
  * value. */
 export interface RequiredCondition {
   key: string;
   equals?: string | boolean | Array<string | boolean>;
+  notEquals?: string | boolean | Array<string | boolean>;
 }
 
 export interface MasterDataField {
@@ -197,6 +200,17 @@ export interface MasterDataField {
   max?: number;
   /** Maximum length for text inputs */
   maxLength?: number;
+  /**
+   * Renders type "number" as a native <input type="number"> (spinner, browser
+   * numeric validation) instead of the text-input-with-digit-filtering every
+   * other number field uses. The text-input form exists to dodge two native
+   * quirks — scientific notation on a very small/large value, and Chrome
+   * silently discarding a keystroke that would exceed `max` mid-edit — which
+   * only bite fields with a wide range or fractional step. A small bounded
+   * integer like sequence digits never triggers either, so it can have the
+   * native spinner back where that's what's wanted.
+   */
+  nativeNumber?: boolean;
   /**
    * Keys this switch clears when it is turned off, and the value to clear them
    * to. A form-only Yes/No that gates real columns: "Use a prefix" off must

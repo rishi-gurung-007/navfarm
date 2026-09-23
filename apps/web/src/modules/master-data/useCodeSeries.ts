@@ -33,9 +33,10 @@ export const CODE_SERIES: Record<string, [string, string, string?]> = {
   "uom-conversion": ["UOM_CONVERSION", "conversion_code"],
   "gl-mapping": ["GL_MAPPING", "mapping_code"],
   "breed-lifecycle-stage": ["BREED_LIFECYCLE_STAGE", "lifecycle_code"],
+  "kpi-metric": ["KPI_METRIC", "metric_code"],
 };
 const PARENT_FIELDS: Record<string, string> = {
-  location: "parent_location_id", breed: "location_id", "item-category": "parent_category_id",
+  location: "parent_location_id", "item-category": "parent_category_id",
   "gl-account": "parent_account_id", "cost-center": "parent_cost_center_id",
 };
 interface Settings { generated: boolean; allowManual: boolean; preview?: string }
@@ -135,14 +136,24 @@ export function useCodeSeries(key: string, form: Record<string, unknown>, enable
 
   // Locations use type-specific series.
   const awaitingLocationType = key === "location" && !type;
-  const managedCode = awaitingLocationType || activeSettings?.generated;
+  // The very first preview for a given key/type/parent combo in this session —
+  // before its request has resolved and before anything is cached — leaves
+  // activeSettings undefined. Falling through to the field's static config
+  // then meant every code field briefly (and for a slow request, not so
+  // briefly) went read-only the instant a Location Type was picked, even
+  // though the series behind it allows manual entry: a field cannot know it's
+  // locked until it's been told so, so the honest default while waiting is
+  // "editable", the same treatment awaitingLocationType already gets.
+  const awaitingPreview = canGenerate && enabled && !awaitingLocationType && activeSettings === undefined && !result?.error;
+  const managedCode = awaitingLocationType || awaitingPreview || activeSettings?.generated;
 
   /**
    * allowManual reflects the Number Series's own `manual_nos` flag.
    * When true the user types the code themselves; when false it is auto-generated
-   * and read-only.
+   * and read-only. Optimistically true while awaiting the first answer, for the
+   * same reason as above.
    */
-  const allowManual = awaitingLocationType || activeSettings?.allowManual;
+  const allowManual = awaitingLocationType || awaitingPreview || activeSettings?.allowManual;
   const serial = enabled && managedCode && !allowManual;
 
   const preview = activeSettings?.preview || "";
@@ -150,6 +161,11 @@ export function useCodeSeries(key: string, form: Record<string, unknown>, enable
   return {
     preview,
     allowManual: !!allowManual,
+    // Whether an actual number series backs this field (vs. no series configured
+    // at all, where the field is just a plain optional text input). Only when a
+    // series is managing the field does leaving it unedited mean "take the next
+    // series number" rather than "the user has no code convention to follow".
+    managed: !!managedCode,
     serial: !!serial,
     refresh: () => {
       PREVIEW_CACHE.delete(cacheKey);

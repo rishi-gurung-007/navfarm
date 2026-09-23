@@ -181,7 +181,7 @@ export class GlAccountService {
     const series = await this.numberSeriesService.lockSeries(seriesCode, tenantId, dto.company_id, tx);
 
     let accountCode: string;
-    if (series.allow_manual && dto.account_code) {
+    if (series.manual_nos && dto.account_code) {
       accountCode = dto.account_code;
     } else if (parent) {
       accountCode = await generateCompositeCode({

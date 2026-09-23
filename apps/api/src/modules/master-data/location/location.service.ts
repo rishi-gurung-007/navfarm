@@ -116,22 +116,22 @@ export class LocationService {
   private async ensureCompanySeries(_type: typeof schema.locationTypeMaster.$inferSelect, tenantId: string, companyId?: string | null) {
     const seriesCode = 'LOCATION';
     if (!companyId) return seriesCode;
-    const [series] = await this.db.select().from(schema.noSeriesMaster).where(and(
-      eq(schema.noSeriesMaster.tenant_id, tenantId),
-      eq(schema.noSeriesMaster.company_id, companyId),
-      eq(schema.noSeriesMaster.series_code, seriesCode),
-      isNull(schema.noSeriesMaster.deleted_at),
+    const [series] = await this.db.select().from(schema.noSeries).where(and(
+      eq(schema.noSeries.tenant_id, tenantId),
+      eq(schema.noSeries.company_id, companyId),
+      eq(schema.noSeries.code, seriesCode),
+      isNull(schema.noSeries.deleted_at),
     )).limit(1);
     if (!series) {
-      await this.db.insert(schema.noSeriesMaster).values({
-        series_id: randomUUID(), tenant_id: tenantId, company_id: companyId,
-        series_code: seriesCode, series_name: 'Location Code',
+      await this.db.insert(schema.noSeries).values({
+        id: randomUUID(), tenant_id: tenantId, company_id: companyId,
+        code: seriesCode, description: 'Location Code',
         document_type: 'LOCATION', prefix: null, separator: '-',
         // The shape itself: parent code, then this level's type, then a number
         // counted among the siblings sharing that stem. A first-level location
         // has no parent to name, so its code is just TYPE-001.
         code_segments: ['parent_location_id', 'location_type'],
-        seq_length: 3, current_seq: 0, reset_frequency: 'NEVER', allow_manual: true,
+        seq_length: 3, current_seq: 0, reset_frequency: 'NEVER', manual_nos: true,
       });
     }
     return seriesCode;

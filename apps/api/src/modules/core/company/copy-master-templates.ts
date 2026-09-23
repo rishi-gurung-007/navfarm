@@ -37,9 +37,9 @@ export function planTemplateCopies(sets: TemplateRows[], companyId: string): Tem
       if (columns.company_id) row.company_id = companyId;
       for (const timestamp of ['created_at', 'updated_at']) if (columns[timestamp]) row[timestamp] = now;
       for (const user of ['created_by', 'updated_by']) if (columns[user]) row[user] = null;
-      if (table === schema.noSeriesMaster) {
+      if (table === schema.noSeries) {
         row.current_seq = 0;
-        row.last_generated_code = null;
+        row.last_no_used = null;
       }
       pending.push({ table, originalId: original[key], row, deferred: {} });
     }
@@ -90,11 +90,11 @@ export async function copyCompanyMasterTemplates(tx: Pick<MySql2Database<typeof 
 
 export async function loadCompanyTemplateCopies(tx: Pick<MySql2Database<typeof schema>, 'select'>, tenantId: string, companyId: string): Promise<TemplateCopy[]> {
   const sets: TemplateRows[] = [];
-  // Per-table idempotency, not a single probe on no_series_master: company
+  // Per-table idempotency, not a single probe on no_series: company
   // creation and seed-activity-master.ts (called from seed-dev-tenant.ts)
   // both write company-scoped master rows, so a fresh company can already
   // hold rows in one template table (activity_master) while another
-  // (no_series_master) is still empty. Gating the whole run on one table
+  // (no_series) is still empty. Gating the whole run on one table
   // assumed a rowless company and died on uq_activity_scope_code the moment
   // that assumption broke. Snapshot, not sync, still holds — per table:
   // adopt only the tables the company has none of, never merge copies into

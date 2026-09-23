@@ -16,8 +16,15 @@ export class CreateActivityDto {
   // only meaningful (and optional) for a TENANT/COMPANY-scope shared template
   // with no active operational area to infer them from.
   @IsOptional() @IsUUID() company_id?: string;
-  @IsOptional() @IsUUID() nob_id?: string;
-  @IsOptional() @IsUUID() lob_id?: string;
+  // 'loose', not the bare default: nob_master/lob_master are seeded with
+  // fixed, deterministic ids (50000000-5000-5000-5000-000000000002, not a
+  // random v4 — every tenant shares the same LIVESTOCK/PIGGERY row). Even
+  // @IsUUID('all') enforces the RFC4122 version/variant nibbles, which these
+  // ids don't carry, so the create call rejected the tenant's own real
+  // NOB/LOB ids the moment an operational-scope create round-tripped them
+  // back in. 'loose' only checks the 8-4-4-4-12 hex shape.
+  @IsOptional() @IsUUID('loose') nob_id?: string;
+  @IsOptional() @IsUUID('loose') lob_id?: string;
 
   @IsString() @IsNotEmpty() @Matches(/^[A-Z][A-Z0-9_]{0,49}$/, { message: 'activity_code must be uppercase letters/digits/underscore, starting with a letter' })
   @MaxLength(50) activity_code!: string;
@@ -45,8 +52,8 @@ export class UpdateActivityDto extends PartialType(OmitType(CreateActivityDto, [
 
 export class QueryActivityDto extends MasterListQueryDto {
   @IsOptional() @IsUUID() companyId?: string;
-  @IsOptional() @IsUUID() nobId?: string;
-  @IsOptional() @IsUUID() lobId?: string;
+  @IsOptional() @IsUUID('loose') nobId?: string;
+  @IsOptional() @IsUUID('loose') lobId?: string;
   @IsOptional() @IsIn(LINE_TYPES) lineType?: (typeof LINE_TYPES)[number];
   @IsOptional() @IsString() @MaxLength(200) search?: string;
   @IsOptional() @Transform(({ value }) => value === 'true' ? true : value === 'false' ? false : value) @IsBoolean() isActive?: boolean;

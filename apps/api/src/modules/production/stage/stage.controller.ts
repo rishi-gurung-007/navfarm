@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Put, Delete, Param, Body, Query, Req, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Put, Patch, Delete, Param, Body, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiParam } from '@nestjs/swagger';
 import { StageService } from './stage.service';
 import { CreateStageDto, UpdateStageDto, QueryStageDto } from './dto/stage.dto';
@@ -57,5 +57,15 @@ export class StageController {
   async remove(@Param('id') id: string, @Req() req: any) {
     const tenantId = req.user?.tenantId || req['tenantId'];
     return this.stageService.remove(id, tenantId, req.user);
+  }
+
+  @Patch(':id/restore')
+  @RequirePermission('PRODUCTION', 'STAGE', 'edit')
+  @ApiOperation({ summary: 'Restore a deactivated Stage' })
+  @ApiParam({ name: 'id', description: 'Stage UUID' })
+  async restore(@Param('id') id: string, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const result = await this.stageService.restore(id, tenantId, req.user);
+    return { success: true, message: result.message, data: result };
   }
 }

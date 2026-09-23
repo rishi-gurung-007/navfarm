@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, or, isNull, SQL } from 'drizzle-orm';
+import { eq, and, or, isNull, desc, SQL } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
@@ -155,10 +155,13 @@ export class ItemTemplateService {
             eq(schema.itemTemplate.category, schema.itemCategoryMaster.category_id),
           )
           .where(and(...conditions))
-      : query.leftJoin(
-          schema.itemCategoryMaster,
-          eq(schema.itemTemplate.category, schema.itemCategoryMaster.category_id),
-        );
+          .orderBy(desc(schema.itemTemplate.created_at))
+      : query
+          .leftJoin(
+            schema.itemCategoryMaster,
+            eq(schema.itemTemplate.category, schema.itemCategoryMaster.category_id),
+          )
+          .orderBy(desc(schema.itemTemplate.created_at));
   }
 
   /**

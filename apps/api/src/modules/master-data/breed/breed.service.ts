@@ -21,7 +21,6 @@ import { NumberSeriesService } from '../../system/number-series/number-series.se
 import { NobLobResolutionService } from '../../core/operational-area/nob-lob-resolution.service';
 import { listFilterConditions, listOrderBy } from '../../../common/master-list-query';
 import {
-  assertLocationOnActiveFarm,
   assertLobInScope,
   farmScope,
   restrictedScopeConditions,
@@ -50,7 +49,6 @@ export class BreedService {
 
   /** Resolves by breed_type first (e.g. BREED_BROILER), then the master-alone BREED series, else manual. */
   private async resolveBreedCode(dto: CreateBreedDto, tenantId: string, companyId: string | null, executor: MySql2Database<typeof schema> = this.db): Promise<string> {
-    if (dto.location_id) await this.requireRootFarm(dto.location_id, tenantId, companyId, executor);
     const seriesCode = await this.numberSeriesService.resolveSeriesFor('BREED', dto.breed_type, tenantId, companyId, executor);
     if (!seriesCode) {
       if (!dto.breed_code) {
@@ -59,7 +57,7 @@ export class BreedService {
       return dto.breed_code.toUpperCase();
     }
     const series = await this.numberSeriesService.lockSeries(seriesCode, tenantId, companyId, executor);
-    if (series.allow_manual && dto.breed_code) {
+    if (series.manual_nos && dto.breed_code) {
       return dto.breed_code.toUpperCase();
     }
     // The record goes to the generator so a series configured with
@@ -72,18 +70,6 @@ export class BreedService {
       executor,
       dto as unknown as Record<string, unknown>,
     );
-  }
-
-  private async requireRootFarm(locationId: string, tenantId: string, companyId: string | null, executor = this.db) {
-    const [location] = await executor.select().from(schema.locationMaster).where(and(
-      eq(schema.locationMaster.location_id, locationId), eq(schema.locationMaster.tenant_id, tenantId),
-      companyId ? eq(schema.locationMaster.company_id, companyId) : isNull(schema.locationMaster.company_id),
-      eq(schema.locationMaster.is_active, true), isNull(schema.locationMaster.deleted_at),
-    )).limit(1);
-    if (!location || location.location_type !== 'FARM' || location.parent_location_id !== null) {
-      throw new BadRequestException('Breed location must be an active, first-level farm without a parent in this workspace.');
-    }
-    return location;
   }
 
   // ========================================================
@@ -337,10 +323,6 @@ export class BreedService {
 
   async createBreed(dto: CreateBreedDto, tenantId: string, userPayload?: any) {
     const companyId = dto.company_id || null;
-    if (!dto.location_id) {
-      throw new BadRequestException('Select the farm where this breed profile applies.');
-    }
-    await assertLocationOnActiveFarm(this.db, farmScope(this.cls), dto.location_id, 'Breed farm');
 
     // Verify species exists
     const species = await this.findOneSpecies(dto.species_id);
@@ -372,7 +354,6 @@ export class BreedService {
     const duplicateConditions = [
       eq(schema.breedMaster.tenant_id, tenantId),
       eq(schema.breedMaster.breed_code, breedCode),
-      eq(schema.breedMaster.location_id, dto.location_id),
       isNull(schema.breedMaster.deleted_at),
     ];
     if (companyId) {
@@ -394,7 +375,6 @@ export class BreedService {
     const breedId = randomUUID();
     const newBreed = {
       breed_id: breedId,
-      location_id: dto.location_id || null,
       tenant_id: tenantId,
       company_id: companyId,
       nob_id: nobId,
@@ -462,7 +442,6 @@ export class BreedService {
         lobId: schema.breedMaster.lob_id,
       }),
     ];
-    if (scope.farmId) conditions.push(eq(schema.breedMaster.location_id, scope.farmId));
     const [breed] = await this.db
       .select()
       .from(schema.breedMaster)
@@ -488,8 +467,6 @@ export class BreedService {
       companyId: schema.breedMaster.company_id,
       lobId: schema.breedMaster.lob_id,
     }));
-    if (scope.farmId) conditions.push(eq(schema.breedMaster.location_id, scope.farmId));
-    if (query.locationId) conditions.push(eq(schema.breedMaster.location_id, query.locationId));
     if (query.speciesId) {
       conditions.push(eq(schema.breedMaster.species_id, query.speciesId));
     }
@@ -523,13 +500,8 @@ export class BreedService {
     const offset = query.offset || 0;
 
     return this.db
-      .select({
-        ...getTableColumns(schema.breedMaster),
-        location_code: schema.locationMaster.location_code,
-        location_name: schema.locationMaster.location_name,
-      })
+      .select()
       .from(schema.breedMaster)
-      .leftJoin(schema.locationMaster, eq(schema.locationMaster.location_id, schema.breedMaster.location_id))
       .where(and(...conditions))
       .orderBy(listOrderBy(schema.breedMaster, query, schema.breedMaster.breed_code))
       .limit(limit)
@@ -538,16 +510,6 @@ export class BreedService {
 
   async updateBreed(id: string, dto: UpdateBreedDto, tenantId: string, userPayload?: any) {
     const breed = await this.findOneBreed(id, tenantId);
-    if (dto.location_id === null) {
-      throw new BadRequestException('A breed profile must remain assigned to a farm.');
-    }
-    const locationId = dto.location_id ?? breed.location_id;
-    if (!locationId) throw new BadRequestException('Select the farm where this breed profile applies.');
-    if (locationId !== breed.location_id) {
-      throw new BadRequestException('A breed profile cannot be moved to another farm. Create the destination farm profile instead.');
-    }
-    await assertLocationOnActiveFarm(this.db, farmScope(this.cls), locationId, 'Breed farm');
-    await this.requireRootFarm(locationId, tenantId, breed.company_id);
 
     if (dto.nob_id !== undefined && dto.nob_id !== breed.nob_id) {
       throw new BadRequestException('A breed profile cannot be moved to another Nature of Business. Create the correct farm profile instead.');
@@ -556,34 +518,6 @@ export class BreedService {
       throw new BadRequestException('A breed profile cannot be moved to another Line of Business. Create the correct farm profile instead.');
     }
     assertLobInScope(farmScope(this.cls), dto.lob_id ?? breed.lob_id);
-
-    // dto.breed_code is no longer writable (the code follows the BREED series —
-    // see below), so the effective code here is the row's own.
-    const effectiveCode = breed.breed_code;
-    if (effectiveCode !== breed.breed_code || locationId !== breed.location_id) {
-      const duplicateConditions = [
-        eq(schema.breedMaster.tenant_id, tenantId),
-        eq(schema.breedMaster.breed_code, effectiveCode),
-        eq(schema.breedMaster.location_id, locationId),
-        ne(schema.breedMaster.breed_id, id),
-        isNull(schema.breedMaster.deleted_at),
-      ];
-      if (breed.company_id) {
-        duplicateConditions.push(eq(schema.breedMaster.company_id, breed.company_id));
-      } else {
-        duplicateConditions.push(isNull(schema.breedMaster.company_id));
-      }
-
-      const existing = await this.db
-        .select()
-        .from(schema.breedMaster)
-        .where(and(...duplicateConditions))
-        .limit(1);
-
-      if (existing.length > 0) {
-        throw new ConflictException(`Breed with code '${effectiveCode}' already exists on this farm.`);
-      }
-    }
 
     if (dto.species_id) {
       await this.findOneSpecies(dto.species_id);
@@ -594,7 +528,6 @@ export class BreedService {
       updated_at: toMysqlTimestamp(),
     };
 
-    if (dto.location_id !== undefined) updates.location_id = dto.location_id;
     if (dto.nob_id !== undefined) updates.nob_id = dto.nob_id;
     if (dto.lob_id !== undefined) updates.lob_id = dto.lob_id;
 
@@ -702,7 +635,6 @@ export class BreedService {
         lobId: schema.breedMaster.lob_id,
       }),
     ];
-    if (scope.farmId) conditions.push(eq(schema.breedMaster.location_id, scope.farmId));
     const [breed] = await this.db
       .select()
       .from(schema.breedMaster)
@@ -780,6 +712,23 @@ export class BreedService {
       if (row.lower_limit != null && row.upper_limit != null && row.lower_limit > row.upper_limit) {
         throw new BadRequestException(`KPI ${row.metric}: Lower Limit ${row.lower_limit} is above Upper Limit ${row.upper_limit}.`);
       }
+    }
+    // metric is a kpi_metric_master code now, not a hardcoded enum the DTO could
+    // check on its own (see the comment on KpiThresholdRowDto) — checked the same
+    // way resource_id is checked just below.
+    const metricCodes = [...new Set((dto.kpi_thresholds || []).map((row) => row.metric))];
+    if (metricCodes.length) {
+      const found = await this.db
+        .select({ metric_code: schema.kpiMetricMaster.metric_code })
+        .from(schema.kpiMetricMaster)
+        .where(and(
+          eq(schema.kpiMetricMaster.tenant_id, tenantId),
+          inArray(schema.kpiMetricMaster.metric_code, metricCodes),
+          eq(schema.kpiMetricMaster.is_active, true),
+          isNull(schema.kpiMetricMaster.deleted_at),
+        ));
+      const missing = metricCodes.filter((code) => !found.some((row) => row.metric_code === code));
+      if (missing.length) throw new NotFoundException(`KPI metric '${missing[0]}' not found. Add it under KPI Metrics first.`);
     }
     const resourceIds = [...new Set((dto.resource_requirements || []).map((row) => row.resource_id))];
     if (resourceIds.length) {

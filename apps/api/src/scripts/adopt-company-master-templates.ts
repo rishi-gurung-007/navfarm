@@ -19,7 +19,7 @@ async function run() {
   const pool = mysql.createPool({ host: process.env.DATABASE_HOST || '127.0.0.1', port: Number(process.env.DATABASE_PORT || 3306), user: process.env.DATABASE_USERNAME || 'root', password: process.env.DATABASE_PASSWORD || '', database });
   const db = drizzle(pool, { schema, mode: 'default' });
   const tables = (Object.values(schema) as unknown[]).filter((value): value is AnyMySqlTable => { try { return !!getTableConfig(value as AnyMySqlTable).name; } catch { return false; } });
-  const codeKeys: Record<string, string> = { item_category_master: 'category_code', location_type_master: 'type_code', item_type_master: 'type_code', no_series_master: 'series_code' };
+  const codeKeys: Record<string, string> = { item_category_master: 'category_code', location_type_master: 'type_code', item_type_master: 'type_code', no_series: 'code' };
   const primary = (table: AnyMySqlTable) => Object.values(getTableColumns(table)).find((c) => c.primary)!;
   const ownerCondition = (table: AnyMySqlTable, companyId: string): SQL | undefined => {
     const c = getTableColumns(table);

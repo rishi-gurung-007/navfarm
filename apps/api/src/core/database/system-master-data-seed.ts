@@ -44,6 +44,52 @@ export const SYSTEM_UOM_SEED: Array<{
   { uom_code: 'SQM', uom_name: 'Square Meter', uom_type: 'AREA', decimal_places: 2, is_base_uom: false },
   { uom_code: 'HR', uom_name: 'Hour', uom_type: 'TIME', decimal_places: 2, is_base_uom: true },
   { uom_code: 'DAY', uom_name: 'Day', uom_type: 'TIME', decimal_places: 0, is_base_uom: false },
+  // The four units KPI_METRIC_UOM (scheduler-header.service.ts) already hardcodes
+  // as a metric's implied unit but the UOM master did not contain, so a KPI
+  // Metric's own Default UOM field (a /uom dropdown, not free text) had nothing
+  // to select for FCR, BCS_SCORE, TEMPERATURE or SEMEN_MOTILITY. LITRE is
+  // deliberately not added here — the existing LITER row already carries that
+  // meaning and SYSTEM_KPI_METRIC_SEED's MILK_LITRES entry points at it, not a
+  // near-duplicate second row.
+  { uom_code: 'RATIO', uom_name: 'Ratio', uom_type: 'OTHER', decimal_places: 3, is_base_uom: false },
+  { uom_code: 'SCORE', uom_name: 'Score', uom_type: 'OTHER', decimal_places: 1, is_base_uom: false },
+  { uom_code: 'CELSIUS', uom_name: 'Celsius', uom_type: 'OTHER', decimal_places: 1, is_base_uom: false },
+  { uom_code: 'PCT', uom_name: 'Percent', uom_type: 'OTHER', decimal_places: 2, is_base_uom: false },
+];
+
+/**
+ * The KPI vocabulary this app's own code already depends on:
+ * KPI_METRIC_UOM (scheduler-header.service.ts) derives a scheduler line's
+ * kpi_uom from these exact codes, and the demo breed_lifecycle_stages rows'
+ * kpi_thresholds JSON already names 10 of them (ADG, BCS_SCORE, BODY_WEIGHT,
+ * FCR, HEAD_COUNT, LITTER_SIZE, MORTALITY_COUNT, PIGLETS_BORN,
+ * SEMEN_MOTILITY, WEANING_WEIGHT — confirmed live). EGG_COUNT and MILK_LITRES
+ * are the two KPI_METRIC_UOM already names for poultry/dairy — piggery is the
+ * only LOB in scope today, but the code treats the map as one flat,
+ * LOB-agnostic vocabulary, so these are seeded the same way rather than left
+ * to be typed by hand the first time a non-piggery LOB needs them.
+ * company_id/nob_id/lob_id are left null (kpi-metric.service.ts's own scope()
+ * comment: "the seeded system metrics are all company_id NULL, meant to be
+ * visible from every company in the tenant").
+ */
+export const SYSTEM_KPI_METRIC_SEED: Array<{
+  metric_code: string;
+  metric_name: string;
+  default_uom: string;
+}> = [
+  { metric_code: 'BODY_WEIGHT', metric_name: 'Body Weight', default_uom: 'KG' },
+  { metric_code: 'ADG', metric_name: 'Average Daily Gain', default_uom: 'GRAM' },
+  { metric_code: 'FCR', metric_name: 'Feed Conversion Ratio', default_uom: 'RATIO' },
+  { metric_code: 'MORTALITY_COUNT', metric_name: 'Mortality Count', default_uom: 'HEAD' },
+  { metric_code: 'HEAD_COUNT', metric_name: 'Head Count', default_uom: 'HEAD' },
+  { metric_code: 'BCS_SCORE', metric_name: 'Body Condition Score', default_uom: 'SCORE' },
+  { metric_code: 'TEMPERATURE', metric_name: 'Temperature', default_uom: 'CELSIUS' },
+  { metric_code: 'LITTER_SIZE', metric_name: 'Litter Size', default_uom: 'HEAD' },
+  { metric_code: 'WEANING_WEIGHT', metric_name: 'Weaning Weight', default_uom: 'KG' },
+  { metric_code: 'PIGLETS_BORN', metric_name: 'Piglets Born', default_uom: 'HEAD' },
+  { metric_code: 'SEMEN_MOTILITY', metric_name: 'Semen Motility', default_uom: 'PCT' },
+  { metric_code: 'EGG_COUNT', metric_name: 'Egg Count', default_uom: 'HEAD' },
+  { metric_code: 'MILK_LITRES', metric_name: 'Milk Yield', default_uom: 'LITER' },
 ];
 
 // Real codes already in use across the seeded demo data (RAW_MATERIAL, CONSUMABLE, FEED,
@@ -404,53 +450,36 @@ export const SYSTEM_NO_SERIES_SEED: Array<{
   // one prefix, so anything that varied needed its own row. A series takes the
   // varying part as a segment now, and one row covers every variant.
   //
-  // Three shapes:
-  //   named   the code IS the name. Sequence Digits 0, no prefix, one name
-  //           segment: a breed is LARGE_WHITE, and LARGE_WHITE-001 would count
-  //           something already unique. A repeat is rejected, not numbered.
+  // Two shapes now (a third, "named" — the code IS the name, no prefix — is
+  // deliberately gone; see below):
   //   built   composed from the record's own fields plus a prefix.
-  //   serial  prefix and number, because the name is prose. "Demo Grain and
-  //           Feed Suppliers" is better as SUP-004 than DEMO_GRAIN_AND_FEED.
+  //   serial  plain prefix and number.
 
-  // named
-  { series_code: 'BREED', series_name: 'Breed Code', document_type: 'BREED', separator: '-', seq_length: 0, reset_frequency: 'NEVER', allow_manual: true, code_segments: ['breed_name'] },
-  { series_code: 'ITEM_TYPE', series_name: 'Item Type Code', document_type: 'ITEM_TYPE', separator: '-', seq_length: 0, reset_frequency: 'NEVER', allow_manual: true, code_segments: ['type_name'] },
-  { series_code: 'ITEM_ATTRIBUTE', series_name: 'Item Attribute Code', document_type: 'ITEM_ATTRIBUTE', separator: '-', seq_length: 0, reset_frequency: 'NEVER', allow_manual: true, code_segments: ['attribute_name'] },
-  { series_code: 'LOCATION_TYPE', series_name: 'Location Type Code', document_type: 'LOCATION_TYPE', separator: '-', seq_length: 0, reset_frequency: 'NEVER', allow_manual: true, code_segments: ['type_name'] },
-  // The name, not UOM-001 — a unit called UOM-003 tells nobody what it measures.
-  // Most units then get typed over: of the ten in use, Dose, Gram and Hour come
-  // straight from their name while KG, ML, LITER, HR and the rest are the
-  // standard symbol, which no rule derives from "Kilogram" or "Millilitre".
-  // allow_manual is what makes that the normal case rather than a workaround.
-  { series_code: 'UOM', series_name: 'Unit of Measure Code', document_type: 'UOM', separator: '-', seq_length: 0, reset_frequency: 'NEVER', allow_manual: true, code_segments: ['uom_name'] },
-  // A sub-category is not a master of its own — it is an item category with a
-  // parent, so one series covers both, and its code is its own name alone.
-  //
-  // It briefly carried its parent too (FEED-LACTATION, matching the hand-made
-  // codes already in the data), but the item code names the category and the
-  // sub-category as separate parts — <category>-<sub-category> — so a
-  // sub-category repeating its parent put FEED in an item code three times.
-  // The parent belongs there once, via the category segment.
-  //
-  // The cost: two sub-categories with the same name under different parents
-  // collide, and the second is refused rather than numbered. That is the same
-  // rule every name-based master follows.
-  { series_code: 'ITEM_CATEGORY', series_name: 'Item Category Code', document_type: 'ITEM_CATEGORY', separator: '-', seq_length: 0, reset_frequency: 'NEVER', allow_manual: true, code_segments: ['category_name'] },
-  // STAGE and SPECIES were serials — STG-001, SPC-001 — and nothing has ever
-  // carried such a code. Every stage in the tenant is GESTATION, FARROWING,
-  // QUARANTINE: the name, which is also what twelve files match on as a string
-  // literal, location.service and animal.service among them. A serial series
-  // described none of that and could only ever have been overridden by hand.
-  //
-  // Named on the stage's own name, the series produces exactly the fifteen
-  // codes already in the database, so the definition now describes the data
-  // instead of contradicting it — and STG-004 can no longer be generated for
-  // something the rest of the codebase expects to find as GESTATION.
-  { series_code: 'STAGE', series_name: 'Stage Code', document_type: 'STAGE', separator: '-', seq_length: 0, reset_frequency: 'NEVER', allow_manual: true, code_segments: ['stage_name'] },
-  // Same for species: eleven of the twelve seeded codes are already the name.
-  // The twelfth was BEE against the name "Honey Bee", corrected in
-  // SYSTEM_SPECIES_SEED rather than special-cased here.
-  { series_code: 'SPECIES', series_name: 'Species Code', document_type: 'SPECIES', separator: '-', seq_length: 0, reset_frequency: 'NEVER', allow_manual: true, code_segments: ['species_name'] },
+  // 2026-09-23: every master below used to be "named" (Breed, Item Type, Item
+  // Attribute, Location Type, UOM, Item Category, and — until this change —
+  // Stage and Species too): the code was the record's own name, uppercased,
+  // no prefix, a repeat rejected rather than numbered. All eight are now
+  // plain serials instead, on record: for Stage and Species specifically,
+  // this exact reversal was tried once already and reverted, because ~12
+  // files (location.service, animal.service, batch.service among them)
+  // matched a stage's own CODE against literals like GESTATION/FARROWING/
+  // QUARANTINE — a serial code broke that matching, since nothing about
+  // STG-004 says "this is gestation". That risk was raised and the decision
+  // to convert anyway was made deliberately, not missed: the codes ALREADY
+  // seeded for the system's own stages/species (SYSTEM_STAGE_SEED,
+  // SYSTEM_SPECIES_SEED) are literal, hand-written strings, not generated by
+  // this series, so GESTATION/FARROWING/QUARANTINE and the string-literal
+  // matches against them are unaffected by this change either way — only a
+  // brand new stage/species/breed/etc. created without a manually-typed code
+  // gets the new STG-0001-style fallback instead of a name-derived one.
+  { series_code: 'BREED', series_name: 'Breed Code', document_type: 'BREED', prefix: 'BRD', separator: '-', seq_length: 3, reset_frequency: 'NEVER', allow_manual: true },
+  { series_code: 'ITEM_TYPE', series_name: 'Item Type Code', document_type: 'ITEM_TYPE', prefix: 'ITYP', separator: '-', seq_length: 3, reset_frequency: 'NEVER', allow_manual: true },
+  { series_code: 'ITEM_ATTRIBUTE', series_name: 'Item Attribute Code', document_type: 'ITEM_ATTRIBUTE', prefix: 'IATT', separator: '-', seq_length: 3, reset_frequency: 'NEVER', allow_manual: true },
+  { series_code: 'LOCATION_TYPE', series_name: 'Location Type Code', document_type: 'LOCATION_TYPE', prefix: 'LTYP', separator: '-', seq_length: 3, reset_frequency: 'NEVER', allow_manual: true },
+  { series_code: 'UOM', series_name: 'Unit of Measure Code', document_type: 'UOM', prefix: 'UOM', separator: '-', seq_length: 3, reset_frequency: 'NEVER', allow_manual: true },
+  { series_code: 'ITEM_CATEGORY', series_name: 'Item Category Code', document_type: 'ITEM_CATEGORY', prefix: 'ICAT', separator: '-', seq_length: 3, reset_frequency: 'NEVER', allow_manual: true },
+  { series_code: 'STAGE', series_name: 'Stage Code', document_type: 'STAGE', prefix: 'STG', separator: '-', seq_length: 3, reset_frequency: 'NEVER', allow_manual: true },
+  { series_code: 'SPECIES', series_name: 'Species Code', document_type: 'SPECIES', prefix: 'SPC', separator: '-', seq_length: 3, reset_frequency: 'NEVER', allow_manual: true },
 
   // built
   // Category alone, not item_type-category-sub_category: category is already

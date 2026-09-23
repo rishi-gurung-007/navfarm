@@ -764,6 +764,34 @@
       "when": 1789370030000,
       "tag": "0108_no_series_code_widen",
       "breakpoints": true
+    },
+    {
+      "idx": 109,
+      "version": "5",
+      "when": 1790098792950,
+      "tag": "0109_kpi_metric_master",
+      "breakpoints": true
+    },
+    {
+      "idx": 110,
+      "version": "5",
+      "when": 1790185200000,
+      "tag": "0110_remove_breed_farm",
+      "breakpoints": true
+    },
+    {
+      "idx": 111,
+      "version": "5",
+      "when": 1790271600000,
+      "tag": "0111_widen_no_series",
+      "breakpoints": true
+    },
+    {
+      "idx": 112,
+      "version": "5",
+      "when": 1790358000000,
+      "tag": "0112_drop_no_series_master",
+      "breakpoints": true
     }
   ]
 }

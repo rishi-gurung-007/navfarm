@@ -31,7 +31,6 @@ import { ShedModule } from './modules/master-data/shed/shed.module';
 import { ItemCategoryModule } from './modules/master-data/item-category/item-category.module';
 import { ItemTypeModule } from './modules/master-data/item-type/item-type.module';
 import { ItemModule } from './modules/master-data/item/item.module';
-import { NoSeriesModule } from './modules/master-data/no-series/no-series.module';
 import { ItemTemplateModule } from './modules/master-data/item-template/item-template.module';
 import { ItemAttributeModule } from './modules/master-data/item-attribute/item-attribute.module';
 import { SupplierModule } from './modules/master-data/supplier/supplier.module';
@@ -39,6 +38,7 @@ import { CustomerModule } from './modules/master-data/customer/customer.module';
 import { ResourceModule } from './modules/master-data/resource/resource.module';
 import { DiseaseModule } from './modules/master-data/disease/disease.module';
 import { ReasonModule } from './modules/master-data/reason/reason.module';
+import { KpiMetricModule } from './modules/master-data/kpi-metric/kpi-metric.module';
 import { ActivityModule } from './modules/master-data/activity/activity.module';
 import { FeedFormulaModule } from './modules/master-data/feed-formula/feed-formula.module';
 import { GlAccountModule } from './modules/finance/gl-account/gl-account.module';
@@ -119,7 +119,6 @@ import { SystemController } from './system/system.controller';
     ItemCategoryModule,
     ItemTypeModule,
     ItemModule,
-    NoSeriesModule,
     ItemTemplateModule,
     ItemAttributeModule,
     SupplierModule,
@@ -127,6 +126,7 @@ import { SystemController } from './system/system.controller';
     ResourceModule,
     DiseaseModule,
     ReasonModule,
+    KpiMetricModule,
     ActivityModule,
     FeedFormulaModule,
     GlAccountModule,

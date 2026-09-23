@@ -5,7 +5,6 @@ import { eq, and, like, or, isNull, getTableColumns, count } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
-import { NoSeriesService } from '../no-series/no-series.service';
 import { CreateItemDto, UpdateItemDto, QueryItemDto, CreateItemFromTemplateDto } from './dto/item.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
@@ -25,7 +24,6 @@ export class ItemService {
     private readonly cls: ClsService,
     private readonly auditService: AuditLogService,
     private readonly numberSeriesService: NumberSeriesService,
-    private readonly noSeriesService: NoSeriesService,
     private readonly nobLobResolution: NobLobResolutionService,
   ) {}
 
@@ -45,19 +43,19 @@ export class ItemService {
    */
   private async ensureCompanyItemSeries(tenantId: string, companyId: string | null) {
     if (!companyId) return;
-    const [existing] = await this.db.select().from(schema.noSeriesMaster).where(and(
-      eq(schema.noSeriesMaster.tenant_id, tenantId),
-      eq(schema.noSeriesMaster.company_id, companyId),
-      eq(schema.noSeriesMaster.series_code, 'ITEM'),
-      isNull(schema.noSeriesMaster.deleted_at),
+    const [existing] = await this.db.select().from(schema.noSeries).where(and(
+      eq(schema.noSeries.tenant_id, tenantId),
+      eq(schema.noSeries.company_id, companyId),
+      eq(schema.noSeries.code, 'ITEM'),
+      isNull(schema.noSeries.deleted_at),
     )).limit(1);
     if (existing) return;
 
-    const [template] = await this.db.select().from(schema.noSeriesMaster).where(and(
-      eq(schema.noSeriesMaster.tenant_id, tenantId),
-      isNull(schema.noSeriesMaster.company_id),
-      eq(schema.noSeriesMaster.series_code, 'ITEM'),
-      isNull(schema.noSeriesMaster.deleted_at),
+    const [template] = await this.db.select().from(schema.noSeries).where(and(
+      eq(schema.noSeries.tenant_id, tenantId),
+      isNull(schema.noSeries.company_id),
+      eq(schema.noSeries.code, 'ITEM'),
+      isNull(schema.noSeries.deleted_at),
     )).limit(1);
     if (!template) throw new NotFoundException("Number series 'ITEM' is not configured for this tenant.");
 
@@ -73,13 +71,13 @@ export class ItemService {
       return match ? Math.max(max, Number(match[1])) : max;
     }, 0);
 
-    await this.db.insert(schema.noSeriesMaster).values({
-      series_id: randomUUID(), tenant_id: tenantId, company_id: companyId,
-      series_code: 'ITEM', series_name: template.series_name, document_type: template.document_type,
+    await this.db.insert(schema.noSeries).values({
+      id: randomUUID(), tenant_id: tenantId, company_id: companyId,
+      code: 'ITEM', description: template.description, document_type: template.document_type,
       prefix: template.prefix, separator: template.separator,
       seq_length: template.seq_length, current_seq: currentSeq,
-      reset_frequency: template.reset_frequency, allow_manual: true,
-    }).onDuplicateKeyUpdate({ set: { series_name: template.series_name } });
+      reset_frequency: template.reset_frequency, manual_nos: true,
+    }).onDuplicateKeyUpdate({ set: { description: template.description } });
   }
 
   /**
@@ -158,20 +156,12 @@ export class ItemService {
     if (!trackingSeriesId || (!isLotTracked && !isSerialTracked)) return;
     const expected = isLotTracked ? 'LOT' : 'SERIAL';
     const [series] = await this.db
-      .select({ document_type: schema.noSeriesMaster.document_type })
-      .from(schema.noSeriesMaster)
-      .where(and(eq(schema.noSeriesMaster.series_id, trackingSeriesId), isNull(schema.noSeriesMaster.deleted_at)))
+      .select({ document_type: schema.noSeries.document_type })
+      .from(schema.noSeries)
+      .where(and(eq(schema.noSeries.id, trackingSeriesId), isNull(schema.noSeries.deleted_at)))
       .limit(1);
     if (!series) {
-      const [modernSeries] = await this.db
-        .select({ id: schema.noSeries.id })
-        .from(schema.noSeries)
-        .where(eq(schema.noSeries.id, trackingSeriesId))
-        .limit(1);
-      if (!modernSeries) {
-        throw new NotFoundException(`Number Series '${trackingSeriesId}' not found.`);
-      }
-      return;
+      throw new NotFoundException(`Number Series '${trackingSeriesId}' not found.`);
     }
     if (series.document_type !== expected) {
       throw new BadRequestException(`A ${expected === 'LOT' ? 'lot' : 'serial'}-tracked item needs a ${expected} number series.`);
@@ -410,9 +400,7 @@ export class ItemService {
     }
 
     // 2. Preview next item number without advancing last_no_used (increments only upon item save)
-    let currentNumberInfo = this.noSeriesService.previewNextNumber
-      ? await this.noSeriesService.previewNextNumber(template.no_series_id)
-      : await this.noSeriesService.generateNextNumber(template.no_series_id, tenantId, effectiveCompanyId);
+    let currentNumberInfo = await this.numberSeriesService.previewNextNumberById(template.no_series_id);
 
     let next_number = currentNumberInfo.next_number;
     let series = currentNumberInfo.series;
@@ -442,12 +430,8 @@ export class ItemService {
       }
 
       // If an active item already exists with this code (e.g. series out of sync), advance the series
-      if (this.noSeriesService.recordNumberUsed) {
-        await this.noSeriesService.recordNumberUsed(template.no_series_id, next_number);
-      }
-      currentNumberInfo = this.noSeriesService.previewNextNumber
-        ? await this.noSeriesService.previewNextNumber(template.no_series_id)
-        : await this.noSeriesService.generateNextNumber(template.no_series_id, tenantId, effectiveCompanyId);
+      await this.numberSeriesService.recordNumberUsedById(template.no_series_id, next_number);
+      currentNumberInfo = await this.numberSeriesService.previewNextNumberById(template.no_series_id);
       next_number = currentNumberInfo.next_number;
       series = currentNumberInfo.series;
     }
@@ -798,8 +782,8 @@ export class ItemService {
           .from(schema.itemTemplate)
           .where(eq(schema.itemTemplate.id, templateId))
           .limit(1);
-        if (template?.no_series_id && this.noSeriesService?.recordNumberUsed) {
-          await this.noSeriesService.recordNumberUsed(template.no_series_id, updates.item_code || item.item_code);
+        if (template?.no_series_id) {
+          await this.numberSeriesService.recordNumberUsedById(template.no_series_id, updates.item_code || item.item_code);
         }
       }
     }

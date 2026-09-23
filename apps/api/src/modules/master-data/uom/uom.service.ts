@@ -48,7 +48,7 @@ export class UomService {
       return dto.uom_code.toUpperCase();
     }
     const series = await this.numberSeriesService.lockSeries(seriesCode, tenantId, companyId);
-    if (series.allow_manual && dto.uom_code) {
+    if (series.manual_nos && dto.uom_code) {
       return dto.uom_code.toUpperCase();
     }
     return this.numberSeriesService.generateNext(seriesCode, tenantId, companyId, undefined, dto as unknown as Record<string, unknown>);

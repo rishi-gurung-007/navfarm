@@ -4,7 +4,7 @@ import { eq, sql, and, ne } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import * as masterSchema from '../../../core/database/master-schema';
 import * as schema from '../../../core/database/schema';
-import { SYSTEM_UOM_SEED, SYSTEM_SPECIES_SEED, SYSTEM_BREED_SEED, SYSTEM_ITEM_SEED, SYSTEM_PARAMETER_SEED, SYSTEM_STAGE_SEED, SYSTEM_NO_SERIES_SEED } from '../../../core/database/system-master-data-seed';
+import { SYSTEM_UOM_SEED, SYSTEM_SPECIES_SEED, SYSTEM_BREED_SEED, SYSTEM_ITEM_SEED, SYSTEM_PARAMETER_SEED, SYSTEM_STAGE_SEED, SYSTEM_NO_SERIES_SEED, SYSTEM_KPI_METRIC_SEED } from '../../../core/database/system-master-data-seed';
 import { MASTER_CONNECTION } from '../../../core/database/database.module';
 import { ConnectionManagerService } from '../../../core/database/connection-manager.service';
 import { SignupTenantDto } from './dto/signup-tenant.dto';
@@ -131,6 +131,9 @@ export class TenantService {
       );
       await tenantDb.insert(schema.speciesMaster).values(
         SYSTEM_SPECIES_SEED.map((s) => ({ ...s, tenant_id: tenantId }))
+      );
+      await tenantDb.insert(schema.kpiMetricMaster).values(
+        SYSTEM_KPI_METRIC_SEED.map((m) => ({ ...m, tenant_id: tenantId }))
       );
 
       // Default breeds/items per NOB/LOB, visible tenant-wide (company_id
@@ -274,14 +277,14 @@ export class TenantService {
         const seriesLobId = series.lob_code ? lobIdByCode.get(series.lob_code) : undefined;
         if ((series.nob_code && !seriesNobId) || (series.lob_code && !seriesLobId)) continue;
 
-        await tenantDb.insert(schema.noSeriesMaster).values({
-          series_id: randomUUID(),
+        await tenantDb.insert(schema.noSeries).values({
+          id: randomUUID(),
           tenant_id: tenantId,
           company_id: null,
           nob_id: seriesNobId || null,
           lob_id: seriesLobId || null,
-          series_code: series.series_code,
-          series_name: series.series_name,
+          code: series.series_code,
+          description: series.series_name,
           document_type: series.document_type,
           prefix: series.prefix || null,
           separator: series.separator,
@@ -289,7 +292,7 @@ export class TenantService {
           seq_length: series.seq_length,
           current_seq: 0,
           reset_frequency: series.reset_frequency,
-          allow_manual: series.allow_manual ?? false,
+          manual_nos: series.allow_manual ?? false,
           code_segments: series.code_segments ?? null,
           prefix_position: series.prefix_position ?? 'END',
         });

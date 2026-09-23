@@ -30,7 +30,7 @@ const ssl = process.env.DATABASE_SSL === 'true'
   ? { minVersion: 'TLSv1.2' as const, rejectUnauthorized: true }
   : undefined;
 
-interface Step {
+export interface Step {
   label: string;
   script: string;
   args: string[];
@@ -39,7 +39,7 @@ interface Step {
 // setup-fresh-database.ts drops and recreates navfarm_master/tenant_system,
 // then bootstraps them, but never provisions a dev tenant — that is what the
 // rest of this chain does.
-const RESET_STEP: Step = { label: 'Drop and rebuild schema + platform masters', script: 'setup-fresh-database.ts', args: [] };
+export const RESET_STEP: Step = { label: 'Drop and rebuild schema + platform masters', script: 'setup-fresh-database.ts', args: [] };
 
 // Master-only path, in the order db-seed-demo builds them, minus everything
 // that seed-demo.ts does inline and minus every operational stage.
@@ -49,7 +49,7 @@ const RESET_STEP: Step = { label: 'Drop and rebuild schema + platform masters', 
 // ever calling it, so this step must run here too — right after the tenant
 // and its tenant-scope masters exist (seed-dev-tenant.ts, migrate-all-tenants.ts,
 // seed-system-master-data.ts, seed-activity-master.ts all only add tenant- or
-// already-company-scoped rows, never remove or add to no_series_master after
+// already-company-scoped rows, never remove or add to no_series after
 // this point) and before the farm-data loaders, which switch off the
 // synthetic company-scoped rows this step creates.
 // seed-farm-locations.ts / seed-farm-masters.ts overwrite the synthetic demo
@@ -59,12 +59,12 @@ const RESET_STEP: Step = { label: 'Drop and rebuild schema + platform masters', 
 // align-production-permissions.ts are the two alignment passes seed-demo.ts
 // runs (the first inline, as its own last stage) that touch masters only,
 // never operational rows.
-const MASTER_STEPS: Step[] = [
+export const MASTER_STEPS: Step[] = [
   { label: 'Dev tenant, companies, users, starter masters', script: 'seed-dev-tenant.ts', args: [] },
   { label: 'Apply pending tenant-schema migrations', script: 'migrate-all-tenants.ts', args: [] },
   { label: 'System reference masters (UOM, species, ...)', script: 'seed-system-master-data.ts', args: [] },
   { label: 'Standard activity master catalog', script: 'seed-activity-master.ts', args: [] },
-  { label: "Adopt tenant master templates into Triple C (no_series_master etc.)", script: 'seed-company-master-templates.ts', args: ['--apply'] },
+  { label: "Adopt tenant master templates into Triple C (no_series etc.)", script: 'seed-company-master-templates.ts', args: ['--apply'] },
   { label: "Triple C's real farms and locations", script: 'seed-farm-locations.ts', args: ['--apply'] },
   { label: "Triple C's real resource and breed masters", script: 'seed-farm-masters.ts', args: ['--apply'] },
   // The demo item catalog (feed/vaccine/medicine/bio items) must exist before
@@ -149,7 +149,7 @@ export function deriveResetTargets(env: NodeJS.ProcessEnv): ResetTargets {
   return { masterDatabase, systemDatabase, tenantPrefix };
 }
 
-async function listResetTargetDatabases(targets: ResetTargets): Promise<string[]> {
+export async function listResetTargetDatabases(targets: ResetTargets): Promise<string[]> {
   const conn = await mysql.createConnection({ host, port, user, password, ssl });
   try {
     const [rows] = await conn.query<mysql.RowDataPacket[]>('SHOW DATABASES');
@@ -161,11 +161,11 @@ async function listResetTargetDatabases(targets: ResetTargets): Promise<string[]
   }
 }
 
-function formatStep(step: Step): string {
+export function formatStep(step: Step): string {
   return step.args.length ? `${step.script} ${step.args.join(' ')}` : step.script;
 }
 
-function runStep(step: Step) {
+export function runStep(step: Step) {
   console.log(`\n⏳ ${formatStep(step)} — ${step.label}`);
   execFileSync(
     'node',

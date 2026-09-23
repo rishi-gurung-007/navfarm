@@ -42,6 +42,7 @@ import { StatusBadge } from '@/components/ui/status-badge';
 import { Badge } from '@/components/ui/badge';
 import BatchPerformanceCurvesPanel from '@/components/console/production/batch-performance-curves-panel';
 import { useCompanyCurrency } from '@/hooks/useCompanyCurrency';
+import { formatQuantity } from '@/lib/utils';
 
 const PAGE_SIZE = 25;
 
@@ -1475,7 +1476,7 @@ export default function BatchPanel() {
                       className="whitespace-nowrap text-right"
                       style={S.primary}
                     >
-                      {row.opening_quantity} {row.uom}
+                      {formatQuantity(row.opening_quantity, row.uom)} {row.uom}
                     </TableCell>
                     <TableCell
                       className="whitespace-nowrap text-right"
@@ -2552,7 +2553,7 @@ export default function BatchPanel() {
                   {t('blLabelOpeningHeadQty')}
                 </p>
                 <p className="font-semibold mt-0.5" style={S.primary}>
-                  {viewing.opening_quantity} {viewing.uom || 'HEAD'}
+                  {formatQuantity(viewing.opening_quantity, viewing.uom || 'HEAD')} {viewing.uom || 'HEAD'}
                 </p>
               </div>
               <div>
@@ -2838,7 +2839,7 @@ export default function BatchPanel() {
                               {t('blLabelCurrentQty')}
                             </p>
                             <p style={S.primary}>
-                              {viewing.bio_asset_state.current_quantity}
+                              {formatQuantity(viewing.bio_asset_state.current_quantity, 'HEAD')}
                             </p>
                           </div>
                           <div>

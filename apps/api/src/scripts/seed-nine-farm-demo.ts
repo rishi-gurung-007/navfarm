@@ -21,9 +21,10 @@
  *      Lionshead Extension holds weaners and growers only.
  *   3. stage_master gains WEANER, GROWER and FINISHER — the three the
  *      commercial grow-out needs and the only piggery stages missing.
- *   4. A breed per farm (breed_master.location_id is the farm — migration
- *      0094 made breed_code unique per farm so the same line can exist on
- *      each), carrying that farm's own submitted benchmarks.
+ *   4. One breed_master row per breed name, company-wide (migration 0110
+ *      removed Farm/location_id from Breed — the profile is shared across
+ *      every farm that references it now, not one row per farm), carrying
+ *      whichever farm's submitted benchmarks seeded it last.
  *   5. breed_lifecycle_stages with the client's periods converted to days and
  *      the client's own wording kept in the stage note, a real feed item per
  *      stage, vaccination and medication protocols (both now carrying
@@ -621,7 +622,7 @@ async function run() {
     /* ---- Location codes come from the LOCATION series ---------------------- */
 
     const [seriesRows] = await db.query<RowDataPacket[]>(
-      `SELECT * FROM no_series_master WHERE tenant_id = ? AND series_code = ?
+      `SELECT * FROM no_series WHERE tenant_id = ? AND code = ?
          AND (company_id = ? OR company_id IS NULL) AND deleted_at IS NULL
        ORDER BY company_id IS NULL LIMIT 1`,
       [scope.tenant_id, 'LOCATION', scope.company_id],
@@ -633,7 +634,7 @@ async function run() {
     };
 
     const [breedSeriesRows] = await db.query<RowDataPacket[]>(
-      `SELECT * FROM no_series_master WHERE tenant_id = ? AND series_code = ?
+      `SELECT * FROM no_series WHERE tenant_id = ? AND code = ?
          AND (company_id = ? OR company_id IS NULL) AND deleted_at IS NULL
        ORDER BY company_id IS NULL LIMIT 1`,
       [scope.tenant_id, 'BREED', scope.company_id],
@@ -644,7 +645,7 @@ async function run() {
     };
 
     const [lifecycleSeriesRows] = await db.query<RowDataPacket[]>(
-      `SELECT * FROM no_series_master WHERE tenant_id = ? AND series_code = ?
+      `SELECT * FROM no_series WHERE tenant_id = ? AND code = ?
          AND (company_id = ? OR company_id IS NULL) AND deleted_at IS NULL
        ORDER BY company_id IS NULL LIMIT 1`,
       [scope.tenant_id, 'BREED_LIFECYCLE_STAGE', scope.company_id],
@@ -891,9 +892,16 @@ async function run() {
     /* ---- 4. Breeds per farm ------------------------------------------------ */
 
     // A breed's code is the same on every farm — a cross-farm transfer matches
-    // the destination profile by breed code (decision of 15 Sep), so a line
-    // already coded on one farm keeps that exact code on the others. Only a
-    // line that exists nowhere yet gets a code from the BREED series.
+    // the destination profile by breed code (decision of 15 Sep). Breed no
+    // longer carries a farm/location at all (removed 2026-09-23, migration
+    // 0110_remove_breed_farm.sql — a breed profile is company-wide, the same
+    // row regardless of which farm references it), so the per-farm loop below
+    // creates one row the first time a breed name is seen and every later
+    // farm sharing that name updates the same shared row rather than creating
+    // its own — the farm's benchmark values are last-write-wins across farms,
+    // which is the direct, intended consequence of the profile no longer
+    // being per-farm. Only a line that exists nowhere yet gets a code from
+    // the BREED series.
     const [existingBreedCodes] = await db.query<RowDataPacket[]>(
       'SELECT breed_code, breed_name FROM breed_master WHERE tenant_id = ?',
       [scope.tenant_id],
@@ -910,15 +918,15 @@ async function run() {
       const code = breedCodeFor(b.name);
       const [existing] = await db.query<RowDataPacket[]>(
         `SELECT breed_id FROM breed_master
-          WHERE tenant_id = ? AND company_id = ? AND location_id = ? AND breed_code = ?`,
-        [scope.tenant_id, scope.company_id, farm.id, code],
+          WHERE tenant_id = ? AND company_id = ? AND breed_code = ?`,
+        [scope.tenant_id, scope.company_id, code],
       );
       const vals = [
         b.name, dec(b.benchmarks.gestationDays), dec(b.benchmarks.lactationDays),
         b.benchmarks.productiveLifeMonths, b.benchmarks.avgLitterSizeBorn === null ? null : dec(b.benchmarks.avgLitterSizeBorn),
         b.benchmarks.avgLitterSizeWeaned === null ? null : dec(b.benchmarks.avgLitterSizeWeaned),
         dec(b.benchmarks.avgWeaningWeightKg), b.benchmarks.boarProductiveLifeMonths,
-        farm.id, b.provenance,
+        b.provenance,
       ];
       let breedId: string;
       if (existing.length) {
@@ -927,7 +935,7 @@ async function run() {
           await db.query(
             `UPDATE breed_master SET breed_name=?, gestation_days=?, lactation_days=?, productive_life_months=?,
                avg_litter_size_born=?, avg_litter_size_weaned=?, avg_weaning_weight_kg=?,
-               boar_productive_life_months=?, location_id=?, description=?,
+               boar_productive_life_months=?, description=?,
                is_active=1, status='ACTIVE', deleted_at=NULL, updated_at=NOW()
              WHERE breed_id=?`, [...vals, breedId]);
         }
@@ -937,9 +945,9 @@ async function run() {
           await db.query(
             `INSERT INTO breed_master (breed_id, tenant_id, company_id, nob_id, lob_id, breed_code, breed_name,
                gestation_days, lactation_days, productive_life_months, avg_litter_size_born, avg_litter_size_weaned,
-               avg_weaning_weight_kg, boar_productive_life_months, location_id, description, breed_type,
+               avg_weaning_weight_kg, boar_productive_life_months, description, breed_type,
                is_active, status, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'ACTIVE', NOW(), NOW())`,
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'ACTIVE', NOW(), NOW())`,
             [breedId, scope.tenant_id, scope.company_id, scope.nob_id, scope.lob_id, code, ...vals, BREED_TYPE]);
         }
       }
@@ -980,13 +988,37 @@ async function run() {
       return code;
     };
 
+    // Keyed by breedId, not per farm: a breed is one row shared by every farm
+    // that carries it (breed no longer has a farm of its own — see
+    // docs/decisions.md, 2026-09-14), so a stage two farms both want must
+    // survive both passes. Declaring this inside the loop below deactivated
+    // whichever farm ran last in DEMO_FARM_CODES order's unwanted stages even
+    // when an earlier farm sharing the same breed still needed them —
+    // GROW_OUT (LEX100, last in the order) left every TN-70-Sow breeding
+    // stage but WEANER/GROWER switched off tenant-wide.
+    const wantedStageIdsByBreed = new Map<string, Set<string>>();
+    // Every farm code that carries each breedId, so the retire pass below
+    // (run once per breed, after every farm has contributed its wanted
+    // stages) can still attribute its count to each farm's summary line.
+    const farmsByBreed = new Map<string, Set<string>>();
+
     for (const b of breedSeeds) {
       const code = breedCodeFor(b.name);
       const breedId = breedIdByFarmAndCode.get(`${b.farm}|${code}`);
       if (!breedId) continue;
       const farmRole = FARMS.find((f) => f.code === b.farm)!.role;
       const stages = stagePlanFor(farmRole, b.line);
-      const wantedStageIds = new Set<string>();
+      let wantedStageIds = wantedStageIdsByBreed.get(breedId);
+      if (!wantedStageIds) {
+        wantedStageIds = new Set<string>();
+        wantedStageIdsByBreed.set(breedId, wantedStageIds);
+      }
+      let farmsForBreed = farmsByBreed.get(breedId);
+      if (!farmsForBreed) {
+        farmsForBreed = new Set<string>();
+        farmsByBreed.set(breedId, farmsForBreed);
+      }
+      farmsForBreed.add(b.farm);
 
       for (const s of stages) {
         const stageId = stageByCode.get(s.stage);
@@ -1062,12 +1094,15 @@ async function run() {
         }
         countsFor(b.farm).lifecycleStages++;
       }
+    }
 
-      // A lifecycle row for a stage this farm's role does not run is switched
-      // OFF, never deleted — schedulers and batch-cost rows point at these.
-      // The Triple C farm breeds carry nine rows copied wholesale from
-      // LANDRACE by seed-triplec-breed-lifecycles.ts; the ones that survive
-      // are rewritten above, and the rest land here.
+    // A lifecycle row for a stage none of the breed's farms run is switched
+    // OFF, never deleted — schedulers and batch-cost rows point at these.
+    // Run once per breed, after every farm sharing it has contributed its
+    // wanted stages above — a breed is one shared row now (breed no longer
+    // has a farm of its own), so retiring per-farm mid-loop would deactivate
+    // a stage an earlier farm on the same breed still needed.
+    for (const [breedId, wantedStageIds] of wantedStageIdsByBreed) {
       const [strays] = await db.query<RowDataPacket[]>(
         'SELECT lifecycle_id, stage_id FROM breed_lifecycle_stages WHERE breed_id = ? AND is_active = 1',
         [breedId],
@@ -1080,7 +1115,9 @@ async function run() {
           toRetire.map((r) => r.lifecycle_id),
         );
       }
-      countsFor(b.farm).lifecycleDeactivated += toRetire.length;
+      for (const farm of farmsByBreed.get(breedId) ?? []) {
+        countsFor(farm).lifecycleDeactivated += toRetire.length;
+      }
     }
 
     /* ---- 6. One data-entry login and one farm manager per farm ------------- */

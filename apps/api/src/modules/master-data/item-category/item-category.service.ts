@@ -176,7 +176,7 @@ export class ItemCategoryService {
     const series = await this.numberSeriesService.lockSeries(seriesCode, tenantId, companyId, tx);
 
     let categoryCode: string;
-    if (series.allow_manual && dto.category_code) {
+    if (series.manual_nos && dto.category_code) {
       categoryCode = dto.category_code.toUpperCase();
     } else if (parent) {
       categoryCode = await generateCompositeCode({

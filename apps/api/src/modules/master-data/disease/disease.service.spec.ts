@@ -106,7 +106,7 @@ describe('DiseaseService', () => {
   describe('create — auto-generated (a series is configured for DISEASE)', () => {
     it('generates the code via the resolved series', async () => {
       numberSeries.resolveSeriesFor.mockResolvedValue('DISEASE');
-      numberSeries.lockSeries.mockResolvedValue({ allow_manual: false });
+      numberSeries.lockSeries.mockResolvedValue({ manual_nos: false });
       numberSeries.generateNext.mockResolvedValue('DIS-001');
       mockDbSelect
         .mockReturnValueOnce(makeSelectResult([{ company_id: 'comp-1' }])) // company found
@@ -123,7 +123,7 @@ describe('DiseaseService', () => {
 
     it('uses the user-supplied code without generating when the series has allow_manual set', async () => {
       numberSeries.resolveSeriesFor.mockResolvedValue('DISEASE');
-      numberSeries.lockSeries.mockResolvedValue({ allow_manual: true });
+      numberSeries.lockSeries.mockResolvedValue({ manual_nos: true });
       mockDbSelect
         .mockReturnValueOnce(makeSelectResult([{ company_id: 'comp-1' }])) // company found
         .mockReturnValueOnce(makeSelectResult([])) // no duplicate

@@ -162,16 +162,16 @@ async function generateLocationCode(
 ): Promise<string> {
   const [series] = await db
     .select()
-    .from(schema.noSeriesMaster)
+    .from(schema.noSeries)
     .where(
       and(
-        eq(schema.noSeriesMaster.tenant_id, ctx.tenantId),
-        eq(schema.noSeriesMaster.series_code, 'LOCATION'),
-        or(eq(schema.noSeriesMaster.company_id, ctx.companyId), isNull(schema.noSeriesMaster.company_id)),
-        isNull(schema.noSeriesMaster.deleted_at),
+        eq(schema.noSeries.tenant_id, ctx.tenantId),
+        eq(schema.noSeries.code, 'LOCATION'),
+        or(eq(schema.noSeries.company_id, ctx.companyId), isNull(schema.noSeries.company_id)),
+        isNull(schema.noSeries.deleted_at),
       ),
     )
-    .orderBy(sql`${schema.noSeriesMaster.company_id} IS NULL`)
+    .orderBy(sql`${schema.noSeries.company_id} IS NULL`)
     .limit(1);
 
   const format = series ?? {

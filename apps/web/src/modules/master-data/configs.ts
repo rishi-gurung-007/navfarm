@@ -1,15 +1,5 @@
 import type { MasterDataConfig } from "./types";
 
-// The Scheduler's KPI metric vocabulary, as KPI_METRICS in
-// apps/api/src/modules/production/scheduler-header/dto/scheduler-header.dto.ts
-// (the scheduler screens carry the same copy). Breed lifecycle KPI rows use it
-// so a threshold names a metric a DESCRIPTIVE line can capture.
-const KPI_METRICS = [
-  "BODY_WEIGHT", "FCR", "ADG", "BCS_SCORE", "MORTALITY_COUNT", "TEMPERATURE",
-  "HEAD_COUNT", "LITTER_SIZE", "WEANING_WEIGHT", "PIGLETS_BORN", "SEMEN_MOTILITY",
-  "EGG_COUNT", "MILK_LITRES", "CUSTOM",
-];
-
 const STATUS_OPTIONS = [
   { value: "ACTIVE", label: "Active" },
   { value: "INACTIVE", label: "Inactive" },
@@ -101,9 +91,22 @@ const location: MasterDataConfig = {
     { key: "location_level", label: "Hierarchy Level", type: "number", min: 0, hideInForm: true, helpText: "Computed from the parent location." },
     { key: "area_size", label: "Area Size", type: "number", min: 0, max: 999999.99, step: "0.01", section: "Identification" },
     { key: "area_unit", label: "Area UOM", type: "select-entity", entityEndpoint: "/uom?uomType=AREA", entityValueKey: "uom_code", entityLabelKeys: ["uom_code", "uom_name"], section: "Identification" },
-    { key: "max_capacity", label: "Max Capacity", type: "number", min: 0, max: 9999999, step: "1", required: true, section: "Identification" },
-    { key: "capacity_uom", label: "Capacity UOM", type: "select-entity", required: true, entityEndpoint: "/uom?uomType=COUNT", entityValueKey: "uom_code", entityLabelKeys: ["uom_code", "uom_name"], section: "Identification" },
-    { key: "storage_type", label: "Storage Location", type: "select", options: ["STORE", "SILO"].map((v) => ({ value: v, label: v })), section: "Identification" },
+    // Hidden for SILO (2026-09-22, client request) — asking for a general Max
+    // Capacity right next to Silo Capacity (KG) read as the same question
+    // twice. Silo Capacity (KG) + Silo Reorder Days are what a silo's own
+    // capacity/reorder logic actually uses; every other location type still
+    // needs Max Capacity, which is what the child-fits-in-parent capacity
+    // check validates against. notEquals rather than an enumerated equals
+    // list, so a location type added later stays required by default instead
+    // of silently inheriting the SILO exception.
+    { key: "max_capacity", label: "Max Capacity", type: "number", min: 0, max: 9999999, step: "1", visibleWhen: { anyOf: [{ key: "location_type", notEquals: "SILO" }] }, requiredWhen: { anyOf: [{ key: "location_type", notEquals: "SILO" }] }, section: "Identification" },
+    { key: "capacity_uom", label: "Capacity UOM", type: "select-entity", entityEndpoint: "/uom?uomType=COUNT", entityValueKey: "uom_code", entityLabelKeys: ["uom_code", "uom_name"], visibleWhen: { anyOf: [{ key: "location_type", notEquals: "SILO" }] }, requiredWhen: { anyOf: [{ key: "location_type", notEquals: "SILO" }] }, section: "Identification" },
+    // Hidden (2026-09-22, client request) — Storage Location duplicated
+    // Location Type (STORE/SILO were already choices there); MasterDataTable's
+    // setField now derives this straight from location_type instead. Kept in
+    // fields[], not deleted, so editing an existing record still loads its
+    // stored value and the payload-building loop below still sends it.
+    { key: "storage_type", label: "Storage Location", type: "select", hideInForm: true, options: ["STORE", "SILO"].map((v) => ({ value: v, label: v })), section: "Identification" },
     { key: "silo_capacity_kg", label: "Silo Capacity (KG)", type: "number", min: 0, max: 999999.99, step: "0.01", visibleWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, requiredWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, helpText: "Required when Storage Location is SILO.", section: "Identification" },
     { key: "silo_reorder_days", label: "Silo Reorder Days", type: "number", min: 0, max: 365, step: "1", visibleWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, requiredWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, helpText: "Required when Storage Location is SILO.", section: "Identification" },
     { key: "downtime_days_required", label: "Downtime Days Required", type: "number", min: 0, max: 365, step: "1", helpText: "Empty days required between batches for biosecurity.", section: "Identification" },
@@ -128,7 +131,6 @@ const stage: MasterDataConfig = {
   group: "Production",
   isPrimary: true,
   supportsNobLobFilter: true,
-  supportsRestore: false,
   columns: [
     { key: "stage_sequence", label: "#" },
     { key: "stage_code", label: "Code" },
@@ -186,17 +188,18 @@ const stage: MasterDataConfig = {
       visibleWhen: { anyOf: [{ key: "transition_trigger", equals: "EVENT_BASED" }] },
       requiredWhen: { anyOf: [{ key: "transition_trigger", equals: "EVENT_BASED" }] },
     },
+    // Data Entry tab removed (2026-09-22, client request) — these three kept
+    // their section value (harmless once nothing renders it) but are hidden
+    // from the form entirely, which is what drops the tab: a tab only shows
+    // up when a visible field claims its section. hideInForm, not deleted —
+    // the columns and any values a record already has are untouched.
     {
-      key: "data_entry_form", label: "Data Entry Form", type: "select", section: "Data Entry",
+      key: "data_entry_form", label: "Data Entry Form", type: "select", section: "Data Entry", hideInForm: true,
       options: ["STANDARD", "FARROWING", "WEANING", "SLAUGHTER"].map((v) => ({ value: v, label: v })),
     },
-    // Only this one moved (2026-09-22, client correction) — the client
-    // specifically wants Auto-Create Scheduler up front on Identification;
-    // the other three Data Entry fields stay put, so the Data Entry tab
-    // still exists for them.
     { key: "scheduler_auto_create", label: "Auto-Create Scheduler", type: "boolean", section: "Identification" },
-    { key: "show_on_animal_card", label: "Show on Animal Card", type: "boolean", section: "Data Entry" },
-    { key: "required_kpi_to_pass", label: "Required KPI to Pass", type: "json", section: "Data Entry", helpText: 'KPI checks validated before a stage transition, e.g. [{"metric":"BODY_WEIGHT","min_value":100}]. A failure warns; a farmer may override with approval.' },
+    { key: "show_on_animal_card", label: "Show on Animal Card", type: "boolean", section: "Data Entry", hideInForm: true },
+    { key: "required_kpi_to_pass", label: "Required KPI to Pass", type: "json", section: "Data Entry", hideInForm: true, helpText: 'KPI checks validated before a stage transition, e.g. [{"metric":"BODY_WEIGHT","min_value":100}]. A failure warns; a farmer may override with approval.' },
   ],
 };
 
@@ -210,7 +213,6 @@ const numberSeries: MasterDataConfig = {
   group: "Production",
   isPrimary: true,
   supportsNobLobFilter: false,
-  supportsRestore: false,
   columns: [
     { key: "code", label: "Code" },
     { key: "document_type", label: "Applies To" },
@@ -219,8 +221,10 @@ const numberSeries: MasterDataConfig = {
     { key: "seq_length", label: "Digits" },
     { key: "last_no_used", label: "Last No. Used" },
     { key: "manual_nos", label: "Allow Manual" },
-    { key: "blocked", label: "Blocked" },
   ],
+  // "Blocked" is this master's own Active/Inactive fact — surfaced through the
+  // generic table's toggle switch (is_active, computed server-side as
+  // !blocked) like every other master, not repeated as its own data column.
   fields: [
     { key: "company_id", label: "Company", type: "text", hideInForm: true },
     { key: "code", label: "Series Code", type: "text", required: true, createOnly: true, maxLength: 20, placeholder: "NS-SUP", helpText: "Unique identifier for this number series (max 20 characters)." },
@@ -258,7 +262,7 @@ const numberSeries: MasterDataConfig = {
     },
     { key: "description", label: "Description", type: "text", maxLength: 50, placeholder: "Vendor Supplier Series", helpText: "Human readable label (max 50 characters)." },
     { key: "no_series_code", label: "Prefix / Code Pattern", type: "text", required: true, maxLength: 20, placeholder: "SUP-", helpText: "Prefix pattern (max 20 characters, e.g. SUP- with 3 digits generates SUP-001)." },
-    { key: "seq_length", label: "Digits (Sequence Length)", type: "number", defaultValue: "4", min: 1, max: 10, step: "1", required: true, helpText: "Length of digits for zero-padding (1 to 10 digits, e.g. 3 for -001, 4 for -0001)." },
+    { key: "seq_length", label: "Digits (Sequence Length)", type: "number", nativeNumber: true, defaultValue: "4", min: 1, max: 10, step: "1", required: true, helpText: "Length of digits for zero-padding (1 to 10 digits, e.g. 3 for -001, 4 for -0001)." },
     { key: "increment_by", label: "Increment By", type: "number", defaultValue: "1", min: 1, max: 100, step: "1", required: true, helpText: "How much to add on each generation (between 1 and 100)." },
     { key: "is_default", label: "Is Default for this Master", type: "boolean", defaultValue: "true", helpText: "If checked, forms for this master will use this number series by default." },
     { key: "manual_nos", label: "Allow Manual Numbers", type: "boolean", helpText: "If checked, users can overwrite the generated number on the form." },
@@ -1015,17 +1019,14 @@ const breed: MasterDataConfig = {
   columns: [
     { key: "breed_code", label: "Code" },
     { key: "breed_name", label: "Name" },
-    { key: "location_code", label: "Farm Code" },
-    { key: "location_name", label: "Farm" },
     { key: "breed_type", label: "Type" },
     { key: "avg_fcr", label: "Avg FCR" },
   ],
   fields: [
-    { key: "location_id", label: "Farm", type: "select-entity", required: true, entityEndpoint: "/location?locationType=FARM&rootOnly=true&isActive=true", entityValueKey: "location_id", entityLabelKeys: ["location_code", "location_name"], section: "Identification", helpText: "The active first-level farm where this breed profile applies." },
     { key: "company_id", label: "Company (blank = global)", type: "text", hideInForm: true },
     { key: "nob_id", label: "Nature of Business", type: "select-entity", required: true, entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], section: "Identification" },
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank if this breed applies to all LOBs under the selected NOB.", section: "Identification" },
-    { key: "breed_code", label: "Breed Code", type: "text", required: true, createOnly: true, helpText: "Leave blank to derive from the breed name via the BREED series. After create, the code follows the series when the name changes — the same breed keeps the same code on every farm.", section: "Identification" },
+    { key: "breed_code", label: "Breed Code", type: "text", required: true, createOnly: true, helpText: "Leave blank to derive from the breed name via the BREED series. After create, the code follows the series when the name changes.", section: "Identification" },
     { key: "breed_name", label: "Breed Name", type: "text", required: true, placeholder: "Yorkshire", section: "Identification" },
     { key: "species_id", label: "Species", type: "select-entity", required: true, entityEndpoint: "/species", entityValueKey: "species_id", entityLabelKeys: ["species_code", "species_name"], section: "Identification" },
     {
@@ -1119,14 +1120,16 @@ const breedLifecycleStage: MasterDataConfig = {
     { key: "output_item_id", label: "Output Item", type: "select-entity", searchable: true, entityEndpoint: "/item", entityValueKey: "item_id", entityLabelKeys: ["item_code", "item_name"] },
     { key: "output_uom", label: "Output UOM", type: "text" },
     { key: "std_output_qty", label: "Std Output Qty", type: "number", step: "0.001", min: 0 },
-    // Rows, not a typed array (Rishi, 2026-09-15). The metric list is the
-    // Scheduler's KPI vocabulary — KPI_METRICS in scheduler-header.dto.ts, the
-    // same words a DESCRIPTIVE line captures — so a threshold names a value
-    // the daily entry actually records. The API validates both lists.
+    // Rows, not a typed array (Rishi, 2026-09-15). metric names a row in the
+    // KPI Metric master (kpi_metric_master) — a real, per-tenant-extensible
+    // catalog now, not a hardcoded list — by its metric_code, the same words a
+    // DESCRIPTIVE scheduler line captures so a threshold names a value the
+    // daily entry actually records. The picker's own New/View All buttons are
+    // how a tenant adds one of their own without leaving this form.
     {
       key: "kpi_thresholds", label: "KPIs & Alerts", type: "json",
       jsonRow: [
-        { key: "metric", label: "KPI", type: "select", options: KPI_METRICS.map((v) => ({ value: v, label: v.replace(/_/g, " ") })) },
+        { key: "metric", label: "KPI", type: "select-entity", entityEndpoint: "/kpi-metric", entityValueKey: "metric_code", entityLabelKeys: ["metric_code", "metric_name"] },
         { key: "lower_limit", label: "Lower Limit", type: "number", step: "0.001" },
         { key: "upper_limit", label: "Upper Limit", type: "number", step: "0.001" },
         { key: "severity", label: "Alert Severity", type: "select", options: ["INFO", "WARNING", "CRITICAL"].map((v) => ({ value: v, label: v })) },
@@ -1204,6 +1207,23 @@ const breedLifecycleStage: MasterDataConfig = {
     // ever displayed it. hideInForm keeps it off the create/edit form while
     // readOnly lets the detail view through, which is the filter it checks.
     { key: "created_at", label: "Created At", type: "date", hideInForm: true, readOnly: true, hideInTable: true },
+  ],
+};
+
+const kpiMetric: MasterDataConfig = {
+  key: "kpi-metric", label: "KPI Metrics", singular: "KPI Metric", apiBase: "/kpi-metric", idKey: "kpi_metric_id",
+  group: "Livestock & Health", isPrimary: true, supportsRestore: true, supportsNobLobFilter: true,
+  description: "The KPI vocabulary Breed Lifecycle Stage thresholds and a Scheduler DESCRIPTIVE line both name their metric from, so a threshold and the daily entry it bounds mean the same value. Add one here — or from the KPI picker on a lifecycle stage's own New button — the moment a metric this list doesn't have comes up.",
+  columns: [
+    { key: "metric_code", label: "Code" }, { key: "metric_name", label: "Name" }, { key: "default_uom", label: "UOM" },
+  ],
+  fields: [
+    { key: "company_id", label: "Company (blank = global)", type: "text", hideInForm: true },
+    { key: "nob_id", label: "Nature of Business", type: "select-entity", entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], helpText: "Leave blank if this metric is shared across all business verticals." },
+    { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank if this metric is shared across all LOBs under the selected NOB." },
+    { key: "metric_code", label: "Code", type: "text", required: true, createOnly: true, placeholder: "EAR_LENGTH", helpText: "Uppercase letters, digits and underscore. This is what a lifecycle threshold and a Scheduler DESCRIPTIVE line both reference — pick something they'll recognize." },
+    { key: "metric_name", label: "Name", type: "text", required: true, placeholder: "Body Weight" },
+    { key: "default_uom", label: "Default UOM", type: "select-entity", entityEndpoint: "/uom", entityValueKey: "uom_code", entityLabelKeys: ["uom_code", "uom_name"], helpText: "The unit this metric is normally recorded in — from the UOM master. Add a RATIO/PCT/HEAD unit there first if this metric needs one that isn't in the list yet." },
   ],
 };
 
@@ -1754,7 +1774,7 @@ export const MASTER_DATA_CONFIGS: MasterDataConfig[] = [
   numberSeries, stage, activity,
   item, itemCategory, itemType, itemAttribute, itemTemplateConfig, uom, uomConversion,
   animal,
-  species, breed, breedLifecycleStage, reason, disease, feedFormula,
+  species, breed, breedLifecycleStage, kpiMetric, reason, disease, feedFormula,
   supplier, customer, resource,
   glAccount, glMapping, costCenter, country, currency, exchangeRate,
 ];

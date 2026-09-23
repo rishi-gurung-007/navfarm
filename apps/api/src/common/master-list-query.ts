@@ -144,10 +144,12 @@ export function listFilterConditions(
 }
 
 /**
- * ORDER BY for a list. Falls back to the master's own code column so the
- * sequence is stable even when the caller asks for nothing — an unsorted list
- * is not merely untidy, it can hand back different rows on the same page of the
- * same query.
+ * ORDER BY for a list. A caller-specified `sort` wins outright. Otherwise,
+ * newest-first (created_at DESC) — a record a person just created should be
+ * the first thing they see on the list they're immediately sent back to, not
+ * buried whatever page its code or name alphabetizes onto. Falls back to the
+ * master's own code column only on the rare table with no created_at, so the
+ * sequence still stays stable rather than reverting to MySQL's undefined order.
  */
 export function listOrderBy(
   table: AnyMySqlTable,
@@ -161,8 +163,11 @@ export function listOrderBy(
       `Cannot sort by '${query.sort}' — it is not a column on this master.`,
     );
   }
-  const target = column ?? fallback;
-  return (query.dir === 'desc' ? desc(target) : asc(target)) as SQL;
+  if (column) {
+    return (query.dir === 'desc' ? desc(column) : asc(column)) as SQL;
+  }
+  const defaultTarget = columns['created_at'] ?? fallback;
+  return (defaultTarget === columns['created_at'] ? desc(defaultTarget) : asc(defaultTarget)) as SQL;
 }
 
 /**

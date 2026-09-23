@@ -215,7 +215,6 @@ interface BreedRow {
   breed_code: string;
   breed_name: string;
   gestation_days: number | null;
-  location_id: string | null;
 }
 
 /**
@@ -263,19 +262,19 @@ export async function resolveDemoFarms(db: Db, companyId: string, profile: Volum
       isNull(schema.locationMaster.deleted_at),
     ));
 
-  // Breeds and their lifecycle stages, per farm.
+  // Breeds and their lifecycle stages. Breed profiles are company-wide, not
+  // per farm (Farm was removed from Breed Master), so every farm below draws
+  // from the same company breed set rather than a farm-filtered one.
   const breedRows: BreedRow[] = await db
     .select({
       breed_id: schema.breedMaster.breed_id,
       breed_code: schema.breedMaster.breed_code,
       breed_name: schema.breedMaster.breed_name,
       gestation_days: schema.breedMaster.gestation_days,
-      location_id: schema.breedMaster.location_id,
     })
     .from(schema.breedMaster)
     .where(and(
       eq(schema.breedMaster.company_id, companyId),
-      inArray(schema.breedMaster.location_id, farmIds),
       eq(schema.breedMaster.is_active, true),
       isNull(schema.breedMaster.deleted_at),
     ));
@@ -342,7 +341,7 @@ export async function resolveDemoFarms(db: Db, companyId: string, profile: Volum
 
     const store = own.find((d) => d.location_type === 'STORE' && d.location_code.startsWith(`${code}/STORE-`));
 
-    const farmBreeds = breedRows.filter((b) => b.location_id === farm.location_id).map(toBreed);
+    const farmBreeds = breedRows.map(toBreed);
     // The sow line is the one with a gestation period; boar lines have none.
     // A teaser boar is not a sire the demo mates with, so it is never chosen
     // as the farm's boar line when a real one is present.

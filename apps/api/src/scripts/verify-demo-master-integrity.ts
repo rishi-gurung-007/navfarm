@@ -34,7 +34,7 @@ async function run() {
     const { tenant_id: tenant, company_id: company } = selectedCompany;
     const snapshot = async () => {
       const state: unknown[] = [];
-      for (const table of ['reason_master', 'no_series_master', 'audit_log']) state.push((await db.query('SELECT * FROM `' + table + '` ORDER BY 1'))[0]);
+      for (const table of ['reason_master', 'no_series', 'audit_log']) state.push((await db.query('SELECT * FROM `' + table + '` ORDER BY 1'))[0]);
       return JSON.stringify(state);
     };
     const before = await snapshot();

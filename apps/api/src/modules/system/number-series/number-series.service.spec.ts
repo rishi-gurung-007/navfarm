@@ -157,7 +157,7 @@ describe('NumberSeriesService', () => {
       expect(mockDbInsert).not.toHaveBeenCalled();
     });
 
-    it('uses the BREED field series on a farm, matching create', async () => {
+    it('uses the BREED field series, matching create — Breed has no farm/parent to preview under', async () => {
       jest.spyOn(service, 'resolveCodeSettings').mockResolvedValue({ generated: true, allowManual: true, seriesCode: 'BREED' } as any);
       mockDbSelect.mockReturnValueOnce(returning([{
         ...series,
@@ -167,20 +167,18 @@ describe('NumberSeriesService', () => {
         seq_length: 0,
         code_segments: ['breed_name'],
       }]))
-        .mockReturnValueOnce(returning([{ location_code: 'FARM-001', location_type: 'FARM', parent_location_id: null }]))
         .mockReturnValueOnce(returning([{ code: 'LARGE_WHITE' }]));
       await expect(service.previewCode({
         master: 'BREED',
-        parentId: 'farm',
         record: JSON.stringify({ breed_name: 'Yorkshire' }),
       }, 'tenant', 'company')).resolves.toMatchObject({ preview: 'YORKSHIRE' });
       expect(mockDbUpdate).not.toHaveBeenCalled();
     });
 
     it('rejects inaccessible parents rather than exposing their codes', async () => {
-      jest.spyOn(service, 'resolveCodeSettings').mockResolvedValue({ generated: true, allowManual: true, seriesCode: 'BREED' } as any);
-      mockDbSelect.mockReturnValueOnce(returning([series])).mockReturnValueOnce(returning([]));
-      await expect(service.previewCode({ master: 'BREED', parentId: 'other-company-farm' }, 'tenant', 'company')).rejects.toThrow('active first-level farm in this workspace');
+      jest.spyOn(service, 'resolveCodeSettings').mockResolvedValue({ generated: true, allowManual: true, seriesCode: 'LOCATION' } as any);
+      mockDbSelect.mockReturnValueOnce(returning([{ ...series, series_code: 'LOCATION', document_type: 'LOCATION' }])).mockReturnValueOnce(returning([]));
+      await expect(service.previewCode({ master: 'LOCATION', parentId: 'other-company-farm' }, 'tenant', 'company')).rejects.toThrow('active parent in this workspace');
       expect(mockDbUpdate).not.toHaveBeenCalled();
     });
   });
@@ -201,26 +199,26 @@ describe('NumberSeriesService', () => {
     };
 
     it('skips occupied manual identities without changing those records', async () => {
-      mockLockedSelect({ series_id: 'series-1', document_type: 'ITEM', current_seq: 0, seq_length: 3,
-        prefix: 'ITM', date_format: null, separator: '-', reset_frequency: 'NEVER', is_active: true, updated_at: new Date().toISOString() });
+      mockLockedSelect({ id: 'series-1', document_type: 'ITEM', current_seq: 0, seq_length: 3,
+        prefix: 'ITM', date_format: null, separator: '-', reset_frequency: 'NEVER', blocked: false, updated_at: new Date().toISOString() });
       mockDbSelect.mockReturnValueOnce({ from: () => ({ where: async () => [{ code: 'ITM-001' }, { code: 'itm-002' }, { code: 'MANUAL' }] }) });
       const set = jest.fn(() => ({ where: async () => ({}) }));
       mockDbUpdate.mockReturnValue({ set });
       await expect(service.generateNext('ITEM', 'tenant', 'company')).resolves.toBe('ITM-003');
       expect(mockDbUpdate).toHaveBeenCalledTimes(1);
-      expect(set).toHaveBeenCalledWith(expect.objectContaining({ current_seq: 3, last_generated_code: 'ITM-003' }));
+      expect(set).toHaveBeenCalledWith(expect.objectContaining({ current_seq: 3, last_no_used: 'ITM-003' }));
     });
 
     it('formats prefix + zero-padded sequence and increments current_seq', async () => {
       mockLockedSelect({
-        series_id: 'series-1',
+        id: 'series-1',
         current_seq: 4,
         seq_length: 6,
         prefix: 'BATCH',
         date_format: null,
         separator: '-',
         reset_frequency: 'NEVER',
-        is_active: true,
+        blocked: false,
         updated_at: new Date().toISOString(),
       });
       mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) }) });
@@ -230,7 +228,7 @@ describe('NumberSeriesService', () => {
       expect(code).toBe('BATCH-000005');
       const setArg = (mockDbUpdate.mock.results[0].value.set as jest.Mock).mock.calls[0][0];
       expect(setArg.current_seq).toBe(5);
-      expect(setArg.last_generated_code).toBe('BATCH-000005');
+      expect(setArg.last_no_used).toBe('BATCH-000005');
     });
 
     // Was date_format: 'YYYY', which stamped the year the record was created.
@@ -238,7 +236,7 @@ describe('NumberSeriesService', () => {
     // entered late carries the year it was born rather than the year of typing.
     it('inserts the date segment between prefix and sequence, from the record', async () => {
       mockLockedSelect({
-        series_id: 'series-1',
+        id: 'series-1',
         current_seq: 20,
         seq_length: 4,
         prefix: 'PIG',
@@ -246,7 +244,7 @@ describe('NumberSeriesService', () => {
         code_segments: ['dob:YEAR'],
         separator: '-',
         reset_frequency: 'NEVER',
-        is_active: true,
+        blocked: false,
         updated_at: new Date().toISOString(),
       });
       mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) }) });
@@ -266,14 +264,14 @@ describe('NumberSeriesService', () => {
       lastYear.setFullYear(lastYear.getFullYear() - 1);
 
       mockLockedSelect({
-        series_id: 'series-1',
+        id: 'series-1',
         current_seq: 42,
         seq_length: 4,
         prefix: 'ITEM',
         date_format: null,
         separator: '-',
         reset_frequency: 'YEARLY',
-        is_active: true,
+        blocked: false,
         updated_at: lastYear.toISOString(),
       });
       mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) }) });
@@ -291,13 +289,13 @@ describe('NumberSeriesService', () => {
 
     it('throws BadRequestException when the series is inactive', async () => {
       mockLockedSelect({
-        series_id: 'series-1',
+        id: 'series-1',
         current_seq: 0,
         seq_length: 4,
         prefix: 'X',
         separator: '-',
         reset_frequency: 'NEVER',
-        is_active: false,
+        blocked: true,
         updated_at: new Date().toISOString(),
       });
 
@@ -321,11 +319,11 @@ describe('NumberSeriesService', () => {
     };
 
     it('returns the locked row without incrementing it', async () => {
-      mockLockedSelect({ series_id: 'series-1', current_seq: 4, seq_length: 3, is_active: true });
+      mockLockedSelect({ id: 'series-1', current_seq: 4, seq_length: 3, blocked: false });
 
       const series = await service.lockSeries('LOCATION_SHED', 'tenant-123', 'comp-1');
 
-      expect(series.series_id).toBe('series-1');
+      expect(series.id).toBe('series-1');
       expect(series.current_seq).toBe(4); // untouched — this is a lock, not a generator
       expect(mockDbUpdate).not.toHaveBeenCalled();
     });
@@ -337,7 +335,7 @@ describe('NumberSeriesService', () => {
     });
 
     it('throws BadRequestException when the series is inactive', async () => {
-      mockLockedSelect({ series_id: 'series-1', current_seq: 0, seq_length: 3, is_active: false });
+      mockLockedSelect({ id: 'series-1', current_seq: 0, seq_length: 3, blocked: true });
 
       await expect(service.lockSeries('X', 'tenant-123', null)).rejects.toThrow(BadRequestException);
     });
@@ -353,7 +351,7 @@ describe('NumberSeriesService', () => {
           from: jest.fn().mockReturnValue({
             where: jest.fn().mockReturnValue({
               limit: jest.fn().mockResolvedValue([{
-                series_name: 'Customer Code', document_type: 'CUSTOMER', prefix: 'CUS',
+                description: 'Customer Code', document_type: 'CUSTOMER', prefix: 'CUS',
                 separator: '-', seq_length: 3, date_format: null, reset_frequency: 'NEVER',
               }]),
             }),
@@ -376,7 +374,7 @@ describe('NumberSeriesService', () => {
       );
 
       expect(insertedValues).toEqual(expect.objectContaining({
-        tenant_id: 'tenant-123', company_id: 'comp-1', series_code: 'CUSTOMER', current_seq: 17,
+        tenant_id: 'tenant-123', company_id: 'comp-1', code: 'CUSTOMER', current_seq: 17,
       }));
     });
 

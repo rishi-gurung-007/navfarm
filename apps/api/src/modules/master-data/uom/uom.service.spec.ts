@@ -164,7 +164,7 @@ describe('UomService', () => {
 
     it('generates the code via a uom_type series when one is configured', async () => {
       numberSeries.resolveSeriesFor.mockResolvedValue('UOM_WEIGHT');
-      numberSeries.lockSeries.mockResolvedValue({ allow_manual: false });
+      numberSeries.lockSeries.mockResolvedValue({ manual_nos: false });
       numberSeries.generateNext.mockResolvedValue('WGT-001');
       mockDbSelect
         .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }) }) }) // no duplicate

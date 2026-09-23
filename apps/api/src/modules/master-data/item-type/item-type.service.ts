@@ -40,7 +40,7 @@ export class ItemTypeService {
       return dto.type_code.toUpperCase();
     }
     const series = await this.numberSeriesService.lockSeries(seriesCode, tenantId, companyId);
-    if (series.allow_manual && dto.type_code) {
+    if (series.manual_nos && dto.type_code) {
       return dto.type_code.toUpperCase();
     }
     return this.numberSeriesService.generateNext(seriesCode, tenantId, companyId, undefined, dto as unknown as Record<string, unknown>);

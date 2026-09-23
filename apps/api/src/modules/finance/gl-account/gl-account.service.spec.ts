@@ -117,7 +117,7 @@ describe('GlAccountService', () => {
   describe('create — auto-generated (a series is configured for GL_ACCOUNT[_type])', () => {
     it('prefers the account_type series and generates a root code with no parent', async () => {
       numberSeries.resolveSeriesFor.mockResolvedValue('GL_ACCOUNT_ASSET');
-      numberSeries.lockSeries.mockResolvedValue({ allow_manual: false, seq_length: 4, prefix: '1' });
+      numberSeries.lockSeries.mockResolvedValue({ manual_nos: false, seq_length: 4, prefix: '1' });
       numberSeries.generateNext.mockResolvedValue('1-0001');
       mockDbSelect
         .mockReturnValueOnce(makeSelectResult([{ company_id: 'comp-1' }])) // company found
@@ -136,7 +136,7 @@ describe('GlAccountService', () => {
 
     it('generates a composite code under a parent account', async () => {
       numberSeries.resolveSeriesFor.mockResolvedValue('GL_ACCOUNT_ASSET');
-      numberSeries.lockSeries.mockResolvedValue({ allow_manual: false, seq_length: 3, prefix: 'SUB' });
+      numberSeries.lockSeries.mockResolvedValue({ manual_nos: false, seq_length: 3, prefix: 'SUB' });
       const parentRow = { gl_account_id: 'parent-1', account_code: '1000', account_name: 'Assets', deleted_at: null };
       mockDbSelect
         .mockReturnValueOnce(makeSelectResult([{ company_id: 'comp-1' }])) // company found
@@ -156,7 +156,7 @@ describe('GlAccountService', () => {
 
     it('uses the user-supplied code without generating when the series has allow_manual set', async () => {
       numberSeries.resolveSeriesFor.mockResolvedValue('GL_ACCOUNT_ASSET');
-      numberSeries.lockSeries.mockResolvedValue({ allow_manual: true, seq_length: 4, prefix: '1' });
+      numberSeries.lockSeries.mockResolvedValue({ manual_nos: true, seq_length: 4, prefix: '1' });
       mockDbSelect
         .mockReturnValueOnce(makeSelectResult([{ company_id: 'comp-1' }])) // company found
         .mockReturnValueOnce(makeSelectResult([{ account_code: '9999', account_name: 'Cash' }])); // findOne
@@ -172,7 +172,7 @@ describe('GlAccountService', () => {
 
     it('rejects a generated code that would exceed 255 characters, without inserting', async () => {
       numberSeries.resolveSeriesFor.mockResolvedValue('GL_ACCOUNT_ASSET');
-      numberSeries.lockSeries.mockResolvedValue({ allow_manual: false, seq_length: 4, prefix: '1' });
+      numberSeries.lockSeries.mockResolvedValue({ manual_nos: false, seq_length: 4, prefix: '1' });
       numberSeries.generateNext.mockResolvedValue('1-' + '9'.repeat(254));
       mockDbSelect.mockReturnValueOnce(makeSelectResult([{ company_id: 'comp-1' }]));
 
@@ -183,7 +183,7 @@ describe('GlAccountService', () => {
 
     it('retries once on a duplicate-key collision then raises ConflictException on a second collision', async () => {
       numberSeries.resolveSeriesFor.mockResolvedValue('GL_ACCOUNT_ASSET');
-      numberSeries.lockSeries.mockResolvedValue({ allow_manual: false, seq_length: 4, prefix: '1' });
+      numberSeries.lockSeries.mockResolvedValue({ manual_nos: false, seq_length: 4, prefix: '1' });
       numberSeries.generateNext.mockResolvedValueOnce('1-0001').mockResolvedValueOnce('1-0002');
       mockDbSelect.mockReturnValueOnce(makeSelectResult([{ company_id: 'comp-1' }]));
 

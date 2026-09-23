@@ -38,7 +38,7 @@ export class StageService {
       return dto.stage_code.toUpperCase();
     }
     const series = await this.numberSeriesService.lockSeries(seriesCode, tenantId, dto.company_id);
-    if (series.allow_manual && dto.stage_code) {
+    if (series.manual_nos && dto.stage_code) {
       return dto.stage_code.toUpperCase();
     }
     return this.numberSeriesService.generateNext(seriesCode, tenantId, dto.company_id, undefined, dto as unknown as Record<string, unknown>);
@@ -330,5 +330,47 @@ export class StageService {
     });
 
     return { success: true, message: `Stage '${stage.stage_name}' has been deactivated.` };
+  }
+
+  /**
+   * Reactivates a deactivated Stage. findOne() filters out anything with
+   * deleted_at set, so a direct query is needed here — the row this call
+   * exists to find is exactly the one findOne() would refuse to return.
+   */
+  async restore(id: string, tenantId: string, userPayload?: any) {
+    const [stage] = await this.db
+      .select()
+      .from(schema.stageMaster)
+      .where(eq(schema.stageMaster.stage_id, id))
+      .limit(1);
+
+    if (!stage) {
+      throw new NotFoundException(`Stage with ID '${id}' not found.`);
+    }
+
+    if (stage.is_active) {
+      return { success: true, message: `Stage '${stage.stage_name}' is already active.` };
+    }
+
+    await this.db
+      .update(schema.stageMaster)
+      .set({
+        is_active: true,
+        deleted_at: null,
+        updated_by: userPayload?.userId || null,
+      })
+      .where(eq(schema.stageMaster.stage_id, id));
+
+    await this.auditService.log({
+      tenantId,
+      companyId: stage.company_id || undefined,
+      userId: userPayload?.userId,
+      action: 'RESTORE',
+      entityName: 'stage_master',
+      entityId: id,
+      oldValues: stage,
+    });
+
+    return { success: true, message: `Stage '${stage.stage_name}' has been restored.` };
   }
 }

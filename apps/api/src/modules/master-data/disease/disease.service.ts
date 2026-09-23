@@ -45,7 +45,7 @@ export class DiseaseService {
       return dto.disease_code.toUpperCase();
     }
     const series = await this.numberSeriesService.lockSeries(seriesCode, tenantId, dto.company_id);
-    if (series.allow_manual && dto.disease_code) {
+    if (series.manual_nos && dto.disease_code) {
       return dto.disease_code.toUpperCase();
     }
     return this.numberSeriesService.generateNext(seriesCode, tenantId, dto.company_id, undefined, dto as unknown as Record<string, unknown>);

@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Put,
+  Patch,
   Delete,
   Param,
   Body,
@@ -11,19 +12,23 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiParam } from '@nestjs/swagger';
-import { NoSeriesService } from './no-series.service';
+import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { CreateNoSeriesDto, UpdateNoSeriesDto } from './dto/no-series.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
 import { RequireCodePreviewPermission } from '../../../common/decorators/require-code-preview-permission.decorator';
 
+// A thin alias over NumberSeriesService's id-keyed methods, kept at its own
+// /no-series routes so item-template, inventory-setup and the frontend's
+// existing /no-series/* calls never had to change when no_series_master was
+// merged into no_series (docs/decisions.md, 2026-09-23).
 @ApiTags('No. Series')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('no-series')
 export class NoSeriesController {
-  constructor(private readonly noSeriesService: NoSeriesService) {}
+  constructor(private readonly numberSeriesService: NumberSeriesService) {}
 
   @Post()
   @RequirePermission('MASTER_DATA', 'ITEM', 'create')
@@ -31,7 +36,7 @@ export class NoSeriesController {
   async create(@Body() dto: CreateNoSeriesDto, @Req() req: any) {
     const tenantId = req.user?.tenantId || req['tenantId'];
     const companyId = req.headers?.['x-active-company-id'] || req.user?.companyId;
-    const result = await this.noSeriesService.create(dto, tenantId, companyId);
+    const result = await this.numberSeriesService.createNoSeriesRow(dto, tenantId, companyId);
     return {
       success: true,
       message: 'No. Series created successfully.',
@@ -50,7 +55,7 @@ export class NoSeriesController {
   ) {
     const tenantId = req.user?.tenantId || req['tenantId'];
     const companyId = queryCompanyId || req.headers?.['x-active-company-id'] || req.user?.companyId;
-    const result = await this.noSeriesService.previewByMaster(masterType, tenantId, companyId, type);
+    const result = await this.numberSeriesService.previewByMaster(masterType, tenantId, companyId, type);
     return {
       success: true,
       message: 'Preview retrieved successfully.',
@@ -67,7 +72,7 @@ export class NoSeriesController {
   ) {
     const tenantId = req.user?.tenantId || req['tenantId'];
     const companyId = queryCompanyId || req.headers?.['x-active-company-id'] || req.user?.companyId;
-    const result = await this.noSeriesService.byMaster(tenantId, companyId);
+    const result = await this.numberSeriesService.byMaster(tenantId, companyId);
     return {
       success: true,
       message: 'No. Series by master retrieved successfully.',
@@ -82,7 +87,7 @@ export class NoSeriesController {
   async setDefault(@Param('id') id: string, @Req() req: any) {
     const tenantId = req.user?.tenantId || req['tenantId'];
     const companyId = req.headers?.['x-active-company-id'] || req.user?.companyId;
-    const result = await this.noSeriesService.setDefault(id, tenantId, companyId);
+    const result = await this.numberSeriesService.setDefaultSeries(id, tenantId, companyId);
     return {
       success: true,
       message: 'Default No. Series updated.',
@@ -93,8 +98,14 @@ export class NoSeriesController {
   @Get()
   @RequirePermission('MASTER_DATA', 'ITEM', 'view')
   @ApiOperation({ summary: 'List all No. Series' })
-  async findAll(@Query('document_type') documentType?: string) {
-    const result = await this.noSeriesService.findAll(documentType);
+  async findAll(
+    @Query('document_type') documentType: string | undefined,
+    @Query('search') search: string | undefined,
+    @Req() req: any,
+  ) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const companyId = req.headers?.['x-active-company-id'] || req.user?.companyId;
+    const result = await this.numberSeriesService.findAllModern(documentType, tenantId, companyId, search);
     return {
       success: true,
       message: 'No. Series retrieved successfully.',
@@ -107,7 +118,7 @@ export class NoSeriesController {
   @ApiOperation({ summary: 'Get No. Series by ID' })
   @ApiParam({ name: 'id', description: 'No. Series UUID' })
   async findOne(@Param('id') id: string) {
-    const result = await this.noSeriesService.findOne(id);
+    const result = await this.numberSeriesService.findOneById(id);
     return {
       success: true,
       message: 'No. Series retrieved successfully.',
@@ -122,7 +133,7 @@ export class NoSeriesController {
   async getNextNumber(@Param('id') id: string, @Req() req: any) {
     const tenantId = req.user?.tenantId || req['tenantId'];
     const companyId = req.headers?.['x-active-company-id'] || req.user?.companyId;
-    const result = await this.noSeriesService.generateNextNumber(id, tenantId, companyId);
+    const result = await this.numberSeriesService.generateNextNumberById(id, tenantId, companyId);
     return {
       success: true,
       message: 'Next number generated successfully.',
@@ -135,7 +146,7 @@ export class NoSeriesController {
   @ApiOperation({ summary: 'Update No. Series' })
   @ApiParam({ name: 'id', description: 'No. Series UUID' })
   async update(@Param('id') id: string, @Body() dto: UpdateNoSeriesDto) {
-    const result = await this.noSeriesService.update(id, dto);
+    const result = await this.numberSeriesService.updateNoSeriesRow(id, dto);
     return {
       success: true,
       message: 'No. Series updated successfully.',
@@ -145,13 +156,26 @@ export class NoSeriesController {
 
   @Delete(':id')
   @RequirePermission('MASTER_DATA', 'ITEM', 'delete')
-  @ApiOperation({ summary: 'Delete No. Series' })
+  @ApiOperation({ summary: 'Deactivate No. Series' })
   @ApiParam({ name: 'id', description: 'No. Series UUID' })
   async delete(@Param('id') id: string) {
-    const result = await this.noSeriesService.delete(id);
+    const result = await this.numberSeriesService.softDeleteById(id);
     return {
       success: true,
-      message: 'No. Series deleted successfully.',
+      message: 'No. Series deactivated successfully.',
+      data: result,
+    };
+  }
+
+  @Patch(':id/restore')
+  @RequirePermission('MASTER_DATA', 'ITEM', 'edit')
+  @ApiOperation({ summary: 'Restore a deactivated No. Series' })
+  @ApiParam({ name: 'id', description: 'No. Series UUID' })
+  async restore(@Param('id') id: string) {
+    const result = await this.numberSeriesService.restoreById(id);
+    return {
+      success: true,
+      message: 'No. Series restored successfully.',
       data: result,
     };
   }

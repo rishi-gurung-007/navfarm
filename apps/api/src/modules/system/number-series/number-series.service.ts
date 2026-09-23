@@ -1,11 +1,12 @@
 import { companyCondition, MASTER_TABLES, masterScopeConditions } from '../../../common/master-data-scope';
-import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException, BadRequestException, HttpException, HttpStatus } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, like, ne, or, isNull, sql, getTableColumns } from 'drizzle-orm';
+import { eq, and, like, ne, not, or, isNull, sql, desc, getTableColumns } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
 import { CreateNumberSeriesDto, UpdateNumberSeriesDto, QueryNumberSeriesDto } from './dto/number-series.dto';
+import { CreateNoSeriesDto, UpdateNoSeriesDto } from '../../master-data/no-series/dto/no-series.dto';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { NobLobResolutionService } from '../../core/operational-area/nob-lob-resolution.service';
 import { formatSeriesCode, formatSeriesStem, nextSequence, nextSequenceInStem, segmentFields, assertCodeFits, parseSegment } from './code-format.util';
@@ -17,6 +18,22 @@ import { listFilterConditions, listOrderBy } from '../../../common/master-list-q
 const toMysqlTimestamp = (date: Date = new Date()) => date.toISOString().slice(0, 19).replace('T', ' ');
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Masters that compose their own code from a type-driven segment (e.g. a
+ * Location's prefix comes from its Location Type's `code_prefix`, not one
+ * shared series) rather than a single flat No. Series. resolveCodeSettings()/
+ * previewCode() already know how to build the right preview for these — but
+ * this table also carries stale generic rows left over from before per-type
+ * series existed (e.g. a `code = 'LOCATION'` row with a static `LOC-`
+ * prefix). Left unguarded, findDefaultSeriesByMaster() matches that generic
+ * row before the type is ever considered, so the create form previews
+ * "LOC-0001" while the actual save (which goes through the type-aware path)
+ * assigns "FARM-009". Refusing here for these masters sends the frontend's
+ * preview call down the same type-aware path the real save uses, instead of
+ * a shortcut that can disagree with it.
+ */
+const SELF_CODED_MASTERS = new Set(['ANIMAL', 'LOCATION']);
 
 /**
  * Fields that hold a reference rather than a value, and the code to read in
@@ -98,10 +115,6 @@ const scopeKeyConditions = (columns: Record<string, any>, tenantId: string, comp
   return conditions;
 };
 
-const isMockDb = (client: any): boolean => {
-  return !!(client?.select?.mock || client?.update?.mock || client?.insert?.mock);
-};
-
 @Injectable()
 export class NumberSeriesService {
   constructor(
@@ -116,6 +129,18 @@ export class NumberSeriesService {
       throw new Error('Tenant database connection context not established.');
     }
     return tenantDb;
+  }
+
+  /**
+   * This table has no is_active column of its own — "Blocked" is its version
+   * of that fact, inverted, going back to before the master-data screen's
+   * generic Active/Inactive toggle existed. Computing is_active here (rather
+   * than adding a real column) lets that same generic toggle — and the trash
+   * icon's delete-really-means-deactivate convention every other master in
+   * this app already follows — work for Number Series without a migration.
+   */
+  private withActive<T extends { blocked: boolean | null }>(row: T): T & { is_active: boolean } {
+    return { ...row, is_active: !row.blocked };
   }
 
   /**
@@ -140,11 +165,11 @@ export class NumberSeriesService {
     },
     loadExistingCodes: () => Promise<Array<string | null | undefined>>,
   ): Promise<void> {
-    const [existing] = await this.db.select().from(schema.noSeriesMaster).where(and(
-      eq(schema.noSeriesMaster.tenant_id, tenantId),
-      companyCondition(schema.noSeriesMaster.company_id, companyId),
-      eq(schema.noSeriesMaster.series_code, defaults.seriesCode),
-      isNull(schema.noSeriesMaster.deleted_at),
+    const [existing] = await this.db.select().from(schema.noSeries).where(and(
+      eq(schema.noSeries.tenant_id, tenantId),
+      companyCondition(schema.noSeries.company_id, companyId),
+      eq(schema.noSeries.code, defaults.seriesCode),
+      isNull(schema.noSeries.deleted_at),
     )).limit(1);
     if (existing) return;
 
@@ -160,92 +185,20 @@ export class NumberSeriesService {
       return match ? Math.max(max, Number(match[1])) : max;
     }, 0);
 
-    await this.db.insert(schema.noSeriesMaster).values({
-      series_id: randomUUID(),
+    await this.db.insert(schema.noSeries).values({
+      id: randomUUID(),
       tenant_id: tenantId,
       company_id: companyId,
-      series_code: defaults.seriesCode,
-      series_name: defaults.seriesName,
+      code: defaults.seriesCode,
+      description: defaults.seriesName,
       document_type: defaults.documentType,
       prefix,
       separator,
       seq_length: defaults.seqLength,
       current_seq: currentSeq,
       reset_frequency: 'NEVER',
-      allow_manual: true,
-    }).onDuplicateKeyUpdate({ set: { series_name: defaults.seriesName } });
-
-    // Also ensure modern no_series table has the entry
-    if (!isMockDb(this.db)) {
-      try {
-        const [existingModern] = await this.db.select().from(schema.noSeries).where(
-          eq(schema.noSeries.code, defaults.seriesCode)
-        ).limit(1);
-        if (!existingModern) {
-          const lastUsed = currentSeq > 0 ? `${prefix}${separator}${String(currentSeq).padStart(defaults.seqLength || 3, '0')}` : null;
-          await this.db.insert(schema.noSeries).values({
-            id: randomUUID(),
-            tenant_id: tenantId,
-            company_id: companyId || null,
-            code: defaults.seriesCode,
-            description: defaults.seriesName,
-            no_series_code: `${prefix}${separator}`,
-            starting_no: '1'.padStart(defaults.seqLength || 3, '0'),
-            increment_by: 1,
-            manual_nos: true,
-            last_no_used: lastUsed,
-            blocked: false,
-          });
-        }
-      } catch {
-        // Ignore in mock DB contexts
-      }
-    }
-  }
-
-  private calculateModernNextNumber(series: typeof schema.noSeries.$inferSelect): string {
-    const increment = series.increment_by || 1;
-
-    if (series.last_no_used) {
-      return this.incrementCodeString(series.last_no_used, increment);
-    }
-
-    if (series.starting_no && series.starting_no.trim()) {
-      const startTrimmed = series.starting_no.trim();
-      const startMatch = startTrimmed.match(/^(.*?)(\d+)$/);
-      if (startMatch) {
-        const prefixInStart = startMatch[1];
-        const digitStr = startMatch[2];
-        if (prefixInStart) {
-          return startTrimmed;
-        }
-        const basePrefix = series.no_series_code ?? (series.code ? `${series.code}-` : '');
-        return `${basePrefix}${digitStr}`;
-      }
-      return startTrimmed;
-    }
-
-    if (series.no_series_code && series.no_series_code.trim()) {
-      const codeTrimmed = series.no_series_code.trim();
-      const codeMatch = codeTrimmed.match(/^(.*?)(\d+)$/);
-      if (codeMatch && codeMatch[2]) {
-        return codeTrimmed;
-      }
-    }
-
-    const basePrefix = series.no_series_code ?? (series.code ? `${series.code}-` : '');
-    return `${basePrefix}${String(increment).padStart(4, '0')}`;
-  }
-
-  private incrementCodeString(codeStr: string, increment = 1): string {
-    const match = codeStr.match(/^(.*?)(\d+)$/);
-    if (match) {
-      const prefix = match[1];
-      const numStr = match[2];
-      const nextVal = parseInt(numStr, 10) + increment;
-      return `${prefix}${String(nextVal).padStart(numStr.length, '0')}`;
-    }
-    return `${codeStr}-${increment}`;
+      manual_nos: true,
+    }).onDuplicateKeyUpdate({ set: { description: defaults.seriesName } });
   }
 
   /**
@@ -271,24 +224,23 @@ export class NumberSeriesService {
       return this.db.transaction((tx) => this.generateNext(seriesCode, tenantId, companyId, tx, record));
     }
 
-    // 1. Check legacy no_series_master first
     const conditions = [
-      eq(schema.noSeriesMaster.tenant_id, tenantId),
-      eq(schema.noSeriesMaster.series_code, seriesCode),
-      isNull(schema.noSeriesMaster.deleted_at),
+      eq(schema.noSeries.tenant_id, tenantId),
+      eq(schema.noSeries.code, seriesCode),
+      isNull(schema.noSeries.deleted_at),
     ];
     // Templates and company counters are independent after company creation.
     conditions.push(
-      companyCondition(schema.noSeriesMaster.company_id, companyId)
+      companyCondition(schema.noSeries.company_id, companyId)
     );
 
-    let series: typeof schema.noSeriesMaster.$inferSelect | undefined;
+    let series: typeof schema.noSeries.$inferSelect | undefined;
     try {
       const [found] = await executor
         .select()
-        .from(schema.noSeriesMaster)
+        .from(schema.noSeries)
         .where(and(...conditions))
-        .orderBy(sql`${schema.noSeriesMaster.company_id} IS NULL`)
+        .orderBy(sql`${schema.noSeries.company_id} IS NULL`)
         .limit(1)
         .for('update');
       series = found;
@@ -296,150 +248,45 @@ export class NumberSeriesService {
       // In mock DB test contexts or query failure, fall through
     }
 
-    if (series) {
-      if (!series.is_active) {
-        throw new BadRequestException(`Number series '${seriesCode}' is inactive.`);
-      }
-
-      const now = new Date();
-      const { sequence: nextSeq, code: formattedCode } = await this.nextAvailableCode(series, tenantId, companyId, executor, now, record);
-
-      await executor
-        .update(schema.noSeriesMaster)
-        .set({
-          current_seq: nextSeq,
-          last_generated_code: formattedCode,
-          updated_at: toMysqlTimestamp(now) as any,
-        })
-        .where(eq(schema.noSeriesMaster.series_id, series.series_id));
-
-      // Synchronize modern no_series table counter if present
-      if (!isMockDb(executor)) {
-        try {
-          await executor
-            .update(schema.noSeries)
-            .set({
-              last_no_used: formattedCode,
-              updated_at: toMysqlTimestamp(now) as any,
-            })
-            .where(and(
-              or(
-                eq(schema.noSeries.code, seriesCode),
-                eq(schema.noSeries.code, seriesCode.replace(/_/g, '-')),
-                eq(schema.noSeries.code, seriesCode.replace(/-/g, '_')),
-              ),
-              or(eq(schema.noSeries.tenant_id, tenantId), isNull(schema.noSeries.tenant_id)) as any,
-            ));
-        } catch {
-          // Ignore in mock DB contexts
-        }
-      }
-
-      return formattedCode;
+    if (!series) {
+      throw new NotFoundException(`Number series '${seriesCode}' not found for this tenant/company scope.`);
+    }
+    if (series.blocked) {
+      throw new BadRequestException(`Number series '${seriesCode}' is inactive.`);
     }
 
-    // 2. Fallback to modern no_series table
-    if (!isMockDb(executor)) {
-      const modernConditions = [
-        or(
-          eq(schema.noSeries.code, seriesCode),
-          eq(schema.noSeries.code, seriesCode.replace(/_/g, '-')),
-          eq(schema.noSeries.code, seriesCode.replace(/-/g, '_')),
-        ),
-      ];
-      if (tenantId) {
-        modernConditions.push(
-          or(eq(schema.noSeries.tenant_id, tenantId), isNull(schema.noSeries.tenant_id)) as any
-        );
-      }
-      if (companyId) {
-        modernConditions.push(
-          or(eq(schema.noSeries.company_id, companyId), isNull(schema.noSeries.company_id)) as any
-        );
-      }
+    const now = new Date();
+    const { sequence: nextSeq, code: formattedCode } = await this.nextAvailableCode(series, tenantId, companyId, executor, now, record);
 
-      let modernSeries: typeof schema.noSeries.$inferSelect | undefined;
-      try {
-        const [found] = await executor
-          .select()
-          .from(schema.noSeries)
-          .where(and(...modernConditions))
-          .orderBy(sql`${schema.noSeries.company_id} IS NULL`)
-          .limit(1)
-          .for('update');
-        modernSeries = found;
-      } catch {
-        // In mock DB test contexts, table might not be mocked; fall through
-      }
+    await executor
+      .update(schema.noSeries)
+      .set({
+        current_seq: nextSeq,
+        last_no_used: formattedCode,
+        updated_at: toMysqlTimestamp(now) as any,
+      })
+      .where(eq(schema.noSeries.id, series.id));
 
-      if (modernSeries) {
-        if (modernSeries.blocked) {
-          throw new BadRequestException(`Number series '${seriesCode}' is blocked.`);
-        }
-
-        const nextCode = this.calculateModernNextNumber(modernSeries);
-
-        // Verify code uniqueness in target table if known
-        const master = seriesCode.toUpperCase();
-        const field = MASTER_CODE_COLUMNS[master];
-        const table = MASTER_TABLES[master?.toLowerCase().replaceAll('_', '-')];
-        const columns = table ? getTableColumns(table) : undefined;
-
-        let finalCode = nextCode;
-        if (field && columns?.[field]) {
-          const occupiedConditions = scopeKeyConditions(columns, tenantId, companyId);
-          let attempts = 0;
-          while (attempts < 50) {
-            const [exists] = await executor
-              .select({ code: columns[field] })
-              .from(table)
-              .where(and(...occupiedConditions, eq(columns[field], finalCode)))
-              .limit(1);
-            if (!exists) break;
-            attempts++;
-            finalCode = this.incrementCodeString(finalCode, modernSeries.increment_by || 1);
-          }
-        }
-
-        const now = new Date();
-        await executor
-          .update(schema.noSeries)
-          .set({
-            last_no_used: finalCode,
-            updated_at: toMysqlTimestamp(now) as any,
-          })
-          .where(eq(schema.noSeries.id, modernSeries.id));
-
-        return finalCode;
-      }
-    }
-
-    throw new NotFoundException(`Number series '${seriesCode}' not found for this tenant/company scope.`);
+    return formattedCode;
   }
 
   /** Includes inactive/deleted identities: a manual code is never overwritten
    * or recycled. This is also used by read-only previews, without a row lock. */
   private async nextAvailableCode(
-    series: typeof schema.noSeriesMaster.$inferSelect,
+    series: typeof schema.noSeries.$inferSelect,
     tenantId: string,
     companyId: string | null | undefined,
     executor = this.db,
     now = new Date(),
     record: Record<string, unknown> = {},
   ) {
-    const master = series.document_type?.toUpperCase();
+    const master = series.document_type?.toUpperCase() ?? '';
     const field = MASTER_CODE_COLUMNS[master];
-    const table = MASTER_TABLES[master?.toLowerCase().replaceAll('_', '-')];
+    const table = MASTER_TABLES[master.toLowerCase().replaceAll('_', '-')];
     const columns = table ? getTableColumns(table) : undefined;
     const occupied = new Set<string>();
     if (field && columns?.[field]) {
       const occupiedConditions = scopeKeyConditions(columns, tenantId, companyId);
-      // Breed identity is Farm + Breed Code. The same biological breed is
-      // deliberately given the same code on each farm, so both preview and
-      // allocation must look for clashes only on the selected farm.
-      if (master === 'BREED' && columns.location_id && typeof record.location_id === 'string') {
-        occupiedConditions.push(eq(columns.location_id, record.location_id));
-      }
       const rows = await executor.select({ code: columns[field] }).from(table).where(and(...occupiedConditions));
       for (const row of rows) occupied.add(String(row.code).toUpperCase());
     }
@@ -482,7 +329,7 @@ export class NumberSeriesService {
    * without any registry entry at all.
    */
   private async resolveSegmentValues(
-    series: typeof schema.noSeriesMaster.$inferSelect,
+    series: typeof schema.noSeries.$inferSelect,
     record: Record<string, unknown>,
     tenantId: string,
     companyId: string | null | undefined,
@@ -556,46 +403,24 @@ export class NumberSeriesService {
     executor: MySql2Database<typeof schema> = this.db,
   ): Promise<string | null> {
     const seriesExists = async (seriesCode: string): Promise<boolean> => {
-      // 1. Check legacy no_series_master
       const conditions = [
-        eq(schema.noSeriesMaster.tenant_id, tenantId),
-        eq(schema.noSeriesMaster.series_code, seriesCode),
-        eq(schema.noSeriesMaster.is_active, true),
-        isNull(schema.noSeriesMaster.deleted_at),
+        eq(schema.noSeries.tenant_id, tenantId),
+        eq(schema.noSeries.code, seriesCode),
+        eq(schema.noSeries.blocked, false),
+        isNull(schema.noSeries.deleted_at),
       ];
       conditions.push(
-        companyCondition(schema.noSeriesMaster.company_id, companyId)
+        companyCondition(schema.noSeries.company_id, companyId)
       );
       try {
         const [row] = await executor
-          .select({ series_id: schema.noSeriesMaster.series_id })
-          .from(schema.noSeriesMaster)
+          .select({ id: schema.noSeries.id })
+          .from(schema.noSeries)
           .where(and(...conditions))
           .limit(1);
         if (row) return true;
       } catch {
         // Fall through
-      }
-
-      // 2. Check modern no_series table
-      if (!isMockDb(executor)) {
-        try {
-          const [modernRow] = await executor
-            .select({ id: schema.noSeries.id })
-            .from(schema.noSeries)
-            .where(and(
-              or(
-                eq(schema.noSeries.code, seriesCode),
-                eq(schema.noSeries.code, seriesCode.replace(/_/g, '-')),
-                eq(schema.noSeries.code, seriesCode.replace(/-/g, '_')),
-              ),
-              eq(schema.noSeries.blocked, false),
-            ))
-            .limit(1);
-          if (modernRow) return true;
-        } catch {
-          // Fall through in mock environments
-        }
       }
 
       return false;
@@ -632,19 +457,18 @@ export class NumberSeriesService {
    */
   async availableMasters(tenantId: string, companyId?: string | null, current?: string, all = false) {
     const rows = await this.db
-      .select({ series_code: schema.noSeriesMaster.series_code })
-      .from(schema.noSeriesMaster)
+      .select({ code: schema.noSeries.code })
+      .from(schema.noSeries)
       .where(and(
-        eq(schema.noSeriesMaster.tenant_id, tenantId),
-        isNull(schema.noSeriesMaster.deleted_at),
-        companyCondition(schema.noSeriesMaster.company_id, companyId),
+        eq(schema.noSeries.tenant_id, tenantId),
+        isNull(schema.noSeries.deleted_at),
+        companyCondition(schema.noSeries.company_id, companyId),
       ));
-    const taken = new Set(rows.map((r) => r.series_code));
-    const selfCoded = new Set(['ANIMAL', 'LOCATION']);
+    const taken = new Set(rows.map((r) => r.code));
     const keep = current?.toUpperCase();
     return Object.keys(MASTER_CODE_COLUMNS)
       .sort()
-      .filter((key) => all || key === keep || (!taken.has(key) && !selfCoded.has(key)))
+      .filter((key) => all || key === keep || (!taken.has(key) && !SELF_CODED_MASTERS.has(key)))
       .map((key) => ({ master_key: key, code_column: MASTER_CODE_COLUMNS[key] }));
   }
 
@@ -655,40 +479,16 @@ export class NumberSeriesService {
     if (!code) return { generated: false, allowManual: true };
 
     try {
-      const [row] = await this.db.select().from(schema.noSeriesMaster).where(and(
-        eq(schema.noSeriesMaster.tenant_id, tenantId), eq(schema.noSeriesMaster.series_code, code),
-        eq(schema.noSeriesMaster.is_active, true), isNull(schema.noSeriesMaster.deleted_at),
-        companyCondition(schema.noSeriesMaster.company_id, companyId),
-      )).orderBy(sql`${schema.noSeriesMaster.company_id} IS NULL`).limit(1);
+      const [row] = await this.db.select().from(schema.noSeries).where(and(
+        eq(schema.noSeries.tenant_id, tenantId), eq(schema.noSeries.code, code),
+        eq(schema.noSeries.blocked, false), isNull(schema.noSeries.deleted_at),
+        companyCondition(schema.noSeries.company_id, companyId),
+      )).orderBy(sql`${schema.noSeries.company_id} IS NULL`).limit(1);
       if (row) {
-        return { generated: true, allowManual: row.allow_manual, seriesCode: row.series_code, prefix: row.prefix };
+        return { generated: true, allowManual: row.manual_nos, seriesCode: row.code, prefix: row.prefix };
       }
     } catch {
       // Fall through in mock environments
-    }
-
-    // Check modern no_series table if not in legacy noSeriesMaster
-    if (!isMockDb(this.db)) {
-      try {
-        const [modernRow] = await this.db.select().from(schema.noSeries).where(and(
-          or(
-            eq(schema.noSeries.code, code),
-            eq(schema.noSeries.code, code.replace(/_/g, '-')),
-            eq(schema.noSeries.code, code.replace(/-/g, '_')),
-          ),
-          eq(schema.noSeries.blocked, false),
-        )).limit(1);
-        if (modernRow) {
-          return {
-            generated: true,
-            allowManual: modernRow.manual_nos,
-            seriesCode: modernRow.code,
-            prefix: modernRow.no_series_code || undefined,
-          };
-        }
-      } catch {
-        // Fall through in mock environments
-      }
     }
 
     return { generated: false, allowManual: true };
@@ -718,26 +518,12 @@ export class NumberSeriesService {
         if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) record = parsed as Record<string, unknown>;
       } catch { record = {}; }
     }
-    const [series] = await this.db.select().from(schema.noSeriesMaster).where(and(
-      eq(schema.noSeriesMaster.tenant_id, tenantId), companyCondition(schema.noSeriesMaster.company_id, companyId),
-      eq(schema.noSeriesMaster.series_code, settings.seriesCode),
-      eq(schema.noSeriesMaster.is_active, true), isNull(schema.noSeriesMaster.deleted_at),
+    const [series] = await this.db.select().from(schema.noSeries).where(and(
+      eq(schema.noSeries.tenant_id, tenantId), companyCondition(schema.noSeries.company_id, companyId),
+      eq(schema.noSeries.code, settings.seriesCode),
+      eq(schema.noSeries.blocked, false), isNull(schema.noSeries.deleted_at),
     )).limit(1);
     if (!series) return { generated: false, allowManual: true };
-    if (query.master === 'BREED' && query.parentId) {
-      const [farm] = await this.db.select().from(schema.locationMaster).where(and(
-        eq(schema.locationMaster.location_id, query.parentId),
-        eq(schema.locationMaster.tenant_id, tenantId),
-        companyCondition(schema.locationMaster.company_id, companyId),
-        isNull(schema.locationMaster.deleted_at),
-        eq(schema.locationMaster.is_active, true),
-        ...masterScopeConditions(this.cls, schema.locationMaster),
-      )).limit(1);
-      if (!farm || farm.location_type !== 'FARM' || farm.parent_location_id !== null) {
-        throw new BadRequestException('Select an active first-level farm in this workspace.');
-      }
-      record.location_id = query.parentId;
-    }
     const hierarchy: Record<string, [string, string, string, string]> = {
       LOCATION: ['location', 'location_id', 'location_code', 'parent_location_id'],
       ITEM_CATEGORY: ['item-category', 'category_id', 'category_code', 'parent_category_id'],
@@ -755,10 +541,7 @@ export class NumberSeriesService {
         eq(parentColumns.is_active, true), ...masterScopeConditions(this.cls, parentTable),
       )).limit(1);
       if (!parent) throw new BadRequestException('Select an active parent in this workspace.');
-      if (query.master === 'BREED' && (parent.location_type !== 'FARM' || parent.parent_location_id !== null)) {
-        throw new BadRequestException('Breed location must be a first-level farm without a parent.');
-      }
-      let prefix = series.prefix || (query.master === 'BREED' ? query.type : series.series_code) || series.series_code;
+      let prefix = series.prefix || series.code;
       if (query.master === 'LOCATION') {
         const [locationType] = await this.db.select().from(schema.locationTypeMaster).where(and(
           eq(schema.locationTypeMaster.tenant_id, tenantId), companyCondition(schema.locationTypeMaster.company_id, companyId),
@@ -776,6 +559,14 @@ export class NumberSeriesService {
         fetchSiblingCodes: async () => this.db.select({ code: columns[MASTER_CODE_COLUMNS[query.master]] }).from(table).where(and(...conditions)) as Promise<{ code: string }[]>,
       });
       return { ...settings, preview };
+    }
+    // A root location (no parentId — a Farm has no parent to preview under)
+    // still composes its stem from location_type, exactly as generateLocationCode()
+    // does for the real create. Without this, the preview skipped the segment
+    // resolution above entirely and showed the bare sequence ("006") instead
+    // of the type-prefixed code ("FARM-006") the save will actually produce.
+    if (query.master === 'LOCATION' && query.type && record.location_type === undefined) {
+      record.location_type = query.type;
     }
     return { ...settings, preview: (await this.nextAvailableCode(series, tenantId, companyId, this.db, new Date(), record)).code };
   }
@@ -849,11 +640,11 @@ export class NumberSeriesService {
   ): Promise<string> {
     const seriesCode = await this.resolveSeriesFor(master, undefined, tenantId, companyId);
     if (!seriesCode) throw new BadRequestException(`No number series is configured for ${master}.`);
-    const [series] = await this.db.select().from(schema.noSeriesMaster).where(and(
-      eq(schema.noSeriesMaster.tenant_id, tenantId),
-      eq(schema.noSeriesMaster.series_code, seriesCode),
-      isNull(schema.noSeriesMaster.deleted_at),
-    )).orderBy(sql`${schema.noSeriesMaster.company_id} IS NULL`).limit(1);
+    const [series] = await this.db.select().from(schema.noSeries).where(and(
+      eq(schema.noSeries.tenant_id, tenantId),
+      eq(schema.noSeries.code, seriesCode),
+      isNull(schema.noSeries.deleted_at),
+    )).orderBy(sql`${schema.noSeries.company_id} IS NULL`).limit(1);
     if (!series) throw new BadRequestException(`Number series '${seriesCode}' not found.`);
 
     // Sequence-only series: nothing in the code came from the record, so a
@@ -1014,53 +805,90 @@ export class NumberSeriesService {
     tenantId: string,
     companyId?: string | null,
     executor: MySql2Database<typeof schema> = this.db,
-  ): Promise<typeof schema.noSeriesMaster.$inferSelect> {
+  ): Promise<typeof schema.noSeries.$inferSelect> {
     const conditions = [
-      eq(schema.noSeriesMaster.tenant_id, tenantId),
-      eq(schema.noSeriesMaster.series_code, seriesCode),
-      isNull(schema.noSeriesMaster.deleted_at),
+      eq(schema.noSeries.tenant_id, tenantId),
+      eq(schema.noSeries.code, seriesCode),
+      isNull(schema.noSeries.deleted_at),
     ];
     conditions.push(
-      companyCondition(schema.noSeriesMaster.company_id, companyId)
+      companyCondition(schema.noSeries.company_id, companyId)
     );
 
     const [series] = await executor
       .select()
-      .from(schema.noSeriesMaster)
+      .from(schema.noSeries)
       .where(and(...conditions))
-      .orderBy(sql`${schema.noSeriesMaster.company_id} IS NULL`)
+      .orderBy(sql`${schema.noSeries.company_id} IS NULL`)
       .limit(1)
       .for('update');
 
     if (!series) {
       throw new NotFoundException(`Number series '${seriesCode}' not found for this tenant/company scope.`);
     }
-    if (!series.is_active) {
+    if (series.blocked) {
       throw new BadRequestException(`Number series '${seriesCode}' is inactive.`);
     }
     return series;
+  }
+
+  /**
+   * Number Series screen / CreateNumberSeriesDto response shape, kept stable
+   * across the no_series_master -> no_series merge so this class's public
+   * contract (and every caller of it) never had to change: series_id/
+   * series_code/series_name/allow_manual/is_active read as they always did,
+   * backed by the merged table's id/code/description/manual_nos/blocked.
+   */
+  private toSeriesShape(row: typeof schema.noSeries.$inferSelect) {
+    return {
+      series_id: row.id,
+      tenant_id: row.tenant_id,
+      company_id: row.company_id,
+      nob_id: row.nob_id,
+      lob_id: row.lob_id,
+      series_code: row.code,
+      series_name: row.description,
+      document_type: row.document_type,
+      prefix: row.prefix,
+      separator: row.separator,
+      seq_length: row.seq_length,
+      current_seq: row.current_seq,
+      last_generated_code: row.last_no_used,
+      reset_frequency: row.reset_frequency,
+      code_segments: row.code_segments,
+      prefix_position: row.prefix_position,
+      seq_separator: row.seq_separator,
+      allow_manual: row.manual_nos,
+      is_active: !row.blocked,
+      created_by: row.created_by,
+      updated_by: row.updated_by,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+      deleted_at: row.deleted_at,
+      extension_config: row.extension_config,
+    };
   }
 
   async create(dto: CreateNumberSeriesDto, tenantId: string, userPayload?: any) {
     const conflict = separatorConflict(dto.code_segments ?? [], dto.separator ?? null, dto.seq_separator ?? null, dto.seq_length);
     if (conflict) throw new BadRequestException(conflict);
     const duplicateConditions = [
-      eq(schema.noSeriesMaster.tenant_id, tenantId),
-      eq(schema.noSeriesMaster.series_code, dto.series_code.toUpperCase()),
-      isNull(schema.noSeriesMaster.deleted_at),
+      eq(schema.noSeries.tenant_id, tenantId),
+      eq(schema.noSeries.code, dto.series_code.toUpperCase()),
+      isNull(schema.noSeries.deleted_at),
     ];
     duplicateConditions.push(
-      dto.company_id ? eq(schema.noSeriesMaster.company_id, dto.company_id) : isNull(schema.noSeriesMaster.company_id)
+      dto.company_id ? eq(schema.noSeries.company_id, dto.company_id) : isNull(schema.noSeries.company_id)
     );
 
-    const existing = await this.db.select().from(schema.noSeriesMaster).where(and(...duplicateConditions)).limit(1);
+    const existing = await this.db.select().from(schema.noSeries).where(and(...duplicateConditions)).limit(1);
     if (existing.length > 0) {
       throw new ConflictException(`Number series '${dto.series_code}' already exists in this scope.`);
     }
 
     // NOB/LOB are no longer asked on the form — derive them from the company's
     // operational areas (an explicit dto value, if a caller still sends one,
-    // wins). no_series_master.nob_id/lob_id are nullable, so an ambiguous
+    // wins). no_series.nob_id/lob_id are nullable, so an ambiguous
     // company simply stores null rather than blocking the create.
     const resolvedNobLob = await this.nobLobResolution.resolve(tenantId, dto.company_id, {
       nob_id: dto.nob_id,
@@ -1069,37 +897,37 @@ export class NumberSeriesService {
 
     const seriesId = randomUUID();
     const newSeries = {
-      series_id: seriesId,
+      id: seriesId,
       tenant_id: tenantId,
       company_id: dto.company_id || null,
       nob_id: resolvedNobLob.nob_id,
       lob_id: resolvedNobLob.lob_id,
-      series_code: dto.series_code.toUpperCase(),
-      series_name: dto.series_name,
+      code: dto.series_code.toUpperCase(),
+      description: dto.series_name,
       document_type: dto.document_type,
       prefix: dto.prefix || null,
       separator: dto.separator || '-',
       seq_length: dto.seq_length,
       current_seq: 0,
-      last_generated_code: null,
+      last_no_used: null,
       reset_frequency: dto.reset_frequency || 'NEVER',
-      allow_manual: dto.allow_manual ?? false,
+      manual_nos: dto.allow_manual ?? false,
       code_segments: dto.code_segments?.length ? dto.code_segments : null,
       prefix_position: dto.prefix_position || 'END',
       seq_separator: dto.seq_separator || null,
-      is_active: true,
+      blocked: false,
       created_by: userPayload?.userId || null,
       updated_by: userPayload?.userId || null,
     };
 
-    await this.db.insert(schema.noSeriesMaster).values(newSeries);
+    await this.db.insert(schema.noSeries).values(newSeries);
 
     await this.auditService.log({
       tenantId,
       companyId: dto.company_id || undefined,
       userId: userPayload?.userId,
       action: 'CREATE',
-      entityName: 'no_series_master',
+      entityName: 'no_series',
       entityId: seriesId,
       newValues: newSeries,
     });
@@ -1110,65 +938,44 @@ export class NumberSeriesService {
   async findOne(id: string) {
     const [series] = await this.db
       .select()
-      .from(schema.noSeriesMaster)
-      .where(and(eq(schema.noSeriesMaster.series_id, id), isNull(schema.noSeriesMaster.deleted_at)))
+      .from(schema.noSeries)
+      .where(and(eq(schema.noSeries.id, id), isNull(schema.noSeries.deleted_at)))
       .limit(1);
 
     if (!series) {
       throw new NotFoundException(`Number series with ID '${id}' not found.`);
     }
-    return series;
+    return this.toSeriesShape(series);
   }
 
   async findAll(query: QueryNumberSeriesDto, tenantId: string) {
     // No isNull(deleted_at) filter — list view shows both Active/Inactive states (toggle switch) so a blocked row can be found again and restored.
     const conditions: any[] = [
-      eq(schema.noSeriesMaster.tenant_id, tenantId),
+      eq(schema.noSeries.tenant_id, tenantId),
     ];
 
-    conditions.push(...masterScopeConditions(this.cls, schema.noSeriesMaster, query.companyId));
-    if (query.documentType) conditions.push(eq(schema.noSeriesMaster.document_type, query.documentType));
-    if (query.isActive !== undefined) conditions.push(eq(schema.noSeriesMaster.is_active, query.isActive));
+    conditions.push(...masterScopeConditions(this.cls, schema.noSeries, query.companyId));
+    if (query.documentType) conditions.push(eq(schema.noSeries.document_type, query.documentType));
+    if (query.isActive !== undefined) conditions.push(eq(schema.noSeries.blocked, !query.isActive));
     if (query.search) {
       conditions.push(
         or(
-          like(schema.noSeriesMaster.series_code, `%${query.search}%`),
-          like(schema.noSeriesMaster.series_name, `%${query.search}%`)
+          like(schema.noSeries.code, `%${query.search}%`),
+          like(schema.noSeries.description, `%${query.search}%`)
         )
       );
     }
 
-    conditions.push(...listFilterConditions(schema.noSeriesMaster, query.filter));
+    conditions.push(...listFilterConditions(schema.noSeries, query.filter));
 
     const limit = query.limit || 50;
     const offset = query.offset || 0;
 
-    const legacyRows = await this.db.select().from(schema.noSeriesMaster).where(and(...conditions))
-      .orderBy(listOrderBy(schema.noSeriesMaster, query, schema.noSeriesMaster.series_code))
+    const rows = await this.db.select().from(schema.noSeries).where(and(...conditions))
+      .orderBy(listOrderBy(schema.noSeries, query, schema.noSeries.code))
       .limit(limit).offset(offset);
 
-    if (query.documentType === 'LOT' || query.documentType === 'SERIAL') {
-      const modernSeries = await this.db
-        .select()
-        .from(schema.noSeries)
-        .where(eq(schema.noSeries.blocked, false));
-      const mappedModern: any[] = modernSeries.map((m) => ({
-        series_id: m.id,
-        tenant_id: m.tenant_id || tenantId,
-        company_id: m.company_id || null,
-        series_code: m.code,
-        series_name: m.description || m.code,
-        document_type: query.documentType,
-        prefix: m.no_series_code || m.code,
-        separator: '-',
-        seq_length: 4,
-        allow_manual: m.manual_nos,
-        is_active: !m.blocked,
-      }));
-      return [...legacyRows, ...mappedModern];
-    }
-
-    return legacyRows;
+    return rows.map((row) => this.toSeriesShape(row));
   }
 
   async update(id: string, dto: UpdateNumberSeriesDto, tenantId: string, userPayload?: any) {
@@ -1176,36 +983,36 @@ export class NumberSeriesService {
 
     // Checked against the row as it will be, not as it is: changing one
     // separator alone is how the pair ends up unreadable.
-    const nextSegments = (dto.code_segments ?? (series as any).code_segments ?? []) as string[];
+    const nextSegments = (dto.code_segments ?? series.code_segments ?? []) as string[];
     const conflict = separatorConflict(
       Array.isArray(nextSegments) ? nextSegments : [],
-      dto.separator ?? (series as any).separator ?? null,
-      dto.seq_separator !== undefined ? dto.seq_separator : ((series as any).seq_separator ?? null),
-      dto.seq_length ?? (series as any).seq_length,
+      dto.separator ?? series.separator ?? null,
+      dto.seq_separator !== undefined ? dto.seq_separator : (series.seq_separator ?? null),
+      dto.seq_length ?? series.seq_length,
     );
     if (conflict) throw new BadRequestException(conflict);
 
     const updates: any = { updated_by: userPayload?.userId || null };
-    if (dto.series_name !== undefined) updates.series_name = dto.series_name;
+    if (dto.series_name !== undefined) updates.description = dto.series_name;
     if (dto.document_type !== undefined) updates.document_type = dto.document_type;
     if (dto.prefix !== undefined) updates.prefix = dto.prefix;
     if (dto.separator !== undefined) updates.separator = dto.separator;
     if (dto.seq_length !== undefined) updates.seq_length = dto.seq_length;
     if (dto.reset_frequency !== undefined) updates.reset_frequency = dto.reset_frequency;
-    if (dto.allow_manual !== undefined) updates.allow_manual = dto.allow_manual;
+    if (dto.allow_manual !== undefined) updates.manual_nos = dto.allow_manual;
     if (dto.code_segments !== undefined) updates.code_segments = dto.code_segments?.length ? dto.code_segments : null;
     if (dto.prefix_position !== undefined) updates.prefix_position = dto.prefix_position || 'END';
     if (dto.seq_separator !== undefined) updates.seq_separator = dto.seq_separator || null;
-    if (dto.is_active !== undefined) updates.is_active = dto.is_active;
+    if (dto.is_active !== undefined) updates.blocked = !dto.is_active;
 
-    await this.db.update(schema.noSeriesMaster).set(updates).where(eq(schema.noSeriesMaster.series_id, id));
+    await this.db.update(schema.noSeries).set(updates).where(eq(schema.noSeries.id, id));
 
     await this.auditService.log({
       tenantId,
       companyId: series.company_id || undefined,
       userId: userPayload?.userId,
       action: 'UPDATE',
-      entityName: 'no_series_master',
+      entityName: 'no_series',
       entityId: id,
       oldValues: series,
       newValues: updates,
@@ -1218,20 +1025,583 @@ export class NumberSeriesService {
     const series = await this.findOne(id);
 
     await this.db
-      .update(schema.noSeriesMaster)
-      .set({ is_active: false, deleted_at: toMysqlTimestamp() as any, updated_by: userPayload?.userId || null })
-      .where(eq(schema.noSeriesMaster.series_id, id));
+      .update(schema.noSeries)
+      .set({ blocked: true, deleted_at: toMysqlTimestamp() as any, updated_by: userPayload?.userId || null })
+      .where(eq(schema.noSeries.id, id));
 
     await this.auditService.log({
       tenantId,
       companyId: series.company_id || undefined,
       userId: userPayload?.userId,
       action: 'DELETE',
-      entityName: 'no_series_master',
+      entityName: 'no_series',
       entityId: id,
       oldValues: series,
     });
 
     return { success: true, message: `Number series '${series.series_code}' has been deactivated.` };
+  }
+
+  // ---------------------------------------------------------------------
+  // Ported from NoSeriesService (master-data/no-series), which this class
+  // absorbs — the id-keyed engine item.service.ts, item-template.service.ts,
+  // inventory-setup.service.ts and NoSeriesController (kept as a thin alias,
+  // see no-series.module.ts) use directly against no_series.id, distinct
+  // from the series_code-keyed engine above.
+  // ---------------------------------------------------------------------
+
+  async createNoSeriesRow(dto: CreateNoSeriesDto, tenantId?: string, companyId?: string | null) {
+    if (dto.code && dto.code.length > 20) {
+      throw new BadRequestException('Series Code cannot exceed 20 characters.');
+    }
+    if (dto.description && dto.description.length > 100) {
+      throw new BadRequestException('Description cannot exceed 100 characters.');
+    }
+    if (dto.no_series_code && dto.no_series_code.length > 20) {
+      throw new BadRequestException('Prefix / Pattern cannot exceed 20 characters.');
+    }
+    if (dto.last_no_used && dto.last_no_used.length > 20) {
+      throw new BadRequestException('Last No. Used cannot exceed 20 characters.');
+    }
+    if (dto.seq_length !== undefined && (dto.seq_length < 1 || dto.seq_length > 10)) {
+      throw new BadRequestException('Sequence Length must be between 1 and 10 digits.');
+    }
+    if (dto.increment_by !== undefined && dto.increment_by < 1) {
+      throw new BadRequestException('Increment By must be at least 1.');
+    }
+
+    const existing = await this.db
+      .select()
+      .from(schema.noSeries)
+      .where(eq(schema.noSeries.code, dto.code))
+      .limit(1);
+
+    if (existing.length > 0) {
+      throw new ConflictException(`No. Series with code '${dto.code}' already exists.`);
+    }
+
+    const id = randomUUID();
+    const isDefault = dto.is_default ?? true;
+    const documentType = dto.document_type || null;
+
+    // If setting this series as default, automatically uncheck is_default on any existing series for the same master type
+    if (isDefault && documentType) {
+      await this.db
+        .update(schema.noSeries)
+        .set({
+          is_default: false,
+          updated_at: toMysqlTimestamp() as any,
+        })
+        .where(and(
+          eq(schema.noSeries.document_type, documentType),
+          eq(schema.noSeries.is_default, true),
+        ));
+    }
+
+    const newRecord = {
+      id,
+      tenant_id: tenantId || null,
+      company_id: dto.company_id || companyId || null,
+      code: dto.code,
+      description: dto.description || null,
+      document_type: documentType,
+      no_series_code: dto.no_series_code || null,
+      seq_length: dto.seq_length ?? 4,
+      increment_by: dto.increment_by ?? 1,
+      is_default: isDefault,
+      manual_nos: dto.manual_nos ?? false,
+      last_no_used: dto.last_no_used || null,
+      blocked: dto.blocked ?? false,
+      created_at: toMysqlTimestamp(),
+      updated_at: toMysqlTimestamp(),
+    };
+
+    await this.db.insert(schema.noSeries).values(newRecord);
+    return this.findOneById(id);
+  }
+
+  async findOneById(id: string, executor?: MySql2Database<typeof schema>) {
+    const client = executor || this.db;
+    const [record] = await client
+      .select()
+      .from(schema.noSeries)
+      .where(eq(schema.noSeries.id, id))
+      .limit(1);
+
+    if (!record) {
+      throw new NotFoundException(`No. Series with ID '${id}' not found.`);
+    }
+    return this.withActive(record);
+  }
+
+  /**
+   * `search` matches the master-data screen's generic search box. Also scopes
+   * by tenant (strictly — every row here carries a real tenant_id) and
+   * company (permissively — a NULL company_id is a tenant-wide shared
+   * series, same convention masterScopeConditions uses).
+   */
+  async findAllModern(documentType?: string, tenantId?: string, companyId?: string | null, search?: string) {
+    const conditions: any[] = [];
+    if (documentType) conditions.push(eq(schema.noSeries.document_type, documentType.toUpperCase().replaceAll('-', '_')));
+    if (tenantId) conditions.push(eq(schema.noSeries.tenant_id, tenantId));
+    if (companyId) conditions.push(or(eq(schema.noSeries.company_id, companyId), isNull(schema.noSeries.company_id)));
+    if (search) {
+      conditions.push(or(
+        like(schema.noSeries.code, `%${search}%`),
+        like(schema.noSeries.description, `%${search}%`),
+        like(schema.noSeries.no_series_code, `%${search}%`),
+      ));
+    }
+    const rows = conditions.length
+      ? await this.db.select().from(schema.noSeries).where(and(...conditions)).orderBy(desc(schema.noSeries.created_at))
+      : await this.db.select().from(schema.noSeries).orderBy(desc(schema.noSeries.created_at));
+    return rows.map((row) => this.withActive(row));
+  }
+
+  /**
+   * Returns all No. Series for the company, grouped by document_type.
+   * Used by the Inventory Setup screen so the user can see, per master type,
+   * which series exist and which one is currently the default.
+   */
+  async byMaster(tenantId: string, companyId?: string | null) {
+    const conditions = [eq(schema.noSeries.tenant_id, tenantId)];
+    if (companyId) conditions.push(eq(schema.noSeries.company_id, companyId));
+    const rows = await this.db
+      .select()
+      .from(schema.noSeries)
+      .where(and(...conditions))
+      .orderBy(schema.noSeries.document_type, schema.noSeries.code);
+
+    // Group by document_type
+    const grouped: Record<string, typeof rows> = {};
+    for (const row of rows) {
+      const key = row.document_type || 'OTHER';
+      if (!grouped[key]) grouped[key] = [];
+      grouped[key].push(row);
+    }
+    return grouped;
+  }
+
+  /**
+   * Sets the given No. Series as the default for its document_type, atomically
+   * unsetting the old default in the same transaction.
+   */
+  async setDefaultSeries(id: string, tenantId: string, companyId?: string | null) {
+    const [series] = await this.db
+      .select()
+      .from(schema.noSeries)
+      .where(eq(schema.noSeries.id, id))
+      .limit(1);
+    if (!series) throw new NotFoundException(`No. Series '${id}' not found.`);
+    if (!series.document_type) throw new BadRequestException('This series has no document type set.');
+
+    const conditions = [
+      eq(schema.noSeries.document_type, series.document_type),
+      eq(schema.noSeries.is_default, true),
+    ];
+    if (tenantId) conditions.push(eq(schema.noSeries.tenant_id, tenantId));
+    // Unset current default
+    await this.db
+      .update(schema.noSeries)
+      .set({ is_default: false, updated_at: toMysqlTimestamp() as any })
+      .where(and(...conditions));
+    // Set new default
+    await this.db
+      .update(schema.noSeries)
+      .set({ is_default: true, updated_at: toMysqlTimestamp() as any })
+      .where(eq(schema.noSeries.id, id));
+    return { success: true, id };
+  }
+
+  /**
+   * Internal utility: Atomically generates and reserves the next number from a No. Series
+   * using a database transaction and row-level locking (SELECT ... FOR UPDATE).
+   *
+   * Holds lock strictly for:
+   * read last_no_used -> calculate -> update -> return
+   *
+   * If lock acquisition exceeds 5 seconds, returns HTTP 503:
+   * "Item code generation busy, please retry."
+   */
+  async generateNextNumberById(
+    id: string,
+    tenantId?: string,
+    companyId?: string | null,
+    externalTx?: any,
+  ): Promise<{ next_number: string; series: typeof schema.noSeries.$inferSelect }> {
+    const executeInTx = async (tx: MySql2Database<typeof schema>) => {
+      try {
+        // Set lock wait timeout to 5 seconds per Section 6 & 8 of TDD
+        await tx.execute(sql`SET innodb_lock_wait_timeout = 5`);
+      } catch {
+        // Ignore if unsupported or running under mock DB in tests
+      }
+
+      let seriesRows: Array<typeof schema.noSeries.$inferSelect>;
+      try {
+        seriesRows = await tx
+          .select()
+          .from(schema.noSeries)
+          .where(eq(schema.noSeries.id, id))
+          .limit(1)
+          .for('update');
+      } catch (err: any) {
+        // Check for MySQL lock wait timeout (code 1205 / ER_LOCK_WAIT_TIMEOUT)
+        if (err?.code === 'ER_LOCK_WAIT_TIMEOUT' || err?.errno === 1205 || String(err?.message || '').includes('Lock wait timeout')) {
+          throw new HttpException('Item code generation busy, please retry.', HttpStatus.SERVICE_UNAVAILABLE);
+        }
+        throw err;
+      }
+
+      const series = seriesRows[0];
+      if (!series) {
+        throw new NotFoundException(`No. Series with ID '${id}' not found.`);
+      }
+
+      if (series.blocked) {
+        throw new BadRequestException(`No. Series [${series.code}] is blocked. Cannot generate item number.`);
+      }
+
+      const increment = series.increment_by || 1;
+      const padDigits = series.seq_length && series.seq_length > 0 ? series.seq_length : 4;
+      const prefix = series.no_series_code ?? (series.code ? `${series.code}-` : '');
+      let nextCode: string;
+
+      if (series.last_no_used) {
+        const match = series.last_no_used.match(/(\d+)$/);
+        if (match) {
+          const numStr = match[1];
+          const nextVal = parseInt(numStr, 10) + increment;
+          nextCode = `${prefix}${String(nextVal).padStart(padDigits, '0')}`;
+        } else {
+          nextCode = `${prefix}${String(increment).padStart(padDigits, '0')}`;
+        }
+      } else {
+        nextCode = `${prefix}${String(increment).padStart(padDigits, '0')}`;
+      }
+
+      await tx
+        .update(schema.noSeries)
+        .set({
+          last_no_used: nextCode,
+          updated_at: toMysqlTimestamp() as any,
+        })
+        .where(eq(schema.noSeries.id, id));
+
+      return {
+        next_number: nextCode,
+        series: { ...series, last_no_used: nextCode },
+      };
+    };
+
+    if (externalTx) {
+      return executeInTx(externalTx);
+    }
+
+    try {
+      return await this.db.transaction(async (tx) => {
+        return executeInTx(tx as any);
+      });
+    } catch (err: any) {
+      if (err?.code === 'ER_LOCK_WAIT_TIMEOUT' || err?.errno === 1205 || String(err?.message || '').includes('Lock wait timeout')) {
+        throw new HttpException('Item code generation busy, please retry.', HttpStatus.SERVICE_UNAVAILABLE);
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * Previews the next number without updating last_no_used.
+   */
+  async previewNextNumberById(id: string): Promise<{ next_number: string; series: typeof schema.noSeries.$inferSelect }> {
+    const series = await this.findOneById(id);
+    if (series.blocked) {
+      throw new BadRequestException(`No. Series [${series.code}] is blocked. Cannot generate item number.`);
+    }
+
+    const increment = series.increment_by || 1;
+    const padDigits = series.seq_length && series.seq_length > 0 ? series.seq_length : 4;
+    const prefix = series.no_series_code ?? (series.code ? `${series.code}-` : '');
+    let nextCode: string;
+
+    if (series.last_no_used) {
+      const match = series.last_no_used.match(/(\d+)$/);
+      if (match) {
+        const numStr = match[1];
+        const nextVal = parseInt(numStr, 10) + increment;
+        nextCode = `${prefix}${String(nextVal).padStart(padDigits, '0')}`;
+      } else {
+        nextCode = `${prefix}${String(increment).padStart(padDigits, '0')}`;
+      }
+    } else {
+      nextCode = `${prefix}${String(increment).padStart(padDigits, '0')}`;
+    }
+
+    return {
+      next_number: nextCode,
+      series,
+    };
+  }
+
+  /**
+   * Finds the default active No. Series for a given Master Type (e.g. SUPPLIER, CUSTOMER, ITEM),
+   * respecting company-level Inventory Setup configuration and optional master type subtype.
+   */
+  async findDefaultSeriesByMaster(masterType: string, tenantId?: string, companyId?: string | null, type?: string | null) {
+    const normalizedType = masterType.toUpperCase().replaceAll('-', '_');
+    const normalizedSubType = type ? type.toUpperCase().replaceAll('-', '_') : null;
+
+    // Self-coded masters (see SELF_CODED_MASTERS) are not resolved from this
+    // table's generic rows — defer to the type-aware previewCode() path.
+    if (SELF_CODED_MASTERS.has(normalizedType)) {
+      return null;
+    }
+
+    // 0. If a subtype is passed, check if a specific series exists for it (e.g. NS-FEED, NS-MED, ITEM_FEED)
+    if (normalizedSubType) {
+      const subConditions = [
+        or(
+          eq(schema.noSeries.code, `NS-${normalizedSubType}`),
+          eq(schema.noSeries.code, normalizedSubType),
+          eq(schema.noSeries.code, `${normalizedType}_${normalizedSubType}`),
+          eq(schema.noSeries.code, `${normalizedType}-${normalizedSubType}`),
+        ),
+        eq(schema.noSeries.blocked, false),
+      ];
+      if (tenantId) subConditions.push(eq(schema.noSeries.tenant_id, tenantId));
+      if (companyId) {
+        subConditions.push(or(
+          eq(schema.noSeries.company_id, companyId),
+          sql`${schema.noSeries.company_id} IS NULL`,
+        )!);
+      }
+      const [typeSeries] = await this.db
+        .select()
+        .from(schema.noSeries)
+        .where(and(...subConditions))
+        .orderBy(sql`${schema.noSeries.is_default} DESC, ${schema.noSeries.created_at} ASC`)
+        .limit(1);
+
+      if (typeSeries) return typeSeries;
+    }
+
+    // 1. Check if Company-specific Inventory Setup defines whether this master has number series applied
+    if (tenantId && companyId) {
+      try {
+        const [setup] = await this.db
+          .select()
+          .from(schema.inventorySetup)
+          .where(and(
+            eq(schema.inventorySetup.tenant_id, tenantId),
+            eq(schema.inventorySetup.company_id, companyId),
+          ))
+          .limit(1);
+
+        if (setup?.numbering_config) {
+          const config = setup.numbering_config as Record<string, { enabled?: boolean; default_series_id?: string | null }>;
+          const masterCfg = config[normalizedType];
+          if (masterCfg) {
+            // Explicitly disabled in company inventory setup: do not generate
+            if (masterCfg.enabled === false) {
+              return null;
+            }
+            // Explicit default series pinned in company inventory setup. Only
+            // honoured while that series still identifies as the default
+            // (is_default = true) — the Number Series screen's "Is Default"
+            // checkbox is the only control a user actually sees, and it edits
+            // is_default there, never this JSON pin. Without this check, an
+            // admin who changes the default on that screen (which correctly
+            // flips is_default on every series for the master, this one
+            // included) sees no effect at all: this pin, set once and never
+            // touched again, would keep silently overriding their choice
+            // forever. Once the pinned series is no longer flagged default,
+            // treat the pin as stale and fall through to the ordinary lookup.
+            if (masterCfg.default_series_id) {
+              const [explicitSeries] = await this.db
+                .select()
+                .from(schema.noSeries)
+                .where(and(
+                  eq(schema.noSeries.id, masterCfg.default_series_id),
+                  eq(schema.noSeries.blocked, false),
+                  eq(schema.noSeries.is_default, true),
+                ))
+                .limit(1);
+              if (explicitSeries) return explicitSeries;
+            }
+          }
+        }
+      } catch {
+        // Fallback to direct query below if inventory_setup check fails or is not populated yet
+      }
+    }
+
+    // 2. Standard fallback query: matching document_type or code, ordered by is_default DESC.
+    // A bare document_type match must exclude subtype-template series (seeded
+    // for ITEM as NS-VAC, NS-FEED, NS-MED, NS-RAW, NS-LVS, one per Item Type) —
+    // those exist to be picked ONLY by the subtype match in step 0 above.
+    // Left in this pool, an unmanaged is_default flag on one of those templates
+    // can outrank the real generic default on the created_at tie-break, so
+    // creating an Item with no Item Type selected yet (the form's initial
+    // state) silently generates a code from whichever template happened to be
+    // marked default first — not from the series an admin just set as default
+    // for the master as a whole.
+    const conditions = [
+      or(
+        and(
+          eq(schema.noSeries.document_type, normalizedType),
+          not(like(schema.noSeries.code, 'NS-%')),
+        )!,
+        eq(schema.noSeries.code, normalizedType),
+        eq(schema.noSeries.code, `NS-${normalizedType}`),
+      ),
+      eq(schema.noSeries.blocked, false),
+    ];
+    if (tenantId) conditions.push(eq(schema.noSeries.tenant_id, tenantId));
+    if (companyId) {
+      conditions.push(or(
+        eq(schema.noSeries.company_id, companyId),
+        sql`${schema.noSeries.company_id} IS NULL`,
+      )!);
+    }
+
+    const rows = await this.db
+      .select()
+      .from(schema.noSeries)
+      .where(and(...conditions))
+      .orderBy(sql`${schema.noSeries.is_default} DESC, ${schema.noSeries.created_at} ASC`);
+
+    return rows[0] || null;
+  }
+
+  /**
+   * Previews the next code by Master Type directly.
+   */
+  async previewByMaster(masterType: string, tenantId?: string, companyId?: string | null, type?: string | null) {
+    const series = await this.findDefaultSeriesByMaster(masterType, tenantId, companyId, type);
+    if (!series) {
+      return {
+        generated: false,
+        allowManual: true,
+        preview: '',
+        message: `No active Number Series found for '${masterType}'.`,
+      };
+    }
+    const previewRes = await this.previewNextNumberById(series.id);
+    return {
+      generated: true,
+      series_id: series.id,
+      series_code: series.code,
+      prefix: series.no_series_code,
+      seq_length: series.seq_length,
+      preview: previewRes.next_number,
+      next_number: previewRes.next_number,
+      allowManual: series.manual_nos,
+      manual_nos: series.manual_nos,
+    };
+  }
+
+  /**
+   * Records a number as used in the No. Series when an item is actually saved/created.
+   */
+  async recordNumberUsedById(id: string, usedNumber: string): Promise<void> {
+    if (!usedNumber) return;
+    const series = await this.findOneById(id);
+    if (!series) return;
+
+    let formattedNumber = usedNumber;
+    const prefix = series.no_series_code ?? (series.code ? `${series.code}-` : '');
+    const padDigits = series.seq_length && series.seq_length > 0 ? series.seq_length : 4;
+    const match = usedNumber.match(/(\d+)$/);
+    if (match && prefix) {
+      const numVal = parseInt(match[1], 10);
+      formattedNumber = `${prefix}${String(numVal).padStart(padDigits, '0')}`;
+    }
+
+    await this.db
+      .update(schema.noSeries)
+      .set({
+        last_no_used: formattedNumber,
+        updated_at: toMysqlTimestamp() as any,
+      })
+      .where(eq(schema.noSeries.id, id));
+  }
+
+  async updateNoSeriesRow(id: string, dto: UpdateNoSeriesDto) {
+    const existing = await this.findOneById(id);
+
+    if (dto.description && dto.description.length > 100) {
+      throw new BadRequestException('Description cannot exceed 100 characters.');
+    }
+    if (dto.no_series_code && dto.no_series_code.length > 20) {
+      throw new BadRequestException('Prefix / Pattern cannot exceed 20 characters.');
+    }
+    if (dto.last_no_used && dto.last_no_used.length > 20) {
+      throw new BadRequestException('Last No. Used cannot exceed 20 characters.');
+    }
+    if (dto.seq_length !== undefined && (dto.seq_length < 1 || dto.seq_length > 10)) {
+      throw new BadRequestException('Sequence Length must be between 1 and 10 digits.');
+    }
+    if (dto.increment_by !== undefined && dto.increment_by < 1) {
+      throw new BadRequestException('Increment By must be at least 1.');
+    }
+
+    const updates: Partial<typeof schema.noSeries.$inferInsert> = {
+      updated_at: toMysqlTimestamp() as any,
+    };
+
+    if (dto.description !== undefined) updates.description = dto.description;
+    if (dto.document_type !== undefined) updates.document_type = dto.document_type;
+    if (dto.no_series_code !== undefined) updates.no_series_code = dto.no_series_code;
+    if (dto.seq_length !== undefined) updates.seq_length = dto.seq_length;
+    if (dto.increment_by !== undefined) updates.increment_by = dto.increment_by;
+    if (dto.is_default !== undefined) updates.is_default = dto.is_default;
+    if (dto.manual_nos !== undefined) updates.manual_nos = dto.manual_nos;
+    if (dto.last_no_used !== undefined) updates.last_no_used = dto.last_no_used;
+    if (dto.blocked !== undefined) updates.blocked = dto.blocked;
+
+    const targetDocType = updates.document_type ?? existing.document_type;
+    // If setting this series as default, automatically uncheck is_default on any other series for the same master type
+    if (updates.is_default === true && targetDocType) {
+      await this.db
+        .update(schema.noSeries)
+        .set({
+          is_default: false,
+          updated_at: toMysqlTimestamp() as any,
+        })
+        .where(and(
+          eq(schema.noSeries.document_type, targetDocType),
+          ne(schema.noSeries.id, id),
+          eq(schema.noSeries.is_default, true),
+        ));
+    }
+
+    await this.db.update(schema.noSeries).set(updates).where(eq(schema.noSeries.id, id));
+    return this.findOneById(id);
+  }
+
+  /**
+   * Deactivates a series (sets Blocked, the field that already gates
+   * generateNextNumberById()/findDefaultSeriesByMaster()) rather than
+   * removing the row — matching the delete-really-means-deactivate
+   * convention every other master-data table in this app follows, and
+   * reversible via restoreById(). A hard delete here would also free its
+   * `code` for reuse, which is never what deactivating a series is meant to do.
+   */
+  async softDeleteById(id: string) {
+    await this.findOneById(id);
+    await this.db
+      .update(schema.noSeries)
+      .set({ blocked: true, updated_at: toMysqlTimestamp() as any })
+      .where(eq(schema.noSeries.id, id));
+    return this.findOneById(id);
+  }
+
+  async restoreById(id: string) {
+    await this.findOneById(id);
+    await this.db
+      .update(schema.noSeries)
+      .set({ blocked: false, updated_at: toMysqlTimestamp() as any })
+      .where(eq(schema.noSeries.id, id));
+    return this.findOneById(id);
   }
 }

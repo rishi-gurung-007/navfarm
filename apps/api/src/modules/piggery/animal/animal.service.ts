@@ -355,13 +355,12 @@ export class AnimalService {
         eq(schema.breedMaster.company_id, animal.company_id),
         eq(schema.breedMaster.nob_id, animal.nob_id),
         eq(schema.breedMaster.lob_id, animal.lob_id),
-        eq(schema.breedMaster.location_id, farmId),
         eq(schema.breedMaster.is_active, true),
         isNull(schema.breedMaster.deleted_at),
       ))
       .limit(1);
     if (!breed) {
-      throw new NotFoundException(`Breed with ID '${breedId}' is not available for this animal's farm and operational scope.`);
+      throw new NotFoundException(`Breed with ID '${breedId}' is not available in this animal's operational scope.`);
     }
     return { farmId };
   }

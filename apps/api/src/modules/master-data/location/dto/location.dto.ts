@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsInt, Min, IsNumber } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsInt, Min, IsNumber, ValidateIf } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import { MasterListQueryDto } from '../../../../common/master-list-query';
 
@@ -70,15 +70,22 @@ export class CreateLocationDto {
   @IsOptional()
   area_unit?: string;
 
-  @ApiProperty({ description: 'Maximum storage or bird/animal capacity limit' })
+  // Not required for SILO: Silo Capacity (KG) + Silo Reorder Days below are
+  // what a silo's own capacity/reorder logic actually uses, and asking for a
+  // second, general capacity right next to it read as the same question
+  // twice (client request, 2026-09-22). ValidateIf keys off the DTO's own
+  // location_type field, so this still runs before the entity is loaded.
+  @ApiProperty({ description: 'Maximum storage or bird/animal capacity limit. Not required for SILO.', required: false })
+  @ValidateIf((dto: CreateLocationDto) => dto.location_type !== 'SILO')
   @IsNumber()
   @Min(0)
-  max_capacity: number;
+  max_capacity?: number;
 
-  @ApiProperty({ description: 'Capacity unit representation' })
+  @ApiProperty({ description: 'Capacity unit representation. Not required for SILO.', required: false })
+  @ValidateIf((dto: CreateLocationDto) => dto.location_type !== 'SILO')
   @IsString()
   @IsNotEmpty()
-  capacity_uom: string;
+  capacity_uom?: string;
 
   @ApiProperty({ description: 'Current count representation', required: false })
   @IsNumber()

@@ -178,7 +178,7 @@ export class CostCenterService {
     const series = await this.numberSeriesService.lockSeries(seriesCode, tenantId, dto.company_id, tx);
 
     let costCenterCode: string;
-    if (series.allow_manual && dto.cost_center_code) {
+    if (series.manual_nos && dto.cost_center_code) {
       costCenterCode = dto.cost_center_code.toUpperCase();
     } else if (parent) {
       costCenterCode = await generateCompositeCode({

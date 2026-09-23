@@ -196,7 +196,7 @@ describe('StageService', () => {
 
     it('generates the stage code via a stage_category series when one is configured', async () => {
       numberSeries.resolveSeriesFor.mockResolvedValue('STAGE_PRE_PRODUCTIVE');
-      numberSeries.lockSeries.mockResolvedValue({ allow_manual: false });
+      numberSeries.lockSeries.mockResolvedValue({ manual_nos: false });
       numberSeries.generateNext.mockResolvedValue('STG-001');
       mockDbSelect
         .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ nob_id: 'nob-1' }]) }) }) })

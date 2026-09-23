@@ -217,7 +217,7 @@ describe('FeedFormulaService', () => {
 
     it('generates the formula code via the resolved series when one is configured', async () => {
       numberSeries.resolveSeriesFor.mockResolvedValue('FEED_FORMULA');
-      numberSeries.lockSeries.mockResolvedValue({ allow_manual: false });
+      numberSeries.lockSeries.mockResolvedValue({ manual_nos: false });
       numberSeries.generateNext.mockResolvedValue('FF-001');
 
       mockDbSelect
