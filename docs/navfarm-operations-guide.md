@@ -21,7 +21,7 @@ below was checked in the browser and against the database, not inferred from tes
 
 - API: NestJS on `http://localhost:2877/api/v1`
 - Web: Next.js on `http://localhost:3002`
-- Databases: MySQL — `navfarm_master` (15 tables), `tenant_system` (101 tables), `tenant_devco` (101 tables)
+- Databases: MySQL — `nf_master` (15 tables), `nf_system` (101 tables), `nf_devco` (101 tables)
 - Migrations: 49 applied to each tenant database, zero schema drift against `schema.ts`
 
 ---
@@ -30,8 +30,8 @@ below was checked in the browser and against the database, not inferred from tes
 
 NAVFarm is a multi-tenant livestock ERP. Three ideas carry most of the design:
 
-**Database-per-tenant.** `navfarm_master` holds the tenant directory and platform admins.
-Each tenant gets its own database (`tenant_<code>`) with the full 101-table schema. A request
+**Database-per-tenant.** `nf_master` holds the tenant directory and platform admins.
+Each tenant gets its own database (`nf_<code>`) with the full 101-table schema. A request
 carries `x-tenant-id`; the CLS-scoped Drizzle connection is resolved per request, so tenant
 isolation is structural rather than a `WHERE tenant_id = ?` convention that one missed clause
 can break.
@@ -63,9 +63,9 @@ Five tenant users plus the platform admin. Password is `12345678` for all of the
 | Vikram Singh | `vikram.singh@highlandpork.local` | `COMPANY_ADMIN` | Highland only |
 | Meera Nair | `supervisor@apexpork.local` | `OPERATIONAL_ADMIN` | Apex piggery area only |
 | Suresh Rathi | `supervisor@highlandpork.local` | `OPERATIONAL_ADMIN` | Highland piggery area only |
-| Platform admin | `admin@navfarm.local` | `SYSTEM_ADMIN` | `navfarm_master` — tenants, not farm data |
+| Platform admin | `admin@navfarm.local` | `SYSTEM_ADMIN` | `nf_master` — tenants, not farm data |
 
-Live data in `tenant_devco`: 5 batches, 39 animals, 307 batch transactions, 11 lifecycle
+Live data in `nf_devco`: 5 batches, 39 animals, 307 batch transactions, 11 lifecycle
 stages, 4 schedulers with 50 parameter lines, 15 stage-transition logs, 17 journal headers,
 6 posted cost variances.
 
@@ -533,7 +533,7 @@ pnpm nx serve api                                # :2877
 pnpm nx serve web                                # :3002
 ```
 
-`--fresh` drops `navfarm_master`, `tenant_system` and `tenant_devco` by name — no other
+`--fresh` drops `nf_master`, `nf_system` and `nf_devco` by name — no other
 database on the MySQL instance is touched. The seed is idempotent: running it without
 `--fresh` repairs and backfills in place rather than duplicating.
 

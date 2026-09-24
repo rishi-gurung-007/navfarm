@@ -20,7 +20,7 @@
  */
 import * as mysql from 'mysql2/promise';
 
-const DB = process.env.TENANT_DB_NAME || 'tenant_devco';
+const DB = process.env.TENANT_DB_NAME || 'nf_devco';
 
 const FARM_BREED_CODES = ['Z-Line-Sow', 'TN-70-Sow'];
 /** Template breed whose lifecycle rows are copied. */

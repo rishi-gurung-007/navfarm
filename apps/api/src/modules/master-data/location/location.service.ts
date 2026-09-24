@@ -3,7 +3,7 @@ import { listFilterConditions, runMasterList } from '../../../common/master-list
 import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { alias } from 'drizzle-orm/mysql-core';
-import { eq, and, like, or, isNull, sql, inArray } from 'drizzle-orm';
+import { eq, and, like, or, isNull, not, sql, inArray } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
@@ -62,6 +62,50 @@ export function sumAreasInUnit(
     counted.push(row.location_code);
   }
   return { total, counted, skipped };
+}
+
+/**
+ * Silo capacity, as the client typed it, in canonical kilogrammes.
+ *
+ * A silo is quoted in tonnes about as often as in kilogrammes, and both turn up
+ * on the same farm. Storing the figure as typed would make every downstream
+ * comparison — days of cover, whether a delivery fits, the reorder alert —
+ * depend on first reading a unit column that nobody reading a field called
+ * `silo_capacity_kg` expects to have to read. One of those readers would
+ * eventually forget, and a 40 that meant 40 TON would be out by a thousand with
+ * nothing to detect it. So the unit is resolved once, here, on the way in.
+ *
+ * Pure and exported for the same reason as sumAreasInUnit above: the arithmetic
+ * is the whole rule, and it should be testable without a database.
+ */
+export function siloCapacityToKg(
+  value: number | string | null | undefined,
+  uom: string | null | undefined,
+): string | null {
+  if (value == null || value === '') return null;
+  const entered = Number(value);
+  if (!Number.isFinite(entered)) return null;
+  return (uom?.toUpperCase() === 'TON' ? entered * 1000 : entered).toString();
+}
+
+/**
+ * The same conversion back out, for the edit form.
+ *
+ * The form has to show the number that was typed, not the number that was
+ * stored: reopening a 40 TON silo and saving it untouched would otherwise send
+ * back the 40,000 it was displaying and store 40,000 TON.
+ *
+ * A row with no unit recorded is read as KG — not a guess, but what the column
+ * already means; silo_capacity_uom was added after those rows were written.
+ */
+export function siloCapacityForDisplay(
+  siloCapacityKg: number | string | null | undefined,
+  uom: string | null | undefined,
+): string | null {
+  if (siloCapacityKg == null || siloCapacityKg === '') return null;
+  const kg = Number(siloCapacityKg);
+  if (!Number.isFinite(kg)) return null;
+  return (uom?.toUpperCase() === 'TON' ? kg / 1000 : kg).toString();
 }
 
 @Injectable()
@@ -279,7 +323,10 @@ export class LocationService {
       gps_longitude: dto.gps_longitude?.toString() || null,
       storage_type: dto.storage_type || null,
       is_quarantine_zone: dto.is_quarantine_zone || false,
-      silo_capacity_kg: dto.silo_capacity_kg?.toString() || null,
+      // Canonical kilogrammes whichever unit was chosen; silo_capacity_uom
+      // records which one, so the form can show the figure back as typed.
+      silo_capacity_kg: siloCapacityToKg(dto.silo_capacity_kg, dto.silo_capacity_uom),
+      silo_capacity_uom: dto.silo_capacity_uom ?? null,
       silo_reorder_days: dto.silo_reorder_days ?? null,
       downtime_days_required: dto.downtime_days_required ?? null,
       storage_name: dto.storage_name ?? null,
@@ -292,7 +339,156 @@ export class LocationService {
     };
 
     await tx.insert(schema.locationMaster).values(location);
+
+    // The shed rows commit with the silo row they describe. A silo that saved
+    // with only some of its sheds attached is a worse outcome than a save that
+    // failed, because nothing afterwards would say which half is missing.
+    if (typeCode === 'SILO' && dto.attached_sheds !== undefined) {
+      await this.syncAttachedSheds(tx, {
+        siloId: locationId,
+        farmId: location.farm_id,
+        shedIds: dto.attached_sheds,
+        tenantId,
+        companyId,
+        userId: userPayload?.userId || null,
+      });
+    }
+
     return location;
+  }
+
+  /**
+   * Writes the "Attached Sheds" set from the silo's side.
+   *
+   * The set itself lives on the SHED rows, in feed_silo_id, never on the silo,
+   * because that is the side the cardinality can be enforced on: a single
+   * column holds one silo and no more, so "a shed draws from exactly one silo"
+   * is structurally true rather than a rule someone has to keep remembering.
+   * The silo form still edits the set from the silo end, so this reconciles the
+   * two — attach everything listed, detach anything that used to be listed and
+   * is not any more.
+   *
+   * Runs on the caller's transaction executor rather than this.db so the shed
+   * writes are part of the same commit as the silo write.
+   */
+  private async syncAttachedSheds(
+    tx: MySql2Database<typeof schema>,
+    params: {
+      siloId: string;
+      farmId: string | null;
+      shedIds: string[];
+      tenantId: string;
+      companyId: string | null;
+      userId?: string | null;
+    },
+  ) {
+    const { siloId, farmId, tenantId, companyId, userId } = params;
+    // The same shed twice in one payload is one attachment, not two.
+    const shedIds = [...new Set(params.shedIds)];
+
+    if (shedIds.length) {
+      const sheds = await tx.select({
+        location_id: schema.locationMaster.location_id,
+        location_code: schema.locationMaster.location_code,
+        location_type: schema.locationMaster.location_type,
+        parent_location_id: schema.locationMaster.parent_location_id,
+        farm_id: schema.locationMaster.farm_id,
+        feed_silo_id: schema.locationMaster.feed_silo_id,
+      }).from(schema.locationMaster).where(and(
+        inArray(schema.locationMaster.location_id, shedIds),
+        eq(schema.locationMaster.tenant_id, tenantId),
+        companyCondition(schema.locationMaster.company_id, companyId),
+        isNull(schema.locationMaster.deleted_at),
+      ));
+
+      const byId = new Map(sheds.map((shed) => [shed.location_id, shed]));
+      for (const shedId of shedIds) {
+        const shed = byId.get(shedId);
+        if (!shed) {
+          throw new BadRequestException(`Shed '${shedId}' is not available in this company.`);
+        }
+        if (shed.location_type !== 'SHED') {
+          throw new BadRequestException(
+            `'${shed.location_code}' is a ${shed.location_type}, not a SHED, so it cannot be fed by a silo.`,
+          );
+        }
+        // farm_id is the level-1 ancestor every row carries; parent_location_id
+        // covers a row written before that column was derived. A silo feeding a
+        // shed on another farm describes a delivery that cannot happen.
+        const shedFarmId = shed.farm_id || shed.parent_location_id;
+        if (!farmId || shedFarmId !== farmId) {
+          throw new BadRequestException(
+            `Shed '${shed.location_code}' is not on the same farm as this silo.`,
+          );
+        }
+        // This is where "a shed draws from EXACTLY ONE silo" is enforced.
+        // Quietly taking a shed from another silo would leave that silo's own
+        // Attached Sheds list wrong with nothing said, so the second claim is
+        // refused and the shed named.
+        if (shed.feed_silo_id && shed.feed_silo_id !== siloId) {
+          throw new BadRequestException(
+            `Shed '${shed.location_code}' already draws its feed from another silo. `
+            + 'A shed draws from exactly one silo — detach it from that silo first.',
+          );
+        }
+      }
+    }
+
+    const updatedAt = toMysqlTimestamp();
+    // Detach first. A shed dropped from the list still points at this silo
+    // otherwise, and the attachment set could only ever grow.
+    const detachConditions = [
+      eq(schema.locationMaster.tenant_id, tenantId),
+      eq(schema.locationMaster.feed_silo_id, siloId),
+    ];
+    if (shedIds.length) {
+      detachConditions.push(not(inArray(schema.locationMaster.location_id, shedIds)));
+    }
+    await tx.update(schema.locationMaster)
+      .set({ feed_silo_id: null, updated_by: userId || null, updated_at: updatedAt })
+      .where(and(...detachConditions));
+
+    if (shedIds.length) {
+      await tx.update(schema.locationMaster)
+        .set({ feed_silo_id: siloId, updated_by: userId || null, updated_at: updatedAt })
+        .where(and(
+          eq(schema.locationMaster.tenant_id, tenantId),
+          inArray(schema.locationMaster.location_id, shedIds),
+        ));
+    }
+  }
+
+  /** The read side of the same view: the sheds currently pointing at this silo. */
+  private async attachedShedIds(siloId: string, tenantId: string): Promise<string[]> {
+    const rows = await this.db.select({ location_id: schema.locationMaster.location_id })
+      .from(schema.locationMaster)
+      .where(and(
+        eq(schema.locationMaster.tenant_id, tenantId),
+        eq(schema.locationMaster.feed_silo_id, siloId),
+        isNull(schema.locationMaster.deleted_at),
+      ))
+      .orderBy(schema.locationMaster.location_code);
+    return rows.map((row) => row.location_id);
+  }
+
+  /**
+   * The edit shape of a location: two of its fields are not what the column
+   * holds.
+   *
+   * silo_capacity_kg is canonical kilogrammes in the database but the form has
+   * to show the figure that was typed (see siloCapacityForDisplay), and
+   * attached_sheds is not a column here at all — it is read back off the shed
+   * rows, and only for a silo, since it means nothing anywhere else.
+   */
+  private async shapeForRead<T extends Record<string, any>>(row: T, tenantId: string) {
+    const shaped = {
+      ...row,
+      silo_capacity_kg: siloCapacityForDisplay(row.silo_capacity_kg, row.silo_capacity_uom),
+    } as T & { attached_sheds?: string[] };
+    if (row.location_type === 'SILO') {
+      shaped.attached_sheds = await this.attachedShedIds(row.location_id, tenantId);
+    }
+    return shaped;
   }
 
   private async assertNoHierarchyCycle(id: string, parentId: string, tenantId: string) {
@@ -311,15 +507,22 @@ export class LocationService {
     }
   }
 
-  /** SILO locations must carry both silo tracking fields. */
+  /**
+   * SILO locations must carry all three silo tracking fields.
+   *
+   * The unit joined the pair because a capacity without one is not a capacity:
+   * the column is kilogrammes, the client types tonnes as readily, and a figure
+   * accepted without saying which cannot be converted later by anyone.
+   */
   private assertSiloFieldsWhenSilo(
     locationType: string | null | undefined,
     siloCapacityKg?: number | null,
     siloReorderDays?: number | null,
+    siloCapacityUom?: string | null,
   ) {
-    if (locationType === 'SILO' && (siloCapacityKg == null || siloReorderDays == null)) {
+    if (locationType === 'SILO' && (siloCapacityKg == null || siloReorderDays == null || siloCapacityUom == null)) {
       throw new ConflictException(
-        'A SILO location requires both silo_capacity_kg and silo_reorder_days.'
+        'A SILO location requires silo_capacity_kg, silo_capacity_uom (KG or TON) and silo_reorder_days.'
       );
     }
   }
@@ -576,6 +779,14 @@ export class LocationService {
       throw new ConflictException(`${locationType.type_name} requires a parent location.`);
     }
 
+    // A SILO hangs off the FARM, never off a shed (client, 2026-09-24). One
+    // silo serves many sheds, so hanging it under one of them would make
+    // whichever shed it happens to stand beside look like the one it feeds,
+    // and the sheds it actually feeds are the attached_sheds set below.
+    if (typeCode === 'SILO' && parent?.location_type !== 'FARM') {
+      throw new ConflictException('A SILO must be created under a FARM.');
+    }
+
     // 3.5. This location's area, plus everything already under the same parent,
     //      must fit inside that parent.
     await this.assertAreaFitsInParent(dto.area_size, dto.area_unit, parent, tenantId);
@@ -583,10 +794,17 @@ export class LocationService {
 
     // 4. SILO locations must carry silo tracking fields
     if (!dto.storage_type && typeCode === 'SILO') dto.storage_type = 'SILO';
-    this.assertSiloFieldsWhenSilo(dto.storage_type, dto.silo_capacity_kg, dto.silo_reorder_days);
+    this.assertSiloFieldsWhenSilo(dto.storage_type, dto.silo_capacity_kg, dto.silo_reorder_days, dto.silo_capacity_uom);
     if (dto.storage_type !== 'SILO') {
       dto.silo_capacity_kg = undefined;
       dto.silo_reorder_days = undefined;
+      dto.silo_capacity_uom = undefined;
+    }
+
+    // attached_sheds is the silo's own field. Accepting it on any other type
+    // and then ignoring it would report a save that did nothing.
+    if (dto.attached_sheds?.length && typeCode !== 'SILO') {
+      throw new BadRequestException('Only a SILO can have attached sheds.');
     }
 
     // 5. area_unit / capacity_uom must resolve to a real UOM
@@ -635,7 +853,16 @@ export class LocationService {
     return this.findOne(locationId, tenantId);
   }
 
-  async findOne(id: string, tenantId: string) {
+  /**
+   * The row exactly as stored, for the service's own use.
+   *
+   * update() and remove() read a location to compare against and to write an
+   * audit trail from, and both need the canonical values — findOne() returns
+   * the *edit* shape, where silo_capacity_kg has already been divided back into
+   * the unit it was typed in. Reasoning about a write from that shape would
+   * multiply the capacity by a thousand on every save of a TON silo.
+   */
+  private async loadLocation(id: string, tenantId: string) {
     const [location] = await this.db
       .select()
       .from(schema.locationMaster)
@@ -651,6 +878,10 @@ export class LocationService {
     }
 
     return location;
+  }
+
+  async findOne(id: string, tenantId: string) {
+    return this.shapeForRead(await this.loadLocation(id, tenantId), tenantId);
   }
 
   async findAll(query: QueryLocationDto, tenantId: string) {
@@ -697,6 +928,46 @@ export class LocationService {
       const eligibleParents = allowed.filter((t) => !['PEN', 'CAGE'].includes(t.toUpperCase()));
       conditions.push(eligibleParents.length ? inArray(schema.locationMaster.location_type, eligibleParents) : sql`1 = 0`);
     }
+    // The Attached Sheds picker on the Silo form. Same decision as
+    // parentForType above and the same scope: masterScopeConditions has already
+    // pinned the company, so this only narrows within it, in SQL, before the
+    // page is cut — the form must not be left filtering the first 50 rows in
+    // the browser and silently offering a subset of the farm's sheds.
+    if (query.shedsForSilo) {
+      conditions.push(eq(schema.locationMaster.location_type, 'SHED'));
+      // Either column identifies the farm: farm_id is the level-1 ancestor
+      // every row carries, parent_location_id covers rows written before it was
+      // derived.
+      conditions.push(or(
+        eq(schema.locationMaster.farm_id, query.shedsForSilo),
+        eq(schema.locationMaster.parent_location_id, query.shedsForSilo),
+      )!);
+      conditions.push(eq(schema.locationMaster.is_active, true));
+      conditions.push(isNull(schema.locationMaster.deleted_at));
+      // Every shed on the farm is returned, including the ones other silos
+      // already feed, because the picker shows those greyed out and names the
+      // silo that holds them (Rishi, 2026-09-24) rather than hiding them — a
+      // farm's layout is easier to read whole, and "why can't I pick that one"
+      // is answered on the row instead of in a refusal after the save. Each
+      // shed therefore carries feed_silo_id and feed_silo_name; the form greys
+      // a row whose feed_silo_id is set and is not the silo being edited.
+      //
+      // Hiding attached sheds instead would be actively wrong: opening an
+      // existing silo would offer a list with every shed it already feeds
+      // missing, showing selections with no matching option and detaching them
+      // on save.
+      //
+      // siloId is still honoured when given, for callers that do want the
+      // narrowed list. The exclusivity rule does not depend on either: it is
+      // enforced where it has to be anyway — syncAttachedSheds refuses a shed
+      // already fed by a different silo, with a message that names it.
+      if (query.siloId) {
+        conditions.push(or(
+          isNull(schema.locationMaster.feed_silo_id),
+          eq(schema.locationMaster.feed_silo_id, query.siloId),
+        )!);
+      }
+    }
     if (query.rootOnly) {
       conditions.push(isNull(schema.locationMaster.parent_location_id));
     }
@@ -718,17 +989,75 @@ export class LocationService {
     // a new query param and a new release each time.
     conditions.push(...listFilterConditions(schema.locationMaster, query.filter));
 
-    return runMasterList(
+    const page = await runMasterList(
       this.db,
       schema.locationMaster,
       conditions,
       query,
       schema.locationMaster.location_code,
     );
+
+    // The list feeds the same edit form findOne does, so it owes the same
+    // shape — a capacity in the unit it was entered in, and a silo's sheds.
+    // The attachments come back in one query keyed by silo rather than one
+    // query per silo on the page.
+    const rows = page.data as unknown as (typeof schema.locationMaster.$inferSelect)[];
+    const siloIds = rows.filter((row) => row.location_type === 'SILO').map((row) => row.location_id);
+    const attachedBySilo = new Map<string, string[]>();
+    if (siloIds.length) {
+      const attachments = await this.db.select({
+        location_id: schema.locationMaster.location_id,
+        feed_silo_id: schema.locationMaster.feed_silo_id,
+      }).from(schema.locationMaster).where(and(
+        eq(schema.locationMaster.tenant_id, tenantId),
+        inArray(schema.locationMaster.feed_silo_id, siloIds),
+        isNull(schema.locationMaster.deleted_at),
+      )).orderBy(schema.locationMaster.location_code);
+      for (const attachment of attachments) {
+        if (!attachment.feed_silo_id) continue;
+        const existing = attachedBySilo.get(attachment.feed_silo_id) || [];
+        existing.push(attachment.location_id);
+        attachedBySilo.set(attachment.feed_silo_id, existing);
+      }
+    }
+
+    // The Attached Sheds picker greys out a shed that another silo already
+    // feeds and names that silo on the row, so a shed has to carry the name and
+    // not just the id. Resolved in one query for the whole page, the same way
+    // the attachments above are — a name per shed would be a query per row.
+    const owningSiloIds = [...new Set(
+      rows.filter((row) => row.location_type === 'SHED' && row.feed_silo_id)
+        .map((row) => row.feed_silo_id as string),
+    )];
+    const siloNameById = new Map<string, string>();
+    if (owningSiloIds.length) {
+      const silos = await this.db.select({
+        location_id: schema.locationMaster.location_id,
+        location_name: schema.locationMaster.location_name,
+      }).from(schema.locationMaster).where(and(
+        eq(schema.locationMaster.tenant_id, tenantId),
+        inArray(schema.locationMaster.location_id, owningSiloIds),
+      ));
+      for (const silo of silos) siloNameById.set(silo.location_id, silo.location_name);
+    }
+
+    return {
+      ...page,
+      data: rows.map((row) => ({
+        ...row,
+        silo_capacity_kg: siloCapacityForDisplay(row.silo_capacity_kg, row.silo_capacity_uom),
+        ...(row.location_type === 'SILO'
+          ? { attached_sheds: attachedBySilo.get(row.location_id) || [] }
+          : {}),
+        ...(row.location_type === 'SHED'
+          ? { feed_silo_name: row.feed_silo_id ? siloNameById.get(row.feed_silo_id) ?? null : null }
+          : {}),
+      })),
+    };
   }
 
   async update(id: string, dto: UpdateLocationDto, tenantId: string, userPayload?: any) {
-    const location = await this.findOne(id, tenantId);
+    const location = await this.loadLocation(id, tenantId);
 
     if (dto.location_type !== undefined && dto.location_type !== location.location_type) {
       throw new ConflictException('Location Type cannot be changed after a location is created. Create a new location instead.');
@@ -778,12 +1107,30 @@ export class LocationService {
       newLocationLevel = 1;
     }
 
+    // Same rule as create(): a SILO hangs off the FARM, never off a shed, so
+    // re-parenting cannot quietly undo what create() refused.
+    if (effectiveLocationType === 'SILO' && parent?.location_type !== 'FARM') {
+      throw new ConflictException('A SILO must be placed under a FARM.');
+    }
+
     // SILO locations must carry silo tracking fields — validate against effective values so a
     // partial update that doesn't touch these fields doesn't spuriously fail.
     const effectiveSiloCapacity = dto.silo_capacity_kg !== undefined ? dto.silo_capacity_kg : location.silo_capacity_kg;
     const effectiveSiloReorderDays = dto.silo_reorder_days !== undefined ? dto.silo_reorder_days : location.silo_reorder_days;
+    // A silo stored before silo_capacity_uom existed carries none, and its
+    // capacity is already canonical kilogrammes — so reading that absence as KG
+    // is not a guess, it is what the column means. Without it every legacy silo
+    // would be uneditable, which is a worse answer than the true one.
+    const effectiveSiloCapacityUom = dto.silo_capacity_uom !== undefined
+      ? dto.silo_capacity_uom
+      : (location.silo_capacity_uom || (effectiveLocationType === 'SILO' ? 'KG' : null));
     const effectiveStorage = dto.storage_type !== undefined ? dto.storage_type : location.storage_type || (effectiveLocationType === 'SILO' ? 'SILO' : null);
-    this.assertSiloFieldsWhenSilo(effectiveStorage, effectiveSiloCapacity as any, effectiveSiloReorderDays as any);
+    this.assertSiloFieldsWhenSilo(effectiveStorage, effectiveSiloCapacity as any, effectiveSiloReorderDays as any, effectiveSiloCapacityUom as any);
+
+    // attached_sheds is the silo's own field; see create().
+    if (dto.attached_sheds !== undefined && effectiveLocationType !== 'SILO') {
+      throw new BadRequestException('Only a SILO can have attached sheds.');
+    }
 
     if (dto.area_unit !== undefined) {
       await this.assertUomExists(dto.area_unit, tenantId, dto.company_id !== undefined ? dto.company_id : location.company_id);
@@ -847,10 +1194,22 @@ export class LocationService {
     if (dto.gps_longitude !== undefined) updates.gps_longitude = dto.gps_longitude?.toString() || null;
     if (dto.storage_type !== undefined) updates.storage_type = dto.storage_type;
     if (dto.is_quarantine_zone !== undefined) updates.is_quarantine_zone = dto.is_quarantine_zone;
-    if (dto.silo_capacity_kg !== undefined) updates.silo_capacity_kg = dto.silo_capacity_kg?.toString() || null;
+    // The figure in the payload is in the payload's unit; the column is always
+    // KG. A unit change arriving on its own is a relabel of the same physical
+    // capacity, not a thousandfold jump, so the stored number is recomputed
+    // only when a new number actually comes with it.
+    if (dto.silo_capacity_kg !== undefined) {
+      updates.silo_capacity_kg = siloCapacityToKg(dto.silo_capacity_kg, effectiveSiloCapacityUom);
+    }
+    // Written back even when the caller sent nothing, so the first save of a
+    // legacy silo records the KG the row has always been stored in.
+    if (effectiveSiloCapacityUom !== location.silo_capacity_uom) {
+      updates.silo_capacity_uom = effectiveSiloCapacityUom;
+    }
     if (dto.silo_reorder_days !== undefined) updates.silo_reorder_days = dto.silo_reorder_days;
     if (effectiveStorage !== 'SILO') {
       updates.silo_capacity_kg = null;
+      updates.silo_capacity_uom = null;
       updates.silo_reorder_days = null;
     }
     if (dto.downtime_days_required !== undefined) updates.downtime_days_required = dto.downtime_days_required;
@@ -862,6 +1221,17 @@ export class LocationService {
     const effective = { ...location, ...updates };
     await this.db.transaction(async (tx) => {
       await tx.update(schema.locationMaster).set(updates).where(eq(schema.locationMaster.location_id, id));
+      // Same transaction as the silo row itself — see syncAttachedSheds.
+      if (dto.attached_sheds !== undefined) {
+        await this.syncAttachedSheds(tx, {
+          siloId: id,
+          farmId: parent?.location_id || location.farm_id,
+          shedIds: dto.attached_sheds,
+          tenantId,
+          companyId: location.company_id,
+          userId: userPayload?.userId || null,
+        });
+      }
     });
 
     await this.auditService.log({
@@ -879,7 +1249,7 @@ export class LocationService {
   }
 
   async remove(id: string, tenantId: string, userPayload?: any) {
-    const location = await this.findOne(id, tenantId);
+    const location = await this.loadLocation(id, tenantId);
     const deletedTime = toMysqlTimestamp();
 
     const [child] = await this.db.select({

@@ -6,6 +6,7 @@ import * as masterSchema from './master-schema';
 import { ConnectionManagerService } from './connection-manager.service';
 import { UserDirectoryService } from './user-directory.service';
 import { MASTER_CONNECTION, PG_CONNECTION } from './database.tokens';
+import { DEFAULT_MASTER_DATABASE } from './database-names';
 
 export { MASTER_CONNECTION, PG_CONNECTION };
 
@@ -20,7 +21,7 @@ export { MASTER_CONNECTION, PG_CONNECTION };
         const host = config.get<string>('database.host');
         const port = config.get<number>('database.port');
         const user = config.get<string>('database.username');
-        const database = config.get<string>('database.database') || 'navfarm_master';
+        const database = config.get<string>('database.database') || DEFAULT_MASTER_DATABASE;
         const ssl = config.get<boolean>('database.ssl');
 
         console.log(`[Master Database] Connecting to ${user}@${host}:${port}/${database}${ssl ? ' (TLS)' : ''}`);

@@ -39,6 +39,23 @@ const LOCATION_TYPE_ADDITIONS = [
   { code: 'CRATE', name: 'Crate', prefix: 'CRATE', allowedParents: ['SHED'] },
 ];
 
+/**
+ * Types whose allowed parents were seeded wider than the client's estate
+ * actually is, and have to be narrowed on databases already carrying them.
+ *
+ * SILO was seeded as FARM-or-SHED. A silo stands in the yard and is blown full
+ * by the mill; several sheds draw from the one silo, so making it a child of a
+ * shed said something untrue about the yard and left no way to record the other
+ * sheds it feeds. A silo hangs off the FARM, and the shed's own feed_silo_id
+ * records which silo it draws from.
+ *
+ * This is an UPDATE, not an insert: LOCATION_TYPE_ADDITIONS above skips a type
+ * that already exists, which every one of these does.
+ */
+const LOCATION_TYPE_PARENT_CORRECTIONS = [
+  { code: 'SILO', allowedParents: ['FARM'] },
+];
+
 const host = process.env.DATABASE_HOST || '127.0.0.1';
 const port = Number(process.env.DATABASE_PORT || 3306);
 const user = process.env.DATABASE_USERNAME || 'root';
@@ -56,7 +73,7 @@ async function run() {
     throw new Error('Use no flags (read-only), --verify, or --apply.');
   }
   const write = apply || verify;
-  const database = process.env.DEV_TENANT_DATABASE || 'tenant_devco';
+  const database = process.env.DEV_TENANT_DATABASE || 'nf_devco';
   const db = await mysql.createConnection({ host, port, user, password, database, ssl });
 
   try {
@@ -120,6 +137,33 @@ async function run() {
     }
     plan.locationTypesAdded = typesAdded.length ? typesAdded : 'none — already present';
 
+    // ---- Location types whose allowed parents were seeded too wide ---------
+    // Both scopes are corrected, not just the company copy: location.service.ts
+    // resolves the type with `ORDER BY company_id IS NULL` and takes whichever
+    // row it finds first, so leaving the tenant template saying SHED would let
+    // a company that has no copy of its own go on parenting silos to sheds.
+    const typesNarrowed: string[] = [];
+    for (const t of LOCATION_TYPE_PARENT_CORRECTIONS) {
+      const [rows] = await db.query<RowDataPacket[]>(
+        `SELECT location_type_id, company_id, allowed_parent_types FROM location_type_master
+          WHERE tenant_id = ? AND type_code = ? AND (company_id = ? OR company_id IS NULL)`,
+        [scope.tenant_id, t.code, scope.company_id]);
+      for (const row of rows) {
+        const current = typeof row.allowed_parent_types === 'string'
+          ? JSON.parse(row.allowed_parent_types) as string[]
+          : (row.allowed_parent_types as string[]);
+        const wanted = JSON.stringify(t.allowedParents);
+        if (JSON.stringify(current) === wanted) continue;
+        if (write) {
+          await db.query(
+            'UPDATE location_type_master SET allowed_parent_types = ?, updated_at = NOW() WHERE location_type_id = ?',
+            [wanted, row.location_type_id]);
+        }
+        typesNarrowed.push(`${t.code} (${row.company_id ? 'COMPANY' : 'TENANT'}): ${current.join(', ')} → ${t.allowedParents.join(', ')}`);
+      }
+    }
+    plan.locationTypesNarrowed = typesNarrowed.length ? typesNarrowed : 'none — already correct';
+
     // ---- The farms themselves ----------------------------------------------
     // Inserted parents-first so every child's parent_location_id resolves, and
     // keyed on location_code so a re-run updates in place.
@@ -149,7 +193,12 @@ async function run() {
         scope.nob_id, scope.lob_id, r.name, r.address ?? null, r.type, parentId,
         LEVEL[r.type] ?? null, num(r.areaSize), r.areaUom ?? null, num(r.maxCapacity),
         r.capacityUom ?? null, r.storageType ?? null, r.storageName ?? null,
-        num(r.siloCapacityKg), num(r.siloReorderDays), num(r.downtimeDays),
+        // The templates state every silo capacity in kilograms — the column the
+        // figure lands in is canonical KG regardless, and the uom only records
+        // what the farm typed, so KG is the honest answer wherever a capacity
+        // is given and NULL is the honest answer where none is.
+        num(r.siloCapacityKg), r.siloCapacityKg === undefined ? null : 'KG',
+        num(r.siloReorderDays), num(r.downtimeDays),
         r.feedInBags === undefined ? null : r.feedInBags ? 1 : 0, farmId,
       ];
 
@@ -161,7 +210,7 @@ async function run() {
           await db.query(
             `UPDATE location_master SET nob_id=?, lob_id=?, location_name=?, location_address=?, location_type=?,
                parent_location_id=?, location_level=?, area_size=?, area_unit=?, max_capacity=?, capacity_uom=?,
-               storage_type=?, storage_name=?, silo_capacity_kg=?, silo_reorder_days=?, downtime_days_required=?,
+               storage_type=?, storage_name=?, silo_capacity_kg=?, silo_capacity_uom=?, silo_reorder_days=?, downtime_days_required=?,
                feed_in_bags=?, farm_id=?, is_active=1, status='ACTIVE', deleted_at=NULL, updated_at=NOW()
              WHERE location_id=?`, [...values, id]);
         }
@@ -175,8 +224,9 @@ async function run() {
             `INSERT INTO location_master (location_id, tenant_id, company_id, location_code, nob_id, lob_id,
                location_name, location_address, location_type, parent_location_id, location_level, area_size,
                area_unit, max_capacity, capacity_uom, storage_type, storage_name, silo_capacity_kg,
-               silo_reorder_days, downtime_days_required, feed_in_bags, farm_id, is_active, status, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'ACTIVE', NOW(), NOW())`,
+               silo_capacity_uom, silo_reorder_days, downtime_days_required, feed_in_bags, farm_id,
+               is_active, status, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'ACTIVE', NOW(), NOW())`,
             [id, scope.tenant_id, scope.company_id, r.code, ...values]);
         }
         inserted++;

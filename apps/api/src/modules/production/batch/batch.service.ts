@@ -1843,7 +1843,13 @@ export class BatchService {
 
   async addTransaction(
     id: string,
-    dto: AddBatchTransactionDto,
+    // source_warehouse_id is deliberately not on AddBatchTransactionDto: it is
+    // resolved server-side from the batch's own shed (see
+    // BatchDailyDataService.resolveConsumptionWarehouse), never chosen by the
+    // caller, and the global ValidationPipe's `whitelist: true` would strip it
+    // off an HTTP body anyway. Optional, so every existing caller — which has
+    // no warehouse to name — keeps the company-wide FIFO draw it had.
+    dto: AddBatchTransactionDto & { source_warehouse_id?: string },
     tenantId: string,
     userPayload?: UserContext,
   ) {
@@ -1985,6 +1991,11 @@ export class BatchService {
         quantity: dto.quantity,
         uom: dto.uom,
         batchNo: batch.batch_no,
+        // Named by the scheduled-entry path only. Left undefined, applyFifo
+        // draws from the oldest layer company-wide, which is what every
+        // pre-existing caller still does; supplied, it confines the draw to
+        // that silo's (or store's) own layers.
+        warehouseId: dto.source_warehouse_id,
         userId: userPayload?.userId,
       });
       await this.glPostingService.postInventoryLedgerEntry(

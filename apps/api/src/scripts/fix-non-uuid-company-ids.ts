@@ -26,7 +26,7 @@ const host = process.env.DATABASE_HOST || 'localhost';
 const port = Number(process.env.DATABASE_PORT || 3306);
 const user = process.env.DATABASE_USERNAME || 'root';
 const password = process.env.DATABASE_PASSWORD || '';
-const masterDatabase = process.env.DATABASE_NAME || 'navfarm_master';
+const masterDatabase = process.env.DATABASE_NAME || 'nf_master';
 
 // Same "all" acceptance rule as validator.js's isUUID(str, "all"): a proper
 // v1-8 UUID with the correct variant nibble, or the two special-cased

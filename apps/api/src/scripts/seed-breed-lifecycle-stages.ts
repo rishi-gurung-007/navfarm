@@ -346,7 +346,7 @@ async function seedTenantDatabase(dbName: string, tenantId: string) {
 }
 
 async function main() {
-  const masterDatabases = ['navfarm_dev_master', 'navfarm_master'];
+  const masterDatabases = ['navfarm_dev_master', 'nf_master'];
 
   for (const masterDb of masterDatabases) {
     try {

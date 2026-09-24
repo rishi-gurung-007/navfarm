@@ -140,7 +140,12 @@ export const SYSTEM_LOCATION_TYPE_SEED: Array<{
   { type_code: 'CAGE', type_name: 'Cage', code_prefix: 'CAGE', allowed_parent_types: ['FARM', 'SHED'] },
   { type_code: 'STORE', type_name: 'Store', code_prefix: 'STORE', allowed_parent_types: ['FARM'] },
   { type_code: 'QUARANTINE', type_name: 'Quarantine', code_prefix: 'QUAR', allowed_parent_types: ['FARM', 'SHED'] },
-  { type_code: 'SILO', type_name: 'Silo', code_prefix: 'SILO', allowed_parent_types: ['FARM', 'SHED'] },
+  // FARM only. A silo stands in the yard and is blown full by the mill; one
+  // silo feeds several sheds, so making it a child of a shed claimed an
+  // ownership the yard does not have and left the other sheds it feeds
+  // unrecordable. Which silo a shed draws from is the shed's own feed_silo_id
+  // (migration 0113), which is a many-sheds-to-one-silo link and not a tree.
+  { type_code: 'SILO', type_name: 'Silo', code_prefix: 'SILO', allowed_parent_types: ['FARM'] },
 ];
 
 export const SYSTEM_SPECIES_SEED: Array<{

@@ -1,7 +1,7 @@
 import * as mysql from 'mysql2/promise';
 import { randomUUID } from 'crypto';
 
-const DB = process.env.TENANT_DB_NAME || 'tenant_devco';
+const DB = process.env.TENANT_DB_NAME || 'nf_devco';
 
 async function main() {
   const conn = await mysql.createConnection({

@@ -35,8 +35,8 @@ const password = process.env.DATABASE_PASSWORD || '';
 const ssl = process.env.DATABASE_SSL === 'true'
   ? { minVersion: 'TLSv1.2' as const, rejectUnauthorized: true }
   : undefined;
-const masterDatabase = process.env.DATABASE_NAME || 'navfarm_master';
-const systemDatabase = process.env.SYSTEM_TENANT_DATABASE || 'tenant_system';
+const masterDatabase = process.env.DATABASE_NAME || 'nf_master';
+const systemDatabase = process.env.SYSTEM_TENANT_DATABASE || 'nf_system';
 const tenantCode = (process.env.DEV_TENANT_CODE || 'devco').toLowerCase();
 
 const wantsFresh = process.argv.includes('--fresh') || process.env.SEED_FRESH === 'true';
@@ -49,7 +49,7 @@ function assertDatabaseName(value: string): string {
 async function dropDatabases() {
   // Only ever the three NAVFarm databases, named explicitly. Anything else on
   // this server — another project sharing the same local MySQL — is untouched.
-  const targets = [masterDatabase, systemDatabase, `tenant_${tenantCode}`].map(assertDatabaseName);
+  const targets = [masterDatabase, systemDatabase, `nf_${tenantCode}`].map(assertDatabaseName);
   const conn = await mysql.createConnection({ host, port, user, password, ssl });
   try {
     for (const dbName of targets) {
@@ -84,7 +84,7 @@ const stages: Array<{ label: string; fn: () => Promise<unknown> }> = [
 
 async function fillDemoDetail() {
   const conn = await mysql.createConnection({
-    host, port, user, password, ssl, database: assertDatabaseName(`tenant_${tenantCode}`),
+    host, port, user, password, ssl, database: assertDatabaseName(`nf_${tenantCode}`),
   });
   try {
     const [[tenant]] = await conn.query<any[]>('SELECT tenant_id FROM company_master LIMIT 1');
@@ -100,7 +100,7 @@ async function fillDemoDetail() {
 
 async function adoptCompanyTemplates() {
   const pool = mysql.createPool({
-    host, port, user, password, ssl, database: assertDatabaseName(`tenant_${tenantCode}`),
+    host, port, user, password, ssl, database: assertDatabaseName(`nf_${tenantCode}`),
   });
   try {
     const db = drizzle(pool, { schema: tenantSchema, mode: 'default' });
@@ -128,7 +128,7 @@ async function adoptCompanyTemplates() {
 
 async function stampSeededMasters() {
   const conn = await mysql.createConnection({
-    host, port, user, password, ssl, database: assertDatabaseName(`tenant_${tenantCode}`),
+    host, port, user, password, ssl, database: assertDatabaseName(`nf_${tenantCode}`),
   });
   try {
     const [[tenant]] = await conn.query<any[]>('SELECT tenant_id FROM company_master LIMIT 1');
@@ -164,7 +164,7 @@ export async function seedDemo() {
   // by hand. The summary used to name six users on two companies, none of which
   // survived the rename to Triple C — it told you to sign in as addresses that
   // did not exist.
-  const summaryPool = mysql.createPool({ host, port, user, password, database: assertDatabaseName(`tenant_${tenantCode}`), ssl });
+  const summaryPool = mysql.createPool({ host, port, user, password, database: assertDatabaseName(`nf_${tenantCode}`), ssl });
   try {
     const [companies] = await summaryPool.query<any[]>('SELECT company_code, company_name FROM company_master WHERE deleted_at IS NULL');
     const [areas] = await summaryPool.query<any[]>('SELECT area_code, area_name FROM operational_area_master WHERE deleted_at IS NULL');

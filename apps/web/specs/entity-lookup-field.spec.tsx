@@ -96,6 +96,41 @@ describe("EntityLookupField", () => {
     expect(screen.getByRole("dialog", { name: "Select Applicable Stages" })).toBeTruthy();
   });
 
+  // A shed another silo feeds is listed, greyed, with its owner named — and
+  // cannot be picked. One this record already holds stays untickable-free.
+  it("greys an unavailable row, names why, and refuses to select it", () => {
+    const onChange = jest.fn();
+    render(
+      <EntityLookupField
+        id="sheds"
+        label="Attached Sheds"
+        options={[
+          { location_id: "s1", location_code: "VIL100/SHED-001", location_name: "Gilt House", owner: "other" },
+          { location_id: "s2", location_code: "VIL100/SHED-002", location_name: "Dry Sow House", owner: "me" },
+          { location_id: "s3", location_code: "VIL100/SHED-003", location_name: "Farrowing House", owner: null },
+        ]}
+        value={["s2"]}
+        valueKey="location_id"
+        labelKeys={["location_code", "location_name"]}
+        onChange={onChange}
+        multiple
+        placeholder="Select an option"
+        optionDisabledReason={(o) => (o.owner ? "Attached to VIL100 Feed Silo 2" : null)}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Attached Sheds" }));
+
+    expect(screen.getByText("Attached to VIL100 Feed Silo 2")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Select VIL100/SHED-001 — Gilt House" })).toBeNull();
+    fireEvent.click(screen.getByText("Gilt House"));
+    expect(onChange).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Deselect VIL100/SHED-002 — Dry Sow House" }));
+    expect(onChange).toHaveBeenLastCalledWith([]);
+    fireEvent.click(screen.getByRole("button", { name: "Select VIL100/SHED-003 — Farrowing House" }));
+    expect(onChange).toHaveBeenLastCalledWith(["s2", "s3"]);
+  });
+
   it("calls onCreate from the dialog creation affordance", () => {
     const onCreate = jest.fn();
     render(<EntityLookupField {...baseProps} onCreate={onCreate} />);

@@ -49,7 +49,7 @@ async function run() {
     throw new Error('Use no flags (read-only), --verify, or --apply.');
   }
 
-  const db = await mysql.createConnection({ host: '127.0.0.1', user: 'root', database: 'tenant_devco' });
+  const db = await mysql.createConnection({ host: '127.0.0.1', user: 'root', database: 'nf_devco' });
   try {
     const [[lock]] = await db.query<RowDataPacket[]>("SELECT GET_LOCK('navfarm-age-at-entry', 5) acquired");
     if (Number(lock.acquired) !== 1) throw new Error('Another age-at-entry backfill is active.');
@@ -107,7 +107,7 @@ async function run() {
     );
 
     console.log(JSON.stringify({
-      database: 'tenant_devco',
+      database: 'nf_devco',
       mode: apply ? 'APPLY' : verify ? 'VERIFY' : 'READ-ONLY',
       rule: 'computed from dob and entry_date; never invented where dob is absent',
       computed,

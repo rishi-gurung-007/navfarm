@@ -132,7 +132,7 @@ The generated API starter does not connect to either service yet. Their environm
 
 ### API
 
-The NestJS API listens on `http://localhost:3000/api` by default.
+The NestJS API listens on `http://localhost:2877/api` by default.
 
 ```sh
 pnpm dev:api
@@ -146,7 +146,9 @@ pnpm nx serve api
 
 ### Web
 
-The root script uses port 3001 so it can run beside the API:
+The web app runs on port 3002 only: currently the assigned port is 3002 and
+other are occupied by other applications in the server. Do not move it to
+3000, 3001 or anything else.
 
 ```sh
 pnpm dev:web
@@ -155,10 +157,10 @@ pnpm dev:web
 Equivalent Nx command:
 
 ```sh
-pnpm nx dev web --port=3001
+pnpm nx dev web
 ```
 
-Open `http://localhost:3001`.
+Open `http://localhost:3002`.
 
 ### Flutter
 

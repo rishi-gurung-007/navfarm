@@ -16,9 +16,10 @@
  * reads them, never invents them. Quantities are demo facts from
  * DEMO_OPERATIONS. Every document's remarks/reason carries DEMO.
  *
- * Silos are resolved from the farm's seeded sheds (`<CODE>/SHED-00n/SILO-001`),
- * not from hard-coded location codes; every seeded farm has at least two,
- * including the AI station and the grow-out site.
+ * Silos are resolved through each shed's `feed_silo_id`, not from hard-coded
+ * location codes and not from the location tree — a silo hangs off the farm
+ * (`<CODE>/SILO-00n`) and may feed several sheds. Every seeded farm has at
+ * least two, including the AI station and the grow-out site.
  *
  * Resume semantics, not skip-on-existence: each document is located by its
  * DEMO reference (external_reference_no on receipts; remarks/reason token on
@@ -104,6 +105,23 @@ const DEMO_OPERATIONS = {
     { item_code: MED_ANTIBIOTIC_1, quantity: 20, uom: 'PCS' },
     { item_code: MED_ANTIBIOTIC_2, quantity: 15, uom: 'PCS' },
     { item_code: VACCINE_BREEDING, quantity: 10, uom: 'PCS' },
+    // Feed, into the farm store rather than a silo. A batch whose scheduler
+    // records no shed or pen draws its consumption from the farm store (see
+    // resolveConsumptionWarehouse in batch-daily-data.service.ts), and a store
+    // holding only medicine left every farm-level batch in chapter 04 unable
+    // to post — applyFifo refused it, correctly, for stock that was never
+    // there. Bagged feed genuinely sits in the store, so this is also what the
+    // yard looks like.
+    // Every ration a scheduler consumes, not just the default one. The demo's
+    // batches are farm-level — all 27 carry a farm_id and no shed, location or
+    // sub_location — so every consumption line resolves to the farm store, and
+    // the store has to hold each of the three feeds the schedulers actually
+    // draw: gestation (29 lines), grower (19) and lactation (12). Stocking
+    // only the default left the other two short and chapter 04 refused them,
+    // correctly, for stock that was never received.
+    { item_code: FEED_GESTATION, quantity: 40000, uom: 'KG' },
+    { item_code: FEED_GROWER, quantity: 40000, uom: 'KG' },
+    { item_code: FEED_LACTATION, quantity: 40000, uom: 'KG' },
   ],
   medicineIssue: { item_code: MED_ANTIBIOTIC_1, quantity: 4, uom: 'PCS' },
   siloTransferKg: 300,
@@ -113,8 +131,12 @@ const DEMO_OPERATIONS = {
   },
 } as const;
 
-/** How many of a farm's silos the chapter stocks. Two is enough to transfer between. */
-const SILOS_STOCKED_PER_FARM = 2;
+// Every silo on the farm is stocked, not the first two. Chapter 04 posts feed
+// consumption for batches across all of a farm's sheds, and each shed now draws
+// from its own attached silo (docs/decisions.md, 2026-09-24) — so a silo the
+// chapter skipped is a silo some shed's daily entry cannot draw from, and
+// applyFifo refuses it as short. Stocking two of 53 silos left 28 of them empty
+// and chapter 04 died on the first shed that owned one.
 
 const TODAY = () => new Date().toISOString().slice(0, 10);
 
@@ -143,7 +165,6 @@ async function itemByHandle(db: MySql2Database<typeof schema>, handle: string) {
 function stockedSilos(farm: DemoFarm): Array<{ id: string; code: string; feedHandle: string }> {
   const shedBySilo = new Map(farm.sheds.filter((s) => s.siloId).map((s) => [s.siloId!, s]));
   return silosOf(farm)
-    .slice(0, SILOS_STOCKED_PER_FARM)
     .map((silo) => {
       const role = shedBySilo.get(silo.id)?.role;
       return { ...silo, feedHandle: (role && FEED_BY_SHED_ROLE[role]) || FEED_DEFAULT };
@@ -291,22 +312,40 @@ export const inventoryChapter: DemoChapter = {
         }
       }
 
-      // --- 4. Stock transfer between the farm's first two silos. The item is
-      // the one the source silo was stocked with — the destination's own diet
-      // may differ, and a transfer of feed it holds none of would be refused.
+      // --- 4. Stock transfer out of the farm's first stocked silo.
+      //
+      // The destination is no longer simply the second stocked silo. A silo
+      // holds one ration at a time (docs/decisions.md, 2026-09-24) and the two
+      // stocked silos are deliberately given different feeds — a gilt house and
+      // a dry sow house do not eat the same thing — so moving one into the
+      // other is precisely what that rule forbids, and assertSiloDestination in
+      // stock-transfer.service.ts refuses it. This chapter used to post it
+      // anyway, and the rebuild died here the first time the rule was enforced.
+      //
+      // What a farm actually does is move feed into a silo that is free, so
+      // that is what this posts: the first silo the chapter did not stock. On a
+      // farm with only the two silos it stocked there is no free one, and the
+      // only legal move is between silos already on the same ration. Where
+      // neither exists the chapter logs why it posted nothing, rather than
+      // seeding a document the API is right to reject.
       {
         const [existing] = await db
           .select({ id: schema.stockTransfer.transfer_id, status: schema.stockTransfer.status })
           .from(schema.stockTransfer)
           .where(eq(schema.stockTransfer.remarks, ref('XSILO')))
           .limit(1);
-        if (!existing) {
+        const freeSilo = silosOf(farm).find((s) => !siloIds.some((stocked) => stocked.id === s.id));
+        const sameRationSilo = siloIds.slice(1).find((s) => s.feedHandle === siloIds[0].feedHandle);
+        const destinationSilo = freeSilo ?? sameRationSilo;
+        if (!existing && !destinationSilo) {
+          ctx.log(`${tag} silo transfer skipped — every silo is stocked with a different ration, and a silo holds one at a time`);
+        } else if (!existing && destinationSilo) {
           const feed = await itemByHandle(db, siloIds[0].feedHandle);
           const created = await transfers.create(
             {
               company_id: ctx.companyId,
               from_warehouse_id: siloIds[0].id,
-              to_warehouse_id: siloIds[1].id,
+              to_warehouse_id: destinationSilo.id,
               posting_date: postingDate,
               remarks: ref('XSILO'),
               lines: [{ item_id: feed.item_id, quantity: DEMO_OPERATIONS.siloTransferKg, uom: 'KG', remarks: 'DEMO stock transfer between feed silos' }],

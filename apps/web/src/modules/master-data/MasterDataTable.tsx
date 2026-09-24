@@ -1379,6 +1379,15 @@ export function MasterDataTable({
       }
       initial[f.key] = v ?? (f.type === "boolean" ? false : "");
     });
+    // The loop above seeds declared fields only, so the record being edited has
+    // no way to recognise itself: every related row pointing back at it looks
+    // exactly like one pointing at somebody else. The form needs the record's
+    // own identity to tell "related to me" apart from "related to someone else"
+    // when rendering related-option lists — `disableOptionWhen` greys out a
+    // shed another silo feeds, and must not grey out the ones this silo feeds.
+    // It cannot reach a save: the payload is built from `visibleFields`, which
+    // only ever holds declared fields, and no config declares its own idKey.
+    initial[config.idKey] = row[config.idKey];
     // storage_type is hidden from the form (see configs.ts) and derived from
     // location_type — but it's hidden from formFields too, so the loop above
     // never seeded it from the row at all. Derive it fresh here rather than
@@ -2175,6 +2184,16 @@ export function MasterDataTable({
       if (f.multiple) {
         if (f.allOption) options = [f.allOption, ...options];
         const selected = parseStringList(form[f.key]);
+        // Owned by someone, and that someone is not the record open in this
+        // form. On create the form has no id yet, so every owned option greys.
+        const rule = f.disableOptionWhen;
+        const optionDisabledReason = rule
+          ? (o: Row) => {
+              const owner = String(o[rule.key] ?? "");
+              if (!owner || owner === String(form[rule.exceptMatchingField] ?? "")) return null;
+              return `${rule.reasonPrefix}${String(o[rule.reasonKey] ?? "") || t("mdAnotherRecord")}`;
+            }
+          : undefined;
         return (
           <EntityLookupField
             id={accessibility.id}
@@ -2189,6 +2208,7 @@ export function MasterDataTable({
             loading={!!resolvedEp && loadedOptions === undefined}
             placeholder={restrictedReason || (disabled ? t("selectXFirst", { name: parentLabel }) : t("selectPlaceholder"))}
             onCreate={relatedConfig ? () => setRelatedCreator({ field: f, config: relatedConfig }) : undefined}
+            optionDisabledReason={optionDisabledReason}
           />
         );
       }

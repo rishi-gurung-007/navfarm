@@ -95,7 +95,7 @@ have not opened.
   a slaughter recorded with the food-safety check skipped, a number series that
   had never once issued a code, an animal panel contradicting itself. Each was
   found by clicking, or by calling the API and then looking in MySQL.
-- **Check the database after a write.** `mysql -u root tenant_devco -e "..."`.
+- **Check the database after a write.** `mysql -u root nf_devco -e "..."`.
   A 200 response is not proof the row is right.
 - **Never invent client data.** No placeholder company names, no example
   identifiers, no "typical" values dressed as the client's. If a document does
@@ -142,7 +142,9 @@ pnpm nx lint web            # 85 errors is the accepted baseline — gate on "no
 
 - **Never run `pkill`.** It has killed a whole session here. Stop a server by a
   PID confirmed with `lsof -ti :PORT`.
-- Web dev server is **port 3002**, API **2877**. Rishi browses the app in Brave
+- Web app is **port 3002 only** (dev and start), API **2877**. Why 3002 and not
+  anything else: currently the assigned port is 3002 and other are occupied by
+  other applications in the server. Do not move it. Rishi browses the app in Brave
   while you work — **leave the dev server running** unless memory is genuinely
   red (`top -l 1 -n 0 | grep PhysMem`, `sysctl vm.swapusage`). The machine has
   8 GB and swaps hard.

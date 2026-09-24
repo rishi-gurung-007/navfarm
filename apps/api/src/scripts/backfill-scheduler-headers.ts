@@ -19,7 +19,7 @@ const host = process.env.DATABASE_HOST || 'localhost';
 const port = Number(process.env.DATABASE_PORT || 3306);
 const user = process.env.DATABASE_USERNAME || 'root';
 const password = process.env.DATABASE_PASSWORD || '';
-const masterDatabase = process.env.DATABASE_NAME || 'navfarm_master';
+const masterDatabase = process.env.DATABASE_NAME || 'nf_master';
 const tenantCode = (process.env.DEV_TENANT_CODE || 'devco').toLowerCase();
 
 const toDateOnly = (date: Date) => date.toISOString().slice(0, 10);

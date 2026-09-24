@@ -9,7 +9,7 @@
 import mysql, { RowDataPacket } from 'mysql2/promise';
 import { randomUUID } from 'crypto';
 
-const TENANT_DB = 'tenant_devco';
+const TENANT_DB = 'nf_devco';
 const OPERATOR_EMAIL = 'user@triplec.local';
 const AREA_CODE = 'PIGGERY-01';
 

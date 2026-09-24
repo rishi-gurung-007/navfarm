@@ -1977,3 +1977,95 @@ uom_master join resolves `uom_code`/`uom_name` correctly. Full API suite:
 `piggery-bbp-stage-seed.spec.ts`, 2 in `item-template.service.spec.ts`)
 reproduce identically with this session's changes stashed out — pre-existing,
 unrelated.
+
+## 2026-09-24 — A silo hangs off the farm, feeds many sheds, and holds real stock
+
+Four decisions from Rishi this session, all about the Location Master's SILO
+type and what a silo means to inventory.
+
+**A silo's parent is the FARM, never a shed.** `location_type_master` allowed
+SILO under `["FARM","SHED"]` and every one of the 53 seeded silos was parented
+to a shed — checked in MySQL before anything was changed. That was wrong twice
+over: it made the silo a peer of the pens inside one shed, and it made "which
+sheds does this silo feed" unanswerable, because a parent can only be one
+thing. Allowed parents are now `["FARM"]` in both scopes (the tenant template
+row and the company copy — master scope matching is exact, so both must move
+or the company-scoped form keeps the old rule).
+
+**One silo serves many sheds; a shed draws from exactly one silo.** Rishi's
+words: "one silo for multiple sheds or only one silo for a single shed in the
+same farm". Because the shed side is the *one* side, this is a nullable
+self-FK `location_master.feed_silo_id` on the SHED row, not a join table —
+one-silo-per-shed then cannot be violated by any code path, including a bad
+seed. The "Attached Sheds" multi-select on the silo form is a *view* of that
+column across the parent farm's sheds: selecting writes `feed_silo_id` on the
+chosen sheds, deselecting clears it. Migration `0113_silo_feed_link.sql`.
+
+**Feed flows store -> silo -> shed, and the daily entry draws from the silo.**
+The gap this closes is not the one it first appeared to be. A CONSUMPTION line
+on a daily entry already posts to `inventory_ledger` — `batch-daily-data.service.ts`
+-> `batchService.addTransaction` -> `writeNegativeEntry` — but passes no
+`warehouseId`, so every row lands with `warehouse_id` NULL and `applyFifo`
+draws stock company-wide. (`resource_ledger`, which reads like the feed path
+and whose schema comment says a resource booking has no warehouse, is dead:
+one writer, `resource-ledger.service.ts:57`, and no caller anywhere.) The fix
+is therefore to resolve a source warehouse and pass it, not to build a new
+posting path: `scheduler_header.location_id` — already loaded by `postEntry`
+and until now unused — gives the batch's shed; the shed's `feed_silo_id` gives
+the silo. "Block when short" needs no new check: `applyFifo` filters layers by
+`warehouse_id` and already throws when they do not cover the issue, so naming
+the silo *is* the block.
+
+**A shed with no silo falls back to the farm's STORE.** Bagged feed genuinely
+comes from the store — `location_master.feed_in_bags` has said so since the
+Location Master templates were loaded, and the breed lifecycle sheets read it.
+It also means the nine demo farms keep working before anyone attaches a silo:
+110 sheds exist against 53 silos, so the fallback is the common path, not the
+edge case.
+
+**Silo capacity is entered in KG or TON, and stored in KG.** Rishi: "for silo
+Capacity uom only two ton/kg". `silo_capacity_kg` keeps storing canonical
+kilograms and `silo_capacity_uom` records which unit the number was typed in,
+so the form can show it back unchanged. Renaming the column to drop the `_kg`
+was rejected: ten live references across `location.service.ts`, both DTOs,
+three seed scripts and the web config, for a cosmetic gain — and every stock
+comparison is in KG regardless. A store->silo transfer that would push the
+silo above its capacity is refused, as is one carrying a different item while
+the silo still holds stock: a silo physically holds one ration.
+
+**The existing silos were not migrated in place.** The first plan was a
+`db-*` script re-parenting the 53 rows; Rishi's instruction was to drop the
+locations, fix the seed scripts and reseed properly instead. That is the
+better call here — the seed scripts are the source of truth for this data, and
+a migration script would have left them still producing the wrong shape. In
+practice it means a full `db-rebuild-demo --apply`, because `location_master`
+is referenced `ON DELETE restrict` by batches, animals, pens and both ledgers,
+so locations cannot be dropped on their own.
+
+**Silo codes follow the parent, names are neutral, taken sheds are greyed.**
+Rishi, 2026-09-24, after seeing `VIL100/SHED-004/SILO-001` on a silo whose
+parent is the farm: codes follow the parent (`VIL100/SILO-001…007`, numbered
+per farm — what the app itself generates for a silo added through the form);
+seeded names are neutral (`VIL100 Feed Silo 3`) and staff rename them, since a
+name naming one shed goes stale the moment a second is attached; and the
+Attached Sheds picker shows a shed another silo already feeds greyed out,
+reading "Attached to <silo name>", rather than offering it and refusing it on
+save.
+
+## 2026-09-24 — Every NAVFarm database is nf_-prefixed
+
+The test RDP server's MySQL is shared with another application. Rishi's call:
+prefix every NAVFarm database — `nf_master`, `nf_system`, `nf_<tenant code>`
+(so the demo tenant is `nf_devco`). Lowercase because MySQL on Windows
+lowercases database names by default, so `NF_` would read differently per
+server. The shorter names (not `nf_navfarm_master`) were Rishi's choice; they
+mean `master` is now a reserved tenant code, since that tenant would be handed
+`nf_master`. `system` already is — it is the system tenant's own code, and
+`nf_system` is simply its `nf_<code>`.
+
+Applied everywhere, not only on the RDP server: one naming, and the rebuild's
+drop guard now accepts `^nf_` names only, so it can no longer drop a
+`tenant_*` database that belongs to someone else. The names live in
+`apps/api/src/core/database/database-names.ts`. No data was carried across —
+the RDP server is a fresh test setup, and locally the demo is rebuilt from
+empty. The TiDB demo cluster still holds `navfarm_master` and was not touched.

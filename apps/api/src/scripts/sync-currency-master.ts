@@ -30,7 +30,7 @@ const password = process.env.DATABASE_PASSWORD || '';
 const ssl = process.env.DATABASE_SSL === 'true'
   ? { minVersion: 'TLSv1.2' as const, rejectUnauthorized: true }
   : undefined;
-const masterDatabase = process.env.DATABASE_NAME || 'navfarm_master';
+const masterDatabase = process.env.DATABASE_NAME || 'nf_master';
 
 interface Plan {
   database: string;

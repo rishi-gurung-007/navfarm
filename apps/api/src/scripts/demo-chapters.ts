@@ -68,7 +68,7 @@ async function resolveTenantDbForGuard(app: Awaited<ReturnType<typeof bootApp>>)
     .from(masterSchema.tenantMaster)
     .where(eq(masterSchema.tenantMaster.tenant_code, DEMO_TENANT_CODE))
     .limit(1);
-  if (!tenant) throw new Error(`Demo tenant '${DEMO_TENANT_CODE}' not found in navfarm_master — run the master stages of the rebuild first.`);
+  if (!tenant) throw new Error(`Demo tenant '${DEMO_TENANT_CODE}' not found in nf_master — run the master stages of the rebuild first.`);
   return app.get(ConnectionManagerService).getTenantConnection(tenant);
 }
 

@@ -21,6 +21,15 @@ export interface EntityLookupDialogProps {
   multiple?: boolean;
   loading?: boolean;
   onCreate?: () => void;
+  /**
+   * Why a given row cannot be picked, or null when it can. A row with a reason
+   * is listed but greyed and inert, with the reason beside its name — the
+   * catalog stays whole and says which of its rows are spoken for, instead of
+   * quietly omitting them and leaving the gap to be discovered as a rejected
+   * save. Already-selected rows are never asked about; letting one go is how it
+   * becomes available again.
+   */
+  optionDisabledReason?: (option: LookupRow) => string | null;
 }
 
 export interface EntityLookupFieldProps {
@@ -36,6 +45,8 @@ export interface EntityLookupFieldProps {
   loading?: boolean;
   placeholder: string;
   onCreate?: () => void;
+  /** See EntityLookupDialogProps — passed straight through to the picker. */
+  optionDisabledReason?: (option: LookupRow) => string | null;
 }
 
 function stringValue(value: unknown): string {
@@ -74,6 +85,7 @@ export function EntityLookupDialog({
   multiple = false,
   loading = false,
   onCreate,
+  optionDisabledReason,
 }: EntityLookupDialogProps) {
   const [search, setSearch] = useState("");
   const selectedValues = multiple
@@ -94,8 +106,14 @@ export function EntityLookupDialog({
     });
   }, [labelKeys, options, search]);
 
+  // A selected row keeps its full behaviour whatever the caller says about it:
+  // the only way to release something already taken is to untick it here.
+  const unavailableReason = (option: LookupRow, selected: boolean) =>
+    (selected ? null : optionDisabledReason?.(option)) || null;
+
   const choose = (option: LookupRow) => {
     const nextValue = stringValue(option[valueKey]);
+    if (unavailableReason(option, selectedValues.includes(nextValue))) return;
     if (!multiple) {
       onChange(nextValue);
       onClose();
@@ -175,7 +193,32 @@ export function EntityLookupDialog({
               const optionValue = stringValue(option[valueKey]);
               const { code, name } = rowValues(option, labelKeys);
               const selected = selectedValues.includes(optionValue);
+              const unavailable = unavailableReason(option, selected);
               const selectLabel = `${selected && multiple ? "Deselect" : "Select"} ${[code, name].filter(Boolean).join(" — ") || optionValue}`;
+              // An unavailable row drops the button entirely rather than
+              // disabling one: there is nothing here to focus or press, and a
+              // row that cannot be chosen should not be a stop on the way to
+              // the rows that can. The reason takes the place of the tick, on
+              // the same line, so the eye reads name-then-why in one pass. Row
+              // height is held at the same min-h-11 the button gives the others
+              // so the list does not lurch where a greyed row sits.
+              if (unavailable) {
+                return (
+                  <TableRow
+                    key={optionValue}
+                    aria-disabled
+                    className="cursor-not-allowed bg-(--surface-raised) hover:bg-(--surface-raised)"
+                  >
+                    <TableCell className="min-h-11 font-mono text-(--text-muted)">{code || "—"}</TableCell>
+                    <TableCell className="text-(--text-muted)">
+                      <div className="flex min-h-5 flex-wrap items-center justify-between gap-x-3 gap-y-1">
+                        <span>{name || "—"}</span>
+                        <span className="italic">{unavailable}</span>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                );
+              }
               return (
                 <TableRow
                   key={optionValue}
@@ -232,6 +275,7 @@ export function EntityLookupField({
   loading = false,
   placeholder,
   onCreate,
+  optionDisabledReason,
 }: EntityLookupFieldProps) {
   const [open, setOpen] = useState(false);
   const selectedValues = multiple
@@ -298,6 +342,7 @@ export function EntityLookupField({
         multiple={multiple}
         loading={loading}
         onCreate={onCreate}
+        optionDisabledReason={optionDisabledReason}
       />
     </div>
   );

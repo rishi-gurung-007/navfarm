@@ -70,13 +70,16 @@ must not be written into terminal history. In MySQL, verify the local service:
 SELECT VERSION() AS mysql_version, @@hostname AS host, @@port AS port,
        @@datadir AS data_directory;
 SHOW VARIABLES LIKE 'bind_address';
-SHOW DATABASES LIKE 'navfarm_master';
-SHOW DATABASES LIKE 'tenant_system';
-SHOW DATABASES LIKE 'tenant\_%';
+SHOW DATABASES LIKE 'nf_master';
+SHOW DATABASES LIKE 'nf_system';
+SHOW DATABASES LIKE 'nf\_%';
 ```
 
 The database account in `apps/api/.env` must be able to create and migrate
-`navfarm_master`, `tenant_system`, and `tenant_<tenant_code>` during bootstrap.
+`nf_master`, `nf_system`, and `nf_<tenant_code>` during bootstrap.
+Every NAVFarm database starts with `nf_`, because this MySQL is shared with
+another application: grant the NAVFarm account rights on `nf\_%` only, and
+nothing NAVFarm creates or drops can land on the other application's databases.
 Keep MySQL bound locally and do not create inbound firewall rules for 3306 or
 33060.
 
@@ -106,7 +109,7 @@ DATABASE_HOST=127.0.0.1
 DATABASE_PORT=3306
 DATABASE_USERNAME=REPLACE_WITH_LOCAL_MYSQL_USER
 DATABASE_PASSWORD=REPLACE_WITH_LOCAL_MYSQL_PASSWORD
-DATABASE_NAME=navfarm_master
+DATABASE_NAME=nf_master
 DATABASE_SSL=false
 
 JWT_SECRET=REPLACE_WITH_A_LONG_RANDOM_SECRET
@@ -114,7 +117,7 @@ JWT_EXPIRES_IN=15m
 JWT_REFRESH_EXPIRES_IN=7d
 ENCRYPTION_KEY=REPLACE_WITH_A_DIFFERENT_LONG_RANDOM_SECRET
 
-SYSTEM_TENANT_DATABASE=tenant_system
+SYSTEM_TENANT_DATABASE=nf_system
 SYSTEM_ADMIN_NAME="NAVFarm System Administrator"
 SYSTEM_ADMIN_EMAIL=REPLACE_WITH_ADMIN_EMAIL
 SYSTEM_ADMIN_PASSWORD=REPLACE_WITH_A_STRONG_ADMIN_PASSWORD

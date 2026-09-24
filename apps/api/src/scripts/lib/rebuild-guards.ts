@@ -1,5 +1,11 @@
-/** The rebuild drops databases. These guards are the difference between a demo reset and data loss. */
-const NAVFARM_DATABASE = /^(navfarm_master|tenant_system|tenant_[a-z0-9_]+)$/;
+/**
+ * The rebuild drops databases. These guards are the difference between a demo
+ * reset and data loss. Every NAVFarm database is nf_-prefixed (see
+ * core/database/database-names.ts); the old navfarm_master / tenant_* names
+ * are no longer ours to drop — on a shared MySQL, tenant_* may well be someone
+ * else's.
+ */
+const NAVFARM_DATABASE = /^nf_[a-z0-9_]+$/;
 
 export function assertSafeRebuildTarget(env: Record<string, string | undefined>, databases: string[]): void {
   const host = (env.DATABASE_HOST || '127.0.0.1').trim();

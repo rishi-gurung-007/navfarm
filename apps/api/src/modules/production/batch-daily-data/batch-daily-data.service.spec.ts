@@ -22,6 +22,39 @@ describe('BatchDailyDataService', () => {
     batch_id: 'batch-1',
     company_id: 'comp-1',
     lob_id: 'lob-1',
+    // The batch's shed. Every CONSUMPTION entry now resolves its source
+    // warehouse from this — the shed's silo, or the farm store behind it.
+    location_id: 'shed-1',
+  };
+
+  /** One `.from().where().limit()` answer, in the order postEntry asks for them. */
+  const answers = (...results: unknown[][]) => {
+    for (const result of results) {
+      mockDbSelect.mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockReturnValue({
+            limit: jest.fn().mockResolvedValue(result),
+          }),
+        }),
+      });
+    }
+  };
+
+  /** findForDate's trailing read — no .limit(), so it resolves off .where(). */
+  const answerFindForDate = () => {
+    mockDbSelect.mockReturnValueOnce({
+      from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([]) }),
+    });
+  };
+
+  const consumptionLine = {
+    line_id: 'line-1',
+    scheduler_id: 'sched-1',
+    is_active: true,
+    line_type: 'CONSUMPTION',
+    item_id: 'item-feed',
+    lot_required: false,
+    activity_name: 'Morning Feed',
   };
 
   beforeEach(async () => {
@@ -139,6 +172,21 @@ describe('BatchDailyDataService', () => {
           }),
         }),
       }) // item lookup
+      .mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockReturnValue({
+            limit: jest.fn().mockResolvedValue([
+              {
+                location_id: 'shed-1',
+                location_type: 'SHED',
+                parent_location_id: 'farm-1',
+                farm_id: 'farm-1',
+                feed_silo_id: 'silo-1',
+              },
+            ]),
+          }),
+        }),
+      }) // feed source — the shed and the silo attached to it
       .mockReturnValueOnce({
         from: jest
           .fn()
@@ -622,6 +670,153 @@ describe('BatchDailyDataService', () => {
       const animalUpdate = updateSets.find((v) => v.status === 'DEAD');
       expect(animalUpdate).toBeDefined();
       delete (mockDb as any).update;
+    });
+  });
+
+  /**
+   * Client rule of 2026-09-24: feed flows farm STORE -> (stock transfer) ->
+   * SILO -> (daily entry) -> shed. Until now the CONSUMPTION leg wrote its
+   * ledger row with no warehouse_id at all, so applyFifo drew the feed from
+   * whichever layer in the company happened to be oldest — the silo standing
+   * next to the shed was not consulted. The entry now names the source.
+   */
+  describe('a feed entry draws from the shed’s silo', () => {
+    const postFeed = () =>
+      service.postEntry(
+        'batch-1',
+        { line_id: 'line-1', entry_date: '2026-09-08', entered_value: 22.5 } as any,
+        'tenant-123',
+        { userId: 'user-1' },
+      );
+
+    beforeEach(() => {
+      (batchService.addTransaction as jest.Mock).mockResolvedValue({
+        transactions: [
+          {
+            transaction_id: 'tx-1',
+            transaction_date: '2026-09-08',
+            item_id: 'item-feed',
+            transaction_type: 'CONSUMPTION',
+          },
+        ],
+      });
+    });
+
+    it('passes the silo attached to the shed as the source warehouse', async () => {
+      answers(
+        [consumptionLine],
+        [header],
+        [{ tracking_mode: 'BATCH_WISE' }],
+        [],
+        [{ item_id: 'item-feed', uom_primary: 'KG' }],
+        [{ location_id: 'shed-1', location_type: 'SHED', parent_location_id: 'farm-1', farm_id: 'farm-1', feed_silo_id: 'silo-1' }],
+      );
+      answerFindForDate();
+
+      await postFeed();
+
+      expect(batchService.addTransaction).toHaveBeenCalledWith(
+        'batch-1',
+        expect.objectContaining({ source_warehouse_id: 'silo-1' }),
+        'tenant-123',
+        { userId: 'user-1' },
+      );
+    });
+
+    // Data entry happens at PEN level on some farms; the silo is attached to
+    // the shed above it, never to the individual pen.
+    it('walks a PEN up to its shed to find the silo', async () => {
+      answers(
+        [consumptionLine],
+        [{ ...header, location_id: 'pen-3' }],
+        [{ tracking_mode: 'BATCH_WISE' }],
+        [],
+        [{ item_id: 'item-feed', uom_primary: 'KG' }],
+        [{ location_id: 'pen-3', location_type: 'PEN', parent_location_id: 'shed-1', farm_id: 'farm-1', feed_silo_id: null }],
+        [{ location_id: 'shed-1', location_type: 'SHED', parent_location_id: 'farm-1', farm_id: 'farm-1', feed_silo_id: 'silo-1' }],
+      );
+      answerFindForDate();
+
+      await postFeed();
+
+      expect(batchService.addTransaction).toHaveBeenCalledWith(
+        'batch-1',
+        expect.objectContaining({ source_warehouse_id: 'silo-1' }),
+        'tenant-123',
+        { userId: 'user-1' },
+      );
+    });
+
+    it("falls back to the farm's store when the shed has no silo attached", async () => {
+      answers(
+        [consumptionLine],
+        [header],
+        [{ tracking_mode: 'BATCH_WISE' }],
+        [],
+        [{ item_id: 'item-feed', uom_primary: 'KG' }],
+        [{ location_id: 'shed-1', location_type: 'SHED', parent_location_id: 'farm-1', farm_id: 'farm-1', feed_silo_id: null }],
+        [{ location_id: 'store-1' }],
+      );
+      answerFindForDate();
+
+      await postFeed();
+
+      expect(batchService.addTransaction).toHaveBeenCalledWith(
+        'batch-1',
+        expect.objectContaining({ source_warehouse_id: 'store-1' }),
+        'tenant-123',
+        { userId: 'user-1' },
+      );
+    });
+
+    it('refuses the entry when neither a silo nor a store can be found', async () => {
+      answers(
+        [consumptionLine],
+        [header],
+        [{ tracking_mode: 'BATCH_WISE' }],
+        [],
+        [{ item_id: 'item-feed', uom_primary: 'KG' }],
+        [{ location_id: 'shed-1', location_type: 'SHED', parent_location_id: 'farm-1', farm_id: 'farm-1', feed_silo_id: null }],
+        [],
+      );
+
+      await expect(postFeed()).rejects.toThrow(BadRequestException);
+      expect(batchService.addTransaction).not.toHaveBeenCalled();
+    });
+
+    it('refuses the entry when the stage has no location at all', async () => {
+      answers(
+        [consumptionLine],
+        [{ ...header, location_id: null }],
+        [{ tracking_mode: 'BATCH_WISE' }],
+        [],
+        [{ item_id: 'item-feed', uom_primary: 'KG' }],
+      );
+
+      await expect(postFeed()).rejects.toThrow(BadRequestException);
+      expect(batchService.addTransaction).not.toHaveBeenCalled();
+    });
+
+    // OUTPUT lines put stock IN and carry no FIFO draw, so they resolve
+    // nothing and keep behaving exactly as before.
+    it('resolves no warehouse for an OUTPUT line', async () => {
+      answers(
+        [{ ...consumptionLine, line_type: 'OUTPUT' }],
+        [header],
+        [{ tracking_mode: 'BATCH_WISE' }],
+        [],
+        [{ item_id: 'item-feed', uom_primary: 'KG' }],
+      );
+      answerFindForDate();
+
+      await postFeed();
+
+      expect(batchService.addTransaction).toHaveBeenCalledWith(
+        'batch-1',
+        expect.not.objectContaining({ source_warehouse_id: expect.anything() }),
+        'tenant-123',
+        { userId: 'user-1' },
+      );
     });
   });
 });

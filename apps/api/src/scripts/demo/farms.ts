@@ -5,9 +5,17 @@
  * `kintyre`) and every shed, silo and pen they touched was a hard-coded
  * location_code. seed-nine-farm-demo.ts then built nine farms with a regular
  * shape — `<CODE>/SHED-00n` sheds named `<CODE> <Role> House`, one
- * `<CODE>/SHED-00n/SILO-001` per shed, `<CODE>/SHED-00n/PEN-00m` pens, one
+ * `<CODE>/SILO-00n` silos, `<CODE>/SHED-00n/PEN-00m` pens, one
  * `<CODE>/STORE-001` store — so the chapters can resolve all nine by code
  * instead of naming two.
+ *
+ * A silo's code follows its parent, the farm, and numbers within it. The
+ * client's rule is that a silo stands in the yard and feeds several sheds, so
+ * the shed's `feed_silo_id` — not the location tree — is what says which silo
+ * a shed draws from, and the code deliberately says nothing about it. Codes
+ * read `<CODE>/SHED-00n/SILO-001` until 2026-09-24, which described a parent
+ * the row no longer had and disagreed with the code the app itself issues for
+ * a silo created through the Location form.
  *
  * Only the seeded sheds are considered: MUL100 and POR100 still carry the
  * legacy sheds loaded from Triple C's own location template (MUGR1, PGH2P7,
@@ -153,6 +161,9 @@ export function silosOf(farm: DemoFarm): Array<{ id: string; code: string }> {
 }
 
 /** The breed a batch on this farm runs under: the sow line, or the boar line on the AI station. */
+/** The sow line every demo farm runs — see resolveDemoFarms. */
+export const DEMO_SOW_BREED_CODE = 'Z-Line-Sow';
+
 export function batchBreedOf(farm: DemoFarm): DemoBreed | null {
   return farm.sowBreed ?? farm.boarBreed;
 }
@@ -242,9 +253,10 @@ export async function resolveDemoFarms(db: Db, companyId: string, profile: Volum
   }
   const farmIds = farmRows.map((f) => f.location_id);
 
-  // Sheds, silos and pens of the seeded structure only (the `<CODE>/SHED-`
-  // prefix); MUL100 and POR100's legacy template sheds are deliberately left
-  // out — see the file header.
+  // Sheds, silos and pens of the seeded structure, selected by farm and type
+  // rather than by any code prefix — silos no longer share the sheds' stem,
+  // and this query never filtered on one in the first place despite an older
+  // comment here claiming it did.
   const descendants = await db
     .select({
       location_id: schema.locationMaster.location_id,
@@ -252,6 +264,9 @@ export async function resolveDemoFarms(db: Db, companyId: string, profile: Volum
       location_name: schema.locationMaster.location_name,
       location_type: schema.locationMaster.location_type,
       parent_location_id: schema.locationMaster.parent_location_id,
+      // Read on the SHED rows: a silo hangs off the farm, not off the shed it
+      // feeds, so the parent link no longer says which shed draws from which.
+      feed_silo_id: schema.locationMaster.feed_silo_id,
       farm_id: schema.locationMaster.farm_id,
     })
     .from(schema.locationMaster)
@@ -312,7 +327,10 @@ export async function resolveDemoFarms(db: Db, companyId: string, profile: Volum
     const own = descendants.filter((d) => d.farm_id === farm.location_id);
     const shedPrefix = `${code}/SHED-`;
 
-    const silosByParent = new Map(own.filter((d) => d.location_type === 'SILO').map((d) => [d.parent_location_id ?? '', d]));
+    // Keyed by the silo's own id, not by its parent. Silos sit at farm level
+    // and one may feed several sheds, so a parent-keyed map would collapse
+    // every silo on the farm down to whichever one was read last.
+    const siloById = new Map(own.filter((d) => d.location_type === 'SILO').map((d) => [d.location_id, d]));
     const pensByParent = new Map<string, string[]>();
     for (const pen of own.filter((d) => d.location_type === 'PEN')) {
       const list = pensByParent.get(pen.parent_location_id ?? '') ?? [];
@@ -324,7 +342,7 @@ export async function resolveDemoFarms(db: Db, companyId: string, profile: Volum
       .filter((d) => d.location_type === 'SHED' && d.location_code.startsWith(shedPrefix))
       .sort((a, b) => a.location_code.localeCompare(b.location_code))
       .map((shed) => {
-        const silo = silosByParent.get(shed.location_id);
+        const silo = shed.feed_silo_id ? siloById.get(shed.feed_silo_id) : undefined;
         return {
           shedId: shed.location_id,
           code: shed.location_code,
@@ -341,11 +359,22 @@ export async function resolveDemoFarms(db: Db, companyId: string, profile: Volum
 
     const store = own.find((d) => d.location_type === 'STORE' && d.location_code.startsWith(`${code}/STORE-`));
 
-    const farmBreeds = breedRows.map(toBreed);
+    // Sorted by code so every pick below is the same on every rebuild. The
+    // breed query has no ORDER BY and breed ids are fresh UUIDs each time, so
+    // "the first one" used to be whichever MySQL happened to return first —
+    // one rebuild gave every farm TN-70-Sow, the next Z-Line-Sow, and the four
+    // GROWER batches came and went with it.
+    const farmBreeds = breedRows.map(toBreed).sort((a, b) => a.code.localeCompare(b.code));
     // The sow line is the one with a gestation period; boar lines have none.
+    // Z-Line-Sow by name (Rishi, 2026-09-24): it carries no GROWER stage, so
+    // the demo has no count-only GROWER batches — a choice, not a gap. Any
+    // other sow line stands in only on a database that lacks it.
     // A teaser boar is not a sire the demo mates with, so it is never chosen
     // as the farm's boar line when a real one is present.
-    const sowBreed = farmBreeds.find((b) => b.gestationDays != null) ?? null;
+    const sowBreed =
+      farmBreeds.find((b) => b.code === DEMO_SOW_BREED_CODE && b.gestationDays != null) ??
+      farmBreeds.find((b) => b.gestationDays != null) ??
+      null;
     const boarBreed =
       farmBreeds.find((b) => b.gestationDays == null && !/teaser/i.test(b.code)) ??
       farmBreeds.find((b) => b.gestationDays == null) ??

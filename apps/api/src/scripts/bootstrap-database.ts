@@ -8,6 +8,7 @@ import * as mysql from 'mysql2/promise';
 import * as master from '../core/database/master-schema';
 import * as tenant from '../core/database/schema';
 import { CURRENCY_SEED_ROWS, defaultCurrencyIdFor } from './lib/currency-seed-data';
+import { DEFAULT_MASTER_DATABASE, DEFAULT_SYSTEM_DATABASE } from '../core/database/database-names';
 
 /**
  * Upsert payload with the primary key stripped.
@@ -36,8 +37,8 @@ const password = process.env.DATABASE_PASSWORD || '';
 const ssl = process.env.DATABASE_SSL === 'true'
   ? { minVersion: 'TLSv1.2' as const, rejectUnauthorized: true }
   : undefined;
-const masterDatabase = process.env.DATABASE_NAME || 'navfarm_master';
-const systemDatabase = process.env.SYSTEM_TENANT_DATABASE || 'tenant_system';
+const masterDatabase = process.env.DATABASE_NAME || DEFAULT_MASTER_DATABASE;
+const systemDatabase = process.env.SYSTEM_TENANT_DATABASE || DEFAULT_SYSTEM_DATABASE;
 const adminEmail = process.env.SYSTEM_ADMIN_EMAIL || 'admin@navfarm.local';
 const adminPassword = process.env.SYSTEM_ADMIN_PASSWORD;
 

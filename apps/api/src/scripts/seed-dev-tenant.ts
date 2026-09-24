@@ -13,6 +13,7 @@ import { seedCode } from './lib/seed-series-code';
 import { seedDefaultCompanyRoles } from '../modules/core/role/default-role-seed';
 import { STARTER_GL_ACCOUNTS, STARTER_GL_MAPPINGS, STARTER_WAREHOUSE } from '../modules/system/setup-wizard/seed/starter-master-data.seed-data';
 import { seedActivitiesForTenant } from './seed-activity-master';
+import { DEFAULT_MASTER_DATABASE, tenantDatabaseName } from '../core/database/database-names';
 
 /**
  * One-command dev/demo environment: creates a working tenant + company +
@@ -36,7 +37,7 @@ const password = process.env.DATABASE_PASSWORD || '';
 const ssl = process.env.DATABASE_SSL === 'true'
   ? { minVersion: 'TLSv1.2' as const, rejectUnauthorized: true }
   : undefined;
-const masterDatabase = process.env.DATABASE_NAME || 'navfarm_master';
+const masterDatabase = process.env.DATABASE_NAME || DEFAULT_MASTER_DATABASE;
 
 const tenantCode = (process.env.DEV_TENANT_CODE || 'devco').toLowerCase();
 const tenantName = process.env.DEV_TENANT_NAME || 'Triple C';
@@ -92,9 +93,10 @@ export async function seedDevTenant() {
       .limit(1);
 
     // Existing tenants must reuse their registered db_name — it can differ from
-    // tenant_<code> (e.g. under an isolated DATABASE_NAME) — recomputing it here
-    const defaultPrefix = masterDatabase.startsWith('piggery_') ? 'piggery_tenant_' : 'tenant_';
-    const dbName = assertDatabaseName(existingTenant?.db_name || `${defaultPrefix}${tenantCode}`);
+    // nf_<code> (e.g. under an isolated DATABASE_NAME) — recomputing it here
+    const dbName = assertDatabaseName(existingTenant?.db_name || (masterDatabase.startsWith('piggery_')
+      ? `piggery_tenant_${tenantCode}`
+      : tenantDatabaseName(tenantCode)));
     const tenantId = existingTenant?.tenant_id || randomUUID();
 
     const server = await mysql.createConnection({ host, port, user, password, ssl });
@@ -493,9 +495,11 @@ export async function seedDevTenant() {
         const lobId = lobIdByCode.get('LVS_PIGGERY') || null;
         const locCtx = { tenantId, companyId: cc.id, nobId, lobId };
 
-        // FARM -> SHED -> (PEN seeded by the piggery script), plus a STORE on
-        // the farm and a SILO on the shed, which is the attachment the
-        // location type master allows (SILO parents: FARM or SHED).
+        // FARM -> SHED -> (PEN seeded by the piggery script), plus a STORE and
+        // a SILO on the farm — both are farm-level structures, and SILO's
+        // allowed_parent_types is ["FARM"] alone. The silo used to hang off the
+        // shed, which said the shed owned it; one silo feeds several sheds, and
+        // the shed's feed_silo_id below is what actually records the draw.
         const farmLoc = await seedLocation(tenantDb, locCtx, { key: cc.farmCode, name: cc.farmName, type: 'FARM', capacity: cc.farmCapacity });
         const farmId = farmLoc.id;
         const shedLoc = await seedLocation(tenantDb, locCtx, { key: cc.shedCode, name: cc.shedName, type: 'SHED', parent: farmLoc, subType: cc.shedType, capacity: cc.shedCapacity });
@@ -503,10 +507,24 @@ export async function seedDevTenant() {
           key: `WH-${cc.code}-MAIN`, name: `${cc.name} Central Warehouse`, type: 'STORE',
           parent: farmLoc, storageType: 'STORE', subType: STARTER_WAREHOUSE.warehouse_type,
         });
-        await seedLocation(tenantDb, locCtx, {
-          key: `SILO-${cc.code}-01`, name: `${cc.shedName} Feed Silo`, type: 'SILO',
-          parent: shedLoc, storageType: 'SILO', siloCapacityKg: 25000, siloReorderDays: 7,
+        // The name is the farm's, not the shed's. It read "Breeding & Gestation
+        // Complex Feed Silo", which said the silo belonged to that one shed —
+        // the same thing the old parent link said, and just as wrong: a silo
+        // stands in the yard and may feed several sheds. farmLoc.code rather
+        // than cc.farmCode because the former is the code the LOCATION series
+        // actually issued; cc.farmCode is only this script's handle. Staff
+        // rename it from the Silo Name field on the form (Rishi, 2026-09-24).
+        const siloLoc = await seedLocation(tenantDb, locCtx, {
+          key: `SILO-${cc.code}-01`, name: `${farmLoc.code} Feed Silo 1`, type: 'SILO',
+          parent: farmLoc, storageType: 'SILO', siloCapacityKg: 25000,
+          siloCapacityUom: 'KG', siloReorderDays: 7,
         });
+        // The one shed this dev tenant has draws from the one silo it has.
+        // Without this the feed forecast has nothing to read: the silo is no
+        // longer the shed's parent, so there is no tree left to walk.
+        await tenantDb.update(tenant.locationMaster)
+          .set({ feed_silo_id: siloLoc.id })
+          .where(eq(tenant.locationMaster.location_id, shedLoc.id));
 
         // The operational area. It was never seeded here — a later coverage
         // script created it — so a fresh dev tenant had no area at all, and an
@@ -730,7 +748,7 @@ export async function seedDevTenant() {
       console.log(`  ${u.email.padEnd(30)} ${DEV_PASSWORD.padEnd(10)} ${u.type.padEnd(19)} ${u.scope}`);
     }
     console.log('');
-    console.log(`Login:            http://localhost:3001/login?tenant=${tenantCode}`);
+    console.log(`Login:            http://localhost:3002/login?tenant=${tenantCode}`);
     console.log('Starter GL accounts, GL mappings, one warehouse, and one farm/shed are already seeded.');
     console.log('');
   } finally {

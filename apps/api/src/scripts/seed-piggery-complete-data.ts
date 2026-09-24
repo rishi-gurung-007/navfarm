@@ -20,10 +20,10 @@ const password = process.env.DATABASE_PASSWORD || '';
 const ssl = process.env.DATABASE_SSL === 'true'
   ? { minVersion: 'TLSv1.2' as const, rejectUnauthorized: true }
   : undefined;
-const masterDatabase = process.env.DATABASE_NAME || 'navfarm_master';
+const masterDatabase = process.env.DATABASE_NAME || 'nf_master';
 const isPiggeryIsolated = masterDatabase.startsWith('piggery_');
 const tenantCode = process.env.DEV_TENANT_CODE || 'devco';
-const dbName = isPiggeryIsolated ? `piggery_tenant_${tenantCode}` : `tenant_${tenantCode}`;
+const dbName = isPiggeryIsolated ? `piggery_tenant_${tenantCode}` : `nf_${tenantCode}`;
 
 export async function seedItemCategoryTree(
   db: any,
