@@ -4,11 +4,14 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   Plus, Pencil, Trash2, Search, Loader2, Inbox, Eye, SlidersHorizontal,
   ArrowUpDown, X, FileText, Info, Users, Boxes, Activity, Layers, MapPin,
-  Scale, QrCode, Landmark, Clock, ArrowRight, Edit3, Building2, Coins
+  Scale, QrCode, Landmark, Clock, ArrowRight, Edit3, Building2, Coins, MoreHorizontal,
+  CheckCircle2, Power
 } from "lucide-react";
 import { api } from "@/services/api-client";
 import { Dialog } from "@/components/ui/dialog";
 import { Drawer } from "@/components/ui/drawer";
+import { Popover } from "@/components/ui/popover";
+import { Menu, MenuItem } from "@/components/ui/menu";
 import { Field, FieldGroup } from "@/components/ui/field";
 import { InlineAlert } from "@/components/ui/alert";
 import { showToast } from "@/components/ui/toast";
@@ -478,6 +481,7 @@ export function MasterDataTable({
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Row | null>(null);
   const [viewingId, setViewingId] = useState<string | null>(null);
+  const [actionMenuRowId, setActionMenuRowId] = useState<string | null>(null);
   const [form, setForm] = useState<Row>({});
   // Pending, not-yet-added input text for each "string-list" field's chip editor, keyed by field key.
   const [chipDrafts, setChipDrafts] = useState<Record<string, string>>({});
@@ -773,80 +777,141 @@ export function MasterDataTable({
   const filterFields = (
     <div className="flex flex-col gap-4">
       {config.key === "location" && (
-        <FieldGroup title={t("mdFilterLocationHierarchy")} className="gap-y-4">
+        <FieldGroup
+          title={
+            <span className="flex items-center gap-1.5">
+              <span>{t("mdFilterLocationHierarchy")}</span>
+              <span
+                title="Filter locations hierarchically by Farm, Shed, and Pen"
+                className="cursor-help text-[var(--text-muted)] hover:text-[var(--text-primary)] transition"
+              >
+                <Info className="inline h-3.5 w-3.5" />
+              </span>
+            </span>
+          }
+          className="gap-y-4"
+        >
           <Field label={t("mdFilterFarm")} htmlFor={`master-${config.key}-filter-farm`} className="sm:col-span-6">
-            <select
-              id={`master-${config.key}-filter-farm`}
-              className={`${inputCls} nf-select`}
-              style={S.input}
-              value={filterDraft.__farm ?? ""}
-              onChange={(e) => {
-                const nextFarm = e.target.value;
-                setFilterDraft((prev) => {
-                  const out = { ...prev };
-                  if (nextFarm === "") delete out.__farm; else out.__farm = nextFarm;
-                  delete out.__shed; // a new farm invalidates whatever shed/pen was picked under the old one
-                  delete out.__pen;
-                  return out;
-                });
-              }}
-            >
-              <option value="">{t("mdFilterAll")}</option>
-              {locationFarmOptions.map((f) => (
-                <option key={String(f.location_id)} value={String(f.location_id)}>
-                  {String(f.location_code ?? f.location_name ?? f.location_id)}
-                </option>
-              ))}
-            </select>
+            <div className="relative flex items-center">
+              <select
+                id={`master-${config.key}-filter-farm`}
+                className={`${inputCls} nf-select pr-8`}
+                style={S.input}
+                value={filterDraft.__farm ?? ""}
+                onChange={(e) => {
+                  const nextFarm = e.target.value;
+                  setFilterDraft((prev) => {
+                    const out = { ...prev };
+                    if (nextFarm === "") delete out.__farm; else out.__farm = nextFarm;
+                    delete out.__shed; // a new farm invalidates whatever shed/pen was picked under the old one
+                    delete out.__pen;
+                    return out;
+                  });
+                }}
+              >
+                <option value="">{t("mdFilterAll")}</option>
+                {locationFarmOptions.map((f) => (
+                  <option key={String(f.location_id)} value={String(f.location_id)}>
+                    {String(f.location_code ?? f.location_name ?? f.location_id)}
+                  </option>
+                ))}
+              </select>
+              {filterDraft.__farm && (
+                <button
+                  type="button"
+                  aria-label="Clear Farm filter"
+                  onClick={() => setFilterDraft((prev) => {
+                    const out = { ...prev };
+                    delete out.__farm; delete out.__shed; delete out.__pen;
+                    return out;
+                  })}
+                  className="absolute right-7 p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              )}
+            </div>
           </Field>
           <Field label={t("mdFilterShed")} htmlFor={`master-${config.key}-filter-shed`} className="sm:col-span-6">
-            <select
-              id={`master-${config.key}-filter-shed`}
-              className={`${inputCls} nf-select`}
-              style={S.input}
-              value={filterDraft.__shed ?? ""}
-              disabled={!filterDraft.__farm}
-              onChange={(e) => {
-                const next = e.target.value;
-                setFilterDraft((prev) => {
-                  const out = { ...prev };
-                  if (next === "") delete out.__shed; else out.__shed = next;
-                  delete out.__pen; // a new shed invalidates whatever pen was picked under the old one
-                  return out;
-                });
-              }}
-            >
-              <option value="">{t("mdFilterAll")}</option>
-              {locationShedOptions.map((s) => (
-                <option key={String(s.location_id)} value={String(s.location_id)}>
-                  {String(s.location_code ?? s.location_name ?? s.location_id)}
-                </option>
-              ))}
-            </select>
+            <div className="relative flex items-center">
+              <select
+                id={`master-${config.key}-filter-shed`}
+                className={`${inputCls} nf-select pr-8`}
+                style={S.input}
+                value={filterDraft.__shed ?? ""}
+                disabled={!filterDraft.__farm}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  setFilterDraft((prev) => {
+                    const out = { ...prev };
+                    if (next === "") delete out.__shed; else out.__shed = next;
+                    delete out.__pen; // a new shed invalidates whatever pen was picked under the old one
+                    return out;
+                  });
+                }}
+              >
+                <option value="">{t("mdFilterAll")}</option>
+                {locationShedOptions.map((s) => (
+                  <option key={String(s.location_id)} value={String(s.location_id)}>
+                    {String(s.location_code ?? s.location_name ?? s.location_id)}
+                  </option>
+                ))}
+              </select>
+              {filterDraft.__shed && (
+                <button
+                  type="button"
+                  aria-label="Clear Shed filter"
+                  onClick={() => setFilterDraft((prev) => {
+                    const out = { ...prev };
+                    delete out.__shed; delete out.__pen;
+                    return out;
+                  })}
+                  className="absolute right-7 p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              )}
+            </div>
           </Field>
           <Field label={t("mdFilterPen")} htmlFor={`master-${config.key}-filter-pen`} className="sm:col-span-6">
-            <select
-              id={`master-${config.key}-filter-pen`}
-              className={`${inputCls} nf-select`}
-              style={S.input}
-              value={filterDraft.__pen ?? ""}
-              disabled={!filterDraft.__shed}
-              onChange={(e) => {
-                const next = e.target.value;
-                setFilterDraft((prev) => {
-                  const out = { ...prev };
-                  if (next === "") delete out.__pen; else out.__pen = next;
-                  return out;
-                });
-              }}
-            >
-              <option value="">{t("mdFilterAll")}</option>
-              {locationPenOptions.map((p) => (
-                <option key={String(p.location_id)} value={String(p.location_id)}>
-                  {String(p.location_code ?? p.location_name ?? p.location_id)}
-                </option>
-              ))}
-            </select>
+            <div className="relative flex items-center">
+              <select
+                id={`master-${config.key}-filter-pen`}
+                className={`${inputCls} nf-select pr-8`}
+                style={S.input}
+                value={filterDraft.__pen ?? ""}
+                disabled={!filterDraft.__shed}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  setFilterDraft((prev) => {
+                    const out = { ...prev };
+                    if (next === "") delete out.__pen; else out.__pen = next;
+                    return out;
+                  });
+                }}
+              >
+                <option value="">{t("mdFilterAll")}</option>
+                {locationPenOptions.map((p) => (
+                  <option key={String(p.location_id)} value={String(p.location_id)}>
+                    {String(p.location_code ?? p.location_name ?? p.location_id)}
+                  </option>
+                ))}
+              </select>
+              {filterDraft.__pen && (
+                <button
+                  type="button"
+                  aria-label="Clear Pen filter"
+                  onClick={() => setFilterDraft((prev) => {
+                    const out = { ...prev };
+                    delete out.__pen;
+                    return out;
+                  })}
+                  className="absolute right-7 p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              )}
+            </div>
           </Field>
         </FieldGroup>
       )}
@@ -864,18 +929,39 @@ export function MasterDataTable({
         return (
           <Field key={c.key} label={filterLabelFor(c.key, c.label)} htmlFor={fieldId}>
             {choices ? (
-              <select id={fieldId} className={`${inputCls} nf-select`} style={S.input}
-                value={value} onChange={(e) => set(e.target.value)}>
-                <option value="">{t("mdFilterAll")}</option>
-                {choices.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-              </select>
+              <div className="relative flex items-center">
+                <select id={fieldId} className={`${inputCls} nf-select pr-8`} style={S.input}
+                  value={value} onChange={(e) => set(e.target.value)}>
+                  <option value="">{t("mdFilterAll")}</option>
+                  {choices.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
+                {value && (
+                  <button
+                    type="button"
+                    aria-label={`Clear ${filterLabelFor(c.key, c.label)} filter`}
+                    onClick={() => set("")}
+                    className="absolute right-7 p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                )}
+              </div>
             ) : (
-              // Wrapped in asterisks on the way out: a column filter is a
-              // "contains", so a partial code finds its rows. The stars are the
-              // wire format, never shown to the person typing.
-              <input id={fieldId} className={inputCls} style={S.input}
-                value={value.replace(/^\*|\*$/g, "")} placeholder={t("mdFilterAny")}
-                onChange={(e) => set(e.target.value ? `*${e.target.value}*` : "")} />
+              <div className="relative flex items-center">
+                <input id={fieldId} className={`${inputCls} pr-8`} style={S.input}
+                  value={value.replace(/^\*|\*$/g, "")} placeholder={t("mdFilterAny")}
+                  onChange={(e) => set(e.target.value ? `*${e.target.value}*` : "")} />
+                {value && (
+                  <button
+                    type="button"
+                    aria-label={`Clear ${filterLabelFor(c.key, c.label)} filter`}
+                    onClick={() => set("")}
+                    className="absolute right-2.5 p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                )}
+              </div>
             )}
           </Field>
         );
@@ -1134,7 +1220,7 @@ export function MasterDataTable({
     formFields.forEach((f) => {
       if (f.defaultValue !== undefined) {
         initial[f.key] = f.defaultValue;
-      } else if (f.multiple && f.allOption) {
+      } else if (f.multiple && f.allOption && config.key !== "reason") {
         initial[f.key] = [String(f.allOption[f.entityValueKey || "id"])];
       } else {
         initial[f.key] = f.type === "boolean" ? false : f.type === "string-list" || f.type === "field-list" || f.multiple ? [] : "";
@@ -1493,6 +1579,24 @@ export function MasterDataTable({
       if (config.key === "location" && form.storage_type) payload.storage_type = form.storage_type;
 
       if (editing) {
+        if (config.key === "animal") {
+          delete payload.animal_type;
+          delete payload.gender;
+          delete payload.entry_type;
+          delete payload.entry_date;
+          delete payload.nob_id;
+          delete payload.lob_id;
+          delete payload.company_id;
+          delete payload.item_id;
+          delete payload.source_receipt_id;
+          delete payload.source_batch_id;
+          delete payload.acquisition_cost;
+          delete payload.landing_cost;
+          delete payload.total_opening_asset_value;
+          delete payload.current_stage_id;
+          delete payload.current_batch_id;
+          delete payload.current_location_id;
+        }
         await api.put(`${config.apiBase}/${editing[config.idKey]}`, payload);
         setModalOpen(false);
         showToast.success("Updated successfully");
@@ -2124,8 +2228,13 @@ export function MasterDataTable({
     // nativeNumber (a small bounded integer, e.g. sequence digits) never gets
     // near that quirk, so it keeps the native input — spinner included.
     const useNativeNumber = f.type === "number" && !!f.nativeNumber;
+    const maxDecimals = typeof f.step === "string" && f.step.includes(".")
+      ? f.step.split(".")[1].length
+      : (typeof f.step === "number" && String(f.step).includes(".")
+          ? String(f.step).split(".")[1].length
+          : (f.decimals !== undefined ? f.decimals : (isInteger ? 0 : 2)));
     const numberPattern = f.type === "number" && !useNativeNumber
-      ? new RegExp(`^${allowNegative ? "-?" : ""}\\d*${isInteger ? "" : "\\.?\\d*"}$`)
+      ? new RegExp(`^${allowNegative ? "-?" : ""}\\d*${maxDecimals > 0 ? `(\\.\\d{0,${maxDecimals}})?` : ""}$`)
       : undefined;
 
     return (
@@ -2167,6 +2276,9 @@ export function MasterDataTable({
           }
           // Guard for max length if input type is number (browser ignores maxLength on type=number)
           if (f.type === "number" && f.maxLength && val.length > f.maxLength) {
+            return;
+          }
+          if (f.type === "number" && f.max !== undefined && val.replace("-", "").split(".")[0].length > String(f.max).length) {
             return;
           }
           // No max-value rejection here on purpose. Editing "4" into "10" by
@@ -2425,6 +2537,78 @@ export function MasterDataTable({
       {bcOwned && <BcOwnershipNotice config={config} />}
       {administrationRestricted && <p className="rounded-lg border p-3 text-sm" style={S.raised}>Only a Tenant Admin or Company Admin can add, edit or deactivate reasons. You can view the shared catalog here.</p>}
 
+      {appliedFilterCount > 0 && (
+        <div className="flex flex-wrap items-center gap-2 pt-1 pb-1">
+          <span className="text-xs font-medium text-[var(--text-muted)]">Active filters:</span>
+          {Object.entries(colFilters).map(([k, v]) => {
+            if (!v) return null;
+            let displayKey = k;
+            let displayVal = v.replace(/^\*|\*$/g, "");
+            if (k === "__farm") {
+              displayKey = "Farm";
+              const f = locationFarmOptions.find((x) => String(x.location_id) === v);
+              if (f) displayVal = String(f.location_code || f.location_name || v);
+            } else if (k === "__shed") {
+              displayKey = "Shed";
+              const s = locationShedOptions.find((x) => String(x.location_id) === v);
+              if (s) displayVal = String(s.location_code || s.location_name || v);
+            } else if (k === "__pen") {
+              displayKey = "Pen";
+              const p = locationPenOptions.find((x) => String(x.location_id) === v);
+              if (p) displayVal = String(p.location_code || p.location_name || v);
+            } else {
+              const col = columns.find((c) => c.key === k);
+              if (col) displayKey = col.label;
+              const choices = filterChoicesFor(k);
+              const choice = choices?.find((c) => c.value === v);
+              if (choice) displayVal = choice.label;
+            }
+            return (
+              <span
+                key={k}
+                className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium bg-[var(--surface-raised)] border border-[var(--border)] text-[var(--text-primary)] shadow-xs"
+              >
+                <span className="text-[var(--text-muted)]">{displayKey}:</span>
+                <span className="font-semibold">{displayVal}</span>
+                <button
+                  type="button"
+                  aria-label={`Remove filter for ${displayKey}`}
+                  onClick={() => {
+                    setColFilters((prev) => {
+                      const next = { ...prev };
+                      delete next[k];
+                      if (k === "__farm") { delete next.__shed; delete next.__pen; }
+                      if (k === "__shed") { delete next.__pen; }
+                      return next;
+                    });
+                    setFilterDraft((prev) => {
+                      const next = { ...prev };
+                      delete next[k];
+                      if (k === "__farm") { delete next.__shed; delete next.__pen; }
+                      if (k === "__shed") { delete next.__pen; }
+                      return next;
+                    });
+                  }}
+                  className="ml-0.5 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </span>
+            );
+          })}
+          <button
+            type="button"
+            onClick={() => {
+              setColFilters({});
+              setFilterDraft({});
+            }}
+            className="text-xs font-semibold text-[var(--accent)] hover:underline ml-1 cursor-pointer"
+          >
+            Clear all
+          </button>
+        </div>
+      )}
+
       {/* The filter panel is a second column of this grid, not a layer over
           it: the table narrows and the panel takes the space, so the rows
           being filtered stay visible and nothing is buried behind a scrim. */}
@@ -2472,19 +2656,18 @@ export function MasterDataTable({
                     sale/slaughter/death". An active flag beside that says
                     nothing the Status column has not already said. */}
                 {!ownsStatusColumn && <TableHead className="text-right">{t("activeColumn")}</TableHead>}
-                <TableHead className="text-right">{t("actionsColumn")}</TableHead>
               </tr>
             </TableHeader>
             <TableBody>
               {loading ? (
                 <tr>
-                  <TableCell colSpan={columns.length + (ownsStatusColumn ? 1 : 2)} className="py-10 text-center" style={S.sub}>
+                  <TableCell colSpan={columns.length + (ownsStatusColumn ? 0 : 1)} className="py-10 text-center" style={S.sub}>
                     <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" style={S.accent} /> {t("loadingEllipsis")}
                   </TableCell>
                 </tr>
               ) : rows.length === 0 ? (
                 <tr>
-                  <TableCell colSpan={columns.length + (ownsStatusColumn ? 1 : 2)} className="py-10 text-center" style={S.sub}>
+                  <TableCell colSpan={columns.length + (ownsStatusColumn ? 0 : 1)} className="py-10 text-center" style={S.sub}>
                     <Inbox className="mx-auto mb-2 h-6 w-6" style={S.muted} />
                     {t("noRecordsYet", { name: tLabel(config.label).toLowerCase() })}
                     {!readOnly && <button onClick={openCreate} className="mt-2 block w-full font-semibold" style={S.accent}>{t("addFirstOne")}</button>}
@@ -2521,7 +2704,78 @@ export function MasterDataTable({
                             </span>
                           </TableCell>
                         ) : (
-                        <TableCell key={c.key} className="whitespace-nowrap" style={S.primary}>{displayValue(row, c.key, t("mdYes"), t("mdNo"), c)}</TableCell>
+                        <TableCell key={c.key} className="whitespace-nowrap" style={S.primary}>
+                          {c.key === columns[0]?.key ? (
+                            <div className="flex items-center justify-between gap-1.5 group">
+                              <span>{displayValue(row, c.key, t("mdYes"), t("mdNo"), c)}</span>
+                              <Popover
+                                open={actionMenuRowId === String(row[config.idKey])}
+                                onOpenChange={(isOpen) => setActionMenuRowId(isOpen ? String(row[config.idKey]) : null)}
+                                align="start"
+                                floating
+                                haspopup="menu"
+                                trigger={(props) => (
+                                  <button
+                                    {...props}
+                                    type="button"
+                                    aria-label={`Actions for ${String(row[columns[0]?.key] ?? "")}`}
+                                    title="Actions"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      props.onClick();
+                                    }}
+                                    className="p-1 rounded text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-raised)] transition cursor-pointer"
+                                  >
+                                    <MoreHorizontal className="h-4 w-4" />
+                                  </button>
+                                )}
+                              >
+                                <Menu label="Row Actions">
+                                  <MenuItem
+                                    onSelect={() => setViewingId(String(row[config.idKey]))}
+                                    leading={<Eye className="h-4 w-4 text-[var(--text-muted)]" />}
+                                  >
+                                    {t("roleColView") ?? "View Details"}
+                                  </MenuItem>
+                                  {!readOnly && (
+                                    <MenuItem
+                                      onSelect={() => openEdit(row)}
+                                      leading={<Pencil className="h-4 w-4 text-[var(--text-muted)]" />}
+                                    >
+                                      {t("edit")}
+                                    </MenuItem>
+                                  )}
+                                  {!readOnly && (config.supportsRestore ?? true) && (
+                                    <MenuItem
+                                      onSelect={() => handleToggleActive(row)}
+                                      disabled={togglingId === row[config.idKey]}
+                                      leading={
+                                        inactive ? (
+                                          <CheckCircle2 className="h-4 w-4 text-[var(--success)]" />
+                                        ) : (
+                                          <Power className="h-4 w-4 text-[var(--warning)]" />
+                                        )
+                                      }
+                                    >
+                                      {inactive ? t("restore") : t("deactivate")}
+                                    </MenuItem>
+                                  )}
+                                  {!readOnly && config.supportsDelete !== false && !(config.supportsRestore ?? true) && (
+                                    <MenuItem
+                                      onSelect={() => setConfirmDelete(row)}
+                                      tone="danger"
+                                      leading={<Trash2 className="h-4 w-4 text-[var(--danger)]" />}
+                                    >
+                                      {t("deactivate")}
+                                    </MenuItem>
+                                  )}
+                                </Menu>
+                              </Popover>
+                            </div>
+                          ) : (
+                            displayValue(row, c.key, t("mdYes"), t("mdNo"), c)
+                          )}
+                        </TableCell>
                         )
                       ))}
                       {!ownsStatusColumn && <TableCell className="text-right">
@@ -2560,21 +2814,6 @@ export function MasterDataTable({
                           </span>
                         )}
                       </TableCell>}
-                      <TableCell className="text-right">
-                        <div className="flex items-center justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>
-                          <button onClick={() => setViewingId(String(row[config.idKey]))} aria-label={`View ${singularLabel(config)}`} title="View" className="rounded-lg p-1.5 transition hover:bg-[var(--surface-raised)]" style={S.sub}>
-                            <Eye className="h-3.5 w-3.5" />
-                          </button>
-                          {!readOnly && <button onClick={() => openEdit(row)} title={t("edit")} className="rounded-lg p-1.5 transition hover:bg-[var(--surface-raised)]" style={S.sub}>
-                            <Pencil className="h-3.5 w-3.5" />
-                          </button>}
-                          {!readOnly && !(config.supportsRestore ?? true) && (
-                            <button onClick={() => setConfirmDelete(row)} title={t("deactivate")} className="rounded-lg p-1.5 transition hover:bg-[var(--danger-muted)]" style={{ color: "var(--danger)" }}>
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
-                          )}
-                        </div>
-                      </TableCell>
                     </TableRow>
                   );
                 })
@@ -2617,19 +2856,38 @@ export function MasterDataTable({
         maxWidth="xl"
         presentation="modal"
         footer={
-          <button
-            onClick={handleSave}
-            disabled={
-              saving ||
-              numbering.loading ||
-              numberingBlocks ||
-              (config.key === "item" && (!form.item_name?.trim() || !form.uom_primary?.trim()))
-            }
-            className="rounded-lg px-5 py-2 text-sm font-semibold text-white shadow-xs transition-all hover:opacity-95 active:scale-95 disabled:opacity-50 cursor-pointer"
-            style={{ backgroundColor: "var(--accent)" }}
-          >
-            {saving ? t("saving") : editing ? t("saveChanges") : t("create")}
-          </button>
+          <div className="flex items-center justify-end gap-3 w-full">
+            <button
+              type="button"
+              onClick={() => {
+                if (saving) return;
+                if (editing?.status === "DRAFT" && (!form.item_name || !String(form.item_name).trim())) {
+                  api.delete(`${config.apiBase}/${editing[config.idKey]}`).catch(() => {});
+                }
+                setModalOpen(false);
+                setActiveFormTab("");
+                setTemplateLockedFields(new Set());
+                if (createOnly) onCreateCancelled?.();
+              }}
+              disabled={saving}
+              className="rounded-lg border px-4 py-2 text-sm font-medium text-[var(--text-secondary)] hover:bg-[var(--surface-secondary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+            >
+              {t("cancel")}
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={
+                saving ||
+                numbering.loading ||
+                numberingBlocks ||
+                (config.key === "item" && (!form.item_name?.trim() || !form.uom_primary?.trim()))
+              }
+              className="rounded-lg px-5 py-2 text-sm font-semibold text-white shadow-xs transition-all hover:opacity-95 active:scale-95 disabled:opacity-50 cursor-pointer"
+              style={{ backgroundColor: "var(--accent)" }}
+            >
+              {saving ? t("saving") : editing ? t("saveChanges") : t("create")}
+            </button>
+          </div>
         }
       >
         <div className="flex flex-col gap-4">
@@ -2820,8 +3078,17 @@ export function MasterDataTable({
       <Drawer
         open={filterOpen}
         onClose={() => setFilterOpen(false)}
-        title={t("mdFilters")}
-        description={t("mdFiltersDesc", { label: tLabel(config.label) })}
+        title={
+          <span className="flex items-center gap-1.5">
+            <span>{t("mdFilters")}</span>
+            <span
+              title={t("mdFiltersDesc", { label: tLabel(config.label) })}
+              className="cursor-help text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)] transition"
+            >
+              <Info className="inline h-3.5 w-3.5" />
+            </span>
+          </span>
+        }
         footer={filterActions}
       >
         {filterFields}

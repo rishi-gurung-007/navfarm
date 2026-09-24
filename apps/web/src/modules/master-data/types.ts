@@ -367,6 +367,8 @@ export interface MasterDataConfig {
    * Conversions), so the table doesn't offer a Restore action that would 404.
    */
   supportsRestore?: boolean;
+  /** Whether the table row actions render a delete / deactivate trash button. Defaults to true. */
+  supportsDelete?: boolean;
   /**
    * Opens a detail panel beside the list when a row is clicked, narrowing the
    * table to make room. Named rather than boolean because the panel's content

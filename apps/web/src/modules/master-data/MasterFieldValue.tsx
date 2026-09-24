@@ -12,7 +12,15 @@ export function formatMasterValue(value: unknown, field?: MasterDataField): stri
   if (typeof value === "boolean") return value ? "Yes" : "No";
   if (Array.isArray(value) && !value.length) return field?.multiple ? "All stages" : "—";
   if (Array.isArray(value) && value.every((entry) => typeof entry === "string")) return value.join(", ");
-  if (field?.type === "number" && Number.isFinite(Number(value))) return String(Number(value));
+  if (field?.type === "number" && Number.isFinite(Number(value))) {
+    const num = Number(value);
+    if (field?.key === "gps_latitude" || field?.key === "gps_longitude") {
+      return String(num);
+    }
+    const isInt = field?.step === "1" || (!field?.step && Number.isInteger(num));
+    if (isInt) return String(num);
+    return Number.isInteger(num) ? String(num) : num.toLocaleString("en-US", { maximumFractionDigits: 2 });
+  }
   // TDD row 102 asks for DD/MM/YYYY. Read the parts off the raw string rather
   // than through Date's local timezone, which shifts a bare "2026-09-08" back a
   // day for anyone west of UTC and would misdate a record on its own detail page.

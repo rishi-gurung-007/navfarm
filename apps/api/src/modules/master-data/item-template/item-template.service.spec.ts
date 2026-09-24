@@ -1,7 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ItemTemplateService } from './item-template.service';
 import { ClsService } from 'nestjs-cls';
-import { BadRequestException, NotFoundException, ConflictException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 
 describe('ItemTemplateService', () => {
   let service: ItemTemplateService;
@@ -108,13 +108,15 @@ describe('ItemTemplateService', () => {
       mockDbSelect.mockReturnValueOnce({
         from: jest.fn().mockReturnValue({
           innerJoin: jest.fn().mockReturnValue({
-            where: jest.fn().mockReturnValue({
-              limit: jest.fn().mockResolvedValue([{
-                id: 'tmpl-1',
-                template_code: 'TMPL-FEED',
-                template_description: 'Feed Template',
-                is_active: true,
-              }]),
+            leftJoin: jest.fn().mockReturnValue({
+              where: jest.fn().mockReturnValue({
+                limit: jest.fn().mockResolvedValue([{
+                  id: 'tmpl-1',
+                  template_code: 'TMPL-FEED',
+                  template_description: 'Feed Template',
+                  is_active: true,
+                }]),
+              }),
             }),
           }),
         }),
@@ -148,7 +150,9 @@ describe('ItemTemplateService', () => {
       mockDbSelect.mockReturnValueOnce({
         from: jest.fn().mockReturnValue({
           innerJoin: jest.fn().mockReturnValue({
-            where: jest.fn().mockResolvedValue(activeTemplates),
+            leftJoin: jest.fn().mockReturnValue({
+              where: jest.fn().mockResolvedValue(activeTemplates),
+            }),
           }),
         }),
       });

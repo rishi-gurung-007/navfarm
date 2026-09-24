@@ -318,6 +318,7 @@ function BreedingRecordTable({
                                 ["Mummified", fmt(f.piglets_mummified)], ["Avg birth weight", fmt(f.avg_birth_weight_kg)],
                                 [Number(f.piglets_weaned) > 0 ? "Weaning date" : "Planned weaning", fmt(f.weaning_date)],
                                 ["Avg weaning weight", fmt(f.avg_weaning_weight_kg)],
+                                ["Litter mass weaned", Number(f.piglets_weaned) > 0 && Number(f.avg_weaning_weight_kg) > 0 ? `${(Number(f.piglets_weaned) * Number(f.avg_weaning_weight_kg)).toFixed(1)} kg` : ""],
                               ]} />
                             )}
                           </div>
@@ -396,6 +397,74 @@ export default function AnimalDetailPanel({ row, onClose }: { row: Row; onClose:
   const lineage: Row = breeding?.lineage ?? { offspring: [] };
   const current: Row = breeding?.current_labels ?? {};
   const isMale = row.gender === "M" || row.animal_type === "BOAR";
+
+  const sowStats = useMemo(() => {
+    if (isMale) return null;
+
+    if (breeding?.sow_summary) {
+      const s = breeding.sow_summary;
+      return {
+        totalBornDead: s.born_dead_count ?? 0,
+        totalMummified: s.mummified_count ?? 0,
+        mortalityPct: s.mortality_pct !== null && s.mortality_pct !== undefined
+          ? `${s.mortality_pct}%`
+          : "",
+        totalLitterMassWeanedKg: s.total_litter_mass_weaned_kg !== null && s.total_litter_mass_weaned_kg !== undefined
+          ? `${s.total_litter_mass_weaned_kg} kg`
+          : "",
+        totalBornLive: s.total_born_live ?? Number(row.total_piglets_born_live) ?? 0,
+        totalWeaned: s.total_weaned ?? Number(row.total_piglets_weaned) ?? 0,
+      };
+    }
+
+    const bornLiveFromFarrowings = farrowings.reduce((sum, f) => sum + (Number(f.piglets_born_live) || 0), 0);
+    const weanedFromFarrowings = farrowings.reduce((sum, f) => sum + (Number(f.piglets_weaned) || 0), 0);
+
+    const totalBornLive = bornLiveFromFarrowings > 0 ? bornLiveFromFarrowings : (Number(row.total_piglets_born_live) || 0);
+    const totalWeaned = weanedFromFarrowings > 0 ? weanedFromFarrowings : (Number(row.total_piglets_weaned) || 0);
+
+    const totalBornDead = farrowings.reduce((sum, f) => {
+      if (f.piglets_stillborn !== undefined && f.piglets_stillborn !== null && f.piglets_stillborn !== "") {
+        return sum + (Number(f.piglets_stillborn) || 0);
+      }
+      const tot = Number(f.piglets_born_total) || 0;
+      const live = Number(f.piglets_born_live) || 0;
+      const mum = Number(f.piglets_mummified) || 0;
+      return sum + Math.max(0, tot - live - mum);
+    }, 0);
+
+    const totalMummified = farrowings.reduce((sum, f) => sum + (Number(f.piglets_mummified) || 0), 0);
+
+    let mortalityPct = "";
+    if (totalBornLive > 0) {
+      const deaths = Math.max(0, totalBornLive - totalWeaned);
+      mortalityPct = `${((deaths / totalBornLive) * 100).toFixed(1)}%`;
+    } else if (totalBornDead + totalMummified > 0) {
+      mortalityPct = "100.0%";
+    } else if (row.parity_count !== null && row.parity_count !== undefined && Number(row.parity_count) > 0) {
+      mortalityPct = "0.0%";
+    }
+
+    let totalLitterMassWeanedKg = 0;
+    let hasWeanWeight = false;
+    for (const f of farrowings) {
+      const weaned = Number(f.piglets_weaned) || 0;
+      const avgWt = Number(f.avg_weaning_weight_kg) || 0;
+      if (weaned > 0 && avgWt > 0) {
+        totalLitterMassWeanedKg += weaned * avgWt;
+        hasWeanWeight = true;
+      }
+    }
+
+    return {
+      totalBornLive,
+      totalWeaned,
+      totalBornDead,
+      totalMummified,
+      mortalityPct,
+      totalLitterMassWeanedKg: hasWeanWeight ? `${totalLitterMassWeanedKg.toFixed(1)} kg` : "",
+    };
+  }, [isMale, breeding, farrowings, row.total_piglets_born_live, row.total_piglets_weaned, row.parity_count]);
 
   const timeline = useMemo<TimelineEvent[]>(() => {
     const events: TimelineEvent[] = [];
@@ -580,8 +649,32 @@ export default function AnimalDetailPanel({ row, onClose }: { row: Row; onClose:
             />
             {!isMale && <ReadField label="No. of teats" value={fmt(row.no_of_teats)} />}
             {!isMale && <ReadField label="Parity count" value={fmt(row.parity_count)} />}
-            {!isMale && <ReadField label="Piglets born live" value={fmt(row.total_piglets_born_live)} />}
-            {!isMale && <ReadField label="Piglets weaned" value={fmt(row.total_piglets_weaned)} />}
+            {!isMale && <ReadField label="Piglets born live" value={fmt(sowStats?.totalBornLive ?? row.total_piglets_born_live)} />}
+            {!isMale && (
+              <ReadField
+                label="Born dead"
+                value={loading && !breeding ? <Loader2 className="h-3.5 w-3.5 animate-spin" style={S.muted} /> : String(sowStats?.totalBornDead ?? 0)}
+              />
+            )}
+            {!isMale && (
+              <ReadField
+                label="Mummified piglets"
+                value={loading && !breeding ? <Loader2 className="h-3.5 w-3.5 animate-spin" style={S.muted} /> : String(sowStats?.totalMummified ?? 0)}
+              />
+            )}
+            {!isMale && <ReadField label="Piglets weaned" value={fmt(sowStats?.totalWeaned ?? row.total_piglets_weaned)} />}
+            {!isMale && (
+              <ReadField
+                label="Mortality percentage"
+                value={loading && !breeding ? <Loader2 className="h-3.5 w-3.5 animate-spin" style={S.muted} /> : (sowStats?.mortalityPct || "—")}
+              />
+            )}
+            {!isMale && (
+              <ReadField
+                label="Total litter mass weaned"
+                value={loading && !breeding ? <Loader2 className="h-3.5 w-3.5 animate-spin" style={S.muted} /> : (sowStats?.totalLitterMassWeanedKg || "—")}
+              />
+            )}
             <ReadField label="Book value" value={fmt(row.book_value)} />
             <ReadField label="Expected cull date" value={fmt(row.expected_cull_date)} />
             {/* Disposal is set by the Dispose action, which checks withdrawal

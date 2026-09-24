@@ -148,7 +148,7 @@ export class UomService {
     const [uom] = await this.db
       .select()
       .from(schema.uomMaster)
-      .where(and(eq(schema.uomMaster.uom_id, id), isNull(schema.uomMaster.deleted_at)))
+      .where(eq(schema.uomMaster.uom_id, id))
       .limit(1);
 
     if (!uom) {
@@ -396,7 +396,7 @@ export class UomService {
       from_uom: dto.from_uom.toUpperCase(),
       to_uom: dto.to_uom.toUpperCase(),
       conversion_factor: dto.conversion_factor.toString(),
-      effective_from: dto.effective_from,
+      effective_from: dto.effective_from || new Date().toISOString().split('T')[0],
       effective_to: dto.effective_to || null,
       is_active: true,
       status: 'ACTIVE',

@@ -110,20 +110,20 @@ export class CreateBreedDto {
   @IsNotEmpty()
   breed_name: string;
 
-  @ApiProperty({ description: 'Species UUID link', example: '00000000-0000-0000-0000-000000000000' })
+  @ApiProperty({ description: 'Species UUID link', required: false, example: '00000000-0000-0000-0000-000000000000' })
   @IsUUID()
-  @IsNotEmpty()
-  species_id: string;
+  @IsOptional()
+  species_id?: string;
 
   @ApiProperty({ description: 'Legacy text description of species', required: false, example: 'Chicken' })
   @IsString()
   @IsOptional()
   species?: string;
 
-  @ApiProperty({ description: 'Breed type classification', example: 'BROILER', enum: ['BROILER', 'LAYER', 'BREEDER', 'DUAL_PURPOSE', 'DAIRY', 'BEEF', 'MEAT', 'TREE', 'FISH'] })
+  @ApiProperty({ description: 'Breed type classification', required: false, example: 'BROILER', enum: ['BROILER', 'LAYER', 'BREEDER', 'DUAL_PURPOSE', 'DAIRY', 'BEEF', 'MEAT', 'TREE', 'FISH'] })
   @IsString()
-  @IsNotEmpty()
-  breed_type: string;
+  @IsOptional()
+  breed_type?: string;
 
   @ApiProperty({ description: 'Average daily growth rate in grams', required: false, example: 52.4 })
   @IsNumber()

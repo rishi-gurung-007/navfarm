@@ -114,8 +114,8 @@ const location: MasterDataConfig = {
     // store this is; this says which one — MULTIPLIER writes MGH1 against each
     // grower house, Porta writes PSL FS - 01 and STORE.
     { key: "storage_name", label: "Silo / Store Name", type: "text", maxLength: 100, placeholder: "MGH1", visibleWhen: { anyOf: [{ key: "storage_type", equals: ["STORE", "SILO"] }] }, helpText: "The name or number this silo or store is known by on the farm.", section: "Identification" },
-    { key: "gps_latitude", label: "Latitude", type: "number", min: -90, max: 90, step: "0.00000001", placeholder: "-17.82722000", helpText: "GPS latitude in decimal degrees, e.g. -17.82722000.", section: "Identification" },
-    { key: "gps_longitude", label: "Longitude", type: "number", min: -180, max: 180, step: "0.00000001", placeholder: "30.99755000", helpText: "GPS longitude in decimal degrees, e.g. 30.99755000.", section: "Identification" },
+    { key: "gps_latitude", label: "Latitude", type: "number", min: -90, max: 90, step: "0.00000001", placeholder: "-17.82722000", visibleWhen: { anyOf: [{ key: "location_type", equals: "FARM" }] }, helpText: "GPS latitude in decimal degrees, e.g. -17.82722000. Applies to Farm only.", section: "Identification" },
+    { key: "gps_longitude", label: "Longitude", type: "number", min: -180, max: 180, step: "0.00000001", placeholder: "30.99755000", visibleWhen: { anyOf: [{ key: "location_type", equals: "FARM" }] }, helpText: "GPS longitude in decimal degrees, e.g. 30.99755000. Applies to Farm only.", section: "Identification" },
   ],
 };
 
@@ -132,7 +132,7 @@ const stage: MasterDataConfig = {
   isPrimary: true,
   supportsNobLobFilter: true,
   columns: [
-    { key: "stage_sequence", label: "#" },
+    { key: "stage_sequence", label: "Display Order" },
     { key: "stage_code", label: "Code" },
     { key: "stage_name", label: "Name" },
     { key: "stage_category", label: "Category" },
@@ -148,10 +148,10 @@ const stage: MasterDataConfig = {
       key: "stage_category", label: "Category", type: "select", required: true, section: "Identification",
       options: ["PRE_PRODUCTIVE", "PRODUCTIVE", "OUTPUT", "DISPOSAL"].map((v) => ({ value: v, label: v.replace(/_/g, " ") })),
     },
-    { key: "stage_sequence", label: "Display Order", type: "number", min: 1, required: true, helpText: "Must be unique per Line of Business.", section: "Identification" },
-    { key: "stage_description", label: "Description", type: "text", section: "Identification" },
-    { key: "typical_duration_days", label: "Duration (days)", type: "number", min: 0, section: "Duration" },
-    { key: "min_days_before_move", label: "Min Days Before Move", type: "number", min: 0, helpText: "Minimum days in this stage before a transition is allowed.", section: "Duration" },
+    { key: "stage_sequence", label: "Display Order", type: "number", min: 1, max: 999, maxLength: 3, required: true, helpText: "Must be unique per Line of Business (max 3 digits).", section: "Identification" },
+    { key: "stage_description", label: "Description", type: "text", maxLength: 50, section: "Identification" },
+    { key: "typical_duration_days", label: "Duration (days)", type: "number", min: 0, max: 999, maxLength: 3, section: "Duration" },
+    { key: "min_days_before_move", label: "Min Days Before Move", type: "number", min: 0, max: 999, maxLength: 3, helpText: "Minimum days in this stage before a transition is allowed.", section: "Duration" },
     {
       // EVENT_BASED added 2026-09-21, client review — the schema column
       // comment already named it; nothing wired it until now. This records
@@ -167,7 +167,7 @@ const stage: MasterDataConfig = {
     // that reveals it, not back in Duration where filling it in meant
     // switching tabs.
     {
-      key: "auto_move_on_day", label: "Auto-Move On Day", type: "number", min: 1, section: "Transitions",
+      key: "auto_move_on_day", label: "Auto-Move On Day", type: "number", min: 1, max: 999, maxLength: 3, section: "Transitions",
       helpText: "Required when Transition Trigger is Auto By Day.",
       visibleWhen: { anyOf: [{ key: "transition_trigger", equals: "AUTO_BY_DAY" }] },
       requiredWhen: { anyOf: [{ key: "transition_trigger", equals: "AUTO_BY_DAY" }] },
@@ -213,6 +213,8 @@ const numberSeries: MasterDataConfig = {
   group: "Production",
   isPrimary: true,
   supportsNobLobFilter: false,
+  supportsRestore: true,
+  supportsDelete: false,
   columns: [
     { key: "code", label: "Code" },
     { key: "document_type", label: "Applies To" },
@@ -272,7 +274,7 @@ const numberSeries: MasterDataConfig = {
 
 const activity: MasterDataConfig = {
   key: "activity",
-  label: "Activities",
+  label: "Activity",
   description: "Standard activities catalog (feed, vaccines, weigh, tasks) used across schedulers and daily data entry.",
   apiBase: "/activity",
   idKey: "activity_id",
@@ -283,15 +285,14 @@ const activity: MasterDataConfig = {
   columns: [
     { key: "activity_code", label: "Code" },
     { key: "activity_name", label: "Name" },
-    { key: "line_type", label: "Line Type" },
-    { key: "description", label: "Description" },
+    { key: "line_type", label: "Activity Type" },
   ],
   fields: [
     { key: "company_id", label: "Company", type: "text", hideInForm: true },
     { key: "activity_code", label: "Activity Code", type: "text", required: true, placeholder: "e.g. MORN_FEED", createOnly: true, helpText: "Short unique uppercase code (e.g. MORN_FEED) for lookups and reporting." },
     { key: "activity_name", label: "Activity Name", type: "text", required: true, placeholder: "e.g. Morning Feed" },
     {
-      key: "line_type", label: "Line Type", type: "select", required: true,
+      key: "line_type", label: "Activity Type", type: "select", required: true,
       options: [
         { value: "CONSUMPTION", label: "CONSUMPTION" },
         { value: "OUTPUT", label: "OUTPUT" },
@@ -303,7 +304,7 @@ const activity: MasterDataConfig = {
     },
     { key: "nob_id", label: "Nature of Business", type: "select-entity", entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], helpText: "Leave blank if this activity is shared across all business verticals." },
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank if this activity is shared across all LOBs under the selected NOB." },
-    { key: "description", label: "Description", type: "textarea", placeholder: "Optional notes or instructions for this activity" },
+    { key: "description", label: "Description", type: "text", maxLength: 50, placeholder: "Optional notes or instructions for this activity" },
   ],
 };
 
@@ -323,6 +324,7 @@ const animal: MasterDataConfig = {
   group: "Piggery",
   isPrimary: true,
   supportsRestore: false,
+  supportsDelete: false,
   detailPanel: "animal",
   // The in-herd statuses. CULLED / DEAD / SOLD / SLAUGHTERED mean the animal
   // has left; Dispose sets those, after checking medicine withdrawal periods
@@ -338,10 +340,10 @@ const animal: MasterDataConfig = {
   fields: [
     { key: "animal_code", label: "Animal Code", type: "text", required: true, createOnly: true, section: "Identification" },
     { key: "company_id", label: "Company", type: "text", hideInForm: true },
-    { key: "nob_id", label: "Nature of Business", type: "select-entity", required: true, entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], section: "Identification" },
-    { key: "lob_id", label: "Line of Business", type: "select-entity", required: true, entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", section: "Identification" },
+    { key: "nob_id", label: "Nature of Business", type: "select-entity", required: true, createOnly: true, entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], section: "Identification" },
+    { key: "lob_id", label: "Line of Business", type: "select-entity", required: true, createOnly: true, entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", section: "Identification" },
     {
-      key: "animal_type", label: "Animal Type", type: "select", required: true, section: "Identification",
+      key: "animal_type", label: "Animal Type", type: "select", required: true, createOnly: true, section: "Identification",
       options: ["SOW", "BOAR", "GILT", "PIGLET", "COMMERCIAL_PIG"].map((v) => ({ value: v, label: v.replace(/_/g, " ") })),
     },
     // A Breed profile is per-farm, so the farm is what tells two otherwise
@@ -354,7 +356,7 @@ const animal: MasterDataConfig = {
       section: "Identification",
     },
     {
-      key: "gender", label: "Gender", type: "select", required: true, section: "Identification",
+      key: "gender", label: "Gender", type: "select", required: true, createOnly: true, section: "Identification",
       options: [{ value: "F", label: "Female" }, { value: "M", label: "Male" }],
     },
     { key: "dob", label: "Date of Birth", type: "date", helpText: "Leave blank if born on this farm and unknown, or imported/unknown.", section: "Identification" },
@@ -365,10 +367,10 @@ const animal: MasterDataConfig = {
     { key: "sire_animal_id", label: "Sire (Father)", type: "select-entity", searchable: true, entityEndpoint: "/animal", entityValueKey: "animal_id", entityLabelKeys: ["animal_code"], section: "Lineage" },
     { key: "dam_animal_id", label: "Dam (Mother)", type: "select-entity", searchable: true, entityEndpoint: "/animal", entityValueKey: "animal_id", entityLabelKeys: ["animal_code"], section: "Lineage" },
     {
-      key: "entry_type", label: "Entry Type", type: "select", required: true, section: "Acquisition",
+      key: "entry_type", label: "Entry Type", type: "select", required: true, createOnly: true, section: "Acquisition",
       options: ["PURCHASED_IMPORTED", "PURCHASED_LOCAL", "BORN_ON_FARM", "TRANSFERRED_IN"].map((v) => ({ value: v, label: v.replace(/_/g, " ") })),
     },
-    { key: "entry_date", label: "Entry Date", type: "date", required: true, section: "Acquisition" },
+    { key: "entry_date", label: "Entry Date", type: "date", required: true, createOnly: true, section: "Acquisition" },
     // Sits with Entry Date rather than beside Date of Birth (where the master
     // template puts it) because it is the entry that gives it meaning, and the
     // two dates it is computed from are the ones either side of it here.
@@ -379,11 +381,11 @@ const animal: MasterDataConfig = {
     // enforced these as COND rules and rejected the wrong combination; the form
     // asked for both from everyone, so a born-on-farm piglet was offered a
     // goods receipt it could never legally carry.
-    { key: "source_receipt_id", searchable: true, label: "Source Goods Receipt", type: "select-entity", entityEndpoint: "/goods-receipt", entityValueKey: "receipt_id", entityLabelKeys: ["receipt_no"], visibleWhen: { anyOf: [{ key: "entry_type", equals: ["PURCHASED_IMPORTED", "PURCHASED_LOCAL"] }] }, requiredWhen: { anyOf: [{ key: "entry_type", equals: ["PURCHASED_IMPORTED", "PURCHASED_LOCAL"] }] }, helpText: "The receipt this animal arrived on.", section: "Acquisition" },
-    { key: "source_batch_id", searchable: true, label: "Source Batch", type: "select-entity", entityEndpoint: "/batch", entityValueKey: "batch_id", entityLabelKeys: ["batch_no"], visibleWhen: { anyOf: [{ key: "entry_type", equals: "BORN_ON_FARM" }] }, requiredWhen: { anyOf: [{ key: "entry_type", equals: "BORN_ON_FARM" }] }, helpText: "The farrowing batch this animal was born from.", section: "Acquisition" },
+    { key: "source_receipt_id", searchable: true, label: "Source Goods Receipt", type: "select-entity", createOnly: true, entityEndpoint: "/goods-receipt", entityValueKey: "receipt_id", entityLabelKeys: ["receipt_no"], visibleWhen: { anyOf: [{ key: "entry_type", equals: ["PURCHASED_IMPORTED", "PURCHASED_LOCAL"] }] }, requiredWhen: { anyOf: [{ key: "entry_type", equals: ["PURCHASED_IMPORTED", "PURCHASED_LOCAL"] }] }, helpText: "The receipt this animal arrived on.", section: "Acquisition" },
+    { key: "source_batch_id", searchable: true, label: "Source Batch", type: "select-entity", createOnly: true, entityEndpoint: "/batch", entityValueKey: "batch_id", entityLabelKeys: ["batch_no"], visibleWhen: { anyOf: [{ key: "entry_type", equals: "BORN_ON_FARM" }] }, requiredWhen: { anyOf: [{ key: "entry_type", equals: "BORN_ON_FARM" }] }, helpText: "The farrowing batch this animal was born from.", section: "Acquisition" },
     // LIVESTOCK is the item type seeded for living biological assets. There is
     // no LIVING_ASSET item type; using it here left this required picker empty.
-    { key: "item_id", searchable: true, label: "Item (Living Asset)", type: "select-entity", required: true, entityEndpoint: "/item?itemType=LIVESTOCK", entityValueKey: "item_id", entityLabelKeys: ["item_code", "item_name"], section: "Acquisition" },
+    { key: "item_id", searchable: true, label: "Item (Living Asset)", type: "select-entity", required: true, createOnly: true, entityEndpoint: "/item?itemType=LIVESTOCK", entityValueKey: "item_id", entityLabelKeys: ["item_code", "item_name"], section: "Acquisition" },
     // Two fields, one column. A purchased animal's cost is read off its goods
     // receipt by the API and anything typed here is discarded, so offering an
     // editable box for it would take input it then throws away. Everything else
@@ -391,15 +393,15 @@ const animal: MasterDataConfig = {
     // max mirrors the DTO's @Max — animal_register.acquisition_cost/landing_cost
     // are decimal(18,4) (schema.ts); this is that column's own ceiling, not a
     // client-specified business limit.
-    { key: "acquisition_cost", label: "Acquisition Cost", type: "number", step: "0.01", min: 0, max: 99999999999999, readOnly: true, visibleWhen: { anyOf: [{ key: "entry_type", equals: ["PURCHASED_IMPORTED", "PURCHASED_LOCAL"] }] }, helpText: "Taken from the rate on the source goods receipt.", section: "Acquisition" },
-    { key: "acquisition_cost", label: "Acquisition Cost", type: "number", step: "0.01", min: 0, max: 99999999999999, requiredWhen: { anyOf: [{ key: "entry_type", equals: ["BORN_ON_FARM", "TRANSFERRED_IN"] }] }, visibleWhen: { anyOf: [{ key: "entry_type", equals: ["BORN_ON_FARM", "TRANSFERRED_IN"] }] }, section: "Acquisition" },
-    { key: "landing_cost", label: "Landing Cost", type: "number", step: "0.01", min: 0, max: 99999999999999, helpText: "Transport/import duty/quarantine charges for imported animals.", section: "Acquisition" },
+    { key: "acquisition_cost", label: "Acquisition Cost", type: "number", step: "0.01", min: 0, max: 99999999999999, readOnly: true, createOnly: true, visibleWhen: { anyOf: [{ key: "entry_type", equals: ["PURCHASED_IMPORTED", "PURCHASED_LOCAL"] }] }, helpText: "Taken from the rate on the source goods receipt.", section: "Acquisition" },
+    { key: "acquisition_cost", label: "Acquisition Cost", type: "number", step: "0.01", min: 0, max: 99999999999999, createOnly: true, requiredWhen: { anyOf: [{ key: "entry_type", equals: ["BORN_ON_FARM", "TRANSFERRED_IN"] }] }, visibleWhen: { anyOf: [{ key: "entry_type", equals: ["BORN_ON_FARM", "TRANSFERRED_IN"] }] }, section: "Acquisition" },
+    { key: "landing_cost", label: "Landing Cost", type: "number", step: "0.01", min: 0, max: 99999999999999, createOnly: true, helpText: "Transport/import duty/quarantine charges for imported animals.", section: "Acquisition" },
     // Acquisition Cost + Landing Cost, computed by the service on save. Shown
     // rather than hidden because it is the figure the opening bio-asset value
     // and the whole amortisation schedule are built from, so it belongs where
     // the two numbers that make it are. Read-only: the service recomputes it
     // from those two on every write, so an entered figure would be overwritten.
-    { key: "total_opening_asset_value", label: "Total Opening Asset Value", type: "number", step: "0.01", min: 0, readOnly: true, helpText: "Acquisition Cost + Landing Cost. Calculated on save.", section: "Acquisition" },
+    { key: "total_opening_asset_value", label: "Total Opening Asset Value", type: "number", step: "0.01", min: 0, readOnly: true, createOnly: true, helpText: "Acquisition Cost + Landing Cost. Calculated on save.", section: "Acquisition" },
     // Bio-Asset shows for males too (Rishi, 2026-09-15, reversing the
     // female-only call of 2026-09-08). Book value, amortisation and residual
     // value are IAS 41 figures that apply to any biological asset — a boar
@@ -412,18 +414,17 @@ const animal: MasterDataConfig = {
     { key: "total_amortised", label: "Total Amortised", type: "number", step: "0.01", min: 0, editOnly: true, section: "Bio-Asset" },
     { key: "amortisation_monthly", label: "Monthly Amortisation", type: "number", step: "0.01", min: 0, editOnly: true, section: "Bio-Asset" },
     { key: "residual_value", label: "Residual Value", type: "number", step: "0.01", min: 0, editOnly: true, section: "Bio-Asset" },
-    // An input, on create as well as edit (2026-09-15). The old help text said
-    // it was derived from the breed's productive life; nothing derives it, so
-    // the date is whatever is entered here.
-    { key: "expected_cull_date", label: "Expected Cull Date", type: "date", section: "Production" },
     { key: "disposal_date", label: "Disposal Date", type: "date", hideInForm: true, helpText: "Set via the Dispose action, not direct edit.", section: "Bio-Asset" },
     { key: "disposal_type", label: "Disposal Type", type: "text", hideInForm: true, helpText: "Set via the Dispose action, not direct edit.", section: "Bio-Asset" },
-    { key: "no_of_teats", label: "No. of Teats", type: "number", min: 0, helpText: "BBP §6: below 15 blocks this gilt from selection regardless of TSI score.", visibleWhen: { anyOf: [{ key: "gender", equals: "F" }] }, section: "Bio-Asset" },
-    { key: "tsi", label: "TSI", type: "number", step: "0.01", min: 0, helpText: "Total Sow Index score.", section: "Bio-Asset" },
-    { key: "grading", label: "Grading", type: "text", section: "Bio-Asset" },
-    { key: "current_stage_id", label: "Current Stage", type: "select-entity", entityEndpoint: "/stage", entityValueKey: "stage_id", entityLabelKeys: ["stage_code", "stage_name"], section: "Current Position" },
-    { key: "current_batch_id", label: "Current Batch", type: "select-entity", searchable: true, entityEndpoint: "/batch", entityValueKey: "batch_id", entityLabelKeys: ["batch_no"], section: "Current Position" },
-    { key: "current_location_id", label: "Current Pen", type: "select-entity", searchable: true, entityEndpoint: "/location?locationType=PEN", entityValueKey: "location_id", entityLabelKeys: ["location_code", "location_name"], helpText: "Animals are placed in Pens only.", section: "Current Position" },
+    { key: "no_of_teats", label: "No. of Teats", type: "number", min: 0, max: 99, helpText: "BBP §6: below 15 blocks this gilt from selection regardless of TSI score.", visibleWhen: { anyOf: [{ key: "gender", equals: "F" }] }, requiredWhen: { anyOf: [{ key: "gender", equals: "F" }] }, section: "Bio-Asset" },
+    { key: "tsi", label: "TSI", type: "number", step: "0.01", min: 0, max: 999, helpText: "Total Sow Index score.", section: "Bio-Asset" },
+    {
+      key: "grading", label: "Grading", type: "select", section: "Bio-Asset",
+      options: [{ value: "1", label: "1" }, { value: "2", label: "2" }, { value: "3", label: "3" }],
+    },
+    { key: "current_stage_id", label: "Current Stage", type: "select-entity", createOnly: true, entityEndpoint: "/stage", entityValueKey: "stage_id", entityLabelKeys: ["stage_code", "stage_name"], section: "Current Position" },
+    { key: "current_batch_id", label: "Current Batch", type: "select-entity", searchable: true, createOnly: true, entityEndpoint: "/batch", entityValueKey: "batch_id", entityLabelKeys: ["batch_no"], helpText: "Choose where this animal is: a batch or a pen location on your farm.", section: "Current Position" },
+    { key: "current_location_id", label: "Current Pen", type: "select-entity", searchable: true, createOnly: true, entityEndpoint: "/location?locationType=PEN", entityValueKey: "location_id", entityLabelKeys: ["location_code", "location_name"], helpText: "Animals are placed in Pens only. Choose where this animal is: a batch or a pen location.", section: "Current Position" },
     {
       key: "status", label: "Status", type: "select", section: "Current Position",
       // The four disposal statuses are absent on purpose: the API refuses them
@@ -440,6 +441,7 @@ const animal: MasterDataConfig = {
     { key: "total_piglets_born_live", label: "Total Piglets Born Live", type: "number", min: 0, editOnly: true, visibleWhen: { anyOf: [{ key: "gender", equals: "F" }] }, section: "Bio-Asset" },
     { key: "total_piglets_weaned", label: "Total Piglets Weaned", type: "number", min: 0, editOnly: true, visibleWhen: { anyOf: [{ key: "gender", equals: "F" }] }, section: "Bio-Asset" },
     { key: "productive_life_start", label: "Productive Life Start", type: "date", section: "Production" },
+    { key: "expected_cull_date", label: "Expected Cull Date", type: "date", section: "Production" },
     { key: "notes", label: "Notes", type: "textarea", section: "Production" },
   ],
 };
@@ -524,10 +526,11 @@ const uom: MasterDataConfig = {
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank if this unit is shared across all LOBs under the selected NOB." },
     { key: "company_id", label: "Company (blank = global)", type: "text", hideInForm: true },
     { key: "uom_code", label: "UOM Code", type: "text", required: true, createOnly: true, helpText: "Leave blank to derive from the unit name via the number series — or type a standard symbol such as KG, which then stays fixed. After create, a series-derived code follows the series when the name changes.", placeholder: "KG" },
-    { key: "uom_name", label: "UOM Name", type: "text", required: true, placeholder: "Kilogram" },
+    { key: "uom_name", label: "UOM Name", type: "text", required: true, placeholder: "Kilogram", helpText: "Name of the unit (e.g. Kilogram, Litre)." },
     {
       key: "uom_type", label: "UOM Type", type: "select", required: true,
       options: ["WEIGHT", "VOLUME", "COUNT", "AREA", "TIME", "OTHER"].map((v) => ({ value: v, label: v })),
+      helpText: "Select unit type: WEIGHT, VOLUME, COUNT, AREA, TIME, or OTHER.",
     },
     { key: "decimal_places", label: "Decimal Places", type: "number", min: 0 },
     { key: "is_base_uom", label: "Is Base Unit", type: "boolean" },
@@ -560,8 +563,6 @@ const uomConversion: MasterDataConfig = {
     // it in as to_uom_decimal_places). Display only; the stored value and the
     // form keep full precision.
     { key: "conversion_factor", label: "Factor", decimals: 2, decimalsFromKey: "to_uom_decimal_places" },
-    { key: "effective_from", label: "Effective From" },
-    { key: "effective_to", label: "Effective To" },
   ],
   supportsNobLobFilter: true,
   fields: [
@@ -591,15 +592,10 @@ const uomConversion: MasterDataConfig = {
       helpText: "Base UOM. A factor always converts TO the base unit.",
     },
     {
-      key: "conversion_factor", label: "Conversion Factor", type: "number", min: 0, required: true,
+      key: "conversion_factor", label: "Conversion Factor", type: "number", step: "0.01", min: 0, required: true,
       placeholder: "50",
       helpText: "Multiply the From quantity to get the base quantity. 1 BAG = 50 KG, so the factor is 50.",
     },
-    // Not on the client's sheet. The column predates this work (schema, 21 July)
-    // and is NOT NULL, so the form cannot stop asking for it without a migration.
-    // Flagged in docs/masters-evidence; needs a client answer, not a guess.
-    { key: "effective_from", label: "Effective From", type: "date", required: true, helpText: "Not on the client template — our column. Use the date this factor starts applying." },
-    { key: "effective_to", label: "Effective To", type: "date", helpText: "Leave blank while the factor is open-ended." },
   ],
 };
 
@@ -1020,7 +1016,6 @@ const breed: MasterDataConfig = {
     { key: "breed_code", label: "Code" },
     { key: "breed_name", label: "Name" },
     { key: "breed_type", label: "Type" },
-    { key: "avg_fcr", label: "Avg FCR" },
   ],
   fields: [
     { key: "company_id", label: "Company (blank = global)", type: "text", hideInForm: true },
@@ -1028,16 +1023,16 @@ const breed: MasterDataConfig = {
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank if this breed applies to all LOBs under the selected NOB.", section: "Identification" },
     { key: "breed_code", label: "Breed Code", type: "text", required: true, createOnly: true, helpText: "Leave blank to derive from the breed name via the BREED series. After create, the code follows the series when the name changes.", section: "Identification" },
     { key: "breed_name", label: "Breed Name", type: "text", required: true, placeholder: "Yorkshire", section: "Identification" },
-    { key: "species_id", label: "Species", type: "select-entity", required: true, entityEndpoint: "/species", entityValueKey: "species_id", entityLabelKeys: ["species_code", "species_name"], section: "Identification" },
+    { key: "species_id", label: "Species", type: "select-entity", entityEndpoint: "/species", entityValueKey: "species_id", entityLabelKeys: ["species_code", "species_name"], section: "Identification" },
     {
-      key: "breed_type", label: "Breed Type", type: "select", required: true, section: "Identification",
+      key: "breed_type", label: "Breed Type", type: "select", section: "Identification",
       // Piggery is the only line of business in scope, so the poultry, aquaculture
       // and agri types (BROILER, LAYER, DAIRY, BEEF, TREE, FISH) are not offered —
       // a pig farm being asked to choose "Tree" or "Layer" is the LOB taxonomy
       // leaking into the form. MEAT is what all existing breeds already use.
       options: ["MEAT", "BREEDER", "DUAL_PURPOSE"].map((v) => ({ value: v, label: v.replace(/_/g, " ") })),
     },
-    { key: "description", label: "Description", type: "textarea", section: "Identification" },
+    { key: "description", label: "Description", type: "text", maxLength: 50, section: "Identification" },
     { key: "avg_growth_rate_g_day", label: "Avg Growth Rate (g/day)", type: "number", step: "0.01", min: 0, section: "Growth & Performance" },
     { key: "avg_fcr", label: "Avg FCR", type: "number", step: "0.01", min: 0, section: "Growth & Performance" },
     { key: "avg_mortality_pct", label: "Avg Mortality %", type: "number", step: "0.01", min: 0, section: "Growth & Performance" },
@@ -1046,7 +1041,7 @@ const breed: MasterDataConfig = {
     { key: "lactation_days", label: "Lactation Days", type: "number", min: 0, section: "Reproduction — Female (Sow)" },
     { key: "avg_litter_size_born", label: "Avg Litter Size Born", type: "number", step: "0.01", min: 0, section: "Reproduction — Female (Sow)" },
     { key: "avg_litter_size_weaned", label: "Avg Litter Size Weaned", type: "number", step: "0.01", min: 0, section: "Reproduction — Female (Sow)" },
-    { key: "avg_weaning_weight_kg", label: "Avg Weaning Weight (KG)", type: "number", step: "0.001", min: 0, section: "Reproduction — Female (Sow)" },
+    { key: "avg_weaning_weight_kg", label: "Avg Weaning Weight (KG)", type: "number", step: "0.01", min: 0, section: "Reproduction — Female (Sow)" },
     { key: "farrowing_rate_pct", label: "Farrowing Rate %", type: "number", step: "0.01", min: 0, section: "Reproduction — Female (Sow)" },
     { key: "productive_life_months", label: "Productive Life (months)", type: "number", min: 0, section: "Reproduction — Female (Sow)" },
     { key: "productive_life_cycles", label: "Productive Life Cycles", type: "number", min: 0, helpText: "Expected number of parities in productive life. A parity count only applies to a female.", section: "Reproduction — Female (Sow)" },
@@ -1111,15 +1106,15 @@ const breedLifecycleStage: MasterDataConfig = {
       options: ["ALL", "SUMMER", "WINTER"].map((v) => ({ value: v, label: v.charAt(0) + v.slice(1).toLowerCase() })),
     },
     { key: "feed_item_id", label: "Feed Item", type: "select-entity", searchable: true, entityEndpoint: "/item", entityValueKey: "item_id", entityLabelKeys: ["item_code", "item_name"] },
-    { key: "feed_qty_per_head_per_day_kg", label: "Feed Qty per Head per Day (KG)", type: "number", step: "0.0001", min: 0 },
+    { key: "feed_qty_per_head_per_day_kg", label: "Feed Qty per Head per Day (KG)", type: "number", step: "0.01", min: 0 },
     { key: "feed_wastage_pct", label: "Feed Wastage %", type: "number", step: "0.01", min: 0 },
-    { key: "std_body_weight_kg", label: "Std Body Weight (KG)", type: "number", step: "0.001", min: 0 },
+    { key: "std_body_weight_kg", label: "Std Body Weight (KG)", type: "number", step: "0.01", min: 0 },
     { key: "std_adg_gpd", label: "Std ADG (g/day)", type: "number", step: "0.01", min: 0 },
-    { key: "std_fcr", label: "Std FCR", type: "number", step: "0.001", min: 0 },
-    { key: "std_mortality_rate_pct", label: "Std Mortality Rate %", type: "number", step: "0.001", min: 0 },
+    { key: "std_fcr", label: "Std FCR", type: "number", step: "0.01", min: 0 },
+    { key: "std_mortality_rate_pct", label: "Std Mortality Rate %", type: "number", step: "0.01", min: 0 },
     { key: "output_item_id", label: "Output Item", type: "select-entity", searchable: true, entityEndpoint: "/item", entityValueKey: "item_id", entityLabelKeys: ["item_code", "item_name"] },
     { key: "output_uom", label: "Output UOM", type: "text" },
-    { key: "std_output_qty", label: "Std Output Qty", type: "number", step: "0.001", min: 0 },
+    { key: "std_output_qty", label: "Std Output Qty", type: "number", step: "0.01", min: 0 },
     // Rows, not a typed array (Rishi, 2026-09-15). metric names a row in the
     // KPI Metric master (kpi_metric_master) — a real, per-tenant-extensible
     // catalog now, not a hardcoded list — by its metric_code, the same words a
@@ -1130,8 +1125,8 @@ const breedLifecycleStage: MasterDataConfig = {
       key: "kpi_thresholds", label: "KPIs & Alerts", type: "json",
       jsonRow: [
         { key: "metric", label: "KPI", type: "select-entity", entityEndpoint: "/kpi-metric", entityValueKey: "metric_code", entityLabelKeys: ["metric_code", "metric_name"] },
-        { key: "lower_limit", label: "Lower Limit", type: "number", step: "0.001" },
-        { key: "upper_limit", label: "Upper Limit", type: "number", step: "0.001" },
+        { key: "lower_limit", label: "Lower Limit", type: "number", step: "0.01" },
+        { key: "upper_limit", label: "Upper Limit", type: "number", step: "0.01" },
         { key: "severity", label: "Alert Severity", type: "select", options: ["INFO", "WARNING", "CRITICAL"].map((v) => ({ value: v, label: v })) },
       ],
       helpText: "One row per KPI. Leave a limit empty for a one-sided threshold.",
@@ -1252,7 +1247,7 @@ const reason: MasterDataConfig = {
     // Template column D is "Description"; the schema/API field is reason_name
     // (entrenched elsewhere — unique index, seed scripts, tests) — relabelled
     // here rather than renamed, so this is the only place the word "Name" is gone.
-    { key: "reason_name", label: "Description", type: "text", required: true, maxLength: 150 },
+    { key: "reason_name", label: "Description", type: "text", required: true, maxLength: 50 },
     // Multi-select over real stage_master rows, with an "All Stages" option
     // standing in for "no restriction" (the column's own meaning when empty —
     // see allOption in types.ts). This is what reason.service.ts actually

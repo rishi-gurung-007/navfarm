@@ -1,7 +1,7 @@
 import { companyCondition, MASTER_TABLES, masterScopeConditions } from '../../../common/master-data-scope';
 import { Injectable, NotFoundException, ConflictException, BadRequestException, HttpException, HttpStatus } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, like, ne, not, or, isNull, sql, desc, getTableColumns } from 'drizzle-orm';
+import { eq, and, like, ne, not, or, isNull, sql, desc, getTableColumns, count } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
@@ -1140,22 +1140,46 @@ export class NumberSeriesService {
    * company (permissively — a NULL company_id is a tenant-wide shared
    * series, same convention masterScopeConditions uses).
    */
-  async findAllModern(documentType?: string, tenantId?: string, companyId?: string | null, search?: string) {
+  async findAllModern(
+    documentType?: string,
+    tenantId?: string,
+    companyId?: string | null,
+    search?: string,
+    filter?: Record<string, any>,
+    query?: any,
+  ) {
     const conditions: any[] = [];
     if (documentType) conditions.push(eq(schema.noSeries.document_type, documentType.toUpperCase().replaceAll('-', '_')));
     if (tenantId) conditions.push(eq(schema.noSeries.tenant_id, tenantId));
     if (companyId) conditions.push(or(eq(schema.noSeries.company_id, companyId), isNull(schema.noSeries.company_id)));
     if (search) {
+      const s = `%${search.trim()}%`;
       conditions.push(or(
-        like(schema.noSeries.code, `%${search}%`),
-        like(schema.noSeries.description, `%${search}%`),
-        like(schema.noSeries.no_series_code, `%${search}%`),
+        like(schema.noSeries.code, s),
+        like(schema.noSeries.description, s),
+        like(schema.noSeries.no_series_code, s),
+        like(schema.noSeries.document_type, s),
       ));
     }
+    if (filter) {
+      conditions.push(...listFilterConditions(schema.noSeries, filter));
+    }
+    const limit = query?.limit ? Math.max(1, Number(query.limit)) : 100;
+    const offset = query?.offset ? Math.max(0, Number(query.offset)) : 0;
+    const orderBy = listOrderBy(schema.noSeries, query, schema.noSeries.created_at);
+
     const rows = conditions.length
-      ? await this.db.select().from(schema.noSeries).where(and(...conditions)).orderBy(desc(schema.noSeries.created_at))
-      : await this.db.select().from(schema.noSeries).orderBy(desc(schema.noSeries.created_at));
-    return rows.map((row) => this.withActive(row));
+      ? await this.db.select().from(schema.noSeries).where(and(...conditions)).orderBy(orderBy).limit(limit).offset(offset)
+      : await this.db.select().from(schema.noSeries).orderBy(orderBy).limit(limit).offset(offset);
+
+    const [counted] = conditions.length
+      ? await this.db.select({ total: count() }).from(schema.noSeries).where(and(...conditions))
+      : await this.db.select({ total: count() }).from(schema.noSeries);
+
+    return {
+      data: rows.map((row) => this.withActive(row)),
+      total: Number(counted?.total ?? rows.length),
+    };
   }
 
   /**

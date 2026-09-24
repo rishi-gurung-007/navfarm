@@ -80,6 +80,7 @@ export const translations = {
     rolSpecies: "Species",
     rolBreeds: "Breeds",
     rolActivities: "Activities",
+    rolKpiMetrics: "KPI Metrics",
     rolFarms: "Farms",
     rolWarehouses: "Warehouses",
     rolSheds: "Sheds",

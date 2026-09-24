@@ -99,17 +99,19 @@ export class NoSeriesController {
   @RequirePermission('MASTER_DATA', 'ITEM', 'view')
   @ApiOperation({ summary: 'List all No. Series' })
   async findAll(
-    @Query('document_type') documentType: string | undefined,
-    @Query('search') search: string | undefined,
+    @Query() query: any,
     @Req() req: any,
   ) {
     const tenantId = req.user?.tenantId || req['tenantId'];
     const companyId = req.headers?.['x-active-company-id'] || req.user?.companyId;
-    const result = await this.numberSeriesService.findAllModern(documentType, tenantId, companyId, search);
+    const documentType = query?.document_type || query?.filter?.document_type;
+    const search = query?.search;
+    const result = await this.numberSeriesService.findAllModern(documentType, tenantId, companyId, search, query?.filter, query);
     return {
       success: true,
       message: 'No. Series retrieved successfully.',
-      data: result,
+      data: Array.isArray(result) ? result : result.data,
+      total: Array.isArray(result) ? result.length : result.total,
     };
   }
 

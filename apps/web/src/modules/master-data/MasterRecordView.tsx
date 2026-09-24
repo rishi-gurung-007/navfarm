@@ -51,10 +51,27 @@ export function MasterRecordView({ config, id, onClose }: { config: MasterDataCo
     !(getActiveWorkspaceScope() === "OPERATIONAL" && ["nob_id", "lob_id"].includes(field.key)) &&
     !config.bcFields?.some((bcField) => bcField.key === field.key) &&
     (!field.hideInForm || field.readOnly) &&
+    !(config.key === "location" && field.key === "parent_location_id" && record?.location_type === "FARM") &&
     (!field.visibleWhen || field.visibleWhen.anyOf.some((condition) => {
       const value = conditionValues?.[condition.key];
       return condition.equals === undefined ? !!value : (Array.isArray(condition.equals) ? condition.equals : [condition.equals]).includes(value as string | boolean);
     })));
+
+  const sections: { title: string; fields: typeof fields }[] = [];
+  const hasSections = fields.some((f) => f.section);
+  if (hasSections) {
+    const seen = new Set<string>();
+    fields.forEach((f) => {
+      const sec = f.section || "General";
+      if (!seen.has(sec)) {
+        seen.add(sec);
+        sections.push({ title: sec, fields: fields.filter((x) => (x.section || "General") === sec) });
+      }
+    });
+  } else {
+    sections.push({ title: "", fields });
+  }
+
   return <Dialog open onClose={onClose} title={`View ${singularLabel(config)}`} maxWidth="xl"
     presentation={fields.length > 10 ? "page" : "modal"}>
     {error ? <InlineAlert>{error}</InlineAlert> : !record ? <p role="status">Loading record…</p> : <div className="grid gap-6">
@@ -65,18 +82,31 @@ export function MasterRecordView({ config, id, onClose }: { config: MasterDataCo
       {(record.is_active === false || !!record.deleted_at) &&
         <p><StatusBadge status="BLOCKED" label="Blocked" /></p>}
       {config.owner === "BC" && <BcOwnershipNotice config={config} />}
-      <dl className={`grid grid-cols-1 gap-4 sm:grid-cols-2${config.owner === "BC" ? " order-last" : ""}`}>
-        {fields.map((field) => <div key={field.key} className="min-w-0">
-          <dt className="text-xs text-(--text-muted)">{labelOf(field)}</dt>
-          <dd className="mt-1 whitespace-pre-wrap break-words text-sm"><MasterFieldValue field={field} value={record[field.key]} record={record} /></dd>
-        </div>)}
-      </dl>
-      {!!config.bcFields?.length && <section aria-label="Business Central" className="rounded-lg border border-(--border) p-4">
+      {sections.map((sec) => (
+        <div key={sec.title || "main"} className="space-y-3">
+          {sec.title && (
+            <h4 className="text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)] border-b pb-1 border-[var(--border)]">
+              {sec.title}
+            </h4>
+          )}
+          <dl className={`grid grid-cols-1 gap-4 sm:grid-cols-2${config.owner === "BC" ? " order-last" : ""}`}>
+            {sec.fields.map((field) => (
+              <div key={field.key} className="min-w-0">
+                <dt className="text-xs text-[var(--text-muted)]">{labelOf(field)}</dt>
+                <dd className="mt-1 whitespace-pre-wrap break-words text-sm font-medium">
+                  <MasterFieldValue field={field} value={record[field.key]} record={record} />
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+      ))}
+      {!!config.bcFields?.length && <section aria-label="Business Central" className="rounded-lg border border-[var(--border)] p-4">
         <h3 className="font-semibold">Business Central</h3>
-        <p className="mt-1 text-xs text-(--text-muted)">Read-only references from BC. A dash means no BC value has been received; it is not a zero or a confirmed status.</p>
+        <p className="mt-1 text-xs text-[var(--text-muted)]">Read-only references from BC. A dash means no BC value has been received; it is not a zero or a confirmed status.</p>
         <dl className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
           {config.bcFields.map((field) => <div key={field.key}>
-            <dt className="text-xs text-(--text-muted)">{field.label} <span className="ml-1 rounded border border-(--border) px-1.5 py-0.5">From BC</span></dt>
+            <dt className="text-xs text-[var(--text-muted)]">{field.label} <span className="ml-1 rounded border border-[var(--border)] px-1.5 py-0.5">From BC</span></dt>
             <dd className="mt-1 break-words text-sm"><MasterFieldValue field={config.fields.find((f) => f.key === field.key)} value={record[field.key]} record={record} /></dd>
           </div>)}
         </dl>

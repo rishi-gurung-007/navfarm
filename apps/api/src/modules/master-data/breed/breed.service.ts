@@ -324,8 +324,8 @@ export class BreedService {
   async createBreed(dto: CreateBreedDto, tenantId: string, userPayload?: any) {
     const companyId = dto.company_id || null;
 
-    // Verify species exists
-    const species = await this.findOneSpecies(dto.species_id);
+    // Verify species exists if provided
+    const species = dto.species_id ? await this.findOneSpecies(dto.species_id) : null;
 
     // NOB/LOB are no longer asked on the form — derive them from the company's
     // operational areas (an explicit dto value, if a caller still sends one,
@@ -381,9 +381,9 @@ export class BreedService {
       lob_id: lobId,
       breed_code: breedCode,
       breed_name: dto.breed_name,
-      species_id: dto.species_id,
-      species: dto.species || species.species_name, // legacy fallback
-      breed_type: dto.breed_type,
+      species_id: dto.species_id || null,
+      species: dto.species || species?.species_name || null, // legacy fallback
+      breed_type: dto.breed_type || 'MEAT',
       avg_growth_rate_g_day: dto.avg_growth_rate_g_day?.toString() || null,
       avg_fcr: dto.avg_fcr?.toString() || null,
       avg_mortality_pct: dto.avg_mortality_pct?.toString() || null,
@@ -769,6 +769,9 @@ export class BreedService {
 
     if (dto.feed_item_id) await this.assertItemExists(dto.feed_item_id);
     if (dto.output_item_id) await this.assertItemExists(dto.output_item_id);
+    if (dto.period_from != null && dto.period_to != null && dto.period_from > dto.period_to) {
+      throw new BadRequestException('Period From cannot be greater than Period To.');
+    }
     await this.assertLifecycleRows(dto, tenantId);
 
     // breed_lifecycle_stages has no company_id — a row is scoped through its breed —
@@ -940,6 +943,11 @@ export class BreedService {
     }
     if (dto.feed_item_id) await this.assertItemExists(dto.feed_item_id);
     if (dto.output_item_id) await this.assertItemExists(dto.output_item_id);
+    const effectiveFrom = dto.period_from !== undefined ? dto.period_from : lifecycleStage.period_from;
+    const effectiveTo = dto.period_to !== undefined ? dto.period_to : lifecycleStage.period_to;
+    if (effectiveFrom != null && effectiveTo != null && effectiveFrom > effectiveTo) {
+      throw new BadRequestException('Period From cannot be greater than Period To.');
+    }
     await this.assertLifecycleRows(dto, tenantId);
 
     const updates: any = {};

@@ -837,6 +837,7 @@ export class AnimalService {
       conditions.push(
         or(
           like(schema.animalRegister.animal_code, `%${query.search}%`),
+          like(schema.animalRegister.animal_type, `%${query.search}%`),
           like(schema.animalRegister.rfid_tag, `%${query.search}%`),
           like(schema.animalRegister.ear_tag, `%${query.search}%`)
         )
@@ -1251,12 +1252,38 @@ export class AnimalService {
       ))
       .orderBy(desc(schema.batchTransfer.transfer_date));
 
+    const totalBornLive = farrowings.reduce((sum, f) => sum + (f.piglets_born_live || 0), 0) || animal.total_piglets_born_live || 0;
+    const totalWeaned = farrowings.reduce((sum, f) => sum + (f.piglets_weaned || 0), 0) || animal.total_piglets_weaned || 0;
+    const totalBornDead = farrowings.reduce((sum, f) => sum + (f.piglets_stillborn || 0), 0);
+    const totalMummified = farrowings.reduce((sum, f) => sum + (f.piglets_mummified || 0), 0);
+    const totalBorn = totalBornLive + totalBornDead + totalMummified;
+    const preWeanDeaths = Math.max(0, totalBornLive - totalWeaned);
+    const mortalityPct = totalBornLive > 0
+      ? Number(((preWeanDeaths / totalBornLive) * 100).toFixed(1))
+      : (totalBorn > 0 ? 100.0 : 0.0);
+    const totalLitterMassWeanedKg = farrowings.reduce((sum, f) => {
+      const weaned = Number(f.piglets_weaned) || 0;
+      const avgWt = Number(f.avg_weaning_weight_kg) || 0;
+      return sum + (weaned * avgWt);
+    }, 0);
+
+    const sowSummary = animal.gender === 'F' ? {
+      born_dead_count: totalBornDead,
+      mummified_count: totalMummified,
+      mortality_pct: mortalityPct,
+      total_litter_mass_weaned_kg: totalLitterMassWeanedKg > 0 ? Number(totalLitterMassWeanedKg.toFixed(2)) : null,
+      total_born_live: totalBornLive,
+      total_weaned: totalWeaned,
+      total_born: totalBorn,
+    } : null;
+
     return {
       animal_code: animal.animal_code,
       animal_type: animal.animal_type,
       gender: animal.gender,
       matings,
       farrowings,
+      sow_summary: sowSummary,
       movements: auditMovements,
       transfers,
       lineage: {

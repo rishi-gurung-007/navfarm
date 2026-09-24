@@ -154,10 +154,10 @@ export class CreateUomConversionDto {
   @IsNotEmpty()
   conversion_factor: number;
 
-  @ApiProperty({ description: 'Effective start date', example: '2026-01-01' })
+  @ApiProperty({ description: 'Effective start date', required: false, example: '2026-01-01' })
   @IsString()
-  @IsNotEmpty()
-  effective_from: string;
+  @IsOptional()
+  effective_from?: string;
 
   @ApiProperty({ description: 'Effective end date', required: false, example: '2027-12-31' })
   @IsString()

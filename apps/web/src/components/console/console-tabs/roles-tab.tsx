@@ -69,6 +69,7 @@ const DEFAULT_RESOURCES = [
   { module_code: "MASTER_DATA", resource: "OPERATIONAL_AREA", name: "Operational Areas", nameKey: "operationalAreas" },
   { module_code: "MASTER_DATA", resource: "BREED_LIFECYCLE_STAGE", name: "Breed Lifecycle Standards", nameKey: "rolBreedLifecycleStandards" },
   { module_code: "MASTER_DATA", resource: "ACTIVITY", name: "Activities", nameKey: "rolActivities" },
+  { module_code: "MASTER_DATA", resource: "KPI_METRIC", name: "KPI Metrics", nameKey: "rolKpiMetrics" },
   // PRODUCTION (Phase 5)
   { module_code: "PRODUCTION", resource: "BATCH", name: "Production Batches", nameKey: "dashProductionBatches" },
   // PRODUCTION (Phase 6)

@@ -48,7 +48,7 @@ export interface DrawerProps {
   open: boolean;
   onClose: () => void;
   /** The drawer's accessible name, and its visible heading. */
-  title: string;
+  title: ReactNode;
   /** Optional supporting line. Becomes the accessible description. */
   description?: string;
   children: ReactNode;

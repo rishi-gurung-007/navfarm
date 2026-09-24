@@ -44,10 +44,19 @@ export class StageService {
     return this.numberSeriesService.generateNext(seriesCode, tenantId, dto.company_id, undefined, dto as unknown as Record<string, unknown>);
   }
 
-  /** AUTO_BY_DAY stages must specify which day to auto-move on. */
-  private assertAutoMoveDayWhenAutoByDay(transitionTrigger: string, autoMoveOnDay?: number | null) {
-    if (transitionTrigger === 'AUTO_BY_DAY' && autoMoveOnDay == null) {
-      throw new ConflictException('auto_move_on_day is required when transition_trigger is AUTO_BY_DAY.');
+  /** AUTO_BY_DAY stages must specify which day to auto-move on, and cannot exceed typical_duration_days. */
+  private assertAutoMoveDayWhenAutoByDay(
+    transitionTrigger: string,
+    autoMoveOnDay?: number | null,
+    typicalDurationDays?: number | null,
+  ) {
+    if (transitionTrigger === 'AUTO_BY_DAY') {
+      if (autoMoveOnDay == null) {
+        throw new ConflictException('auto_move_on_day is required when transition_trigger is AUTO_BY_DAY.');
+      }
+      if (typicalDurationDays != null && autoMoveOnDay > typicalDurationDays) {
+        throw new BadRequestException('Auto-Move On Day cannot be greater than Duration (days).');
+      }
     }
   }
 
@@ -108,7 +117,7 @@ export class StageService {
       throw new NotFoundException(`LOB with ID '${lobId}' not found.`);
     }
 
-    this.assertAutoMoveDayWhenAutoByDay(dto.transition_trigger, dto.auto_move_on_day);
+    this.assertAutoMoveDayWhenAutoByDay(dto.transition_trigger, dto.auto_move_on_day, dto.typical_duration_days);
     this.assertAltFieldsWhenConditional(dto.transition_trigger, dto.alt_next_stage_id, dto.alt_trigger_condition);
 
     if (dto.next_stage_id) await this.assertStageExists(dto.next_stage_id);
@@ -237,9 +246,10 @@ export class StageService {
   async update(id: string, dto: UpdateStageDto, tenantId: string, userPayload?: any) {
     const stage = await this.findOne(id);
 
-    const effectiveTrigger = dto.transition_trigger ?? stage.transition_trigger;
+    const effectiveTrigger = dto.transition_trigger !== undefined ? dto.transition_trigger : stage.transition_trigger;
     const effectiveAutoMoveDay = dto.auto_move_on_day !== undefined ? dto.auto_move_on_day : stage.auto_move_on_day;
-    this.assertAutoMoveDayWhenAutoByDay(effectiveTrigger, effectiveAutoMoveDay as any);
+    const effectiveDuration = dto.typical_duration_days !== undefined ? dto.typical_duration_days : stage.typical_duration_days;
+    this.assertAutoMoveDayWhenAutoByDay(effectiveTrigger, effectiveAutoMoveDay as any, effectiveDuration as any);
     const effectiveAltNextStageId = dto.alt_next_stage_id !== undefined ? dto.alt_next_stage_id : stage.alt_next_stage_id;
     const effectiveAltTriggerCondition = dto.alt_trigger_condition !== undefined ? dto.alt_trigger_condition : stage.alt_trigger_condition;
     this.assertAltFieldsWhenConditional(effectiveTrigger, effectiveAltNextStageId as any, effectiveAltTriggerCondition as any);

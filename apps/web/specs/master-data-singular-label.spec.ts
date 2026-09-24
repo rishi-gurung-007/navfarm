@@ -41,6 +41,7 @@ const EXPECTED: Record<string, string> = {
   country: "Country",
   currency: "Currency",
   "exchange-rate": "Exchange Rate",
+  "kpi-metric": "KPI Metric",
 };
 
 describe("singularLabel", () => {
