@@ -24,8 +24,11 @@ import { copyCompanyMasterTemplates } from '../modules/core/company/copy-master-
  *   pnpm nx run api:db-seed-demo --fresh     # drop the databases first
  *
  * Every stage is idempotent, so re-running only fills what is missing. Pass
- * --fresh (or SEED_FRESH=true) to drop navfarm_master, tenant_system and the
- * dev tenant database first and rebuild from empty.
+ * --fresh (or SEED_FRESH=true) to drop nf_master, nf_system and the dev tenant
+ * database (nf_<code>) first and rebuild from empty.
+ *
+ * This is the older demo chain: it does not build the nine farms, their silos
+ * or the posted chapters. db-rebuild-demo is the current one.
  */
 
 const host = process.env.DATABASE_HOST || 'localhost';

@@ -35,6 +35,21 @@ git switch main
 git pull --ff-only origin main
 ```
 
+**One time only — moving off the pre-24 September `main`.** On 24 September
+2026 `main` was replaced rather than advanced (it had stopped at 14 September;
+the old tip is kept as branch `main-backup-2026-09-24`). A checkout still on the
+old `main` cannot fast-forward, so `git pull --ff-only` stops with "Not
+possible to fast-forward". Only when `git status --short` printed nothing, move
+the checkout onto the new `main` instead:
+
+```powershell
+git reset --hard origin/main
+git log -1 --oneline
+```
+
+`reset --hard` discards uncommitted server changes, which is why the clean
+`git status` comes first. Every later update is the ordinary `pull --ff-only`.
+
 Install the repository's declared pnpm version and dependencies:
 
 ```powershell
@@ -154,20 +169,59 @@ into the browser bundle, and no `NEXT_PUBLIC_API_URL` or
 `NEXT_PUBLIC_SOCKET_URL` is needed. Rebuild the web application if this file
 changes because Next.js records rewrites during the build.
 
-## 4. One-time database bootstrap and demo seed
+## 4. Build the demo databases
 
-From the repository root:
+From the repository root, first as a read-only dry run:
 
 ```powershell
-pnpm nx run api:db-bootstrap
-pnpm nx run api:db-seed-demo
-pnpm nx run api:verify-demo-master-integrity
+pnpm nx run api:db-rebuild-demo
 ```
 
-`db-seed-demo` intentionally installs synthetic test/demo data. Do not remove
-those values merely because they are synthetic. Do not add `--fresh` on an
-existing server: the fresh mode drops and recreates the configured NAVFarm
-databases and is only for a deliberately disposable database.
+It prints the databases it would drop and the ordered command list, and changes
+nothing. It only ever targets `nf_`-prefixed databases on `127.0.0.1` — the
+guard refuses any other name and any remote host — so it cannot reach the
+other application's databases on this MySQL. On a first install it reports
+`Would drop (reset step only): (none found)`. **If it lists anything that is
+not NAVFarm's, stop.** Otherwise:
+
+```powershell
+pnpm nx run api:db-rebuild-demo -- --apply
+```
+
+This is the same chain the development machines use: schema, the Triple C
+tenant and company, the real farm locations and masters, the nine-farm demo
+(sheds, pens, silos, breeds, lifecycles, logins) and the posted demo chapters.
+The chapters take a few minutes. The data is synthetic test/demo data by
+design; do not remove it merely because it is synthetic.
+
+`db-seed-demo` is the older demo chain and does not build the nine farms or
+their silos; do not use it for this server.
+
+Check the result in MySQL:
+
+```sql
+SHOW DATABASES LIKE 'nf\_%';
+SELECT tenant_code, db_name FROM nf_master.tenant_master;
+SELECT COUNT(*) FROM nf_devco.location_master WHERE location_type = 'SILO';
+```
+
+Expect `nf_master`, `nf_system` and `nf_devco`; tenants `devco → nf_devco` and
+`system → nf_system`; and 53 silos.
+
+### Retiring the pre-`nf_` databases
+
+Servers set up before 24 September hold NAVFarm's data under the old names.
+Once the `nf_` deployment is verified (section 9), list which old databases
+were NAVFarm's:
+
+```sql
+SELECT tenant_code, db_name FROM navfarm_master.tenant_master;
+```
+
+Only `navfarm_master` and the `db_name`s it lists are NAVFarm's. Back them up
+with `mysqldump` if the old data may be wanted, then drop those — by name, one
+at a time. **Leave every other `tenant_*` database alone**: it is not in
+NAVFarm's list and may belong to the other application.
 
 ## 5. Production builds
 
@@ -274,13 +328,14 @@ with `Ctrl+C` in their own windows. For an update:
 4. Run `git fetch origin`, `git switch main`, and
    `git pull --ff-only origin main`.
 5. Run `pnpm install --frozen-lockfile`.
-6. Run `pnpm nx run api:db-bootstrap` to apply current database setup/migrations.
-7. Run `pnpm nx run api:verify-demo-master-integrity` when this is the demo tenant.
+6. Run `pnpm nx run api:db-bootstrap` to apply current database setup/migrations
+   while keeping the data, or — when the release changes the demo and the data
+   is disposable — rebuild it with section 4 (dry run first, then `--apply`).
 8. Rebuild API and web with the commands in section 5.
 9. Start API first, verify direct health, then start web and verify proxied health.
 
-Do not use `db-seed-demo --fresh` during a normal update. Run the non-fresh demo
-seed only when the release intentionally adds or repairs demo fixtures.
+`db-rebuild-demo -- --apply` drops and rebuilds every `nf_` database, so never
+run it where data must be kept.
 
 ## 11. Persistent processes after interactive testing
 
