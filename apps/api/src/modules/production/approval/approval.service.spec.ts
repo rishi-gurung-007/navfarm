@@ -5,6 +5,7 @@ import { MySqlDialect } from 'drizzle-orm/mysql-core';
 import { ApprovalService } from './approval.service';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { BatchService } from '../batch/batch.service';
+import { BatchTransferService } from '../batch/batch-transfer.service';
 import { transactionCls, useFarmScope } from '../../../test-utils/transaction-cls';
 import * as schema from '../../../core/database/schema';
 
@@ -41,6 +42,7 @@ describe('ApprovalService.findAll pagination', () => {
       providers: [
         ApprovalService,
         { provide: BatchService, useValue: { addTransaction: jest.fn() } },
+        { provide: BatchTransferService, useValue: { post: jest.fn(), cancel: jest.fn() } },
         { provide: ClsService, useValue: { get: jest.fn().mockReturnValue(chain) } },
         { provide: AuditLogService, useValue: { log: jest.fn().mockResolvedValue({}) } },
       ],
@@ -101,6 +103,7 @@ describe('ApprovalService farm scope', () => {
         { provide: ClsService, useValue: cls },
         { provide: AuditLogService, useValue: { log: jest.fn().mockResolvedValue({}) } },
         { provide: BatchService, useValue: { addTransaction: jest.fn() } },
+        { provide: BatchTransferService, useValue: { post: jest.fn(), cancel: jest.fn() } },
       ],
     }).compile();
 
@@ -190,6 +193,7 @@ describe('ApprovalService.create company boundary', () => {
         { provide: ClsService, useValue: cls },
         { provide: AuditLogService, useValue: { log: jest.fn().mockResolvedValue({}) } },
         { provide: BatchService, useValue: { addTransaction: jest.fn() } },
+        { provide: BatchTransferService, useValue: { post: jest.fn(), cancel: jest.fn() } },
       ],
     }).compile();
     service = module.get<ApprovalService>(ApprovalService);

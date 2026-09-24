@@ -1869,3 +1869,38 @@ CRATE rows carry farm_id.
 **5. Full demo rebuild applied.** 28 batches (7 with multi-stage flows),
 260 animals across 6 stages, 28 company items, 804 daily entries. Fossil
 rows (old BATCH-0000xx family with invented names, PIG-BAT-2026 seed) gone.
+
+## 2026-09-16 — Animal transfer approvals: workers raise, top-level users decide
+
+Rishi's rule: an animal moving between batches needs an approval **only when a
+normal (STANDARD_USER) user requests it**; a top-level user (TENANT/COMPANY/
+OPERATIONAL_ADMIN, SYSTEM_ADMIN) transfers directly, with the UI showing a
+warning that the selected animals will move. This replaces the interim
+"workers cannot transfer at all" refusal (the old
+`assertWorkerMayTransfer` + WORKER_TRANSFER_REFUSAL interim rule).
+
+How it works now:
+
+- `transferActorApprovalMode()` decides once: STANDARD_USER → APPROVAL,
+  everything else → DIRECT (an unknown caller in a restricted scope fails
+  closed to APPROVAL).
+- A worker's `batch-transfer create()` lands as a **DRAFT** transfer plus a
+  **PENDING approval_request** (`doc_type=BATCH_TRANSFER`, new
+  `reference_id` column links it to the transfer, migration 0100). The
+  animals do **not** move. `post()` by a worker directly is still refused —
+  only the approval's post (`viaApproval` flag) can move a worker's animals.
+- Approving the request posts the transfer (same `post()` path as a direct
+  post: value shift, ledger legs, head counts, destination scheduler);
+  rejecting cancels the draft. Decision and movement share one transaction.
+- Split/merge stay admin-only: they close/reopen batches in the same breath
+  as the movement, so a gated movement would leave them half-applied.
+- Web Batch panel: Animals tab has "Transfer animals" — admins get a warning
+  to confirm (posts immediately), workers get "Send for approval" and the
+  API's PENDING request. The batch-create animal picker now lists **all**
+  animals on the farm: in-batch ones render disabled with their batch number
+  (`/animal` list joined batch_no through `current_batch_id`).
+- Chapter 06 seeds the whole chain through real service calls: worker raises,
+  admin approves, animals move.
+
+Schema note: `approval_request.reference_id` is intentionally generic (no FK)
+— future approval-gated documents reuse it.

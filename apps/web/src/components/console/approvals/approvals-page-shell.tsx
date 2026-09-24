@@ -16,6 +16,7 @@ import {
   Stethoscope,
   Building2,
   Plus,
+  ArrowLeftRight,
 } from "lucide-react";
 import { getStoredUser, NavUser, getActiveCompanyId, getActiveOperationalAreaId } from "@/hooks/useAuth";
 import { api } from "@/services/api-client";
@@ -315,6 +316,8 @@ export function ApprovalsPageShell({ activeTab }: { activeTab: ApprovalStatus })
         return <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-[var(--radius-xs)] bg-indigo-500/10 text-indigo-700 dark:text-indigo-400 border border-indigo-500/20"><Building2 className="h-3 w-3" /> {t("apDocType_STOCK_TRANSFER")}</span>;
       case "STAGE_CLOSE":
         return <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-[var(--radius-xs)] bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/20"><Layers className="h-3 w-3" /> {t("apDocType_STAGE_CLOSE")}</span>;
+      case "BATCH_TRANSFER":
+        return <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-[var(--radius-xs)] bg-teal-500/10 text-teal-700 dark:text-teal-400 border border-teal-500/20"><ArrowLeftRight className="h-3 w-3" /> Batch Transfer</span>;
       default:
         return <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-[var(--radius-xs)] bg-rose-500/10 text-rose-700 dark:text-rose-400 border border-rose-500/20"><Stethoscope className="h-3 w-3" /> {t("apDocType_VET_DISPOSAL")}</span>;
     }

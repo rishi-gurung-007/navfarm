@@ -3632,6 +3632,10 @@ export const approvalRequest = mysqlTable('approval_request', {
   requestor_role: varchar('requestor_role', { length: 60 }),
   location_label: varchar('location_label', { length: 200 }),
   batch_id: varchar('batch_id', { length: 36 }).references(() => batchHeader.batch_id, { onDelete: 'set null' }),
+  // The document a request decides on, when that document is a table row —
+  // today only the batch_transfer a BATCH_TRANSFER request gates. The older
+  // doc types describe a free-text operational ask, not a persisted document.
+  reference_id: varchar('reference_id', { length: 36 }),
   urgency: varchar('urgency', { length: 10 }).default('MEDIUM').notNull(), // HIGH, MEDIUM, LOW
   item_or_stage: varchar('item_or_stage', { length: 200 }),
   requested_qty: varchar('requested_qty', { length: 100 }),

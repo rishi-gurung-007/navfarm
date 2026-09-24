@@ -809,13 +809,21 @@ export class AnimalService {
     const limit = query.limit || 50;
     const offset = query.offset || 0;
 
+    // The join carries the batch number the animal sits in. "All animals, with
+    // the assigned ones marked" (batch-panel selection list) needs it — an id
+    // alone would force the web to fetch batches separately to label a row.
     return this.db
-      .select()
+      .select({
+        animal: schema.animalRegister,
+        batch_no: schema.batchHeader.batch_no,
+      })
       .from(schema.animalRegister)
+      .leftJoin(schema.batchHeader, eq(schema.animalRegister.current_batch_id, schema.batchHeader.batch_id))
       .where(and(...conditions))
       .orderBy(listOrderBy(schema.animalRegister, query, schema.animalRegister.animal_code))
       .limit(limit)
-      .offset(offset);
+      .offset(offset)
+      .then((rows) => rows.map((r) => ({ ...r.animal, batch_no: r.batch_no })));
   }
 
   async update(id: string, dto: UpdateAnimalDto, tenantId: string, userPayload?: any) {

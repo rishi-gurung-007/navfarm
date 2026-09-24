@@ -251,16 +251,20 @@ describe('BatchDailyDataService', () => {
       jest.spyOn(service as any, 'companyToday').mockResolvedValue(ENTRY_DATE);
     });
 
-    it('refuses a farm worker before selecting or moving any animal', async () => {
+    it('sends a farm worker\'s TRANSFER through create()\'s approval gate, which decides the mode', async () => {
       useFarmScope({ farmId: 'farm-g', restricted: true, companyId: 'comp-1', lobId: 'lob-1' });
       const transfers = service['batchTransferService'] as unknown as { create: jest.Mock };
+      // The gate now sits inside create(): the service hands the movement over
+      // and create() decides between direct post and PENDING approval. From
+      // here both paths look the same — a completed create() call.
+      transfers.create.mockResolvedValue({ transfer_id: 'tr-draft', status: 'DRAFT' });
 
-      await expect(service.postEntry('batch-1', transferEntry, 'tenant-123', { userId: 'w-1', userType: 'STANDARD_USER' }))
-        .rejects.toThrow(new ForbiddenException('Transfers by farm workers need approval, which is not available yet.'));
+      await service.postEntry('batch-1', transferEntry, 'tenant-123', { userId: 'w-1', userType: 'STANDARD_USER' });
 
-      expect(transfers.create).not.toHaveBeenCalled();
-      expect(capturedWheres.some((entry) => entry.table === schema.animalRegister)).toBe(false);
-      expect(mockDbInsert).not.toHaveBeenCalled();
+      expect(transfers.create).toHaveBeenCalledTimes(1);
+      // postEntry still writes its own batch_daily_data row — only the animal
+      // movement itself is deferred to create()'s gate.
+      expect(mockDbInsert).toHaveBeenCalledTimes(1);
     });
 
     it('passes auto_triggers_stage as a service option, never in the transfer body', async () => {

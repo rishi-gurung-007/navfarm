@@ -7,6 +7,7 @@ import * as schema from '../../../core/database/schema';
 import { CreateApprovalRequestDto, DecideApprovalDto, QueryApprovalDto } from './dto/approval.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { BatchService } from '../batch/batch.service';
+import { BatchTransferService } from '../batch/batch-transfer.service';
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { assertCompanyInScope, batchReferenceScopeConditions, batchScopeConditions, farmScope, restrictedScopeConditions } from '../../../common/farm-scope';
 
@@ -40,6 +41,7 @@ export class ApprovalService {
     private readonly cls: ClsService,
     private readonly auditService: AuditLogService,
     private readonly batchService: BatchService,
+    private readonly batchTransferService: BatchTransferService,
   ) {}
 
   private get db(): MySql2Database<typeof schema> {
@@ -280,6 +282,21 @@ export class ApprovalService {
         .for('update');
       if (!batch || batch.company_id !== current.company_id) throw new BadRequestException('The health request batch does not belong to its company.');
       await this.postHealthTreatment(current, tenantId, userPayload);
+    }
+
+    // An approved transfer approval posts the movement it gates — the same
+    // post() a direct post uses, flagged viaApproval so the worker gate
+    // standing in front of it opens for the decision. A rejected one cancels
+    // the draft so the animals cannot be moved by a stale request later. Both
+    // run inside this decision's transaction: an approval whose movement
+    // cannot post fails the decision, not the herd.
+    if (current.doc_type === 'BATCH_TRANSFER') {
+      if (!current.reference_id) throw new BadRequestException('This transfer request has no transfer document linked.');
+      if (status === 'APPROVED') {
+        await this.batchTransferService.post(current.reference_id, tenantId, userPayload, { viaApproval: true });
+      } else {
+        await this.batchTransferService.cancel(current.reference_id, tenantId, userPayload);
+      }
     }
 
     await this.db

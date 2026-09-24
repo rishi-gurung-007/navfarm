@@ -499,7 +499,7 @@ describe('BatchTransferService', () => {
       stillLiveSelect();
       updatesByTable();
 
-      await service.post('tr-1', 'tenant-123', { userId: 'user-1' }, true);
+      await service.post('tr-1', 'tenant-123', { userId: 'user-1' }, { autoTriggersStage: true });
 
       expect(mockDb.transaction).toHaveBeenCalled();
       expect(mockCreateForAuthorizedBatchStage).toHaveBeenCalledWith(
@@ -518,7 +518,7 @@ describe('BatchTransferService', () => {
       stillLiveSelect();
       updatesByTable();
 
-      await expect(service.post('tr-1', 'tenant-123', undefined, true)).rejects.toThrow('scheduler failed');
+      await expect(service.post('tr-1', 'tenant-123', undefined, { autoTriggersStage: true })).rejects.toThrow('scheduler failed');
 
       expect(mockDb.transaction).toHaveBeenCalled();
       expect(shiftState).not.toHaveBeenCalled();
@@ -754,12 +754,34 @@ describe('BatchTransferService', () => {
     const stopAtAnimalSelection = () =>
       jest.spyOn(service as any, 'listTransferableAnimalsFromAuthorizedBatch').mockRejectedValue(new Error('reached animal selection'));
 
-    it('refuses a farm worker with the interim approval message, before reading any batch', async () => {
+    it('gates a farm worker\'s transfer behind a PENDING approval, not a refusal', async () => {
       useFarmScope({ farmId: 'farm-k', restricted: true, companyId: 'comp-1', lobId: 'lob-1' });
-      await expect(service.create(dto, 'tenant-123', 'batch-gest', worker))
-        .rejects.toThrow(new ForbiddenException(WORKER_TRANSFER_REFUSAL));
-      expect(mockDbSelect).not.toHaveBeenCalled();
-      expect(mockDbInsert).not.toHaveBeenCalled();
+      const source = batchRow({ batch_id: 'batch-gest', farm_id: 'farm-k' });
+      const destination = batchRow({ batch_id: 'batch-farrow', farm_id: 'farm-k', stage_id: 'stage-farrowing', sub_location_id: 'pen-k-1' });
+      jest.spyOn(service as any, 'loadBatch').mockResolvedValue(source);
+      mockDbSelect.mockReturnValueOnce(chain([destination])).mockReturnValueOnce(chain([penRow]));
+      jest.spyOn(service as any, 'listTransferableAnimalsFromAuthorizedBatch').mockResolvedValue([
+        { animal_id: 'a-1', current_location_id: 'pen-1', book_value: '10', total_opening_asset_value: null, acquisition_cost: null },
+      ]);
+      jest.spyOn(service as any, 'generateTransferNo').mockResolvedValue('BTR-9');
+      mockDbSelect.mockReturnValueOnce(chain([])); // source bio-asset state (per-head value fallback)
+      mockDbSelect.mockReturnValueOnce(chain([{ n: 3 }])); // BATCH_TRANSFER doc-no count inside raiseTransferApproval
+      // findOne returns the DRAFT the worker will read back.
+      jest.spyOn(service, 'findOne').mockResolvedValue({ transfer_id: 'tr-x', status: 'DRAFT' } as any);
+      const inserts: any[] = [];
+      mockDbInsert.mockImplementation(() => ({ values: jest.fn((v: any) => { inserts.push(v); return Promise.resolve({}); }) }));
+
+      const result = await service.create({ ...dto, post_immediately: true } as any, 'tenant-123', 'batch-gest', worker);
+
+      expect((result as any).status).toBe('DRAFT');
+      // Three inserts: the transfer header, its line, and the PENDING approval.
+      // The approval is a first-class row, not a refusal — the whole point.
+      expect(mockDbInsert).toHaveBeenCalledTimes(3);
+      const approval = inserts[2];
+      expect(approval.doc_type).toBe('BATCH_TRANSFER');
+      expect(approval.status).toBe('PENDING');
+      expect(approval.batch_id).toBe('batch-gest');
+      expect(approval.requested_qty).toBe('1');
     });
 
     it('refuses an operational admin moving animals to another farm', async () => {
@@ -828,11 +850,11 @@ describe('BatchTransferService', () => {
       const post = jest.spyOn(service, 'post').mockResolvedValue({} as any);
 
       await service.create({ ...dto, auto_triggers_stage: true }, 'tenant-123', 'batch-gest', companyAdmin);
-      expect(post).toHaveBeenLastCalledWith(expect.any(String), 'tenant-123', companyAdmin, undefined);
+      expect(post).toHaveBeenLastCalledWith(expect.any(String), 'tenant-123', companyAdmin, { autoTriggersStage: undefined });
 
       mockDbSelect.mockReturnValueOnce(chain([kintyreDestination])).mockReturnValueOnce(chain([penRow])).mockReturnValueOnce(chain([]));
       await service.create(dto, 'tenant-123', 'batch-gest', companyAdmin, { autoTriggersStage: true });
-      expect(post).toHaveBeenLastCalledWith(expect.any(String), 'tenant-123', companyAdmin, true);
+      expect(post).toHaveBeenLastCalledWith(expect.any(String), 'tenant-123', companyAdmin, { autoTriggersStage: true });
     });
 
     // N-I1: Registered PIG-BAT-2026-0101 and Count Only PIG-BAT-2026-0003 share

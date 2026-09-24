@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Plus, Trash2, Search, Loader2, Inbox, Eye, PlayCircle, CheckCircle2, ClipboardCheck, QrCode as QrCodeIcon, RefreshCw, CalendarClock } from "lucide-react";
+import { Plus, Trash2, Search, Loader2, Inbox, Eye, PlayCircle, CheckCircle2, ClipboardCheck, QrCode as QrCodeIcon, RefreshCw, CalendarClock, ArrowLeftRight } from "lucide-react";
 import QRCode from "react-qr-code";
 import { api } from "@/services/api-client";
 import { Dialog } from "@/components/ui/dialog";
@@ -164,6 +164,19 @@ export default function BatchPanel() {
   const storedUser = getStoredUser();
   const assignedFarmId = storedUser?.farmId || storedUser?.farm_id || "";
   const farmIsFixed = storedUser?.userType === "STANDARD_USER" && !!assignedFarmId;
+
+  // Transfer-to-batch from the Animals tab. A top-level user confirms a
+  // warning and the movement posts; a standard user's transfer goes to the
+  // Approvals queue — the API raises the PENDING request, the UI explains it.
+  const isTopLevelUser = !!storedUser && storedUser.userType !== "STANDARD_USER";
+  const [transferModalOpen, setTransferModalOpen] = useState(false);
+  const [transferTargets, setTransferTargets] = useState<Row[]>([]);
+  const [transferForm, setTransferForm] = useState<Row>({ to_batch_id: "", transfer_date: new Date().toISOString().slice(0, 10), reason: "" });
+  const [transferAnimalIds, setTransferAnimalIds] = useState<string[]>([]);
+  const [transferSaving, setTransferSaving] = useState(false);
+  const [transferError, setTransferError] = useState("");
+  const [transferResult, setTransferResult] = useState<null | { status: string; transfer_no?: string }>(null);
+  const [transferableAnimals, setTransferableAnimals] = useState<Row[]>([]);
   const scope = typeof window !== "undefined" ? localStorage.getItem("active_workspace_scope") : "COMPANY";
 
   const load = async () => {
@@ -268,7 +281,10 @@ export default function BatchPanel() {
       const params = new URLSearchParams();
       if (companyId) params.set("companyId", companyId);
       if (header.breed_id) params.set("breedId", header.breed_id);
-      params.set("unassignedOnly", "true");
+      // All animals on the farm, not just the unassigned ones — an animal
+      // already in another batch shows as disabled with its batch number, so
+      // the list tells the truth about the herd instead of hiding rows.
+      params.set("limit", "500");
       api
         .get(`/animal?${params.toString()}`)
         .then((res) => {
@@ -414,6 +430,52 @@ export default function BatchPanel() {
     if (!viewing) return;
     const res = await api.get(`/batch/${viewing.batch_id}`);
     setViewing(unwrap<Row>(res));
+  };
+
+  const openTransferModal = async () => {
+    if (!viewing) return;
+    setTransferError("");
+    setTransferResult(null);
+    setTransferAnimalIds([]);
+    setTransferForm({ to_batch_id: "", transfer_date: new Date().toISOString().slice(0, 10), reason: "" });
+    setTransferModalOpen(true);
+    try {
+      const res = await api.get(`/batch-transfer/transferable/${viewing.batch_id}`);
+      setTransferTargets(batches.filter((b) => b.batch_id !== viewing.batch_id && b.farm_id === viewing.farm_id && ["DRAFT", "ACTIVE"].includes(b.status)));
+      // Nothing renders until the pool is in — but the modal is open, so keep
+      // the response for the list below.
+      setTransferableAnimals(unwrap<Row[]>(res) || []);
+    } catch (err: any) {
+      setTransferError(err?.message || "Could not load the animals that can transfer.");
+      setTransferTargets(batches.filter((b) => b.batch_id !== viewing.batch_id && b.farm_id === viewing.farm_id && ["DRAFT", "ACTIVE"].includes(b.status)));
+    }
+  };
+
+  const handleTransferAnimals = async () => {
+    if (!viewing || !transferForm.to_batch_id || transferAnimalIds.length === 0) return;
+    setTransferSaving(true);
+    setTransferError("");
+    try {
+      const res = await api.post(`/batch-transfer/from/${viewing.batch_id}`, {
+        company_id: (viewing as any).company_id,
+        to_batch_id: transferForm.to_batch_id,
+        transfer_date: transferForm.transfer_date,
+        transfer_type: "PARTIAL",
+        animal_ids: transferAnimalIds,
+        reason: transferForm.reason || undefined,
+        post_immediately: true,
+      });
+      const created = (res?.data ?? res) as any;
+      // DIRECT posts return status POSTED; APPROVAL-mode creates return DRAFT
+      // plus a PENDING approval raised by the API.
+      setTransferResult({ status: created?.status || "DRAFT", transfer_no: created?.transfer_no });
+      setTransferAnimalIds([]);
+      await refreshViewing();
+    } catch (err: any) {
+      setTransferError(err?.message || "Could not transfer the selected animals.");
+    } finally {
+      setTransferSaving(false);
+    }
   };
 
   const loadDataEntry = async () => {
@@ -1116,11 +1178,11 @@ export default function BatchPanel() {
                     <div className="flex flex-col gap-2 mt-1">
                       {loadingAnimals ? (
                         <div className="py-4 text-center text-xs" style={S.sub}>
-                          <Loader2 className="inline-block mr-1 h-3.5 w-3.5 animate-spin" /> Loading unassigned registered animals on this farm…
+                          <Loader2 className="inline-block mr-1 h-3.5 w-3.5 animate-spin" /> Loading registered animals on this farm…
                         </div>
                       ) : availableAnimals.length === 0 ? (
                         <div className="py-3 text-center text-xs text-amber-700 bg-amber-500/10 rounded-md border border-amber-500/20">
-                          No unassigned registered animals found on this farm and breed. Use <strong>Explicit Entry</strong> to specify opening headcount and register animals afterwards or upon arrival.
+                          No registered animals found on this farm and breed. Use <strong>Explicit Entry</strong> to specify opening headcount and register animals afterwards or upon arrival.
                         </div>
                       ) : (
                         <div className="flex flex-col gap-1.5">
@@ -1129,32 +1191,40 @@ export default function BatchPanel() {
                             <button
                               type="button"
                               onClick={() => {
-                                const allIds = availableAnimals.map((a) => a.animal_id);
-                                const isAll = selectedAnimalIds.length === allIds.length;
+                                const selectable = availableAnimals.filter((a) => !a.current_batch_id);
+                                const allIds = selectable.map((a) => a.animal_id);
+                                const isAll = selectable.length > 0 && selectedAnimalIds.length === allIds.length;
                                 const next = isAll ? [] : allIds;
                                 setSelectedAnimalIds(next);
                                 setHeader((h) => ({ ...h, opening_quantity: next.length > 0 ? next.length.toString() : "", uom: "HEAD" }));
                               }}
                               className="text-primary hover:underline font-semibold"
                             >
-                              {selectedAnimalIds.length === availableAnimals.length ? "Deselect All" : "Select All"}
+                              {selectedAnimalIds.length === availableAnimals.filter((a) => !a.current_batch_id).length ? "Deselect All" : "Select All"}
                             </button>
                           </div>
                           <div className="max-h-44 overflow-y-auto border rounded-md p-1 divide-y divide-(--row-border)" style={S.input}>
                             {availableAnimals.map((a) => {
+                              // An animal already in a batch cannot be picked
+                              // for a second one — the API refuses it — so its
+                              // row is disabled and says where it is instead.
+                              const taken = !!a.current_batch_id;
                               const isChecked = selectedAnimalIds.includes(a.animal_id);
                               return (
-                                <label key={a.animal_id} className="flex items-center gap-2.5 p-1.5 hover:bg-(--surface-raised) cursor-pointer rounded text-xs">
+                                <label key={a.animal_id} className={`flex items-center gap-2.5 p-1.5 rounded text-xs ${taken ? "opacity-50 cursor-not-allowed" : "hover:bg-(--surface-raised) cursor-pointer"}`}>
                                   <input
                                     type="checkbox"
                                     checked={isChecked}
+                                    disabled={taken}
                                     onChange={() => toggleAnimalSelection(a.animal_id)}
                                     className="rounded border-border"
                                   />
                                   <span className="font-semibold" style={S.primary}>{a.ear_tag || a.animal_code}</span>
                                   <span className="text-[11px]" style={S.sub}>({a.animal_type})</span>
                                   <span className="text-[11px] ml-auto" style={S.muted}>
-                                    {a.gender === "F" ? "Female" : a.gender === "M" ? "Male" : ""} • {a.status}
+                                    {taken
+                                      ? <>In {a.batch_no}</>
+                                      : <>{a.gender === "F" ? "Female" : a.gender === "M" ? "Male" : ""} • {a.status}</>}
                                   </span>
                                 </label>
                               );
@@ -1903,6 +1973,11 @@ export default function BatchPanel() {
                   <span className="text-[11px] font-medium" style={S.sub}>
                     {viewing.animals?.length ?? 0} head registered
                   </span>
+                  {viewing.status === "ACTIVE" && (
+                    <Button size="sm" variant="outline" onClick={openTransferModal} className="text-xs h-8">
+                      <ArrowLeftRight className="h-3.5 w-3.5" /> Transfer animals
+                    </Button>
+                  )}
                 </div>
 
                 {(!viewing.animals || viewing.animals.length === 0) ? (
@@ -1947,6 +2022,124 @@ export default function BatchPanel() {
             )}
           </div>
         )}
+      </Dialog>
+
+      {/* Transfer animals to another batch — role decides post vs approval */}
+      <Dialog
+        open={transferModalOpen}
+        onClose={() => !transferSaving && setTransferModalOpen(false)}
+        title="Transfer animals to another Batch"
+        footer={transferResult ? (
+          <Button size="sm" onClick={() => setTransferModalOpen(false)}>Done</Button>
+        ) : (
+          <>
+            <Button variant="outline" size="sm" onClick={() => setTransferModalOpen(false)} disabled={transferSaving}>Cancel</Button>
+            <Button
+              size="sm"
+              className="nf-btn-primary"
+              disabled={transferSaving || !transferForm.to_batch_id || transferAnimalIds.length === 0}
+              onClick={handleTransferAnimals}
+            >
+              {transferSaving ? "Submitting…" : isTopLevelUser ? "Transfer" : "Send for approval"}
+            </Button>
+          </>
+        )}
+      >
+        <div className="flex flex-col gap-4">
+          {transferError && <InlineAlert>{transferError}</InlineAlert>}
+
+          {transferResult ? (
+            <div className="flex flex-col gap-2">
+              {transferResult.status === "POSTED" ? (
+                <div className="p-3 text-xs rounded-[var(--radius-md)] bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/20">
+                  Transfer {transferResult.transfer_no ?? ""} posted. The animals now stand in the destination batch.
+                </div>
+              ) : (
+                <div className="p-3 text-xs rounded-[var(--radius-md)] bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/20">
+                  Transfer {transferResult.transfer_no} was sent for approval. A top-level user will decide it from the Approvals screen —
+                  the animals move once it is approved.
+                </div>
+              )}
+            </div>
+          ) : (
+            <>
+              {isTopLevelUser ? (
+                <div className="p-3 text-xs rounded-[var(--radius-md)] bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/20">
+                  <strong>Heads up:</strong> the selected animals would be transferred to the destination batch immediately —
+                  their batch, stage and pen move with them. This cannot be undone here.
+                </div>
+              ) : (
+                <div className="p-3 text-xs rounded-[var(--radius-md)] bg-blue-500/10 text-blue-700 dark:text-blue-400 border border-blue-500/20">
+                  Your transfer will be sent to the Approvals queue. The animals move only once a top-level user approves it.
+                </div>
+              )}
+
+              <div className="flex flex-col gap-1.5">
+                <label className="nf-text-label" style={S.sub}>Destination batch *</label>
+                <select
+                  value={transferForm.to_batch_id}
+                  onChange={(e) => setTransferForm((f: Row) => ({ ...f, to_batch_id: e.target.value }))}
+                  className={`${inputCls} nf-select`}
+                  style={S.input}
+                >
+                  <option value="">Select…</option>
+                  {transferTargets.map((b) => (
+                    <option key={b.batch_id} value={b.batch_id}>{b.batch_no} — {b.status}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="nf-text-label" style={S.sub}>Transfer date *</label>
+                <input
+                  type="date"
+                  value={transferForm.transfer_date}
+                  onChange={(e) => setTransferForm((f: Row) => ({ ...f, transfer_date: e.target.value }))}
+                  className={inputCls}
+                  style={S.input}
+                />
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="nf-text-label" style={S.sub}>Reason</label>
+                <input
+                  value={transferForm.reason}
+                  onChange={(e) => setTransferForm((f: Row) => ({ ...f, reason: e.target.value }))}
+                  placeholder="Why are these animals moving?"
+                  className={inputCls}
+                  style={S.input}
+                />
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <div className="flex items-center justify-between text-[11px]" style={S.sub}>
+                  <span>Animals to move ({transferAnimalIds.length} of {transferableAnimals.length}):</span>
+                  <button
+                    type="button"
+                    onClick={() => setTransferAnimalIds(transferAnimalIds.length === transferableAnimals.length ? [] : transferableAnimals.map((a) => a.animal_id))}
+                    className="text-primary hover:underline font-semibold"
+                  >
+                    {transferAnimalIds.length === transferableAnimals.length && transferableAnimals.length > 0 ? "Deselect All" : "Select All"}
+                  </button>
+                </div>
+                <div className="max-h-44 overflow-y-auto border rounded-md p-1 divide-y divide-(--row-border)" style={S.input}>
+                  {transferableAnimals.map((a) => (
+                    <label key={a.animal_id} className="flex items-center gap-2.5 p-1.5 hover:bg-(--surface-raised) cursor-pointer rounded text-xs">
+                      <input
+                        type="checkbox"
+                        checked={transferAnimalIds.includes(a.animal_id)}
+                        onChange={() => setTransferAnimalIds((prev) => prev.includes(a.animal_id) ? prev.filter((id) => id !== a.animal_id) : [...prev, a.animal_id])}
+                        className="rounded border-border"
+                      />
+                      <span className="font-semibold" style={S.primary}>{a.ear_tag || a.animal_code}</span>
+                      <span className="text-[11px]" style={S.sub}>({a.animal_type})</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
+        </div>
       </Dialog>
 
       {/* Transfer stage modal */}

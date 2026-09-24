@@ -49,7 +49,10 @@ describe('approval posting', () => {
       events.push('post');
     }) };
     audit = { log: jest.fn(async () => { events.push('audit'); }) };
-    service = new ApprovalService(cls, audit, batchService);
+    // Non-BATCH_TRANSFER decisions never touch the transfer service; the mock
+    // fails loudly if a code path ever calls it without a linked request.
+    const batchTransferService = { post: jest.fn(async () => { throw new Error('unexpected transfer post'); }), cancel: jest.fn(async () => { throw new Error('unexpected transfer cancel') }) };
+    service = new ApprovalService(cls, audit, batchService, batchTransferService as any);
     jest.spyOn(service, 'findOne').mockImplementation(async () => ({ ...request }));
   });
 

@@ -9,7 +9,7 @@ import { CorrectDailyEntryDto, CreateBatchDailyDataDto, PostDailyDraftsDto, Save
 import { CreateUnscheduledHealthDto } from './dto/unscheduled-health.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { BatchService, type UserContext } from '../batch/batch.service';
-import { BatchTransferService, assertWorkerMayTransfer } from '../batch/batch-transfer.service';
+import { BatchTransferService, transferActorApprovalMode } from '../batch/batch-transfer.service';
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
 import { DueLine, stageDayStatus, pendingDays, isLineDue, StageDayStatus, addDays, datesBetween } from './day-completeness';
 import { entryVerdict, isCorrectableLineType, todayIn, todayAtOffset } from './entry-window';
@@ -1212,10 +1212,11 @@ export class BatchDailyDataService {
           throw new BadRequestException('entered_value (or the line\'s standard_qty) is required to know how many head to move.');
         }
         // destination_batch_id comes from the request body, so this is the same
-        // movement as POST /batch-transfer and obeys the same interim rule: a
-        // farm worker holding only BATCH_ENTRY create cannot move animals.
-        // create() re-checks; refusing here also skips the candidate read.
-        assertWorkerMayTransfer(userPayload, farmScope(this.cls));
+        // movement as POST /batch-transfer and obeys the same rule: a farm
+        // worker's movement is gated behind a PENDING approval (raised inside
+        // create(), which re-checks); top-level users post directly. The mode
+        // read here only skips the candidate read when it would be refused.
+        const transferMode = transferActorApprovalMode(userPayload, farmScope(this.cls));
         const headcount = Math.round(values.entered_value ?? Number(line.standard_qty));
         // Auto-select the oldest still-in-this-batch animals up to the requested
         // headcount — the schedule line only says how many move, not which ones;

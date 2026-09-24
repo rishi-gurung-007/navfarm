@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, or, inArray, isNull, gte, lte, desc, sql, SQL } from 'drizzle-orm';
+import { eq, and, or, inArray, isNull, gte, lte, desc, sql, like, SQL } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
@@ -39,13 +39,15 @@ function transferActorType(actor: TransferActor | undefined, scope: FarmScope): 
 }
 
 /**
- * Interim rule until the Phase 7 approval workflow exists: decisions.md says
- * every standard-user transfer needs approval, and there is nothing yet to
- * approve it with, so a farm worker cannot create or post one at all. Checked
- * before any read so the refusal says nothing about the batches named.
+ * Transfer authorization, decided once and read the same way on create and
+ * post. A standard user (a farm worker) never posts directly: their transfer
+ * lands as a DRAFT and a PENDING approval request that a top-level user
+ * decides from the Approvals screen — approval posts it. Every other role is
+ * trusted and posts immediately; the UI shows them a warning to confirm, the
+ * API enforces nothing extra for them.
  */
-export function assertWorkerMayTransfer(actor: TransferActor | undefined, scope: FarmScope): void {
-  if (transferActorType(actor, scope) === 'STANDARD_USER') throw new ForbiddenException(WORKER_TRANSFER_REFUSAL);
+export function transferActorApprovalMode(actor: TransferActor | undefined, scope: FarmScope): 'APPROVAL' | 'DIRECT' {
+  return transferActorType(actor, scope) === 'STANDARD_USER' ? 'APPROVAL' : 'DIRECT';
 }
 
 /**
@@ -55,7 +57,8 @@ export function assertWorkerMayTransfer(actor: TransferActor | undefined, scope:
  * an animal attached to its source-farm Breed after it moves.
  */
 function assertFarmToFarmAllowed(actor: TransferActor | undefined, scope: FarmScope, source: BatchRow, destination: BatchRow): void {
-  assertWorkerMayTransfer(actor, scope);
+  // The farm-to-farm refusal stands for every role; the destination's Breed
+  // profile must be remappable before any animal crosses a farm.
   if (source.farm_id !== destination.farm_id) {
     throw new ForbiddenException(FARM_TO_FARM_TRANSFER_REFUSAL);
   }
@@ -356,9 +359,11 @@ export class BatchTransferService {
   }
 
   /**
-   * `options.autoTriggersStage` is internal: only the TRANSFER scheduler line
-   * sets it (it generates the destination's scheduler unscoped), so it is not
-   * on the HTTP DTO.
+   * Internal call flags. `autoTriggersStage` is set only by the TRANSFER
+   * scheduler line (it generates the destination's scheduler unscoped);
+   * `viaApproval` is set only by ApprovalService when a decision posts the
+   * gated transfer — the one path a farm worker's transfer is allowed to
+   * move animals. Neither is on the HTTP DTO.
    */
   async create(
     dto: CreateBatchTransferDto,
@@ -367,7 +372,7 @@ export class BatchTransferService {
     userPayload?: TransferActor,
     options: { autoTriggersStage?: boolean } = {},
   ) {
-    assertWorkerMayTransfer(userPayload, farmScope(this.cls));
+    const mode = transferActorApprovalMode(userPayload, farmScope(this.cls));
     // One transaction with the post below, so a refused post leaves no DRAFT
     // header and lines behind from an autocommitted insert.
     return withTenantTransaction(this.cls, async () => {
@@ -477,10 +482,79 @@ export class BatchTransferService {
       newValues: { transfer_no: transferNo, from: source.batch_no, to: destination.batch_no, head_count: selected.length },
     });
 
-    if (dto.post_immediately !== false) {
-      return this.post(transferId, tenantId, userPayload, options.autoTriggersStage);
+    if (dto.post_immediately !== false && mode === 'DIRECT') {
+      return this.post(transferId, tenantId, userPayload, { autoTriggersStage: options.autoTriggersStage });
+    }
+    // A worker's transfer stops here: DRAFT, with a PENDING approval riding on
+    // it (below). The UI reads the two back together; an approver's decision
+    // posts the movement through the same post() path a direct post uses.
+    if (mode === 'APPROVAL') {
+      await this.raiseTransferApproval(transferId, source, destination, transferNo, selected.length, userPayload, dto.reason, tenantId);
     }
     return this.findOne(transferId, tenantId);
+    });
+  }
+
+  /**
+   * The PENDING approval a standard user's transfer waits on. Raised inside
+   * the caller's transaction so a refused transfer never leaves an approval
+   * pointing at a transfer that does not exist — and a transfer never exists
+   * without its approval. Written directly, not through ApprovalService: the
+   * module graph runs Approval → Batch, and a back-import would be a cycle.
+   * The doc-number scheme mirrors ApprovalService.generateDocNo.
+   */
+  private async raiseTransferApproval(
+    transferId: string,
+    source: BatchRow,
+    destination: BatchRow,
+    transferNo: string,
+    headCount: number,
+    userPayload?: TransferActor,
+    reason?: string | null,
+    tenantId?: string,
+  ): Promise<void> {
+    const tenant = tenantId!;
+    const year = new Date().getFullYear();
+    const [{ n }] = await this.db
+      .select({ n: sql<number>`COUNT(*)` })
+      .from(schema.approvalRequest)
+      .where(
+        and(
+          eq(schema.approvalRequest.tenant_id, tenant),
+          eq(schema.approvalRequest.company_id, source.company_id),
+          eq(schema.approvalRequest.doc_type, 'BATCH_TRANSFER'),
+          like(schema.approvalRequest.doc_no, `TRF-REQ-${year}-%`),
+        )
+      );
+    const docNo = `TRF-REQ-${year}-${String(Number(n) + 1).padStart(4, '0')}`;
+
+    await this.db.insert(schema.approvalRequest).values({
+      tenant_id: tenant,
+      company_id: source.company_id,
+      doc_type: 'BATCH_TRANSFER',
+      doc_no: docNo,
+      title: `Transfer ${headCount} animal${headCount === 1 ? '' : 's'} to ${destination.batch_no}`,
+      requested_by: userPayload?.userId || null,
+      requestor_label: (userPayload as any)?.fullName || (userPayload as any)?.email || null,
+      requestor_role: ((userPayload as any)?.userType || '').replace(/_/g, ' ') || null,
+      location_label: `${source.batch_no} → ${destination.batch_no}`,
+      batch_id: source.batch_id,
+      reference_id: transferId,
+      item_or_stage: transferNo,
+      requested_qty: String(headCount),
+      justification: reason || null,
+      status: 'PENDING',
+      created_by: userPayload?.userId || null,
+    });
+
+    await this.auditService.log({
+      tenantId: tenant,
+      companyId: source.company_id,
+      userId: userPayload?.userId,
+      action: 'CREATE',
+      entityName: 'approval_request',
+      entityId: transferId,
+      newValues: { doc_no: docNo, doc_type: 'BATCH_TRANSFER', transfer_no: transferNo, head_count: headCount },
     });
   }
 
@@ -523,7 +597,12 @@ export class BatchTransferService {
     tenantId: string,
     userPayload?: TransferActor,
   ) {
-    assertWorkerMayTransfer(userPayload, farmScope(this.cls));
+    // Split/merge are composite flows: the child closes and the movement posts
+    // in one breath, so a gated (approval-pending) movement would leave them
+    // half-applied. Workers raise plain transfers for approval instead.
+    if (transferActorApprovalMode(userPayload, farmScope(this.cls)) === 'APPROVAL') {
+      throw new ForbiddenException(WORKER_TRANSFER_REFUSAL);
+    }
     // Atomic: the child batch, the animal movement and the child's scheduler
     // commit together. Before, the child was autocommitted and a later refusal
     // left it behind with the animals already moved.
@@ -662,7 +741,11 @@ export class BatchTransferService {
     tenantId: string,
     userPayload?: TransferActor,
   ) {
-    assertWorkerMayTransfer(userPayload, farmScope(this.cls));
+    // Same composite-flow refusal as split: merge closes the child the moment
+    // the movement posts, so the movement cannot sit pending approval.
+    if (transferActorApprovalMode(userPayload, farmScope(this.cls)) === 'APPROVAL') {
+      throw new ForbiddenException(WORKER_TRANSFER_REFUSAL);
+    }
     // Atomic with the movement: a closed child with its animals still in it, or
     // moved animals under a child still open, were both possible before.
     return withTenantTransaction(this.cls, async () => {
@@ -713,15 +796,24 @@ export class BatchTransferService {
    * double-submit waits for the first post, then is refused — it cannot move
    * the same animals, value or ledger legs twice.
    */
-  async post(transferId: string, tenantId: string, userPayload?: TransferActor, autoTriggersStage?: boolean) {
-    assertWorkerMayTransfer(userPayload, farmScope(this.cls));
+  async post(transferId: string, tenantId: string, userPayload?: TransferActor, flags: { autoTriggersStage?: boolean; viaApproval?: boolean } = {}) {
+    // A worker's post() call is always direct — their transfers go through the
+    // approval's post, which carries viaApproval. A worker who has somehow
+    // obtained the transfer id still cannot move the animals themselves.
+    if (!flags.viaApproval) {
+      if (transferActorApprovalMode(userPayload, farmScope(this.cls)) === 'APPROVAL') {
+        throw new ForbiddenException(WORKER_TRANSFER_REFUSAL);
+      }
+    }
     return withTenantTransaction(this.cls, async () => {
     const transfer = await this.loadTransferForMutation(transferId, tenantId);
     if (transfer.status !== 'DRAFT') {
       throw new BadRequestException(`Only a DRAFT transfer can be posted (this one is ${transfer.status}).`);
     }
     const { source, destination: destBatch } = await this.lockTransferBatches(transfer, tenantId);
-    assertFarmToFarmAllowed(userPayload, farmScope(this.cls), source, destBatch);
+    if (!flags.viaApproval) {
+      assertFarmToFarmAllowed(userPayload, farmScope(this.cls), source, destBatch);
+    }
     // Re-read on the locked row: the destination's tracking or breed may have
     // been changed since the draft was created.
     assertDestinationTracksAnimals(destBatch);
@@ -803,7 +895,7 @@ export class BatchTransferService {
     // header already exists. Runs after the repoint above so the live
     // animal_register count createForStage() reads already includes these
     // animals.
-    if (autoTriggersStage && destBatch?.stage_id) {
+    if (flags.autoTriggersStage && destBatch?.stage_id) {
       await this.schedulerHeaderService.createForAuthorizedBatchStage(destBatch, destBatch.stage_id, tenantId, userPayload);
     }
 
