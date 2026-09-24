@@ -248,12 +248,9 @@ export default function GoodsIssuePanel() {
         title={t("gipNewGoodsIssue")}
         maxWidth="xl"
         footer={
-          <>
-            <Button variant="outline" size="sm" onClick={() => setModalOpen(false)} disabled={saving}>{t("gipCancel")}</Button>
-            <Button size="sm" onClick={handleSave} disabled={saving} className="nf-btn-primary">
-              {saving ? t("gipSaving") : t("gipSaveDraft")}
-            </Button>
-          </>
+          <Button size="sm" onClick={handleSave} disabled={saving} className="nf-btn-primary">
+            {saving ? t("gipSaving") : t("gipSaveDraft")}
+          </Button>
         }
       >
         <div className="flex flex-col gap-4">
@@ -342,12 +339,9 @@ export default function GoodsIssuePanel() {
         maxWidth="xl"
         footer={
           viewing?.status === "DRAFT" ? (
-            <>
-              <Button variant="outline" size="sm" onClick={() => setViewing(null)}>{t("gipCancel")}</Button>
-              <Button size="sm" onClick={handlePost} disabled={posting} className="flex items-center gap-1.5 nf-btn-primary">
-                <CheckCircle2 className="h-4 w-4" /> {posting ? t("gipPosting") : t("gipPost")}
-              </Button>
-            </>
+            <Button size="sm" onClick={handlePost} disabled={posting} className="flex items-center gap-1.5 nf-btn-primary">
+              <CheckCircle2 className="h-4 w-4" /> {posting ? t("gipPosting") : t("gipPost")}
+            </Button>
           ) : undefined
         }
       >

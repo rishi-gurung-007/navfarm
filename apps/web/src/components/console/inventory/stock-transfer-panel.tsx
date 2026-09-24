@@ -255,12 +255,9 @@ export default function StockTransferPanel() {
         title={t("stpNewStockTransfer")}
         maxWidth="xl"
         footer={
-          <>
-            <Button variant="outline" size="sm" onClick={() => setModalOpen(false)} disabled={saving}>{t("stpCancel")}</Button>
-            <Button size="sm" onClick={handleSave} disabled={saving} className="nf-btn-primary">
-              {saving ? t("stpSaving") : t("stpSaveDraft")}
-            </Button>
-          </>
+          <Button size="sm" onClick={handleSave} disabled={saving} className="nf-btn-primary">
+            {saving ? t("stpSaving") : t("stpSaveDraft")}
+          </Button>
         }
       >
         <div className="flex flex-col gap-4">
@@ -349,12 +346,9 @@ export default function StockTransferPanel() {
         maxWidth="xl"
         footer={
           viewing?.status === "DRAFT" ? (
-            <>
-              <Button variant="outline" size="sm" onClick={() => setViewing(null)}>{t("stpCancel")}</Button>
-              <Button size="sm" onClick={handlePost} disabled={posting} className="flex items-center gap-1.5 nf-btn-primary">
-                <CheckCircle2 className="h-4 w-4" /> {posting ? t("stpPosting") : t("stpPost")}
-              </Button>
-            </>
+            <Button size="sm" onClick={handlePost} disabled={posting} className="flex items-center gap-1.5 nf-btn-primary">
+              <CheckCircle2 className="h-4 w-4" /> {posting ? t("stpPosting") : t("stpPost")}
+            </Button>
           ) : undefined
         }
       >

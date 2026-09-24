@@ -222,12 +222,9 @@ export default function ParameterPanel() {
         onClose={() => !saving && setModalOpen(false)}
         title={t("paramNewParameterTitle")}
         footer={
-          <>
-            <button onClick={() => setModalOpen(false)} disabled={saving} className="rounded-lg border px-4 py-2 text-sm font-medium" style={S.surface}>{t("paramCancel")}</button>
-            <Button onClick={handleSave} disabled={saving} >
-              {saving ? t("paramSaving") : t("paramSave")}
-            </Button>
-          </>
+          <Button onClick={handleSave} disabled={saving} >
+            {saving ? t("paramSaving") : t("paramSave")}
+          </Button>
         }
       >
         <div className="flex flex-col gap-4">

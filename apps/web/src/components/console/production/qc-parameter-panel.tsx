@@ -222,12 +222,9 @@ export default function QcParameterPanel() {
         onClose={() => !saving && setModalOpen(false)}
         title={t("qcpNewQcParameter")}
         footer={
-          <>
-            <button onClick={() => setModalOpen(false)} disabled={saving} className="rounded-lg border px-4 py-2 text-sm font-medium" style={S.surface}>{t("qcpCancel")}</button>
-            <Button onClick={handleSave} disabled={saving} >
-              {saving ? t("qcpSaving") : t("qcpSave")}
-            </Button>
-          </>
+          <Button onClick={handleSave} disabled={saving} >
+            {saving ? t("qcpSaving") : t("qcpSave")}
+          </Button>
         }
       >
         <div className="flex flex-col gap-4">

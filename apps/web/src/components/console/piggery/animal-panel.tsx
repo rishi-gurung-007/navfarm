@@ -575,12 +575,9 @@ export default function AnimalPanel() {
         description={t("anpRegisterAnimalDesc")}
         maxWidth="lg"
         footer={
-          <>
-            <Button variant="ghost" onClick={() => setCreateOpen(false)} disabled={createSaving}>{t("anpCancel")}</Button>
-            <Button id="animal-create-save-btn" onClick={handleCreate} disabled={createSaving}>
-              {createSaving ? <><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />{t("anpSaving")}</> : t("anpRegister")}
-            </Button>
-          </>
+          <Button id="animal-create-save-btn" onClick={handleCreate} disabled={createSaving}>
+            {createSaving ? <><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />{t("anpSaving")}</> : t("anpRegister")}
+          </Button>
         }
       >
         {createError && <div className="mb-4"><InlineAlert variant="danger">{createError}</InlineAlert></div>}
@@ -960,12 +957,9 @@ export default function AnimalPanel() {
         description={t("anpLogDoseDesc")}
         maxWidth="sm"
         footer={
-          <>
-            <Button variant="ghost" onClick={() => setDoseOpen(false)} disabled={doseSaving}>{t("anpCancel")}</Button>
-            <Button id="animal-dose-save-btn" onClick={handleLogDose} disabled={doseSaving}>
-              {doseSaving ? <><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />{t("anpSaving")}</> : t("anpLogDose")}
-            </Button>
-          </>
+          <Button id="animal-dose-save-btn" onClick={handleLogDose} disabled={doseSaving}>
+            {doseSaving ? <><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />{t("anpSaving")}</> : t("anpLogDose")}
+          </Button>
         }
       >
         {doseError && <div className="mb-4"><InlineAlert variant="danger">{doseError}</InlineAlert></div>}
@@ -1025,12 +1019,9 @@ export default function AnimalPanel() {
         description={t("anpDisposeAnimalDesc")}
         maxWidth="sm"
         footer={
-          <>
-            <Button variant="ghost" onClick={() => setDisposeOpen(false)} disabled={disposeSaving}>{t("anpCancel")}</Button>
-            <Button id="animal-dispose-confirm-btn" variant="destructive" onClick={handleDispose} disabled={disposeSaving}>
-              {disposeSaving ? <><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />{t("anpSaving")}</> : t("anpConfirmDisposal")}
-            </Button>
-          </>
+          <Button id="animal-dispose-confirm-btn" variant="destructive" onClick={handleDispose} disabled={disposeSaving}>
+            {disposeSaving ? <><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />{t("anpSaving")}</> : t("anpConfirmDisposal")}
+          </Button>
         }
       >
         {/* Structured withdrawal warning — shown instead of generic error when it's that specific error */}

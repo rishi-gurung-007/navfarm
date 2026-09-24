@@ -707,7 +707,6 @@ export default function CompanyTab({
               </div>
 
               <div className="flex flex-col-reverse gap-3 border-t border-(--border) pt-4 sm:flex-row sm:justify-end">
-                <Button type="button" variant="outline" disabled={creating} onClick={() => setShowCreateModal(false)} className="min-h-10 px-4 text-sm cursor-pointer">{t("cancel")}</Button>
                 <Button type="submit" disabled={creating} className="min-h-10 px-5 text-sm cursor-pointer">
                   {creating ? "Creating..." : "Create Company"}
                 </Button>

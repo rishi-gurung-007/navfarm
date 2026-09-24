@@ -771,9 +771,6 @@ export default function InventorySetupPage() {
           maxWidth="sm"
           footer={
             <div className="flex justify-end gap-2">
-              <Button variant="secondary" size="sm" onClick={() => setModalOpen(false)} disabled={modalCreating}>
-                Cancel
-              </Button>
               <Button variant="default" size="sm" onClick={handleCreateSeries} disabled={modalCreating}>
                 {modalCreating ? "Creating..." : "Create & Set Default"}
               </Button>

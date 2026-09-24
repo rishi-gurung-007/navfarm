@@ -326,8 +326,6 @@ export default function AdminMastersPage() {
                       className="h-11 rounded-[var(--radius-sm)] bg-(--accent) px-5 text-sm font-semibold text-white hover:bg-(--accent-hover) disabled:opacity-50">
                       {savingNob ? "Saving…" : "Save NOB"}
                     </button>
-                    <button type="button" onClick={() => setShowNobForm(false)}
-                      className="h-11 rounded-[var(--radius-sm)] border border-(--border) bg-(--surface) px-5 text-sm text-(--text-secondary) hover:bg-(--surface-raised)">{t("cancel")}</button>
                   </div>
                 </form>
               </Dialog>
@@ -383,8 +381,6 @@ export default function AdminMastersPage() {
                                   className="h-11 rounded-[var(--radius-sm)] bg-(--accent) px-5 text-sm font-semibold text-white hover:bg-(--accent-hover) disabled:opacity-50">
                                   {savingLob ? "Saving…" : "Save LOB"}
                                 </button>
-                                <button type="button" onClick={() => setShowLobForm(null)}
-                                  className="h-11 rounded-[var(--radius-sm)] border border-(--border) bg-(--surface) px-5 text-sm text-(--text-secondary) hover:bg-(--surface-raised)">{t("cancel")}</button>
                               </div>
                             </form>
                           </Dialog>
@@ -451,8 +447,6 @@ export default function AdminMastersPage() {
                       className="h-11 rounded-[var(--radius-sm)] bg-(--accent) px-5 text-sm font-semibold text-white hover:bg-(--accent-hover) disabled:opacity-50">
                       {savingCurr ? "Saving…" : "Add Currency"}
                     </button>
-                    <button type="button" onClick={() => setShowCurrForm(false)}
-                      className="h-11 rounded-[var(--radius-sm)] border border-(--border) bg-(--surface) px-5 text-sm text-(--text-secondary) hover:bg-(--surface-raised)">{t("cancel")}</button>
                   </div>
                 </form>
               </Dialog>
@@ -514,8 +508,6 @@ export default function AdminMastersPage() {
                       className="h-11 rounded-[var(--radius-sm)] bg-(--accent) px-5 text-sm font-semibold text-white hover:bg-(--accent-hover) disabled:opacity-50">
                       {savingLang ? "Saving…" : "Add Language"}
                     </button>
-                    <button type="button" onClick={() => setShowLangForm(false)}
-                      className="h-11 rounded-[var(--radius-sm)] border border-(--border) bg-(--surface) px-5 text-sm text-(--text-secondary) hover:bg-(--surface-raised)">{t("cancel")}</button>
                   </div>
                 </form>
               </Dialog>
@@ -593,8 +585,6 @@ export default function AdminMastersPage() {
                       className="h-11 rounded-[var(--radius-sm)] bg-(--accent) px-5 text-sm font-semibold text-white hover:bg-(--accent-hover) disabled:opacity-50">
                       {savingTz ? "Saving…" : "Add Timezone"}
                     </button>
-                    <button type="button" onClick={() => setShowTzForm(false)}
-                      className="h-11 rounded-[var(--radius-sm)] border border-(--border) bg-(--surface) px-5 text-sm text-(--text-secondary) hover:bg-(--surface-raised)">{t("cancel")}</button>
                   </div>
                 </form>
               </Dialog>
@@ -648,8 +638,6 @@ export default function AdminMastersPage() {
                       className="h-11 rounded-[var(--radius-sm)] bg-(--accent) px-5 text-sm font-semibold text-white hover:bg-(--accent-hover) disabled:opacity-50">
                       {savingCountry ? "Saving…" : "Add Country"}
                     </button>
-                    <button type="button" onClick={() => setShowCountryForm(false)}
-                      className="h-11 rounded-[var(--radius-sm)] border border-(--border) bg-(--surface) px-5 text-sm text-(--text-secondary) hover:bg-(--surface-raised)">{t("cancel")}</button>
                   </div>
                 </form>
               </Dialog>
@@ -702,8 +690,6 @@ export default function AdminMastersPage() {
                                   className="h-11 rounded-[var(--radius-sm)] bg-(--accent) px-5 text-sm font-semibold text-white hover:bg-(--accent-hover) disabled:opacity-50">
                                   {savingState ? "Saving…" : "Save State"}
                                 </button>
-                                <button type="button" onClick={() => setShowStateForm(null)}
-                                  className="h-11 rounded-[var(--radius-sm)] border border-(--border) bg-(--surface) px-5 text-sm text-(--text-secondary) hover:bg-(--surface-raised)">{t("cancel")}</button>
                               </div>
                             </form>
                           </Dialog>
@@ -782,8 +768,6 @@ export default function AdminMastersPage() {
                       className="h-11 rounded-[var(--radius-sm)] bg-(--accent) px-5 text-sm font-semibold text-white hover:bg-(--accent-hover) disabled:opacity-50">
                       {savingCosting ? "Saving…" : "Add Costing Method"}
                     </button>
-                    <button type="button" onClick={() => setShowCostingForm(false)}
-                      className="h-11 rounded-[var(--radius-sm)] border border-(--border) bg-(--surface) px-5 text-sm text-(--text-secondary) hover:bg-(--surface-raised)">{t("cancel")}</button>
                   </div>
                 </form>
               </Dialog>

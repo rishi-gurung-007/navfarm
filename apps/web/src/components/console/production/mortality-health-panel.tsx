@@ -839,14 +839,11 @@ export default function MortalityHealthPanel() {
         open={mortalityDialogOpen}
         onClose={() => setMortalityDialogOpen(false)}
         title={t("mhLogMortalityPostMortemEvent")}
-        footer={<>
-            <Button variant="outline" onClick={() => setMortalityDialogOpen(false)}>
-              {t("mhCancel")}
-            </Button>
-            <Button onClick={handleSaveMortality} className="nf-btn-primary">
-              {t("mhSaveMortalityEntry")}
-            </Button>
-        </>}
+        footer={
+          <Button onClick={handleSaveMortality} className="nf-btn-primary">
+            {t("mhSaveMortalityEntry")}
+          </Button>
+        }
       >
         <div className="space-y-4 text-xs pt-2">
           <div className="grid grid-cols-2 gap-3">
@@ -962,14 +959,11 @@ export default function MortalityHealthPanel() {
         open={treatmentDialogOpen}
         onClose={() => { if (!savingTreatment) setTreatmentDialogOpen(false); }}
         title={t("mhRecordVeterinaryTreatment")}
-        footer={<>
-            <Button variant="outline" disabled={savingTreatment} onClick={() => setTreatmentDialogOpen(false)}>
-              {t("mhCancel")}
-            </Button>
-            <Button onClick={handleSaveTreatment} disabled={savingTreatment || healthItemsLoading || uncertainTreatment} className="nf-btn-primary">
-              {t("mhSaveTreatmentRecord")}
-            </Button>
-        </>}
+        footer={
+          <Button onClick={handleSaveTreatment} disabled={savingTreatment || healthItemsLoading || uncertainTreatment} className="nf-btn-primary">
+            {t("mhSaveTreatmentRecord")}
+          </Button>
+        }
       >
         <fieldset disabled={savingTreatment} className="grid gap-8 md:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
           <section className="min-w-0 space-y-5" aria-label="Treatment context">

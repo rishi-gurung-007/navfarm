@@ -367,14 +367,9 @@ export default function PiggeryBatchStagesPanel() {
           title={t("pbsEditTimelineTitle", { name: editingStage.name })}
           maxWidth="sm"
           footer={
-            <>
-              <Button variant="outline" size="sm" onClick={() => setEditModalOpen(false)}>
-                {t("pbsCancel")}
-              </Button>
-              <Button size="sm" onClick={handleSaveEditStage} className="nf-btn-primary">
-                {t("pbsSaveDuration")}
-              </Button>
-            </>
+            <Button size="sm" onClick={handleSaveEditStage} className="nf-btn-primary">
+              {t("pbsSaveDuration")}
+            </Button>
           }
         >
           <div className="space-y-3 text-xs pt-1">
@@ -399,14 +394,9 @@ export default function PiggeryBatchStagesPanel() {
           title={t("pbsAddCustomStageTitle")}
           maxWidth="sm"
           footer={
-            <>
-              <Button variant="outline" size="sm" onClick={() => setAddModalOpen(false)}>
-                {t("pbsCancel")}
-              </Button>
-              <Button size="sm" onClick={handleAddCustomStage} className="nf-btn-primary">
-                {t("pbsInsertStage")}
-              </Button>
-            </>
+            <Button size="sm" onClick={handleAddCustomStage} className="nf-btn-primary">
+              {t("pbsInsertStage")}
+            </Button>
           }
         >
           <div className="space-y-3 text-xs pt-1">

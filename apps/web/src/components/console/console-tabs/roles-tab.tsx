@@ -613,10 +613,7 @@ export default function RolesTab({
         description={t("roleModalCreateDesc")}
         maxWidth="sm"
         footer={
-          <>
-            <Button type="button" variant="outline" size="sm" onClick={() => setIsCreateModalOpen(false)}>{t("cancel")}</Button>
-            <Button type="submit" form="create-role-form" disabled={creatingRole} size="sm" className="nf-btn-primary">{creatingRole ? t("saving") : t("create")}</Button>
-          </>
+          <Button type="submit" form="create-role-form" disabled={creatingRole} size="sm" className="nf-btn-primary">{creatingRole ? t("saving") : t("create")}</Button>
         }
       >
         <form id="create-role-form" onSubmit={handleCreateRoleSubmit} className="flex flex-col gap-4 pt-1">
@@ -639,10 +636,7 @@ export default function RolesTab({
         description={editingRole ? t("roleModalEditDesc", { code: editingRole.role_code }) : undefined}
         maxWidth="sm"
         footer={
-          <>
-            <Button type="button" variant="outline" size="sm" onClick={() => setIsEditModalOpen(false)}>{t("cancel")}</Button>
-            <Button type="submit" form="edit-role-form" disabled={savingEdit} size="sm" className="nf-btn-primary">{savingEdit ? t("saving") : t("saveChanges")}</Button>
-          </>
+          <Button type="submit" form="edit-role-form" disabled={savingEdit} size="sm" className="nf-btn-primary">{savingEdit ? t("saving") : t("saveChanges")}</Button>
         }
       >
         {editingRole && (
@@ -666,12 +660,9 @@ export default function RolesTab({
         description={t("roleModalDeleteDesc")}
         maxWidth="sm"
         footer={
-          <>
-            <Button variant="outline" size="sm" onClick={() => setDeletingRoleId(null)}>{t("cancel")}</Button>
-            <Button variant="destructive" size="sm" onClick={() => deletingRoleId && handleDeleteRole(deletingRoleId)} disabled={deletingRole}>
-              {deletingRole ? t("roleDeleting") : t("roleDeleteAction")}
-            </Button>
-          </>
+          <Button variant="destructive" size="sm" onClick={() => deletingRoleId && handleDeleteRole(deletingRoleId)} disabled={deletingRole}>
+            {deletingRole ? t("roleDeleting") : t("roleDeleteAction")}
+          </Button>
         }
       >
         <div className="text-xs leading-relaxed pt-1" style={S.textSecondary}>

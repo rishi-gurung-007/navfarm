@@ -378,7 +378,6 @@ export default function TenantDetailPage() {
             <p className="text-xs" style={S.muted}>{t("admCurrentPlan")}</p>
           )}
           <div className="flex flex-col-reverse gap-3 border-t pt-4 sm:flex-row sm:justify-end" style={S.border}>
-            <button type="button" disabled={upgrading} onClick={() => setShowPlanDialog(false)} className="min-h-10 rounded-lg border border-(--border) bg-(--surface) px-4 text-sm font-semibold text-(--text-secondary) hover:bg-(--surface-raised) disabled:opacity-50">{t("cancel")}</button>
             <button type="submit" disabled={!selectedPlan || upgrading || selectedPlan === tenant?.plan_id}
               className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-(--accent) px-5 text-sm font-semibold text-white hover:bg-(--accent-hover) disabled:opacity-50">
               {upgrading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <ArrowUpRight className="h-4 w-4" />}
@@ -853,8 +852,6 @@ export default function TenantDetailPage() {
                   {savingSectors ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
                   {savingSectors ? "Saving..." : "Save Sector Licensing"}
                 </button>
-                <button type="button" onClick={() => setShowSectorModal(false)}
-                  className="px-5 py-2.5 text-sm font-medium rounded-lg border cursor-pointer" style={{ ...S.raised, ...S.sub }}>{t("cancel")}</button>
               </div>
             </div>
           </div>

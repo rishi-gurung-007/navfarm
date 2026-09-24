@@ -107,15 +107,10 @@ export default function CompaniesIndexPage() {
           title={t("coAddCompanyDrawerTitle")}
           description={t("coAddCompanyDrawerDesc")}
           footer={
-            <>
-              <Button type="button" variant="outline" onClick={() => setShowAddModal(false)}>
-                {t("cancel")}
-              </Button>
-              <Button type="submit" form="create-company-form" disabled={creating}>
-                {creating ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                {creating ? t("coCreatingCompany") : t("coCreateCompany")}
-              </Button>
-            </>
+            <Button type="submit" form="create-company-form" disabled={creating}>
+              {creating ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+              {creating ? t("coCreatingCompany") : t("coCreateCompany")}
+            </Button>
           }
         >
           <form id="create-company-form" onSubmit={handleCreateCompany} className="space-y-5">

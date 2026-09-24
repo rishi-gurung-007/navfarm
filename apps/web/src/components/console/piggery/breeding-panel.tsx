@@ -11,6 +11,7 @@ import {
   XCircle,
   Clock,
   Activity,
+  X,
 } from "lucide-react";
 import { api } from "@/services/api-client";
 import { Button } from "@/components/ui/button";
@@ -746,9 +747,19 @@ export function BreedingPanel() {
       {showMatingModal && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="rounded-[var(--radius-lg)] border max-w-lg w-full p-6 space-y-4 shadow-2xl" style={S.surface}>
-            <h3 className="text-lg font-bold flex items-center gap-2" style={S.primary}>
-              <Heart className="w-5 h-5" style={S.accent} /> {t("brpModalMatingTitle")}
-            </h3>
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-bold flex items-center gap-2" style={S.primary}>
+                <Heart className="w-5 h-5" style={S.accent} /> {t("brpModalMatingTitle")}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowMatingModal(false)}
+                className="p-1 rounded-full text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-secondary)] transition-colors cursor-pointer"
+                aria-label={t("close")}
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
             <form onSubmit={handleCreateMating} className="space-y-3">
               <div>
                 <label className="block text-xs font-semibold mb-1" style={S.sub}>{t("brpLabelSowGilt")}</label>
@@ -950,10 +961,7 @@ export function BreedingPanel() {
                 </div>
               </div>
 
-              <div className="flex justify-end gap-2 pt-2">
-                <Button type="button" variant="outline" size="sm" onClick={() => setShowMatingModal(false)}>
-                  {t("brpBtnCancel")}
-                </Button>
+              <div className="flex justify-end pt-2">
                 <Button type="submit" size="sm" disabled={submitting}>
                   {submitting ? t("brpBtnRecording") : t("brpBtnSaveMating")}
                 </Button>
@@ -969,9 +977,19 @@ export function BreedingPanel() {
       {showPregCheckModal && selectedMating && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="rounded-[var(--radius-lg)] border max-w-md w-full p-6 space-y-4 shadow-2xl" style={S.surface}>
-            <h3 className="text-lg font-bold flex items-center gap-2" style={S.primary}>
-              <CheckCircle2 className="w-5 h-5" style={S.success} /> {t("brpModalPregCheckTitle")}
-            </h3>
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-bold flex items-center gap-2" style={S.primary}>
+                <CheckCircle2 className="w-5 h-5" style={S.success} /> {t("brpModalPregCheckTitle")}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowPregCheckModal(false)}
+                className="p-1 rounded-full text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-secondary)] transition-colors cursor-pointer"
+                aria-label={t("close")}
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
             <p className="text-xs" style={S.sub}>
               {t("brpLabelSowColon")} <span className="font-semibold" style={S.primary}>{selectedMating.sow_code}</span> {t("brpMatedOn", { date: selectedMating.mating_date })}
             </p>
@@ -1021,10 +1039,7 @@ export function BreedingPanel() {
                 />
               </div>
 
-              <div className="flex justify-end gap-2 pt-2">
-                <Button type="button" variant="outline" size="sm" onClick={() => setShowPregCheckModal(false)}>
-                  {t("brpBtnCancel")}
-                </Button>
+              <div className="flex justify-end pt-2">
                 <Button type="submit" size="sm" disabled={submitting}>
                   {submitting ? t("brpBtnSaving") : t("brpBtnUpdatePregStatus")}
                 </Button>
@@ -1040,9 +1055,19 @@ export function BreedingPanel() {
       {showFarrowModal && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="rounded-[var(--radius-lg)] border max-w-lg w-full p-6 space-y-4 shadow-2xl" style={S.surface}>
-            <h3 className="text-lg font-bold flex items-center gap-2" style={S.primary}>
-              <Baby className="w-5 h-5" style={S.accent} /> {t("brpModalFarrowingTitle")}
-            </h3>
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-bold flex items-center gap-2" style={S.primary}>
+                <Baby className="w-5 h-5" style={S.accent} /> {t("brpModalFarrowingTitle")}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowFarrowModal(false)}
+                className="p-1 rounded-full text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-secondary)] transition-colors cursor-pointer"
+                aria-label={t("close")}
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
             <form onSubmit={handleCreateFarrowing} className="space-y-3">
               <div>
                 <label className="block text-xs font-semibold mb-1" style={S.sub}>{t("brpLabelSowRequired")}</label>
@@ -1154,10 +1179,7 @@ export function BreedingPanel() {
                 </div>
               </div>
 
-              <div className="flex justify-end gap-2 pt-2">
-                <Button type="button" variant="outline" size="sm" onClick={() => setShowFarrowModal(false)}>
-                  {t("brpBtnCancel")}
-                </Button>
+              <div className="flex justify-end pt-2">
                 <Button type="submit" size="sm" disabled={submitting}>
                   {submitting ? t("brpBtnSaving") : t("brpBtnSaveFarrowing")}
                 </Button>
@@ -1173,9 +1195,19 @@ export function BreedingPanel() {
       {showWeanModal && selectedFarrow && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="rounded-[var(--radius-lg)] border max-w-md w-full p-6 space-y-4 shadow-2xl" style={S.surface}>
-            <h3 className="text-lg font-bold flex items-center gap-2" style={S.primary}>
-              <CheckCircle2 className="w-5 h-5" style={S.accent} /> {t("brpModalWeaningTitle")}
-            </h3>
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-bold flex items-center gap-2" style={S.primary}>
+                <CheckCircle2 className="w-5 h-5" style={S.accent} /> {t("brpModalWeaningTitle")}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowWeanModal(false)}
+                className="p-1 rounded-full text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-secondary)] transition-colors cursor-pointer"
+                aria-label={t("close")}
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
             <p className="text-xs" style={S.sub}>
               {t("brpLabelSowColon")} <span className="font-semibold" style={S.primary}>{selectedFarrow.sow_code}</span> {t("brpFarrowedOn", { date: selectedFarrow.farrowing_date })}
             </p>
@@ -1219,10 +1251,7 @@ export function BreedingPanel() {
                 </div>
               </div>
 
-              <div className="flex justify-end gap-2 pt-2">
-                <Button type="button" variant="outline" size="sm" onClick={() => setShowWeanModal(false)}>
-                  {t("brpBtnCancel")}
-                </Button>
+              <div className="flex justify-end pt-2">
                 <Button type="submit" size="sm" disabled={submitting}>
                   {submitting ? t("brpBtnSaving") : t("brpBtnSaveWeaning")}
                 </Button>
@@ -1238,9 +1267,19 @@ export function BreedingPanel() {
       {showSemenModal && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="rounded-[var(--radius-lg)] border max-w-lg w-full p-6 space-y-4 shadow-2xl" style={S.surface}>
-            <h3 className="text-lg font-bold flex items-center gap-2" style={S.primary}>
-              <FlaskConical className="w-5 h-5" style={S.accent} /> {t("brpModalSemenTitle")}
-            </h3>
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-bold flex items-center gap-2" style={S.primary}>
+                <FlaskConical className="w-5 h-5" style={S.accent} /> {t("brpModalSemenTitle")}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowSemenModal(false)}
+                className="p-1 rounded-full text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-secondary)] transition-colors cursor-pointer"
+                aria-label={t("close")}
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
             <form onSubmit={handleCreateSemen} className="space-y-3">
               <div>
                 <label className="block text-xs font-semibold mb-1" style={S.sub}>{t("brpLabelBoarAnimal")}</label>
@@ -1332,10 +1371,7 @@ export function BreedingPanel() {
                 </div>
               </div>
 
-              <div className="flex justify-end gap-2 pt-2">
-                <Button type="button" variant="outline" size="sm" onClick={() => setShowSemenModal(false)}>
-                  {t("brpBtnCancel")}
-                </Button>
+              <div className="flex justify-end pt-2">
                 <Button type="submit" size="sm" disabled={submitting}>
                   {submitting ? t("brpBtnCalculatingSaving") : t("brpBtnSaveCollectionBatch")}
                 </Button>

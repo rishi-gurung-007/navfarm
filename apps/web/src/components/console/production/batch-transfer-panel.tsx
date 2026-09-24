@@ -266,7 +266,6 @@ export default function BatchTransferPanel() {
         maxWidth="lg"
         footer={
           <div className="flex justify-end gap-2">
-            <Button variant="secondary" onClick={() => setOpen(false)}>{t("cancel")}</Button>
             <Button onClick={submit} disabled={saving}>
               {saving ? <><Loader2 size={14} className="mr-2 animate-spin" />{t("btSubmitting")}</> : t("btSubmit")}
             </Button>

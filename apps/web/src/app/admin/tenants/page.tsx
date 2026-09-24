@@ -214,8 +214,6 @@ export default function AdminTenantsPage() {
               ))}
             </select>
             <div className="flex flex-col-reverse gap-3 border-t pt-4 sm:flex-row sm:justify-end" style={S.border}>
-              <button type="button" disabled={upgrading} onClick={() => { setUpgradingTenant(null); setSelectedPlanId(""); }}
-                className="min-h-10 rounded-lg border border-(--border) bg-(--surface) px-4 text-sm font-semibold text-(--text-secondary) hover:bg-(--surface-raised) disabled:opacity-50">{t("cancel")}</button>
               <button type="submit" disabled={!selectedPlanId || upgrading}
                 className="min-h-10 rounded-lg bg-(--accent) px-5 text-sm font-semibold text-white hover:bg-(--accent-hover) disabled:opacity-50">
                 {upgrading ? "Updating…" : "Apply plan change"}
@@ -503,8 +501,6 @@ export default function AdminTenantsPage() {
               </div>
 
               <div className="flex flex-col-reverse gap-3 border-t pt-4 sm:flex-row sm:justify-end" style={S.border}>
-                <button type="button" disabled={creating} onClick={() => setShowAddModal(false)}
-                  className="min-h-10 rounded-lg border border-(--border) bg-(--surface) px-5 text-sm font-semibold text-(--text-secondary) hover:bg-(--surface-raised) disabled:opacity-50">{t("cancel")}</button>
                 <button type="submit" disabled={creating}
                   className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-(--accent) px-5 text-sm font-semibold text-white hover:bg-(--accent-hover) disabled:opacity-50">
                   {creating ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}

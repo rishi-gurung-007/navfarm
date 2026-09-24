@@ -269,12 +269,9 @@ export default function JournalPanel() {
         title={t("jpNewJournalEntry")}
         maxWidth="xl"
         footer={
-          <>
-            <button onClick={() => setModalOpen(false)} disabled={saving} className="rounded-lg border px-4 py-2 text-sm font-medium" style={S.surface}>{t("jpCancel")}</button>
-            <Button onClick={handleSave} disabled={saving} >
-              {saving ? t("jpSaving") : t("jpSaveDraft")}
-            </Button>
-          </>
+          <Button onClick={handleSave} disabled={saving} >
+            {saving ? t("jpSaving") : t("jpSaveDraft")}
+          </Button>
         }
       >
         <div className="flex flex-col gap-4">
@@ -352,15 +349,10 @@ export default function JournalPanel() {
         maxWidth="xl"
         footer={
           viewing?.status === "DRAFT" ? (
-            <>
-              <button onClick={() => setViewing(null)} className="rounded-lg border px-4 py-2 text-sm font-medium" style={S.surface}>{t("jpClose")}</button>
-              <button onClick={handlePost} disabled={posting} className="flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-semibold text-white disabled:opacity-50" style={{ backgroundColor: "var(--success)" }}>
-                <CheckCircle2 className="h-4 w-4" /> {posting ? t("jpPosting") : t("jpPost")}
-              </button>
-            </>
-          ) : (
-            <button onClick={() => setViewing(null)} className="rounded-lg border px-4 py-2 text-sm font-medium" style={S.surface}>{t("jpClose")}</button>
-          )
+            <button onClick={handlePost} disabled={posting} className="flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-semibold text-white disabled:opacity-50" style={{ backgroundColor: "var(--success)" }}>
+              <CheckCircle2 className="h-4 w-4" /> {posting ? t("jpPosting") : t("jpPost")}
+            </button>
+          ) : undefined
         }
       >
         {viewing && (

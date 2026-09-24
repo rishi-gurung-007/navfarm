@@ -316,12 +316,9 @@ export default function GoodsReceiptPanel() {
         title={editingId ? t("grpEditGoodsReceiptTitle") : t("grpNewGoodsReceiptTitle")}
         maxWidth="xl"
         footer={
-          <>
-            <Button variant="outline" size="sm" onClick={() => { setModalOpen(false); setEditingId(null); }} disabled={saving}>{t("grpCancel")}</Button>
-            <Button size="sm" onClick={handleSave} disabled={saving} className="nf-btn-primary">
-              {saving ? t("grpSaving") : editingId ? t("grpSaveChanges") : t("grpSaveDraft")}
-            </Button>
-          </>
+          <Button size="sm" onClick={handleSave} disabled={saving} className="nf-btn-primary">
+            {saving ? t("grpSaving") : editingId ? t("grpSaveChanges") : t("grpSaveDraft")}
+          </Button>
         }
       >
         <div className="flex flex-col gap-4">
@@ -420,12 +417,9 @@ export default function GoodsReceiptPanel() {
         maxWidth="xl"
         footer={
           viewing?.status === "DRAFT" ? (
-            <>
-              <Button variant="outline" size="sm" onClick={() => setViewing(null)}>{t("grpCancel")}</Button>
-              <Button size="sm" onClick={handlePost} disabled={posting} className="flex items-center gap-1.5 nf-btn-primary">
-                <CheckCircle2 className="h-4 w-4" /> {posting ? t("grpPosting") : t("grpPost")}
-              </Button>
-            </>
+            <Button size="sm" onClick={handlePost} disabled={posting} className="flex items-center gap-1.5 nf-btn-primary">
+              <CheckCircle2 className="h-4 w-4" /> {posting ? t("grpPosting") : t("grpPost")}
+            </Button>
           ) : undefined
         }
       >

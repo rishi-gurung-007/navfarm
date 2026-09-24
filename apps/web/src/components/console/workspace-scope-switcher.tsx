@@ -20,6 +20,7 @@ import {
   setActiveCompanyId,
   getActiveOperationalAreaId,
   setActiveOperationalAreaId,
+  setActiveOperationalArea,
   getActiveFarmId,
   setActiveFarmId,
   getActiveLob,
@@ -119,13 +120,21 @@ export default function WorkspaceScopeSwitcher({
               storedUser?.companyId,
               ...(storedUser?.companies || []).map((c: any) => c.company_id),
             ].filter(Boolean));
-            setOperationalAreas(
-              isTenantAdminUser ? res : res.filter((a: any) => userAllowedCompanyIds.has(a.company_id)),
-            );
+            const allowed = isTenantAdminUser ? res : res.filter((a: any) => userAllowedCompanyIds.has(a.company_id));
+            setOperationalAreas(allowed);
+            if (scope === "OPERATIONAL" && areaId) {
+              const matched = allowed.find((a: any) => a.area_id === areaId);
+              if (matched) setActiveOperationalArea(matched);
+            }
           } else {
             // Operational admins / standard users: only areas they're explicitly assigned to.
             const userAllowedAreaIds = new Set((storedUser?.operationalAreas || []).map((a: any) => a.area_id));
-            setOperationalAreas(res.filter((a: any) => userAllowedAreaIds.has(a.area_id)));
+            const allowed = res.filter((a: any) => userAllowedAreaIds.has(a.area_id));
+            setOperationalAreas(allowed);
+            if (scope === "OPERATIONAL" && areaId) {
+              const matched = allowed.find((a: any) => a.area_id === areaId);
+              if (matched) setActiveOperationalArea(matched);
+            }
           }
         }
       }).catch(() => {
@@ -150,6 +159,7 @@ export default function WorkspaceScopeSwitcher({
   const handleSelectTenantScope = () => {
     setActiveWorkspaceScope("TENANT");
     setActiveOperationalAreaId(null);
+    setActiveOperationalArea(null);
     setCurrentScope("TENANT");
     setIsOpen(false);
     window.location.href = "/dashboard";
@@ -159,6 +169,7 @@ export default function WorkspaceScopeSwitcher({
     setActiveCompanyId(companyId);
     setActiveWorkspaceScope("COMPANY");
     setActiveOperationalAreaId(null);
+    setActiveOperationalArea(null);
     // The farm pinned under the previous company is not a farm of this one.
     // apiRequest keeps sending x-active-farm-id from storage regardless of
     // company, and resolveFarmScope 403s any farm-scoped request once the
@@ -178,6 +189,7 @@ export default function WorkspaceScopeSwitcher({
   const handleSelectOperationalArea = (area: OperationalAreaItem) => {
     setActiveCompanyId(area.company_id);
     setActiveOperationalAreaId(area.area_id);
+    setActiveOperationalArea(area as any);
     setActiveWorkspaceScope("OPERATIONAL");
     // Same reasoning as handleSelectCompany: switching the operational area
     // can also switch the company underneath it, and a farm pinned to the

@@ -123,15 +123,6 @@ export function ItemTemplateSelectModal({
         <div className="flex w-full items-center justify-end gap-2">
           <button
             type="button"
-            onClick={onClose}
-            disabled={confirming}
-            className="rounded-lg border px-4 py-2 text-xs font-semibold hover:bg-(--surface-raised) cursor-pointer"
-            style={{ borderColor: "var(--border)", color: "var(--text-secondary)" }}
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
             onClick={handleConfirm}
             disabled={!selectedId || confirming}
             className="flex items-center gap-1.5 rounded-lg px-4 py-2 text-xs font-semibold text-white disabled:opacity-50 cursor-pointer"

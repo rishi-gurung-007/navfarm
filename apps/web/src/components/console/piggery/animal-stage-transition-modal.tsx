@@ -114,7 +114,6 @@ export default function AnimalStageTransitionModal({
       maxWidth="md"
       footer={
         <div className="flex w-full items-center justify-end gap-2">
-          <Button variant="ghost" onClick={onClose}>{t("astmCancel")}</Button>
           <Button onClick={handleSubmit} disabled={saving || !toStageId}>
             {saving ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <ArrowRight className="mr-1.5 h-3.5 w-3.5" />}
             {t("astmConfirmTransition")}

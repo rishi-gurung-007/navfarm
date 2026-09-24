@@ -254,12 +254,9 @@ export default function StockAdjustmentPanel() {
         title={t("sapNewStockAdjustment")}
         maxWidth="xl"
         footer={
-          <>
-            <Button variant="outline" size="sm" onClick={() => setModalOpen(false)} disabled={saving}>{t("sapCancel")}</Button>
-            <Button size="sm" onClick={handleSave} disabled={saving} className="nf-btn-primary">
-              {saving ? t("sapSaving") : t("sapSaveDraft")}
-            </Button>
-          </>
+          <Button size="sm" onClick={handleSave} disabled={saving} className="nf-btn-primary">
+            {saving ? t("sapSaving") : t("sapSaveDraft")}
+          </Button>
         }
       >
         <div className="flex flex-col gap-4">
@@ -345,12 +342,9 @@ export default function StockAdjustmentPanel() {
         maxWidth="xl"
         footer={
           viewing?.status === "DRAFT" ? (
-            <>
-              <Button variant="outline" size="sm" onClick={() => setViewing(null)}>{t("sapCancel")}</Button>
-              <Button size="sm" onClick={handlePost} disabled={posting} className="flex items-center gap-1.5 nf-btn-primary">
-                <CheckCircle2 className="h-4 w-4" /> {posting ? t("sapPosting") : t("sapPost")}
-              </Button>
-            </>
+            <Button size="sm" onClick={handlePost} disabled={posting} className="flex items-center gap-1.5 nf-btn-primary">
+              <CheckCircle2 className="h-4 w-4" /> {posting ? t("sapPosting") : t("sapPost")}
+            </Button>
           ) : undefined
         }
       >

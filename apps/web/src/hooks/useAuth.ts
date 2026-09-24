@@ -203,7 +203,44 @@ export function getActiveOperationalAreaId(): string | null {
 export function setActiveOperationalAreaId(areaId: string | null): void {
   if (typeof window === "undefined") return;
   if (areaId) localStorage.setItem("active_operational_area_id", areaId);
-  else localStorage.removeItem("active_operational_area_id");
+  else {
+    localStorage.removeItem("active_operational_area_id");
+    localStorage.removeItem("active_operational_area");
+  }
+}
+
+/** The active operational area object (with nob_id, lob_id, area_name, etc.) */
+export function getActiveOperationalArea(): OperationalAreaRef | null {
+  if (typeof window === "undefined") return null;
+  const raw = localStorage.getItem("active_operational_area");
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object" && parsed.area_id) {
+        return parsed;
+      }
+    } catch {
+      // ignore
+    }
+  }
+  const user = getStoredUser();
+  const areaId = getActiveOperationalAreaId();
+  if (user?.operationalAreas && areaId) {
+    const found = user.operationalAreas.find((a: any) => a.area_id === areaId);
+    if (found) return found;
+  }
+  return null;
+}
+
+export function setActiveOperationalArea(area: OperationalAreaRef | null): void {
+  if (typeof window === "undefined") return;
+  if (area) {
+    localStorage.setItem("active_operational_area", JSON.stringify(area));
+    setActiveOperationalAreaId(area.area_id);
+  } else {
+    localStorage.removeItem("active_operational_area");
+    setActiveOperationalAreaId(null);
+  }
 }
 
 /**

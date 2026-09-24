@@ -2858,23 +2858,6 @@ export function MasterDataTable({
         footer={
           <div className="flex items-center justify-end gap-3 w-full">
             <button
-              type="button"
-              onClick={() => {
-                if (saving) return;
-                if (editing?.status === "DRAFT" && (!form.item_name || !String(form.item_name).trim())) {
-                  api.delete(`${config.apiBase}/${editing[config.idKey]}`).catch(() => {});
-                }
-                setModalOpen(false);
-                setActiveFormTab("");
-                setTemplateLockedFields(new Set());
-                if (createOnly) onCreateCancelled?.();
-              }}
-              disabled={saving}
-              className="rounded-lg border px-4 py-2 text-sm font-medium text-[var(--text-secondary)] hover:bg-[var(--surface-secondary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
-            >
-              {t("cancel")}
-            </button>
-            <button
               onClick={handleSave}
               disabled={
                 saving ||

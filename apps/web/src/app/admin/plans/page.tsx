@@ -193,8 +193,6 @@ export default function AdminPlansPage() {
                 {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : null}
                 {saving ? "Saving…" : editingPlan ? "Save Changes" : "Create Plan"}
               </button>
-              <button type="button" onClick={() => setShowForm(false)}
-                className="h-11 rounded-[var(--radius-sm)] border border-(--border) bg-(--surface) px-5 text-sm font-medium text-(--text-secondary) hover:bg-(--surface-raised)">{t("cancel")}</button>
             </div>
           </form>
       </Dialog>

@@ -163,7 +163,7 @@ describe("master-data lookup chips", () => {
       expect(screen.queryByRole("table")).toBeNull();
       expect(screen.queryByRole("searchbox")).toBeNull();
 
-      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      fireEvent.click(screen.getByRole("button", { name: "Close" }));
       expect(onCreateCancelled).toHaveBeenCalledTimes(1);
     });
 

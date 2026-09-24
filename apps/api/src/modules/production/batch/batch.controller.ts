@@ -166,10 +166,15 @@ export class BatchController {
       "Scheduled parameter lines due on a given date for this batch, with expected quantity and what's already been recorded — drives the guided Data Entry screen",
   })
   @ApiParam({ name: 'id', description: 'Batch UUID' })
-  async getDataEntry(@Param('id') id: string, @Query('date') date: string) {
+  async getDataEntry(
+    @Param('id') id: string,
+    @Query('date') date: string,
+    @Query('stageId') stageId?: string,
+  ) {
     const result = await this.batchService.getDataEntry(
       id,
       date || new Date().toISOString().slice(0, 10),
+      stageId,
     );
     return {
       success: true,

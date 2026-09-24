@@ -26,8 +26,9 @@ import { Pagination } from '@/components/ui/pagination';
 import {
   getActiveCompanyId,
   getActiveOperationalAreaId,
+  getActiveOperationalArea,
+  setActiveOperationalArea,
   getActiveWorkspaceScope,
-  getStoredUser,
 } from '@/hooks/useAuth';
 import { useLanguage } from '@/hooks/useLanguage';
 import {
@@ -244,12 +245,46 @@ export default function BatchPanel() {
   // form auto-fills and hides both fields instead of asking the user to repeat a
   // choice their workspace already made. Only a Company-level workspace (no area
   // selected) still needs the manual NOB → LOB pickers.
-  const activeArea =
-    getActiveWorkspaceScope() === 'OPERATIONAL'
-      ? (getStoredUser()?.operationalAreas || []).find(
-          (a) => a.area_id === getActiveOperationalAreaId(),
-        )
-      : undefined;
+  const isOperationalScope = getActiveWorkspaceScope() === 'OPERATIONAL';
+
+  const [activeArea, setActiveArea] = useState<any>(() => {
+    if (typeof window === 'undefined') return undefined;
+    if (getActiveWorkspaceScope() !== 'OPERATIONAL') return undefined;
+    return getActiveOperationalArea() || undefined;
+  });
+
+  useEffect(() => {
+    if (getActiveWorkspaceScope() !== 'OPERATIONAL') {
+      setActiveArea(undefined);
+      return;
+    }
+
+    const cached = getActiveOperationalArea();
+    if (cached?.nob_id && cached?.lob_id) {
+      setActiveArea(cached);
+      setNobId((prev) => prev || cached.nob_id);
+      setHeader((h) => ({ ...h, lob_id: h.lob_id || cached.lob_id }));
+    }
+
+    const areaId = getActiveOperationalAreaId();
+    api
+      .get(`/operational-area${companyId ? `?company_id=${companyId}` : ''}`)
+      .then((res: any) => {
+        const list = Array.isArray(res) ? res : [];
+        const matched = areaId
+          ? list.find((a: any) => a.area_id === areaId)
+          : list[0];
+        if (matched) {
+          setActiveArea(matched);
+          setActiveOperationalArea(matched);
+          if (matched.nob_id) setNobId(matched.nob_id);
+          if (matched.lob_id) {
+            setHeader((h) => ({ ...h, lob_id: matched.lob_id }));
+          }
+        }
+      })
+      .catch(() => {});
+  }, [companyId]);
 
   const load = async () => {
     setLoading(true);
@@ -325,7 +360,7 @@ export default function BatchPanel() {
   // nobId, so the batch-detail modal's QC-gate check (which needs this
   // batch's own LOB, not whatever's left selected in the create form) can
   // find the right LOB entry too.
-  const activeNobIdForLobs = viewing?.nob_id || nobId;
+  const activeNobIdForLobs = viewing?.nob_id || activeArea?.nob_id || nobId;
   useEffect(() => {
     if (!activeNobIdForLobs) {
       setLobs([]);
@@ -343,8 +378,8 @@ export default function BatchPanel() {
   // scope prefers whichever batch is currently open for viewing (so labels in
   // the detail modal resolve correctly for that batch's own LOB) and falls
   // back to the create form's current selection otherwise.
-  const activeNobId = viewing?.nob_id || nobId;
-  const activeLobId = viewing?.lob_id || header.lob_id;
+  const activeNobId = viewing?.nob_id || activeArea?.nob_id || nobId;
+  const activeLobId = viewing?.lob_id || activeArea?.lob_id || header.lob_id;
   useEffect(() => {
     const params = new URLSearchParams();
     if (companyId) params.set('companyId', companyId);
@@ -380,9 +415,12 @@ export default function BatchPanel() {
   }, [activeNobId, activeLobId]);
 
   const openCreate = () => {
-    setNobId(activeArea?.nob_id || '');
+    const area = activeArea || getActiveOperationalArea();
+    const effectiveNobId = isOperationalScope ? (area?.nob_id || '') : (area?.nob_id || nobId);
+    const effectiveLobId = isOperationalScope ? (area?.lob_id || '') : (area?.lob_id || header.lob_id);
+    setNobId(effectiveNobId);
     setHeader({
-      lob_id: activeArea?.lob_id || '',
+      lob_id: effectiveLobId,
       costing_method: 'STANDARD',
       breed_id: '',
       stage_id: '',
@@ -791,7 +829,8 @@ export default function BatchPanel() {
     setSaving(true);
     setFormError('');
     try {
-      if (!header.lob_id) throw new Error(t('blErrLobRequired'));
+      const effectiveLobId = header.lob_id || activeArea?.lob_id;
+      if (!effectiveLobId) throw new Error(t('blErrLobRequired'));
       if (!header.start_date) throw new Error(t('blErrStartDateRequired'));
       if (!header.uom)
         throw new Error(
@@ -809,7 +848,10 @@ export default function BatchPanel() {
           tracking_mode: 'ANIMAL_WISE',
           animal_ids: [...selectedAnimalIds],
           company_id: companyId,
-          lob_id: header.lob_id,
+          lob_id: effectiveLobId,
+          operational_area_id: isOperationalScope
+            ? activeArea?.area_id || undefined
+            : undefined,
           costing_method: header.costing_method,
           breed_id: header.breed_id || undefined,
           shed_id: header.shed_id || undefined,
@@ -877,7 +919,10 @@ export default function BatchPanel() {
 
       const batchWisePayload = {
         company_id: companyId,
-        lob_id: header.lob_id,
+        lob_id: effectiveLobId,
+        operational_area_id: isOperationalScope
+          ? activeArea?.area_id || undefined
+          : undefined,
         costing_method: header.costing_method,
         breed_id: header.breed_id || undefined,
         stage_id: header.stage_id || undefined,
@@ -1564,25 +1609,21 @@ export default function BatchPanel() {
         <div className="flex flex-col gap-4">
           {formError && <InlineAlert>{formError}</InlineAlert>}
 
-          {activeArea && (
-            <div className="rounded-lg border border-primary/20 bg-primary/5 p-3 text-xs">
-              <span className="font-semibold" style={S.primary}>
-                Operational Area: {activeArea.area_name}
-              </span>
-              <span className="ml-1" style={S.sub}>
-                — Nature/Line of Business auto-set from this area (
-                {nobs.find((n) => n.nob_id === activeArea.nob_id)?.nob_name ||
-                  activeArea.nob_id}{' '}
-                /{' '}
-                {lobs.find((l) => l.lob_id === activeArea.lob_id)?.lob_name ||
-                  activeArea.lob_id}
-                ).
-              </span>
+          {isOperationalScope && activeArea && (
+            <div className="rounded-lg border border-primary/20 bg-primary/5 p-2.5 text-xs flex items-center justify-between">
+              <div>
+                <span className="font-semibold" style={S.primary}>
+                  Operational Area:
+                </span>
+                <span className="ml-1.5 font-medium" style={S.primary}>
+                  {activeArea.area_name}
+                </span>
+              </div>
             </div>
           )}
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            {!activeArea && (
+            {!isOperationalScope && (
               <>
                 <div className="flex flex-col gap-1.5">
                   <label className="nf-text-label" style={S.sub}>
@@ -3237,28 +3278,18 @@ export default function BatchPanel() {
         onClose={() => !stageSaving && setStageModalOpen(false)}
         title={t('blTransferStage')}
         footer={
-          <>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setStageModalOpen(false)}
-              disabled={stageSaving}
-            >
-              {t('blCancel')}
-            </Button>
-            <Button
-              size="sm"
-              onClick={handleTransferStage}
-              disabled={
-                stageSaving ||
-                stageOptions.length === 0 ||
-                !stageForm.to_stage_code
-              }
-              className="nf-btn-primary"
-            >
-              {stageSaving ? t('blTransferring') : t('blTransferBtn')}
-            </Button>
-          </>
+          <Button
+            size="sm"
+            onClick={handleTransferStage}
+            disabled={
+              stageSaving ||
+              stageOptions.length === 0 ||
+              !stageForm.to_stage_code
+            }
+            className="nf-btn-primary"
+          >
+            {stageSaving ? t('blTransferring') : t('blTransferBtn')}
+          </Button>
         }
       >
         <div className="flex flex-col gap-4">
@@ -3326,24 +3357,14 @@ export default function BatchPanel() {
         onClose={() => !renewSaving && setRenewModalOpen(false)}
         title={t('blRenewBatch')}
         footer={
-          <>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setRenewModalOpen(false)}
-              disabled={renewSaving}
-            >
-              {t('blCancel')}
-            </Button>
-            <Button
-              size="sm"
-              onClick={handleRenew}
-              disabled={renewSaving}
-              className="nf-btn-primary"
-            >
-              {renewSaving ? t('blCreating') : t('blCreateNextCycle')}
-            </Button>
-          </>
+          <Button
+            size="sm"
+            onClick={handleRenew}
+            disabled={renewSaving}
+            className="nf-btn-primary"
+          >
+            {renewSaving ? t('blCreating') : t('blCreateNextCycle')}
+          </Button>
         }
       >
         <div className="flex flex-col gap-4">
@@ -3540,24 +3561,14 @@ export default function BatchPanel() {
         title={t('blCloseBatchTitle', { batchNo: viewing?.batch_no || '' })}
         maxWidth="xl"
         footer={
-          <>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setCloseModalOpen(false)}
-              disabled={acting}
-            >
-              {t('blCancel')}
-            </Button>
-            <Button
-              size="sm"
-              onClick={handleClose}
-              disabled={acting}
-              className="nf-btn-primary"
-            >
-              {acting ? t('blClosing') : t('blCloseBatch')}
-            </Button>
-          </>
+          <Button
+            size="sm"
+            onClick={handleClose}
+            disabled={acting}
+            className="nf-btn-primary"
+          >
+            {acting ? t('blClosing') : t('blCloseBatch')}
+          </Button>
         }
       >
         <div className="flex flex-col gap-4">
@@ -3787,24 +3798,14 @@ export default function BatchPanel() {
                 : t('blDispose')
         }
         footer={
-          <>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setBioActionOpen(null)}
-              disabled={bioActing}
-            >
-              {t('blCancel')}
-            </Button>
-            <Button
-              size="sm"
-              onClick={handleBioAction}
-              disabled={bioActing}
-              className="nf-btn-primary"
-            >
-              {bioActing ? t('blSaving') : t('blConfirm')}
-            </Button>
-          </>
+          <Button
+            size="sm"
+            onClick={handleBioAction}
+            disabled={bioActing}
+            className="nf-btn-primary"
+          >
+            {bioActing ? t('blSaving') : t('blConfirm')}
+          </Button>
         }
       >
         <div className="flex flex-col gap-4">
@@ -4103,24 +4104,14 @@ export default function BatchPanel() {
         maxWidth="lg"
         footer={
           qcSubmitted ? undefined : (
-            <>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setQcModalOpen(false)}
-                disabled={qcSaving}
-              >
-                {t('blCancel')}
-              </Button>
-              <Button
-                size="sm"
-                onClick={handleSaveQc}
-                disabled={qcSaving}
-                className="nf-btn-primary"
-              >
-                {qcSaving ? t('blSaving') : t('blSubmitInspection')}
-              </Button>
-            </>
+            <Button
+              size="sm"
+              onClick={handleSaveQc}
+              disabled={qcSaving}
+              className="nf-btn-primary"
+            >
+              {qcSaving ? t('blSaving') : t('blSubmitInspection')}
+            </Button>
           )
         }
       >
@@ -4463,25 +4454,15 @@ export default function BatchPanel() {
               {t('blGenerateAnotherPack')}
             </Button>
           ) : (
-            <>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setPackModalOpen(false)}
-                disabled={packSaving}
-              >
-                {t('blCancel')}
-              </Button>
-              <Button
-                size="sm"
-                onClick={handleGeneratePack}
-                disabled={packSaving || packQcGateBlocked}
-                title={packQcGateBlocked ? t('blPackQcGateTooltip') : undefined}
-                className="nf-btn-primary"
-              >
-                {packSaving ? t('blGenerating') : t('blGeneratePack')}
-              </Button>
-            </>
+            <Button
+              size="sm"
+              onClick={handleGeneratePack}
+              disabled={packSaving || packQcGateBlocked}
+              title={packQcGateBlocked ? t('blPackQcGateTooltip') : undefined}
+              className="nf-btn-primary"
+            >
+              {packSaving ? t('blGenerating') : t('blGeneratePack')}
+            </Button>
           )
         }
       >
@@ -4644,23 +4625,14 @@ export default function BatchPanel() {
         title={`Merge ${mergeTarget?.batch_no ?? ''} back`}
         maxWidth="sm"
         footer={
-          <>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setMergeTarget(null)}
-            >
-              Cancel
-            </Button>
-            <Button
-              size="sm"
-              className="nf-btn-primary"
-              onClick={confirmMerge}
-              disabled={mergeBusy}
-            >
-              {mergeBusy ? 'Merging…' : 'Merge back'}
-            </Button>
-          </>
+          <Button
+            size="sm"
+            className="nf-btn-primary"
+            onClick={confirmMerge}
+            disabled={mergeBusy}
+          >
+            {mergeBusy ? 'Merging…' : 'Merge back'}
+          </Button>
         }
       >
         <div className="space-y-2 text-xs">

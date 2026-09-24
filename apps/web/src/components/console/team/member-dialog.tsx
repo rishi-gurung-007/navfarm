@@ -203,12 +203,9 @@ export function MemberDialog({
       description={isEdit ? t("tmEditDesc") : t("tmCreateDesc")}
       maxWidth="lg"
       footer={
-        <>
-          <Button type="button" variant="outline" size="sm" onClick={onClose}>{t("cancel")}</Button>
-          <Button type="submit" form="team-member-form" size="sm" disabled={saving}>
-            {saving ? (isEdit ? t("saving") : t("tmCreating")) : isEdit ? t("saveChanges") : t("tmCreateSubmit")}
-          </Button>
-        </>
+        <Button type="submit" form="team-member-form" size="sm" disabled={saving}>
+          {saving ? (isEdit ? t("saving") : t("tmCreating")) : isEdit ? t("saveChanges") : t("tmCreateSubmit")}
+        </Button>
       }
     >
       <form id="team-member-form" onSubmit={submit} className="flex flex-col gap-6 pt-1">

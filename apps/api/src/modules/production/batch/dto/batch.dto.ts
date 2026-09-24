@@ -164,6 +164,14 @@ export class CreateBatchDto {
   lob_id: string;
 
   @ApiProperty({
+    description: 'Operational Area UUID scope (optional)',
+    required: false,
+  })
+  @IsUUID()
+  @IsOptional()
+  operational_area_id?: string;
+
+  @ApiProperty({
     description: 'Costing method for this batch',
     enum: COSTING_METHODS,
   })

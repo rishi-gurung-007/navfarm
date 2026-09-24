@@ -1431,6 +1431,9 @@ describe('BatchService', () => {
       jest
         .spyOn(service as any, 'loadActiveScheduleLines')
         .mockResolvedValue([{ header: schedulerHeader, line }]);
+      jest
+        .spyOn(service as any, 'loadBatchScheduledStages')
+        .mockResolvedValue([]);
       mockDbSelect
         .mockReturnValueOnce({
           from: jest.fn().mockReturnValue({
@@ -1518,6 +1521,9 @@ describe('BatchService', () => {
       jest
         .spyOn(service as any, 'loadActiveScheduleLines')
         .mockResolvedValue([{ header: schedulerHeader, line: feedLine }]);
+      jest
+        .spyOn(service as any, 'loadBatchScheduledStages')
+        .mockResolvedValue([]);
       mockDbSelect
         .mockReturnValueOnce({
           from: jest.fn().mockReturnValue({

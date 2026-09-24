@@ -1375,12 +1375,9 @@ export default function StageWiseConsumptionOutputPanel() {
           title={t("swLogStageConsumption")}
           maxWidth="sm"
           footer={
-            <>
-              <Button variant="outline" size="sm" onClick={() => setLogModalOpen(false)} disabled={logSaving}>{t("cancel")}</Button>
-              <Button size="sm" onClick={handleAddConsumption} className="nf-btn-primary" disabled={logSaving}>
-                {logSaving ? "Saving…" : "Add to Stage WIP"}
-              </Button>
-            </>
+            <Button size="sm" onClick={handleAddConsumption} className="nf-btn-primary" disabled={logSaving}>
+              {logSaving ? "Saving…" : "Add to Stage WIP"}
+            </Button>
           }
         >
           <div className="space-y-3 text-xs pt-1">

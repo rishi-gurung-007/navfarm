@@ -552,15 +552,21 @@ export default function OperationalBatchDataEntry() {
 
   // ── Step 2: Fetch scheduled entry lines (or stage groups) + batch/stage
   // master data for the selected batch + date ──
-  const loadDataEntry = () => {
+  const loadDataEntry = (overrideStageId?: string) => {
     if (!selectedBatchId) return;
     setDataEntryLoading(true);
     setNoScheduler(false);
     setDataEntryError('');
 
+    const targetStage =
+      overrideStageId !== undefined ? overrideStageId : selectedStageId;
+    const stageParam = targetStage ? `&stageId=${targetStage}` : '';
+
     Promise.all([
       api
-        .get(`/batch/${selectedBatchId}/data-entry?date=${selectedDate}`)
+        .get(
+          `/batch/${selectedBatchId}/data-entry?date=${selectedDate}${stageParam}`,
+        )
         .catch(() => ({ lines: [] })),
       api.get(`/batch/${selectedBatchId}`).catch(() => null),
       api.get(`/stage`).catch(() => []),
@@ -571,9 +577,7 @@ export default function OperationalBatchDataEntry() {
       .then(([schedRes, batchRes, stageRes, locationRes]) => {
         const schedData = schedRes?.data ?? schedRes;
         const batchData = batchRes?.data ?? batchRes;
-        const isAnimalWise =
-          batchData?.tracking_mode === 'ANIMAL_WISE' ||
-          Array.isArray(schedData?.stages);
+        const isAnimalWise = batchData?.tracking_mode === 'ANIMAL_WISE';
 
         const stageMaster: any[] = (stageRes as any)?.data ?? stageRes ?? [];
         setStageMasterList(Array.isArray(stageMaster) ? stageMaster : []);
@@ -662,10 +666,17 @@ export default function OperationalBatchDataEntry() {
           }
         } else {
           const lines: any[] = schedData?.lines ?? [];
+          const stages: Row[] = schedData?.stages ?? [];
+          const progress: Row[] = schedData?.progress ?? [];
           setDataEntryLines(lines);
-          setDataEntryStages([]);
-          setDataEntryProgress([]);
+          setDataEntryStages(stages);
+          setDataEntryProgress(progress);
           setNoScheduler(lines.length === 0);
+          if (schedData?.selected_stage_id) {
+            setSelectedStageId(schedData.selected_stage_id);
+          } else if (stages.length > 0 && !selectedStageId) {
+            setSelectedStageId(stages[0].stage_id);
+          }
           for (const l of lines)
             values[entryKey(l.line_id)] = defaultEntryValue(l);
 
@@ -1895,11 +1906,64 @@ export default function OperationalBatchDataEntry() {
         <>
           {!isAnimalWise && (
             <>
-              {/* ── 8-Stage Lifecycle Stepper — read-only, reflecting the batch's
-              real current stage. Advancing it is the deliberate "Change
-              Stage" action above (real POST /batch/:id/transfer-stage call),
-              not something clicking a stage while logging daily data does. ── */}
-              {lifecycle.stages.length > 0 ? (
+              {dataEntryProgress.length > 0 ? (
+                <div className="w-full rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface)] p-5 overflow-x-auto shadow-2xs">
+                  <div
+                    className="relative"
+                    style={{
+                      minWidth: `${Math.max(780, dataEntryProgress.length * 108)}px`,
+                    }}
+                  >
+                    <div className="absolute top-4 left-6 right-6 h-[3px] bg-[var(--border)] z-0 rounded-full" />
+                    <div className="flex items-start justify-between relative z-10">
+                      {dataEntryProgress.map((p) => {
+                        const selected = p.stage_id === selectedStageId;
+                        const stageLocked = lockInfo.status === 'LOCKED';
+                        return (
+                          <div
+                            key={p.stage_id}
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => {
+                              setSelectedStageId(p.stage_id);
+                              loadDataEntry(p.stage_id);
+                            }}
+                            className="flex min-w-0 flex-col items-center group flex-1 cursor-pointer"
+                          >
+                            <button
+                              type="button"
+                              className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold transition-all duration-200 ${
+                                stageLocked
+                                  ? 'bg-[var(--success)] text-white ring-4 ring-[var(--success-muted)] shadow-xs'
+                                  : selected
+                                    ? 'bg-[var(--accent)] text-white ring-4 ring-[var(--accent-muted)] shadow-md scale-110'
+                                    : 'bg-[var(--surface)] border-2 border-[var(--border)] text-[var(--text-muted)] group-hover:border-[var(--text-secondary)]'
+                              }`}
+                            >
+                              {p.stage_sequence || '•'}
+                            </button>
+                            <div className="mt-2.5 text-center flex flex-col items-center w-full px-0.5">
+                              <p
+                                className={`text-xs tracking-tight truncate w-full ${
+                                  selected
+                                    ? 'text-[var(--accent)] font-bold'
+                                    : 'text-[var(--text-secondary)] font-medium'
+                                }`}
+                                title={p.stage_name}
+                              >
+                                {p.stage_name}
+                              </p>
+                              <span className="text-[10px] text-[var(--text-muted)] mt-0.5">
+                                {p.animal_count} head
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              ) : lifecycle.stages.length > 0 ? (
                 <PiggeryLifecycleStepper
                   stages={lifecycle.stages}
                   currentStageId={lifecycle.currentStageId}
@@ -2716,34 +2780,25 @@ export default function OperationalBatchDataEntry() {
           title={`Move ${(selectedStage.animals || []).length} animal(s) to a stage`}
           maxWidth="sm"
           footer={
-            <>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setBulkStageTransitionOpen(false)}
-              >
-                {t('blCancel')}
-              </Button>
-              <Button
-                size="sm"
-                onClick={() =>
-                  handleBulkStageTransition(
-                    (selectedStage.animals || []).map((a: Row) => a.animal_id),
-                  )
-                }
-                disabled={
-                  bulkStageTransitionSaving ||
-                  !bulkStageTransitionForm.to_stage_id
-                }
-                className="nf-btn-primary"
-              >
-                {bulkStageTransitionSaving ? (
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  'Move'
-                )}
-              </Button>
-            </>
+            <Button
+              size="sm"
+              onClick={() =>
+                handleBulkStageTransition(
+                  (selectedStage.animals || []).map((a: Row) => a.animal_id),
+                )
+              }
+              disabled={
+                bulkStageTransitionSaving ||
+                !bulkStageTransitionForm.to_stage_id
+              }
+              className="nf-btn-primary"
+            >
+              {bulkStageTransitionSaving ? (
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                'Move'
+              )}
+            </Button>
           }
         >
           <div className="space-y-3 text-xs pt-1">
@@ -2822,31 +2877,22 @@ export default function OperationalBatchDataEntry() {
           title={t('blTransferStage')}
           maxWidth="sm"
           footer={
-            <>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setChangeStageOpen(false)}
-              >
-                {t('blCancel')}
-              </Button>
-              <Button
-                size="sm"
-                onClick={handleChangeStage}
-                disabled={
-                  changeStageSaving ||
-                  changeStageOptions.length === 0 ||
-                  !changeStageForm.to_stage_code
-                }
-                className="nf-btn-primary"
-              >
-                {changeStageSaving ? (
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  t('blTransferStage')
-                )}
-              </Button>
-            </>
+            <Button
+              size="sm"
+              onClick={handleChangeStage}
+              disabled={
+                changeStageSaving ||
+                changeStageOptions.length === 0 ||
+                !changeStageForm.to_stage_code
+              }
+              className="nf-btn-primary"
+            >
+              {changeStageSaving ? (
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                t('blTransferStage')
+              )}
+            </Button>
           }
         >
           <div className="space-y-3 text-xs pt-1">
@@ -2905,27 +2951,14 @@ export default function OperationalBatchDataEntry() {
           title={t('obUploadInspectionMedia')}
           maxWidth="sm"
           footer={
-            <>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  setUploadModalOpen(false);
-                  setUploadingFile(null);
-                  setUploadError('');
-                }}
-              >
-                {t('cancel')}
-              </Button>
-              <Button
-                size="sm"
-                onClick={handleAddAttachment}
-                disabled={!uploadingFile}
-                className="nf-btn-primary"
-              >
-                {t('obAttachToDailyLog')}
-              </Button>
-            </>
+            <Button
+              size="sm"
+              onClick={handleAddAttachment}
+              disabled={!uploadingFile}
+              className="nf-btn-primary"
+            >
+              {t('obAttachToDailyLog')}
+            </Button>
           }
         >
           <div className="space-y-3 text-xs pt-1">

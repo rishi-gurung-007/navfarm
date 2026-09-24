@@ -620,10 +620,7 @@ export function ApprovalsPageShell({ activeTab }: { activeTab: ApprovalStatus })
                 className="nf-input w-full"
               />
             </div>
-            <div className="flex justify-end gap-2 pt-2 border-t" style={{ borderColor: "var(--border)" }}>
-              <Button variant="outline" onClick={() => setRejectItem(null)}>
-                {t("cancel")}
-              </Button>
+            <div className="flex justify-end pt-2 border-t" style={{ borderColor: "var(--border)" }}>
               <Button variant="destructive" onClick={handleRejectConfirm} disabled={busy}>
                 {t("apConfirmRejection")}
               </Button>
@@ -743,10 +740,7 @@ export function ApprovalsPageShell({ activeTab }: { activeTab: ApprovalStatus })
               />
             </div>
 
-            <div className="flex justify-end gap-2 pt-3 border-t" style={{ borderColor: "var(--border)" }}>
-              <Button variant="outline" onClick={() => setCreateModalOpen(false)}>
-                {t("cancel")}
-              </Button>
+            <div className="flex justify-end pt-3 border-t" style={{ borderColor: "var(--border)" }}>
               <Button onClick={handleCreateApproval} disabled={busy} className="nf-btn-primary">
                 {t("apSubmitForAuth")}
               </Button>

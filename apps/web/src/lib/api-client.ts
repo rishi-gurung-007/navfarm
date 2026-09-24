@@ -79,6 +79,7 @@ const SESSION_KEYS = [
   'active_company_id',
   'active_workspace_scope',
   'active_operational_area_id',
+  'active_operational_area',
   'active_lob',
   'active_farm_id',
   'tenant_company_mode',

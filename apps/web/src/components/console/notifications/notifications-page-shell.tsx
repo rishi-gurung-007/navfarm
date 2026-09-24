@@ -349,10 +349,6 @@ export function NotificationsPageShell({ activeChannel }: { activeChannel: Notif
               className={`${inputCls} resize-y`} style={inputStyle} />
           </Field>
           <div className="flex flex-col-reverse gap-3 border-t pt-4 sm:flex-row sm:justify-end" style={{ borderColor: "var(--border)" }}>
-            <button type="button" disabled={testing} onClick={() => setShowTestDialog(false)}
-              className="min-h-10 rounded-lg border border-(--border) bg-(--surface) px-4 text-sm font-semibold text-(--text-secondary) hover:bg-(--surface-raised) disabled:opacity-50">
-              {t("cancel")}
-            </button>
             <button type="submit" disabled={testing || !testRecipient}
               className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-(--accent) px-5 text-sm font-semibold text-white hover:bg-(--accent-hover) disabled:opacity-50">
               {testing ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}

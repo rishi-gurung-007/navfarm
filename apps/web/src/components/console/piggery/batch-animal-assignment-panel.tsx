@@ -905,14 +905,9 @@ export default function BatchAnimalAssignmentPanel() {
           title={t("baapRelocateAnimalTitle", { tag: selectedAnimalForTransfer.earTag })}
           maxWidth="sm"
           footer={
-            <>
-              <Button variant="outline" size="sm" onClick={() => setTransferModalOpen(false)}>
-                {t("baapCancelButton")}
-              </Button>
-              <Button size="sm" onClick={handleConfirmTransfer} disabled={transferSaving || !targetLocationId} className="nf-btn-primary">
-                {transferSaving ? t("anpSaving") : t("baapRecordPenMovementButton")}
-              </Button>
-            </>
+            <Button size="sm" onClick={handleConfirmTransfer} disabled={transferSaving || !targetLocationId} className="nf-btn-primary">
+              {transferSaving ? t("anpSaving") : t("baapRecordPenMovementButton")}
+            </Button>
           }
         >
           <div className="space-y-3 text-xs pt-1">
@@ -960,12 +955,9 @@ export default function BatchAnimalAssignmentPanel() {
         title={`Move ${selectedIds.size} animal(s) to a stage`}
         maxWidth="sm"
         footer={
-          <>
-            <Button variant="outline" size="sm" onClick={() => setMoveOpen(false)}>Cancel</Button>
-            <Button size="sm" className="nf-btn-primary" onClick={handleBulkMove} disabled={groupBusy || !moveStageId}>
-              {groupBusy ? "Moving…" : "Move animals"}
-            </Button>
-          </>
+          <Button size="sm" className="nf-btn-primary" onClick={handleBulkMove} disabled={groupBusy || !moveStageId}>
+            {groupBusy ? "Moving…" : "Move animals"}
+          </Button>
         }
       >
         <div className="space-y-3">
@@ -1005,12 +997,9 @@ export default function BatchAnimalAssignmentPanel() {
         title={`Hold ${selectedIds.size} animal(s) back as a split group`}
         maxWidth="sm"
         footer={
-          <>
-            <Button variant="outline" size="sm" onClick={() => setSplitOpen(false)}>Cancel</Button>
-            <Button size="sm" className="nf-btn-primary" onClick={handleSplit} disabled={groupBusy}>
-              {groupBusy ? "Splitting…" : "Create split group"}
-            </Button>
-          </>
+          <Button size="sm" className="nf-btn-primary" onClick={handleSplit} disabled={groupBusy}>
+            {groupBusy ? "Splitting…" : "Create split group"}
+          </Button>
         }
       >
         <div className="space-y-3">
@@ -1052,14 +1041,9 @@ export default function BatchAnimalAssignmentPanel() {
           title={t("baapImportEarTagsCsvTitle")}
           maxWidth="md"
           footer={
-            <>
-              <Button variant="outline" size="sm" onClick={() => setCsvModalOpen(false)}>
-                {t("baapCancelButton")}
-              </Button>
-              <Button size="sm" onClick={handleImportCsv} className="nf-btn-primary">
-                {t("baapImportAnimalsButton")}
-              </Button>
-            </>
+            <Button size="sm" onClick={handleImportCsv} className="nf-btn-primary">
+              {t("baapImportAnimalsButton")}
+            </Button>
           }
         >
           <div className="space-y-3 text-xs pt-1">

@@ -383,11 +383,6 @@ export default function OperationalAreasPage() {
 
               <div className="pt-2 flex items-center justify-end gap-2">
                 <button
-                  type="button"
-                  onClick={() => setShowModal(false)}
-                  className="px-4 py-2 rounded-[var(--radius-sm)] border border-(--border) bg-(--surface-raised) text-xs font-semibold text-(--text-secondary)"
-                >{t("cancel")}</button>
-                <button
                   type="submit"
                   disabled={submitting}
                   className="px-5 py-2 rounded-[var(--radius-sm)] bg-(--accent) hover:opacity-90 text-xs font-bold text-white shadow-xs disabled:opacity-50"

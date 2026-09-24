@@ -520,12 +520,9 @@ export default function AreaSettingsPage() {
         description={t("asAssignStaffDescription")}
         maxWidth="sm"
         footer={
-          <>
-            <Button variant="outline" size="sm" onClick={() => setStaffModalOpen(false)}>{t("cancel")}</Button>
-            <Button size="sm" onClick={handleAddStaff} disabled={staffBusy || !staffEmail.trim()} className="nf-btn-primary">
-              {t("asAssignToUnit")}
-            </Button>
-          </>
+          <Button size="sm" onClick={handleAddStaff} disabled={staffBusy || !staffEmail.trim()} className="nf-btn-primary">
+            {t("asAssignToUnit")}
+          </Button>
         }
       >
         <div className="space-y-3 pt-1 text-xs">

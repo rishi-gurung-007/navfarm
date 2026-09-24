@@ -338,7 +338,6 @@ export default function DairyCowRegisterPanel() {
         maxWidth="md"
         footer={
           <div className="flex justify-end gap-2">
-            <Button variant="secondary" onClick={() => setShowAddModal(false)}>{t("cancel")}</Button>
             <Button onClick={submit as any} disabled={saving}>{saving ? t("asSaving") : t("dySaveDairyCow")}</Button>
           </div>
         }
