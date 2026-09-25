@@ -10,6 +10,7 @@ import { CreateGoodsReceiptDto, UpdateGoodsReceiptDto, QueryGoodsReceiptDto } fr
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
+import { SiloFeedService } from '../silo-feed/silo-feed.service';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   return date.toISOString().slice(0, 19).replace('T', ' ');
@@ -22,6 +23,10 @@ export class GoodsReceiptService {
     private readonly auditService: AuditLogService,
     private readonly ledgerService: InventoryLedgerService,
     private readonly glPostingService: GlPostingService,
+    // A receipt can land stock directly on a SILO (no stock transfer in
+    // between), so it is bound by the same D9 item rules as a transfer —
+    // SiloFeedService is the one home for them.
+    private readonly siloFeedService: SiloFeedService,
   ) {}
 
   private get db(): MySql2Database<typeof schema> {
@@ -53,6 +58,39 @@ export class GoodsReceiptService {
     if (row && (row.is_active === false || row.deleted_at)) {
       throw new BadRequestException('The selected warehouse is inactive.');
     }
+  }
+
+  /**
+   * A Goods Receipt whose warehouse is a SILO lands stock on it directly —
+   * no stock transfer in between — so it is the other moment (besides a
+   * posted transfer) a silo's contents can change. Checked at post(), same
+   * as stock-transfer's own guard, since a draft's numbers say nothing about
+   * what the silo will hold by the time it posts.
+   */
+  private async assertSiloDestination(
+    receipt: { company_id: string; warehouse_id: string },
+    lines: { item_id: string }[],
+    tenantId: string,
+  ): Promise<void> {
+    const [destination] = await this.db
+      .select({
+        location_id: schema.locationMaster.location_id,
+        location_name: schema.locationMaster.location_name,
+        location_type: schema.locationMaster.location_type,
+      })
+      .from(schema.locationMaster)
+      .where(eq(schema.locationMaster.location_id, receipt.warehouse_id))
+      .limit(1);
+    if (!destination || destination.location_type !== 'SILO') return;
+
+    await this.siloFeedService.assertCanReceive({
+      siloId: destination.location_id,
+      siloName: destination.location_name || destination.location_id,
+      companyId: receipt.company_id,
+      tenantId,
+      itemIds: [...new Set(lines.map((l) => l.item_id))],
+      documentLabel: 'Goods Receipt',
+    });
   }
 
   private async generateReceiptNo(tenantId: string, companyId: string, executor: MySql2Database<typeof schema> = this.db): Promise<string> {
@@ -287,6 +325,10 @@ export class GoodsReceiptService {
         );
       }
     }
+
+    // Before the DRAFT -> POSTED claim: a refusal here must leave the receipt
+    // a draft the farm can correct, matching stock-transfer's own ordering.
+    await this.assertSiloDestination(receipt, receipt.lines, tenantId);
 
     // Claim the DRAFT -> POSTED transition atomically before writing any
     // ledger/GL entries — see goods-issue.service.ts's post() for the full

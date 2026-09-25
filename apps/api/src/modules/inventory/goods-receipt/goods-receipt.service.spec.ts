@@ -6,6 +6,7 @@ import { MySqlDialect } from 'drizzle-orm/mysql-core';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
+import { SiloFeedService } from '../silo-feed/silo-feed.service';
 import { BadRequestException } from '@nestjs/common';
 import * as schema from '../../../core/database/schema';
 import { plainToInstance } from 'class-transformer';
@@ -46,10 +47,16 @@ describe('GoodsReceiptService', () => {
   // out of service after the receipt was drafted cannot receive stock. Every
   // post test queues this first.
   const activeWarehouse = () => found({ is_active: true, deleted_at: null });
+  // post() re-reads the warehouse a second time for the silo item check —
+  // a STORE short-circuits assertSiloDestination immediately, matching every
+  // existing post test's non-silo warehouse.
+  const nonSiloWarehouse = () => found({ location_id: 'wh-1', location_type: 'STORE' });
+  const mockAssertCanReceive = jest.fn();
 
   beforeEach(async () => {
     mockDbSelect.mockReset();
     mockDbUpdate.mockReset();
+    mockAssertCanReceive.mockReset().mockResolvedValue(undefined);
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -58,6 +65,7 @@ describe('GoodsReceiptService', () => {
         { provide: AuditLogService, useValue: { log: jest.fn().mockResolvedValue({}) } },
         { provide: InventoryLedgerService, useValue: { writePositiveEntry: jest.fn().mockResolvedValue({ entry_no: 1 }) } },
         { provide: GlPostingService, useValue: { postInventoryLedgerEntry: jest.fn().mockResolvedValue({}) } },
+        { provide: SiloFeedService, useValue: { assertCanReceive: mockAssertCanReceive } },
       ],
     }).compile();
 
@@ -80,6 +88,7 @@ describe('GoodsReceiptService', () => {
 
       mockDbSelect.mockReturnValueOnce(activeWarehouse());
       mockDbSelect.mockReturnValueOnce(found({ supplier_id: 'sup-1', vendor_type: 'ANIMAL_SUPPLIER', health_cert_url: 'https://certs.example.com/farm.pdf' }));
+      mockDbSelect.mockReturnValueOnce(nonSiloWarehouse());
       mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ affectedRows: 1 }]) }) });
 
       const result = await service.post('gr-1', 'tenant-123', { userId: 'user-1' });
@@ -94,6 +103,7 @@ describe('GoodsReceiptService', () => {
 
       mockDbSelect.mockReturnValueOnce(activeWarehouse());
       mockDbSelect.mockReturnValueOnce(found({ supplier_id: 'sup-2', vendor_type: 'FEED_SUPPLIER', health_cert_url: null }));
+      mockDbSelect.mockReturnValueOnce(nonSiloWarehouse());
       mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ affectedRows: 1 }]) }) });
 
       const result = await service.post('gr-2', 'tenant-123', { userId: 'user-1' });
@@ -107,11 +117,12 @@ describe('GoodsReceiptService', () => {
         .mockResolvedValueOnce({ ...draftReceipt, supplier_id: null, status: 'POSTED' } as any);
 
       mockDbSelect.mockReturnValueOnce(activeWarehouse());
+      mockDbSelect.mockReturnValueOnce(nonSiloWarehouse());
       mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ affectedRows: 1 }]) }) });
 
       const result = await service.post('gr-3', 'tenant-123', { userId: 'user-1' });
 
-      expect(mockDbSelect).toHaveBeenCalledTimes(1); // the warehouse only — no supplier lookup needed
+      expect(mockDbSelect).toHaveBeenCalledTimes(2); // warehouse-active + silo-destination reads — no supplier lookup needed
       expect(result.status).toBe('POSTED');
     });
   });
@@ -170,6 +181,7 @@ describe('GoodsReceiptService', () => {
           { provide: AuditLogService, useValue: { log: jest.fn().mockResolvedValue({}) } },
           { provide: InventoryLedgerService, useValue: { writePositiveEntry: jest.fn().mockResolvedValue({ entry_no: 1 }) } },
           { provide: GlPostingService, useValue: { postInventoryLedgerEntry: jest.fn().mockResolvedValue({}) } },
+          { provide: SiloFeedService, useValue: { assertCanReceive: jest.fn().mockResolvedValue(undefined) } },
         ],
       }).compile();
 

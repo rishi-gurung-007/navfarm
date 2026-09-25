@@ -7,6 +7,7 @@ import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
 import { UomService } from '../../master-data/uom/uom.service';
+import { SiloFeedService } from '../silo-feed/silo-feed.service';
 import * as schema from '../../../core/database/schema';
 
 /**
@@ -36,6 +37,11 @@ describe('StockTransferService', () => {
 
   const mockGetStockBalance = jest.fn();
   const mockResolveConversionFactor = jest.fn();
+  // Item rules (one item, different item, D9) now live in SiloFeedService —
+  // its own spec (silo-feed.service.spec.ts) proves those rules; here it is
+  // a collaborator whose call StockTransferService is responsible for
+  // making, with the right arguments, before its own capacity check runs.
+  const mockAssertCanReceive = jest.fn();
 
   /** Awaitable at any point, so .where(), .limit() and .offset() all resolve. */
   const chain = (result: unknown[]) => {
@@ -75,6 +81,8 @@ describe('StockTransferService', () => {
     mockGetStockBalance.mockReset().mockResolvedValue([]);
     // KG in, KG out — a test that cares about the conversion overrides it.
     mockResolveConversionFactor.mockReset().mockResolvedValue(1);
+    // Accepts by default; a test that cares about a refusal overrides it.
+    mockAssertCanReceive.mockReset().mockResolvedValue(undefined);
     mockDbSelect.mockImplementation(() => ({ from: (table: unknown) => chain(rows.get(table) ?? []) }));
     mockDbInsert.mockReturnValue({ values: jest.fn().mockResolvedValue({}) });
     mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) }) });
@@ -88,6 +96,7 @@ describe('StockTransferService', () => {
         { provide: InventoryLedgerService, useValue: { writeTransferEntries: jest.fn().mockResolvedValue({ shipment: {}, receipt: {} }), getStockBalance: mockGetStockBalance } },
         { provide: GlPostingService, useValue: { postInventoryLedgerEntry: jest.fn().mockResolvedValue({}) } },
         { provide: UomService, useValue: { resolveConversionFactor: mockResolveConversionFactor } },
+        { provide: SiloFeedService, useValue: { assertCanReceive: mockAssertCanReceive } },
       ],
     }).compile();
 
@@ -328,12 +337,17 @@ describe('StockTransferService', () => {
       jest.spyOn(service as any, 'loadForMutation').mockResolvedValue(
         draft([{ line_id: 'ln-1', item_id: 'item-starter', quantity: '10', uom: 'KG' }]) as any,
       );
-      mockGetStockBalance.mockResolvedValue([
-        { item_id: 'item-grower', item_code: 'FEED-GROWER', uom: 'KG', on_hand_qty: 100 },
-      ]);
+      mockAssertCanReceive.mockRejectedValue(new Error(
+        "Cannot post this Stock Transfer — silo 'Feed Silo 01' already holds 'FEED-GROWER'. A silo holds one feed item at a time; empty it before moving a different item in.",
+      ));
 
       await expect(service.post('tr-1', 'tenant-1')).rejects.toThrow(/holds one feed item at a time/);
       expect(mockDbUpdate).not.toHaveBeenCalled();
+      // The item rules ran before the capacity balances were even fetched.
+      expect(mockAssertCanReceive).toHaveBeenCalledWith({
+        siloId: 'silo-1', siloName: 'Feed Silo 01', companyId: 'co-1', tenantId: 'tenant-1',
+        itemIds: ['item-starter'], documentLabel: 'Stock Transfer',
+      });
     });
 
     it('refuses a single transfer carrying two different items into one silo', async () => {
@@ -343,6 +357,9 @@ describe('StockTransferService', () => {
           { line_id: 'ln-2', item_id: 'item-starter', quantity: '10', uom: 'KG' },
         ]) as any,
       );
+      mockAssertCanReceive.mockRejectedValue(new Error(
+        "Cannot post this Stock Transfer — silo 'Feed Silo 01' holds one feed item at a time and this transfer carries 2 different items.",
+      ));
 
       await expect(service.post('tr-1', 'tenant-1')).rejects.toThrow(/holds one feed item at a time/);
       expect(mockDbUpdate).not.toHaveBeenCalled();

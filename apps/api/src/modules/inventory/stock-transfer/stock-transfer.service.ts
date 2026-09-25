@@ -11,6 +11,7 @@ import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
 import { UomService } from '../../master-data/uom/uom.service';
+import { SiloFeedService } from '../silo-feed/silo-feed.service';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   return date.toISOString().slice(0, 19).replace('T', ' ');
@@ -27,6 +28,10 @@ export class StockTransferService {
     // the item is stocked in, so the capacity guard below needs the tenant's
     // own uom_conversion_master rather than an assumption about the unit.
     private readonly uomService: UomService,
+    // Item rules (one feed per silo, D9 sibling-shed check) live in
+    // SiloFeedService — shared with Goods Receipt so a silo obeys the same
+    // rules regardless of which document lands stock on it.
+    private readonly siloFeedService: SiloFeedService,
   ) {}
 
   private get db(): MySql2Database<typeof schema> {
@@ -191,15 +196,19 @@ export class StockTransferService {
     if (!destination || destination.location_type !== 'SILO') return;
     const siloName = destination.location_name || destination.location_id;
 
-    // A silo holds ONE feed item at a time, so a transfer that carries two of
-    // them into the same silo is refused on the document alone, before any
-    // stock is read.
     const incomingItems = new Set(lines.map((l) => l.item_id));
-    if (incomingItems.size > 1) {
-      throw new BadRequestException(
-        `Cannot post this Stock Transfer — silo '${siloName}' holds one feed item at a time and this transfer carries ${incomingItems.size} different items.`,
-      );
-    }
+
+    // One feed item at a time, a different feed only into an empty silo, and
+    // D9's sibling-shed check — all three now live in SiloFeedService, shared
+    // with Goods Receipt (see silo-feed.service.ts).
+    await this.siloFeedService.assertCanReceive({
+      siloId: destination.location_id,
+      siloName,
+      companyId: transfer.company_id,
+      tenantId,
+      itemIds: [...incomingItems],
+      documentLabel: 'Stock Transfer',
+    });
 
     // On-hand per item in the silo, straight from the FIFO layers —
     // InventoryLedgerService.getStockBalance() is the canonical
@@ -208,13 +217,6 @@ export class StockTransferService {
       { companyId: transfer.company_id, warehouseId: destination.location_id } as any,
       tenantId,
     );
-
-    const resident = balances.find((b) => !incomingItems.has(b.item_id));
-    if (resident) {
-      throw new BadRequestException(
-        `Cannot post this Stock Transfer — silo '${siloName}' already holds '${resident.item_code}'. A silo holds one feed item at a time; empty it before moving a different item in.`,
-      );
-    }
 
     // silo_capacity_kg is required on a SILO going forward, but silos
     // configured before the column existed still have none — nothing to
