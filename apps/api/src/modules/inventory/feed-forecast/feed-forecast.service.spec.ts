@@ -506,46 +506,75 @@ describe('buildInputBatches', () => {
     ]);
   });
 
-  // Ruling (final review, I2): a BATCH_WISE batch whose animals are registered
-  // one by one moves them into their own stages (the demo's breeding stock
-  // walks FLUSH -> ... -> LACTATION), so it is split exactly like ANIMAL_WISE.
-  it('a REGISTERED batch-wise batch is split by animal stage like ANIMAL_WISE, each group on its own header', () => {
+  // Ruling (final review, I2 + follow-up): a BATCH_WISE batch whose animals
+  // are registered one by one moves them into their own stages (the demo's
+  // breeding stock walks FLUSH -> ... -> LACTATION), so it is split by stage.
+  // Staged animals are counted per stage; the batch's own stage gets only the
+  // batch's heads not accounted for by a staged animal. Stage-less animal
+  // rows are never counted one by one — on the demo they are BIO_ASSET
+  // placeholders duplicating the registered herd.
+  it('a REGISTERED batch is split by animal stage, each group on its own header, and its own stage gets the remainder', () => {
     const { batches } = buildInputBatches({
       ...base,
-      batchRows: [{ ...batchWise, animal_tracking: 'REGISTERED' }],
-      animalGroups: new Map([['b1', [{ stageId: 'GIL', heads: 5 }, { stageId: 'GES', heads: 30 }]]]),
+      batchRows: [{ ...batchWise, animal_tracking: 'REGISTERED' }], // 48 heads (closing)
+      animalGroups: new Map([['b1', [{ stageId: 'GES', heads: 30 }]]]),
       headers: [{ batch_id: 'b1', stage_id: 'GES', effective_from: '2026-09-20', location_id: 'pen-2' }],
     });
     expect(batches.map((b) => [b.batchId, b.batchNo, b.heads, b.shedId, b.segments[0].stageId, b.segments[0].start])).toEqual([
-      ['b1:GIL', 'BATCH-1 · GILT', 5, 'shed-1', 'GIL', '2026-09-01'],
       ['b1:GES', 'BATCH-1 · GESTATION', 30, 'shed-2', 'GES', '2026-09-20'],
+      ['b1:GIL', 'BATCH-1 · GILT', 18, 'shed-1', 'GIL', '2026-09-01'],
     ]);
   });
 
-  it("animals with no current stage are counted in the batch's own stage group", () => {
+  it('VIL100-like: 58 heads, 58 staged across 5 stages, 58 stage-less placeholders -> 5 groups summing to 58, no own-stage group', () => {
+    const stages5 = new Map<string, StageInfo>([
+      ...stages,
+      ...['FLU', 'INS', 'GST', 'FAR', 'LAC'].map((id): [string, StageInfo] => [id, { stageId: id, stageCode: id, durationDays: null, nextStageId: null, isActive: true }]),
+    ]);
     const { batches } = buildInputBatches({
       ...base,
-      batchRows: [{ ...batchWise, animal_tracking: 'REGISTERED' }],
-      animalGroups: new Map([['b1', [{ stageId: null, heads: 7 }, { stageId: 'GIL', heads: 5 }, { stageId: 'GES', heads: 30 }]]]),
+      stages: stages5,
+      batchRows: [{ ...batchWise, animal_tracking: 'REGISTERED', opening_quantity: '58', closing_quantity: null }],
+      animalGroups: new Map([['b1', [
+        { stageId: null, heads: 58 },
+        { stageId: 'FLU', heads: 13 }, { stageId: 'INS', heads: 12 }, { stageId: 'GST', heads: 12 },
+        { stageId: 'FAR', heads: 11 }, { stageId: 'LAC', heads: 10 },
+      ]]]),
+    });
+    expect(batches.map((b) => b.segments[0].stageId)).toEqual(['FLU', 'INS', 'GST', 'FAR', 'LAC']);
+    expect(batches.reduce((n, b) => n + b.heads, 0)).toBe(58);
+  });
+
+  it('a REGISTERED batch of 100 heads with 40 staged gets an own-stage group of 60', () => {
+    const { batches } = buildInputBatches({
+      ...base,
+      batchRows: [{ ...batchWise, animal_tracking: 'REGISTERED', opening_quantity: '100', closing_quantity: null }],
+      animalGroups: new Map([['b1', [{ stageId: null, heads: 100 }, { stageId: 'GES', heads: 40 }]]]),
     });
     expect(batches.map((b) => [b.batchNo, b.heads])).toEqual([
-      ['BATCH-1 · GILT', 12],
-      ['BATCH-1 · GESTATION', 30],
+      ['BATCH-1 · GESTATION', 40],
+      ['BATCH-1 · GILT', 60],
     ]);
   });
 
-  it('stage-less animals of a batch with no stage of its own feed nothing', () => {
-    const { batches } = buildInputBatches({
+  it('a REGISTERED batch with no live animals feeds its whole head count at its own stage', () => {
+    const { batches } = buildInputBatches({ ...base, batchRows: [{ ...batchWise, animal_tracking: 'REGISTERED' }] });
+    expect(batches.map((b) => [b.batchNo, b.heads])).toEqual([['BATCH-1 · GILT', 48]]);
+  });
+
+  it("ANIMAL_WISE is unchanged: stage-less animals count in the batch's own stage, or nowhere when it has none", () => {
+    const withStage = buildInputBatches({
+      ...base,
+      batchRows: [{ ...batchWise, tracking_mode: 'ANIMAL_WISE' }],
+      animalGroups: new Map([['b1', [{ stageId: null, heads: 7 }, { stageId: 'GIL', heads: 5 }, { stageId: 'GES', heads: 30 }]]]),
+    });
+    expect(withStage.batches.map((b) => [b.batchNo, b.heads])).toEqual([['BATCH-1 · GILT', 12], ['BATCH-1 · GESTATION', 30]]);
+    const noStage = buildInputBatches({
       ...base,
       batchRows: [{ ...batchWise, tracking_mode: 'ANIMAL_WISE', stage_id: null }],
       animalGroups: new Map([['b1', [{ stageId: null, heads: 7 }, { stageId: 'GES', heads: 30 }]]]),
     });
-    expect(batches.map((b) => [b.batchNo, b.heads])).toEqual([['BATCH-1 · GESTATION', 30]]);
-  });
-
-  it('a REGISTERED batch with no live animals yields no input batch', () => {
-    const { batches } = buildInputBatches({ ...base, batchRows: [{ ...batchWise, animal_tracking: 'REGISTERED' }] });
-    expect(batches).toEqual([]);
+    expect(noStage.batches.map((b) => [b.batchNo, b.heads])).toEqual([['BATCH-1 · GESTATION', 30]]);
   });
 
   it('an animal-wise batch with no live animals yields no input batch', () => {

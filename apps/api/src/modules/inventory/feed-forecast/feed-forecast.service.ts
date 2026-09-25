@@ -206,14 +206,23 @@ export function resolveShed(locationId: string | null | undefined, locationById:
  * a batchNo carrying the stage so the rows can be told apart. No live
  * animals, no input.
  *
- * A BATCH_WISE batch whose animal_tracking is REGISTERED is split the same way
- * (final review, I2): its animals are registered one by one and each moves
- * through its own stages — a breeding herd is part flushing, part gestating,
- * part lactating at once — so the batch row's single stage would feed every
- * sow the diet of whichever stage the batch was opened at. Animals with no
- * current stage (placeholders, or a register row never given one) are counted
- * in the batch's own stage group rather than dropped; with no batch stage
- * either there is no diet to give them, and they feed nothing.
+ * For ANIMAL_WISE, animals with no current stage are counted in the batch's
+ * own stage group rather than dropped; with no batch stage either there is no
+ * diet to give them, and they feed nothing.
+ *
+ * A BATCH_WISE batch whose animal_tracking is REGISTERED is split by stage
+ * too (final review, I2): its animals are registered one by one and each
+ * moves through its own stages — a breeding herd is part flushing, part
+ * gestating, part lactating at once — so the batch row's single stage would
+ * feed every sow the diet of whichever stage the batch was opened at. Its
+ * head count is still the batch's own (closing ?? opening): each stage group
+ * is the live animals standing in that stage, and the batch's own stage gets
+ * only what is left over, never less than zero and omitted at zero. Stage-less
+ * animal rows are deliberately not counted one by one (I2 follow-up ruling):
+ * a BIO_ASSET batch registers one placeholder row per opening head, so on the
+ * demo 58 placeholders sit beside the 58 real animals they stand for, and
+ * counting both fed the herd twice. The remainder rule does not depend on how
+ * a placeholder is marked.
  *
  * Stage start and shed come from the batch's scheduler_header for that stage
  * — its effective_from is when the batch entered the stage, its location_id
@@ -246,9 +255,11 @@ export function buildInputBatches(args: {
   for (const b of batchRows) {
     if (!b.breed_id) continue; // no breed, no feed standard to look up
     const animalWise = isGroupedByAnimal(b);
-    const groups = animalWise
+    const groups = b.tracking_mode === 'ANIMAL_WISE'
       ? stageGroupsOf(animalGroups.get(b.batch_id) ?? [], b.stage_id)
-      : b.stage_id
+      : animalWise
+        ? registeredStageGroups(animalGroups.get(b.batch_id) ?? [], b.stage_id, Number(b.closing_quantity ?? b.opening_quantity))
+        : b.stage_id
         ? [{ stageId: b.stage_id, heads: Number(b.closing_quantity ?? b.opening_quantity) }]
         : [];
     for (const g of groups) {
@@ -285,6 +296,28 @@ function stageGroupsOf(groups: { stageId: string | null; heads: number }[], batc
     if (!stageId) continue;
     heads.set(stageId, (heads.get(stageId) ?? 0) + g.heads);
   }
+  return [...heads].map(([stageId, n]) => ({ stageId, heads: n }));
+}
+
+/**
+ * A REGISTERED batch's stage groups: staged live animals per stage, first-seen
+ * order, then the batch's own stage topped up with the heads no staged animal
+ * accounts for (merged into it if animals already stand in that stage).
+ * Stage-less rows are ignored — see buildInputBatches.
+ */
+function registeredStageGroups(
+  groups: { stageId: string | null; heads: number }[],
+  batchStageId: string | null,
+  batchHeads: number,
+): { stageId: string; heads: number }[] {
+  const heads = new Map<string, number>();
+  for (const g of groups) {
+    if (!g.stageId) continue;
+    heads.set(g.stageId, (heads.get(g.stageId) ?? 0) + g.heads);
+  }
+  const staged = [...heads.values()].reduce((n, h) => n + h, 0);
+  const remainder = Math.max(0, batchHeads - staged);
+  if (batchStageId && remainder > 0) heads.set(batchStageId, (heads.get(batchStageId) ?? 0) + remainder);
   return [...heads].map(([stageId, n]) => ({ stageId, heads: n }));
 }
 
@@ -627,8 +660,9 @@ export class FeedForecastService {
             eq(schema.animalRegister.tenant_id, tenantId),
             eq(schema.animalRegister.company_id, farm.companyId),
             inArray(schema.animalRegister.current_batch_id, animalWiseIds),
-            // Stage-less animals are read too: buildInputBatches counts them
-            // in the batch's own stage group (I2), not nowhere.
+            // Stage-less animals are read too: an ANIMAL_WISE batch counts
+            // them in its own stage group; a REGISTERED one ignores them and
+            // derives its own-stage group from the batch head count (I2).
             notInArray(schema.animalRegister.status, GONE_STATUSES),
           ),
         )
