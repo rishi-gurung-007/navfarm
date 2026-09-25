@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { ConflictException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
 import { MySqlDialect } from 'drizzle-orm/mysql-core';
 import { SchedulerHeaderService } from './scheduler-header.service';
@@ -206,6 +206,58 @@ describe('SchedulerHeaderService', () => {
         lifecycle_ref_id: 'lc-r2', item_id: 'item-r2', activity_name: 'Gestation Feed — Grower R2',
         start_day: 28, end_day: 114, standard_qty: '0.9000',
       }));
+    });
+  });
+
+  describe('createForStage — feed rows the scheduler must not turn into lines', () => {
+    /** The select sequence up to and including the breed_lifecycle_stages read. */
+    const upToLifecycle = (rows: object[]) => {
+      mockDbSelect
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([batch]) }) }) }) // scoped batch lookup
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }) }) }) // no existing header
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([stage]) }) }) }) // stage lookup
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ orderBy: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }) }) }) }) // priorHeader check — none
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ liveCount: 0 }]) }) }) // live animal_register count
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ orderBy: jest.fn().mockResolvedValue(rows) }) }) }); // breed_lifecycle_stages
+    };
+    const row = (over: object) => ({
+      lifecycle_id: 'lc', breed_id: 'breed-1', stage_id: 'stage-gest', calc_unit: 'DAY', period_from: 1, period_to: 114,
+      feed_item_id: 'item-feed', feed_qty_per_head_per_day_kg: '2.2000',
+      std_mortality_rate_pct: null, output_item_id: null, std_output_qty: null, std_body_weight_kg: null,
+      medication_protocol: null, vaccination_protocol: null, ...over,
+    });
+
+    // decimal columns arrive as strings, and '0.0000' is truthy — the forecast
+    // compares numerically (gt(..., '0')), so the scheduler must too, or it
+    // schedules a daily feed of nothing that the forecast does not know about.
+    it('skips a feed row whose rate is zero, compared as a number rather than a string', async () => {
+      const insertedValues: any[] = [];
+      mockDbInsert.mockImplementation(() => ({ values: jest.fn((v: any) => { insertedValues.push(v); return Promise.resolve({}); }) }));
+      upToLifecycle([
+        row({ lifecycle_id: 'lc-zero', feed_item_id: 'item-r1', feed_qty_per_head_per_day_kg: '0.0000', period_to: 27 }),
+        row({ lifecycle_id: 'lc-r2', feed_item_id: 'item-r2', feed_qty_per_head_per_day_kg: '0.9000', period_from: 28 }),
+      ]);
+      mockDbSelect
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ item_name: 'Grower R2' }]) }) }) }) // feed item name lookup — R2 only
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ scheduler_id: 'new-sched', batch_id: 'batch-1', stage_id: 'stage-gest', scheduler_status: 'DRAFT' }]) }) }) }) // findOne: header
+        .mockReturnValueOnce(batchInScopeRow('batch-1'))
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([]) }) }) // findOne: lines
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ batch_no: 'BAT-0001' }]) }) }) })
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([stage]) }) }) });
+
+      await service.createForStage('batch-1', 'stage-gest', 'tenant-123', { userId: 'user-1' });
+
+      const lines = insertedValues.find((v) => Array.isArray(v)) ?? [];
+      expect(lines.map((l: any) => l.lifecycle_ref_id)).toEqual(['lc-r2']);
+    });
+
+    it('refuses a feed row with an unknown calc_unit as a 400 naming the stage and the unit', async () => {
+      mockDbInsert.mockImplementation(() => ({ values: jest.fn().mockResolvedValue({}) }));
+      upToLifecycle([row({ calc_unit: 'FORTNIGHT' })]);
+
+      const attempt = service.createForStage('batch-1', 'stage-gest', 'tenant-123', { userId: 'user-1' });
+      await expect(attempt).rejects.toThrow(BadRequestException);
+      await expect(attempt).rejects.toThrow(/Gestation.*FORTNIGHT/);
     });
   });
 

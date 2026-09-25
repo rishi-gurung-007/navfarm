@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException, ConflictException } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
+import { MySqlDialect } from 'drizzle-orm/mysql-core';
 import { BatchDailyDataService } from './batch-daily-data.service';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { BatchService } from '../batch/batch.service';
@@ -28,13 +29,15 @@ describe('BatchDailyDataService', () => {
     location_id: 'shed-1',
   };
 
-  /** One `.from().where().limit()` answer, in the order postEntry asks for them. */
+  /** One `.from().where()[.orderBy()].limit()` answer, in the order postEntry asks for them. */
   const answers = (...results: unknown[][]) => {
     for (const result of results) {
+      const limit = jest.fn().mockResolvedValue(result);
       mockDbSelect.mockReturnValueOnce({
         from: jest.fn().mockReturnValue({
           where: jest.fn().mockReturnValue({
-            limit: jest.fn().mockResolvedValue(result),
+            limit,
+            orderBy: jest.fn().mockReturnValue({ limit }),
           }),
         }),
       });
@@ -48,13 +51,17 @@ describe('BatchDailyDataService', () => {
     });
   };
 
-  /** silo_shed_link lookup — no .limit() either, a shed can have several rows. */
+  /** silo_shed_link lookup (joined to the silo row) — no .limit() either, a
+   * shed can have several rows. Returns the where() mock so a test can read
+   * the condition it was handed. */
   const answerSiloLinks = (siloIds: string[]) => {
+    const where = jest.fn().mockResolvedValue(siloIds.map((silo_id) => ({ silo_id })));
     mockDbSelect.mockReturnValueOnce({
       from: jest.fn().mockReturnValue({
-        where: jest.fn().mockResolvedValue(siloIds.map((silo_id) => ({ silo_id }))),
+        innerJoin: jest.fn().mockReturnValue({ where }),
       }),
     });
+    return where;
   };
 
   const siloFeedService = { currentItems: jest.fn() };
@@ -863,6 +870,30 @@ describe('BatchDailyDataService', () => {
         'tenant-123',
         { userId: 'user-1' },
       );
+    });
+
+    // Minor 1 of the final review: the same silo rows the forecast reads —
+    // this tenant's links, to silos still active and not deleted.
+    it('reads only this tenant\'s links to active, undeleted silos', async () => {
+      answers(
+        [consumptionLine],
+        [header],
+        [{ tracking_mode: 'BATCH_WISE' }],
+        [],
+        [{ item_id: 'item-feed', uom_primary: 'KG' }],
+        [shed],
+      );
+      const where = answerSiloLinks([]);
+      answers([{ location_id: 'store-1' }]);
+      answerFindForDate();
+
+      await postFeed();
+
+      const { sql: text, params } = new MySqlDialect().sqlToQuery(where.mock.calls[0][0]);
+      expect(text).toContain('`silo_shed_link`.`tenant_id` = ?');
+      expect(text).toContain('`location_master`.`is_active` = ?');
+      expect(text).toContain('`location_master`.`deleted_at` is null');
+      expect(params).toContain('tenant-123');
     });
 
     it('refuses the entry when no attached silo holds the item and there is no store', async () => {

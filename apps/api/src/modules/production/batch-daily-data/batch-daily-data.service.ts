@@ -706,6 +706,9 @@ export class BatchDailyDataService {
             ),
           ),
         )
+        // First by code, as the feed forecast picks a farm's store, so a farm
+        // that somehow carries two draws on the one the forecast reports.
+        .orderBy(schema.locationMaster.location_code)
         .limit(1);
       return store?.location_id ?? null;
     };
@@ -742,10 +745,22 @@ export class BatchDailyDataService {
 
     // Every silo linked to this shed (there may be several, or none) — the
     // source is whichever one currently holds the item being posted.
+    // Bounded by tenant and by the silo still being live, the same rows the
+    // feed forecast reads (feed-forecast.service.ts loadInput): a link left
+    // pointing at a retired or deleted silo must not be drawn from here while
+    // the forecast shows the shed falling through to the store.
     const siloLinks = await this.db
       .select({ silo_id: schema.siloShedLink.silo_id })
       .from(schema.siloShedLink)
-      .where(eq(schema.siloShedLink.shed_id, shed.location_id));
+      .innerJoin(schema.locationMaster, eq(schema.locationMaster.location_id, schema.siloShedLink.silo_id))
+      .where(
+        and(
+          eq(schema.siloShedLink.tenant_id, tenantId),
+          eq(schema.siloShedLink.shed_id, shed.location_id),
+          eq(schema.locationMaster.is_active, true),
+          isNull(schema.locationMaster.deleted_at),
+        ),
+      );
     if (siloLinks.length > 0) {
       const siloIds = siloLinks.map((link) => link.silo_id);
       const residents = await this.siloFeedService.currentItems(siloIds, companyId, tenantId);

@@ -138,9 +138,23 @@ export class SchedulerHeaderService {
     // its mortality/output/protocol columns alone, with no feed_item_id). Each line's day range
     // comes from stageDayRange() — the shared rule the forecast engine also imports — so this
     // scheduler and that engine always agree on which days belong to which diet.
-    const feedRows = lifecycleRows.filter((row) => row.feed_item_id && row.feed_qty_per_head_per_day_kg);
+    // The rate is a decimal column and so a string here: '0.0000' is truthy,
+    // so it is compared as a number — the forecast's loader filters with
+    // gt(rate, '0'), and a zero-rate line scheduled here would be a daily
+    // feed entry the forecast does not know exists.
+    const feedRows = lifecycleRows.filter((row) => row.feed_item_id && Number(row.feed_qty_per_head_per_day_kg) > 0);
     for (const row of feedRows) {
-      const { fromDay, toDay } = stageDayRange(row.calc_unit, row.period_from, row.period_to);
+      let range: { fromDay: number; toDay: number };
+      try {
+        range = stageDayRange(row.calc_unit, row.period_from, row.period_to);
+      } catch (e) {
+        // Corrupt master data is the caller's to fix in Breed Master, so it is
+        // answered as a 400 naming the stage and the unit — not a bare 500.
+        throw new BadRequestException(
+          `Stage '${stage.stage_name}' of this batch's breed has a feed row with calc_unit '${row.calc_unit}' — ${(e as Error).message}. Fix the row in Breed Master before generating the scheduler.`,
+        );
+      }
+      const { fromDay, toDay } = range;
       const [feedItem] = await this.db.select({ item_name: schema.itemMaster.item_name }).from(schema.itemMaster).where(eq(schema.itemMaster.item_id, row.feed_item_id as string)).limit(1);
       lines.push({
         line_id: randomUUID(), scheduler_id: schedulerId, line_seq: seq++, line_type: 'CONSUMPTION',
