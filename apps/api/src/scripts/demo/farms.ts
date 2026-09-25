@@ -11,9 +11,9 @@
  *
  * A silo's code follows its parent, the farm, and numbers within it. The
  * client's rule is that a silo stands in the yard and feeds several sheds, so
- * the shed's `feed_silo_id` — not the location tree — is what says which silo
- * a shed draws from, and the code deliberately says nothing about it. Codes
- * read `<CODE>/SHED-00n/SILO-001` until 2026-09-24, which described a parent
+ * `silo_shed_link` — not the location tree — is what says which silos a shed
+ * draws from, and the code deliberately says nothing about it. Codes read
+ * `<CODE>/SHED-00n/SILO-001` until 2026-09-24, which described a parent
  * the row no longer had and disagreed with the code the app itself issues for
  * a silo created through the Location form.
  *
@@ -92,7 +92,18 @@ export interface DemoShed {
   code: string;
   name: string;
   role: ShedRole | null;
-  /** The shed's feed silo, or null on a shed the seed gave none. */
+  /**
+   * Every silo this shed draws from, in code order — silo_shed_link is
+   * many-to-many since 0114, so a shed may list more than one (one per feed
+   * item, spec D9) and a silo may appear under more than one shed.
+   */
+  siloIds: string[];
+  siloCodes: string[];
+  /**
+   * The first of those, or null on a shed the seed gave none. The chapters that
+   * only ever want "a silo on this shed" read this rather than indexing; the
+   * seed still gives each shed exactly one.
+   */
   siloId: string | null;
   siloCode: string | null;
   penIds: string[];
@@ -155,9 +166,16 @@ export function pensForRole(farm: DemoFarm, ...roles: ShedRole[]): string[] {
 
 /** The farm's feed silos, in code order. Every seeded farm has at least two. */
 export function silosOf(farm: DemoFarm): Array<{ id: string; code: string }> {
-  return farm.sheds
-    .filter((s): s is DemoShed & { siloId: string; siloCode: string } => !!s.siloId && !!s.siloCode)
-    .map((s) => ({ id: s.siloId, code: s.siloCode }));
+  // Deduplicated: silo_shed_link is many-to-many, so one silo may be listed by
+  // several sheds and a flat map over the sheds would return it once per shed.
+  const byId = new Map<string, { id: string; code: string }>();
+  for (const shed of farm.sheds) {
+    shed.siloIds.forEach((id, i) => {
+      const code = shed.siloCodes[i];
+      if (id && code && !byId.has(id)) byId.set(id, { id, code });
+    });
+  }
+  return [...byId.values()].sort((a, b) => a.code.localeCompare(b.code));
 }
 
 /** The breed a batch on this farm runs under: the sow line, or the boar line on the AI station. */
@@ -264,9 +282,6 @@ export async function resolveDemoFarms(db: Db, companyId: string, profile: Volum
       location_name: schema.locationMaster.location_name,
       location_type: schema.locationMaster.location_type,
       parent_location_id: schema.locationMaster.parent_location_id,
-      // Read on the SHED rows: a silo hangs off the farm, not off the shed it
-      // feeds, so the parent link no longer says which shed draws from which.
-      feed_silo_id: schema.locationMaster.feed_silo_id,
       farm_id: schema.locationMaster.farm_id,
     })
     .from(schema.locationMaster)
@@ -276,6 +291,24 @@ export async function resolveDemoFarms(db: Db, companyId: string, profile: Volum
       eq(schema.locationMaster.is_active, true),
       isNull(schema.locationMaster.deleted_at),
     ));
+
+  // Which silos each shed draws from (0114 silo_shed_link; spec D7). Read as a
+  // second query rather than joined into `descendants` because the relation is
+  // many-to-many: the join would repeat a shed row once per link and so
+  // multiply its pens into the map built below.
+  const shedIds = descendants.filter((d) => d.location_type === 'SHED').map((d) => d.location_id);
+  const siloLinks = shedIds.length
+    ? await db
+      .select({ silo_id: schema.siloShedLink.silo_id, shed_id: schema.siloShedLink.shed_id })
+      .from(schema.siloShedLink)
+      .where(inArray(schema.siloShedLink.shed_id, shedIds))
+    : [];
+  const siloIdsByShed = new Map<string, string[]>();
+  for (const link of siloLinks) {
+    const list = siloIdsByShed.get(link.shed_id) ?? [];
+    list.push(link.silo_id);
+    siloIdsByShed.set(link.shed_id, list);
+  }
 
   // Breeds and their lifecycle stages. Breed profiles are company-wide, not
   // per farm (Farm was removed from Breed Master), so every farm below draws
@@ -342,14 +375,23 @@ export async function resolveDemoFarms(db: Db, companyId: string, profile: Volum
       .filter((d) => d.location_type === 'SHED' && d.location_code.startsWith(shedPrefix))
       .sort((a, b) => a.location_code.localeCompare(b.location_code))
       .map((shed) => {
-        const silo = shed.feed_silo_id ? siloById.get(shed.feed_silo_id) : undefined;
+        // Sorted by code so `siloId` below is the same silo on every run — the
+        // link table hands its rows back in no particular order. Resolved
+        // through siloById, which holds only this farm's silos, so a link that
+        // somehow crossed farms is dropped rather than followed.
+        const silos = (siloIdsByShed.get(shed.location_id) ?? [])
+          .map((id) => siloById.get(id))
+          .filter((s): s is NonNullable<typeof s> => !!s)
+          .sort((a, b) => a.location_code.localeCompare(b.location_code));
         return {
           shedId: shed.location_id,
           code: shed.location_code,
           name: shed.location_name,
           role: shedRoleOf(shed.location_name),
-          siloId: silo?.location_id ?? null,
-          siloCode: silo?.location_code ?? null,
+          siloIds: silos.map((s) => s.location_id),
+          siloCodes: silos.map((s) => s.location_code),
+          siloId: silos[0]?.location_id ?? null,
+          siloCode: silos[0]?.location_code ?? null,
           penIds: (pensByParent.get(shed.location_id) ?? []).sort(),
         };
       });

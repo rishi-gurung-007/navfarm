@@ -1024,12 +1024,10 @@ export const locationMaster = mysqlTable('location_master', {
   // the stored number is canonical KG either way. Required when
   // location_type = SILO.
   silo_capacity_uom: varchar('silo_capacity_uom', { length: 10 }),
-  // The silo a SHED draws its feed from. Set on SHED rows only, pointing at a
-  // SILO under the same farm. One silo serves many sheds; a shed has exactly
-  // one silo, which this column makes structurally true without a join table.
-  // The "Attached Sheds" multi-select on the silo form writes this column on
-  // the selected sheds and clears it on the deselected ones.
-  feed_silo_id: varchar('feed_silo_id', { length: 36 }),
+  // Which silos a SHED draws its feed from lives in silo_shed_link, not here.
+  // A feed_silo_id column stood here until 0115: it made "a shed has exactly
+  // one silo" structurally true, which stopped being the rule once a shed could
+  // draw one feed item per silo (spec D7, D9).
   // Spec D3: Date to Refill = run-down - buffer days; Required On = refill -
   // lead time. Per farm because delivery distance is per farm. Read only on
   // FARM rows.
@@ -1065,11 +1063,6 @@ export const locationMaster = mysqlTable('location_master', {
     columns: [table.shed_id],
     foreignColumns: [locationMaster.location_id],
     name: 'loc_master_shed_id_fk'
-  }).onDelete('restrict'),
-  feedSiloFk: foreignKey({
-    columns: [table.feed_silo_id],
-    foreignColumns: [table.location_id],
-    name: 'location_master_feed_silo_id_fk'
   }).onDelete('restrict'),
   uqLocationCode: uniqueIndex('uq_location_master_tenant_company_code').on(
     table.tenant_id, table.company_id, table.location_code

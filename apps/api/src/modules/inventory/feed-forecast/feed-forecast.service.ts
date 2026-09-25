@@ -459,7 +459,7 @@ export class FeedForecastService {
     const siloRows = activeOfType('SILO');
     const activeSiloIds = new Set(siloRows.map((s) => s.location_id));
 
-    // silo_shed_link (D7) is the only silo<->shed source; location_master.feed_silo_id is being dropped (Task 9).
+    // silo_shed_link (D7) is the only silo<->shed source; the feed_silo_id column it replaced went in 0115.
     const shedIds = shedRows.map((s) => s.location_id);
     const links = shedIds.length
       ? await this.db

@@ -74,7 +74,7 @@ describe('LocationService canonical hierarchy', () => {
   /** A shed on that same farm, free to attach. */
   const shedRow = () => ({
     location_id: 'shed-1', location_code: 'FARM-001/SHED-001', location_type: 'SHED',
-    parent_location_id: 'farm-1', farm_id: 'farm-1', feed_silo_id: null,
+    parent_location_id: 'farm-1', farm_id: 'farm-1',
   });
   /** The location_master row the create actually inserted. */
   const inserted = () => (txInsert.mock.results[0].value.values as jest.Mock).mock.calls[0][0];

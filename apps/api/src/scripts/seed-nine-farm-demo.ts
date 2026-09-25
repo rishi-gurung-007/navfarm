@@ -668,8 +668,8 @@ async function run() {
     // SILO hangs off FARM, not off the shed it feeds. A silo is blown full by
     // the mill and drawn down by several sheds at once, so parenting it to one
     // of them made the tree state something the yard does not: that the silo
-    // belonged to that shed. Which shed draws from which silo is now the SHED's
-    // feed_silo_id, set below.
+    // belonged to that shed. Which sheds draw from which silo is now
+    // silo_shed_link, written below.
     for (const [child, parent] of [['SHED', 'FARM'], ['PEN', 'SHED'], ['SILO', 'FARM'], ['STORE', 'FARM']] as const) {
       const allowed = allowedParents.get(child);
       if (!allowed) throw new Error(`location_type_master has no ${child} row — run db-seed-farm-locations first.`);
@@ -845,8 +845,8 @@ async function run() {
         // leaving every silo a SILO-001 inside its own shed.
         //
         // Nothing downstream resolves a silo by its code: demo/farms.ts reads
-        // the SHED's feed_silo_id, and chapter 02 takes the ration from that
-        // shed's role. Renumbering is therefore free. What it is not is
+        // silo_shed_link, and chapter 02 takes the ration from that shed's
+        // role. Renumbering is therefore free. What it is not is
         // in-place: upsertLocation keys on location_code, so a database that
         // already holds the shed-stemmed silos gets the new ones inserted
         // alongside them and the sheds repointed. The old rows have to be
@@ -874,9 +874,20 @@ async function run() {
         });
         if (write) await db.query('UPDATE location_master SET warehouse_id = ? WHERE location_id = ?', [silo.placed.id, silo.placed.id]);
         // Which silo this shed draws from. With the silo no longer the shed's
-        // parent, this column is the only thing that still says so, and the
-        // feed forecast reads it rather than walking the tree.
-        if (write) await db.query('UPDATE location_master SET feed_silo_id = ? WHERE location_id = ?', [silo.placed.id, shed.placed.id]);
+        // parent, silo_shed_link (0114) is the only thing that says so, and the
+        // feed forecast reads it rather than walking the tree. The seed still
+        // gives each shed one silo of its own; the link table is what allows a
+        // second to be attached later without the first being forgotten.
+        //
+        // INSERT IGNORE leans on uq_silo_shed_link so a re-run over a database
+        // that already holds the pair leaves it alone, the same way every other
+        // write in this script picks up where an earlier one stopped.
+        if (write) {
+          await db.query(
+            'INSERT IGNORE INTO silo_shed_link (link_id, tenant_id, company_id, silo_id, shed_id) VALUES (?, ?, ?, ?, ?)',
+            [randomUUID(), scope.tenant_id, scope.company_id, silo.placed.id, shed.placed.id],
+          );
+        }
         c.silos++;
       }
     }

@@ -46,8 +46,8 @@ const LOCATION_TYPE_ADDITIONS = [
  * SILO was seeded as FARM-or-SHED. A silo stands in the yard and is blown full
  * by the mill; several sheds draw from the one silo, so making it a child of a
  * shed said something untrue about the yard and left no way to record the other
- * sheds it feeds. A silo hangs off the FARM, and the shed's own feed_silo_id
- * records which silo it draws from.
+ * sheds it feeds. A silo hangs off the FARM, and silo_shed_link records which
+ * silos a shed draws from.
  *
  * This is an UPDATE, not an insert: LOCATION_TYPE_ADDITIONS above skips a type
  * that already exists, which every one of these does.
