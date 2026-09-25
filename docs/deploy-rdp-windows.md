@@ -328,9 +328,12 @@ with `Ctrl+C` in their own windows. For an update:
 4. Run `git fetch origin`, `git switch main`, and
    `git pull --ff-only origin main`.
 5. Run `pnpm install --frozen-lockfile`.
-6. Run `pnpm nx run api:db-bootstrap` to apply current database setup/migrations
-   while keeping the data, or — when the release changes the demo and the data
-   is disposable — rebuild it with section 4 (dry run first, then `--apply`).
+6. Back up the `nf_` databases (section 13), then run `pnpm nx run api:db-bootstrap`
+   **and** `pnpm nx run api:db-migrate-all-tenants`. Bootstrap migrates only
+   `nf_master` and `nf_system`; the tenant databases (`nf_<tenant>`, where the
+   testers' data lives) are migrated only by the second command. Only when the
+   release says the demo must be rebuilt and the data is disposable, rebuild it
+   with section 4 instead (dry run first, then `--apply`).
 8. Rebuild API and web with the commands in section 5.
 9. Start API first, verify direct health, then start web and verify proxied health.
 
@@ -388,8 +391,12 @@ git pull --ff-only origin main
 git log -1 --oneline
 pnpm install --frozen-lockfile
 
-# 3. Database: keep the data and apply new migrations …
+# 3. Database: back up (section 13), then keep the data and apply new migrations.
+#    Bootstrap migrates nf_master and nf_system only; the second command migrates
+#    every tenant database. Read its output: a tenant that prints FAILED still
+#    lets the command exit 0.
 pnpm nx run api:db-bootstrap
+pnpm nx run api:db-migrate-all-tenants
 #    … or, only when the release says the demo must be rebuilt (drops every nf_ database):
 #    pnpm nx run api:db-rebuild-demo            (dry run, read it)
 #    pnpm nx run api:db-rebuild-demo -- --apply
@@ -415,3 +422,83 @@ Testers who had the site open during the update may see one automatic reload:
 the page script `chunk-reload-script.ts` reloads a tab once when its chunks no
 longer exist. If a page still shows "Application error" after that, ask for a
 hard refresh (Ctrl+Shift+R) and a screenshot of the browser console.
+
+## 13. Releases with tenant migrations: backup, check, recover
+
+The Feed Forecast release (tenant migrations 0114, 0115 and 0116) was rehearsed
+on a copy of a demo tenant rolled back to the server's state (0113). Row counts
+and table checksums were unchanged apart from the tables the migrations exist
+to change (`silo_shed_link` created and filled from `feed_silo_id`,
+`feed_silo_id` dropped, two farm columns added, feed rows moved to stage days),
+and a second run applied nothing. The steps below are what made that safe.
+
+**Before stopping anything, record the starting point** (MySQL, read-only):
+
+```sql
+SELECT tenant_code, db_name FROM nf_master.tenant_master;
+-- for each db_name:
+SELECT COUNT(*), MAX(created_at) FROM nf_<code>.__drizzle_migrations;          -- 114, 1790444400000 before this release
+SELECT COUNT(*) FROM nf_<code>.location_master WHERE feed_silo_id IS NOT NULL;  -- note it: the link count must equal it
+```
+
+Stop if any tenant is not at the same starting point.
+
+**Back up only the NAVFarm databases**, after the services are stopped and before
+any migration. This MySQL is shared, so never `--all-databases`. PowerShell's
+`>` writes UTF-16 and corrupts a dump; use `--result-file`:
+
+```powershell
+$ts = Get-Date -Format yyyyMMdd-HHmm
+New-Item -ItemType Directory -Force C:\navfarm-backups | Out-Null
+git rev-parse HEAD > "C:\navfarm-backups\prev-commit-$ts.txt"
+mysqldump -u root -p --single-transaction --routines --triggers --events --no-tablespaces `
+  --set-gtid-purged=OFF --default-character-set=utf8mb4 `
+  --databases nf_master nf_system nf_<code1> nf_<code2> `
+  --result-file="C:\navfarm-backups\nf-$ts.sql"
+Select-String -Path "C:\navfarm-backups\nf-$ts.sql" -Pattern '^-- Dump completed' | Select -First 1
+```
+
+List every `db_name` from the query above. The last line must print
+`-- Dump completed`.
+
+**After `db-migrate-all-tenants`**, for each tenant:
+
+```sql
+SELECT COUNT(*), MAX(created_at) FROM nf_<code>.__drizzle_migrations;   -- 117, 1790703600000
+SELECT COUNT(*) FROM nf_<code>.silo_shed_link;                            -- = the feed_silo_id count noted before
+SELECT COUNT(*) FROM information_schema.columns
+ WHERE table_schema='nf_<code>' AND table_name='location_master' AND column_name='feed_silo_id';  -- 0
+```
+
+Then, after starting the services, sign in as a tester and check that a
+batch and a goods receipt from before the update are still there, that
+Locations and a silo's attached sheds load, and that Inventory → Feed Forecast
+opens for a farm.
+
+**If a migration fails part-way.** MySQL commits DDL statement by statement, so
+a crash can leave half a migration behind, and every re-run then stops on it.
+No data is lost: the links are copied before `feed_silo_id` is dropped.
+
+- `Table 'silo_shed_link' already exists` (0114 died part-way): `DROP TABLE silo_shed_link;`
+  and, if it was added, `ALTER TABLE location_master DROP COLUMN feed_refill_buffer_days;`,
+  then re-run `db-migrate-all-tenants`.
+- `Can't DROP 'location_master_feed_silo_id_fk'` (0115 died part-way): put back
+  what 0115 removed, then re-run:
+  ```sql
+  ALTER TABLE `location_master` ADD CONSTRAINT `location_master_feed_silo_id_fk`
+    FOREIGN KEY (`feed_silo_id`) REFERENCES `location_master`(`location_id`) ON DELETE restrict;
+  ```
+  (and `CREATE INDEX idx_location_master_feed_silo_id ON location_master (feed_silo_id);`
+  if the index is gone too).
+- When in doubt, and before testers have entered new data, restore the backup
+  (services stopped): `cmd /c "mysql -u root -p < C:\navfarm-backups\nf-<ts>.sql"`,
+  then `git reset --hard <prev-commit>`, install, build and start.
+
+**Rolling back after testers have entered new data**: do not restore the backup,
+which would lose their entries. Ask for the down migration, which puts
+`feed_silo_id` back from the links and was tested to reproduce the old state
+exactly (a shed with several silos keeps the lowest).
+
+Never run `db-rebuild-demo`, `setup-fresh-database` or any seed script on this
+server: they replace the testers' data.
+
