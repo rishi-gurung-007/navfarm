@@ -8,7 +8,7 @@
  * so it can be unit-tested against the workbook's worked example without a
  * database.
  *
- * The two ideas that don't fall out of the types by themselves:
+ * Four ideas that don't fall out of the types by themselves:
  *
  * 1. Balance projection is per (source, item), not per (batch, item) — D9
  *    already guarantees at most one silo per shed holds a given item, but a
@@ -17,12 +17,31 @@
  *    group demand by the physical container ("key" below) and run the
  *    depletion once per container; every ForecastRow drawing on that
  *    container then reads off the same daysLeft/runDownDate.
- * 2. `sourceDailyDemandKg` (used for D1's daysLeft) is the combined demand
+ * 2. The balance is a **planning-date snapshot**, not a `from`-date snapshot
+ *    (fix round 1, ruling in the review ledger): daysLeft, runDownDate,
+ *    refillDate, requiredOn and overdue are all computed by walking the
+ *    calendar from `planningDate` through `to`. Days before planningDate
+ *    never consume the balance — if `to` is before planningDate there is
+ *    nothing to walk and runDownDate is null. `rangeDemandKg` and
+ *    `perDayIntakeKg` are unaffected: they still describe demand over the
+ *    requested `from…to` window, which can start before or after
+ *    planningDate.
+ * 3. `sourceDailyDemandKg` (used for D1's daysLeft) is the combined demand
  *    on the *planning date specifically*, not a row's first day of demand in
  *    the range — a diet can start later in the window (D15), in which case
  *    the planning-date demand is legitimately 0 and daysLeft is null even
  *    though the row still shows demand later on (see the worked example's
- *    R2, whose diet starts three days into the range).
+ *    R2, whose diet starts three days into the range). Because planningDate
+ *    can fall outside `from…to` (see #2), demand is evaluated for the union
+ *    of the display range, the walk range and planningDate itself — not
+ *    just for the display range.
+ * 4. All balance/demand arithmetic that feeds daysLeft/runDownDate is done
+ *    in integer micrograms (`Math.round(kg * 1_000_000)`), converted back to
+ *    kg only for output. Kg-denominated floats (e.g. 40 heads x 1.03 kg/day =
+ *    41.2 kg against a 123.6 kg balance, which is exactly 3 days of stock)
+ *    don't divide or subtract exactly in IEEE 754 doubles — `floor(123.6 /
+ *    41.2)` can come out 2 instead of 3. Whole grams aren't precise enough
+ *    either (e.g. 17.9375 kg/day is a half-gram), so the scale is 1e6, not 1e3.
  */
 import { FeedRow, feedRowFor } from '../../production/lifecycle/feed-row-days';
 
@@ -96,11 +115,7 @@ function diffDays(a: string, b: string): number {
   return Math.round((parseIsoUtc(b) - parseIsoUtc(a)) / 86_400_000);
 }
 
-/** heads x kg/head/day x (1 + wastage%) (D5), kept to 3 decimals so repeated day-by-day summation doesn't drift. */
-function round3(n: number): number {
-  return Math.round(n * 1000) / 1000;
-}
-
+/** Inclusive list of ISO dates from `from` to `to`; empty if `to` is before `from`. */
 function dateRange(from: string, to: string): string[] {
   const days = diffDays(from, to);
   const dates: string[] = [];
@@ -108,19 +123,44 @@ function dateRange(from: string, to: string): string[] {
   return dates;
 }
 
-type SourceResolution = { sourceType: 'SILO' | 'STORE' | 'NONE'; sourceCode: string | null };
+/**
+ * kg -> integer micrograms, so the balance walk (fix round 1, #4 above) divides and subtracts exactly.
+ * Whole grams (1e3x) aren't fine-grained enough: e.g. 50 heads x 0.35 kg/day x 2.5% wastage is exactly
+ * 17.9375 kg/day, which rounds to a half-gram at 1e3x scale and drifts the division. Micrograms (1e6x)
+ * push that below any input precision this engine sees (kg/head/day, wastage%, head counts).
+ */
+function toMicrograms(kg: number): number {
+  return Math.round(kg * 1_000_000);
+}
+
+function toKg(micrograms: number): number {
+  return micrograms / 1_000_000;
+}
+
+type SourceResolution = { sourceType: 'SILO' | 'STORE' | 'NONE'; sourceCode: string | null; siloId: string | null };
 
 /** One physical container (a silo, or the shared farm store) holding one item — the unit balance projection runs over. */
 interface SourceKey {
   key: string;
   sourceType: 'SILO' | 'STORE' | 'NONE';
   sourceCode: string | null;
+  siloId: string | null;
   itemId: string;
 }
 
 export function buildFeedForecast(input: ForecastInput): { rows: ForecastRow[]; flags: ForecastFlag[] } {
   const flags: ForecastFlag[] = [];
-  const dates = dateRange(input.from, input.to);
+
+  // The visible/reporting window (rangeDemandKg, perDayIntakeKg, NO_FEED_ROW/OVERLAP flags).
+  const rangeDates = dateRange(input.from, input.to);
+  const isInRange = (date: string) => date >= input.from && date <= input.to;
+
+  // The balance-walk window: planningDate through `to` — fix round 1, #2. Empty when `to` precedes planningDate.
+  const walkDates = input.planningDate <= input.to ? dateRange(input.planningDate, input.to) : [];
+
+  // Demand must be evaluated for every date that either window (or planningDate itself, for sourceDailyDemandKg)
+  // needs — the union can extend before `from` when planningDate < from, or after `to` never (walkDates ⊆ [.., to]).
+  const demandDates = Array.from(new Set([...rangeDates, ...walkDates, input.planningDate])).sort();
 
   const siloById = new Map(input.silos.map((s) => [s.siloId, s]));
   const shedById = new Map(input.sheds.map((s) => [s.shedId, s]));
@@ -138,18 +178,18 @@ export function buildFeedForecast(input: ForecastInput): { rows: ForecastRow[]; 
 
     let resolution: SourceResolution;
     if (matching) {
-      resolution = { sourceType: 'SILO', sourceCode: matching.siloCode };
+      resolution = { sourceType: 'SILO', sourceCode: matching.siloCode, siloId: matching.siloId };
     } else if (shedSilos.length === 0) {
       // D6: sheds without a silo are included, fed from the farm STORE — no flag, this is expected.
       resolution = input.store
-        ? { sourceType: 'STORE', sourceCode: input.store.storeCode }
-        : { sourceType: 'NONE', sourceCode: null };
+        ? { sourceType: 'STORE', sourceCode: input.store.storeCode, siloId: null }
+        : { sourceType: 'NONE', sourceCode: null, siloId: null };
     } else {
       // The shed has silos, but none of them hold this item — falls back to STORE (Task 4's daily-entry rule), flagged.
       flags.push({ kind: 'NO_SILO_HOLDS_ITEM', shedCode: shed!.shedCode, itemName: input.items[itemId] ?? itemId });
       resolution = input.store
-        ? { sourceType: 'STORE', sourceCode: input.store.storeCode }
-        : { sourceType: 'NONE', sourceCode: null };
+        ? { sourceType: 'STORE', sourceCode: input.store.storeCode, siloId: null }
+        : { sourceType: 'NONE', sourceCode: null, siloId: null };
     }
     sourceCache.set(cacheKey, resolution);
     return resolution;
@@ -160,26 +200,29 @@ export function buildFeedForecast(input: ForecastInput): { rows: ForecastRow[]; 
       key: `${resolution.sourceType}:${resolution.sourceCode ?? 'NONE'}:${itemId}`,
       sourceType: resolution.sourceType,
       sourceCode: resolution.sourceCode,
+      siloId: resolution.siloId,
       itemId,
     };
   }
 
-  function balanceFor(sk: SourceKey): number {
+  /** Current balance in micrograms — silos are looked up by siloId (the stable key), not siloCode. */
+  function balanceMicrogramsFor(sk: SourceKey): number {
     if (sk.sourceType === 'SILO') {
-      const silo = input.silos.find((s) => s.siloCode === sk.sourceCode);
-      return silo?.balanceKg ?? 0;
+      const silo = sk.siloId ? siloById.get(sk.siloId) : undefined;
+      return toMicrograms(silo?.balanceKg ?? 0);
     }
     if (sk.sourceType === 'STORE') {
-      return input.store?.balances[sk.itemId] ?? 0;
+      return toMicrograms(input.store?.balances[sk.itemId] ?? 0);
     }
     return 0;
   }
 
-  // Demand per source-key per calendar day, accumulated across every batch that draws on that container (Review Focus 1).
-  const demandByKeyByDate = new Map<string, Map<string, number>>();
+  // Demand per source-key per calendar day, in micrograms, accumulated across every batch that draws on that container
+  // (Review Focus 1) and over every date demand needs evaluating for (Review Focus 3 / fix round 1 #2-#3).
+  const demandMicrogramsByKeyByDate = new Map<string, Map<string, number>>();
   const keyMeta = new Map<string, SourceKey>();
 
-  // Per (batch, item) row aggregate — one ForecastRow per pair that has at least one day of demand in range.
+  // Per (batch, item) row aggregate — one ForecastRow per pair that has at least one day of demand > 0 in range.
   interface RowAgg {
     batchNo: string;
     itemId: string;
@@ -188,8 +231,8 @@ export function buildFeedForecast(input: ForecastInput): { rows: ForecastRow[]; 
     key: string;
     sourceType: 'SILO' | 'STORE' | 'NONE';
     sourceCode: string | null;
-    rangeDemandKg: number;
-    perDayIntakeKg: number;
+    rangeDemandMicrograms: number;
+    perDayIntakeMicrograms: number; // set once, on the first in-range day with demand > 0
     firstDemandDate: string;
   }
   const rowAggs = new Map<string, RowAgg>(); // keyed by batchId:itemId
@@ -204,7 +247,7 @@ export function buildFeedForecast(input: ForecastInput): { rows: ForecastRow[]; 
 
     const feedRowsForBreed = input.feedRows.filter((r) => r.breedId === batch.breedId);
 
-    for (const date of dates) {
+    for (const date of demandDates) {
       const segment = batch.segments.find((s) => s.start <= date && (s.end === null || date <= s.end));
       if (!segment) continue;
 
@@ -213,29 +256,36 @@ export function buildFeedForecast(input: ForecastInput): { rows: ForecastRow[]; 
       const result = feedRowFor(candidates, dayOfStage);
 
       if ('error' in result) {
-        flags.push({
-          kind: result.error === 'NONE' ? 'NO_FEED_ROW' : 'OVERLAPPING_FEED_ROWS',
-          batchNo: batch.batchNo,
-          stageCode: segment.stageCode,
-          day: dayOfStage,
-          date,
-        });
+        // Flags are reserved for the visible window — a gap that only affects the pre-`from` walk tail is not
+        // shown to the user (Task 7/8 handle display), but it still correctly contributes no demand either way.
+        if (isInRange(date)) {
+          flags.push({
+            kind: result.error === 'NONE' ? 'NO_FEED_ROW' : 'OVERLAPPING_FEED_ROWS',
+            batchNo: batch.batchNo,
+            stageCode: segment.stageCode,
+            day: dayOfStage,
+            date,
+          });
+        }
         continue;
       }
 
       const feedRow = result.row;
-      const demand = round3(batch.heads * feedRow.kgPerHeadPerDay * (1 + feedRow.wastagePct / 100));
+      const demandMicrograms = toMicrograms(batch.heads * feedRow.kgPerHeadPerDay * (1 + feedRow.wastagePct / 100));
+      if (demandMicrograms <= 0) continue; // zero demand: no row, no source resolution, nothing to project (minor fix)
 
       const resolution = resolveSource(batch.shedId, feedRow.itemId);
       const sk = sourceKeyFor(resolution, feedRow.itemId);
       keyMeta.set(sk.key, sk);
 
-      let byDate = demandByKeyByDate.get(sk.key);
+      let byDate = demandMicrogramsByKeyByDate.get(sk.key);
       if (!byDate) {
         byDate = new Map();
-        demandByKeyByDate.set(sk.key, byDate);
+        demandMicrogramsByKeyByDate.set(sk.key, byDate);
       }
-      byDate.set(date, round3((byDate.get(date) ?? 0) + demand));
+      byDate.set(date, (byDate.get(date) ?? 0) + demandMicrograms);
+
+      if (!isInRange(date)) continue; // walk-only date (before `from`): contributes to the balance, not to the row
 
       const aggKey = `${batch.batchId}:${feedRow.itemId}`;
       let agg = rowAggs.get(aggKey);
@@ -249,13 +299,13 @@ export function buildFeedForecast(input: ForecastInput): { rows: ForecastRow[]; 
           key: sk.key,
           sourceType: sk.sourceType,
           sourceCode: sk.sourceCode,
-          rangeDemandKg: 0,
-          perDayIntakeKg: demand,
+          rangeDemandMicrograms: 0,
+          perDayIntakeMicrograms: demandMicrograms,
           firstDemandDate: date,
         };
         rowAggs.set(aggKey, agg);
       }
-      agg.rangeDemandKg = round3(agg.rangeDemandKg + demand);
+      agg.rangeDemandMicrograms += demandMicrograms;
     }
   }
 
@@ -272,21 +322,22 @@ export function buildFeedForecast(input: ForecastInput): { rows: ForecastRow[]; 
   const projectionByKey = new Map<string, KeyProjection>();
 
   for (const [key, sk] of keyMeta) {
-    const byDate = demandByKeyByDate.get(key) ?? new Map<string, number>();
-    const currentInventoryKg = balanceFor(sk);
+    const byDate = demandMicrogramsByKeyByDate.get(key) ?? new Map<string, number>();
+    const balanceMicrograms = balanceMicrogramsFor(sk);
 
-    const sourceDailyDemandKg = byDate.get(input.planningDate) ?? 0;
-    const daysLeft = sourceDailyDemandKg > 0 ? Math.floor(currentInventoryKg / sourceDailyDemandKg) : null;
+    const sourceDailyDemandMicrograms = byDate.get(input.planningDate) ?? 0;
+    const daysLeft = sourceDailyDemandMicrograms > 0 ? Math.floor(balanceMicrograms / sourceDailyDemandMicrograms) : null;
 
-    let remaining = currentInventoryKg;
+    // Walk from planningDate, not from `from` (fix round 1, #2) — days before planningDate never consume the balance.
+    let remainingMicrograms = balanceMicrograms;
     let runDownDate: string | null = null;
-    for (const date of dates) {
-      const demand = byDate.get(date) ?? 0;
-      if (demand > 0 && remaining < demand) {
+    for (const date of walkDates) {
+      const demandMicrograms = byDate.get(date) ?? 0;
+      if (demandMicrograms > 0 && remainingMicrograms < demandMicrograms) {
         runDownDate = date;
         break;
       }
-      remaining -= demand;
+      remainingMicrograms -= demandMicrograms;
     }
 
     const refillDate = runDownDate !== null ? addDays(runDownDate, -input.refillBufferDays) : null;
@@ -294,8 +345,8 @@ export function buildFeedForecast(input: ForecastInput): { rows: ForecastRow[]; 
     const overdue = requiredOn !== null && requiredOn < input.planningDate;
 
     projectionByKey.set(key, {
-      currentInventoryKg,
-      sourceDailyDemandKg,
+      currentInventoryKg: toKg(balanceMicrograms),
+      sourceDailyDemandKg: toKg(sourceDailyDemandMicrograms),
       daysLeft,
       runDownDate,
       refillDate,
@@ -304,40 +355,39 @@ export function buildFeedForecast(input: ForecastInput): { rows: ForecastRow[]; 
     });
   }
 
-  const rows: ForecastRow[] = [];
+  const entries: { row: ForecastRow; firstDemandDate: string }[] = [];
   for (const agg of rowAggs.values()) {
     const projection = projectionByKey.get(agg.key)!;
-    rows.push({
-      batchNo: agg.batchNo,
-      itemId: agg.itemId,
-      itemName: input.items[agg.itemId] ?? agg.itemId,
-      shedCode: agg.shedCode,
-      planningDate: input.planningDate,
-      sourceType: agg.sourceType,
-      sourceCode: agg.sourceCode,
-      currentInventoryKg: projection.currentInventoryKg,
-      heads: agg.heads,
-      perDayIntakeKg: agg.perDayIntakeKg,
-      sourceDailyDemandKg: projection.sourceDailyDemandKg,
-      daysLeft: projection.daysLeft,
-      runDownDate: projection.runDownDate,
-      refillDate: projection.refillDate,
-      requiredOn: projection.requiredOn,
-      overdue: projection.overdue,
-      rangeDemandKg: agg.rangeDemandKg,
+    entries.push({
+      firstDemandDate: agg.firstDemandDate,
+      row: {
+        batchNo: agg.batchNo,
+        itemId: agg.itemId,
+        itemName: input.items[agg.itemId] ?? agg.itemId,
+        shedCode: agg.shedCode,
+        planningDate: input.planningDate,
+        sourceType: agg.sourceType,
+        sourceCode: agg.sourceCode,
+        currentInventoryKg: projection.currentInventoryKg,
+        heads: agg.heads,
+        perDayIntakeKg: toKg(agg.perDayIntakeMicrograms),
+        sourceDailyDemandKg: projection.sourceDailyDemandKg,
+        daysLeft: projection.daysLeft,
+        runDownDate: projection.runDownDate,
+        refillDate: projection.refillDate,
+        requiredOn: projection.requiredOn,
+        overdue: projection.overdue,
+        rangeDemandKg: toKg(agg.rangeDemandMicrograms),
+      },
     });
   }
 
-  const firstDemandByAggKey = new Map<string, string>();
-  for (const [aggKey, agg] of rowAggs) firstDemandByAggKey.set(aggKey, agg.firstDemandDate);
-
-  rows.sort((a, b) => {
-    if (a.shedCode !== b.shedCode) return a.shedCode < b.shedCode ? -1 : 1;
-    if (a.batchNo !== b.batchNo) return a.batchNo < b.batchNo ? -1 : 1;
-    const da = firstDemandByAggKey.get(`${a.batchNo}:${a.itemId}`) ?? '';
-    const db = firstDemandByAggKey.get(`${b.batchNo}:${b.itemId}`) ?? '';
-    return da < db ? -1 : da > db ? 1 : 0;
+  // Sort by shedCode, batchNo, first-demand date — a single consistent key, not a re-derived one (minor fix).
+  entries.sort((a, b) => {
+    if (a.row.shedCode !== b.row.shedCode) return a.row.shedCode < b.row.shedCode ? -1 : 1;
+    if (a.row.batchNo !== b.row.batchNo) return a.row.batchNo < b.row.batchNo ? -1 : 1;
+    return a.firstDemandDate < b.firstDemandDate ? -1 : a.firstDemandDate > b.firstDemandDate ? 1 : 0;
   });
 
-  return { rows, flags };
+  return { rows: entries.map((e) => e.row), flags };
 }

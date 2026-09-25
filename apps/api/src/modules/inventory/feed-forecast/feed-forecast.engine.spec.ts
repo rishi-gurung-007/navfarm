@@ -235,7 +235,8 @@ describe('buildFeedForecast — wastage', () => {
   });
 });
 
-describe('buildFeedForecast — missing feed row', () => {
+describe('buildFeedForecast — missing feed row inside a multi-day range', () => {
+  // Two rows leave a one-day hole at stage-day 31: row1 covers 1-30, row2 resumes at 32-60.
   const feedRows: FeedRow[] = [
     {
       lifecycleId: 'a',
@@ -244,16 +245,28 @@ describe('buildFeedForecast — missing feed row', () => {
       itemId: 'r1',
       itemName: 'Grower Diet',
       fromDay: 1,
-      toDay: 31,
+      toDay: 30,
+      kgPerHeadPerDay: 1.0,
+      wastagePct: 0,
+    },
+    {
+      lifecycleId: 'b',
+      breedId: 'l',
+      stageId: 'grower',
+      itemId: 'r1',
+      itemName: 'Grower Diet',
+      fromDay: 32,
+      toDay: 60,
       kgPerHeadPerDay: 1.0,
       wastagePct: 0,
     },
   ];
-  // Batch starts far enough back that day 32 (no covering row) falls inside the range.
+  // start chosen so 2026-09-23/24/25 land on stage-days 31/32/33: the hole is the first day of the range,
+  // the next two days are covered again — proving the gap adds nothing while the surrounding days still do.
   const input: ForecastInput = {
     planningDate: '2026-09-23',
     from: '2026-09-23',
-    to: '2026-09-23',
+    to: '2026-09-25',
     refillBufferDays: 2,
     leadTimeDays: 0,
     sheds: [{ shedId: 'h1', shedCode: 'GRS/SHED-001', siloIds: ['s1'] }],
@@ -267,23 +280,25 @@ describe('buildFeedForecast — missing feed row', () => {
         breedId: 'l',
         shedId: 'h1',
         heads: 100,
-        // start chosen so 2026-09-23 is stage-day 32 (start = 2026-08-23).
-        segments: [{ stageId: 'grower', stageCode: 'GROWER', start: '2026-08-23', end: null, projected: false }],
+        segments: [{ stageId: 'grower', stageCode: 'GROWER', start: '2026-08-24', end: null, projected: false }],
       },
     ],
     feedRows,
   };
 
-  it('flags NO_FEED_ROW and adds no demand for that day', () => {
+  it('flags NO_FEED_ROW for the gap day and still sums demand from the covered days', () => {
     const { rows, flags } = buildFeedForecast(input);
-    expect(rows).toHaveLength(0);
     expect(flags).toContainEqual({
       kind: 'NO_FEED_ROW',
       batchNo: 'GR-2026-01',
       stageCode: 'GROWER',
-      day: 32,
+      day: 31,
       date: '2026-09-23',
     });
+    const r = rows.find((row) => row.itemId === 'r1')!;
+    // Only 09-24 and 09-25 contribute (100 kg/day each) — the gap day (09-23) adds nothing.
+    expect(r.rangeDemandKg).toBe(200);
+    expect(r.perDayIntakeKg).toBe(100);
   });
 });
 
@@ -429,5 +444,495 @@ describe('buildFeedForecast — projected stage change', () => {
       stageCode: 'GROWER',
       date: '2026-09-23',
     });
+  });
+});
+
+/** Builds a one-shed, one-batch, one-item ForecastInput so the fix-round-1 tests below don't repeat boilerplate. */
+function singleBatchInput(opts: {
+  heads: number;
+  kgPerHeadPerDay: number;
+  wastagePct: number;
+  balanceKg: number;
+  planningDate: string;
+  from: string;
+  to: string;
+  refillBufferDays?: number;
+  leadTimeDays?: number;
+}): ForecastInput {
+  const feedRows: FeedRow[] = [
+    {
+      lifecycleId: 'a',
+      breedId: 'l',
+      stageId: 'grower',
+      itemId: 'r1',
+      itemName: 'Grower Diet',
+      fromDay: 1,
+      toDay: 9999,
+      kgPerHeadPerDay: opts.kgPerHeadPerDay,
+      wastagePct: opts.wastagePct,
+    },
+  ];
+  return {
+    planningDate: opts.planningDate,
+    from: opts.from,
+    to: opts.to,
+    refillBufferDays: opts.refillBufferDays ?? 2,
+    leadTimeDays: opts.leadTimeDays ?? 0,
+    sheds: [{ shedId: 'h1', shedCode: 'GRS/SHED-001', siloIds: ['s1'] }],
+    silos: [{ siloId: 's1', siloCode: 'GRS/SILO-001', itemId: 'r1', balanceKg: opts.balanceKg }],
+    store: null,
+    items: { r1: 'Grower Diet' },
+    batches: [
+      {
+        batchId: 'b',
+        batchNo: 'GR-2026-01',
+        breedId: 'l',
+        shedId: 'h1',
+        heads: opts.heads,
+        segments: [{ stageId: 'grower', stageCode: 'GROWER', start: '2026-01-01', end: null, projected: false }],
+      },
+    ],
+    feedRows,
+  };
+}
+
+describe('buildFeedForecast — fix round 1: integer-gram balance walk at exact multiples', () => {
+  it('40 heads x 1.03 kg/day (41.2 kg/day) against 123.6 kg is exactly 3 days of stock', () => {
+    const input = singleBatchInput({
+      heads: 40,
+      kgPerHeadPerDay: 1.03,
+      wastagePct: 0,
+      balanceKg: 123.6,
+      planningDate: '2026-09-23',
+      from: '2026-09-23',
+      to: '2026-09-29',
+    });
+    const { rows } = buildFeedForecast(input);
+    expect(rows[0].daysLeft).toBe(3);
+    expect(rows[0].runDownDate).toBe('2026-09-26'); // planning + 3
+  });
+
+  it('50 heads x 0.35 kg/day x 2.5% wastage (17.9375 kg/day) against 71.75 kg is exactly 4 days of stock', () => {
+    const input = singleBatchInput({
+      heads: 50,
+      kgPerHeadPerDay: 0.35,
+      wastagePct: 2.5,
+      balanceKg: 71.75,
+      planningDate: '2026-09-23',
+      from: '2026-09-23',
+      to: '2026-09-29',
+    });
+    const { rows } = buildFeedForecast(input);
+    expect(rows[0].daysLeft).toBe(4);
+    expect(rows[0].runDownDate).toBe('2026-09-27'); // planning + 4
+  });
+
+  it('balance exactly equal to one day of demand is 1 day of stock, not 0', () => {
+    const input = singleBatchInput({
+      heads: 100,
+      kgPerHeadPerDay: 1,
+      wastagePct: 0,
+      balanceKg: 100,
+      planningDate: '2026-09-23',
+      from: '2026-09-23',
+      to: '2026-09-29',
+    });
+    const { rows } = buildFeedForecast(input);
+    expect(rows[0].daysLeft).toBe(1);
+    expect(rows[0].runDownDate).toBe('2026-09-24'); // planning + 1
+  });
+});
+
+describe('buildFeedForecast — fix round 1: projection anchored to planningDate, not from', () => {
+  it('walks from planningDate through to, even when planningDate is before `from`', () => {
+    const input = singleBatchInput({
+      heads: 100,
+      kgPerHeadPerDay: 1,
+      wastagePct: 0,
+      balanceKg: 525,
+      planningDate: '2026-09-23',
+      from: '2026-09-26',
+      to: '2026-09-29',
+    });
+    const { rows } = buildFeedForecast(input);
+    const r = rows.find((row) => row.itemId === 'r1')!;
+    expect(r.daysLeft).toBe(5);
+    expect(r.runDownDate).toBe('2026-09-28');
+  });
+
+  it('does not subtract days before planningDate from the balance when `from` precedes planningDate', () => {
+    // If the walk wrongly started at `from` (09-20), 250 kg at 100 kg/day would run out on 09-22, before
+    // planningDate. Anchored correctly at planningDate (09-23), it runs out on 09-25 instead.
+    const input = singleBatchInput({
+      heads: 100,
+      kgPerHeadPerDay: 1,
+      wastagePct: 0,
+      balanceKg: 250,
+      planningDate: '2026-09-23',
+      from: '2026-09-20',
+      to: '2026-09-25',
+    });
+    const { rows } = buildFeedForecast(input);
+    const r = rows.find((row) => row.itemId === 'r1')!;
+    expect(r.daysLeft).toBe(2);
+    expect(r.runDownDate).toBe('2026-09-25');
+  });
+
+  it('runDownDate is null when `to` is before planningDate — nothing to walk', () => {
+    const input = singleBatchInput({
+      heads: 100,
+      kgPerHeadPerDay: 1,
+      wastagePct: 0,
+      balanceKg: 10,
+      planningDate: '2026-09-23',
+      from: '2026-09-10',
+      to: '2026-09-15',
+    });
+    const { rows } = buildFeedForecast(input);
+    const r = rows.find((row) => row.itemId === 'r1')!;
+    expect(r.runDownDate).toBeNull();
+    expect(r.refillDate).toBeNull();
+    expect(r.requiredOn).toBeNull();
+    expect(r.overdue).toBe(false);
+  });
+});
+
+describe('buildFeedForecast — D6: shed with no silo falls back to STORE with no flag', () => {
+  const feedRows: FeedRow[] = [
+    {
+      lifecycleId: 'a',
+      breedId: 'l',
+      stageId: 'grower',
+      itemId: 'r1',
+      itemName: 'Grower Diet',
+      fromDay: 1,
+      toDay: 60,
+      kgPerHeadPerDay: 1.0,
+      wastagePct: 0,
+    },
+  ];
+  const input: ForecastInput = {
+    planningDate: '2026-09-23',
+    from: '2026-09-23',
+    to: '2026-09-23',
+    refillBufferDays: 2,
+    leadTimeDays: 0,
+    sheds: [{ shedId: 'h1', shedCode: 'GRS/SHED-001', siloIds: [] }],
+    silos: [],
+    store: { storeId: 'st1', storeCode: 'GRS/STORE-001', balances: { r1: 400 } },
+    items: { r1: 'Grower Diet' },
+    batches: [
+      {
+        batchId: 'b',
+        batchNo: 'GR-2026-01',
+        breedId: 'l',
+        shedId: 'h1',
+        heads: 100,
+        segments: [{ stageId: 'grower', stageCode: 'GROWER', start: '2026-09-23', end: null, projected: false }],
+      },
+    ],
+    feedRows,
+  };
+
+  it('sources from STORE without a NO_SILO_HOLDS_ITEM flag', () => {
+    const { rows, flags } = buildFeedForecast(input);
+    const r = rows.find((row) => row.itemId === 'r1')!;
+    expect(r.sourceType).toBe('STORE');
+    expect(r.sourceCode).toBe('GRS/STORE-001');
+    expect(flags.some((f) => f.kind === 'NO_SILO_HOLDS_ITEM')).toBe(false);
+  });
+});
+
+describe('buildFeedForecast — NONE source: no silo holds it and there is no store', () => {
+  const feedRows: FeedRow[] = [
+    {
+      lifecycleId: 'a',
+      breedId: 'l',
+      stageId: 'grower',
+      itemId: 'r1',
+      itemName: 'Grower Diet',
+      fromDay: 1,
+      toDay: 60,
+      kgPerHeadPerDay: 1.0,
+      wastagePct: 0,
+    },
+  ];
+  const input: ForecastInput = {
+    planningDate: '2026-09-23',
+    from: '2026-09-23',
+    to: '2026-09-25',
+    refillBufferDays: 2,
+    leadTimeDays: 0,
+    sheds: [{ shedId: 'h1', shedCode: 'GRS/SHED-001', siloIds: [] }],
+    silos: [],
+    store: null,
+    items: { r1: 'Grower Diet' },
+    batches: [
+      {
+        batchId: 'b',
+        batchNo: 'GR-2026-01',
+        breedId: 'l',
+        shedId: 'h1',
+        heads: 100,
+        segments: [{ stageId: 'grower', stageCode: 'GROWER', start: '2026-09-23', end: null, projected: false }],
+      },
+    ],
+    feedRows,
+  };
+
+  it('sourceType NONE, zero balance, and still reports a run-down (left as-is)', () => {
+    const { rows } = buildFeedForecast(input);
+    const r = rows.find((row) => row.itemId === 'r1')!;
+    expect(r.sourceType).toBe('NONE');
+    expect(r.sourceCode).toBeNull();
+    expect(r.currentInventoryKg).toBe(0);
+    expect(r.daysLeft).toBe(0);
+    expect(r.runDownDate).toBe('2026-09-23'); // planning date itself — zero balance can't cover any demand
+  });
+});
+
+describe('buildFeedForecast — OVERLAPPING_FEED_ROWS', () => {
+  const feedRows: FeedRow[] = [
+    {
+      lifecycleId: 'a',
+      breedId: 'l',
+      stageId: 'grower',
+      itemId: 'r1',
+      itemName: 'Grower Diet',
+      fromDay: 1,
+      toDay: 10,
+      kgPerHeadPerDay: 1.0,
+      wastagePct: 0,
+    },
+    {
+      lifecycleId: 'b',
+      breedId: 'l',
+      stageId: 'grower',
+      itemId: 'r1',
+      itemName: 'Grower Diet',
+      fromDay: 5,
+      toDay: 15,
+      kgPerHeadPerDay: 2.0,
+      wastagePct: 0,
+    },
+  ];
+  const input: ForecastInput = {
+    planningDate: '2026-09-23',
+    from: '2026-09-23',
+    to: '2026-09-23',
+    refillBufferDays: 2,
+    leadTimeDays: 0,
+    sheds: [{ shedId: 'h1', shedCode: 'GRS/SHED-001', siloIds: ['s1'] }],
+    silos: [{ siloId: 's1', siloCode: 'GRS/SILO-001', itemId: 'r1', balanceKg: 5000 }],
+    store: null,
+    items: { r1: 'Grower Diet' },
+    batches: [
+      {
+        batchId: 'b',
+        batchNo: 'GR-2026-01',
+        breedId: 'l',
+        shedId: 'h1',
+        heads: 100,
+        // start chosen so 2026-09-23 is stage-day 7, inside both overlapping rows' ranges.
+        segments: [{ stageId: 'grower', stageCode: 'GROWER', start: '2026-09-17', end: null, projected: false }],
+      },
+    ],
+    feedRows,
+  };
+
+  it('flags OVERLAPPING_FEED_ROWS and adds no demand for that day', () => {
+    const { rows, flags } = buildFeedForecast(input);
+    expect(flags).toContainEqual({
+      kind: 'OVERLAPPING_FEED_ROWS',
+      batchNo: 'GR-2026-01',
+      stageCode: 'GROWER',
+      day: 7,
+      date: '2026-09-23',
+    });
+    expect(rows).toHaveLength(0);
+  });
+});
+
+describe('buildFeedForecast — two sheds falling back to one STORE, combined demand', () => {
+  const feedRows: FeedRow[] = [
+    {
+      lifecycleId: 'a',
+      breedId: 'l',
+      stageId: 'grower',
+      itemId: 'r1',
+      itemName: 'Grower Diet',
+      fromDay: 1,
+      toDay: 60,
+      kgPerHeadPerDay: 1.0,
+      wastagePct: 0,
+    },
+  ];
+  const input: ForecastInput = {
+    planningDate: '2026-09-23',
+    from: '2026-09-23',
+    to: '2026-09-29',
+    refillBufferDays: 2,
+    leadTimeDays: 0,
+    sheds: [
+      { shedId: 'h1', shedCode: 'GRS/SHED-001', siloIds: [] },
+      { shedId: 'h2', shedCode: 'GRS/SHED-002', siloIds: [] },
+    ],
+    silos: [],
+    store: { storeId: 'st1', storeCode: 'GRS/STORE-001', balances: { r1: 450 } },
+    items: { r1: 'Grower Diet' },
+    batches: [
+      {
+        batchId: 'b1',
+        batchNo: 'GR-2026-01',
+        breedId: 'l',
+        shedId: 'h1',
+        heads: 100,
+        segments: [{ stageId: 'grower', stageCode: 'GROWER', start: '2026-09-23', end: null, projected: false }],
+      },
+      {
+        batchId: 'b2',
+        batchNo: 'GR-2026-02',
+        breedId: 'l',
+        shedId: 'h2',
+        heads: 100,
+        segments: [{ stageId: 'grower', stageCode: 'GROWER', start: '2026-09-23', end: null, projected: false }],
+      },
+    ],
+    feedRows,
+  };
+
+  it('both rows share daysLeft and run-down date from the combined STORE demand', () => {
+    const { rows } = buildFeedForecast(input);
+    expect(rows).toHaveLength(2);
+    for (const r of rows) {
+      expect(r.sourceType).toBe('STORE');
+      expect(r.daysLeft).toBe(2);
+      expect(r.runDownDate).toBe('2026-09-25');
+    }
+  });
+});
+
+describe('buildFeedForecast — demand changing across a stage boundary inside the horizon', () => {
+  // 5 days at 1.0 kg/head/day, then 5 days at 2.0 kg/head/day, 100 heads throughout.
+  const feedRows: FeedRow[] = [
+    {
+      lifecycleId: 'a',
+      breedId: 'l',
+      stageId: 'grower',
+      itemId: 'r1',
+      itemName: 'Grower Diet',
+      fromDay: 1,
+      toDay: 5,
+      kgPerHeadPerDay: 1.0,
+      wastagePct: 0,
+    },
+    {
+      lifecycleId: 'b',
+      breedId: 'l',
+      stageId: 'grower',
+      itemId: 'r1',
+      itemName: 'Grower Diet',
+      fromDay: 6,
+      toDay: 10,
+      kgPerHeadPerDay: 2.0,
+      wastagePct: 0,
+    },
+  ];
+  const input: ForecastInput = {
+    planningDate: '2026-09-21',
+    from: '2026-09-21',
+    to: '2026-09-27',
+    refillBufferDays: 2,
+    leadTimeDays: 0,
+    sheds: [{ shedId: 'h1', shedCode: 'GRS/SHED-001', siloIds: ['s1'] }],
+    silos: [{ siloId: 's1', siloCode: 'GRS/SILO-001', itemId: 'r1', balanceKg: 100000 }],
+    store: null,
+    items: { r1: 'Grower Diet' },
+    batches: [
+      {
+        batchId: 'b',
+        batchNo: 'GR-2026-01',
+        breedId: 'l',
+        shedId: 'h1',
+        heads: 100,
+        // start chosen so 09-21 is stage-day 1: the 7-day range (09-21..09-27) spans days 1-7,
+        // crossing the day5/day6 boundary between the two feed rows.
+        segments: [{ stageId: 'grower', stageCode: 'GROWER', start: '2026-09-21', end: null, projected: false }],
+      },
+    ],
+    feedRows,
+  };
+
+  it('sums the actual per-day demand either side of the boundary, not just a flag', () => {
+    const { rows } = buildFeedForecast(input);
+    expect(rows).toHaveLength(1);
+    const r = rows[0];
+    // Days 1-5 (09-21..09-25) at 100 kg/day = 500 kg; days 6-7 (09-26..09-27) at 200 kg/day = 400 kg.
+    expect(r.rangeDemandKg).toBe(900);
+    expect(r.perDayIntakeKg).toBe(100); // first demand day (09-21) is still on the 1.0 kg/head rate
+  });
+});
+
+describe('buildFeedForecast — a diet row that starts later in the horizon', () => {
+  // The applicable feed row only begins on stage-day 4; the range's first 3 days have no covering row for r1,
+  // but a second row (a different item) covers them, so this isolates "starts later" from "missing row".
+  const feedRows: FeedRow[] = [
+    {
+      lifecycleId: 'a',
+      breedId: 'l',
+      stageId: 'grower',
+      itemId: 'r0',
+      itemName: 'Starter Diet',
+      fromDay: 1,
+      toDay: 3,
+      kgPerHeadPerDay: 0.5,
+      wastagePct: 0,
+    },
+    {
+      lifecycleId: 'b',
+      breedId: 'l',
+      stageId: 'grower',
+      itemId: 'r1',
+      itemName: 'Grower Diet',
+      fromDay: 4,
+      toDay: 60,
+      kgPerHeadPerDay: 1.0,
+      wastagePct: 0,
+    },
+  ];
+  const input: ForecastInput = {
+    planningDate: '2026-09-23',
+    from: '2026-09-23',
+    to: '2026-09-27',
+    refillBufferDays: 2,
+    leadTimeDays: 0,
+    sheds: [{ shedId: 'h1', shedCode: 'GRS/SHED-001', siloIds: ['s1', 's0'] }],
+    silos: [
+      { siloId: 's0', siloCode: 'GRS/SILO-000', itemId: 'r0', balanceKg: 5000 },
+      { siloId: 's1', siloCode: 'GRS/SILO-001', itemId: 'r1', balanceKg: 5000 },
+    ],
+    store: null,
+    items: { r0: 'Starter Diet', r1: 'Grower Diet' },
+    batches: [
+      {
+        batchId: 'b',
+        batchNo: 'GR-2026-01',
+        breedId: 'l',
+        shedId: 'h1',
+        heads: 100,
+        // start chosen so the range (09-23..09-27) covers stage-days 1-5: r0 for days 1-3, r1 starts day 4.
+        segments: [{ stageId: 'grower', stageCode: 'GROWER', start: '2026-09-23', end: null, projected: false }],
+      },
+    ],
+    feedRows,
+  };
+
+  it('the later-starting row only counts demand from its first covered day', () => {
+    const { rows } = buildFeedForecast(input);
+    const r1 = rows.find((row) => row.itemId === 'r1')!;
+    // Days 4-5 (09-26, 09-27) at 100 kg/day = 200 kg; perDayIntakeKg is the first day it has demand.
+    expect(r1.rangeDemandKg).toBe(200);
+    expect(r1.perDayIntakeKg).toBe(100);
+    expect(r1.sourceCode).toBe('GRS/SILO-001');
   });
 });
