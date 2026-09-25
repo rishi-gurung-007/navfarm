@@ -450,7 +450,7 @@ describe('buildInputBatches', () => {
     ['GES', { stageId: 'GES', stageCode: 'GESTATION', durationDays: null, nextStageId: null, isActive: true }],
   ]);
   const base = {
-    animalGroups: new Map<string, { stageId: string; heads: number }[]>(),
+    animalGroups: new Map<string, { stageId: string | null; heads: number }[]>(),
     headers: [] as { batch_id: string; stage_id: string; effective_from: string; location_id: string | null }[],
     stages,
     locationById,
@@ -460,7 +460,7 @@ describe('buildInputBatches', () => {
   };
   const batchWise = {
     batch_id: 'b1', batch_no: 'BATCH-1', breed_id: 'br', stage_id: 'GIL', shed_id: 'shed-1',
-    tracking_mode: 'BATCH_WISE', start_date: '2026-09-01', opening_quantity: '50', closing_quantity: '48',
+    tracking_mode: 'BATCH_WISE', animal_tracking: 'COUNT_ONLY' as string | null, start_date: '2026-09-01', opening_quantity: '50', closing_quantity: '48',
   };
 
   it('a batch-wise batch: heads = closing ?? opening, start from batch when no header', () => {
@@ -504,6 +504,48 @@ describe('buildInputBatches', () => {
       ['b1:GIL', 'BATCH-1 · GILT', 12, 'GIL'],
       ['b1:GES', 'BATCH-1 · GESTATION', 30, 'GES'],
     ]);
+  });
+
+  // Ruling (final review, I2): a BATCH_WISE batch whose animals are registered
+  // one by one moves them into their own stages (the demo's breeding stock
+  // walks FLUSH -> ... -> LACTATION), so it is split exactly like ANIMAL_WISE.
+  it('a REGISTERED batch-wise batch is split by animal stage like ANIMAL_WISE, each group on its own header', () => {
+    const { batches } = buildInputBatches({
+      ...base,
+      batchRows: [{ ...batchWise, animal_tracking: 'REGISTERED' }],
+      animalGroups: new Map([['b1', [{ stageId: 'GIL', heads: 5 }, { stageId: 'GES', heads: 30 }]]]),
+      headers: [{ batch_id: 'b1', stage_id: 'GES', effective_from: '2026-09-20', location_id: 'pen-2' }],
+    });
+    expect(batches.map((b) => [b.batchId, b.batchNo, b.heads, b.shedId, b.segments[0].stageId, b.segments[0].start])).toEqual([
+      ['b1:GIL', 'BATCH-1 · GILT', 5, 'shed-1', 'GIL', '2026-09-01'],
+      ['b1:GES', 'BATCH-1 · GESTATION', 30, 'shed-2', 'GES', '2026-09-20'],
+    ]);
+  });
+
+  it("animals with no current stage are counted in the batch's own stage group", () => {
+    const { batches } = buildInputBatches({
+      ...base,
+      batchRows: [{ ...batchWise, animal_tracking: 'REGISTERED' }],
+      animalGroups: new Map([['b1', [{ stageId: null, heads: 7 }, { stageId: 'GIL', heads: 5 }, { stageId: 'GES', heads: 30 }]]]),
+    });
+    expect(batches.map((b) => [b.batchNo, b.heads])).toEqual([
+      ['BATCH-1 · GILT', 12],
+      ['BATCH-1 · GESTATION', 30],
+    ]);
+  });
+
+  it('stage-less animals of a batch with no stage of its own feed nothing', () => {
+    const { batches } = buildInputBatches({
+      ...base,
+      batchRows: [{ ...batchWise, tracking_mode: 'ANIMAL_WISE', stage_id: null }],
+      animalGroups: new Map([['b1', [{ stageId: null, heads: 7 }, { stageId: 'GES', heads: 30 }]]]),
+    });
+    expect(batches.map((b) => [b.batchNo, b.heads])).toEqual([['BATCH-1 · GESTATION', 30]]);
+  });
+
+  it('a REGISTERED batch with no live animals yields no input batch', () => {
+    const { batches } = buildInputBatches({ ...base, batchRows: [{ ...batchWise, animal_tracking: 'REGISTERED' }] });
+    expect(batches).toEqual([]);
   });
 
   it('an animal-wise batch with no live animals yields no input batch', () => {

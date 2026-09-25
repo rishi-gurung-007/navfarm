@@ -79,6 +79,7 @@ export interface BatchRow {
   stage_id: string | null;
   shed_id: string | null;
   tracking_mode: string;
+  animal_tracking: string | null;
   start_date: string;
   opening_quantity: string;
   closing_quantity: string | null;
@@ -205,6 +206,15 @@ export function resolveShed(locationId: string | null | undefined, locationById:
  * a batchNo carrying the stage so the rows can be told apart. No live
  * animals, no input.
  *
+ * A BATCH_WISE batch whose animal_tracking is REGISTERED is split the same way
+ * (final review, I2): its animals are registered one by one and each moves
+ * through its own stages — a breeding herd is part flushing, part gestating,
+ * part lactating at once — so the batch row's single stage would feed every
+ * sow the diet of whichever stage the batch was opened at. Animals with no
+ * current stage (placeholders, or a register row never given one) are counted
+ * in the batch's own stage group rather than dropped; with no batch stage
+ * either there is no diet to give them, and they feed nothing.
+ *
  * Stage start and shed come from the batch's scheduler_header for that stage
  * — its effective_from is when the batch entered the stage, its location_id
  * where it stood — else from the batch row. Where the location does not walk
@@ -214,7 +224,7 @@ export function resolveShed(locationId: string | null | undefined, locationById:
  */
 export function buildInputBatches(args: {
   batchRows: BatchRow[];
-  animalGroups: Map<string, { stageId: string; heads: number }[]>;
+  animalGroups: Map<string, { stageId: string | null; heads: number }[]>;
   headers: HeaderRow[];
   stages: Map<string, StageInfo>;
   locationById: Map<string, LocationNode>;
@@ -235,9 +245,9 @@ export function buildInputBatches(args: {
   const flags: ForecastFlag[] = [];
   for (const b of batchRows) {
     if (!b.breed_id) continue; // no breed, no feed standard to look up
-    const animalWise = b.tracking_mode === 'ANIMAL_WISE';
+    const animalWise = isGroupedByAnimal(b);
     const groups = animalWise
-      ? animalGroups.get(b.batch_id) ?? []
+      ? stageGroupsOf(animalGroups.get(b.batch_id) ?? [], b.stage_id)
       : b.stage_id
         ? [{ stageId: b.stage_id, heads: Number(b.closing_quantity ?? b.opening_quantity) }]
         : [];
@@ -260,6 +270,22 @@ export function buildInputBatches(args: {
     }
   }
   return { batches, flags };
+}
+
+/** Batches the forecast splits by their animals' own stages (see buildInputBatches). */
+function isGroupedByAnimal(b: Pick<BatchRow, 'tracking_mode' | 'animal_tracking'>): boolean {
+  return b.tracking_mode === 'ANIMAL_WISE' || b.animal_tracking === 'REGISTERED';
+}
+
+/** Folds stage-less animals into the batch's own stage group, keeping first-seen order. */
+function stageGroupsOf(groups: { stageId: string | null; heads: number }[], batchStageId: string | null): { stageId: string; heads: number }[] {
+  const heads = new Map<string, number>();
+  for (const g of groups) {
+    const stageId = g.stageId ?? batchStageId;
+    if (!stageId) continue;
+    heads.set(stageId, (heads.get(stageId) ?? 0) + g.heads);
+  }
+  return [...heads].map(([stageId, n]) => ({ stageId, heads: n }));
 }
 
 /**
@@ -566,6 +592,7 @@ export class FeedForecastService {
         stage_id: schema.batchHeader.stage_id,
         shed_id: schema.batchHeader.shed_id,
         tracking_mode: schema.batchHeader.tracking_mode,
+        animal_tracking: schema.batchHeader.animal_tracking,
         start_date: schema.batchHeader.start_date,
         opening_quantity: schema.batchHeader.opening_quantity,
         closing_quantity: schema.batchHeader.closing_quantity,
@@ -585,8 +612,8 @@ export class FeedForecastService {
     if (!fed.length) return { batches: [], flags: [] };
     const batchIds = fed.map((b) => b.batch_id);
 
-    const animalGroups = new Map<string, { stageId: string; heads: number }[]>();
-    const animalWiseIds = fed.filter((b) => b.tracking_mode === 'ANIMAL_WISE').map((b) => b.batch_id);
+    const animalGroups = new Map<string, { stageId: string | null; heads: number }[]>();
+    const animalWiseIds = fed.filter(isGroupedByAnimal).map((b) => b.batch_id);
     if (animalWiseIds.length) {
       const groups = await this.db
         .select({
@@ -600,14 +627,15 @@ export class FeedForecastService {
             eq(schema.animalRegister.tenant_id, tenantId),
             eq(schema.animalRegister.company_id, farm.companyId),
             inArray(schema.animalRegister.current_batch_id, animalWiseIds),
-            isNotNull(schema.animalRegister.current_stage_id),
+            // Stage-less animals are read too: buildInputBatches counts them
+            // in the batch's own stage group (I2), not nowhere.
             notInArray(schema.animalRegister.status, GONE_STATUSES),
           ),
         )
         .groupBy(schema.animalRegister.current_batch_id, schema.animalRegister.current_stage_id);
       for (const g of groups) {
-        if (!g.batch_id || !g.stage_id) continue;
-        animalGroups.set(g.batch_id, [...(animalGroups.get(g.batch_id) ?? []), { stageId: g.stage_id, heads: Number(g.heads) }]);
+        if (!g.batch_id) continue;
+        animalGroups.set(g.batch_id, [...(animalGroups.get(g.batch_id) ?? []), { stageId: g.stage_id ?? null, heads: Number(g.heads) }]);
       }
     }
 
