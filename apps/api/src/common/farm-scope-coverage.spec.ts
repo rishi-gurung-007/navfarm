@@ -17,6 +17,7 @@ import { GoodsIssueController } from '../modules/inventory/goods-issue/goods-iss
 import { StockAdjustmentController } from '../modules/inventory/stock-adjustment/stock-adjustment.controller';
 import { StockTransferController } from '../modules/inventory/stock-transfer/stock-transfer.controller';
 import { InventoryLedgerController } from '../modules/inventory/inventory-ledger/inventory-ledger.controller';
+import { FeedForecastController } from '../modules/inventory/feed-forecast/feed-forecast.controller';
 import { AlertController } from '../modules/production/alert/alert.controller';
 import { MilkController } from '../modules/production/milk/milk.controller';
 import { QcController } from '../modules/production/qc/qc.controller';
@@ -50,7 +51,7 @@ const SCOPED = {
   BatchController, BatchDailyDataController, BatchTransferController, SchedulerHeaderController,
   ApprovalController, AnimalController, AnimalMedicationLogController, AnimalMovementLogController, BreedingController,
   GoodsReceiptController, GoodsIssueController, StockAdjustmentController, StockTransferController,
-  InventoryLedgerController,
+  InventoryLedgerController, FeedForecastController,
   AlertController, MilkController, QcController, QrCodeController,
   BioAssetLedgerController,
   FinancialReportsController,

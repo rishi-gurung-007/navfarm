@@ -45,6 +45,7 @@ import { GlAccountModule } from './modules/finance/gl-account/gl-account.module'
 import { GlMappingModule } from './modules/finance/gl-mapping/gl-mapping.module';
 import { CostCenterModule } from './modules/finance/cost-center/cost-center.module';
 import { InventoryLedgerModule } from './modules/inventory/inventory-ledger/inventory-ledger.module';
+import { FeedForecastModule } from './modules/inventory/feed-forecast/feed-forecast.module';
 import { GoodsReceiptModule } from './modules/inventory/goods-receipt/goods-receipt.module';
 import { BioAssetLedgerModule } from './modules/inventory/bio-asset-ledger/bio-asset-ledger.module';
 import { GoodsIssueModule } from './modules/inventory/goods-issue/goods-issue.module';
@@ -133,6 +134,7 @@ import { SystemController } from './system/system.controller';
     GlMappingModule,
     CostCenterModule,
     InventoryLedgerModule,
+    FeedForecastModule,
     GoodsReceiptModule,
     BioAssetLedgerModule,
     GoodsIssueModule,
