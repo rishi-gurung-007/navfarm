@@ -330,6 +330,12 @@ export class LocationService {
       silo_capacity_kg: siloCapacityToKg(dto.silo_capacity_kg, dto.silo_capacity_uom),
       silo_capacity_uom: dto.silo_capacity_uom ?? null,
       silo_reorder_days: dto.silo_reorder_days ?? null,
+      low_level_kg: dto.storage_type === 'SILO' && dto.low_level_kg != null ? String(dto.low_level_kg) : null,
+      high_level_kg: dto.storage_type === 'SILO' && dto.high_level_kg != null ? String(dto.high_level_kg) : null,
+      ...(dto.feed_bulk_multiple_kg !== undefined ? { feed_bulk_multiple_kg: dto.feed_bulk_multiple_kg } : {}),
+      ...(dto.feed_bag_size_kg !== undefined ? { feed_bag_size_kg: dto.feed_bag_size_kg } : {}),
+      ...(dto.feed_truck_target_kg !== undefined ? { feed_truck_target_kg: dto.feed_truck_target_kg } : {}),
+      ...(dto.feed_production_weekday !== undefined ? { feed_production_weekday: dto.feed_production_weekday } : {}),
       downtime_days_required: dto.downtime_days_required ?? null,
       storage_name: dto.storage_name ?? null,
       feed_in_bags: null,
@@ -551,6 +557,23 @@ export class LocationService {
       throw new ConflictException(
         'A SILO location requires silo_capacity_kg, silo_capacity_uom (KG or TON) and silo_reorder_days.'
       );
+    }
+  }
+
+  /**
+   * Master Setup §1 rows 10 and 12: one low level and one high level per
+   * silo, both kilograms whatever unit the capacity was typed in (capacity is
+   * compared after its TON→KG conversion). Either may be blank (Q8); when both
+   * are given the low must sit below the high, and neither may exceed what
+   * the silo physically holds.
+   */
+  private assertSiloLevels(lowKg: number | null | undefined, highKg: number | null | undefined, capacityKg: number | null) {
+    if (lowKg != null && highKg != null && lowKg >= highKg) {
+      throw new ConflictException('The low feed level must be below the high feed level.');
+    }
+    if (capacityKg != null) {
+      if (highKg != null && highKg > capacityKg) throw new ConflictException('The high feed level cannot exceed the silo capacity.');
+      if (lowKg != null && lowKg > capacityKg) throw new ConflictException('The low feed level cannot exceed the silo capacity.');
     }
   }
 
@@ -822,10 +845,16 @@ export class LocationService {
     // 4. SILO locations must carry silo tracking fields
     if (!dto.storage_type && typeCode === 'SILO') dto.storage_type = 'SILO';
     this.assertSiloFieldsWhenSilo(dto.storage_type, dto.silo_capacity_kg, dto.silo_reorder_days, dto.silo_capacity_uom);
+    if (dto.storage_type === 'SILO') {
+      const capacityKg = siloCapacityToKg(dto.silo_capacity_kg, dto.silo_capacity_uom);
+      this.assertSiloLevels(dto.low_level_kg, dto.high_level_kg, capacityKg == null ? null : Number(capacityKg));
+    }
     if (dto.storage_type !== 'SILO') {
       dto.silo_capacity_kg = undefined;
       dto.silo_reorder_days = undefined;
       dto.silo_capacity_uom = undefined;
+      dto.low_level_kg = undefined;
+      dto.high_level_kg = undefined;
     }
 
     // attached_sheds is the silo's own field. Accepting it on any other type
@@ -1216,14 +1245,30 @@ export class LocationService {
       updates.silo_capacity_uom = effectiveSiloCapacityUom;
     }
     if (dto.silo_reorder_days !== undefined) updates.silo_reorder_days = dto.silo_reorder_days;
+    // Levels are validated against the effective row, so saving only the
+    // high level of a silo that already has a low one still checks the pair.
+    if (effectiveStorage === 'SILO') {
+      const effectiveLow = dto.low_level_kg !== undefined ? dto.low_level_kg : location.low_level_kg == null ? null : Number(location.low_level_kg);
+      const effectiveHigh = dto.high_level_kg !== undefined ? dto.high_level_kg : location.high_level_kg == null ? null : Number(location.high_level_kg);
+      const effectiveCapacity = updates.silo_capacity_kg !== undefined ? updates.silo_capacity_kg : location.silo_capacity_kg;
+      this.assertSiloLevels(effectiveLow, effectiveHigh, effectiveCapacity == null ? null : Number(effectiveCapacity));
+    }
+    if (dto.low_level_kg !== undefined) updates.low_level_kg = dto.low_level_kg == null ? null : String(dto.low_level_kg);
+    if (dto.high_level_kg !== undefined) updates.high_level_kg = dto.high_level_kg == null ? null : String(dto.high_level_kg);
     if (effectiveStorage !== 'SILO') {
       updates.silo_capacity_kg = null;
       updates.silo_capacity_uom = null;
       updates.silo_reorder_days = null;
+      updates.low_level_kg = null;
+      updates.high_level_kg = null;
     }
     if (dto.downtime_days_required !== undefined) updates.downtime_days_required = dto.downtime_days_required;
     if (dto.feed_refill_buffer_days !== undefined) updates.feed_refill_buffer_days = dto.feed_refill_buffer_days;
     if (dto.feed_lead_time_days !== undefined) updates.feed_lead_time_days = dto.feed_lead_time_days;
+    if (dto.feed_bulk_multiple_kg !== undefined) updates.feed_bulk_multiple_kg = dto.feed_bulk_multiple_kg;
+    if (dto.feed_bag_size_kg !== undefined) updates.feed_bag_size_kg = dto.feed_bag_size_kg;
+    if (dto.feed_truck_target_kg !== undefined) updates.feed_truck_target_kg = dto.feed_truck_target_kg;
+    if (dto.feed_production_weekday !== undefined) updates.feed_production_weekday = dto.feed_production_weekday;
     if (dto.storage_name !== undefined) updates.storage_name = dto.storage_name;
     if (dto.is_active !== undefined) updates.is_active = dto.is_active;
     if (dto.status !== undefined) updates.status = dto.status;

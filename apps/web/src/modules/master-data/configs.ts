@@ -132,6 +132,14 @@ const location: MasterDataConfig = {
     { key: "silo_capacity_kg", label: "Silo Capacity", type: "number", min: 0, max: 999999.99, step: "0.01", visibleWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, requiredWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, helpText: "Required when Storage Location is SILO.", section: "Identification" },
     { key: "silo_capacity_uom", label: "Silo Capacity UOM", type: "select", options: ["KG", "TON"].map((v) => ({ value: v, label: v })), defaultValue: "KG", visibleWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, requiredWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, helpText: "The unit the capacity above is entered in. The capacity is stored in kilograms whichever unit is chosen — a tonne figure is converted on save.", section: "Identification" },
     { key: "silo_reorder_days", label: "Silo Reorder Days", type: "number", min: 0, max: 365, step: "1", visibleWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, requiredWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, helpText: "Required when Storage Location is SILO.", section: "Identification" },
+    // Master Setup §1 rows 10 and 12 (spec D10) — alongside Silo Reorder
+    // Days, not replacing it. Optional (Q8): blank means no alert of that kind.
+    { key: "low_level_kg", label: "Below Feed Level (KG)", type: "number", min: 0, step: "1", nativeNumber: true,
+      visibleWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, section: "Identification",
+      helpText: "Low feed alert when this silo's System Balance is at or below this many kilograms. Leave blank for no low alert." },
+    { key: "high_level_kg", label: "Above Threshold (KG)", type: "number", min: 0, step: "1", nativeNumber: true,
+      visibleWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, section: "Identification",
+      helpText: "Over-stock notice when the System Balance is at or above this many kilograms — typically 90% of capacity. Leave blank for none." },
     // Feed Forecast's two per-farm timing offsets (spec D3): delivery distance
     // is per farm, so both live on the FARM row rather than on each silo.
     { key: "feed_refill_buffer_days", label: "Feed Refill Buffer (Days)", type: "number", min: 0, max: 30, step: "1", nativeNumber: true,
@@ -140,6 +148,18 @@ const location: MasterDataConfig = {
     { key: "feed_lead_time_days", label: "Feed Lead Time (Days)", type: "number", min: 0, max: 30, step: "1", nativeNumber: true,
       visibleWhen: { anyOf: [{ key: "location_type", equals: "FARM" }] }, section: "Identification",
       helpText: "Feed Forecast: the order is due this many days before the refill date. 0 for feed from the internal mill." },
+    { key: "feed_bulk_multiple_kg", label: "Bulk Order Multiple (KG)", type: "number", min: 1, step: "1", nativeNumber: true,
+      visibleWhen: { anyOf: [{ key: "location_type", equals: "FARM" }] }, section: "Identification",
+      helpText: "Feed requisitions round bulk orders up to this many kilograms (one truck compartment). Default 3000." },
+    { key: "feed_bag_size_kg", label: "Feed Bag Size (KG)", type: "number", min: 1, step: "1", nativeNumber: true,
+      visibleWhen: { anyOf: [{ key: "location_type", equals: "FARM" }] }, section: "Identification",
+      helpText: "Bagged feed is ordered in whole bags of this weight. Default 50." },
+    { key: "feed_truck_target_kg", label: "Bulk Truck Target (KG)", type: "number", min: 1, step: "1", nativeNumber: true,
+      visibleWhen: { anyOf: [{ key: "location_type", equals: "FARM" }] }, section: "Identification",
+      helpText: "Normal truck load, shown against the farm's requested total. A target, not a cap — more is served by extra trips. Default 30000." },
+    { key: "feed_production_weekday", label: "Feed Production Day (0 = Sunday)", type: "number", min: 0, max: 6, step: "1", nativeNumber: true,
+      visibleWhen: { anyOf: [{ key: "location_type", equals: "FARM" }] }, section: "Identification",
+      helpText: "Weekday the mill produces this farm's feed, 0 = Sunday to 6 = Saturday. Requisitions are due the day before. Default 0." },
     // Which sheds this silo feeds. One silo may serve many sheds, and — since
     // silo_shed_link replaced the old one-silo-per-shed feed_silo_id column
     // (spec D7) — a shed may now draw from several silos too, one per feed

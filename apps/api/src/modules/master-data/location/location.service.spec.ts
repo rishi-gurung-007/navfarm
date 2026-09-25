@@ -572,6 +572,70 @@ describe('LocationService canonical hierarchy', () => {
     expect(result.deleted_at).toBeNull();
   });
 
+  it('stores a silo low and high feed level in kilograms (Master Setup §1 rows 10 and 12)', async () => {
+    selectResults.push(
+      [company], [siloType], [farmParent()], [uom], [series],
+      [], // no existing SILO siblings under this farm yet
+      [{ location_id: 'silo-1', location_code: 'FARM-001/SILO-001', location_type: 'SILO', location_level: 2,
+         silo_capacity_kg: '12000.00', silo_capacity_uom: 'KG', low_level_kg: '1000.00', high_level_kg: '10800.00' }],
+      [], // no sheds attached to it
+    );
+
+    await service.create({
+      company_id: 'comp-1', parent_location_id: 'farm-1',
+      location_name: 'Feed Silo 1', location_address: 'Farm Road', location_type: 'SILO',
+      capacity_uom: 'KG', silo_capacity_kg: 12000, silo_capacity_uom: 'KG', silo_reorder_days: 7,
+      low_level_kg: 1000, high_level_kg: 10800,
+    } as any, 'tenant-1');
+
+    expect(inserted().low_level_kg).toBe('1000');
+    expect(inserted().high_level_kg).toBe('10800');
+  });
+
+  it('refuses a low feed level that is not below the high level', async () => {
+    selectResults.push([company], [siloType], [farmParent()]);
+    await expect(service.create({
+      company_id: 'comp-1', parent_location_id: 'farm-1',
+      location_name: 'Feed Silo 1', location_address: 'Farm Road', location_type: 'SILO',
+      capacity_uom: 'KG', silo_capacity_kg: 12000, silo_capacity_uom: 'KG', silo_reorder_days: 7,
+      low_level_kg: 5000, high_level_kg: 5000,
+    } as any, 'tenant-1')).rejects.toThrow('The low feed level must be below the high feed level.');
+    expect(txInsert).not.toHaveBeenCalled();
+  });
+
+  it('refuses a high feed level above the silo capacity, in kilograms even when capacity was typed in tonnes', async () => {
+    selectResults.push([company], [siloType], [farmParent()]);
+    await expect(service.create({
+      company_id: 'comp-1', parent_location_id: 'farm-1',
+      location_name: 'Feed Silo 1', location_address: 'Farm Road', location_type: 'SILO',
+      capacity_uom: 'KG', silo_capacity_kg: 12, silo_capacity_uom: 'TON', silo_reorder_days: 7,
+      low_level_kg: 1000, high_level_kg: 12500,
+    } as any, 'tenant-1')).rejects.toThrow('The high feed level cannot exceed the silo capacity.');
+  });
+
+  // L13: the create-path checks above cover the happy path and the two
+  // refusals; the update path re-validates the pair too — the brief's
+  // service comment on assertSiloLevels promises "either may be blank …
+  // when both are given the low must sit below the high", and that promise
+  // has to hold when only one side of an existing pair is edited, not only
+  // when both arrive together on create.
+  it('refuses raising the silo above a low level that already exists on the row, on update', async () => {
+    const silo = {
+      location_id: 'silo-1', tenant_id: 'tenant-1', company_id: 'comp-1', location_code: 'FARM-001/SILO-001',
+      location_type: 'SILO', location_level: 2, parent_location_id: 'farm-1', farm_id: 'farm-1',
+      storage_type: 'SILO', silo_capacity_kg: '12000.00', silo_capacity_uom: 'KG', silo_reorder_days: 7,
+      low_level_kg: '1000.00', high_level_kg: null,
+    };
+    selectResults.push(
+      [silo], [siloType], [farmParent()],
+      [{ parent_location_id: null }], // the cycle walk to the root
+    );
+
+    await expect(service.update('silo-1', { high_level_kg: 500 }, 'tenant-1'))
+      .rejects.toThrow('The low feed level must be below the high feed level.');
+    expect(txUpdate).not.toHaveBeenCalled();
+  });
+
   it('getLocationOccupancy aggregates headcounts, capacity utilization, and biosecurity status', async () => {
     selectResults.push(
       [{

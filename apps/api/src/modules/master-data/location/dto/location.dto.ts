@@ -177,6 +177,45 @@ export class CreateLocationDto {
   @Max(30)
   feed_lead_time_days?: number;
 
+  // Master Setup §1 row 10: low feed alert at or below this System Balance.
+  @ApiProperty({ description: 'SILO: low feed alert when System Balance is at or below this many KG. Blank = no low alert.', required: false, nullable: true })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  low_level_kg?: number | null;
+
+  // Master Setup §1 row 12: over-stock notice at or above this System Balance.
+  @ApiProperty({ description: 'SILO: over-stock notice when System Balance is at or above this many KG (typically 90% of capacity). Blank = none.', required: false, nullable: true })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  high_level_kg?: number | null;
+
+  @ApiProperty({ description: 'FARM: bulk feed orders round up to this many kilograms (Requisition §1 row 28, default 3000).', required: false })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  feed_bulk_multiple_kg?: number;
+
+  @ApiProperty({ description: 'FARM: bagged feed rounds to whole bags of this many kilograms (checkpoint 27, default 50).', required: false })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  feed_bag_size_kg?: number;
+
+  @ApiProperty({ description: 'FARM: normal bulk truck load in KG — a planning target, not a cap (Requisition §1 row 27, default 30000).', required: false })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  feed_truck_target_kg?: number;
+
+  @ApiProperty({ description: 'FARM: weekday feed is produced for this farm, 0 = Sunday … 6 = Saturday. The requisition deadline is the day before (default Sunday, so Saturday).', required: false })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(6)
+  feed_production_weekday?: number;
+
   @ApiProperty({ description: 'Flexible custom config configurations in JSON format', required: false })
   @IsOptional()
   extension_config?: any;
@@ -334,6 +373,45 @@ export class UpdateLocationDto {
   @Min(0)
   @Max(30)
   feed_lead_time_days?: number;
+
+  // Master Setup §1 row 10: low feed alert at or below this System Balance.
+  @ApiProperty({ description: 'SILO: low feed alert when System Balance is at or below this many KG. Blank = no low alert.', required: false, nullable: true })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  low_level_kg?: number | null;
+
+  // Master Setup §1 row 12: over-stock notice at or above this System Balance.
+  @ApiProperty({ description: 'SILO: over-stock notice when System Balance is at or above this many KG (typically 90% of capacity). Blank = none.', required: false, nullable: true })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  high_level_kg?: number | null;
+
+  @ApiProperty({ description: 'FARM: bulk feed orders round up to this many kilograms (Requisition §1 row 28, default 3000).', required: false })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  feed_bulk_multiple_kg?: number;
+
+  @ApiProperty({ description: 'FARM: bagged feed rounds to whole bags of this many kilograms (checkpoint 27, default 50).', required: false })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  feed_bag_size_kg?: number;
+
+  @ApiProperty({ description: 'FARM: normal bulk truck load in KG — a planning target, not a cap (Requisition §1 row 27, default 30000).', required: false })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  feed_truck_target_kg?: number;
+
+  @ApiProperty({ description: 'FARM: weekday feed is produced for this farm, 0 = Sunday … 6 = Saturday. The requisition deadline is the day before (default Sunday, so Saturday).', required: false })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(6)
+  feed_production_weekday?: number;
 
   @ApiProperty({ required: false })
   @IsBoolean()

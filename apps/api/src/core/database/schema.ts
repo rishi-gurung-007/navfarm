@@ -1035,6 +1035,16 @@ export const locationMaster = mysqlTable('location_master', {
   feed_lead_time_days: int('feed_lead_time_days').default(0),
   // Alert when silo stock covers less than this many days of consumption. Required when location_type = SILO.
   silo_reorder_days: int('silo_reorder_days'),
+  // Master Setup §1 rows 10 and 12 (spec D10): the single low feed level and
+  // the high (over-stock) level of a SILO, in KG. Null = not checked.
+  low_level_kg: decimal('low_level_kg', { precision: 12, scale: 2 }),
+  high_level_kg: decimal('high_level_kg', { precision: 12, scale: 2 }),
+  // FARM rows only — feed requisition rounding and cycle (Requisition §1 rows
+  // 27–28, checkpoints 22 and 27); defaults are the workbook's.
+  feed_bulk_multiple_kg: int('feed_bulk_multiple_kg').default(3000),
+  feed_bag_size_kg: int('feed_bag_size_kg').default(50),
+  feed_truck_target_kg: int('feed_truck_target_kg').default(30000),
+  feed_production_weekday: int('feed_production_weekday').default(0),
   // Mandatory empty days between batches at this location for biosecurity.
   downtime_days_required: int('downtime_days_required'),
   last_cleaned_date: date('last_cleaned_date', { mode: 'string' }),
@@ -3978,12 +3988,24 @@ export const requisition = mysqlTable('requisition', {
   company_id: varchar('company_id', { length: 36 }).notNull().references(() => companyMaster.company_id, { onDelete: 'cascade' }),
   farm_id: varchar('farm_id', { length: 36 }).references(() => locationMaster.location_id, { onDelete: 'set null' }),
   req_no: varchar('req_no', { length: 50 }).notNull().unique(),
-  doc_type: varchar('doc_type', { length: 40 }).notNull().default('ITEM'), // ITEM, FA, SERVICE
-  status: varchar('status', { length: 30 }).notNull().default('DRAFT'), // DRAFT, PENDING_APPROVAL, APPROVED, REJECTED
+  doc_type: varchar('doc_type', { length: 40 }).notNull().default('ITEM'), // ITEM, FA, SERVICE, FEED
+  status: varchar('status', { length: 30 }).notNull().default('DRAFT'), // DRAFT, AUTO_DRAFT, PENDING_APPROVAL, APPROVED, REJECTED
   required_date: date('required_date', { mode: 'string' }),
   justification: text('justification'),
   approval_request_id: varchar('approval_request_id', { length: 36 }).references(() => approvalRequest.request_id, { onDelete: 'set null' }),
   linked_po_no: varchar('linked_po_no', { length: 50 }),
+  // Feed requisition header (Requisition and Loading Sheet §1). Null on ITEM/FA/SERVICE documents.
+  requisition_type: varchar('requisition_type', { length: 20 }), // FEED_FORECAST, MANUAL (row 7)
+  source: varchar('source', { length: 30 }), // AUTO_FORECAST, MANUAL_ENTRY, STOCK_TAKE_TRIGGERED, DIET_CHANGE_UPCOMING (row 8)
+  purpose: varchar('purpose', { length: 30 }), // INTERNAL_TRANSFER (row 31)
+  supply_source: varchar('supply_source', { length: 20 }), // MILL (row 30)
+  priority: varchar('priority', { length: 30 }), // row 34
+  forecast_run_key: varchar('forecast_run_key', { length: 64 }), // Engine Step 9 "Preserve run ID"
+  production_date: date('production_date', { mode: 'string' }),
+  submission_deadline: date('submission_deadline', { mode: 'string' }), // row 35
+  remarks: text('remarks'), // row 36
+  approved_by: varchar('approved_by', { length: 36 }), // row 37
+  approved_at: timestamp('approved_at', { mode: 'string' }), // row 38
   created_by: varchar('created_by', { length: 36 }),
   updated_by: varchar('updated_by', { length: 36 }),
   created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
@@ -4001,6 +4023,25 @@ export const requisitionLine = mysqlTable('requisition_line', {
   quantity: decimal('quantity', { precision: 18, scale: 4 }).notNull(),
   uom: varchar('uom', { length: 20 }).notNull(),
   est_rate: decimal('est_rate', { precision: 18, scale: 6 }),
+  // Feed line (Requisition and Loading Sheet §2). `quantity` is Requested Qty KG.
+  destination_location_id: varchar('destination_location_id', { length: 36 }).references(() => locationMaster.location_id, { onDelete: 'set null' }),
+  source_type: varchar('source_type', { length: 10 }), // SILO, STORE
+  feed_type: varchar('feed_type', { length: 10 }), // BULK, BAGGED
+  is_next_diet: boolean('is_next_diet').default(false).notNull(),
+  days_before_diet_change: int('days_before_diet_change'),
+  lifecycle_ref_id: varchar('lifecycle_ref_id', { length: 36 }),
+  system_balance_kg: decimal('system_balance_kg', { precision: 18, scale: 4 }),
+  daily_requirement_kg: decimal('daily_requirement_kg', { precision: 18, scale: 4 }),
+  days_remaining: int('days_remaining'),
+  first_shortage_date: date('first_shortage_date', { mode: 'string' }),
+  unrounded_need_kg: decimal('unrounded_need_kg', { precision: 18, scale: 4 }),
+  recommended_qty_kg: decimal('recommended_qty_kg', { precision: 18, scale: 4 }),
+  bag_count: int('bag_count'),
+  proposed_delivery_date: date('proposed_delivery_date', { mode: 'string' }),
+  needs_silo_changeover: boolean('needs_silo_changeover').default(false).notNull(),
+  // Ruling M9: set when the farm hand-edits a drafted quantity, so an
+  // auto-draft rerun (Task 8) keeps this line instead of overwriting it.
+  quantity_edited: boolean('quantity_edited').default(false).notNull(),
   created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
 });
 
