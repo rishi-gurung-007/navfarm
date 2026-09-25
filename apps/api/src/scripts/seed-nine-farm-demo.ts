@@ -849,8 +849,11 @@ async function run() {
         // role. Renumbering is therefore free. What it is not is
         // in-place: upsertLocation keys on location_code, so a database that
         // already holds the shed-stemmed silos gets the new ones inserted
-        // alongside them and the sheds repointed. The old rows have to be
-        // retired by hand, or the demo reseeded from empty.
+        // alongside them, and each shed a second silo_shed_link row beside the
+        // old silo's — nothing is repointed, since the link table only ever
+        // adds. The old silos and their links have to be retired by hand (two
+        // silos on one shed holding the same feed is what D9 forbids), or the
+        // demo reseeded from empty.
         //
         // shed_id is null for the same reason the parent moved: the silo is not
         // inside a shed. warehouse_id stays self-referential — a silo is a
@@ -879,12 +882,15 @@ async function run() {
         // gives each shed one silo of its own; the link table is what allows a
         // second to be attached later without the first being forgotten.
         //
-        // INSERT IGNORE leans on uq_silo_shed_link so a re-run over a database
-        // that already holds the pair leaves it alone, the same way every other
-        // write in this script picks up where an earlier one stopped.
+        // A re-run over a database that already holds the pair hits
+        // uq_silo_shed_link and the no-op update leaves the row as it was, the
+        // same way every other write in this script picks up where an earlier
+        // one stopped (and as seed-dev-tenant.ts writes the link). Not INSERT
+        // IGNORE: that would also swallow a foreign-key or NOT NULL failure and
+        // leave a shed silently without its silo.
         if (write) {
           await db.query(
-            'INSERT IGNORE INTO silo_shed_link (link_id, tenant_id, company_id, silo_id, shed_id) VALUES (?, ?, ?, ?, ?)',
+            'INSERT INTO silo_shed_link (link_id, tenant_id, company_id, silo_id, shed_id) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE silo_id = silo_id',
             [randomUUID(), scope.tenant_id, scope.company_id, silo.placed.id, shed.placed.id],
           );
         }

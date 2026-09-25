@@ -2,12 +2,13 @@ import { BadRequestException, ConflictException, NotFoundException } from '@nest
 import { Test, TestingModule } from '@nestjs/testing';
 import { ClsService } from 'nestjs-cls';
 import { transactionCls, useFarmScope } from '../../../test-utils/transaction-cls';
-import { buildInputBatches, FeedForecastService, projectSegments, resolveShed, siloInput, StageInfo } from './feed-forecast.service';
+import { buildInputBatches, FeedForecastService, locationLobConditions, projectSegments, resolveShed, siloInput, StageInfo } from './feed-forecast.service';
 import { InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
 import { SiloFeedService } from '../silo-feed/silo-feed.service';
 import { buildFeedForecast, ForecastInput } from './feed-forecast.engine';
 import { activeFarmOfCompany, FARM_SCOPE_KEY, farmScope } from '../../../common/farm-scope';
 import * as schema from '../../../core/database/schema';
+import { MySqlDialect } from 'drizzle-orm/mysql-core';
 
 // The engine has its own spec (feed-forecast.engine.spec.ts) against the
 // workbook's worked example; here it is a spy, so these tests pin only what the
@@ -547,5 +548,25 @@ describe('siloInput', () => {
     expect(() => siloInput({ siloId: 'S', siloCode: 'SILO-1' }, { item_id: 'I', on_hand_qty: 10, uoms: ['KG', 'BAG'] })).toThrow(
       new ConflictException("Silo 'SILO-1' holds its feed in BAG, not KG — the forecast cannot add bags to kilograms."),
     );
+  });
+});
+
+describe('locationLobConditions', () => {
+  const render = (conds: ReturnType<typeof locationLobConditions>) => {
+    const dialect = new MySqlDialect();
+    return conds.map((c) => dialect.sqlToQuery(c));
+  };
+
+  it('keeps a restricted caller on its LOB but also admits LOB-less locations (a farm STORE may carry none)', () => {
+    const [q] = render(locationLobConditions({ farmId: 'farm-A', restricted: true, companyId: 'comp-1', lobId: 'lob-1' }));
+    expect(q.sql).toMatch(/`lob_id` = \?/);
+    expect(q.sql).toMatch(/`lob_id` is null/);
+    expect(q.sql.toLowerCase()).toContain(' or ');
+    expect(q.params).toEqual(['lob-1']);
+  });
+
+  it('adds nothing for an unrestricted caller or one with no LOB', () => {
+    expect(locationLobConditions({ farmId: 'farm-A', restricted: false, companyId: 'comp-1', lobId: 'lob-1' })).toEqual([]);
+    expect(locationLobConditions({ farmId: 'farm-A', restricted: true, companyId: 'comp-1', lobId: null })).toEqual([]);
   });
 });

@@ -10,10 +10,10 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-25-feed-forecast-design.md` (decisions D1–D15 are referenced by number below).
 
-## Status as of 2026-09-25 20:16
+## Status as of 2026-09-25 (after the Task 9 fix round)
 
-Tasks 1–9 have landed. **Tasks 1–8 were tracked by commit, not by ticking the
-boxes below** — the boxes in those sections are still unticked and should not be
+Tasks 1–9 are committed. **They were tracked by commit, not by ticking the
+boxes below** — the boxes in Tasks 1–8 are still unticked and should not be
 read as work outstanding. The commits are:
 
 | Task | Commit |
@@ -25,14 +25,17 @@ read as work outstanding. The commits are:
 | 5 Per-row feed lines | `98bf750` |
 | 6 Forecast engine | `98ef76b`, `db59c26` |
 | 7 `GET /feed-forecast` | `58190ed`, `b06441e` |
-| 8 Web report | `605c02c` |
-| — review fix rounds | `17f1b93`, `2f58a97` |
-| 9 Seeds/demo on the link table, drop `feed_silo_id` | `ab7625e` |
+| 8 Web report | `605c02c`, fix rounds `17f1b93`, `2f58a97` |
+| 9 Seeds/demo on the link table, drop `feed_silo_id` | `ab7625e`, plus the fix round `fix(demo): place demo batches in a shed whose silo holds their feed` |
 
-**Only Task 10 remains**, and it is blocked on Rishi: Step 1 is
-`pnpm nx run api:db-rebuild-demo -- --apply`, which an agent must not run.
-Nothing in Tasks 1–9 has been verified against MySQL yet — that is what Task 10
-is for, and until it runs the feature is green-suite-only (`CLAUDE.md`).
+**Live MySQL checks done so far:** Task 1's link backfill on `nf_devco` —
+53 `silo_shed_link` rows for 53 previously pointed sheds (53 = 53); Tasks 7
+and 8 — `GET /feed-forecast` called against `nf_devco` with the silo and store
+balances it reported matching `inventory_ledger`.
+
+**Remaining: Task 10.** Rishi rebuilds the demo (Step 1,
+`pnpm nx run api:db-rebuild-demo -- --apply`, which an agent must not run);
+the controller then verifies Steps 2–4 against MySQL.
 
 ## Global Constraints
 
@@ -467,7 +470,7 @@ ALTER TABLE `location_master` DROP COLUMN `feed_silo_id`;
 
 - [ ] **Step 1:** Ask Rishi to run `pnpm nx run api:db-rebuild-demo -- --apply`.
 - [ ] **Step 2: Links and items:**
-`SELECT COUNT(*) FROM nf_devco.silo_shed_link;` → 52. For VIL100: silo, linked shed, current item from `inventory_ledger` (sum of `remaining_quantity` by warehouse and item where positive).
+`SELECT COUNT(*) FROM nf_devco.silo_shed_link;` → equals the number of seeded shed→silo pairs (53 on nf_devco before the rebuild; recheck after). For VIL100: silo, linked shed, current item from `inventory_ledger` (sum of `remaining_quantity` by warehouse and item where positive).
 - [ ] **Step 3: Hand-compute one row.** For VIL100's first shed: heads (`batch_header.closing_quantity`), day of stage from `scheduler_header.effective_from`, the lifecycle row's kg and wastage, the silo balance; compute demand, days left, run-down, refill, required-on by hand; compare with `GET /feed-forecast` for the same range. They must match exactly.
 - [ ] **Step 4: Posting draws from the right silo.** Attach a second silo to a VIL100 shed, transfer a different feed item into it, post a daily feed entry for that item, and confirm the negative ledger row's `warehouse_id` is that silo. Try transferring an item another silo on the same shed already holds → refused with the D9 message.
 - [ ] **Step 5:** Write `docs/VERIFICATION-2026-09-25-feed-forecast-a.md` (queries, outputs, the hand calculation) and add a `docs/decisions.md` entry summarising D1–D15.

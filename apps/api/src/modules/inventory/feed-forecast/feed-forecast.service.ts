@@ -10,6 +10,19 @@ import { FeedRow, stageDayRange } from '../../production/lifecycle/feed-row-days
 import { buildFeedForecast, ForecastFlag, ForecastInput, ForecastRow } from './feed-forecast.engine';
 import { QueryFeedForecastDto } from './dto/feed-forecast.dto';
 
+/**
+ * The LOB bound on the forecast's location read for a restricted
+ * (OPERATIONAL_ADMIN) caller. A location with no lob_id belongs to every LOB —
+ * a farm STORE is often created without one — so it is admitted alongside the
+ * caller's own, the same rule assertLocationOnActiveFarm (common/farm-scope.ts)
+ * applies; a strict equality silently dropped such a store and its feed.
+ */
+export function locationLobConditions(scope: FarmScope) {
+  return scope.restricted && scope.lobId
+    ? [or(eq(schema.locationMaster.lob_id, scope.lobId), isNull(schema.locationMaster.lob_id))!]
+    : [];
+}
+
 /** Workbook checkpoint 15: the forecast looks at most 45 days past `from`. */
 export const MAX_SPAN_DAYS = 45;
 const DEFAULT_SPAN_DAYS = 7;
@@ -448,7 +461,7 @@ export class FeedForecastService {
           isNull(schema.locationMaster.deleted_at),
           // Fix round 2, finding 4: a restricted (OPERATIONAL_ADMIN) caller's
           // read is bounded by LOB everywhere else — this one had been left out.
-          ...(scope.restricted && scope.lobId ? [eq(schema.locationMaster.lob_id, scope.lobId)] : []),
+          ...locationLobConditions(scope),
         ),
       );
     const locationById = new Map(locations.map((l) => [l.location_id, l]));

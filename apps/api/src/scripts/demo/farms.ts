@@ -250,7 +250,7 @@ interface BreedRow {
  * Reads the nine farms and everything hanging off them in a handful of
  * queries, and refuses — never guesses — on a farm the seed has not built.
  */
-export async function resolveDemoFarms(db: Db, companyId: string, profile: VolumeProfileName): Promise<DemoFarm[]> {
+export async function resolveDemoFarms(db: Db, tenantId: string, companyId: string, profile: VolumeProfileName): Promise<DemoFarm[]> {
   const farmRows = await db
     .select({
       location_id: schema.locationMaster.location_id,
@@ -295,13 +295,14 @@ export async function resolveDemoFarms(db: Db, companyId: string, profile: Volum
   // Which silos each shed draws from (0114 silo_shed_link; spec D7). Read as a
   // second query rather than joined into `descendants` because the relation is
   // many-to-many: the join would repeat a shed row once per link and so
-  // multiply its pens into the map built below.
+  // multiply its pens into the map built below. Bounded by tenant as well as
+  // by shed, as the feed forecast's own read of the table is.
   const shedIds = descendants.filter((d) => d.location_type === 'SHED').map((d) => d.location_id);
   const siloLinks = shedIds.length
     ? await db
       .select({ silo_id: schema.siloShedLink.silo_id, shed_id: schema.siloShedLink.shed_id })
       .from(schema.siloShedLink)
-      .where(inArray(schema.siloShedLink.shed_id, shedIds))
+      .where(and(eq(schema.siloShedLink.tenant_id, tenantId), inArray(schema.siloShedLink.shed_id, shedIds)))
     : [];
   const siloIdsByShed = new Map<string, string[]>();
   for (const link of siloLinks) {
