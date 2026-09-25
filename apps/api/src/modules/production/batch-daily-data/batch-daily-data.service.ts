@@ -17,6 +17,7 @@ import { BatchService, type UserContext } from '../batch/batch.service';
 import { BatchTransferService } from '../batch/batch-transfer.service';
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
 import { AnimalMovementLogService } from '../../piggery/animal-movement-log/animal-movement-log.service';
+import { SiloFeedService } from '../../inventory/silo-feed/silo-feed.service';
 
 const toMysqlTimestamp = (date: Date = new Date()) =>
   date.toISOString().slice(0, 19).replace('T', ' ');
@@ -45,6 +46,7 @@ export class BatchDailyDataService {
     private readonly batchTransferService: BatchTransferService,
     private readonly glPostingService: GlPostingService,
     private readonly movementLog: AnimalMovementLogService,
+    private readonly siloFeedService: SiloFeedService,
   ) {}
 
   private get db(): MySql2Database<typeof schema> {
@@ -274,8 +276,11 @@ export class BatchDailyDataService {
           line.line_type === 'CONSUMPTION'
             ? await this.resolveConsumptionWarehouse(
                 header.location_id,
+                line.item_id,
                 line.activity_name,
                 batchRow?.farm_id ?? null,
+                header.company_id,
+                tenantId,
               )
             : undefined;
         const updated = await this.batchService.addTransaction(
@@ -651,13 +656,16 @@ export class BatchDailyDataService {
    * Where a scheduled CONSUMPTION line's stock is actually drawn from.
    *
    * The client's feed flow (2026-09-24) is farm STORE -> (stock transfer) ->
-   * SILO -> (daily entry) -> shed, so a shed's feed is whatever its own silo
-   * holds — location_master.feed_silo_id, written by the "Attached Sheds"
-   * multi-select on the silo form. Data entry happens at PEN level on some
-   * farms, and a silo is attached to the shed above the pen, never to the pen
-   * itself, so a PEN walks up its parent first.
+   * SILO -> (daily entry) -> shed. A shed may now draw from several silos
+   * (silo_shed_link, Task 1), so the source is whichever of this shed's
+   * silos currently holds the item this line is posting (D9: a silo holds
+   * one feed item, so at most one of them can) — SiloFeedService.currentItems
+   * is the single place that reads silo residency. Data entry happens at PEN
+   * level on some farms, and a silo is attached to the shed above the pen,
+   * never to the pen itself, so a PEN walks up its parent first.
    *
-   * With no silo attached the farm's STORE is the source, and that is a real
+   * With no attached silo holding this item — none linked at all, or none of
+   * them carrying it — the farm's STORE is the source, and that is a real
    * answer rather than a stopgap: bagged feed (location_master.feed_in_bags,
    * carried per location on both client templates) genuinely is carried out
    * of the store, never blown into a silo. It also keeps every farm posting
@@ -669,15 +677,17 @@ export class BatchDailyDataService {
    */
   private async resolveConsumptionWarehouse(
     locationId: string | null,
+    itemId: string,
     activityName: string | null,
     batchFarmId: string | null,
+    companyId: string,
+    tenantId: string,
   ): Promise<string> {
     const columns = {
       location_id: schema.locationMaster.location_id,
       location_type: schema.locationMaster.location_type,
       parent_location_id: schema.locationMaster.parent_location_id,
       farm_id: schema.locationMaster.farm_id,
-      feed_silo_id: schema.locationMaster.feed_silo_id,
     };
     // The farm's own store, which every fallback below ends at.
     const storeOfFarm = async (farmId: string | null) => {
@@ -730,7 +740,18 @@ export class BatchDailyDataService {
       if (parent) shed = parent;
     }
 
-    if (shed.feed_silo_id) return shed.feed_silo_id;
+    // Every silo linked to this shed (there may be several, or none) — the
+    // source is whichever one currently holds the item being posted.
+    const siloLinks = await this.db
+      .select({ silo_id: schema.siloShedLink.silo_id })
+      .from(schema.siloShedLink)
+      .where(eq(schema.siloShedLink.shed_id, shed.location_id));
+    if (siloLinks.length > 0) {
+      const siloIds = siloLinks.map((link) => link.silo_id);
+      const residents = await this.siloFeedService.currentItems(siloIds, companyId, tenantId);
+      const holdingSiloId = siloIds.find((siloId) => residents.get(siloId)?.item_id === itemId);
+      if (holdingSiloId) return holdingSiloId;
+    }
 
     // farm_id is stamped on every descendant of a FARM (see the location
     // seeder); a shed sitting directly under the farm with no farm_id falls
@@ -739,7 +760,7 @@ export class BatchDailyDataService {
     if (store) return store;
 
     throw new BadRequestException(
-      `'${activityName ?? 'This line'}' cannot be posted — no silo is attached to this batch's shed and its farm has no store to draw from. Attach a silo to the shed, or create the farm's store location.`,
+      `'${activityName ?? 'This line'}' cannot be posted — no silo attached to this batch's shed holds this item, and its farm has no store to draw from. Attach or fill a silo for this item, or create the farm's store location.`,
     );
   }
 
