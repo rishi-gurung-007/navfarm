@@ -813,6 +813,13 @@
       "when": 1790617200000,
       "tag": "0115_drop_feed_silo_id",
       "breakpoints": true
+    },
+    {
+      "idx": 116,
+      "version": "5",
+      "when": 1790703600000,
+      "tag": "0116_lifecycle_feed_rows_stage_days",
+      "breakpoints": true
     }
   ]
 }
