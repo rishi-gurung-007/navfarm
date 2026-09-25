@@ -154,11 +154,13 @@ function formatIsoUtc(ms: number): string {
   return `${y}-${m}-${day}`;
 }
 
-function addDays(iso: string, n: number): string {
+// Exported for Plan B's requisition rules (feed-requisition.rules.ts, ruling L12) so calendar-date arithmetic has one
+// implementation, not a second copy.
+export function addDays(iso: string, n: number): string {
   return formatIsoUtc(parseIsoUtc(iso) + n * 86_400_000);
 }
 
-function diffDays(a: string, b: string): number {
+export function diffDays(a: string, b: string): number {
   return Math.round((parseIsoUtc(b) - parseIsoUtc(a)) / 86_400_000);
 }
 
