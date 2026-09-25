@@ -1079,7 +1079,6 @@ export const translations = {
     mdFilterShed: "Shed",
     mdFilterPen: "Pen",
     mdNoMatches: "No matches",
-    mdAnotherRecord: "another record",
     allNob: "All Nature of Business",
     allLob: "All Lines of Business",
     selectNobFirst: "Select NOB first…",

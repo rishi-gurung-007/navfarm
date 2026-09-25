@@ -132,13 +132,21 @@ const location: MasterDataConfig = {
     { key: "silo_capacity_kg", label: "Silo Capacity", type: "number", min: 0, max: 999999.99, step: "0.01", visibleWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, requiredWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, helpText: "Required when Storage Location is SILO.", section: "Identification" },
     { key: "silo_capacity_uom", label: "Silo Capacity UOM", type: "select", options: ["KG", "TON"].map((v) => ({ value: v, label: v })), defaultValue: "KG", visibleWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, requiredWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, helpText: "The unit the capacity above is entered in. The capacity is stored in kilograms whichever unit is chosen — a tonne figure is converted on save.", section: "Identification" },
     { key: "silo_reorder_days", label: "Silo Reorder Days", type: "number", min: 0, max: 365, step: "1", visibleWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, requiredWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, helpText: "Required when Storage Location is SILO.", section: "Identification" },
-    // Which sheds this silo feeds. One silo may serve many sheds, but a shed
-    // draws from exactly one silo, so the link is a feed_silo_id column on the
-    // SHED row (schema.ts) rather than a join table — one-silo-per-shed is
-    // then structurally true instead of a rule a validator has to keep
-    // re-checking. This multi-select is a view of that column read from the
-    // silo's side: ticking a shed writes this silo into that shed's
-    // feed_silo_id, unticking clears it.
+    // Feed Forecast's two per-farm timing offsets (spec D3): delivery distance
+    // is per farm, so both live on the FARM row rather than on each silo.
+    { key: "feed_refill_buffer_days", label: "Feed Refill Buffer (Days)", type: "number", min: 0, max: 30, step: "1", nativeNumber: true,
+      visibleWhen: { anyOf: [{ key: "location_type", equals: "FARM" }] }, section: "Identification",
+      helpText: "Feed Forecast: the refill date is this many days before a silo runs out." },
+    { key: "feed_lead_time_days", label: "Feed Lead Time (Days)", type: "number", min: 0, max: 30, step: "1", nativeNumber: true,
+      visibleWhen: { anyOf: [{ key: "location_type", equals: "FARM" }] }, section: "Identification",
+      helpText: "Feed Forecast: the order is due this many days before the refill date. 0 for feed from the internal mill." },
+    // Which sheds this silo feeds. One silo may serve many sheds, and — since
+    // silo_shed_link replaced the old one-silo-per-shed feed_silo_id column
+    // (spec D7) — a shed may now draw from several silos too, one per feed
+    // item; D9 (never two silos feeding the same shed the same item) is
+    // enforced on the API side rather than by narrowing this picker. This
+    // multi-select is a view of that link table read from the silo's side:
+    // ticking a shed links it to this silo, unticking removes the link.
     //
     // dependsOn parent_location_id with {value} in the path scopes the list to
     // the farm chosen as this silo's parent, so a silo can never be attached
@@ -155,12 +163,8 @@ const location: MasterDataConfig = {
       dependsOn: "parent_location_id", requiresParent: true,
       visibleWhen: { anyOf: [{ key: "location_type", equals: "SILO" }] },
       emptyMultipleLabel: "None attached",
-      // A shed another silo already feeds is listed greyed with that silo
-      // named, rather than offered and then refused on save (Rishi,
-      // 2026-09-24: "Attached to", worded to be read at a glance).
-      disableOptionWhen: { key: "feed_silo_id", exceptMatchingField: "location_id", reasonKey: "feed_silo_name", reasonPrefix: "Attached to " },
       section: "Identification",
-      helpText: "The sheds on this silo's parent farm that take their feed from it. A shed draws from one silo only; a shed already attached to another silo is shown greyed out, and has to be detached from that silo first.",
+      helpText: "The sheds on this silo's parent farm that may take their feed from it. A shed can draw from several silos, one per feed item; two silos feeding the same shed may not hold the same feed.",
     },
     { key: "downtime_days_required", label: "Downtime Days Required", type: "number", min: 0, max: 365, step: "1", helpText: "Empty days required between batches for biosecurity.", section: "Identification" },
     // The silo or store's own name-number. storage_type says which kind of

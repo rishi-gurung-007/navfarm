@@ -3,6 +3,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ClsService } from 'nestjs-cls';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
+import { SiloFeedService } from '../../inventory/silo-feed/silo-feed.service';
 import { LocationService, siloCapacityForDisplay, siloCapacityToKg } from './location.service';
 
 describe('LocationService canonical hierarchy', () => {
@@ -10,8 +11,13 @@ describe('LocationService canonical hierarchy', () => {
   const selectResults: any[][] = [];
   const txInsert = jest.fn();
   const txUpdate = jest.fn();
+  const txDelete = jest.fn();
   const audit = { log: jest.fn() };
   const numberSeries = { generateNext: jest.fn(), lockSeries: jest.fn() };
+  // D9 (which item may live where) is SiloFeedService's rule, not
+  // LocationService's — these tests only need to know it was asked, and
+  // whether it allowed or refused, not the item logic behind that answer.
+  const siloFeedService = { assertAttachable: jest.fn(), currentItems: jest.fn() };
 
   const makeSelectBuilder = (rows: any[]) => {
     const builder: any = {};
@@ -32,6 +38,7 @@ describe('LocationService canonical hierarchy', () => {
   const tx = {
     insert: txInsert,
     update: txUpdate,
+    delete: txDelete,
     select: jest.fn(() => makeSelectBuilder(selectResults.shift() || [])),
   };
   const db = {
@@ -80,9 +87,12 @@ describe('LocationService canonical hierarchy', () => {
     jest.clearAllMocks();
     txInsert.mockImplementation(() => ({ values: jest.fn().mockResolvedValue({}) }));
     txUpdate.mockImplementation(() => ({ set: jest.fn(() => ({ where: jest.fn().mockResolvedValue({}) })) }));
+    txDelete.mockImplementation(() => ({ where: jest.fn().mockResolvedValue({}) }));
     audit.log.mockResolvedValue({});
     numberSeries.generateNext.mockResolvedValue('FARM-001');
     numberSeries.lockSeries.mockResolvedValue({ series_id: 'series-1', seq_length: 3 });
+    siloFeedService.assertAttachable.mockResolvedValue(undefined);
+    siloFeedService.currentItems.mockResolvedValue(new Map());
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -90,6 +100,7 @@ describe('LocationService canonical hierarchy', () => {
         { provide: ClsService, useValue: { get: jest.fn(() => db) } },
         { provide: AuditLogService, useValue: audit },
         { provide: NumberSeriesService, useValue: numberSeries },
+        { provide: SiloFeedService, useValue: siloFeedService },
       ],
     }).compile();
     service = module.get(LocationService);
@@ -281,13 +292,49 @@ describe('LocationService canonical hierarchy', () => {
     expect(result.silo_capacity_kg).toBe('40');
   });
 
-  it('attaches the listed sheds by writing feed_silo_id on the shed rows, and detaches the rest', async () => {
+  it('a silo read returns current_feed_item_code and current_feed_item_name from SiloFeedService.currentItems', async () => {
+    selectResults.push(
+      [{
+        location_id: 'silo-1', tenant_id: 'tenant-1', company_id: 'comp-1',
+        location_type: 'SILO', location_code: 'FARM-001/SILO-001',
+      }],
+      [], // no sheds attached
+    );
+    siloFeedService.currentItems.mockResolvedValueOnce(new Map([
+      ['silo-1', { item_id: 'item-1', item_code: 'STARTER', item_description: 'Starter Feed', on_hand_qty: 500 }],
+    ]));
+
+    const result = await service.findOne('silo-1', 'tenant-1');
+
+    expect(siloFeedService.currentItems).toHaveBeenCalledWith(['silo-1'], 'comp-1', 'tenant-1');
+    expect(result.current_feed_item_code).toBe('STARTER');
+    expect(result.current_feed_item_name).toBe('Starter Feed');
+  });
+
+  it('an empty silo reads current_feed_item_code and current_feed_item_name as null', async () => {
+    selectResults.push(
+      [{
+        location_id: 'silo-1', tenant_id: 'tenant-1', company_id: 'comp-1',
+        location_type: 'SILO', location_code: 'FARM-001/SILO-001',
+      }],
+      [],
+    );
+    siloFeedService.currentItems.mockResolvedValueOnce(new Map([['silo-1', null]]));
+
+    const result = await service.findOne('silo-1', 'tenant-1');
+
+    expect(result.current_feed_item_code).toBeNull();
+    expect(result.current_feed_item_name).toBeNull();
+  });
+
+  it('links the listed sheds in silo_shed_link, after SiloFeedService clears the attach', async () => {
     selectResults.push(
       [company], [siloType], [farmParent()], [uom], [series],
       [], // no existing SILO siblings
       [shedRow()], // the attached_sheds lookup
-      [{ location_id: 'silo-1', location_code: 'FARM-001/SILO-001', location_type: 'SILO', location_level: 2 }],
-      [{ location_id: 'shed-1' }], // read back off the shed rows
+      [], // no existing links yet for this brand-new silo
+      [{ location_id: 'silo-1', location_code: 'FARM-001/SILO-001', location_type: 'SILO', location_level: 2, company_id: 'comp-1' }],
+      [{ shed_id: 'shed-1' }], // read back off silo_shed_link
     );
 
     const result = await service.create({
@@ -297,15 +344,61 @@ describe('LocationService canonical hierarchy', () => {
       attached_sheds: ['shed-1'],
     }, 'tenant-1');
 
-    // Two writes on the shed rows, in the same transaction as the silo insert:
-    // detach whatever used to point here, then attach what was listed.
-    expect(txUpdate).toHaveBeenCalledTimes(2);
-    expect((txUpdate.mock.results[0].value.set as jest.Mock).mock.calls[0][0])
-      .toEqual(expect.objectContaining({ feed_silo_id: null }));
-    expect((txUpdate.mock.results[1].value.set as jest.Mock).mock.calls[0][0].feed_silo_id)
-      .toBe(inserted().location_id);
+    // D9 (may this silo feed this shed the same item another silo already
+    // does?) is SiloFeedService's call, made once per attach, not assumed.
+    expect(siloFeedService.assertAttachable).toHaveBeenCalledWith({
+      siloId: inserted().location_id, shedIds: ['shed-1'], companyId: 'comp-1', tenantId: 'tenant-1',
+    });
+    // One delete (stale links) and one insert (missing links) on the link
+    // table, in the same transaction as the silo insert.
+    expect(txDelete).toHaveBeenCalledTimes(1);
+    expect(txInsert).toHaveBeenCalledTimes(2); // the location row, then the silo_shed_link row
     expect(db.transaction).toHaveBeenCalledTimes(1);
     expect(result.attached_sheds).toEqual(['shed-1']);
+  });
+
+  it('allows attaching a shed to a second silo — a shed may now draw from several silos, one per feed item (D7)', async () => {
+    // The old model refused this outright, reading the shed's own
+    // feed_silo_id; that check is gone from syncAttachedSheds. Whether two
+    // silos may share a shed is SiloFeedService.assertAttachable's call now
+    // (D9, item-based), and it is asked, not assumed to refuse.
+    selectResults.push(
+      [company], [siloType], [farmParent()], [uom], [series], [],
+      [shedRow()],
+      [], // no existing links yet for this silo
+      [{ location_id: 'silo-2', location_code: 'FARM-001/SILO-002', location_type: 'SILO', location_level: 2, company_id: 'comp-1' }],
+      [{ shed_id: 'shed-1' }],
+    );
+
+    const result = await service.create({
+      company_id: 'comp-1', parent_location_id: 'farm-1',
+      location_name: 'Feed Silo 2', location_address: 'Farm Road', location_type: 'SILO',
+      capacity_uom: 'KG', silo_capacity_kg: 2000, silo_capacity_uom: 'KG', silo_reorder_days: 7,
+      attached_sheds: ['shed-1'],
+    }, 'tenant-1');
+
+    expect(siloFeedService.assertAttachable).toHaveBeenCalledTimes(1);
+    expect(result.attached_sheds).toEqual(['shed-1']);
+  });
+
+  it("propagates SiloFeedService's refusal without writing anything to silo_shed_link", async () => {
+    selectResults.push(
+      [company], [siloType], [farmParent()], [uom], [series], [],
+      [shedRow()],
+    );
+    siloFeedService.assertAttachable.mockRejectedValueOnce(new BadRequestException(
+      "Cannot attach silo 'FARM-001/SILO-002' to shed 'FARM-001/SHED-001' — silo 'FARM-001/SILO-001' already draws 'STARTER' from there.",
+    ));
+
+    await expect(service.create({
+      company_id: 'comp-1', parent_location_id: 'farm-1',
+      location_name: 'Feed Silo 2', location_address: 'Farm Road', location_type: 'SILO',
+      capacity_uom: 'KG', silo_capacity_kg: 2000, silo_capacity_uom: 'KG', silo_reorder_days: 7,
+      attached_sheds: ['shed-1'],
+    }, 'tenant-1')).rejects.toThrow('already draws');
+
+    expect(txDelete).not.toHaveBeenCalled();
+    expect(txInsert).toHaveBeenCalledTimes(1); // the location row only — nothing on the link table
   });
 
   it('refuses to attach a location that is not a SHED', async () => {
@@ -334,20 +427,6 @@ describe('LocationService canonical hierarchy', () => {
       capacity_uom: 'KG', silo_capacity_kg: 2000, silo_capacity_uom: 'KG', silo_reorder_days: 7,
       attached_sheds: ['shed-1'],
     }, 'tenant-1')).rejects.toThrow('not on the same farm');
-  });
-
-  it('refuses a shed that already draws from another silo — a shed draws from exactly one', async () => {
-    selectResults.push(
-      [company], [siloType], [farmParent()], [uom], [series], [],
-      [{ ...shedRow(), feed_silo_id: 'silo-other' }],
-    );
-
-    await expect(service.create({
-      company_id: 'comp-1', parent_location_id: 'farm-1',
-      location_name: 'Feed Silo 2', location_address: 'Farm Road', location_type: 'SILO',
-      capacity_uom: 'KG', silo_capacity_kg: 2000, silo_capacity_uom: 'KG', silo_reorder_days: 7,
-      attached_sheds: ['shed-1'],
-    }, 'tenant-1')).rejects.toThrow('exactly one silo');
   });
 
   it('refuses to attach a shed that was never created', async () => {
@@ -409,11 +488,13 @@ describe('LocationService canonical hierarchy', () => {
 
     const result = await service.update('silo-1', { attached_sheds: [] }, 'tenant-1', { userId: 'user-1' });
 
-    // The silo row itself, then the detach. A shed dropped from the list still
-    // points at this silo otherwise, and the set could only ever grow.
-    expect(txUpdate).toHaveBeenCalledTimes(2);
-    expect((txUpdate.mock.results[1].value.set as jest.Mock).mock.calls[0][0])
-      .toEqual(expect.objectContaining({ feed_silo_id: null }));
+    // The silo row itself is one update; detaching everything is a delete on
+    // silo_shed_link, not a second update — a shed dropped from the list still
+    // carries a link otherwise, and the set could only ever grow. An empty
+    // list means no shedIds to validate or clear through SiloFeedService.
+    expect(txUpdate).toHaveBeenCalledTimes(1);
+    expect(txDelete).toHaveBeenCalledTimes(1);
+    expect(siloFeedService.assertAttachable).not.toHaveBeenCalled();
     expect(result.attached_sheds).toEqual([]);
   });
 
@@ -540,6 +621,7 @@ describe('hierarchical location codes', () => {
         { provide: ClsService, useValue: { get: jest.fn() } },
         { provide: AuditLogService, useValue: { log: jest.fn() } },
         { provide: NumberSeriesService, useValue: numberSeries },
+        { provide: SiloFeedService, useValue: { assertAttachable: jest.fn(), currentItems: jest.fn() } },
       ],
     }).compile();
     service = module.get(LocationService);

@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsInt, Min, IsNumber, ValidateIf, IsIn, IsArray } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsInt, Min, Max, IsNumber, ValidateIf, IsIn, IsArray } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import { MasterListQueryDto } from '../../../../common/master-list-query';
 
@@ -129,14 +129,14 @@ export class CreateLocationDto {
   @IsOptional()
   silo_capacity_uom?: 'KG' | 'TON';
 
-  // Not a column. The sheds a silo feeds are recorded on the SHED rows
-  // (location_master.feed_silo_id), because that is the side of the
-  // relationship the cardinality lives on: one silo serves many sheds, a shed
-  // draws from exactly one. The silo form still wants to edit the set from the
-  // silo's side, so this array is a view over those rows — the service writes
-  // feed_silo_id on every shed listed here and clears it on any shed dropped
+  // Not a column. The sheds a silo feeds are recorded in silo_shed_link
+  // (spec D7), a many-to-many table: one silo serves many sheds, and — unlike
+  // the old feed_silo_id column this replaced — a shed may now draw from
+  // several silos too, one per feed item. The silo form still wants to edit
+  // the set from the silo's side, so this array is a view over that table —
+  // the service links every shed listed here and unlinks any shed dropped
   // from the list.
-  @ApiProperty({ description: 'SHED location UUIDs this Silo feeds. Writes feed_silo_id on each listed shed; sheds dropped from the list are detached.', required: false, type: [String] })
+  @ApiProperty({ description: 'SHED location UUIDs this Silo feeds via silo_shed_link. A shed may draw from several silos, one per feed item; sheds dropped from the list are unlinked.', required: false, type: [String] })
   @IsOptional()
   @IsArray()
   @IsUUID('4', { each: true })
@@ -158,6 +158,24 @@ export class CreateLocationDto {
   @IsString()
   @IsOptional()
   storage_name?: string;
+
+  // Spec D3: Feed Forecast's refill date is run-down minus this many days.
+  // Per farm because delivery distance is per farm; applies to FARM rows.
+  @ApiProperty({ description: 'Feed Forecast: the refill date is this many days before a silo runs out. Applies to FARM.', required: false })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(30)
+  feed_refill_buffer_days?: number;
+
+  // Spec D3: Feed Forecast's order-due date is the refill date minus this
+  // many days. 0 for feed made at the farm's own internal mill.
+  @ApiProperty({ description: 'Feed Forecast: the order is due this many days before the refill date. 0 for feed from the internal mill. Applies to FARM.', required: false })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(30)
+  feed_lead_time_days?: number;
 
   @ApiProperty({ description: 'Flexible custom config configurations in JSON format', required: false })
   @IsOptional()
@@ -278,9 +296,9 @@ export class UpdateLocationDto {
   @IsOptional()
   silo_capacity_uom?: 'KG' | 'TON';
 
-  // A view over the SHED rows' feed_silo_id, not a column here; see the
-  // create DTO for why the set is stored on the shed side.
-  @ApiProperty({ description: 'SHED location UUIDs this Silo feeds. Sheds dropped from the list are detached.', required: false, type: [String] })
+  // A view over silo_shed_link, not a column here; see the create DTO for why
+  // the set lives in that table rather than on either row.
+  @ApiProperty({ description: 'SHED location UUIDs this Silo feeds via silo_shed_link. Sheds dropped from the list are unlinked.', required: false, type: [String] })
   @IsOptional()
   @IsArray()
   @IsUUID('4', { each: true })
@@ -302,6 +320,20 @@ export class UpdateLocationDto {
   @IsString()
   @IsOptional()
   storage_name?: string;
+
+  @ApiProperty({ description: 'Feed Forecast: the refill date is this many days before a silo runs out. Applies to FARM.', required: false })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(30)
+  feed_refill_buffer_days?: number;
+
+  @ApiProperty({ description: 'Feed Forecast: the order is due this many days before the refill date. 0 for feed from the internal mill. Applies to FARM.', required: false })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(30)
+  feed_lead_time_days?: number;
 
   @ApiProperty({ required: false })
   @IsBoolean()
@@ -380,22 +412,13 @@ export class QueryLocationDto extends MasterListQueryDto {
   // "exactly one silo" rule showing up in the picker rather than only in the
   // refusal the save would have produced.
   @ApiProperty({
-    description: 'Only SHED locations under this farm that are free to attach to a silo — those with no feed silo yet, '
-      + 'plus (with siloId) the ones the silo being edited already feeds.',
+    description: 'Every active SHED location under this farm — the Attached Sheds picker on the Silo form. A shed may '
+      + 'draw from several silos (D7), so nothing here is narrowed by what another silo already feeds.',
     required: false,
   })
   @IsOptional()
   @IsUUID()
   shedsForSilo?: string;
-
-  @ApiProperty({
-    description: 'Used with shedsForSilo: the silo currently being edited. Its own sheds stay in the list, or editing a '
-      + 'silo would offer a list that drops every attachment it arrived with.',
-    required: false,
-  })
-  @IsOptional()
-  @IsUUID()
-  siloId?: string;
 
   @ApiProperty({ description: 'Only locations without a parent', required: false })
   @IsOptional()
