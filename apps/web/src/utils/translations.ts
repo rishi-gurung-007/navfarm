@@ -1410,6 +1410,7 @@ export const translations = {
     ffNoRows: "No forecast rows for this range.",
     ffFailedToLoad: "Failed to load the feed forecast.",
     ffNotesTitle: "Notes",
+    ffNoteRangeBeforePlanning: "The stock projection starts at the planning date ({{date}}); pick a Date To on or after it to see a run-down date.",
     ffFlagHeadsAssumedFlat: "Head counts are held at the latest posted count; no movements are scheduled.",
     ffFlagBatchShedUnknown: "{{batchNo}} has no shed on record, so its feed is drawn from the farm store.",
     ffFlagNoSiloHoldsItem: "No silo in {{shedCode}} holds {{itemName}}; its feed is drawn from the farm store.",

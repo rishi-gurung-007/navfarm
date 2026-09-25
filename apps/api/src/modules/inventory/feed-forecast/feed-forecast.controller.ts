@@ -23,7 +23,8 @@ export class FeedForecastController {
   @ApiOperation({ summary: "Feed forecast for one farm: each batch's demand, its silo or store, and when that runs down" })
   async get(@Query() query: QueryFeedForecastDto, @Req() req: any) {
     const tenantId = req.user?.tenantId || req['tenantId'];
-    const result = await this.feedForecastService.getForecast(query, tenantId);
+    const userType = req.user?.userType;
+    const result = await this.feedForecastService.getForecast(query, tenantId, userType);
     return {
       success: true,
       message: 'Feed forecast retrieved successfully.',

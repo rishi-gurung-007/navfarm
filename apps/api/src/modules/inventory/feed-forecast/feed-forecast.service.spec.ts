@@ -6,6 +6,7 @@ import { buildInputBatches, FeedForecastService, projectSegments, resolveShed, s
 import { InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
 import { SiloFeedService } from '../silo-feed/silo-feed.service';
 import { buildFeedForecast, ForecastInput } from './feed-forecast.engine';
+import { activeFarmOfCompany } from '../../../common/farm-scope';
 
 // The engine has its own spec (feed-forecast.engine.spec.ts) against the
 // workbook's worked example; here it is a spy, so these tests pin only what the
@@ -14,6 +15,28 @@ import { buildFeedForecast, ForecastInput } from './feed-forecast.engine';
 jest.mock('./feed-forecast.engine', () => ({
   buildFeedForecast: jest.fn(() => ({ rows: [], flags: [] })),
 }));
+
+// activeFarmOfCompany runs a real query against location_master; feed-forecast's
+// own spec doubles it out (farm-scope.spec.ts already proves that query works)
+// so these tests can pin only the service's own routing of the query farmId vs.
+// the header-pinned scope.farmId (fix round 1).
+jest.mock('../../../common/farm-scope', () => ({
+  ...jest.requireActual('../../../common/farm-scope'),
+  activeFarmOfCompany: jest.fn(),
+}));
+
+/** A tenantDb stub answering only the lob_id lookup the OPERATIONAL_ADMIN branch makes. */
+function dbWithFarmLob(lobId: string | null): object {
+  return {
+    select: () => ({
+      from: () => ({
+        where: () => ({
+          limit: async () => (lobId === null ? [] : [{ lob_id: lobId }]),
+        }),
+      }),
+    }),
+  };
+}
 
 const FARM = { id: 'farm-A', code: 'VIL100', name: 'Village 100', companyId: 'comp-1', refillBufferDays: 2, leadTimeDays: 0 };
 
@@ -25,6 +48,7 @@ describe('FeedForecastService', () => {
 
   beforeEach(async () => {
     (buildFeedForecast as jest.Mock).mockClear();
+    (activeFarmOfCompany as jest.Mock).mockReset().mockResolvedValue(true);
     cls = transactionCls({});
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -90,7 +114,14 @@ describe('FeedForecastService', () => {
 
     const result = await service.getForecast({ farmId: 'farm-A' }, 'tenant-1');
 
-    expect(loadInput).toHaveBeenCalledWith(FARM, '2026-09-25', '2026-09-25', '2026-10-02', 'tenant-1');
+    expect(loadInput).toHaveBeenCalledWith(
+      FARM,
+      '2026-09-25',
+      '2026-09-25',
+      '2026-10-02',
+      'tenant-1',
+      { farmId: 'farm-A', restricted: false, companyId: null, lobId: null },
+    );
     expect(buildFeedForecast).toHaveBeenCalledWith(input);
     expect(result).toEqual({
       planningDate: '2026-09-25',
@@ -100,6 +131,69 @@ describe('FeedForecastService', () => {
       rows: [{ batchNo: 'B1' }],
       // The engine's flags, then the loader's own (a batch placed on no known shed).
       flags: [{ kind: 'HEADS_ASSUMED_FLAT', batchNo: 'B1' }, { kind: 'BATCH_SHED_UNKNOWN', batchNo: 'B2' }],
+    });
+  });
+
+  // Fix round 1: only STANDARD_USER is farm-bound on this endpoint. Every
+  // other user type's query farmId must win over whatever the workspace
+  // switcher pinned in x-active-farm-id, and every loader must then see that
+  // chosen farm, not the pinned one.
+  describe('non-STANDARD_USER farm switching', () => {
+    it('an admin pinned to farm A (header) asking for farm B of the same company loads farm B, validated against the company, and every loader sees an effective scope with farmId B', async () => {
+      useFarmScope(cls, { farmId: 'farm-A', restricted: false, companyId: 'comp-1', lobId: null });
+
+      await service.getForecast({ farmId: 'farm-B' }, 'tenant-1', 'TENANT_ADMIN');
+
+      expect(activeFarmOfCompany).toHaveBeenCalledWith(expect.anything(), 'farm-B', 'comp-1', 'tenant-1');
+      expect(loadFarm).toHaveBeenCalledWith('farm-B', 'tenant-1');
+      expect(loadInput).toHaveBeenCalledWith(
+        FARM,
+        expect.any(String),
+        expect.any(String),
+        expect.any(String),
+        'tenant-1',
+        { farmId: 'farm-B', restricted: false, companyId: 'comp-1', lobId: null },
+      );
+    });
+
+    it('an OPERATIONAL_ADMIN asking for a farm of another LOB gets NotFound, before anything is loaded', async () => {
+      const lobCls = transactionCls(dbWithFarmLob('lob-2'));
+      useFarmScope(lobCls, { farmId: 'farm-A', restricted: true, companyId: 'comp-1', lobId: 'lob-1' });
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [
+          FeedForecastService,
+          { provide: ClsService, useValue: lobCls },
+          { provide: InventoryLedgerService, useValue: { getStockBalance: jest.fn() } },
+          { provide: SiloFeedService, useValue: { currentItems: jest.fn() } },
+        ],
+      }).compile();
+      const lobService = module.get(FeedForecastService);
+      const lobLoadFarm = jest.spyOn(lobService as any, 'loadFarm').mockResolvedValue(FARM);
+
+      await expect(lobService.getForecast({ farmId: 'farm-B' }, 'tenant-1', 'OPERATIONAL_ADMIN')).rejects.toThrow(
+        new NotFoundException('Farm not found.'),
+      );
+      expect(lobLoadFarm).not.toHaveBeenCalled();
+    });
+
+    it('a STANDARD_USER asking for another farm still gets NotFound, before anything is loaded', async () => {
+      useFarmScope(cls, { farmId: 'farm-A', restricted: true, companyId: 'comp-1', lobId: 'lob-1' });
+
+      await expect(service.getForecast({ farmId: 'farm-B' }, 'tenant-1', 'STANDARD_USER')).rejects.toThrow(
+        new NotFoundException('Farm not found.'),
+      );
+      expect(loadFarm).not.toHaveBeenCalled();
+      expect(activeFarmOfCompany).not.toHaveBeenCalled();
+    });
+
+    it('an admin asking for a farm of another company gets NotFound, before anything is loaded', async () => {
+      useFarmScope(cls, { farmId: 'farm-A', restricted: false, companyId: 'comp-1', lobId: null });
+      (activeFarmOfCompany as jest.Mock).mockResolvedValueOnce(false);
+
+      await expect(service.getForecast({ farmId: 'farm-C' }, 'tenant-1', 'TENANT_ADMIN')).rejects.toThrow(
+        new NotFoundException('Farm not found.'),
+      );
+      expect(loadFarm).not.toHaveBeenCalled();
     });
   });
 });

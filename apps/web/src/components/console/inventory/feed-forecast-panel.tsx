@@ -15,7 +15,7 @@
  * explicit query param — otherwise an admin with no farm pinned ("All
  * farms") gets the API's 400 "Select a farm." with no way to pick one here.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Loader2, Inbox } from "lucide-react";
 import { api } from "@/services/api-client";
 import { InlineAlert } from "@/components/ui/alert";
@@ -107,7 +107,17 @@ function fmtKg(n: number | null | undefined): string {
 function groupDayFlags(
   flags: Array<{ batchNo: string; stageCode: string; day: number; date: string }>
 ): Array<{ batchNo: string; stageCode: string; dayFrom: number; dayTo: number; dateFrom: string; dateTo: string }> {
-  const sorted = [...flags].sort((a, b) =>
+  // De-duplicate identical (batchNo, stageCode, day) flags first — the engine
+  // can raise the same day more than once (e.g. once per overlapping feed
+  // row candidate), which would otherwise inflate a grouped range.
+  const seen = new Set<string>();
+  const deduped = flags.filter((f) => {
+    const key = `${f.batchNo}:${f.stageCode}:${f.day}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  const sorted = [...deduped].sort((a, b) =>
     a.batchNo !== b.batchNo ? a.batchNo.localeCompare(b.batchNo) :
     a.stageCode !== b.stageCode ? a.stageCode.localeCompare(b.stageCode) :
     a.day - b.day
@@ -170,6 +180,14 @@ function buildFlagSentences(flags: ForecastFlag[], t: (key: any, vars?: any) => 
 
 export default function FeedForecastPanel() {
   const { t } = useLanguage();
+  // t() is read inside the fetch effect's error handler, but the effect must
+  // not re-run just because the translation function's identity changed
+  // (some callers, including the test mock, hand back a new `t` on every
+  // render) — a ref keeps the effect's own dependency list to the request's
+  // actual inputs (farmId/dateFrom/dateTo) instead of looping on renders.
+  const tRef = useRef(t);
+  tRef.current = t;
+
   const user = getStoredUser();
   const isStandardUser = user?.userType === "STANDARD_USER";
 
@@ -193,11 +211,21 @@ export default function FeedForecastPanel() {
       .catch(() => undefined);
   }, [isStandardUser]);
 
+  // If the farm pinned by the workspace switcher isn't one of this user's
+  // selectable farms (a stale pin, or a farm outside the current company),
+  // fall back to no selection rather than leaving the select showing a value
+  // that matches none of its options.
+  useEffect(() => {
+    if (isStandardUser || !selectedFarmId || farms.length === 0) return;
+    if (!farms.some((f) => f.location_id === selectedFarmId)) setSelectedFarmId("");
+  }, [farms]);
+
   const farmId = isStandardUser ? getActiveFarmId() : selectedFarmId;
 
   useEffect(() => {
     if (!farmId) {
       setData(null);
+      setError("");
       return;
     }
     let cancelled = false;
@@ -212,7 +240,7 @@ export default function FeedForecastPanel() {
       })
       .catch((err: any) => {
         if (cancelled) return;
-        setError(err?.message || t("ffFailedToLoad"));
+        setError(err?.message || tRef.current("ffFailedToLoad"));
         setData(null);
       })
       .finally(() => {
@@ -221,10 +249,20 @@ export default function FeedForecastPanel() {
     return () => {
       cancelled = true;
     };
-  }, [farmId, dateFrom, dateTo, t]);
+  }, [farmId, dateFrom, dateTo]);
 
-  const rows = data?.rows ?? [];
-  const flagSentences = data ? buildFlagSentences(data.flags, t) : [];
+  // Guard every list read off the response: an envelope that failed to
+  // unwrap, or a payload missing `flags`, must render an empty state, not
+  // crash on .map/.find (interfaces note — a prior production crash came
+  // from exactly this).
+  const rows = Array.isArray(data?.rows) ? (data!.rows as ForecastRow[]) : [];
+  const flagSentences = data ? buildFlagSentences(Array.isArray(data.flags) ? data.flags : [], t) : [];
+
+  // D2: runDownDate is null both when the silo/store lasts the whole range
+  // and when the range ends before the planning date (nothing was walked
+  // yet, so there is nothing to report as "lasts"). The second case needs
+  // its own wording so it isn't read as good news.
+  const rangeBeforePlanning = !!data && data.to < data.planningDate;
 
   return (
     <div className="flex flex-col gap-4">
@@ -233,7 +271,11 @@ export default function FeedForecastPanel() {
           <label className="nf-text-caption block" htmlFor="ff-farm">{t("ffPrimaryLocation")}</label>
           {isStandardUser ? (
             <p className="mt-0.5 text-sm font-medium" style={{ color: "var(--text-primary)" }}>
-              {user?.farm ? `${user.farm.location_code} — ${user.farm.location_name}` : "—"}
+              {user?.farm
+                ? `${user.farm.location_code} — ${user.farm.location_name}`
+                : data?.farm
+                  ? `${data.farm.code} — ${data.farm.name}`
+                  : "—"}
             </p>
           ) : (
             <select
@@ -285,7 +327,11 @@ export default function FeedForecastPanel() {
 
       {error && <InlineAlert>{error}</InlineAlert>}
 
-      {!farmId && !error ? (
+      {rangeBeforePlanning && !error && (
+        <InlineAlert variant="info">{t("ffNoteRangeBeforePlanning", { date: formatDate(data!.planningDate) })}</InlineAlert>
+      )}
+
+      {error ? null : !farmId ? (
         <InlineAlert variant="info">{t("ffPickFarmPrompt")}</InlineAlert>
       ) : (
         <Table>
@@ -334,7 +380,11 @@ export default function FeedForecastPanel() {
                   <TableCell className="whitespace-nowrap text-right" style={{ color: "var(--text-primary)" }}>{fmtKg(row.perDayIntakeKg)}</TableCell>
                   <TableCell className="whitespace-nowrap text-right" style={{ color: "var(--text-primary)" }}>{row.daysLeft ?? "—"}</TableCell>
                   <TableCell className="whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>
-                    {row.runDownDate === null ? t("ffLastsRange") : formatDate(row.runDownDate)}
+                    {row.runDownDate !== null
+                      ? formatDate(row.runDownDate)
+                      : rangeBeforePlanning
+                        ? "—"
+                        : t("ffLastsRange")}
                   </TableCell>
                   <TableCell className="whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>{formatDate(row.refillDate)}</TableCell>
                   <TableCell className="whitespace-nowrap">

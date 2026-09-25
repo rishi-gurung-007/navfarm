@@ -3,7 +3,7 @@ import { MySql2Database } from 'drizzle-orm/mysql2';
 import { ClsService } from 'nestjs-cls';
 import { and, eq, inArray, isNotNull, isNull, gt, notInArray, or, sql } from 'drizzle-orm';
 import * as schema from '../../../core/database/schema';
-import { batchScopeConditions, farmScope } from '../../../common/farm-scope';
+import { activeFarmOfCompany, batchScopeConditions, farmScope, FarmScope } from '../../../common/farm-scope';
 import { InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
 import { SiloFeedService } from '../silo-feed/silo-feed.service';
 import { FeedRow, stageDayRange } from '../../production/lifecycle/feed-row-days';
@@ -272,7 +272,7 @@ export class FeedForecastService {
     return tenantDb;
   }
 
-  async getForecast(query: QueryFeedForecastDto, tenantId: string): Promise<FeedForecastResponse> {
+  async getForecast(query: QueryFeedForecastDto, tenantId: string, userType?: string): Promise<FeedForecastResponse> {
     const planningDate = todayLocal();
     const from = query.from ?? planningDate;
     const to = query.to ?? addDays(from, DEFAULT_SPAN_DAYS);
@@ -284,18 +284,47 @@ export class FeedForecastService {
       throw new BadRequestException(`The forecast covers at most ${MAX_SPAN_DAYS} days after from.`);
     }
 
-    // D13: a farm-bound user sees their own farm and nothing else. A request
-    // naming another farm answers NotFound, not Forbidden, so the endpoint
-    // does not confirm that farm exists.
     const scope = farmScope(this.cls);
-    if (scope.farmId && query.farmId && query.farmId !== scope.farmId) {
-      throw new NotFoundException('Farm not found.');
+    // Ruling (fix round 1): only STANDARD_USER is farm-bound for this
+    // endpoint. STANDARD_USER keeps D13 — a request naming another farm
+    // answers NotFound, not Forbidden, so the endpoint does not confirm that
+    // farm exists. Every other user type may ask for any active farm of
+    // their company (LOB-checked for OPERATIONAL_ADMIN); the query farmId
+    // wins over whatever the workspace switcher has pinned in the header, so
+    // an admin can switch farms on this page without re-pinning first.
+    const isStandardUser = !userType || userType === 'STANDARD_USER';
+    let farmId: string | undefined;
+    if (isStandardUser) {
+      if (scope.farmId && query.farmId && query.farmId !== scope.farmId) {
+        throw new NotFoundException('Farm not found.');
+      }
+      farmId = scope.farmId ?? query.farmId;
+    } else {
+      farmId = query.farmId ?? scope.farmId ?? undefined;
+      if (farmId) {
+        if (!(await activeFarmOfCompany(this.db, farmId, scope.companyId ?? undefined, tenantId))) {
+          throw new NotFoundException('Farm not found.');
+        }
+        if (scope.restricted && scope.lobId) {
+          const [farmRow] = await this.db
+            .select({ lob_id: schema.locationMaster.lob_id })
+            .from(schema.locationMaster)
+            .where(eq(schema.locationMaster.location_id, farmId))
+            .limit(1);
+          if (!farmRow || farmRow.lob_id !== scope.lobId) throw new NotFoundException('Farm not found.');
+        }
+      }
     }
-    const farmId = scope.farmId ?? query.farmId;
     if (!farmId) throw new BadRequestException('Select a farm.');
 
+    // Every loader below must see the farm actually being reported on, not
+    // whatever farm happens to be pinned in the header — otherwise an admin
+    // switching farms through `farmId` would have their loaders silently
+    // filtered back down to the pinned farm (or, worse, another company's).
+    const effectiveScope: FarmScope = { ...scope, farmId };
+
     const farm = await this.loadFarm(farmId, tenantId);
-    const { input, flags: loadFlags } = await this.loadInput(farm, planningDate, from, to, tenantId);
+    const { input, flags: loadFlags } = await this.loadInput(farm, planningDate, from, to, tenantId, effectiveScope);
     const { rows, flags } = buildFeedForecast(input);
     return { planningDate, from, to, farm: { id: farm.id, code: farm.code, name: farm.name }, rows, flags: [...flags, ...loadFlags] };
   }
@@ -342,6 +371,7 @@ export class FeedForecastService {
     from: string,
     to: string,
     tenantId: string,
+    effectiveScope: FarmScope,
   ): Promise<{ input: ForecastInput; flags: ForecastFlag[] }> {
     const companyId = farm.companyId;
 
@@ -394,7 +424,7 @@ export class FeedForecastService {
       .filter((s) => linkedSiloIds.includes(s.location_id))
       .map((s) => siloInput({ siloId: s.location_id, siloCode: s.location_code }, residents.get(s.location_id) ?? null));
 
-    const { batches, flags } = await this.loadBatches(farm, planningDate, to, tenantId, locationById, new Set(shedIds));
+    const { batches, flags } = await this.loadBatches(farm, planningDate, to, tenantId, locationById, new Set(shedIds), effectiveScope);
     const feedRows = await this.loadFeedRows([...new Set(batches.map((b) => b.breedId))], companyId, tenantId);
 
     // The farm's STORE (D6 fallback). One per farm in every template; if a farm
@@ -456,8 +486,8 @@ export class FeedForecastService {
     tenantId: string,
     locationById: Map<string, LocationNode>,
     activeShedIds: Set<string>,
+    scope: FarmScope,
   ): Promise<{ batches: InputBatch[]; flags: ForecastFlag[] }> {
-    const scope = farmScope(this.cls);
     const batchRows = await this.db
       .select({
         batch_id: schema.batchHeader.batch_id,

@@ -53,7 +53,7 @@ export interface ResolveFarmScopeInput {
 
 type Db = MySql2Database<typeof schema>;
 
-async function activeFarmOfCompany(db: Db, farmId: string, companyId: string | undefined, tenantId: string): Promise<boolean> {
+export async function activeFarmOfCompany(db: Db, farmId: string, companyId: string | undefined, tenantId: string): Promise<boolean> {
   if (!companyId) return false;
   const [row] = await db
     .select({ location_id: schema.locationMaster.location_id })
