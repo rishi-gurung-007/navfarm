@@ -59,6 +59,30 @@ export default function OperationalAreasPage() {
 
   const activeCompanyId = getActiveCompanyId();
 
+  /**
+   * The LOBs of one NOB. GET /setup/wizard/nobs returns nob_master rows with
+   * no nested lobs array — this screen used to read `nob.lobs`, which was
+   * always undefined, so the LOB picker was permanently empty and the form
+   * could never be submitted. Every other screen calls this endpoint; so does
+   * this one now.
+   */
+  const loadLobs = async (nobId: string) => {
+    if (!nobId) {
+      setLobs([]);
+      setForm((prev) => ({ ...prev, lob_id: "" }));
+      return;
+    }
+    const res = await api.get(`/setup/wizard/lobs/${nobId}`).catch(() => []);
+    // Piggery-only for now — see step8-modules.tsx for the matching
+    // restriction at company onboarding. Remove both once another LOB's
+    // operational workflow is ready.
+    const list = (Array.isArray(res) ? (res as any[]) : []).filter((l) =>
+      (l.lob_name || l.lob_code || "").toLowerCase().includes("piggery"),
+    );
+    setLobs(list);
+    setForm((prev) => ({ ...prev, lob_id: list[0]?.lob_id || "" }));
+  };
+
   const loadData = async () => {
     setLoading(true);
     try {
@@ -75,27 +99,22 @@ export default function OperationalAreasPage() {
       // restriction at company onboarding. Remove both once another LOB's
       // operational workflow is ready.
       const rawNobs = Array.isArray(nobsRes) ? (nobsRes as any[]) : [];
-      const nobsList = rawNobs
-        .filter((n) => (n.nob_name || n.nob_code || "").toLowerCase().includes("livestock"))
-        .map((n) => ({
-          ...n,
-          lobs: (n.lobs || []).filter((l: any) => (l.lob_name || l.lob_code || "").toLowerCase().includes("piggery")),
-        }));
+      const nobsList = rawNobs.filter((n) =>
+        (n.nob_name || n.nob_code || "").toLowerCase().includes("livestock"),
+      );
       setNobs(nobsList);
 
-      // Default NOB/LOB if available
+      // Default NOB, then its LOBs — /setup/wizard/nobs answers with flat
+      // nob_master rows, so the LOBs have to be fetched for the chosen NOB.
       if (nobsList.length > 0) {
         setForm((prev) => ({
           ...prev,
           nob_id: nobsList[0].nob_id,
         }));
-        if (nobsList[0].lobs && nobsList[0].lobs.length > 0) {
-          setLobs(nobsList[0].lobs);
-          setForm((prev) => ({
-            ...prev,
-            lob_id: nobsList[0].lobs[0].lob_id,
-          }));
-        }
+        await loadLobs(nobsList[0].nob_id);
+      } else {
+        setLobs([]);
+        setForm((prev) => ({ ...prev, lob_id: "" }));
       }
     } finally {
       setLoading(false);
@@ -107,13 +126,8 @@ export default function OperationalAreasPage() {
   }, []);
 
   const handleNobChange = (nobId: string) => {
-    const selected = nobs.find((n) => n.nob_id === nobId);
-    setForm({
-      ...form,
-      nob_id: nobId,
-      lob_id: selected?.lobs?.[0]?.lob_id || "",
-    });
-    setLobs(selected?.lobs || []);
+    setForm((prev) => ({ ...prev, nob_id: nobId, lob_id: "" }));
+    void loadLobs(nobId);
   };
 
   const handleCreateArea = async (e: React.FormEvent) => {
