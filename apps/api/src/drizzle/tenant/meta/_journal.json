@@ -827,6 +827,13 @@
       "when": 1790790000000,
       "tag": "0117_feed_levels_settings_requisition",
       "breakpoints": true
+    },
+    {
+      "idx": 118,
+      "version": "5",
+      "when": 1790876400000,
+      "tag": "0118_alert_rule",
+      "breakpoints": true
     }
   ]
 }

@@ -3252,6 +3252,41 @@ export const notificationLogRelations = relations(notificationLog, ({ one }) => 
   })
 }));
 
+/**
+ * Alerts and Notifications Master — feed workbook, Master Setup §4, one row
+ * per notification rule. farm_id null = "ALL" farms. recipient_roles holds
+ * role_master.role_code values as the client writes them (Q1). Plan B
+ * evaluates FEED_BELOW_L1, FEED_ABOVE, DIET_CHANGE and REQ_DEADLINE, and
+ * delivers IN_APP only.
+ */
+export const alertRule = mysqlTable('alert_rule', {
+  rule_id: varchar('rule_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+  company_id: varchar('company_id', { length: 36 }).references(() => companyMaster.company_id, { onDelete: 'cascade' }),
+  notification_code: varchar('notification_code', { length: 20 }).notNull(),
+  notification_name: varchar('notification_name', { length: 100 }).notNull(),
+  event_type: varchar('event_type', { length: 40 }).notNull(),
+  trigger_entity: varchar('trigger_entity', { length: 20 }).notNull(),
+  threshold_reference: varchar('threshold_reference', { length: 20 }).default('FIXED_VALUE').notNull(),
+  threshold_value: decimal('threshold_value', { precision: 18, scale: 4 }),
+  priority_level: varchar('priority_level', { length: 30 }).notNull(),
+  recipient_roles: json('recipient_roles').$type<string[]>().notNull(),
+  delivery_channel: varchar('delivery_channel', { length: 30 }).default('IN_APP').notNull(),
+  frequency: varchar('frequency', { length: 20 }).default('ONCE').notNull(),
+  escalation_after_hours: int('escalation_after_hours'),
+  escalation_role: varchar('escalation_role', { length: 50 }),
+  farm_id: varchar('farm_id', { length: 36 }).references(() => locationMaster.location_id, { onDelete: 'set null' }),
+  is_active: boolean('is_active').default(true).notNull(),
+  status: varchar('status', { length: 20 }).default('ACTIVE').notNull(),
+  created_by: varchar('created_by', { length: 36 }),
+  updated_by: varchar('updated_by', { length: 36 }),
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+  updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().notNull(),
+  deleted_at: timestamp('deleted_at', { mode: 'string' }),
+}, (table) => ({
+  uqCode: uniqueIndex('uq_alert_rule_code').on(table.tenant_id, table.company_id, table.notification_code),
+}));
+
 // ==========================================
 // 9. INVENTORY ENGINE (Phase 3)
 // ==========================================

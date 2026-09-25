@@ -1362,6 +1362,52 @@ const reason: MasterDataConfig = {
   ],
 };
 
+// Alerts and Notifications Master — feed workbook, Master Setup §4, fields in
+// the workbook's order. Recipient roles are role codes typed as chips (Q1: the
+// workbook's FARM_MANAGER / HEAD_OF_FARM exist in no tenant yet, so a picker
+// over role_master could not even offer them).
+const alertRule: MasterDataConfig = {
+  key: "alert-rule", label: "Alert Rules", singular: "Alert Rule", apiBase: "/alert-rule", idKey: "rule_id",
+  group: "Inventory", businessAdminOnly: true,
+  description: "Alerts and Notifications Master: which event raises an in-app alert, at what threshold, how urgently, for which roles, how often, and to whom it escalates.",
+  columns: [
+    { key: "notification_code", label: "Notification Code" }, { key: "notification_name", label: "Notification Name" },
+    { key: "event_type", label: "Event Type" }, { key: "priority_level", label: "Priority Level" },
+    { key: "recipient_roles", label: "Recipient Role(s)" }, { key: "frequency", label: "Frequency" },
+  ],
+  fields: [
+    { key: "company_id", label: "Company", type: "text", hideInForm: true },
+    { key: "notification_code", label: "Notification Code", type: "text", required: true, createOnly: true, maxLength: 20 },
+    { key: "notification_name", label: "Notification Name", type: "text", required: true, maxLength: 100 },
+    { key: "event_type", label: "Event Type", type: "select", required: true,
+      options: ["FEED_BELOW_L1", "FEED_ABOVE", "DIET_CHANGE", "REQ_DEADLINE"].map((value) => ({ value, label: value })) },
+    { key: "trigger_entity", label: "Trigger Entity", type: "select", required: true,
+      options: ["SILO", "REQUISITION", "FEED_PLAN", "STOCK_TAKE"].map((value) => ({ value, label: value })),
+      helpText: "FEED_BELOW_L1 and FEED_ABOVE: SILO. DIET_CHANGE: FEED_PLAN. REQ_DEADLINE: REQUISITION." },
+    { key: "threshold_reference", label: "Threshold Reference", type: "select", required: true,
+      options: ["SILO_BELOW", "SILO_ABOVE", "FIXED_VALUE"].map((value) => ({ value, label: value })),
+      helpText: "SILO_BELOW reads each silo's Below Feed Level, SILO_ABOVE its Above Threshold. FIXED_VALUE uses the value below." },
+    { key: "threshold_value", label: "Threshold Value", type: "number", min: 0, nativeNumber: true,
+      requiredWhen: { anyOf: [{ key: "threshold_reference", equals: "FIXED_VALUE" }] },
+      helpText: "KG for a silo rule; days before the diet change for DIET_CHANGE; days before the submission deadline for REQ_DEADLINE." },
+    { key: "priority_level", label: "Priority Level", type: "select", required: true,
+      options: ["CRITICAL_FIRST_PRIORITY", "CRITICAL", "WARNING", "INFO"].map((value) => ({ value, label: value })) },
+    { key: "recipient_roles", label: "Recipient Role(s)", type: "string-list", required: true,
+      helpText: "Role codes from Role Master. Tenant, company and operational admins see every alert regardless." },
+    { key: "delivery_channel", label: "Delivery Channel", type: "select", required: true,
+      options: [{ value: "IN_APP", label: "IN_APP" }], helpText: "In-app only for now; email is not sent yet." },
+    { key: "frequency", label: "Frequency", type: "select", required: true,
+      options: ["ONCE", "DAILY", "ON_EACH_OCCURRENCE", "ESCALATING"].map((value) => ({ value, label: value })),
+      helpText: "ONCE until resolved; DAILY re-alerts each day; ON_EACH_OCCURRENCE re-alerts when the value changes; ESCALATING adds the escalation role if nobody acknowledges in time." },
+    { key: "escalation_after_hours", label: "Escalation After Hours", type: "number", min: 1, step: "1", nativeNumber: true,
+      visibleWhen: { anyOf: [{ key: "frequency", equals: "ESCALATING" }] }, requiredWhen: { anyOf: [{ key: "frequency", equals: "ESCALATING" }] } },
+    { key: "escalation_role", label: "Escalation Recipient Role", type: "text", maxLength: 50,
+      visibleWhen: { anyOf: [{ key: "frequency", equals: "ESCALATING" }] }, requiredWhen: { anyOf: [{ key: "frequency", equals: "ESCALATING" }] } },
+    { key: "farm_id", label: "Farm Filter", type: "select-entity", entityEndpoint: "/location?locationType=FARM&rootOnly=true",
+      entityValueKey: "location_id", entityLabelKeys: ["location_code", "location_name"], helpText: "Leave blank for ALL farms." },
+  ],
+};
+
 const disease: MasterDataConfig = {
   key: "disease",
   label: "Diseases",
@@ -1859,7 +1905,7 @@ export const MASTER_DATA_CONFIGS: MasterDataConfig[] = [
   numberSeries, stage, activity,
   item, itemCategory, itemType, itemAttribute, itemTemplateConfig, uom, uomConversion,
   animal,
-  species, breed, breedLifecycleStage, kpiMetric, reason, disease, feedFormula,
+  species, breed, breedLifecycleStage, kpiMetric, reason, alertRule, disease, feedFormula,
   supplier, customer, resource,
   glAccount, glMapping, costCenter, country, currency, exchangeRate,
 ];
