@@ -373,7 +373,7 @@ About three minutes of planned downtime is the price of a clean switch.
 Run in an **Administrator** PowerShell:
 
 ```powershell
-Set-Location C:\path\to\navfarm
+Set-Location C:\Users\rishi.gurung\Desktop\navfarm
 
 # 1. Stop web first (it depends on the API), then the API.
 Stop-Service NAVFarm-Web

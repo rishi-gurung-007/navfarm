@@ -179,7 +179,11 @@ export function useCodeSeries(key: string, form: Record<string, unknown>, enable
       // Manual (manual_nos = true): user value is authoritative; do not override user-cleared empty input
       return value;
     },
-    loading: canGenerate && enabled && !activeSettings?.preview && !result?.error,
+    // Loading means "no answer yet", not "no preview yet". A tenant with no
+    // number series gets { generated: false } and never a preview, so keying
+    // this on the preview kept Create disabled forever on a fresh tenant's
+    // first Add Location.
+    loading: awaitingPreview,
     error: canGenerate && enabled ? result?.error : undefined,
     /** The config field this hook drives, so a caller can tell whether a failed
      * preview actually prevents saving. */

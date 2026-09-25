@@ -99,7 +99,8 @@ export default function AdminMastersPage() {
     try {
       const [nobList, currList, langList, tzList, countryList, costingList] = await Promise.all([
         api.get("/setup/wizard/nobs"),
-        api.get("/currency"),
+        // /currency answers { success, message, data }; the others answer bare arrays.
+        api.get("/currency").then((r: any) => r?.data ?? r),
         api.get("/language"),
         api.get("/timezone"),
         api.get("/country").then((r: any) => r?.data ?? r),
@@ -159,7 +160,7 @@ export default function AdminMastersPage() {
       setSuccess("Currency added.");
       setShowCurrForm(false);
       setCurrForm({ iso_code: "", currency_name: "", symbol: "", symbol_position: "BEFORE", is_system_default: false });
-      setCurrencies(await api.get("/currency"));
+      setCurrencies(await api.get("/currency").then((r: any) => r?.data ?? r));
     } catch (err: any) { setError(err?.message || "Failed to create currency."); }
     finally { setSavingCurr(false); }
   };
