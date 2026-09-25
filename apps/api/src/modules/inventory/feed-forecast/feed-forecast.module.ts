@@ -8,5 +8,6 @@ import { SiloFeedModule } from '../silo-feed/silo-feed.module';
   imports: [InventoryLedgerModule, SiloFeedModule],
   controllers: [FeedForecastController],
   providers: [FeedForecastService],
+  exports: [FeedForecastService],
 })
 export class FeedForecastModule {}

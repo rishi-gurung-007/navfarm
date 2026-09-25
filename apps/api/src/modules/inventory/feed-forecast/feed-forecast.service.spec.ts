@@ -61,6 +61,11 @@ describe('FeedForecastService', () => {
       ],
     }).compile();
     service = module.get(FeedForecastService);
+    // Plan B: resolveFarm's trailing company lookup (activeFarmOfTenant) only
+    // fires when farmScope has no companyId of its own — these specs run
+    // without a real guard's scope, so it would otherwise hit the raw db
+    // stub. Doubled the same way activeFarmOfCompany already is above.
+    jest.spyOn(service as any, 'activeFarmOfTenant').mockResolvedValue(FARM.companyId);
     loadFarm = jest.spyOn(service as any, 'loadFarm').mockResolvedValue(FARM);
     loadInput = jest.spyOn(service as any, 'loadInput').mockImplementation(async (...args: any[]) => ({
       input: { planningDate: args[1], from: args[2], to: args[3] },

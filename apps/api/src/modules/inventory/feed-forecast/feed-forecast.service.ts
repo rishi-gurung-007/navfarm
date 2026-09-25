@@ -7,7 +7,7 @@ import { activeFarmOfCompany, batchScopeConditions, farmScope, FARM_SCOPE_KEY, F
 import { InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
 import { SiloFeedService } from '../silo-feed/silo-feed.service';
 import { FeedRow, stageDayRange } from '../../production/lifecycle/feed-row-days';
-import { buildFeedForecast, ForecastFlag, ForecastInput, ForecastRow } from './feed-forecast.engine';
+import { buildFeedForecast, DietChange, ForecastFlag, ForecastInput, ForecastRow, ForecastSource } from './feed-forecast.engine';
 import { QueryFeedForecastDto } from './dto/feed-forecast.dto';
 
 /**
@@ -54,6 +54,14 @@ export interface FeedForecastResponse {
   farm: { id: string; code: string; name: string };
   rows: ForecastRow[];
   flags: ForecastFlag[];
+  // Plan B: the requisition's lines and the DIET_CHANGE alert read these (engine Task 2).
+  sources: ForecastSource[];
+  dietChanges: DietChange[];
+}
+
+export interface ResolvedFarm {
+  farmId: string;
+  companyId: string;
 }
 
 export interface StageInfo {
@@ -359,7 +367,17 @@ export class FeedForecastService {
     if (diffDays(from, to) > MAX_SPAN_DAYS) {
       throw new BadRequestException(`The forecast covers at most ${MAX_SPAN_DAYS} days after from.`);
     }
+    const { farmId, companyId } = await this.resolveFarm(query.farmId, tenantId, userType);
+    return this.computeForFarm(farmId, companyId, tenantId, { from, to });
+  }
 
+  /**
+   * Which farm a caller may be answered for (D13 and fix rounds 1–2) — shared
+   * by the report, the feed alerts and the feed requisitions so the three can
+   * never disagree about whose farm a user may see.
+   */
+  async resolveFarm(queryFarmId: string | undefined, tenantId: string, userType?: string): Promise<ResolvedFarm> {
+    const query = { farmId: queryFarmId };
     const scope = farmScope(this.cls);
     // Ruling (fix round 1): only STANDARD_USER is farm-bound for this
     // endpoint. STANDARD_USER keeps D13 — a request naming another farm
@@ -408,30 +426,58 @@ export class FeedForecastService {
       }
     }
     if (!farmId) throw new BadRequestException('Select a farm.');
+    const companyId = effectiveCompanyId ?? (await this.activeFarmOfTenant(farmId, tenantId));
+    if (!companyId) throw new NotFoundException('Farm not found.');
+    return { farmId, companyId };
+  }
 
-    // Every loader below must see the farm actually being reported on, not
-    // whatever farm happens to be pinned in the header — otherwise an admin
-    // switching farms through `farmId` would have their loaders silently
-    // filtered back down to the pinned farm (or, worse, another company's).
-    // Fix round 2, finding 1: this must replace the CLS-held scope itself
-    // (`this.cls.set`), not just a value threaded through this method's own
-    // loaders — InventoryLedgerService and SiloFeedService (via
-    // siloFeedService.currentItems -> ledgerService.getStockBalance) read
-    // farmScope(cls) independently for their own warehouse-balance queries,
-    // several calls below this one, and never saw the effective farm before
-    // this fix. `cls.set` needs an active CLS context, so this runs the rest
-    // of the request inside `cls.run()` — the same idiom withTenantTransaction
-    // uses (tenant-transaction.ts) to open one when it isn't already inside
-    // one; nested inside a real request it inherits the guard's own context
-    // (tenantDb, tenantId, ...) and only farmScope is overridden within it.
-    const farmIdResolved = farmId;
-    const effectiveScope: FarmScope = { ...scope, farmId: farmIdResolved, companyId: effectiveCompanyId };
+  /**
+   * The forecast for a farm already resolved (or, from a posting hook, known
+   * from the location that was posted). No user checks here — callers are
+   * resolveFarm or trusted internal code. from/to default as the report does.
+   */
+  async computeForFarm(farmId: string, companyId: string, tenantId: string, range: { from?: string; to?: string } = {}): Promise<FeedForecastResponse> {
+    const planningDate = todayLocal();
+    const from = range.from ?? planningDate;
+    const to = range.to ?? addDays(from, DEFAULT_SPAN_DAYS);
+    return this.withFarmScope(farmId, companyId, async () => {
+      const farm = await this.loadFarm(farmId, tenantId);
+      const { input, flags: loadFlags } = await this.loadInput(farm, planningDate, from, to, tenantId);
+      const { rows, flags, sources, dietChanges } = buildFeedForecast(input);
+      return {
+        planningDate, from, to,
+        farm: { id: farm.id, code: farm.code, name: farm.name },
+        rows, flags: [...flags, ...loadFlags], sources, dietChanges,
+      };
+    });
+  }
+
+  /**
+   * Runs `work` with the CLS farm scope replaced by this farm (fix round 2,
+   * finding 1: InventoryLedgerService and SiloFeedService read farmScope(cls)
+   * themselves). Public so the alert evaluator reads silo balances the same way.
+   *
+   * Every loader below must see the farm actually being reported on, not
+   * whatever farm happens to be pinned in the header — otherwise an admin
+   * switching farms through `farmId` would have their loaders silently
+   * filtered back down to the pinned farm (or, worse, another company's).
+   * Fix round 2, finding 1: this must replace the CLS-held scope itself
+   * (`this.cls.set`), not just a value threaded through the caller's own
+   * loaders — InventoryLedgerService and SiloFeedService (via
+   * siloFeedService.currentItems -> ledgerService.getStockBalance) read
+   * farmScope(cls) independently for their own warehouse-balance queries, and
+   * never saw the effective farm before this fix. `cls.set` needs an active
+   * CLS context, so this runs `work` inside `cls.run()` — the same idiom
+   * withTenantTransaction uses (tenant-transaction.ts) to open one when it
+   * isn't already inside one; nested inside a real request it inherits the
+   * guard's own context (tenantDb, tenantId, ...) and only farmScope is
+   * overridden within it.
+   */
+  async withFarmScope<T>(farmId: string, companyId: string, work: () => Promise<T>): Promise<T> {
+    const effectiveScope: FarmScope = { ...farmScope(this.cls), farmId, companyId };
     return this.cls.run(async () => {
       this.cls.set(FARM_SCOPE_KEY, effectiveScope);
-      const farm = await this.loadFarm(farmIdResolved, tenantId);
-      const { input, flags: loadFlags } = await this.loadInput(farm, planningDate, from, to, tenantId);
-      const { rows, flags } = buildFeedForecast(input);
-      return { planningDate, from, to, farm: { id: farm.id, code: farm.code, name: farm.name }, rows, flags: [...flags, ...loadFlags] };
+      return work();
     });
   }
 
