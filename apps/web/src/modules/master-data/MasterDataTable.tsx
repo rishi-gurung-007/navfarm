@@ -699,6 +699,21 @@ export function MasterDataTable({
     load();
   }, [config.key, search, nobFilter, lobFilter, page, pageSize, sortKey, sortDir, colFilters, createOnly]);
 
+  // Some of this form's pickers list this master's own rows — Location's
+  // Parent Location and Attached Sheds are both /location — and every picker's
+  // options are cached per endpoint for as long as the page stays open. So a
+  // Farm saved here was missing from the next Add Shed's Parent Location until
+  // the page was reloaded, which read as the new record appearing "after a
+  // minute". After any change to this master, forget the cached lists that
+  // come from it: the dependent-field effect refetches a missing endpoint the
+  // next time the form needs it, and the reload key refetches the
+  // non-dependent ones, which that effect alone would otherwise leave missing.
+  const forgetOwnOptions = () => {
+    const own = endpointPath(config.apiBase);
+    setEntityOptions((prev) => Object.fromEntries(Object.entries(prev).filter(([ep]) => endpointPath(ep) !== own)));
+    setEntityReloadKey((key) => key + 1);
+  };
+
   // Anything that changes which rows match sends you back to the first page —
   // page 7 of a filtered list that now has two pages is not a page.
   useEffect(() => { setPage(1); }, [config.key, search, nobFilter, lobFilter, pageSize, colFilters]);
@@ -1607,12 +1622,14 @@ export function MasterDataTable({
           delete payload.current_location_id;
         }
         await api.put(`${config.apiBase}/${editing[config.idKey]}`, payload);
+        forgetOwnOptions();
         setModalOpen(false);
         showToast.success("Updated successfully");
         load();
       } else {
         const response = await api.post(config.apiBase, payload);
         const created = unwrap<Row>(response);
+        forgetOwnOptions();
         setModalOpen(false);
         showToast.success("Created successfully");
         onCreated?.(created);
@@ -1657,6 +1674,7 @@ export function MasterDataTable({
     setDeleting(true);
     try {
       await api.delete(`${config.apiBase}/${confirmDelete[config.idKey]}`);
+      forgetOwnOptions();
       setConfirmDelete(null);
       showToast.success("Deleted successfully");
       load();
@@ -1683,6 +1701,7 @@ export function MasterDataTable({
         await api.delete(`${config.apiBase}/${id}`);
         showToast.success("Deactivated successfully");
       }
+      forgetOwnOptions();
       load();
     } catch (err: any) {
       const msg = err?.message || t("mdFailedToSave");
