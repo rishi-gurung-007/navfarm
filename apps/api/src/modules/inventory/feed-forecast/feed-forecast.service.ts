@@ -357,26 +357,25 @@ export class FeedForecastService {
   }
 
   async getForecast(query: QueryFeedForecastDto, tenantId: string, userType?: string): Promise<FeedForecastResponse> {
-    const planningDate = todayLocal();
-    const from = query.from ?? planningDate;
-    const to = query.to ?? addDays(from, DEFAULT_SPAN_DAYS);
-    if (!isCalendarDay(from) || !isCalendarDay(to)) {
-      throw new BadRequestException('from and to must be calendar dates (YYYY-MM-DD).');
-    }
-    if (to < from) throw new BadRequestException('to must not be before from.');
-    if (diffDays(from, to) > MAX_SPAN_DAYS) {
-      throw new BadRequestException(`The forecast covers at most ${MAX_SPAN_DAYS} days after from.`);
-    }
     const { farmId, companyId } = await this.resolveFarm(query.farmId, tenantId, userType);
-    return this.computeForFarm(farmId, companyId, tenantId, { from, to });
+    return this.computeForFarm(farmId, companyId, tenantId, { from: query.from, to: query.to });
   }
 
   /**
    * Which farm a caller may be answered for (D13 and fix rounds 1–2) — shared
    * by the report, the feed alerts and the feed requisitions so the three can
    * never disagree about whose farm a user may see.
+   *
+   * `userType` is required (fix round 1, security): the endpoint used to
+   * treat a missing/unknown type as STANDARD_USER, which is the *more*
+   * restrictive branch — safe there, but a caller that meant to be an admin
+   * and mistakenly sent no type would have been silently bound to whatever
+   * farm happened to be pinned. Every caller now states its type; only the
+   * literal string `'STANDARD_USER'` takes that branch, and anything else
+   * (unset, unknown, or a real admin type) takes the company/LOB-checked one
+   * below, which fails closed with no exceptions carved out.
    */
-  async resolveFarm(queryFarmId: string | undefined, tenantId: string, userType?: string): Promise<ResolvedFarm> {
+  async resolveFarm(queryFarmId: string | undefined, tenantId: string, userType: string | undefined): Promise<ResolvedFarm> {
     const query = { farmId: queryFarmId };
     const scope = farmScope(this.cls);
     // Ruling (fix round 1): only STANDARD_USER is farm-bound for this
@@ -386,7 +385,7 @@ export class FeedForecastService {
     // their company (LOB-checked for OPERATIONAL_ADMIN); the query farmId
     // wins over whatever the workspace switcher has pinned in the header, so
     // an admin can switch farms on this page without re-pinning first.
-    const isStandardUser = !userType || userType === 'STANDARD_USER';
+    const isStandardUser = userType === 'STANDARD_USER';
     let farmId: string | undefined;
     // The company that validated the chosen farm — normally scope.companyId,
     // but a TENANT_ADMIN/SYSTEM_ADMIN in tenant-wide scope (no company
@@ -394,10 +393,15 @@ export class FeedForecastService {
     // finding 2).
     let effectiveCompanyId = scope.companyId;
     if (isStandardUser) {
-      if (scope.farmId && query.farmId && query.farmId !== scope.farmId) {
+      // Fix round 1 (security): the guard always pins a farm for a
+      // STANDARD_USER — a scope with none is a malformed session, not an
+      // unrestricted one, so it must not fall through to an unchecked query
+      // farm.
+      if (!scope.farmId) throw new NotFoundException('Farm not found.');
+      if (query.farmId && query.farmId !== scope.farmId) {
         throw new NotFoundException('Farm not found.');
       }
-      farmId = scope.farmId ?? query.farmId;
+      farmId = scope.farmId;
     } else {
       farmId = query.farmId ?? scope.farmId ?? undefined;
       if (farmId) {
@@ -426,20 +430,36 @@ export class FeedForecastService {
       }
     }
     if (!farmId) throw new BadRequestException('Select a farm.');
-    const companyId = effectiveCompanyId ?? (await this.activeFarmOfTenant(farmId, tenantId));
-    if (!companyId) throw new NotFoundException('Farm not found.');
-    return { farmId, companyId };
+    // Fix round 1 (security): fail closed here rather than a second,
+    // unbounded tenant-wide lookup. Only the explicit TENANT_ADMIN/
+    // SYSTEM_ADMIN-with-no-company branch above may resolve a company from
+    // the farm itself; every other path must already have one.
+    if (!effectiveCompanyId) throw new NotFoundException('Farm not found.');
+    return { farmId, companyId: effectiveCompanyId };
   }
 
   /**
-   * The forecast for a farm already resolved (or, from a posting hook, known
-   * from the location that was posted). No user checks here — callers are
-   * resolveFarm or trusted internal code. from/to default as the report does.
+   * The forecast for a farm already resolved — callers pass exactly the
+   * `{ farmId, companyId }` pair `resolveFarm` produced (or, from a posting
+   * hook, a farm/company already known from the location that was posted).
+   * No user checks here — that is resolveFarm's job, done once. This method
+   * validates the range itself (fix round 1: it used to be getForecast's job,
+   * done before resolveFarm — a trusted internal caller going straight to
+   * computeForFarm would then have had no bound on the span at all) so every
+   * caller, HTTP or internal, is held to the same 45-day cap. from/to default
+   * as the report does.
    */
   async computeForFarm(farmId: string, companyId: string, tenantId: string, range: { from?: string; to?: string } = {}): Promise<FeedForecastResponse> {
     const planningDate = todayLocal();
     const from = range.from ?? planningDate;
     const to = range.to ?? addDays(from, DEFAULT_SPAN_DAYS);
+    if (!isCalendarDay(from) || !isCalendarDay(to)) {
+      throw new BadRequestException('from and to must be calendar dates (YYYY-MM-DD).');
+    }
+    if (to < from) throw new BadRequestException('to must not be before from.');
+    if (diffDays(from, to) > MAX_SPAN_DAYS) {
+      throw new BadRequestException(`The forecast covers at most ${MAX_SPAN_DAYS} days after from.`);
+    }
     return this.withFarmScope(farmId, companyId, async () => {
       const farm = await this.loadFarm(farmId, tenantId);
       const { input, flags: loadFlags } = await this.loadInput(farm, planningDate, from, to, tenantId);

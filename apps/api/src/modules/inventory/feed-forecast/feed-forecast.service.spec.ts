@@ -61,11 +61,6 @@ describe('FeedForecastService', () => {
       ],
     }).compile();
     service = module.get(FeedForecastService);
-    // Plan B: resolveFarm's trailing company lookup (activeFarmOfTenant) only
-    // fires when farmScope has no companyId of its own — these specs run
-    // without a real guard's scope, so it would otherwise hit the raw db
-    // stub. Doubled the same way activeFarmOfCompany already is above.
-    jest.spyOn(service as any, 'activeFarmOfTenant').mockResolvedValue(FARM.companyId);
     loadFarm = jest.spyOn(service as any, 'loadFarm').mockResolvedValue(FARM);
     loadInput = jest.spyOn(service as any, 'loadInput').mockImplementation(async (...args: any[]) => ({
       input: { planningDate: args[1], from: args[2], to: args[3] },
@@ -77,37 +72,40 @@ describe('FeedForecastService', () => {
 
   it('a restricted user asking for another farm gets NotFound, before anything is loaded', async () => {
     useFarmScope(cls, { farmId: 'farm-A', restricted: true, companyId: 'comp-1', lobId: 'lob-1' });
-    await expect(service.getForecast({ farmId: 'farm-B' }, 'tenant-1')).rejects.toThrow(new NotFoundException('Farm not found.'));
+    await expect(service.getForecast({ farmId: 'farm-B' }, 'tenant-1', 'STANDARD_USER')).rejects.toThrow(new NotFoundException('Farm not found.'));
     expect(loadFarm).not.toHaveBeenCalled();
     expect(buildFeedForecast).not.toHaveBeenCalled();
   });
 
   it('a restricted user with no farmId gets their own farm', async () => {
     useFarmScope(cls, { farmId: 'farm-A', restricted: true, companyId: 'comp-1', lobId: 'lob-1' });
-    await service.getForecast({}, 'tenant-1');
+    await service.getForecast({}, 'tenant-1', 'STANDARD_USER');
     expect(loadFarm).toHaveBeenCalledWith('farm-A', 'tenant-1');
   });
 
   it('an unrestricted caller must name a farm', async () => {
-    await expect(service.getForecast({}, 'tenant-1')).rejects.toThrow(BadRequestException);
+    await expect(service.getForecast({}, 'tenant-1', 'TENANT_ADMIN')).rejects.toThrow(BadRequestException);
   });
 
   it('rejects `to` before `from`', async () => {
-    await expect(service.getForecast({ farmId: 'farm-A', from: '2026-09-25', to: '2026-09-24' }, 'tenant-1')).rejects.toThrow(
+    useFarmScope(cls, { farmId: null, restricted: false, companyId: 'comp-1', lobId: null });
+    await expect(service.getForecast({ farmId: 'farm-A', from: '2026-09-25', to: '2026-09-24' }, 'tenant-1', 'TENANT_ADMIN')).rejects.toThrow(
       BadRequestException,
     );
     expect(loadFarm).not.toHaveBeenCalled();
   });
 
   it('rejects a span over 45 days (workbook checkpoint 15) and accepts exactly 45', async () => {
-    await expect(service.getForecast({ farmId: 'farm-A', from: '2026-09-25', to: '2026-11-10' }, 'tenant-1')).rejects.toThrow(
+    useFarmScope(cls, { farmId: null, restricted: false, companyId: 'comp-1', lobId: null });
+    await expect(service.getForecast({ farmId: 'farm-A', from: '2026-09-25', to: '2026-11-10' }, 'tenant-1', 'TENANT_ADMIN')).rejects.toThrow(
       BadRequestException,
     );
-    await expect(service.getForecast({ farmId: 'farm-A', from: '2026-09-25', to: '2026-11-09' }, 'tenant-1')).resolves.toBeDefined();
+    await expect(service.getForecast({ farmId: 'farm-A', from: '2026-09-25', to: '2026-11-09' }, 'tenant-1', 'TENANT_ADMIN')).resolves.toBeDefined();
   });
 
   it('rejects an impossible calendar day', async () => {
-    await expect(service.getForecast({ farmId: 'farm-A', from: '2026-02-27', to: '2026-02-31' }, 'tenant-1')).rejects.toThrow(
+    useFarmScope(cls, { farmId: null, restricted: false, companyId: 'comp-1', lobId: null });
+    await expect(service.getForecast({ farmId: 'farm-A', from: '2026-02-27', to: '2026-02-31' }, 'tenant-1', 'TENANT_ADMIN')).rejects.toThrow(
       BadRequestException,
     );
     expect(loadFarm).not.toHaveBeenCalled();
@@ -115,11 +113,12 @@ describe('FeedForecastService', () => {
 
   it('happy path: planningDate is today, from/to default to today..today+7, the loaded input goes to the engine as-is, loader flags are appended', async () => {
     jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate'] }).setSystemTime(new Date(2026, 8, 25, 10, 30));
+    useFarmScope(cls, { farmId: 'farm-A', restricted: true, companyId: 'comp-1', lobId: 'lob-1' });
     const input = { planningDate: '2026-09-25', marker: 'loaded' } as unknown as ForecastInput;
     loadInput.mockResolvedValueOnce({ input, flags: [{ kind: 'BATCH_SHED_UNKNOWN', batchNo: 'B2' }] });
     (buildFeedForecast as jest.Mock).mockReturnValueOnce({ rows: [{ batchNo: 'B1' }], flags: [{ kind: 'HEADS_ASSUMED_FLAT', batchNo: 'B1' }] });
 
-    const result = await service.getForecast({ farmId: 'farm-A' }, 'tenant-1');
+    const result = await service.getForecast({ farmId: 'farm-A' }, 'tenant-1', 'STANDARD_USER');
 
     expect(loadInput).toHaveBeenCalledWith(FARM, '2026-09-25', '2026-09-25', '2026-10-02', 'tenant-1');
     expect(buildFeedForecast).toHaveBeenCalledWith(input);
@@ -275,6 +274,46 @@ describe('FeedForecastService', () => {
         new NotFoundException('Farm not found.'),
       );
       expect(loadFarm).not.toHaveBeenCalled();
+    });
+  });
+
+  // Fix round 1 (security): resolveFarm must fail closed. None of these stub
+  // activeFarmOfTenant — a fail-closed path must reach its NotFound without
+  // ever needing that (or any other) lookup to succeed.
+  describe('resolveFarm — fails closed', () => {
+    it('an unset userType with no company pinned gets NotFound (no STANDARD_USER fallback)', async () => {
+      useFarmScope(cls, { farmId: null, restricted: false, companyId: null, lobId: null });
+      await expect(service.resolveFarm('farm-B', 'tenant-1', undefined)).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('an unknown user type is bound to its scoped company: a farm outside it is NotFound', async () => {
+      useFarmScope(cls, { farmId: null, restricted: false, companyId: 'comp-1', lobId: null });
+      (activeFarmOfCompany as jest.Mock).mockResolvedValueOnce(false);
+      await expect(service.resolveFarm('farm-C', 'tenant-1', 'STAFF')).rejects.toBeInstanceOf(NotFoundException);
+      expect(activeFarmOfCompany).toHaveBeenCalledWith(expect.anything(), 'farm-C', 'comp-1', 'tenant-1');
+    });
+
+    it('an OPERATIONAL_ADMIN naming a farm of another LOB gets NotFound', async () => {
+      const lobCls = transactionCls(dbWithFarmLob('lob-2'));
+      useFarmScope(lobCls, { farmId: 'farm-A', restricted: true, companyId: 'comp-1', lobId: 'lob-1' });
+      const lobService = new FeedForecastService(lobCls, {} as any, {} as any);
+      await expect(lobService.resolveFarm('farm-B', 'tenant-1', 'OPERATIONAL_ADMIN')).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('a TENANT_ADMIN with no company pinned takes the company from the farm itself (the one lookup this path may make)', async () => {
+      useFarmScope(cls, { farmId: null, restricted: false, companyId: null, lobId: null });
+      jest.spyOn(service as any, 'activeFarmOfTenant').mockResolvedValue('comp-X');
+      await expect(service.resolveFarm('farm-B', 'tenant-1', 'TENANT_ADMIN')).resolves.toEqual({ farmId: 'farm-B', companyId: 'comp-X' });
+    });
+
+    it('a COMPANY_ADMIN with no company pinned gets NotFound rather than a tenant-wide lookup', async () => {
+      useFarmScope(cls, { farmId: null, restricted: false, companyId: null, lobId: null });
+      await expect(service.resolveFarm('farm-B', 'tenant-1', 'COMPANY_ADMIN')).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('a STANDARD_USER with no farm pinned (malformed session) gets NotFound rather than the query farm', async () => {
+      useFarmScope(cls, { farmId: null, restricted: true, companyId: 'comp-1', lobId: 'lob-1' });
+      await expect(service.resolveFarm('farm-B', 'tenant-1', 'STANDARD_USER')).rejects.toBeInstanceOf(NotFoundException);
     });
   });
 
