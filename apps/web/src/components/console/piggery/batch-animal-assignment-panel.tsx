@@ -14,6 +14,8 @@ import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { InlineAlert } from "@/components/ui/alert";
 import { useLanguage } from "@/hooks/useLanguage";
+import AnimalStageTransitionModal from "./animal-stage-transition-modal";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 
 export interface AnimalAssignmentRow {
   id: string;
@@ -30,6 +32,10 @@ export interface AnimalAssignmentRow {
   weightKg: number;
   source: string;
   status: "Active" | "Transferred" | "Isolated" | "Culled";
+  stageId?: string;
+  stageCode?: string;
+  stageName?: string;
+  rawAnimal?: any;
 }
 
 import { api } from "@/services/api-client";
@@ -78,6 +84,7 @@ export default function BatchAnimalAssignmentPanel() {
   const [search, setSearch] = useState("");
   const [selectedSex, setSelectedSex] = useState("All");
   const [selectedStatus, setSelectedStatus] = useState("All");
+  const [selectedStage, setSelectedStage] = useState("All");
   const [activeTab, setActiveTab] = useState<"assigned" | "add" | "transfer" | "removal">("assigned");
 
   // Reference data for the real "assign existing" / "register new" flows
@@ -87,6 +94,9 @@ export default function BatchAnimalAssignmentPanel() {
   const [items, setItems] = useState<Row[]>([]);
   const [locations, setLocations] = useState<Row[]>([]);
   const [stages, setStages] = useState<Row[]>([]);
+
+  // Individual animal manual stage change modal
+  const [transitionAnimal, setTransitionAnimal] = useState<Row | null>(null);
 
   // Multi-select over the assigned list. A batch that is due to move on usually
   // has a handful of animals that are not ready — the group actions below act
@@ -132,8 +142,38 @@ export default function BatchAnimalAssignmentPanel() {
 
   const [toastMsg, setToastMsg] = useState("");
 
-  // 1. Fetch live batches
-  useEffect(() => {
+  // Deduplicate stages for dropdowns, preferring active company-scoped row over tenant-scoped row
+  const uniqueStages = useMemo(() => {
+    const map = new Map<string, Row>();
+    const companyId = getActiveCompanyId();
+    const sorted = [...stages].sort((a, b) => {
+      const aComp = a.company_id === companyId ? 1 : 0;
+      const bComp = b.company_id === companyId ? 1 : 0;
+      return aComp - bComp;
+    });
+    for (const st of sorted) {
+      if (st.stage_code) {
+        map.set(st.stage_code, st);
+      }
+    }
+    return Array.from(map.values());
+  }, [stages]);
+
+  // Distinct stages present in currently loaded animals
+  const availableStages = useMemo(() => {
+    const stageCountMap = new Map<string, { code: string; name: string; count: number }>();
+    animals.forEach((a) => {
+      const code = a.stageCode || "UNKNOWN";
+      if (!stageCountMap.has(code)) {
+        stageCountMap.set(code, { code, name: a.stageName || code, count: 0 });
+      }
+      stageCountMap.get(code)!.count += 1;
+    });
+    return Array.from(stageCountMap.values());
+  }, [animals]);
+
+  // 1. Fetch live batches (only animal-wise batches: animal_tracking === 'REGISTERED')
+  const loadBatches = (preserveSelectedId?: string) => {
     const companyId = getActiveCompanyId();
     if (!companyId) {
       setLoading(false);
@@ -143,7 +183,9 @@ export default function BatchAnimalAssignmentPanel() {
     api.get(`/batch?companyId=${companyId}&status=ACTIVE&limit=50`)
       .then((res) => {
         const list: any[] = Array.isArray(res) ? res : (res?.data ?? []);
-        const mapped: BatchOption[] = list.map((b: any) => ({
+        // Strictly filter to Animal-Wise batches
+        const registeredOnly = list.filter((b: any) => b.animal_tracking === "REGISTERED");
+        const mapped: BatchOption[] = registeredOnly.map((b: any) => ({
           id: b.batch_id,
           code: b.batch_no,
           breed: b.breed_name || b.breed_code || "—",
@@ -154,17 +196,25 @@ export default function BatchAnimalAssignmentPanel() {
           breedId: b.breed_id || undefined,
           locationId: b.location_id || b.shed_id || undefined,
           stageId: b.stage_id || undefined,
-          animalTracking: b.animal_tracking || "COUNT_ONLY",
+          animalTracking: b.animal_tracking || "REGISTERED",
         }));
         setBatches(mapped);
         if (mapped.length > 0) {
-          setSelectedBatchId(mapped.find((batch) => batch.animalTracking === "REGISTERED")?.id || mapped[0].id);
+          const currentId = preserveSelectedId || selectedBatchId;
+          const match = mapped.find((b) => b.id === currentId);
+          setSelectedBatchId(match ? match.id : mapped[0].id);
+        } else {
+          setSelectedBatchId("");
         }
         setLoading(false);
       })
       .catch(() => {
         setLoading(false);
       });
+  };
+
+  useEffect(() => {
+    loadBatches();
   }, []);
 
   // 2. Fetch animals actually assigned to the selected batch (real filter, real fields)
@@ -179,6 +229,10 @@ export default function BatchAnimalAssignmentPanel() {
           const ageDays = dob ? Math.max(0, Math.floor((Date.now() - new Date(dob).getTime()) / 86400000)) : 0;
           const loc = locations.find((l) => l.location_id === a.current_location_id);
           const breedRow = breeds.find((b) => b.breed_id === a.breed_id);
+          const stageId = a.current_stage_id || currentBatch?.stageId || "";
+          const stageRow = stages.find((s) => s.stage_id === stageId) || stages.find((s) => s.stage_code === currentBatch?.stage);
+          const stageCode = stageRow?.stage_code || currentBatch?.stage || "—";
+          const stageName = stageRow?.stage_name || "";
           const statusRaw = a.status || "ACTIVE";
           const status: AnimalAssignmentRow["status"] =
             ["CULLED", "DEAD", "SOLD", "SLAUGHTERED"].includes(statusRaw) ? "Culled" :
@@ -189,7 +243,7 @@ export default function BatchAnimalAssignmentPanel() {
             animalId: a.animal_code,
             rfid: a.rfid_tag || undefined,
             sex: a.gender === "M" ? "Male (Boar)" : a.animal_type === "PIGLET" ? "Piglet" : a.animal_type === "GILT" ? "Female (Gilt)" : "Female (Sow)",
-            breed: breedRow?.breed_name || breedRow?.breed_code || "—",
+            breed: breedRow?.breed_name || breedRow?.breed_code || a.breed_name || "—",
             dob: dob || "—",
             ageDays,
             entryDate: a.entry_date || "—",
@@ -198,6 +252,16 @@ export default function BatchAnimalAssignmentPanel() {
             weightKg: Number(a.current_weight_kg) || 0,
             source: a.entry_type || "—",
             status,
+            stageId: stageRow?.stage_id || stageId,
+            stageCode,
+            stageName,
+            rawAnimal: {
+              ...a,
+              current_stage_id: stageRow?.stage_id || stageId,
+              stage_code: stageCode,
+              stage_name: stageName || stageCode,
+              breed_name: breedRow?.breed_name || breedRow?.breed_code || a.breed_name,
+            },
           };
         });
         setAnimals(mapped);
@@ -205,7 +269,7 @@ export default function BatchAnimalAssignmentPanel() {
       .catch(() => setAnimals([]));
   };
 
-  useEffect(loadAssignedAnimals, [selectedBatchId, locations, breeds]);
+  useEffect(loadAssignedAnimals, [selectedBatchId, locations, breeds, stages, currentBatch?.stageId, currentBatch?.stage]);
 
   // Reference data — loaded once on mount
   useEffect(() => {
@@ -437,11 +501,13 @@ export default function BatchAnimalAssignmentPanel() {
       a.earTag.toLowerCase().includes(search.toLowerCase()) ||
       a.animalId.toLowerCase().includes(search.toLowerCase()) ||
       a.penLocation.toLowerCase().includes(search.toLowerCase()) ||
-      (a.rfid && a.rfid.toLowerCase().includes(search.toLowerCase()));
+      (a.rfid && a.rfid.toLowerCase().includes(search.toLowerCase())) ||
+      (a.stageCode && a.stageCode.toLowerCase().includes(search.toLowerCase()));
 
     const matchSex = selectedSex === "All" || a.sex.includes(selectedSex);
     const matchStatus = selectedStatus === "All" || a.status === selectedStatus;
-    return matchSearch && matchSex && matchStatus;
+    const matchStage = selectedStage === "All" || a.stageCode === selectedStage;
+    return matchSearch && matchSex && matchStatus && matchStage;
   });
 
 
@@ -466,21 +532,24 @@ export default function BatchAnimalAssignmentPanel() {
             <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] shrink-0">
               {t("baapTargetBatch")}
             </span>
-            <select
-              value={selectedBatchId}
-              onChange={(e) => {
-                setSelectedBatchId(e.target.value);
-                setActiveTab("assigned");
-                setSelectedIds(new Set());
-              }}
-              className="max-w-[240px] sm:max-w-[320px] truncate rounded-[var(--radius-xs)] border border-[var(--input-border)] bg-[var(--input-bg)] px-3 py-1.5 text-xs font-bold text-[var(--text-primary)] focus:outline-none"
-            >
-              {batches.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.code} ({b.breed})
-                </option>
-              ))}
-            </select>
+            <div className="w-72 sm:w-80">
+              <SearchableSelect
+                ariaLabel={t("baapTargetBatch")}
+                value={selectedBatchId}
+                onChange={(val) => {
+                  setSelectedBatchId(val);
+                  setActiveTab("assigned");
+                  setSelectedIds(new Set());
+                  setSelectedStage("All");
+                }}
+                options={batches.map((b) => ({
+                  value: b.id,
+                  label: `${b.code} (${b.breed})`,
+                }))}
+                placeholder={t("baapTargetBatch")}
+                searchPlaceholder="Search batches…"
+              />
+            </div>
             <span
               className="px-2 py-0.5 rounded-full text-[10px] font-bold border shrink-0"
               style={{
@@ -579,32 +648,65 @@ export default function BatchAnimalAssignmentPanel() {
             <div className="flex items-center gap-3 flex-wrap flex-1">
               <div>
                 <span className="text-[10px] uppercase font-bold text-[var(--text-muted)] block mb-1">{t("baapSexLabel")}</span>
-                <select
-                  value={selectedSex}
-                  onChange={(e) => setSelectedSex(e.target.value)}
-                  className="rounded-[var(--radius-xs)] border border-[var(--border)] bg-[var(--surface-raised)] px-2.5 py-1 text-xs text-[var(--text-primary)]"
-                >
-                  <option value="All">{t("baapAllGenders")}</option>
-                  <option value="Sow">{t("baapFemaleSow")}</option>
-                  <option value="Gilt">{t("baapFemaleGilt")}</option>
-                  <option value="Boar">{t("baapMaleBoar")}</option>
-                  <option value="Piglet">{t("baapPiglet")}</option>
-                </select>
+                <div className="w-36">
+                  <SearchableSelect
+                    ariaLabel={t("baapSexLabel")}
+                    value={selectedSex}
+                    onChange={(val) => setSelectedSex(val)}
+                    options={[
+                      { value: "All", label: t("baapAllGenders") },
+                      { value: "Sow", label: t("baapFemaleSow") },
+                      { value: "Gilt", label: t("baapFemaleGilt") },
+                      { value: "Boar", label: t("baapMaleBoar") },
+                      { value: "Piglet", label: t("baapPiglet") },
+                    ]}
+                    placeholder={t("baapAllGenders")}
+                    searchPlaceholder="Search sex…"
+                    onClear={selectedSex !== "All" ? () => setSelectedSex("All") : undefined}
+                  />
+                </div>
               </div>
 
               <div>
                 <span className="text-[10px] uppercase font-bold text-[var(--text-muted)] block mb-1">{t("baapStatusLabel")}</span>
-                <select
-                  value={selectedStatus}
-                  onChange={(e) => setSelectedStatus(e.target.value)}
-                  className="rounded-[var(--radius-xs)] border border-[var(--border)] bg-[var(--surface-raised)] px-2.5 py-1 text-xs text-[var(--text-primary)]"
-                >
-                  <option value="All">{t("baapAllStatuses")}</option>
-                  <option value="Active">{t("baapStatusActive")}</option>
-                  <option value="Isolated">{t("baapStatusIsolated")}</option>
-                  <option value="Transferred">{t("baapStatusTransferred")}</option>
-                  <option value="Culled">{t("baapStatusCulled")}</option>
-                </select>
+                <div className="w-36">
+                  <SearchableSelect
+                    ariaLabel={t("baapStatusLabel")}
+                    value={selectedStatus}
+                    onChange={(val) => setSelectedStatus(val)}
+                    options={[
+                      { value: "All", label: t("baapAllStatuses") },
+                      { value: "Active", label: t("baapStatusActive") },
+                      { value: "Isolated", label: t("baapStatusIsolated") },
+                      { value: "Transferred", label: t("baapStatusTransferred") },
+                      { value: "Culled", label: t("baapStatusCulled") },
+                    ]}
+                    placeholder={t("baapAllStatuses")}
+                    searchPlaceholder="Search status…"
+                    onClear={selectedStatus !== "All" ? () => setSelectedStatus("All") : undefined}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <span className="text-[10px] uppercase font-bold text-[var(--text-muted)] block mb-1">Stage</span>
+                <div className="w-48">
+                  <SearchableSelect
+                    ariaLabel="Stage"
+                    value={selectedStage}
+                    onChange={(val) => setSelectedStage(val)}
+                    options={[
+                      { value: "All", label: `All Stages (${animals.length})` },
+                      ...availableStages.map((st) => ({
+                        value: st.code,
+                        label: `${st.code} (${st.count})`,
+                      })),
+                    ]}
+                    placeholder="All Stages"
+                    searchPlaceholder="Search stages…"
+                    onClear={selectedStage !== "All" ? () => setSelectedStage("All") : undefined}
+                  />
+                </div>
               </div>
             </div>
 
@@ -640,6 +742,7 @@ export default function BatchAnimalAssignmentPanel() {
                     <th className="px-4 py-2.5 font-bold">{t("baapColHash")}</th>
                     <th className="px-4 py-2.5 font-bold">{t("baapColEarTagRfid")}</th>
                     <th className="px-4 py-2.5 font-bold">{t("baapColAnimalId")}</th>
+                    <th className="px-4 py-2.5 font-bold">Stage</th>
                     <th className="px-4 py-2.5 font-bold">{t("baapColGenderBreed")}</th>
                     <th className="px-4 py-2.5 font-bold">{t("baapColDobAge")}</th>
                     <th className="px-4 py-2.5 font-bold">{t("baapColCurrentPen")}</th>
@@ -652,7 +755,7 @@ export default function BatchAnimalAssignmentPanel() {
                 <tbody className="divide-y divide-[var(--border)]">
                   {filtered.length === 0 ? (
                     <tr>
-                      <td colSpan={11} className="py-8 text-center text-[var(--text-muted)]">
+                      <td colSpan={12} className="py-8 text-center text-[var(--text-muted)]">
                         {t("baapNoAnimalsFound", { code: currentBatch?.code || "" })}
                       </td>
                     </tr>
@@ -673,6 +776,14 @@ export default function BatchAnimalAssignmentPanel() {
                           {animal.rfid && <span className="text-[10px] text-[var(--text-muted)] font-mono">{animal.rfid}</span>}
                         </td>
                         <td className="px-4 py-2.5 font-mono text-[var(--text-secondary)]">{animal.animalId}</td>
+                        <td className="px-4 py-2.5">
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-[var(--accent-muted)] text-[var(--accent)] border border-[var(--accent)]/20 font-mono">
+                            {animal.stageCode}
+                          </span>
+                          {animal.stageName && animal.stageName !== animal.stageCode && (
+                            <span className="block text-[10px] text-[var(--text-muted)] truncate max-w-[120px]">{animal.stageName}</span>
+                          )}
+                        </td>
                         <td className="px-4 py-2.5">
                           <span className="font-medium text-[var(--text-primary)] block">{animal.sex}</span>
                           <span className="text-[10px] text-[var(--text-muted)]">{animal.breed}</span>
@@ -704,8 +815,15 @@ export default function BatchAnimalAssignmentPanel() {
                             <CheckCircle className="w-3 h-3" /> {animal.status}
                           </span>
                         </td>
-                        <td className="px-4 py-2.5 text-right">
-                          <span className="text-[10px] text-[var(--text-muted)]">Use Batch Transfer</span>
+                        <td className="px-4 py-2.5 text-right whitespace-nowrap">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => setTransitionAnimal(animal.rawAnimal)}
+                            className="h-6 text-[10px] px-2 font-semibold hover:border-[var(--accent)] hover:text-[var(--accent)]"
+                          >
+                            Change Stage
+                          </Button>
                         </td>
                       </tr>
                     ))
@@ -737,38 +855,62 @@ export default function BatchAnimalAssignmentPanel() {
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 text-xs">
               <div>
                 <label className="font-semibold block mb-1">{t("anpNatureOfBusiness")}</label>
-                <select className="nf-input w-full" value={regNobId} onChange={(e) => { setRegNobId(e.target.value); setRegForm((f) => ({ ...f, lob_id: "" })); }}>
-                  <option value="">{t("anpSelectPlaceholder")}</option>
-                  {nobs.map((n) => <option key={n.nob_id} value={n.nob_id}>{n.nob_name}</option>)}
-                </select>
+                <SearchableSelect
+                  ariaLabel={t("anpNatureOfBusiness")}
+                  value={regNobId}
+                  onChange={(val) => {
+                    setRegNobId(val);
+                    setRegForm((f) => ({ ...f, lob_id: "" }));
+                  }}
+                  options={nobs.map((n) => ({ value: n.nob_id, label: n.nob_name }))}
+                  placeholder={t("anpSelectPlaceholder")}
+                  searchPlaceholder="Search nature of business…"
+                />
               </div>
               <div>
                 <label className="font-semibold block mb-1">{t("anpLineOfBusiness")}</label>
-                <select className="nf-input w-full" value={regForm.lob_id} onChange={(e) => setRegForm((f) => ({ ...f, lob_id: e.target.value }))}>
-                  <option value="">{t("anpSelectNobFirst")}</option>
-                  {lobs.map((l) => <option key={l.lob_id} value={l.lob_id}>{l.lob_name}</option>)}
-                </select>
+                <SearchableSelect
+                  ariaLabel={t("anpLineOfBusiness")}
+                  value={regForm.lob_id}
+                  onChange={(val) => setRegForm((f) => ({ ...f, lob_id: val }))}
+                  options={lobs.map((l) => ({ value: l.lob_id, label: l.lob_name }))}
+                  placeholder={regNobId ? t("anpSelectPlaceholder") : t("anpSelectNobFirst")}
+                  searchPlaceholder="Search line of business…"
+                  disabled={!regNobId}
+                />
               </div>
               <div>
                 <label className="font-semibold block mb-1">{t("anpAnimalType")}</label>
-                <select className="nf-input w-full" value={regForm.animal_type} onChange={(e) => setRegForm((f) => ({ ...f, animal_type: e.target.value }))}>
-                  <option value="">{t("anpSelectPlaceholder")}</option>
-                  {ANIMAL_TYPES.map((tp) => <option key={tp} value={tp}>{tp.replace(/_/g, " ")}</option>)}
-                </select>
+                <SearchableSelect
+                  ariaLabel={t("anpAnimalType")}
+                  value={regForm.animal_type}
+                  onChange={(val) => setRegForm((f) => ({ ...f, animal_type: val }))}
+                  options={ANIMAL_TYPES.map((tp) => ({ value: tp, label: tp.replace(/_/g, " ") }))}
+                  placeholder={t("anpSelectPlaceholder")}
+                  searchPlaceholder="Search animal type…"
+                />
               </div>
               <div>
                 <label className="font-semibold block mb-1">{t("anpGender")}</label>
-                <select className="nf-input w-full" value={regForm.gender} onChange={(e) => setRegForm((f) => ({ ...f, gender: e.target.value }))}>
-                  <option value="">{t("anpSelectPlaceholder")}</option>
-                  {GENDERS.map((g) => <option key={g.value} value={g.value}>{g.label}</option>)}
-                </select>
+                <SearchableSelect
+                  ariaLabel={t("anpGender")}
+                  value={regForm.gender}
+                  onChange={(val) => setRegForm((f) => ({ ...f, gender: val }))}
+                  options={GENDERS.map((g) => ({ value: g.value, label: g.label }))}
+                  placeholder={t("anpSelectPlaceholder")}
+                  searchPlaceholder="Search gender…"
+                />
               </div>
               <div>
                 <label className="font-semibold block mb-1">{t("anpEntryType")}</label>
-                <select className="nf-input w-full" value={regForm.entry_type} onChange={(e) => setRegForm((f) => ({ ...f, entry_type: e.target.value }))}>
-                  <option value="">{t("anpSelectPlaceholder")}</option>
-                  {ENTRY_TYPES.map((tp) => <option key={tp} value={tp}>{tp.replace(/_/g, " ")}</option>)}
-                </select>
+                <SearchableSelect
+                  ariaLabel={t("anpEntryType")}
+                  value={regForm.entry_type}
+                  onChange={(val) => setRegForm((f) => ({ ...f, entry_type: val }))}
+                  options={ENTRY_TYPES.map((tp) => ({ value: tp, label: tp.replace(/_/g, " ") }))}
+                  placeholder={t("anpSelectPlaceholder")}
+                  searchPlaceholder="Search entry type…"
+                />
               </div>
               <div>
                 <label className="font-semibold block mb-1">{t("anpEntryDate")}</label>
@@ -776,17 +918,28 @@ export default function BatchAnimalAssignmentPanel() {
               </div>
               <div>
                 <label className="font-semibold block mb-1">{t("anpBreed")}</label>
-                <select className="nf-input w-full" value={regForm.breed_id} onChange={(e) => setRegForm((f) => ({ ...f, breed_id: e.target.value }))}>
-                  <option value="">{t("anpSelectLobFirst")}</option>
-                  {breeds.map((b) => <option key={b.breed_id} value={b.breed_id}>{b.breed_name}</option>)}
-                </select>
+                <SearchableSelect
+                  ariaLabel={t("anpBreed")}
+                  value={regForm.breed_id}
+                  onChange={(val) => setRegForm((f) => ({ ...f, breed_id: val }))}
+                  options={breeds.map((b) => ({ value: b.breed_id, label: b.breed_name }))}
+                  placeholder={regForm.lob_id ? t("anpSelectPlaceholder") : t("anpSelectLobFirst")}
+                  searchPlaceholder="Search breed…"
+                  disabled={!regForm.lob_id}
+                />
               </div>
               <div>
                 <label className="font-semibold block mb-1">{t("anpItemLivingAsset")}</label>
-                <select className="nf-input w-full" value={regForm.item_id} onChange={(e) => setRegForm((f) => ({ ...f, item_id: e.target.value }))}>
-                  <option value="">{t("anpSelectPlaceholder")}</option>
-                  {items.filter((i) => i.item_type === "LIVING_ASSET" || !i.item_type).map((i) => <option key={i.item_id} value={i.item_id}>{i.item_name}</option>)}
-                </select>
+                <SearchableSelect
+                  ariaLabel={t("anpItemLivingAsset")}
+                  value={regForm.item_id}
+                  onChange={(val) => setRegForm((f) => ({ ...f, item_id: val }))}
+                  options={items
+                    .filter((i) => i.item_type === "LIVING_ASSET" || !i.item_type)
+                    .map((i) => ({ value: i.item_id, label: i.item_name }))}
+                  placeholder={t("anpSelectPlaceholder")}
+                  searchPlaceholder="Search item…"
+                />
               </div>
               <div>
                 <label className="font-semibold block mb-1">{t("anpAcquisitionCost")}</label>
@@ -919,18 +1072,17 @@ export default function BatchAnimalAssignmentPanel() {
 
             <div>
               <label className="font-semibold block mb-1">{t("baapNewDestinationPenLabel")}</label>
-              <select
+              <SearchableSelect
+                ariaLabel={t("baapNewDestinationPenLabel")}
                 value={targetLocationId}
-                onChange={(e) => setTargetLocationId(e.target.value)}
-                className="nf-input w-full"
-              >
-                <option value="">{t("baapDestinationPenPlaceholder")}</option>
-                {locations.map((l) => (
-                  <option key={l.location_id} value={l.location_id}>
-                    {l.location_name || l.location_code}
-                  </option>
-                ))}
-              </select>
+                onChange={(val) => setTargetLocationId(val)}
+                options={locations.map((l) => ({
+                  value: l.location_id,
+                  label: l.location_name || l.location_code,
+                }))}
+                placeholder={t("baapDestinationPenPlaceholder")}
+                searchPlaceholder="Search pen…"
+              />
             </div>
 
             <div>
@@ -946,6 +1098,22 @@ export default function BatchAnimalAssignmentPanel() {
           </div>
         </Dialog>
       )}
+
+      {/* ── MODAL: Per-animal manual stage change (matches Data Entry) ── */}
+      <AnimalStageTransitionModal
+        open={!!transitionAnimal}
+        onClose={() => setTransitionAnimal(null)}
+        animal={transitionAnimal}
+        onSuccess={() => {
+          loadAssignedAnimals();
+          loadBatches(selectedBatchId);
+          setToastMsg("Animal stage transition recorded successfully.");
+          setTimeout(() => setToastMsg(""), 3500);
+        }}
+        stages={uniqueStages}
+        locations={locations}
+        batches={batches.map((b) => ({ batch_id: b.id, batch_no: b.code }))}
+      />
 
       {/* Advance a selected group to a stage — the tail-enders a batch-level
           move left behind, moved together rather than one modal each. */}
@@ -964,21 +1132,32 @@ export default function BatchAnimalAssignmentPanel() {
           {groupError && <p className="text-xs text-[var(--danger)]">{groupError}</p>}
           <label className="block">
             <span className="text-[10px] uppercase font-bold text-[var(--text-muted)] block mb-1">Destination stage</span>
-            <select value={moveStageId} onChange={(e) => setMoveStageId(e.target.value)} className="nf-input-sm nf-select w-full">
-              <option value="">Select a stage…</option>
-              {stages.map((st: any) => (
-                <option key={st.stage_id} value={st.stage_id}>{st.stage_code} — {st.stage_name}</option>
-              ))}
-            </select>
+            <SearchableSelect
+              ariaLabel="Destination stage"
+              value={moveStageId}
+              onChange={(val) => setMoveStageId(val)}
+              options={uniqueStages.map((st: any) => ({
+                value: st.stage_id,
+                label: `${st.stage_code} — ${st.stage_name}`,
+              }))}
+              placeholder="Select a stage…"
+              searchPlaceholder="Search stage…"
+            />
           </label>
           <label className="block">
             <span className="text-[10px] uppercase font-bold text-[var(--text-muted)] block mb-1">Destination pen (optional)</span>
-            <select value={moveLocationId} onChange={(e) => setMoveLocationId(e.target.value)} className="nf-input-sm nf-select w-full">
-              <option value="">Leave where they are</option>
-              {locations.map((l: any) => (
-                <option key={l.location_id} value={l.location_id}>{l.location_code} — {l.location_name}</option>
-              ))}
-            </select>
+            <SearchableSelect
+              ariaLabel="Destination pen"
+              value={moveLocationId}
+              onChange={(val) => setMoveLocationId(val)}
+              options={locations.map((l: any) => ({
+                value: l.location_id,
+                label: `${l.location_code} — ${l.location_name}`,
+              }))}
+              placeholder="Leave where they are"
+              searchPlaceholder="Search pen…"
+              onClear={moveLocationId ? () => setMoveLocationId("") : undefined}
+            />
           </label>
           <label className="block">
             <span className="text-[10px] uppercase font-bold text-[var(--text-muted)] block mb-1">Reason (overrides the minimum-days check)</span>
@@ -1010,21 +1189,33 @@ export default function BatchAnimalAssignmentPanel() {
           </p>
           <label className="block">
             <span className="text-[10px] uppercase font-bold text-[var(--text-muted)] block mb-1">Stage the group holds at</span>
-            <select value={splitStageCode} onChange={(e) => setSplitStageCode(e.target.value)} className="nf-input-sm nf-select w-full">
-              <option value="">Keep the batch&rsquo;s current stage</option>
-              {stages.map((st: any) => (
-                <option key={st.stage_id} value={st.stage_code}>{st.stage_code} — {st.stage_name}</option>
-              ))}
-            </select>
+            <SearchableSelect
+              ariaLabel="Stage the group holds at"
+              value={splitStageCode}
+              onChange={(val) => setSplitStageCode(val)}
+              options={stages.map((st: any) => ({
+                value: st.stage_code,
+                label: `${st.stage_code} — ${st.stage_name}`,
+              }))}
+              placeholder="Keep the batch's current stage"
+              searchPlaceholder="Search stage…"
+              onClear={splitStageCode ? () => setSplitStageCode("") : undefined}
+            />
           </label>
           <label className="block">
             <span className="text-[10px] uppercase font-bold text-[var(--text-muted)] block mb-1">Pen (optional)</span>
-            <select value={splitLocationId} onChange={(e) => setSplitLocationId(e.target.value)} className="nf-input-sm nf-select w-full">
-              <option value="">Keep the batch&rsquo;s pen</option>
-              {locations.map((l: any) => (
-                <option key={l.location_id} value={l.location_id}>{l.location_code} — {l.location_name}</option>
-              ))}
-            </select>
+            <SearchableSelect
+              ariaLabel="Pen"
+              value={splitLocationId}
+              onChange={(val) => setSplitLocationId(val)}
+              options={locations.map((l: any) => ({
+                value: l.location_id,
+                label: `${l.location_code} — ${l.location_name}`,
+              }))}
+              placeholder="Keep the batch's pen"
+              searchPlaceholder="Search pen…"
+              onClear={splitLocationId ? () => setSplitLocationId("") : undefined}
+            />
           </label>
           <label className="block">
             <span className="text-[10px] uppercase font-bold text-[var(--text-muted)] block mb-1">Reason</span>

@@ -74,11 +74,11 @@ export function useCodeSeries(key: string, form: Record<string, unknown>, enable
     api.get(previewUrl)
       .then((modernRes: any) => {
         const modernData = modernRes?.data || modernRes;
-        if (modernData?.generated) {
+        if (modernData && typeof modernData === "object" && ("generated" in modernData || modernRes?.success)) {
           const settings: Settings = {
-            generated: true,
+            generated: modernData.generated === true,
             allowManual: modernData.allowManual !== false,
-            preview: modernData.preview || modernData.next_number,
+            preview: modernData.preview || modernData.next_number || "",
           };
           PREVIEW_CACHE.set(cacheKey, settings);
           if (!cancelled) {
@@ -99,9 +99,9 @@ export function useCodeSeries(key: string, form: Record<string, unknown>, enable
           const settings: Settings = {
             generated: data.generated === true,
             allowManual: data.allowManual !== false,
-            preview: data.preview,
+            preview: data.preview || "",
           };
-          if (settings.generated) PREVIEW_CACHE.set(cacheKey, settings);
+          PREVIEW_CACHE.set(cacheKey, settings);
           if (!cancelled) setResult({ key: requestKey, settings });
         });
       })
@@ -116,9 +116,9 @@ export function useCodeSeries(key: string, form: Record<string, unknown>, enable
           const settings: Settings = {
             generated: data.generated === true,
             allowManual: data.allowManual !== false,
-            preview: data.preview,
+            preview: data.preview || "",
           };
-          if (settings.generated) PREVIEW_CACHE.set(cacheKey, settings);
+          PREVIEW_CACHE.set(cacheKey, settings);
           if (!cancelled) setResult({ key: requestKey, settings });
         }).catch((err: Error) => {
           // If we already have a cached preview, do NOT wipe it with an error
@@ -179,7 +179,7 @@ export function useCodeSeries(key: string, form: Record<string, unknown>, enable
       // Manual (manual_nos = true): user value is authoritative; do not override user-cleared empty input
       return value;
     },
-    loading: canGenerate && enabled && !activeSettings?.preview && !result?.error,
+    loading: canGenerate && enabled && activeSettings === undefined && !result?.error,
     error: canGenerate && enabled ? result?.error : undefined,
     /** The config field this hook drives, so a caller can tell whether a failed
      * preview actually prevents saving. */

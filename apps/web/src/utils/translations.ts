@@ -1234,7 +1234,7 @@ export const translations = {
     animalAssignment: "Animal Assignment",
     batchDataEntry: "Data Entry",
     scheduler: "Scheduler",
-    feedManagement: "Feed Management",
+    feedManagement: "Batch History",
     animalHerdRegister: "Animal & Herd Register",
     dairyCowRegister: "Dairy Cow Register",
     inventoryStock: "Inventory & Stock",

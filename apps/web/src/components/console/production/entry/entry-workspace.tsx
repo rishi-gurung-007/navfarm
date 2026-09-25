@@ -6,6 +6,7 @@ import { Building2, CalendarDays, CheckCircle2, ChevronLeft } from "lucide-react
 import { api } from "@/services/api-client";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { EmptyState, LoadingState } from "@/components/ui/states";
 import { useLanguage } from "@/hooks/useLanguage";
 import { getStoredUser } from "@/hooks/useAuth";
@@ -174,20 +175,20 @@ export default function EntryWorkspace() {
         {/* ── Which batch, and which day ─────────────────────────────── */}
         <Card className="p-4">
           <div className="flex flex-wrap items-end gap-3">
-            <label className="min-w-[180px] flex-1">
+            <div className="min-w-[220px] flex-1">
               <span className="mb-1 block text-xs font-medium text-(--text-secondary)">{t("deSelectBatch")}</span>
-              <select
+              <SearchableSelect
+                ariaLabel={t("deSelectBatch")}
                 value={batchId}
-                // A different batch has different stages and a different first
-                // owed day, so neither the stage nor the day survives the change.
-                onChange={(e) => navigate({ batch: e.target.value, stage: null, date: null }, "replace")}
-                className="h-12 w-full rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--surface)] px-3 text-sm text-(--text-primary)"
-              >
-                {batches.map((b) => (
-                  <option key={b.batch_id} value={b.batch_id}>{b.batch_no}</option>
-                ))}
-              </select>
-            </label>
+                onChange={(val) => navigate({ batch: val, stage: null, date: null }, "replace")}
+                options={batches.map((b) => ({
+                  value: b.batch_id,
+                  label: b.batch_no,
+                }))}
+                placeholder={t("deSelectBatch")}
+                searchPlaceholder="Search batch…"
+              />
+            </div>
             <div className="min-w-[170px]">
               <span className="mb-1 block text-xs font-medium text-(--text-secondary)">{t("deWorkingDay")}</span>
               <div className="flex h-12 items-center gap-2 rounded-[var(--radius-sm)] border border-[var(--border)] px-3 text-sm font-semibold text-(--text-primary)">

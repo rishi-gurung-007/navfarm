@@ -9,11 +9,12 @@ import {
   ArrowRight,
   Layers,
 } from "lucide-react";
-import { PiggeryStage } from "./piggery-lifecycle-stepper";
-import { buildLifecycleStages } from "./build-lifecycle-stages";
+import PiggeryLifecycleStepper, { PiggeryStage } from "./piggery-lifecycle-stepper";
+import { buildLifecycleStages, StageMasterRow } from "./build-lifecycle-stages";
 import { resolvePiggeryStageId } from "./resolve-piggery-stage";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 
 import { api } from "@/services/api-client";
 import { getActiveCompanyId } from "@/hooks/useAuth";
@@ -41,9 +42,6 @@ export default function PiggeryBatchStagesPanel() {
     [batches, selectedBatchId]
   );
 
-  // Starts empty and is filled from stage_master + this batch's stage_log.
-  // Seeding it with DEFAULT_PIGGERY_STAGES rendered eight fixed stages with
-  // 2025 dates for every batch before any data arrived.
   const [stages, setStages] = useState<PiggeryStage[]>([]);
   const [stageMaster, setStageMaster] = useState<any[]>([]);
   const [currentStageId, setCurrentStageId] = useState<number>(1);
@@ -100,25 +98,115 @@ export default function PiggeryBatchStagesPanel() {
       });
   }, []);
 
-  // Build the selected batch's real lifecycle: every stage configured for the
-  // LOB, with completion taken from the batch's own stage_log rather than from
-  // a stage's position in the sequence. Deriving status from position marked
-  // Quarantine and Gilt Grower "Done" on a cohort that entered at Flush/AI.
+  // Build the selected batch's real lifecycle matching its Data Entry stages:
+  // loads scheduled stages from `/batch/:id/data-entry` alongside batch stage_log,
+  // showing only the relevant stages for this batch in correct sequence order.
   useEffect(() => {
     if (!currentBatch) return;
     let cancelled = false;
 
     (async () => {
-      const details: any = await api.get(`/batch/${currentBatch.id}`).catch(() => null);
+      const [details, schedRes] = await Promise.all([
+        api.get(`/batch/${currentBatch.id}`).catch(() => null),
+        api.get(
+          `/batch/${currentBatch.id}/data-entry?date=${currentBatch.startDate || new Date().toISOString().slice(0, 10)}`
+        ).catch(() => null),
+      ]);
       if (cancelled) return;
       const batch = details?.data ?? details;
       if (!batch || stageMaster.length === 0) {
         setStages([]);
         return;
       }
+
+      const schedData = schedRes?.data ?? schedRes;
+      const progress: any[] = Array.isArray(schedData?.progress) ? schedData.progress : [];
+      const schedStages: any[] = Array.isArray(schedData?.stages) ? schedData.stages : [];
+
+      // Collect stage codes and IDs belonging to this batch (identical to data entry)
+      const scheduledCodes = new Set<string>();
+      const scheduledIds = new Set<string>();
+      for (const p of progress) {
+        if (p.stage_code) scheduledCodes.add(String(p.stage_code).toUpperCase());
+        if (p.stage_id) scheduledIds.add(String(p.stage_id));
+      }
+      for (const s of schedStages) {
+        if (s.stage_code) scheduledCodes.add(String(s.stage_code).toUpperCase());
+        if (s.stage_id) scheduledIds.add(String(s.stage_id));
+      }
+      if (batch.current_stage_code) {
+        scheduledCodes.add(String(batch.current_stage_code).toUpperCase());
+      }
+      if (batch.stage_id) {
+        scheduledIds.add(String(batch.stage_id));
+      }
+      const stageLog: any[] = Array.isArray(batch.stage_log) ? batch.stage_log : [];
+      for (const log of stageLog) {
+        if (log.from_stage_code) scheduledCodes.add(String(log.from_stage_code).toUpperCase());
+        if (log.to_stage_code) scheduledCodes.add(String(log.to_stage_code).toUpperCase());
+      }
+
+      let batchStageMaster: StageMasterRow[] = [];
+      const seenCodes = new Set<string>();
+
+      // Sort stageMaster preferring company-scoped over tenant-scoped
+      const sortedMaster = [...stageMaster].sort((a, b) => {
+        if (a.company_id && !b.company_id) return -1;
+        if (!a.company_id && b.company_id) return 1;
+        return (a.stage_sequence ?? 0) - (b.stage_sequence ?? 0);
+      });
+
+      if (scheduledCodes.size > 0 || scheduledIds.size > 0) {
+        for (const sm of sortedMaster) {
+          const codeUpper = (sm.stage_code || "").toUpperCase();
+          if (
+            (scheduledCodes.has(codeUpper) || scheduledIds.has(sm.stage_id)) &&
+            !seenCodes.has(codeUpper)
+          ) {
+            seenCodes.add(codeUpper);
+            batchStageMaster.push({
+              stage_id: sm.stage_id,
+              stage_code: sm.stage_code,
+              stage_name: sm.stage_name,
+              stage_sequence: sm.stage_sequence ?? 0,
+              stage_category: sm.stage_category || "PRE_PRODUCTIVE",
+              typical_duration_days: sm.typical_duration_days ?? 0,
+              next_stage_id: sm.next_stage_id,
+            });
+          }
+        }
+
+        // Include any progress item from data-entry not in stageMaster
+        for (const p of progress) {
+          const pCode = (p.stage_code || "").toUpperCase();
+          if (pCode && !seenCodes.has(pCode)) {
+            seenCodes.add(pCode);
+            batchStageMaster.push({
+              stage_id: p.stage_id,
+              stage_code: p.stage_code,
+              stage_name: p.stage_name || p.stage_code,
+              stage_sequence: p.stage_sequence ?? batchStageMaster.length + 1,
+              stage_category: "PRE_PRODUCTIVE",
+              typical_duration_days: 0,
+            });
+          }
+        }
+      } else {
+        // Fallback for batches without schedulers: deduplicated stageMaster
+        for (const sm of sortedMaster) {
+          const codeUpper = (sm.stage_code || "").toUpperCase();
+          if (!seenCodes.has(codeUpper)) {
+            seenCodes.add(codeUpper);
+            batchStageMaster.push(sm);
+          }
+        }
+      }
+
+      batchStageMaster.sort((a, b) => a.stage_sequence - b.stage_sequence);
+
       const built = buildLifecycleStages({
-        stageMaster,
-        stageLog: Array.isArray(batch.stage_log) ? batch.stage_log : [],
+        stageMaster: batchStageMaster,
+        stageLog,
         batchStartDate: String(batch.start_date || currentBatch.startDate || "").slice(0, 10),
         currentStageCode: batch.current_stage_code ?? currentBatch.currentStageCode ?? null,
       });
@@ -146,6 +234,13 @@ export default function PiggeryBatchStagesPanel() {
         to_stage_code: nextStage.code,
         remarks: `Advanced from stage ${stages.find((s) => s.id === currentStageId)?.name || currentStageId} to ${nextStage.name}`,
       });
+      setBatches((prev) =>
+        prev.map((b) =>
+          b.id === currentBatch.id
+            ? { ...b, currentStageCode: nextStage.code, currentStageId: nextId }
+            : b,
+        ),
+      );
     } catch {}
 
     const updated = stages.map((s) => ({
@@ -197,7 +292,11 @@ export default function PiggeryBatchStagesPanel() {
     setTimeout(() => setToastMsg(""), 3500);
   };
 
-  const currentStageName = stages.find((s) => s.id === currentStageId)?.name || t("pbsActiveStage");
+  const currentStageName =
+    stages.find((s) => s.status === "CURRENT")?.name ||
+    stages.find((s) => s.id === currentStageId)?.name ||
+    currentBatch?.currentStageCode ||
+    t("pbsActiveStage");
   const totalStandardDays = stages.reduce((sum, s) => sum + s.standardDays, 0);
 
   if (loading) {
@@ -217,17 +316,22 @@ export default function PiggeryBatchStagesPanel() {
             <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)]">
               {t("pbsProductionBatchLabel")}
             </span>
-            <select
-              value={selectedBatchId}
-              onChange={(e) => setSelectedBatchId(e.target.value)}
-              className="max-w-[240px] sm:max-w-[320px] truncate rounded-[var(--radius-xs)] border border-[var(--input-border)] bg-[var(--input-bg)] px-3 py-1.5 text-xs font-bold text-[var(--text-primary)] focus:outline-none"
-            >
-              {batches.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.code} — {b.name} ({b.breed})
-                </option>
-              ))}
-            </select>
+            <div className="w-80">
+              <SearchableSelect
+                ariaLabel={t("pbsProductionBatchLabel")}
+                value={selectedBatchId}
+                onChange={(val) => {
+                  setSelectedBatchId(val);
+                  const selected = batches.find((b) => b.id === val);
+                  if (selected) setCurrentStageId(selected.currentStageId);
+                }}
+                options={batches.map((b) => ({
+                  value: b.id,
+                  label: `${b.code} — ${b.name} (${b.breed})`,
+                }))}
+                searchPlaceholder="Search batches…"
+              />
+            </div>
             <span
               className="px-2 py-0.5 rounded-full text-[10px] font-bold border"
               style={{
@@ -275,6 +379,14 @@ export default function PiggeryBatchStagesPanel() {
         </div>
       )}
 
+      {/* ── Visual Lifecycle Stepper ── */}
+      {stages.length > 0 && (
+        <PiggeryLifecycleStepper
+          stages={stages}
+          currentStageId={currentStageId}
+        />
+      )}
+
       {/* ── Stage Sequence Table ── */}
       <div className="rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface)] overflow-hidden shadow-2xs">
         <div className="px-4 py-3 border-b border-[var(--border)] bg-[var(--surface-raised)] flex items-center justify-between">
@@ -304,7 +416,7 @@ export default function PiggeryBatchStagesPanel() {
             <tbody className="divide-y divide-[var(--border)]">
               {stages.map((stage, index) => {
                 const dayFrom = index === 0 ? 1 : stages.slice(0, index).reduce((sum, s) => sum + s.standardDays, 1);
-                const dayTo = dayFrom + stage.standardDays - 1;
+                const dayTo = stage.standardDays > 0 ? dayFrom + stage.standardDays - 1 : dayFrom;
 
                 return (
                   <tr key={stage.id} className="hover:bg-[var(--surface-raised)]/80 transition-colors">

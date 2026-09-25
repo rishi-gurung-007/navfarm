@@ -240,6 +240,7 @@ export class BatchController {
     @Param('id') id: string,
     @Param('stageId') stageId: string,
     @Query('date') date: string,
+    @Query('animalId') animalId: string,
     @Req() req: any,
   ) {
     const tenantId = req.user?.tenantId || req['tenantId'];
@@ -249,10 +250,13 @@ export class BatchController {
       date || new Date().toISOString().slice(0, 10),
       tenantId,
       req.user,
+      animalId,
     );
     return {
       success: true,
-      message: 'Stage data posted and locked.',
+      message: animalId
+        ? 'Animal data posted successfully.'
+        : 'Stage data posted and locked.',
       data: result,
     };
   }

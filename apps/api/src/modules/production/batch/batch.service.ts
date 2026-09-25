@@ -7,7 +7,7 @@ import {
   Inject,
 } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, like, isNull, inArray, desc, asc, SQL } from 'drizzle-orm';
+import { eq, and, like, isNull, inArray, desc, asc, gt, SQL } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { unlink } from 'fs/promises';
 import { resolve } from 'path';
@@ -2615,10 +2615,20 @@ export class BatchService {
   private computeExpectedQty(
     line: typeof schema.schedulerLine.$inferSelect,
     animalCount: number,
+    stageAnimalCount?: number,
   ): number {
     if (line.standard_qty == null) return 0;
     const qty = Number(line.standard_qty);
-    return line.qty_basis === 'PER_HEAD' ? qty * animalCount : qty; // TOTAL_BATCH / PER_PEN / FIXED all use the raw value
+    if (line.qty_basis === 'PER_HEAD') {
+      return Number((qty * animalCount).toFixed(4));
+    }
+    // PER_BATCH / TOTAL_BATCH:
+    // If calculating for a single individual animal (animalCount === 1 and stageAnimalCount > 0):
+    // distribute the batch total across all active animals in the stage/batch.
+    if (stageAnimalCount && stageAnimalCount > 0) {
+      return Number((qty / stageAnimalCount).toFixed(4));
+    }
+    return qty;
   }
 
   /** transaction_type (batch_transaction's generic enum) -> the scheduler_line.line_type(s) it can match. */
@@ -2769,6 +2779,276 @@ export class BatchService {
   }
 
   /**
+   * Computes the next pending data entry date starting from batch.start_date.
+   * Daily data entry is mandatory and dates cannot be skipped.
+   * For BATCH_WISE: date is completed when batch_data_entry_lock has status 'LOCKED'.
+   * For ANIMAL_WISE: date is completed when all active scheduled stages have status 'LOCKED'.
+   */
+  async getNextPendingDate(batch: {
+    batch_id: string;
+    start_date?: string | null;
+    tracking_mode?: string | null;
+  }): Promise<string> {
+    const today = new Date().toISOString().slice(0, 10);
+    const startDate = batch.start_date || today;
+
+    try {
+      if (typeof this.db?.select !== 'function') return startDate;
+
+      const locks =
+        (await this.db
+          .select({
+            entry_date: schema.batchDataEntryLock.entry_date,
+            stage_id: schema.batchDataEntryLock.stage_id,
+            status: schema.batchDataEntryLock.status,
+          })
+          .from(schema.batchDataEntryLock)
+          .where(
+            and(
+              eq(schema.batchDataEntryLock.batch_id, batch.batch_id),
+              eq(schema.batchDataEntryLock.status, 'LOCKED'),
+            ),
+          )) || [];
+
+      const addOneDay = (dStr: string) => {
+        const [y, m, d] = dStr.split('-').map(Number);
+        const next = new Date(Date.UTC(y, m - 1, d + 1));
+        return next.toISOString().slice(0, 10);
+      };
+
+      if (batch.tracking_mode === 'ANIMAL_WISE') {
+        const liveAnimals =
+          (await this.db
+            .select({
+              current_stage_id: schema.animalRegister.current_stage_id,
+            })
+            .from(schema.animalRegister)
+            .where(
+              and(
+                eq(schema.animalRegister.current_batch_id, batch.batch_id),
+                eq(schema.animalRegister.is_active, true),
+              ),
+            )) || [];
+        const activeStageIds = new Set(
+          liveAnimals.map((a: any) => a.current_stage_id).filter(Boolean),
+        );
+
+        let cursor = startDate;
+        let count = 0;
+        while (count < 365) {
+          let isComplete = false;
+          if (activeStageIds.size === 0) {
+            isComplete = locks.some((l: any) => l.entry_date === cursor);
+          } else {
+            const lockedStages = new Set(
+              locks
+                .filter((l: any) => l.entry_date === cursor)
+                .map((l: any) => l.stage_id),
+            );
+            isComplete = Array.from(activeStageIds).every((sId) =>
+              lockedStages.has(sId!),
+            );
+          }
+
+          if (!isComplete) {
+            return cursor;
+          }
+          if (cursor >= today) {
+            return addOneDay(cursor);
+          }
+          cursor = addOneDay(cursor);
+          count++;
+        }
+        return cursor;
+      } else {
+        const lockedDates = new Set(locks.map((l: any) => l.entry_date));
+        let cursor = startDate;
+        let count = 0;
+        while (count < 365) {
+          if (!lockedDates.has(cursor)) {
+            return cursor;
+          }
+          if (cursor >= today) {
+            return addOneDay(cursor);
+          }
+          cursor = addOneDay(cursor);
+          count++;
+        }
+        return cursor;
+      }
+    } catch {
+      return batch.start_date || today;
+    }
+  }
+
+  /**
+   * Evaluates stage transition rules for a batch:
+   * - Days spent in current stage
+   * - Validation against stage_master "min_days_before_move"
+   * - Automatic transition trigger (AUTO_BY_DAY) and due status
+   * - Details of next stage
+   */
+  async getStageTransitionInfo(batch: {
+    batch_id: string;
+    lob_id?: string | null;
+    stage_id?: string | null;
+    current_stage_code?: string | null;
+    start_date?: string | null;
+  }) {
+    if (typeof this.db?.select !== 'function') return null;
+    try {
+      let currentStage: any = null;
+      if (batch.stage_id) {
+        const [stg] = await this.db
+          .select()
+          .from(schema.stageMaster)
+          .where(eq(schema.stageMaster.stage_id, batch.stage_id))
+          .limit(1);
+        currentStage = stg;
+      } else if (batch.current_stage_code && batch.lob_id) {
+        const [stg] = await this.db
+          .select()
+          .from(schema.stageMaster)
+          .where(
+            and(
+              eq(schema.stageMaster.lob_id, batch.lob_id),
+              eq(
+                schema.stageMaster.stage_code,
+                batch.current_stage_code.toUpperCase(),
+              ),
+              eq(schema.stageMaster.is_active, true),
+              isNull(schema.stageMaster.deleted_at),
+            ),
+          )
+          .limit(1);
+        currentStage = stg;
+      }
+
+      let daysPassed = 0;
+      const [lastTransfer] = await this.db
+        .select({ transferred_at: schema.batchStageLog.transferred_at })
+        .from(schema.batchStageLog)
+        .where(eq(schema.batchStageLog.batch_id, batch.batch_id))
+        .orderBy(desc(schema.batchStageLog.transferred_at))
+        .limit(1);
+
+      const stageEntryDate = lastTransfer
+        ? new Date(lastTransfer.transferred_at)
+        : new Date(batch.start_date || new Date());
+      daysPassed = Math.max(
+        0,
+        Math.floor(
+          (Date.now() - stageEntryDate.getTime()) / (1000 * 60 * 60 * 24),
+        ),
+      );
+
+      let nextStage: any = null;
+      if (currentStage?.next_stage_id) {
+        const [ns] = await this.db
+          .select()
+          .from(schema.stageMaster)
+          .where(eq(schema.stageMaster.stage_id, currentStage.next_stage_id))
+          .limit(1);
+        nextStage = ns;
+      }
+      if (!nextStage && currentStage && batch.lob_id) {
+        const [ns] = await this.db
+          .select()
+          .from(schema.stageMaster)
+          .where(
+            and(
+              eq(schema.stageMaster.lob_id, batch.lob_id),
+              gt(schema.stageMaster.stage_sequence, currentStage.stage_sequence),
+              eq(schema.stageMaster.is_active, true),
+              isNull(schema.stageMaster.deleted_at),
+            ),
+          )
+          .orderBy(schema.stageMaster.stage_sequence)
+          .limit(1);
+        nextStage = ns;
+      }
+
+      let validNextStages: any[] = [];
+      if (currentStage && batch.lob_id) {
+        const rawStages = await this.db
+          .select()
+          .from(schema.stageMaster)
+          .where(
+            and(
+              eq(schema.stageMaster.lob_id, batch.lob_id),
+              gt(schema.stageMaster.stage_sequence, currentStage.stage_sequence),
+              eq(schema.stageMaster.is_active, true),
+              isNull(schema.stageMaster.deleted_at),
+            ),
+          )
+          .orderBy(schema.stageMaster.stage_sequence);
+
+        const seenCodes = new Set<string>();
+        // Prefer company-scoped row if duplicate stage_codes exist
+        const sorted = [...rawStages].sort((a, b) => {
+          if (a.stage_sequence !== b.stage_sequence)
+            return a.stage_sequence - b.stage_sequence;
+          if (a.company_id && !b.company_id) return -1;
+          if (!a.company_id && b.company_id) return 1;
+          return 0;
+        });
+        for (const s of sorted) {
+          if (s.stage_code && !seenCodes.has(s.stage_code)) {
+            seenCodes.add(s.stage_code);
+            validNextStages.push(s);
+          }
+        }
+      }
+
+      const minDays = currentStage?.min_days_before_move ?? 0;
+      const canMoveWithoutRemarks = daysPassed >= minDays;
+      const trigger = currentStage?.transition_trigger ?? 'MANUAL';
+      const autoMoveDay =
+        currentStage?.auto_move_on_day ||
+        currentStage?.typical_duration_days ||
+        null;
+      const autoTransitionDue =
+        trigger === 'AUTO_BY_DAY' &&
+        autoMoveDay !== null &&
+        daysPassed >= autoMoveDay &&
+        !!nextStage;
+
+      return {
+        current_stage_id: currentStage?.stage_id || null,
+        current_stage_code:
+          currentStage?.stage_code || batch.current_stage_code || null,
+        current_stage_name: currentStage?.stage_name || null,
+        days_in_stage: daysPassed,
+        min_days_before_move: minDays,
+        can_move_without_remarks: canMoveWithoutRemarks,
+        transition_trigger: trigger,
+        auto_move_on_day: autoMoveDay,
+        typical_duration_days: currentStage?.typical_duration_days || null,
+        auto_transition_due: autoTransitionDue,
+        next_stage: nextStage
+          ? {
+              stage_id: nextStage.stage_id,
+              stage_code: nextStage.stage_code,
+              stage_name: nextStage.stage_name,
+              stage_sequence: nextStage.stage_sequence,
+              typical_duration_days: nextStage.typical_duration_days,
+            }
+          : null,
+        valid_next_stages: validNextStages.map((s) => ({
+          stage_id: s.stage_id,
+          stage_code: s.stage_code,
+          stage_name: s.stage_name,
+          stage_sequence: s.stage_sequence,
+          min_days_before_move: s.min_days_before_move,
+          typical_duration_days: s.typical_duration_days,
+        })),
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Drives the batch "Data Entry" screen: every scheduler_line due on the
    * given date under the batch's current-stage scheduler_header, with its
    * expected quantity and whatever's already been recorded that day — so the
@@ -2814,13 +3094,29 @@ export class BatchService {
     }));
 
     if (!activePairs.length) {
+      let nextPendingDate = dateStr;
+      let stageTransition: any = null;
+      try {
+        nextPendingDate = await this.getNextPendingDate(batch);
+      } catch {
+        nextPendingDate = batch.start_date || dateStr;
+      }
+      try {
+        stageTransition = await this.getStageTransitionInfo(batch);
+      } catch {
+        stageTransition = null;
+      }
+
       return {
         date: dateStr,
+        next_pending_date: nextPendingDate,
+        is_next_pending_date: dateStr === nextPendingDate,
         day_of_batch: null,
         lines: [],
         stages: scheduledStages,
         progress,
         selected_stage_id: activeStageId,
+        stage_transition: stageTransition,
         ...lockInfo,
       };
     }
@@ -2831,13 +3127,30 @@ export class BatchService {
       activePairs,
       dateStr,
     );
+
+    let nextPendingDate = dateStr;
+    let stageTransition: any = null;
+    try {
+      nextPendingDate = await this.getNextPendingDate(batch);
+    } catch {
+      nextPendingDate = batch.start_date || dateStr;
+    }
+    try {
+      stageTransition = await this.getStageTransitionInfo(batch);
+    } catch {
+      stageTransition = null;
+    }
+
     return {
       date: dateStr,
+      next_pending_date: nextPendingDate,
+      is_next_pending_date: dateStr === nextPendingDate,
       day_of_batch: dayOfStage,
       lines,
       stages: scheduledStages,
       progress,
       selected_stage_id: activeStageId,
+      stage_transition: stageTransition,
       ...lockInfo,
     };
   }
@@ -2938,6 +3251,25 @@ export class BatchService {
       throw new BadRequestException(
         'This batch has not transferred into a stage yet — nothing to post.',
       );
+    }
+
+    if (batch.start_date && dateStr < batch.start_date) {
+      throw new BadRequestException(
+        `Cannot post data entry for date ${dateStr} before batch start date ${batch.start_date}.`,
+      );
+    }
+
+    if (batch.start_date) {
+      try {
+        const nextPendingDate = await this.getNextPendingDate(batch);
+        if (dateStr > nextPendingDate) {
+          throw new BadRequestException(
+            `Daily data entry is mandatory. You cannot skip dates or advance the posting date until the current pending date (${nextPendingDate}) is completed.`,
+          );
+        }
+      } catch (err) {
+        if (err instanceof BadRequestException) throw err;
+      }
     }
 
     const activePairs = await this.loadActiveScheduleLines(batch, dateStr);
@@ -3119,8 +3451,21 @@ export class BatchService {
       ...new Set(batchSchedulers.map((s) => s.stage_id)),
     ];
 
+    let nextPendingDate = dateStr;
+    try {
+      nextPendingDate = await this.getNextPendingDate(batch);
+    } catch {
+      nextPendingDate = batch.start_date || dateStr;
+    }
+
     if (!scheduledStageIds.length) {
-      return { date: dateStr, progress: [], stages: [] };
+      return {
+        date: dateStr,
+        next_pending_date: nextPendingDate,
+        is_next_pending_date: dateStr === nextPendingDate,
+        progress: [],
+        stages: [],
+      };
     }
 
     // 2. Fetch ONLY the stages for which a scheduler exists, ordered strictly by stage_sequence
@@ -3159,6 +3504,7 @@ export class BatchService {
     type AnimalLines = {
       animal_id: string;
       animal_code: string;
+      is_posted: boolean;
       lines: Awaited<ReturnType<BatchService['buildDataEntryLines']>>['lines'];
     };
     const stages: Array<{
@@ -3191,6 +3537,31 @@ export class BatchService {
         .limit(1);
 
       const lock = lockRows.find((l) => l.stage_id === stageId);
+      const isStageLocked = lock?.status === 'LOCKED';
+
+      const postedEntries = animals.length
+        ? await this.db
+            .select({
+              animal_id: schema.batchDailyData.animal_id,
+            })
+            .from(schema.batchDailyData)
+            .where(
+              and(
+                eq(schema.batchDailyData.batch_id, batch.batch_id),
+                eq(schema.batchDailyData.entry_date, dateStr),
+                eq(schema.batchDailyData.posted, true),
+                inArray(
+                  schema.batchDailyData.animal_id,
+                  animals.map((a) => a.animal_id),
+                ),
+              ),
+            )
+        : [];
+      const postedAnimalSet = new Set(
+        postedEntries
+          .map((e) => e.animal_id)
+          .filter((id): id is string => Boolean(id)),
+      );
 
       if (!header) {
         stages.push({
@@ -3206,6 +3577,7 @@ export class BatchService {
           animals: animals.map((a) => ({
             animal_id: a.animal_id,
             animal_code: a.animal_code,
+            is_posted: isStageLocked || postedAnimalSet.has(a.animal_id),
             lines: [],
           })),
         });
@@ -3216,9 +3588,6 @@ export class BatchService {
         header,
         dateStr,
       );
-      // One full lines array per animal — each animal's own already-entered
-      // value and its own PER_HEAD share, not the stage group's shared total
-      // (see buildDataEntryLines()'s animalId param).
       let dayOfStage: number | null = null;
       const animalLines: AnimalLines[] = [];
       for (const animal of animals) {
@@ -3228,11 +3597,13 @@ export class BatchService {
           activePairs,
           dateStr,
           animal.animal_id,
+          animals.length,
         );
         dayOfStage = built.dayOfStage;
         animalLines.push({
           animal_id: animal.animal_id,
           animal_code: animal.animal_code,
+          is_posted: isStageLocked || postedAnimalSet.has(animal.animal_id),
           lines: built.lines,
         });
       }
@@ -3251,18 +3622,17 @@ export class BatchService {
       });
     }
 
-    return { date: dateStr, progress, stages };
+    return {
+      date: dateStr,
+      next_pending_date: nextPendingDate,
+      is_next_pending_date: dateStr === nextPendingDate,
+      progress,
+      stages,
+    };
   }
 
   /**
-   * "POST STAGE DATA" — ANIMAL_WISE only (Batch-wise has no day-lock in this
-   * pass; see batch_data_entry_lock's schema comment for why). Validates every
-   * mandatory scheduler_line due on this date has an actual batch_daily_data
-   * row for every animal currently in the stage, then locks (batch, stage,
-   * date). Once locked, postEntry() refuses all further writes against it —
-   * that refusal is also what closes the double-posting hole (re-saving an
-   * already-posted line used to silently re-run its ledger/GL/transfer
-   * dispatch a second time).
+   * "POST STAGE DATA" — ANIMAL_WISE only (supports full stage or single animal)
    */
   async postStageDay(
     batchId: string,
@@ -3270,6 +3640,7 @@ export class BatchService {
     dateStr: string,
     tenantId: string,
     userPayload?: UserContext,
+    animalId?: string,
   ) {
     const today = new Date().toISOString().slice(0, 10);
     if (dateStr > today) {
@@ -3285,7 +3656,26 @@ export class BatchService {
       );
     }
 
-    const animals = await this.db
+    if (batch.start_date && dateStr < batch.start_date) {
+      throw new BadRequestException(
+        `Cannot post data entry for date ${dateStr} before batch start date ${batch.start_date}.`,
+      );
+    }
+
+    if (batch.start_date) {
+      try {
+        const nextPendingDate = await this.getNextPendingDate(batch);
+        if (dateStr > nextPendingDate) {
+          throw new BadRequestException(
+            `Daily data entry is mandatory. You cannot skip dates or advance the posting date until the current pending date (${nextPendingDate}) is completed.`,
+          );
+        }
+      } catch (err) {
+        if (err instanceof BadRequestException) throw err;
+      }
+    }
+
+    const allStageAnimals = await this.db
       .select()
       .from(schema.animalRegister)
       .where(
@@ -3295,11 +3685,62 @@ export class BatchService {
           eq(schema.animalRegister.is_active, true),
         ),
       );
-    if (!animals.length) {
+    if (!allStageAnimals.length) {
       throw new BadRequestException(
         'No animals are currently in this stage — nothing to post.',
       );
     }
+
+    // Identify which animals in this stage have already been posted on dateStr
+    const alreadyPostedEntries = await this.db
+      .select({
+        animal_id: schema.batchDailyData.animal_id,
+      })
+      .from(schema.batchDailyData)
+      .where(
+        and(
+          eq(schema.batchDailyData.batch_id, batchId),
+          eq(schema.batchDailyData.entry_date, dateStr),
+          eq(schema.batchDailyData.posted, true),
+          inArray(
+            schema.batchDailyData.animal_id,
+            allStageAnimals.map((a) => a.animal_id),
+          ),
+        ),
+      );
+    const alreadyPostedAnimalIds = new Set(
+      alreadyPostedEntries
+        .map((e) => e.animal_id)
+        .filter((id): id is string => Boolean(id)),
+    );
+
+    if (animalId) {
+      const match = allStageAnimals.find((a) => a.animal_id === animalId);
+      if (!match) {
+        throw new BadRequestException(
+          `Animal '${animalId}' is not active in this stage — cannot post.`,
+        );
+      }
+      if (alreadyPostedAnimalIds.has(animalId)) {
+        throw new BadRequestException(
+          `Data entry for animal '${match.animal_code}' has already been posted on ${dateStr}.`,
+        );
+      }
+    }
+
+    const remainingAnimals = allStageAnimals.filter(
+      (a) => !alreadyPostedAnimalIds.has(a.animal_id),
+    );
+
+    if (!animalId && remainingAnimals.length === 0) {
+      throw new BadRequestException(
+        `All animals in this stage have already been posted on ${dateStr}.`,
+      );
+    }
+
+    const targetAnimals = animalId
+      ? allStageAnimals.filter((a) => a.animal_id === animalId)
+      : remainingAnimals;
 
     const [header] = await this.db
       .select()
@@ -3336,7 +3777,7 @@ export class BatchService {
               eq(schema.batchDailyData.entry_date, dateStr),
               inArray(
                 schema.batchDailyData.animal_id,
-                animals.map((a) => a.animal_id),
+                targetAnimals.map((a) => a.animal_id),
               ),
             ),
           );
@@ -3344,7 +3785,7 @@ export class BatchService {
           entries.map((e) => `${e.line_id}:${e.animal_id}`),
         );
         const missing: string[] = [];
-        for (const animal of animals) {
+        for (const animal of targetAnimals) {
           for (const { line } of activePairs) {
             if (!line.is_mandatory) continue;
             if (!enteredSet.has(`${line.line_id}:${animal.animal_id}`)) {
@@ -3359,11 +3800,7 @@ export class BatchService {
         }
       }
 
-      // Finalize every still-draft row for this stage/date — mirrors
-      // postBatchDay()'s own draft-finalize loop. Without this, a per-line
-      // save that now (correctly) posts with draft:true would sit un-
-      // dispatched forever: locking here would look like posting without
-      // ever actually touching the ledger/GL/transfer engine.
+      // Finalize every still-draft row for target animal(s) on this stage/date
       if (activePairs.length) {
         const dueLineIds = activePairs.map(({ line }) => line.line_id);
         const draftRows = await this.db
@@ -3375,7 +3812,7 @@ export class BatchService {
               eq(schema.batchDailyData.entry_date, dateStr),
               inArray(
                 schema.batchDailyData.animal_id,
-                animals.map((a) => a.animal_id),
+                targetAnimals.map((a) => a.animal_id),
               ),
               eq(schema.batchDailyData.posted, false),
             ),
@@ -3402,55 +3839,116 @@ export class BatchService {
       }
     }
 
-    const now = toMysqlTimestamp();
-    const lockId = randomUUID();
-    await this.db
-      .insert(schema.batchDataEntryLock)
-      .values({
-        lock_id: lockId,
-        tenant_id: tenantId,
-        company_id: batch.company_id,
+    // Determine if the entire stage should be locked:
+    // If posting for all animals, always lock.
+    // If posting for a single animal, lock only if ALL stage animals now have mandatory entries posted.
+    let shouldLockStage = !animalId;
+    if (animalId && header) {
+      const activePairs = await this.loadScheduleLinesForHeader(
+        header,
+        dateStr,
+      );
+      const mandatoryLineIds = activePairs
+        .filter(({ line }) => line.is_mandatory)
+        .map(({ line }) => line.line_id);
+      if (mandatoryLineIds.length) {
+        const allEntries = await this.db
+          .select({
+            line_id: schema.batchDailyData.line_id,
+            animal_id: schema.batchDailyData.animal_id,
+            posted: schema.batchDailyData.posted,
+          })
+          .from(schema.batchDailyData)
+          .where(
+            and(
+              inArray(schema.batchDailyData.line_id, mandatoryLineIds),
+              eq(schema.batchDailyData.entry_date, dateStr),
+              inArray(
+                schema.batchDailyData.animal_id,
+                allStageAnimals.map((a) => a.animal_id),
+              ),
+            ),
+          );
+        const postedSet = new Set(
+          allEntries
+            .filter((e) => e.posted)
+            .map((e) => `${e.line_id}:${e.animal_id}`),
+        );
+        const allComplete = allStageAnimals.every((animal) =>
+          mandatoryLineIds.every((lineId) =>
+            postedSet.has(`${lineId}:${animal.animal_id}`),
+          ),
+        );
+        if (allComplete) {
+          shouldLockStage = true;
+        }
+      }
+    }
+
+    if (shouldLockStage) {
+      const now = toMysqlTimestamp();
+      const lockId = randomUUID();
+      await this.db
+        .insert(schema.batchDataEntryLock)
+        .values({
+          lock_id: lockId,
+          tenant_id: tenantId,
+          company_id: batch.company_id,
+          batch_id: batchId,
+          stage_id: stageId,
+          entry_date: dateStr,
+          status: 'LOCKED',
+          locked_by: userPayload?.userId || null,
+          locked_at: now,
+        })
+        .onDuplicateKeyUpdate({
+          set: {
+            status: 'LOCKED',
+            locked_by: userPayload?.userId || null,
+            locked_at: now,
+            reopened_by: null,
+            reopened_at: null,
+            reopen_reason: null,
+            updated_at: now,
+          },
+        });
+
+      await this.auditService.log({
+        tenantId,
+        companyId: batch.company_id,
+        userId: userPayload?.userId,
+        action: 'CREATE',
+        entityName: 'batch_data_entry_lock',
+        entityId: lockId,
+        newValues: {
+          batch_id: batchId,
+          stage_id: stageId,
+          entry_date: dateStr,
+          status: 'LOCKED',
+        },
+      });
+
+      return {
         batch_id: batchId,
         stage_id: stageId,
         entry_date: dateStr,
         status: 'LOCKED',
         locked_by: userPayload?.userId || null,
         locked_at: now,
-      })
-      .onDuplicateKeyUpdate({
-        set: {
-          status: 'LOCKED',
-          locked_by: userPayload?.userId || null,
-          locked_at: now,
-          reopened_by: null,
-          reopened_at: null,
-          reopen_reason: null,
-          updated_at: now,
-        },
-      });
-
-    await this.auditService.log({
-      tenantId,
-      companyId: batch.company_id,
-      userId: userPayload?.userId,
-      action: 'CREATE',
-      entityName: 'batch_data_entry_lock',
-      entityId: lockId,
-      newValues: {
-        batch_id: batchId,
-        stage_id: stageId,
-        entry_date: dateStr,
-        status: 'LOCKED',
-      },
-    });
+        stage_locked: true,
+        animal_id: animalId || null,
+        target_animal_count: targetAnimals.length,
+      };
+    }
 
     return {
       batch_id: batchId,
       stage_id: stageId,
       entry_date: dateStr,
-      status: 'LOCKED',
-      locked_by: userPayload?.userId || null,
-      locked_at: now,
+      status: 'POSTED',
+      stage_locked: false,
+      animal_id: animalId || null,
+      target_animal_count: targetAnimals.length,
     };
   }
 
@@ -3539,6 +4037,7 @@ export class BatchService {
     }>,
     dateStr: string,
     animalId?: string,
+    stageAnimalCount?: number,
   ) {
     // ANIMAL_WISE calls this once per animal in the stage (animalId set) — the
     // group's shared PER_HEAD standard is this one animal's own share (count
@@ -3571,8 +4070,10 @@ export class BatchService {
           occurrence: string;
           is_mandatory: boolean;
           lot_required: boolean;
+          allow_qty_edit: boolean;
+          qty_basis: string;
           expected_qty: number;
-          already_entered_qty: number;
+          already_entered_qty: number | null;
           std_rate: number | null;
         }>,
         dayOfStage,
@@ -3702,7 +4203,9 @@ export class BatchService {
         .reduce((sum, t) => sum + Number(t.quantity || 0), 0);
       const alreadyEntered = enteredEntry
         ? Number(enteredEntry.entered_value || 0)
-        : legacyEntered;
+        : legacyEntered > 0
+          ? legacyEntered
+          : null;
       const uom = line.item_id ? itemUom(line.item_id) : line.kpi_uom;
       const stdRate = standardRate(line, uom);
 
@@ -3726,7 +4229,13 @@ export class BatchService {
         occurrence: line.occurrence,
         is_mandatory: line.is_mandatory,
         lot_required: line.lot_required,
-        expected_qty: this.computeExpectedQty(line, animalCount),
+        allow_qty_edit: line.allow_qty_edit ?? true,
+        qty_basis: line.qty_basis ?? 'PER_HEAD',
+        expected_qty: this.computeExpectedQty(
+          line,
+          animalCount,
+          stageAnimalCount,
+        ),
         already_entered_qty: alreadyEntered,
         std_rate: stdRate,
       };

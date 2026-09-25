@@ -736,11 +736,19 @@ export class SchedulerHeaderService {
     // who selected no farm, so their own LOB and company are the whole bound.
     conditions.push(...restrictedScopeConditions(scope, { companyId: schema.schedulerHeader.company_id, lobId: schema.schedulerHeader.lob_id }));
 
-    const rows = await this.db
+    let queryBuilder = this.db
       .select()
       .from(schema.schedulerHeader)
       .where(and(...conditions))
       .orderBy(schema.schedulerHeader.updated_at);
+    if (query.limit) {
+      queryBuilder = queryBuilder.limit(Number(query.limit)) as any;
+    }
+    if (query.offset) {
+      queryBuilder = queryBuilder.offset(Number(query.offset)) as any;
+    }
+
+    const rows = await queryBuilder;
     if (!rows.length) return [];
 
     const batchIds = [...new Set(rows.map((r) => r.batch_id))];

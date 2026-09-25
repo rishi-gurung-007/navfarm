@@ -10,6 +10,7 @@ import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { InlineAlert } from "@/components/ui/alert";
 import { useLanguage } from "@/hooks/useLanguage";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 
 type Row = Record<string, any>;
 
@@ -61,7 +62,9 @@ export default function AnimalStageTransitionModal({
     setReason("");
     setRemarks("");
 
-    const currentStage = stages.find((s) => s.stage_id === animal.current_stage_id);
+    const currentStage = stages.find(
+      (s) => s.stage_id === animal.current_stage_id || (animal.stage_code && s.stage_code === animal.stage_code),
+    );
     if (currentStage?.next_stage_id) {
       setToStageId(currentStage.next_stage_id);
     } else {
@@ -71,7 +74,9 @@ export default function AnimalStageTransitionModal({
 
   if (!animal) return null;
 
-  const currentStage = stages.find((s) => s.stage_id === animal.current_stage_id);
+  const currentStage = stages.find(
+    (s) => s.stage_id === animal.current_stage_id || (animal.stage_code && s.stage_code === animal.stage_code),
+  );
   const entryDate = animal.entry_date ? new Date(animal.entry_date) : new Date(animal.created_at || Date.now());
   const daysInStage = Math.max(0, Math.floor((new Date(transitionDate).getTime() - entryDate.getTime()) / (1000 * 60 * 60 * 24)));
   const minDays = currentStage?.min_days_before_move || 0;
@@ -160,19 +165,18 @@ export default function AnimalStageTransitionModal({
         {/* Transition Form Inputs */}
         <div className="space-y-3">
           <div>
-            <label className="nf-label text-xs">{t("astmDestinationStageLabel")}</label>
-            <select
-              className="nf-input text-xs"
+            <label className="nf-label text-xs block mb-1">{t("astmDestinationStageLabel")}</label>
+            <SearchableSelect
+              ariaLabel={t("astmDestinationStageLabel")}
               value={toStageId}
-              onChange={(e) => setToStageId(e.target.value)}
-            >
-              <option value="">{t("astmSelectDestinationStagePlaceholder")}</option>
-              {stages.map((s) => (
-                <option key={s.stage_id} value={s.stage_id}>
-                  {s.stage_name} ({s.stage_code}) — {s.stage_category}
-                </option>
-              ))}
-            </select>
+              onChange={(val) => setToStageId(val)}
+              options={stages.map((s) => ({
+                value: s.stage_id,
+                label: `${s.stage_name} (${s.stage_code}) — ${s.stage_category}`,
+              }))}
+              placeholder={t("astmSelectDestinationStagePlaceholder")}
+              searchPlaceholder="Search stages…"
+            />
           </div>
 
           <div className="rounded-[var(--radius-md)] border p-3 text-xs" style={S.surface}>

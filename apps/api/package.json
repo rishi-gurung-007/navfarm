@@ -57,6 +57,14 @@
           "command": "node --env-file-if-exists=.env --import tsx src/scripts/merge-no-series-master.ts"
         }
       },
+      "db-seed-piggery-two-batches": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --import tsx src/scripts/seed-piggery-two-batches.ts"
+        }
+      },
       "db-seed-farm-locations": {
         "executor": "nx:run-commands",
         "cache": false,

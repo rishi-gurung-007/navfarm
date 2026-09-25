@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import {
   CalendarClock,
   Copy,
@@ -16,8 +16,10 @@ import { Button } from "@/components/ui/button";
 import { InlineAlert } from "@/components/ui/alert";
 import { TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { useLanguage } from "@/hooks/useLanguage";
+import { getActiveCompanyId } from "@/hooks/useAuth";
 import { findConflictingSchedulerLine } from "./scheduler-line-overlap";
 import { formatQuantity } from "@/lib/utils";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 
 type Row = Record<string, any>;
 
@@ -247,18 +249,31 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
   const [copySearch, setCopySearch] = useState("");
   const [copyingSchedulerId, setCopyingSchedulerId] = useState<string | null>(null);
 
+  const consumableItems = useMemo(() => {
+    return items.filter(
+      (it) =>
+        (!it.is_biological_asset &&
+          it.is_biological_asset !== 1 &&
+          it.is_biological_asset !== "1" &&
+          it.item_type !== "LIVESTOCK") ||
+        it.item_id === lineForm.item_id
+    );
+  }, [items, lineForm.item_id]);
+
   const handleOpenCopyModal = async () => {
     setShowCopyModal(true);
     setLoadingSchedulers(true);
     setCopySearch("");
     try {
       const p = new URLSearchParams();
-      if (companyId) p.set("companyId", companyId);
+      const activeCo = companyId || getActiveCompanyId();
+      if (activeCo) p.set("companyId", activeCo);
       p.set("limit", "100");
       const res = await api.get(`/scheduler-header?${p.toString()}`);
       const list = unwrap<Row[]>(res) || [];
       setExistingSchedulers(list);
-    } catch {
+    } catch (err) {
+      console.error("Failed to load schedulers for copy:", err);
       setExistingSchedulers([]);
     } finally {
       setLoadingSchedulers(false);
@@ -516,19 +531,17 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
                 {loadingBatches ? (
                   <div className="flex items-center gap-2 py-1.5"><Loader2 className="h-4 w-4 animate-spin" style={S.muted} /><span style={S.muted}>Loading batches...</span></div>
                 ) : (
-                  <select
+                  <SearchableSelect
+                    ariaLabel="Batch"
                     value={batchId}
-                    onChange={(e) => setBatchId(e.target.value)}
-                    className={`${inputCls} nf-select w-full`}
-                    style={S.input}
-                  >
-                    <option value="">— Select a batch —</option>
-                    {batches.map((b) => (
-                      <option key={b.batch_id} value={b.batch_id}>
-                        {b.batch_no} {b.stage_name ? `(${b.stage_name})` : ""} {b.breed_name ? `• ${b.breed_name}` : ""}
-                      </option>
-                    ))}
-                  </select>
+                    onChange={(val) => setBatchId(val)}
+                    options={batches.map((b) => ({
+                      value: b.batch_id,
+                      label: `${b.batch_no} ${b.stage_name ? `(${b.stage_name})` : ""} ${b.breed_name ? `• ${b.breed_name}` : ""}`.trim(),
+                    }))}
+                    placeholder="— Select a batch —"
+                    searchPlaceholder="Search batches…"
+                  />
                 )}
               </div>
 
@@ -540,20 +553,18 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
                 {loadingStages ? (
                   <div className="flex items-center gap-2 py-1.5"><Loader2 className="h-4 w-4 animate-spin" style={S.muted} /><span style={S.muted}>Loading stages...</span></div>
                 ) : (
-                  <select
+                  <SearchableSelect
+                    ariaLabel="Stage"
                     value={stageId}
-                    onChange={(e) => setStageId(e.target.value)}
+                    onChange={(val) => setStageId(val)}
                     disabled={!batchId}
-                    className={`${inputCls} nf-select w-full`}
-                    style={S.input}
-                  >
-                    <option value="">— Select stage —</option>
-                    {stages.map((s) => (
-                      <option key={s.stage_id} value={s.stage_id}>
-                        {s.stage_name} {s.typical_duration_days ? `(${s.typical_duration_days} days)` : ""}
-                      </option>
-                    ))}
-                  </select>
+                    options={stages.map((s) => ({
+                      value: s.stage_id,
+                      label: `${s.stage_name} ${s.typical_duration_days ? `(${s.typical_duration_days} days)` : ""}`.trim(),
+                    }))}
+                    placeholder="— Select stage —"
+                    searchPlaceholder="Search stages…"
+                  />
                 )}
               </div>
 
@@ -562,16 +573,12 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
                 <label className="mb-1 block font-semibold" style={S.sub}>
                   Data Entry Level
                 </label>
-                <select
+                <SearchableSelect
+                  ariaLabel="Data Entry Level"
                   value={dataEntryLevel}
-                  onChange={(e) => setDataEntryLevel(e.target.value)}
-                  className={`${inputCls} nf-select w-full`}
-                  style={S.input}
-                >
-                  {DATA_ENTRY_LEVELS.map((lvl) => (
-                    <option key={lvl} value={lvl}>{lvl}</option>
-                  ))}
-                </select>
+                  onChange={(val) => setDataEntryLevel(val)}
+                  options={DATA_ENTRY_LEVELS}
+                />
               </div>
 
               {/* Effective From */}
@@ -624,15 +631,15 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
                 <label className="mb-1 block font-semibold" style={S.sub}>
                   Initial Status
                 </label>
-                <select
+                <SearchableSelect
+                  ariaLabel="Initial Status"
                   value={status}
-                  onChange={(e) => setStatus(e.target.value)}
-                  className={`${inputCls} nf-select w-full`}
-                  style={S.input}
-                >
-                  <option value="DRAFT">DRAFT (Review & Finalize)</option>
-                  <option value="ACTIVE">ACTIVE (Ready for Daily Entry)</option>
-                </select>
+                  onChange={(val) => setStatus(val)}
+                  options={[
+                    { value: "DRAFT", label: "DRAFT (Review & Finalize)" },
+                    { value: "ACTIVE", label: "ACTIVE (Ready for Daily Entry)" },
+                  ]}
+                />
               </div>
 
               {/* Notes */}
@@ -790,16 +797,12 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
               <label className="mb-1 block font-semibold" style={S.sub}>
                 Line Type <span className="text-red-500">*</span>
               </label>
-              <select
+              <SearchableSelect
+                ariaLabel="Line Type"
                 value={lineForm.line_type}
-                onChange={(e) => setLineForm((f: Row) => ({ ...f, line_type: e.target.value }))}
-                className={`${inputCls} nf-select w-full`}
-                style={S.input}
-              >
-                {LINE_TYPES.map((lt) => (
-                  <option key={lt} value={lt}>{lt}</option>
-                ))}
-              </select>
+                onChange={(val) => setLineForm((f: Row) => ({ ...f, line_type: val }))}
+                options={LINE_TYPES}
+              />
             </div>
 
             {/* Activity Name */}
@@ -807,31 +810,19 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
               <label className="mb-1 block font-semibold" style={S.sub}>
                 Activity Name <span className="text-red-500">*</span>
               </label>
-              <select
+              <SearchableSelect
+                ariaLabel="Activity Name"
                 value={lineForm.activity_name}
-                onChange={(e) => handleSelectActivity(e.target.value)}
-                className={`${inputCls} nf-select w-full`}
-                style={S.input}
-              >
-                <option value="">— Select activity from catalog —</option>
-                {activities
+                onChange={(val) => handleSelectActivity(val)}
+                options={activities
                   .filter((a) => a.line_type === lineForm.line_type)
-                  .map((a) => (
-                    <option key={a.activity_id} value={a.activity_name}>
-                      {a.activity_name} ({a.activity_code})
-                    </option>
-                  ))}
-                {lineForm.activity_name &&
-                  !activities.some(
-                    (a) =>
-                      a.activity_name === lineForm.activity_name &&
-                      a.line_type === lineForm.line_type,
-                  ) && (
-                    <option key="__EXISTING__" value={lineForm.activity_name}>
-                      {lineForm.activity_name}
-                    </option>
-                  )}
-              </select>
+                  .map((a) => ({
+                    value: a.activity_name,
+                    label: `${a.activity_name} (${a.activity_code})`,
+                  }))}
+                placeholder="— Select activity from catalog —"
+                searchPlaceholder="Search activities…"
+              />
             </div>
 
             {/* Occurrence */}
@@ -839,16 +830,12 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
               <label className="mb-1 block font-semibold" style={S.sub}>
                 Occurrence <span className="text-red-500">*</span>
               </label>
-              <select
+              <SearchableSelect
+                ariaLabel="Occurrence"
                 value={lineForm.occurrence}
-                onChange={(e) => setLineForm((f: Row) => ({ ...f, occurrence: e.target.value }))}
-                className={`${inputCls} nf-select w-full`}
-                style={S.input}
-              >
-                {OCCURRENCES.map((oc) => (
-                  <option key={oc} value={oc}>{oc}</option>
-                ))}
-              </select>
+                onChange={(val) => setLineForm((f: Row) => ({ ...f, occurrence: val }))}
+                options={OCCURRENCES}
+              />
             </div>
 
             {/* Start Day & End Day */}
@@ -933,26 +920,24 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
                   <label className="mb-1 block font-semibold" style={S.sub}>Feed / Medicine Item <span className="text-red-500">*</span></label>
-                  <select
+                  <SearchableSelect
+                    ariaLabel="Feed / Medicine Item"
                     value={lineForm.item_id}
-                    onChange={(e) => {
-                      const sel = items.find((i) => i.item_id === e.target.value);
+                    onChange={(val) => {
+                      const sel = items.find((i) => i.item_id === val);
                       setLineForm((f: Row) => ({
                         ...f,
-                        item_id: e.target.value,
+                        item_id: val,
                         item_description: sel?.item_name || f.item_description,
                       }));
                     }}
-                    className={`${inputCls} nf-select w-full`}
-                    style={S.input}
-                  >
-                    <option value="">— Select item —</option>
-                    {items.map((it) => (
-                      <option key={it.item_id} value={it.item_id}>
-                        {it.item_name} {it.uom_primary ? `(${it.uom_primary})` : ""}
-                      </option>
-                    ))}
-                  </select>
+                    options={consumableItems.map((it) => ({
+                      value: it.item_id,
+                      label: `${it.item_name} ${it.uom_primary ? `(${it.uom_primary})` : ""}`,
+                    }))}
+                    placeholder="— Select consumable item —"
+                    searchPlaceholder="Search items…"
+                  />
                 </div>
 
                 <div>
@@ -970,16 +955,12 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
 
                 <div>
                   <label className="mb-1 block font-semibold" style={S.sub}>Qty Basis</label>
-                  <select
+                  <SearchableSelect
+                    ariaLabel="Qty Basis"
                     value={lineForm.qty_basis}
-                    onChange={(e) => setLineForm((f: Row) => ({ ...f, qty_basis: e.target.value }))}
-                    className={`${inputCls} nf-select w-full`}
-                    style={S.input}
-                  >
-                    {QTY_BASES.map((qb) => (
-                      <option key={qb} value={qb}>{qb}</option>
-                    ))}
-                  </select>
+                    onChange={(val) => setLineForm((f: Row) => ({ ...f, qty_basis: val }))}
+                    options={QTY_BASES}
+                  />
                 </div>
 
                 <div className="flex flex-col gap-2 pt-2">
@@ -1018,19 +999,17 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
                   <label className="mb-1 block font-semibold" style={S.sub}>Output Item <span className="text-red-500">*</span></label>
-                  <select
+                  <SearchableSelect
+                    ariaLabel="Output Item"
                     value={lineForm.item_id}
-                    onChange={(e) => setLineForm((f: Row) => ({ ...f, item_id: e.target.value }))}
-                    className={`${inputCls} nf-select w-full`}
-                    style={S.input}
-                  >
-                    <option value="">— Select output item —</option>
-                    {items.map((it) => (
-                      <option key={it.item_id} value={it.item_id}>
-                        {it.item_name} {it.uom_primary ? `(${it.uom_primary})` : ""}
-                      </option>
-                    ))}
-                  </select>
+                    onChange={(val) => setLineForm((f: Row) => ({ ...f, item_id: val }))}
+                    options={items.map((it) => ({
+                      value: it.item_id,
+                      label: `${it.item_name} ${it.uom_primary ? `(${it.uom_primary})` : ""}`,
+                    }))}
+                    placeholder="— Select output item —"
+                    searchPlaceholder="Search output items…"
+                  />
                 </div>
 
                 <div>
@@ -1048,16 +1027,12 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
 
                 <div>
                   <label className="mb-1 block font-semibold" style={S.sub}>Output Basis</label>
-                  <select
+                  <SearchableSelect
+                    ariaLabel="Output Basis"
                     value={lineForm.output_basis}
-                    onChange={(e) => setLineForm((f: Row) => ({ ...f, output_basis: e.target.value }))}
-                    className={`${inputCls} nf-select w-full`}
-                    style={S.input}
-                  >
-                    {OUTPUT_BASES.map((ob) => (
-                      <option key={ob} value={ob}>{ob}</option>
-                    ))}
-                  </select>
+                    onChange={(val) => setLineForm((f: Row) => ({ ...f, output_basis: val }))}
+                    options={OUTPUT_BASES}
+                  />
                 </div>
 
                 <div className="flex flex-col gap-2 pt-2">
@@ -1086,24 +1061,20 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
                   <label className="mb-1 block font-semibold" style={S.sub}>KPI Metric <span className="text-red-500">*</span></label>
-                  <select
+                  <SearchableSelect
+                    ariaLabel="KPI Metric"
                     value={lineForm.kpi_metric}
-                    onChange={(e) => {
-                      const metric = e.target.value;
+                    onChange={(metric) => {
                       setLineForm((f: Row) => ({
                         ...f,
                         kpi_metric: metric,
                         kpi_uom: KPI_UOM_MAP[metric] || (metric === "CUSTOM" ? f.kpi_uom : ""),
                       }));
                     }}
-                    className={`${inputCls} nf-select w-full`}
-                    style={S.input}
-                  >
-                    <option value="">— Select KPI Metric —</option>
-                    {KPI_METRICS.map((m) => (
-                      <option key={m} value={m}>{m.replace(/_/g, " ")}</option>
-                    ))}
-                  </select>
+                    options={KPI_METRICS.map((m) => ({ value: m, label: m.replace(/_/g, " ") }))}
+                    placeholder="— Select KPI Metric —"
+                    searchPlaceholder="Search KPI metrics…"
+                  />
                 </div>
 
                 <div>
@@ -1133,16 +1104,12 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
 
                 <div>
                   <label className="mb-1 block font-semibold" style={S.sub}>Capture Per</label>
-                  <select
+                  <SearchableSelect
+                    ariaLabel="Capture Per"
                     value={lineForm.capture_per}
-                    onChange={(e) => setLineForm((f: Row) => ({ ...f, capture_per: e.target.value }))}
-                    className={`${inputCls} nf-select w-full`}
-                    style={S.input}
-                  >
-                    {CAPTURE_PERS.map((cp) => (
-                      <option key={cp} value={cp}>{cp.replace(/_/g, " ")}</option>
-                    ))}
-                  </select>
+                    onChange={(val) => setLineForm((f: Row) => ({ ...f, capture_per: val }))}
+                    options={CAPTURE_PERS.map((cp) => ({ value: cp, label: cp.replace(/_/g, " ") }))}
+                  />
                 </div>
 
                 <div>
@@ -1171,16 +1138,12 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
 
                 <div>
                   <label className="mb-1 block font-semibold" style={S.sub}>Alert Severity</label>
-                  <select
+                  <SearchableSelect
+                    ariaLabel="Alert Severity"
                     value={lineForm.alert_severity}
-                    onChange={(e) => setLineForm((f: Row) => ({ ...f, alert_severity: e.target.value }))}
-                    className={`${inputCls} nf-select w-full`}
-                    style={S.input}
-                  >
-                    {ALERT_SEVERITIES.map((as) => (
-                      <option key={as} value={as}>{as}</option>
-                    ))}
-                  </select>
+                    onChange={(val) => setLineForm((f: Row) => ({ ...f, alert_severity: val }))}
+                    options={ALERT_SEVERITIES}
+                  />
                 </div>
               </div>
             )}
@@ -1190,17 +1153,13 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
                   <label className="mb-1 block font-semibold" style={S.sub}>Overhead Category</label>
-                  <select
+                  <SearchableSelect
+                    ariaLabel="Overhead Category"
                     value={lineForm.overhead_category}
-                    onChange={(e) => setLineForm((f: Row) => ({ ...f, overhead_category: e.target.value }))}
-                    className={`${inputCls} nf-select w-full`}
-                    style={S.input}
-                  >
-                    <option value="">— Select category —</option>
-                    {OVERHEAD_CATEGORIES.map((cat) => (
-                      <option key={cat} value={cat}>{cat}</option>
-                    ))}
-                  </select>
+                    onChange={(val) => setLineForm((f: Row) => ({ ...f, overhead_category: val }))}
+                    options={OVERHEAD_CATEGORIES}
+                    placeholder="— Select category —"
+                  />
                 </div>
 
                 <div>
@@ -1234,26 +1193,24 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
                   <label className="mb-1 block font-semibold" style={S.sub}>Labour / Equipment Resource <span className="text-red-500">*</span></label>
-                  <select
+                  <SearchableSelect
+                    ariaLabel="Resource"
                     value={lineForm.resource_id}
-                    onChange={(e) => {
-                      const r = resources.find((res) => res.resource_id === e.target.value);
+                    onChange={(val) => {
+                      const r = resources.find((res) => res.resource_id === val);
                       setLineForm((f: Row) => ({
                         ...f,
-                        resource_id: e.target.value,
+                        resource_id: val,
                         resource_name: r?.resource_name || f.resource_name,
                       }));
                     }}
-                    className={`${inputCls} nf-select w-full`}
-                    style={S.input}
-                  >
-                    <option value="">— Select resource —</option>
-                    {resources.map((r) => (
-                      <option key={r.resource_id} value={r.resource_id}>
-                        {r.resource_name} {r.resource_type ? `(${r.resource_type})` : ""}
-                      </option>
-                    ))}
-                  </select>
+                    options={resources.map((r) => ({
+                      value: r.resource_id,
+                      label: `${r.resource_name} ${r.resource_type ? `(${r.resource_type})` : ""}`,
+                    }))}
+                    placeholder="— Select resource —"
+                    searchPlaceholder="Search resources…"
+                  />
                 </div>
 
                 <div>
@@ -1289,19 +1246,19 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
                   <label className="mb-1 block font-semibold" style={S.sub}>Animal / Piglet Item <span className="text-red-500">*</span></label>
-                  <select
+                  <SearchableSelect
+                    ariaLabel="Biological Asset Item"
                     value={lineForm.item_id}
-                    onChange={(e) => setLineForm((f: Row) => ({ ...f, item_id: e.target.value }))}
-                    className={`${inputCls} nf-select w-full`}
-                    style={S.input}
-                  >
-                    <option value="">— Select animal item —</option>
-                    {items.map((it) => (
-                      <option key={it.item_id} value={it.item_id}>
-                        {it.item_name}
-                      </option>
-                    ))}
-                  </select>
+                    onChange={(val) => setLineForm((f: Row) => ({ ...f, item_id: val }))}
+                    options={items
+                      .filter((it) => it.is_biological_asset || it.item_type === 'LIVESTOCK')
+                      .map((it) => ({
+                        value: it.item_id,
+                        label: `${it.item_name} (${it.item_code})`,
+                      }))}
+                    placeholder="— Select biological asset item —"
+                    searchPlaceholder="Search biological assets…"
+                  />
                 </div>
 
                 <div>

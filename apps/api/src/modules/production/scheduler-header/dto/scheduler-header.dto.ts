@@ -130,6 +130,20 @@ export class QuerySchedulerHeaderDto {
   @IsOptional()
   @IsString()
   search?: string;
+
+  @ApiProperty({ description: 'Max rows to return', required: false })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  limit?: number;
+
+  @ApiProperty({ description: 'Row offset for pagination', required: false })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  offset?: number;
 }
 
 export class UpdateSchedulerHeaderStatusDto {

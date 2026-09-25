@@ -17,7 +17,7 @@ import { InlineAlert } from "@/components/ui/alert";
 import { showToast } from "@/components/ui/toast";
 import { Pagination } from "@/components/ui/pagination";
 import { TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
-import { getActiveCompanyId, getActiveWorkspaceScope, getStoredUser, hasPermission } from "@/hooks/useAuth";
+import { getActiveCompanyId, getActiveWorkspaceScope, getActiveOperationalArea, getStoredUser, hasPermission } from "@/hooks/useAuth";
 import { useLanguage } from "@/hooks/useLanguage";
 import { singularLabel } from "./labels";
 import { cn } from "@/lib/utils";
@@ -1567,6 +1567,18 @@ export function MasterDataTable({
 
       const hasCompanyField = config.fields.some((f) => f.key === "company_id");
       if (!editing && companyId && hasCompanyField) payload.company_id = companyId;
+
+      if (!editing && workspaceScope === "OPERATIONAL") {
+        const activeArea = getActiveOperationalArea();
+        if (activeArea) {
+          if (config.fields.some((f) => f.key === "nob_id") && activeArea.nob_id) {
+            payload.nob_id = activeArea.nob_id;
+          }
+          if (config.fields.some((f) => f.key === "lob_id") && activeArea.lob_id) {
+            payload.lob_id = activeArea.lob_id;
+          }
+        }
+      }
 
       // storage_type is hidden from the form (derived from location_type, see
       // setField/openEdit above) and so excluded from visibleFields — without

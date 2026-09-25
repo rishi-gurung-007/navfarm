@@ -25,6 +25,8 @@ import {
   Users,
   ChevronDown,
   ChevronRight,
+  ArrowRightCircle,
+  Sparkles,
 } from 'lucide-react';
 import PiggeryLifecycleStepper, {
   type PiggeryStage,
@@ -49,6 +51,7 @@ import {
 } from '@/components/ui/table';
 import { useLanguage } from '@/hooks/useLanguage';
 import AnimalStageTransitionModal from '@/components/console/piggery/animal-stage-transition-modal';
+import { SearchableSelect } from '@/components/ui/searchable-select';
 
 // file_url from the API is server-relative (e.g. "/uploads/xyz.jpg"). Next.js
 // proxies that same-origin path to the API alongside /api/v1.
@@ -91,9 +94,15 @@ const isTextCapture = (line: Row) =>
 // Save instead of re-typing a number that's already shown one column over.
 // Text-capture lines have no numeric "expected" to seed a text box with.
 const defaultEntryValue = (line: Row) => {
-  if (line.already_entered_qty) return String(line.already_entered_qty);
-  if (!isTextCapture(line) && line.expected_qty != null)
+  if (line.allow_qty_edit === false) {
+    return line.expected_qty != null ? String(line.expected_qty) : '';
+  }
+  if (line.already_entered_qty != null && line.already_entered_qty !== '') {
+    return String(line.already_entered_qty);
+  }
+  if (!isTextCapture(line) && line.expected_qty != null) {
     return String(line.expected_qty);
+  }
   return '';
 };
 
@@ -316,6 +325,45 @@ export default function OperationalBatchDataEntry() {
     useState(false);
   const [changeStageSaving, setChangeStageSaving] = useState(false);
   const [changeStageError, setChangeStageError] = useState('');
+
+  // Daily data entry mandatory date progression
+  const [nextPendingDate, setNextPendingDate] = useState<string>('');
+
+  // Stage transition & Min Days Before Move validation from backend
+  const [stageTransition, setStageTransition] = useState<{
+    current_stage_id: string | null;
+    current_stage_code: string | null;
+    current_stage_name: string | null;
+    days_in_stage: number;
+    min_days_before_move: number;
+    can_move_without_remarks: boolean;
+    transition_trigger: string;
+    auto_move_on_day: number | null;
+    typical_duration_days: number | null;
+    auto_transition_due: boolean;
+    next_stage: {
+      stage_id: string;
+      stage_code: string;
+      stage_name: string;
+      stage_sequence: number;
+      typical_duration_days: number | null;
+    } | null;
+    valid_next_stages: Array<{
+      stage_id: string;
+      stage_code: string;
+      stage_name: string;
+      stage_sequence: number;
+      min_days_before_move: number;
+      typical_duration_days: number | null;
+    }>;
+  } | null>(null);
+
+  // Automatic stage transition prompt popup
+  const [autoTransitionModalOpen, setAutoTransitionModalOpen] = useState(false);
+  const [autoTransitionDismissedBatchId, setAutoTransitionDismissedBatchId] =
+    useState<string | null>(null);
+  const [autoTransitionSaving, setAutoTransitionSaving] = useState(false);
+  const [autoTransitionError, setAutoTransitionError] = useState('');
 
   const breedLabel = (breedId: string | null) => {
     if (!breedId) return null;
@@ -578,6 +626,26 @@ export default function OperationalBatchDataEntry() {
         const schedData = schedRes?.data ?? schedRes;
         const batchData = batchRes?.data ?? batchRes;
         const isAnimalWise = batchData?.tracking_mode === 'ANIMAL_WISE';
+
+        const npd = schedData?.next_pending_date || '';
+        if (npd) {
+          setNextPendingDate(npd);
+          if (!userPickedDateRef.current && selectedDate !== npd) {
+            setSelectedDate(npd);
+          }
+        }
+
+        if (schedData?.stage_transition) {
+          setStageTransition(schedData.stage_transition);
+          if (
+            schedData.stage_transition.auto_transition_due &&
+            autoTransitionDismissedBatchId !== selectedBatchId
+          ) {
+            setAutoTransitionModalOpen(true);
+          }
+        } else {
+          setStageTransition(null);
+        }
 
         const stageMaster: any[] = (stageRes as any)?.data ?? stageRes ?? [];
         setStageMasterList(Array.isArray(stageMaster) ? stageMaster : []);
@@ -897,9 +965,11 @@ export default function OperationalBatchDataEntry() {
       if (entryScope === 'ALL') {
         const templateAnimal = (selectedStage.animals || [])[0];
         const lines: Row[] = templateAnimal?.lines || [];
-        const animalIds = (selectedStage.animals || []).map(
-          (a: Row) => a.animal_id,
+        // Only save draft entries for animals that are NOT yet posted
+        const pendingAnimals = (selectedStage.animals || []).filter(
+          (a: Row) => !a.is_posted,
         );
+        const animalIds = pendingAnimals.map((a: Row) => a.animal_id);
         for (const line of lines) {
           if (!dataEntryCanSave(line, '__ALL__')) continue;
           const key = entryKey(line.line_id, '__ALL__');
@@ -916,6 +986,10 @@ export default function OperationalBatchDataEntry() {
         const animal = (selectedStage.animals || []).find(
           (a: Row) => a.animal_id === entryScope,
         );
+        if (animal?.is_posted) {
+          // Animal already posted on this date — do not overwrite posted entries with drafts
+          return 0;
+        }
         const lines: Row[] = animal?.lines || [];
         for (const line of lines) {
           if (!dataEntryCanSave(line, entryScope)) continue;
@@ -985,16 +1059,52 @@ export default function OperationalBatchDataEntry() {
       );
       return;
     }
+
+    const stageAnimals: Row[] = selectedStage?.animals || [];
+    if (entryScope !== 'ALL') {
+      const match = stageAnimals.find((a: Row) => a.animal_id === entryScope);
+      if (match?.is_posted) {
+        const msg = `Data entry for animal ${match.animal_code} has already been posted on ${selectedDate}.`;
+        setStageActionError(msg);
+        setSaveErrorMsg(msg);
+        return;
+      }
+    } else {
+      const pendingCount = stageAnimals.filter((a: Row) => !a.is_posted).length;
+      if (stageAnimals.length > 0 && pendingCount === 0) {
+        const msg = `All animals in this stage have already been posted on ${selectedDate}.`;
+        setStageActionError(msg);
+        setSaveErrorMsg(msg);
+        return;
+      }
+    }
+
     setStageActionBusy(true);
     setStageActionError('');
     try {
       // Auto-save any entered values as draft before posting so backend receives complete data
       await saveDraftEntries();
 
-      await api.post(
-        `/batch/${currentBatch.id}/stage/${selectedStageId}/post-day?date=${selectedDate}`,
-        {},
-      );
+      const isSingleAnimal = entryScope !== 'ALL';
+      const animalObj = isSingleAnimal
+        ? selectedStage?.animals?.find((a: Row) => a.animal_id === entryScope)
+        : null;
+      const animalCode = animalObj?.animal_code || 'animal';
+
+      const postUrl = isSingleAnimal
+        ? `/batch/${currentBatch.id}/stage/${selectedStageId}/post-day?date=${selectedDate}&animalId=${entryScope}`
+        : `/batch/${currentBatch.id}/stage/${selectedStageId}/post-day?date=${selectedDate}`;
+
+      const res: any = await api.post(postUrl, {});
+      const isStageLocked = res?.data?.stage_locked ?? !isSingleAnimal;
+
+      if (isSingleAnimal && !isStageLocked) {
+        setSaveSuccessMsg(`✓ Data posted for ${animalCode}.`);
+        setTimeout(() => setSaveSuccessMsg(''), 4000);
+        loadDataEntry();
+        loadPostedDates();
+        return;
+      }
 
       // Check remaining unposted stages with animals for this date
       const activeStages = dataEntryStages.filter(
@@ -1235,14 +1345,30 @@ export default function OperationalBatchDataEntry() {
     loadAttachments();
   };
 
-  // Whole-batch manual stage change (BATCH_WISE) — same endpoint and stage-
-  // option source as batch-panel.tsx's own Transfer Stage action.
+  // Whole-batch manual stage change (BATCH_WISE) — filters to valid next stage(s)
+  // in the pipeline and validates against Min Days Before Move rule.
   const openChangeStage = async () => {
     if (!currentBatch) return;
-    setChangeStageForm({ to_stage_code: '', remarks: '' });
+    const defaultDest =
+      stageTransition?.next_stage?.stage_code ||
+      stageTransition?.valid_next_stages?.[0]?.stage_code ||
+      '';
+    setChangeStageForm({ to_stage_code: defaultDest, remarks: '' });
     setChangeStageError('');
-    setChangeStageOptions([]);
     setChangeStageOpen(true);
+
+    if (
+      stageTransition?.valid_next_stages &&
+      stageTransition.valid_next_stages.length > 0
+    ) {
+      setChangeStageOptions(
+        Array.from(
+          new Set(stageTransition.valid_next_stages.map((s) => s.stage_code)),
+        ),
+      );
+      return;
+    }
+
     if (!currentBatch.lobId) return;
     setChangeStageOptionsLoading(true);
     try {
@@ -1252,16 +1378,24 @@ export default function OperationalBatchDataEntry() {
             `/stage?lobId=${currentBatch.lobId}&isActive=true&limit=200`,
           ),
         ) || [];
+      const currentSeq = stageMasterList.find(
+        (s) => s.stage_code === currentBatch.currentStageCode,
+      )?.stage_sequence;
+      const filtered = stageRows.filter((s: Row) => {
+        if (!s.stage_code || s.stage_code === currentBatch.currentStageCode)
+          return false;
+        if (currentSeq !== undefined && s.stage_sequence !== undefined) {
+          return s.stage_sequence > currentSeq;
+        }
+        return true;
+      });
       const codes = Array.from(
-        new Set(
-          stageRows
-            .map((s: Row) => s.stage_code)
-            .filter(
-              (c: string | null) => !!c && c !== currentBatch.currentStageCode,
-            ),
-        ),
+        new Set(filtered.map((s: Row) => s.stage_code)),
       ) as string[];
-      setChangeStageOptions(codes.sort());
+      setChangeStageOptions(codes);
+      if (!defaultDest && codes.length > 0) {
+        setChangeStageForm((f) => ({ ...f, to_stage_code: codes[0] }));
+      }
     } catch {
       setChangeStageOptions([]);
     } finally {
@@ -1276,16 +1410,53 @@ export default function OperationalBatchDataEntry() {
     try {
       if (!changeStageForm.to_stage_code)
         throw new Error(t('blErrDestStageRequired'));
+
+      if (
+        stageTransition &&
+        !stageTransition.can_move_without_remarks &&
+        !changeStageForm.remarks?.trim()
+      ) {
+        throw new Error(
+          `Minimum duration of ${stageTransition.min_days_before_move} days is required for '${stageTransition.current_stage_name}' before transition (currently on day ${stageTransition.days_in_stage}). Justification / Remarks are mandatory to override.`,
+        );
+      }
+
       await api.post(`/batch/${currentBatch.id}/transfer-stage`, {
         to_stage_code: changeStageForm.to_stage_code,
         remarks: changeStageForm.remarks || undefined,
       });
       setChangeStageOpen(false);
+      setSaveSuccessMsg(
+        `Batch successfully transferred to stage ${changeStageForm.to_stage_code}.`,
+      );
       loadDataEntry();
     } catch (err: any) {
       setChangeStageError(err?.message || t('blErrTransferStage'));
     } finally {
       setChangeStageSaving(false);
+    }
+  };
+
+  const handleAutoTransitionNow = async () => {
+    if (!currentBatch || !stageTransition?.next_stage) return;
+    setAutoTransitionSaving(true);
+    setAutoTransitionError('');
+    try {
+      await api.post(`/batch/${currentBatch.id}/transfer-stage`, {
+        to_stage_code: stageTransition.next_stage.stage_code,
+        remarks: 'Automatic stage transition trigger (AUTO_BY_DAY)',
+      });
+      setAutoTransitionModalOpen(false);
+      setSaveSuccessMsg(
+        `Batch successfully transferred to ${stageTransition.next_stage.stage_name} (${stageTransition.next_stage.stage_code}).`,
+      );
+      loadDataEntry();
+    } catch (err: any) {
+      setAutoTransitionError(
+        err?.message || 'Failed to complete stage transition.',
+      );
+    } finally {
+      setAutoTransitionSaving(false);
     }
   };
 
@@ -1353,6 +1524,14 @@ export default function OperationalBatchDataEntry() {
     broadcast?: boolean,
   ) => {
     const key = entryKey(line.line_id, animalId);
+    const allowEdit = line.allow_qty_edit !== false;
+    const isRowDisabled = rowLocked || !allowEdit;
+    const actualNumericVal =
+      !allowEdit && line.expected_qty != null
+        ? String(line.expected_qty)
+        : (dataEntryValues[key] ??
+          (line.expected_qty != null ? String(line.expected_qty) : ''));
+
     return (
       <TableRow key={key}>
         <TableCell className="px-3 py-2" style={S.primary}>
@@ -1370,9 +1549,18 @@ export default function OperationalBatchDataEntry() {
             : '—'}
         </TableCell>
         <TableCell className="px-3 py-2" style={S.primary}>
-          {Number(line.expected_qty).toLocaleString(undefined, {
-            maximumFractionDigits: 4,
-          })}
+          <div className="flex flex-col">
+            <span>
+              {Number(line.expected_qty).toLocaleString(undefined, {
+                maximumFractionDigits: 4,
+              })}
+            </span>
+            {line.qty_basis === 'PER_BATCH' && (
+              <span className="text-[10px] text-[var(--text-muted)] font-normal">
+                (Per Batch)
+              </span>
+            )}
+          </div>
         </TableCell>
         <TableCell className="px-2 py-1.5 w-28">
           {isTextCapture(line) ? (
@@ -1383,21 +1571,28 @@ export default function OperationalBatchDataEntry() {
                 setDataEntryTexts((v) => ({ ...v, [key]: e.target.value }))
               }
               placeholder={line.kpi_uom}
-              className={inputCls}
+              className={`${inputCls} ${!allowEdit ? 'opacity-75 bg-[var(--surface-muted)] cursor-not-allowed' : ''}`}
               style={S.input}
-              disabled={rowLocked}
+              disabled={isRowDisabled}
+              title={!allowEdit ? 'Quantity edit disabled in scheduler' : undefined}
             />
           ) : (
-            <input
-              type="number"
-              value={dataEntryValues[key] ?? ''}
-              onChange={(e) =>
-                setDataEntryValues((v) => ({ ...v, [key]: e.target.value }))
-              }
-              className={inputCls}
-              style={S.input}
-              disabled={rowLocked}
-            />
+            <div className="relative flex items-center">
+              <input
+                type="number"
+                value={actualNumericVal}
+                onChange={(e) =>
+                  setDataEntryValues((v) => ({ ...v, [key]: e.target.value }))
+                }
+                className={`${inputCls} ${!allowEdit ? 'opacity-75 bg-[var(--surface-muted)] cursor-not-allowed pr-6' : ''}`}
+                style={S.input}
+                disabled={isRowDisabled}
+                title={!allowEdit ? 'Quantity edit disabled in scheduler' : undefined}
+              />
+              {!allowEdit && (
+                <Lock className="w-3 h-3 text-[var(--text-muted)] absolute right-2 pointer-events-none" />
+              )}
+            </div>
           )}
           {line.lot_required && (
             <input
@@ -1413,27 +1608,27 @@ export default function OperationalBatchDataEntry() {
             />
           )}
           {line.line_type === 'TRANSFER' && (
-            <select
-              value={dataEntryDestBatches[key] ?? ''}
-              onChange={(e) =>
-                setDataEntryDestBatches((v) => ({
-                  ...v,
-                  [key]: e.target.value,
-                }))
-              }
-              className={`${inputCls} nf-select mt-1`}
-              style={S.input}
-              disabled={rowLocked}
-            >
-              <option value="">{t('blPlaceholderDestBatch')}</option>
-              {batches
-                .filter((b) => b.id !== currentBatch?.id)
-                .map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.code}
-                  </option>
-                ))}
-            </select>
+            <div className="mt-1 min-w-[160px]">
+              <SearchableSelect
+                ariaLabel={t('blPlaceholderDestBatch')}
+                value={dataEntryDestBatches[key] ?? ''}
+                onChange={(val) =>
+                  setDataEntryDestBatches((v) => ({
+                    ...v,
+                    [key]: val,
+                  }))
+                }
+                options={batches
+                  .filter((b) => b.id !== currentBatch?.id)
+                  .map((b) => ({
+                    value: b.id,
+                    label: b.code,
+                  }))}
+                placeholder={t('blPlaceholderDestBatch')}
+                searchPlaceholder="Search batches…"
+                disabled={rowLocked}
+              />
+            </div>
           )}
         </TableCell>
       </TableRow>
@@ -1607,22 +1802,22 @@ export default function OperationalBatchDataEntry() {
               </span>
 
               <div className="mt-1.5 flex items-center gap-2.5 flex-wrap">
-                <select
-                  value={selectedBatchId}
-                  onChange={(e) => {
-                    userPickedDateRef.current = false;
-                    setSelectedBatchId(e.target.value);
-                  }}
-                  className="max-w-[280px] sm:max-w-[360px] truncate rounded-[var(--radius-xs)] border border-[var(--input-border)] bg-[var(--input-bg)] px-3 py-1.5 text-xs font-bold text-[var(--text-primary)] focus:outline-none"
-                >
-                  {batches.map((b) => (
-                    <option key={b.id} value={b.id}>
-                      {b.code}
-                      {b.parentBatchId ? ' ↳ split group' : ''} — {b.name} (
-                      {b.breed})
-                    </option>
-                  ))}
-                </select>
+                <div className="w-80">
+                  <SearchableSelect
+                    ariaLabel={t('activeProductionBatch')}
+                    value={selectedBatchId}
+                    onChange={(val) => {
+                      userPickedDateRef.current = false;
+                      setSelectedBatchId(val);
+                    }}
+                    options={batches.map((b) => ({
+                      value: b.id,
+                      label: `${b.code}${b.parentBatchId ? ' ↳ split group' : ''} — ${b.name} (${b.breed})`,
+                    }))}
+                    placeholder={t('activeProductionBatch')}
+                    searchPlaceholder="Search batches…"
+                  />
+                </div>
                 <span
                   className="px-2 py-0.5 rounded-full text-[10px] font-bold border shrink-0"
                   style={{
@@ -1917,27 +2112,45 @@ export default function OperationalBatchDataEntry() {
                     <div className="absolute top-4 left-6 right-6 h-[3px] bg-[var(--border)] z-0 rounded-full" />
                     <div className="flex items-start justify-between relative z-10">
                       {dataEntryProgress.map((p) => {
-                        const selected = p.stage_id === selectedStageId;
-                        const stageLocked = lockInfo.status === 'LOCKED';
+                        const isActive =
+                          p.stage_code === currentBatch?.currentStageCode ||
+                          p.stage_id === (stageTransition?.current_stage_id || selectedStageId);
+                        const isNextEligible =
+                          !isActive &&
+                          stageTransition?.valid_next_stages?.some(
+                            (s) => s.stage_id === p.stage_id,
+                          );
                         return (
                           <div
                             key={p.stage_id}
-                            role="button"
-                            tabIndex={0}
+                            className={`flex min-w-0 flex-col items-center group flex-1 ${
+                              isActive
+                                ? 'cursor-default'
+                                : isNextEligible
+                                  ? 'cursor-pointer opacity-85 hover:opacity-100'
+                                  : 'cursor-not-allowed opacity-50'
+                            }`}
                             onClick={() => {
-                              setSelectedStageId(p.stage_id);
-                              loadDataEntry(p.stage_id);
+                              if (isNextEligible) {
+                                openChangeStage();
+                              }
                             }}
-                            className="flex min-w-0 flex-col items-center group flex-1 cursor-pointer"
+                            title={
+                              isActive
+                                ? `${p.stage_name} (Active Stage for this batch)`
+                                : isNextEligible
+                                  ? `Click to transfer batch to ${p.stage_name}`
+                                  : `${p.stage_name} (Inactive — Only one stage active at a time)`
+                            }
                           >
                             <button
                               type="button"
                               className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold transition-all duration-200 ${
-                                stageLocked
-                                  ? 'bg-[var(--success)] text-white ring-4 ring-[var(--success-muted)] shadow-xs'
-                                  : selected
-                                    ? 'bg-[var(--accent)] text-white ring-4 ring-[var(--accent-muted)] shadow-md scale-110'
-                                    : 'bg-[var(--surface)] border-2 border-[var(--border)] text-[var(--text-muted)] group-hover:border-[var(--text-secondary)]'
+                                isActive
+                                  ? 'bg-[var(--accent)] text-white ring-4 ring-[var(--accent-muted)] shadow-md scale-110'
+                                  : isNextEligible
+                                    ? 'bg-[var(--surface)] border-2 border-[var(--accent-muted)] text-[var(--accent)] group-hover:border-[var(--accent)] shadow-2xs'
+                                    : 'bg-[var(--surface)] border-2 border-[var(--border)] text-[var(--text-muted)]'
                               }`}
                             >
                               {p.stage_sequence || '•'}
@@ -1945,7 +2158,7 @@ export default function OperationalBatchDataEntry() {
                             <div className="mt-2.5 text-center flex flex-col items-center w-full px-0.5">
                               <p
                                 className={`text-xs tracking-tight truncate w-full ${
-                                  selected
+                                  isActive
                                     ? 'text-[var(--accent)] font-bold'
                                     : 'text-[var(--text-secondary)] font-medium'
                                 }`}
@@ -1953,25 +2166,102 @@ export default function OperationalBatchDataEntry() {
                               >
                                 {p.stage_name}
                               </p>
-                              <span className="text-[10px] text-[var(--text-muted)] mt-0.5">
-                                {p.animal_count} head
-                              </span>
+                              {isActive ? (
+                                <span className="text-[10px] text-[var(--accent)] font-bold mt-0.5 inline-flex items-center gap-1">
+                                  ● Active ({p.animal_count} head)
+                                </span>
+                              ) : (
+                                <span className="text-[10px] text-[var(--text-muted)] mt-0.5">
+                                  {p.animal_count} head
+                                </span>
+                              )}
                             </div>
                           </div>
                         );
                       })}
                     </div>
                   </div>
+
+                  {/* Active Stage & Stage Transfer Controller Bar */}
+                  <div className="mt-4 pt-3 border-t border-[var(--border)] flex flex-wrap items-center justify-between gap-3 text-xs">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-semibold text-[var(--text-secondary)]">
+                        Single Active Stage:
+                      </span>
+                      <span className="font-bold text-[var(--accent)] px-2.5 py-0.5 rounded bg-[var(--accent-muted)]/20 border border-[var(--accent-muted)]">
+                        {stageTransition?.current_stage_name || currentBatch?.currentStage || 'Current Stage'}
+                      </span>
+                      {stageTransition && (
+                        <div className="flex items-center gap-2 text-[var(--text-secondary)] flex-wrap">
+                          <span>• Day <strong>{stageTransition.days_in_stage}</strong></span>
+                          <span>• Min Days Rule: <strong>{stageTransition.min_days_before_move}d</strong></span>
+                          <span
+                            className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                              stageTransition.can_move_without_remarks
+                                ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30'
+                                : 'bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-500/30'
+                            }`}
+                          >
+                            {stageTransition.can_move_without_remarks
+                              ? '✓ Minimum Days Satisfied'
+                              : `Hold: ${Math.max(0, stageTransition.min_days_before_move - stageTransition.days_in_stage)}d remaining (remarks required)`}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+
+                    {(!noScheduler || dataEntryLines.length > 0 || dataEntryProgress.length > 0) && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={openChangeStage}
+                        className="h-7 text-xs gap-1.5 font-semibold shrink-0"
+                        title="Transfer whole batch to the next valid stage"
+                      >
+                        <ArrowRightCircle className="h-3.5 w-3.5" /> Transfer Stage
+                      </Button>
+                    )}
+                  </div>
                 </div>
               ) : lifecycle.stages.length > 0 ? (
-                <PiggeryLifecycleStepper
-                  stages={lifecycle.stages}
-                  currentStageId={lifecycle.currentStageId}
-                />
+                <div className="space-y-3">
+                  <PiggeryLifecycleStepper
+                    stages={lifecycle.stages}
+                    currentStageId={lifecycle.currentStageId}
+                  />
+                  <div className="flex items-center justify-between text-xs p-3 rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface)]">
+                    <span className="font-semibold text-[var(--text-secondary)]">
+                      Current Stage: <strong>{currentBatch?.currentStage}</strong> (Single active stage)
+                    </span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={openChangeStage}
+                      className="h-7 text-xs gap-1.5 font-semibold"
+                    >
+                      <ArrowRightCircle className="h-3.5 w-3.5" /> Transfer Stage
+                    </Button>
+                  </div>
+                </div>
               ) : (
-                <PiggeryLifecycleStepper
-                  currentStageId={currentBatch?.currentStageId || 0}
-                />
+                <div className="space-y-3">
+                  <PiggeryLifecycleStepper
+                    currentStageId={currentBatch?.currentStageId || 0}
+                  />
+                  <div className="flex items-center justify-between text-xs p-3 rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface)]">
+                    <span className="font-semibold text-[var(--text-secondary)]">
+                      Current Stage: <strong>{currentBatch?.currentStage}</strong> (Single active stage)
+                    </span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={openChangeStage}
+                      className="h-7 text-xs gap-1.5 font-semibold"
+                    >
+                      <ArrowRightCircle className="h-3.5 w-3.5" /> Transfer Stage
+                    </Button>
+                  </div>
+                </div>
               )}
             </>
           )}
@@ -1980,16 +2270,16 @@ export default function OperationalBatchDataEntry() {
           <div className="rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface)] p-4 flex flex-wrap items-end justify-between gap-4 shadow-2xs">
             <div className="flex items-end gap-4 flex-wrap">
               <div>
-                <label className="nf-text-label mb-1 block text-[var(--text-muted)]">
-                  {t('logEntryDate')}
+                <label className="nf-text-label mb-1 block text-[var(--text-muted)] font-semibold">
+                  Posting Date <span className="text-[10px] text-[var(--accent)] font-normal">(Next Pending Date)</span>
                 </label>
                 <input
                   type="date"
                   value={selectedDate}
                   disabled
                   readOnly
-                  className="h-8 rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--surface-raised)] px-3 text-xs font-semibold text-[var(--text-secondary)] focus:outline-none opacity-80 cursor-not-allowed select-none"
-                  title="Posting date is managed automatically upon posting data entry"
+                  className="h-8 rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--surface-raised)] px-3 text-xs font-bold text-[var(--text-primary)] focus:outline-none opacity-90 cursor-not-allowed select-none"
+                  title="Daily data entry is mandatory. The posting date always shows the next pending date and cannot be skipped."
                 />
               </div>
 
@@ -1998,32 +2288,40 @@ export default function OperationalBatchDataEntry() {
                   <label className="nf-text-label mb-1 block text-[var(--text-muted)]">
                     History
                   </label>
-                  <select
-                    value=""
-                    disabled={posting}
-                    onChange={(e) => {
-                      if (!e.target.value) return;
-                      userPickedDateRef.current = true;
-                      setSelectedDate(e.target.value);
-                      e.target.value = '';
+                  <div className="w-56 sm:w-64">
+                    <SearchableSelect
+                      ariaLabel="History posted dates"
+                      value=""
+                      disabled={posting}
+                      onChange={(val) => {
+                        if (!val) return;
+                        userPickedDateRef.current = true;
+                        setSelectedDate(val);
+                      }}
+                      options={postedDates.map((d: Row, idx: number) => ({
+                        value: String(d.entry_date),
+                        label: `${String(d.entry_date)}${d.stage_name ? ` — ${d.stage_name}` : ''}${d.status === 'REOPENED' ? ' (reopened)' : ''}`,
+                      }))}
+                      placeholder={`${postedDates.length} posted date${postedDates.length === 1 ? '' : 's'} — view…`}
+                      searchPlaceholder="Search dates…"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {userPickedDateRef.current && nextPendingDate && selectedDate !== nextPendingDate && (
+                <div className="flex items-center gap-2 bg-amber-500/10 border border-amber-500/20 text-amber-700 dark:text-amber-400 px-3 py-1 rounded-[var(--radius-sm)] text-xs h-8">
+                  <span>Viewing Past Date: <strong>{selectedDate}</strong> (Read-only)</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      userPickedDateRef.current = false;
+                      setSelectedDate(nextPendingDate);
                     }}
-                    className="nf-select h-8 rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--surface-raised)] px-3 text-xs font-semibold text-[var(--text-primary)] focus:outline-none disabled:opacity-60 cursor-pointer shadow-2xs hover:bg-[var(--surface-secondary)] transition-colors"
+                    className="font-bold underline ml-1 hover:text-amber-900 dark:hover:text-amber-200 cursor-pointer"
                   >
-                    <option value="">
-                      {postedDates.length} posted date
-                      {postedDates.length === 1 ? '' : 's'} — view…
-                    </option>
-                    {postedDates.map((d: Row, idx: number) => (
-                      <option
-                        key={`${d.entry_date}-${d.stage_id}-${idx}`}
-                        value={String(d.entry_date)}
-                      >
-                        {String(d.entry_date)}
-                        {d.stage_name ? ` — ${d.stage_name}` : ''}
-                        {d.status === 'REOPENED' ? ' (reopened)' : ''}
-                      </option>
-                    ))}
-                  </select>
+                    Return to Next Pending Date ({nextPendingDate})
+                  </button>
                 </div>
               )}
 
@@ -2044,7 +2342,12 @@ export default function OperationalBatchDataEntry() {
                     size="sm"
                     variant="outline"
                     onClick={handleSaveAllToDraft}
-                    disabled={savingAllDraft || posting || isFutureDate}
+                    disabled={
+                      savingAllDraft ||
+                      posting ||
+                      isFutureDate ||
+                      (!!nextPendingDate && selectedDate !== nextPendingDate)
+                    }
                     title={
                       isFutureDate
                         ? `Cannot save draft for future date (${selectedDate})`
@@ -2063,11 +2366,18 @@ export default function OperationalBatchDataEntry() {
                 <Button
                   size="sm"
                   onClick={handlePostEntry}
-                  disabled={posting || locked || isFutureDate}
+                  disabled={
+                    posting ||
+                    locked ||
+                    isFutureDate ||
+                    (!!nextPendingDate && selectedDate !== nextPendingDate)
+                  }
                   title={
                     isFutureDate
                       ? `Cannot post data entry for future date (${selectedDate}). Today is ${todayStr}.`
-                      : undefined
+                      : !!nextPendingDate && selectedDate !== nextPendingDate
+                        ? `Only the next pending date (${nextPendingDate}) can be posted.`
+                        : undefined
                   }
                   className="nf-btn-primary text-xs h-8 gap-1.5 font-semibold rounded-[var(--radius-sm)] shadow-2xs"
                 >
@@ -2080,9 +2390,11 @@ export default function OperationalBatchDataEntry() {
                     ? 'Posted & Locked'
                     : isFutureDate
                       ? 'Future Date — Cannot Post'
-                      : posting
-                        ? 'Posting…'
-                        : 'Post Entry'}
+                      : nextPendingDate && selectedDate !== nextPendingDate
+                        ? 'History Date — Read Only'
+                        : posting
+                          ? 'Posting…'
+                          : 'Post Entry'}
                 </Button>
               </div>
             )}
@@ -2121,46 +2433,85 @@ export default function OperationalBatchDataEntry() {
                       )}
                       {savingAllDraft ? 'Saving…' : 'Save to Draft'}
                     </Button>
-                    <Button
-                      size="sm"
-                      onClick={handlePostStageDay}
-                      disabled={stageActionBusy || isFutureDate}
-                      title={
-                        isFutureDate
-                          ? `Cannot post data entry for future date (${selectedDate}). Today is ${todayStr}.`
-                          : undefined
+                    {(() => {
+                      const stageAnimals: Row[] = selectedStage?.animals || [];
+                      const postedAnimalsCount = stageAnimals.filter((a) => a.is_posted).length;
+                      const pendingAnimalsCount = stageAnimals.length - postedAnimalsCount;
+                      const currentAnimal = stageAnimals.find((a) => a.animal_id === entryScope);
+                      const isCurrentAnimalPosted = entryScope !== 'ALL' && Boolean(currentAnimal?.is_posted);
+                      const areAllAnimalsPosted = stageAnimals.length > 0 && pendingAnimalsCount === 0;
+
+                      const isPostDisabled =
+                        stageActionBusy ||
+                        isFutureDate ||
+                        (entryScope !== 'ALL' ? isCurrentAnimalPosted : areAllAnimalsPosted);
+
+                      let postButtonLabel = 'Post Stage Data';
+                      if (isFutureDate) {
+                        postButtonLabel = 'Future Date — Cannot Post';
+                      } else if (entryScope !== 'ALL') {
+                        postButtonLabel = isCurrentAnimalPosted
+                          ? `Already Posted (${currentAnimal?.animal_code || 'Animal'})`
+                          : `Post Data (${currentAnimal?.animal_code || 'Animal'})`;
+                      } else if (areAllAnimalsPosted) {
+                        postButtonLabel = 'All Animals Posted';
+                      } else if (postedAnimalsCount > 0) {
+                        postButtonLabel = `Post Remaining Animals (${pendingAnimalsCount})`;
                       }
-                      className="nf-btn-primary text-xs h-8 gap-1.5 font-semibold rounded-[var(--radius-sm)] shadow-2xs"
-                    >
-                      {stageActionBusy ? (
-                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                      ) : (
-                        <Lock className="w-3.5 h-3.5" />
-                      )}
-                      {stageActionBusy
-                        ? t('blSaving')
-                        : isFutureDate
-                          ? 'Future Date — Cannot Post'
-                          : 'Post Stage Data'}
-                    </Button>
+
+                      return (
+                        <Button
+                          size="sm"
+                          onClick={handlePostStageDay}
+                          disabled={isPostDisabled}
+                          title={
+                            isFutureDate
+                              ? `Cannot post data entry for future date (${selectedDate}). Today is ${todayStr}.`
+                              : isCurrentAnimalPosted
+                                ? `Data entry for animal ${currentAnimal?.animal_code} is already posted on this date.`
+                                : areAllAnimalsPosted
+                                  ? `All animals in this stage are already posted on this date.`
+                                  : undefined
+                          }
+                          className="nf-btn-primary text-xs h-8 gap-1.5 font-semibold rounded-[var(--radius-sm)] shadow-2xs"
+                        >
+                          {stageActionBusy ? (
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                          ) : isCurrentAnimalPosted || areAllAnimalsPosted ? (
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                          ) : (
+                            <Lock className="w-3.5 h-3.5" />
+                          )}
+                          {stageActionBusy ? t('blSaving') : postButtonLabel}
+                        </Button>
+                      );
+                    })()}
                   </>
                 )}
-                {(selectedStage.animals || []).length > 0 && (
-                  <select
-                    value={entryScope}
-                    onChange={(e) => setEntryScope(e.target.value)}
-                    className="nf-select h-8 rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--surface-raised)] px-3 text-xs font-semibold text-[var(--text-primary)] focus:outline-none disabled:opacity-60 cursor-pointer shadow-2xs hover:bg-[var(--surface-secondary)] transition-colors"
-                  >
-                    <option value="ALL">
-                      All animals in this stage ({selectedStage.animal_count})
-                    </option>
-                    {selectedStage.animals.map((a: Row) => (
-                      <option key={a.animal_id} value={a.animal_id}>
-                        {a.animal_code}
-                      </option>
-                    ))}
-                  </select>
-                )}
+                {(selectedStage.animals || []).length > 0 && (() => {
+                  const stageAnimals: Row[] = selectedStage.animals || [];
+                  const pendingCount = stageAnimals.filter((a) => !a.is_posted).length;
+                  return (
+                    <div className="w-80">
+                      <SearchableSelect
+                        ariaLabel="Animal Selection"
+                        value={entryScope}
+                        onChange={(val) => setEntryScope(val)}
+                        options={[
+                          {
+                            value: 'ALL',
+                            label: `All animals in this stage (${selectedStage.animal_count}) — ${pendingCount} pending`,
+                          },
+                          ...stageAnimals.map((a: Row) => ({
+                            value: a.animal_id,
+                            label: `${a.animal_code} ${a.is_posted ? '(✓ Posted)' : '(Pending)'}`,
+                          })),
+                        ]}
+                        searchPlaceholder="Search animal code…"
+                      />
+                    </div>
+                  );
+                })()}
               </div>
             )}
           </div>
@@ -2439,8 +2790,46 @@ export default function OperationalBatchDataEntry() {
                           );
                         }
                         const stageAnimals: Row[] = selectedStage.animals || [];
+                        const pendingAnimals = stageAnimals.filter((a) => !a.is_posted);
+                        const allPosted = stageAnimals.length > 0 && pendingAnimals.length === 0;
                         return (
                           <div>
+                            {pendingAnimals.length < stageAnimals.length && pendingAnimals.length > 0 && (
+                              <div
+                                className="mb-3 p-2.5 text-xs rounded-[var(--radius-sm)] border flex items-center justify-between gap-2"
+                                style={{
+                                  backgroundColor: 'var(--surface-raised)',
+                                  borderColor: 'var(--border)',
+                                }}
+                              >
+                                <div className="flex items-center gap-2">
+                                  <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />
+                                  <span style={S.primary}>
+                                    <strong>{stageAnimals.length - pendingAnimals.length}</strong> of <strong>{stageAnimals.length}</strong> animals already posted.
+                                    Entries saved or posted below will apply to the <strong>{pendingAnimals.length} remaining</strong> animal(s).
+                                  </span>
+                                </div>
+                              </div>
+                            )}
+                            {allPosted && (
+                              <div
+                                className="mb-3 p-2.5 text-xs font-semibold rounded-[var(--radius-sm)] border flex items-center justify-between gap-2"
+                                style={{
+                                  backgroundColor: 'var(--surface-raised)',
+                                  borderColor: 'var(--border)',
+                                }}
+                              >
+                                <div className="flex items-center gap-2">
+                                  <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />
+                                  <span style={S.primary}>
+                                    All {stageAnimals.length} animals in this stage are already posted for {selectedDate}. Data entry is locked.
+                                  </span>
+                                </div>
+                                <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded">
+                                  STAGE COMPLETED
+                                </span>
+                              </div>
+                            )}
                             {selectedStage.lock_status !== 'LOCKED' &&
                               stageAnimals.length > 0 && (
                                 <div className="mb-2 flex items-center justify-end">
@@ -2460,7 +2849,7 @@ export default function OperationalBatchDataEntry() {
                             {renderActivityBoxes(
                               templateAnimal.lines || [],
                               '__ALL__',
-                              selectedStage.lock_status === 'LOCKED' || isFutureDate,
+                              selectedStage.lock_status === 'LOCKED' || isFutureDate || allPosted,
                               true,
                             )}
                           </div>
@@ -2480,8 +2869,28 @@ export default function OperationalBatchDataEntry() {
                         const rosterAnimal = batchAnimalRoster.find(
                           (a) => a.animal_id === animal.animal_id,
                         );
+                        const isCurrentAnimalPosted = Boolean(animal.is_posted);
                         return (
                           <div>
+                            {isCurrentAnimalPosted && (
+                              <div
+                                className="mb-3 p-2.5 text-xs font-semibold rounded-[var(--radius-sm)] border flex items-center justify-between gap-2"
+                                style={{
+                                  backgroundColor: 'var(--surface-raised)',
+                                  borderColor: 'var(--border)',
+                                }}
+                              >
+                                <div className="flex items-center gap-2">
+                                  <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />
+                                  <span style={S.primary}>
+                                    Data entry for <strong>{animal.animal_code}</strong> has already been posted on {selectedDate}. Fields are read-only.
+                                  </span>
+                                </div>
+                                <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded">
+                                  POSTED / LOCKED
+                                </span>
+                              </div>
+                            )}
                             <div className="mb-2 flex items-center justify-between gap-2">
                               <p
                                 className="font-mono text-[11px] font-semibold"
@@ -2507,7 +2916,7 @@ export default function OperationalBatchDataEntry() {
                             {renderActivityBoxes(
                               animal.lines || [],
                               animal.animal_id,
-                              selectedStage.lock_status === 'LOCKED' || isFutureDate,
+                              selectedStage.lock_status === 'LOCKED' || isFutureDate || isCurrentAnimalPosted,
                             )}
                           </div>
                         );
@@ -2809,45 +3218,44 @@ export default function OperationalBatchDataEntry() {
               <label className="font-semibold block mb-1">
                 Destination Stage
               </label>
-              <select
+              <SearchableSelect
+                ariaLabel="Destination Stage"
                 value={bulkStageTransitionForm.to_stage_id}
-                onChange={(e) =>
+                onChange={(val) =>
                   setBulkStageTransitionForm((f) => ({
                     ...f,
-                    to_stage_id: e.target.value,
+                    to_stage_id: val,
                   }))
                 }
-                className={`${inputCls} nf-select w-full`}
-              >
-                <option value="">Select a stage…</option>
-                {stageMasterList.map((s: Row) => (
-                  <option key={s.stage_id} value={s.stage_id}>
-                    {s.stage_code} — {s.stage_name}
-                  </option>
-                ))}
-              </select>
+                options={stageMasterList.map((s: Row) => ({
+                  value: s.stage_id,
+                  label: `${s.stage_code} — ${s.stage_name}`,
+                }))}
+                placeholder="Select a stage…"
+                searchPlaceholder="Search stages…"
+              />
             </div>
             <div>
               <label className="font-semibold block mb-1">
                 Destination Location (optional)
               </label>
-              <select
+              <SearchableSelect
+                ariaLabel="Destination Location"
                 value={bulkStageTransitionForm.to_location_id}
-                onChange={(e) =>
+                onChange={(val) =>
                   setBulkStageTransitionForm((f) => ({
                     ...f,
-                    to_location_id: e.target.value,
+                    to_location_id: val,
                   }))
                 }
-                className={`${inputCls} nf-select w-full`}
-              >
-                <option value="">Keep current location</option>
-                {locations.map((l: Row) => (
-                  <option key={l.location_id} value={l.location_id}>
-                    {l.location_name}
-                  </option>
-                ))}
-              </select>
+                options={locations.map((l: Row) => ({
+                  value: l.location_id,
+                  label: l.location_name,
+                }))}
+                placeholder="Keep current location"
+                searchPlaceholder="Search locations…"
+                onClear={bulkStageTransitionForm.to_location_id ? () => setBulkStageTransitionForm((f) => ({ ...f, to_location_id: '' })) : undefined}
+              />
             </div>
             <div>
               <label className="font-semibold block mb-1">
@@ -2880,11 +3288,14 @@ export default function OperationalBatchDataEntry() {
             <Button
               size="sm"
               onClick={handleChangeStage}
-              disabled={
+              disabled={Boolean(
                 changeStageSaving ||
-                changeStageOptions.length === 0 ||
-                !changeStageForm.to_stage_code
-              }
+                  changeStageOptions.length === 0 ||
+                  !changeStageForm.to_stage_code ||
+                  (stageTransition &&
+                    !stageTransition.can_move_without_remarks &&
+                    !changeStageForm.remarks?.trim()),
+              )}
               className="nf-btn-primary"
             >
               {changeStageSaving ? (
@@ -2895,43 +3306,128 @@ export default function OperationalBatchDataEntry() {
             </Button>
           }
         >
-          <div className="space-y-3 text-xs pt-1">
+          <div className="space-y-3.5 text-xs pt-1">
             {changeStageError && <InlineAlert>{changeStageError}</InlineAlert>}
+
+            {/* Current Stage & Rule Context Box */}
+            <div className="p-3 rounded-lg border border-[var(--border)] bg-[var(--surface-subtle,#f8fafc)] dark:bg-[var(--surface-subtle,#0f172a)] space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[var(--text-muted)] font-medium">
+                  Current Stage
+                </span>
+                <span className="font-semibold text-[var(--text-primary)]">
+                  {stageTransition?.current_stage_name ||
+                    currentBatch?.currentStageCode}{' '}
+                  (
+                  {stageTransition?.current_stage_code ||
+                    currentBatch?.currentStageCode}
+                  )
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-[var(--text-muted)]">Days in Stage</span>
+                <span className="font-semibold text-[var(--text-primary)]">
+                  {stageTransition
+                    ? `${stageTransition.days_in_stage} days`
+                    : '—'}
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-[var(--text-muted)]">
+                  Min Days Before Move Rule
+                </span>
+                <span className="font-semibold text-[var(--text-primary)]">
+                  {stageTransition?.min_days_before_move
+                    ? `${stageTransition.min_days_before_move} days`
+                    : 'None required'}
+                </span>
+              </div>
+
+              {stageTransition && (
+                <div className="pt-1">
+                  {stageTransition.can_move_without_remarks ? (
+                    <div className="flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400 font-medium bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded p-2">
+                      <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                      <span>
+                        Minimum duration satisfied ({stageTransition.days_in_stage}{' '}
+                        of {stageTransition.min_days_before_move} days).
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="flex items-start gap-1.5 text-xs text-amber-700 dark:text-amber-300 font-medium bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded p-2">
+                      <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                      <span>
+                        Early move notice: Stage requires at least{' '}
+                        {stageTransition.min_days_before_move} days before move
+                        (currently day {stageTransition.days_in_stage}). Justification /
+                        Remarks are mandatory to proceed.
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
             <div>
               <label className="font-semibold block mb-1">
-                Destination Stage
+                Destination Stage *
               </label>
               {changeStageOptionsLoading ? (
                 <div className="flex items-center gap-2 text-[var(--text-muted)]">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading
-                  stages…
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading stages…
                 </div>
               ) : (
-                <select
+                <SearchableSelect
+                  ariaLabel="Destination Stage"
+                  ariaRequired
                   value={changeStageForm.to_stage_code}
-                  onChange={(e) =>
+                  onChange={(val) =>
                     setChangeStageForm((f) => ({
                       ...f,
-                      to_stage_code: e.target.value,
+                      to_stage_code: val,
                     }))
                   }
-                  className={`${inputCls} nf-select w-full`}
-                >
-                  <option value="">Select a stage…</option>
-                  {changeStageOptions.map((code) => (
-                    <option key={code} value={code}>
-                      {code}
-                    </option>
-                  ))}
-                </select>
+                  options={Array.from(new Set(changeStageOptions)).map((code) => {
+                    const stageDetail = stageTransition?.valid_next_stages?.find(
+                      (s) => s.stage_code === code,
+                    );
+                    const label = stageDetail
+                      ? `${stageDetail.stage_name} (${code}) — Seq ${stageDetail.stage_sequence}${
+                          stageDetail.typical_duration_days
+                            ? `, ~${stageDetail.typical_duration_days}d`
+                            : ''
+                        }`
+                      : code;
+                    return {
+                      value: code,
+                      label,
+                    };
+                  })}
+                  placeholder="Select destination stage…"
+                  searchPlaceholder="Search destination stages…"
+                />
               )}
             </div>
             <div>
               <label className="font-semibold block mb-1">
-                Remarks (required to override a minimum-duration hold)
+                Remarks{' '}
+                {stageTransition && !stageTransition.can_move_without_remarks ? (
+                  <span className="text-amber-600 dark:text-amber-400 font-medium">
+                    * (Required for early move justification)
+                  </span>
+                ) : (
+                  <span className="text-[var(--text-muted)] font-normal">
+                    (Optional)
+                  </span>
+                )}
               </label>
               <input
                 type="text"
+                placeholder={
+                  stageTransition && !stageTransition.can_move_without_remarks
+                    ? 'Enter reason/justification for early stage transition…'
+                    : 'Notes or remarks for this stage transfer…'
+                }
                 value={changeStageForm.remarks}
                 onChange={(e) =>
                   setChangeStageForm((f) => ({ ...f, remarks: e.target.value }))
@@ -2942,6 +3438,140 @@ export default function OperationalBatchDataEntry() {
           </div>
         </Dialog>
       )}
+
+      {/* ── MODAL: Automatic Stage Transition Popup ── */}
+      {autoTransitionModalOpen && stageTransition?.next_stage && (
+        <Dialog
+          open={autoTransitionModalOpen}
+          onClose={() => {
+            if (currentBatch) {
+              setAutoTransitionDismissedBatchId(currentBatch.id);
+            }
+            setAutoTransitionModalOpen(false);
+          }}
+          title="Stage Transition Due: Time to Transfer Stage"
+          maxWidth="md"
+          footer={
+            <div className="flex items-center justify-between w-full">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  if (currentBatch) {
+                    setAutoTransitionDismissedBatchId(currentBatch.id);
+                  }
+                  setAutoTransitionModalOpen(false);
+                }}
+              >
+                Review Later
+              </Button>
+              <Button
+                size="sm"
+                onClick={handleAutoTransitionNow}
+                disabled={autoTransitionSaving}
+                className="nf-btn-primary flex items-center gap-1.5"
+              >
+                {autoTransitionSaving ? (
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <>
+                    <span>
+                      Transfer to {stageTransition.next_stage.stage_code} Now
+                    </span>
+                    <ArrowRightCircle className="w-4 h-4" />
+                  </>
+                )}
+              </Button>
+            </div>
+          }
+        >
+          <div className="space-y-4 text-xs pt-1">
+            {autoTransitionError && (
+              <InlineAlert>{autoTransitionError}</InlineAlert>
+            )}
+
+            <div className="p-3.5 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50/80 dark:bg-amber-950/40 text-amber-900 dark:text-amber-100 flex items-start gap-3">
+              <Sparkles className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-semibold text-sm">
+                  Stage Transition Rule Triggered (AUTO_BY_DAY)
+                </p>
+                <p className="mt-1 text-xs opacity-90 leading-relaxed">
+                  Batch <strong>{currentBatch?.code}</strong> has spent{' '}
+                  <strong>{stageTransition.days_in_stage} days</strong> in{' '}
+                  <strong>{stageTransition.current_stage_name}</strong>. According to
+                  the stage transition rules, the typical duration of{' '}
+                  <strong>
+                    {stageTransition.auto_move_on_day ||
+                      stageTransition.typical_duration_days}{' '}
+                    days
+                  </strong>{' '}
+                  has been reached. It is now time to transfer this batch to the next
+                  stage.
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              {/* Current Stage */}
+              <div className="p-3 rounded-lg border border-[var(--border)] bg-[var(--surface-subtle,#f8fafc)] dark:bg-[var(--surface-subtle,#0f172a)] space-y-1.5">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)]">
+                  Current Stage
+                </span>
+                <p className="font-bold text-sm text-[var(--text-primary)]">
+                  {stageTransition.current_stage_name}
+                </p>
+                <p className="text-xs text-[var(--text-muted)]">
+                  Code:{' '}
+                  <span className="font-semibold">
+                    {stageTransition.current_stage_code}
+                  </span>
+                </p>
+                <div className="pt-1 text-[11px] text-[var(--text-secondary)]">
+                  Days in Stage:{' '}
+                  <strong className="text-[var(--text-primary)]">
+                    {stageTransition.days_in_stage}d
+                  </strong>
+                </div>
+              </div>
+
+              {/* Next Stage */}
+              <div className="p-3 rounded-lg border-2 border-emerald-500/40 bg-emerald-50/40 dark:bg-emerald-950/20 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">
+                    Next Destination Stage
+                  </span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded font-bold bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-200">
+                    Seq #{stageTransition.next_stage.stage_sequence}
+                  </span>
+                </div>
+                <p className="font-bold text-sm text-emerald-950 dark:text-emerald-100">
+                  {stageTransition.next_stage.stage_name}
+                </p>
+                <p className="text-xs text-emerald-800 dark:text-emerald-300">
+                  Code:{' '}
+                  <span className="font-semibold">
+                    {stageTransition.next_stage.stage_code}
+                  </span>
+                </p>
+                <div className="pt-1 text-[11px] text-emerald-800 dark:text-emerald-300">
+                  Duration:{' '}
+                  <strong>
+                    {stageTransition.next_stage.typical_duration_days
+                      ? `~${stageTransition.next_stage.typical_duration_days} days`
+                      : 'Standard'}
+                  </strong>
+                </div>
+              </div>
+            </div>
+
+            <p className="text-[11px] text-[var(--text-muted)] italic">
+              Note: Clicking &quot;Transfer to {stageTransition.next_stage.stage_code} Now&quot; will advance the batch to the destination stage and initialize its logs immediately.
+            </p>
+          </div>
+        </Dialog>
+      )}
+
 
       {/* ── MODAL: UPLOAD INSPECTION MEDIA ── */}
       {uploadModalOpen && (
@@ -2978,14 +3608,17 @@ export default function OperationalBatchDataEntry() {
               <label className="font-semibold block mb-1">
                 {t('obMediaType')}
               </label>
-              <select
+              <SearchableSelect
+                ariaLabel={t('obMediaType')}
                 value={newAttachmentType}
-                onChange={(e) => setNewAttachmentType(e.target.value)}
-                className="nf-input w-full"
-              >
-                <option value="IMAGE">{t('obMediaSiteImage')}</option>
-                <option value="PDF">{t('obMediaVetReport')}</option>
-              </select>
+                onChange={(val) => setNewAttachmentType(val)}
+                options={[
+                  { value: 'IMAGE', label: t('obMediaSiteImage') },
+                  { value: 'PDF', label: t('obMediaVetReport') },
+                ]}
+                placeholder={t('obMediaType')}
+                searchPlaceholder="Search type…"
+              />
             </div>
 
             {uploadError && (

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { Plus, Search, Loader2, Inbox } from "lucide-react";
 import { api } from "@/services/api-client";
 import { Dialog } from "@/components/ui/dialog";
@@ -67,6 +67,17 @@ export default function ParameterPanel() {
   const [form, setForm] = useState<Row>(emptyForm());
 
   const companyId = getActiveCompanyId();
+
+  const consumableItems = useMemo(() => {
+    return items.filter(
+      (it) =>
+        (!it.is_biological_asset &&
+          it.is_biological_asset !== 1 &&
+          it.is_biological_asset !== "1" &&
+          it.item_type !== "LIVESTOCK") ||
+        it.item_id === form.item_id
+    );
+  }, [items, form.item_id]);
 
   const load = async () => {
     setLoading(true);
@@ -258,7 +269,7 @@ export default function ParameterPanel() {
                 <label className="nf-text-label" style={S.sub}>{t("paramFieldItem")}</label>
                 <select value={form.item_id} onChange={(e) => setForm((f: Row) => ({ ...f, item_id: e.target.value }))} className={`${inputCls} nf-select`} style={S.input}>
                   <option value="">{t("paramSelectPlaceholder")}</option>
-                  {items.map((it) => <option key={it.item_id} value={it.item_id}>{it.item_code} — {it.item_name}</option>)}
+                  {(form.parameter_type === "CONSUMPTION" ? consumableItems : items).map((it) => <option key={it.item_id} value={it.item_id}>{it.item_code} — {it.item_name}</option>)}
                 </select>
               </div>
             )}

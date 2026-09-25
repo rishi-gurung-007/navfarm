@@ -7,7 +7,7 @@ import { getActiveCompanyId, getActiveOperationalAreaId } from "@/hooks/useAuth"
 import { useLanguage } from "@/hooks/useLanguage";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
-import { Select } from "@/components/ui/select";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { InlineAlert } from "@/components/ui/alert";
 import { StatRow, StatCard } from "@/components/ui/stat-row";
 import { StatusBadge } from "@/components/ui/status-badge";
@@ -278,21 +278,32 @@ export default function BatchTransferPanel() {
           <div className="grid gap-4 sm:grid-cols-2">
             <label className="block">
               <span className="nf-text-label">{t("btFromBatch")}</span>
-              <Select value={fromBatchId} onChange={(e) => setFromBatchId(e.target.value)}>
-                <option value="">{t("btSelectSource")}</option>
-                {sourceBatches.map((b) => (
-                  <option key={b.batch_id} value={b.batch_id}>{b.batch_no}</option>
-                ))}
-              </Select>
+              <SearchableSelect
+                ariaLabel={t("btFromBatch")}
+                value={fromBatchId}
+                onChange={(val) => setFromBatchId(val)}
+                options={sourceBatches.map((b) => ({
+                  value: b.batch_id,
+                  label: b.batch_no,
+                }))}
+                placeholder={t("btSelectSource")}
+                searchPlaceholder="Search source batch…"
+              />
             </label>
             <label className="block">
               <span className="nf-text-label">{t("btToBatch")}</span>
-              <Select value={toBatchId} onChange={(e) => setToBatchId(e.target.value)} disabled={!fromBatchId}>
-                <option value="">{t("btSelectDestination")}</option>
-                {destinationBatches.map((b) => (
-                  <option key={b.batch_id} value={b.batch_id}>{b.batch_no}</option>
-                ))}
-              </Select>
+              <SearchableSelect
+                ariaLabel={t("btToBatch")}
+                value={toBatchId}
+                onChange={(val) => setToBatchId(val)}
+                options={destinationBatches.map((b) => ({
+                  value: b.batch_id,
+                  label: b.batch_no,
+                }))}
+                placeholder={t("btSelectDestination")}
+                searchPlaceholder="Search destination batch…"
+                disabled={!fromBatchId}
+              />
             </label>
             <label className="block">
               <span className="nf-text-label">{t("btTransferDate")}</span>

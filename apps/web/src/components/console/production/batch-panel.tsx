@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   Plus,
@@ -16,6 +16,7 @@ import {
   RefreshCw,
   CalendarClock,
   FileText,
+  AlertTriangle,
 } from 'lucide-react';
 import QRCode from 'react-qr-code';
 import { api } from '@/services/api-client';
@@ -44,6 +45,7 @@ import { Badge } from '@/components/ui/badge';
 import BatchPerformanceCurvesPanel from '@/components/console/production/batch-performance-curves-panel';
 import { useCompanyCurrency } from '@/hooks/useCompanyCurrency';
 import { formatQuantity } from '@/lib/utils';
+import { SearchableSelect } from '@/components/ui/searchable-select';
 
 const PAGE_SIZE = 25;
 
@@ -153,6 +155,24 @@ export default function BatchPanel() {
   } | null>(null);
   const csvFileInputRef = useRef<HTMLInputElement>(null);
   const [inputLines, setInputLines] = useState<Row[]>([emptyInputLine()]);
+
+  const isBiologicalAssetItem = (it: any) =>
+    it?.is_biological_asset === true ||
+    it?.is_biological_asset === 1 ||
+    it?.is_biological_asset === '1' ||
+    it?.is_biological_asset === 'true' ||
+    it?.item_type === 'LIVESTOCK';
+
+  const availableInputItems = useMemo(() => {
+    if (trackingMode === 'BATCH_WISE') {
+      const bio = items.filter(isBiologicalAssetItem);
+      const selectedItemIds = new Set(inputLines.map((l) => l.item_id).filter(Boolean));
+      const bioIds = new Set(bio.map((b) => b.item_id));
+      const extra = items.filter((it) => selectedItemIds.has(it.item_id) && !bioIds.has(it.item_id));
+      return [...bio, ...extra];
+    }
+    return items;
+  }, [items, trackingMode, inputLines]);
   const [stdForm, setStdForm] = useState<Row>({
     std_output_quantity: '',
     std_output_cost_per_unit: '',
@@ -235,6 +255,22 @@ export default function BatchPanel() {
   const [stageError, setStageError] = useState('');
   const [stageOptions, setStageOptions] = useState<string[]>([]);
   const [stageOptionsLoading, setStageOptionsLoading] = useState(false);
+  const [stageTransitionInfo, setStageTransitionInfo] = useState<{
+    current_stage_id: string | null;
+    current_stage_code: string | null;
+    current_stage_name: string | null;
+    days_in_stage: number;
+    min_days_before_move: number;
+    can_move_without_remarks: boolean;
+    valid_next_stages?: Array<{
+      stage_id: string;
+      stage_code: string;
+      stage_name: string;
+      stage_sequence: number;
+      min_days_before_move: number;
+      typical_duration_days: number | null;
+    }>;
+  } | null>(null);
 
   const companyId = getActiveCompanyId();
   const scope =
@@ -798,7 +834,17 @@ export default function BatchPanel() {
 
   const setInputLineField = (idx: number, key: string, value: any) => {
     setInputLines((prev) =>
-      prev.map((l, i) => (i === idx ? { ...l, [key]: value } : l)),
+      prev.map((l, i) => {
+        if (i !== idx) return l;
+        const updated = { ...l, [key]: value };
+        if (key === 'item_id') {
+          const itemObj = items.find((it) => it.item_id === value);
+          if (itemObj?.uom_primary && !updated.uom) {
+            updated.uom = itemObj.uom_primary;
+          }
+        }
+        return updated;
+      }),
     );
   };
   const addInputLine = () =>
@@ -1341,6 +1387,7 @@ export default function BatchPanel() {
     setStageForm({ to_stage_code: '', remarks: '' });
     setStageError('');
     setStageOptions([]);
+    setStageTransitionInfo(null);
     setStageModalOpen(true);
     // Stages aren't a fixed enum — they're whatever Stage Master defines for
     // this batch's LOB (the same source transferStage() itself validates
@@ -1348,22 +1395,49 @@ export default function BatchPanel() {
     if (!viewing.lob_id) return;
     setStageOptionsLoading(true);
     try {
-      const stages =
-        unwrap<Row[]>(
-          await api.get(
-            `/stage?lobId=${viewing.lob_id}&isActive=true&limit=200`,
-          ),
-        ) || [];
-      const codes = Array.from(
-        new Set(
-          stages
-            .map((s: Row) => s.stage_code)
-            .filter(
-              (c: string | null) => !!c && c !== viewing.current_stage_code,
+      const dataEntryRes = await api
+        .get(`/batch/${viewing.batch_id}/data-entry`)
+        .catch(() => null);
+      const dataEntryObj = unwrap<Row>(dataEntryRes);
+      const stageTrans = dataEntryObj?.stage_transition || null;
+      if (stageTrans) {
+        setStageTransitionInfo(stageTrans);
+      }
+
+      if (
+        stageTrans?.valid_next_stages &&
+        stageTrans.valid_next_stages.length > 0
+      ) {
+        const codes = stageTrans.valid_next_stages.map(
+          (s: Row) => s.stage_code,
+        );
+        setStageOptions(codes);
+        if (stageTrans.next_stage?.stage_code) {
+          setStageForm({
+            to_stage_code: stageTrans.next_stage.stage_code,
+            remarks: '',
+          });
+        } else if (codes.length > 0) {
+          setStageForm({ to_stage_code: codes[0], remarks: '' });
+        }
+      } else {
+        const stages =
+          unwrap<Row[]>(
+            await api.get(
+              `/stage?lobId=${viewing.lob_id}&isActive=true&limit=200`,
             ),
-        ),
-      ) as string[];
-      setStageOptions(codes.sort());
+          ) || [];
+        const codes = Array.from(
+          new Set(
+            stages
+              .map((s: Row) => s.stage_code)
+              .filter(
+                (c: string | null) => !!c && c !== viewing.current_stage_code,
+              ),
+          ),
+        ) as string[];
+        setStageOptions(codes.sort());
+      }
     } catch {
       setStageOptions([]);
     } finally {
@@ -1378,6 +1452,15 @@ export default function BatchPanel() {
     try {
       if (!stageForm.to_stage_code)
         throw new Error(t('blErrDestStageRequired'));
+      if (
+        stageTransitionInfo &&
+        !stageTransitionInfo.can_move_without_remarks &&
+        !stageForm.remarks?.trim()
+      ) {
+        throw new Error(
+          `Minimum duration of ${stageTransitionInfo.min_days_before_move} days is required for '${stageTransitionInfo.current_stage_name || viewing.current_stage_code}' before transition (currently on day ${stageTransitionInfo.days_in_stage}). Justification / Remarks are mandatory to override.`,
+        );
+      }
       const result = await api.post(
         `/batch/${viewing.batch_id}/transfer-stage`,
         {
@@ -1406,18 +1489,21 @@ export default function BatchPanel() {
           </p>
         </div>
         <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="nf-input-sm nf-select"
-            style={S.input}
-          >
-            <option value="">{t('blFilterAllStatuses')}</option>
-            <option value="DRAFT">{t('blStatusDraft')}</option>
-            <option value="ACTIVE">{t('blStatusActive')}</option>
-            <option value="CLOSED">{t('blStatusClosed')}</option>
-            <option value="CANCELLED">{t('blStatusCancelled')}</option>
-          </select>
+          <div className="w-44">
+            <SearchableSelect
+              ariaLabel="Status Filter"
+              value={statusFilter}
+              onChange={(val) => setStatusFilter(val)}
+              options={[
+                { value: 'DRAFT', label: t('blStatusDraft') },
+                { value: 'ACTIVE', label: t('blStatusActive') },
+                { value: 'CLOSED', label: t('blStatusClosed') },
+                { value: 'CANCELLED', label: t('blStatusCancelled') },
+              ]}
+              placeholder={t('blFilterAllStatuses')}
+              onClear={statusFilter ? () => setStatusFilter('') : undefined}
+            />
+          </div>
           <div className="relative">
             <Search
               className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2"
@@ -1629,45 +1715,41 @@ export default function BatchPanel() {
                   <label className="nf-text-label" style={S.sub}>
                     {t('blLabelNob')} <span className="text-(--danger)">*</span>
                   </label>
-                  <select
+                  <SearchableSelect
+                    ariaLabel={t('blLabelNob')}
+                    ariaRequired
                     value={nobId}
-                    onChange={(e) => {
-                      setNobId(e.target.value);
+                    onChange={(val) => {
+                      setNobId(val);
                       setHeader((h) => ({ ...h, lob_id: '' }));
                     }}
-                    className={`${inputCls} nf-select`}
-                    style={S.input}
-                  >
-                    <option value="">{t('blSelectEllipsis')}</option>
-                    {nobs.map((n) => (
-                      <option key={n.nob_id} value={n.nob_id}>
-                        {n.nob_code} — {n.nob_name}
-                      </option>
-                    ))}
-                  </select>
+                    options={nobs.map((n) => ({
+                      value: n.nob_id,
+                      label: `${n.nob_code} — ${n.nob_name}`,
+                    }))}
+                    placeholder={t('blSelectEllipsis')}
+                    searchPlaceholder="Search NOBs…"
+                  />
                 </div>
                 <div className="flex flex-col gap-1.5">
                   <label className="nf-text-label" style={S.sub}>
                     {t('blLabelLob')} <span className="text-(--danger)">*</span>
                   </label>
-                  <select
+                  <SearchableSelect
+                    ariaLabel={t('blLabelLob')}
+                    ariaRequired
                     value={header.lob_id}
-                    onChange={(e) =>
-                      setHeader((h) => ({ ...h, lob_id: e.target.value }))
+                    onChange={(val) =>
+                      setHeader((h) => ({ ...h, lob_id: val }))
                     }
-                    className={`${inputCls} nf-select`}
-                    style={S.input}
                     disabled={!nobId}
-                  >
-                    <option value="">
-                      {nobId ? t('blSelectEllipsis') : t('blSelectNobFirst')}
-                    </option>
-                    {lobs.map((l) => (
-                      <option key={l.lob_id} value={l.lob_id}>
-                        {l.lob_code} — {l.lob_name}
-                      </option>
-                    ))}
-                  </select>
+                    options={lobs.map((l) => ({
+                      value: l.lob_id,
+                      label: `${l.lob_code} — ${l.lob_name}`,
+                    }))}
+                    placeholder={nobId ? t('blSelectEllipsis') : t('blSelectNobFirst')}
+                    searchPlaceholder="Search LOBs…"
+                  />
                 </div>
               </>
             )}
@@ -1675,10 +1757,12 @@ export default function BatchPanel() {
               <label className="nf-text-label" style={S.sub}>
                 {t('blLabelBatchType')} <span className="text-(--danger)">*</span>
               </label>
-              <select
+              <SearchableSelect
+                ariaLabel={t('blLabelBatchType')}
+                ariaRequired
                 value={trackingMode}
-                onChange={(e) => {
-                  const mode = e.target.value as 'BATCH_WISE' | 'ANIMAL_WISE';
+                onChange={(val) => {
+                  const mode = val as 'BATCH_WISE' | 'ANIMAL_WISE';
                   setTrackingMode(mode);
                   if (mode === 'ANIMAL_WISE') {
                     setHeader((h) => ({ ...h, uom: 'HEAD' }));
@@ -1689,39 +1773,39 @@ export default function BatchPanel() {
                     }));
                   }
                 }}
-                className={`${inputCls} nf-select`}
-                style={S.input}
-              >
-                <option value="BATCH_WISE">{t('blBatchWise')}</option>
-                <option value="ANIMAL_WISE">{t('blAnimalWise')}</option>
-              </select>
+                options={[
+                  { value: 'BATCH_WISE', label: t('blBatchWise') },
+                  { value: 'ANIMAL_WISE', label: t('blAnimalWise') },
+                ]}
+              />
             </div>
             <div className="flex flex-col gap-1.5">
               <label className="nf-text-label" style={S.sub}>
                 {t('blLabelCostingMethod')}{' '}
                 <span className="text-(--danger)">*</span>
               </label>
-              <select
+              <SearchableSelect
+                ariaLabel={t('blLabelCostingMethod')}
+                ariaRequired
                 value={header.costing_method}
-                onChange={(e) =>
-                  setHeader((h) => ({ ...h, costing_method: e.target.value }))
+                onChange={(val) =>
+                  setHeader((h) => ({ ...h, costing_method: val }))
                 }
-                className={`${inputCls} nf-select`}
-                style={S.input}
-              >
-                <option value="STANDARD">{t('blCostingStandard')}</option>
-                <option value="FIFO">{t('blCostingFifo')}</option>
-                <option value="BIO_ASSET">{t('blCostingBioAsset')}</option>
-              </select>
+                options={[
+                  { value: 'STANDARD', label: t('blCostingStandard') },
+                  { value: 'FIFO', label: t('blCostingFifo') },
+                  { value: 'BIO_ASSET', label: t('blCostingBioAsset') },
+                ]}
+              />
             </div>
             <div className="flex flex-col gap-1.5">
               <label className="nf-text-label" style={S.sub}>
                 {t('blLabelBreed')}
               </label>
-              <select
+              <SearchableSelect
+                ariaLabel={t('blLabelBreed')}
                 value={header.breed_id}
-                onChange={(e) => {
-                  const newBreedId = e.target.value;
+                onChange={(newBreedId) => {
                   setHeader((h) => ({ ...h, breed_id: newBreedId }));
                   if (trackingMode === 'ANIMAL_WISE' && newBreedId) {
                     setSelectedAnimalIds((prev) => {
@@ -1737,36 +1821,33 @@ export default function BatchPanel() {
                     });
                   }
                 }}
-                className={`${inputCls} nf-select`}
-                style={S.input}
-              >
-                <option value="">{t('blSelectEllipsis')}</option>
-                {breeds.map((b) => (
-                  <option key={b.breed_id} value={b.breed_id}>
-                    {b.breed_code} — {b.breed_name}
-                  </option>
-                ))}
-              </select>
+                options={breeds.map((b) => ({
+                  value: b.breed_id,
+                  label: `${b.breed_code} — ${b.breed_name}`,
+                }))}
+                placeholder={t('blSelectEllipsis')}
+                searchPlaceholder="Search breeds…"
+                onClear={header.breed_id ? () => setHeader((h) => ({ ...h, breed_id: '' })) : undefined}
+              />
             </div>
             <div className="flex flex-col gap-1.5">
               <label className="nf-text-label" style={S.sub}>
                 {t('blLabelShed')}
               </label>
-              <select
+              <SearchableSelect
+                ariaLabel={t('blLabelShed')}
                 value={header.shed_id}
-                onChange={(e) =>
-                  setHeader((h) => ({ ...h, shed_id: e.target.value }))
+                onChange={(val) =>
+                  setHeader((h) => ({ ...h, shed_id: val }))
                 }
-                className={`${inputCls} nf-select`}
-                style={S.input}
-              >
-                <option value="">{t('blSelectEllipsis')}</option>
-                {sheds.map((s) => (
-                  <option key={s.shed_id} value={s.shed_id}>
-                    {s.shed_code} — {s.shed_name}
-                  </option>
-                ))}
-              </select>
+                options={sheds.map((s) => ({
+                  value: s.shed_id,
+                  label: `${s.shed_code} — ${s.shed_name}`,
+                }))}
+                placeholder={t('blSelectEllipsis')}
+                searchPlaceholder="Search sheds…"
+                onClear={header.shed_id ? () => setHeader((h) => ({ ...h, shed_id: '' })) : undefined}
+              />
             </div>
             {trackingMode === 'BATCH_WISE' && (
               <div className="flex flex-col gap-1.5 sm:col-span-2">
@@ -1774,10 +1855,12 @@ export default function BatchPanel() {
                   {t('blLabelInitialStage')}{' '}
                   <span className="text-(--danger)">*</span>
                 </label>
-                <select
+                <SearchableSelect
+                  ariaLabel={t('blLabelInitialStage')}
+                  ariaRequired
                   value={header.stage_id}
-                  onChange={(e) => {
-                    const sId = e.target.value;
+                  disabled={!header.lob_id}
+                  onChange={(sId) => {
                     const st = stages.find((s) => s.stage_id === sId);
                     setHeader((h) => {
                       let end = h.expected_end_date;
@@ -1791,25 +1874,13 @@ export default function BatchPanel() {
                       return { ...h, stage_id: sId, expected_end_date: end };
                     });
                   }}
-                  className={`${inputCls} nf-select`}
-                  style={S.input}
-                  disabled={!header.lob_id}
-                >
-                  <option value="">
-                    {header.lob_id
-                      ? t('blSelectEllipsis')
-                      : t('blSelectNobFirst')}
-                  </option>
-                  {stages.map((s) => (
-                    <option key={s.stage_id} value={s.stage_id}>
-                      {s.stage_code} — {s.stage_name} (
-                      {s.typical_duration_days
-                        ? `${s.typical_duration_days} days`
-                        : 'Open duration'}
-                      )
-                    </option>
-                  ))}
-                </select>
+                  options={stages.map((s) => ({
+                    value: s.stage_id,
+                    label: `${s.stage_code} — ${s.stage_name} (${s.typical_duration_days ? `${s.typical_duration_days} days` : 'Open duration'})`,
+                  }))}
+                  placeholder={header.lob_id ? t('blSelectEllipsis') : t('blSelectNobFirst')}
+                  searchPlaceholder="Search stages…"
+                />
               </div>
             )}
             {header.stage_id && trackingMode === 'BATCH_WISE' && (
@@ -1911,21 +1982,20 @@ export default function BatchPanel() {
                   title="Animal Wise batches are always counted in HEAD"
                 />
               ) : (
-                <select
+                <SearchableSelect
+                  ariaLabel="UOM"
+                  ariaRequired
                   value={header.uom}
-                  onChange={(e) =>
-                    setHeader((h) => ({ ...h, uom: e.target.value }))
+                  onChange={(val) =>
+                    setHeader((h) => ({ ...h, uom: val }))
                   }
-                  className={`${inputCls} nf-select`}
-                  style={S.input}
-                >
-                  <option value="">{t('blSelectEllipsis')}</option>
-                  {uoms.map((u) => (
-                    <option key={u.uom_code} value={u.uom_code}>
-                      {u.uom_code}
-                    </option>
-                  ))}
-                </select>
+                  options={uoms.map((u) => ({
+                    value: u.uom_code,
+                    label: u.uom_code,
+                  }))}
+                  placeholder={t('blSelectEllipsis')}
+                  searchPlaceholder="Search UOM…"
+                />
               )}
             </div>
             <div className="flex flex-col gap-1.5 sm:col-span-2">
@@ -1991,49 +2061,39 @@ export default function BatchPanel() {
                     {inputLines.map((line, idx) => (
                       <TableRow key={idx}>
                         <TableCell className="px-2 py-1.5">
-                          <select
+                          <SearchableSelect
+                            ariaLabel="Item"
                             value={line.item_id}
-                            onChange={(e) =>
-                              setInputLineField(idx, 'item_id', e.target.value)
+                            onChange={(val) =>
+                              setInputLineField(idx, 'item_id', val)
                             }
-                            className={`${inputCls} nf-select`}
-                            style={S.input}
-                          >
-                            <option value="">
-                              {t('blSelectItemOptions', {
-                                count: items.length,
-                              })}
-                            </option>
-                            {items.map((it, i) => (
-                              <option key={it.item_id} value={it.item_id}>
-                                {i + 1}. {it.item_code} —{' '}
-                                {it.item_name || it.item_code}
-                              </option>
-                            ))}
-                          </select>
+                            options={availableInputItems.map((it, i) => ({
+                              value: it.item_id,
+                              label: `${i + 1}. ${it.item_code} — ${it.item_name || it.item_code}`,
+                            }))}
+                            placeholder={t('blSelectItemOptions', {
+                              count: availableInputItems.length,
+                            })}
+                            searchPlaceholder="Search item…"
+                          />
                         </TableCell>
                         <TableCell className="px-2 py-1.5">
-                          <select
+                          <SearchableSelect
+                            ariaLabel="Source Batch"
                             value={line.source_batch_id}
-                            onChange={(e) =>
-                              setInputLineField(
-                                idx,
-                                'source_batch_id',
-                                e.target.value,
-                              )
+                            onChange={(val) =>
+                              setInputLineField(idx, 'source_batch_id', val)
                             }
-                            className={`${inputCls} nf-select`}
-                            style={S.input}
-                          >
-                            <option value="">{t('blNone')}</option>
-                            {batches
+                            options={batches
                               .filter((b) => b.status === 'CLOSED')
-                              .map((b) => (
-                                <option key={b.batch_id} value={b.batch_id}>
-                                  {b.batch_no}
-                                </option>
-                              ))}
-                          </select>
+                              .map((b) => ({
+                                value: b.batch_id,
+                                label: b.batch_no,
+                              }))}
+                            placeholder={t('blNone')}
+                            searchPlaceholder="Search batch…"
+                            onClear={line.source_batch_id ? () => setInputLineField(idx, 'source_batch_id', '') : undefined}
+                          />
                         </TableCell>
                         <TableCell className="px-2 py-1.5 w-24">
                           <input
@@ -2047,21 +2107,19 @@ export default function BatchPanel() {
                           />
                         </TableCell>
                         <TableCell className="px-2 py-1.5 w-24">
-                          <select
+                          <SearchableSelect
+                            ariaLabel="UOM"
                             value={line.uom}
-                            onChange={(e) =>
-                              setInputLineField(idx, 'uom', e.target.value)
+                            onChange={(val) =>
+                              setInputLineField(idx, 'uom', val)
                             }
-                            className={`${inputCls} nf-select`}
-                            style={S.input}
-                          >
-                            <option value="">{t('blSelectEllipsis')}</option>
-                            {uoms.map((u) => (
-                              <option key={u.uom_code} value={u.uom_code}>
-                                {u.uom_code}
-                              </option>
-                            ))}
-                          </select>
+                            options={uoms.map((u) => ({
+                              value: u.uom_code,
+                              label: u.uom_code,
+                            }))}
+                            placeholder={t('blSelectEllipsis')}
+                            searchPlaceholder="Search UOM…"
+                          />
                         </TableCell>
                         <TableCell className="px-2 py-1.5 w-24">
                           <input
@@ -2206,30 +2264,21 @@ export default function BatchPanel() {
                         {stdConsumptionLines.map((line, idx) => (
                           <TableRow key={idx}>
                             <TableCell className="px-2 py-1.5">
-                              <select
+                              <SearchableSelect
+                                ariaLabel="Item"
                                 value={line.item_id}
-                                onChange={(e) =>
-                                  setStdConsumptionLineField(
-                                    idx,
-                                    'item_id',
-                                    e.target.value,
-                                  )
+                                onChange={(val) =>
+                                  setStdConsumptionLineField(idx, 'item_id', val)
                                 }
-                                className={`${inputCls} nf-select`}
-                                style={S.input}
-                              >
-                                <option value="">
-                                  {t('blSelectItemOptions', {
-                                    count: items.length,
-                                  })}
-                                </option>
-                                {items.map((it, i) => (
-                                  <option key={it.item_id} value={it.item_id}>
-                                    {i + 1}. {it.item_code} —{' '}
-                                    {it.item_name || it.item_code}
-                                  </option>
-                                ))}
-                              </select>
+                                options={items.map((it, i) => ({
+                                  value: it.item_id,
+                                  label: `${i + 1}. ${it.item_code} — ${it.item_name || it.item_code}`,
+                                }))}
+                                placeholder={t('blSelectItemOptions', {
+                                  count: items.length,
+                                })}
+                                searchPlaceholder="Search item…"
+                              />
                             </TableCell>
                             <TableCell className="px-2 py-1.5 w-32">
                               <input
@@ -2293,29 +2342,33 @@ export default function BatchPanel() {
                   {selectableFilteredCandidates.length} selected)
                 </p>
                 <div className="flex items-center gap-2">
-                  <select
-                    value={animalGenderFilter}
-                    onChange={(e) => setAnimalGenderFilter(e.target.value)}
-                    className={`${inputCls} nf-select w-auto`}
-                    style={S.input}
-                  >
-                    <option value="">All genders</option>
-                    <option value="M">Male</option>
-                    <option value="F">Female</option>
-                  </select>
-                  <select
-                    value={animalStageFilter}
-                    onChange={(e) => setAnimalStageFilter(e.target.value)}
-                    className={`${inputCls} nf-select w-auto`}
-                    style={S.input}
-                  >
-                    <option value="">All stages</option>
-                    {animalStageFilterOptions.map(([stageId, code]) => (
-                      <option key={stageId} value={stageId}>
-                        {code}
-                      </option>
-                    ))}
-                  </select>
+                  <div className="w-36">
+                    <SearchableSelect
+                      ariaLabel="Gender Filter"
+                      value={animalGenderFilter}
+                      onChange={(val) => setAnimalGenderFilter(val)}
+                      options={[
+                        { value: 'M', label: 'Male' },
+                        { value: 'F', label: 'Female' },
+                      ]}
+                      placeholder="All genders"
+                      onClear={animalGenderFilter ? () => setAnimalGenderFilter('') : undefined}
+                    />
+                  </div>
+                  <div className="w-40">
+                    <SearchableSelect
+                      ariaLabel="Stage Filter"
+                      value={animalStageFilter}
+                      onChange={(val) => setAnimalStageFilter(val)}
+                      options={animalStageFilterOptions.map(([stageId, code]) => ({
+                        value: stageId,
+                        label: code,
+                      }))}
+                      placeholder="All stages"
+                      searchPlaceholder="Search stages…"
+                      onClear={animalStageFilter ? () => setAnimalStageFilter('') : undefined}
+                    />
+                  </div>
                   <div className="relative w-64">
                     <Search
                       className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2"
@@ -3281,11 +3334,14 @@ export default function BatchPanel() {
           <Button
             size="sm"
             onClick={handleTransferStage}
-            disabled={
+            disabled={Boolean(
               stageSaving ||
-              stageOptions.length === 0 ||
-              !stageForm.to_stage_code
-            }
+                stageOptions.length === 0 ||
+                !stageForm.to_stage_code ||
+                (stageTransitionInfo &&
+                  !stageTransitionInfo.can_move_without_remarks &&
+                  !stageForm.remarks?.trim()),
+            )}
             className="nf-btn-primary"
           >
             {stageSaving ? t('blTransferring') : t('blTransferBtn')}
@@ -3301,6 +3357,52 @@ export default function BatchPanel() {
             </span>
             . {t('blNoCostGlImpactNote')}
           </p>
+
+          {/* Min Days Before Move Rule Context */}
+          {stageTransitionInfo && (
+            <div className="p-3 rounded-lg border border-[var(--border)] bg-[var(--surface-subtle,#f8fafc)] dark:bg-[var(--surface-subtle,#0f172a)] space-y-2 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="text-[var(--text-muted)]">
+                  Days in Current Stage:
+                </span>
+                <span className="font-semibold text-[var(--text-primary)]">
+                  {stageTransitionInfo.days_in_stage} days
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-[var(--text-muted)]">
+                  Min Days Before Move Rule:
+                </span>
+                <span className="font-semibold text-[var(--text-primary)]">
+                  {stageTransitionInfo.min_days_before_move
+                    ? `${stageTransitionInfo.min_days_before_move} days`
+                    : 'None required'}
+                </span>
+              </div>
+              <div className="pt-1">
+                {stageTransitionInfo.can_move_without_remarks ? (
+                  <div className="flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400 font-medium bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded p-2">
+                    <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                    <span>
+                      Minimum duration satisfied ({stageTransitionInfo.days_in_stage}{' '}
+                      of {stageTransitionInfo.min_days_before_move} days).
+                    </span>
+                  </div>
+                ) : (
+                  <div className="flex items-start gap-1.5 text-xs text-amber-700 dark:text-amber-300 font-medium bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded p-2">
+                    <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                    <span>
+                      Early move notice: Current stage requires at least{' '}
+                      {stageTransitionInfo.min_days_before_move} days before move
+                      (currently day {stageTransitionInfo.days_in_stage}). Justification
+                      / Remarks are mandatory to proceed.
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           <div className="flex flex-col gap-1.5">
             <label className="nf-text-label" style={S.sub}>
               {t('blLabelNewStage')} *
@@ -3311,24 +3413,30 @@ export default function BatchPanel() {
                 {t('blLoadingStages')}
               </div>
             ) : stageOptions.length > 0 ? (
-              <select
+              <SearchableSelect
+                ariaLabel={t('blSelectStagePlaceholder')}
                 value={stageForm.to_stage_code || ''}
-                onChange={(e) =>
+                onChange={(val) =>
                   setStageForm((f: Row) => ({
                     ...f,
-                    to_stage_code: e.target.value,
+                    to_stage_code: val,
                   }))
                 }
-                className={`${inputCls} nf-select`}
-                style={S.input}
-              >
-                <option value="">{t('blSelectStagePlaceholder')}</option>
-                {stageOptions.map((code) => (
-                  <option key={code} value={code}>
-                    {code}
-                  </option>
-                ))}
-              </select>
+                options={Array.from(new Set(stageOptions)).map((code) => {
+                  const stageDetail = stageTransitionInfo?.valid_next_stages?.find(
+                    (s: Row) => s.stage_code === code,
+                  );
+                  const label = stageDetail
+                    ? `${stageDetail.stage_name} (${code}) — Seq ${stageDetail.stage_sequence}`
+                    : code;
+                  return {
+                    value: code,
+                    label,
+                  };
+                })}
+                placeholder={t('blSelectStagePlaceholder')}
+                searchPlaceholder="Search stage…"
+              />
             ) : (
               <p className="text-xs" style={S.muted}>
                 {t('blNoStagesConfigured')}
@@ -3337,9 +3445,25 @@ export default function BatchPanel() {
           </div>
           <div className="flex flex-col gap-1.5">
             <label className="nf-text-label" style={S.sub}>
-              {t('blLabelRemarks')}
+              {t('blLabelRemarks')}{' '}
+              {stageTransitionInfo &&
+              !stageTransitionInfo.can_move_without_remarks ? (
+                <span className="text-amber-600 dark:text-amber-400 font-medium">
+                  * (Required for early move justification)
+                </span>
+              ) : (
+                <span className="text-[var(--text-muted)] font-normal">
+                  (Optional)
+                </span>
+              )}
             </label>
             <input
+              placeholder={
+                stageTransitionInfo &&
+                !stageTransitionInfo.can_move_without_remarks
+                  ? 'Enter reason/justification for early stage transition…'
+                  : ''
+              }
               value={stageForm.remarks || ''}
               onChange={(e) =>
                 setStageForm((f: Row) => ({ ...f, remarks: e.target.value }))
@@ -3459,21 +3583,19 @@ export default function BatchPanel() {
               <label className="nf-text-label" style={S.sub}>
                 {t('blLabelUom')} *
               </label>
-              <select
+              <SearchableSelect
+                ariaLabel={t('blLabelUom')}
                 value={renewForm.uom || ''}
-                onChange={(e) =>
-                  setRenewForm((f: Row) => ({ ...f, uom: e.target.value }))
+                onChange={(val) =>
+                  setRenewForm((f: Row) => ({ ...f, uom: val }))
                 }
-                className={`${inputCls} nf-select`}
-                style={S.input}
-              >
-                <option value="">{t('blSelectEllipsis')}</option>
-                {uoms.map((u) => (
-                  <option key={u.uom_code} value={u.uom_code}>
-                    {u.uom_code}
-                  </option>
-                ))}
-              </select>
+                options={uoms.map((u) => ({
+                  value: u.uom_code,
+                  label: u.uom_code,
+                }))}
+                placeholder={t('blSelectEllipsis')}
+                searchPlaceholder="Search UOM…"
+              />
             </div>
           </div>
           <div>
@@ -3484,23 +3606,21 @@ export default function BatchPanel() {
               {t('blInputLineTitle')}
             </p>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
-              <select
-                value={renewForm.item_id || ''}
-                onChange={(e) =>
-                  setRenewForm((f: Row) => ({ ...f, item_id: e.target.value }))
-                }
-                className={inputCls + ' sm:col-span-2 nf-select'}
-                style={S.input}
-              >
-                <option value="">
-                  {t('blSelectItemOptions', { count: items.length })}
-                </option>
-                {items.map((it, i) => (
-                  <option key={it.item_id} value={it.item_id}>
-                    {i + 1}. {it.item_code} — {it.item_name || it.item_code}
-                  </option>
-                ))}
-              </select>
+              <div className="sm:col-span-2">
+                <SearchableSelect
+                  ariaLabel={t('blInputLineTitle')}
+                  value={renewForm.item_id || ''}
+                  onChange={(val) =>
+                    setRenewForm((f: Row) => ({ ...f, item_id: val }))
+                  }
+                  options={items.map((it, i) => ({
+                    value: it.item_id,
+                    label: `${i + 1}. ${it.item_code} — ${it.item_name || it.item_code}`,
+                  }))}
+                  placeholder={t('blSelectItemOptions', { count: items.length })}
+                  searchPlaceholder="Search item…"
+                />
+              </div>
               <input
                 type="number"
                 placeholder={t('blPlaceholderQty')}
@@ -3511,21 +3631,19 @@ export default function BatchPanel() {
                 className={inputCls}
                 style={S.input}
               />
-              <select
+              <SearchableSelect
+                ariaLabel={t('blSelectUomPlaceholder')}
                 value={renewForm.line_uom || ''}
-                onChange={(e) =>
-                  setRenewForm((f: Row) => ({ ...f, line_uom: e.target.value }))
+                onChange={(val) =>
+                  setRenewForm((f: Row) => ({ ...f, line_uom: val }))
                 }
-                className={`${inputCls} nf-select`}
-                style={S.input}
-              >
-                <option value="">{t('blSelectUomPlaceholder')}</option>
-                {uoms.map((u) => (
-                  <option key={u.uom_code} value={u.uom_code}>
-                    {u.uom_code}
-                  </option>
-                ))}
-              </select>
+                options={uoms.map((u) => ({
+                  value: u.uom_code,
+                  label: u.uom_code,
+                }))}
+                placeholder={t('blSelectUomPlaceholder')}
+                searchPlaceholder="Search UOM…"
+              />
               <input
                 type="number"
                 placeholder={t('blPlaceholderEstRate')}
@@ -3649,39 +3767,34 @@ export default function BatchPanel() {
                 {outputLines.map((line, idx) => (
                   <TableRow key={idx}>
                     <TableCell className="px-2 py-1.5">
-                      <select
+                      <SearchableSelect
+                        ariaLabel="Item"
                         value={line.item_id}
-                        onChange={(e) =>
-                          setOutputLineField(idx, 'item_id', e.target.value)
+                        onChange={(val) =>
+                          setOutputLineField(idx, 'item_id', val)
                         }
-                        className={`${inputCls} nf-select`}
-                        style={S.input}
-                      >
-                        <option value="">
-                          {t('blSelectItemOptions', { count: items.length })}
-                        </option>
-                        {items.map((it, i) => (
-                          <option key={it.item_id} value={it.item_id}>
-                            {i + 1}. {it.item_code} —{' '}
-                            {it.item_name || it.item_code}
-                          </option>
-                        ))}
-                      </select>
+                        options={items.map((it, i) => ({
+                          value: it.item_id,
+                          label: `${i + 1}. ${it.item_code} — ${it.item_name || it.item_code}`,
+                        }))}
+                        placeholder={t('blSelectItemOptions', { count: items.length })}
+                        searchPlaceholder="Search item…"
+                      />
                     </TableCell>
-                    <TableCell className="px-2 py-1.5 w-24">
-                      <select
+                    <TableCell className="px-2 py-1.5 w-32">
+                      <SearchableSelect
+                        ariaLabel="Type"
                         value={line.output_type}
-                        onChange={(e) =>
-                          setOutputLineField(idx, 'output_type', e.target.value)
+                        onChange={(val) =>
+                          setOutputLineField(idx, 'output_type', val)
                         }
-                        className={`${inputCls} nf-select`}
-                        style={S.input}
-                      >
-                        <option value="MAIN">{t('blOutputTypeMain')}</option>
-                        <option value="BY_PRODUCT">
-                          {t('blOutputTypeByProduct')}
-                        </option>
-                      </select>
+                        options={[
+                          { value: 'MAIN', label: t('blOutputTypeMain') },
+                          { value: 'BY_PRODUCT', label: t('blOutputTypeByProduct') },
+                        ]}
+                        placeholder="Type"
+                        searchPlaceholder="Search type…"
+                      />
                     </TableCell>
                     <TableCell className="px-2 py-1.5 w-20">
                       <input
@@ -3709,43 +3822,35 @@ export default function BatchPanel() {
                         style={S.input}
                       />
                     </TableCell>
-                    <TableCell className="px-2 py-1.5 w-24">
-                      <select
+                    <TableCell className="px-2 py-1.5 w-28">
+                      <SearchableSelect
+                        ariaLabel="UOM"
                         value={line.uom}
-                        onChange={(e) =>
-                          setOutputLineField(idx, 'uom', e.target.value)
+                        onChange={(val) =>
+                          setOutputLineField(idx, 'uom', val)
                         }
-                        className={`${inputCls} nf-select`}
-                        style={S.input}
-                      >
-                        <option value="">{t('blSelectEllipsis')}</option>
-                        {uoms.map((u) => (
-                          <option key={u.uom_code} value={u.uom_code}>
-                            {u.uom_code}
-                          </option>
-                        ))}
-                      </select>
+                        options={uoms.map((u) => ({
+                          value: u.uom_code,
+                          label: u.uom_code,
+                        }))}
+                        placeholder={t('blSelectEllipsis')}
+                        searchPlaceholder="Search UOM…"
+                      />
                     </TableCell>
                     <TableCell className="px-2 py-1.5">
-                      <select
+                      <SearchableSelect
+                        ariaLabel="Warehouse"
                         value={line.warehouse_id}
-                        onChange={(e) =>
-                          setOutputLineField(
-                            idx,
-                            'warehouse_id',
-                            e.target.value,
-                          )
+                        onChange={(val) =>
+                          setOutputLineField(idx, 'warehouse_id', val)
                         }
-                        className={`${inputCls} nf-select`}
-                        style={S.input}
-                      >
-                        <option value="">{t('blSelectEllipsis')}</option>
-                        {warehouses.map((w) => (
-                          <option key={w.warehouse_id} value={w.warehouse_id}>
-                            {w.warehouse_code}
-                          </option>
-                        ))}
-                      </select>
+                        options={warehouses.map((w) => ({
+                          value: w.warehouse_id,
+                          label: w.warehouse_code,
+                        }))}
+                        placeholder={t('blSelectEllipsis')}
+                        searchPlaceholder="Search warehouse…"
+                      />
                     </TableCell>
                     <TableCell className="px-2 py-1.5">
                       <button
@@ -3922,20 +4027,22 @@ export default function BatchPanel() {
                   <label className="nf-text-label" style={S.sub}>
                     {t('blLabelDisposalType')}
                   </label>
-                  <select
+                  <SearchableSelect
+                    ariaLabel={t('blLabelDisposalType')}
                     value={bioForm.disposal_type}
-                    onChange={(e) =>
+                    onChange={(val) =>
                       setBioForm((f: Row) => ({
                         ...f,
-                        disposal_type: e.target.value,
+                        disposal_type: val,
                       }))
                     }
-                    className={`${inputCls} nf-select`}
-                    style={S.input}
-                  >
-                    <option value="HARVEST">{t('blDisposalHarvest')}</option>
-                    <option value="SOLD">{t('blDisposalSold')}</option>
-                  </select>
+                    options={[
+                      { value: 'HARVEST', label: t('blDisposalHarvest') },
+                      { value: 'SOLD', label: t('blDisposalSold') },
+                    ]}
+                    placeholder={t('blLabelDisposalType')}
+                    searchPlaceholder="Search type…"
+                  />
                 </div>
                 <div className="flex flex-col gap-1.5">
                   <label className="nf-text-label" style={S.sub}>
@@ -3979,50 +4086,43 @@ export default function BatchPanel() {
                     <label className="nf-text-label" style={S.sub}>
                       {t('blLabelOutputItem', { count: items.length })}
                     </label>
-                    <select
+                    <SearchableSelect
+                      ariaLabel={t('blLabelOutputItem', { count: items.length })}
                       value={bioForm.output_item_id}
-                      onChange={(e) =>
+                      onChange={(val) =>
                         setBioForm((f: Row) => ({
                           ...f,
-                          output_item_id: e.target.value,
+                          output_item_id: val,
                         }))
                       }
-                      className={`${inputCls} nf-select`}
-                      style={S.input}
-                    >
-                      <option value="">
-                        {t('blSelectItemOptions', { count: items.length })}
-                      </option>
-                      {items.map((it, i) => (
-                        <option key={it.item_id} value={it.item_id}>
-                          {i + 1}. {it.item_code} —{' '}
-                          {it.item_name || it.item_code}
-                        </option>
-                      ))}
-                    </select>
+                      options={items.map((it, i) => ({
+                        value: it.item_id,
+                        label: `${i + 1}. ${it.item_code} — ${it.item_name || it.item_code}`,
+                      }))}
+                      placeholder={t('blSelectItemOptions', { count: items.length })}
+                      searchPlaceholder="Search item…"
+                    />
                   </div>
                   <div className="flex flex-col gap-1.5">
                     <label className="nf-text-label" style={S.sub}>
                       {t('blLabelOutputUom')}
                     </label>
-                    <select
+                    <SearchableSelect
+                      ariaLabel={t('blLabelOutputUom')}
                       value={bioForm.output_uom}
-                      onChange={(e) =>
+                      onChange={(val) =>
                         setBioForm((f: Row) => ({
                           ...f,
-                          output_uom: e.target.value,
+                          output_uom: val,
                         }))
                       }
-                      className={`${inputCls} nf-select`}
-                      style={S.input}
-                    >
-                      <option value="">{t('blSelectEllipsis')}</option>
-                      {uoms.map((u) => (
-                        <option key={u.uom_code} value={u.uom_code}>
-                          {u.uom_code}
-                        </option>
-                      ))}
-                    </select>
+                      options={uoms.map((u) => ({
+                        value: u.uom_code,
+                        label: u.uom_code,
+                      }))}
+                      placeholder={t('blSelectEllipsis')}
+                      searchPlaceholder="Search UOM…"
+                    />
                   </div>
                   <div className="flex flex-col gap-1.5">
                     <label className="nf-text-label" style={S.sub}>
@@ -4045,24 +4145,22 @@ export default function BatchPanel() {
                     <label className="nf-text-label" style={S.sub}>
                       {t('blLabelWarehouse')}
                     </label>
-                    <select
+                    <SearchableSelect
+                      ariaLabel={t('blLabelWarehouse')}
                       value={bioForm.warehouse_id}
-                      onChange={(e) =>
+                      onChange={(val) =>
                         setBioForm((f: Row) => ({
                           ...f,
-                          warehouse_id: e.target.value,
+                          warehouse_id: val,
                         }))
                       }
-                      className={`${inputCls} nf-select`}
-                      style={S.input}
-                    >
-                      <option value="">{t('blSelectEllipsis')}</option>
-                      {warehouses.map((w) => (
-                        <option key={w.warehouse_id} value={w.warehouse_id}>
-                          {w.warehouse_code}
-                        </option>
-                      ))}
-                    </select>
+                      options={warehouses.map((w) => ({
+                        value: w.warehouse_id,
+                        label: w.warehouse_code,
+                      }))}
+                      placeholder={t('blSelectEllipsis')}
+                      searchPlaceholder="Search warehouse…"
+                    />
                   </div>
                 </div>
               ) : (
@@ -4230,29 +4328,28 @@ export default function BatchPanel() {
                   <label className="nf-text-label" style={S.sub}>
                     {t('blLabelDisposition')}
                   </label>
-                  <select
+                  <SearchableSelect
+                    ariaLabel={t('blLabelDisposition')}
                     value={qcForm.disposition}
-                    onChange={(e) =>
+                    onChange={(val) =>
                       setQcForm((f: Row) => ({
                         ...f,
-                        disposition: e.target.value,
+                        disposition: val,
                       }))
                     }
-                    className={`${inputCls} nf-select`}
-                    style={S.input}
-                  >
-                    {[
+                    options={[
                       'ACCEPT',
                       'REJECT',
                       'REWORK',
                       'QUARANTINE',
                       'CONDITIONAL_ACCEPT',
-                    ].map((d) => (
-                      <option key={d} value={d}>
-                        {d}
-                      </option>
-                    ))}
-                  </select>
+                    ].map((d) => ({
+                      value: d,
+                      label: d,
+                    }))}
+                    placeholder={t('blLabelDisposition')}
+                    searchPlaceholder="Search disposition…"
+                  />
                 </div>
                 <div className="flex flex-col gap-1.5">
                   <label className="nf-text-label" style={S.sub}>
@@ -4365,52 +4462,51 @@ export default function BatchPanel() {
                             />
                           )}
                           {p.param_type === 'BOOLEAN' && (
-                            <select
+                            <SearchableSelect
+                              ariaLabel={p.param_name || t('blSelectEllipsis')}
                               value={
                                 qcResultValues[p.param_id]?.actual_value ?? ''
                               }
-                              onChange={(e) =>
+                              onChange={(val) =>
                                 setQcResultField(
                                   p.param_id,
                                   'actual_value',
-                                  e.target.value,
+                                  val,
                                 )
                               }
-                              className={`${inputCls} nf-select`}
-                              style={S.input}
-                            >
-                              <option value="">{t('blSelectEllipsis')}</option>
-                              <option value="true">{t('blPassTrue')}</option>
-                              <option value="false">{t('blFailFalse')}</option>
-                            </select>
+                              options={[
+                                { value: 'true', label: t('blPassTrue') },
+                                { value: 'false', label: t('blFailFalse') },
+                              ]}
+                              placeholder={t('blSelectEllipsis')}
+                              searchPlaceholder="Search result…"
+                            />
                           )}
                           {p.param_type === 'GRADE' && (
-                            <select
+                            <SearchableSelect
+                              ariaLabel={p.param_name || t('blSelectGrade')}
                               value={
                                 qcResultValues[p.param_id]?.actual_value ?? ''
                               }
-                              onChange={(e) => {
+                              onChange={(val) => {
                                 setQcResultField(
                                   p.param_id,
                                   'actual_value',
-                                  e.target.value,
+                                  val,
                                 );
                                 setQcResultField(
                                   p.param_id,
                                   'grade_assigned',
-                                  e.target.value,
+                                  val,
                                 );
                               }}
-                              className={`${inputCls} nf-select`}
-                              style={S.input}
-                            >
-                              <option value="">{t('blSelectGrade')}</option>
-                              {Object.keys(p.grade_scale || {}).map((g) => (
-                                <option key={g} value={g}>
-                                  {g} — {p.grade_scale[g]}
-                                </option>
-                              ))}
-                            </select>
+                              options={Object.keys(p.grade_scale || {}).map((g) => ({
+                                value: g,
+                                label: `${g} — ${p.grade_scale[g]}`,
+                              }))}
+                              placeholder={t('blSelectGrade')}
+                              searchPlaceholder="Search grade…"
+                            />
                           )}
                         </div>
                       </div>
@@ -4536,24 +4632,22 @@ export default function BatchPanel() {
                   {t('blLabelPackUom')}{' '}
                   <span className="text-(--danger)">*</span>
                 </label>
-                <select
+                <SearchableSelect
+                  ariaLabel={t('blLabelPackUom')}
                   value={packForm.pack_uom}
-                  onChange={(e) =>
+                  onChange={(val) =>
                     setPackForm((f: Row) => ({
                       ...f,
-                      pack_uom: e.target.value,
+                      pack_uom: val,
                     }))
                   }
-                  className={`${inputCls} nf-select`}
-                  style={S.input}
-                >
-                  <option value="">{t('blSelectEllipsis')}</option>
-                  {uoms.map((u) => (
-                    <option key={u.uom_code} value={u.uom_code}>
-                      {u.uom_code}
-                    </option>
-                  ))}
-                </select>
+                  options={uoms.map((u) => ({
+                    value: u.uom_code,
+                    label: u.uom_code,
+                  }))}
+                  placeholder={t('blSelectEllipsis')}
+                  searchPlaceholder="Search UOM…"
+                />
               </div>
               <div className="flex flex-col gap-1.5">
                 <label className="nf-text-label" style={S.sub}>
@@ -4572,24 +4666,22 @@ export default function BatchPanel() {
                 <label className="nf-text-label" style={S.sub}>
                   {t('blLabelWarehouseFacility')}
                 </label>
-                <select
+                <SearchableSelect
+                  ariaLabel={t('blLabelWarehouseFacility')}
                   value={packForm.warehouse_id}
-                  onChange={(e) =>
+                  onChange={(val) =>
                     setPackForm((f: Row) => ({
                       ...f,
-                      warehouse_id: e.target.value,
+                      warehouse_id: val,
                     }))
                   }
-                  className={`${inputCls} nf-select`}
-                  style={S.input}
-                >
-                  <option value="">{t('blSelectEllipsis')}</option>
-                  {warehouses.map((w) => (
-                    <option key={w.warehouse_id} value={w.warehouse_id}>
-                      {w.warehouse_code}
-                    </option>
-                  ))}
-                </select>
+                  options={warehouses.map((w) => ({
+                    value: w.warehouse_id,
+                    label: w.warehouse_code,
+                  }))}
+                  placeholder={t('blSelectEllipsis')}
+                  searchPlaceholder="Search warehouse…"
+                />
               </div>
               <div className="flex flex-col gap-1.5">
                 <label className="nf-text-label" style={S.sub}>
@@ -4598,21 +4690,20 @@ export default function BatchPanel() {
                     ? t('blQcRequiredSuffix')
                     : t('blQcOptionalSuffix')}
                 </label>
-                <select
+                <SearchableSelect
+                  ariaLabel={t('blLabelLinkQcRecord')}
                   value={packForm.qc_id}
-                  onChange={(e) =>
-                    setPackForm((f: Row) => ({ ...f, qc_id: e.target.value }))
+                  onChange={(val) =>
+                    setPackForm((f: Row) => ({ ...f, qc_id: val }))
                   }
-                  className={`${inputCls} nf-select`}
-                  style={S.input}
-                >
-                  <option value="">{t('blNone')}</option>
-                  {packQcRecords.map((q) => (
-                    <option key={q.qc_id} value={q.qc_id}>
-                      {q.qc_date} — {q.overall_result}
-                    </option>
-                  ))}
-                </select>
+                  options={packQcRecords.map((q) => ({
+                    value: q.qc_id,
+                    label: `${q.qc_date} — ${q.overall_result}`,
+                  }))}
+                  placeholder={t('blNone')}
+                  searchPlaceholder="Search QC record…"
+                  onClear={packForm.qc_id ? () => setPackForm((f: Row) => ({ ...f, qc_id: '' })) : undefined}
+                />
               </div>
             </div>
           )}

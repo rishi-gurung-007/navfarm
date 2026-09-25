@@ -292,6 +292,8 @@ export interface SearchableEntitySelectProps {
   onClear?: () => void;
   onCreate?: () => void;
   onViewAll?: () => void;
+  triggerClassName?: string;
+  triggerStyle?: React.CSSProperties;
 }
 
 /** A single-select entity dropdown with an in-panel text filter, for catalogs long enough that
@@ -315,6 +317,8 @@ export function SearchableEntitySelect({
   onClear,
   onCreate,
   onViewAll,
+  triggerClassName,
+  triggerStyle,
 }: SearchableEntitySelectProps) {
   const [open, setOpen] = useState(false);
   const unavailable = disabled || loading;
@@ -346,11 +350,12 @@ export function SearchableEntitySelect({
           aria-required={ariaRequired}
           aria-busy={loading || undefined}
           disabled={unavailable}
-          className="nf-input nf-select w-full truncate text-left disabled:cursor-not-allowed disabled:opacity-70"
+          className={`nf-input nf-select w-full truncate text-left disabled:cursor-not-allowed disabled:opacity-70 ${triggerClassName || ""}`}
           style={{
             backgroundColor: "var(--input-bg)",
             color: selected ? "var(--input-text)" : "var(--text-muted)",
             borderColor: "var(--input-border)",
+            ...triggerStyle,
           }}
         >
           {loading ? "Loading records…" : selected ? getLabel(selected) : placeholder}
