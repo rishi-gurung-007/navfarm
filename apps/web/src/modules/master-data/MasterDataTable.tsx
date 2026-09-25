@@ -1990,6 +1990,7 @@ export function MasterDataTable({
                               valueKey={col.entityValueKey || "id"}
                               getLabel={(option) => entityLabel(option, col)}
                               getLabelParts={(option) => entityLabelPartsOf(option, col)}
+                              columnHeaders={col.entityLabelKeys && col.entityLabelKeys.length > 1 ? ["Code", "Name"] : undefined}
                               disabled={readOnly || (isLocked(row) && col.key === req?.key)}
                               loading={!!col.entityEndpoint && entityOptions[col.entityEndpoint] === undefined}
                               placeholder={t("selectPlaceholder")}
@@ -2216,6 +2217,7 @@ export function MasterDataTable({
           valueKey={f.entityValueKey || "id"}
           getLabel={(o) => entityLabel(o, f)}
           getLabelParts={(o) => entityLabelPartsOf(o, f)}
+          columnHeaders={f.entityLabelKeys && f.entityLabelKeys.length > 1 ? ["Code", "Name"] : undefined}
           disabled={disabled || !!f.readOnly || isLockedByTemplate}
           loading={!!resolvedEp && loadedOptions === undefined}
           placeholder={placeholderText}

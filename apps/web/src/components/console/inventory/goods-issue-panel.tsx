@@ -11,6 +11,7 @@ import { getActiveCompanyId } from "@/hooks/useAuth";
 import { TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { useLanguage } from "@/hooks/useLanguage";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 
 const PAGE_SIZE = 25;
 
@@ -164,6 +165,8 @@ export default function GoodsIssuePanel() {
   };
 
   const warehouseLabel = (id: string) => warehouses.find((w) => w.warehouse_id === id)?.warehouse_name || "—";
+  // Same STORE/SILO projection as stock-transfer-panel.tsx — only stores are issued from here.
+  const storeWarehouses = warehouses.filter((w) => w.location_type === "STORE");
   const itemLabel = (id: string) => {
     const it = items.find((i) => i.item_id === id);
     return it ? `${it.item_code} — ${it.item_name}` : "—";
@@ -261,10 +264,13 @@ export default function GoodsIssuePanel() {
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="flex flex-col gap-1.5">
               <label className="nf-text-label" style={S.sub}>{t("gipWarehouse")} <span className="text-(--danger)">*</span></label>
-              <select value={header.warehouse_id} onChange={(e) => setHeader((h) => ({ ...h, warehouse_id: e.target.value }))} className={`${inputCls} nf-select`} style={S.input}>
-                <option value="">{t("gipSelectEllipsis")}</option>
-                {warehouses.map((w) => <option key={w.warehouse_id} value={w.warehouse_id}>{w.warehouse_code} — {w.warehouse_name}</option>)}
-              </select>
+              <SearchableSelect
+                ariaLabel={t("gipWarehouse")}
+                value={header.warehouse_id}
+                onChange={(val) => setHeader((h) => ({ ...h, warehouse_id: val }))}
+                options={storeWarehouses.map((w) => ({ value: w.warehouse_id, label: `${w.warehouse_code} — ${w.warehouse_name}` }))}
+                placeholder={t("gipSelectEllipsis")}
+              />
             </div>
             <div className="flex flex-col gap-1.5">
               <label className="nf-text-label" style={S.sub}>{t("gipPostingDate")} <span className="text-(--danger)">*</span></label>

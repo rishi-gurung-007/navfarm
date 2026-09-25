@@ -12,6 +12,14 @@
           "command": "node --env-file-if-exists=.env --import tsx src/scripts/verify-demo-master-integrity.ts"
         }
       },
+      "db-seed-documented-reasons": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --import tsx src/scripts/seed-documented-reasons.ts"
+        }
+      },
       "db-align-demo-bbp-masters": {
         "executor": "nx:run-commands",
         "cache": false,

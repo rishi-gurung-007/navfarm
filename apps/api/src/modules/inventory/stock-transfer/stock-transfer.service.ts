@@ -104,6 +104,8 @@ export class StockTransferService {
         item_id: line.item_id,
         quantity: line.quantity.toString(),
         uom: line.uom,
+        lot_no: line.lot_no || null,
+        serial_no: line.serial_no || null,
         remarks: line.remarks || null,
       }))
     );
@@ -344,6 +346,8 @@ export class StockTransferService {
         uom: line.uom,
         fromWarehouseId: transfer.from_warehouse_id,
         toWarehouseId: transfer.to_warehouse_id,
+        lotNo: line.lot_no || undefined,
+        serialNo: line.serial_no || undefined,
         userId: userPayload?.userId,
       });
 

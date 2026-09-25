@@ -17,6 +17,7 @@ function SearchableEntityPanel({
   valueKey,
   getLabel,
   getLabelParts,
+  columnHeaders,
   value,
   onPick,
   searchPlaceholder,
@@ -31,6 +32,7 @@ function SearchableEntityPanel({
   valueKey: string;
   getLabel: (row: Row) => string;
   getLabelParts?: (row: Row) => string[];
+  columnHeaders?: string[];
   value: string;
   onPick: (row: Row) => void;
   searchPlaceholder: string;
@@ -129,7 +131,7 @@ function SearchableEntityPanel({
   }
 
   return (
-    <div className="flex w-full min-h-0 flex-col gap-1.5 p-1">
+    <div className={`flex w-full min-h-0 flex-col gap-1.5 p-1 ${columnar ? "min-w-[280px]" : ""}`}>
       <div className="relative shrink-0">
         <Search
           className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2"
@@ -161,6 +163,27 @@ function SearchableEntityPanel({
         className={`min-h-0 overflow-y-auto overscroll-contain gap-0.5 pr-0.5 ${columnar ? "grid" : "flex flex-col"}`}
         style={columnar ? { maxHeight: "240px", gridTemplateColumns: listTemplate } : { maxHeight: "240px" }}
       >
+        {columnar && columnHeaders && columnHeaders.length > 0 && !loading && filtered.length > 0 && (
+          <div
+            role="presentation"
+            aria-hidden="true"
+            className="sticky top-0 z-10 grid gap-x-3 px-2.5 py-1.5 text-[11px] font-bold tracking-wider uppercase select-none border-b shrink-0"
+            style={{
+              gridColumn: "1 / -1",
+              gridTemplateColumns: "subgrid",
+              color: "var(--text-muted)",
+              borderColor: "var(--border-subtle)",
+              backgroundColor: "var(--surface)",
+            }}
+          >
+            {Array.from({ length: columnCount }, (_, col) => (
+              <span key={col} className={col === 0 ? "whitespace-nowrap" : "truncate"}>
+                {columnHeaders[col] ?? ""}
+              </span>
+            ))}
+            <span className="w-4 shrink-0" aria-hidden="true" />
+          </div>
+        )}
         {loading ? (
           <div role="status" aria-live="polite" className="px-2.5 py-3 text-xs" style={{ color: "var(--text-muted)", gridColumn: "1 / -1" }}>
             <Loader2 className="mr-1.5 inline h-3.5 w-3.5 animate-spin" aria-hidden />
@@ -282,6 +305,7 @@ export interface SearchableEntitySelectProps {
    * on `getLabel`, so every existing call site is unaffected. The trigger always
    * shows `getLabel`. */
   getLabelParts?: (row: Row) => string[];
+  columnHeaders?: string[];
   disabled?: boolean;
   loading?: boolean;
   placeholder: string;
@@ -309,6 +333,7 @@ export function SearchableEntitySelect({
   valueKey,
   getLabel,
   getLabelParts,
+  columnHeaders,
   disabled,
   loading = false,
   placeholder,
@@ -367,6 +392,7 @@ export function SearchableEntitySelect({
         valueKey={valueKey}
         getLabel={getLabel}
         getLabelParts={getLabelParts}
+        columnHeaders={columnHeaders}
         value={value}
         onPick={(row) => onChange(String(row[valueKey]))}
         searchPlaceholder={searchPlaceholder}

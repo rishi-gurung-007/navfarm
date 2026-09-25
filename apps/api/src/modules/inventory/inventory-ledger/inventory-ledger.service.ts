@@ -43,6 +43,7 @@ interface WriteNegativeEntryParams {
   quantity: number; // positive number — the amount being consumed/shipped/written off
   uom: string;
   lotNo?: string;
+  serialNo?: string;
   batchNo?: string;
   warehouseId?: string;
   locationId?: string;
@@ -121,6 +122,23 @@ export class InventoryLedgerService {
     });
   }
 
+  /**
+   * item_master.is_lot_tracked/is_serial_tracked (TDD row 11's three-way
+   * choice: LOT, SERIAL, or neither) says whether a movement of this item
+   * must carry that identity. Shared by every ledger write — receipt, issue,
+   * and both legs of a transfer — so a lot/serial-tracked item can't post
+   * anywhere without one, the same way goods_receipt_line already required it
+   * in practice even though nothing enforced it.
+   */
+  private assertTracking(item: typeof schema.itemMaster.$inferSelect, lotNo?: string, serialNo?: string) {
+    if (item.is_lot_tracked && !lotNo) {
+      throw new BadRequestException(`Item '${item.item_code}' is lot-tracked — a Lot No. is required.`);
+    }
+    if (item.is_serial_tracked && !serialNo) {
+      throw new BadRequestException(`Item '${item.item_code}' is serial-tracked — a Serial No. is required.`);
+    }
+  }
+
   /** Writes a POSITIVE (inbound) ledger entry — Goods Receipt lines, and positive Stock Adjustment lines. */
   async writePositiveEntry(params: WritePositiveEntryParams) {
     const [item] = await this.db
@@ -132,6 +150,7 @@ export class InventoryLedgerService {
     if (!item) {
       throw new BadRequestException(`Item with ID '${params.itemId}' not found.`);
     }
+    this.assertTracking(item, params.lotNo, params.serialNo);
 
     const rate = params.rate ?? 0;
     const ledgerId = randomUUID();
@@ -190,6 +209,7 @@ export class InventoryLedgerService {
       outboundLedgerId: string;
       quantity: number;
       lotNo?: string;
+      serialNo?: string;
       applicationDate: string;
       userId?: string;
       // Batch consumption draws from a company-wide pool and never sets this
@@ -224,6 +244,12 @@ export class InventoryLedgerService {
     }
     if (params.lotNo) {
       layerConditions.push(eq(schema.inventoryLedger.lot_no, params.lotNo));
+    }
+    // A serial identifies one physical unit, so it narrows the layer search the
+    // same way a lot narrows it to one batch — FIFO order among matches is
+    // moot for a serial since exactly one layer can carry it.
+    if (params.serialNo) {
+      layerConditions.push(eq(schema.inventoryLedger.serial_no, params.serialNo));
     }
 
     // Row-locked so two concurrent consumptions against the same layers can't
@@ -302,6 +328,7 @@ export class InventoryLedgerService {
     if (!item) {
       throw new BadRequestException(`Item with ID '${params.itemId}' not found.`);
     }
+    this.assertTracking(item, params.lotNo, params.serialNo);
 
     const ledgerId = randomUUID();
 
@@ -323,6 +350,7 @@ export class InventoryLedgerService {
         transaction_type: params.transactionType,
         quantity: (-Math.abs(params.quantity)).toString(),
         lot_no: params.lotNo || null,
+        serial_no: params.serialNo || null,
         uom: params.uom,
         uom_conversion_factor: item.uom_conversion_factor,
         batch_no: params.batchNo || null,
@@ -342,6 +370,7 @@ export class InventoryLedgerService {
           outboundLedgerId: ledgerId,
           quantity: params.quantity,
           lotNo: params.lotNo,
+          serialNo: params.serialNo,
           applicationDate: params.postingDate,
           userId: params.userId,
           warehouseId: params.warehouseId,
@@ -375,6 +404,8 @@ export class InventoryLedgerService {
     uom: string;
     fromWarehouseId: string;
     toWarehouseId: string;
+    lotNo?: string;
+    serialNo?: string;
     userId?: string;
   }) {
     const shipment = await this.writeNegativeEntry({
@@ -388,10 +419,17 @@ export class InventoryLedgerService {
       transactionType: 'TRANSFER_SHIPMENT',
       quantity: params.quantity,
       uom: params.uom,
+      lotNo: params.lotNo,
+      serialNo: params.serialNo,
       warehouseId: params.fromWarehouseId,
       userId: params.userId,
     });
 
+    // Carries the shipment's own lot/serial forward rather than params.lotNo/
+    // serialNo directly — same value today, but shipment.lot_no is what FIFO
+    // actually drew (relevant once a caller ever transfers without pinning a
+    // lot), so the receipt layer's identity is always true to what left the
+    // source warehouse.
     const receipt = await this.writePositiveEntry({
       tenantId: params.tenantId,
       companyId: params.companyId,
@@ -404,6 +442,8 @@ export class InventoryLedgerService {
       quantity: params.quantity,
       uom: params.uom,
       rate: Number(shipment.rate),
+      lotNo: shipment.lot_no || undefined,
+      serialNo: shipment.serial_no || undefined,
       warehouseId: params.toWarehouseId,
       userId: params.userId,
     });

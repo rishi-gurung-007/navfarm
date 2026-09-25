@@ -11,6 +11,7 @@ import { getActiveCompanyId } from "@/hooks/useAuth";
 import { TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { useLanguage } from "@/hooks/useLanguage";
+import { ReasonSelect } from "@/components/ui/reason-select";
 
 const PAGE_SIZE = 25;
 
@@ -278,7 +279,14 @@ export default function StockAdjustmentPanel() {
             </div>
             <div className="flex flex-col gap-1.5">
               <label className="nf-text-label" style={S.sub}>{t("sapReason")}</label>
-              <input value={header.reason} onChange={(e) => setHeader((h) => ({ ...h, reason: e.target.value }))} placeholder={t("sapPhysicalCountVariance")} className={inputCls} style={S.input} />
+              <ReasonSelect
+                ariaLabel={t("sapReason")}
+                value={header.reason}
+                onChange={(val) => setHeader((h) => ({ ...h, reason: val }))}
+                onClear={() => setHeader((h) => ({ ...h, reason: "" }))}
+                placeholder={t("sapPhysicalCountVariance") || "Select adjustment reason…"}
+                category="ADJUSTMENT"
+              />
             </div>
             <div className="flex flex-col gap-1.5">
               <label className="nf-text-label" style={S.sub}>{t("sapRemarks")}</label>

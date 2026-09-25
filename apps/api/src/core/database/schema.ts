@@ -3598,6 +3598,12 @@ export const goodsIssueLine = mysqlTable('goods_issue_line', {
   item_id: varchar('item_id', { length: 36 }).notNull().references(() => itemMaster.item_id, { onDelete: 'restrict' }),
   quantity: decimal('quantity', { precision: 18, scale: 4 }).notNull(),
   uom: varchar('uom', { length: 20 }).notNull(),
+  // Which receipt layer this consumption draws down — required at post() when
+  // item_master.is_lot_tracked/is_serial_tracked says so (inventory-ledger.service.ts
+  // assertTracking()), so the lot/serial travels onto the inventory_ledger row the
+  // way it already does for goods_receipt_line.
+  lot_no: varchar('lot_no', { length: 50 }),
+  serial_no: varchar('serial_no', { length: 100 }),
   remarks: varchar('remarks', { length: 500 }),
 });
 
@@ -3642,6 +3648,11 @@ export const stockTransferLine = mysqlTable('stock_transfer_line', {
   item_id: varchar('item_id', { length: 36 }).notNull().references(() => itemMaster.item_id, { onDelete: 'restrict' }),
   quantity: decimal('quantity', { precision: 18, scale: 4 }).notNull(),
   uom: varchar('uom', { length: 20 }).notNull(),
+  // Same tracking contract as goods_issue_line — carried from the shipment leg
+  // onto the receipt leg by writeTransferEntries() so a lot/serial doesn't lose
+  // its identity crossing warehouses.
+  lot_no: varchar('lot_no', { length: 50 }),
+  serial_no: varchar('serial_no', { length: 100 }),
   remarks: varchar('remarks', { length: 500 }),
 });
 

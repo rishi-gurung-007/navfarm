@@ -1,6 +1,7 @@
 import React from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { SearchableEntitySelect } from "@/modules/master-data/SearchableEntitySelect";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 
 // The client reviewed the compact selector live and asked for two things: the
 // options laid out as a small table rather than one run-on line per row, and
@@ -134,5 +135,72 @@ describe("SearchableEntitySelect over a static option list", () => {
     expect(screen.getByRole("listbox", { name: "Transition Trigger" }).style.gridTemplateColumns).toBe("");
     expect(screen.queryByRole("button", { name: /^New /})).toBeNull();
     expect(screen.queryByRole("button", { name: /^View All /})).toBeNull();
+  });
+});
+
+describe("SearchableEntitySelect with table headers", () => {
+  it("renders Code and Name column headers when columnHeaders is provided", () => {
+    open(jest.fn(), { columnHeaders: ["Code", "Name"] });
+    expect(screen.getByText("Code")).toBeDefined();
+    expect(screen.getByText("Name")).toBeDefined();
+  });
+});
+
+describe("SearchableSelect automatic table layout", () => {
+  it("automatically creates Code and Name columns and headers for genuine delimited labels", () => {
+    render(
+      <SearchableSelect
+        ariaLabel="Breed"
+        value=""
+        onChange={jest.fn()}
+        options={[
+          { value: "b1", label: "BRD-001 — Tempo-Boar" },
+          { value: "b2", label: "TN-70-Sow — TN-70-Sow" },
+        ]}
+      />
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Breed" }));
+    expect(screen.getByText("Code")).toBeDefined();
+    expect(screen.getByText("Name")).toBeDefined();
+    expect(screen.getByText("BRD-001")).toBeDefined();
+    expect(screen.getByText("Tempo-Boar")).toBeDefined();
+  });
+
+  it("does not create Code and Name headers when items are animal tags or non-delimited lists", () => {
+    render(
+      <SearchableSelect
+        ariaLabel="Animal Selection"
+        value=""
+        onChange={jest.fn()}
+        options={[
+          { value: "ALL", label: "All animals in this stage (7) — 6 pending" },
+          { value: "a1", label: "PIG-0028 (✓ Posted)" },
+          { value: "a2", label: "PIG-0029 (Pending)" },
+        ]}
+      />
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Animal Selection" }));
+    expect(screen.queryByText("Code")).toBeNull();
+    expect(screen.queryByText("Name")).toBeNull();
+    expect(screen.getByText("All animals in this stage (7) — 6 pending")).toBeDefined();
+    expect(screen.getByText("PIG-0028 (✓ Posted)")).toBeDefined();
+  });
+
+  it("suppresses headers and columns when columnHeaders={false} is explicitly provided", () => {
+    render(
+      <SearchableSelect
+        ariaLabel="Status Filter"
+        value=""
+        columnHeaders={false}
+        onChange={jest.fn()}
+        options={[
+          { value: "ACT — Active", label: "ACT — Active" },
+          { value: "CLS — Closed", label: "CLS — Closed" },
+        ]}
+      />
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Status Filter" }));
+    expect(screen.queryByText("Code")).toBeNull();
+    expect(screen.queryByText("Name")).toBeNull();
   });
 });

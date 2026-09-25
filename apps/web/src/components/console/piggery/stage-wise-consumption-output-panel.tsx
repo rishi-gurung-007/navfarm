@@ -999,6 +999,7 @@ export default function StageWiseConsumptionOutputPanel() {
               <SearchableSelect
                 ariaLabel={t("swStage")}
                 value={selectedStageId}
+                columnHeaders={false}
                 onChange={(val) => handleStageChange(val)}
                 options={[
                   { value: "ALL", label: "All Stages (Batch Total)" },
@@ -1023,6 +1024,7 @@ export default function StageWiseConsumptionOutputPanel() {
                 <SearchableSelect
                   ariaLabel={t("swAnimal")}
                   value={selectedAnimalId}
+                  columnHeaders={false}
                   onChange={(val) => setSelectedAnimalId(val)}
                   options={[
                     { value: "", label: t("schedWholeBatch") },
@@ -1941,6 +1943,7 @@ export default function StageWiseConsumptionOutputPanel() {
                         <SearchableSelect
                           ariaLabel="Photo / Attachment Type"
                           value={photoType}
+                          columnHeaders={false}
                           onChange={(val) => setPhotoType(val)}
                           options={[
                             { value: "IMAGE", label: "Stage Inspection Photo" },

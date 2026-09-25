@@ -15,7 +15,9 @@ import { Dialog } from "@/components/ui/dialog";
 import { InlineAlert } from "@/components/ui/alert";
 import { useLanguage } from "@/hooks/useLanguage";
 import AnimalStageTransitionModal from "./animal-stage-transition-modal";
+import AnimalDetailsModal from "./animal-details-modal";
 import { SearchableSelect } from "@/components/ui/searchable-select";
+import { ReasonSelect } from "@/components/ui/reason-select";
 
 export interface AnimalAssignmentRow {
   id: string;
@@ -81,6 +83,8 @@ export default function BatchAnimalAssignmentPanel() {
   const isRegisteredBatch = currentBatch?.animalTracking === "REGISTERED";
 
   const [animals, setAnimals] = useState<AnimalAssignmentRow[]>([]);
+  const [detailsAnimalId, setDetailsAnimalId] = useState<string | null>(null);
+  const [batchMortalityCount, setBatchMortalityCount] = useState<number>(0);
   const [search, setSearch] = useState("");
   const [selectedSex, setSelectedSex] = useState("All");
   const [selectedStatus, setSelectedStatus] = useState("All");
@@ -220,7 +224,11 @@ export default function BatchAnimalAssignmentPanel() {
   // 2. Fetch animals actually assigned to the selected batch (real filter, real fields)
   const loadAssignedAnimals = () => {
     const companyId = getActiveCompanyId();
-    if (!companyId || !selectedBatchId) { setAnimals([]); return; }
+    if (!companyId || !selectedBatchId) {
+      setAnimals([]);
+      setBatchMortalityCount(0);
+      return;
+    }
     api.get(`/animal?companyId=${companyId}&currentBatchId=${selectedBatchId}&limit=200`)
       .then((res) => {
         const list: any[] = unwrap<any[]>(res) || [];
@@ -267,6 +275,25 @@ export default function BatchAnimalAssignmentPanel() {
         setAnimals(mapped);
       })
       .catch(() => setAnimals([]));
+
+    // Fetch batch mortality transactions & disposed count
+    Promise.all([
+      api.get(`/batch/${selectedBatchId}`).catch(() => null),
+      api.get(`/animal?companyId=${companyId}&currentBatchId=${selectedBatchId}&includeDisposed=true&limit=500`).catch(() => null),
+    ]).then(([batchRes, allAnimalsRes]) => {
+      const bData = batchRes?.data || batchRes;
+      const txs: any[] = bData?.transactions || [];
+      const mortTxsCount = txs
+        .filter((t: any) => t.transaction_type === "MORTALITY")
+        .reduce((sum: number, t: any) => sum + (Number(t.quantity) || 1), 0);
+
+      const allAnimalsList: any[] = unwrap<any[]>(allAnimalsRes) || [];
+      const deadAnimalsCount = allAnimalsList.filter(
+        (a: any) => a.status === "DEAD" || a.status === "CULLED" || a.disposal_type === "DIED"
+      ).length;
+
+      setBatchMortalityCount(Math.max(mortTxsCount, deadAnimalsCount));
+    });
   };
 
   useEffect(loadAssignedAnimals, [selectedBatchId, locations, breeds, stages, currentBatch?.stageId, currentBatch?.stage]);
@@ -581,9 +608,13 @@ export default function BatchAnimalAssignmentPanel() {
               <span className="text-[9px] uppercase font-semibold block" style={{ color: "var(--text-secondary)" }}>{t("baapKpiIsolated")}</span>
               <span className="font-mono font-bold" style={{ color: "var(--warning)" }}>{isolatedCount}</span>
             </div>
-            <div className="text-center px-2.5">
+            <div className="text-center px-2.5 border-r" style={{ borderColor: "var(--border)" }}>
               <span className="text-[9px] uppercase font-semibold block" style={{ color: "var(--text-secondary)" }}>{t("baapKpiTransferred")}</span>
               <span className="font-mono font-bold" style={{ color: "var(--text-primary)" }}>{transferredCount}</span>
+            </div>
+            <div className="text-center px-2.5">
+              <span className="text-[9px] uppercase font-semibold block" style={{ color: "var(--text-secondary)" }}>{t("baapKpiMortality")}</span>
+              <span className="font-mono font-bold" style={{ color: "var(--danger)" }}>{batchMortalityCount}</span>
             </div>
           </div>
 
@@ -652,6 +683,7 @@ export default function BatchAnimalAssignmentPanel() {
                   <SearchableSelect
                     ariaLabel={t("baapSexLabel")}
                     value={selectedSex}
+                    columnHeaders={false}
                     onChange={(val) => setSelectedSex(val)}
                     options={[
                       { value: "All", label: t("baapAllGenders") },
@@ -673,6 +705,7 @@ export default function BatchAnimalAssignmentPanel() {
                   <SearchableSelect
                     ariaLabel={t("baapStatusLabel")}
                     value={selectedStatus}
+                    columnHeaders={false}
                     onChange={(val) => setSelectedStatus(val)}
                     options={[
                       { value: "All", label: t("baapAllStatuses") },
@@ -694,6 +727,7 @@ export default function BatchAnimalAssignmentPanel() {
                   <SearchableSelect
                     ariaLabel="Stage"
                     value={selectedStage}
+                    columnHeaders={false}
                     onChange={(val) => setSelectedStage(val)}
                     options={[
                       { value: "All", label: `All Stages (${animals.length})` },
@@ -761,8 +795,12 @@ export default function BatchAnimalAssignmentPanel() {
                     </tr>
                   ) : (
                     filtered.map((animal, idx) => (
-                      <tr key={animal.id} className="hover:bg-[var(--surface-raised)]/80 transition-colors">
-                        <td className="px-3 py-2.5">
+                      <tr
+                        key={animal.id}
+                        onClick={() => setDetailsAnimalId(animal.id)}
+                        className="hover:bg-[var(--surface-raised)]/80 transition-colors cursor-pointer group"
+                      >
+                        <td className="px-3 py-2.5" onClick={(e) => e.stopPropagation()}>
                           <input
                             type="checkbox"
                             aria-label={`Select ${animal.earTag}`}
@@ -772,7 +810,7 @@ export default function BatchAnimalAssignmentPanel() {
                         </td>
                         <td className="px-4 py-2.5 text-[var(--text-muted)]">{idx + 1}</td>
                         <td className="px-4 py-2.5">
-                          <span className="font-mono font-bold text-[var(--accent)] block">{animal.earTag}</span>
+                          <span className="font-mono font-bold text-[var(--accent)] block group-hover:underline">{animal.earTag}</span>
                           {animal.rfid && <span className="text-[10px] text-[var(--text-muted)] font-mono">{animal.rfid}</span>}
                         </td>
                         <td className="px-4 py-2.5 font-mono text-[var(--text-secondary)]">{animal.animalId}</td>
@@ -815,7 +853,7 @@ export default function BatchAnimalAssignmentPanel() {
                             <CheckCircle className="w-3 h-3" /> {animal.status}
                           </span>
                         </td>
-                        <td className="px-4 py-2.5 text-right whitespace-nowrap">
+                        <td className="px-4 py-2.5 text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                           <Button
                             size="sm"
                             variant="outline"
@@ -1087,12 +1125,13 @@ export default function BatchAnimalAssignmentPanel() {
 
             <div>
               <label className="font-semibold block mb-1">{t("baapTransferPurposeLabel")}</label>
-              <input
-                type="text"
+              <ReasonSelect
+                ariaLabel={t("baapTransferPurposeLabel")}
                 value={transferReason}
-                onChange={(e) => setTransferReason(e.target.value)}
-                placeholder={t("baapTransferPurposePlaceholder")}
-                className="nf-input w-full"
+                onChange={(val) => setTransferReason(val)}
+                onClear={() => setTransferReason("")}
+                placeholder={t("baapTransferPurposePlaceholder") || "Select transfer reason…"}
+                searchPlaceholder="Search reason code, description, category…"
               />
             </div>
           </div>
@@ -1161,7 +1200,14 @@ export default function BatchAnimalAssignmentPanel() {
           </label>
           <label className="block">
             <span className="text-[10px] uppercase font-bold text-[var(--text-muted)] block mb-1">Reason (overrides the minimum-days check)</span>
-            <input value={moveReason} onChange={(e) => setMoveReason(e.target.value)} className="nf-input-sm w-full" placeholder="e.g. Re-served and confirmed pregnant" />
+            <ReasonSelect
+              ariaLabel="Reason (overrides the minimum-days check)"
+              value={moveReason}
+              onChange={(val) => setMoveReason(val)}
+              onClear={() => setMoveReason("")}
+              placeholder="Select reason from Reason Master…"
+              triggerClassName="nf-input-sm"
+            />
           </label>
           <p className="text-[11px] text-[var(--text-muted)]">
             Animals short of their stage minimum are reported back and skipped; the rest still move.
@@ -1219,7 +1265,14 @@ export default function BatchAnimalAssignmentPanel() {
           </label>
           <label className="block">
             <span className="text-[10px] uppercase font-bold text-[var(--text-muted)] block mb-1">Reason</span>
-            <input value={splitReason} onChange={(e) => setSplitReason(e.target.value)} className="nf-input-sm w-full" placeholder="e.g. PREGNANCY_FAILED" />
+            <ReasonSelect
+              ariaLabel="Reason"
+              value={splitReason}
+              onChange={(val) => setSplitReason(val)}
+              onClear={() => setSplitReason("")}
+              placeholder="Select reason from Reason Master…"
+              triggerClassName="nf-input-sm"
+            />
           </label>
         </div>
       </Dialog>
@@ -1251,6 +1304,13 @@ export default function BatchAnimalAssignmentPanel() {
           </div>
         </Dialog>
       )}
+
+      {/* ── ANIMAL DETAILS POPUP MODAL ── */}
+      <AnimalDetailsModal
+        animalId={detailsAnimalId}
+        onClose={() => setDetailsAnimalId(null)}
+        onOpenStageTransition={(rawAnimal) => setTransitionAnimal(rawAnimal)}
+      />
     </div>
   );
 }

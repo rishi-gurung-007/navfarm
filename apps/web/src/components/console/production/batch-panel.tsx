@@ -1823,8 +1823,11 @@ export default function BatchPanel() {
                 }}
                 options={breeds.map((b) => ({
                   value: b.breed_id,
+                  code: b.breed_code,
+                  name: b.breed_name,
                   label: `${b.breed_code} — ${b.breed_name}`,
                 }))}
+                columnHeaders={['Code', 'Name']}
                 placeholder={t('blSelectEllipsis')}
                 searchPlaceholder="Search breeds…"
                 onClear={header.breed_id ? () => setHeader((h) => ({ ...h, breed_id: '' })) : undefined}
@@ -1842,8 +1845,11 @@ export default function BatchPanel() {
                 }
                 options={sheds.map((s) => ({
                   value: s.shed_id,
+                  code: s.shed_code,
+                  name: s.shed_name,
                   label: `${s.shed_code} — ${s.shed_name}`,
                 }))}
+                columnHeaders={['Code', 'Name']}
                 placeholder={t('blSelectEllipsis')}
                 searchPlaceholder="Search sheds…"
                 onClear={header.shed_id ? () => setHeader((h) => ({ ...h, shed_id: '' })) : undefined}
@@ -1876,8 +1882,11 @@ export default function BatchPanel() {
                   }}
                   options={stages.map((s) => ({
                     value: s.stage_id,
+                    code: s.stage_code,
+                    name: `${s.stage_name} (${s.typical_duration_days ? `${s.typical_duration_days} days` : 'Open duration'})`,
                     label: `${s.stage_code} — ${s.stage_name} (${s.typical_duration_days ? `${s.typical_duration_days} days` : 'Open duration'})`,
                   }))}
+                  columnHeaders={['Code', 'Name']}
                   placeholder={header.lob_id ? t('blSelectEllipsis') : t('blSelectNobFirst')}
                   searchPlaceholder="Search stages…"
                 />
@@ -1991,8 +2000,11 @@ export default function BatchPanel() {
                   }
                   options={uoms.map((u) => ({
                     value: u.uom_code,
-                    label: u.uom_code,
+                    code: u.uom_code,
+                    name: u.uom_name,
+                    label: u.uom_name ? `${u.uom_code} — ${u.uom_name}` : u.uom_code,
                   }))}
+                  columnHeaders={['Code', 'Name']}
                   placeholder={t('blSelectEllipsis')}
                   searchPlaceholder="Search UOM…"
                 />
@@ -2067,10 +2079,13 @@ export default function BatchPanel() {
                             onChange={(val) =>
                               setInputLineField(idx, 'item_id', val)
                             }
-                            options={availableInputItems.map((it, i) => ({
+                            options={availableInputItems.map((it) => ({
                               value: it.item_id,
-                              label: `${i + 1}. ${it.item_code} — ${it.item_name || it.item_code}`,
+                              code: it.item_code,
+                              name: it.item_name || it.item_code,
+                              label: `${it.item_code} — ${it.item_name || it.item_code}`,
                             }))}
+                            columnHeaders={['Code', 'Name']}
                             placeholder={t('blSelectItemOptions', {
                               count: availableInputItems.length,
                             })}
@@ -2115,8 +2130,11 @@ export default function BatchPanel() {
                             }
                             options={uoms.map((u) => ({
                               value: u.uom_code,
-                              label: u.uom_code,
+                              code: u.uom_code,
+                              name: u.uom_name,
+                              label: u.uom_name ? `${u.uom_code} — ${u.uom_name}` : u.uom_code,
                             }))}
+                            columnHeaders={['Code', 'Name']}
                             placeholder={t('blSelectEllipsis')}
                             searchPlaceholder="Search UOM…"
                           />
@@ -2270,10 +2288,13 @@ export default function BatchPanel() {
                                 onChange={(val) =>
                                   setStdConsumptionLineField(idx, 'item_id', val)
                                 }
-                                options={items.map((it, i) => ({
+                                options={items.map((it) => ({
                                   value: it.item_id,
-                                  label: `${i + 1}. ${it.item_code} — ${it.item_name || it.item_code}`,
+                                  code: it.item_code,
+                                  name: it.item_name || it.item_code,
+                                  label: `${it.item_code} — ${it.item_name || it.item_code}`,
                                 }))}
+                                columnHeaders={['Code', 'Name']}
                                 placeholder={t('blSelectItemOptions', {
                                   count: items.length,
                                 })}
@@ -3613,10 +3634,13 @@ export default function BatchPanel() {
                   onChange={(val) =>
                     setRenewForm((f: Row) => ({ ...f, item_id: val }))
                   }
-                  options={items.map((it, i) => ({
+                  options={items.map((it) => ({
                     value: it.item_id,
-                    label: `${i + 1}. ${it.item_code} — ${it.item_name || it.item_code}`,
+                    code: it.item_code,
+                    name: it.item_name || it.item_code,
+                    label: `${it.item_code} — ${it.item_name || it.item_code}`,
                   }))}
+                  columnHeaders={['Code', 'Name']}
                   placeholder={t('blSelectItemOptions', { count: items.length })}
                   searchPlaceholder="Search item…"
                 />
@@ -3639,8 +3663,11 @@ export default function BatchPanel() {
                 }
                 options={uoms.map((u) => ({
                   value: u.uom_code,
-                  label: u.uom_code,
+                  code: u.uom_code,
+                  name: u.uom_name,
+                  label: u.uom_name ? `${u.uom_code} — ${u.uom_name}` : u.uom_code,
                 }))}
+                columnHeaders={['Code', 'Name']}
                 placeholder={t('blSelectUomPlaceholder')}
                 searchPlaceholder="Search UOM…"
               />
@@ -4693,6 +4720,7 @@ export default function BatchPanel() {
                 <SearchableSelect
                   ariaLabel={t('blLabelLinkQcRecord')}
                   value={packForm.qc_id}
+                  columnHeaders={false}
                   onChange={(val) =>
                     setPackForm((f: Row) => ({ ...f, qc_id: val }))
                   }

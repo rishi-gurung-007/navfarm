@@ -51,7 +51,9 @@ import {
 } from '@/components/ui/table';
 import { useLanguage } from '@/hooks/useLanguage';
 import AnimalStageTransitionModal from '@/components/console/piggery/animal-stage-transition-modal';
+import AnimalDetailsModal from '@/components/console/piggery/animal-details-modal';
 import { SearchableSelect } from '@/components/ui/searchable-select';
+import { ReasonSelect } from '@/components/ui/reason-select';
 
 // file_url from the API is server-relative (e.g. "/uploads/xyz.jpg"). Next.js
 // proxies that same-origin path to the API alongside /api/v1.
@@ -297,6 +299,10 @@ export default function OperationalBatchDataEntry() {
   const [stageTransitionAnimal, setStageTransitionAnimal] =
     useState<Row | null>(null);
 
+  // Animal detail modal popup from clicking an animal row in the dialog
+  const [selectedAnimalIdForDetails, setSelectedAnimalIdForDetails] =
+    useState<string | null>(null);
+
   // Bulk manual stage change for every animal currently in the selected
   // stage (ANIMAL_WISE, "All animals" entry scope) — same
   // POST /animal/bulk-transition-stage the Batch Animals screen's own
@@ -375,15 +381,31 @@ export default function OperationalBatchDataEntry() {
     const l = locations.find((x) => x.location_id === locationId);
     return l ? l.location_name : '—';
   };
-  const animalAge = (a: Row) => {
-    if (!a.dob)
-      return a.age_at_entry_weeks != null
-        ? `${a.age_at_entry_weeks} wks (at entry)`
-        : '—';
-    const days = Math.floor(
-      (Date.now() - new Date(a.dob).getTime()) / 86400000,
-    );
-    return days < 60 ? `${days} days` : `${Math.floor(days / 30)} mo`;
+  const getAnimalAgeBreakdown = (a: Row): { weeks: string; days: string } => {
+    if (a.dob) {
+      const bornTime = new Date(a.dob).getTime();
+      if (!Number.isNaN(bornTime)) {
+        const days = Math.max(0, Math.floor((Date.now() - bornTime) / 86400000));
+        const weeks = Math.floor(days / 7);
+        return {
+          weeks: `${weeks} wks`,
+          days: `${days} days`,
+        };
+      }
+    }
+    if (a.age_at_entry_weeks != null) {
+      const weeks = Number(a.age_at_entry_weeks);
+      if (!Number.isNaN(weeks)) {
+        return {
+          weeks: `${weeks} wks`,
+          days: `${weeks * 7} days`,
+        };
+      }
+    }
+    return {
+      weeks: '—',
+      days: '—',
+    };
   };
 
   const LINE_TYPE_LABELS: Record<string, string> = {
@@ -2293,12 +2315,13 @@ export default function OperationalBatchDataEntry() {
                       ariaLabel="History posted dates"
                       value=""
                       disabled={posting}
+                      columnHeaders={false}
                       onChange={(val) => {
                         if (!val) return;
                         userPickedDateRef.current = true;
                         setSelectedDate(val);
                       }}
-                      options={postedDates.map((d: Row, idx: number) => ({
+                      options={postedDates.map((d: Row) => ({
                         value: String(d.entry_date),
                         label: `${String(d.entry_date)}${d.stage_name ? ` — ${d.stage_name}` : ''}${d.status === 'REOPENED' ? ' (reopened)' : ''}`,
                       }))}
@@ -2721,13 +2744,16 @@ export default function OperationalBatchDataEntry() {
                           </button>
                         ) : (
                           <div className="flex w-full flex-col gap-1.5 sm:w-auto sm:flex-row sm:items-center">
-                            <input
-                              value={reopenReason}
-                              onChange={(e) => setReopenReason(e.target.value)}
-                              placeholder="Reason for reopening (required)"
-                              className={inputCls + ' sm:w-64'}
-                              style={S.input}
-                            />
+                            <div className="w-full sm:w-72">
+                              <ReasonSelect
+                                ariaLabel="Reason for reopening"
+                                value={reopenReason}
+                                onChange={(val) => setReopenReason(val)}
+                                onClear={() => setReopenReason("")}
+                                placeholder="Reason for reopening (required)"
+                                triggerClassName="nf-input-sm"
+                              />
+                            </div>
                             <div className="flex gap-1.5">
                               <button
                                 type="button"
@@ -3104,7 +3130,7 @@ export default function OperationalBatchDataEntry() {
           open={!!animalListStageId}
           onClose={() => setAnimalListStageId(null)}
           title={`${animalListStage?.stage_code || ''} — Animals`}
-          maxWidth="md"
+          maxWidth="lg"
         >
           {batchAnimalRosterLoading ? (
             <div className="flex items-center justify-center py-6">
@@ -3128,41 +3154,65 @@ export default function OperationalBatchDataEntry() {
                     <TableHead className="h-auto px-3 py-2">Ear Tag</TableHead>
                     <TableHead className="h-auto px-3 py-2">Sex</TableHead>
                     <TableHead className="h-auto px-3 py-2">Breed</TableHead>
-                    <TableHead className="h-auto px-3 py-2">Age</TableHead>
+                    <TableHead className="h-auto px-3 py-2">
+                      Age (Weeks)
+                    </TableHead>
+                    <TableHead className="h-auto px-3 py-2">
+                      Age (Days)
+                    </TableHead>
                     <TableHead className="h-auto px-3 py-2">Location</TableHead>
                   </tr>
                 </TableHeader>
                 <TableBody>
-                  {animalListRows.map((a) => (
-                    <TableRow key={a.animal_id}>
-                      <TableCell className="px-3 py-1.5 font-mono">
-                        {a.animal_code}
-                      </TableCell>
-                      <TableCell
-                        className="px-3 py-1.5 font-mono"
-                        style={S.sub}
+                  {animalListRows.map((a) => {
+                    const age = getAnimalAgeBreakdown(a);
+                    return (
+                      <TableRow
+                        key={a.animal_id}
+                        className="cursor-pointer hover:bg-(--surface-raised) transition-colors"
+                        onClick={() => setSelectedAnimalIdForDetails(a.animal_id)}
+                        title="Click to view animal details"
                       >
-                        {a.ear_tag || '—'}
-                      </TableCell>
-                      <TableCell className="px-3 py-1.5" style={S.sub}>
-                        {a.gender === 'F' ? 'Female' : 'Male'}
-                      </TableCell>
-                      <TableCell className="px-3 py-1.5" style={S.sub}>
-                        {a.breed_name || '—'}
-                      </TableCell>
-                      <TableCell className="px-3 py-1.5" style={S.sub}>
-                        {animalAge(a)}
-                      </TableCell>
-                      <TableCell className="px-3 py-1.5" style={S.sub}>
-                        {locationLabel(a.current_location_id)}
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                        <TableCell className="px-3 py-1.5 font-mono text-primary font-medium hover:underline">
+                          {a.animal_code}
+                        </TableCell>
+                        <TableCell
+                          className="px-3 py-1.5 font-mono"
+                          style={S.sub}
+                        >
+                          {a.ear_tag || '—'}
+                        </TableCell>
+                        <TableCell className="px-3 py-1.5" style={S.sub}>
+                          {a.gender === 'F' ? 'Female' : 'Male'}
+                        </TableCell>
+                        <TableCell className="px-3 py-1.5" style={S.sub}>
+                          {a.breed_name || '—'}
+                        </TableCell>
+                        <TableCell className="px-3 py-1.5" style={S.sub}>
+                          {age.weeks}
+                        </TableCell>
+                        <TableCell className="px-3 py-1.5" style={S.sub}>
+                          {age.days}
+                        </TableCell>
+                        <TableCell className="px-3 py-1.5" style={S.sub}>
+                          {locationLabel(a.current_location_id)}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
                 </TableBody>
               </table>
             </div>
           )}
         </Dialog>
+      )}
+
+      {/* ── MODAL: Animal Details Popup ── */}
+      {selectedAnimalIdForDetails && (
+        <AnimalDetailsModal
+          animalId={selectedAnimalIdForDetails}
+          onClose={() => setSelectedAnimalIdForDetails(null)}
+        />
       )}
 
       {/* ── MODAL: Per-animal manual stage change (ANIMAL_WISE) ── */}
@@ -3261,16 +3311,22 @@ export default function OperationalBatchDataEntry() {
               <label className="font-semibold block mb-1">
                 Reason (required to override a minimum-duration hold)
               </label>
-              <input
-                type="text"
+              <ReasonSelect
+                ariaLabel="Reason (required to override a minimum-duration hold)"
                 value={bulkStageTransitionForm.reason}
-                onChange={(e) =>
+                onChange={(val) =>
                   setBulkStageTransitionForm((f) => ({
                     ...f,
-                    reason: e.target.value,
+                    reason: val,
                   }))
                 }
-                className="nf-input w-full"
+                onClear={() =>
+                  setBulkStageTransitionForm((f) => ({
+                    ...f,
+                    reason: "",
+                  }))
+                }
+                placeholder="Select reason from Reason Master…"
               />
             </div>
           </div>

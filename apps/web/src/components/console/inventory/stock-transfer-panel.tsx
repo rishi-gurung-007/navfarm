@@ -11,6 +11,7 @@ import { Pagination } from "@/components/ui/pagination";
 import { getActiveCompanyId } from "@/hooks/useAuth";
 import { TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { StatusBadge } from "@/components/ui/status-badge";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 
 const PAGE_SIZE = 25;
 
@@ -169,6 +170,10 @@ export default function StockTransferPanel() {
   };
 
   const warehouseLabel = (id: string) => warehouses.find((w) => w.warehouse_id === id)?.warehouse_name || "—";
+  // /warehouse projects location_master rows of type STORE or SILO (see warehouse.service.ts) — a
+  // transfer moves stock between stores, so silos are excluded here. warehouses itself stays
+  // unfiltered: warehouseLabel() still needs to resolve any pre-existing SILO-based transfer.
+  const storeWarehouses = warehouses.filter((w) => w.location_type === "STORE");
   const itemLabel = (id: string) => {
     const it = items.find((i) => i.item_id === id);
     return it ? `${it.item_code} — ${it.item_name}` : "—";
@@ -268,17 +273,23 @@ export default function StockTransferPanel() {
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="flex flex-col gap-1.5">
               <label className="nf-text-label" style={S.sub}>{t("stpFromWarehouse")} <span className="text-(--danger)">*</span></label>
-              <select value={header.from_warehouse_id} onChange={(e) => setHeader((h) => ({ ...h, from_warehouse_id: e.target.value }))} className={`${inputCls} nf-select`} style={S.input}>
-                <option value="">{t("stpSelectEllipsis")}</option>
-                {warehouses.map((w) => <option key={w.warehouse_id} value={w.warehouse_id}>{w.warehouse_code} — {w.warehouse_name}</option>)}
-              </select>
+              <SearchableSelect
+                ariaLabel={t("stpFromWarehouse")}
+                value={header.from_warehouse_id}
+                onChange={(val) => setHeader((h) => ({ ...h, from_warehouse_id: val }))}
+                options={storeWarehouses.map((w) => ({ value: w.warehouse_id, label: `${w.warehouse_code} — ${w.warehouse_name}` }))}
+                placeholder={t("stpSelectEllipsis")}
+              />
             </div>
             <div className="flex flex-col gap-1.5">
               <label className="nf-text-label" style={S.sub}>{t("stpToWarehouse")} <span className="text-(--danger)">*</span></label>
-              <select value={header.to_warehouse_id} onChange={(e) => setHeader((h) => ({ ...h, to_warehouse_id: e.target.value }))} className={`${inputCls} nf-select`} style={S.input}>
-                <option value="">{t("stpSelectEllipsis")}</option>
-                {warehouses.map((w) => <option key={w.warehouse_id} value={w.warehouse_id}>{w.warehouse_code} — {w.warehouse_name}</option>)}
-              </select>
+              <SearchableSelect
+                ariaLabel={t("stpToWarehouse")}
+                value={header.to_warehouse_id}
+                onChange={(val) => setHeader((h) => ({ ...h, to_warehouse_id: val }))}
+                options={storeWarehouses.map((w) => ({ value: w.warehouse_id, label: `${w.warehouse_code} — ${w.warehouse_name}` }))}
+                placeholder={t("stpSelectEllipsis")}
+              />
             </div>
             <div className="flex flex-col gap-1.5">
               <label className="nf-text-label" style={S.sub}>{t("stpPostingDate")} <span className="text-(--danger)">*</span></label>

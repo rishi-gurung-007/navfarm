@@ -8,6 +8,7 @@ import { useLanguage } from "@/hooks/useLanguage";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { SearchableSelect } from "@/components/ui/searchable-select";
+import { ReasonSelect } from "@/components/ui/reason-select";
 import { InlineAlert } from "@/components/ui/alert";
 import { StatRow, StatCard } from "@/components/ui/stat-row";
 import { StatusBadge } from "@/components/ui/status-badge";
@@ -314,16 +315,17 @@ export default function BatchTransferPanel() {
                 className="nf-input w-full text-sm"
               />
             </label>
-            <label className="block">
-              <span className="nf-text-label">{t("btReason")}</span>
-              <input
-                type="text"
+            <div className="block">
+              <span className="nf-text-label block mb-1">{t("btReason")}</span>
+              <ReasonSelect
+                ariaLabel={t("btReason")}
                 value={reason}
-                onChange={(e) => setReason(e.target.value)}
-                placeholder={t("btReasonPlaceholder")}
-                className="nf-input w-full text-sm"
+                onChange={(val) => setReason(val)}
+                onClear={() => setReason("")}
+                placeholder={t("btReasonPlaceholder") || "Select reason from master…"}
+                searchPlaceholder="Search reason code, description, category…"
               />
-            </label>
+            </div>
           </div>
 
           <fieldset className="space-y-2">
