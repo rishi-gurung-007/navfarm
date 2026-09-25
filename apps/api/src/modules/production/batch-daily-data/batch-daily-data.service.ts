@@ -674,8 +674,12 @@ export class BatchDailyDataService {
    * If neither resolves there is nowhere honest to take the stock from, and
    * guessing would put the batch's cost against another farm's inventory —
    * which is exactly what the warehouse-less ledger row used to do.
+   *
+   * Public so the demo's chapter 04 can size its silo top-ups against the
+   * very warehouse each entry will draw from, rather than a second copy of
+   * this rule that could drift from it.
    */
-  private async resolveConsumptionWarehouse(
+  async resolveConsumptionWarehouse(
     locationId: string | null,
     itemId: string,
     activityName: string | null,
