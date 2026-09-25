@@ -321,7 +321,7 @@ interface KpiRow {
 interface StagePlan {
   stage: string;
   category: 'SOW' | 'GILT' | 'BOAR' | 'PIGLET' | 'COMMERCIAL_PIG';
-  /** Converted to days from the client's words; `note` keeps the words. */
+  /** Stage days (day 1 = the day the pig entered the stage), not days of age; `note` keeps the client's words. */
   from: number;
   to: number;
   feed: string;
@@ -345,10 +345,20 @@ const DEMO_CAVEAT = 'Demo benchmark, not a client-approved standard — confirm 
  * lifecycle sheets ("from service week" / "15 weeks pregnant", "birth" /
  * "4 weeks", "4 weeks of age" / "10 weeks of age"); the rest are Rishi's
  * wording of the same periods, because no submitted sheet words them.
+ *
+ * from/to are STAGE DAYS — day 1 is the day the pig entered the stage — per
+ * Rishi, 2026-09-25. The scheduler and the feed forecast both read
+ * period_from/period_to that way (modules/production/lifecycle/feed-row-days.ts,
+ * stageDayRange), so the client's age wording ("Weaner 28-70 of age") is kept
+ * in the note but the numbers are shifted to start at stage day 1 with each
+ * stage's length unchanged: WEANER 28-70 -> 1-43, GILT_GROWER 28-210 -> 1-183,
+ * GROWER 70-140 -> 1-71, FINISHER 140-170 -> 1-31, and QUARANTINE's 0 -> 1.
+ * Left as ages, a batch that entered WEANER or GILT_GROWER got no feed line
+ * for its first 27 stage days.
  */
 const SOW_STAGE_PLAN: StagePlan[] = [
   {
-    stage: 'QUARANTINE', category: 'GILT', from: 0, to: 28,
+    stage: 'QUARANTINE', category: 'GILT', from: 1, to: 28,
     feed: FEED.GESTATION, feedKgPerHeadPerDay: 2.5,
     bodyWeightKg: 110, adgGpd: 450, fcr: 3.2, mortalityPct: 0.5,
     vaccinations: [{ vaccine: VACCINE.PRRS, trigger_type: 'AGE_WEEKS', trigger_value: 26, dose_ml: 2, route: 'IM', withdrawal_days: 21 }],
@@ -360,7 +370,7 @@ const SOW_STAGE_PLAN: StagePlan[] = [
     note: `Client period: "Quarantine 0-28" (days from arrival). ${DEMO_CAVEAT}`,
   },
   {
-    stage: 'GILT_GROWER', category: 'GILT', from: 28, to: 210,
+    stage: 'GILT_GROWER', category: 'GILT', from: 1, to: 183,
     feed: FEED.GROWER, feedKgPerHeadPerDay: 2.2,
     bodyWeightKg: 120, adgGpd: 650, fcr: 2.9, mortalityPct: 1,
     vaccinations: [{ vaccine: VACCINE.PARVO, trigger_type: 'AGE_WEEKS', trigger_value: 24, dose_ml: 2, route: 'IM', withdrawal_days: 21 }],
@@ -369,7 +379,7 @@ const SOW_STAGE_PLAN: StagePlan[] = [
       { metric: 'ADG', lower_limit: 550, upper_limit: 800, severity: 'WARNING' },
       { metric: 'BODY_WEIGHT', lower_limit: 100, upper_limit: 140, severity: 'INFO' },
     ],
-    note: `Client period: "Gilt grower to ~210" (days of age). The farm sheets write this phase as "gilt rearing 16 to 25 weeks" and "gilt rearing gilt to Service line (28 weeks to 35 weeks)". ${DEMO_CAVEAT}`,
+    note: `Client period: "Gilt grower to ~210" (days of age), held as stage days 1-183 (age 28-210). The farm sheets write this phase as "gilt rearing 16 to 25 weeks" and "gilt rearing gilt to Service line (28 weeks to 35 weeks)". ${DEMO_CAVEAT}`,
   },
   {
     stage: 'FLUSH', category: 'GILT', from: 1, to: 14,
@@ -438,7 +448,7 @@ const SOW_STAGE_PLAN: StagePlan[] = [
     note: `Weaning event at the end of the 28-day lactation. The farm sheets write the gilt-processing period around it as "birth" to "4 weeks". ${DEMO_CAVEAT}`,
   },
   {
-    stage: 'WEANER', category: 'PIGLET', from: 28, to: 70,
+    stage: 'WEANER', category: 'PIGLET', from: 1, to: 43,
     feed: FEED.GROWER, feedKgPerHeadPerDay: 0.8,
     bodyWeightKg: 20, adgGpd: 400, fcr: 1.8, mortalityPct: 2.5,
     vaccinations: [{ vaccine: VACCINE.PRRS, trigger_type: 'AGE_WEEKS', trigger_value: 6, dose_ml: 2, route: 'IM', withdrawal_days: 21 }],
@@ -448,10 +458,10 @@ const SOW_STAGE_PLAN: StagePlan[] = [
       { metric: 'FCR', lower_limit: null, upper_limit: 2, severity: 'WARNING' },
       { metric: 'MORTALITY_COUNT', lower_limit: null, upper_limit: 2, severity: 'CRITICAL' },
     ],
-    note: `Client period: "Weaner 28-70 of age" (days). The farm sheets write the same period as "4 weeks of age" to "10 weeks of age". ${DEMO_CAVEAT}`,
+    note: `Client period: "Weaner 28-70 of age" (days), held as stage days 1-43. The farm sheets write the same period as "4 weeks of age" to "10 weeks of age". ${DEMO_CAVEAT}`,
   },
   {
-    stage: 'GROWER', category: 'COMMERCIAL_PIG', from: 70, to: 140,
+    stage: 'GROWER', category: 'COMMERCIAL_PIG', from: 1, to: 71,
     feed: FEED.GROWER, feedKgPerHeadPerDay: 2,
     bodyWeightKg: 65, adgGpd: 700, fcr: 2.5, mortalityPct: 1.5,
     vaccinations: [],
@@ -460,10 +470,10 @@ const SOW_STAGE_PLAN: StagePlan[] = [
       { metric: 'ADG', lower_limit: 600, upper_limit: 800, severity: 'WARNING' },
       { metric: 'FCR', lower_limit: null, upper_limit: 2.7, severity: 'WARNING' },
     ],
-    note: `Client period: "Grower 70-140" (days of age). ${DEMO_CAVEAT}`,
+    note: `Client period: "Grower 70-140" (days of age), held as stage days 1-71. ${DEMO_CAVEAT}`,
   },
   {
-    stage: 'FINISHER', category: 'COMMERCIAL_PIG', from: 140, to: 170,
+    stage: 'FINISHER', category: 'COMMERCIAL_PIG', from: 1, to: 31,
     feed: FEED.FINISHER, feedKgPerHeadPerDay: 3,
     bodyWeightKg: 105, adgGpd: 850, fcr: 3, mortalityPct: 1,
     vaccinations: [],
@@ -472,11 +482,16 @@ const SOW_STAGE_PLAN: StagePlan[] = [
       { metric: 'BODY_WEIGHT', lower_limit: 95, upper_limit: 115, severity: 'WARNING' },
       { metric: 'FCR', lower_limit: null, upper_limit: 3.2, severity: 'WARNING' },
     ],
-    note: `Client period: "Finisher 140-170" (days of age). ${DEMO_CAVEAT}`,
+    note: `Client period: "Finisher 140-170" (days of age), held as stage days 1-31. ${DEMO_CAVEAT}`,
   },
 ];
 
-/** A boar line runs quarantine, then collection for the rest of its working life. */
+/**
+ * A boar line runs quarantine, then collection for the rest of its working
+ * life. Stage days, like SOW_STAGE_PLAN (Rishi, 2026-09-25; feed-row-days.ts
+ * reads them so): BOAR_AI was written as days of age 29-1095, the day after
+ * quarantine to the end of productive life, and is held as stage days 1-1067.
+ */
 const BOAR_STAGE_PLAN: StagePlan[] = [
   {
     ...SOW_STAGE_PLAN[0],
@@ -484,7 +499,7 @@ const BOAR_STAGE_PLAN: StagePlan[] = [
     note: `Client period: "Quarantine 0-28" (days from arrival). ${DEMO_CAVEAT}`,
   },
   {
-    stage: 'BOAR_AI', category: 'BOAR', from: 29, to: 1095,
+    stage: 'BOAR_AI', category: 'BOAR', from: 1, to: 1067,
     feed: FEED.GESTATION, feedKgPerHeadPerDay: 3,
     bodyWeightKg: 250, adgGpd: 300, fcr: 3.5, mortalityPct: 1,
     vaccinations: [{ vaccine: VACCINE.PARVO, trigger_type: 'AGE_WEEKS', trigger_value: 30, dose_ml: 2, route: 'IM', withdrawal_days: 21 }],
@@ -493,7 +508,7 @@ const BOAR_STAGE_PLAN: StagePlan[] = [
       { metric: 'SEMEN_MOTILITY', lower_limit: 70, upper_limit: null, severity: 'CRITICAL' },
       { metric: 'BCS_SCORE', lower_limit: 3, upper_limit: 3.5, severity: 'INFO' },
     ],
-    note: `Working life after quarantine, held in days of age to the boar productive life the sheets give (29 months). ${DEMO_CAVEAT}`,
+    note: `Working life after quarantine, to the boar productive life the sheets give (29 months), held as stage days 1-1067 (age 29-1095). ${DEMO_CAVEAT}`,
   },
 ];
 

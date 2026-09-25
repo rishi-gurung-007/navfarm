@@ -22,6 +22,13 @@ interface LifecycleDefinition {
   notes: string;
 }
 
+// periodFrom/periodTo are STAGE DAYS — day 1 is the day the pig entered the
+// stage — per Rishi, 2026-09-25, because the scheduler and the feed forecast
+// both read them that way (modules/production/lifecycle/feed-row-days.ts,
+// stageDayRange). These rows were first written end to end along the pig's
+// life (GILT_GROWER 8-120, FLUSH_SERVICE 121-128, ... CB_GROWER 286-363), so
+// every stage after quarantine got no feed line until its batch was hundreds
+// of days into it. Each is now shifted to start at 1 with its length kept.
 const LANDRACE_LIFECYCLE_STAGES: LifecycleDefinition[] = [
   {
     code: 'BLS-LAND-01',
@@ -44,8 +51,8 @@ const LANDRACE_LIFECYCLE_STAGES: LifecycleDefinition[] = [
     code: 'BLS-LAND-02',
     stageCode: 'GILT_GROWER',
     calcUnit: 'DAY',
-    periodFrom: 8,
-    periodTo: 120,
+    periodFrom: 1,
+    periodTo: 113,
     feedItemCode: 'LVS-PIG-FEED',
     feedQtyPerDayKg: 2.2,
     feedWastagePct: 5.0,
@@ -61,8 +68,8 @@ const LANDRACE_LIFECYCLE_STAGES: LifecycleDefinition[] = [
     code: 'BLS-LAND-03',
     stageCode: 'FLUSH_SERVICE',
     calcUnit: 'DAY',
-    periodFrom: 121,
-    periodTo: 128,
+    periodFrom: 1,
+    periodTo: 8,
     feedItemCode: 'LVS-PIG-FEED',
     feedQtyPerDayKg: 3.0,
     feedWastagePct: 5.0,
@@ -76,8 +83,8 @@ const LANDRACE_LIFECYCLE_STAGES: LifecycleDefinition[] = [
     code: 'BLS-LAND-04',
     stageCode: 'DRY_SOW_GESTATION',
     calcUnit: 'DAY',
-    periodFrom: 129,
-    periodTo: 242,
+    periodFrom: 1,
+    periodTo: 114,
     feedItemCode: 'LVS-PIG-FEED',
     feedQtyPerDayKg: 2.5,
     feedWastagePct: 3.0,
@@ -92,8 +99,8 @@ const LANDRACE_LIFECYCLE_STAGES: LifecycleDefinition[] = [
     code: 'BLS-LAND-05',
     stageCode: 'FARROWING',
     calcUnit: 'DAY',
-    periodFrom: 243,
-    periodTo: 250,
+    periodFrom: 1,
+    periodTo: 8,
     feedItemCode: 'LVS-PIG-FEED',
     feedQtyPerDayKg: 1.5,
     feedWastagePct: 0.0,
@@ -109,8 +116,8 @@ const LANDRACE_LIFECYCLE_STAGES: LifecycleDefinition[] = [
     code: 'BLS-LAND-06',
     stageCode: 'LACTATION',
     calcUnit: 'DAY',
-    periodFrom: 251,
-    periodTo: 278,
+    periodFrom: 1,
+    periodTo: 28,
     feedItemCode: 'LVS-PIG-FEED',
     feedQtyPerDayKg: 6.5,
     feedWastagePct: 3.0,
@@ -127,8 +134,8 @@ const LANDRACE_LIFECYCLE_STAGES: LifecycleDefinition[] = [
     code: 'BLS-LAND-07',
     stageCode: 'WEANING',
     calcUnit: 'DAY',
-    periodFrom: 279,
-    periodTo: 285,
+    periodFrom: 1,
+    periodTo: 7,
     stdBodyWeightKg: 6.5,
     stdMortalityRatePct: 0.0,
     outputItemCode: 'LVS-PIGLET',
@@ -142,8 +149,8 @@ const LANDRACE_LIFECYCLE_STAGES: LifecycleDefinition[] = [
     code: 'BLS-LAND-08',
     stageCode: 'CB_GROWER',
     calcUnit: 'DAY',
-    periodFrom: 286,
-    periodTo: 363,
+    periodFrom: 1,
+    periodTo: 78,
     feedItemCode: 'LVS-PIG-FEED',
     feedQtyPerDayKg: 2.5,
     feedWastagePct: 5.0,
