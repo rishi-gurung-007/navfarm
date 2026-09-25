@@ -84,6 +84,29 @@ describe('SiloFeedService', () => {
       ).rejects.toThrow(/already holds 'FEED-R1'.*empty it/s);
     });
 
+    it("reads naturally for a Goods Receipt — 'this receipt' in the two-item message, 'Goods Receipt' in both prefixes", async () => {
+      await expect(
+        service.assertCanReceive({
+          siloId: 'silo-1', siloName: 'GRS/SILO-001', companyId: 'co-1', tenantId: 'tenant-1',
+          itemIds: ['item-r1', 'item-r2'], documentLabel: 'Goods Receipt',
+        }),
+      ).rejects.toThrow(
+        "Cannot post this Goods Receipt — silo 'GRS/SILO-001' holds one feed item at a time and this receipt carries 2 different items.",
+      );
+
+      mockGetStockBalance.mockResolvedValueOnce([
+        { item_id: 'item-r1', item_code: 'FEED-R1', item_description: null, on_hand_qty: 100 },
+      ]);
+      await expect(
+        service.assertCanReceive({
+          siloId: 'silo-1', siloName: 'GRS/SILO-001', companyId: 'co-1', tenantId: 'tenant-1',
+          itemIds: ['item-r2'], documentLabel: 'Goods Receipt',
+        }),
+      ).rejects.toThrow(
+        "Cannot post this Goods Receipt — silo 'GRS/SILO-001' already holds 'FEED-R1'. A silo holds one feed item at a time; empty it before moving a different item in.",
+      );
+    });
+
     it("rejects D9: a sibling silo on a shared shed already draws the incoming item", async () => {
       // Own silo (S1) is empty.
       mockGetStockBalance.mockResolvedValueOnce([]);
