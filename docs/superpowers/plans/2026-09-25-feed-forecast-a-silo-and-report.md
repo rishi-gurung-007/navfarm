@@ -10,6 +10,30 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-25-feed-forecast-design.md` (decisions D1–D15 are referenced by number below).
 
+## Status as of 2026-09-25 20:16
+
+Tasks 1–9 have landed. **Tasks 1–8 were tracked by commit, not by ticking the
+boxes below** — the boxes in those sections are still unticked and should not be
+read as work outstanding. The commits are:
+
+| Task | Commit |
+|---|---|
+| 1 Link table, backfill, farm offsets | `befb009` |
+| 2 `SiloFeedService` | `9a2d7bd`, `65f06bd` |
+| 3 Location service + web master data | `bdb5c19` |
+| 4 Daily entry silo source | `5ce724f` |
+| 5 Per-row feed lines | `98bf750` |
+| 6 Forecast engine | `98ef76b`, `db59c26` |
+| 7 `GET /feed-forecast` | `58190ed`, `b06441e` |
+| 8 Web report | `605c02c` |
+| — review fix rounds | `17f1b93`, `2f58a97` |
+| 9 Seeds/demo on the link table, drop `feed_silo_id` | `ab7625e` |
+
+**Only Task 10 remains**, and it is blocked on Rishi: Step 1 is
+`pnpm nx run api:db-rebuild-demo -- --apply`, which an agent must not run.
+Nothing in Tasks 1–9 has been verified against MySQL yet — that is what Task 10
+is for, and until it runs the feature is green-suite-only (`CLAUDE.md`).
+
 ## Global Constraints
 
 - Read `AGENTS.md` first. Comments explain **why**, in prose, matching the dense style of the file being edited.
@@ -422,8 +446,8 @@ UI:
 - Create: `apps/api/src/drizzle/tenant/0115_drop_feed_silo_id.sql` + journal entry 115
 - Modify: `schema.ts` (remove `feed_silo_id`, its FK and index), `system-master-data-seed.ts` if it references it
 
-- [ ] **Step 1:** `grep -rn "feed_silo_id" apps/api/src apps/web/src` → only the files above remain; change each.
-- [ ] **Step 2: Migration 0115:**
+- [x] **Step 1:** `grep -rn "feed_silo_id" apps/api/src apps/web/src` → only the files above remain; change each.
+- [x] **Step 2: Migration 0115:**
 
 ```sql
 -- silo_shed_link (0114) now carries every silo -> shed relation and nothing
@@ -434,8 +458,8 @@ DROP INDEX `idx_location_master_feed_silo_id` ON `location_master`;
 --> statement-breakpoint
 ALTER TABLE `location_master` DROP COLUMN `feed_silo_id`;
 ```
-- [ ] **Step 3:** `grep -rn "feed_silo_id" apps/api/src apps/web/src` → only the two migration files. Typecheck, all API and web tests → PASS.
-- [ ] **Step 4: Commit** `refactor(location): seeds and demo on silo_shed_link; drop feed_silo_id`
+- [x] **Step 3:** `grep -rn "feed_silo_id" apps/api/src apps/web/src` → only the two migration files. Typecheck, all API and web tests → PASS.
+- [x] **Step 4: Commit** `refactor(location): seeds and demo on silo_shed_link; drop feed_silo_id`
 
 ---
 
