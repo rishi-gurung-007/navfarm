@@ -356,3 +356,62 @@ Each process must have:
 
 Validate the same direct and proxied health checks after converting the
 interactive commands into services.
+
+## 12. Updating the running services (NSSM)
+
+The server runs two NSSM services behind IIS: `NAVFarm-API` (port 2877) and
+`NAVFarm-Web` (port 3002, published as https://test-app.navfarm.com).
+`NAVFarm-Web` depends on `NAVFarm-API`.
+
+**Stop both services before building.** `next build` replaces
+`apps/web/.next` in place and renames every chunk under `/_next/static`. A web
+service left running during the build serves a mix of old and new files, and
+testers get `ChunkLoadError … 500` and "Application error: a client-side
+exception". The services also keep `dist/` and `.next` files locked on Windows.
+About three minutes of planned downtime is the price of a clean switch.
+
+Run in an **Administrator** PowerShell:
+
+```powershell
+Set-Location C:\path\to\navfarm
+
+# 1. Stop web first (it depends on the API), then the API.
+Stop-Service NAVFarm-Web
+Stop-Service NAVFarm-API
+Get-Service NAVFarm-Web, NAVFarm-API          # both Stopped
+Get-NetTCPConnection -State Listen -LocalPort 2877,3002 -ErrorAction SilentlyContinue   # prints nothing
+
+# 2. Update the code.
+git status --short                             # must print nothing
+git fetch origin
+git pull --ff-only origin main
+git log -1 --oneline
+pnpm install --frozen-lockfile
+
+# 3. Database: keep the data and apply new migrations …
+pnpm nx run api:db-bootstrap
+#    … or, only when the release says the demo must be rebuilt (drops every nf_ database):
+#    pnpm nx run api:db-rebuild-demo            (dry run, read it)
+#    pnpm nx run api:db-rebuild-demo -- --apply
+
+# 4. Build while nothing is running.
+pnpm nx run api:build --skipNxCache
+pnpm nx run web:build --skipNxCache
+
+# 5. Start the API, check it, then start web and check through IIS.
+Start-Service NAVFarm-API
+Start-Sleep 5
+Invoke-RestMethod http://127.0.0.1:2877/api/v1/health
+Start-Service NAVFarm-Web
+Start-Sleep 10
+(Invoke-WebRequest http://127.0.0.1:3002 -UseBasicParsing).StatusCode
+Invoke-RestMethod https://test-app.navfarm.com/api/v1/health
+```
+
+If a build fails, fix it before starting either service. Do not start the old
+build against the new code.
+
+Testers who had the site open during the update may see one automatic reload:
+the page script `chunk-reload-script.ts` reloads a tab once when its chunks no
+longer exist. If a page still shows "Application error" after that, ask for a
+hard refresh (Ctrl+Shift+R) and a screenshot of the browser console.

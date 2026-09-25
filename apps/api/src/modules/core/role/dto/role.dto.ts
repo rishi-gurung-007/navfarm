@@ -1,6 +1,23 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsArray, ValidateNested } from 'class-validator';
-import { Type } from 'class-transformer';
+import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsArray, ValidateNested, MaxLength } from 'class-validator';
+import { Type, Transform } from 'class-transformer';
+
+/**
+ * `enableImplicitConversion` is on globally, and it reads ANY non-empty string
+ * as boolean true — so `{"isActive":"false"}` used to activate a role. The
+ * implicit conversion runs before @Transform, so `value` has already become
+ * true by the time we see it; the raw input is read from `obj[key]` instead.
+ * The flag now means what it spells and @IsBoolean rejects anything else.
+ */
+const StrictBoolean = () =>
+  Transform(({ obj, key }) => {
+    const value = obj[key];
+    if (typeof value !== 'string') return value;
+    const v = value.trim().toLowerCase();
+    if (['true', '1'].includes(v)) return true;
+    if (['false', '0', ''].includes(v)) return false;
+    return value;
+  });
 
 export class CreateRoleDto {
   @ApiProperty({ 
@@ -17,6 +34,7 @@ export class CreateRoleDto {
   })
   @IsString()
   @IsNotEmpty()
+  @MaxLength(50)
   roleCode: string;
 
   @ApiProperty({ 
@@ -25,6 +43,7 @@ export class CreateRoleDto {
   })
   @IsString()
   @IsNotEmpty()
+  @MaxLength(100)
   roleName: string;
 
   @ApiProperty({ 
@@ -67,36 +86,43 @@ export class PermissionItemDto {
   resource: string;
 
   @ApiProperty({ description: 'Allows viewing records', default: false, example: true })
+  @StrictBoolean()
   @IsBoolean()
   @IsOptional()
   can_view?: boolean;
 
   @ApiProperty({ description: 'Allows creating records', default: false, example: true })
+  @StrictBoolean()
   @IsBoolean()
   @IsOptional()
   can_create?: boolean;
 
   @ApiProperty({ description: 'Allows updating records', default: false, example: false })
+  @StrictBoolean()
   @IsBoolean()
   @IsOptional()
   can_edit?: boolean;
 
   @ApiProperty({ description: 'Allows deleting records', default: false, example: false })
+  @StrictBoolean()
   @IsBoolean()
   @IsOptional()
   can_delete?: boolean;
 
   @ApiProperty({ description: 'Allows approving workflow status changes', default: false, example: false })
+  @StrictBoolean()
   @IsBoolean()
   @IsOptional()
   can_approve?: boolean;
 
   @ApiProperty({ description: 'Allows exporting reports/grids', default: false, example: false })
+  @StrictBoolean()
   @IsBoolean()
   @IsOptional()
   can_export?: boolean;
 
   @ApiProperty({ description: 'Allows printing documents', default: false, example: false })
+  @StrictBoolean()
   @IsBoolean()
   @IsOptional()
   can_print?: boolean;
@@ -105,6 +131,8 @@ export class PermissionItemDto {
 export class UpdateRoleDto {
   @ApiProperty({ description: 'Updated display name', required: false, example: 'Senior Farm Supervisor' })
   @IsString()
+  @IsNotEmpty()
+  @MaxLength(100)
   @IsOptional()
   roleName?: string;
 
@@ -114,6 +142,7 @@ export class UpdateRoleDto {
   description?: string;
 
   @ApiProperty({ description: 'Activate or deactivate the role', required: false, example: true })
+  @StrictBoolean()
   @IsBoolean()
   @IsOptional()
   isActive?: boolean;
