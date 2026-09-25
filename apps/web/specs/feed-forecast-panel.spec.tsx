@@ -158,7 +158,12 @@ describe('FeedForecastPanel — tenant admin', () => {
     await screen.findByRole('table');
     expect(forecastCallCount()).toBe(1);
 
-    fireEvent.change(screen.getByLabelText('ffDateFrom'), { target: { value: '2026-09-26' } });
+    // A date that is never the default: Date From starts at today, so a fixed
+    // literal turned this test red on the day it named.
+    const input = screen.getByLabelText('ffDateFrom') as HTMLInputElement;
+    const next = new Date(`${input.value}T00:00:00Z`);
+    next.setUTCDate(next.getUTCDate() + 1);
+    fireEvent.change(input, { target: { value: next.toISOString().slice(0, 10) } });
 
     await waitFor(() => expect(forecastCallCount()).toBe(2));
     // Give any runaway effect a moment to misbehave before asserting it didn't.
