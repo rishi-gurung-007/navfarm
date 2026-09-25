@@ -61,10 +61,11 @@ describe('buildFeedForecast — sources and diet changes (Plan B)', () => {
       silos: [{ siloId: 's1', siloCode: 'GRS/SILO-001', itemId: 'r1', balanceKg: 1500 }],
       store: { storeId: 'st', storeCode: 'GRS/STORE-001', balances: {} },
     };
-    const { sources, dietChanges } = buildFeedForecast(input);
+    const { sources, dietChanges, flags } = buildFeedForecast(input);
     const r2 = sources.find((s) => s.itemId === 'r2')!;
     expect(r2).toMatchObject({ sourceType: 'STORE', sourceCode: 'GRS/STORE-001', locationId: 'st', isNextDiet: true, noSiloHoldsItem: true, balanceKg: 0 });
     expect(dietChanges[0]).toMatchObject({ nextSourceType: 'STORE', nextSourceCode: null });
+    expect(flags.filter((f) => f.kind === 'NO_SILO_HOLDS_ITEM')).toHaveLength(1);
   });
 
   it('leaves sources with no container out, and reports no change for a batch that stays on one diet', () => {
@@ -72,5 +73,46 @@ describe('buildFeedForecast — sources and diet changes (Plan B)', () => {
     const { sources, dietChanges } = buildFeedForecast(input);
     expect(sources).toEqual([]);
     expect(dietChanges).toEqual([]);
+  });
+
+  it('reports a diet change across a gap day with no feed row, comparing against the last known item', () => {
+    // R1 days 25-27 (23-25 Sep), day 28 (26 Sep) has no candidate row for the breed/stage — a gap — then R2 picks up
+    // from day 29 (27 Sep). Without the gap fix, day i-1 (26 Sep) reads as "no item" and the change is missed.
+    const input: ForecastInput = {
+      ...workedExample,
+      feedRows: [
+        { lifecycleId: 'row-r1', breedId: 'l', stageId: 'wean', itemId: 'r1', itemName: 'Weaner Diet R1', fromDay: 25, toDay: 27, kgPerHeadPerDay: 2.0, wastagePct: 0 },
+        { lifecycleId: 'row-r2', breedId: 'l', stageId: 'wean', itemId: 'r2', itemName: 'Weaner Diet R2', fromDay: 29, toDay: 31, kgPerHeadPerDay: 2.5, wastagePct: 0 },
+      ],
+    };
+    const { sources, dietChanges } = buildFeedForecast(input);
+    expect(dietChanges).toEqual([{
+      batchId: 'b', batchNo: 'WG-2026-38', shedCode: 'GRS/SHED-003',
+      fromItemId: 'r1', fromItemName: 'Weaner Diet R1', toItemId: 'r2', toItemName: 'Weaner Diet R2',
+      changeDate: '2026-09-27', nextSourceType: 'SILO', nextSourceCode: 'GRS/SILO-002',
+    }]);
+    const r2 = sources.find((s) => s.itemId === 'r2')!;
+    expect(r2.isNextDiet).toBe(true);
+  });
+
+  it('does not emit a source whose demand falls entirely before planningDate', () => {
+    // from (20 Sep) is before planningDate (23 Sep); the single feed row (days 1-3 of the stage, 20-22 Sep) is
+    // entirely consumed before the walk starts, so the container has nothing left to requisition.
+    const input: ForecastInput = {
+      planningDate: '2026-09-23', from: '2026-09-20', to: '2026-09-25', refillBufferDays: 2, leadTimeDays: 0,
+      sheds: [{ shedId: 'h3', shedCode: 'GRS/SHED-003', siloIds: ['s0'] }],
+      silos: [{ siloId: 's0', siloCode: 'GRS/SILO-000', itemId: 'r0', balanceKg: 500 }],
+      store: null,
+      items: { r0: 'Starter Diet R0' },
+      batches: [{
+        batchId: 'b', batchNo: 'WG-2026-38', breedId: 'l', shedId: 'h3', heads: 1000,
+        segments: [{ stageId: 'wean', stageCode: 'WEANER', start: '2026-09-20', end: null, projected: false }],
+      }],
+      feedRows: [
+        { lifecycleId: 'row-r0', breedId: 'l', stageId: 'wean', itemId: 'r0', itemName: 'Starter Diet R0', fromDay: 1, toDay: 3, kgPerHeadPerDay: 1.0, wastagePct: 0 },
+      ],
+    };
+    const { sources } = buildFeedForecast(input);
+    expect(sources).toEqual([]);
   });
 });

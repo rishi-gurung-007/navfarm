@@ -447,37 +447,51 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
     });
   }
 
-  // Diet changes (checkpoint 30): a batch whose item on walk day i differs from day i-1. Days before planningDate are
-  // not walked, so a change that already happened is never reported as upcoming.
+  // Diet changes (checkpoint 30): a batch whose item changes between two walk days, compared against the last walk
+  // day that HAD an item — not strictly the day before (fix round 1, #1). A gap day (no feed row, or a 0 kg row) has
+  // no entry in itemByBatchDate; without this, a gap right before a diet switch would hide the change entirely,
+  // because day i-1 would read as "no item" rather than "the old diet".
   const dietChanges: DietChange[] = [];
   const nextDietKeys = new Set<string>();
   for (const batch of input.batches) {
-    for (let i = 1; i < walkDates.length; i++) {
-      const before = itemByBatchDate.get(`${batch.batchId}|${walkDates[i - 1]}`);
-      const after = itemByBatchDate.get(`${batch.batchId}|${walkDates[i]}`);
-      if (!before || !after || before === after) continue;
-      const next = resolveSource(batch.shedId, after); // cached: already resolved by the demand loop
-      nextDietKeys.add(sourceKeyFor(next, after).key);
-      dietChanges.push({
-        batchId: batch.batchId,
-        batchNo: batch.batchNo,
-        shedCode: shedById.get(batch.shedId)?.shedCode ?? '',
-        fromItemId: before,
-        fromItemName: input.items[before] ?? before,
-        toItemId: after,
-        toItemName: input.items[after] ?? after,
-        changeDate: walkDates[i],
-        nextSourceType: next.sourceType,
-        nextSourceCode: next.sourceType === 'SILO' ? next.sourceCode : null,
-      });
+    let lastItem: string | null = null;
+    for (const date of walkDates) {
+      const item = itemByBatchDate.get(`${batch.batchId}|${date}`);
+      if (!item) continue;
+      if (lastItem !== null && item !== lastItem) {
+        const next = resolveSource(batch.shedId, item); // cached: already resolved by the demand loop
+        nextDietKeys.add(sourceKeyFor(next, item).key);
+        dietChanges.push({
+          batchId: batch.batchId,
+          batchNo: batch.batchNo,
+          shedCode: shedById.get(batch.shedId)?.shedCode ?? '',
+          fromItemId: lastItem,
+          fromItemName: input.items[lastItem] ?? lastItem,
+          toItemId: item,
+          toItemName: input.items[item] ?? item,
+          changeDate: date,
+          nextSourceType: next.sourceType,
+          nextSourceCode: next.sourceType === 'SILO' ? next.sourceCode : null,
+        });
+      }
+      lastItem = item;
     }
   }
+  // Sort by shedCode, batchNo, changeDate — same convention as the rows/sources sort below (fix round 1, #4).
+  dietChanges.sort((a, b) => {
+    if (a.shedCode !== b.shedCode) return a.shedCode < b.shedCode ? -1 : 1;
+    if (a.batchNo !== b.batchNo) return a.batchNo < b.batchNo ? -1 : 1;
+    return a.changeDate < b.changeDate ? -1 : a.changeDate > b.changeDate ? 1 : 0;
+  });
 
   // One summary per real container and item. NONE (no silo, no store) has nowhere to deliver to, so no requisition line.
   const sources: ForecastSource[] = [];
   for (const [key, sk] of keyMeta) {
     if (sk.sourceType === 'NONE') continue;
     const p = projectionByKey.get(key)!;
+    // A container can appear in keyMeta from demand that falls entirely before planningDate (from < planningDate) —
+    // nothing is left to walk, so it has no requisition line (fix round 1, #2).
+    if (p.walkDemandKg <= 0) continue;
     const planningDayDemandKg = p.sourceDailyDemandKg ?? 0;
     sources.push({
       sourceType: sk.sourceType,
