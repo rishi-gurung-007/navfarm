@@ -42,6 +42,12 @@
  *    don't divide or subtract exactly in IEEE 754 doubles — `floor(123.6 /
  *    41.2)` can come out 2 instead of 3. Whole grams aren't precise enough
  *    either (e.g. 17.9375 kg/day is a half-gram), so the scale is 1e6, not 1e3.
+ * 5. Plan B reads two more things off the same walk: `sources` (one entry per
+ *    physical container and item — the unit a feed requisition line is
+ *    drafted for) and `dietChanges` (each batch's switch to its next
+ *    lifecycle feed row inside planningDate..to, for the DIET_CHANGE alert).
+ *    They are computed here, not by callers, so the requisition, the alert
+ *    and the report can never disagree about demand or dates.
  */
 import { FeedRow, feedRowFor } from '../../production/lifecycle/feed-row-days';
 
@@ -96,6 +102,44 @@ export interface ForecastRow {
   rangeDemandKg: number;
 }
 
+export interface ForecastSource {
+  sourceType: 'SILO' | 'STORE';
+  sourceCode: string;
+  locationId: string; // silo_id or the store's location_id
+  itemId: string;
+  itemName: string;
+  balanceKg: number; // System Balance at the planning date
+  planningDayDemandKg: number; // combined demand on the planning date
+  firstDemandDate: string | null; // first walk day (planningDate..to) with demand
+  firstDayDemandKg: number; // combined demand on firstDemandDate
+  walkDemandKg: number; // combined demand planningDate..to
+  daysLeft: number | null; // D1
+  runDownDate: string | null; // D2
+  isNextDiet: boolean; // a batch changes onto this item in the window and nothing eats it today
+  noSiloHoldsItem: boolean; // a shed with silos draws it from the store because no silo holds it
+  lifecycleIds: string[]; // lifecycle rows that produce its demand in the window, sorted
+}
+
+export interface DietChange {
+  batchId: string;
+  batchNo: string;
+  shedCode: string;
+  fromItemId: string;
+  fromItemName: string;
+  toItemId: string;
+  toItemName: string;
+  changeDate: string; // first day of the new diet, > planningDate
+  nextSourceType: 'SILO' | 'STORE' | 'NONE';
+  nextSourceCode: string | null; // the silo that will feed it, null unless SILO
+}
+
+export interface ForecastResult {
+  rows: ForecastRow[];
+  flags: ForecastFlag[];
+  sources: ForecastSource[];
+  dietChanges: DietChange[];
+}
+
 /** Date arithmetic on UTC midnights — see context.md: farm-local calendar days in, UTC midnight math internally. */
 function parseIsoUtc(iso: string): number {
   const [y, m, d] = iso.split('-').map(Number);
@@ -140,7 +184,14 @@ function toKg(micrograms: number): number {
   return micrograms / 1_000_000;
 }
 
-type SourceResolution = { sourceType: 'SILO' | 'STORE' | 'NONE'; sourceCode: string | null; siloId: string | null };
+type SourceResolution = {
+  sourceType: 'SILO' | 'STORE' | 'NONE';
+  sourceCode: string | null;
+  siloId: string | null;
+  storeId: string | null;
+  // The shed has silos but none holds this item, so it falls back to the store (Plan A Task 4's rule).
+  noSiloHoldsItem: boolean;
+};
 
 /** One physical container (a silo, or the shared farm store) holding one item — the unit balance projection runs over. */
 interface SourceKey {
@@ -148,10 +199,11 @@ interface SourceKey {
   sourceType: 'SILO' | 'STORE' | 'NONE';
   sourceCode: string | null;
   siloId: string | null;
+  storeId: string | null;
   itemId: string;
 }
 
-export function buildFeedForecast(input: ForecastInput): { rows: ForecastRow[]; flags: ForecastFlag[] } {
+export function buildFeedForecast(input: ForecastInput): ForecastResult {
   const flags: ForecastFlag[] = [];
 
   // The visible/reporting window (rangeDemandKg, perDayIntakeKg, NO_FEED_ROW/OVERLAP flags).
@@ -181,18 +233,18 @@ export function buildFeedForecast(input: ForecastInput): { rows: ForecastRow[]; 
 
     let resolution: SourceResolution;
     if (matching) {
-      resolution = { sourceType: 'SILO', sourceCode: matching.siloCode, siloId: matching.siloId };
+      resolution = { sourceType: 'SILO', sourceCode: matching.siloCode, siloId: matching.siloId, storeId: null, noSiloHoldsItem: false };
     } else if (shedSilos.length === 0) {
       // D6: sheds without a silo are included, fed from the farm STORE — no flag, this is expected.
       resolution = input.store
-        ? { sourceType: 'STORE', sourceCode: input.store.storeCode, siloId: null }
-        : { sourceType: 'NONE', sourceCode: null, siloId: null };
+        ? { sourceType: 'STORE', sourceCode: input.store.storeCode, siloId: null, storeId: input.store.storeId, noSiloHoldsItem: false }
+        : { sourceType: 'NONE', sourceCode: null, siloId: null, storeId: null, noSiloHoldsItem: false };
     } else {
       // The shed has silos, but none of them hold this item — falls back to STORE (Task 4's daily-entry rule), flagged.
       flags.push({ kind: 'NO_SILO_HOLDS_ITEM', shedCode: shed!.shedCode, itemName: input.items[itemId] ?? itemId });
       resolution = input.store
-        ? { sourceType: 'STORE', sourceCode: input.store.storeCode, siloId: null }
-        : { sourceType: 'NONE', sourceCode: null, siloId: null };
+        ? { sourceType: 'STORE', sourceCode: input.store.storeCode, siloId: null, storeId: input.store.storeId, noSiloHoldsItem: true }
+        : { sourceType: 'NONE', sourceCode: null, siloId: null, storeId: null, noSiloHoldsItem: true };
     }
     sourceCache.set(cacheKey, resolution);
     return resolution;
@@ -204,6 +256,7 @@ export function buildFeedForecast(input: ForecastInput): { rows: ForecastRow[]; 
       sourceType: resolution.sourceType,
       sourceCode: resolution.sourceCode,
       siloId: resolution.siloId,
+      storeId: resolution.storeId,
       itemId,
     };
   }
@@ -239,6 +292,12 @@ export function buildFeedForecast(input: ForecastInput): { rows: ForecastRow[]; 
     firstDemandDate: string;
   }
   const rowAggs = new Map<string, RowAgg>(); // keyed by batchId:itemId
+
+  // Plan B: which lifecycle rows feed each container inside the walk window, which item each batch eats on each walk
+  // day (for diet changes), and which containers are a store fallback for a shed that has silos.
+  const lifecycleIdsByKey = new Map<string, Set<string>>();
+  const itemByBatchDate = new Map<string, string>();
+  const noSiloKeys = new Set<string>();
 
   for (const batch of input.batches) {
     flags.push({ kind: 'HEADS_ASSUMED_FLAT', batchNo: batch.batchNo }); // D11: heads assumed flat unless movements say otherwise
@@ -288,6 +347,17 @@ export function buildFeedForecast(input: ForecastInput): { rows: ForecastRow[]; 
       }
       byDate.set(date, (byDate.get(date) ?? 0) + demandMicrograms);
 
+      if (date >= input.planningDate && date <= input.to) {
+        let ids = lifecycleIdsByKey.get(sk.key);
+        if (!ids) {
+          ids = new Set();
+          lifecycleIdsByKey.set(sk.key, ids);
+        }
+        ids.add(feedRow.lifecycleId);
+        itemByBatchDate.set(`${batch.batchId}|${date}`, feedRow.itemId);
+        if (resolution.noSiloHoldsItem) noSiloKeys.add(sk.key);
+      }
+
       if (!isInRange(date)) continue; // walk-only date (before `from`): contributes to the balance, not to the row
 
       const aggKey = `${batch.batchId}:${feedRow.itemId}`;
@@ -321,6 +391,9 @@ export function buildFeedForecast(input: ForecastInput): { rows: ForecastRow[]; 
     refillDate: string | null;
     requiredOn: string | null;
     overdue: boolean;
+    walkDemandKg: number;
+    firstDemandDate: string | null;
+    firstDayDemandKg: number;
   }
   const projectionByKey = new Map<string, KeyProjection>();
 
@@ -347,6 +420,19 @@ export function buildFeedForecast(input: ForecastInput): { rows: ForecastRow[]; 
     const requiredOn = refillDate !== null ? addDays(refillDate, -input.leadTimeDays) : null;
     const overdue = requiredOn !== null && requiredOn < input.planningDate;
 
+    // Plan B: demand over the walk window and its first day — the requisition's shortfall and daily requirement.
+    let walkDemandMicrograms = 0;
+    let firstDemandDate: string | null = null;
+    let firstDayDemandMicrograms = 0;
+    for (const date of walkDates) {
+      const m = byDate.get(date) ?? 0;
+      if (m > 0 && firstDemandDate === null) {
+        firstDemandDate = date;
+        firstDayDemandMicrograms = m;
+      }
+      walkDemandMicrograms += m;
+    }
+
     projectionByKey.set(key, {
       currentInventoryKg: toKg(balanceMicrograms),
       sourceDailyDemandKg: toKg(sourceDailyDemandMicrograms),
@@ -355,8 +441,65 @@ export function buildFeedForecast(input: ForecastInput): { rows: ForecastRow[]; 
       refillDate,
       requiredOn,
       overdue,
+      walkDemandKg: toKg(walkDemandMicrograms),
+      firstDemandDate,
+      firstDayDemandKg: toKg(firstDayDemandMicrograms),
     });
   }
+
+  // Diet changes (checkpoint 30): a batch whose item on walk day i differs from day i-1. Days before planningDate are
+  // not walked, so a change that already happened is never reported as upcoming.
+  const dietChanges: DietChange[] = [];
+  const nextDietKeys = new Set<string>();
+  for (const batch of input.batches) {
+    for (let i = 1; i < walkDates.length; i++) {
+      const before = itemByBatchDate.get(`${batch.batchId}|${walkDates[i - 1]}`);
+      const after = itemByBatchDate.get(`${batch.batchId}|${walkDates[i]}`);
+      if (!before || !after || before === after) continue;
+      const next = resolveSource(batch.shedId, after); // cached: already resolved by the demand loop
+      nextDietKeys.add(sourceKeyFor(next, after).key);
+      dietChanges.push({
+        batchId: batch.batchId,
+        batchNo: batch.batchNo,
+        shedCode: shedById.get(batch.shedId)?.shedCode ?? '',
+        fromItemId: before,
+        fromItemName: input.items[before] ?? before,
+        toItemId: after,
+        toItemName: input.items[after] ?? after,
+        changeDate: walkDates[i],
+        nextSourceType: next.sourceType,
+        nextSourceCode: next.sourceType === 'SILO' ? next.sourceCode : null,
+      });
+    }
+  }
+
+  // One summary per real container and item. NONE (no silo, no store) has nowhere to deliver to, so no requisition line.
+  const sources: ForecastSource[] = [];
+  for (const [key, sk] of keyMeta) {
+    if (sk.sourceType === 'NONE') continue;
+    const p = projectionByKey.get(key)!;
+    const planningDayDemandKg = p.sourceDailyDemandKg ?? 0;
+    sources.push({
+      sourceType: sk.sourceType,
+      sourceCode: sk.sourceCode!,
+      locationId: (sk.siloId ?? sk.storeId)!,
+      itemId: sk.itemId,
+      itemName: input.items[sk.itemId] ?? sk.itemId,
+      balanceKg: p.currentInventoryKg,
+      planningDayDemandKg,
+      firstDemandDate: p.firstDemandDate,
+      firstDayDemandKg: p.firstDayDemandKg,
+      walkDemandKg: p.walkDemandKg,
+      daysLeft: p.daysLeft,
+      runDownDate: p.runDownDate,
+      // "Is Next Diet Requisition — True if generated for the upcoming next diet" (Requisition §1 row 16): a batch
+      // changes onto it inside the window and nothing on this container eats it on the planning date.
+      isNextDiet: nextDietKeys.has(key) && planningDayDemandKg === 0,
+      noSiloHoldsItem: noSiloKeys.has(key),
+      lifecycleIds: [...(lifecycleIdsByKey.get(key) ?? [])].sort(),
+    });
+  }
+  sources.sort((a, b) => (a.sourceCode !== b.sourceCode ? (a.sourceCode < b.sourceCode ? -1 : 1) : a.itemId < b.itemId ? -1 : a.itemId > b.itemId ? 1 : 0));
 
   const entries: { row: ForecastRow; firstDemandDate: string }[] = [];
   for (const agg of rowAggs.values()) {
@@ -392,5 +535,5 @@ export function buildFeedForecast(input: ForecastInput): { rows: ForecastRow[]; 
     return a.firstDemandDate < b.firstDemandDate ? -1 : a.firstDemandDate > b.firstDemandDate ? 1 : 0;
   });
 
-  return { rows: entries.map((e) => e.row), flags };
+  return { rows: entries.map((e) => e.row), flags, sources, dietChanges };
 }
