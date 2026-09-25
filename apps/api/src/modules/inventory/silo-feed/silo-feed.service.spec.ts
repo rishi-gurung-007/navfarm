@@ -156,6 +156,19 @@ describe('SiloFeedService', () => {
     });
   });
 
+  describe('currentItems', () => {
+    it("reports the unit of every balance row of the resident item, not only the first", async () => {
+      // The ledger groups balances by unit, so one item can come back as a KG
+      // row and a BAG row; the feed forecast refuses the silo unless all are KG.
+      mockGetStockBalance.mockResolvedValueOnce([
+        { item_id: 'item-r1', item_code: 'FEED-R1', item_description: null, on_hand_qty: 100, uom: 'KG' },
+        { item_id: 'item-r1', item_code: 'FEED-R1', item_description: null, on_hand_qty: 4, uom: 'BAG' },
+      ]);
+      const items = await service.currentItems(['silo-1'], 'co-1', 'tenant-1');
+      expect(items.get('silo-1')).toEqual(expect.objectContaining({ item_id: 'item-r1', uoms: ['KG', 'BAG'] }));
+    });
+  });
+
   describe('assertAttachable', () => {
     it('rejects attaching a silo to a shed whose sibling silo already holds the same item', async () => {
       // S1 holds R1.

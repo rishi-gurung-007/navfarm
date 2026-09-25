@@ -71,7 +71,10 @@ export type ForecastFlag =
   | { kind: 'OVERLAPPING_FEED_ROWS'; batchNo: string; stageCode: string; day: number; date: string }
   | { kind: 'NO_SILO_HOLDS_ITEM'; shedCode: string; itemName: string }
   | { kind: 'STAGE_CHANGE_PROJECTED'; batchNo: string; stageCode: string; date: string }
-  | { kind: 'HEADS_ASSUMED_FLAT'; batchNo: string };
+  | { kind: 'HEADS_ASSUMED_FLAT'; batchNo: string }
+  // Raised by the service, not this engine: the batch's location did not resolve to an active SHED of the farm, so it
+  // was passed with no shed and draws on the STORE — flagged so it is not mistaken for a D6 shed-without-silo.
+  | { kind: 'BATCH_SHED_UNKNOWN'; batchNo: string };
 
 export interface ForecastRow {
   batchNo: string;

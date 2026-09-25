@@ -48,7 +48,37 @@ export interface StageInfo {
   stageCode: string;
   durationDays: number | null;
   nextStageId: string | null;
+  isActive: boolean;
 }
+
+/** The slice of a location_master row the shed walk needs. */
+export interface LocationNode {
+  location_id: string;
+  location_type: string;
+  parent_location_id: string | null;
+}
+
+/** The slice of a batch_header row buildInputBatches needs. */
+export interface BatchRow {
+  batch_id: string;
+  batch_no: string;
+  breed_id: string | null;
+  stage_id: string | null;
+  shed_id: string | null;
+  tracking_mode: string;
+  start_date: string;
+  opening_quantity: string;
+  closing_quantity: string | null;
+}
+
+export interface HeaderRow {
+  batch_id: string;
+  stage_id: string;
+  effective_from: string;
+  location_id: string | null;
+}
+
+type InputBatch = ForecastInput['batches'][number];
 
 type Segment = ForecastInput['batches'][number]['segments'][number];
 
@@ -65,6 +95,11 @@ function addDays(iso: string, n: number): string {
 
 function diffDays(a: string, b: string): number {
   return Math.round((parseIsoUtc(b) - parseIsoUtc(a)) / 86_400_000);
+}
+
+/** YYYY-MM-DD *and* a real day: Date.UTC rolls 2026-02-31 over to 3 March, so the parse must round-trip. */
+function isCalendarDay(iso: string): boolean {
+  return ISO_DAY.test(iso) && new Date(parseIsoUtc(iso)).toISOString().slice(0, 10) === iso;
 }
 
 /**
@@ -84,10 +119,21 @@ function todayLocal(): string {
  * only where Stage Master says how long a stage lasts and what follows it —
  * the stages it is expected to move through before `to` (D11: known dated
  * movements only). Each projected segment is marked so the engine can flag
- * the assumption; a stage with no duration or no successor simply runs on
- * past `to`, which is what "the count stays flat" means for the stage too.
+ * the assumption; a stage with no duration, no successor, or a retired
+ * (inactive) successor simply runs on past `to`.
+ *
+ * A stage whose typical length ran out *before* the planning date is not
+ * projected either (fix round 1 ruling): the transition should have happened
+ * but was not posted, so it is not a known movement — the batch keeps the
+ * stage its record says, and the diet shown is that stage's.
  */
-export function projectSegments(stageId: string, start: string, to: string, stages: Map<string, StageInfo>): Segment[] {
+export function projectSegments(
+  stageId: string,
+  start: string,
+  planningDate: string,
+  to: string,
+  stages: Map<string, StageInfo>,
+): Segment[] {
   const first = stages.get(stageId);
   const segments: Segment[] = [{ stageId, stageCode: first?.stageCode ?? stageId, start, end: null, projected: false }];
   while (segments.length < MAX_SEGMENTS) {
@@ -95,9 +141,9 @@ export function projectSegments(stageId: string, start: string, to: string, stag
     const stage = stages.get(current.stageId);
     if (!stage?.durationDays || stage.durationDays < 1 || !stage.nextStageId) break;
     const end = addDays(current.start, stage.durationDays - 1);
-    if (end >= to) break;
+    if (end >= to || end < planningDate) break;
     const next = stages.get(stage.nextStageId);
-    if (!next) break;
+    if (!next || !next.isActive) break;
     current.end = end;
     segments.push({ stageId: next.stageId, stageCode: next.stageCode, start: addDays(end, 1), end: null, projected: true });
   }
@@ -114,15 +160,93 @@ export function projectSegments(stageId: string, start: string, to: string, stag
  */
 export function siloInput(
   silo: { siloId: string; siloCode: string },
-  resident: { item_id: string; on_hand_qty: number; uom: string } | null,
+  resident: { item_id: string; on_hand_qty: number; uoms: string[] } | null,
 ): ForecastInput['silos'][number] {
   if (!resident) return { siloId: silo.siloId, siloCode: silo.siloCode, itemId: null, balanceKg: 0 };
-  if (resident.uom !== 'KG') {
+  // Every balance row of the item, not just the first: the ledger groups by
+  // unit, so a KG row can sit beside a BAG row of the same feed.
+  const foreign = resident.uoms.find((u) => u !== 'KG');
+  if (foreign) {
     throw new ConflictException(
-      `Silo '${silo.siloCode}' holds its feed in ${resident.uom}, not KG — the forecast cannot add bags to kilograms.`,
+      `Silo '${silo.siloCode}' holds its feed in ${foreign}, not KG — the forecast cannot add bags to kilograms.`,
     );
   }
   return { siloId: silo.siloId, siloCode: silo.siloCode, itemId: resident.item_id, balanceKg: resident.on_hand_qty };
+}
+
+/** A location's SHED: itself, or the nearest SHED above it (PEN -> SHED, CRATE -> PEN -> SHED); null if none. */
+export function resolveShed(locationId: string | null | undefined, locationById: Map<string, LocationNode>): string | null {
+  let current = locationId ? locationById.get(locationId) : undefined;
+  for (let hops = 0; current && hops < 5; hops++) {
+    if (current.location_type === 'SHED') return current.location_id;
+    current = current.parent_location_id ? locationById.get(current.parent_location_id) : undefined;
+  }
+  return null;
+}
+
+/**
+ * ACTIVE batch rows -> the engine's input batches. A BATCH_WISE batch is one
+ * input batch; an ANIMAL_WISE batch has no single stage, so it becomes one
+ * input batch per stage its live animals are in, each with that group's head
+ * count (D11: the latest count, flat unless a stage change is scheduled), and
+ * a batchNo carrying the stage so the rows can be told apart. No live
+ * animals, no input.
+ *
+ * Stage start and shed come from the batch's scheduler_header for that stage
+ * — its effective_from is when the batch entered the stage, its location_id
+ * where it stood — else from the batch row. Where the location does not walk
+ * up to an *active* SHED of the farm, the batch is passed with no shed (so it
+ * draws on the STORE) and flagged BATCH_SHED_UNKNOWN, since otherwise it would
+ * read exactly like a D6 shed-without-silo.
+ */
+export function buildInputBatches(args: {
+  batchRows: BatchRow[];
+  animalGroups: Map<string, { stageId: string; heads: number }[]>;
+  headers: HeaderRow[];
+  stages: Map<string, StageInfo>;
+  locationById: Map<string, LocationNode>;
+  activeShedIds: Set<string>;
+  planningDate: string;
+  to: string;
+}): { batches: InputBatch[]; flags: ForecastFlag[] } {
+  const { batchRows, animalGroups, headers, stages, locationById, activeShedIds, planningDate, to } = args;
+
+  // One header per (batch, stage) is the schema's intent (uq_scheduler_header_batch_stage),
+  // but if several exist the latest that has already started wins — a future one is a plan, not a fact.
+  const headerOf = new Map<string, HeaderRow>();
+  for (const h of [...headers].sort((a, b) => a.effective_from.localeCompare(b.effective_from))) {
+    if (h.effective_from <= planningDate) headerOf.set(`${h.batch_id}:${h.stage_id}`, h);
+  }
+
+  const batches: InputBatch[] = [];
+  const flags: ForecastFlag[] = [];
+  for (const b of batchRows) {
+    if (!b.breed_id) continue; // no breed, no feed standard to look up
+    const animalWise = b.tracking_mode === 'ANIMAL_WISE';
+    const groups = animalWise
+      ? animalGroups.get(b.batch_id) ?? []
+      : b.stage_id
+        ? [{ stageId: b.stage_id, heads: Number(b.closing_quantity ?? b.opening_quantity) }]
+        : [];
+    for (const g of groups) {
+      const stageCode = stages.get(g.stageId)?.stageCode ?? g.stageId;
+      const batchNo = animalWise ? `${b.batch_no} · ${stageCode}` : b.batch_no;
+      const header = headerOf.get(`${b.batch_id}:${g.stageId}`);
+      const resolved = resolveShed(header?.location_id ?? b.shed_id, locationById);
+      const shedId = resolved && activeShedIds.has(resolved) ? resolved : '';
+      if (!shedId) flags.push({ kind: 'BATCH_SHED_UNKNOWN', batchNo });
+      batches.push({
+        // ANIMAL_WISE groups need distinct ids: the engine keys its rows by (batchId, item).
+        batchId: animalWise ? `${b.batch_id}:${g.stageId}` : b.batch_id,
+        batchNo,
+        breedId: b.breed_id,
+        shedId,
+        heads: g.heads,
+        segments: projectSegments(g.stageId, header?.effective_from ?? b.start_date, planningDate, to, stages),
+      });
+    }
+  }
+  return { batches, flags };
 }
 
 /**
@@ -152,7 +276,7 @@ export class FeedForecastService {
     const planningDate = todayLocal();
     const from = query.from ?? planningDate;
     const to = query.to ?? addDays(from, DEFAULT_SPAN_DAYS);
-    if (!ISO_DAY.test(from) || !ISO_DAY.test(to)) {
+    if (!isCalendarDay(from) || !isCalendarDay(to)) {
       throw new BadRequestException('from and to must be calendar dates (YYYY-MM-DD).');
     }
     if (to < from) throw new BadRequestException('to must not be before from.');
@@ -171,9 +295,9 @@ export class FeedForecastService {
     if (!farmId) throw new BadRequestException('Select a farm.');
 
     const farm = await this.loadFarm(farmId, tenantId);
-    const input = await this.loadInput(farm, planningDate, from, to, tenantId);
+    const { input, flags: loadFlags } = await this.loadInput(farm, planningDate, from, to, tenantId);
     const { rows, flags } = buildFeedForecast(input);
-    return { planningDate, from, to, farm: { id: farm.id, code: farm.code, name: farm.name }, rows, flags };
+    return { planningDate, from, to, farm: { id: farm.id, code: farm.code, name: farm.name }, rows, flags: [...flags, ...loadFlags] };
   }
 
   /** The FARM row itself, inside the caller's company — the same test farm-scope uses for an active farm. */
@@ -212,7 +336,13 @@ export class FeedForecastService {
     };
   }
 
-  private async loadInput(farm: ForecastFarm, planningDate: string, from: string, to: string, tenantId: string): Promise<ForecastInput> {
+  private async loadInput(
+    farm: ForecastFarm,
+    planningDate: string,
+    from: string,
+    to: string,
+    tenantId: string,
+  ): Promise<{ input: ForecastInput; flags: ForecastFlag[] }> {
     const companyId = farm.companyId;
 
     // Every location on the farm in one read: sheds, silos and the store are
@@ -243,16 +373,6 @@ export class FeedForecastService {
     const siloRows = activeOfType('SILO');
     const activeSiloIds = new Set(siloRows.map((s) => s.location_id));
 
-    /** A location's SHED: itself, or the nearest SHED above it (PEN -> SHED, CRATE -> PEN -> SHED). */
-    const shedOf = (locationId: string | null | undefined): string | null => {
-      let current = locationId ? locationById.get(locationId) : undefined;
-      for (let hops = 0; current && hops < 5; hops++) {
-        if (current.location_type === 'SHED') return current.location_id;
-        current = current.parent_location_id ? locationById.get(current.parent_location_id) : undefined;
-      }
-      return null;
-    };
-
     // silo_shed_link (D7) is the only silo<->shed source; location_master.feed_silo_id is being dropped (Task 9).
     const shedIds = shedRows.map((s) => s.location_id);
     const links = shedIds.length
@@ -274,7 +394,7 @@ export class FeedForecastService {
       .filter((s) => linkedSiloIds.includes(s.location_id))
       .map((s) => siloInput({ siloId: s.location_id, siloCode: s.location_code }, residents.get(s.location_id) ?? null));
 
-    const batches = await this.loadBatches(farm, to, tenantId, shedOf);
+    const { batches, flags } = await this.loadBatches(farm, planningDate, to, tenantId, locationById, new Set(shedIds));
     const feedRows = await this.loadFeedRows([...new Set(batches.map((b) => b.breedId))], companyId, tenantId);
 
     // The farm's STORE (D6 fallback). One per farm in every template; if a farm
@@ -311,33 +431,32 @@ export class FeedForecastService {
     }
 
     return {
-      planningDate,
-      from,
-      to,
-      refillBufferDays: farm.refillBufferDays,
-      leadTimeDays: farm.leadTimeDays,
-      sheds,
-      silos,
-      store,
-      items,
-      batches,
-      feedRows,
+      input: {
+        planningDate,
+        from,
+        to,
+        refillBufferDays: farm.refillBufferDays,
+        leadTimeDays: farm.leadTimeDays,
+        sheds,
+        silos,
+        store,
+        items,
+        batches,
+        feedRows,
+      },
+      flags,
     };
   }
 
-  /**
-   * ACTIVE batches on the farm, as the engine's input batches. A BATCH_WISE
-   * batch is one input batch; an ANIMAL_WISE batch has no single stage, so it
-   * becomes one input batch per stage its live animals are in, each with that
-   * group's head count (D11: the latest count, flat unless a stage change is
-   * scheduled).
-   */
+  /** Reads the ACTIVE batches of the farm and everything buildInputBatches needs to place them. */
   private async loadBatches(
     farm: ForecastFarm,
+    planningDate: string,
     to: string,
     tenantId: string,
-    shedOf: (locationId: string | null | undefined) => string | null,
-  ): Promise<ForecastInput['batches']> {
+    locationById: Map<string, LocationNode>,
+    activeShedIds: Set<string>,
+  ): Promise<{ batches: InputBatch[]; flags: ForecastFlag[] }> {
     const scope = farmScope(this.cls);
     const batchRows = await this.db
       .select({
@@ -359,12 +478,12 @@ export class FeedForecastService {
           eq(schema.batchHeader.company_id, farm.companyId),
           eq(schema.batchHeader.farm_id, farm.id),
           eq(schema.batchHeader.status, 'ACTIVE'),
+          isNull(schema.batchHeader.deleted_at),
           ...batchScopeConditions(scope),
         ),
       );
-    // A batch with no breed has no feed standard to look up; nothing to forecast for it.
     const fed = batchRows.filter((b) => b.breed_id);
-    if (!fed.length) return [];
+    if (!fed.length) return { batches: [], flags: [] };
     const batchIds = fed.map((b) => b.batch_id);
 
     const animalGroups = new Map<string, { stageId: string; heads: number }[]>();
@@ -393,8 +512,6 @@ export class FeedForecastService {
       }
     }
 
-    // scheduler_header is one row per (batch, stage): its effective_from is
-    // when the batch entered that stage, and its location_id where it stood.
     const headers = await this.db
       .select({
         batch_id: schema.schedulerHeader.batch_id,
@@ -410,8 +527,8 @@ export class FeedForecastService {
           inArray(schema.schedulerHeader.batch_id, batchIds),
         ),
       );
-    const headerOf = new Map(headers.map((h) => [`${h.batch_id}:${h.stage_id}`, h]));
 
+    // Inactive stages are loaded too (a batch may still sit in one); projectSegments refuses to move *into* one.
     const lobIds = [...new Set(fed.map((b) => b.lob_id))];
     const stageRows = await this.db
       .select({
@@ -419,6 +536,7 @@ export class FeedForecastService {
         stage_code: schema.stageMaster.stage_code,
         typical_duration_days: schema.stageMaster.typical_duration_days,
         next_stage_id: schema.stageMaster.next_stage_id,
+        is_active: schema.stageMaster.is_active,
       })
       .from(schema.stageMaster)
       .where(
@@ -432,34 +550,17 @@ export class FeedForecastService {
     const stages = new Map<string, StageInfo>(
       stageRows.map((s) => [
         s.stage_id,
-        { stageId: s.stage_id, stageCode: s.stage_code, durationDays: s.typical_duration_days, nextStageId: s.next_stage_id },
+        {
+          stageId: s.stage_id,
+          stageCode: s.stage_code,
+          durationDays: s.typical_duration_days,
+          nextStageId: s.next_stage_id,
+          isActive: s.is_active,
+        },
       ]),
     );
 
-    const result: ForecastInput['batches'] = [];
-    for (const b of fed) {
-      const groups =
-        b.tracking_mode === 'ANIMAL_WISE'
-          ? animalGroups.get(b.batch_id) ?? []
-          : b.stage_id
-            ? [{ stageId: b.stage_id, heads: Number(b.closing_quantity ?? b.opening_quantity) }]
-            : [];
-      for (const g of groups) {
-        const header = headerOf.get(`${b.batch_id}:${g.stageId}`);
-        const start = header?.effective_from ?? b.start_date;
-        const shedId = (header ? shedOf(header.location_id) : null) ?? shedOf(b.shed_id) ?? b.shed_id ?? '';
-        result.push({
-          // ANIMAL_WISE groups need distinct ids: the engine keys its rows by (batchId, item).
-          batchId: b.tracking_mode === 'ANIMAL_WISE' ? `${b.batch_id}:${g.stageId}` : b.batch_id,
-          batchNo: b.batch_no,
-          breedId: b.breed_id!,
-          shedId,
-          heads: g.heads,
-          segments: projectSegments(g.stageId, start, to, stages),
-        });
-      }
-    }
-    return result;
+    return buildInputBatches({ batchRows: fed, animalGroups, headers, stages, locationById, activeShedIds, planningDate, to });
   }
 
   /** Active lifecycle rows with a feed item and a positive rate, as stage-day ranges (feed-row-days.ts). */

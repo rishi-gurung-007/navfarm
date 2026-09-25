@@ -44,17 +44,19 @@ export class SiloFeedService {
    * empty. getStockBalance() only ever returns positive balances and a silo
    * holds at most one item, so its first row (if any) is the whole answer —
    * one call per silo, since getStockBalance is scoped to a single warehouse.
-   * `uom` rides along so the feed forecast can refuse a silo whose balance is
-   * not in KG rather than add bags to kilograms.
+   * `uoms` lists the unit of *every* balance row of that item (the ledger
+   * groups by unit, so one item can surface as a KG row and a BAG row), so
+   * the feed forecast can refuse a silo whose feed is not all in KG rather
+   * than add bags to kilograms.
    */
   async currentItems(
     siloIds: string[],
     companyId: string,
     tenantId: string,
-  ): Promise<Map<string, { item_id: string; item_code: string; item_description: string | null; on_hand_qty: number; uom: string } | null>> {
+  ): Promise<Map<string, { item_id: string; item_code: string; item_description: string | null; on_hand_qty: number; uoms: string[] } | null>> {
     const result = new Map<
       string,
-      { item_id: string; item_code: string; item_description: string | null; on_hand_qty: number; uom: string } | null
+      { item_id: string; item_code: string; item_description: string | null; on_hand_qty: number; uoms: string[] } | null
     >();
     for (const siloId of siloIds) {
       const balances = await this.ledgerService.getStockBalance(
@@ -70,7 +72,7 @@ export class SiloFeedService {
               item_code: resident.item_code,
               item_description: resident.item_description ?? null,
               on_hand_qty: resident.on_hand_qty,
-              uom: resident.uom,
+              uoms: [...new Set(balances.filter((b) => b.item_id === resident.item_id).map((b) => b.uom))],
             }
           : null,
       );
