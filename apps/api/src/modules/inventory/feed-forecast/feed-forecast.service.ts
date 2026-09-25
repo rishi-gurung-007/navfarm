@@ -256,7 +256,7 @@ export function buildInputBatches(args: {
     if (!b.breed_id) continue; // no breed, no feed standard to look up
     const animalWise = isGroupedByAnimal(b);
     const groups = b.tracking_mode === 'ANIMAL_WISE'
-      ? stageGroupsOf(animalGroups.get(b.batch_id) ?? [], b.stage_id)
+      ? stageGroupsOf(animalGroups.get(b.batch_id) ?? [])
       : animalWise
         ? registeredStageGroups(animalGroups.get(b.batch_id) ?? [], b.stage_id, Number(b.closing_quantity ?? b.opening_quantity))
         : b.stage_id
@@ -288,13 +288,17 @@ function isGroupedByAnimal(b: Pick<BatchRow, 'tracking_mode' | 'animal_tracking'
   return b.tracking_mode === 'ANIMAL_WISE' || b.animal_tracking === 'REGISTERED';
 }
 
-/** Folds stage-less animals into the batch's own stage group, keeping first-seen order. */
-function stageGroupsOf(groups: { stageId: string | null; heads: number }[], batchStageId: string | null): { stageId: string; heads: number }[] {
+/**
+ * An ANIMAL_WISE batch's stage groups: live animals per current stage, in
+ * first-seen order. Stage-less rows are skipped — daily entry can only post
+ * against an animal at the line's stage, and a stage-less row is typically a
+ * BIO_ASSET placeholder, so counting it would double the herd.
+ */
+function stageGroupsOf(groups: { stageId: string | null; heads: number }[]): { stageId: string; heads: number }[] {
   const heads = new Map<string, number>();
   for (const g of groups) {
-    const stageId = g.stageId ?? batchStageId;
-    if (!stageId) continue;
-    heads.set(stageId, (heads.get(stageId) ?? 0) + g.heads);
+    if (!g.stageId) continue;
+    heads.set(g.stageId, (heads.get(g.stageId) ?? 0) + g.heads);
   }
   return [...heads].map(([stageId, n]) => ({ stageId, heads: n }));
 }
@@ -660,9 +664,9 @@ export class FeedForecastService {
             eq(schema.animalRegister.tenant_id, tenantId),
             eq(schema.animalRegister.company_id, farm.companyId),
             inArray(schema.animalRegister.current_batch_id, animalWiseIds),
-            // Stage-less animals are read too: an ANIMAL_WISE batch counts
-            // them in its own stage group; a REGISTERED one ignores them and
-            // derives its own-stage group from the batch head count (I2).
+            // Stage-less rows are read but never counted individually: an
+            // ANIMAL_WISE batch skips them, and a REGISTERED one derives its
+            // own-stage group from the batch head count instead (I2).
             notInArray(schema.animalRegister.status, GONE_STATUSES),
           ),
         )

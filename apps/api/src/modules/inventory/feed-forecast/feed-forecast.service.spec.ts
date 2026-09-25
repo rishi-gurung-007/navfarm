@@ -562,13 +562,13 @@ describe('buildInputBatches', () => {
     expect(batches.map((b) => [b.batchNo, b.heads])).toEqual([['BATCH-1 · GILT', 48]]);
   });
 
-  it("ANIMAL_WISE is unchanged: stage-less animals count in the batch's own stage, or nowhere when it has none", () => {
+  it('ANIMAL_WISE is unchanged: stage-less animals are not counted (they would double a BIO_ASSET placeholder herd)', () => {
     const withStage = buildInputBatches({
       ...base,
       batchRows: [{ ...batchWise, tracking_mode: 'ANIMAL_WISE' }],
       animalGroups: new Map([['b1', [{ stageId: null, heads: 7 }, { stageId: 'GIL', heads: 5 }, { stageId: 'GES', heads: 30 }]]]),
     });
-    expect(withStage.batches.map((b) => [b.batchNo, b.heads])).toEqual([['BATCH-1 · GILT', 12], ['BATCH-1 · GESTATION', 30]]);
+    expect(withStage.batches.map((b) => [b.batchNo, b.heads])).toEqual([['BATCH-1 · GILT', 5], ['BATCH-1 · GESTATION', 30]]);
     const noStage = buildInputBatches({
       ...base,
       batchRows: [{ ...batchWise, tracking_mode: 'ANIMAL_WISE', stage_id: null }],
