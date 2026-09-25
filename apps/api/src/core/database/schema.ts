@@ -1030,6 +1030,11 @@ export const locationMaster = mysqlTable('location_master', {
   // The "Attached Sheds" multi-select on the silo form writes this column on
   // the selected sheds and clears it on the deselected ones.
   feed_silo_id: varchar('feed_silo_id', { length: 36 }),
+  // Spec D3: Date to Refill = run-down - buffer days; Required On = refill -
+  // lead time. Per farm because delivery distance is per farm. Read only on
+  // FARM rows.
+  feed_refill_buffer_days: int('feed_refill_buffer_days').default(2),
+  feed_lead_time_days: int('feed_lead_time_days').default(0),
   // Alert when silo stock covers less than this many days of consumption. Required when location_type = SILO.
   silo_reorder_days: int('silo_reorder_days'),
   // Mandatory empty days between batches at this location for biosecurity.
@@ -1069,6 +1074,22 @@ export const locationMaster = mysqlTable('location_master', {
   uqLocationCode: uniqueIndex('uq_location_master_tenant_company_code').on(
     table.tenant_id, table.company_id, table.location_code
   ),
+}));
+
+// Silo <-> shed, many-to-many (spec D7). A row says "this shed may draw feed
+// from this silo"; which silo a given posting uses is decided by the item the
+// silo holds (D9), not by this table.
+export const siloShedLink = mysqlTable('silo_shed_link', {
+  link_id: varchar('link_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+  company_id: varchar('company_id', { length: 36 }),
+  silo_id: varchar('silo_id', { length: 36 }).notNull().references(() => locationMaster.location_id, { onDelete: 'cascade' }),
+  shed_id: varchar('shed_id', { length: 36 }).notNull().references(() => locationMaster.location_id, { onDelete: 'cascade' }),
+  created_by: varchar('created_by', { length: 36 }),
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+}, (table) => ({
+  uqSiloShed: uniqueIndex('uq_silo_shed_link').on(table.silo_id, table.shed_id),
+  shedIdx: index('idx_silo_shed_link_shed').on(table.shed_id),
 }));
 
 // ==========================================
