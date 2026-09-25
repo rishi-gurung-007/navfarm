@@ -208,6 +208,17 @@ describe('FeedForecastPanel — tenant admin', () => {
     await waitFor(() => expect(select.value).toBe(''));
   });
 
+  it('falls back to no farm selection (and the pick-a-farm prompt) when the /location call itself fails', async () => {
+    get.mockImplementation((url: string) => {
+      if (url.startsWith('/location')) return Promise.reject(new Error('network error'));
+      return Promise.resolve(forecastResponse);
+    });
+    render(<FeedForecastPanel />);
+    const select = await screen.findByRole('combobox', { name: 'ffPrimaryLocation' }) as HTMLSelectElement;
+    await waitFor(() => expect(select.value).toBe(''));
+    expect(await screen.findByText('ffPickFarmPrompt')).toBeTruthy();
+  });
+
   it('groups consecutive NO_FEED_ROW day flags into one range sentence, dedupes an identical repeated flag, and lists BATCH_SHED_UNKNOWN', async () => {
     get.mockImplementation(
       routedGet({

@@ -200,25 +200,45 @@ export default function FeedForecastPanel() {
   const [error, setError] = useState("");
 
   // Non-STANDARD_USER types pick a farm; a STANDARD_USER's farm is fixed (D13).
+  // farmsLoaded/farmsFailed distinguish "still loading" from "loaded, and
+  // either empty or the request itself failed" — the fallback effect below
+  // must not act on the former but must act on both of the latter (fix
+  // round 2, minor 3: a failed /location call used to leave a stale pinned
+  // farm selected with no matching option, since the old guard only fired
+  // once `farms` held rows).
+  const [farmsLoaded, setFarmsLoaded] = useState(false);
+  const [farmsFailed, setFarmsFailed] = useState(false);
   useEffect(() => {
     if (isStandardUser) return;
+    let cancelled = false;
     api
       .get(`/location?locationType=FARM&rootOnly=true&isActive=true`)
       .then((res) => {
+        if (cancelled) return;
         const rows = unwrap<FarmItem[]>(res);
         if (Array.isArray(rows)) setFarms(rows);
+        else setFarmsFailed(true);
       })
-      .catch(() => undefined);
+      .catch(() => {
+        if (!cancelled) setFarmsFailed(true);
+      })
+      .finally(() => {
+        if (!cancelled) setFarmsLoaded(true);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [isStandardUser]);
 
-  // If the farm pinned by the workspace switcher isn't one of this user's
-  // selectable farms (a stale pin, or a farm outside the current company),
-  // fall back to no selection rather than leaving the select showing a value
-  // that matches none of its options.
+  // If the farm list failed to load, came back empty, or the farm pinned by
+  // the workspace switcher isn't one of this user's selectable farms (a
+  // stale pin, or a farm outside the current company), fall back to no
+  // selection rather than leaving the select showing a value that matches
+  // none of its options (or silently querying a farm nobody confirmed).
   useEffect(() => {
-    if (isStandardUser || !selectedFarmId || farms.length === 0) return;
-    if (!farms.some((f) => f.location_id === selectedFarmId)) setSelectedFarmId("");
-  }, [farms]);
+    if (isStandardUser || !selectedFarmId || !farmsLoaded) return;
+    if (farmsFailed || !farms.some((f) => f.location_id === selectedFarmId)) setSelectedFarmId("");
+  }, [farms, farmsLoaded, farmsFailed]);
 
   const farmId = isStandardUser ? getActiveFarmId() : selectedFarmId;
 

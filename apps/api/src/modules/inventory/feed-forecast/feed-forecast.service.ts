@@ -3,7 +3,7 @@ import { MySql2Database } from 'drizzle-orm/mysql2';
 import { ClsService } from 'nestjs-cls';
 import { and, eq, inArray, isNotNull, isNull, gt, notInArray, or, sql } from 'drizzle-orm';
 import * as schema from '../../../core/database/schema';
-import { activeFarmOfCompany, batchScopeConditions, farmScope, FarmScope } from '../../../common/farm-scope';
+import { activeFarmOfCompany, batchScopeConditions, farmScope, FARM_SCOPE_KEY, FarmScope } from '../../../common/farm-scope';
 import { InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
 import { SiloFeedService } from '../silo-feed/silo-feed.service';
 import { FeedRow, stageDayRange } from '../../production/lifecycle/feed-row-days';
@@ -294,6 +294,11 @@ export class FeedForecastService {
     // an admin can switch farms on this page without re-pinning first.
     const isStandardUser = !userType || userType === 'STANDARD_USER';
     let farmId: string | undefined;
+    // The company that validated the chosen farm — normally scope.companyId,
+    // but a TENANT_ADMIN/SYSTEM_ADMIN in tenant-wide scope (no company
+    // pinned) has none, so it is resolved from the farm itself (fix round 2,
+    // finding 2).
+    let effectiveCompanyId = scope.companyId;
     if (isStandardUser) {
       if (scope.farmId && query.farmId && query.farmId !== scope.farmId) {
         throw new NotFoundException('Farm not found.');
@@ -302,7 +307,18 @@ export class FeedForecastService {
     } else {
       farmId = query.farmId ?? scope.farmId ?? undefined;
       if (farmId) {
-        if (!(await activeFarmOfCompany(this.db, farmId, scope.companyId ?? undefined, tenantId))) {
+        if (scope.companyId) {
+          if (!(await activeFarmOfCompany(this.db, farmId, scope.companyId, tenantId))) {
+            throw new NotFoundException('Farm not found.');
+          }
+        } else if (userType === 'TENANT_ADMIN' || userType === 'SYSTEM_ADMIN') {
+          const tenantFarmCompanyId = await this.activeFarmOfTenant(farmId, tenantId);
+          if (!tenantFarmCompanyId) throw new NotFoundException('Farm not found.');
+          effectiveCompanyId = tenantFarmCompanyId;
+        } else {
+          // No company to validate against and not a tenant-wide admin type —
+          // a data-integrity gap (e.g. a COMPANY_ADMIN with no assigned
+          // company), never something to silently widen access for.
           throw new NotFoundException('Farm not found.');
         }
         if (scope.restricted && scope.lobId) {
@@ -321,12 +337,46 @@ export class FeedForecastService {
     // whatever farm happens to be pinned in the header — otherwise an admin
     // switching farms through `farmId` would have their loaders silently
     // filtered back down to the pinned farm (or, worse, another company's).
-    const effectiveScope: FarmScope = { ...scope, farmId };
+    // Fix round 2, finding 1: this must replace the CLS-held scope itself
+    // (`this.cls.set`), not just a value threaded through this method's own
+    // loaders — InventoryLedgerService and SiloFeedService (via
+    // siloFeedService.currentItems -> ledgerService.getStockBalance) read
+    // farmScope(cls) independently for their own warehouse-balance queries,
+    // several calls below this one, and never saw the effective farm before
+    // this fix. `cls.set` needs an active CLS context, so this runs the rest
+    // of the request inside `cls.run()` — the same idiom withTenantTransaction
+    // uses (tenant-transaction.ts) to open one when it isn't already inside
+    // one; nested inside a real request it inherits the guard's own context
+    // (tenantDb, tenantId, ...) and only farmScope is overridden within it.
+    const farmIdResolved = farmId;
+    const effectiveScope: FarmScope = { ...scope, farmId: farmIdResolved, companyId: effectiveCompanyId };
+    return this.cls.run(async () => {
+      this.cls.set(FARM_SCOPE_KEY, effectiveScope);
+      const farm = await this.loadFarm(farmIdResolved, tenantId);
+      const { input, flags: loadFlags } = await this.loadInput(farm, planningDate, from, to, tenantId);
+      const { rows, flags } = buildFeedForecast(input);
+      return { planningDate, from, to, farm: { id: farm.id, code: farm.code, name: farm.name }, rows, flags: [...flags, ...loadFlags] };
+    });
+  }
 
-    const farm = await this.loadFarm(farmId, tenantId);
-    const { input, flags: loadFlags } = await this.loadInput(farm, planningDate, from, to, tenantId, effectiveScope);
-    const { rows, flags } = buildFeedForecast(input);
-    return { planningDate, from, to, farm: { id: farm.id, code: farm.code, name: farm.name }, rows, flags: [...flags, ...loadFlags] };
+  /** Company of an active, top-level, non-deleted FARM of the tenant — no company condition, for
+   * a TENANT_ADMIN/SYSTEM_ADMIN in tenant-wide scope who has no company pinned to check against. */
+  private async activeFarmOfTenant(farmId: string, tenantId: string): Promise<string | null> {
+    const [row] = await this.db
+      .select({ company_id: schema.locationMaster.company_id })
+      .from(schema.locationMaster)
+      .where(
+        and(
+          eq(schema.locationMaster.location_id, farmId),
+          isNull(schema.locationMaster.parent_location_id),
+          eq(schema.locationMaster.location_type, 'FARM'),
+          eq(schema.locationMaster.tenant_id, tenantId),
+          eq(schema.locationMaster.is_active, true),
+          isNull(schema.locationMaster.deleted_at),
+        ),
+      )
+      .limit(1);
+    return row?.company_id ?? null;
   }
 
   /** The FARM row itself, inside the caller's company — the same test farm-scope uses for an active farm. */
@@ -371,9 +421,12 @@ export class FeedForecastService {
     from: string,
     to: string,
     tenantId: string,
-    effectiveScope: FarmScope,
   ): Promise<{ input: ForecastInput; flags: ForecastFlag[] }> {
     const companyId = farm.companyId;
+    // getForecast has already replaced the CLS scope with the effective one
+    // (fix round 2, finding 1) — every read below, direct or through
+    // siloFeedService/ledgerService, sees the chosen farm this way.
+    const scope = farmScope(this.cls);
 
     // Every location on the farm in one read: sheds, silos and the store are
     // picked out of it below, and scheduler/batch locations (often a PEN, or a
@@ -393,6 +446,9 @@ export class FeedForecastService {
           eq(schema.locationMaster.company_id, companyId),
           eq(schema.locationMaster.farm_id, farm.id),
           isNull(schema.locationMaster.deleted_at),
+          // Fix round 2, finding 4: a restricted (OPERATIONAL_ADMIN) caller's
+          // read is bounded by LOB everywhere else — this one had been left out.
+          ...(scope.restricted && scope.lobId ? [eq(schema.locationMaster.lob_id, scope.lobId)] : []),
         ),
       );
     const locationById = new Map(locations.map((l) => [l.location_id, l]));
@@ -424,7 +480,7 @@ export class FeedForecastService {
       .filter((s) => linkedSiloIds.includes(s.location_id))
       .map((s) => siloInput({ siloId: s.location_id, siloCode: s.location_code }, residents.get(s.location_id) ?? null));
 
-    const { batches, flags } = await this.loadBatches(farm, planningDate, to, tenantId, locationById, new Set(shedIds), effectiveScope);
+    const { batches, flags } = await this.loadBatches(farm, planningDate, to, tenantId, locationById, new Set(shedIds));
     const feedRows = await this.loadFeedRows([...new Set(batches.map((b) => b.breedId))], companyId, tenantId);
 
     // The farm's STORE (D6 fallback). One per farm in every template; if a farm
@@ -486,8 +542,8 @@ export class FeedForecastService {
     tenantId: string,
     locationById: Map<string, LocationNode>,
     activeShedIds: Set<string>,
-    scope: FarmScope,
   ): Promise<{ batches: InputBatch[]; flags: ForecastFlag[] }> {
+    const scope = farmScope(this.cls);
     const batchRows = await this.db
       .select({
         batch_id: schema.batchHeader.batch_id,

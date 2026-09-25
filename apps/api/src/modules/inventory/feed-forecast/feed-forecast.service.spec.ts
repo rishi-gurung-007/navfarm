@@ -6,7 +6,8 @@ import { buildInputBatches, FeedForecastService, projectSegments, resolveShed, s
 import { InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
 import { SiloFeedService } from '../silo-feed/silo-feed.service';
 import { buildFeedForecast, ForecastInput } from './feed-forecast.engine';
-import { activeFarmOfCompany } from '../../../common/farm-scope';
+import { activeFarmOfCompany, FARM_SCOPE_KEY, farmScope } from '../../../common/farm-scope';
+import * as schema from '../../../core/database/schema';
 
 // The engine has its own spec (feed-forecast.engine.spec.ts) against the
 // workbook's worked example; here it is a spy, so these tests pin only what the
@@ -114,14 +115,7 @@ describe('FeedForecastService', () => {
 
     const result = await service.getForecast({ farmId: 'farm-A' }, 'tenant-1');
 
-    expect(loadInput).toHaveBeenCalledWith(
-      FARM,
-      '2026-09-25',
-      '2026-09-25',
-      '2026-10-02',
-      'tenant-1',
-      { farmId: 'farm-A', restricted: false, companyId: null, lobId: null },
-    );
+    expect(loadInput).toHaveBeenCalledWith(FARM, '2026-09-25', '2026-09-25', '2026-10-02', 'tenant-1');
     expect(buildFeedForecast).toHaveBeenCalledWith(input);
     expect(result).toEqual({
       planningDate: '2026-09-25',
@@ -139,21 +133,17 @@ describe('FeedForecastService', () => {
   // switcher pinned in x-active-farm-id, and every loader must then see that
   // chosen farm, not the pinned one.
   describe('non-STANDARD_USER farm switching', () => {
-    it('an admin pinned to farm A (header) asking for farm B of the same company loads farm B, validated against the company, and every loader sees an effective scope with farmId B', async () => {
+    it('an admin pinned to farm A (header) asking for farm B of the same company loads farm B, validated against the company', async () => {
       useFarmScope(cls, { farmId: 'farm-A', restricted: false, companyId: 'comp-1', lobId: null });
 
       await service.getForecast({ farmId: 'farm-B' }, 'tenant-1', 'TENANT_ADMIN');
 
       expect(activeFarmOfCompany).toHaveBeenCalledWith(expect.anything(), 'farm-B', 'comp-1', 'tenant-1');
       expect(loadFarm).toHaveBeenCalledWith('farm-B', 'tenant-1');
-      expect(loadInput).toHaveBeenCalledWith(
-        FARM,
-        expect.any(String),
-        expect.any(String),
-        expect.any(String),
-        'tenant-1',
-        { farmId: 'farm-B', restricted: false, companyId: 'comp-1', lobId: null },
-      );
+      expect(loadInput).toHaveBeenCalledWith(FARM, expect.any(String), expect.any(String), expect.any(String), 'tenant-1');
+      // useFarmScope stubs cls.get('farmScope') to a fixed object, so it can't
+      // observe the CLS mutation itself — the dedicated 'CLS scope reaches
+      // every downstream loader' spec below proves that with a real cls.
     });
 
     it('an OPERATIONAL_ADMIN asking for a farm of another LOB gets NotFound, before anything is loaded', async () => {
@@ -194,6 +184,183 @@ describe('FeedForecastService', () => {
         new NotFoundException('Farm not found.'),
       );
       expect(loadFarm).not.toHaveBeenCalled();
+    });
+  });
+
+  // Fix round 2, finding 2: TENANT_ADMIN/SYSTEM_ADMIN in tenant-wide scope
+  // (no company header) send scope.companyId === null; activeFarmOfCompany
+  // always answers false for a null company, so every farm 404'd. The farm
+  // itself now resolves and supplies its own company to the effective scope.
+  describe('TENANT_ADMIN/SYSTEM_ADMIN with no company pinned', () => {
+    /** A tenantDb stub answering only the activeFarmOfTenant lookup. */
+    function dbWithTenantFarm(companyId: string | null): object {
+      return {
+        select: () => ({
+          from: () => ({
+            where: () => ({
+              limit: async () => (companyId === null ? [] : [{ company_id: companyId }]),
+            }),
+          }),
+        }),
+      };
+    }
+
+    it('a farm that is an active top-level FARM of the tenant resolves, and the effective scope takes the farm\'s company', async () => {
+      // Seeded with a real cls.set (not useFarmScope, which would stub
+      // farmScope(cls) to a fixed value and hide the mutation this test
+      // checks), nested inside cls.run() so `.set` has an active context to
+      // write into — same reasoning as runWithEffectiveScope below.
+      const tenantCls = transactionCls(dbWithTenantFarm('comp-B'));
+      await tenantCls.run(async () => {
+        tenantCls.set(FARM_SCOPE_KEY, { farmId: null, restricted: false, companyId: null, lobId: null });
+        const module: TestingModule = await Test.createTestingModule({
+          providers: [
+            FeedForecastService,
+            { provide: ClsService, useValue: tenantCls },
+            { provide: InventoryLedgerService, useValue: { getStockBalance: jest.fn() } },
+            { provide: SiloFeedService, useValue: { currentItems: jest.fn() } },
+          ],
+        }).compile();
+        const tenantService = module.get(FeedForecastService);
+        const tenantLoadFarm = jest.spyOn(tenantService as any, 'loadFarm').mockResolvedValue(FARM);
+        // getForecast's own cls.run() nests a shallow-copied store (nestjs-cls
+        // default `ifNested: 'inherit'`), so a check from out here after it
+        // returns would still see the outer, unmutated store — capture the
+        // scope from inside loadInput's own call, in the same nested context
+        // the mutation actually happened in (same pattern as the
+        // 'every downstream loader' spec below).
+        let capturedScope: unknown;
+        jest.spyOn(tenantService as any, 'loadInput').mockImplementation(async () => {
+          capturedScope = farmScope(tenantCls);
+          return { input: {}, flags: [] };
+        });
+
+        await tenantService.getForecast({ farmId: 'farm-B' }, 'tenant-1', 'TENANT_ADMIN');
+
+        expect(tenantLoadFarm).toHaveBeenCalledWith('farm-B', 'tenant-1');
+        expect(capturedScope).toEqual({ farmId: 'farm-B', restricted: false, companyId: 'comp-B', lobId: null });
+      });
+    });
+
+    it('a farm that is not an active top-level FARM of the tenant (deleted/inactive/child) gets NotFound', async () => {
+      const tenantCls = transactionCls(dbWithTenantFarm(null));
+      useFarmScope(tenantCls, { farmId: null, restricted: false, companyId: null, lobId: null });
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [
+          FeedForecastService,
+          { provide: ClsService, useValue: tenantCls },
+          { provide: InventoryLedgerService, useValue: { getStockBalance: jest.fn() } },
+          { provide: SiloFeedService, useValue: { currentItems: jest.fn() } },
+        ],
+      }).compile();
+      const tenantService = module.get(FeedForecastService);
+      const tenantLoadFarm = jest.spyOn(tenantService as any, 'loadFarm').mockResolvedValue(FARM);
+
+      await expect(tenantService.getForecast({ farmId: 'farm-B' }, 'tenant-1', 'SYSTEM_ADMIN')).rejects.toThrow(
+        new NotFoundException('Farm not found.'),
+      );
+      expect(tenantLoadFarm).not.toHaveBeenCalled();
+    });
+
+    it('a COMPANY_ADMIN with no company pinned (not tenant-wide) still gets NotFound rather than silently widening access', async () => {
+      useFarmScope(cls, { farmId: null, restricted: false, companyId: null, lobId: null });
+
+      await expect(service.getForecast({ farmId: 'farm-B' }, 'tenant-1', 'COMPANY_ADMIN')).rejects.toThrow(
+        new NotFoundException('Farm not found.'),
+      );
+      expect(loadFarm).not.toHaveBeenCalled();
+    });
+  });
+
+  // Fix round 2, finding 1 (critical): the silo and store balance reads used
+  // to run under whatever farm was pinned in the header, because
+  // InventoryLedgerService/SiloFeedService read farmScope(cls) independently,
+  // several calls below getForecast's own farm resolution — an admin pinned
+  // to farm A asking for farm B got a 200 with every source silently empty.
+  // This spec does NOT stub loadInput, so the real loaders run and reach the
+  // (mocked) InventoryLedgerService exactly as production code would.
+  describe('the effective farm scope reaches every downstream loader (no loadInput stub)', () => {
+    const storeRow = { location_id: 'store-1', location_code: 'STORE-01', location_type: 'STORE', parent_location_id: null, is_active: true };
+
+    /** Answers only the one query loadInput needs beyond an empty result: the
+     * farm's locations, returning a single active STORE so the store-balance
+     * read (the one finding 1 is about) actually runs. */
+    function dbForLoadInput(): object {
+      function thenable(rows: unknown[]): any {
+        const node: any = {
+          where: () => thenable(rows),
+          limit: () => thenable(rows),
+          orderBy: () => thenable(rows),
+          then: (resolve: any) => resolve(rows),
+        };
+        return node;
+      }
+      return {
+        select: () => ({
+          from: (table: unknown) => thenable(table === schema.locationMaster ? [storeRow] : []),
+        }),
+      };
+    }
+
+    /**
+     * `cls.set` needs an active CLS context (ClsService#set throws without
+     * one — see the production `cls.run()` comment above), and the seeded
+     * scope must still be there when getForecast makes its own *first*
+     * farmScope(cls) read, before it does its own `cls.run()`. So the seed,
+     * the module compile, the getForecast call and the downstream reads all
+     * have to run nested inside one `cls.run()` — mirroring how a real
+     * request already has RolesGuard's context active by the time this
+     * service's own `cls.run()` nests inside it.
+     */
+    async function runWithEffectiveScope(
+      initialScope: { farmId: string | null; restricted: boolean; companyId: string | null; lobId: string | null },
+      work: (service: FeedForecastService) => Promise<unknown>,
+    ): Promise<{ getCapturedFarmId: () => string | null | undefined }> {
+      const localCls = transactionCls(dbForLoadInput());
+      let capturedFarmId: string | null | undefined;
+      await localCls.run(async () => {
+        localCls.set(FARM_SCOPE_KEY, initialScope);
+        const module: TestingModule = await Test.createTestingModule({
+          providers: [
+            FeedForecastService,
+            { provide: ClsService, useValue: localCls },
+            {
+              provide: InventoryLedgerService,
+              useValue: {
+                getStockBalance: jest.fn(async () => {
+                  capturedFarmId = farmScope(localCls).farmId;
+                  return [];
+                }),
+              },
+            },
+            { provide: SiloFeedService, useValue: { currentItems: jest.fn() } },
+          ],
+        }).compile();
+        const localService = module.get(FeedForecastService);
+        jest.spyOn(localService as any, 'loadFarm').mockResolvedValue(FARM);
+        await work(localService);
+      });
+      return { getCapturedFarmId: () => capturedFarmId };
+    }
+
+    it('an admin pinned to farm A asking for farm B: the store balance read sees farmId B, not the pinned A', async () => {
+      (activeFarmOfCompany as jest.Mock).mockResolvedValue(true);
+
+      const { getCapturedFarmId } = await runWithEffectiveScope(
+        { farmId: 'farm-A', restricted: false, companyId: 'comp-1', lobId: null },
+        (localService) => localService.getForecast({ farmId: 'farm-B' }, 'tenant-1', 'TENANT_ADMIN'),
+      );
+
+      expect(getCapturedFarmId()).toBe('farm-B');
+    });
+
+    it('a STANDARD_USER is unaffected: the store balance read still sees their own (only) farm', async () => {
+      const { getCapturedFarmId } = await runWithEffectiveScope(
+        { farmId: 'farm-A', restricted: true, companyId: 'comp-1', lobId: 'lob-1' },
+        (localService) => localService.getForecast({}, 'tenant-1', 'STANDARD_USER'),
+      );
+
+      expect(getCapturedFarmId()).toBe('farm-A');
     });
   });
 });
