@@ -50,10 +50,32 @@ describe('planAlerts — silo levels (checkpoints 11–13)', () => {
     expect(planAlerts(base({ silos: [silo1(800)], active: [] })).raise).toHaveLength(1);
   });
 
+  it('re-arms across a resolve/raise sequence: recovers, then a later fall raises a fresh alert', () => {
+    const resolved = planAlerts(base({ silos: [silo1(6900)], active: [active({})] }));
+    expect(resolved.resolve).toEqual([{ alertId: 'a1', reason: 'RECOVERED' }]);
+    // Task 7 would drop the resolved alert from `active` before the next evaluation.
+    const rearmed = planAlerts(base({ silos: [silo1(700)], active: [] }));
+    expect(rearmed.raise).toHaveLength(1);
+    expect(rearmed.raise[0].dedupKey).toBe('rule-low|s1');
+  });
+
+  it('an alert open at exactly the threshold does not resolve — dedup holds until it is above', () => {
+    const plan = planAlerts(base({ silos: [silo1(1000)], active: [active({})] }));
+    expect(plan.resolve).toEqual([]);
+    expect(plan.raise).toEqual([]);
+  });
+
   it('raises FEED_ABOVE at or above the high level, as INFO', () => {
     const plan = planAlerts(base({ silos: [silo1(10800)] }));
     expect(plan.raise.map((c) => c.rule.notificationCode)).toEqual(['FEED-ABOVE']);
     expect(plan.raise[0].message).toContain('Do not order.');
+  });
+
+  it('resolves FEED_ABOVE when the balance falls back below the high level', () => {
+    const aboveOpen = active({ alertId: 'a2', ruleId: 'rule-above', eventType: 'FEED_ABOVE', subjectType: 'SILO', dedupKey: 'rule-above|s1', observedValue: 10800 });
+    const plan = planAlerts(base({ silos: [silo1(9000)], active: [aboveOpen] }));
+    expect(plan.resolve).toEqual([{ alertId: 'a2', reason: 'RECOVERED' }]);
+    expect(plan.raise).toEqual([]);
   });
 
   it('skips a silo without a level for SILO_BELOW, and uses a FIXED_VALUE instead when the rule says so', () => {
@@ -96,6 +118,13 @@ describe('planAlerts — frequency (Master Setup §4 rows 52–54)', () => {
       .toEqual([{ alertId: 'a1', observedValue: 700 }]);
     expect(planAlerts(base({ rules: [each], silos: [silo1(900)], active: [active({ observedValue: 900 })] })).renotify).toEqual([]);
   });
+
+  it('ON_EACH_OCCURRENCE: compares at 3 decimals, so float rounding noise does not re-notify', () => {
+    const each = { ...lowRule, frequency: 'ON_EACH_OCCURRENCE' as const };
+    expect(planAlerts(base({ rules: [each], silos: [silo1(900.0001)], active: [active({ observedValue: 900.0004 })] })).renotify).toEqual([]);
+    expect(planAlerts(base({ rules: [each], silos: [silo1(900.01)], active: [active({ observedValue: 900.0004 })] })).renotify)
+      .toEqual([{ alertId: 'a1', observedValue: 900.01 }]);
+  });
 });
 
 describe('planAlerts — diet change (checkpoint 30)', () => {
@@ -131,7 +160,17 @@ describe('planAlerts — requisition deadline (checkpoint 20)', () => {
     expect(friday.raise.map((c) => c.rule.notificationCode)).toEqual(['REQ-REMINDER']);
     expect(friday.raise[0].message).toBe('REQ-GRS-2026-00041 is AUTO_DRAFT; the submission deadline is 2026-09-26, 1 day left.');
     const saturday = planAlerts(base({ today: '2026-09-26', rules: [reminderRule, overdueRule], requisitions: [draft] }));
-    expect(saturday.raise.map((c) => c.rule.notificationCode).sort()).toEqual(['REQ-OVERDUE', 'REQ-REMINDER']);
+    expect(saturday.raise.map((c) => c.rule.notificationCode)).toEqual(['REQ-OVERDUE']);
+    expect(saturday.raise[0].message).toBe('REQ-GRS-2026-00041 is AUTO_DRAFT; the submission deadline is 2026-09-26, today.');
+  });
+
+  it('on the deadline day only the overdue alert is open — the reminder closes as REQ-OVERDUE takes over', () => {
+    const reminderOpen = active({
+      alertId: 'q-remind', ruleId: 'rule-remind', eventType: 'REQ_DEADLINE', subjectType: 'REQUISITION', dedupKey: 'rule-remind|req-1',
+    });
+    const saturday = planAlerts(base({ today: '2026-09-26', rules: [reminderRule, overdueRule], requisitions: [draft], active: [reminderOpen] }));
+    expect(saturday.raise.map((c) => c.rule.notificationCode)).toEqual(['REQ-OVERDUE']);
+    expect(saturday.resolve).toEqual([{ alertId: 'q-remind', reason: 'CLOSED' }]);
   });
 
   it('says nothing on Thursday, and closes the alert once the requisition is approved', () => {

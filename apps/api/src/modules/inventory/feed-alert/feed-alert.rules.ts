@@ -113,6 +113,8 @@ const REASON_BY_EVENT: Record<string, ResolveReason> = {
 
 const kg = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 2 });
 const days = (n: number) => `${n} day${n === 1 ? '' : 's'}`;
+/** kg observed values come from float arithmetic upstream; compare at 3 decimals so a re-notify isn't fired by rounding noise. */
+const round3 = (n: number) => Math.round(n * 1000) / 1000;
 
 function siloThreshold(rule: AlertRuleFact, silo: SiloLevelFact): number | null {
   if (rule.thresholdReference === 'FIXED_VALUE') return rule.thresholdValue;
@@ -145,19 +147,24 @@ function candidatesFor(rule: AlertRuleFact, input: PlanAlertsInput): AlertCandid
       const left = diffDaysIso(input.today, dc.changeDate);
       if (left < 0 || left > window) continue;
       const silo = dc.nextSourceType === 'SILO' && dc.nextSourceCode ? dc.nextSourceCode : 'none holds it yet';
+      const whenDiet = left === 0 ? 'today' : `in ${days(left)}`;
       out.push({
         rule, dedupKey: `${rule.ruleId}|${dc.batchId}|${dc.toItemId}|${dc.changeDate}`, subjectType: 'BATCH', subjectId: dc.batchId, itemId: dc.toItemId,
         title: `Diet change in ${days(left)}: ${dc.batchNo}`,
-        message: `${dc.batchNo} in ${dc.shedCode} moves from ${dc.fromItemName} to ${dc.toItemName} on ${dc.changeDate}, in ${days(left)}. Silo for the next diet: ${silo}.`,
+        message: `${dc.batchNo} in ${dc.shedCode} moves from ${dc.fromItemName} to ${dc.toItemName} on ${dc.changeDate}, ${whenDiet}. Silo for the next diet: ${silo}.`,
         observedValue: left, thresholdValue: window,
       });
     }
   } else if (rule.eventType === 'REQ_DEADLINE') {
+    // The reminder window (thresholdValue > 0) means "N days before": it fires strictly ahead of the
+    // deadline and steps aside once the deadline day arrives, so the overdue rule (thresholdValue 0,
+    // matching on-or-past the deadline) is what stays open from that day on — no double-firing.
     const window = rule.thresholdValue ?? 0;
     for (const req of input.requisitions) {
       const left = diffDaysIso(input.today, req.submissionDeadline);
-      if (left > window) continue;
-      const when = left >= 0 ? `${days(left)} left` : `${days(-left)} past`;
+      const matches = window > 0 ? left > 0 && left <= window : left <= window;
+      if (!matches) continue;
+      const when = left === 0 ? 'today' : left > 0 ? `${days(left)} left` : `${days(-left)} past`;
       out.push({
         rule, dedupKey: `${rule.ruleId}|${req.requisitionId}`, subjectType: 'REQUISITION', subjectId: req.requisitionId, itemId: null,
         title: `Requisition ${req.reqNo} not approved`,
@@ -188,7 +195,10 @@ export function planAlerts(input: PlanAlertsInput): AlertPlan {
       }
       if (rule.frequency === 'DAILY' && open.lastNotifiedDay < input.today) {
         plan.renotify.push({ alertId: open.alertId, observedValue: c.observedValue });
-      } else if (rule.frequency === 'ON_EACH_OCCURRENCE' && c.observedValue !== open.observedValue) {
+      } else if (
+        rule.frequency === 'ON_EACH_OCCURRENCE' &&
+        (c.observedValue === null || open.observedValue === null ? c.observedValue !== open.observedValue : round3(c.observedValue) !== round3(open.observedValue))
+      ) {
         plan.renotify.push({ alertId: open.alertId, observedValue: c.observedValue });
       } else if (
         rule.frequency === 'ESCALATING' && !open.acknowledged && !open.escalated && rule.escalationRole &&
