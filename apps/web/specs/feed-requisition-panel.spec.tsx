@@ -81,4 +81,41 @@ describe('FeedRequisitionPanel', () => {
       remarks: 'Extra pigs arriving', lines: [{ line_id: 'L1', quantity_kg: 9000 }],
     }));
   });
+
+  it('sends an edited Required By Date in the PUT line edits', async () => {
+    const put = api.put as jest.Mock;
+    render(<FeedRequisitionPanel />);
+    fireEvent.click(await screen.findByRole('button', { name: 'frqDraftFromForecast' }));
+    await screen.findByText('REQ-GRS-2026-00041');
+
+    fireEvent.change(screen.getByLabelText('frqDeliveryFor:{"line":1}'), { target: { value: '2099-09-30' } });
+    fireEvent.click(screen.getByRole('button', { name: 'frqSave' }));
+    await waitFor(() => expect(put).toHaveBeenCalledWith('/feed-requisition/req-1', {
+      remarks: '', lines: [{ line_id: 'L1', proposed_delivery_date: '2099-09-30' }],
+    }));
+  });
+
+  it('requires remarks to approve once the submission deadline has passed', async () => {
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const pastDeadline = `${yesterday.getFullYear()}-${String(yesterday.getMonth() + 1).padStart(2, '0')}-${String(yesterday.getDate()).padStart(2, '0')}`;
+    const lateView = { ...view, submission_deadline: pastDeadline };
+    get.mockImplementation(async (url: string) => (url.startsWith('/feed-requisition/') ? { data: lateView } : { data: [] }));
+    post.mockImplementation(async (url: string) =>
+      url === '/feed-requisition/auto-draft' ? { data: { requisitionId: 'req-1', created: true, linesDrafted: 2, requisition: lateView } } : { data: lateView }
+    );
+
+    render(<FeedRequisitionPanel />);
+    fireEvent.click(await screen.findByRole('button', { name: 'frqDraftFromForecast' }));
+    await screen.findByText('REQ-GRS-2026-00041');
+
+    expect(screen.getByText('frqRemarksRequired')).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'frqApprove' }) as HTMLButtonElement).disabled).toBe(true);
+
+    fireEvent.change(screen.getByLabelText('frqRemarks'), { target: { value: 'Approved late, deadline missed' } });
+    const approve = screen.getByRole('button', { name: 'frqApprove' }) as HTMLButtonElement;
+    expect(approve.disabled).toBe(false);
+    fireEvent.click(approve);
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/feed-requisition/req-1/approve', { remarks: 'Approved late, deadline missed', lines: [] }));
+  });
 });

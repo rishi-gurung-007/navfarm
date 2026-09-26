@@ -31,7 +31,11 @@ export function useFeedFarm() {
       .get("/location?locationType=FARM&rootOnly=true&isActive=true")
       .then((res: any) => {
         if (!alive) return;
-        const list: FarmItem[] = (res?.data ?? res) || [];
+        // A proxy error page or contract change can hand back a non-array
+        // body — guarded like the sibling inventory panels so it renders an
+        // empty farm list instead of crashing on .map/[0].
+        const raw = res?.data ?? res;
+        const list: FarmItem[] = Array.isArray(raw) ? raw : [];
         setFarms(list);
         setFarmId((current) => current ?? list[0]?.location_id ?? null);
       })

@@ -23,6 +23,7 @@ import { Badge } from "@/components/ui/badge";
 import { getActiveFarmId, getStoredUser } from "@/hooks/useAuth";
 import { useLanguage } from "@/hooks/useLanguage";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
+import { formatDate, todayIso, unwrap } from "./feed-format";
 
 interface ForecastRow {
   batchNo: string;
@@ -67,30 +68,11 @@ interface FarmItem {
   location_name: string;
 }
 
-function unwrap<T = any>(res: any): T {
-  return (res?.data ?? res) as T;
-}
-
-function todayIso(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
-
 function addDaysIso(iso: string, days: number): string {
   const [y, m, d] = iso.split("-").map(Number);
   const date = new Date(Date.UTC(y, m - 1, d));
   date.setUTCDate(date.getUTCDate() + days);
   return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
-}
-
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-
-/** "YYYY-MM-DD" -> "dd-MMM-yyyy"; null/undefined -> "—" (interfaces note). */
-function formatDate(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  const [y, m, d] = iso.split("-").map(Number);
-  if (!y || !m || !d) return "—";
-  return `${String(d).padStart(2, "0")}-${MONTHS[m - 1]}-${y}`;
 }
 
 function fmtKg(n: number | null | undefined): string {

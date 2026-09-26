@@ -44,6 +44,18 @@ describe('useFeedFarm — D13', () => {
     expect(result.current.fixedFarm).toBeNull();
   });
 
+  it('treats a non-array /location response as an empty farm list instead of crashing', async () => {
+    (getStoredUser as jest.Mock).mockReturnValue({ userType: 'COMPANY_ADMIN' });
+    (getActiveFarmId as jest.Mock).mockReturnValue(null);
+    get.mockResolvedValue({ data: { error: 'proxy timeout' } });
+
+    const { result } = renderHook(() => useFeedFarm());
+
+    await waitFor(() => expect(get).toHaveBeenCalled());
+    expect(result.current.farms).toEqual([]);
+    expect(result.current.farmId).toBeNull();
+  });
+
   it('falls back to the first farm in the list when no farm is pinned', async () => {
     (getStoredUser as jest.Mock).mockReturnValue({ userType: 'TENANT_ADMIN' });
     (getActiveFarmId as jest.Mock).mockReturnValue(null);

@@ -1418,6 +1418,7 @@ export const translations = {
     frqColBagCount: "Bag Count",
     frqColDelivery: "Proposed Delivery Date",
     frqRequestedFor: "Requested Qty for line {{line}}",
+    frqDeliveryFor: "Required By Date for line {{line}}",
     frqChangeover: "No silo holds this feed",
     frqYes: "Yes",
     frqNo: "No",

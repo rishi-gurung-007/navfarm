@@ -4,16 +4,16 @@
  * Inventory → Feed Requisitions (Feed Forecast Plan B, Task 10). The farm's
  * feed requisitions; "Draft from forecast" runs Engine Step 9 on the server
  * (POST /feed-requisition/auto-draft), and a draft opens with the Requisition
- * sheet §2 columns. The farm edits Requested Qty and the delivery date,
- * writes remarks, and approves or rejects (§4 steps 3–4). The 20 % remark
+ * sheet §2 columns. The farm edits Requested Qty and the Required By Date,
+ * writes remarks, and approves or rejects (§4 steps 3–4). The 20% remark
  * rule and the deadline rule are mirrored here only to say so before the
  * click; the API enforces both (checkpoints 18 and 22) and its 400 message,
  * when one comes back, is shown as-is rather than replaced with our own text.
  *
- * farm_total_requested_kg and truck_trips are the server's own read of the
- * saved lines (readView in feed-requisition.service.ts) — this is the sum of
- * THIS requisition's bulk quantities, not a cycle total, so an unsaved edit
- * is folded in locally (bulkTotal) rather than waiting for a Save round trip.
+ * The farm total (row 26) is recomputed here from the current line edits
+ * (bulkTotal below) rather than read off the server's farm_total_requested_kg
+ * — the server only knows the last-saved quantities, and this is meant to
+ * update as the farm types, before a Save round trip.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, Inbox } from "lucide-react";
@@ -24,6 +24,7 @@ import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
 import { useLanguage } from "@/hooks/useLanguage";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
+import { formatDate, todayIso, unwrap } from "./feed-format";
 import { useFeedFarm } from "./use-feed-farm";
 
 interface ListRow {
@@ -71,13 +72,16 @@ interface View {
   submission_deadline: string | null;
   remarks: string | null;
   truck_target_kg: number;
-  farm_total_requested_kg: number;
-  truck_trips: number;
   lines: Line[];
 }
 
+/** One line's pending edits, kept separate from the server's own line fields until Save/Approve. */
+interface LineEdit {
+  quantity?: string;
+  date?: string;
+}
+
 const OPEN = ["AUTO_DRAFT", "DRAFT", "PENDING_APPROVAL"];
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 /** Checkpoint 18, as the API applies it (feed-requisition.rules.ts deviationNeedsRemarks). */
 export function needsRemarks(recommended: number | null, requested: number): boolean {
@@ -86,23 +90,11 @@ export function needsRemarks(recommended: number | null, requested: number): boo
   return Math.abs(requested - recommended) / recommended > 0.2 + 1e-9;
 }
 
-function unwrap<T>(res: any): T {
-  return (res?.data ?? res) as T;
-}
 const num = (v: string | number | null | undefined) => (v === null || v === undefined || v === "" ? null : Number(v));
 const kg = (v: string | number | null | undefined) => {
   const n = num(v);
   return n === null ? "—" : n.toLocaleString("en-US", { maximumFractionDigits: 2 });
 };
-function formatDate(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  const [y, m, d] = iso.split("-").map(Number);
-  return `${String(d).padStart(2, "0")}-${MONTHS[m - 1]}-${y}`;
-}
-function todayIso(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
 const PRIORITY_VARIANT: Record<string, "danger" | "warning" | "info" | "neutral"> = {
   CRITICAL_FIRST_PRIORITY: "danger", CRITICAL: "danger", WARNING: "warning", INFO: "info",
 };
@@ -119,7 +111,7 @@ export default function FeedRequisitionPanel() {
   const { farmId, setFarmId, farms, isFixed, fixedFarm } = useFeedFarm();
   const [rows, setRows] = useState<ListRow[]>([]);
   const [selected, setSelected] = useState<View | null>(null);
-  const [edits, setEdits] = useState<Record<string, string>>({});
+  const [edits, setEdits] = useState<Record<string, LineEdit>>({});
   const [remarks, setRemarks] = useState("");
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -174,16 +166,22 @@ export default function FeedRequisitionPanel() {
       await loadList();
     });
 
-  const requestedOf = (line: Line) => (edits[line.line_id] !== undefined ? Number(edits[line.line_id]) : Number(line.quantity));
-  const lineEdits = () => Object.entries(edits).map(([line_id, value]) => ({ line_id, quantity_kg: Number(value) }));
+  const requestedOf = (line: Line) => (edits[line.line_id]?.quantity !== undefined ? Number(edits[line.line_id].quantity) : Number(line.quantity));
+  const dateOf = (line: Line) => edits[line.line_id]?.date ?? line.proposed_delivery_date ?? "";
+  const setQuantity = (lineId: string, value: string) => setEdits((cur) => ({ ...cur, [lineId]: { ...cur[lineId], quantity: value } }));
+  const setDate = (lineId: string, value: string) => setEdits((cur) => ({ ...cur, [lineId]: { ...cur[lineId], date: value } }));
+  const lineEdits = () =>
+    Object.entries(edits).map(([line_id, edit]) => ({
+      line_id,
+      ...(edit.quantity !== undefined ? { quantity_kg: Number(edit.quantity) } : {}),
+      ...(edit.date !== undefined ? { proposed_delivery_date: edit.date } : {}),
+    }));
 
   const editable = !!selected && OPEN.includes(selected.status);
   const deviating = selected ? selected.lines.filter((l) => needsRemarks(num(l.recommended_qty_kg), requestedOf(l))) : [];
   const late = !!selected?.submission_deadline && todayIso() > selected.submission_deadline;
   const remarksMissing = (deviating.length > 0 || late) && !remarks.trim();
   // Requisition §1 row 26: requested bulk total vs the truck target (row 27) — trips, not a cap (checkpoint 17).
-  // Recomputed from the current edits (rather than the server's farm_total_requested_kg/truck_trips) so an
-  // unsaved quantity change is reflected before the farm clicks Save.
   const bulkTotal = selected ? selected.lines.filter((l) => l.feed_type === "BULK").reduce((sum, l) => sum + requestedOf(l), 0) : 0;
   const trips = selected && bulkTotal > 0 ? Math.ceil(bulkTotal / selected.truck_target_kg) : 0;
 
@@ -311,15 +309,26 @@ export default function FeedRequisitionPanel() {
                       <input
                         type="number" min={0} step="any" className="nf-input-sm w-28 px-2"
                         aria-label={t("frqRequestedFor", { line: line.line_seq })}
-                        value={edits[line.line_id] ?? String(Number(line.quantity))}
-                        onChange={(e) => setEdits((cur) => ({ ...cur, [line.line_id]: e.target.value }))}
+                        value={edits[line.line_id]?.quantity ?? String(Number(line.quantity))}
+                        onChange={(e) => setQuantity(line.line_id, e.target.value)}
                       />
                     ) : (
                       kg(line.quantity)
                     )}
                   </TableCell>
                   <TableCell>{line.bag_count ?? "—"}</TableCell>
-                  <TableCell>{formatDate(line.proposed_delivery_date)}</TableCell>
+                  <TableCell>
+                    {editable ? (
+                      <input
+                        type="date" className="nf-input-sm w-36 px-2"
+                        aria-label={t("frqDeliveryFor", { line: line.line_seq })}
+                        value={dateOf(line)}
+                        onChange={(e) => setDate(line.line_id, e.target.value)}
+                      />
+                    ) : (
+                      formatDate(line.proposed_delivery_date)
+                    )}
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
