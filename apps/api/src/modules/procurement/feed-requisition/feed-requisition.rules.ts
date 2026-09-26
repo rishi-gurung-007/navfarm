@@ -21,8 +21,7 @@
  * re-exported here as `addDaysIso`/`diffDaysIso` rather than copied, so a
  * calendar bug can only exist in one place.
  */
-import { addDays, diffDays, type ForecastSource } from '../../inventory/feed-forecast/feed-forecast.engine';
-import { todayLocal } from '../../inventory/feed-forecast/feed-forecast.service';
+import { addDays, diffDays, todayLocal, type ForecastSource } from '../../inventory/feed-forecast/feed-forecast.engine';
 
 export type FeedType = 'BULK' | 'BAGGED';
 export type Priority = 'CRITICAL_FIRST_PRIORITY' | 'CRITICAL' | 'WARNING' | 'INFO';
@@ -194,7 +193,7 @@ export interface DraftUpsertPlan {
  * drafted with (or a line drafted with none) counts as changed too, so a line
  * written before the flag existed is never overwritten either.
  */
-function wasEdited(line: ExistingDraftLine): boolean {
+export function wasEdited(line: Pick<ExistingDraftLine, 'quantityKg' | 'recommendedQtyKg' | 'quantityEdited'>): boolean {
   return line.quantityEdited === true || line.recommendedQtyKg === null || Math.abs(line.quantityKg - line.recommendedQtyKg) > 1e-6;
 }
 

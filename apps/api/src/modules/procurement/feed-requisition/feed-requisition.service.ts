@@ -11,8 +11,8 @@
  * RequisitionModule stays unregistered (its /requisition controller would
  * mount with it), so nothing here imports it.
  */
-import { BadRequestException, ForbiddenException, Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
-import { and, desc, eq, inArray, isNull, like, ne, sql } from 'drizzle-orm';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
+import { and, desc, eq, inArray, isNull, like, notInArray, sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { ClsService } from 'nestjs-cls';
@@ -21,12 +21,14 @@ import * as schema from '../../../core/database/schema';
 import { farmScope } from '../../../common/farm-scope';
 import { userHasPermission } from '../../../common/permissions';
 import { withTenantTransaction } from '../../../common/tenant-transaction';
+import { isDuplicateEntry } from '../../../common/filters/http-exception.filter';
 import { FeedForecastService, MAX_SPAN_DAYS } from '../../inventory/feed-forecast/feed-forecast.service';
+import { utcTimestamp } from '../../inventory/feed-forecast/feed-forecast.engine';
 import { FeedAlertService } from '../../inventory/feed-alert/feed-alert.service';
 import { ApprovalService } from '../../production/approval/approval.service';
 import {
   DestinationInfo, DraftLine, FarmFeedSettings, FeedType, approvalProblems, bagCountFor, diffDaysIso, feedTypeOf, lineKey, planDraftUpsert,
-  productionCycle, recommendLines, requisitionPriority, runKeyFor, serverToday,
+  productionCycle, recommendLines, requisitionPriority, runKeyFor, serverToday, wasEdited,
 } from './feed-requisition.rules';
 import {
   AutoDraftFeedRequisitionDto, CreateManualFeedRequisitionDto, DecideFeedRequisitionDto, FeedLineEditInput, QueryFeedRequisitionDto,
@@ -39,17 +41,21 @@ export type UserCtx = { userId?: string; userType?: string; email?: string };
 export const FEED_DOC_TYPE = 'FEED';
 /** Statuses a feed requisition can still be edited, approved or rejected in (Requisition §1 row 33, up to APPROVED). */
 export const OPEN_FEED_STATUSES = ['AUTO_DRAFT', 'DRAFT', 'PENDING_APPROVAL'];
+/** Statuses that take a requisition out of its cycle: its lines no longer cover a silo and item (row 9). */
+const DEAD_FEED_STATUSES = ['REJECTED', 'CANCELLED'];
+export const NUMBERING_CLASH = 'Another requisition was numbered at the same moment — try again.';
+
+/** MySQL 1213: InnoDB rolled the transaction back to break a deadlock. Drizzle wraps the driver error in `cause`. */
+function isDeadlock(error: unknown): boolean {
+  for (let e: any = error, depth = 0; e && typeof e === 'object' && depth < 5; e = e.cause, depth++) {
+    if (e.code === 'ER_LOCK_DEADLOCK' || e.errno === 1213) return true;
+  }
+  return false;
+}
 
 const dec = (n: number | null | undefined) => (n == null ? null : String(n));
-/**
- * Server-local wall time, the same clock MySQL's CURRENT_TIMESTAMP writes
- * created_at with (session time_zone SYSTEM) — an ISO/UTC string here put
- * approved_at 5h45m before the created_at of the same row.
- */
-const nowTs = (d: Date = new Date()) => {
-  const p = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
-};
+/** approved_at / deleted_at in the one Plan B timestamp convention: UTC, as utcTimestamp documents in the engine. */
+const nowTs = () => utcTimestamp();
 /** A farm code is data, not a pattern: `_` or `%` in it must not widen the req_no LIKE. */
 const likePrefix = (prefix: string) => `${prefix.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
 
@@ -159,8 +165,11 @@ export class FeedRequisitionService {
    * farm cannot read the same last number; the read itself is a locking one
    * too, so it sees the latest committed number rather than the transaction's
    * snapshot. Two farms of different companies that share a code share the
-   * prefix but not the farm lock — should they collide, req_no's unique key
-   * refuses the second (a 409, never a duplicate number).
+   * prefix but not the farm lock, so they can read the same last number: the
+   * second insert then fails req_no's unique key (or InnoDB breaks the
+   * resulting gap-lock deadlock). numbered() runs the whole transaction once
+   * more — it reads the number the first committed — and answers 409 only if
+   * that clashes too. A duplicate number is never written.
    */
   private async nextReqNo(farmCode: string, tenantId: string): Promise<string> {
     const prefix = `REQ-${farmCode}-${serverToday().slice(0, 4)}-`;
@@ -173,6 +182,51 @@ export class FeedRequisitionService {
       .for('update');
     const lastSeq = last ? Number(last.req_no.slice(prefix.length)) : 0;
     return `${prefix}${String((Number.isFinite(lastSeq) ? lastSeq : 0) + 1).padStart(5, '0')}`;
+  }
+
+  /**
+   * Runs a transaction that allocates a req_no, once more if its number
+   * clashed with another farm's of the same code (see nextReqNo). Inside an
+   * outer transaction there is nothing to retry — the clash has already
+   * spoiled it — so it is left to the caller.
+   */
+  private async numbered<T>(transaction: () => Promise<T>): Promise<T> {
+    const clash = (e: unknown) => isDuplicateEntry(e) || isDeadlock(e);
+    if (this.cls.get('tenantPostingTransaction') === true) return transaction();
+    try {
+      return await transaction();
+    } catch (error) {
+      if (!clash(error)) throw error;
+    }
+    try {
+      return await transaction();
+    } catch (error) {
+      if (clash(error)) throw new ConflictException(NUMBERING_CLASH);
+      throw error;
+    }
+  }
+
+  /**
+   * Every live feed requisition of this farm's cycle, locked. Read under the
+   * farm lock and as a locking read, so a caller that waited sees what the
+   * transaction before it committed rather than its own stale snapshot.
+   */
+  private async lockCycle(farmId: string, tenantId: string, submissionDeadline: string) {
+    return this.db
+      .select({
+        requisition_id: schema.requisition.requisition_id, req_no: schema.requisition.req_no,
+        status: schema.requisition.status, requisition_type: schema.requisition.requisition_type,
+      })
+      .from(schema.requisition)
+      .where(and(
+        eq(schema.requisition.tenant_id, tenantId),
+        eq(schema.requisition.farm_id, farmId),
+        eq(schema.requisition.doc_type, FEED_DOC_TYPE),
+        eq(schema.requisition.submission_deadline, submissionDeadline),
+        notInArray(schema.requisition.status, DEAD_FEED_STATUSES),
+        isNull(schema.requisition.deleted_at),
+      ))
+      .for('update');
   }
 
   /** The draft-time snapshot columns of a line (Requisition §2). */
@@ -222,23 +276,9 @@ export class FeedRequisitionService {
       const cycle = productionCycle(forecast.planningDate, farm.settings.productionWeekday);
       const runKey = runKeyFor(farm.code);
 
-      return withTenantTransaction(this.cls, async () => {
+      return this.numbered(() => withTenantTransaction(this.cls, async () => {
         await this.lockFarm(farmId, tenantId);
-        // Every live feed requisition of this farm's cycle. Read under the farm
-        // lock and as a locking read, so a rerun that waited sees the draft the
-        // first run committed rather than its own stale snapshot.
-        const cycleRows = await this.db
-          .select({ requisition_id: schema.requisition.requisition_id, status: schema.requisition.status, requisition_type: schema.requisition.requisition_type })
-          .from(schema.requisition)
-          .where(and(
-            eq(schema.requisition.tenant_id, tenantId),
-            eq(schema.requisition.farm_id, farmId),
-            eq(schema.requisition.doc_type, FEED_DOC_TYPE),
-            eq(schema.requisition.submission_deadline, cycle.submissionDeadline),
-            ne(schema.requisition.status, 'REJECTED'),
-            isNull(schema.requisition.deleted_at),
-          ))
-          .for('update');
+        const cycleRows = await this.lockCycle(farmId, tenantId, cycle.submissionDeadline);
         const draft = cycleRows.find((r) => r.status === 'AUTO_DRAFT' && r.requisition_type === 'FEED_FORECAST');
         const otherIds = cycleRows.filter((r) => r !== draft).map((r) => r.requisition_id);
 
@@ -341,7 +381,7 @@ export class FeedRequisitionService {
         }
         await this.db.update(schema.requisition).set(header).where(eq(schema.requisition.requisition_id, draft.requisition_id));
         return { requisitionId: draft.requisition_id as string | null, created: false, linesDrafted: drafted.length };
-      });
+      }));
     });
 
     // Checkpoint 20: the draft's deadline reminders start from here. Only now,
@@ -380,8 +420,9 @@ export class FeedRequisitionService {
       if (missing) throw new BadRequestException(`Feed item ${missing} was not found.`);
 
       const cycle = productionCycle(serverToday(), farm.settings.productionWeekday);
-      return withTenantTransaction(this.cls, async () => {
+      return this.numbered(() => withTenantTransaction(this.cls, async () => {
         await this.lockFarm(farmId, tenantId);
+        await this.supersedeCoverage(dto.lines, destinations, nameOf, farmId, tenantId, cycle.submissionDeadline, user);
         const id = randomUUID();
         await this.db.insert(schema.requisition).values({
           requisition_id: id,
@@ -420,11 +461,63 @@ export class FeedRequisitionService {
           };
         }));
         return id;
-      });
+      }));
     });
     // After commit, as autoDraft: a manual requisition also counts for the deadline reminders.
     await this.feedAlerts.evaluateFarmSafely(farmId, companyId, tenantId);
     return this.forecast.withFarmScope(farmId, companyId, () => this.readView(requisitionId, tenantId));
+  }
+
+  /**
+   * Requisition §1 row 9 across requisitions: one line per silo per feed item
+   * in a cycle. Called under the farm lock, before the manual requisition is
+   * written. A (destination, item) already on a requisition the farm or an
+   * approver has acted on — another manual one, one pending or approved, or
+   * an auto-draft line whose quantity the farm made its own — is refused
+   * with 409. One covered only by an untouched AUTO_DRAFT line is the
+   * system's suggestion, which the manual line supersedes: that line is
+   * removed, and a draft left with no lines goes with it, as a rerun that
+   * drafts nothing removes it.
+   */
+  private async supersedeCoverage(
+    lines: CreateManualFeedRequisitionDto['lines'], destinations: Map<string, Destination>, nameOf: Map<string, string>,
+    farmId: string, tenantId: string, submissionDeadline: string, user: UserCtx,
+  ): Promise<void> {
+    const cycleRows = await this.lockCycle(farmId, tenantId, submissionDeadline);
+    if (!cycleRows.length) return;
+    const byId = new Map(cycleRows.map((r) => [r.requisition_id, r]));
+    const existing = await this.db
+      .select({
+        line_id: schema.requisitionLine.line_id, requisition_id: schema.requisitionLine.requisition_id,
+        dest: schema.requisitionLine.destination_location_id, item: schema.requisitionLine.item_id,
+        quantity: schema.requisitionLine.quantity, recommended: schema.requisitionLine.recommended_qty_kg,
+        edited: schema.requisitionLine.quantity_edited,
+      })
+      .from(schema.requisitionLine)
+      .where(inArray(schema.requisitionLine.requisition_id, [...byId.keys()]));
+    const wanted = new Set(lines.map((l) => lineKey(l.destination_location_id, l.item_id)));
+    const superseded: typeof existing = [];
+    for (const line of existing) {
+      if (!line.dest || !line.item || !wanted.has(lineKey(line.dest, line.item))) continue;
+      const req = byId.get(line.requisition_id)!;
+      const untouchedSuggestion = req.status === 'AUTO_DRAFT' && req.requisition_type === 'FEED_FORECAST'
+        && !wasEdited({ quantityKg: Number(line.quantity), recommendedQtyKg: line.recommended == null ? null : Number(line.recommended), quantityEdited: !!line.edited });
+      if (!untouchedSuggestion) {
+        throw new ConflictException(
+          `${destinations.get(line.dest)?.code ?? line.dest} already has ${nameOf.get(line.item) ?? line.item} on requisition ${req.req_no} (${req.status}) this cycle — change that line instead.`,
+        );
+      }
+      superseded.push(line);
+    }
+    if (!superseded.length) return;
+    await this.db.delete(schema.requisitionLine).where(inArray(schema.requisitionLine.line_id, superseded.map((l) => l.line_id)));
+    for (const draftId of new Set(superseded.map((l) => l.requisition_id))) {
+      const left = existing.filter((l) => l.requisition_id === draftId && !superseded.includes(l));
+      if (!left.length) {
+        await this.db.update(schema.requisition).set({ deleted_at: nowTs(), updated_by: user?.userId ?? null })
+          .where(eq(schema.requisition.requisition_id, draftId));
+      }
+    }
   }
 
   async findAll(query: QueryFeedRequisitionDto, tenantId: string, user: UserCtx) {

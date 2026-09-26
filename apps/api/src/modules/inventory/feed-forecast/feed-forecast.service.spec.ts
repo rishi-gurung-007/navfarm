@@ -15,6 +15,7 @@ import { MySqlDialect } from 'drizzle-orm/mysql-core';
 // service owns — farm resolution under scope, the date window, and handing the
 // loaded snapshot to the engine unchanged.
 jest.mock('./feed-forecast.engine', () => ({
+  ...jest.requireActual('./feed-forecast.engine'), // the real calendar helpers (todayLocal lives there)
   buildFeedForecast: jest.fn(() => ({ rows: [], flags: [] })),
 }));
 

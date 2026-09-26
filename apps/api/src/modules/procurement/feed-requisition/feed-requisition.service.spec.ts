@@ -1,4 +1,4 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { MySqlDialect } from 'drizzle-orm/mysql-core';
 import type { ClsService } from 'nestjs-cls';
 import { transactionCls } from '../../../test-utils/transaction-cls';
@@ -102,7 +102,7 @@ function setup(sources: ForecastSource[], queues: Map<unknown, unknown[][]>) {
     evaluateFarmSafely: jest.fn(async (...args: unknown[]) => { evaluated.push({ args, inTx: cls.get('tenantPostingTransaction') === true }); }),
   };
   const service = new FeedRequisitionService(cls, forecast, {} as any, alerts);
-  return { service, log, forecast, alerts, evaluated, cls };
+  return { service, log, forecast, alerts, evaluated, cls, db };
 }
 
 describe('FeedRequisitionService.autoDraft', () => {
@@ -231,5 +231,93 @@ describe('FeedRequisitionService.findOne — by id, under the row\'s own farm (R
     const read = log.filter((e) => e.op === 'select' && e.table === schema.requisition)[1];
     expect(render(read.where).params).toContain('farm-y');
     expect(render(read.where).params).not.toContain('farm-x');
+  });
+});
+
+describe('FeedRequisitionService.createManual — row 9 across the cycle, numbering clash', () => {
+  const manualLine = { destination_location_id: 'silo-1', item_id: 'item-r1', quantity_kg: 3000, proposed_delivery_date: '2026-09-30' };
+  const ITEM = { item_id: 'item-r1', item_name: 'Weaner Diet R1' };
+  const year = serverToday().slice(0, 4);
+  const queuesWith = (cycle: unknown[], lines: unknown[]) => new Map<unknown, unknown[][]>([
+    [schema.locationMaster, [[FARM_ROW], [SILO_ROW], [{ location_id: 'farm-grs' }]]],
+    [schema.itemMaster, [[ITEM]]],
+    [schema.requisition, [cycle, [], [{ req: { requisition_id: 'new' }, farm_code: 'GRS', truck_target_kg: 30000 }]]],
+    [schema.requisitionLine, [lines, []]],
+  ]);
+  const line = (over: object) => ({ line_id: 'AL1', requisition_id: 'auto-1', dest: 'silo-1', item: 'item-r1', quantity: '6000.0000', recommended: '6000.0000', edited: false, ...over });
+  const run = (service: FeedRequisitionService) => service.createManual({ lines: [manualLine] } as any, 'tenant-1', { userId: 'u-1', userType: 'COMPANY_ADMIN' });
+
+  it.each([
+    ['an APPROVED requisition', { requisition_id: 'r-9', req_no: 'REQ-GRS-2026-00009', status: 'APPROVED', requisition_type: 'FEED_FORECAST' }, {}],
+    ['another manual requisition', { requisition_id: 'r-9', req_no: 'REQ-GRS-2026-00009', status: 'DRAFT', requisition_type: 'MANUAL' }, {}],
+    ['a PENDING_APPROVAL requisition', { requisition_id: 'r-9', req_no: 'REQ-GRS-2026-00009', status: 'PENDING_APPROVAL', requisition_type: 'FEED_FORECAST' }, {}],
+    ['an AUTO_DRAFT line the farm edited', { requisition_id: 'r-9', req_no: 'REQ-GRS-2026-00009', status: 'AUTO_DRAFT', requisition_type: 'FEED_FORECAST' }, { edited: true }],
+  ])('refuses a silo and item already on %s with 409, writing nothing', async (_label, req, over) => {
+    const { service, log } = setup([], queuesWith([req], [line({ requisition_id: 'r-9', ...over })]));
+    await expect(run(service)).rejects.toThrow(new ConflictException(
+      'GRS/SILO-001 already has Weaner Diet R1 on requisition REQ-GRS-2026-00009 (' + (req as any).status + ') this cycle — change that line instead.'));
+    expect(log.filter((e) => e.op !== 'select')).toEqual([]);
+    // The cycle was read under the farm lock, as a locking read, excluding dead requisitions.
+    const cycleRead = log.find((e) => e.table === schema.requisition && e.lock === 'update')!;
+    expect(cycleRead.inTx).toBe(true);
+    expect(render(cycleRead.where).params).toEqual(expect.arrayContaining(['REJECTED', 'CANCELLED']));
+  });
+
+  it("supersedes an untouched AUTO_DRAFT line: removes it, drops the emptied draft, and writes the manual requisition", async () => {
+    const auto = { requisition_id: 'auto-1', req_no: 'REQ-GRS-2026-00001', status: 'AUTO_DRAFT', requisition_type: 'FEED_FORECAST' };
+    const { service, log } = setup([], queuesWith([auto], [line({})]));
+    await run(service);
+    const writes = log.filter((e) => e.op !== 'select');
+    expect(writes.every((e) => e.inTx)).toBe(true);
+    expect(render(writes.find((e) => e.op === 'delete' && e.table === schema.requisitionLine)!.where).params).toEqual(['AL1']);
+    const dropped = writes.find((e) => e.op === 'update' && e.table === schema.requisition)!;
+    expect(dropped.set).toHaveProperty('deleted_at');
+    expect(render(dropped.where).params).toEqual(['auto-1']);
+    expect(writes.find((e) => e.op === 'insert' && e.table === schema.requisition)!.values).toMatchObject({ status: 'DRAFT', requisition_type: 'MANUAL' });
+  });
+
+  it('keeps the draft when it still has other lines', async () => {
+    const auto = { requisition_id: 'auto-1', req_no: 'REQ-GRS-2026-00001', status: 'AUTO_DRAFT', requisition_type: 'FEED_FORECAST' };
+    const { service, log } = setup([], queuesWith([auto], [line({}), line({ line_id: 'AL2', dest: 'silo-2', item: 'item-r2' })]));
+    await run(service);
+    expect(render(log.find((e) => e.op === 'delete')!.where).params).toEqual(['AL1']);
+    expect(log.some((e) => e.op === 'update' && e.table === schema.requisition)).toBe(false);
+  });
+
+  const dupEntry = () => Object.assign(new Error('Failed query'), { cause: Object.assign(new Error("Duplicate entry 'REQ-GRS' for key 'req_no'"), { code: 'ER_DUP_ENTRY', errno: 1062 }) });
+
+  it('runs the numbering transaction once more when req_no clashed with another farm of the same code', async () => {
+    const queues = new Map<unknown, unknown[][]>([
+      [schema.locationMaster, [[FARM_ROW], [SILO_ROW], [{ location_id: 'farm-grs' }], [{ location_id: 'farm-grs' }]]],
+      [schema.itemMaster, [[ITEM]]],
+      [schema.requisition, [[], [{ req_no: `REQ-GRS-${year}-00041` }], [], [{ req_no: `REQ-GRS-${year}-00042` }], [{ req: { requisition_id: 'new' }, farm_code: 'GRS', truck_target_kg: 30000 }]]],
+      [schema.requisitionLine, [[]]],
+    ]);
+    const { service, log, db } = setup([], queues);
+    const insert = db.insert.getMockImplementation();
+    let first = true;
+    db.insert.mockImplementation((t: unknown) => {
+      if (t === schema.requisition && first) { first = false; return { values: jest.fn(async () => { throw dupEntry(); }) }; }
+      return insert(t);
+    });
+    await run(service);
+    const header = log.find((e) => e.op === 'insert' && e.table === schema.requisition)!;
+    expect(header.values.req_no).toBe(`REQ-GRS-${year}-00043`);
+    expect(log.filter((e) => e.table === schema.locationMaster && e.lock === 'update')).toHaveLength(2);
+  });
+
+  it('answers 409 when the retry clashes too (deadlock), and does not retry other failures', async () => {
+    const deadlock = () => Object.assign(new Error('Failed query'), { cause: { code: 'ER_LOCK_DEADLOCK', errno: 1213 } });
+    const twice = queuesWith([], []);
+    twice.get(schema.locationMaster)!.push([{ location_id: 'farm-grs' }]); // the retry takes the farm lock again
+    const clashing = setup([], twice);
+    clashing.db.insert.mockImplementation(() => ({ values: jest.fn(async () => { throw deadlock(); }) }));
+    await expect(run(clashing.service)).rejects.toThrow(new ConflictException('Another requisition was numbered at the same moment — try again.'));
+    expect(clashing.db.insert).toHaveBeenCalledTimes(2);
+
+    const failing = setup([], queuesWith([], []));
+    failing.db.insert.mockImplementation(() => ({ values: jest.fn(async () => { throw new Error('connection lost'); }) }));
+    await expect(run(failing.service)).rejects.toThrow('connection lost');
+    expect(failing.db.insert).toHaveBeenCalledTimes(1);
   });
 });

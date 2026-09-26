@@ -7,7 +7,7 @@ import { activeFarmOfCompany, batchScopeConditions, farmScope, FARM_SCOPE_KEY, F
 import { InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
 import { SiloFeedService } from '../silo-feed/silo-feed.service';
 import { FeedRow, stageDayRange } from '../../production/lifecycle/feed-row-days';
-import { buildFeedForecast, DietChange, ForecastFlag, ForecastInput, ForecastRow, ForecastSource } from './feed-forecast.engine';
+import { buildFeedForecast, DietChange, ForecastFlag, ForecastInput, ForecastRow, ForecastSource, todayLocal } from './feed-forecast.engine';
 import { QueryFeedForecastDto } from './dto/feed-forecast.dto';
 
 /**
@@ -122,20 +122,6 @@ function diffDays(a: string, b: string): number {
 /** YYYY-MM-DD *and* a real day: Date.UTC rolls 2026-02-31 over to 3 March, so the parse must round-trip. */
 function isCalendarDay(iso: string): boolean {
   return ISO_DAY.test(iso) && new Date(parseIsoUtc(iso)).toISOString().slice(0, 10) === iso;
-}
-
-/**
- * The server's own calendar day, not the UTC one: `toISOString()` would hand a
- * farm east of Greenwich yesterday's date for the first hours of every
- * morning, and the forecast's planning date is a farm-local calendar day.
- * Exported, with an optional instant, so the feed alert evaluator reads "today"
- * and "the day an alert was last notified" by the same rule (Ruling L12).
- */
-export function todayLocal(ms: number = Date.now()): string {
-  const now = new Date(ms);
-  const m = String(now.getMonth() + 1).padStart(2, '0');
-  const d = String(now.getDate()).padStart(2, '0');
-  return `${now.getFullYear()}-${m}-${d}`;
 }
 
 /**

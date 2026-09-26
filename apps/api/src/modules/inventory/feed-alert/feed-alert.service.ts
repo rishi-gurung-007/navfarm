@@ -7,17 +7,18 @@ import * as schema from '../../../core/database/schema';
 import { ADMIN_USER_TYPES } from '../../../common/permissions';
 import { FARM_SCOPE_KEY, FarmScope } from '../../../common/farm-scope';
 import { isDuplicateEntry } from '../../../common/filters/http-exception.filter';
-import { FeedForecastService, todayLocal } from '../feed-forecast/feed-forecast.service';
+import { FeedForecastService } from '../feed-forecast/feed-forecast.service';
 import { SiloFeedService } from '../silo-feed/silo-feed.service';
 import { AlertRuleService } from '../../system/alert-rule/alert-rule.service';
-import { addDays, type DietChange } from '../feed-forecast/feed-forecast.engine';
+import { addDays, parseUtcTimestamp, todayLocal, utcTimestamp, type DietChange } from '../feed-forecast/feed-forecast.engine';
 import type { AlertFrequency, PriorityLevel } from '../../system/alert-rule/alert-rule.rules';
 import {
   ActiveAlertFact, AlertPlan, AlertRuleFact, OpenRequisitionFact, SiloLevelFact, planAlerts,
 } from './feed-alert.rules';
 
-const ts = (ms: number) => new Date(ms).toISOString().slice(0, 19).replace('T', ' ');
-const parseTs = (s: string) => Date.parse(`${s.replace(' ', 'T')}Z`);
+// Every feed_alert timestamp is written and read in the one Plan B convention (UTC, see utcTimestamp in the engine).
+const ts = utcTimestamp;
+const parseTs = parseUtcTimestamp;
 const num = (v: string | null) => (v == null ? null : Number(v));
 
 /** Feed requisitions not yet approved — the statuses a REQ_DEADLINE reminder is about (checkpoint 20). */

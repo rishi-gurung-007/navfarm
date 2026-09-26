@@ -164,6 +164,41 @@ export function diffDays(a: string, b: string): number {
   return Math.round((parseIsoUtc(b) - parseIsoUtc(a)) / 86_400_000);
 }
 
+/**
+ * The server's own calendar day, not the UTC one: `toISOString()` would hand a
+ * farm east of Greenwich yesterday's date for the first hours of every
+ * morning, and the forecast's planning date is a farm-local calendar day.
+ * Lives here, beside addDays/diffDays, so the forecast service, the alert
+ * evaluator and the requisition rules share one pure implementation (Ruling
+ * L12) and the rules module needs no Nest service to know what day it is.
+ */
+export function todayLocal(ms: number = Date.now()): string {
+  const now = new Date(ms);
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${now.getFullYear()}-${m}-${d}`;
+}
+
+/**
+ * Timestamps Plan B writes from JavaScript (feed_alert raised/notified/
+ * escalated/acknowledged/resolved, requisition approved_at/deleted_at) follow
+ * the codebase's convention for JS-written datetime columns: UTC as
+ * `YYYY-MM-DD HH:MM:SS` — the `toISOString().slice(0, 19)` form some forty
+ * services use (location, item, stock adjustment, goods receipt, alert …).
+ * Columns left to their DB default (created_at, updated_at) take MySQL's
+ * CURRENT_TIMESTAMP in the session zone, which agrees on a UTC server and
+ * differs on a dev machine running in local time — a pre-existing split this
+ * code does not add a third convention to. `parseUtcTimestamp` reads back
+ * only what `utcTimestamp` wrote.
+ */
+export function utcTimestamp(ms: number = Date.now()): string {
+  return new Date(ms).toISOString().slice(0, 19).replace('T', ' ');
+}
+
+export function parseUtcTimestamp(s: string): number {
+  return Date.parse(`${s.replace(' ', 'T')}Z`);
+}
+
 /** Inclusive list of ISO dates from `from` to `to`; empty if `to` is before `from`. */
 function dateRange(from: string, to: string): string[] {
   const days = diffDays(from, to);

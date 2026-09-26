@@ -5,7 +5,7 @@
  * see docs/superpowers/specs/2026-09-25-feed-forecast-design.md, D1-D3.
  */
 import { FeedRow } from '../../production/lifecycle/feed-row-days';
-import { buildFeedForecast, ForecastInput } from './feed-forecast.engine';
+import { buildFeedForecast, ForecastInput, parseUtcTimestamp, todayLocal, utcTimestamp } from './feed-forecast.engine';
 
 const workedExample: ForecastInput = {
   planningDate: '2026-09-23',
@@ -934,5 +934,16 @@ describe('buildFeedForecast — a diet row that starts later in the horizon', ()
     expect(r1.rangeDemandKg).toBe(200);
     expect(r1.perDayIntakeKg).toBe(100);
     expect(r1.sourceCode).toBe('GRS/SILO-001');
+  });
+});
+
+describe('calendar and timestamp helpers (one convention for Plan B)', () => {
+  it('todayLocal reads the server calendar day, not the UTC one', () => {
+    expect(todayLocal(new Date(2026, 8, 23, 0, 30).getTime())).toBe('2026-09-23');
+  });
+  it('writes UTC YYYY-MM-DD HH:MM:SS and reads back exactly what it wrote', () => {
+    const ms = Date.UTC(2026, 8, 26, 2, 52, 4);
+    expect(utcTimestamp(ms)).toBe('2026-09-26 02:52:04');
+    expect(parseUtcTimestamp(utcTimestamp(ms))).toBe(ms);
   });
 });
