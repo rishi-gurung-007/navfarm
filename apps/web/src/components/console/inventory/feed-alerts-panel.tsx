@@ -64,7 +64,10 @@ export default function FeedAlertsPanel() {
       // Evaluation failing must not hide the alerts already raised.
       await api.post("/feed-alert/evaluate", { farmId }).catch(() => undefined);
       const res = await api.get(`/feed-alert?farmId=${farmId}&status=${status}`);
-      setAlerts(((res as any)?.data ?? res) || []);
+      // Guarded like the sibling inventory panels: a non-array body (proxy
+      // error page, contract change) shows the empty state instead of crashing.
+      const list = (res as any)?.data ?? res;
+      setAlerts(Array.isArray(list) ? list : []);
     } catch (err: any) {
       setError(err?.message || tRef.current("falLoadFailed"));
     } finally {
