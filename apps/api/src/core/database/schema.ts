@@ -3287,6 +3287,45 @@ export const alertRule = mysqlTable('alert_rule', {
   uqCode: uniqueIndex('uq_alert_rule_code').on(table.tenant_id, table.company_id, table.notification_code),
 }));
 
+/**
+ * In-app feed alerts raised from alert_rule (Plan B). active_key = dedup_key
+ * while ACTIVE, NULL once RESOLVED: the unique index is what makes "one open
+ * alert per rule and subject" (checkpoint 11) hold under concurrent postings.
+ */
+export const feedAlert = mysqlTable('feed_alert', {
+  alert_id: varchar('alert_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+  company_id: varchar('company_id', { length: 36 }).notNull().references(() => companyMaster.company_id, { onDelete: 'cascade' }),
+  farm_id: varchar('farm_id', { length: 36 }).notNull().references(() => locationMaster.location_id, { onDelete: 'cascade' }),
+  rule_id: varchar('rule_id', { length: 36 }).notNull().references(() => alertRule.rule_id, { onDelete: 'cascade' }),
+  notification_code: varchar('notification_code', { length: 20 }).notNull(),
+  event_type: varchar('event_type', { length: 40 }).notNull(),
+  priority_level: varchar('priority_level', { length: 30 }).notNull(),
+  subject_type: varchar('subject_type', { length: 20 }).notNull(), // SILO, BATCH, REQUISITION
+  subject_id: varchar('subject_id', { length: 36 }).notNull(),
+  item_id: varchar('item_id', { length: 36 }),
+  dedup_key: varchar('dedup_key', { length: 191 }).notNull(),
+  active_key: varchar('active_key', { length: 191 }),
+  status: varchar('status', { length: 20 }).default('ACTIVE').notNull(), // ACTIVE, RESOLVED
+  title: varchar('title', { length: 200 }).notNull(),
+  message: text('message').notNull(),
+  observed_value: decimal('observed_value', { precision: 18, scale: 4 }),
+  threshold_value: decimal('threshold_value', { precision: 18, scale: 4 }),
+  recipient_roles: json('recipient_roles').$type<string[]>().notNull(),
+  escalation_role: varchar('escalation_role', { length: 50 }),
+  escalated_at: timestamp('escalated_at', { mode: 'string' }),
+  acknowledged_by: varchar('acknowledged_by', { length: 36 }),
+  acknowledged_at: timestamp('acknowledged_at', { mode: 'string' }),
+  raised_at: timestamp('raised_at', { mode: 'string' }).notNull(),
+  last_notified_at: timestamp('last_notified_at', { mode: 'string' }).notNull(),
+  notify_count: int('notify_count').default(1).notNull(),
+  resolved_at: timestamp('resolved_at', { mode: 'string' }),
+  resolved_reason: varchar('resolved_reason', { length: 20 }),
+}, (table) => ({
+  uqActive: uniqueIndex('uq_feed_alert_active_key').on(table.active_key),
+  farmStatus: index('idx_feed_alert_farm_status').on(table.farm_id, table.status),
+}));
+
 // ==========================================
 // 9. INVENTORY ENGINE (Phase 3)
 // ==========================================

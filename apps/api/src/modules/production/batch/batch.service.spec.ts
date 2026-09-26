@@ -75,7 +75,7 @@ describe('BatchService', () => {
         },
         {
           provide: 'BATCH_DAILY_DATA_POSTER',
-          useValue: { postEntry: jest.fn().mockResolvedValue({}) },
+          useValue: { postEntry: jest.fn().mockResolvedValue({}), reevaluateFeedLevels: jest.fn().mockResolvedValue(undefined) },
         },
       ],
     }).compile();
@@ -621,6 +621,7 @@ describe('BatchService', () => {
       tracking_mode: 'BATCH_WISE',
       stage_id: 'stage-gest',
       company_id: 'comp-1',
+      farm_id: 'farm-1',
     };
 
     it('refuses to post an ANIMAL_WISE batch — that mode posts per stage', async () => {
@@ -788,6 +789,7 @@ describe('BatchService', () => {
         }),
         'tenant-123',
         { userId: 'user-1' },
+        { deferFeedAlerts: true },
       );
       expect(dailyDataPoster.postEntry).toHaveBeenCalledWith(
         'batch-1',
@@ -798,7 +800,12 @@ describe('BatchService', () => {
         }),
         'tenant-123',
         { userId: 'user-1' },
+        { deferFeedAlerts: true },
       );
+      // Ruling M6: the lines defer their silo-level re-check, and the day
+      // makes it once, for the batch's farm, after every line has posted.
+      expect(dailyDataPoster.reevaluateFeedLevels).toHaveBeenCalledTimes(1);
+      expect(dailyDataPoster.reevaluateFeedLevels).toHaveBeenCalledWith('farm-1', 'tenant-123');
       // Neither dispatch call carries `draft` — this is the real, final post.
       const calledDtos = (
         dailyDataPoster.postEntry as jest.Mock
@@ -828,6 +835,8 @@ describe('BatchService', () => {
 
       expect(result.status).toBe('LOCKED');
       expect(mockDbSelect).not.toHaveBeenCalled();
+      // Nothing was dispatched, so no stock moved and no silo needs re-checking.
+      expect(module.get('BATCH_DAILY_DATA_POSTER').reevaluateFeedLevels).not.toHaveBeenCalled();
     });
   });
 

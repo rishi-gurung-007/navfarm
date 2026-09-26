@@ -128,9 +128,11 @@ function isCalendarDay(iso: string): boolean {
  * The server's own calendar day, not the UTC one: `toISOString()` would hand a
  * farm east of Greenwich yesterday's date for the first hours of every
  * morning, and the forecast's planning date is a farm-local calendar day.
+ * Exported, with an optional instant, so the feed alert evaluator reads "today"
+ * and "the day an alert was last notified" by the same rule (Ruling L12).
  */
-function todayLocal(): string {
-  const now = new Date();
+export function todayLocal(ms: number = Date.now()): string {
+  const now = new Date(ms);
   const m = String(now.getMonth() + 1).padStart(2, '0');
   const d = String(now.getDate()).padStart(2, '0');
   return `${now.getFullYear()}-${m}-${d}`;

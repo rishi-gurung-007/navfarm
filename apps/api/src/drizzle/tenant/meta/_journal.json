@@ -834,6 +834,13 @@
       "when": 1790876400000,
       "tag": "0118_alert_rule",
       "breakpoints": true
+    },
+    {
+      "idx": 119,
+      "version": "5",
+      "when": 1790962800000,
+      "tag": "0119_feed_alert",
+      "breakpoints": true
     }
   ]
 }

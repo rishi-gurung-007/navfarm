@@ -4,6 +4,7 @@ import {
   BadRequestException,
   ConflictException,
   Inject,
+  Optional,
   forwardRef,
 } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
@@ -18,6 +19,7 @@ import { BatchTransferService } from '../batch/batch-transfer.service';
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
 import { AnimalMovementLogService } from '../../piggery/animal-movement-log/animal-movement-log.service';
 import { SiloFeedService } from '../../inventory/silo-feed/silo-feed.service';
+import { FeedAlertService } from '../../inventory/feed-alert/feed-alert.service';
 
 const toMysqlTimestamp = (date: Date = new Date()) =>
   date.toISOString().slice(0, 19).replace('T', ' ');
@@ -47,6 +49,10 @@ export class BatchDailyDataService {
     private readonly glPostingService: GlPostingService,
     private readonly movementLog: AnimalMovementLogService,
     private readonly siloFeedService: SiloFeedService,
+    // POST Day consumption lowers the silo it drew from (Plan A Task 4), so
+    // the farm's silo levels are re-checked afterwards (checkpoint 12).
+    // Optional so a testing module that does not provide it still builds.
+    @Optional() private readonly feedAlerts?: FeedAlertService,
   ) {}
 
   private get db(): MySql2Database<typeof schema> {
@@ -61,6 +67,10 @@ export class BatchDailyDataService {
     dto: CreateBatchDailyDataDto,
     tenantId: string,
     userPayload?: UserContext,
+    // BatchService.postBatchDay/postStageDay post a whole day's drafts through
+    // here one line at a time; they pass this and re-check the silo levels
+    // once for the day (Ruling M6), not once per line.
+    opts: { deferFeedAlerts?: boolean } = {},
   ) {
     // Throws (404/403) if the batch doesn't exist or isn't in the caller's
     // farm/company/lob scope — BatchService.findOne is the shared, audited
@@ -649,7 +659,24 @@ export class BatchDailyDataService {
       },
     });
 
+    // Only CONSUMPTION and OUTPUT lines move item stock; the rest (overhead,
+    // resources, animal transfers) leave every silo where it was. This method
+    // opens no transaction of its own, so each write above has committed by
+    // here; the evaluation itself never throws (Ruling M6).
+    if (!opts.deferFeedAlerts && (line.line_type === 'CONSUMPTION' || line.line_type === 'OUTPUT')) {
+      await this.reevaluateFeedLevels(batchRow?.farm_id, tenantId);
+    }
+
     return this.findForDate(batchId, dto.entry_date, tenantId);
+  }
+
+  /**
+   * Re-checks the silo levels of the batch's farm (checkpoint 12). Public for
+   * BatchService's day posts, which defer the per-line check above and call
+   * this once after the whole day is in. Never throws.
+   */
+  async reevaluateFeedLevels(farmId: string | null | undefined, tenantId: string): Promise<void> {
+    await this.feedAlerts?.evaluateLevelsSafely([farmId], tenantId);
   }
 
   /**

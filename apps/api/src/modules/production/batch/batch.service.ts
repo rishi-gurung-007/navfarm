@@ -2951,6 +2951,9 @@ export class BatchService {
       );
     }
 
+    // Draft entries this call dispatches for real; their silo levels are
+    // re-checked once, after the day is posted (Ruling M6).
+    let postedDrafts = 0;
     const activePairs = await this.loadActiveScheduleLines(batch, dateStr);
     const mandatoryPairs = activePairs.filter(({ line }) => line.is_mandatory);
     if (mandatoryPairs.length) {
@@ -3005,7 +3008,9 @@ export class BatchService {
           } as any,
           tenantId,
           userPayload,
+          { deferFeedAlerts: true },
         );
+        postedDrafts++;
       }
     }
 
@@ -3047,6 +3052,8 @@ export class BatchService {
         status: 'LOCKED',
       },
     });
+
+    if (postedDrafts) await this.batchDailyDataService.reevaluateFeedLevels(batch.farm_id, tenantId);
 
     return {
       batch_id: batchId,
@@ -3323,6 +3330,8 @@ export class BatchService {
       )
       .limit(1);
 
+    // As in postBatchDay: one silo-level re-check for the day, not per line.
+    let postedDrafts = 0;
     if (header) {
       const activePairs = await this.loadScheduleLinesForHeader(
         header,
@@ -3408,7 +3417,9 @@ export class BatchService {
             } as any,
             tenantId,
             userPayload,
+            { deferFeedAlerts: true },
           );
+          postedDrafts++;
         }
       }
     }
@@ -3454,6 +3465,8 @@ export class BatchService {
         status: 'LOCKED',
       },
     });
+
+    if (postedDrafts) await this.batchDailyDataService.reevaluateFeedLevels(batch.farm_id, tenantId);
 
     return {
       batch_id: batchId,

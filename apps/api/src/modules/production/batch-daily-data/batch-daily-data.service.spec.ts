@@ -9,6 +9,7 @@ import { BatchTransferService } from '../batch/batch-transfer.service';
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
 import { AnimalMovementLogService } from '../../piggery/animal-movement-log/animal-movement-log.service';
 import { SiloFeedService } from '../../inventory/silo-feed/silo-feed.service';
+import { FeedAlertService } from '../../inventory/feed-alert/feed-alert.service';
 
 describe('BatchDailyDataService', () => {
   let service: BatchDailyDataService;
@@ -65,6 +66,7 @@ describe('BatchDailyDataService', () => {
   };
 
   const siloFeedService = { currentItems: jest.fn() };
+  const feedAlerts = { evaluateLevelsSafely: jest.fn() };
 
   const consumptionLine = {
     line_id: 'line-1',
@@ -80,6 +82,7 @@ describe('BatchDailyDataService', () => {
     mockDbSelect.mockReset();
     mockDbInsert.mockReset();
     siloFeedService.currentItems.mockReset();
+    feedAlerts.evaluateLevelsSafely.mockReset().mockResolvedValue(undefined);
     mockDbInsert.mockReturnValue({
       values: jest.fn().mockReturnValue({
         onDuplicateKeyUpdate: jest.fn().mockResolvedValue({}),
@@ -111,6 +114,7 @@ describe('BatchDailyDataService', () => {
           useValue: { record: jest.fn().mockResolvedValue('movement-1') },
         },
         { provide: SiloFeedService, useValue: siloFeedService },
+        { provide: FeedAlertService, useValue: feedAlerts },
       ],
     }).compile();
 
@@ -142,7 +146,12 @@ describe('BatchDailyDataService', () => {
     ).rejects.toThrow(ConflictException);
   });
 
-  it("delegates a CONSUMPTION entry to BatchService.addTransaction with the item's stock UOM", async () => {
+  // Ruling M6: a lone entry re-checks its farm's silo levels itself; a day
+  // post (BatchService.postBatchDay/postStageDay) defers it and checks once.
+  it.each([
+    ['re-checks the farm\'s silo levels afterwards', {}, [[['farm-1'], 'tenant-123']]],
+    ['leaves the silo re-check to the day post when deferred', { deferFeedAlerts: true }, []],
+  ])("delegates a CONSUMPTION entry to BatchService.addTransaction with the item's stock UOM, and %s", async (_label, opts, alertCalls) => {
     mockDbSelect
       .mockReturnValueOnce({
         from: jest.fn().mockReturnValue({
@@ -173,7 +182,7 @@ describe('BatchDailyDataService', () => {
           where: jest.fn().mockReturnValue({
             limit: jest
               .fn()
-              .mockResolvedValue([{ tracking_mode: 'BATCH_WISE' }]),
+              .mockResolvedValue([{ tracking_mode: 'BATCH_WISE', farm_id: 'farm-1' }]),
           }),
         }),
       }) // batch tracking_mode lookup
@@ -238,8 +247,10 @@ describe('BatchDailyDataService', () => {
       } as any,
       'tenant-123',
       { userId: 'user-1' },
+      opts,
     );
 
+    expect(feedAlerts.evaluateLevelsSafely.mock.calls).toEqual(alertCalls);
     expect(batchService.addTransaction).toHaveBeenCalledWith(
       'batch-1',
       expect.objectContaining({

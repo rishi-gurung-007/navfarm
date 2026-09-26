@@ -1,5 +1,5 @@
 import { withTenantTransaction } from '../../../common/tenant-transaction';
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Optional } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { eq, and, like, or, isNull, count } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
@@ -11,6 +11,7 @@ import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
 import { SiloFeedService } from '../silo-feed/silo-feed.service';
+import { FeedAlertService } from '../feed-alert/feed-alert.service';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   return date.toISOString().slice(0, 19).replace('T', ' ');
@@ -27,6 +28,10 @@ export class GoodsReceiptService {
     // between), so it is bound by the same D9 item rules as a transfer —
     // SiloFeedService is the one home for them.
     private readonly siloFeedService: SiloFeedService,
+    // Checkpoint 12's re-check of silo levels after the stock has moved. Optional
+    // so a testing module that does not provide it still builds; the hook is
+    // then a no-op.
+    @Optional() private readonly feedAlerts?: FeedAlertService,
   ) {}
 
   private get db(): MySql2Database<typeof schema> {
@@ -300,7 +305,7 @@ export class GoodsReceiptService {
    * new offsetting documents, not edits.
    */
   async post(id: string, tenantId: string, userPayload?: any) {
-    return withTenantTransaction(this.cls, async () => {
+    const posted = await withTenantTransaction(this.cls, async () => {
     const receipt = await this.findOne(id);
     this.assertDraft(receipt);
     // The warehouse may have been deactivated after the receipt was drafted —
@@ -384,5 +389,10 @@ export class GoodsReceiptService {
 
     return this.findOne(id);
     });
+    // Ruling M6: once per posting, after the transaction above has committed,
+    // and never able to fail it. The header's warehouse is where every line
+    // lands (Ruling M5: goods_receipt_line has no warehouse of its own).
+    await this.feedAlerts?.evaluateLevelsSafely([posted.warehouse_id], tenantId);
+    return posted;
   }
 }

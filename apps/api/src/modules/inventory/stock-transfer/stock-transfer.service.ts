@@ -1,5 +1,5 @@
 import { withTenantTransaction } from '../../../common/tenant-transaction';
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Optional } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { eq, and, or, like, isNull, count, sql } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
@@ -12,6 +12,7 @@ import { InventoryLedgerService } from '../inventory-ledger/inventory-ledger.ser
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
 import { UomService } from '../../master-data/uom/uom.service';
 import { SiloFeedService } from '../silo-feed/silo-feed.service';
+import { FeedAlertService } from '../feed-alert/feed-alert.service';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   return date.toISOString().slice(0, 19).replace('T', ' ');
@@ -32,6 +33,10 @@ export class StockTransferService {
     // SiloFeedService — shared with Goods Receipt so a silo obeys the same
     // rules regardless of which document lands stock on it.
     private readonly siloFeedService: SiloFeedService,
+    // Checkpoint 12's re-check of silo levels after the stock has moved. Optional
+    // so a testing module that does not provide it still builds; the hook is
+    // then a no-op.
+    @Optional() private readonly feedAlerts?: FeedAlertService,
   ) {}
 
   private get db(): MySql2Database<typeof schema> {
@@ -419,7 +424,7 @@ export class StockTransferService {
   }
 
   async post(id: string, tenantId: string, userPayload?: any) {
-    return withTenantTransaction(this.cls, async () => {
+    const posted = await withTenantTransaction(this.cls, async () => {
     const transfer = await this.loadForMutation(id, tenantId);
     this.assertDraft(transfer);
 
@@ -489,5 +494,9 @@ export class StockTransferService {
 
     return this.findOne(id);
     });
+    // Ruling M6: once per posting, after the transaction above has committed,
+    // and never able to fail it. Both ends — a transfer out of a silo lowers it.
+    await this.feedAlerts?.evaluateLevelsSafely([posted.from_warehouse_id, posted.to_warehouse_id], tenantId);
+    return posted;
   }
 }

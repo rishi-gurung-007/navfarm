@@ -7,6 +7,7 @@ import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
 import { SiloFeedService } from '../silo-feed/silo-feed.service';
+import { FeedAlertService } from '../feed-alert/feed-alert.service';
 import { BadRequestException } from '@nestjs/common';
 import * as schema from '../../../core/database/schema';
 import { plainToInstance } from 'class-transformer';
@@ -180,6 +181,77 @@ describe('GoodsReceiptService', () => {
   // captures the last `.where()` condition so a test can render the SQL and
   // check the farm join made it in. Local to this describe because the outer
   // suite's mock answers by call order instead.
+  // Ruling M6: a posting re-checks silo levels once, only after its
+  // transaction has committed, and nothing that goes wrong in that re-check
+  // can fail the posting it follows.
+  describe('feed alert hook', () => {
+    const postedReceipt = () => {
+      jest.spyOn(service, 'findOne')
+        .mockResolvedValueOnce({ ...draftReceipt, supplier_id: null } as any)
+        .mockResolvedValueOnce({ ...draftReceipt, supplier_id: null, status: 'POSTED' } as any);
+      mockDbSelect.mockReturnValueOnce(activeWarehouse());
+      mockDbSelect.mockReturnValueOnce(nonSiloWarehouse());
+      mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ affectedRows: 1 }]) }) });
+    };
+
+    const build = async (feedAlerts: unknown, cls: ClsService) => {
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [
+          GoodsReceiptService,
+          { provide: ClsService, useValue: cls },
+          { provide: AuditLogService, useValue: { log: jest.fn().mockResolvedValue({}) } },
+          { provide: InventoryLedgerService, useValue: { writePositiveEntry: mockWritePositiveEntry } },
+          { provide: GlPostingService, useValue: { postInventoryLedgerEntry: jest.fn().mockResolvedValue({}) } },
+          { provide: SiloFeedService, useValue: { assertCanReceive: mockAssertCanReceive } },
+          { provide: FeedAlertService, useValue: feedAlerts },
+        ],
+      }).compile();
+      service = module.get<GoodsReceiptService>(GoodsReceiptService);
+    };
+
+    it('re-checks the receipt warehouse once, after the transaction has committed', async () => {
+      const cls = transactionCls(mockDb);
+      let committed = false;
+      mockDbTransaction.mockImplementationOnce(async (work: (tx: any) => Promise<any>) => {
+        const result = await work(mockDb);
+        committed = true;
+        return result;
+      });
+      const seen: Array<{ committed: boolean; inTx: unknown }> = [];
+      const feedAlerts = { evaluateLevelsSafely: jest.fn(async () => { seen.push({ committed, inTx: cls.get('tenantPostingTransaction') }); }) };
+      await build(feedAlerts, cls);
+      postedReceipt();
+
+      const result = await service.post('gr-3', 'tenant-123', { userId: 'user-1' });
+
+      expect(result.status).toBe('POSTED');
+      expect(feedAlerts.evaluateLevelsSafely).toHaveBeenCalledTimes(1);
+      expect(feedAlerts.evaluateLevelsSafely).toHaveBeenCalledWith(['wh-1'], 'tenant-123');
+      expect(seen).toEqual([{ committed: true, inTx: undefined }]);
+    });
+
+    it('still posts when the re-check itself throws', async () => {
+      const cls = transactionCls(mockDb);
+      const alertRules = { ensureDefaultRules: jest.fn().mockRejectedValue(new Error('alert_rule is locked')) };
+      const feedAlerts = new FeedAlertService(cls, {} as any, {} as any, alertRules as any);
+      const warn = jest.spyOn((feedAlerts as any).logger, 'warn').mockImplementation(() => undefined);
+      await build(feedAlerts, cls);
+      postedReceipt();
+      // The hook's own read of the receipt warehouse: a silo on farm-1, so it goes on to evaluate that farm.
+      mockDbSelect.mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockResolvedValue([{ location_id: 'wh-1', location_type: 'SILO', farm_id: 'farm-1', company_id: 'comp-1' }]),
+        }),
+      });
+
+      const result = await service.post('gr-3', 'tenant-123', { userId: 'user-1' });
+
+      expect(result.status).toBe('POSTED');
+      expect(alertRules.ensureDefaultRules).toHaveBeenCalledWith('comp-1', 'tenant-123');
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('alert_rule is locked'));
+    });
+  });
+
   describe('farm scope', () => {
     const grasmere = { farmId: 'farm-g', restricted: true, companyId: 'co-1', lobId: 'lob-pig' };
 

@@ -1,5 +1,5 @@
 import { withTenantTransaction } from '../../../common/tenant-transaction';
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Optional } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { eq, and, like, isNull, count } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
@@ -10,6 +10,7 @@ import { CreateStockAdjustmentDto, UpdateStockAdjustmentDto, QueryStockAdjustmen
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
+import { FeedAlertService } from '../feed-alert/feed-alert.service';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   return date.toISOString().slice(0, 19).replace('T', ' ');
@@ -22,6 +23,10 @@ export class StockAdjustmentService {
     private readonly auditService: AuditLogService,
     private readonly ledgerService: InventoryLedgerService,
     private readonly glPostingService: GlPostingService,
+    // Checkpoint 12's re-check of silo levels after the stock has moved. Optional
+    // so a testing module that does not provide it still builds; the hook is
+    // then a no-op.
+    @Optional() private readonly feedAlerts?: FeedAlertService,
   ) {}
 
   private get db(): MySql2Database<typeof schema> {
@@ -215,7 +220,7 @@ export class StockAdjustmentService {
   }
 
   async post(id: string, tenantId: string, userPayload?: any) {
-    return withTenantTransaction(this.cls, async () => {
+    const posted = await withTenantTransaction(this.cls, async () => {
     const adjustment = await this.findOne(id);
     this.assertDraft(adjustment);
 
@@ -291,5 +296,9 @@ export class StockAdjustmentService {
 
     return this.findOne(id);
     });
+    // Ruling M6: once per posting, after the transaction above has committed,
+    // and never able to fail it — an adjustment can take a silo below its low level.
+    await this.feedAlerts?.evaluateLevelsSafely([posted.warehouse_id], tenantId);
+    return posted;
   }
 }
