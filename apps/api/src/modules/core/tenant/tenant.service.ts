@@ -7,6 +7,7 @@ import * as schema from '../../../core/database/schema';
 import { SYSTEM_UOM_SEED, SYSTEM_SPECIES_SEED, SYSTEM_BREED_SEED, SYSTEM_ITEM_SEED, SYSTEM_PARAMETER_SEED, SYSTEM_STAGE_SEED, SYSTEM_NO_SERIES_SEED, SYSTEM_KPI_METRIC_SEED } from '../../../core/database/system-master-data-seed';
 import { MASTER_CONNECTION } from '../../../core/database/database.module';
 import { ConnectionManagerService } from '../../../core/database/connection-manager.service';
+import { RESERVED_TENANT_CODES, tenantDatabaseName } from '../../../core/database/database-names';
 import { SignupTenantDto } from './dto/signup-tenant.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { UpdateTenantDto } from './dto/update-tenant.dto';
@@ -25,6 +26,12 @@ export class TenantService {
   ) { }
 
   async signup(dto: SignupTenantDto) {
+    // A tenant's database is nf_<code>, so a code that spells a non-tenant
+    // database's name would be handed that database. See database-names.ts.
+    if (RESERVED_TENANT_CODES.includes(dto.tenant_code.toLowerCase())) {
+      throw new ConflictException(`Tenant subdomain code '${dto.tenant_code}' is reserved.`);
+    }
+
     // 1. Check if tenant code is already registered in master
     const existing = await this.db
       .select()
@@ -50,7 +57,7 @@ export class TenantService {
 
     const tenantId = randomUUID();
     const planStartDate = new Date().toISOString().split('T')[0];
-    const dbName = `tenant_${dto.tenant_code.toLowerCase()}`;
+    const dbName = tenantDatabaseName(dto.tenant_code);
 
     // 3. Create database on MySQL server
     try {
@@ -673,7 +680,7 @@ export class TenantService {
       throw new NotFoundException(`Tenant with ID '${id}' not found.`);
     }
 
-    // Must use the tenant's registered db_name, not a recomputed tenant_<code> —
+    // Must use the tenant's registered db_name, not a recomputed nf_<code> —
     // they can differ (e.g. under an isolated DATABASE_NAME), and dropping the
     // wrong physical database here is unrecoverable.
     const dbName = tenant.db_name;

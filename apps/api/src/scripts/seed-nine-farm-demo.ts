@@ -574,7 +574,7 @@ async function run() {
     throw new Error('Use no flags (read-only), --verify, or --apply.');
   }
   const write = apply || verify;
-  const database = process.env.DEV_TENANT_DATABASE || process.env.TENANT_DB_NAME || 'tenant_devco';
+  const database = process.env.DEV_TENANT_DATABASE || process.env.TENANT_DB_NAME || 'nf_devco';
   const db = await mysql.createConnection({ host, port, user, password, database, ssl });
 
   try {
@@ -665,7 +665,12 @@ async function run() {
       r.type_code as string,
       (typeof r.allowed_parent_types === 'string' ? JSON.parse(r.allowed_parent_types) : r.allowed_parent_types) as string[],
     ]));
-    for (const [child, parent] of [['SHED', 'FARM'], ['PEN', 'SHED'], ['SILO', 'SHED'], ['STORE', 'FARM']] as const) {
+    // SILO hangs off FARM, not off the shed it feeds. A silo is blown full by
+    // the mill and drawn down by several sheds at once, so parenting it to one
+    // of them made the tree state something the yard does not: that the silo
+    // belonged to that shed. Which shed draws from which silo is now the SHED's
+    // feed_silo_id, set below.
+    for (const [child, parent] of [['SHED', 'FARM'], ['PEN', 'SHED'], ['SILO', 'FARM'], ['STORE', 'FARM']] as const) {
       const allowed = allowedParents.get(child);
       if (!allowed) throw new Error(`location_type_master has no ${child} row — run db-seed-farm-locations first.`);
       if (!allowed.includes(parent)) {
@@ -693,24 +698,30 @@ async function run() {
 
     /* ---- 1 & 2. The nine farms and their trees ---------------------------- */
 
-    interface Placed { id: string; code: string }
+    // Carries its level so children can derive theirs — see upsertLocation.
+    interface Placed { id: string; code: string; level: number }
 
     const upsertLocation = async (row: {
       code: string; name: string; address: string | null; type: string;
       parent: Placed | null; farmId: string | null; shedId: string | null;
-      level: number; capacity: number | null; capacityUom: string | null;
+      capacity: number | null; capacityUom: string | null;
       storageType: string | null; storageName: string | null;
-      siloCapacityKg: number | null; siloReorderDays: number | null;
+      siloCapacityKg: number | null; siloCapacityUom: string | null;
+      siloReorderDays: number | null;
     }): Promise<{ placed: Placed; action: 'inserted' | 'updated' }> => {
       const [existing] = await db.query<RowDataPacket[]>(
         'SELECT location_id FROM location_master WHERE tenant_id = ? AND location_code = ?',
         [scope.tenant_id, row.code],
       );
+      // Depth is derived from the parent, never asserted by the caller — the
+      // same rule scripts/lib/seed-location.ts applies. A hardcoded level is
+      // only ever right until a row moves, and the silo has just moved.
+      const level = row.parent ? row.parent.level + 1 : 1;
       const values = [
         scope.nob_id, scope.lob_id, row.name, row.address, row.type,
-        row.parent?.id ?? null, row.level, dec(row.capacity), row.capacityUom,
-        row.storageType, row.storageName, dec(row.siloCapacityKg), row.siloReorderDays,
-        row.farmId, row.shedId,
+        row.parent?.id ?? null, level, dec(row.capacity), row.capacityUom,
+        row.storageType, row.storageName, dec(row.siloCapacityKg), row.siloCapacityUom,
+        row.siloReorderDays, row.farmId, row.shedId,
       ];
       if (existing.length) {
         const id = existing[0].location_id as string;
@@ -718,26 +729,26 @@ async function run() {
           await db.query(
             `UPDATE location_master SET nob_id=?, lob_id=?, location_name=?, location_address=?, location_type=?,
                parent_location_id=?, location_level=?, max_capacity=?, capacity_uom=?, storage_type=?, storage_name=?,
-               silo_capacity_kg=?, silo_reorder_days=?, farm_id=?, shed_id=?,
+               silo_capacity_kg=?, silo_capacity_uom=?, silo_reorder_days=?, farm_id=?, shed_id=?,
                is_active=1, status='ACTIVE', deleted_at=NULL, updated_at=NOW()
              WHERE location_id=?`,
             [...values, id],
           );
         }
-        return { placed: { id, code: row.code }, action: 'updated' };
+        return { placed: { id, code: row.code, level }, action: 'updated' };
       }
       const id = randomUUID();
       if (write) {
         await db.query(
           `INSERT INTO location_master (location_id, tenant_id, company_id, location_code, nob_id, lob_id,
              location_name, location_address, location_type, parent_location_id, location_level, max_capacity,
-             capacity_uom, storage_type, storage_name, silo_capacity_kg, silo_reorder_days, farm_id, shed_id,
-             is_active, status, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'ACTIVE', NOW(), NOW())`,
+             capacity_uom, storage_type, storage_name, silo_capacity_kg, silo_capacity_uom, silo_reorder_days,
+             farm_id, shed_id, is_active, status, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'ACTIVE', NOW(), NOW())`,
           [id, scope.tenant_id, scope.company_id, row.code, ...values],
         );
       }
-      return { placed: { id, code: row.code }, action: 'inserted' };
+      return { placed: { id, code: row.code, level }, action: 'inserted' };
     };
 
     const farmPlaced = new Map<string, Placed>();
@@ -756,14 +767,14 @@ async function run() {
         // submitted Location Masters. They are reused by id and left exactly
         // as they are — renaming a farm the client named, or re-inserting it
         // under a second id, would break every row that points at it.
-        placed = { id: existingFarm[0].location_id as string, code: farm.code };
+        placed = { id: existingFarm[0].location_id as string, code: farm.code, level: 1 };
         c.farmRow = 'reused';
       } else {
         const r = await upsertLocation({
           code: farm.code, name: farm.name, address: farm.address, type: 'FARM',
-          parent: null, farmId: null, shedId: null, level: 1,
+          parent: null, farmId: null, shedId: null,
           capacity: null, capacityUom: null, storageType: null, storageName: null,
-          siloCapacityKg: null, siloReorderDays: null,
+          siloCapacityKg: null, siloCapacityUom: null, siloReorderDays: null,
         });
         // A farm is its own farm_id, which needs the id the insert just made.
         if (write) await db.query('UPDATE location_master SET farm_id = ? WHERE location_id = ?', [r.placed.id, r.placed.id]);
@@ -781,10 +792,10 @@ async function run() {
         : nextLocationCode('STORE', farm.code);
       const store = await upsertLocation({
         code: storeCode, name: STORE_NAME, address: null, type: 'STORE',
-        parent: placed, farmId: placed.id, shedId: null, level: 2,
+        parent: placed, farmId: placed.id, shedId: null,
         capacity: STORE_CAPACITY, capacityUom: STORE_CAPACITY_UOM,
         storageType: 'STORE', storageName: `${farm.code} Feed & Medicine Store`,
-        siloCapacityKg: null, siloReorderDays: null,
+        siloCapacityKg: null, siloCapacityUom: null, siloReorderDays: null,
       });
       if (write) await db.query('UPDATE location_master SET warehouse_id = ? WHERE location_id = ?', [store.placed.id, store.placed.id]);
       c.stores++;
@@ -803,9 +814,10 @@ async function run() {
         const shedCode = nextLocationCode('SHED', farm.code);
         const shed = await upsertLocation({
           code: shedCode, name: shedName, address: null, type: 'SHED',
-          parent: placed, farmId: placed.id, shedId: null, level: 2,
+          parent: placed, farmId: placed.id, shedId: null,
           capacity: spec.pens * spec.penCapacity, capacityUom: 'HEAD',
-          storageType: null, storageName: null, siloCapacityKg: null, siloReorderDays: null,
+          storageType: null, storageName: null,
+          siloCapacityKg: null, siloCapacityUom: null, siloReorderDays: null,
         });
         if (write) await db.query('UPDATE location_master SET shed_id = ? WHERE location_id = ?', [shed.placed.id, shed.placed.id]);
         c.sheds++;
@@ -814,22 +826,57 @@ async function run() {
           const penCode = nextLocationCode('PEN', shedCode);
           await upsertLocation({
             code: penCode, name: `${shedName} Pen ${i}`, address: null, type: 'PEN',
-            parent: shed.placed, farmId: placed.id, shedId: shed.placed.id, level: 3,
+            parent: shed.placed, farmId: placed.id, shedId: shed.placed.id,
             capacity: spec.penCapacity, capacityUom: 'HEAD',
-            storageType: null, storageName: null, siloCapacityKg: null, siloReorderDays: null,
+            storageType: null, storageName: null,
+            siloCapacityKg: null, siloCapacityUom: null, siloReorderDays: null,
           });
           c.pens++;
         }
 
-        const siloCode = nextLocationCode('SILO', shedCode);
+        // The silo hangs off the FARM, not off the shed it feeds, and now its
+        // code says so too. It used to be numbered within the shed's stem, so
+        // the code read `<FARM>/SHED-00n/SILO-001` while parent_location_id
+        // pointed at the farm — a hierarchy the tree no longer had, and one the
+        // app itself would never produce: location.service.ts builds the stem
+        // from the parent's code, so a silo added through the UI comes out
+        // `<FARM>/SILO-00n`. The seed now stems off the farm for the same
+        // reason, which also renumbers them 001..N across the farm instead of
+        // leaving every silo a SILO-001 inside its own shed.
+        //
+        // Nothing downstream resolves a silo by its code: demo/farms.ts reads
+        // the SHED's feed_silo_id, and chapter 02 takes the ration from that
+        // shed's role. Renumbering is therefore free. What it is not is
+        // in-place: upsertLocation keys on location_code, so a database that
+        // already holds the shed-stemmed silos gets the new ones inserted
+        // alongside them and the sheds repointed. The old rows have to be
+        // retired by hand, or the demo reseeded from empty.
+        //
+        // shed_id is null for the same reason the parent moved: the silo is not
+        // inside a shed. warehouse_id stays self-referential — a silo is a
+        // stock location, and that is what the inventory ledger joins on.
+        const siloCode = nextLocationCode('SILO', farm.code);
+        // Neutral, farm-scoped, and deliberately not the shed's. A silo stands
+        // in the yard and may feed several sheds, so "VIL100 Weaner House Feed
+        // Silo" went stale the moment a second shed was attached to it. The
+        // sequence is read back off the code the series just issued rather than
+        // counted here, so the name can never drift from the code on a re-run
+        // that picks up where an earlier one stopped. Staff rename these from
+        // the Silo Name field on the form (Rishi, 2026-09-24).
+        const siloName = `${farm.code} Feed Silo ${Number(/(\d+)$/.exec(siloCode)?.[1] ?? c.silos + 1)}`;
         const silo = await upsertLocation({
-          code: siloCode, name: `${shedName} Feed Silo`, address: null, type: 'SILO',
-          parent: shed.placed, farmId: placed.id, shedId: shed.placed.id, level: 3,
+          code: siloCode, name: siloName, address: null, type: 'SILO',
+          parent: placed, farmId: placed.id, shedId: null,
           capacity: null, capacityUom: null,
-          storageType: 'SILO', storageName: `${shedName} Feed Silo`,
-          siloCapacityKg: spec.siloCapacityKg, siloReorderDays: SILO_REORDER_DAYS,
+          storageType: 'SILO', storageName: siloName,
+          siloCapacityKg: spec.siloCapacityKg, siloCapacityUom: 'KG',
+          siloReorderDays: SILO_REORDER_DAYS,
         });
         if (write) await db.query('UPDATE location_master SET warehouse_id = ? WHERE location_id = ?', [silo.placed.id, silo.placed.id]);
+        // Which silo this shed draws from. With the silo no longer the shed's
+        // parent, this column is the only thing that still says so, and the
+        // feed forecast reads it rather than walking the tree.
+        if (write) await db.query('UPDATE location_master SET feed_silo_id = ? WHERE location_id = ?', [silo.placed.id, shed.placed.id]);
         c.silos++;
       }
     }

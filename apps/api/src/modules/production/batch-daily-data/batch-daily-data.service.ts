@@ -7,7 +7,7 @@ import {
   forwardRef,
 } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, inArray, sql, isNull } from 'drizzle-orm';
+import { eq, and, inArray, or, sql, isNull } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
@@ -103,6 +103,10 @@ export class BatchDailyDataService {
       .select({
         tracking_mode: schema.batchHeader.tracking_mode,
         company_id: schema.batchHeader.company_id,
+        // The last resort when resolving where a consumption line draws its
+        // stock from: a batch whose scheduler records no shed or pen still
+        // belongs to a farm, and that farm's store is the right source.
+        farm_id: schema.batchHeader.farm_id,
       })
       .from(schema.batchHeader)
       .where(eq(schema.batchHeader.batch_id, batchId))
@@ -262,6 +266,18 @@ export class BatchDailyDataService {
           .from(schema.itemMaster)
           .where(eq(schema.itemMaster.item_id, line.item_id))
           .limit(1);
+        // Feed and medicine come out of somewhere physical: the silo standing
+        // at this batch's shed, or the farm store behind it. Only CONSUMPTION
+        // draws stock down — an OUTPUT line puts stock IN and has no source to
+        // resolve, so it is left exactly as it was.
+        const sourceWarehouseId =
+          line.line_type === 'CONSUMPTION'
+            ? await this.resolveConsumptionWarehouse(
+                header.location_id,
+                line.activity_name,
+                batchRow?.farm_id ?? null,
+              )
+            : undefined;
         const updated = await this.batchService.addTransaction(
           batchId,
           {
@@ -272,6 +288,13 @@ export class BatchDailyDataService {
             uom: item?.uom_primary || 'PCS',
             rate: dto.rate,
             animal_id: dto.animal_id,
+            // Threaded down to InventoryLedgerService.applyFifo, which only
+            // considers layers received into this warehouse. That filter is
+            // itself the "is there enough feed in the silo?" check — applyFifo
+            // already throws BadRequestException when the layers come up short
+            // ("Insufficient stock for item ..."), so no second balance check
+            // is written here; one would only be able to disagree with it.
+            source_warehouse_id: sourceWarehouseId,
             remarks: dto.remarks || `${line.activity_name} — scheduled entry`,
           } as any,
           tenantId,
@@ -622,6 +645,102 @@ export class BatchDailyDataService {
     });
 
     return this.findForDate(batchId, dto.entry_date, tenantId);
+  }
+
+  /**
+   * Where a scheduled CONSUMPTION line's stock is actually drawn from.
+   *
+   * The client's feed flow (2026-09-24) is farm STORE -> (stock transfer) ->
+   * SILO -> (daily entry) -> shed, so a shed's feed is whatever its own silo
+   * holds — location_master.feed_silo_id, written by the "Attached Sheds"
+   * multi-select on the silo form. Data entry happens at PEN level on some
+   * farms, and a silo is attached to the shed above the pen, never to the pen
+   * itself, so a PEN walks up its parent first.
+   *
+   * With no silo attached the farm's STORE is the source, and that is a real
+   * answer rather than a stopgap: bagged feed (location_master.feed_in_bags,
+   * carried per location on both client templates) genuinely is carried out
+   * of the store, never blown into a silo. It also keeps every farm posting
+   * entries from the day it is created, before anyone has configured silos.
+   *
+   * If neither resolves there is nowhere honest to take the stock from, and
+   * guessing would put the batch's cost against another farm's inventory —
+   * which is exactly what the warehouse-less ledger row used to do.
+   */
+  private async resolveConsumptionWarehouse(
+    locationId: string | null,
+    activityName: string | null,
+    batchFarmId: string | null,
+  ): Promise<string> {
+    const columns = {
+      location_id: schema.locationMaster.location_id,
+      location_type: schema.locationMaster.location_type,
+      parent_location_id: schema.locationMaster.parent_location_id,
+      farm_id: schema.locationMaster.farm_id,
+      feed_silo_id: schema.locationMaster.feed_silo_id,
+    };
+    // The farm's own store, which every fallback below ends at.
+    const storeOfFarm = async (farmId: string | null) => {
+      if (!farmId) return null;
+      const [store] = await this.db
+        .select({ location_id: schema.locationMaster.location_id })
+        .from(schema.locationMaster)
+        .where(
+          and(
+            eq(schema.locationMaster.location_type, 'STORE'),
+            eq(schema.locationMaster.is_active, true),
+            isNull(schema.locationMaster.deleted_at),
+            or(
+              eq(schema.locationMaster.farm_id, farmId),
+              eq(schema.locationMaster.parent_location_id, farmId),
+            ),
+          ),
+        )
+        .limit(1);
+      return store?.location_id ?? null;
+    };
+
+    // A scheduler that records no shed or pen is not a reason to refuse the
+    // entry: plenty of batches are scheduled at farm level, and the feed still
+    // came from somewhere. The batch's own farm store is that somewhere, and
+    // refusing instead would have blocked every farm-level batch in the demo —
+    // which is exactly how this surfaced.
+    const [location] = locationId
+      ? await this.db
+          .select(columns)
+          .from(schema.locationMaster)
+          .where(eq(schema.locationMaster.location_id, locationId))
+          .limit(1)
+      : [undefined];
+    if (!location) {
+      const store = await storeOfFarm(batchFarmId);
+      if (store) return store;
+      throw new BadRequestException(
+        `'${activityName ?? 'This line'}' cannot be posted — its stage records no shed or pen, and the batch's farm has no store to draw from. Set the batch's location, or create the farm's store location.`,
+      );
+    }
+
+    let shed = location;
+    if (location.location_type === 'PEN' && location.parent_location_id) {
+      const [parent] = await this.db
+        .select(columns)
+        .from(schema.locationMaster)
+        .where(eq(schema.locationMaster.location_id, location.parent_location_id))
+        .limit(1);
+      if (parent) shed = parent;
+    }
+
+    if (shed.feed_silo_id) return shed.feed_silo_id;
+
+    // farm_id is stamped on every descendant of a FARM (see the location
+    // seeder); a shed sitting directly under the farm with no farm_id falls
+    // back to its parent, which is that farm.
+    const store = await storeOfFarm(shed.farm_id || shed.parent_location_id || batchFarmId);
+    if (store) return store;
+
+    throw new BadRequestException(
+      `'${activityName ?? 'This line'}' cannot be posted — no silo is attached to this batch's shed and its farm has no store to draw from. Attach a silo to the shed, or create the farm's store location.`,
+    );
   }
 
   async findForDate(batchId: string, entryDate: string, tenantId: string) {

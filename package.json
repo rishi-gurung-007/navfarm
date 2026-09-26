@@ -6,9 +6,10 @@
   "engines": {
     "node": "^22.12.0 || ^24.0.0 || ^26.0.0"
   },
+  "//": "The NAVFarm web app runs on port 3002 only: currently the assigned port is 3002 and other are occupied by other applications in the server. Do not move it to 3000/3001 or anything else.",
   "scripts": {
     "dev:api": "pnpm nx serve api",
-    "dev:web": "pnpm nx dev web --port=3001",
+    "dev:web": "pnpm nx dev web --port=3002",
     "dev:mobile": "pnpm nx run mobile:serve",
     "build:api": "pnpm nx build api",
     "build:web": "pnpm nx build web",

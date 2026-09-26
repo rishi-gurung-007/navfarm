@@ -35,6 +35,21 @@ git switch main
 git pull --ff-only origin main
 ```
 
+**One time only — moving off the pre-24 September `main`.** On 24 September
+2026 `main` was replaced rather than advanced (it had stopped at 14 September;
+the old tip is kept as branch `main-backup-2026-09-24`). A checkout still on the
+old `main` cannot fast-forward, so `git pull --ff-only` stops with "Not
+possible to fast-forward". Only when `git status --short` printed nothing, move
+the checkout onto the new `main` instead:
+
+```powershell
+git reset --hard origin/main
+git log -1 --oneline
+```
+
+`reset --hard` discards uncommitted server changes, which is why the clean
+`git status` comes first. Every later update is the ordinary `pull --ff-only`.
+
 Install the repository's declared pnpm version and dependencies:
 
 ```powershell
@@ -70,13 +85,16 @@ must not be written into terminal history. In MySQL, verify the local service:
 SELECT VERSION() AS mysql_version, @@hostname AS host, @@port AS port,
        @@datadir AS data_directory;
 SHOW VARIABLES LIKE 'bind_address';
-SHOW DATABASES LIKE 'navfarm_master';
-SHOW DATABASES LIKE 'tenant_system';
-SHOW DATABASES LIKE 'tenant\_%';
+SHOW DATABASES LIKE 'nf_master';
+SHOW DATABASES LIKE 'nf_system';
+SHOW DATABASES LIKE 'nf\_%';
 ```
 
 The database account in `apps/api/.env` must be able to create and migrate
-`navfarm_master`, `tenant_system`, and `tenant_<tenant_code>` during bootstrap.
+`nf_master`, `nf_system`, and `nf_<tenant_code>` during bootstrap.
+Every NAVFarm database starts with `nf_`, because this MySQL is shared with
+another application: grant the NAVFarm account rights on `nf\_%` only, and
+nothing NAVFarm creates or drops can land on the other application's databases.
 Keep MySQL bound locally and do not create inbound firewall rules for 3306 or
 33060.
 
@@ -106,7 +124,7 @@ DATABASE_HOST=127.0.0.1
 DATABASE_PORT=3306
 DATABASE_USERNAME=REPLACE_WITH_LOCAL_MYSQL_USER
 DATABASE_PASSWORD=REPLACE_WITH_LOCAL_MYSQL_PASSWORD
-DATABASE_NAME=navfarm_master
+DATABASE_NAME=nf_master
 DATABASE_SSL=false
 
 JWT_SECRET=REPLACE_WITH_A_LONG_RANDOM_SECRET
@@ -114,7 +132,7 @@ JWT_EXPIRES_IN=15m
 JWT_REFRESH_EXPIRES_IN=7d
 ENCRYPTION_KEY=REPLACE_WITH_A_DIFFERENT_LONG_RANDOM_SECRET
 
-SYSTEM_TENANT_DATABASE=tenant_system
+SYSTEM_TENANT_DATABASE=nf_system
 SYSTEM_ADMIN_NAME="NAVFarm System Administrator"
 SYSTEM_ADMIN_EMAIL=REPLACE_WITH_ADMIN_EMAIL
 SYSTEM_ADMIN_PASSWORD=REPLACE_WITH_A_STRONG_ADMIN_PASSWORD
@@ -151,20 +169,59 @@ into the browser bundle, and no `NEXT_PUBLIC_API_URL` or
 `NEXT_PUBLIC_SOCKET_URL` is needed. Rebuild the web application if this file
 changes because Next.js records rewrites during the build.
 
-## 4. One-time database bootstrap and demo seed
+## 4. Build the demo databases
 
-From the repository root:
+From the repository root, first as a read-only dry run:
 
 ```powershell
-pnpm nx run api:db-bootstrap
-pnpm nx run api:db-seed-demo
-pnpm nx run api:verify-demo-master-integrity
+pnpm nx run api:db-rebuild-demo
 ```
 
-`db-seed-demo` intentionally installs synthetic test/demo data. Do not remove
-those values merely because they are synthetic. Do not add `--fresh` on an
-existing server: the fresh mode drops and recreates the configured NAVFarm
-databases and is only for a deliberately disposable database.
+It prints the databases it would drop and the ordered command list, and changes
+nothing. It only ever targets `nf_`-prefixed databases on `127.0.0.1` — the
+guard refuses any other name and any remote host — so it cannot reach the
+other application's databases on this MySQL. On a first install it reports
+`Would drop (reset step only): (none found)`. **If it lists anything that is
+not NAVFarm's, stop.** Otherwise:
+
+```powershell
+pnpm nx run api:db-rebuild-demo -- --apply
+```
+
+This is the same chain the development machines use: schema, the Triple C
+tenant and company, the real farm locations and masters, the nine-farm demo
+(sheds, pens, silos, breeds, lifecycles, logins) and the posted demo chapters.
+The chapters take a few minutes. The data is synthetic test/demo data by
+design; do not remove it merely because it is synthetic.
+
+`db-seed-demo` is the older demo chain and does not build the nine farms or
+their silos; do not use it for this server.
+
+Check the result in MySQL:
+
+```sql
+SHOW DATABASES LIKE 'nf\_%';
+SELECT tenant_code, db_name FROM nf_master.tenant_master;
+SELECT COUNT(*) FROM nf_devco.location_master WHERE location_type = 'SILO';
+```
+
+Expect `nf_master`, `nf_system` and `nf_devco`; tenants `devco → nf_devco` and
+`system → nf_system`; and 53 silos.
+
+### Retiring the pre-`nf_` databases
+
+Servers set up before 24 September hold NAVFarm's data under the old names.
+Once the `nf_` deployment is verified (section 9), list which old databases
+were NAVFarm's:
+
+```sql
+SELECT tenant_code, db_name FROM navfarm_master.tenant_master;
+```
+
+Only `navfarm_master` and the `db_name`s it lists are NAVFarm's. Back them up
+with `mysqldump` if the old data may be wanted, then drop those — by name, one
+at a time. **Leave every other `tenant_*` database alone**: it is not in
+NAVFarm's list and may belong to the other application.
 
 ## 5. Production builds
 
@@ -271,13 +328,14 @@ with `Ctrl+C` in their own windows. For an update:
 4. Run `git fetch origin`, `git switch main`, and
    `git pull --ff-only origin main`.
 5. Run `pnpm install --frozen-lockfile`.
-6. Run `pnpm nx run api:db-bootstrap` to apply current database setup/migrations.
-7. Run `pnpm nx run api:verify-demo-master-integrity` when this is the demo tenant.
+6. Run `pnpm nx run api:db-bootstrap` to apply current database setup/migrations
+   while keeping the data, or — when the release changes the demo and the data
+   is disposable — rebuild it with section 4 (dry run first, then `--apply`).
 8. Rebuild API and web with the commands in section 5.
 9. Start API first, verify direct health, then start web and verify proxied health.
 
-Do not use `db-seed-demo --fresh` during a normal update. Run the non-fresh demo
-seed only when the release intentionally adds or repairs demo fixtures.
+`db-rebuild-demo -- --apply` drops and rebuilds every `nf_` database, so never
+run it where data must be kept.
 
 ## 11. Persistent processes after interactive testing
 
@@ -298,3 +356,62 @@ Each process must have:
 
 Validate the same direct and proxied health checks after converting the
 interactive commands into services.
+
+## 12. Updating the running services (NSSM)
+
+The server runs two NSSM services behind IIS: `NAVFarm-API` (port 2877) and
+`NAVFarm-Web` (port 3002, published as https://test-app.navfarm.com).
+`NAVFarm-Web` depends on `NAVFarm-API`.
+
+**Stop both services before building.** `next build` replaces
+`apps/web/.next` in place and renames every chunk under `/_next/static`. A web
+service left running during the build serves a mix of old and new files, and
+testers get `ChunkLoadError … 500` and "Application error: a client-side
+exception". The services also keep `dist/` and `.next` files locked on Windows.
+About three minutes of planned downtime is the price of a clean switch.
+
+Run in an **Administrator** PowerShell:
+
+```powershell
+Set-Location C:\Users\rishi.gurung\Desktop\navfarm
+
+# 1. Stop web first (it depends on the API), then the API.
+Stop-Service NAVFarm-Web
+Stop-Service NAVFarm-API
+Get-Service NAVFarm-Web, NAVFarm-API          # both Stopped
+Get-NetTCPConnection -State Listen -LocalPort 2877,3002 -ErrorAction SilentlyContinue   # prints nothing
+
+# 2. Update the code.
+git status --short                             # must print nothing
+git fetch origin
+git pull --ff-only origin main
+git log -1 --oneline
+pnpm install --frozen-lockfile
+
+# 3. Database: keep the data and apply new migrations …
+pnpm nx run api:db-bootstrap
+#    … or, only when the release says the demo must be rebuilt (drops every nf_ database):
+#    pnpm nx run api:db-rebuild-demo            (dry run, read it)
+#    pnpm nx run api:db-rebuild-demo -- --apply
+
+# 4. Build while nothing is running.
+pnpm nx run api:build --skipNxCache
+pnpm nx run web:build --skipNxCache
+
+# 5. Start the API, check it, then start web and check through IIS.
+Start-Service NAVFarm-API
+Start-Sleep 5
+Invoke-RestMethod http://127.0.0.1:2877/api/v1/health
+Start-Service NAVFarm-Web
+Start-Sleep 10
+(Invoke-WebRequest http://127.0.0.1:3002 -UseBasicParsing).StatusCode
+Invoke-RestMethod https://test-app.navfarm.com/api/v1/health
+```
+
+If a build fails, fix it before starting either service. Do not start the old
+build against the new code.
+
+Testers who had the site open during the update may see one automatic reload:
+the page script `chunk-reload-script.ts` reloads a tab once when its chunks no
+longer exist. If a page still shows "Application error" after that, ask for a
+hard refresh (Ctrl+Shift+R) and a screenshot of the browser console.

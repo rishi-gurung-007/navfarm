@@ -699,6 +699,21 @@ export function MasterDataTable({
     load();
   }, [config.key, search, nobFilter, lobFilter, page, pageSize, sortKey, sortDir, colFilters, createOnly]);
 
+  // Some of this form's pickers list this master's own rows — Location's
+  // Parent Location and Attached Sheds are both /location — and every picker's
+  // options are cached per endpoint for as long as the page stays open. So a
+  // Farm saved here was missing from the next Add Shed's Parent Location until
+  // the page was reloaded, which read as the new record appearing "after a
+  // minute". After any change to this master, forget the cached lists that
+  // come from it: the dependent-field effect refetches a missing endpoint the
+  // next time the form needs it, and the reload key refetches the
+  // non-dependent ones, which that effect alone would otherwise leave missing.
+  const forgetOwnOptions = () => {
+    const own = endpointPath(config.apiBase);
+    setEntityOptions((prev) => Object.fromEntries(Object.entries(prev).filter(([ep]) => endpointPath(ep) !== own)));
+    setEntityReloadKey((key) => key + 1);
+  };
+
   // Anything that changes which rows match sends you back to the first page —
   // page 7 of a filtered list that now has two pages is not a page.
   useEffect(() => { setPage(1); }, [config.key, search, nobFilter, lobFilter, pageSize, colFilters]);
@@ -1379,6 +1394,15 @@ export function MasterDataTable({
       }
       initial[f.key] = v ?? (f.type === "boolean" ? false : "");
     });
+    // The loop above seeds declared fields only, so the record being edited has
+    // no way to recognise itself: every related row pointing back at it looks
+    // exactly like one pointing at somebody else. The form needs the record's
+    // own identity to tell "related to me" apart from "related to someone else"
+    // when rendering related-option lists — `disableOptionWhen` greys out a
+    // shed another silo feeds, and must not grey out the ones this silo feeds.
+    // It cannot reach a save: the payload is built from `visibleFields`, which
+    // only ever holds declared fields, and no config declares its own idKey.
+    initial[config.idKey] = row[config.idKey];
     // storage_type is hidden from the form (see configs.ts) and derived from
     // location_type — but it's hidden from formFields too, so the loop above
     // never seeded it from the row at all. Derive it fresh here rather than
@@ -1610,12 +1634,14 @@ export function MasterDataTable({
           delete payload.current_location_id;
         }
         await api.put(`${config.apiBase}/${editing[config.idKey]}`, payload);
+        forgetOwnOptions();
         setModalOpen(false);
         showToast.success("Updated successfully");
         load();
       } else {
         const response = await api.post(config.apiBase, payload);
         const created = unwrap<Row>(response);
+        forgetOwnOptions();
         setModalOpen(false);
         showToast.success("Created successfully");
         onCreated?.(created);
@@ -1660,6 +1686,7 @@ export function MasterDataTable({
     setDeleting(true);
     try {
       await api.delete(`${config.apiBase}/${confirmDelete[config.idKey]}`);
+      forgetOwnOptions();
       setConfirmDelete(null);
       showToast.success("Deleted successfully");
       load();
@@ -1686,6 +1713,7 @@ export function MasterDataTable({
         await api.delete(`${config.apiBase}/${id}`);
         showToast.success("Deactivated successfully");
       }
+      forgetOwnOptions();
       load();
     } catch (err: any) {
       const msg = err?.message || t("mdFailedToSave");
@@ -2188,6 +2216,16 @@ export function MasterDataTable({
       if (f.multiple) {
         if (f.allOption) options = [f.allOption, ...options];
         const selected = parseStringList(form[f.key]);
+        // Owned by someone, and that someone is not the record open in this
+        // form. On create the form has no id yet, so every owned option greys.
+        const rule = f.disableOptionWhen;
+        const optionDisabledReason = rule
+          ? (o: Row) => {
+              const owner = String(o[rule.key] ?? "");
+              if (!owner || owner === String(form[rule.exceptMatchingField] ?? "")) return null;
+              return `${rule.reasonPrefix}${String(o[rule.reasonKey] ?? "") || t("mdAnotherRecord")}`;
+            }
+          : undefined;
         return (
           <EntityLookupField
             id={accessibility.id}
@@ -2202,6 +2240,7 @@ export function MasterDataTable({
             loading={!!resolvedEp && loadedOptions === undefined}
             placeholder={restrictedReason || (disabled ? t("selectXFirst", { name: parentLabel }) : t("selectPlaceholder"))}
             onCreate={relatedConfig ? () => setRelatedCreator({ field: f, config: relatedConfig }) : undefined}
+            optionDisabledReason={optionDisabledReason}
           />
         );
       }

@@ -2,8 +2,14 @@
   "name": "web",
   "version": "0.0.1",
   "private": true,
+  "//": "The NAVFarm web app runs on port 3002 only: currently the assigned port is 3002 and other are occupied by other applications in the server. Do not move it to 3000/3001 or anything else.",
   "nx": {
     "targets": {
+      "dev": {
+        "options": {
+          "port": 3002
+        }
+      },
       "start": {
         "executor": "nx:run-commands",
         "continuous": true,

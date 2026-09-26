@@ -10,6 +10,7 @@ import { CreateStockTransferDto, UpdateStockTransferDto, QueryStockTransferDto }
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
+import { UomService } from '../../master-data/uom/uom.service';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   return date.toISOString().slice(0, 19).replace('T', ' ');
@@ -22,6 +23,10 @@ export class StockTransferService {
     private readonly auditService: AuditLogService,
     private readonly ledgerService: InventoryLedgerService,
     private readonly glPostingService: GlPostingService,
+    // Silo capacity is kilograms and a feed line can be entered in any unit
+    // the item is stocked in, so the capacity guard below needs the tenant's
+    // own uom_conversion_master rather than an assumption about the unit.
+    private readonly uomService: UomService,
   ) {}
 
   private get db(): MySql2Database<typeof schema> {
@@ -156,6 +161,116 @@ export class StockTransferService {
       toWarehouseId,
       'Destination warehouse',
     );
+  }
+
+  /**
+   * Feed only ever reaches a silo through a stock transfer (farm STORE ->
+   * SILO) and only ever leaves it through a daily feed entry, so posting the
+   * transfer is the single moment at which a silo can be overfilled or handed
+   * a second feed to hold. Both of the client's rules of 2026-09-24 therefore
+   * live here, and both apply to a SILO destination only — a STORE is a
+   * general warehouse and takes any item in any quantity.
+   *
+   * Checked at post() rather than at create()/update(): a draft's numbers say
+   * nothing about what the silo will hold by the time it is posted, and
+   * post() is where the stock actually moves.
+   */
+  private async assertSiloDestination(
+    transfer: { company_id: string; to_warehouse_id: string },
+    lines: { item_id: string; quantity: unknown; uom: string }[],
+    tenantId: string,
+  ) {
+    const [destination] = await this.db
+      .select({
+        location_id: schema.locationMaster.location_id,
+        location_name: schema.locationMaster.location_name,
+        location_type: schema.locationMaster.location_type,
+        silo_capacity_kg: schema.locationMaster.silo_capacity_kg,
+      })
+      .from(schema.locationMaster)
+      .where(eq(schema.locationMaster.location_id, transfer.to_warehouse_id))
+      .limit(1);
+    if (!destination || destination.location_type !== 'SILO') return;
+    const siloName = destination.location_name || destination.location_id;
+
+    // A silo holds ONE feed item at a time, so a transfer that carries two of
+    // them into the same silo is refused on the document alone, before any
+    // stock is read.
+    const incomingItems = new Set(lines.map((l) => l.item_id));
+    if (incomingItems.size > 1) {
+      throw new BadRequestException(
+        `Cannot post this Stock Transfer — silo '${siloName}' holds one feed item at a time and this transfer carries ${incomingItems.size} different items.`,
+      );
+    }
+
+    // On-hand per item in the silo, straight from the FIFO layers —
+    // InventoryLedgerService.getStockBalance() is the canonical
+    // remaining_quantity sum and is reused rather than recomputed here.
+    const balances = await this.ledgerService.getStockBalance(
+      { companyId: transfer.company_id, warehouseId: destination.location_id } as any,
+      tenantId,
+    );
+
+    const resident = balances.find((b) => !incomingItems.has(b.item_id));
+    if (resident) {
+      throw new BadRequestException(
+        `Cannot post this Stock Transfer — silo '${siloName}' already holds '${resident.item_code}'. A silo holds one feed item at a time; empty it before moving a different item in.`,
+      );
+    }
+
+    // silo_capacity_kg is required on a SILO going forward, but silos
+    // configured before the column existed still have none — nothing to
+    // exceed, so there is nothing to refuse.
+    if (destination.silo_capacity_kg == null) return;
+    const capacityKg = Number(destination.silo_capacity_kg);
+
+    let onHandKg = 0;
+    for (const balance of balances) {
+      onHandKg += await this.toKilograms(
+        balance.on_hand_qty, balance.uom, balance.item_id, transfer.company_id, tenantId, siloName,
+      );
+    }
+    let incomingKg = 0;
+    for (const line of lines) {
+      incomingKg += await this.toKilograms(
+        Number(line.quantity), line.uom, line.item_id, transfer.company_id, tenantId, siloName,
+      );
+    }
+
+    // The 0.0001 slack is the same tolerance getStockBalance uses to decide a
+    // layer is spent — without it a decimal(12,2) capacity and a float sum can
+    // disagree in the last place and refuse a transfer that exactly fills.
+    if (onHandKg + incomingKg > capacityKg + 0.0001) {
+      throw new BadRequestException(
+        `Cannot post this Stock Transfer — silo '${siloName}' holds ${onHandKg} KG of a ${capacityKg} KG capacity, and this transfer of ${incomingKg} KG would overfill it by ${Math.round((onHandKg + incomingKg - capacityKg) * 100) / 100} KG.`,
+      );
+    }
+  }
+
+  /**
+   * Capacity is canonical kilograms, so every quantity compared against it has
+   * to be converted first. Never assumed: an item stocked in BAG or TON whose
+   * conversion nobody has configured is refused outright, because treating its
+   * number as kilograms would silently under- or over-fill the silo by orders
+   * of magnitude.
+   */
+  private async toKilograms(
+    quantity: number,
+    uom: string,
+    itemId: string,
+    companyId: string,
+    tenantId: string,
+    siloName: string,
+  ): Promise<number> {
+    const unit = (uom || '').toUpperCase().trim();
+    try {
+      const factor = await this.uomService.resolveConversionFactor(unit, 'KG', itemId, companyId, tenantId);
+      return quantity * factor;
+    } catch {
+      throw new BadRequestException(
+        `Cannot post this Stock Transfer — silo '${siloName}' has its capacity in KG and there is no conversion from '${unit}' to KG. Record the conversion in UOM Conversion before transferring this item into a silo.`,
+      );
+    }
   }
 
   /** Visibility only — a mutation authorizes through loadForMutation(). */
@@ -315,6 +430,11 @@ export class StockTransferService {
     if (!transfer.lines || transfer.lines.length === 0) {
       throw new BadRequestException('Cannot post a Stock Transfer with no lines.');
     }
+
+    // Before the DRAFT -> POSTED claim: a refusal here must leave the transfer
+    // a draft the farm can correct, which is also the order every other check
+    // in this method already follows.
+    await this.assertSiloDestination(transfer, transfer.lines, tenantId);
 
     // Claim the DRAFT -> POSTED transition atomically before writing any
     // ledger/GL entries — see goods-issue.service.ts's post() for the full

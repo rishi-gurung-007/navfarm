@@ -15,7 +15,7 @@ import { isDuplicateEntry } from '../common/filters/http-exception.filter';
 async function run() {
   if (process.argv.length > 2) throw new Error('This verifier accepts no flags and never commits.');
   const tenantCode = (process.env.DEV_TENANT_CODE || 'devco').toLowerCase();
-  const database = `tenant_${tenantCode}`;
+  const database = `nf_${tenantCode}`;
   if (!/^[A-Za-z0-9_]+$/.test(database)) throw new Error(`Unsafe database name: ${database}`);
   const db = await mysql.createConnection({
     host: process.env.DATABASE_HOST || '127.0.0.1',

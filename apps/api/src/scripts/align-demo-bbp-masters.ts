@@ -14,7 +14,7 @@ import { readMigrationFiles } from 'drizzle-orm/migrator';
 async function run() {
   const mode = process.argv[2] || 'READ_ONLY';
   if (process.argv.length > 3 || !['READ_ONLY', '--schema', '--verify', '--apply'].includes(mode)) throw new Error('Use no flags, --schema, --verify or --apply.');
-  const db = await mysql.createConnection({ host: '127.0.0.1', user: 'root', database: 'tenant_devco' });
+  const db = await mysql.createConnection({ host: '127.0.0.1', user: 'root', database: 'nf_devco' });
   try {
     const [[lock]] = await db.query<RowDataPacket[]>("SELECT GET_LOCK('navfarm-bbp-master-alignment', 5) acquired");
     if (Number(lock.acquired) !== 1) throw new Error('Another alignment is running.');
@@ -41,7 +41,7 @@ async function run() {
         if (duplicates.length) throw new Error(`Duplicate identities in ${table}; no automatic deletion or renaming will be performed.`);
       }
       await migrate(drizzle(db), { migrationsFolder: resolve('src/drizzle/tenant') });
-      console.log('Reviewed additive schema migrations applied to tenant_devco. No demo records changed.');
+      console.log('Reviewed additive schema migrations applied to nf_devco. No demo records changed.');
       return;
     }
     await db.beginTransaction();

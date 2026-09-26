@@ -13,6 +13,9 @@ export interface RoleRequester {
   userType?: string;
 }
 
+/** The seven action flags a permission row can carry, in ledger order. */
+const ACTIONS = ['view', 'create', 'edit', 'delete', 'approve', 'export', 'print'] as const;
+
 @Injectable()
 export class RoleService {
   constructor(
@@ -200,7 +203,7 @@ export class RoleService {
     const previous = await this.db.select().from(schema.rolePermissions).where(eq(schema.rolePermissions.role_id, roleId));
     const grants = (rows: any[]) => Object.fromEntries(
       rows
-        .map((p) => [`${p.module_code}.${p.resource}`, ['view', 'create', 'edit', 'delete', 'approve', 'export', 'print'].filter((a) => p[`can_${a}`]).join(',')] as const)
+        .map((p) => [`${p.module_code}.${p.resource}`, ACTIONS.filter((a) => p[`can_${a}`]).join(',')] as const)
         .filter(([, actions]) => actions)
         .sort(([a], [b]) => a.localeCompare(b)),
     );
@@ -209,9 +212,14 @@ export class RoleService {
       // 1. Delete old permission rows
       await tx.delete(schema.rolePermissions).where(eq(schema.rolePermissions.role_id, roleId));
 
-      // 2. Insert new permission rows
-      if (permissions.length > 0) {
-        const insertRows = permissions.map((p) => ({
+      // 2. Insert new permission rows. The console posts its whole matrix on
+      // every save, so most items grant nothing — storing them wrote 49 rows
+      // to express one grant. Only rows that actually allow an action persist.
+      const granting = permissions.filter((p) =>
+        ACTIONS.some((a) => p[`can_${a}` as keyof typeof p] === true),
+      );
+      if (granting.length > 0) {
+        const insertRows = granting.map((p) => ({
           perm_id: randomUUID(),
           role_id: roleId,
           module_code: p.module_code,
@@ -319,6 +327,14 @@ export class RoleService {
       throw new BadRequestException('System roles cannot be renamed or redescribed.');
     }
 
+    // Deactivating a role is a live revocation — permissions.ts filters on
+    // role_master.is_active, so every holder loses access the moment this
+    // flips. A system role is exactly the one no single call should be able to
+    // do that to: OPERATOR alone carries 38 grants across 11 people.
+    if (role.is_system_role && data.isActive !== undefined) {
+      throw new BadRequestException('System roles cannot be activated or deactivated.');
+    }
+
     const updateData: Record<string, any> = {};
     if (data.roleName !== undefined) updateData.role_name = data.roleName;
     if (data.description !== undefined) updateData.role_description = data.description;
@@ -359,25 +375,28 @@ export class RoleService {
       throw new BadRequestException('System roles cannot be deleted.');
     }
 
-    // Check if any active assignments exist
+    // Every assignment, not just the active ones: user_role_assignment.role_id
+    // is a RESTRICT foreign key, so a revoked (is_active = 0) row still blocks
+    // the delete at the database. Checking only active rows turned that into a
+    // 500 *after* the permission rows had already gone.
     const assignments = await this.db
       .select()
       .from(schema.userRoleAssignment)
-      .where(and(
-        eq(schema.userRoleAssignment.role_id, roleId),
-        eq(schema.userRoleAssignment.is_active, true),
-      ))
+      .where(eq(schema.userRoleAssignment.role_id, roleId))
       .limit(1);
 
     if (assignments.length > 0) {
       throw new BadRequestException(
-        'Role has active user assignments. Revoke all assignments before deleting this role.'
+        'Role still has user assignments referencing it. Remove those assignments before deleting this role.'
       );
     }
 
-    // Delete permissions first, then the role (cascade handles permissions but explicit is cleaner)
-    await this.db.delete(schema.rolePermissions).where(eq(schema.rolePermissions.role_id, roleId));
-    await this.db.delete(schema.roleMaster).where(eq(schema.roleMaster.role_id, roleId));
+    // One transaction: if dropping the role is refused, the permission rows
+    // come back. Un-transacted, a refusal left the role alive granting nothing.
+    await this.db.transaction(async (tx) => {
+      await tx.delete(schema.rolePermissions).where(eq(schema.rolePermissions.role_id, roleId));
+      await tx.delete(schema.roleMaster).where(eq(schema.roleMaster.role_id, roleId));
+    });
 
     await this.record({ companyId: role.company_id, action: 'DELETE', entityName: 'role_master', entityId: roleId, oldValues: role });
 

@@ -56,7 +56,7 @@ export async function buildDemoContext(
     .from(masterSchema.tenantMaster)
     .where(eq(masterSchema.tenantMaster.tenant_code, DEMO_TENANT_CODE))
     .limit(1);
-  if (!tenant) throw new Error(`Demo tenant '${DEMO_TENANT_CODE}' not found in navfarm_master — run the master stages of the rebuild first.`);
+  if (!tenant) throw new Error(`Demo tenant '${DEMO_TENANT_CODE}' not found in nf_master — run the master stages of the rebuild first.`);
   if (!tenant.is_active) throw new Error(`Demo tenant '${DEMO_TENANT_CODE}' is inactive.`);
 
   const tenantDb = await app.get(ConnectionManagerService).getTenantConnection(tenant);

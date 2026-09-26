@@ -21,6 +21,7 @@
 import { execFileSync } from 'node:child_process';
 import * as mysql from 'mysql2/promise';
 import { assertSafeRebuildTarget, parseRebuildArgs } from './lib/rebuild-guards';
+import { DEFAULT_MASTER_DATABASE, DEFAULT_SYSTEM_DATABASE, NAVFARM_DB_PREFIX } from '../core/database/database-names';
 
 const host = process.env.DATABASE_HOST || '127.0.0.1';
 const port = Number(process.env.DATABASE_PORT || 3306);
@@ -36,7 +37,7 @@ export interface Step {
   args: string[];
 }
 
-// setup-fresh-database.ts drops and recreates navfarm_master/tenant_system,
+// setup-fresh-database.ts drops and recreates nf_master/nf_system,
 // then bootstraps them, but never provisions a dev tenant — that is what the
 // rest of this chain does.
 export const RESET_STEP: Step = { label: 'Drop and rebuild schema + platform masters', script: 'setup-fresh-database.ts', args: [] };
@@ -135,17 +136,17 @@ export interface ResetTargets {
  * loudly, until it is deliberately supported.
  */
 export function deriveResetTargets(env: NodeJS.ProcessEnv): ResetTargets {
-  const masterDatabase = env.DATABASE_NAME || 'navfarm_master';
+  const masterDatabase = env.DATABASE_NAME || DEFAULT_MASTER_DATABASE;
   const isPiggeryIsolated = masterDatabase.startsWith('piggery_');
   if (isPiggeryIsolated) {
     throw new Error(
       `Demo rebuild does not support piggery-isolated database naming (DATABASE_NAME=${masterDatabase}). ` +
-      'It only targets navfarm_master/tenant_system/tenant_<name>. Refusing to run rather than silently ' +
+      'It only targets nf_master/nf_system/nf_<tenant code>. Refusing to run rather than silently ' +
       'missing what setup-fresh-database.ts would drop under that naming.',
     );
   }
-  const tenantPrefix = 'tenant_';
-  const systemDatabase = env.SYSTEM_TENANT_DATABASE || 'tenant_system';
+  const tenantPrefix = NAVFARM_DB_PREFIX;
+  const systemDatabase = env.SYSTEM_TENANT_DATABASE || DEFAULT_SYSTEM_DATABASE;
   return { masterDatabase, systemDatabase, tenantPrefix };
 }
 

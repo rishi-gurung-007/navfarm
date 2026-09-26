@@ -49,7 +49,7 @@ const password = process.env.DATABASE_PASSWORD || '';
 const ssl = process.env.DATABASE_SSL === 'true'
   ? { minVersion: 'TLSv1.2' as const, rejectUnauthorized: true }
   : undefined;
-const database = process.env.DEV_TENANT_DATABASE || `tenant_${(process.env.DEV_TENANT_CODE || 'devco').toLowerCase()}`;
+const database = process.env.DEV_TENANT_DATABASE || `nf_${(process.env.DEV_TENANT_CODE || 'devco').toLowerCase()}`;
 
 /**
  * Triple C is one company, so its catalog is both shared catalogues merged:

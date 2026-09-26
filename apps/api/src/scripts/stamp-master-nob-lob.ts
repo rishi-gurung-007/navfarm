@@ -77,7 +77,7 @@ async function run() {
     throw new Error('Use no flags (read-only), --verify, or --apply.');
   }
 
-  const database = process.env.DEV_TENANT_DATABASE || `tenant_${(process.env.DEV_TENANT_CODE || 'devco').toLowerCase()}`;
+  const database = process.env.DEV_TENANT_DATABASE || `nf_${(process.env.DEV_TENANT_CODE || 'devco').toLowerCase()}`;
   const conn = await mysql.createConnection({ host, port, user, password, database, ssl });
   try {
     const [[lock]] = await conn.query<RowDataPacket[]>("SELECT GET_LOCK('navfarm-stamp-nob-lob', 5) acquired");

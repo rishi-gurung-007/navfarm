@@ -1015,8 +1015,21 @@ export const locationMaster = mysqlTable('location_master', {
   // read it: a stage's feed is "bagged" at MFH and "Bulk" at MSL.
   feed_in_bags: boolean('feed_in_bags'),
   is_quarantine_zone: boolean('is_quarantine_zone').default(false).notNull(),
-  // Maximum feed capacity of this Silo in KG. Required when location_type = SILO.
+  // Maximum feed capacity of this Silo, always stored in KG. Required when
+  // location_type = SILO. The client enters it in either KG or TON
+  // (silo_capacity_uom); the service converts TON to KG on write so every
+  // stock comparison stays in one unit.
   silo_capacity_kg: decimal('silo_capacity_kg', { precision: 12, scale: 2 }),
+  // The unit silo_capacity_kg was entered in: 'KG' or 'TON'. Display only —
+  // the stored number is canonical KG either way. Required when
+  // location_type = SILO.
+  silo_capacity_uom: varchar('silo_capacity_uom', { length: 10 }),
+  // The silo a SHED draws its feed from. Set on SHED rows only, pointing at a
+  // SILO under the same farm. One silo serves many sheds; a shed has exactly
+  // one silo, which this column makes structurally true without a join table.
+  // The "Attached Sheds" multi-select on the silo form writes this column on
+  // the selected sheds and clears it on the deselected ones.
+  feed_silo_id: varchar('feed_silo_id', { length: 36 }),
   // Alert when silo stock covers less than this many days of consumption. Required when location_type = SILO.
   silo_reorder_days: int('silo_reorder_days'),
   // Mandatory empty days between batches at this location for biosecurity.
@@ -1047,6 +1060,11 @@ export const locationMaster = mysqlTable('location_master', {
     columns: [table.shed_id],
     foreignColumns: [locationMaster.location_id],
     name: 'loc_master_shed_id_fk'
+  }).onDelete('restrict'),
+  feedSiloFk: foreignKey({
+    columns: [table.feed_silo_id],
+    foreignColumns: [table.location_id],
+    name: 'location_master_feed_silo_id_fk'
   }).onDelete('restrict'),
   uqLocationCode: uniqueIndex('uq_location_master_tenant_company_code').on(
     table.tenant_id, table.company_id, table.location_code

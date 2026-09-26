@@ -1118,8 +1118,10 @@ export class AuthService {
     const fromEmail = smtpConfig?.from_email || process.env.SMTP_FROM_EMAIL || 'no-reply@navfarm.com';
     const fromName = smtpConfig?.from_name || process.env.SMTP_FROM_NAME || 'NAVFarm Support';
 
-    // 3. Resolve frontend URL (fallback to localhost:3000)
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    // 3. Resolve frontend URL. The web app runs on port 3002 only: currently
+    // the assigned port is 3002 and other are occupied by other applications
+    // in the server — so the fallback is 3002, never Next's default 3000.
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3002';
 
     // 4. Create mail transport
     const transporter = nodemailer.createTransport({

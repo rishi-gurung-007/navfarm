@@ -79,7 +79,7 @@ async function run() {
     throw new Error('Use no flags (read-only), --verify, or --apply.');
   }
 
-  const db = await mysql.createConnection({ host, port, user, password, database: process.env.DEV_TENANT_DATABASE || 'tenant_devco', ssl });
+  const db = await mysql.createConnection({ host, port, user, password, database: process.env.DEV_TENANT_DATABASE || 'nf_devco', ssl });
   try {
     const [[lock]] = await db.query<RowDataPacket[]>("SELECT GET_LOCK('navfarm-stage-tdd', 5) acquired");
     if (Number(lock.acquired) !== 1) throw new Error('Another stage alignment run is active.');
@@ -157,7 +157,7 @@ async function run() {
     );
 
     console.log(JSON.stringify({
-      database: 'tenant_devco',
+      database: 'nf_devco',
       mode: apply ? 'APPLY' : verify ? 'VERIFY' : 'READ-ONLY',
       renamed, activated, added, skipped,
       leftInactive: LEFT_INACTIVE,

@@ -46,7 +46,7 @@ async function run() {
     throw new Error('Use no flags (read-only), --verify, or --apply.');
   }
 
-  const database = process.env.DEV_TENANT_DATABASE || 'tenant_devco';
+  const database = process.env.DEV_TENANT_DATABASE || 'nf_devco';
   const db = await mysql.createConnection({ host, port, user, password, database, ssl });
   try {
     const [[lock]] = await db.query<RowDataPacket[]>("SELECT GET_LOCK('navfarm-prod-perms', 5) acquired");

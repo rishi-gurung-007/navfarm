@@ -30,7 +30,7 @@ import mysql, { RowDataPacket } from 'mysql2/promise';
 import { randomUUID } from 'node:crypto';
 import { SYSTEM_NO_SERIES_SEED } from '../core/database/system-master-data-seed';
 
-const TENANT_DB = process.env.RESEED_SERIES_TENANT_DB || 'tenant_devco';
+const TENANT_DB = process.env.RESEED_SERIES_TENANT_DB || 'nf_devco';
 
 async function run() {
   const apply = process.argv.includes('--apply');

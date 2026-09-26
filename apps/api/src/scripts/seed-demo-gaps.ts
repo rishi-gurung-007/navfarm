@@ -23,7 +23,7 @@ const ssl = process.env.DATABASE_SSL === 'true'
   ? { minVersion: 'TLSv1.2' as const, rejectUnauthorized: true }
   : undefined;
 const tenantCode = process.env.DEV_TENANT_CODE || 'devco';
-const dbName = `tenant_${tenantCode}`;
+const dbName = `nf_${tenantCode}`;
 
 const d4 = (n: number) => n.toFixed(4);
 

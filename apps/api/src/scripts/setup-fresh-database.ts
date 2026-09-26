@@ -1,5 +1,6 @@
 import * as mysql from 'mysql2/promise';
 import { execSync } from 'node:child_process';
+import { DEFAULT_MASTER_DATABASE, DEFAULT_SYSTEM_DATABASE, NAVFARM_DB_PREFIX } from '../core/database/database-names';
 
 const host = process.env.DATABASE_HOST || 'localhost';
 const port = Number(process.env.DATABASE_PORT || 3306);
@@ -8,10 +9,10 @@ const password = process.env.DATABASE_PASSWORD || '';
 const ssl = process.env.DATABASE_SSL === 'true'
   ? { minVersion: 'TLSv1.2' as const, rejectUnauthorized: true }
   : undefined;
-const masterDatabase = process.env.DATABASE_NAME || 'navfarm_master';
+const masterDatabase = process.env.DATABASE_NAME || DEFAULT_MASTER_DATABASE;
 const isPiggeryIsolated = masterDatabase.startsWith('piggery_');
-const tenantPrefix = isPiggeryIsolated ? 'piggery_tenant_' : 'tenant_';
-const systemDatabase = process.env.SYSTEM_TENANT_DATABASE || (isPiggeryIsolated ? 'piggery_tenant_system' : 'tenant_system');
+const tenantPrefix = isPiggeryIsolated ? 'piggery_tenant_' : NAVFARM_DB_PREFIX;
+const systemDatabase = process.env.SYSTEM_TENANT_DATABASE || (isPiggeryIsolated ? 'piggery_tenant_system' : DEFAULT_SYSTEM_DATABASE);
 
 function assertDbName(value: string): string {
   if (!/^[A-Za-z0-9_]+$/.test(value)) {
@@ -79,7 +80,7 @@ async function runFreshSetup() {
   console.log('you want fixture data for local development.');
   console.log('');
   console.log('  Platform Super Administrator:');
-  console.log('     URL:      http://localhost:3001/login  (or /admin)');
+  console.log('     URL:      http://localhost:3002/login  (or /admin)');
   console.log(`     Email:    ${process.env.SYSTEM_ADMIN_EMAIL || 'admin@navfarm.local'}`);
   console.log('     Password: value of SYSTEM_ADMIN_PASSWORD in your .env');
   console.log('================================================================\n');

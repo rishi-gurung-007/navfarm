@@ -259,6 +259,34 @@ export interface MasterDataField {
    */
   excludeValuesOf?: string[];
   /**
+   * Greys an option out instead of letting it be chosen and then refused on
+   * save. An option is unavailable when its `key` column already holds an
+   * owner, except where that owner is this form's own `exceptMatchingField`
+   * value — which means the option belongs to the record being edited and must
+   * stay selectable, since giving it up is how it becomes free again. The
+   * greyed row carries `reasonPrefix` followed by the option's `reasonKey`, so
+   * it names who holds it rather than only saying no.
+   *
+   * A shed draws feed from exactly one silo: Attached Sheds lists every shed on
+   * the farm, and the API rejects one another silo already feeds. Hiding those
+   * rows would make the farm's layout unreadable and would strip a silo's own
+   * sheds out of its edit form; showing them greyed answers "why not that one"
+   * on the row, before anyone spends a save finding out.
+   *
+   * Honoured by the `multiple` entity lookup picker, which is the only control
+   * that renders its options as rows with room to say why.
+   */
+  disableOptionWhen?: {
+    /** Column on an option row naming its current owner, empty when unowned (e.g. "feed_silo_id"). */
+    key: string;
+    /** Field in this form whose value means the owner is this very record (e.g. the record's own id). */
+    exceptMatchingField: string;
+    /** Column on an option row holding the owner's display name, for the explanation (e.g. "feed_silo_name"). */
+    reasonKey: string;
+    /** Sentence the owner's name is appended to, trailing space included (e.g. "Attached to "). */
+    reasonPrefix: string;
+  };
+  /**
    * A form-only control standing in for a set of boolean columns: the chosen
    * option's column is written `true` and every other one `false`. Set
    * `filterOnly` alongside it — the field's own key is not a column.

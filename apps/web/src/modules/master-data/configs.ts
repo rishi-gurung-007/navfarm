@@ -89,11 +89,20 @@ const location: MasterDataConfig = {
       section: "Identification",
     },
     { key: "location_level", label: "Hierarchy Level", type: "number", min: 0, hideInForm: true, helpText: "Computed from the parent location." },
-    { key: "area_size", label: "Area Size", type: "number", min: 0, max: 999999.99, step: "0.01", section: "Identification" },
-    { key: "area_unit", label: "Area UOM", type: "select-entity", entityEndpoint: "/uom?uomType=AREA", entityValueKey: "uom_code", entityLabelKeys: ["uom_code", "uom_name"], section: "Identification" },
+    // Hidden for SILO (2026-09-24, client request) — a silo is a sealed vessel
+    // sized by what it holds, not by the ground it covers. There is no floor
+    // area to walk, stock or apportion, so Area Size and Area UOM were left
+    // blank on every silo row and the pair read as a question that should not
+    // have been asked; Silo Capacity below is the only capacity a silo has.
+    // notEquals rather than an enumerated equals list, for exactly the reason
+    // spelled out under Max Capacity just below: a location type added later
+    // stays visible by default instead of silently inheriting the SILO
+    // exception.
+    { key: "area_size", label: "Area Size", type: "number", min: 0, max: 999999.99, step: "0.01", visibleWhen: { anyOf: [{ key: "location_type", notEquals: "SILO" }] }, section: "Identification" },
+    { key: "area_unit", label: "Area UOM", type: "select-entity", entityEndpoint: "/uom?uomType=AREA", entityValueKey: "uom_code", entityLabelKeys: ["uom_code", "uom_name"], visibleWhen: { anyOf: [{ key: "location_type", notEquals: "SILO" }] }, section: "Identification" },
     // Hidden for SILO (2026-09-22, client request) — asking for a general Max
-    // Capacity right next to Silo Capacity (KG) read as the same question
-    // twice. Silo Capacity (KG) + Silo Reorder Days are what a silo's own
+    // Capacity right next to Silo Capacity read as the same question
+    // twice. Silo Capacity + Silo Reorder Days are what a silo's own
     // capacity/reorder logic actually uses; every other location type still
     // needs Max Capacity, which is what the child-fits-in-parent capacity
     // check validates against. notEquals rather than an enumerated equals
@@ -107,13 +116,70 @@ const location: MasterDataConfig = {
     // fields[], not deleted, so editing an existing record still loads its
     // stored value and the payload-building loop below still sends it.
     { key: "storage_type", label: "Storage Location", type: "select", hideInForm: true, options: ["STORE", "SILO"].map((v) => ({ value: v, label: v })), section: "Identification" },
-    { key: "silo_capacity_kg", label: "Silo Capacity (KG)", type: "number", min: 0, max: 999999.99, step: "0.01", visibleWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, requiredWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, helpText: "Required when Storage Location is SILO.", section: "Identification" },
+    // The unit moved out of the label and into a field of its own (2026-09-24,
+    // client request): silos here are quoted in tonnes as often as in
+    // kilograms, and a label that only ever said KG invited the tonne figure
+    // to be typed in as though it were kilograms. Two options and no more —
+    // the client restricted this to exactly KG and TON, so it is a plain
+    // select rather than the WEIGHT UOM master, which would also offer grams
+    // and pounds that no silo is ever quoted in.
+    //
+    // silo_capacity_kg keeps storing canonical KILOGRAMS whichever unit is
+    // chosen; silo_capacity_uom records only how the number was typed, so the
+    // form can show it back unchanged. That keeps every stock and reorder
+    // comparison in one unit. The column was deliberately not renamed — ten
+    // live references for a cosmetic gain, and the stored value is still KG.
+    { key: "silo_capacity_kg", label: "Silo Capacity", type: "number", min: 0, max: 999999.99, step: "0.01", visibleWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, requiredWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, helpText: "Required when Storage Location is SILO.", section: "Identification" },
+    { key: "silo_capacity_uom", label: "Silo Capacity UOM", type: "select", options: ["KG", "TON"].map((v) => ({ value: v, label: v })), defaultValue: "KG", visibleWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, requiredWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, helpText: "The unit the capacity above is entered in. The capacity is stored in kilograms whichever unit is chosen — a tonne figure is converted on save.", section: "Identification" },
     { key: "silo_reorder_days", label: "Silo Reorder Days", type: "number", min: 0, max: 365, step: "1", visibleWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, requiredWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, helpText: "Required when Storage Location is SILO.", section: "Identification" },
+    // Which sheds this silo feeds. One silo may serve many sheds, but a shed
+    // draws from exactly one silo, so the link is a feed_silo_id column on the
+    // SHED row (schema.ts) rather than a join table — one-silo-per-shed is
+    // then structurally true instead of a rule a validator has to keep
+    // re-checking. This multi-select is a view of that column read from the
+    // silo's side: ticking a shed writes this silo into that shed's
+    // feed_silo_id, unticking clears it.
+    //
+    // dependsOn parent_location_id with {value} in the path scopes the list to
+    // the farm chosen as this silo's parent, so a silo can never be attached
+    // to a shed standing on another farm; requiresParent keeps the picker off
+    // the form until that farm is chosen, rather than offering every shed in
+    // the tenant. No allOption deliberately — "all sheds" is not a value a
+    // silo can hold, and an allOption arrives pre-selected on create
+    // (MasterDataTable openCreate), which would silently claim every shed on
+    // the farm for the first silo anyone added.
+    {
+      key: "attached_sheds", label: "Attached Sheds", type: "select-entity", multiple: true,
+      entityEndpoint: "/location?shedsForSilo={value}", entityValueKey: "location_id",
+      entityLabelKeys: ["location_code", "location_name"],
+      dependsOn: "parent_location_id", requiresParent: true,
+      visibleWhen: { anyOf: [{ key: "location_type", equals: "SILO" }] },
+      emptyMultipleLabel: "None attached",
+      // A shed another silo already feeds is listed greyed with that silo
+      // named, rather than offered and then refused on save (Rishi,
+      // 2026-09-24: "Attached to", worded to be read at a glance).
+      disableOptionWhen: { key: "feed_silo_id", exceptMatchingField: "location_id", reasonKey: "feed_silo_name", reasonPrefix: "Attached to " },
+      section: "Identification",
+      helpText: "The sheds on this silo's parent farm that take their feed from it. A shed draws from one silo only; a shed already attached to another silo is shown greyed out, and has to be detached from that silo first.",
+    },
     { key: "downtime_days_required", label: "Downtime Days Required", type: "number", min: 0, max: 365, step: "1", helpText: "Empty days required between batches for biosecurity.", section: "Identification" },
     // The silo or store's own name-number. storage_type says which kind of
     // store this is; this says which one — MULTIPLIER writes MGH1 against each
     // grower house, Porta writes PSL FS - 01 and STORE.
-    { key: "storage_name", label: "Silo / Store Name", type: "text", maxLength: 100, placeholder: "MGH1", visibleWhen: { anyOf: [{ key: "storage_type", equals: ["STORE", "SILO"] }] }, helpText: "The name or number this silo or store is known by on the farm.", section: "Identification" },
+    //
+    // labelWhen follows location_type so the form asks for the one thing it is
+    // actually asking for (2026-09-24): by the time this field appears the
+    // type has already been chosen, and a person filling in a silo should read
+    // "Silo Name", not a slash-pair half of which does not apply to them. The
+    // static label stays as the fallback for a storage type added later with
+    // no entry here, and for the record view before a type is set.
+    {
+      key: "storage_name", label: "Silo / Store Name", type: "text", maxLength: 100, placeholder: "MGH1",
+      labelWhen: { key: "location_type", labels: { SILO: "Silo Name", STORE: "Store Name" } },
+      visibleWhen: { anyOf: [{ key: "storage_type", equals: ["STORE", "SILO"] }] },
+      helpText: "The name or number this location is known by on the farm.",
+      section: "Identification",
+    },
     { key: "gps_latitude", label: "Latitude", type: "number", min: -90, max: 90, step: "0.00000001", placeholder: "-17.82722000", visibleWhen: { anyOf: [{ key: "location_type", equals: "FARM" }] }, helpText: "GPS latitude in decimal degrees, e.g. -17.82722000. Applies to Farm only.", section: "Identification" },
     { key: "gps_longitude", label: "Longitude", type: "number", min: -180, max: 180, step: "0.00000001", placeholder: "30.99755000", visibleWhen: { anyOf: [{ key: "location_type", equals: "FARM" }] }, helpText: "GPS longitude in decimal degrees, e.g. 30.99755000. Applies to Farm only.", section: "Identification" },
   ],

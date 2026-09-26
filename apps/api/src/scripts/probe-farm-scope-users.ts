@@ -6,7 +6,7 @@
 import { randomUUID } from 'crypto';
 import mysql, { RowDataPacket } from 'mysql2/promise';
 
-const TENANT_DB = 'tenant_devco';
+const TENANT_DB = 'nf_devco';
 const AREA_CODE = 'PIGGERY-01';
 const SOURCE_EMAIL = 'user@triplec.local';
 const POR_EMAIL = 'verification.por100@triplec.local';

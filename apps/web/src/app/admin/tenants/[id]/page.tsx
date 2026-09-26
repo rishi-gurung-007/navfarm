@@ -132,7 +132,8 @@ export default function TenantDetailPage() {
         api.get(`/tenant/${tenantId}/companies`),
         api.get(`/tenant/${tenantId}/users`),
         api.get("/plan"),
-        api.get("/currency").catch(() => []),
+        // /currency answers { success, message, data }; the others answer bare arrays.
+        api.get("/currency").then((r: any) => r?.data ?? r).catch(() => []),
         api.get("/setup/wizard/nobs").catch(() => []),
       ]);
       setTenant(tenantData);
@@ -141,13 +142,13 @@ export default function TenantDetailPage() {
       setUsers(Array.isArray(usersList) ? usersList : []);
       setPlans(Array.isArray(plansList) ? plansList : []);
       setSelectedPlan(tenantData?.plan_id || "");
-      setCurrencies(currenciesList || []);
-      setNobs(nobsList || []);
-      setEditNobIds(Array.isArray(tenantData?.allowed_nob_ids) ? tenantData.allowed_nob_ids : nobsList.map((n: any) => n.nob_id));
+      setCurrencies(Array.isArray(currenciesList) ? currenciesList : []);
+      setNobs(Array.isArray(nobsList) ? nobsList : []);
+      setEditNobIds(Array.isArray(tenantData?.allowed_nob_ids) ? tenantData.allowed_nob_ids : (Array.isArray(nobsList) ? nobsList : []).map((n: any) => n.nob_id));
       setEditLobIds(Array.isArray(tenantData?.allowed_lob_ids) ? tenantData.allowed_lob_ids : []);
 
       // If we have NOBs, load all of their LOB sub-sectors in parallel
-      if (nobsList && nobsList.length > 0) {
+      if (Array.isArray(nobsList) && nobsList.length > 0) {
         try {
           const lobsPromises = nobsList.map((nobItem: any) =>
             api.get(`/setup/wizard/lobs/${nobItem.nob_id}`).catch(() => [])

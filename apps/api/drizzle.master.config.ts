@@ -9,7 +9,7 @@ export default defineConfig({
     port: parseInt(process.env.DATABASE_PORT || '3306', 10),
     user: process.env.DATABASE_USERNAME || 'root',
     password: process.env.DATABASE_PASSWORD || '',
-    database: process.env.DATABASE_NAME || 'navfarm_master',
+    database: process.env.DATABASE_NAME || 'nf_master',
     ...(process.env.DATABASE_SSL === 'true' ? { ssl: { minVersion: 'TLSv1.2' as const, rejectUnauthorized: true } } : {}),
   },
 });

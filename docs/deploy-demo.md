@@ -31,7 +31,7 @@ export DATABASE_HOST=gateway01.<region>.prod.aws.tidbcloud.com
 export DATABASE_PORT=4000
 export DATABASE_USERNAME=<user>.<cluster-id>
 export DATABASE_PASSWORD=<cluster password>
-export DATABASE_NAME=navfarm_master
+export DATABASE_NAME=nf_master
 export DATABASE_SSL=true
 ```
 

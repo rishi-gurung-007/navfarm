@@ -60,6 +60,14 @@ export interface SeedLocationInput {
   subType?: string;
   storageType?: 'STORE' | 'SILO';
   siloCapacityKg?: number;
+  /**
+   * The unit the capacity was *entered* in — 'KG' or 'TON'. `siloCapacityKg` is
+   * canonical kilograms either way, so this changes nothing about the number
+   * stored; it is what the form has to show back to the farm that typed it.
+   * Omitted means KG, which is what a seed that states its figure in kilograms
+   * has already said by naming the field.
+   */
+  siloCapacityUom?: string;
   siloReorderDays?: number;
   isQuarantineZone?: boolean;
   lastCleanedDate?: string;
@@ -123,6 +131,7 @@ export async function seedLocation(
     capacity_uom: loc.capacity != null ? loc.capacityUom || 'HEAD' : null,
     storage_type: loc.storageType ?? null,
     silo_capacity_kg: loc.siloCapacityKg != null ? loc.siloCapacityKg.toString() : null,
+    silo_capacity_uom: loc.siloCapacityKg != null ? loc.siloCapacityUom || 'KG' : null,
     silo_reorder_days: loc.siloReorderDays ?? null,
     is_quarantine_zone: loc.isQuarantineZone ?? false,
     last_cleaned_date: loc.lastCleanedDate ?? null,

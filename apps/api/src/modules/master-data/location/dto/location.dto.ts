@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsInt, Min, IsNumber, ValidateIf } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsInt, Min, IsNumber, ValidateIf, IsIn, IsArray } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import { MasterListQueryDto } from '../../../../common/master-list-query';
 
@@ -117,6 +117,30 @@ export class CreateLocationDto {
   @IsOptional()
   @Min(0)
   silo_capacity_kg?: number;
+
+  // The number the client types is not necessarily the number stored. Silo
+  // capacity is quoted in tonnes as often as in kilogrammes, and a farm that
+  // enters 40 meaning 40 TON against a column documented as KG is a
+  // thousandfold error nothing downstream could detect. So the unit travels
+  // with the figure and the service converts on write; silo_capacity_kg stays
+  // canonical kilogrammes in the database whichever unit was chosen.
+  @ApiProperty({ description: "Unit the silo capacity above was entered in. TON is multiplied by 1000 on write. Required when location_type = SILO.", required: false, enum: ['KG', 'TON'] })
+  @IsIn(['KG', 'TON'])
+  @IsOptional()
+  silo_capacity_uom?: 'KG' | 'TON';
+
+  // Not a column. The sheds a silo feeds are recorded on the SHED rows
+  // (location_master.feed_silo_id), because that is the side of the
+  // relationship the cardinality lives on: one silo serves many sheds, a shed
+  // draws from exactly one. The silo form still wants to edit the set from the
+  // silo's side, so this array is a view over those rows — the service writes
+  // feed_silo_id on every shed listed here and clears it on any shed dropped
+  // from the list.
+  @ApiProperty({ description: 'SHED location UUIDs this Silo feeds. Writes feed_silo_id on each listed shed; sheds dropped from the list are detached.', required: false, type: [String] })
+  @IsOptional()
+  @IsArray()
+  @IsUUID('4', { each: true })
+  attached_sheds?: string[];
 
   @ApiProperty({ description: 'Alert when silo stock covers less than this many days of consumption. Required when location_type = SILO.', required: false })
   @IsInt()
@@ -249,6 +273,19 @@ export class UpdateLocationDto {
   @Min(0)
   silo_capacity_kg?: number;
 
+  @ApiProperty({ required: false, enum: ['KG', 'TON'] })
+  @IsIn(['KG', 'TON'])
+  @IsOptional()
+  silo_capacity_uom?: 'KG' | 'TON';
+
+  // A view over the SHED rows' feed_silo_id, not a column here; see the
+  // create DTO for why the set is stored on the shed side.
+  @ApiProperty({ description: 'SHED location UUIDs this Silo feeds. Sheds dropped from the list are detached.', required: false, type: [String] })
+  @IsOptional()
+  @IsArray()
+  @IsUUID('4', { each: true })
+  attached_sheds?: string[];
+
   @ApiProperty({ required: false })
   @IsInt()
   @IsOptional()
@@ -335,6 +372,30 @@ export class QueryLocationDto extends MasterListQueryDto {
   @IsOptional()
   @IsString()
   parentForType?: string;
+
+  // The Attached Sheds picker on the Silo form, and the same decision as
+  // parentForType above: narrow in SQL, before the page is cut, or the form
+  // filters the first 50 rows in the browser and silently offers a subset.
+  // A shed already fed by another silo is not on offer at all — that is the
+  // "exactly one silo" rule showing up in the picker rather than only in the
+  // refusal the save would have produced.
+  @ApiProperty({
+    description: 'Only SHED locations under this farm that are free to attach to a silo — those with no feed silo yet, '
+      + 'plus (with siloId) the ones the silo being edited already feeds.',
+    required: false,
+  })
+  @IsOptional()
+  @IsUUID()
+  shedsForSilo?: string;
+
+  @ApiProperty({
+    description: 'Used with shedsForSilo: the silo currently being edited. Its own sheds stay in the list, or editing a '
+      + 'silo would offer a list that drops every attachment it arrived with.',
+    required: false,
+  })
+  @IsOptional()
+  @IsUUID()
+  siloId?: string;
 
   @ApiProperty({ description: 'Only locations without a parent', required: false })
   @IsOptional()
