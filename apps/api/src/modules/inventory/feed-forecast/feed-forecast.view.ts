@@ -46,6 +46,7 @@ export function resolveViewRange(args: {
       if (!args.period) throw new Error('A Reporting Period view needs a period.');
       return { from: args.period.startDate, to: args.period.endDate };
     default:
+      // Same default as GET /feed-forecast has had since Plan A: to = from + 7.
       return { from: start, to: args.to ?? addDays(start, DEFAULT_SPAN_DAYS) };
   }
 }
@@ -103,7 +104,10 @@ export function groupRows(daily: DailyForecastRow[], view: ForecastView, from: s
   const groups = new Map<string, { row: ReportRow; intake: number; demand: number }>();
   for (const d of byDate) {
     const start = bucketStart(view, from, d.date);
-    const key = `${d.batchId}|${d.itemId}|${d.sourceCode ?? 'NONE'}|${start}`;
+    // Stage is part of the line: a batch that changes stage inside a week or
+    // period while keeping the same feed (WEANER → GROWER on one mash) gets a
+    // new line, so a grouped row never shows a stage it has already left.
+    const key = `${d.batchId}|${d.stageCode}|${d.itemId}|${d.sourceCode ?? 'NONE'}|${start}`;
     const intake = Math.round(d.perDayIntakeKg * 1e6);
     const demand = Math.round(d.demandKg * 1e6);
     const group = groups.get(key);

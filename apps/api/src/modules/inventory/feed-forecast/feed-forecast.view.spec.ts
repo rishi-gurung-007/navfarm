@@ -36,6 +36,15 @@ describe('groupRows — Step 6 "Build dated forecast"', () => {
     expect(rows[1]).toMatchObject({ itemNo: 'FEED-R2', date: '2026-09-26', dateTo: '2026-09-29', days: 4, intakeKg: 10000, demandKg: 10500, wastagePct: 5 });
   });
 
+  it('a stage change on the same feed inside a week starts a new line, so no row keeps a stage it has left', () => {
+    const staged = daily.map((d) => (d.date >= '2026-09-26' ? { ...d, stageCode: 'GROWER', itemId: 'r1', itemNo: 'FEED-R1' } : d));
+    const rows = groupRows(staged, 'WEEKLY', '2026-09-23');
+    expect(rows.map((r) => [r.stageCode, r.itemNo, r.date])).toEqual([
+      ['WEANER', 'FEED-R1', '2026-09-23'],
+      ['GROWER', 'FEED-R1', '2026-09-26'],
+    ]);
+  });
+
   it('never changes the daily numbers: grouped totals equal the daily sums for every view', () => {
     for (const view of ['DAILY', 'WEEKLY', 'PERIOD', 'CUSTOM'] as const) {
       const rows = groupRows(daily, view, '2026-09-23');
@@ -91,7 +100,7 @@ describe('resolveViewRange and spanProblem', () => {
     expect(resolveViewRange({ view: 'WEEKLY', planningDate: '2026-09-23', from: '2026-09-27' })).toEqual({ from: '2026-09-27', to: '2026-10-03' });
   });
 
-  it('PERIOD takes the Reporting Period Master dates; CUSTOM defaults to 7 days', () => {
+  it('PERIOD takes the Reporting Period Master dates; CUSTOM defaults to from + 7 (the Plan A default)', () => {
     expect(resolveViewRange({ view: 'PERIOD', planningDate: '2026-09-23', period })).toEqual({ from: '2026-08-30', to: '2026-09-26' });
     expect(resolveViewRange({ view: 'CUSTOM', planningDate: '2026-09-23' })).toEqual({ from: '2026-09-23', to: '2026-09-30' });
     expect(() => resolveViewRange({ view: 'PERIOD', planningDate: '2026-09-23', period: null })).toThrow('A Reporting Period view needs a period.');
