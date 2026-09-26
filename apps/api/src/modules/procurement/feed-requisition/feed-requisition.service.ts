@@ -254,11 +254,12 @@ export class FeedRequisitionService {
   }
 
   async autoDraft(dto: AutoDraftFeedRequisitionDto, tenantId: string, user: UserCtx) {
-    const today = serverToday();
+    const { farmId, companyId } = await this.forecast.resolveFarm(dto.farmId, tenantId, user?.userType);
+    // D16: the forecast plans from today in the farm's time zone, so `to` is held to the same day.
+    const { today } = await this.forecast.farmToday(companyId, tenantId);
     if (dto.to && (dto.to < today || diffDaysIso(today, dto.to) > MAX_SPAN_DAYS)) {
       throw new BadRequestException(`to must be between today and ${MAX_SPAN_DAYS} days ahead.`);
     }
-    const { farmId, companyId } = await this.forecast.resolveFarm(dto.farmId, tenantId, user?.userType);
     const outcome = await this.forecast.withFarmScope(farmId, companyId, async () => {
       const forecast = await this.forecast.computeForFarm(farmId, companyId, tenantId, { to: dto.to });
       const farm = await this.loadFarm(farmId, tenantId);
@@ -419,7 +420,9 @@ export class FeedRequisitionService {
       const missing = itemIds.find((id) => !nameOf.has(id));
       if (missing) throw new BadRequestException(`Feed item ${missing} was not found.`);
 
-      const cycle = productionCycle(serverToday(), farm.settings.productionWeekday);
+      // D16: the requisition cycle is dated by the farm's day, the same one the forecast plans from.
+      const { today: manualToday } = await this.forecast.farmToday(companyId, tenantId);
+      const cycle = productionCycle(manualToday, farm.settings.productionWeekday);
       return this.numbered(() => withTenantTransaction(this.cls, async () => {
         await this.lockFarm(farmId, tenantId);
         await this.supersedeCoverage(dto.lines, destinations, nameOf, farmId, tenantId, cycle.submissionDeadline, user);
@@ -709,13 +712,15 @@ export class FeedRequisitionService {
         .where(eq(schema.requisitionLine.requisition_id, id))
         .orderBy(schema.requisitionLine.line_seq);
       const remarks = dto.remarks?.trim() || row.remarks?.trim() || null;
+      // D16: the deadline is checked against the farm's day, the same one the forecast plans from.
+      const { today: approveToday } = await this.forecast.farmToday(companyId, tenantId);
       const problems = approvalProblems({
         lines: lines.map((l) => ({
           lineSeq: l.line_seq, itemName: l.description ?? '', quantityKg: Number(l.quantity),
           recommendedQtyKg: l.recommended == null ? null : Number(l.recommended),
         })),
         remarks,
-        today: serverToday(),
+        today: approveToday,
         submissionDeadline: row.submission_deadline,
       });
       if (problems.length) throw new BadRequestException(problems.join(' '));

@@ -1032,7 +1032,7 @@ export const locationMaster = mysqlTable('location_master', {
   // lead time. Per farm because delivery distance is per farm. Read only on
   // FARM rows.
   feed_refill_buffer_days: int('feed_refill_buffer_days').default(2),
-  feed_lead_time_days: int('feed_lead_time_days').default(0),
+  feed_lead_time_days: int('feed_lead_time_days').default(2),
   // Alert when silo stock covers less than this many days of consumption. Required when location_type = SILO.
   silo_reorder_days: int('silo_reorder_days'),
   // Master Setup §1 rows 10 and 12 (spec D10): the single low feed level and

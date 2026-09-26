@@ -10,7 +10,7 @@ import { isDuplicateEntry } from '../../../common/filters/http-exception.filter'
 import { FeedForecastService } from '../feed-forecast/feed-forecast.service';
 import { SiloFeedService } from '../silo-feed/silo-feed.service';
 import { AlertRuleService } from '../../system/alert-rule/alert-rule.service';
-import { addDays, parseUtcTimestamp, todayLocal, utcTimestamp, type DietChange } from '../feed-forecast/feed-forecast.engine';
+import { addDays, parseUtcTimestamp, todayInZone, todayLocal, utcTimestamp, type DietChange } from '../feed-forecast/feed-forecast.engine';
 import type { AlertFrequency, PriorityLevel } from '../../system/alert-rule/alert-rule.rules';
 import {
   ActiveAlertFact, AlertPlan, AlertRuleFact, OpenRequisitionFact, SiloLevelFact, planAlerts,
@@ -93,35 +93,46 @@ export class FeedAlertService {
     await this.alertRules.ensureDefaultRules(companyId, tenantId);
     return this.systemFarmScope(farmId, companyId, async () => {
       const nowMs = Date.now();
-      const today = todayLocal(nowMs);
       let rules = await this.loadRules(companyId, farmId, tenantId);
       // Caller contract (a): every silo of the farm, whichever one the posting touched.
       const silos = await this.loadSiloLevels(farmId, companyId, tenantId);
       let dietChanges: DietChange[] = [];
       let requisitions: OpenRequisitionFact[] = [];
       let forecastError: string | undefined;
-      if (!levelsOnly) {
-        const dietRules = rules.filter((r) => r.isActive && r.eventType === 'DIET_CHANGE' && (r.farmId === null || r.farmId === farmId));
-        if (dietRules.length) {
-          // The forecast only needs to look as far ahead as the widest DIET_CHANGE window (checkpoint 15 caps it at 45).
-          const horizon = Math.min(45, Math.max(1, ...dietRules.map((r) => r.thresholdValue ?? 3)));
-          try {
+      // D16/M6: today in the farm's zone, read once per evaluation, and the
+      // zone itself (used to read lastNotifiedDay back off a UTC timestamp).
+      // A failed lookup shares the diet forecast's own try/catch below — it
+      // behaves exactly like a forecast failure: logged, the server day
+      // stands in for `today` so the silo and deadline rules still evaluate,
+      // and only DIET_CHANGE sits this pass out.
+      let today = todayLocal(nowMs);
+      let timeZone: string | null = null;
+      try {
+        ({ today, timeZone } = await this.forecast.farmToday(companyId, tenantId, nowMs));
+        if (!levelsOnly) {
+          const dietRules = rules.filter((r) => r.isActive && r.eventType === 'DIET_CHANGE' && (r.farmId === null || r.farmId === farmId));
+          if (dietRules.length) {
+            // The forecast only needs to look as far ahead as the widest DIET_CHANGE window (checkpoint 15 caps it at 45).
+            const horizon = Math.min(45, Math.max(1, ...dietRules.map((r) => r.thresholdValue ?? 3)));
             dietChanges = (await this.forecast.computeForFarm(farmId, companyId, tenantId, { from: today, to: addDays(today, horizon) })).dietChanges;
-          } catch (error) {
-            // Final review I1: the forecast refuses a farm it cannot compute
-            // (feed stocked in a unit other than KG, a broken lifecycle row).
-            // That must not silence the silo and deadline alerts, so only the
-            // DIET_CHANGE rules sit this pass out — and their open alerts with
-            // them: an empty diet list would resolve those as PASSED, and a
-            // dropped rule alone would resolve them as RULE_OFF.
-            forecastError = (error as Error).message;
-            this.logger.warn(`Diet-change alerts not evaluated for farm ${farmId}: ${forecastError}`);
-            rules = rules.filter((r) => r.eventType !== 'DIET_CHANGE');
           }
         }
+      } catch (error) {
+        // Final review I1: the forecast refuses a farm it cannot compute
+        // (feed stocked in a unit other than KG, a broken lifecycle row) —
+        // and now also a zone lookup that fails outright (ruling M6). Neither
+        // must silence the silo and deadline alerts, so only the DIET_CHANGE
+        // rules sit this pass out — and their open alerts with them: an
+        // empty diet list would resolve those as PASSED, and a dropped rule
+        // alone would resolve them as RULE_OFF.
+        forecastError = (error as Error).message;
+        this.logger.warn(`Diet-change alerts not evaluated for farm ${farmId}: ${forecastError}`);
+        rules = rules.filter((r) => r.eventType !== 'DIET_CHANGE');
+      }
+      if (!levelsOnly) {
         requisitions = await this.loadOpenRequisitions(farmId, companyId, tenantId);
       }
-      let active = await this.loadActive(farmId, tenantId);
+      let active = await this.loadActive(farmId, tenantId, timeZone);
       if (forecastError) active = active.filter((a) => a.eventType !== 'DIET_CHANGE');
       const plan = planAlerts({ today, nowMs, farmId, rules, silos, dietChanges, requisitions, active, levelsOnly });
       await this.applyPlan(plan, { tenantId, companyId, farmId, nowMs });
@@ -334,8 +345,13 @@ export class FeedAlertService {
       .map((r) => ({ requisitionId: r.requisition_id, reqNo: r.req_no, status: r.status, submissionDeadline: r.submission_deadline! }));
   }
 
-  /** Caller contract (b): open alerts of the evaluated farm only. */
-  private async loadActive(farmId: string, tenantId: string): Promise<ActiveAlertFact[]> {
+  /**
+   * Caller contract (b): open alerts of the evaluated farm only. `timeZone`
+   * is the same one farmToday just read (D16/M6) — lastNotifiedDay is a
+   * calendar day, and a UTC timestamp read back in the server's zone instead
+   * of the farm's could disagree with `today` about which day it names.
+   */
+  private async loadActive(farmId: string, tenantId: string, timeZone: string | null = null): Promise<ActiveAlertFact[]> {
     const rows = await this.db.select().from(schema.feedAlert).where(and(
       eq(schema.feedAlert.tenant_id, tenantId), eq(schema.feedAlert.farm_id, farmId), eq(schema.feedAlert.status, 'ACTIVE'),
     ));
@@ -347,7 +363,7 @@ export class FeedAlertService {
       subjectId: r.subject_id,
       dedupKey: r.dedup_key,
       raisedAtMs: parseTs(r.raised_at),
-      lastNotifiedDay: todayLocal(parseTs(r.last_notified_at)),
+      lastNotifiedDay: todayInZone(timeZone, parseTs(r.last_notified_at)),
       acknowledged: !!r.acknowledged_at,
       escalated: !!r.escalated_at,
       observedValue: num(r.observed_value),

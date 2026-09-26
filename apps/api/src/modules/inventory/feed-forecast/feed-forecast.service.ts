@@ -7,7 +7,7 @@ import { activeFarmOfCompany, batchScopeConditions, farmScope, FARM_SCOPE_KEY, F
 import { InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
 import { SiloFeedService } from '../silo-feed/silo-feed.service';
 import { FeedRow, stageDayRange } from '../../production/lifecycle/feed-row-days';
-import { buildFeedForecast, DietChange, ForecastFlag, ForecastInput, ForecastRow, ForecastSource, todayLocal } from './feed-forecast.engine';
+import { buildFeedForecast, DietChange, ForecastFlag, ForecastInput, ForecastRow, ForecastSource, isTimeZone, todayInZone } from './feed-forecast.engine';
 import { QueryFeedForecastDto } from './dto/feed-forecast.dto';
 
 /**
@@ -62,6 +62,12 @@ export interface FeedForecastResponse {
 export interface ResolvedFarm {
   farmId: string;
   companyId: string;
+}
+
+/** "Today" for a farm (D16) and the zone it was read in; timeZone null = the server's day (no usable zone on record). */
+export interface FarmClock {
+  today: string;
+  timeZone: string | null;
 }
 
 export interface StageInfo {
@@ -427,6 +433,32 @@ export class FeedForecastService {
   }
 
   /**
+   * Today in the farm's time zone (D16, open question Q14). A farm row carries
+   * no zone, so the company's default_timezone_id is the one on record —
+   * Africa/Harare for Triple C. The column is a free varchar with no foreign
+   * key, so a value the runtime does not know as an IANA zone is tried as a
+   * timezone_master id before giving up. No usable zone → the server's day,
+   * which is what the forecast used before, and timeZone null says so.
+   */
+  async farmToday(companyId: string, tenantId: string, nowMs: number = Date.now()): Promise<FarmClock> {
+    const [company] = await this.db
+      .select({ zone: schema.companyMaster.default_timezone_id })
+      .from(schema.companyMaster)
+      .where(and(eq(schema.companyMaster.company_id, companyId), eq(schema.companyMaster.tenant_id, tenantId)))
+      .limit(1);
+    let zone: string | null = company?.zone ?? null;
+    if (zone && !isTimeZone(zone)) {
+      const [tz] = await this.db
+        .select({ code: schema.timezoneMaster.tz_code })
+        .from(schema.timezoneMaster)
+        .where(eq(schema.timezoneMaster.tz_id, zone))
+        .limit(1);
+      zone = tz?.code && isTimeZone(tz.code) ? tz.code : null;
+    }
+    return { today: todayInZone(zone, nowMs), timeZone: zone };
+  }
+
+  /**
    * The forecast for a farm already resolved — callers pass exactly the
    * `{ farmId, companyId }` pair `resolveFarm` produced (or, from a posting
    * hook, a farm/company already known from the location that was posted).
@@ -438,7 +470,7 @@ export class FeedForecastService {
    * as the report does.
    */
   async computeForFarm(farmId: string, companyId: string, tenantId: string, range: { from?: string; to?: string } = {}): Promise<FeedForecastResponse> {
-    const planningDate = todayLocal();
+    const { today: planningDate } = await this.farmToday(companyId, tenantId);
     const from = range.from ?? planningDate;
     const to = range.to ?? addDays(from, DEFAULT_SPAN_DAYS);
     if (!isCalendarDay(from) || !isCalendarDay(to)) {
@@ -541,7 +573,8 @@ export class FeedForecastService {
       name: row.location_name,
       companyId: row.company_id,
       refillBufferDays: row.feed_refill_buffer_days ?? 2,
-      leadTimeDays: row.feed_lead_time_days ?? 0,
+      // D19: the column default moved from 0 to 2 (migration 0120); the same fallback applies to any row still null.
+      leadTimeDays: row.feed_lead_time_days ?? 2,
     };
   }
 

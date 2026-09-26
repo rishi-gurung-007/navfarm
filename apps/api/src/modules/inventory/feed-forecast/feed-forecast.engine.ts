@@ -179,6 +179,29 @@ export function todayLocal(ms: number = Date.now()): string {
   return `${now.getFullYear()}-${m}-${d}`;
 }
 
+/** True when the runtime knows `zone` as an IANA time zone (Intl throws a RangeError otherwise). */
+export function isTimeZone(zone: string): boolean {
+  try {
+    new Intl.DateTimeFormat('en-CA', { timeZone: zone });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The calendar day in `zone` — spec D16: the planning date defaults to today
+ * in the farm's time zone (Africa/Harare for Triple C). Without a usable zone
+ * it is todayLocal, the server's day, which is what Plans A and B used, so a
+ * company with no zone on record behaves exactly as before.
+ */
+export function todayInZone(zone: string | null | undefined, ms: number = Date.now()): string {
+  if (!zone || !isTimeZone(zone)) return todayLocal(ms);
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date(ms));
+  const part = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
+  return `${part('year')}-${part('month')}-${part('day')}`;
+}
+
 /**
  * Timestamps Plan B writes from JavaScript (feed_alert raised/notified/
  * escalated/acknowledged/resolved, requisition approved_at/deleted_at) follow

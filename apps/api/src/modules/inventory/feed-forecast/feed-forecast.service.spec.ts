@@ -5,7 +5,7 @@ import { transactionCls, useFarmScope } from '../../../test-utils/transaction-cl
 import { buildInputBatches, FeedForecastService, locationLobConditions, projectSegments, resolveShed, siloInput, StageInfo } from './feed-forecast.service';
 import { InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
 import { SiloFeedService } from '../silo-feed/silo-feed.service';
-import { buildFeedForecast, ForecastInput } from './feed-forecast.engine';
+import { buildFeedForecast, ForecastInput, todayLocal } from './feed-forecast.engine';
 import { activeFarmOfCompany, FARM_SCOPE_KEY, farmScope } from '../../../common/farm-scope';
 import * as schema from '../../../core/database/schema';
 import { MySqlDialect } from 'drizzle-orm/mysql-core';
@@ -67,6 +67,7 @@ describe('FeedForecastService', () => {
       input: { planningDate: args[1], from: args[2], to: args[3] },
       flags: [],
     }));
+    jest.spyOn(service, 'farmToday').mockImplementation(async () => ({ today: todayLocal(), timeZone: null }));
   });
 
   afterEach(() => jest.useRealTimers());

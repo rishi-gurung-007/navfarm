@@ -138,6 +138,7 @@ describe('FeedAlertService — evaluation (caller contract of planAlerts)', () =
       withFarmScope: jest.fn((farmId: string, companyId: string, work: () => Promise<unknown>) =>
         cls.run(async () => { cls.set(FARM_SCOPE_KEY, { ...farmScope(cls), farmId, companyId }); return work(); })),
       computeForFarm: jest.fn(),
+      farmToday: jest.fn(async () => ({ today: '2026-09-25', timeZone: 'Africa/Harare' })),
     };
     const service = new FeedAlertService(cls, forecast as any, {} as any, alertRules as any);
     const seen: unknown[] = [];
@@ -226,6 +227,7 @@ describe('FeedAlertService — evaluation (caller contract of planAlerts)', () =
         resolveFarm: jest.fn(async () => ({ farmId: 'farm-a', companyId: 'co' })),
         withFarmScope: jest.fn((_f: string, _c: string, work: () => Promise<unknown>) => work()),
         computeForFarm,
+        farmToday: jest.fn(async () => ({ today: '2026-09-25', timeZone: 'Africa/Harare' })),
       };
       const service = new FeedAlertService(cls, forecast as any, {} as any, { ensureDefaultRules: jest.fn() } as any);
       jest.spyOn(service as any, 'loadRules').mockResolvedValue(rules);
@@ -258,6 +260,13 @@ describe('FeedAlertService — evaluation (caller contract of planAlerts)', () =
       expect(result).not.toHaveProperty('forecastError');
       // With a real (empty) diet list the open diet alert has passed.
       expect((apply.mock.calls[0][0] as AlertPlan).resolve).toEqual([{ alertId: 'al-diet', reason: 'PASSED' }]);
+    });
+
+    it('evaluates on the farm day from farmToday, not the server day (D16)', async () => {
+      const computeForFarm = jest.fn().mockResolvedValue({ dietChanges: [] });
+      const { service } = build(computeForFarm);
+      await service.evaluateNow('farm-a', 't', 'COMPANY_ADMIN');
+      expect(computeForFarm).toHaveBeenCalledWith('farm-a', 'co', 't', expect.objectContaining({ from: '2026-09-25' }));
     });
   });
 

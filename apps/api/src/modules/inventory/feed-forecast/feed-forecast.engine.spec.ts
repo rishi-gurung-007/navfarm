@@ -5,7 +5,7 @@
  * see docs/superpowers/specs/2026-09-25-feed-forecast-design.md, D1-D3.
  */
 import { FeedRow } from '../../production/lifecycle/feed-row-days';
-import { buildFeedForecast, ForecastInput, parseUtcTimestamp, todayLocal, utcTimestamp } from './feed-forecast.engine';
+import { buildFeedForecast, ForecastInput, parseUtcTimestamp, todayInZone, todayLocal, utcTimestamp } from './feed-forecast.engine';
 
 const workedExample: ForecastInput = {
   planningDate: '2026-09-23',
@@ -945,5 +945,19 @@ describe('calendar and timestamp helpers (one convention for Plan B)', () => {
     const ms = Date.UTC(2026, 8, 26, 2, 52, 4);
     expect(utcTimestamp(ms)).toBe('2026-09-26 02:52:04');
     expect(parseUtcTimestamp(utcTimestamp(ms))).toBe(ms);
+  });
+});
+
+describe('todayInZone — D16 planning date in the farm time zone', () => {
+  it('is already the 26th in Harare at 22:30 UTC on the 25th', () => {
+    expect(todayInZone('Africa/Harare', Date.UTC(2026, 8, 25, 22, 30))).toBe('2026-09-26');
+  });
+  it('is still the 25th in Harare at 21:59 UTC', () => {
+    expect(todayInZone('Africa/Harare', Date.UTC(2026, 8, 25, 21, 59))).toBe('2026-09-25');
+  });
+  it('falls back to the server day for an unknown or missing zone', () => {
+    const ms = Date.UTC(2026, 8, 25, 12, 0);
+    expect(todayInZone('Not/AZone', ms)).toBe(todayLocal(ms));
+    expect(todayInZone(null, ms)).toBe(todayLocal(ms));
   });
 });

@@ -194,6 +194,14 @@ describe('FeedRequisitionService.approve — checkpoints 18 and 22, Q3', () => {
     expect(accepted.writes().find((e) => e.table === schema.approvalRequest)!.values).toMatchObject({ justification: 'Mill confirmed a late slot' });
   });
 
+  it('checks the deadline against the farm day, from the row\'s own company (D16)', async () => {
+    const { service, as } = setup(base(REQ_ROW, [LINE_6000]));
+    const farmToday = jest.spyOn(FeedForecastService.prototype, 'farmToday');
+    await as(COMPANY_ADMIN_SCOPE, () => service.approve('req-1', {}, 'tenant-1', admin));
+    expect(farmToday).toHaveBeenCalledWith('co-1', 'tenant-1');
+    farmToday.mockRestore();
+  });
+
   it.each(['DRAFT', 'PENDING_APPROVAL'])('approves from %s in one step', async (status) => {
     const { service, writes, as } = setup(base({ ...REQ_ROW, status }, [LINE_6000]));
     await as(COMPANY_ADMIN_SCOPE, () => service.approve('req-1', {}, 'tenant-1', admin));

@@ -19,6 +19,7 @@ describe('FeedRequisitionService.createManual', () => {
   const forecast: any = {
     resolveFarm: jest.fn(async () => ({ farmId: 'farm-grs', companyId: 'co-1' })),
     withFarmScope: jest.fn(async (_f: string, _c: string, work: () => Promise<unknown>) => work()),
+    farmToday: jest.fn(async () => ({ today: serverToday(), timeZone: null })),
   };
   const service = new FeedRequisitionService(transactionCls(db), forecast, {} as any, { evaluateFarmSafely: jest.fn() } as any);
 
@@ -97,6 +98,7 @@ function setup(sources: ForecastSource[], queues: Map<unknown, unknown[][]>) {
     withFarmScope: jest.fn((farmId: string, companyId: string, work: () => Promise<unknown>) =>
       cls.run(async () => { cls.set(FARM_SCOPE_KEY, { ...farmScope(cls), farmId, companyId }); return work(); })),
     computeForFarm: jest.fn(async () => ({ planningDate: serverToday(), to: serverToday(), sources, farm: { id: 'farm-grs', code: 'GRS' } })),
+    farmToday: jest.fn(async () => ({ today: serverToday(), timeZone: null })),
   };
   const alerts: any = {
     evaluateFarmSafely: jest.fn(async (...args: unknown[]) => { evaluated.push({ args, inTx: cls.get('tenantPostingTransaction') === true }); }),
@@ -193,6 +195,16 @@ describe('FeedRequisitionService.autoDraft', () => {
     expect(log.some((e) => e.op === 'insert')).toBe(false);
     expect(evaluated).toHaveLength(1);
   });
+
+  it('checks `to` against the farm day, after resolving the farm (D16)', async () => {
+    const { service, forecast } = setup([source()], new Map());
+    forecast.farmToday.mockResolvedValueOnce({ today: '2026-09-26', timeZone: 'Africa/Harare' });
+    await expect(service.autoDraft({ to: '2026-11-11' }, 'tenant-1', { userId: 'u-1', userType: 'COMPANY_ADMIN' }))
+      .rejects.toThrow('to must be between today and 45 days ahead.');
+    expect(forecast.resolveFarm).toHaveBeenCalled();
+    expect(forecast.farmToday).toHaveBeenCalledWith('co-1', 'tenant-1');
+    expect(forecast.computeForFarm).not.toHaveBeenCalled();
+  });
 });
 
 describe('FeedRequisitionService.findOne — by id, under the row\'s own farm (Ruling H3)', () => {
@@ -261,6 +273,14 @@ describe('FeedRequisitionService.createManual — row 9 across the cycle, number
     const cycleRead = log.find((e) => e.table === schema.requisition && e.lock === 'update')!;
     expect(cycleRead.inTx).toBe(true);
     expect(render(cycleRead.where).params).toEqual(expect.arrayContaining(['REJECTED', 'CANCELLED']));
+  });
+
+  it('dates the cycle from the farm day, not the server day (D16)', async () => {
+    const auto = { requisition_id: 'auto-1', req_no: 'REQ-GRS-2026-00001', status: 'AUTO_DRAFT', requisition_type: 'FEED_FORECAST' };
+    const { service, forecast } = setup([], queuesWith([auto], [line({})]));
+    forecast.farmToday.mockResolvedValueOnce({ today: '2026-09-26', timeZone: 'Africa/Harare' });
+    await run(service);
+    expect(forecast.farmToday).toHaveBeenCalledWith('co-1', 'tenant-1');
   });
 
   it("supersedes an untouched AUTO_DRAFT line: removes it, drops the emptied draft, and writes the manual requisition", async () => {

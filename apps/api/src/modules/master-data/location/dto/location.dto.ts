@@ -168,9 +168,8 @@ export class CreateLocationDto {
   @Max(30)
   feed_refill_buffer_days?: number;
 
-  // Spec D3: Feed Forecast's order-due date is the refill date minus this
-  // many days. 0 for feed made at the farm's own internal mill.
-  @ApiProperty({ description: 'Feed Forecast: the order is due this many days before the refill date. 0 for feed from the internal mill. Applies to FARM.', required: false })
+  // Spec D19: Required On = Date to Refill - this many days; default 2.
+  @ApiProperty({ description: 'Feed Forecast: Required On is this many days before the Date to Refill (spec D19, default 2). Applies to FARM.', required: false })
   @IsOptional()
   @IsInt()
   @Min(0)
@@ -367,7 +366,8 @@ export class UpdateLocationDto {
   @Max(30)
   feed_refill_buffer_days?: number;
 
-  @ApiProperty({ description: 'Feed Forecast: the order is due this many days before the refill date. 0 for feed from the internal mill. Applies to FARM.', required: false })
+  // Spec D19: Required On = Date to Refill - this many days; default 2.
+  @ApiProperty({ description: 'Feed Forecast: Required On is this many days before the Date to Refill (spec D19, default 2). Applies to FARM.', required: false })
   @IsOptional()
   @IsInt()
   @Min(0)

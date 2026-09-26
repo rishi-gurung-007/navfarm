@@ -147,7 +147,7 @@ const location: MasterDataConfig = {
       helpText: "Feed Forecast: the refill date is this many days before a silo runs out." },
     { key: "feed_lead_time_days", label: "Feed Lead Time (Days)", type: "number", min: 0, max: 30, step: "1", nativeNumber: true,
       visibleWhen: { anyOf: [{ key: "location_type", equals: "FARM" }] }, section: "Identification",
-      helpText: "Feed Forecast: the order is due this many days before the refill date. 0 for feed from the internal mill." },
+      helpText: "Feed Forecast: Required On is this many days before the Date to Refill. Default 2." },
     { key: "feed_bulk_multiple_kg", label: "Bulk Order Multiple (KG)", type: "number", min: 1, step: "1", nativeNumber: true,
       visibleWhen: { anyOf: [{ key: "location_type", equals: "FARM" }] }, section: "Identification",
       helpText: "Feed requisitions round bulk orders up to this many kilograms (one truck compartment). Default 3000." },
