@@ -165,6 +165,34 @@ describe('FeedAlertService — evaluation (caller contract of planAlerts)', () =
     expect(forecast.computeForFarm).not.toHaveBeenCalled();
   });
 
+  it('a levelsOnly (posting-hook) evaluation does not throw when farmToday rejects — silo rules still raise, on the server-day fallback (M6)', async () => {
+    const cls = transactionCls({});
+    const alertRules = { ensureDefaultRules: jest.fn() };
+    const forecast = {
+      withFarmScope: jest.fn((_f: string, _c: string, work: () => Promise<unknown>) => work()),
+      computeForFarm: jest.fn(),
+      farmToday: jest.fn().mockRejectedValue(new Error('connection lost')),
+    };
+    const service = new FeedAlertService(cls, forecast as any, {} as any, alertRules as any);
+    const siloRule = {
+      ruleId: 'r-low', notificationCode: 'FEED-BELOW-L1', eventType: 'FEED_BELOW_L1', thresholdReference: 'SILO_BELOW', thresholdValue: null,
+      priorityLevel: 'WARNING', recipientRoles: ['FARM_MANAGER'], frequency: 'ONCE', escalationAfterHours: null, escalationRole: null, farmId: null, isActive: true,
+    };
+    jest.spyOn(service as any, 'loadRules').mockResolvedValue([siloRule]);
+    jest.spyOn(service as any, 'loadSiloLevels').mockResolvedValue([
+      { siloId: 's1', siloCode: 'F/SILO-1', itemId: 'i1', itemName: 'Grower', balanceKg: 500, lowLevelKg: 1000, highLevelKg: null },
+    ]);
+    jest.spyOn(service as any, 'loadActive').mockResolvedValue([]);
+    const apply = jest.spyOn(service as any, 'applyPlan').mockResolvedValue(undefined);
+    jest.spyOn((service as any).logger, 'warn').mockImplementation(() => undefined);
+
+    const result = await service.evaluateFarm('farm-a', 'co', 't', { levelsOnly: true });
+
+    expect(result.forecastError).toBe('connection lost');
+    const plan = apply.mock.calls[0][0] as AlertPlan;
+    expect(plan.raise).toEqual([expect.objectContaining({ rule: siloRule, subjectId: 's1' })]);
+  });
+
   it('hands planAlerts every active silo of the farm, levelled or not, so a FIXED_VALUE rule and recovery both see them (contract a)', async () => {
     const silos = [
       { location_id: 's1', location_code: 'F/SILO-1', low_level_kg: '1000.0000', high_level_kg: null },

@@ -4,7 +4,7 @@ import type { ClsService } from 'nestjs-cls';
 import { transactionCls } from '../../../test-utils/transaction-cls';
 import { FARM_SCOPE_KEY, farmScope } from '../../../common/farm-scope';
 import * as schema from '../../../core/database/schema';
-import type { ForecastSource } from '../../inventory/feed-forecast/feed-forecast.engine';
+import { todayInZone, type ForecastSource } from '../../inventory/feed-forecast/feed-forecast.engine';
 import { serverToday } from './feed-requisition.rules';
 import { FeedRequisitionService } from './feed-requisition.service';
 
@@ -197,6 +197,23 @@ describe('FeedRequisitionService.autoDraft', () => {
     expect(evaluated).toHaveLength(1);
   });
 
+  it('numbers into the new year when the farm zone has already turned (31 Dec 23:00 UTC, Africa/Harare) (D16)', async () => {
+    // 31 Dec 2026 23:00 UTC is 1 Jan 2027 01:00 in Harare (UTC+2) — the req_no
+    // year must follow the farm's day, not the server's still-2026 one.
+    const ms = Date.UTC(2026, 11, 31, 23, 0);
+    const farmDay = todayInZone('Africa/Harare', ms);
+    expect(farmDay).toBe('2027-01-01'); // sanity check on the fixture itself
+    const queues = new Map<unknown, unknown[][]>([
+      [schema.locationMaster, [[FARM_ROW], [SILO_ROW], [{ location_id: 'farm-grs' }]]],
+      [schema.requisition, [[], [], [{ req: { requisition_id: 'new' }, farm_code: 'GRS', truck_target_kg: 30000 }]]],
+    ]);
+    const { service, forecast, log } = setup([source()], queues);
+    forecast.farmToday.mockResolvedValue({ today: farmDay, timeZone: 'Africa/Harare' });
+    await service.autoDraft({}, 'tenant-1', { userId: 'u-1', userType: 'COMPANY_ADMIN' });
+    const insert = log.find((e) => e.op === 'insert' && e.table === schema.requisition)!;
+    expect(insert.values.req_no).toBe('REQ-GRS-2027-00001');
+  });
+
   it('checks `to` against the farm day, after resolving the farm (D16)', async () => {
     const { service, forecast } = setup([source()], new Map());
     forecast.farmToday.mockResolvedValueOnce({ today: '2026-09-26', timeZone: 'Africa/Harare' });
@@ -282,6 +299,20 @@ describe('FeedRequisitionService.createManual — row 9 across the cycle, number
     forecast.farmToday.mockResolvedValueOnce({ today: '2026-09-26', timeZone: 'Africa/Harare' });
     await run(service);
     expect(forecast.farmToday).toHaveBeenCalledWith('co-1', 'tenant-1');
+  });
+
+  it('numbers into the new year when the farm zone has already turned (31 Dec 23:00 UTC, Africa/Harare) (D16)', async () => {
+    // 31 Dec 2026 23:00 UTC is 1 Jan 2027 01:00 in Harare (UTC+2) — the req_no
+    // year must follow the farm's day, not the server's still-2026 one.
+    const ms = Date.UTC(2026, 11, 31, 23, 0);
+    const farmDay = todayInZone('Africa/Harare', ms);
+    expect(farmDay).toBe('2027-01-01'); // sanity check on the fixture itself
+    const auto = { requisition_id: 'auto-1', req_no: 'REQ-GRS-2026-00001', status: 'AUTO_DRAFT', requisition_type: 'FEED_FORECAST' };
+    const { service, forecast, log } = setup([], queuesWith([auto], [line({})]));
+    forecast.farmToday.mockResolvedValueOnce({ today: farmDay, timeZone: 'Africa/Harare' });
+    await run(service);
+    const insert = log.find((e) => e.op === 'insert' && e.table === schema.requisition)!;
+    expect(insert.values.req_no).toBe('REQ-GRS-2027-00001');
   });
 
   it("supersedes an untouched AUTO_DRAFT line: removes it, drops the emptied draft, and writes the manual requisition", async () => {

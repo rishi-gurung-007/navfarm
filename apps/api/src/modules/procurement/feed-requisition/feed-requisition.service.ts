@@ -170,9 +170,14 @@ export class FeedRequisitionService {
    * resulting gap-lock deadlock). numbered() runs the whole transaction once
    * more — it reads the number the first committed — and answers 409 only if
    * that clashes too. A duplicate number is never written.
+   *
+   * `today` is the farm-zone day (D16) — both callers already hold it from
+   * their own farmToday call, so a requisition made after midnight in Harare
+   * but before midnight on the server numbers into the year that has already
+   * turned for the farm, not the one still current on the server.
    */
-  private async nextReqNo(farmCode: string, tenantId: string): Promise<string> {
-    const prefix = `REQ-${farmCode}-${serverToday().slice(0, 4)}-`;
+  private async nextReqNo(farmCode: string, tenantId: string, today: string): Promise<string> {
+    const prefix = `REQ-${farmCode}-${today.slice(0, 4)}-`;
     const [last] = await this.db
       .select({ req_no: schema.requisition.req_no })
       .from(schema.requisition)
@@ -335,7 +340,7 @@ export class FeedRequisitionService {
             tenant_id: tenantId,
             company_id: companyId,
             farm_id: farmId,
-            req_no: await this.nextReqNo(farm.code, tenantId),
+            req_no: await this.nextReqNo(farm.code, tenantId, today),
             doc_type: FEED_DOC_TYPE,
             status: 'AUTO_DRAFT',
             requisition_type: 'FEED_FORECAST',
@@ -432,7 +437,7 @@ export class FeedRequisitionService {
           tenant_id: tenantId,
           company_id: companyId,
           farm_id: farmId,
-          req_no: await this.nextReqNo(farm.code, tenantId),
+          req_no: await this.nextReqNo(farm.code, tenantId, manualToday),
           doc_type: FEED_DOC_TYPE,
           status: 'DRAFT',
           requisition_type: 'MANUAL',
