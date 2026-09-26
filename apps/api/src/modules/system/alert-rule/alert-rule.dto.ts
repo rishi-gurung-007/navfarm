@@ -19,7 +19,7 @@ export class CreateAlertRuleDto {
   @IsArray() @ArrayMaxSize(20) @IsString({ each: true })
   @Transform(({ value }) => (Array.isArray(value) ? value.map((v: unknown) => String(v).trim().toUpperCase()).filter(Boolean) : value))
   recipient_roles: string[];
-  @ApiProperty({ enum: DELIVERY_CHANNELS }) @IsString() delivery_channel: string;
+  @ApiProperty({ enum: DELIVERY_CHANNELS }) @IsIn(DELIVERY_CHANNELS as unknown as string[]) delivery_channel: string;
   @ApiProperty({ enum: FREQUENCIES }) @IsIn(FREQUENCIES as unknown as string[]) frequency: string;
   @ApiPropertyOptional() @IsOptional() @Type(() => Number) @IsInt() @Min(1) escalation_after_hours?: number | null;
   @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(50)

@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { and, eq, inArray, isNull, ne, or } from 'drizzle-orm';
+import { and, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { ClsService } from 'nestjs-cls';
 import { randomUUID } from 'node:crypto';
@@ -57,6 +57,15 @@ export class AlertRuleService {
    * 0118 ran; a company created afterwards has none. Called at the start of
    * findAll (and again by Task 6 before evaluating) so the gap never shows —
    * idempotent, inserting only the codes this company is missing.
+   *
+   * Fix round 1: the read-then-insert above is not itself atomic, so two
+   * concurrent callers can both see a code as missing and both try to insert
+   * it. `ON DUPLICATE KEY UPDATE` on the row's own unique key (tenant,
+   * company, notification_code) turns the loser's insert into a no-op —
+   * setting a column to itself changes nothing but still counts as the
+   * "duplicate" branch, so MySQL never raises ER_DUP_ENTRY here. Any other
+   * failure (a bad FK, a full disk, …) is a different error class and still
+   * throws, same as an unguarded insert would.
    */
   async ensureDefaultRules(companyId: string, tenantId: string): Promise<void> {
     const existing = await this.db.select({ code: table.notification_code }).from(table).where(and(
@@ -73,7 +82,7 @@ export class AlertRuleService {
       threshold_value: rule.threshold_value == null ? null : String(rule.threshold_value),
       priority_level: rule.priority_level, recipient_roles: rule.recipient_roles, delivery_channel: rule.delivery_channel,
       frequency: rule.frequency, escalation_after_hours: rule.escalation_after_hours, escalation_role: rule.escalation_role,
-    })));
+    }))).onDuplicateKeyUpdate({ set: { notification_code: sql`${table.notification_code}` } });
   }
 
   async findOne(id: string, tenantId: string) {
@@ -112,13 +121,25 @@ export class AlertRuleService {
     if (!farm) throw new BadRequestException('Farm Filter must be a farm of this company.');
   }
 
-  /** Row 45: "Only one low feed event applies per silo" — one active FEED_BELOW_L1 rule per company and farm filter. */
+  /**
+   * Row 45: "Only one low feed event applies per silo" — one active
+   * FEED_BELOW_L1 rule per company and farm filter.
+   *
+   * Fix round 1: this was asymmetric. A farm-specific rule (farm_id set)
+   * correctly checked "same farm OR a company-wide rule" — a company-wide
+   * rule applies to every farm, so it always clashes. But a company-wide new
+   * rule (farm_id null) only checked other farm_id-IS-NULL rows, missing any
+   * already-active farm-specific rule it would also cover. A company-wide
+   * rule must clash with ANY other active FEED_BELOW_L1 rule of the company,
+   * so no farm filter is added at all in that case — every farm_id, null or
+   * not, is a candidate clash.
+   */
   private async assertSingleLowRule(rule: { event_type: string; company_id: string | null; farm_id: string | null; is_active: boolean }, tenantId: string, excludeId?: string) {
     if (rule.event_type !== 'FEED_BELOW_L1' || !rule.is_active) return;
     const [clash] = await this.db.select({ rule_id: table.rule_id, notification_code: table.notification_code }).from(table).where(and(
       eq(table.tenant_id, tenantId), eq(table.event_type, 'FEED_BELOW_L1'), eq(table.is_active, true),
       rule.company_id ? eq(table.company_id, rule.company_id) : isNull(table.company_id),
-      rule.farm_id ? or(eq(table.farm_id, rule.farm_id), isNull(table.farm_id))! : isNull(table.farm_id),
+      ...(rule.farm_id ? [or(eq(table.farm_id, rule.farm_id), isNull(table.farm_id))!] : []),
       ...(excludeId ? [ne(table.rule_id, excludeId)] : []),
     )).limit(1);
     if (clash) throw new ConflictException(`Only one low feed rule applies per silo; ${clash.notification_code} already covers these farms.`);
