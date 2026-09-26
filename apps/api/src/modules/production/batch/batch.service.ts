@@ -445,6 +445,8 @@ export class BatchService {
           uom: line.uom,
           rate: line.rate?.toString() || null,
           amount: line.rate ? (line.quantity * line.rate).toString() : null,
+          lot_no: line.lot_no || null,
+          serial_no: line.serial_no || null,
         })),
       );
     }
@@ -795,6 +797,8 @@ export class BatchService {
           uom: line.uom,
           rate: line.rate?.toString() || null,
           amount: line.rate ? (line.quantity * line.rate).toString() : null,
+          lot_no: line.lot_no || null,
+          serial_no: line.serial_no || null,
         })),
       );
 
@@ -1755,6 +1759,8 @@ export class BatchService {
           quantity: Number(line.quantity),
           uom: line.uom,
           batchNo: batch.batch_no,
+          lotNo: line.lot_no || undefined,
+          serialNo: line.serial_no || undefined,
           userId: userPayload?.userId,
         });
         await this.glPostingService.postInventoryLedgerEntry(

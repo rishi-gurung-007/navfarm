@@ -1,7 +1,7 @@
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, like, or, isNull, count } from 'drizzle-orm';
+import { eq, and, like, or, isNull, count, inArray } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
@@ -10,6 +10,7 @@ import { CreateGoodsReceiptDto, UpdateGoodsReceiptDto, QueryGoodsReceiptDto } fr
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
+import { NumberSeriesService } from '../../system/number-series/number-series.service';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   return date.toISOString().slice(0, 19).replace('T', ' ');
@@ -22,6 +23,7 @@ export class GoodsReceiptService {
     private readonly auditService: AuditLogService,
     private readonly ledgerService: InventoryLedgerService,
     private readonly glPostingService: GlPostingService,
+    private readonly numberSeriesService: NumberSeriesService,
   ) {}
 
   private get db(): MySql2Database<typeof schema> {
@@ -71,13 +73,14 @@ export class GoodsReceiptService {
     await this.assertWarehouseActive(dto.warehouse_id);
     return withTenantTransaction(this.cls, async () => {
     const receiptId = randomUUID();
-    const receiptNo = await this.db.transaction(async (tx) => {
-      const no = await this.generateReceiptNo(tenantId, dto.company_id, tx);
+    let receiptNo = '';
+    await this.db.transaction(async (tx) => {
+      receiptNo = await this.generateReceiptNo(tenantId, dto.company_id, tx);
       await tx.insert(schema.goodsReceipt).values({
         receipt_id: receiptId,
         tenant_id: tenantId,
         company_id: dto.company_id,
-        receipt_no: no,
+        receipt_no: receiptNo,
         posting_date: dto.posting_date,
         warehouse_id: dto.warehouse_id,
         supplier_id: dto.supplier_id || null,
@@ -87,10 +90,8 @@ export class GoodsReceiptService {
         created_by: userPayload?.userId || null,
         updated_by: userPayload?.userId || null,
       });
-      return no;
+      await this.insertLines(receiptId, dto.lines, dto.company_id, tenantId, tx);
     });
-
-    await this.insertLines(receiptId, dto.lines);
 
     await this.auditService.log({
       tenantId,
@@ -106,23 +107,167 @@ export class GoodsReceiptService {
     });
   }
 
-  private async insertLines(receiptId: string, lines: CreateGoodsReceiptDto['lines']) {
-    await this.db.insert(schema.goodsReceiptLine).values(
-      lines.map((line, idx) => ({
-        line_id: randomUUID(),
-        receipt_id: receiptId,
-        line_no: idx + 1,
-        item_id: line.item_id,
-        quantity: line.quantity.toString(),
-        uom: line.uom,
-        rate: line.rate?.toString() || null,
-        amount: line.rate ? (line.quantity * line.rate).toString() : null,
-        lot_no: line.lot_no || null,
-        serial_no: line.serial_no || null,
-        expiry_date: line.expiry_date || null,
-        remarks: line.remarks || null,
-      }))
-    );
+  private async insertLines(
+    receiptId: string,
+    lines: CreateGoodsReceiptDto['lines'],
+    companyId: string,
+    tenantId: string,
+    executor: MySql2Database<typeof schema> = this.db,
+  ) {
+    const rowsToInsert: Array<typeof schema.goodsReceiptLine.$inferInsert> = [];
+    let currentLineNo = 1;
+
+    for (const line of lines) {
+      const [item] = await executor
+        .select()
+        .from(schema.itemMaster)
+        .where(eq(schema.itemMaster.item_id, line.item_id))
+        .limit(1);
+
+      if (!item) {
+        throw new BadRequestException(`Item with ID '${line.item_id}' not found.`);
+      }
+
+      const quantityNum = Number(line.quantity);
+      if (Number.isNaN(quantityNum) || quantityNum <= 0) {
+        throw new BadRequestException(`Quantity for item '${item.item_code}' must be a positive number.`);
+      }
+
+      if (item.is_lot_tracked) {
+        let lotNo = line.lot_no?.trim() || null;
+        if (!lotNo) {
+          if (!item.tracking_series_id) {
+            throw new BadRequestException(
+              `Item '${item.item_code}' is lot-tracked — a Lot No. is required or a Tracking No. Series must be assigned.`,
+            );
+          }
+          const generated = await this.numberSeriesService.generateNextNumberById(
+            item.tracking_series_id,
+            tenantId,
+            companyId,
+            executor,
+          );
+          lotNo = generated.next_number;
+        }
+
+        rowsToInsert.push({
+          line_id: randomUUID(),
+          receipt_id: receiptId,
+          line_no: currentLineNo++,
+          item_id: line.item_id,
+          quantity: quantityNum.toString(),
+          uom: line.uom,
+          rate: line.rate?.toString() || null,
+          amount: line.rate ? (quantityNum * line.rate).toString() : null,
+          lot_no: lotNo,
+          serial_no: null,
+          expiry_date: line.expiry_date || null,
+          remarks: line.remarks || null,
+        });
+      } else if (item.is_serial_tracked) {
+        if (!Number.isInteger(quantityNum)) {
+          throw new BadRequestException(
+            `Item '${item.item_code}' is serial-tracked — quantity must be a whole positive integer.`,
+          );
+        }
+        const qty = Math.round(quantityNum);
+
+        let serials: string[] = [];
+        if (line.serials && Array.isArray(line.serials) && line.serials.length > 0) {
+          serials = line.serials.map((s) => String(s).trim()).filter(Boolean);
+        } else if (line.serial_no?.trim()) {
+          serials = line.serial_no
+            .split(/[\n,]+/)
+            .map((s) => s.trim())
+            .filter(Boolean);
+        }
+
+        if (serials.length > 0) {
+          if (serials.length !== qty) {
+            throw new BadRequestException(
+              `Item '${item.item_code}' is serial-tracked: quantity is ${qty}, but ${serials.length} serial number(s) were provided.`,
+            );
+          }
+          const seen = new Set<string>();
+          for (const s of serials) {
+            if (seen.has(s)) {
+              throw new BadRequestException(`Duplicate serial number '${s}' in Goods Receipt.`);
+            }
+            seen.add(s);
+          }
+
+          const existingLedger = await executor
+            .select({ serial_no: schema.inventoryLedger.serial_no })
+            .from(schema.inventoryLedger)
+            .where(
+              and(
+                eq(schema.inventoryLedger.tenant_id, tenantId),
+                eq(schema.inventoryLedger.item_id, item.item_id),
+                eq(schema.inventoryLedger.entry_type, 'POSITIVE'),
+                inArray(schema.inventoryLedger.serial_no, serials),
+              ),
+            )
+            .limit(1);
+
+          if (existingLedger.length > 0) {
+            throw new BadRequestException(
+              `Serial number '${existingLedger[0].serial_no}' has already been received for item '${item.item_code}'.`,
+            );
+          }
+        } else {
+          if (!item.tracking_series_id) {
+            throw new BadRequestException(
+              `Item '${item.item_code}' is serial-tracked — Serial No.(s) are required or a Tracking No. Series must be assigned.`,
+            );
+          }
+          for (let i = 0; i < qty; i++) {
+            const gen = await this.numberSeriesService.generateNextNumberById(
+              item.tracking_series_id,
+              tenantId,
+              companyId,
+              executor,
+            );
+            serials.push(gen.next_number);
+          }
+        }
+
+        for (const sn of serials) {
+          rowsToInsert.push({
+            line_id: randomUUID(),
+            receipt_id: receiptId,
+            line_no: currentLineNo++,
+            item_id: line.item_id,
+            quantity: '1',
+            uom: line.uom,
+            rate: line.rate?.toString() || null,
+            amount: line.rate ? line.rate.toString() : null,
+            lot_no: line.lot_no || null,
+            serial_no: sn,
+            expiry_date: line.expiry_date || null,
+            remarks: line.remarks || null,
+          });
+        }
+      } else {
+        rowsToInsert.push({
+          line_id: randomUUID(),
+          receipt_id: receiptId,
+          line_no: currentLineNo++,
+          item_id: line.item_id,
+          quantity: quantityNum.toString(),
+          uom: line.uom,
+          rate: line.rate?.toString() || null,
+          amount: line.rate ? (quantityNum * line.rate).toString() : null,
+          lot_no: line.lot_no || null,
+          serial_no: line.serial_no || null,
+          expiry_date: line.expiry_date || null,
+          remarks: line.remarks || null,
+        });
+      }
+    }
+
+    if (rowsToInsert.length > 0) {
+      await executor.insert(schema.goodsReceiptLine).values(rowsToInsert);
+    }
   }
 
   async findOne(id: string) {
@@ -209,12 +354,14 @@ export class GoodsReceiptService {
     // lines, which post() then refuses forever — matches create()/post(),
     // which already run their multi-step writes inside one transaction.
     return withTenantTransaction(this.cls, async () => {
-      await this.db.update(schema.goodsReceipt).set(updates).where(eq(schema.goodsReceipt.receipt_id, id));
+      await this.db.transaction(async (tx) => {
+        await tx.update(schema.goodsReceipt).set(updates).where(eq(schema.goodsReceipt.receipt_id, id));
 
-      if (dto.lines) {
-        await this.db.delete(schema.goodsReceiptLine).where(eq(schema.goodsReceiptLine.receipt_id, id));
-        await this.insertLines(id, dto.lines);
-      }
+        if (dto.lines) {
+          await tx.delete(schema.goodsReceiptLine).where(eq(schema.goodsReceiptLine.receipt_id, id));
+          await this.insertLines(id, dto.lines, receipt.company_id, tenantId, tx);
+        }
+      });
 
       await this.auditService.log({
         tenantId,

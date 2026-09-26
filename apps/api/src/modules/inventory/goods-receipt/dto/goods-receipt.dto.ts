@@ -49,6 +49,12 @@ export class GoodsReceiptLineInput {
   @IsOptional()
   serial_no?: string;
 
+  @ApiProperty({ description: 'List of serial numbers for serial-tracked items with quantity > 1', required: false, type: [String] })
+  @IsArray()
+  @IsString({ each: true })
+  @IsOptional()
+  serials?: string[];
+
   @ApiProperty({ description: 'Expiry date', required: false })
   @IsDateString()
   @IsOptional()

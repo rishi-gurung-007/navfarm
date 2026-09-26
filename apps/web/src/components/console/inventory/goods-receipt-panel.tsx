@@ -32,7 +32,15 @@ function unwrap<T = any>(res: any): T {
   return (Array.isArray(res) ? res : res?.data ?? res) as T;
 }
 
-const emptyLine = () => ({ item_id: "", quantity: "", uom: "", rate: "", lot_no: "", expiry_date: "" });
+const emptyLine = () => ({
+  item_id: "",
+  quantity: "",
+  uom: "",
+  rate: "",
+  lot_no: "",
+  serial_no: "",
+  expiry_date: "",
+});
 
 export default function GoodsReceiptPanel() {
   const { t } = useLanguage();
@@ -59,6 +67,7 @@ export default function GoodsReceiptPanel() {
   // title/button copy. A POSTED receipt never sets this: its row offers View
   // only, and the Edit action itself never appears for it (see the table).
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [generatingIdx, setGeneratingIdx] = useState<number | null>(null);
 
   const [viewing, setViewing] = useState<Row | null>(null);
   const [posting, setPosting] = useState(false);
@@ -132,6 +141,7 @@ export default function GoodsReceiptPanel() {
         uom: l.uom || "",
         rate: l.rate ?? "",
         lot_no: l.lot_no || "",
+        serial_no: l.serial_no || "",
         expiry_date: l.expiry_date || "",
       }));
       setLines(fullLines.length ? fullLines : [emptyLine()]);
@@ -143,6 +153,32 @@ export default function GoodsReceiptPanel() {
 
   const setLineField = (idx: number, key: string, value: any) => {
     setLines((prev) => prev.map((l, i) => (i === idx ? { ...l, [key]: value } : l)));
+  };
+
+  const handleGenerateTracking = async (idx: number, type: 'LOT' | 'SERIAL') => {
+    const line = lines[idx];
+    const it = items.find((i) => i.item_id === line.item_id);
+    if (!it?.tracking_series_id) return;
+    setGeneratingIdx(idx);
+    setFormError("");
+    try {
+      const count = type === 'SERIAL' ? Math.max(1, parseInt(line.quantity || '1', 10) || 1) : 1;
+      const res = await api.get(`/no-series/${it.tracking_series_id}/next-number?count=${count}`);
+      const data = unwrap<any>(res);
+      if (type === 'LOT') {
+        const nextNum = data.next_number || (data.numbers && data.numbers[0]);
+        if (nextNum) setLineField(idx, 'lot_no', nextNum);
+      } else {
+        const nums = data.numbers || [data.next_number];
+        if (nums && nums.length > 0) {
+          setLineField(idx, 'serial_no', nums.join(', '));
+        }
+      }
+    } catch (err: any) {
+      setFormError(err?.message || 'Failed to generate number series');
+    } finally {
+      setGeneratingIdx(null);
+    }
   };
 
   const addLine = () => setLines((prev) => [...prev, emptyLine()]);
@@ -370,39 +406,143 @@ export default function GoodsReceiptPanel() {
                   <TableHead className="h-auto px-3 py-2">{t("grpColQty")}</TableHead>
                   <TableHead className="h-auto px-3 py-2">{t("grpColUom")}</TableHead>
                   <TableHead className="h-auto px-3 py-2">{t("grpColRate")}</TableHead>
-                  <TableHead className="h-auto px-3 py-2">{t("grpColLotNo")}</TableHead>
+                  <TableHead className="h-auto px-3 py-2">Lot No.</TableHead>
+                  <TableHead className="h-auto px-3 py-2">Serial No.</TableHead>
                   <TableHead className="h-auto px-3 py-2">{t("grpColExpiry")}</TableHead>
                   <TableHead className="h-auto px-3 py-2"></TableHead>
                 </tr>
               </TableHeader>
               <TableBody>
-                {lines.map((line, idx) => (
-                  <TableRow key={idx}>
-                    <TableCell className="px-2 py-1.5">
-                      <select value={line.item_id} onChange={(e) => setLineField(idx, "item_id", e.target.value)} className={`${inputCls} nf-select`} style={S.input}>
-                        <option value="">{t("grpSelectItemOptions", { count: items.length })}</option>
-                        {items.map((it, i) => (
-                          <option key={it.item_id} value={it.item_id}>
-                            {i + 1}. {it.item_code} — {it.item_name}
-                          </option>
-                        ))}
-                      </select>
-                    </TableCell>
-                    <TableCell className="px-2 py-1.5 w-24"><input type="number" value={line.quantity} onChange={(e) => setLineField(idx, "quantity", e.target.value)} className={inputCls} style={S.input} /></TableCell>
-                    <TableCell className="px-2 py-1.5 w-28">
-                      <select value={line.uom} onChange={(e) => setLineField(idx, "uom", e.target.value)} className={`${inputCls} nf-select`} style={S.input}>
-                        <option value="">{t("grpSelectEllipsis")}</option>
-                        {uoms.map((u) => <option key={u.uom_code} value={u.uom_code}>{u.uom_code}</option>)}
-                      </select>
-                    </TableCell>
-                    <TableCell className="px-2 py-1.5 w-24"><input type="number" value={line.rate} onChange={(e) => setLineField(idx, "rate", e.target.value)} className={inputCls} style={S.input} /></TableCell>
-                    <TableCell className="px-2 py-1.5 w-28"><input value={line.lot_no} onChange={(e) => setLineField(idx, "lot_no", e.target.value)} className={inputCls} style={S.input} /></TableCell>
-                    <TableCell className="px-2 py-1.5 w-36"><input type="date" value={line.expiry_date} onChange={(e) => setLineField(idx, "expiry_date", e.target.value)} className={inputCls} style={S.input} /></TableCell>
-                    <TableCell className="px-2 py-1.5">
-                      <button onClick={() => removeLine(idx)} type="button" className="rounded-[var(--radius-xs)] p-1 transition hover:bg-(--danger-muted)" style={{ color: "var(--danger)" }}><Trash2 className="h-3.5 w-3.5" /></button>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {lines.map((line, idx) => {
+                  const it = items.find((i) => i.item_id === line.item_id);
+                  const isLot = Boolean(it?.is_lot_tracked);
+                  const isSerial = Boolean(it?.is_serial_tracked);
+                  const hasSeries = Boolean(it?.tracking_series_id);
+                  const isGenerating = generatingIdx === idx;
+
+                  return (
+                    <TableRow key={idx}>
+                      <TableCell className="px-2 py-1.5 min-w-[180px]">
+                        <select
+                          value={line.item_id}
+                          onChange={(e) => setLineField(idx, "item_id", e.target.value)}
+                          className={`${inputCls} nf-select`}
+                          style={S.input}
+                        >
+                          <option value="">{t("grpSelectItemOptions", { count: items.length })}</option>
+                          {items.map((it, i) => (
+                            <option key={it.item_id} value={it.item_id}>
+                              {i + 1}. {it.item_code} — {it.item_name}
+                              {it.is_lot_tracked ? " [LOT]" : it.is_serial_tracked ? " [SERIAL]" : ""}
+                            </option>
+                          ))}
+                        </select>
+                      </TableCell>
+                      <TableCell className="px-2 py-1.5 w-20">
+                        <input
+                          type="number"
+                          value={line.quantity}
+                          onChange={(e) => setLineField(idx, "quantity", e.target.value)}
+                          className={inputCls}
+                          style={S.input}
+                        />
+                      </TableCell>
+                      <TableCell className="px-2 py-1.5 w-24">
+                        <select
+                          value={line.uom}
+                          onChange={(e) => setLineField(idx, "uom", e.target.value)}
+                          className={`${inputCls} nf-select`}
+                          style={S.input}
+                        >
+                          <option value="">{t("grpSelectEllipsis")}</option>
+                          {uoms.map((u) => (
+                            <option key={u.uom_code} value={u.uom_code}>
+                              {u.uom_code}
+                            </option>
+                          ))}
+                        </select>
+                      </TableCell>
+                      <TableCell className="px-2 py-1.5 w-20">
+                        <input
+                          type="number"
+                          value={line.rate}
+                          onChange={(e) => setLineField(idx, "rate", e.target.value)}
+                          className={inputCls}
+                          style={S.input}
+                        />
+                      </TableCell>
+                      <TableCell className="px-2 py-1.5 w-36">
+                        <div className="flex items-center gap-1">
+                          <input
+                            value={line.lot_no}
+                            disabled={!isLot && isSerial}
+                            onChange={(e) => setLineField(idx, "lot_no", e.target.value)}
+                            placeholder={isLot ? (hasSeries ? "Auto / Enter" : "Lot No.") : "—"}
+                            className={inputCls}
+                            style={S.input}
+                          />
+                          {isLot && hasSeries && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              disabled={isGenerating}
+                              onClick={() => handleGenerateTracking(idx, 'LOT')}
+                              className="px-1.5 py-0.5 text-[10px] h-7 font-mono shrink-0"
+                              title="Generate next Lot No."
+                            >
+                              {isGenerating ? "…" : "Gen"}
+                            </Button>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell className="px-2 py-1.5 w-36">
+                        <div className="flex items-center gap-1">
+                          <input
+                            value={line.serial_no}
+                            disabled={!isSerial && isLot}
+                            onChange={(e) => setLineField(idx, "serial_no", e.target.value)}
+                            placeholder={isSerial ? (hasSeries ? "Auto / Enter" : "Serial No.") : "—"}
+                            className={inputCls}
+                            style={S.input}
+                          />
+                          {isSerial && hasSeries && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              disabled={isGenerating}
+                              onClick={() => handleGenerateTracking(idx, 'SERIAL')}
+                              className="px-1.5 py-0.5 text-[10px] h-7 font-mono shrink-0"
+                              title="Generate Serial No.(s) for quantity"
+                            >
+                              {isGenerating ? "…" : "Gen"}
+                            </Button>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell className="px-2 py-1.5 w-32">
+                        <input
+                          type="date"
+                          value={line.expiry_date}
+                          onChange={(e) => setLineField(idx, "expiry_date", e.target.value)}
+                          className={inputCls}
+                          style={S.input}
+                        />
+                      </TableCell>
+                      <TableCell className="px-2 py-1.5">
+                        <button
+                          onClick={() => removeLine(idx)}
+                          type="button"
+                          className="rounded-[var(--radius-xs)] p-1 transition hover:bg-(--danger-muted)"
+                          style={{ color: "var(--danger)" }}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </table>
           </div>
@@ -442,6 +582,7 @@ export default function GoodsReceiptPanel() {
                     <TableHead className="h-auto px-3 py-2">{t("grpColUom")}</TableHead>
                     <TableHead className="h-auto px-3 py-2">{t("grpColRate")}</TableHead>
                     <TableHead className="h-auto px-3 py-2">{t("grpColLotNo")}</TableHead>
+                    <TableHead className="h-auto px-3 py-2">Serial No.</TableHead>
                   </tr>
                 </TableHeader>
                 <TableBody>
@@ -452,6 +593,7 @@ export default function GoodsReceiptPanel() {
                       <TableCell className="px-3 py-2" style={S.primary}>{l.uom}</TableCell>
                       <TableCell className="px-3 py-2" style={S.primary}>{l.rate ?? "—"}</TableCell>
                       <TableCell className="px-3 py-2" style={S.primary}>{l.lot_no || "—"}</TableCell>
+                      <TableCell className="px-3 py-2 font-mono" style={S.primary}>{l.serial_no || "—"}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>

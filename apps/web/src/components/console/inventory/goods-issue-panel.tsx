@@ -12,6 +12,7 @@ import { TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/compon
 import { StatusBadge } from "@/components/ui/status-badge";
 import { useLanguage } from "@/hooks/useLanguage";
 import { SearchableSelect } from "@/components/ui/searchable-select";
+import { LotSerialPicker } from "@/components/ui/lot-serial-picker";
 
 const PAGE_SIZE = 25;
 
@@ -33,7 +34,14 @@ function unwrap<T = any>(res: any): T {
   return (Array.isArray(res) ? res : res?.data ?? res) as T;
 }
 
-const emptyLine = () => ({ item_id: "", quantity: "", uom: "" });
+const emptyLine = () => ({
+  item_id: "",
+  quantity: "",
+  uom: "",
+  lot_no: "",
+  serial_no: "",
+  maxQty: undefined as number | undefined,
+});
 
 export default function GoodsIssuePanel() {
   const { t } = useLanguage();
@@ -107,7 +115,24 @@ export default function GoodsIssuePanel() {
   };
 
   const setLineField = (idx: number, key: string, value: any) => {
-    setLines((prev) => prev.map((l, i) => (i === idx ? { ...l, [key]: value } : l)));
+    setLines((prev) =>
+      prev.map((l, i) => {
+        if (i !== idx) return l;
+        if (key === "item_id") {
+          const it = items.find((item) => item.item_id === value);
+          return {
+            ...l,
+            item_id: value,
+            uom: it?.uom_primary || it?.uom || l.uom,
+            lot_no: "",
+            serial_no: "",
+            maxQty: undefined,
+            quantity: it?.is_serial_tracked ? "1" : l.quantity,
+          };
+        }
+        return { ...l, [key]: value };
+      })
+    );
   };
 
   const addLine = () => setLines((prev) => [...prev, emptyLine()]);
@@ -121,7 +146,25 @@ export default function GoodsIssuePanel() {
       if (!header.posting_date) throw new Error(t("gipPostingDateRequired"));
       const cleanLines = lines
         .filter((l) => l.item_id && l.quantity && l.uom)
-        .map((l) => ({ item_id: l.item_id, quantity: Number(l.quantity), uom: l.uom }));
+        .map((l) => {
+          const it = items.find((i) => i.item_id === l.item_id);
+          if (it?.is_lot_tracked && !l.lot_no) {
+            throw new Error(`Lot number is required for lot-tracked item "${it.item_code} — ${it.item_name}".`);
+          }
+          if (it?.is_serial_tracked && !l.serial_no) {
+            throw new Error(`Serial number is required for serial-tracked item "${it.item_code} — ${it.item_name}".`);
+          }
+          if (l.maxQty !== undefined && Number(l.quantity) > Number(l.maxQty)) {
+            throw new Error(`Quantity ${l.quantity} for lot "${l.lot_no}" exceeds available stock (${l.maxQty}).`);
+          }
+          return {
+            item_id: l.item_id,
+            quantity: Number(l.quantity),
+            uom: l.uom,
+            lot_no: l.lot_no || undefined,
+            serial_no: l.serial_no || undefined,
+          };
+        });
       if (cleanLines.length === 0) throw new Error(t("gipAddAtLeastOneLine"));
 
       await api.post("/goods-issue", {
@@ -303,34 +346,95 @@ export default function GoodsIssuePanel() {
                   <TableHead className="h-auto px-3 py-2">{t("gipItem")}</TableHead>
                   <TableHead className="h-auto px-3 py-2">{t("gipQty")}</TableHead>
                   <TableHead className="h-auto px-3 py-2">{t("gipUom")}</TableHead>
+                  <TableHead className="h-auto px-3 py-2">Lot / Serial</TableHead>
                   <TableHead className="h-auto px-3 py-2"></TableHead>
                 </tr>
               </TableHeader>
               <TableBody>
-                {lines.map((line, idx) => (
-                  <TableRow key={idx}>
-                    <TableCell className="px-2 py-1.5">
-                      <select value={line.item_id} onChange={(e) => setLineField(idx, "item_id", e.target.value)} className={`${inputCls} nf-select`} style={S.input}>
-                        <option value="">{t("gipSelectItemOptions", { count: items.length })}</option>
-                        {items.map((it, i) => (
-                          <option key={it.item_id} value={it.item_id}>
-                            {i + 1}. {it.item_code} — {it.item_name}
-                          </option>
-                        ))}
-                      </select>
-                    </TableCell>
-                    <TableCell className="px-2 py-1.5 w-24"><input type="number" value={line.quantity} onChange={(e) => setLineField(idx, "quantity", e.target.value)} className={inputCls} style={S.input} /></TableCell>
-                    <TableCell className="px-2 py-1.5 w-28">
-                      <select value={line.uom} onChange={(e) => setLineField(idx, "uom", e.target.value)} className={`${inputCls} nf-select`} style={S.input}>
-                        <option value="">{t("gipSelectEllipsis")}</option>
-                        {uoms.map((u) => <option key={u.uom_code} value={u.uom_code}>{u.uom_code}</option>)}
-                      </select>
-                    </TableCell>
-                    <TableCell className="px-2 py-1.5">
-                      <button onClick={() => removeLine(idx)} type="button" className="rounded-[var(--radius-xs)] p-1 transition hover:bg-(--danger-muted)" style={{ color: "var(--danger)" }}><Trash2 className="h-3.5 w-3.5" /></button>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {lines.map((line, idx) => {
+                  const it = items.find((i) => i.item_id === line.item_id);
+                  const trackingType = it?.is_lot_tracked ? "LOT" : it?.is_serial_tracked ? "SERIAL" : "NONE";
+
+                  return (
+                    <TableRow key={idx}>
+                      <TableCell className="px-2 py-1.5 min-w-[180px]">
+                        <select value={line.item_id} onChange={(e) => setLineField(idx, "item_id", e.target.value)} className={`${inputCls} nf-select`} style={S.input}>
+                          <option value="">{t("gipSelectItemOptions", { count: items.length })}</option>
+                          {items.map((itItem, i) => (
+                            <option key={itItem.item_id} value={itItem.item_id}>
+                              {i + 1}. {itItem.item_code} — {itItem.item_name}
+                            </option>
+                          ))}
+                        </select>
+                      </TableCell>
+                      <TableCell className="px-2 py-1.5 w-24">
+                        <input
+                          type="number"
+                          value={line.quantity}
+                          disabled={trackingType === "SERIAL"}
+                          onChange={(e) => setLineField(idx, "quantity", e.target.value)}
+                          className={inputCls}
+                          style={S.input}
+                        />
+                      </TableCell>
+                      <TableCell className="px-2 py-1.5 w-28">
+                        <select value={line.uom} onChange={(e) => setLineField(idx, "uom", e.target.value)} className={`${inputCls} nf-select`} style={S.input}>
+                          <option value="">{t("gipSelectEllipsis")}</option>
+                          {uoms.map((u) => <option key={u.uom_code} value={u.uom_code}>{u.uom_code}</option>)}
+                        </select>
+                      </TableCell>
+                      <TableCell className="px-2 py-1.5 min-w-[190px]">
+                        {trackingType !== "NONE" ? (
+                          <div className="flex flex-col gap-0.5">
+                            <LotSerialPicker
+                              itemId={line.item_id}
+                              warehouseId={header.warehouse_id}
+                              trackingType={trackingType}
+                              value={trackingType === "LOT" ? line.lot_no : line.serial_no}
+                              onChange={(val, opt: any) => {
+                                if (trackingType === "LOT") {
+                                  setLines((prev) =>
+                                    prev.map((l, i) =>
+                                      i === idx
+                                        ? {
+                                            ...l,
+                                            lot_no: val,
+                                            maxQty: opt?.remaining_quantity ? Number(opt.remaining_quantity) : undefined,
+                                          }
+                                        : l
+                                    )
+                                  );
+                                } else {
+                                  setLines((prev) =>
+                                    prev.map((l, i) =>
+                                      i === idx
+                                        ? {
+                                            ...l,
+                                            serial_no: val,
+                                            quantity: "1",
+                                          }
+                                        : l
+                                    )
+                                  );
+                                }
+                              }}
+                              disabled={!header.warehouse_id}
+                              placeholder={!header.warehouse_id ? "Select warehouse first" : undefined}
+                            />
+                            {line.maxQty !== undefined && (
+                              <span className="text-[10px]" style={S.muted}>Available: {line.maxQty}</span>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="px-2 text-xs" style={S.muted}>—</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="px-2 py-1.5">
+                        <button onClick={() => removeLine(idx)} type="button" className="rounded-[var(--radius-xs)] p-1 transition hover:bg-(--danger-muted)" style={{ color: "var(--danger)" }}><Trash2 className="h-3.5 w-3.5" /></button>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </table>
           </div>
@@ -367,6 +471,8 @@ export default function GoodsIssuePanel() {
                     <TableHead className="h-auto px-3 py-2">{t("gipItem")}</TableHead>
                     <TableHead className="h-auto px-3 py-2">{t("gipQty")}</TableHead>
                     <TableHead className="h-auto px-3 py-2">{t("gipUom")}</TableHead>
+                    <TableHead className="h-auto px-3 py-2">Lot No.</TableHead>
+                    <TableHead className="h-auto px-3 py-2">Serial No.</TableHead>
                   </tr>
                 </TableHeader>
                 <TableBody>
@@ -375,6 +481,8 @@ export default function GoodsIssuePanel() {
                       <TableCell className="px-3 py-2" style={S.primary}>{itemLabel(l.item_id)}</TableCell>
                       <TableCell className="px-3 py-2" style={S.primary}>{l.quantity}</TableCell>
                       <TableCell className="px-3 py-2" style={S.primary}>{l.uom}</TableCell>
+                      <TableCell className="px-3 py-2 font-mono" style={S.primary}>{l.lot_no || "—"}</TableCell>
+                      <TableCell className="px-3 py-2 font-mono" style={S.primary}>{l.serial_no || "—"}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>

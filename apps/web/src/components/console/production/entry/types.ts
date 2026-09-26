@@ -50,6 +50,7 @@ export interface ExistingFormLine {
   line_type: string;
   activity_name: string;
   is_mandatory: boolean;
+  item_id?: string | null;
   item_name: string | null;
   uom: string | null;
   standard_qty: number | null;

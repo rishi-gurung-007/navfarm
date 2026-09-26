@@ -1,7 +1,7 @@
 import { Controller, Get, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { InventoryLedgerService } from './inventory-ledger.service';
-import { QueryInventoryLedgerDto, QueryStockBalanceDto } from './dto/inventory-ledger.dto';
+import { QueryInventoryLedgerDto, QueryStockBalanceDto, QueryAvailableLotsDto, QueryAvailableSerialsDto } from './dto/inventory-ledger.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
@@ -43,4 +43,31 @@ export class InventoryLedgerController {
       data: result,
     };
   }
+
+  @Get('available-lots')
+  @RequirePermission('INVENTORY', 'LEDGER', 'view')
+  @ApiOperation({ summary: 'List available lot numbers with remaining stock for an item and warehouse (FIFO/expiry sorted)' })
+  async getAvailableLots(@Query() query: QueryAvailableLotsDto, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const result = await this.ledgerService.getAvailableLots(query, tenantId);
+    return {
+      success: true,
+      message: 'Available lots retrieved successfully.',
+      data: result,
+    };
+  }
+
+  @Get('available-serials')
+  @RequirePermission('INVENTORY', 'LEDGER', 'view')
+  @ApiOperation({ summary: 'List available serial numbers with remaining stock for an item and warehouse' })
+  async getAvailableSerials(@Query() query: QueryAvailableSerialsDto, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const result = await this.ledgerService.getAvailableSerials(query, tenantId);
+    return {
+      success: true,
+      message: 'Available serials retrieved successfully.',
+      data: result,
+    };
+  }
 }
+

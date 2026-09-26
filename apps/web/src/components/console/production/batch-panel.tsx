@@ -46,6 +46,7 @@ import BatchPerformanceCurvesPanel from '@/components/console/production/batch-p
 import { useCompanyCurrency } from '@/hooks/useCompanyCurrency';
 import { formatQuantity } from '@/lib/utils';
 import { SearchableSelect } from '@/components/ui/searchable-select';
+import { LotSerialPicker } from '@/components/ui/lot-serial-picker';
 
 const PAGE_SIZE = 25;
 
@@ -80,6 +81,8 @@ const emptyInputLine = () => ({
   quantity: '',
   uom: '',
   rate: '',
+  lot_no: '',
+  serial_no: '',
 });
 const emptyOutputLine = () => ({
   item_id: '',
@@ -519,6 +522,8 @@ export default function BatchPanel() {
             quantity: l.quantity || '',
             uom: l.uom || '',
             rate: l.rate || '',
+            lot_no: l.lot_no || '',
+            serial_no: l.serial_no || '',
           }))
         : [emptyInputLine()],
     );
@@ -842,6 +847,8 @@ export default function BatchPanel() {
           if (itemObj?.uom_primary && !updated.uom) {
             updated.uom = itemObj.uom_primary;
           }
+          updated.lot_no = '';
+          updated.serial_no = '';
         }
         return updated;
       }),
@@ -923,13 +930,28 @@ export default function BatchPanel() {
         throw new Error(t('blErrOpeningQtyUomRequired'));
       const cleanLines = inputLines
         .filter((l) => l.item_id && l.quantity && l.uom)
-        .map((l) => ({
-          item_id: l.item_id,
-          source_batch_id: l.source_batch_id || undefined,
-          quantity: Number(l.quantity),
-          uom: l.uom,
-          rate: l.rate ? Number(l.rate) : undefined,
-        }));
+        .map((l) => {
+          const it = items.find((x) => x.item_id === l.item_id);
+          if (it?.is_lot_tracked && !l.lot_no) {
+            throw new Error(
+              `Item ${it.item_name || it.item_code} requires a Lot No.`,
+            );
+          }
+          if (it?.is_serial_tracked && !l.serial_no) {
+            throw new Error(
+              `Item ${it.item_name || it.item_code} requires a Serial No.`,
+            );
+          }
+          return {
+            item_id: l.item_id,
+            source_batch_id: l.source_batch_id || undefined,
+            quantity: Number(l.quantity),
+            uom: l.uom,
+            rate: l.rate ? Number(l.rate) : undefined,
+            lot_no: l.lot_no || undefined,
+            serial_no: l.serial_no || undefined,
+          };
+        });
       if (cleanLines.length === 0) throw new Error(t('blErrAddInputLine'));
 
       let standard: Row | undefined;
@@ -1339,6 +1361,8 @@ export default function BatchPanel() {
       quantity: viewing.opening_quantity ?? '',
       line_uom: viewing.input_lines?.[0]?.uom || '',
       rate: '',
+      lot_no: viewing.input_lines?.[0]?.lot_no || '',
+      serial_no: viewing.input_lines?.[0]?.serial_no || '',
     });
     setRenewError('');
     setRenewModalOpen(true);
@@ -1357,6 +1381,13 @@ export default function BatchPanel() {
         throw new Error(t('blErrRenewHeaderFieldsRequired'));
       if (!renewForm.item_id || !renewForm.quantity || !renewForm.line_uom)
         throw new Error(t('blErrRenewInputLineRequired'));
+      const it = items.find((x) => x.item_id === renewForm.item_id);
+      if (it?.is_lot_tracked && !renewForm.lot_no) {
+        throw new Error(`Item ${it.item_name || it.item_code} requires a Lot No.`);
+      }
+      if (it?.is_serial_tracked && !renewForm.serial_no) {
+        throw new Error(`Item ${it.item_name || it.item_code} requires a Serial No.`);
+      }
       const result = await api.post(`/batch/${viewing.batch_id}/renew`, {
         start_date: renewForm.start_date,
         expected_end_date: renewForm.expected_end_date || undefined,
@@ -1369,6 +1400,8 @@ export default function BatchPanel() {
             quantity: Number(renewForm.quantity),
             uom: renewForm.line_uom,
             rate: renewForm.rate ? Number(renewForm.rate) : undefined,
+            lot_no: renewForm.lot_no || undefined,
+            serial_no: renewForm.serial_no || undefined,
           },
         ],
       });
@@ -2058,6 +2091,9 @@ export default function BatchPanel() {
                         {t('blColSourceBatch')}
                       </TableHead>
                       <TableHead className="h-auto px-3 py-2">
+                        Lot / Serial No.
+                      </TableHead>
+                      <TableHead className="h-auto px-3 py-2">
                         {t('blColQty')}
                       </TableHead>
                       <TableHead className="h-auto px-3 py-2">
@@ -2070,98 +2106,136 @@ export default function BatchPanel() {
                     </tr>
                   </TableHeader>
                   <TableBody>
-                    {inputLines.map((line, idx) => (
-                      <TableRow key={idx}>
-                        <TableCell className="px-2 py-1.5">
-                          <SearchableSelect
-                            ariaLabel="Item"
-                            value={line.item_id}
-                            onChange={(val) =>
-                              setInputLineField(idx, 'item_id', val)
-                            }
-                            options={availableInputItems.map((it) => ({
-                              value: it.item_id,
-                              code: it.item_code,
-                              name: it.item_name || it.item_code,
-                              label: `${it.item_code} — ${it.item_name || it.item_code}`,
-                            }))}
-                            columnHeaders={['Code', 'Name']}
-                            placeholder={t('blSelectItemOptions', {
-                              count: availableInputItems.length,
-                            })}
-                            searchPlaceholder="Search item…"
-                          />
-                        </TableCell>
-                        <TableCell className="px-2 py-1.5">
-                          <SearchableSelect
-                            ariaLabel="Source Batch"
-                            value={line.source_batch_id}
-                            onChange={(val) =>
-                              setInputLineField(idx, 'source_batch_id', val)
-                            }
-                            options={batches
-                              .filter((b) => b.status === 'CLOSED')
-                              .map((b) => ({
-                                value: b.batch_id,
-                                label: b.batch_no,
+                    {inputLines.map((line, idx) => {
+                      const itm = items.find((x) => x.item_id === line.item_id);
+                      const trackingType = itm?.is_lot_tracked
+                        ? 'LOT'
+                        : itm?.is_serial_tracked
+                        ? 'SERIAL'
+                        : 'NONE';
+
+                      return (
+                        <TableRow key={idx}>
+                          <TableCell className="px-2 py-1.5">
+                            <SearchableSelect
+                              ariaLabel="Item"
+                              value={line.item_id}
+                              onChange={(val) =>
+                                setInputLineField(idx, 'item_id', val)
+                              }
+                              options={availableInputItems.map((it) => ({
+                                value: it.item_id,
+                                code: it.item_code,
+                                name: it.item_name || it.item_code,
+                                label: `${it.item_code} — ${it.item_name || it.item_code}`,
                               }))}
-                            placeholder={t('blNone')}
-                            searchPlaceholder="Search batch…"
-                            onClear={line.source_batch_id ? () => setInputLineField(idx, 'source_batch_id', '') : undefined}
-                          />
-                        </TableCell>
-                        <TableCell className="px-2 py-1.5 w-24">
-                          <input
-                            type="number"
-                            value={line.quantity}
-                            onChange={(e) =>
-                              setInputLineField(idx, 'quantity', e.target.value)
-                            }
-                            className={inputCls}
-                            style={S.input}
-                          />
-                        </TableCell>
-                        <TableCell className="px-2 py-1.5 w-24">
-                          <SearchableSelect
-                            ariaLabel="UOM"
-                            value={line.uom}
-                            onChange={(val) =>
-                              setInputLineField(idx, 'uom', val)
-                            }
-                            options={uoms.map((u) => ({
-                              value: u.uom_code,
-                              code: u.uom_code,
-                              name: u.uom_name,
-                              label: u.uom_name ? `${u.uom_code} — ${u.uom_name}` : u.uom_code,
-                            }))}
-                            columnHeaders={['Code', 'Name']}
-                            placeholder={t('blSelectEllipsis')}
-                            searchPlaceholder="Search UOM…"
-                          />
-                        </TableCell>
-                        <TableCell className="px-2 py-1.5 w-24">
-                          <input
-                            type="number"
-                            value={line.rate}
-                            onChange={(e) =>
-                              setInputLineField(idx, 'rate', e.target.value)
-                            }
-                            className={inputCls}
-                            style={S.input}
-                          />
-                        </TableCell>
-                        <TableCell className="px-2 py-1.5">
-                          <button
-                            onClick={() => removeInputLine(idx)}
-                            type="button"
-                            className="rounded-[var(--radius-xs)] p-1 transition hover:bg-(--danger-muted)"
-                            style={{ color: 'var(--danger)' }}
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                              columnHeaders={['Code', 'Name']}
+                              placeholder={t('blSelectItemOptions', {
+                                count: availableInputItems.length,
+                              })}
+                              searchPlaceholder="Search item…"
+                            />
+                          </TableCell>
+                          <TableCell className="px-2 py-1.5">
+                            <SearchableSelect
+                              ariaLabel="Source Batch"
+                              value={line.source_batch_id}
+                              onChange={(val) =>
+                                setInputLineField(idx, 'source_batch_id', val)
+                              }
+                              options={batches
+                                .filter((b) => b.status === 'CLOSED')
+                                .map((b) => ({
+                                  value: b.batch_id,
+                                  label: b.batch_no,
+                                }))}
+                              placeholder={t('blNone')}
+                              searchPlaceholder="Search batch…"
+                              onClear={line.source_batch_id ? () => setInputLineField(idx, 'source_batch_id', '') : undefined}
+                            />
+                          </TableCell>
+                          <TableCell className="px-2 py-1.5 w-48">
+                            {trackingType !== 'NONE' ? (
+                              <LotSerialPicker
+                                itemId={line.item_id}
+                                trackingType={trackingType}
+                                value={line.lot_no || line.serial_no || ''}
+                                onChange={(val) => {
+                                  if (trackingType === 'LOT') {
+                                    setInputLineField(idx, 'lot_no', val);
+                                  } else {
+                                    setInputLineField(idx, 'serial_no', val);
+                                    if (val) {
+                                      setInputLineField(idx, 'quantity', '1');
+                                    }
+                                  }
+                                }}
+                                placeholder={
+                                  trackingType === 'LOT'
+                                    ? 'Select lot…'
+                                    : 'Select serial…'
+                                }
+                              />
+                            ) : (
+                              <span className="text-[11px] text-muted-foreground italic px-2">
+                                —
+                              </span>
+                            )}
+                          </TableCell>
+                          <TableCell className="px-2 py-1.5 w-24">
+                            <input
+                              type="number"
+                              value={line.quantity}
+                              onChange={(e) =>
+                                setInputLineField(idx, 'quantity', e.target.value)
+                              }
+                              disabled={trackingType === 'SERIAL'}
+                              className={inputCls}
+                              style={S.input}
+                            />
+                          </TableCell>
+                          <TableCell className="px-2 py-1.5 w-24">
+                            <SearchableSelect
+                              ariaLabel="UOM"
+                              value={line.uom}
+                              onChange={(val) =>
+                                setInputLineField(idx, 'uom', val)
+                              }
+                              options={uoms.map((u) => ({
+                                value: u.uom_code,
+                                code: u.uom_code,
+                                name: u.uom_name,
+                                label: u.uom_name ? `${u.uom_code} — ${u.uom_name}` : u.uom_code,
+                              }))}
+                              columnHeaders={['Code', 'Name']}
+                              placeholder={t('blSelectEllipsis')}
+                              searchPlaceholder="Search UOM…"
+                            />
+                          </TableCell>
+                          <TableCell className="px-2 py-1.5 w-24">
+                            <input
+                              type="number"
+                              value={line.rate}
+                              onChange={(e) =>
+                                setInputLineField(idx, 'rate', e.target.value)
+                              }
+                              className={inputCls}
+                              style={S.input}
+                            />
+                          </TableCell>
+                          <TableCell className="px-2 py-1.5">
+                            <button
+                              onClick={() => removeInputLine(idx)}
+                              type="button"
+                              className="rounded-[var(--radius-xs)] p-1 transition hover:bg-(--danger-muted)"
+                              style={{ color: 'var(--danger)' }}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
                   </TableBody>
                 </table>
               </div>
@@ -2879,6 +2953,9 @@ export default function BatchPanel() {
                             {t('blColSourceBatch')}
                           </TableHead>
                           <TableHead className="h-auto px-3 py-2">
+                            Lot / Serial No.
+                          </TableHead>
+                          <TableHead className="h-auto px-3 py-2">
                             {t('blColQty')}
                           </TableHead>
                           <TableHead className="h-auto px-3 py-2">
@@ -2899,6 +2976,9 @@ export default function BatchPanel() {
                               {l.source_batch_id
                                 ? batchLabel(l.source_batch_id)
                                 : '—'}
+                            </TableCell>
+                            <TableCell className="px-3 py-2" style={S.sub}>
+                              {l.lot_no || l.serial_no || '—'}
                             </TableCell>
                             <TableCell className="px-3 py-2" style={S.primary}>
                               {l.quantity} {l.uom}
@@ -3681,6 +3761,41 @@ export default function BatchPanel() {
                 className={inputCls + ' sm:col-span-4'}
                 style={S.input}
               />
+              {(() => {
+                const renewItm = items.find((x) => x.item_id === renewForm.item_id);
+                const renewTracking = renewItm?.is_lot_tracked
+                  ? 'LOT'
+                  : renewItm?.is_serial_tracked
+                  ? 'SERIAL'
+                  : 'NONE';
+                if (renewTracking === 'NONE') return null;
+                return (
+                  <div className="sm:col-span-4">
+                    <label className="nf-text-label block mb-1" style={S.sub}>
+                      {renewTracking === 'LOT' ? 'Lot No. *' : 'Serial No. *'}
+                    </label>
+                    <LotSerialPicker
+                      itemId={renewForm.item_id}
+                      trackingType={renewTracking}
+                      value={renewForm.lot_no || renewForm.serial_no || ''}
+                      onChange={(val) => {
+                        if (renewTracking === 'LOT') {
+                          setRenewForm((f: Row) => ({ ...f, lot_no: val }));
+                        } else {
+                          setRenewForm((f: Row) => ({
+                            ...f,
+                            serial_no: val,
+                            quantity: val ? '1' : f.quantity,
+                          }));
+                        }
+                      }}
+                      placeholder={
+                        renewTracking === 'LOT' ? 'Select lot…' : 'Select serial…'
+                      }
+                    />
+                  </div>
+                );
+              })()}
             </div>
           </div>
           <div className="flex flex-col gap-1.5">

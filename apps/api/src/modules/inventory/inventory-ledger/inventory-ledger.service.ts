@@ -1,12 +1,12 @@
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, or, isNull, gte, lte, asc, desc, sql, isNotNull, SQL } from 'drizzle-orm';
+import { eq, and, or, isNull, gte, lte, asc, desc, sql, isNotNull, ne, SQL } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
-import { QueryInventoryLedgerDto, QueryStockBalanceDto } from './dto/inventory-ledger.dto';
-import { farmScope, locationOnFarm, restrictedScopeConditions } from '../../../common/farm-scope';
+import { QueryInventoryLedgerDto, QueryStockBalanceDto, QueryAvailableLotsDto, QueryAvailableSerialsDto } from './dto/inventory-ledger.dto';
+import { farmScope, locationOnFarm, locationReferenceScopeConditions, restrictedScopeConditions } from '../../../common/farm-scope';
 
 interface WritePositiveEntryParams {
   tenantId: string;
@@ -583,5 +583,106 @@ export class InventoryLedgerService {
       return balances.filter((r) => r.reorder_level != null && r.on_hand_qty <= r.reorder_level);
     }
     return balances;
+  }
+
+  async getAvailableLots(query: QueryAvailableLotsDto, tenantId: string) {
+    const itemId = query.itemId || query.item_id;
+    if (!itemId) {
+      throw new BadRequestException('itemId is required.');
+    }
+    const warehouseId = query.warehouseId || query.warehouse_id;
+    const companyId = query.companyId || query.company_id;
+
+    const scope = farmScope(this.cls);
+    const conditions: any[] = [
+      eq(schema.inventoryLedger.tenant_id, tenantId),
+      eq(schema.inventoryLedger.item_id, itemId),
+      eq(schema.inventoryLedger.entry_type, 'POSITIVE'),
+      sql`CAST(${schema.inventoryLedger.remaining_quantity} AS DECIMAL(18,4)) > 0`,
+      isNotNull(schema.inventoryLedger.lot_no),
+      ne(schema.inventoryLedger.lot_no, ''),
+    ];
+
+    if (companyId) conditions.push(eq(schema.inventoryLedger.company_id, companyId));
+    if (warehouseId) conditions.push(eq(schema.inventoryLedger.warehouse_id, warehouseId));
+    conditions.push(...locationReferenceScopeConditions(scope, schema.inventoryLedger.warehouse_id));
+    conditions.push(...restrictedScopeConditions(scope, { companyId: schema.inventoryLedger.company_id }));
+
+    const rows = await this.db
+      .select({
+        lot_no: schema.inventoryLedger.lot_no,
+        remaining_quantity: sql<string>`COALESCE(SUM(${schema.inventoryLedger.remaining_quantity}), 0)`,
+        expiry_date: sql<string | null>`MIN(${schema.inventoryLedger.expiry_date})`,
+        posting_date: sql<string>`MIN(${schema.inventoryLedger.posting_date})`,
+      })
+      .from(schema.inventoryLedger)
+      .where(and(...conditions))
+      .groupBy(schema.inventoryLedger.lot_no);
+
+    return rows
+      .map((r) => ({
+        lot_no: r.lot_no!,
+        remaining_quantity: Number(r.remaining_quantity),
+        expiry_date: r.expiry_date,
+        posting_date: r.posting_date,
+      }))
+      .filter((r) => r.remaining_quantity > 0.0001)
+      .sort((a, b) => {
+        if (a.expiry_date && b.expiry_date) {
+          const expDiff = new Date(a.expiry_date).getTime() - new Date(b.expiry_date).getTime();
+          if (expDiff !== 0) return expDiff;
+        } else if (a.expiry_date && !b.expiry_date) {
+          return -1;
+        } else if (!a.expiry_date && b.expiry_date) {
+          return 1;
+        }
+        return new Date(a.posting_date).getTime() - new Date(b.posting_date).getTime();
+      });
+  }
+
+  async getAvailableSerials(query: QueryAvailableSerialsDto, tenantId: string) {
+    const itemId = query.itemId || query.item_id;
+    if (!itemId) {
+      throw new BadRequestException('itemId is required.');
+    }
+    const warehouseId = query.warehouseId || query.warehouse_id;
+    const companyId = query.companyId || query.company_id;
+
+    const scope = farmScope(this.cls);
+    const conditions: any[] = [
+      eq(schema.inventoryLedger.tenant_id, tenantId),
+      eq(schema.inventoryLedger.item_id, itemId),
+      eq(schema.inventoryLedger.entry_type, 'POSITIVE'),
+      sql`CAST(${schema.inventoryLedger.remaining_quantity} AS DECIMAL(18,4)) > 0`,
+      isNotNull(schema.inventoryLedger.serial_no),
+      ne(schema.inventoryLedger.serial_no, ''),
+    ];
+
+    if (companyId) conditions.push(eq(schema.inventoryLedger.company_id, companyId));
+    if (warehouseId) conditions.push(eq(schema.inventoryLedger.warehouse_id, warehouseId));
+    conditions.push(...locationReferenceScopeConditions(scope, schema.inventoryLedger.warehouse_id));
+    conditions.push(...restrictedScopeConditions(scope, { companyId: schema.inventoryLedger.company_id }));
+
+    const rows = await this.db
+      .select({
+        serial_no: schema.inventoryLedger.serial_no,
+        remaining_quantity: schema.inventoryLedger.remaining_quantity,
+        expiry_date: schema.inventoryLedger.expiry_date,
+        posting_date: schema.inventoryLedger.posting_date,
+        warehouse_id: schema.inventoryLedger.warehouse_id,
+      })
+      .from(schema.inventoryLedger)
+      .where(and(...conditions))
+      .orderBy(asc(schema.inventoryLedger.posting_date), asc(schema.inventoryLedger.created_at));
+
+    return rows
+      .map((r) => ({
+        serial_no: r.serial_no!,
+        remaining_quantity: Number(r.remaining_quantity),
+        expiry_date: r.expiry_date,
+        posting_date: r.posting_date,
+        warehouse_id: r.warehouse_id,
+      }))
+      .filter((r) => r.remaining_quantity > 0.0001);
   }
 }

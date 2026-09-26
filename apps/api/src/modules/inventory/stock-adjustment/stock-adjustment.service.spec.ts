@@ -6,6 +6,7 @@ import { StockAdjustmentService } from './stock-adjustment.service';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
+import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import * as schema from '../../../core/database/schema';
 
 /**
@@ -72,6 +73,7 @@ describe('StockAdjustmentService', () => {
         { provide: AuditLogService, useValue: { log: jest.fn().mockResolvedValue({}) } },
         { provide: InventoryLedgerService, useValue: { writePositiveEntry: jest.fn().mockResolvedValue({ entry_no: 1 }), writeNegativeEntry: jest.fn().mockResolvedValue({ entry_no: 2 }) } },
         { provide: GlPostingService, useValue: { postInventoryLedgerEntry: jest.fn().mockResolvedValue({}) } },
+        { provide: NumberSeriesService, useValue: { generateNextNumberById: jest.fn().mockResolvedValue({ next_number: 'LOT-TEST-001' }) } },
       ],
     }).compile();
 

@@ -59,6 +59,16 @@ export class BatchInputLineInput {
   @IsNumber()
   @IsOptional()
   rate?: number;
+
+  @ApiProperty({ description: 'Lot number — required when item is lot-tracked', required: false })
+  @IsString()
+  @IsOptional()
+  lot_no?: string;
+
+  @ApiProperty({ description: 'Serial number — required when item is serial-tracked', required: false })
+  @IsString()
+  @IsOptional()
+  serial_no?: string;
 }
 
 export class BatchStandardConsumptionLineInput {

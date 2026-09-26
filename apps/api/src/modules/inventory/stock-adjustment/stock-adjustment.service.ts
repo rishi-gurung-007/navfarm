@@ -1,7 +1,7 @@
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, like, isNull, count } from 'drizzle-orm';
+import { eq, and, like, isNull, count, inArray } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
@@ -10,6 +10,7 @@ import { CreateStockAdjustmentDto, UpdateStockAdjustmentDto, QueryStockAdjustmen
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
+import { NumberSeriesService } from '../../system/number-series/number-series.service';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   return date.toISOString().slice(0, 19).replace('T', ' ');
@@ -22,6 +23,7 @@ export class StockAdjustmentService {
     private readonly auditService: AuditLogService,
     private readonly ledgerService: InventoryLedgerService,
     private readonly glPostingService: GlPostingService,
+    private readonly numberSeriesService: NumberSeriesService,
   ) {}
 
   private get db(): MySql2Database<typeof schema> {
@@ -69,7 +71,7 @@ export class StockAdjustmentService {
       return no;
     });
 
-    await this.insertLines(adjustmentId, dto.lines);
+    await this.insertLines(adjustmentId, dto.lines, tenantId);
 
     await this.auditService.log({
       tenantId,
@@ -85,9 +87,68 @@ export class StockAdjustmentService {
     });
   }
 
-  private async insertLines(adjustmentId: string, lines: CreateStockAdjustmentDto['lines']) {
-    await this.db.insert(schema.stockAdjustmentLine).values(
-      lines.map((line, idx) => ({
+  private async insertLines(adjustmentId: string, lines: CreateStockAdjustmentDto['lines'], tenantId: string) {
+    if (!lines || lines.length === 0) return;
+
+    const itemIds = [...new Set(lines.map((l) => l.item_id))];
+    const items = await this.db
+      .select()
+      .from(schema.itemMaster)
+      .where(inArray(schema.itemMaster.item_id, itemIds));
+    const itemMap = new Map(items.map((i) => [i.item_id, i]));
+
+    const values: Array<typeof schema.stockAdjustmentLine.$inferInsert> = [];
+
+    for (let idx = 0; idx < lines.length; idx++) {
+      const line = lines[idx];
+      const item = itemMap.get(line.item_id);
+      let lotNo = line.lot_no || null;
+      let serialNo = line.serial_no || null;
+      const qty = Number(line.quantity);
+
+      if (item?.is_lot_tracked) {
+        if (qty < 0) {
+          if (!lotNo) {
+            throw new BadRequestException(
+              `Lot number is required for negative adjustment of lot-tracked item "${item.item_code} — ${item.item_name}".`
+            );
+          }
+        } else if (qty > 0) {
+          if (!lotNo) {
+            if (item.tracking_series_id) {
+              const gen = await this.numberSeriesService.generateNextNumberById(item.tracking_series_id, tenantId);
+              lotNo = gen.next_number;
+            } else {
+              throw new BadRequestException(
+                `Lot number is required for positive adjustment of lot-tracked item "${item.item_code} — ${item.item_name}".`
+              );
+            }
+          }
+        }
+      }
+
+      if (item?.is_serial_tracked) {
+        if (qty < 0) {
+          if (!serialNo) {
+            throw new BadRequestException(
+              `Serial number is required for negative adjustment of serial-tracked item "${item.item_code} — ${item.item_name}".`
+            );
+          }
+        } else if (qty > 0) {
+          if (!serialNo) {
+            if (item.tracking_series_id) {
+              const gen = await this.numberSeriesService.generateNextNumberById(item.tracking_series_id, tenantId);
+              serialNo = gen.next_number;
+            } else {
+              throw new BadRequestException(
+                `Serial number is required for positive adjustment of serial-tracked item "${item.item_code} — ${item.item_name}".`
+              );
+            }
+          }
+        }
+      }
+
+      values.push({
         line_id: randomUUID(),
         adjustment_id: adjustmentId,
         line_no: idx + 1,
@@ -95,9 +156,13 @@ export class StockAdjustmentService {
         quantity: line.quantity.toString(),
         uom: line.uom,
         rate: line.rate?.toString() || null,
+        lot_no: lotNo,
+        serial_no: serialNo,
         remarks: line.remarks || null,
-      }))
-    );
+      });
+    }
+
+    await this.db.insert(schema.stockAdjustmentLine).values(values);
   }
 
   async findOne(id: string) {
@@ -173,7 +238,7 @@ export class StockAdjustmentService {
 
     if (dto.lines) {
       await this.db.delete(schema.stockAdjustmentLine).where(eq(schema.stockAdjustmentLine.adjustment_id, id));
-      await this.insertLines(id, dto.lines);
+      await this.insertLines(id, dto.lines, tenantId);
     }
 
     await this.auditService.log({
@@ -256,6 +321,8 @@ export class StockAdjustmentService {
           quantity,
           uom: line.uom,
           rate: line.rate ? Number(line.rate) : 0,
+          lotNo: line.lot_no || undefined,
+          serialNo: line.serial_no || undefined,
           warehouseId: adjustment.warehouse_id,
           userId: userPayload?.userId,
         });
@@ -272,6 +339,8 @@ export class StockAdjustmentService {
           transactionType: 'VARIANCE_NEGATIVE',
           quantity: Math.abs(quantity),
           uom: line.uom,
+          lotNo: line.lot_no || undefined,
+          serialNo: line.serial_no || undefined,
           warehouseId: adjustment.warehouse_id,
           userId: userPayload?.userId,
         });

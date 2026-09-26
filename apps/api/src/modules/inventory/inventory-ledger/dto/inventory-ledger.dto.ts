@@ -89,3 +89,62 @@ export class QueryStockBalanceDto {
   @IsBoolean()
   belowReorderOnly?: boolean;
 }
+
+export class QueryAvailableLotsDto {
+  @ApiProperty({ description: 'Filter by item UUID', required: false })
+  @IsOptional()
+  @IsUUID()
+  itemId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  item_id?: string;
+
+  @ApiProperty({ description: 'Filter by warehouse UUID', required: false })
+  @IsOptional()
+  @IsUUID()
+  warehouseId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  warehouse_id?: string;
+
+  @ApiProperty({ description: 'Filter by company UUID', required: false })
+  @IsOptional()
+  @IsUUID()
+  companyId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  company_id?: string;
+}
+
+export class QueryAvailableSerialsDto {
+  @ApiProperty({ description: 'Filter by item UUID', required: false })
+  @IsOptional()
+  @IsUUID()
+  itemId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  item_id?: string;
+
+  @ApiProperty({ description: 'Filter by warehouse UUID', required: false })
+  @IsOptional()
+  @IsUUID()
+  warehouseId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  warehouse_id?: string;
+
+  @ApiProperty({ description: 'Filter by company UUID', required: false })
+  @IsOptional()
+  @IsUUID()
+  companyId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  company_id?: string;
+}
+

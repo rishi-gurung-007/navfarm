@@ -736,7 +736,7 @@ export const itemMaster = mysqlTable('item_master', {
   is_serial_tracked: boolean('is_serial_tracked').default(false).notNull(),
   // Lot/serial number series for this item's tracking numbers — separate from item_code's
   // own 'ITEM' series (item.service.ts). References noSeries.id.
-  tracking_series_id: varchar('tracking_series_id', { length: 36 }),
+  tracking_series_id: varchar('tracking_series_id', { length: 36 }).references(() => noSeries.id, { onDelete: 'set null' }),
   is_biological_asset: boolean('is_biological_asset').default(false).notNull(),
   is_biological_costing_method: varchar('is_biological_costing_method', { length: 30 }),
   is_inventoriable: boolean('is_inventoriable').default(true).notNull(),
@@ -1171,11 +1171,16 @@ export const itemMasterRelations = relations(itemMaster, ({ one, many }) => ({
     fields: [itemMaster.item_template_id],
     references: [itemTemplate.id]
   }),
+  trackingSeries: one(noSeries, {
+    fields: [itemMaster.tracking_series_id],
+    references: [noSeries.id]
+  }),
   attributes: many(itemAttributeValues)
 }));
 
 export const noSeriesRelations = relations(noSeries, ({ many }) => ({
   templates: many(itemTemplate),
+  trackedItems: many(itemMaster),
 }));
 
 export const itemTemplateRelations = relations(itemTemplate, ({ one, many }) => ({
@@ -2231,6 +2236,8 @@ export const batchInputLine = mysqlTable('batch_input_line', {
   uom: varchar('uom', { length: 20 }).notNull(),
   rate: decimal('rate', { precision: 18, scale: 6 }),
   amount: decimal('amount', { precision: 18, scale: 4 }),
+  lot_no: varchar('lot_no', { length: 50 }),
+  serial_no: varchar('serial_no', { length: 100 }),
 }, (table) => ({
   batchFk: foreignKey({
     columns: [table.batch_id],
@@ -3688,6 +3695,8 @@ export const stockAdjustmentLine = mysqlTable('stock_adjustment_line', {
   quantity: decimal('quantity', { precision: 18, scale: 4 }).notNull(), // signed: positive = found stock, negative = missing/damaged
   uom: varchar('uom', { length: 20 }).notNull(),
   rate: decimal('rate', { precision: 18, scale: 6 }), // required only when quantity is positive (validated at DTO level)
+  lot_no: varchar('lot_no', { length: 50 }),
+  serial_no: varchar('serial_no', { length: 100 }),
   remarks: varchar('remarks', { length: 500 }),
 }, (table) => ({
   adjustmentFk: foreignKey({

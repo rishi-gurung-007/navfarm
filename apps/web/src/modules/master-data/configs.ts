@@ -259,6 +259,8 @@ const numberSeries: MasterDataConfig = {
         { value: "GL_MAPPING", label: "GL Mapping" },
         { value: "COST_CENTER", label: "Cost Center" },
         { value: "BATCH", label: "Batch" },
+        { value: "LOT", label: "Lot" },
+        { value: "SERIAL", label: "Serial" },
       ],
       helpText: "Select which master entity this number sequence generates codes for.",
     },
