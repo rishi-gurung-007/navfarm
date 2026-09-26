@@ -11,7 +11,7 @@ Create button on a fresh tenant).
 | Branch | What | State |
 |---|---|---|
 | `feat/feed-forecast-a` | Plan A: silo↔shed links, one feed per silo, daily entry from the right silo, one feed line per diet row, forecast engine, `GET /feed-forecast`, Inventory → Feed Forecast page, demo seeds, migrations 0114–0116 | **Done, reviewed, live-verified.** Ready to merge to `main` after your review. 28 commits ahead of `main`. |
-| `feat/feed-forecast-b` | Plan B (cut from A): silo low/high levels, alert rules master, in-app feed alerts, feed requisition (draft, decide, screen) — migrations 0117–0119 | In progress; see the status table below. |
+| `feat/feed-forecast-b` | Plan B (cut from A): silo low/high levels, alert rules master, in-app feed alerts, feed requisition (draft, decide, screen) — migrations 0117–0119 | **Done, reviewed, live-verified** (`docs/VERIFICATION-2026-09-26-feed-forecast-b.md`). Final whole-branch review: ready to merge after Plan A (fast-forward onto `origin/main` — not the stale local `main`). |
 
 Neither branch is pushed. Ledgers with every finding and ruling:
 `.superpowers/sdd/2026-09-25-feed-forecast-a-silo-and-report/progress.md` and
@@ -83,7 +83,7 @@ Neither branch is pushed. Ledgers with every finding and ruling:
   the real animals; the forecast now counts them correctly, but the scheduler
   still records 116 head for VIL100's breeding batch's later stages.
 
-## Plan B status (as of 13:20)
+## Plan B status (final)
 
 Every task was implemented by a subagent and reviewed by a separate one (spec
 and quality), with fix rounds until clean. Migrations 0117–0119 are applied to
@@ -98,11 +98,12 @@ the local tenant databases.
 | 5 | Alerts and Notifications Master (0118), 5 workbook rules per company | done, reviewed | 4f4494b, 3f8acae |
 | 6 | Alert planning: raise, re-arm, escalate, resolve | done, reviewed (state machine hand-traced) | 4d618a9, d0e9fd4 |
 | 7 | Feed alerts (0119), evaluated after every stock posting and on demand | done, security-reviewed, stock-adjustment path proved in MySQL | 6c486fd, 049af6b |
-| 8 | Feed requisition auto-draft, manual entry, read | done, reviewed, auto-draft proved in MySQL; fix round re-reviewed clean | cf39c4e, 9ffeaca |
+| 8 | Feed requisition auto-draft, manual entry, read | done, reviewed, auto-draft proved in MySQL | cf39c4e, 9ffeaca |
 | 9 | Approve / reject (own farm only, remarks rules, approval audit) | done, security-reviewed, approval proved in MySQL | a1d3579, af352f8 |
-| 10 | Web: Inventory → Feed Requisitions | done; review running | 51e5de6 |
+| 10 | Web: Inventory → Feed Requisitions | done, reviewed | 51e5de6, 54c3f66 |
 | 11 | Web: Inventory → Feed Alerts | done, reviewed | 534fa30, 8a63b09 |
-| 12 | Full check through the running API + MySQL | running | — |
+| 12 | Full check through the running API + MySQL | PASS (one case blocked by demo roles, see verification doc) | f4b7839 |
+| — | Final whole-branch review fixes: forecast failure no longer stalls date alerts; tenant-wide low-rule clash; deactivated silo reason | done, re-reviewed | 0796ddb |
 
 Decisions I made overnight that you may want to change (all in the ledger):
 - Feed approvals are recorded through a new farm-level approval method, not
@@ -113,3 +114,14 @@ Decisions I made overnight that you may want to change (all in the ledger):
   keeps its own local-time helper. The project mixes both — one decision needed.
 - Farm staff see no feed alerts until the FARM_MANAGER / HEAD_OF_FARM roles
   exist or the rules are edited (Q1).
+
+## Field specification received 26 Sep
+
+`NAVFarm_Feed_Forecast_Report_Field_Specification.docx` (text in
+`.superpowers/feed-forecast-sources/field-specification-2026-09-26.txt`) changes
+the report screen: one row per batch + item + date, selectable planning date in
+the farm time zone, Daily/Weekly/Reporting Period/Custom views, Item No, run-down
+to the low level with confirmed incoming, an "indicative" flag, and a current /
+next stage block. Recommendations on wastage, days of stock, refill dates and
+the Reporting Period Master were given to Rishi; the report-alignment plan is
+written after his confirmation. Batch numbering is left as is (Rishi).
