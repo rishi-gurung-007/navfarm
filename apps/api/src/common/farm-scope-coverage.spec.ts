@@ -27,6 +27,7 @@ import { BioAssetLedgerController } from '../modules/inventory/bio-asset-ledger/
 import { FinancialReportsController } from '../modules/finance/financial-reports/financial-reports.controller';
 import { BreedController } from '../modules/master-data/breed/breed.controller';
 import { RequisitionController } from '../modules/procurement/requisition/requisition.controller';
+import { FeedRequisitionController } from '../modules/procurement/feed-requisition/feed-requisition.controller';
 import { ResourceLedgerController } from '../modules/production/resource-ledger/resource-ledger.controller';
 
 /**
@@ -58,6 +59,7 @@ const SCOPED = {
   FinancialReportsController,
   BreedController,
   RequisitionController,
+  FeedRequisitionController,
   ResourceLedgerController,
 };
 

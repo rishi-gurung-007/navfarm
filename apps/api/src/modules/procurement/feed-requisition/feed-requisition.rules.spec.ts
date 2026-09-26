@@ -1,7 +1,7 @@
 import type { ForecastSource } from '../../inventory/feed-forecast/feed-forecast.engine';
 import {
-  DEFAULT_FEED_SETTINGS, DestinationInfo, bagCountFor, deviationNeedsRemarks, feedTypeOf, productionCycle,
-  recommendLines, requisitionPriority, roundOrderKg,
+  DEFAULT_FEED_SETTINGS, DestinationInfo, bagCountFor, deviationNeedsRemarks, feedTypeOf, planDraftUpsert, productionCycle,
+  recommendLines, requisitionPriority, roundOrderKg, runKeyFor, serverToday,
 } from './feed-requisition.rules';
 
 const S = DEFAULT_FEED_SETTINGS;
@@ -120,5 +120,50 @@ describe('requisitionPriority — Requisition §1 row 34', () => {
     expect(requisitionPriority('2026-09-23', [{ belowLowLevel: false, firstShortageDate: '2026-09-26' }])).toBe('WARNING');
     expect(requisitionPriority('2026-09-23', [{ belowLowLevel: false, firstShortageDate: '2026-09-30' }])).toBe('INFO');
     expect(requisitionPriority('2026-09-23', [])).toBe('INFO');
+  });
+});
+
+describe('planDraftUpsert — rerun without duplicate drafts (Engine Step 9, Review Focus 1)', () => {
+  const [lineR1, lineR2] = recommendLines({
+    planningDate: '2026-09-23', to: '2026-09-29', sources: [r1, r2],
+    destinations: new Map([silo('s1'), silo('s2')]), settings: S,
+  });
+
+  it('inserts every line on the first run', () => {
+    expect(planDraftUpsert([], new Set(), [lineR1, lineR2])).toEqual({ insert: [lineR1, lineR2], update: [], remove: [], keep: [] });
+  });
+
+  it('refreshes an untouched line, quantity included', () => {
+    const plan = planDraftUpsert([{ lineId: 'L1', key: 's1|r1', quantityKg: 6000, recommendedQtyKg: 6000 }], new Set(), [lineR1]);
+    expect(plan.update).toEqual([{ lineId: 'L1', line: lineR1, keepQuantity: false, priorQuantityKg: 6000 }]);
+  });
+
+  it('keeps a quantity the farm edited', () => {
+    const plan = planDraftUpsert([{ lineId: 'L1', key: 's1|r1', quantityKg: 7000, recommendedQtyKg: 6000 }], new Set(), [lineR1]);
+    expect(plan.update[0]).toMatchObject({ keepQuantity: true, priorQuantityKg: 7000 });
+  });
+
+  it('keeps a quantity flagged quantity_edited even when the farm typed the recommendation back (M9)', () => {
+    const plan = planDraftUpsert([{ lineId: 'L1', key: 's1|r1', quantityKg: 6000, recommendedQtyKg: 6000, quantityEdited: true }], new Set(), [lineR1]);
+    expect(plan.update[0]).toMatchObject({ keepQuantity: true, priorQuantityKg: 6000 });
+    expect(planDraftUpsert([{ lineId: 'L9', key: 's9|r9', quantityKg: 3000, recommendedQtyKg: 3000, quantityEdited: true }], new Set(), []).keep).toEqual(['L9']);
+  });
+
+  it('removes a line no longer needed, unless the farm edited it', () => {
+    expect(planDraftUpsert([{ lineId: 'L9', key: 's9|r9', quantityKg: 3000, recommendedQtyKg: 3000 }], new Set(), []).remove).toEqual(['L9']);
+    expect(planDraftUpsert([{ lineId: 'L9', key: 's9|r9', quantityKg: 4000, recommendedQtyKg: 3000 }], new Set(), []).keep).toEqual(['L9']);
+  });
+
+  it('skips lines already on another requisition of the cycle', () => {
+    expect(planDraftUpsert([], new Set(['s2|r2']), [lineR1, lineR2]).insert).toEqual([lineR1]);
+  });
+});
+
+describe('runKeyFor and serverToday', () => {
+  it('names the farm and the moment', () => {
+    expect(runKeyFor('GRS', new Date(2026, 8, 23, 9, 5, 7))).toBe('RUN-GRS-20260923-090507');
+  });
+  it('reads the server calendar day, not the UTC one', () => {
+    expect(serverToday(new Date(2026, 8, 23, 0, 30))).toBe('2026-09-23');
   });
 });

@@ -64,6 +64,7 @@ import { BatchDailyDataModule } from './modules/production/batch-daily-data/batc
 import { ResourceLedgerModule } from './modules/production/resource-ledger/resource-ledger.module';
 import { AlertModule } from './modules/production/alert/alert.module';
 import { ApprovalModule } from './modules/production/approval/approval.module';
+import { FeedRequisitionModule } from './modules/procurement/feed-requisition/feed-requisition.module';
 import { MilkModule } from './modules/production/milk/milk.module';
 import { QcParameterModule } from './modules/production/qc-parameter/qc-parameter.module';
 import { QcModule } from './modules/production/qc/qc.module';
@@ -155,6 +156,8 @@ import { SystemController } from './system/system.controller';
     ResourceLedgerModule,
     AlertModule,
     ApprovalModule,
+    // Feed requisitions (Plan B). The generic RequisitionModule stays unregistered (Ruling C2).
+    FeedRequisitionModule,
     MilkModule,
     QcParameterModule,
     QcModule,

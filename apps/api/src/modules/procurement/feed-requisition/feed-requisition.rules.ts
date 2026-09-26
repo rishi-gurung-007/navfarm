@@ -22,6 +22,7 @@
  * calendar bug can only exist in one place.
  */
 import { addDays, diffDays, type ForecastSource } from '../../inventory/feed-forecast/feed-forecast.engine';
+import { todayLocal } from '../../inventory/feed-forecast/feed-forecast.service';
 
 export type FeedType = 'BULK' | 'BAGGED';
 export type Priority = 'CRITICAL_FIRST_PRIORITY' | 'CRITICAL' | 'WARNING' | 'INFO';
@@ -168,4 +169,66 @@ export function requisitionPriority(planningDate: string, lines: Pick<DraftLine,
   if (days < 3) return 'CRITICAL';
   if (days < 7) return 'WARNING';
   return 'INFO';
+}
+
+export interface ExistingDraftLine {
+  lineId: string;
+  key: string;
+  quantityKg: number;
+  recommendedQtyKg: number | null;
+  /** requisition_line.quantity_edited (Ruling M9): the farm changed this quantity by hand. */
+  quantityEdited?: boolean;
+}
+
+export interface DraftUpsertPlan {
+  insert: DraftLine[];
+  update: { lineId: string; line: DraftLine; keepQuantity: boolean; priorQuantityKg: number }[];
+  remove: string[];
+  keep: string[];
+}
+
+/**
+ * A line the farm changed. Ruling M9's flag is the record of it — a farm that
+ * edits 6,000 kg to 9,000 and back to 6,000 has still made the quantity its
+ * own — and a quantity that no longer matches the recommendation it was
+ * drafted with (or a line drafted with none) counts as changed too, so a line
+ * written before the flag existed is never overwritten either.
+ */
+function wasEdited(line: ExistingDraftLine): boolean {
+  return line.quantityEdited === true || line.recommendedQtyKg === null || Math.abs(line.quantityKg - line.recommendedQtyKg) > 1e-6;
+}
+
+/**
+ * Engine Step 9 on rerun: update the cycle's one AUTO_DRAFT in place. A farm's
+ * own quantity is never overwritten (Requisition §1 row 24: Requested Qty is
+ * "Farm Manager final … qty"), and a (destination, item) already on another
+ * requisition of the cycle is not drafted twice (row 9).
+ */
+export function planDraftUpsert(existing: ExistingDraftLine[], covered: Set<string>, wanted: DraftLine[]): DraftUpsertPlan {
+  const plan: DraftUpsertPlan = { insert: [], update: [], remove: [], keep: [] };
+  const byKey = new Map(existing.map((e) => [e.key, e]));
+  const wantedKeys = new Set<string>();
+  for (const line of wanted) {
+    if (covered.has(line.key)) continue;
+    wantedKeys.add(line.key);
+    const prior = byKey.get(line.key);
+    if (!prior) plan.insert.push(line);
+    else plan.update.push({ lineId: prior.lineId, line, keepQuantity: wasEdited(prior), priorQuantityKg: prior.quantityKg });
+  }
+  for (const prior of existing) {
+    if (wantedKeys.has(prior.key)) continue;
+    (wasEdited(prior) ? plan.keep : plan.remove).push(prior.lineId);
+  }
+  return plan;
+}
+
+/** The server's calendar day — the forecast's planning-date rule itself (todayLocal), not a copy of it (L12). */
+export function serverToday(now: Date = new Date()): string {
+  return todayLocal(now.getTime());
+}
+
+/** Engine Step 9 "Preserve run ID". Format ours (the workbook's example RUN-GRS-20260923-001 uses a daily sequence). */
+export function runKeyFor(farmCode: string, now: Date = new Date()): string {
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `RUN-${farmCode}-${serverToday(now).replace(/-/g, '')}-${p(now.getHours())}${p(now.getMinutes())}${p(now.getSeconds())}`;
 }
