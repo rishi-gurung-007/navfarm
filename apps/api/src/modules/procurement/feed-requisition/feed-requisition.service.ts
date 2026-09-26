@@ -674,7 +674,7 @@ export class FeedRequisitionService {
         await this.lockOpen(id, tenantId, farmId, companyId);
         await this.applyLineEdits(id, dto.lines, farmId, tenantId);
         await this.db.update(schema.requisition).set({
-          ...(dto.remarks !== undefined ? { remarks: dto.remarks.trim() || null } : {}),
+          ...(dto.remarks !== undefined ? { remarks: dto.remarks?.trim() || null } : {}),
           updated_by: user?.userId ?? null,
         }).where(eq(schema.requisition.requisition_id, id));
       });
