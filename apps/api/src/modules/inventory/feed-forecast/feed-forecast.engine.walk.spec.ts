@@ -126,3 +126,96 @@ describe('buildFeedForecast — the Worked Example is unchanged by D19 (Plan B n
     expect(buildFeedForecast(input).sources[0].shortfallKg).toBe(12500);
   });
 });
+
+describe('buildFeedForecast — D19 walk edge cases (Plan R review of Task 2)', () => {
+  it('runs down on a day nobody eats when a transfer out takes the silo to its low level, so a shortfall has a date', () => {
+    // The batch leaves the shed after 24 Sep. 1,000 → closes 900, 800; on 25 Sep 700 kg goes out: 100 kg, below 200.
+    const input = oneSilo(
+      {
+        batches: [{
+          batchId: 'b1', batchNo: 'GR-2026-01', breedId: 'l', shedId: 'h1', heads: 100,
+          segments: [{ stageId: 'grower', stageCode: 'GROWER', start: '2026-09-01', end: '2026-09-24', projected: false }],
+        }],
+        incoming: [{ locationId: 's1', itemId: 'r1', date: '2026-09-25', kg: -700 }],
+      },
+      { balanceKg: 1000, lowLevelKg: 200 },
+    );
+    expect(buildFeedForecast(input).sources[0]).toMatchObject({
+      runDownDate: '2026-09-25', refillDate: '2026-09-23', requiredOn: '2026-09-21', shortfallKg: 100,
+    });
+  });
+
+  it('flags a projected stage change that falls inside from..to', () => {
+    const input = oneSilo({
+      batches: [{
+        batchId: 'b1', batchNo: 'GR-2026-01', breedId: 'l', shedId: 'h1', heads: 100,
+        segments: [
+          { stageId: 'grower', stageCode: 'GROWER', start: '2026-09-01', end: '2026-09-26', projected: false },
+          { stageId: 'finisher', stageCode: 'FINISHER', start: '2026-09-27', end: null, projected: true },
+        ],
+      }],
+    });
+    expect(buildFeedForecast(input).flags.filter((f) => f.kind === 'STAGE_CHANGE_PROJECTED')).toEqual([
+      { kind: 'STAGE_CHANGE_PROJECTED', batchNo: 'GR-2026-01', stageCode: 'FINISHER', date: '2026-09-27' },
+    ]);
+  });
+
+  it('a silo already below its low level runs down on the planning date', () => {
+    // 150 kg against a 200 kg level: short by 700 demand + 200 level − 150 held.
+    expect(buildFeedForecast(oneSilo({}, { balanceKg: 150, lowLevelKg: 200 })).sources[0]).toMatchObject({
+      runDownDate: '2026-09-23', refillDate: '2026-09-21', requiredOn: '2026-09-19', overdue: true, shortfallKg: 750,
+    });
+  });
+
+  it('a delivery on the day it would run down counts that day', () => {
+    // 250 → 150, 50; on 25 Sep 100 kg arrives: 150 → 50; empties on 26 Sep, not 25 Sep.
+    const input = oneSilo({ incoming: [{ locationId: 's1', itemId: 'r1', date: '2026-09-25', kg: 100 }] }, { balanceKg: 250 });
+    const { sources, daily } = buildFeedForecast(input);
+    expect(sources[0].runDownDate).toBe('2026-09-26');
+    expect(daily.find((d) => d.date === '2026-09-25')!.currentInventoryKg).toBe(150);
+  });
+
+  it('a silo shared by two batches runs down to its low level on their combined demand', () => {
+    // 2 × 100 kg/day from 1,000 kg with a 300 kg level: closes 800, 600, 400, 200 (26 Sep).
+    const input = oneSilo({}, { balanceKg: 1000, lowLevelKg: 300 });
+    input.batches.push({ ...input.batches[0], batchId: 'b2', batchNo: 'GR-2026-02' });
+    const { sources, rows, daily } = buildFeedForecast(input);
+    expect(sources).toHaveLength(1);
+    expect(sources[0]).toMatchObject({ runDownDate: '2026-09-26', thresholdKg: 300, planningDayDemandKg: 200 });
+    expect(rows.map((r) => r.runDownDate)).toEqual(['2026-09-26', '2026-09-26']);
+    expect(daily.filter((d) => d.date === '2026-09-23').map((d) => [d.daysOfStock, d.sharedBatchCount])).toEqual([[5, 2], [5, 2]]);
+  });
+
+  it('a store runs down to zero — it has no low level', () => {
+    const input = oneSilo({
+      sheds: [{ shedId: 'h1', shedCode: 'GRS/SHED-001', siloIds: [] }],
+      silos: [],
+      store: { storeId: 'st', storeCode: 'GRS/STORE-001', balances: { r1: 250 } },
+    });
+    expect(buildFeedForecast(input).sources[0]).toMatchObject({ sourceType: 'STORE', thresholdKg: 0, runDownDate: '2026-09-25' });
+  });
+
+  it('a silo that outlasts the horizon has no run-down, refill or required-on', () => {
+    const { sources, rows, daily } = buildFeedForecast(oneSilo({ horizonTo: '2026-10-10' }, { balanceKg: 10000, lowLevelKg: 200 }));
+    const none = { runDownDate: null, refillDate: null, requiredOn: null, overdue: false };
+    expect(sources[0]).toMatchObject({ ...none, shortfallKg: 0 });
+    expect(rows[0]).toMatchObject(none);
+    expect(daily.every((d) => d.runDownDate === null && d.requiredOn === null)).toBe(true);
+  });
+
+  it('adds up several incoming rows on one date', () => {
+    // 150 → 50; 24 Sep: 50 + 100 + 150 = 300 → 200, 100, 0 on 26 Sep. Either row alone runs down on 25 Sep.
+    const input = oneSilo(
+      {
+        incoming: [
+          { locationId: 's1', itemId: 'r1', date: '2026-09-24', kg: 100 },
+          { locationId: 's1', itemId: 'r1', date: '2026-09-24', kg: 150 },
+        ],
+      },
+      { balanceKg: 150 },
+    );
+    const { sources, daily } = buildFeedForecast(input);
+    expect(sources[0]).toMatchObject({ runDownDate: '2026-09-26', incomingKg: 250 });
+    expect(daily.find((d) => d.date === '2026-09-24')!.currentInventoryKg).toBe(300);
+  });
+});

@@ -41,13 +41,26 @@
  *    demand. A silo cannot go below empty, so demand it cannot meet is not
  *    carried. Run-Down is the first day, on or after the planning date, whose
  *    closing balance is at or below the silo's low level — at or below zero
- *    when none is set (open question Q1). The run-down may be looked for past
+ *    when none is set (open question Q1). That day need not have demand: a
+ *    transfer out on a day nobody eats can take the silo to its low level,
+ *    and the shortfall it causes must have a run-down and a Required On. The run-down may be looked for past
  *    `to` (`horizonTo`) so a one-day view still shows it; everything else
  *    keeps its window.
+ * 7. Plan R (D16–D18): `daily` is one row per batch, item and date, read off
+ *    the same walk. Its Current Inventory is the container's opening that day
+ *    (Ruling M7): what the day before left, plus that day's `incoming` —
+ *    which carries posted receipts and posted non-feeding outflows as well as
+ *    saved transfers — but not that day's feeding, which is the forecast's
+ *    own demand, so a posted daily entry is never subtracted twice.
  */
 import { FeedRow, feedRowFor } from '../../production/lifecycle/feed-row-days';
 
-/** D19 "confirmed incoming" into (or, negative, out of) one container, on one day. What counts is the service's rule (Q2). */
+/**
+ * D19 "confirmed incoming" into (or, negative, out of) one container, on one day. What counts is the service's rule
+ * (Q2): posted non-feeding movements dated on or after the stock date (receipts, transfers, goods issues, adjustments)
+ * and saved-but-unposted transfers. Each lands in the opening of its own day, so it is in that day's Current
+ * Inventory (Ruling M7); feeding is never passed here — the engine's own demand stands for it.
+ */
 export interface IncomingFeed {
   locationId: string; // silo_id or the store's location_id
   itemId: string;
@@ -114,6 +127,41 @@ export interface ForecastRow {
   rangeDemandKg: number;
 }
 
+/**
+ * Plan R (spec D16–D18; field specification of 26 Sep, Report Grid): one row
+ * per batch, feed item and forecast date. A diet change is a new item, so it
+ * is a new row — never blended. Current Inventory is the container's
+ * projected opening balance that day; Days of Stock is the container's, not
+ * the batch's (D18); Per Day Intake leaves wastage out (D17) while demandKg
+ * keeps it, because wasted feed still leaves the silo.
+ */
+export interface DailyForecastRow {
+  date: string;
+  batchId: string;
+  batchNo: string;
+  shedCode: string;
+  stageCode: string;
+  itemId: string;
+  itemNo: string; // item code, '' when unknown
+  itemName: string;
+  lifecycleId: string;
+  sourceType: 'SILO' | 'STORE' | 'NONE';
+  sourceCode: string | null;
+  currentInventoryKg: number; // projected System Balance at the start of `date` (Q6)
+  heads: number;
+  feedRateKg: number; // kg per head per day
+  perDayIntakeKg: number; // D17: heads × rate, no wastage
+  wastagePct: number;
+  demandKg: number; // heads × rate × (1 + wastage %): what leaves the silo
+  daysOfStock: number | null; // D18: floor(currentInventory ÷ the container's demand that day)
+  sharedBatchCount: number; // batches drawing on the same container and item that day
+  indicative: boolean; // Q13
+  runDownDate: string | null;
+  refillDate: string | null;
+  requiredOn: string | null;
+  overdue: boolean;
+}
+
 export interface ForecastSource {
   sourceType: 'SILO' | 'STORE';
   sourceCode: string;
@@ -156,6 +204,7 @@ export interface ForecastResult {
   flags: ForecastFlag[];
   sources: ForecastSource[];
   dietChanges: DietChange[];
+  daily: DailyForecastRow[]; // sorted by shedCode, batchNo, date, itemName
 }
 
 /** Date arithmetic on UTC midnights — see context.md: farm-local calendar days in, UTC midnight math internally. */
@@ -410,6 +459,26 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
   const itemByBatchDate = new Map<string, string>();
   const noSiloKeys = new Set<string>();
 
+  // Plan R: per-date rows run from the planning date (or `from`, if later) to `to` (Q7). The batches eating from a
+  // container on a day give its shared count (D18); an ANIMAL_WISE batch's stage groups count as separate batches,
+  // because each is fed its own stage's diet.
+  const rowFrom = input.from > input.planningDate ? input.from : input.planningDate;
+  interface DailyEntry {
+    date: string;
+    batchId: string;
+    batchNo: string;
+    shedId: string;
+    heads: number;
+    stageCode: string;
+    feedRow: FeedRow;
+    key: string;
+    sourceType: 'SILO' | 'STORE' | 'NONE';
+    sourceCode: string | null;
+    demandMicrograms: number;
+  }
+  const dailyEntries: DailyEntry[] = [];
+  const batchesByKeyDate = new Map<string, Set<string>>();
+
   for (const batch of input.batches) {
     flags.push({ kind: 'HEADS_ASSUMED_FLAT', batchNo: batch.batchNo }); // D11: heads assumed flat unless movements say otherwise
     for (const segment of batch.segments) {
@@ -470,6 +539,20 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
         if (resolution.noSiloHoldsItem) noSiloKeys.add(sk.key);
       }
 
+      if (date >= rowFrom && date <= input.to) {
+        dailyEntries.push({
+          date, batchId: batch.batchId, batchNo: batch.batchNo, shedId: batch.shedId, heads: batch.heads,
+          stageCode: segment.stageCode, feedRow, key: sk.key, sourceType: sk.sourceType, sourceCode: sk.sourceCode, demandMicrograms,
+        });
+        const shareKey = `${sk.key}|${date}`;
+        let sharing = batchesByKeyDate.get(shareKey);
+        if (!sharing) {
+          sharing = new Set();
+          batchesByKeyDate.set(shareKey, sharing);
+        }
+        sharing.add(batch.batchId);
+      }
+
       if (!isInRange(date)) continue; // walk-only date: contributes to the balance, not to the row
 
       const aggKey = `${batch.batchId}:${feedRow.itemId}`;
@@ -511,7 +594,7 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
     shortfallKg: number;
   }
   const projectionByKey = new Map<string, KeyProjection>();
-  // Opening balance of every walked day, per key — the per-date rows (Task 3) read Current Inventory off it.
+  // Opening balance of every walked day, per key — the per-date rows read Current Inventory off it (Ruling M7).
   const openingByKey = new Map<string, Map<string, number>>();
 
   for (const [key, sk] of keyMeta) {
@@ -529,7 +612,8 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
       opening.set(date, open);
       const demand = byDate.get(date) ?? 0;
       const closing = open - demand;
-      if (runDownDate === null && date >= input.planningDate && demand > 0 && closing <= threshold) runDownDate = date;
+      // Any day counts, eaten from or not: a transfer out on an idle day can take the silo to its low level too.
+      if (runDownDate === null && date >= input.planningDate && closing <= threshold) runDownDate = date;
       carried = Math.max(0, closing); // demand the silo cannot meet is not carried into the next day
     }
     openingByKey.set(key, opening);
@@ -646,6 +730,55 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
   }
   sources.sort((a, b) => (a.sourceCode !== b.sourceCode ? (a.sourceCode < b.sourceCode ? -1 : 1) : a.itemId < b.itemId ? -1 : a.itemId > b.itemId ? 1 : 0));
 
+  const daily: DailyForecastRow[] = dailyEntries.map((e) => {
+    const p = projectionByKey.get(e.key)!;
+    const byDate = demandMicrogramsByKeyByDate.get(e.key) ?? new Map<string, number>();
+    const opening = openingByKey.get(e.key)?.get(e.date) ?? 0;
+    const containerDemand = byDate.get(e.date) ?? 0;
+    // Q13: indicative when what this container feeds per day changes later in the window — a diet, rate or stage
+    // change of any batch on it — because the days-of-stock division assumes today's rate holds.
+    let indicative = false;
+    for (const d of planDates) {
+      if (d > e.date && (byDate.get(d) ?? 0) !== containerDemand) {
+        indicative = true;
+        break;
+      }
+    }
+    const itemId = e.feedRow.itemId;
+    return {
+      date: e.date,
+      batchId: e.batchId,
+      batchNo: e.batchNo,
+      shedCode: shedById.get(e.shedId)?.shedCode ?? '',
+      stageCode: e.stageCode,
+      itemId,
+      itemNo: input.itemCodes?.[itemId] ?? '',
+      itemName: input.items[itemId] ?? itemId,
+      lifecycleId: e.feedRow.lifecycleId,
+      sourceType: e.sourceType,
+      sourceCode: e.sourceCode,
+      currentInventoryKg: toKg(opening),
+      heads: e.heads,
+      feedRateKg: e.feedRow.kgPerHeadPerDay,
+      perDayIntakeKg: toKg(toMicrograms(e.heads * e.feedRow.kgPerHeadPerDay)),
+      wastagePct: e.feedRow.wastagePct,
+      demandKg: toKg(e.demandMicrograms),
+      daysOfStock: containerDemand > 0 ? Math.floor(opening / containerDemand) : null,
+      sharedBatchCount: batchesByKeyDate.get(`${e.key}|${e.date}`)?.size ?? 1,
+      indicative,
+      runDownDate: p.runDownDate,
+      refillDate: p.refillDate,
+      requiredOn: p.requiredOn,
+      overdue: p.overdue,
+    };
+  });
+  daily.sort((a, b) => {
+    if (a.shedCode !== b.shedCode) return a.shedCode < b.shedCode ? -1 : 1;
+    if (a.batchNo !== b.batchNo) return a.batchNo < b.batchNo ? -1 : 1;
+    if (a.date !== b.date) return a.date < b.date ? -1 : 1;
+    return a.itemName < b.itemName ? -1 : a.itemName > b.itemName ? 1 : 0;
+  });
+
   const entries: { row: ForecastRow; firstDemandDate: string }[] = [];
   for (const agg of rowAggs.values()) {
     const projection = projectionByKey.get(agg.key)!;
@@ -679,5 +812,5 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
     return a.firstDemandDate < b.firstDemandDate ? -1 : a.firstDemandDate > b.firstDemandDate ? 1 : 0;
   });
 
-  return { rows: entries.map((e) => e.row), flags, sources, dietChanges };
+  return { rows: entries.map((e) => e.row), flags, sources, dietChanges, daily };
 }
