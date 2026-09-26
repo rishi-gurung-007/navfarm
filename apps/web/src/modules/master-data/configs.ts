@@ -1408,6 +1408,29 @@ const alertRule: MasterDataConfig = {
   ],
 };
 
+// Reporting Period Master — spec D20; workbook Master Setup row 10 in its
+// order. Business Year and Production Start Date are derived by the API
+// (Production Start = the Sunday after End), so they are table columns only
+// and never form fields. A year is drafted with "Generate July–June periods"
+// on Inventory → Feed Forecast (Reporting Period view) and edited here.
+const reportingPeriod: MasterDataConfig = {
+  key: "reporting-period", label: "Reporting Periods", singular: "Reporting Period", apiBase: "/reporting-period", idKey: "period_id",
+  group: "Inventory", businessAdminOnly: true,
+  description: "Reporting Period Master: each month's period up to its month-end Saturday stock take, in a July–June business year. The Feed Forecast's Reporting Period view takes its dates from here.",
+  columns: [
+    { key: "period_code", label: "Period Code" }, { key: "business_year", label: "Business Year" },
+    { key: "start_date", label: "Start Date" }, { key: "end_date", label: "End Date" },
+    { key: "stock_take_date", label: "Stock Take Date" }, { key: "production_start_date", label: "Production Start Date" },
+  ],
+  fields: [
+    { key: "company_id", label: "Company", type: "text", hideInForm: true },
+    { key: "period_code", label: "Period Code", type: "text", required: true, createOnly: true, maxLength: 20, helpText: "For example 2026-09 for the September 2026 period." },
+    { key: "start_date", label: "Start Date", type: "date", required: true, helpText: "Normally the Sunday after the previous period's End Date." },
+    { key: "end_date", label: "End Date", type: "date", required: true, helpText: "The month-end Saturday. Production Start Date is set to the Sunday after it." },
+    { key: "stock_take_date", label: "Stock Take Date", type: "date", helpText: "Leave blank to use the End Date." },
+  ],
+};
+
 const disease: MasterDataConfig = {
   key: "disease",
   label: "Diseases",
@@ -1905,7 +1928,7 @@ export const MASTER_DATA_CONFIGS: MasterDataConfig[] = [
   numberSeries, stage, activity,
   item, itemCategory, itemType, itemAttribute, itemTemplateConfig, uom, uomConversion,
   animal,
-  species, breed, breedLifecycleStage, kpiMetric, reason, alertRule, disease, feedFormula,
+  species, breed, breedLifecycleStage, kpiMetric, reason, alertRule, reportingPeriod, disease, feedFormula,
   supplier, customer, resource,
   glAccount, glMapping, costCenter, country, currency, exchangeRate,
 ];

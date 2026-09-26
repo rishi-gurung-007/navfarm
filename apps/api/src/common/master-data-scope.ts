@@ -20,7 +20,7 @@ export const MASTER_TABLES: Record<string, AnyMySqlTable> = {
   'uom/conversion': schema.uomConversionMaster, 'uom-conversion': schema.uomConversionMaster,
   species: schema.speciesMaster,
   breed: schema.breedMaster, 'breed-lifecycle-stage': schema.breedLifecycleStages,
-  reason: schema.reasonMaster, 'alert-rule': schema.alertRule, disease: schema.diseaseMaster, 'feed-formula': schema.feedFormulaMaster,
+  reason: schema.reasonMaster, 'alert-rule': schema.alertRule, 'reporting-period': schema.reportingPeriod, disease: schema.diseaseMaster, 'feed-formula': schema.feedFormulaMaster,
   'kpi-metric': schema.kpiMetricMaster,
   activity: schema.activityMaster,
   supplier: schema.supplierMaster, customer: schema.customerMaster, resource: schema.resourceMaster,

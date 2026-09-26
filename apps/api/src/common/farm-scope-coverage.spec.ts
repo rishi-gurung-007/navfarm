@@ -90,6 +90,7 @@ const EXEMPT: Record<string, string> = {
   'master-data/location/location.controller.ts': 'Master data; locations reference a farm but the master list itself is not farm-scoped for access — write paths that place a record on a location go through assertLocationOnActiveFarm instead.',
   'master-data/no-series/no-series.controller.ts': 'Master data, not farm-specific.',
   'master-data/reason/reason.controller.ts': 'Master data, not farm-specific.',
+  'master-data/reporting-period/reporting-period.controller.ts': 'Company master (Reporting Period Master, D20); periods are company-wide, not a farm\'s.',
   'master-data/resource/resource.controller.ts': 'Master data, not farm-specific.',
   'master-data/shed/shed.controller.ts': 'Master data, not farm-specific.',
   'master-data/supplier/supplier.controller.ts': 'Master data, not farm-specific.',

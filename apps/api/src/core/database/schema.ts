@@ -3287,6 +3287,29 @@ export const alertRule = mysqlTable('alert_rule', {
   uqCode: uniqueIndex('uq_alert_rule_code').on(table.tenant_id, table.company_id, table.notification_code),
 }));
 
+/** Reporting Period Master (spec D20, migration 0121). One row per company and period; business_year and production_start_date are derived on save. */
+export const reportingPeriod = mysqlTable('reporting_period', {
+  period_id: varchar('period_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+  company_id: varchar('company_id', { length: 36 }).references(() => companyMaster.company_id, { onDelete: 'cascade' }),
+  period_code: varchar('period_code', { length: 20 }).notNull(),
+  business_year: varchar('business_year', { length: 7 }).notNull(),
+  start_date: date('start_date', { mode: 'string' }).notNull(),
+  end_date: date('end_date', { mode: 'string' }).notNull(),
+  stock_take_date: date('stock_take_date', { mode: 'string' }).notNull(),
+  production_start_date: date('production_start_date', { mode: 'string' }).notNull(),
+  is_active: boolean('is_active').default(true).notNull(),
+  status: varchar('status', { length: 20 }).default('ACTIVE').notNull(),
+  created_by: varchar('created_by', { length: 36 }),
+  updated_by: varchar('updated_by', { length: 36 }),
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+  updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().notNull(),
+  deleted_at: timestamp('deleted_at', { mode: 'string' }),
+}, (table) => ({
+  uqCode: uniqueIndex('uq_reporting_period_code').on(table.tenant_id, table.company_id, table.period_code),
+  idxDates: index('idx_reporting_period_dates').on(table.tenant_id, table.company_id, table.start_date),
+}));
+
 /**
  * In-app feed alerts raised from alert_rule (Plan B). active_key = dedup_key
  * while ACTIVE, NULL once RESOLVED: the unique index is what makes "one open
