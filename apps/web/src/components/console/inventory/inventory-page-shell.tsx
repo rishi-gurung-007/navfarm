@@ -12,6 +12,7 @@ import { ShieldAlert } from "lucide-react";
 const INVENTORY_SECTIONS = [
   { key: "balance", href: "/inventory/balance", labelKey: "invStockBalance" },
   { key: "feed-forecast", href: "/inventory/feed-forecast", labelKey: "invFeedForecast" },
+  { key: "feed-alerts", href: "/inventory/feed-alerts", labelKey: "invFeedAlerts" },
   { key: "goods-receipt", href: "/inventory/goods-receipt", labelKey: "invGoodsReceipt" },
   { key: "transfers", href: "/inventory/transfers", labelKey: "invTransfers" },
   { key: "goods-issue", href: "/inventory/goods-issue", labelKey: "invGoodsIssue" },
@@ -90,6 +91,7 @@ export function InventoryPageShell({ activeKey, children }: { activeKey: Invento
 
   const title =
     activeKey === "feed-forecast" ? t("invFeedForecastTitle") :
+    activeKey === "feed-alerts" ? t("invFeedAlertsTitle") :
     activeKey === "goods-receipt" ? t("invGoodsReceiptTitle") :
     activeKey === "transfers" ? t("invTransfersTitle") :
     activeKey === "goods-issue" ? t("invGoodsIssueTitle") :
@@ -99,6 +101,7 @@ export function InventoryPageShell({ activeKey, children }: { activeKey: Invento
 
   const description =
     activeKey === "feed-forecast" ? t("invFeedForecastDesc") :
+    activeKey === "feed-alerts" ? t("invFeedAlertsDesc") :
     scope === "OPERATIONAL" ? t("invOperationalDesc", { lob: tLob(activeLob) }) : t("invCompanyDesc");
 
   return (

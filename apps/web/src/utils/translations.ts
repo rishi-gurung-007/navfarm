@@ -1421,6 +1421,25 @@ export const translations = {
     ffFlagOverlappingSingle: "More than one feed row matches {{stageCode}} day {{day}} on {{batchNo}} ({{date}}).",
     ffFlagOverlappingRange: "More than one feed row matches {{stageCode}} days {{dayFrom}}–{{dayTo}} on {{batchNo}} ({{dateFrom}} – {{dateTo}}).",
 
+    invFeedAlerts: "Feed Alerts",
+    invFeedAlertsTitle: "Inventory → Feed Alerts",
+    invFeedAlertsDesc: "Low and over-stocked silos, upcoming diet changes and unapproved feed requisitions, from the Alerts and Notifications Master.",
+
+    // Console — Inventory — Feed Alerts panel
+    falFarm: "Farm",
+    falShow: "Show",
+    falActiveOnly: "Active",
+    falIncludingResolved: "Active and resolved",
+    falLoading: "Checking feed alerts…",
+    falNone: "No feed alerts for this farm.",
+    falLoadFailed: "Feed alerts could not be loaded.",
+    falAckFailed: "The alert could not be acknowledged.",
+    falAcknowledge: "Acknowledge",
+    falResolved: "Resolved",
+    falRaised: "raised {{at}}",
+    falEscalated: "escalated to {{role}}",
+    falNoScheduler: "Diet-change and requisition-deadline alerts update when this screen is opened or when stock is posted — there is no scheduler.",
+
     // Console — Finance
     finJournal: "Costing & WIP Journals",
     finProfitLoss: "Profit & Loss (P&L)",
