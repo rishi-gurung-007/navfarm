@@ -509,7 +509,7 @@ describe('buildFeedForecast — fix round 1: integer-gram balance walk at exact 
     });
     const { rows } = buildFeedForecast(input);
     expect(rows[0].daysLeft).toBe(3);
-    expect(rows[0].runDownDate).toBe('2026-09-26'); // planning + 3
+    expect(rows[0].runDownDate).toBe('2026-09-25'); // D19/Q1: closes at 0 kg at the end of the 3rd day (was D2's day 4)
   });
 
   it('50 heads x 0.35 kg/day x 2.5% wastage (17.9375 kg/day) against 71.75 kg is exactly 4 days of stock', () => {
@@ -524,7 +524,7 @@ describe('buildFeedForecast — fix round 1: integer-gram balance walk at exact 
     });
     const { rows } = buildFeedForecast(input);
     expect(rows[0].daysLeft).toBe(4);
-    expect(rows[0].runDownDate).toBe('2026-09-27'); // planning + 4
+    expect(rows[0].runDownDate).toBe('2026-09-26'); // D19/Q1: closes at 0 kg at the end of the 4th day (was D2's day 5)
   });
 
   it('balance exactly equal to one day of demand is 1 day of stock, not 0', () => {
@@ -539,7 +539,7 @@ describe('buildFeedForecast — fix round 1: integer-gram balance walk at exact 
     });
     const { rows } = buildFeedForecast(input);
     expect(rows[0].daysLeft).toBe(1);
-    expect(rows[0].runDownDate).toBe('2026-09-24'); // planning + 1
+    expect(rows[0].runDownDate).toBe('2026-09-23'); // D19/Q1: one day of stock empties on the planning day itself
   });
 });
 
