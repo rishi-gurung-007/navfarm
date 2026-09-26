@@ -232,3 +232,33 @@ export function runKeyFor(farmCode: string, now: Date = new Date()): string {
   const p = (n: number) => String(n).padStart(2, '0');
   return `RUN-${farmCode}-${serverToday(now).replace(/-/g, '')}-${p(now.getHours())}${p(now.getMinutes())}${p(now.getSeconds())}`;
 }
+
+export interface ApprovalLine {
+  lineSeq: number;
+  itemName: string;
+  quantityKg: number;
+  recommendedQtyKg: number | null;
+}
+
+const kg = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 3 });
+
+/**
+ * What stops an approval (Requisition §4 step 4). Remarks answer both the 20 %
+ * deviation (checkpoint 18) and a late approval (checkpoint 22, Q5); they are
+ * one field on the header (row 36), so one set of remarks covers every line.
+ * The deadline day itself is still on time — only a later day is the exception.
+ */
+export function approvalProblems(args: { lines: ApprovalLine[]; remarks: string | null | undefined; today: string; submissionDeadline: string | null }): string[] {
+  if (!args.lines.length) return ['A requisition needs at least one line to be approved.'];
+  if (args.remarks?.trim()) return [];
+  const problems: string[] = [];
+  for (const l of args.lines) {
+    if (deviationNeedsRemarks(l.recommendedQtyKg, l.quantityKg)) {
+      problems.push(`Line ${l.lineSeq} (${l.itemName}): requested ${kg(l.quantityKg)} kg is more than 20% from the recommended ${kg(l.recommendedQtyKg ?? 0)} kg — remarks are required.`);
+    }
+  }
+  if (args.submissionDeadline && args.today > args.submissionDeadline) {
+    problems.push(`The submission deadline ${args.submissionDeadline} has passed — give remarks to approve it as an exception.`);
+  }
+  return problems;
+}

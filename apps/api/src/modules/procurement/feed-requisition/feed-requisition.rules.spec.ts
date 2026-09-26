@@ -1,6 +1,6 @@
 import type { ForecastSource } from '../../inventory/feed-forecast/feed-forecast.engine';
 import {
-  DEFAULT_FEED_SETTINGS, DestinationInfo, bagCountFor, deviationNeedsRemarks, feedTypeOf, planDraftUpsert, productionCycle,
+  DEFAULT_FEED_SETTINGS, DestinationInfo, approvalProblems, bagCountFor, deviationNeedsRemarks, feedTypeOf, planDraftUpsert, productionCycle,
   recommendLines, requisitionPriority, roundOrderKg, runKeyFor, serverToday,
 } from './feed-requisition.rules';
 
@@ -165,5 +165,33 @@ describe('runKeyFor and serverToday', () => {
   });
   it('reads the server calendar day, not the UTC one', () => {
     expect(serverToday(new Date(2026, 8, 23, 0, 30))).toBe('2026-09-23');
+  });
+});
+
+describe('approvalProblems — checkpoints 18 and 22', () => {
+  const r1Line = { lineSeq: 1, itemName: 'Weaner Diet R1', quantityKg: 9000, recommendedQtyKg: 6000 };
+
+  it('names the line that deviates more than 20 % when there are no remarks — 6,000 → 9,000 kg', () => {
+    expect(approvalProblems({ lines: [r1Line], remarks: '  ', today: '2026-09-23', submissionDeadline: '2026-09-26' }))
+      .toEqual(['Line 1 (Weaner Diet R1): requested 9,000 kg is more than 20% from the recommended 6,000 kg — remarks are required.']);
+  });
+  it('accepts it with remarks', () => {
+    expect(approvalProblems({ lines: [r1Line], remarks: 'Extra pigs arriving', today: '2026-09-23', submissionDeadline: '2026-09-26' })).toEqual([]);
+  });
+  it('accepts exactly 20 % and a manual line without remarks', () => {
+    expect(approvalProblems({ lines: [{ ...r1Line, quantityKg: 7200 }, { lineSeq: 2, itemName: 'X', quantityKg: 50000, recommendedQtyKg: null }], remarks: null, today: '2026-09-23', submissionDeadline: '2026-09-26' })).toEqual([]);
+  });
+  it('accepts approval on the deadline day itself without remarks', () => {
+    expect(approvalProblems({ lines: [{ ...r1Line, quantityKg: 6000 }], remarks: null, today: '2026-09-26', submissionDeadline: '2026-09-26' })).toEqual([]);
+  });
+  it('needs remarks after the deadline (Q5)', () => {
+    expect(approvalProblems({ lines: [{ ...r1Line, quantityKg: 6000 }], remarks: null, today: '2026-09-27', submissionDeadline: '2026-09-26' }))
+      .toEqual(['The submission deadline 2026-09-26 has passed — give remarks to approve it as an exception.']);
+  });
+  it('lists both the deviation and the late approval when neither has remarks', () => {
+    expect(approvalProblems({ lines: [r1Line], remarks: undefined, today: '2026-09-27', submissionDeadline: '2026-09-26' })).toHaveLength(2);
+  });
+  it('refuses a requisition with no lines', () => {
+    expect(approvalProblems({ lines: [], remarks: 'x', today: '2026-09-23', submissionDeadline: null })).toEqual(['A requisition needs at least one line to be approved.']);
   });
 });
