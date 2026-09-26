@@ -162,3 +162,37 @@ describe('buildFeedForecast — Current Inventory takes the day\'s posted moveme
     expect(daily.map((d) => d.daysOfStock)).toEqual([5, 14, 11, 10]);
   });
 });
+
+describe('buildFeedForecast — daily rows with no source, and the sort tie-break (fix round 1)', () => {
+  // No silo and no store: two sheds eat R1 from nowhere. The NONE "container" is not a real one, so it has no days
+  // of stock and no sharing across sheds.
+  const input: ForecastInput = {
+    planningDate: '2026-09-23', from: '2026-09-23', to: '2026-09-23', refillBufferDays: 2, leadTimeDays: 2,
+    sheds: [{ shedId: 'h1', shedCode: 'GRS/SHED-001', siloIds: [] }, { shedId: 'h2', shedCode: 'GRS/SHED-002', siloIds: [] }],
+    silos: [], store: null, items: { r1: 'Grower Diet' },
+    batches: ['h1', 'h2'].map((shedId, i) => ({
+      batchId: `b${i}`, batchNo: `GR-2026-0${i}`, breedId: 'l', shedId, heads: 100,
+      segments: [{ stageId: 'grower', stageCode: 'GROWER', start: '2026-09-01', end: null, projected: false }],
+    })),
+    feedRows: [row()],
+  };
+
+  it('gives a NONE-source row no days of stock and counts only its own batch', () => {
+    const { daily } = buildFeedForecast(input);
+    expect(daily.map((d) => [d.sourceType, d.daysOfStock, d.sharedBatchCount])).toEqual([['NONE', null, 1], ['NONE', null, 1]]);
+  });
+
+  it('breaks a shed/batch/date/item tie by stage code, then batch id', () => {
+    const tied: ForecastInput = {
+      ...input,
+      sheds: [{ shedId: 'h1', shedCode: 'GRS/SHED-001', siloIds: [] }],
+      batches: [
+        { batchId: 'z', batchNo: 'GR-X', breedId: 'l', shedId: 'h1', heads: 10, segments: [{ stageId: 'grower', stageCode: 'GROWER', start: '2026-09-01', end: null, projected: false }] },
+        { batchId: 'y', batchNo: 'GR-X', breedId: 'l', shedId: 'h1', heads: 10, segments: [{ stageId: 'grower', stageCode: 'GROWER', start: '2026-09-01', end: null, projected: false }] },
+        { batchId: 'a', batchNo: 'GR-X', breedId: 'l', shedId: 'h1', heads: 10, segments: [{ stageId: 'finisher', stageCode: 'FINISHER', start: '2026-09-01', end: null, projected: false }] },
+      ],
+      feedRows: [row(), row({ lifecycleId: 'f', stageId: 'finisher' })],
+    };
+    expect(buildFeedForecast(tied).daily.map((d) => `${d.stageCode} ${d.batchId}`)).toEqual(['FINISHER a', 'GROWER y', 'GROWER z']);
+  });
+});

@@ -219,3 +219,44 @@ describe('buildFeedForecast — D19 walk edge cases (Plan R review of Task 2)', 
     expect(daily.find((d) => d.date === '2026-09-24')!.currentInventoryKg).toBe(300);
   });
 });
+
+describe('buildFeedForecast — run-down needs demand or a transfer out that day (fix round 1)', () => {
+  // SILO-001 holds R1 (1,000 kg); SILO-002 holds R2 and is empty. The batch changes onto R2 on 26 Sep (day 4).
+  const nextDiet = (): ForecastInput => oneSilo({
+    leadTimeDays: 0,
+    sheds: [{ shedId: 'h1', shedCode: 'GRS/SHED-001', siloIds: ['s1', 's2'] }],
+    silos: [
+      { siloId: 's1', siloCode: 'GRS/SILO-001', itemId: 'r1', balanceKg: 1000 },
+      { siloId: 's2', siloCode: 'GRS/SILO-002', itemId: 'r2', balanceKg: 0 },
+    ],
+    items: { r1: 'Grower R1', r2: 'Grower R2' },
+    feedRows: [row({ toDay: 25 }), row({ lifecycleId: 'b', itemId: 'r2', itemName: 'Grower R2', fromDay: 26 })],
+  });
+
+  it('an empty next-diet silo idle until its diet starts runs down on the diet day, not the planning date', () => {
+    const r2 = buildFeedForecast(nextDiet()).sources.find((s) => s.itemId === 'r2')!;
+    expect(r2).toMatchObject({
+      isNextDiet: true, balanceKg: 0, runDownDate: '2026-09-26', refillDate: '2026-09-24', requiredOn: '2026-09-24', overdue: false,
+    });
+  });
+
+  it('a positive delivery on an idle day does not make an at-level silo run down that day', () => {
+    const input = nextDiet();
+    input.incoming = [{ locationId: 's2', itemId: 'r2', date: '2026-09-24', kg: 50 }];
+    expect(buildFeedForecast(input).sources.find((s) => s.itemId === 'r2')!.runDownDate).toBe('2026-09-26');
+  });
+
+  it('never leaves a shortfall without a run-down and a Required On', () => {
+    const cases: ForecastInput[] = [
+      nextDiet(),
+      oneSilo({ incoming: [{ locationId: 's1', itemId: 'r1', date: '2026-09-25', kg: -500 }] }, { lowLevelKg: 100 }),
+      oneSilo({ incoming: [{ locationId: 's1', itemId: 'r1', date: '2026-09-27', kg: 1000 }] }, { balanceKg: 200, lowLevelKg: 150 }),
+      oneSilo({}, { balanceKg: 10000 }),
+    ];
+    for (const input of cases) {
+      for (const s of buildFeedForecast(input).sources) {
+        if (s.shortfallKg > 0) expect(s.runDownDate !== null && s.requiredOn !== null).toBe(true);
+      }
+    }
+  });
+});

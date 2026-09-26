@@ -41,9 +41,11 @@
  *    demand. A silo cannot go below empty, so demand it cannot meet is not
  *    carried. Run-Down is the first day, on or after the planning date, whose
  *    closing balance is at or below the silo's low level — at or below zero
- *    when none is set (open question Q1). That day need not have demand: a
- *    transfer out on a day nobody eats can take the silo to its low level,
- *    and the shortfall it causes must have a run-down and a Required On. The run-down may be looked for past
+ *    when none is set (open question Q1). The day must have demand or a
+ *    transfer out: a transfer out on a day nobody eats can take the silo to
+ *    its low level, and the shortfall it causes must have a run-down and a
+ *    Required On — but an empty next-diet silo sitting idle is not run down
+ *    until its diet starts, or its requisition would be due today. The run-down may be looked for past
  *    `to` (`horizonTo`) so a one-day view still shows it; everything else
  *    keeps its window.
  * 7. Plan R (D16–D18): `daily` is one row per batch, item and date, read off
@@ -612,8 +614,10 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
       opening.set(date, open);
       const demand = byDate.get(date) ?? 0;
       const closing = open - demand;
-      // Any day counts, eaten from or not: a transfer out on an idle day can take the silo to its low level too.
-      if (runDownDate === null && date >= input.planningDate && closing <= threshold) runDownDate = date;
+      // Only a day that takes feed out counts — eaten from, or a transfer out. Either can bring the silo to its low
+      // level (so no shortfall is left without a date); a day with neither leaves an idle, empty silo alone.
+      const outgoing = demand > 0 || (inflow.get(date) ?? 0) < 0;
+      if (runDownDate === null && date >= input.planningDate && outgoing && closing <= threshold) runDownDate = date;
       carried = Math.max(0, closing); // demand the silo cannot meet is not carried into the next day
     }
     openingByKey.set(key, opening);
@@ -763,8 +767,10 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
       perDayIntakeKg: toKg(toMicrograms(e.heads * e.feedRow.kgPerHeadPerDay)),
       wastagePct: e.feedRow.wastagePct,
       demandKg: toKg(e.demandMicrograms),
-      daysOfStock: containerDemand > 0 ? Math.floor(opening / containerDemand) : null,
-      sharedBatchCount: batchesByKeyDate.get(`${e.key}|${e.date}`)?.size ?? 1,
+      // NONE is no container at all (every shed without a silo or store shares its key), so it has no stock to
+      // count days of and no batches to share with.
+      daysOfStock: e.sourceType !== 'NONE' && containerDemand > 0 ? Math.floor(opening / containerDemand) : null,
+      sharedBatchCount: e.sourceType === 'NONE' ? 1 : (batchesByKeyDate.get(`${e.key}|${e.date}`)?.size ?? 1),
       indicative,
       runDownDate: p.runDownDate,
       refillDate: p.refillDate,
@@ -776,7 +782,10 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
     if (a.shedCode !== b.shedCode) return a.shedCode < b.shedCode ? -1 : 1;
     if (a.batchNo !== b.batchNo) return a.batchNo < b.batchNo ? -1 : 1;
     if (a.date !== b.date) return a.date < b.date ? -1 : 1;
-    return a.itemName < b.itemName ? -1 : a.itemName > b.itemName ? 1 : 0;
+    if (a.itemName !== b.itemName) return a.itemName < b.itemName ? -1 : 1;
+    // An ANIMAL_WISE batch's stage groups share its batch number; batch id last keeps the order total.
+    if (a.stageCode !== b.stageCode) return a.stageCode < b.stageCode ? -1 : 1;
+    return a.batchId < b.batchId ? -1 : a.batchId > b.batchId ? 1 : 0;
   });
 
   const entries: { row: ForecastRow; firstDemandDate: string }[] = [];
