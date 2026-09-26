@@ -55,14 +55,25 @@ export default function FeedAlertsPanel() {
   const [loading, setLoading] = useState(false);
   const [acting, setActing] = useState<string | null>(null);
   const [error, setError] = useState("");
+  // Why the last evaluation fell short, if it did: the forecast could not be
+  // built (diet-change alerts skipped, the rest evaluated) or the call failed.
+  const [evalNotice, setEvalNotice] = useState("");
 
   const load = useCallback(async () => {
     if (!farmId) return;
     setLoading(true);
     setError("");
+    setEvalNotice("");
     try {
-      // Evaluation failing must not hide the alerts already raised.
-      await api.post("/feed-alert/evaluate", { farmId }).catch(() => undefined);
+      // Evaluation failing must not hide the alerts already raised — but the
+      // user is told, since what they see may then be out of date.
+      try {
+        const evalRes: any = await api.post("/feed-alert/evaluate", { farmId });
+        const forecastError = (evalRes?.data ?? evalRes)?.forecastError;
+        if (forecastError) setEvalNotice(tRef.current("falForecastFailed", { reason: forecastError }));
+      } catch {
+        setEvalNotice(tRef.current("falEvaluateFailed"));
+      }
       const res = await api.get(`/feed-alert?farmId=${farmId}&status=${status}`);
       // Guarded like the sibling inventory panels: a non-array body (proxy
       // error page, contract change) shows the empty state instead of crashing.
@@ -116,6 +127,7 @@ export default function FeedAlertsPanel() {
           stock is posted. */}
       <InlineAlert variant="info">{t("falNoScheduler")}</InlineAlert>
 
+      {evalNotice && <InlineAlert variant="warning">{evalNotice}</InlineAlert>}
       {error && <InlineAlert>{error}</InlineAlert>}
 
       {loading ? (

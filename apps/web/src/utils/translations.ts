@@ -1486,6 +1486,8 @@ export const translations = {
     falRaised: "raised {{at}}",
     falEscalated: "escalated to {{role}}",
     falNoScheduler: "Diet-change and requisition-deadline alerts update when this screen is opened or when stock is posted — there is no scheduler.",
+    falForecastFailed: "Diet-change alerts were not checked: the feed forecast for this farm could not be built ({{reason}}). Silo and requisition alerts were checked.",
+    falEvaluateFailed: "Feed alerts could not be re-checked just now; the list below may be out of date.",
 
     // Console — Finance
     finJournal: "Costing & WIP Journals",

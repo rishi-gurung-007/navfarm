@@ -79,34 +79,53 @@ export class FeedAlertService {
   async evaluateNow(queryFarmId: string | undefined, tenantId: string, userType: string | undefined) {
     const { farmId, companyId } = await this.forecast.resolveFarm(queryFarmId, tenantId, userType);
     const plan = await this.evaluateFarm(farmId, companyId, tenantId);
-    return { farmId, raised: plan.raise.length, renotified: plan.renotify.length, escalated: plan.escalate.length, resolved: plan.resolve.length };
+    return {
+      farmId, raised: plan.raise.length, renotified: plan.renotify.length, escalated: plan.escalate.length, resolved: plan.resolve.length,
+      ...(plan.forecastError ? { forecastError: plan.forecastError } : {}),
+    };
   }
 
-  async evaluateFarm(farmId: string, companyId: string, tenantId: string, opts: { levelsOnly?: boolean } = {}): Promise<AlertPlan> {
+  async evaluateFarm(
+    farmId: string, companyId: string, tenantId: string, opts: { levelsOnly?: boolean } = {},
+  ): Promise<AlertPlan & { forecastError?: string }> {
     const levelsOnly = !!opts.levelsOnly;
     // M8: a company created after 0118 has no rules until something ensures them.
     await this.alertRules.ensureDefaultRules(companyId, tenantId);
     return this.systemFarmScope(farmId, companyId, async () => {
       const nowMs = Date.now();
       const today = todayLocal(nowMs);
-      const rules = await this.loadRules(companyId, farmId, tenantId);
+      let rules = await this.loadRules(companyId, farmId, tenantId);
       // Caller contract (a): every silo of the farm, whichever one the posting touched.
       const silos = await this.loadSiloLevels(farmId, companyId, tenantId);
       let dietChanges: DietChange[] = [];
       let requisitions: OpenRequisitionFact[] = [];
+      let forecastError: string | undefined;
       if (!levelsOnly) {
         const dietRules = rules.filter((r) => r.isActive && r.eventType === 'DIET_CHANGE' && (r.farmId === null || r.farmId === farmId));
         if (dietRules.length) {
           // The forecast only needs to look as far ahead as the widest DIET_CHANGE window (checkpoint 15 caps it at 45).
           const horizon = Math.min(45, Math.max(1, ...dietRules.map((r) => r.thresholdValue ?? 3)));
-          dietChanges = (await this.forecast.computeForFarm(farmId, companyId, tenantId, { from: today, to: addDays(today, horizon) })).dietChanges;
+          try {
+            dietChanges = (await this.forecast.computeForFarm(farmId, companyId, tenantId, { from: today, to: addDays(today, horizon) })).dietChanges;
+          } catch (error) {
+            // Final review I1: the forecast refuses a farm it cannot compute
+            // (feed stocked in a unit other than KG, a broken lifecycle row).
+            // That must not silence the silo and deadline alerts, so only the
+            // DIET_CHANGE rules sit this pass out — and their open alerts with
+            // them: an empty diet list would resolve those as PASSED, and a
+            // dropped rule alone would resolve them as RULE_OFF.
+            forecastError = (error as Error).message;
+            this.logger.warn(`Diet-change alerts not evaluated for farm ${farmId}: ${forecastError}`);
+            rules = rules.filter((r) => r.eventType !== 'DIET_CHANGE');
+          }
         }
         requisitions = await this.loadOpenRequisitions(farmId, companyId, tenantId);
       }
-      const active = await this.loadActive(farmId, tenantId);
+      let active = await this.loadActive(farmId, tenantId);
+      if (forecastError) active = active.filter((a) => a.eventType !== 'DIET_CHANGE');
       const plan = planAlerts({ today, nowMs, farmId, rules, silos, dietChanges, requisitions, active, levelsOnly });
       await this.applyPlan(plan, { tenantId, companyId, farmId, nowMs });
-      return plan;
+      return forecastError ? { ...plan, forecastError } : plan;
     });
   }
 
@@ -325,6 +344,7 @@ export class FeedAlertService {
       ruleId: r.rule_id,
       eventType: r.event_type,
       subjectType: r.subject_type as ActiveAlertFact['subjectType'],
+      subjectId: r.subject_id,
       dedupKey: r.dedup_key,
       raisedAtMs: parseTs(r.raised_at),
       lastNotifiedDay: todayLocal(parseTs(r.last_notified_at)),

@@ -89,6 +89,17 @@ describe('planAlerts — silo levels (checkpoints 11–13)', () => {
     expect(plan.raise[0].message).toBe('GRS/SILO-001 holds 0 kg of no feed — at or below its low level of 1,000 kg.');
   });
 
+  // Final review minor 9: a silo taken out of service did not recover — its
+  // open alert closes for that reason, in either kind of evaluation.
+  it('resolves an open alert of a silo no longer among the farm\'s active silos as SILO_INACTIVE, not RECOVERED', () => {
+    for (const levelsOnly of [false, true]) {
+      const plan = planAlerts(base({ levelsOnly, silos: [silo1(5000, { siloId: 's2', siloCode: 'GRS/SILO-002' })], active: [active({ subjectId: 's1' })] }));
+      expect(plan.resolve).toEqual([{ alertId: 'a1', reason: 'SILO_INACTIVE' }]);
+    }
+    // Still an active silo, above its level: that is a recovery.
+    expect(planAlerts(base({ silos: [silo1(5000)], active: [active({ subjectId: 's1' })] })).resolve).toEqual([{ alertId: 'a1', reason: 'RECOVERED' }]);
+  });
+
   it('honours the farm filter and resolves the alerts of a deactivated rule', () => {
     expect(planAlerts(base({ rules: [{ ...lowRule, farmId: 'farm-other' }], silos: [silo1(10)] })).raise).toEqual([]);
     const plan = planAlerts(base({ rules: [{ ...lowRule, isActive: false }], silos: [silo1(10)], active: [active({})] }));

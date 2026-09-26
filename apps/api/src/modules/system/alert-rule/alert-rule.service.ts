@@ -136,10 +136,21 @@ export class AlertRuleService {
    */
   private async assertSingleLowRule(rule: { event_type: string; company_id: string | null; farm_id: string | null; is_active: boolean }, tenantId: string, excludeId?: string) {
     if (rule.event_type !== 'FEED_BELOW_L1' || !rule.is_active) return;
+    // Final review minor 1: a tenant-wide rule (company_id NULL) is evaluated
+    // for every company's farms (feed-alert loadRules), so it is the same
+    // event as any company's low rule. A new tenant-wide rule therefore
+    // clashes with every active low rule of the tenant, and a company rule
+    // clashes with its own company's (farm-filtered as above) or with any
+    // active tenant-wide one.
+    const scope = rule.company_id
+      ? [or(
+          and(eq(table.company_id, rule.company_id), ...(rule.farm_id ? [or(eq(table.farm_id, rule.farm_id), isNull(table.farm_id))!] : [])),
+          isNull(table.company_id),
+        )!]
+      : [];
     const [clash] = await this.db.select({ rule_id: table.rule_id, notification_code: table.notification_code }).from(table).where(and(
       eq(table.tenant_id, tenantId), eq(table.event_type, 'FEED_BELOW_L1'), eq(table.is_active, true),
-      rule.company_id ? eq(table.company_id, rule.company_id) : isNull(table.company_id),
-      ...(rule.farm_id ? [or(eq(table.farm_id, rule.farm_id), isNull(table.farm_id))!] : []),
+      ...scope,
       ...(excludeId ? [ne(table.rule_id, excludeId)] : []),
     )).limit(1);
     if (clash) throw new ConflictException(`Only one low feed rule applies per silo; ${clash.notification_code} already covers these farms.`);

@@ -63,6 +63,8 @@ export interface ActiveAlertFact {
   ruleId: string;
   eventType: string;
   subjectType: 'SILO' | 'BATCH' | 'REQUISITION';
+  /** The silo, batch or requisition the alert is about. Optional for older callers; without it a SILO alert cannot be told apart from a recovery. */
+  subjectId?: string;
   dedupKey: string;
   raisedAtMs: number;
   lastNotifiedDay: string;
@@ -83,7 +85,7 @@ export interface AlertCandidate {
   thresholdValue: number | null;
 }
 
-export type ResolveReason = 'RECOVERED' | 'PASSED' | 'CLOSED' | 'RULE_OFF';
+export type ResolveReason = 'RECOVERED' | 'PASSED' | 'CLOSED' | 'RULE_OFF' | 'SILO_INACTIVE';
 
 export interface AlertPlan {
   raise: AlertCandidate[];
@@ -210,11 +212,18 @@ export function planAlerts(input: PlanAlertsInput): AlertPlan {
   }
 
   const liveRuleIds = new Set(rules.map((r) => r.ruleId));
+  // input.silos is every active silo of the farm (the caller's contract), so a
+  // silo missing from it was deactivated or moved: its alert closes for that
+  // reason, not as a recovery the stock never made.
+  const liveSiloIds = new Set(input.silos.map((s) => s.siloId));
   for (const open of input.active) {
     if (wanted.has(open.dedupKey)) continue;
     // After a stock posting only silo facts were loaded; anything else stays as it is until a full evaluation.
     if (input.levelsOnly && open.subjectType !== 'SILO') continue;
-    plan.resolve.push({ alertId: open.alertId, reason: liveRuleIds.has(open.ruleId) ? REASON_BY_EVENT[open.eventType] ?? 'CLOSED' : 'RULE_OFF' });
+    const reason: ResolveReason = open.subjectType === 'SILO' && open.subjectId !== undefined && !liveSiloIds.has(open.subjectId)
+      ? 'SILO_INACTIVE'
+      : liveRuleIds.has(open.ruleId) ? REASON_BY_EVENT[open.eventType] ?? 'CLOSED' : 'RULE_OFF';
+    plan.resolve.push({ alertId: open.alertId, reason });
   }
   return plan;
 }

@@ -43,6 +43,26 @@ describe('FeedAlertsPanel', () => {
     await screen.findByText('Low feed: GRS/SILO-001');
   });
 
+  it('says so when diet-change alerts could not be checked because the forecast failed', async () => {
+    post.mockResolvedValueOnce({ data: { farmId: 'farm-grs', raised: 1, renotified: 0, escalated: 0, resolved: 0, forecastError: 'Silo holds feed in BAG, not KG.' } });
+    render(<FeedAlertsPanel />);
+    await screen.findByText('Low feed: GRS/SILO-001');
+    expect(screen.getByText('falForecastFailed:{"reason":"Silo holds feed in BAG, not KG."}')).toBeTruthy();
+  });
+
+  it('says so when the evaluation itself failed, and still lists alerts', async () => {
+    post.mockRejectedValueOnce(new Error('boom'));
+    render(<FeedAlertsPanel />);
+    await screen.findByText('Low feed: GRS/SILO-001');
+    expect(screen.getByText('falEvaluateFailed')).toBeTruthy();
+  });
+
+  it('shows no evaluation notice when evaluation succeeded', async () => {
+    render(<FeedAlertsPanel />);
+    await screen.findByText('Low feed: GRS/SILO-001');
+    expect(screen.queryByText(/falForecastFailed|falEvaluateFailed/)).toBeNull();
+  });
+
   it('acknowledges an alert', async () => {
     render(<FeedAlertsPanel />);
     fireEvent.click(await screen.findByRole('button', { name: 'falAcknowledge' }));

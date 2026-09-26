@@ -69,6 +69,39 @@ describe('AlertRuleService', () => {
         .rejects.toThrow(ConflictException);
     });
 
+    // Final review minor 1: a tenant-wide rule (company_id NULL) applies to
+    // every company's silos, so it and any company's low rule are one event.
+    const rendered = () => new MySqlDialect().sqlToQuery(capturedWhere as any);
+
+    it('a tenant-wide rule clashes with any active low rule of the tenant — no company or farm bound', async () => {
+      for (const farm_id of [null, 'farm-1']) {
+        selectQueue.push([]);
+        await (service as any).assertSingleLowRule({ event_type: 'FEED_BELOW_L1', company_id: null, farm_id, is_active: true }, 'tenant-1');
+        const q = rendered();
+        expect(q.sql).not.toContain('company_id');
+        expect(q.sql).not.toContain('farm_id');
+        expect(q.params).toEqual(expect.arrayContaining(['tenant-1', 'FEED_BELOW_L1']));
+      }
+      selectQueue.push([{ rule_id: 'co-rule', notification_code: 'FEED-BELOW-L1' }]);
+      await expect((service as any).assertSingleLowRule({ event_type: 'FEED_BELOW_L1', company_id: null, farm_id: null, is_active: true }, 'tenant-1'))
+        .rejects.toThrow(ConflictException);
+    });
+
+    it('a company rule also clashes with an active tenant-wide rule, whatever its farm filter', async () => {
+      for (const farm_id of [null, 'farm-1']) {
+        selectQueue.push([]);
+        await (service as any).assertSingleLowRule({ event_type: 'FEED_BELOW_L1', company_id: 'co-1', farm_id, is_active: true }, 'tenant-1');
+        const q = rendered();
+        // (own company [and farm filter]) OR tenant-wide
+        expect(q.sql).toContain('or `alert_rule`.`company_id` is null)');
+        if (farm_id) expect(q.sql).toContain('`alert_rule`.`farm_id` = ?');
+        expect(q.params).toContain('co-1');
+      }
+      selectQueue.push([{ rule_id: 'tenant-rule', notification_code: 'FEED-BELOW-L1' }]);
+      await expect((service as any).assertSingleLowRule({ event_type: 'FEED_BELOW_L1', company_id: 'co-1', farm_id: 'farm-1', is_active: true }, 'tenant-1'))
+        .rejects.toThrow(ConflictException);
+    });
+
     it('excludes the rule being edited from its own clash check', async () => {
       selectQueue.push([]);
       await (service as any).assertSingleLowRule({ event_type: 'FEED_BELOW_L1', company_id: 'co-1', farm_id: null, is_active: true }, 'tenant-1', 'rule-1');

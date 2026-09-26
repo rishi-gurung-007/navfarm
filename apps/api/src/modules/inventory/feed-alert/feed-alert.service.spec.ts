@@ -205,6 +205,62 @@ describe('FeedAlertService — evaluation (caller contract of planAlerts)', () =
     expect(q.params).toEqual(expect.arrayContaining(['u1', 'co-a']));
   });
 
+  describe('full evaluation when the forecast cannot be built (final review I1)', () => {
+    const rule = (over: Record<string, unknown>) => ({
+      thresholdReference: 'FIXED_VALUE', priorityLevel: 'WARNING', recipientRoles: ['FARM_MANAGER'], frequency: 'ONCE',
+      escalationAfterHours: null, escalationRole: null, farmId: null, isActive: true, ...over,
+    });
+    const rules = [
+      rule({ ruleId: 'r-low', notificationCode: 'FEED-BELOW-L1', eventType: 'FEED_BELOW_L1', thresholdReference: 'SILO_BELOW', thresholdValue: null }),
+      rule({ ruleId: 'r-diet', notificationCode: 'DIET-CHANGE', eventType: 'DIET_CHANGE', thresholdValue: 3 }),
+      rule({ ruleId: 'r-over', notificationCode: 'REQ-OVERDUE', eventType: 'REQ_DEADLINE', thresholdValue: 0 }),
+    ];
+    const openDiet = {
+      alertId: 'al-diet', ruleId: 'r-diet', eventType: 'DIET_CHANGE', subjectType: 'BATCH', dedupKey: 'r-diet|b1|i2|2026-09-27',
+      raisedAtMs: 0, lastNotifiedDay: '2026-09-25', acknowledged: false, escalated: false, observedValue: 2,
+    };
+
+    function build(computeForFarm: jest.Mock) {
+      const cls = transactionCls({});
+      const forecast = {
+        resolveFarm: jest.fn(async () => ({ farmId: 'farm-a', companyId: 'co' })),
+        withFarmScope: jest.fn((_f: string, _c: string, work: () => Promise<unknown>) => work()),
+        computeForFarm,
+      };
+      const service = new FeedAlertService(cls, forecast as any, {} as any, { ensureDefaultRules: jest.fn() } as any);
+      jest.spyOn(service as any, 'loadRules').mockResolvedValue(rules);
+      jest.spyOn(service as any, 'loadSiloLevels').mockResolvedValue([
+        { siloId: 's1', siloCode: 'F/SILO-1', itemId: 'i1', itemName: 'Grower', balanceKg: 500, lowLevelKg: 1000, highLevelKg: null },
+      ]);
+      jest.spyOn(service as any, 'loadOpenRequisitions').mockResolvedValue([
+        { requisitionId: 'rq1', reqNo: 'FRQ-1', status: 'DRAFT', submissionDeadline: '2020-01-01' },
+      ]);
+      jest.spyOn(service as any, 'loadActive').mockResolvedValue([openDiet]);
+      const apply = jest.spyOn(service as any, 'applyPlan').mockResolvedValue(undefined);
+      jest.spyOn((service as any).logger, 'warn').mockImplementation(() => undefined);
+      return { service, apply };
+    }
+
+    it('still raises the silo and deadline alerts, leaves DIET_CHANGE alerts alone, and says why', async () => {
+      const { service, apply } = build(jest.fn().mockRejectedValue(new Error('Silo F/SILO-1 holds feed in BAG, not KG.')));
+      const result = await service.evaluateNow('farm-a', 't', 'COMPANY_ADMIN');
+
+      const plan = apply.mock.calls[0][0] as AlertPlan;
+      expect(plan.raise.map((c) => c.rule.notificationCode).sort()).toEqual(['FEED-BELOW-L1', 'REQ-OVERDUE']);
+      // Not resolved as PASSED (an empty diet list would do that), and not RULE_OFF either.
+      expect(plan.resolve).toEqual([]);
+      expect(result).toEqual({ farmId: 'farm-a', raised: 2, renotified: 0, escalated: 0, resolved: 0, forecastError: 'Silo F/SILO-1 holds feed in BAG, not KG.' });
+    });
+
+    it('carries no forecastError when the forecast builds', async () => {
+      const { service, apply } = build(jest.fn().mockResolvedValue({ dietChanges: [] }));
+      const result = await service.evaluateNow('farm-a', 't', 'COMPANY_ADMIN');
+      expect(result).not.toHaveProperty('forecastError');
+      // With a real (empty) diet list the open diet alert has passed.
+      expect((apply.mock.calls[0][0] as AlertPlan).resolve).toEqual([{ alertId: 'al-diet', reason: 'PASSED' }]);
+    });
+  });
+
   it('evaluateNow resolves the farm with the caller\'s user type, then runs a full evaluation', async () => {
     const forecast = { resolveFarm: jest.fn(async () => ({ farmId: 'farm-a', companyId: 'co' })) };
     const service = new FeedAlertService(transactionCls({}), forecast as any, {} as any, {} as any);
