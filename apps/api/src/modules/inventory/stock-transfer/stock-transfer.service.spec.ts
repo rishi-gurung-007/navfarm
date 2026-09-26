@@ -8,6 +8,7 @@ import { InventoryLedgerService } from '../inventory-ledger/inventory-ledger.ser
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
 import { UomService } from '../../master-data/uom/uom.service';
 import { SiloFeedService } from '../silo-feed/silo-feed.service';
+import { FeedAlertService } from '../feed-alert/feed-alert.service';
 import * as schema from '../../../core/database/schema';
 
 /**
@@ -101,6 +102,78 @@ describe('StockTransferService', () => {
     }).compile();
 
     service = module.get<StockTransferService>(StockTransferService);
+  });
+
+  // Ruling M6: a posted transfer re-checks the silo levels of the farms at
+  // both ends, once, after its transaction has committed — and nothing that
+  // goes wrong in that re-check fails the posting.
+  describe('feed alert hook', () => {
+    let committed: boolean;
+    let feedAlerts: FeedAlertService;
+
+    beforeEach(async () => {
+      committed = false;
+      (mockDb as any).transaction = async (work: (tx: unknown) => Promise<unknown>) => {
+        const result = await work(mockDb);
+        committed = true;
+        return result;
+      };
+      rows.set(schema.locationMaster, [
+        { location_id: 'wh-1', location_type: 'STORE', farm_id: 'farm-a', company_id: 'co-1' },
+        { location_id: 'wh-2', location_type: 'SILO', farm_id: 'farm-b', company_id: 'co-1' },
+      ]);
+      feedAlerts = new FeedAlertService(cls, {} as any, {} as any, {} as any);
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [
+          StockTransferService,
+          { provide: ClsService, useValue: cls },
+          { provide: AuditLogService, useValue: { log: jest.fn().mockResolvedValue({}) } },
+          { provide: InventoryLedgerService, useValue: { writeTransferEntries: jest.fn().mockResolvedValue({ shipment: {}, receipt: {} }), getStockBalance: mockGetStockBalance } },
+          { provide: GlPostingService, useValue: { postInventoryLedgerEntry: jest.fn().mockResolvedValue({}) } },
+          { provide: UomService, useValue: { resolveConversionFactor: mockResolveConversionFactor } },
+          { provide: SiloFeedService, useValue: { assertCanReceive: mockAssertCanReceive } },
+          { provide: FeedAlertService, useValue: feedAlerts },
+        ],
+      }).compile();
+      service = module.get<StockTransferService>(StockTransferService);
+      const draft = {
+        transfer_id: 'tr-1', transfer_no: 'TR-1', company_id: 'co-1', status: 'DRAFT', posting_date: '2026-09-26',
+        from_warehouse_id: 'wh-1', to_warehouse_id: 'wh-2',
+        lines: [{ line_id: 'ln-1', item_id: 'item-1', quantity: '100', uom: 'KG' }],
+      };
+      jest.spyOn(service as any, 'loadForMutation').mockResolvedValue(draft);
+      jest.spyOn(service as any, 'assertWarehouses').mockResolvedValue(undefined);
+      jest.spyOn(service as any, 'assertSiloDestination').mockResolvedValue(undefined);
+      jest.spyOn(service, 'findOne').mockResolvedValue({ ...draft, status: 'POSTED' } as any);
+      mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ affectedRows: 1 }]) }) });
+    });
+
+    it('re-checks each end\'s farm once, after the transaction has committed', async () => {
+      const seen: unknown[] = [];
+      const evaluate = jest.spyOn(feedAlerts, 'evaluateFarm').mockImplementation(async () => {
+        seen.push({ committed, inTx: cls.get('tenantPostingTransaction') });
+        return { raise: [], renotify: [], escalate: [], resolve: [] };
+      });
+
+      const result = await service.post('tr-1', 'tenant-1', { userId: 'user-1' });
+
+      expect(result.status).toBe('POSTED');
+      expect(evaluate.mock.calls).toEqual([
+        ['farm-a', 'co-1', 'tenant-1', { levelsOnly: true }],
+        ['farm-b', 'co-1', 'tenant-1', { levelsOnly: true }],
+      ]);
+      expect(seen).toEqual([{ committed: true, inTx: undefined }, { committed: true, inTx: undefined }]);
+    });
+
+    it('still posts when the re-check throws', async () => {
+      jest.spyOn(feedAlerts, 'evaluateFarm').mockRejectedValue(new Error('alert_rule is locked'));
+      const warn = jest.spyOn((feedAlerts as any).logger, 'warn').mockImplementation(() => undefined);
+
+      const result = await service.post('tr-1', 'tenant-1', { userId: 'user-1' });
+
+      expect(result.status).toBe('POSTED');
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('alert_rule is locked'));
+    });
   });
 
   describe('farm scope', () => {

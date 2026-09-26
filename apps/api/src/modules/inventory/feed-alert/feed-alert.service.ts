@@ -42,8 +42,12 @@ export function visibleTo(
  * In-app feed alerts (Plan B). Loads the facts planAlerts needs for one farm
  * and writes the plan. No scheduler exists in the API, so evaluation runs
  * after stock postings (silo levels only), after requisition decisions, and
- * on demand from the Feed Alerts screen — the only path that advances
- * escalation and the date-driven rules (DIET_CHANGE, REQ_DEADLINE, DAILY).
+ * on demand from the Feed Alerts screen. A posting's levels-only pass plans
+ * the silo rules in full — raise, resolve, DAILY and ON_EACH_OCCURRENCE
+ * re-notify, and escalation of an ESCALATING silo alert past its hours — so
+ * silo alerts also move whenever stock does. The date-driven rules
+ * (DIET_CHANGE, REQ_DEADLINE) advance only through a full evaluation: the
+ * evaluate endpoint (the screen calls it on open) or a requisition decision.
  *
  * An alert belongs to the farm, not to whoever triggered the evaluation, so
  * every fact is read as system work for that farm (systemFarmScope): a

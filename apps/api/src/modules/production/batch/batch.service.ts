@@ -2952,7 +2952,7 @@ export class BatchService {
     }
 
     // Draft entries this call dispatches for real; their silo levels are
-    // re-checked once, after the day is posted (Ruling M6).
+    // re-checked once, when the dispatch loop ends (Ruling M6).
     let postedDrafts = 0;
     const activePairs = await this.loadActiveScheduleLines(batch, dateStr);
     const mandatoryPairs = activePairs.filter(({ line }) => line.is_mandatory);
@@ -2994,23 +2994,33 @@ export class BatchService {
             eq(schema.batchDailyData.posted, false),
           ),
         );
-      for (const row of draftRows) {
-        await this.batchDailyDataService.postEntry(
-          batchId,
-          {
-            line_id: row.line_id,
-            entry_date: dateStr,
-            entered_value:
-              row.entered_value != null ? Number(row.entered_value) : undefined,
-            entered_text: row.entered_text || undefined,
-            lot_no: row.lot_no || undefined,
-            remarks: row.remarks || undefined,
-          } as any,
-          tenantId,
-          userPayload,
-          { deferFeedAlerts: true },
-        );
-        postedDrafts++;
+      try {
+        for (const row of draftRows) {
+          await this.batchDailyDataService.postEntry(
+            batchId,
+            {
+              line_id: row.line_id,
+              entry_date: dateStr,
+              entered_value:
+                row.entered_value != null ? Number(row.entered_value) : undefined,
+              entered_text: row.entered_text || undefined,
+              lot_no: row.lot_no || undefined,
+              remarks: row.remarks || undefined,
+            } as any,
+            tenantId,
+            userPayload,
+            { deferFeedAlerts: true },
+          );
+          postedDrafts++;
+        }
+      } finally {
+        // Once per call (Ruling M6), and in a finally: if a later line throws,
+        // the lines before it have already moved stock (postEntry opens no
+        // transaction), so their silos are re-checked before the error goes
+        // on. The lock below moves no stock, so checking here rather than
+        // after it loses nothing; reevaluateFeedLevels never throws, so it
+        // cannot mask the original error.
+        if (postedDrafts) await this.batchDailyDataService.reevaluateFeedLevels(batch.farm_id, tenantId);
       }
     }
 
@@ -3052,8 +3062,6 @@ export class BatchService {
         status: 'LOCKED',
       },
     });
-
-    if (postedDrafts) await this.batchDailyDataService.reevaluateFeedLevels(batch.farm_id, tenantId);
 
     return {
       batch_id: batchId,
@@ -3400,26 +3408,31 @@ export class BatchService {
               eq(schema.batchDailyData.posted, false),
             ),
           );
-        for (const row of draftRows) {
-          await this.batchDailyDataService.postEntry(
-            batchId,
-            {
-              line_id: row.line_id,
-              entry_date: dateStr,
-              animal_id: row.animal_id || undefined,
-              entered_value:
-                row.entered_value != null
-                  ? Number(row.entered_value)
-                  : undefined,
-              entered_text: row.entered_text || undefined,
-              lot_no: row.lot_no || undefined,
-              remarks: row.remarks || undefined,
-            } as any,
-            tenantId,
-            userPayload,
-            { deferFeedAlerts: true },
-          );
-          postedDrafts++;
+        try {
+          for (const row of draftRows) {
+            await this.batchDailyDataService.postEntry(
+              batchId,
+              {
+                line_id: row.line_id,
+                entry_date: dateStr,
+                animal_id: row.animal_id || undefined,
+                entered_value:
+                  row.entered_value != null
+                    ? Number(row.entered_value)
+                    : undefined,
+                entered_text: row.entered_text || undefined,
+                lot_no: row.lot_no || undefined,
+                remarks: row.remarks || undefined,
+              } as any,
+              tenantId,
+              userPayload,
+              { deferFeedAlerts: true },
+            );
+            postedDrafts++;
+          }
+        } finally {
+          // As in postBatchDay: once per call, and even when a later line throws.
+          if (postedDrafts) await this.batchDailyDataService.reevaluateFeedLevels(batch.farm_id, tenantId);
         }
       }
     }
@@ -3465,8 +3478,6 @@ export class BatchService {
         status: 'LOCKED',
       },
     });
-
-    if (postedDrafts) await this.batchDailyDataService.reevaluateFeedLevels(batch.farm_id, tenantId);
 
     return {
       batch_id: batchId,

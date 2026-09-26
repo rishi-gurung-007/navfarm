@@ -541,6 +541,81 @@ describe('BatchService', () => {
       expect(onDuplicateKeyUpdate).toHaveBeenCalled();
     });
 
+    // Ruling M6 on the ANIMAL_WISE day post: every draft line defers its own
+    // silo re-check, and the call makes one for the batch's farm — also when a
+    // later line throws after earlier ones have already moved stock.
+    describe('feed level re-check', () => {
+      const optionalLine = { line_id: 'line-feed', is_mandatory: false, activity_name: 'Feed' };
+      const arrange = () => {
+        jest
+          .spyOn(service, 'findOne')
+          .mockResolvedValueOnce({ ...animalWiseBatch, farm_id: 'farm-1' } as any);
+        jest
+          .spyOn(service as any, 'loadScheduleLinesForHeader')
+          .mockResolvedValueOnce([{ header: {}, line: optionalLine }]);
+        mockDbSelect
+          .mockReturnValueOnce({
+            from: jest.fn().mockReturnValue({
+              where: jest.fn().mockResolvedValue([
+                { animal_id: 'a-1', animal_code: 'PIG-0001' },
+                { animal_id: 'a-2', animal_code: 'PIG-0002' },
+              ]),
+            }),
+          }) // live animals
+          .mockReturnValueOnce({
+            from: jest.fn().mockReturnValue({
+              where: jest.fn().mockReturnValue({
+                limit: jest.fn().mockResolvedValue([{ scheduler_id: 'sched-1' }]),
+              }),
+            }),
+          }) // scheduler header
+          .mockReturnValueOnce({
+            from: jest.fn().mockReturnValue({
+              where: jest.fn().mockResolvedValue([
+                { line_id: 'line-feed', animal_id: 'a-1', entered_value: '2.0000' },
+                { line_id: 'line-feed', animal_id: 'a-2', entered_value: '2.5000' },
+              ]),
+            }),
+          }); // two still-draft rows
+        mockDbInsert.mockReturnValue({
+          values: jest.fn().mockReturnValue({ onDuplicateKeyUpdate: jest.fn().mockResolvedValue({}) }),
+        });
+        return module.get('BATCH_DAILY_DATA_POSTER');
+      };
+
+      it('defers every line and re-checks the farm once', async () => {
+        const poster = arrange();
+        const result = await service.postStageDay('batch-1', 'stage-flush', '2026-09-11', 'tenant-123', { userId: 'user-1' });
+        expect(result.status).toBe('LOCKED');
+        expect(poster.postEntry).toHaveBeenCalledTimes(2);
+        for (const call of (poster.postEntry as jest.Mock).mock.calls) expect(call[4]).toEqual({ deferFeedAlerts: true });
+        expect(poster.reevaluateFeedLevels).toHaveBeenCalledTimes(1);
+        expect(poster.reevaluateFeedLevels).toHaveBeenCalledWith('farm-1', 'tenant-123');
+      });
+
+      it('still re-checks once when a later line throws, then rethrows', async () => {
+        const poster = arrange();
+        (poster.postEntry as jest.Mock)
+          .mockResolvedValueOnce({})
+          .mockRejectedValueOnce(new BadRequestException('line 2 refused'));
+        await expect(
+          service.postStageDay('batch-1', 'stage-flush', '2026-09-11', 'tenant-123', { userId: 'user-1' }),
+        ).rejects.toThrow('line 2 refused');
+        expect(poster.reevaluateFeedLevels).toHaveBeenCalledTimes(1);
+        expect(poster.reevaluateFeedLevels).toHaveBeenCalledWith('farm-1', 'tenant-123');
+        expect(mockDbInsert).not.toHaveBeenCalled(); // the day was not locked
+      });
+
+      it('does not re-check when the first line throws — nothing moved', async () => {
+        const poster = arrange();
+        (poster.postEntry as jest.Mock).mockRejectedValueOnce(new BadRequestException('line 1 refused'));
+        await expect(
+          service.postStageDay('batch-1', 'stage-flush', '2026-09-11', 'tenant-123'),
+        ).rejects.toThrow('line 1 refused');
+        expect(poster.reevaluateFeedLevels).not.toHaveBeenCalled();
+      });
+    });
+
     it('reopen requires a reason', async () => {
       await expect(
         service.reopenStageDay(
@@ -811,6 +886,34 @@ describe('BatchService', () => {
         dailyDataPoster.postEntry as jest.Mock
       ).mock.calls.map((c) => c[1]);
       expect(calledDtos.every((dto) => dto.draft === undefined)).toBe(true);
+    });
+
+    it('re-checks the farm\'s silo levels once even when a later draft line throws, then rethrows', async () => {
+      jest
+        .spyOn(service, 'findOne')
+        .mockResolvedValueOnce(batchWiseBatch as any);
+      jest
+        .spyOn(service as any, 'loadActiveScheduleLines')
+        .mockResolvedValueOnce([{ header: {}, line: { line_id: 'line-feed', is_mandatory: false, activity_name: 'Feed' } }]);
+      mockDbSelect.mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockResolvedValue([
+            { line_id: 'line-feed', entered_value: '40.0000' },
+            { line_id: 'line-feed', entered_value: '41.0000' },
+          ]),
+        }),
+      }); // two still-draft rows
+      const poster = module.get('BATCH_DAILY_DATA_POSTER');
+      (poster.postEntry as jest.Mock)
+        .mockResolvedValueOnce({})
+        .mockRejectedValueOnce(new BadRequestException('line 2 refused'));
+
+      await expect(
+        service.postBatchDay('batch-1', '2026-09-11', 'tenant-123', { userId: 'user-1' }),
+      ).rejects.toThrow('line 2 refused');
+      expect(poster.reevaluateFeedLevels).toHaveBeenCalledTimes(1);
+      expect(poster.reevaluateFeedLevels).toHaveBeenCalledWith('farm-1', 'tenant-123');
+      expect(mockDbInsert).not.toHaveBeenCalled(); // the day was not locked
     });
 
     it('locks cleanly when there are no mandatory lines due at all', async () => {
