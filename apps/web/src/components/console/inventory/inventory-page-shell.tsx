@@ -53,7 +53,7 @@ function useInventoryPageState() {
   return { ready, scope, activeLob, mayView };
 }
 
-export function InventoryPageShell({ activeKey, children }: { activeKey: InventoryTabKey; children: React.ReactNode }) {
+export function InventoryPageShell({ activeKey, fill = false, children }: { activeKey: InventoryTabKey; fill?: boolean; children: React.ReactNode }) {
   const { t, tLob } = useLanguage();
   const router = useRouter();
   const { ready, scope, activeLob, mayView } = useInventoryPageState();
@@ -108,8 +108,9 @@ export function InventoryPageShell({ activeKey, children }: { activeKey: Invento
     scope === "OPERATIONAL" ? t("invOperationalDesc", { lob: tLob(activeLob) }) : t("invCompanyDesc");
 
   return (
-    <ConsolePage>
-      <PageHeader title={title} description={description} />
+    // Plan S: a feed screen holds its header and filters still; only its table scrolls.
+    <ConsolePage fill={fill}>
+      <PageHeader title={title} description={description} sticky={!fill} />
       {children}
     </ConsolePage>
   );

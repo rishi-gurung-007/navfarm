@@ -5,7 +5,7 @@ import FeedForecastPanel from "@/components/console/inventory/feed-forecast-pane
 
 export default function InventoryFeedForecastPage() {
   return (
-    <InventoryPageShell activeKey="feed-forecast">
+    <InventoryPageShell activeKey="feed-forecast" fill>
       <FeedForecastPanel />
     </InventoryPageShell>
   );
