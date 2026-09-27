@@ -43,6 +43,7 @@ which one won and why.
 | D25 | Feed requisitions are approved in the Approvals inbox (Rishi, 27 Sep; supersedes the Plan B one-step approve on the requisition screen) | The requisition screen drafts and edits and has **Submit for approval**; submitting raises a PENDING approval request that appears in the sidebar **Approvals** inbox for the farm's own approvers (farm-level users included — the inbox must scope a farm-level document by its farm, not only by batch). Approve / reject there updates the requisition; the 20 % deviation and past-deadline remarks rules still apply at approval. |
 | D26 | One Requisitions screen (Rishi, 27 Sep) | Inventory → **Requisitions** (renamed from Feed Requisitions) with a type filter (Feed now; other types later); drafted from the forecast or entered by hand. |
 | D27 | Silo low level default for existing data (Rishi, 27 Sep; confirms D22) | Low = 20 % of capacity, High = 90 % of capacity, where empty; editable. |
+| D28 | Legacy silo storage type on non-silo locations (Rishi, 27 Sep) | 248 PEN/SHED/CRATE rows carry `storage_type = 'SILO'` from the old location template, so every save of them demands silo fields and fails. Fix in Plan S: silo-field checks key on the location TYPE (SILO), never on storage_type; a migration clears `storage_type` on rows whose location type is not SILO or STORE (only where it is 'SILO'), touching nothing else. Feed-requisition approval in the Approvals inbox needs both the inbox approve grant and the requisition approve grant (S5). FLUSH is 14 days (S7). |
 
 ## Scope — four plans
 

@@ -6,7 +6,7 @@
 
 - **Repo / branch:** `/Users/nero/Desktop/navfarm`, branch `feat/feed-forecast-report`. Work in place. Never switch branches, push or merge.
 - **Ledger:** `.superpowers/sdd/2026-09-27-feed-forecast-s-fixes/progress.md`. Create it with the SDD layout on first start (a `# SDD ledger — plan: docs/superpowers/plans/2026-09-27-feed-forecast-s-fixes.md` heading, a `## Progress` section). Copy `context.md` from `.superpowers/sdd/2026-09-26-feed-forecast-r-report-alignment/context.md` into the same folder and change its first bullet's plan name to this plan.
-- **Order:** strictly serial, Task 1 → Task 22, in the numbering below. Never run two tasks at once: Tasks 9–16 share `translations.ts`, and several pairs share a file (listed under "Task order").
+- **Order:** strictly serial, Task 1 → Task 22 (with Task 20a between 20 and 21), in the numbering below. Never run two tasks at once: Tasks 9–16 share `translations.ts`, and several pairs share a file (listed under "Task order").
 - **Every task ends with one commit and one ledger line.** The ledger line is `Task N: complete (<first-sha>..<last-sha>, tests: <exact command> → <result>)`. A task without its ledger line is not done. On resume, read the ledger, run `git log --oneline -25`, and start at the first task with no ledger line. If a task's commit exists but its ledger line does not, re-run that task's verification step, then write the line.
 - **Each task is self-contained:** its Files block names every file it touches, and its last steps name the exact verification command. A fresh agent can pick up any task from the ledger alone.
 - **Rulings** made while executing (a deviation from this text, with the reason) go in the ledger as `Ruling (Task N): …`, as the Plan R ledger does.
@@ -7344,6 +7344,46 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>" -- apps/api/src/drizzle
 
 ---
 
+### Task 20a: D28 — legacy `storage_type = 'SILO'` on pens, sheds and crates
+
+Run after Task 20, before Task 21 (so the rehearsal covers 0126). Spec D28.
+
+**Why:** 102 PEN, 57 SHED and 89 CRATE rows in nf_devco carry `storage_type = 'SILO'` from the old location template. `LocationService.assertSiloFieldsWhenSilo` is called with the storage type (`location.service.ts` ~:854 on create with `dto.storage_type`, ~:1173 on update with `effectiveStorage`), so saving any of them throws 409 "A SILO location requires silo_capacity_kg …". Testers cannot edit those pens/sheds/crates.
+
+**Files:**
+- Modify: `apps/api/src/modules/master-data/location/location.service.ts` (the two call sites above, and the `if (dto.storage_type === 'SILO')` / `!== 'SILO'` blocks next to the create call)
+- Modify: `apps/api/src/modules/master-data/location/location.service.spec.ts`
+- Create: `apps/api/src/drizzle/tenant/0126_clear_legacy_silo_storage_type.sql`; modify `meta/_journal.json` (idx 126, `when` 1791567600000 — one day after 0125's 1791481200000; check 0125's real value in the journal first and use +86400000)
+
+- [ ] **Step 1: Failing tests** in `location.service.spec.ts`:
+  - updating a PEN whose stored row has `storage_type: 'SILO'` and no silo fields (only `location_name` in the DTO) succeeds (no ConflictException);
+  - creating a PEN with `storage_type: 'SILO'` and no silo fields succeeds and the inserted row has `storage_type` null and no silo fields;
+  - creating or updating a SILO without `silo_capacity_kg` / `silo_capacity_uom` / `silo_reorder_days` still throws the 409 (unchanged);
+  - D22 level checks unchanged (existing tests keep passing).
+- [ ] **Step 2:** `pnpm nx test api -- --testPathPatterns=location --skip-nx-cache` → the new tests fail.
+- [ ] **Step 3: Implement.**
+  - Create path: call `this.assertSiloFieldsWhenSilo(typeCode, …)` (the location TYPE code already resolved as `typeCode`), and gate the level/clearing blocks on `typeCode === 'SILO'` instead of `dto.storage_type === 'SILO'`. When `typeCode` is neither SILO nor STORE, set `dto.storage_type = undefined` so a new pen is never stored with a silo storage type.
+  - Update path: compute the effective location TYPE (DTO value, else the row's) and pass that to `assertSiloFieldsWhenSilo`; when the effective type is not SILO/STORE and the row's storage_type is 'SILO', write `storage_type: null` in the same update.
+  - Comment (why): storage_type is a legacy template column; silo rules follow the location type, so 248 legacy pens stay editable (D28).
+- [ ] **Step 4: Migration 0126** — only the rows D28 names, nothing else:
+
+```sql
+-- D28 (Rishi, 27 Sep 2026): pens, sheds and crates loaded from the old location
+-- template carry storage_type = 'SILO', which made every save of them demand silo
+-- capacity. Silo rules follow the location type now; this clears the stale value on
+-- rows that are not a SILO or a STORE. No other column is touched.
+UPDATE `location_master`
+SET `storage_type` = NULL
+WHERE `storage_type` = 'SILO'
+  AND `location_type` NOT IN ('SILO', 'STORE');
+```
+  (Check the real column holding the type code — `location_type` in nf_devco — before writing; if the service stores the type elsewhere, match it.)
+- [ ] **Step 5:** tests pass; `pnpm nx test api -- --maxWorkers=2 --skip-nx-cache`; `pnpm nx run-many -t typecheck -p api,web --skip-nx-cache`.
+- [ ] **Step 6: Apply locally** with `pnpm nx run api:db-migrate-all-tenants`. If the classifier refuses it, record a Ruling and leave it to Task 21's rehearsal (the controller will apply it). If it runs: `SELECT location_type, storage_type, COUNT(*) FROM location_master WHERE storage_type IS NOT NULL GROUP BY 1,2` → only SILO/SILO and STORE/STORE remain; then `PUT /location/<a PEN that had storage_type SILO>` with a new name through the running API → 200 and the name changed in MySQL.
+- [ ] **Step 7: Commit** (explicit paths): `fix(location): silo rules follow the location type; clear legacy silo storage type on pens (D28)`.
+
+Task 21 adds to its rehearsal: a PEN with storage_type 'SILO' before → NULL after; SILO and STORE rows unchanged; per-row hashes of every other column unchanged.
+
 ### Task 21: B2 — rehearsal on a server-like copy, and the runbook
 
 **Files:**
@@ -7740,7 +7780,7 @@ The ledger line records the four gate results (api suites/tests, web suites/test
 
 | # | Question | Default used |
 |---|---|---|
-| S11 | 248 PEN/SHED/CRATE rows carry a legacy `storage_type = 'SILO'`, and the older silo-fields check (`assertSiloFieldsWhenSilo`, keyed on `storage_type`) refuses every save of them ("A SILO location requires silo_capacity_kg …"). This was true before Plan S (Task 4 ledger finding). Should Plan S clear their `storage_type`, or key that check on `location_type`? | Not changed in Plan S: it changes validation for 248 rows outside the review's scope. It is recorded in the runbook and the verification document for Rishi to decide. |
+| S11 (decided: fix it — Task 20a, spec D28) | 248 PEN/SHED/CRATE rows carry a legacy `storage_type = 'SILO'`, and the older silo-fields check (`assertSiloFieldsWhenSilo`, keyed on `storage_type`) refuses every save of them ("A SILO location requires silo_capacity_kg …"). This was true before Plan S (Task 4 ledger finding). Should Plan S clear their `storage_type`, or key that check on `location_type`? | Not changed in Plan S: it changes validation for 248 rows outside the review's scope. It is recorded in the runbook and the verification document for Rishi to decide. |
 
 ## Errata to the committed header (the first two are now corrected in the header; kept here for the record)
 
