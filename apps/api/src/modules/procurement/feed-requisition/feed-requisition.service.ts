@@ -11,7 +11,7 @@
  * RequisitionModule stays unregistered (its /requisition controller would
  * mount with it), so nothing here imports it.
  */
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, InternalServerErrorException, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { and, desc, eq, inArray, isNull, like, notInArray, sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import { MySql2Database } from 'drizzle-orm/mysql2';
@@ -28,12 +28,13 @@ import { FeedAlertService } from '../../inventory/feed-alert/feed-alert.service'
 import { SiloFeedService } from '../../inventory/silo-feed/silo-feed.service';
 import { InventoryLedgerService } from '../../inventory/inventory-ledger/inventory-ledger.service';
 import { ApprovalService } from '../../production/approval/approval.service';
+import type { ApprovalRequestRow } from '../../production/approval/approval.service';
 import {
-  DestinationInfo, DraftLine, FarmFeedSettings, FeedType, approvalProblems, bagCountFor, diffDaysIso, feedTypeOf, lineKey, planDraftUpsert,
+  ApprovalLine, DestinationInfo, DraftLine, FarmFeedSettings, FeedType, approvalProblems, bagCountFor, diffDaysIso, feedTypeOf, lineKey, planDraftUpsert,
   productionCycle, recommendLines, requisitionPriority, runKeyFor, serverToday, wasEdited,
 } from './feed-requisition.rules';
 import {
-  AutoDraftFeedRequisitionDto, CreateManualFeedRequisitionDto, DecideFeedRequisitionDto, FeedLineEditInput, QueryFeedRequisitionDto,
+  AutoDraftFeedRequisitionDto, CreateManualFeedRequisitionDto, FeedLineEditInput, QueryFeedRequisitionDto,
   UpdateFeedRequisitionDto,
 } from './dto/feed-requisition.dto';
 
@@ -41,8 +42,23 @@ import {
 export type UserCtx = { userId?: string; userType?: string; email?: string };
 
 export const FEED_DOC_TYPE = 'FEED';
-/** Statuses a feed requisition can still be edited, approved or rejected in (Requisition §1 row 33, up to APPROVED). */
+/** Statuses Plan B treated as open. Kept for the REQ_DEADLINE facts and the auto-draft cycle, which still count a requisition waiting for approval as "not approved". */
 export const OPEN_FEED_STATUSES = ['AUTO_DRAFT', 'DRAFT', 'PENDING_APPROVAL'];
+/** D25: the approval_request doc_type a feed requisition is submitted as. */
+export const FEED_APPROVAL_DOC_TYPE = 'FEED_REQUISITION';
+const STATUS_WORDS: Record<string, string> = {
+  PENDING_APPROVAL: 'waiting for approval', APPROVED: 'approved', REJECTED: 'rejected', CANCELLED: 'cancelled',
+};
+
+/**
+ * D25: a requisition the farm may still change and submit — a draft, or a
+ * PENDING_APPROVAL one Plan B left with no approval request (nothing in the
+ * inbox can decide it, so the farm submits it again). Once submitted it is
+ * the approver's, and changes wait for a rejection or a withdrawal.
+ */
+export function isEditableFeedRequisition(row: { status: string; approval_request_id: string | null }): boolean {
+  return row.status === 'AUTO_DRAFT' || row.status === 'DRAFT' || (row.status === 'PENDING_APPROVAL' && !row.approval_request_id);
+}
 /** Statuses that take a requisition out of its cycle: its lines no longer cover a silo and item (row 9). */
 const DEAD_FEED_STATUSES = ['REJECTED', 'CANCELLED'];
 export const NUMBERING_CLASH = 'Another requisition was numbered at the same moment — try again.';
@@ -85,13 +101,14 @@ export function requisitionListFields() {
     required_date: R.required_date,
     submission_deadline: R.submission_deadline,
     created_at: R.created_at,
+    approval_request_id: R.approval_request_id,
     line_count: sql<number>`(SELECT COUNT(*) FROM requisition_line rl WHERE rl.requisition_id = ${outer})`,
     requested_kg: sql<string>`(SELECT COALESCE(SUM(rl.quantity), 0) FROM requisition_line rl WHERE rl.requisition_id = ${outer})`,
   };
 }
 
 @Injectable()
-export class FeedRequisitionService {
+export class FeedRequisitionService implements OnModuleInit {
   constructor(
     private readonly cls: ClsService,
     private readonly forecast: FeedForecastService,
@@ -107,6 +124,15 @@ export class FeedRequisitionService {
     const tenantDb = this.cls.get<MySql2Database<typeof schema>>('tenantDb');
     if (!tenantDb) throw new Error('Tenant database connection context not established.');
     return tenantDb;
+  }
+
+  /** D25: tells the approval engine what approving, rejecting and withdrawing a feed requisition does. */
+  onModuleInit(): void {
+    this.approvals.registerDocumentHandler(FEED_APPROVAL_DOC_TYPE, {
+      decide: (request, decision, remarks, tenantId, user) => this.decideFromApproval(request, decision, remarks, tenantId, user),
+      withdraw: (request, tenantId, user) => this.withdrawFromApproval(request, tenantId, user),
+      afterDecide: (request, tenantId) => this.feedAlerts.evaluateFarmSafely(request.farm_id, request.company_id, tenantId),
+    });
   }
 
   /** The same farm/LOB bound requisition.service.ts applies. */
@@ -694,8 +720,8 @@ export class FeedRequisitionService {
       .limit(1)
       .for('update');
     if (!row) throw new NotFoundException(`Requisition '${requisitionId}' not found.`);
-    if (!OPEN_FEED_STATUSES.includes(row.status)) {
-      throw new BadRequestException(`Requisition ${row.req_no} is ${row.status} and can no longer be changed.`);
+    if (!isEditableFeedRequisition(row)) {
+      throw new BadRequestException(`Requisition ${row.req_no} is ${STATUS_WORDS[row.status] ?? row.status.toLowerCase()} and can no longer be changed.`);
     }
     return row;
   }
@@ -751,63 +777,61 @@ export class FeedRequisitionService {
     });
   }
 
+  /** The lines as approvalProblems reads them (checkpoint 18). */
+  private async linesForCheck(requisitionId: string): Promise<ApprovalLine[]> {
+    const lines = await this.db
+      .select({
+        line_seq: schema.requisitionLine.line_seq,
+        description: schema.requisitionLine.description,
+        quantity: schema.requisitionLine.quantity,
+        recommended: schema.requisitionLine.recommended_qty_kg,
+      })
+      .from(schema.requisitionLine)
+      .where(eq(schema.requisitionLine.requisition_id, requisitionId))
+      .orderBy(schema.requisitionLine.line_seq);
+    return lines.map((l) => ({
+      lineSeq: l.line_seq, itemName: l.description ?? '', quantityKg: Number(l.quantity),
+      recommendedQtyKg: l.recommended == null ? null : Number(l.recommended),
+    }));
+  }
+
   /**
-   * Requisition §4 step 4. Q3: one action from AUTO_DRAFT, DRAFT or
-   * PENDING_APPROVAL, with any last edits applied first so the 20 % check
-   * (checkpoint 18) sees the quantities being approved. Remarks — the ones
-   * sent now, or the ones already saved — answer both that and a late
-   * approval (checkpoint 22, Q5). The decision is recorded in the approval
-   * engine in the same transaction (Ruling C1), and only after it commits
-   * are the farm's alerts re-evaluated, so the REQ_DEADLINE reminder on this
-   * requisition resolves at once rather than at the next posting.
+   * D25 (Rishi, 27 Sep): the farm submits its requisition to the Approvals
+   * inbox. Own farm only (resolveOwnFarm, checkpoint 19); last edits are
+   * applied first, then the remarks rule is checked (S8: a requisition that
+   * needs remarks — more than 20 % off, checkpoint 18, or past its deadline,
+   * checkpoint 22 — never reaches an approver without them). The request and
+   * the status change commit together; the farm's alerts are re-evaluated
+   * after, so the REQ_DEADLINE reminder reads "waiting for approval" at once.
    */
-  async approve(id: string, dto: DecideFeedRequisitionDto, tenantId: string, user: UserCtx) {
-    await this.assertMayDecide(user);
+  async submit(id: string, dto: UpdateFeedRequisitionDto, tenantId: string, user: UserCtx) {
     const { farmId, companyId } = await this.resolveOwnFarm(id, tenantId, user);
     await this.forecast.withFarmScope(farmId, companyId, () => withTenantTransaction(this.cls, async () => {
       const row = await this.lockOpen(id, tenantId, farmId, companyId);
       await this.applyLineEdits(id, dto.lines, farmId, tenantId);
-      const lines = await this.db
-        .select({
-          line_seq: schema.requisitionLine.line_seq,
-          description: schema.requisitionLine.description,
-          quantity: schema.requisitionLine.quantity,
-          recommended: schema.requisitionLine.recommended_qty_kg,
-        })
-        .from(schema.requisitionLine)
-        .where(eq(schema.requisitionLine.requisition_id, id))
-        .orderBy(schema.requisitionLine.line_seq);
-      const remarks = dto.remarks?.trim() || row.remarks?.trim() || null;
-      // D16: the deadline is checked against the farm's day, the same one the forecast plans from.
-      const { today: approveToday } = await this.forecast.farmToday(companyId, tenantId);
-      const problems = approvalProblems({
-        lines: lines.map((l) => ({
-          lineSeq: l.line_seq, itemName: l.description ?? '', quantityKg: Number(l.quantity),
-          recommendedQtyKg: l.recommended == null ? null : Number(l.recommended),
-        })),
-        remarks,
-        today: approveToday,
-        submissionDeadline: row.submission_deadline,
-      });
+      const lines = await this.linesForCheck(id);
+      const remarks = dto.remarks !== undefined ? dto.remarks?.trim() || null : row.remarks?.trim() || null;
+      const { today } = await this.forecast.farmToday(companyId, tenantId);
+      const problems = approvalProblems({ lines, remarks, today, submissionDeadline: row.submission_deadline });
       if (problems.length) throw new BadRequestException(problems.join(' '));
-
-      const requestId = await this.approvals.decideFarmDocument({
-        documentType: 'FEED_REQUISITION',
+      const totalKg = lines.reduce((sum, l) => sum + l.quantityKg, 0);
+      const requestId = await this.approvals.submitFarmDocument({
+        documentType: FEED_APPROVAL_DOC_TYPE,
         documentId: id,
         documentNo: row.req_no,
         farmId,
         companyId,
         title: `Feed requisition ${row.req_no}`,
         urgency: row.priority === 'CRITICAL_FIRST_PRIORITY' || row.priority === 'CRITICAL' ? 'HIGH' : 'MEDIUM',
-        itemOrStage: 'FEED',
-        requestId: row.approval_request_id,
-      }, 'APPROVED', remarks, tenantId, user);
+        itemOrStage: 'Feed',
+        requestedQty: totalKg.toLocaleString('en-US', { maximumFractionDigits: 2 }),
+        uom: 'KG',
+        justification: remarks,
+      }, tenantId, user);
       await this.db.update(schema.requisition).set({
-        status: 'APPROVED',
+        status: 'PENDING_APPROVAL',
         approval_request_id: requestId,
         remarks,
-        approved_by: user?.userId ?? null,
-        approved_at: nowTs(),
         updated_by: user?.userId ?? null,
       }).where(eq(schema.requisition.requisition_id, id));
     }));
@@ -815,34 +839,76 @@ export class FeedRequisitionService {
     return this.forecast.withFarmScope(farmId, companyId, () => this.readView(id, tenantId));
   }
 
-  /** Reject with a reason, recorded in the approval engine like an approval (L15), then the farm's alerts re-evaluated. */
-  async reject(id: string, dto: DecideFeedRequisitionDto, tenantId: string, user: UserCtx) {
+  /**
+   * The requisition an approval request decides, locked. The request row has
+   * already passed the inbox's farm scope for this approver (farmConditions),
+   * so the requisition is found by the request's own document, company and
+   * farm — never by the caller's pin — and must still be waiting on exactly
+   * this request: a withdrawn-and-resubmitted requisition answers only to its
+   * newest request.
+   */
+  private async lockForApproval(request: ApprovalRequestRow, tenantId: string) {
+    const [row] = await this.db
+      .select()
+      .from(schema.requisition)
+      .where(and(
+        eq(schema.requisition.requisition_id, request.document_id ?? ''),
+        eq(schema.requisition.tenant_id, tenantId),
+        eq(schema.requisition.doc_type, FEED_DOC_TYPE),
+        eq(schema.requisition.company_id, request.company_id),
+        isNull(schema.requisition.deleted_at),
+      ))
+      .limit(1)
+      .for('update');
+    if (!row || row.farm_id !== request.farm_id) throw new NotFoundException('Requisition not found.');
+    if (row.status !== 'PENDING_APPROVAL' || row.approval_request_id !== request.request_id) {
+      throw new BadRequestException(`Requisition ${row.req_no} is not waiting for this approval.`);
+    }
+    return row;
+  }
+
+  /**
+   * D25: the inbox's decision, inside its transaction. Approval needs the
+   * requisition approve grant as well as the inbox's (S5: approving commits
+   * the mill), and re-checks the remarks rule on the approval day with the
+   * approver's remarks or the saved ones — D25 keeps checkpoints 18 and 22 at
+   * approval. A rejection needs a reason, appended to the remarks.
+   */
+  private async decideFromApproval(request: ApprovalRequestRow, decision: 'APPROVED' | 'REJECTED', remarks: string | null, tenantId: string, user: UserCtx) {
     await this.assertMayDecide(user);
-    const reason = dto.rejection_reason?.trim();
-    if (!reason) throw new BadRequestException('A rejection reason is required.');
-    const { farmId, companyId } = await this.resolveOwnFarm(id, tenantId, user);
-    await this.forecast.withFarmScope(farmId, companyId, () => withTenantTransaction(this.cls, async () => {
-      const row = await this.lockOpen(id, tenantId, farmId, companyId);
-      const requestId = await this.approvals.decideFarmDocument({
-        documentType: 'FEED_REQUISITION',
-        documentId: id,
-        documentNo: row.req_no,
-        farmId,
-        companyId,
-        title: `Feed requisition ${row.req_no}`,
-        itemOrStage: 'FEED',
-        requestId: row.approval_request_id,
-      }, 'REJECTED', reason, tenantId, user);
+    const row = await this.lockForApproval(request, tenantId);
+    if (decision === 'REJECTED') {
+      if (!remarks) throw new BadRequestException('A rejection reason is required.');
       await this.db.update(schema.requisition).set({
         status: 'REJECTED',
-        approval_request_id: requestId,
-        remarks: row.remarks ? `${row.remarks}\nRejected: ${reason}` : `Rejected: ${reason}`,
+        remarks: row.remarks ? `${row.remarks}\nRejected: ${remarks}` : `Rejected: ${remarks}`,
         updated_by: user?.userId ?? null,
-      }).where(eq(schema.requisition.requisition_id, id));
-    }));
-    await this.feedAlerts.evaluateFarmSafely(farmId, companyId, tenantId);
-    return this.forecast.withFarmScope(farmId, companyId, () => this.readView(id, tenantId));
+      }).where(eq(schema.requisition.requisition_id, row.requisition_id));
+      return;
+    }
+    const finalRemarks = remarks || row.remarks?.trim() || null;
+    const { today } = await this.forecast.farmToday(row.company_id, tenantId);
+    const problems = approvalProblems({ lines: await this.linesForCheck(row.requisition_id), remarks: finalRemarks, today, submissionDeadline: row.submission_deadline });
+    if (problems.length) throw new BadRequestException(problems.join(' '));
+    await this.db.update(schema.requisition).set({
+      status: 'APPROVED',
+      remarks: finalRemarks,
+      approved_by: user?.userId ?? null,
+      approved_at: nowTs(),
+      updated_by: user?.userId ?? null,
+    }).where(eq(schema.requisition.requisition_id, row.requisition_id));
   }
+
+  /** S9: a withdrawn request hands the requisition back to the farm as a draft. */
+  private async withdrawFromApproval(request: ApprovalRequestRow, tenantId: string, user: UserCtx) {
+    const row = await this.lockForApproval(request, tenantId);
+    await this.db.update(schema.requisition).set({
+      status: 'DRAFT',
+      approval_request_id: null,
+      updated_by: user?.userId ?? null,
+    }).where(eq(schema.requisition.requisition_id, row.requisition_id));
+  }
+
 
   /** The requisition view, read under the farm scope the caller already set (withFarmScope). */
   private async readView(requisitionId: string, tenantId: string) {

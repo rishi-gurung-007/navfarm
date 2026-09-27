@@ -43,6 +43,3 @@ export class UpdateFeedRequisitionDto {
   lines?: FeedLineEditInput[];
 }
 
-export class DecideFeedRequisitionDto extends UpdateFeedRequisitionDto {
-  @ApiPropertyOptional({ description: 'Required when rejecting' }) @IsOptional() @IsString() @MaxLength(2000) rejection_reason?: string;
-}

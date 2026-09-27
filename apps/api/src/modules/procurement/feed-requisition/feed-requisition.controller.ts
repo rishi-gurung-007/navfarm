@@ -6,12 +6,12 @@ import { RequirePermission } from '../../../common/decorators/require-permission
 import { FarmScoped } from '../../../common/farm-scope';
 import { FeedRequisitionService } from './feed-requisition.service';
 import {
-  AutoDraftFeedRequisitionDto, CreateManualFeedRequisitionDto, DecideFeedRequisitionDto, QueryFeedRequisitionDto, UpdateFeedRequisitionDto,
+  AutoDraftFeedRequisitionDto, CreateManualFeedRequisitionDto, QueryFeedRequisitionDto, UpdateFeedRequisitionDto,
 } from './dto/feed-requisition.dto';
 
-// Feed requisitions ride the Procurement Requisition grant: they are
-// requisitions (doc_type FEED), approved by whoever may approve requisitions,
-// and only for a farm in the caller's scope (checkpoint 19).
+// Feed requisitions ride the Procurement Requisition grant: drafted and
+// submitted here, approved in the Approvals inbox (D25) by whoever may approve
+// requisitions, and only for a farm in the caller's scope (checkpoint 19).
 @ApiTags('Feed Requisitions')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -60,21 +60,12 @@ export class FeedRequisitionController {
     return { success: true, message: 'Feed requisition saved.', data };
   }
 
-  @Post(':id/approve')
+  @Post(':id/submit')
   @HttpCode(200)
-  @RequirePermission('PROCUREMENT', 'REQUISITION', 'approve')
-  @ApiOperation({ summary: 'Approve: own farm only (cp. 19), remarks over 20 % deviation (cp. 18) or after the deadline (cp. 22)' })
-  async approve(@Param('id', ParseUUIDPipe) id: string, @Body() dto: DecideFeedRequisitionDto, @Req() req: any) {
-    const data = await this.feedRequisitions.approve(id, dto ?? {}, req.user?.tenantId || req['tenantId'], req.user);
-    return { success: true, message: 'Feed requisition approved.', data };
-  }
-
-  @Post(':id/reject')
-  @HttpCode(200)
-  @RequirePermission('PROCUREMENT', 'REQUISITION', 'approve')
-  @ApiOperation({ summary: 'Reject an open feed requisition with a reason' })
-  async reject(@Param('id', ParseUUIDPipe) id: string, @Body() dto: DecideFeedRequisitionDto, @Req() req: any) {
-    const data = await this.feedRequisitions.reject(id, dto ?? {}, req.user?.tenantId || req['tenantId'], req.user);
-    return { success: true, message: 'Feed requisition rejected.', data };
+  @RequirePermission('PROCUREMENT', 'REQUISITION', 'create')
+  @ApiOperation({ summary: 'Submit an open feed requisition to the Approvals inbox (D25); remarks needed over 20 % deviation (cp. 18) or after the deadline (cp. 22)' })
+  async submit(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateFeedRequisitionDto, @Req() req: any) {
+    const data = await this.feedRequisitions.submit(id, dto ?? {}, req.user?.tenantId || req['tenantId'], req.user);
+    return { success: true, message: 'Feed requisition submitted for approval.', data };
   }
 }
