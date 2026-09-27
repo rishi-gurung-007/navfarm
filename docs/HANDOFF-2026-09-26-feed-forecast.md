@@ -6,6 +6,22 @@ Forecast is on `main` or on the test server yet: `main` only has the fixes
 shipped on 25 Sep (roles, operational areas, chunk reload, currency envelope,
 Create button on a fresh tenant).
 
+## How to continue (read first)
+
+- Branch: `feat/feed-forecast-report` (contains Plans A, B, R). Nothing merged or pushed.
+- Current work: **Plan S** — fixes from Rishi's review of the running app (27 Sep):
+  defects, one Alerts page and one Approvals flow for feed (D24–D26), required
+  silo levels (D22/D27), demo seed and data migrations for testers' data
+  (D21–D23), plain wording and a fixed-page / scrolling-table design.
+  - Findings: `.superpowers/feed-forecast-sources/review-2026-09-27-running-app.md`
+  - Decisions: spec rows D21–D27 in `docs/superpowers/specs/2026-09-25-feed-forecast-design.md`
+  - Plan: `docs/superpowers/plans/2026-09-27-feed-forecast-s-fixes.md`
+  - Ledger: `.superpowers/sdd/2026-09-27-feed-forecast-s-fixes/progress.md`
+    (one line per finished task; resume at the first task without "complete").
+- Rules every agent follows: commit only with explicit paths; never nx.json;
+  never push, merge or run db-rebuild-demo (Rishi runs it); verify writes by
+  driving the API and reading MySQL; run gates with `--skip-nx-cache`.
+
 ## Branches
 
 | Branch | What | State |
