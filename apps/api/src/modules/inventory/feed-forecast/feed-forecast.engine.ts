@@ -273,6 +273,18 @@ export function todayInZone(zone: string | null | undefined, ms: number = Date.n
 }
 
 /**
+ * "YYYY-MM-DD" (or a timestamp starting with one) → "DD/MM/YY", the field
+ * specification's date format (D16), for every message a user reads off the
+ * API (review A9: alert texts said "deadline is 2026-09-26" while the screens
+ * said 26/09/26). Anything that is not a date comes back as it was.
+ */
+export function dayShort(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+  return m ? `${m[3]}/${m[2]}/${m[1].slice(2)}` : iso;
+}
+
+/**
  * Timestamps Plan B writes from JavaScript (feed_alert raised/notified/
  * escalated/acknowledged/resolved, requisition approved_at/deleted_at) follow
  * the codebase's convention for JS-written datetime columns: UTC as

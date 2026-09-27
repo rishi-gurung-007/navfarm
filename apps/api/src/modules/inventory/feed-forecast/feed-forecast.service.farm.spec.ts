@@ -109,8 +109,7 @@ describe('FeedForecastService — Plan B entry points', () => {
       expect(result.flags).toContainEqual({
         kind: 'AS_OF_PAST', planningDate: '2026-09-19', today: '2026-09-26',
         // The Task 6 carry ruling: the note says what is today's register and what that costs a back-dated view.
-        note: "Stock is shown as of 2026-09-19; batches, head counts and stages are today's register (2026-09-26), not as they stood then. "
-          + 'A batch that entered its current stage after 2026-09-19 carries no demand for the days before that stage began.',
+        note: 'Stock as of 19/09/26. Batches, head counts and stages are as of today (26/09/26); a batch that entered its stage after 19/09/26 shows no feed before that.',
       });
     });
 
@@ -131,9 +130,9 @@ describe('FeedForecastService — Plan B entry points', () => {
     it('refuses a planning date more than 45 days from today, before loading anything', async () => {
       const { cls, service, loadInput } = withToday('2026-09-26');
       await expect(cls.run(() => service.computeForFarm('farm-b', 'co-1', 'tenant-1', { planningDate: '2026-11-11' })))
-        .rejects.toThrow('The planning date must be within 45 days of today (2026-09-26).');
+        .rejects.toThrow('The planning date must be within 45 days of today (26/09/26).');
       await expect(cls.run(() => service.computeForFarm('farm-b', 'co-1', 'tenant-1', { planningDate: '2026-08-11' })))
-        .rejects.toThrow('The planning date must be within 45 days of today (2026-09-26).');
+        .rejects.toThrow('The planning date must be within 45 days of today (26/09/26).');
       expect(loadInput).not.toHaveBeenCalled();
     });
 
@@ -150,7 +149,7 @@ describe('FeedForecastService — Plan B entry points', () => {
     it('refuses a `to` more than 45 days past the planning date, before loading anything', async () => {
       const { cls, service, loadInput } = withToday('2026-09-26');
       await expect(cls.run(() => service.computeForFarm('farm-b', 'co-1', 'tenant-1', { planningDate: '2026-09-20', from: '2026-10-01', to: '2026-11-05' })))
-        .rejects.toThrow('The forecast reaches at most 45 days past the planning date (to 2026-11-04).');
+        .rejects.toThrow('The forecast reaches 04/11/26 at most (45 days after the planning date).');
       expect(loadInput).not.toHaveBeenCalled();
       await cls.run(() => service.computeForFarm('farm-b', 'co-1', 'tenant-1', { planningDate: '2026-09-20', from: '2026-10-01', to: '2026-11-04' }));
       expect(loadInput).toHaveBeenCalledTimes(1);
@@ -159,7 +158,7 @@ describe('FeedForecastService — Plan B entry points', () => {
     it('a `to` defaulted from `from` past the reach says so, since the caller never sent one', async () => {
       const { cls, service, loadInput } = withToday('2026-09-26');
       await expect(cls.run(() => service.computeForFarm('farm-b', 'co-1', 'tenant-1', { from: '2026-11-05' })))
-        .rejects.toThrow('No `to` was sent, so it defaults to from + 7 (2026-11-12), past the forecast\'s reach of 45 days after the planning date (2026-11-10). Send a `to` on or before 2026-11-10.');
+        .rejects.toThrow('The range would end 12/11/26, after the last forecast day 10/11/26. Choose an end date on or before 10/11/26.');
       expect(loadInput).not.toHaveBeenCalled();
     });
 

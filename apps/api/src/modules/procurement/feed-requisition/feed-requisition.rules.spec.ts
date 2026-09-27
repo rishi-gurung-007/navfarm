@@ -219,7 +219,7 @@ describe('approvalProblems — checkpoints 18 and 22', () => {
 
   it('names the line that deviates more than 20 % when there are no remarks — 6,000 → 9,000 kg', () => {
     expect(approvalProblems({ lines: [r1Line], remarks: '  ', today: '2026-09-23', submissionDeadline: '2026-09-26' }))
-      .toEqual(['Line 1 (Weaner Diet R1): requested 9,000 kg is more than 20% from the recommended 6,000 kg — remarks are required.']);
+      .toEqual(['Line 1 (Weaner Diet R1): 9,000 kg is more than 20% off the recommended 6,000 kg. Add remarks to explain.']);
   });
   it('accepts it with remarks', () => {
     expect(approvalProblems({ lines: [r1Line], remarks: 'Extra pigs arriving', today: '2026-09-23', submissionDeadline: '2026-09-26' })).toEqual([]);
@@ -232,7 +232,7 @@ describe('approvalProblems — checkpoints 18 and 22', () => {
   });
   it('needs remarks after the deadline (Q5)', () => {
     expect(approvalProblems({ lines: [{ ...r1Line, quantityKg: 6000 }], remarks: null, today: '2026-09-27', submissionDeadline: '2026-09-26' }))
-      .toEqual(['The submission deadline 2026-09-26 has passed — give remarks to approve it as an exception.']);
+      .toEqual(['The submission deadline (26/09/26) has passed. Add remarks to explain.']);
   });
   it('lists both the deviation and the late approval when neither has remarks', () => {
     expect(approvalProblems({ lines: [r1Line], remarks: undefined, today: '2026-09-27', submissionDeadline: '2026-09-26' })).toHaveLength(2);

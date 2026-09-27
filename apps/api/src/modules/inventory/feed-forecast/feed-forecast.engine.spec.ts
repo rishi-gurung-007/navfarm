@@ -5,7 +5,7 @@
  * see docs/superpowers/specs/2026-09-25-feed-forecast-design.md, D1-D3.
  */
 import { FeedRow } from '../../production/lifecycle/feed-row-days';
-import { buildFeedForecast, ForecastInput, parseUtcTimestamp, todayInZone, todayLocal, utcTimestamp } from './feed-forecast.engine';
+import { buildFeedForecast, dayShort, ForecastInput, parseUtcTimestamp, todayInZone, todayLocal, utcTimestamp } from './feed-forecast.engine';
 
 const workedExample: ForecastInput = {
   planningDate: '2026-09-23',
@@ -959,5 +959,17 @@ describe('todayInZone — D16 planning date in the farm time zone', () => {
     const ms = Date.UTC(2026, 8, 25, 12, 0);
     expect(todayInZone('Not/AZone', ms)).toBe(todayLocal(ms));
     expect(todayInZone(null, ms)).toBe(todayLocal(ms));
+  });
+});
+
+describe('dayShort — the field specification\'s DD/MM/YY for API messages (review A9)', () => {
+  it('formats a calendar day and a timestamp\'s day', () => {
+    expect(dayShort('2026-09-26')).toBe('26/09/26');
+    expect(dayShort('2026-11-07 10:00:00')).toBe('07/11/26');
+  });
+  it('dashes a missing day and leaves anything else alone', () => {
+    expect(dayShort(null)).toBe('—');
+    expect(dayShort('')).toBe('—');
+    expect(dayShort('soon')).toBe('soon');
   });
 });

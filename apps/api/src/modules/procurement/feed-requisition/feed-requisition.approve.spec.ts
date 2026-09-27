@@ -179,7 +179,7 @@ describe('FeedRequisitionService.approve — checkpoints 18 and 22, Q3', () => {
   it('refuses more than 20 % from the recommendation without remarks, writing nothing', async () => {
     const { service, writes, as } = setup(base(REQ_ROW, [{ ...LINE_6000, quantity: '9000.0000' }]));
     await expect(as(COMPANY_ADMIN_SCOPE, () => service.approve('req-1', {}, 'tenant-1', admin)))
-      .rejects.toThrow(new BadRequestException('Line 1 (Weaner Diet R1): requested 9,000 kg is more than 20% from the recommended 6,000 kg — remarks are required.'));
+      .rejects.toThrow(new BadRequestException('Line 1 (Weaner Diet R1): 9,000 kg is more than 20% off the recommended 6,000 kg. Add remarks to explain.'));
     expect(writes()).toEqual([]);
   });
 

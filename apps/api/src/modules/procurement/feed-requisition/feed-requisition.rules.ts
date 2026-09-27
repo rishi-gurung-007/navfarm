@@ -42,7 +42,7 @@
  * re-exported here as `addDaysIso`/`diffDaysIso` rather than copied, so a
  * calendar bug can only exist in one place.
  */
-import { addDays, diffDays, todayLocal, type ForecastSource } from '../../inventory/feed-forecast/feed-forecast.engine';
+import { addDays, dayShort, diffDays, todayLocal, type ForecastSource } from '../../inventory/feed-forecast/feed-forecast.engine';
 
 export type FeedType = 'BULK' | 'BAGGED';
 export type Priority = 'CRITICAL_FIRST_PRIORITY' | 'CRITICAL' | 'WARNING' | 'INFO';
@@ -286,11 +286,11 @@ export function approvalProblems(args: { lines: ApprovalLine[]; remarks: string 
   const problems: string[] = [];
   for (const l of args.lines) {
     if (deviationNeedsRemarks(l.recommendedQtyKg, l.quantityKg)) {
-      problems.push(`Line ${l.lineSeq} (${l.itemName}): requested ${kg(l.quantityKg)} kg is more than 20% from the recommended ${kg(l.recommendedQtyKg ?? 0)} kg — remarks are required.`);
+      problems.push(`Line ${l.lineSeq} (${l.itemName}): ${kg(l.quantityKg)} kg is more than 20% off the recommended ${kg(l.recommendedQtyKg ?? 0)} kg. Add remarks to explain.`);
     }
   }
   if (args.submissionDeadline && args.today > args.submissionDeadline) {
-    problems.push(`The submission deadline ${args.submissionDeadline} has passed — give remarks to approve it as an exception.`);
+    problems.push(`The submission deadline (${dayShort(args.submissionDeadline)}) has passed. Add remarks to explain.`);
   }
   return problems;
 }

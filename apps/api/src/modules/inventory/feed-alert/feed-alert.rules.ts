@@ -20,7 +20,7 @@
  * Ruling L12: no new copy of calendar-date arithmetic — diffDaysIso is the
  * engine's diffDays, re-exported by feed-requisition.rules (Task 3).
  */
-import type { DietChange } from '../feed-forecast/feed-forecast.engine';
+import { dayShort, type DietChange } from '../feed-forecast/feed-forecast.engine';
 import type { AlertFrequency, PriorityLevel } from '../../system/alert-rule/alert-rule.rules';
 import { diffDaysIso } from '../../procurement/feed-requisition/feed-requisition.rules';
 
@@ -115,6 +115,10 @@ const REASON_BY_EVENT: Record<string, ResolveReason> = {
 
 const kg = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 2 });
 const days = (n: number) => `${n} day${n === 1 ? '' : 's'}`;
+/** A requisition status in the words the farm uses (review A8: alert texts said "is AUTO_DRAFT"). */
+const REQ_STATUS_WORDS: Record<string, string> = {
+  AUTO_DRAFT: 'a draft', DRAFT: 'a draft', PENDING_APPROVAL: 'waiting for approval',
+};
 /** kg observed values come from float arithmetic upstream; compare at 3 decimals so a re-notify isn't fired by rounding noise. */
 const round3 = (n: number) => Math.round(n * 1000) / 1000;
 
@@ -138,8 +142,10 @@ function candidatesFor(rule: AlertRuleFact, input: PlanAlertsInput): AlertCandid
         rule, dedupKey: `${rule.ruleId}|${silo.siloId}`, subjectType: 'SILO', subjectId: silo.siloId, itemId: silo.itemId,
         title: low ? `Low feed: ${silo.siloCode}` : `Over-stock: ${silo.siloCode}`,
         message: low
-          ? `${silo.siloCode} holds ${kg(silo.balanceKg)} kg of ${what} — at or below its low level of ${kg(threshold)} kg.`
-          : `${silo.siloCode} holds ${kg(silo.balanceKg)} kg of ${what} — at or above its high level of ${kg(threshold)} kg. Do not order.`,
+          ? silo.itemName
+            ? `${silo.siloCode} has ${kg(silo.balanceKg)} kg of ${silo.itemName}, at or below its low level of ${kg(threshold)} kg.`
+            : `${silo.siloCode} is empty, at or below its low level of ${kg(threshold)} kg.`
+          : `${silo.siloCode} has ${kg(silo.balanceKg)} kg of ${what}, at or above its high level of ${kg(threshold)} kg. No more feed needed yet.`,
         observedValue: silo.balanceKg, thresholdValue: threshold,
       });
     }
@@ -148,12 +154,12 @@ function candidatesFor(rule: AlertRuleFact, input: PlanAlertsInput): AlertCandid
     for (const dc of input.dietChanges) {
       const left = diffDaysIso(input.today, dc.changeDate);
       if (left < 0 || left > window) continue;
-      const silo = dc.nextSourceType === 'SILO' && dc.nextSourceCode ? dc.nextSourceCode : 'none holds it yet';
+      const silo = dc.nextSourceType === 'SILO' && dc.nextSourceCode ? dc.nextSourceCode : 'none yet';
       const whenDiet = left === 0 ? 'today' : `in ${days(left)}`;
       out.push({
         rule, dedupKey: `${rule.ruleId}|${dc.batchId}|${dc.toItemId}|${dc.changeDate}`, subjectType: 'BATCH', subjectId: dc.batchId, itemId: dc.toItemId,
         title: `Diet change in ${days(left)}: ${dc.batchNo}`,
-        message: `${dc.batchNo} in ${dc.shedCode} moves from ${dc.fromItemName} to ${dc.toItemName} on ${dc.changeDate}, ${whenDiet}. Silo for the next diet: ${silo}.`,
+        message: `${dc.batchNo} in ${dc.shedCode} changes from ${dc.fromItemName} to ${dc.toItemName} on ${dayShort(dc.changeDate)} (${whenDiet}). Next diet silo: ${silo}.`,
         observedValue: left, thresholdValue: window,
       });
     }
@@ -170,7 +176,7 @@ function candidatesFor(rule: AlertRuleFact, input: PlanAlertsInput): AlertCandid
       out.push({
         rule, dedupKey: `${rule.ruleId}|${req.requisitionId}`, subjectType: 'REQUISITION', subjectId: req.requisitionId, itemId: null,
         title: `Requisition ${req.reqNo} not approved`,
-        message: `${req.reqNo} is ${req.status}; the submission deadline is ${req.submissionDeadline}, ${when}.`,
+        message: `${req.reqNo} is ${REQ_STATUS_WORDS[req.status] ?? 'not approved'}. Submission deadline ${dayShort(req.submissionDeadline)}, ${when}.`,
         observedValue: left, thresholdValue: window,
       });
     }

@@ -7,7 +7,7 @@
  * diet remain separate lines": a group is one batch, one item and one source,
  * so a diet change is always a new line. Pure — no database, no Nest.
  */
-import { addDays, diffDays, type DailyForecastRow } from './feed-forecast.engine';
+import { addDays, dayShort, diffDays, type DailyForecastRow } from './feed-forecast.engine';
 
 /** Workbook checkpoint 15: the forecast looks at most 45 days past `from` ("for example 45 days"). */
 export const MAX_SPAN_DAYS = 45;
@@ -53,12 +53,12 @@ export function resolveViewRange(args: {
 
 /** Why a range cannot be forecast, or null. A reporting period is named, since its dates were not typed by the user. */
 export function spanProblem(from: string, to: string, period?: PeriodRange | null): string | null {
-  if (to < from) return 'to must not be before from.';
+  if (to < from) return 'The end date is before the start date.';
   const span = diffDays(from, to);
   if (span <= MAX_SPAN_DAYS) return null;
   return period
-    ? `Reporting period ${period.periodCode} runs ${span + 1} days (${period.startDate} to ${period.endDate}); the forecast covers at most ${MAX_SPAN_DAYS + 1}.`
-    : `The forecast covers at most ${MAX_SPAN_DAYS} days after from.`;
+    ? `Reporting period ${period.periodCode} runs ${span + 1} days (${dayShort(period.startDate)} to ${dayShort(period.endDate)}); the forecast covers at most ${MAX_SPAN_DAYS + 1}.`
+    : `Choose a range of at most ${MAX_SPAN_DAYS} days.`;
 }
 
 /** One line of the report grid: a single date (Daily, Custom) or a batch + item's days in a week or period. */

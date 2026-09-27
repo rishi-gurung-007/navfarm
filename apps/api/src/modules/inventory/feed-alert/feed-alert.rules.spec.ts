@@ -32,7 +32,7 @@ describe('planAlerts — silo levels (checkpoints 11–13)', () => {
     expect(plan.raise).toHaveLength(1);
     expect(plan.raise[0]).toMatchObject({ dedupKey: 'rule-low|s1', subjectType: 'SILO', subjectId: 's1', itemId: 'r1', observedValue: 1000, thresholdValue: 1000 });
     expect(plan.raise[0].title).toBe('Low feed: GRS/SILO-001');
-    expect(plan.raise[0].message).toBe('GRS/SILO-001 holds 1,000 kg of Weaner Diet R1 — at or below its low level of 1,000 kg.');
+    expect(plan.raise[0].message).toBe('GRS/SILO-001 has 1,000 kg of Weaner Diet R1, at or below its low level of 1,000 kg.');
   });
 
   it('does not raise a second alert while one is active (deduplicate until recovery)', () => {
@@ -68,7 +68,7 @@ describe('planAlerts — silo levels (checkpoints 11–13)', () => {
   it('raises FEED_ABOVE at or above the high level, as INFO', () => {
     const plan = planAlerts(base({ silos: [silo1(10800)] }));
     expect(plan.raise.map((c) => c.rule.notificationCode)).toEqual(['FEED-ABOVE']);
-    expect(plan.raise[0].message).toContain('Do not order.');
+    expect(plan.raise[0].message).toContain('No more feed needed yet.');
   });
 
   it('resolves FEED_ABOVE when the balance falls back below the high level', () => {
@@ -86,7 +86,7 @@ describe('planAlerts — silo levels (checkpoints 11–13)', () => {
 
   it('alerts an empty silo with a low level set (Q7)', () => {
     const plan = planAlerts(base({ silos: [silo1(0, { itemId: null, itemName: null })] }));
-    expect(plan.raise[0].message).toBe('GRS/SILO-001 holds 0 kg of no feed — at or below its low level of 1,000 kg.');
+    expect(plan.raise[0].message).toBe('GRS/SILO-001 is empty, at or below its low level of 1,000 kg.');
   });
 
   // Final review minor 9: a silo taken out of service did not recover — its
@@ -148,12 +148,12 @@ describe('planAlerts — diet change (checkpoint 30)', () => {
     const plan = planAlerts(base({ rules: [dietRule], dietChanges: [change] }));
     expect(plan.raise).toHaveLength(1);
     expect(plan.raise[0]).toMatchObject({ subjectType: 'BATCH', subjectId: 'b', itemId: 'r2', observedValue: 3, dedupKey: 'rule-diet|b|r2|2026-09-26' });
-    expect(plan.raise[0].message).toBe('WG-2026-38 in GRS/SHED-003 moves from Weaner Diet R1 to Weaner Diet R2 on 2026-09-26, in 3 days. Silo for the next diet: GRS/SILO-002.');
+    expect(plan.raise[0].message).toBe('WG-2026-38 in GRS/SHED-003 changes from Weaner Diet R1 to Weaner Diet R2 on 26/09/26 (in 3 days). Next diet silo: GRS/SILO-002.');
   });
 
   it('says so when no silo holds the next diet', () => {
     const plan = planAlerts(base({ rules: [dietRule], dietChanges: [{ ...change, nextSourceType: 'STORE', nextSourceCode: null }] }));
-    expect(plan.raise[0].message).toContain('Silo for the next diet: none holds it yet.');
+    expect(plan.raise[0].message).toContain('Next diet silo: none yet.');
   });
 
   it('stays quiet 4 days out and resolves once the change has passed', () => {
@@ -169,10 +169,23 @@ describe('planAlerts — requisition deadline (checkpoint 20)', () => {
   it('Friday reminder one day before, Saturday CRITICAL on the day', () => {
     const friday = planAlerts(base({ today: '2026-09-25', rules: [reminderRule, overdueRule], requisitions: [draft] }));
     expect(friday.raise.map((c) => c.rule.notificationCode)).toEqual(['REQ-REMINDER']);
-    expect(friday.raise[0].message).toBe('REQ-GRS-2026-00041 is AUTO_DRAFT; the submission deadline is 2026-09-26, 1 day left.');
+    expect(friday.raise[0].message).toBe('REQ-GRS-2026-00041 is a draft. Submission deadline 26/09/26, 1 day left.');
     const saturday = planAlerts(base({ today: '2026-09-26', rules: [reminderRule, overdueRule], requisitions: [draft] }));
     expect(saturday.raise.map((c) => c.rule.notificationCode)).toEqual(['REQ-OVERDUE']);
-    expect(saturday.raise[0].message).toBe('REQ-GRS-2026-00041 is AUTO_DRAFT; the submission deadline is 2026-09-26, today.');
+    expect(saturday.raise[0].message).toBe('REQ-GRS-2026-00041 is a draft. Submission deadline 26/09/26, today.');
+  });
+
+  it('names the requisition status in words and carries no ISO date anywhere (review A8, A9)', () => {
+    const pending = planAlerts(base({ today: '2026-09-25', rules: [reminderRule, overdueRule], requisitions: [{ ...draft, status: 'PENDING_APPROVAL' }] }));
+    expect(pending.raise[0].message).toBe('REQ-GRS-2026-00041 is waiting for approval. Submission deadline 26/09/26, 1 day left.');
+    const everything = planAlerts(base({
+      today: '2026-09-23',
+      rules: [lowRule, dietRule, reminderRule, overdueRule],
+      silos: [silo1(900)],
+      requisitions: [{ ...draft, submissionDeadline: '2026-09-23' }],
+    }));
+    expect(everything.raise.length).toBeGreaterThan(0);
+    for (const r of everything.raise) expect(`${r.title} ${r.message}`).not.toMatch(/\d{4}-\d{2}-\d{2}/);
   });
 
   it('on the deadline day only the overdue alert is open — the reminder closes as REQ-OVERDUE takes over', () => {

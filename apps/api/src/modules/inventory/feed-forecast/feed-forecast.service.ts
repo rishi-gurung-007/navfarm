@@ -7,7 +7,7 @@ import * as schema from '../../../core/database/schema';
 import { activeFarmOfCompany, batchScopeConditions, farmScope, FARM_SCOPE_KEY, FarmScope, restrictedScopeConditions } from '../../../common/farm-scope';
 import { FeedStockMovement, InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
 import { FeedRow, stageDayRange } from '../../production/lifecycle/feed-row-days';
-import { buildFeedForecast, DailyForecastRow, DietChange, ForecastFlag, ForecastInput, ForecastRow, ForecastSource, isTimeZone, todayInZone } from './feed-forecast.engine';
+import { buildFeedForecast, DailyForecastRow, dayShort, DietChange, ForecastFlag, ForecastInput, ForecastRow, ForecastSource, isTimeZone, todayInZone } from './feed-forecast.engine';
 import { DEFAULT_SPAN_DAYS, ForecastView, groupRows, MAX_SPAN_DAYS, PeriodRange, ReportRow, resolveViewRange, spanProblem } from './feed-forecast.view';
 import { stockAsOf } from './feed-forecast.stock';
 import { QueryFeedForecastDto } from './dto/feed-forecast.dto';
@@ -247,7 +247,7 @@ function diffDays(a: string, b: string): number {
  * word or bound it differently.
  */
 function planningDateProblem(today: string, planningDate: string): string | null {
-  return Math.abs(diffDays(today, planningDate)) > MAX_SPAN_DAYS ? `The planning date must be within ${MAX_SPAN_DAYS} days of today (${today}).` : null;
+  return Math.abs(diffDays(today, planningDate)) > MAX_SPAN_DAYS ? `The planning date must be within ${MAX_SPAN_DAYS} days of today (${dayShort(today)}).` : null;
 }
 
 /**
@@ -261,8 +261,8 @@ function reachProblem(planningDate: string, to: string, toSent: boolean): string
   const reach = addDays(planningDate, MAX_SPAN_DAYS);
   if (to <= reach) return null;
   return toSent
-    ? `The forecast reaches at most ${MAX_SPAN_DAYS} days past the planning date (to ${reach}).`
-    : `No \`to\` was sent, so it defaults to from + ${DEFAULT_SPAN_DAYS} (${to}), past the forecast's reach of ${MAX_SPAN_DAYS} days after the planning date (${reach}). Send a \`to\` on or before ${reach}.`;
+    ? `The forecast reaches ${dayShort(reach)} at most (${MAX_SPAN_DAYS} days after the planning date).`
+    : `The range would end ${dayShort(to)}, after the last forecast day ${dayShort(reach)}. Choose an end date on or before ${dayShort(reach)}.`;
 }
 
 /** YYYY-MM-DD *and* a real day: Date.UTC rolls 2026-02-31 over to 3 March, so the parse must round-trip. */
@@ -279,8 +279,8 @@ function isCalendarDay(iso: string): boolean {
  */
 export function asOfPastNote(planningDate: string, today: string): string {
   return (
-    `Stock is shown as of ${planningDate}; batches, head counts and stages are today's register (${today}), not as they stood then. ` +
-    `A batch that entered its current stage after ${planningDate} carries no demand for the days before that stage began.`
+    `Stock as of ${dayShort(planningDate)}. Batches, head counts and stages are as of today (${dayShort(today)}); ` +
+    `a batch that entered its stage after ${dayShort(planningDate)} shows no feed before that.`
   );
 }
 
@@ -516,7 +516,7 @@ export class FeedForecastService {
         : periods.find((p) => p.startDate <= planningDate && planningDate <= p.endDate) ?? null;
       if (!period) {
         throw new BadRequestException(
-          query.periodId ? 'Reporting period not found.' : `No reporting period covers ${planningDate}. Add one under Master Data → Reporting Periods.`,
+          query.periodId ? 'Reporting period not found.' : `No reporting period covers ${dayShort(planningDate)}. Add one under Farm Master → Reporting Periods.`,
         );
       }
     } else if (query.periodId !== undefined) {
@@ -535,9 +535,9 @@ export class FeedForecastService {
     // Q7: an "as of" forecast has no projection for days already behind the planning date.
     const forecastFrom = to < planningDate ? null : from > planningDate ? from : planningDate;
     const forecastNote = forecastFrom === null
-      ? `Nothing in ${from} to ${to} is forecast: the range ends before the planning date (${planningDate}). Move the planning date back to see it.`
+      ? `Nothing from ${dayShort(from)} to ${dayShort(to)} is forecast: the range ends before the planning date (${dayShort(planningDate)}).`
       : forecastFrom > from
-        ? `Dates before the planning date (${planningDate}) are not forecast. Move the planning date back to see them.`
+        ? `Days before the planning date (${dayShort(planningDate)}) are not forecast.`
         : null;
     return {
       planningDate: result.planningDate,

@@ -792,13 +792,13 @@ describe('FeedForecastService.getForecast — views, periods and the report (Pla
     const report = await service.getForecast({ view: 'PERIOD' }, 'tenant-1', 'STANDARD_USER');
     expect(compute.mock.calls[0][3]).toMatchObject({ from: '2026-08-30', to: '2026-09-26' });
     expect(report).toMatchObject({ from: '2026-08-30', to: '2026-09-26', forecastFrom: '2026-09-23', period: { periodCode: '2026-09' } });
-    expect(report.forecastNote).toBe('Dates before the planning date (2026-09-23) are not forecast. Move the planning date back to see them.');
+    expect(report.forecastNote).toBe('Days before the planning date (23/09/26) are not forecast.');
   });
 
   it('refuses a reporting period longer than the 45-day horizon, naming it, and computes nothing (Review Focus 3)', async () => {
     jest.spyOn(service as any, 'loadPeriods').mockResolvedValue([{ ...september, periodId: 'p-long', periodCode: '2026-X', startDate: '2026-08-01', endDate: '2026-09-19' }]);
     await expect(service.getForecast({ view: 'PERIOD', periodId: 'p-long' }, 'tenant-1', 'STANDARD_USER')).rejects.toThrow(
-      new BadRequestException('Reporting period 2026-X runs 50 days (2026-08-01 to 2026-09-19); the forecast covers at most 46.'),
+      new BadRequestException('Reporting period 2026-X runs 50 days (01/08/26 to 19/09/26); the forecast covers at most 46.'),
     );
     expect(compute).not.toHaveBeenCalled();
   });
@@ -806,7 +806,7 @@ describe('FeedForecastService.getForecast — views, periods and the report (Pla
   it('says where to add a period when none covers the planning date, and refuses an unknown period id', async () => {
     jest.spyOn(service as any, 'loadPeriods').mockResolvedValue([]);
     await expect(service.getForecast({ view: 'PERIOD' }, 'tenant-1', 'STANDARD_USER')).rejects.toThrow(
-      new BadRequestException('No reporting period covers 2026-09-23. Add one under Master Data → Reporting Periods.'),
+      new BadRequestException('No reporting period covers 23/09/26. Add one under Farm Master → Reporting Periods.'),
     );
     await expect(service.getForecast({ view: 'PERIOD', periodId: 'nope' }, 'tenant-1', 'STANDARD_USER')).rejects.toThrow(
       new BadRequestException('Reporting period not found.'),
@@ -818,7 +818,7 @@ describe('FeedForecastService.getForecast — views, periods and the report (Pla
     const report = await service.getForecast({ from: '2026-09-10', to: '2026-09-15' }, 'tenant-1', 'STANDARD_USER');
     expect(report.forecastFrom).toBeNull();
     expect(report.forecastNote).toBe(
-      'Nothing in 2026-09-10 to 2026-09-15 is forecast: the range ends before the planning date (2026-09-23). Move the planning date back to see it.',
+      'Nothing from 10/09/26 to 15/09/26 is forecast: the range ends before the planning date (23/09/26).',
     );
   });
 
@@ -845,7 +845,7 @@ describe('FeedForecastService.getForecast — views, periods and the report (Pla
   it('refuses a planning date more than 45 days from today before looking up a period (Q8)', async () => {
     const loadPeriods = jest.spyOn(service as any, 'loadPeriods').mockResolvedValue([september]);
     await expect(service.getForecast({ view: 'PERIOD', planningDate: '2026-11-08' }, 'tenant-1', 'STANDARD_USER')).rejects.toThrow(
-      new BadRequestException('The planning date must be within 45 days of today (2026-09-23).'),
+      new BadRequestException('The planning date must be within 45 days of today (23/09/26).'),
     );
     expect(loadPeriods).not.toHaveBeenCalled();
     expect(compute).not.toHaveBeenCalled();
@@ -856,7 +856,7 @@ describe('FeedForecastService.getForecast — views, periods and the report (Pla
     compute.mockImplementationOnce((...args: Parameters<FeedForecastService['computeForFarm']>) =>
       FeedForecastService.prototype.computeForFarm.apply(service, args));
     await expect(service.getForecast({ from: '2026-11-01', to: '2026-11-08' }, 'tenant-1', 'STANDARD_USER')).rejects.toThrow(
-      new BadRequestException('The forecast reaches at most 45 days past the planning date (to 2026-11-07).'),
+      new BadRequestException('The forecast reaches 07/11/26 at most (45 days after the planning date).'),
     );
     await expect(service.getForecast({ from: '2026-11-01', to: '2026-11-07' }, 'tenant-1', 'STANDARD_USER')).resolves.toBeDefined();
   });
@@ -866,7 +866,7 @@ describe('FeedForecastService.getForecast — views, periods and the report (Pla
       FeedForecastService.prototype.computeForFarm.apply(service, args));
     await expect(service.getForecast({ from: '2026-11-01' }, 'tenant-1', 'STANDARD_USER')).rejects.toThrow(
       new BadRequestException(
-        'No `to` was sent, so it defaults to from + 7 (2026-11-08), past the forecast\'s reach of 45 days after the planning date (2026-11-07). Send a `to` on or before 2026-11-07.',
+        'The range would end 08/11/26, after the last forecast day 07/11/26. Choose an end date on or before 07/11/26.',
       ),
     );
   });
