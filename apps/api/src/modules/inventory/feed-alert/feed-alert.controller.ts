@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Param, ParseUUIDPipe, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
@@ -31,6 +31,25 @@ export class FeedAlertController {
   @ApiOperation({ summary: 'Evaluate every feed alert rule for one farm now (there is no scheduler)' })
   async evaluate(@Body() dto: EvaluateFeedAlertDto, @Req() req: any) {
     const data = await this.alerts.evaluateNow(dto?.farmId, req.user?.tenantId || req['tenantId'], req.user?.userType);
+    return { success: true, message: 'Feed alerts evaluated.', data };
+  }
+
+  // D24: the Alerts page reads and evaluates every farm the user may open,
+  // under the same grant as the single-farm routes.
+  @Get('scope')
+  @RequirePermission('INVENTORY', 'LEDGER', 'view')
+  @ApiOperation({ summary: 'Feed alerts of every farm the caller may open, or of one (D24)' })
+  async listScope(@Query() query: QueryFeedAlertDto, @Req() req: any) {
+    const data = await this.alerts.listScope(query, req.user?.tenantId || req['tenantId'], req.user);
+    return { success: true, message: 'Feed alerts retrieved successfully.', data };
+  }
+
+  @Post('evaluate-scope')
+  @HttpCode(200)
+  @RequirePermission('INVENTORY', 'LEDGER', 'view')
+  @ApiOperation({ summary: 'Evaluate the feed alert rules of every farm the caller may open (D24; there is no scheduler)' })
+  async evaluateScope(@Req() req: any) {
+    const data = await this.alerts.evaluateScope(req.user?.tenantId || req['tenantId'], req.user);
     return { success: true, message: 'Feed alerts evaluated.', data };
   }
 

@@ -20,6 +20,12 @@ export class QueryAlertDto {
   @IsUUID()
   batchId?: string;
 
+  // D24: the Alerts page filters by farm; a batch alert reaches a farm through its batch.
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsUUID()
+  farmId?: string;
+
   @ApiProperty({ required: false, enum: ['WARNING', 'CRITICAL'] })
   @IsOptional()
   @IsString()

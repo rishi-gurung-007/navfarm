@@ -202,6 +202,72 @@ export class FeedAlertService {
     return rows.filter((r) => visibleTo(r.alert, roleCodes, seesAll)).map((r) => ({ ...r.alert, farm_code: r.farm_code }));
   }
 
+  /**
+   * D24 (Rishi, 27 Sep): the Alerts page evaluates every farm this user may
+   * open — there is still no scheduler, so diet-change and deadline alerts
+   * are only as fresh as the last evaluation. The farms are listFarms' (the
+   * rules resolveFarm applies); one farm's failure is reported and the rest
+   * still run, and a farm whose forecast cannot be built is named so the page
+   * can say its diet-change alerts were skipped.
+   */
+  async evaluateScope(tenantId: string, user: AlertUser): Promise<{
+    farms: number;
+    failed: Array<{ farmCode: string; reason: string }>;
+    forecastErrors: Array<{ farmCode: string; reason: string }>;
+  }> {
+    const farms = await this.forecast.listFarms(tenantId, user?.userType);
+    const failed: Array<{ farmCode: string; reason: string }> = [];
+    const forecastErrors: Array<{ farmCode: string; reason: string }> = [];
+    for (const farm of farms) {
+      try {
+        const plan = await this.evaluateFarm(farm.farmId, farm.companyId, tenantId);
+        if (plan.forecastError) forecastErrors.push({ farmCode: farm.code, reason: plan.forecastError });
+      } catch (error) {
+        this.logger.warn(`Feed alerts not evaluated for farm ${farm.code}: ${(error as Error).message}`);
+        failed.push({ farmCode: farm.code, reason: (error as Error).message });
+      }
+    }
+    return { farms: farms.length, failed, forecastErrors };
+  }
+
+  /**
+   * D24: the feed alerts of every farm in scope (or the one named), for the
+   * Alerts page. A farm outside the scope is not found, as on the single-farm
+   * list; a row is kept only when its company is its farm's company in scope,
+   * and only when it is addressed to one of the user's roles (Q1, L15 — role
+   * codes are read once per company).
+   */
+  async listScope(query: { farmId?: string; status?: 'ACTIVE' | 'RESOLVED' | 'ALL' }, tenantId: string, user: AlertUser) {
+    const farms = await this.forecast.listFarms(tenantId, user?.userType);
+    const chosen = query.farmId ? farms.filter((f) => f.farmId === query.farmId) : farms;
+    if (query.farmId && !chosen.length) throw new NotFoundException('Farm not found.');
+    if (!chosen.length) return [];
+    const companyOf = new Map(chosen.map((f) => [f.farmId, f.companyId]));
+    const status = query.status ?? 'ACTIVE';
+    const rows = await this.db
+      .select({ alert: schema.feedAlert, farm_code: schema.locationMaster.location_code })
+      .from(schema.feedAlert)
+      .leftJoin(schema.locationMaster, eq(schema.locationMaster.location_id, schema.feedAlert.farm_id))
+      .where(and(
+        eq(schema.feedAlert.tenant_id, tenantId),
+        inArray(schema.feedAlert.farm_id, [...companyOf.keys()]),
+        ...(status === 'ALL' ? [] : [eq(schema.feedAlert.status, status)]),
+      ))
+      .orderBy(desc(schema.feedAlert.last_notified_at))
+      .limit(500);
+    const seesAll = SEES_ALL.includes(user?.userType ?? '');
+    const rolesByCompany = new Map<string, string[]>();
+    const out: Array<typeof schema.feedAlert.$inferSelect & { farm_code: string | null }> = [];
+    for (const r of rows) {
+      if (companyOf.get(r.alert.farm_id) !== r.alert.company_id) continue;
+      if (!seesAll && !rolesByCompany.has(r.alert.company_id)) {
+        rolesByCompany.set(r.alert.company_id, await this.roleCodesOf(user?.userId, r.alert.company_id));
+      }
+      if (visibleTo(r.alert, rolesByCompany.get(r.alert.company_id) ?? [], seesAll)) out.push({ ...r.alert, farm_code: r.farm_code });
+    }
+    return out;
+  }
+
   async acknowledge(alertId: string, tenantId: string, user: AlertUser) {
     const [row] = await this.db.select().from(schema.feedAlert)
       .where(and(eq(schema.feedAlert.alert_id, alertId), eq(schema.feedAlert.tenant_id, tenantId))).limit(1);
