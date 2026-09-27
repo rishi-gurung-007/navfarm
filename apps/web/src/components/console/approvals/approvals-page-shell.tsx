@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Clock,
@@ -26,6 +26,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { useCompanyCurrency, formatMoney, type CompanyCurrency } from "@/hooks/useCompanyCurrency";
+import { FeedRequisitionApprovalDetail } from "./feed-requisition-approval-detail";
 
 export type ApprovalStatus = "PENDING" | "APPROVED" | "REJECTED";
 
@@ -48,6 +49,7 @@ export type ApprovalItem = {
   requestor_role: string;
   location: string;
   batch_no?: string;
+  document_id?: string;
   date_submitted: string;
   urgency: "HIGH" | "MEDIUM" | "LOW";
   details: {
@@ -92,6 +94,7 @@ function fromApi(r: ApiRow, currency?: CompanyCurrency | null): ApprovalItem {
     requestor_role: r.requestor_role || "—",
     location: r.location_label || "—",
     batch_no: r.batch_no || undefined,
+    document_id: r.document_id || undefined,
     date_submitted: formatStamp(r.submitted_at),
     urgency: (r.urgency || "MEDIUM") as ApprovalItem["urgency"],
     details: {
@@ -129,6 +132,26 @@ export function ApprovalsPageShell({ activeTab }: { activeTab: ApprovalStatus })
 
   // Detail Modal
   const [viewingItem, setViewingItem] = useState<ApprovalItem | null>(null);
+  // D25: an approver's remarks on a feed requisition travel with Approve.
+  const [approverRemarks, setApproverRemarks] = useState("");
+  useEffect(() => setApproverRemarks(""), [viewingItem?.id]);
+  // The Requisitions screen links here with ?request=<id>; open it once the list is in.
+  const openedFromLink = useRef(false);
+  useEffect(() => {
+    if (openedFromLink.current || approvals.length === 0) return;
+    let requested: string | null = null;
+    try {
+      requested = new URLSearchParams(window.location.search).get("request");
+    } catch {
+      requested = null;
+    }
+    if (!requested) return;
+    const match = approvals.find((a) => a.id === requested);
+    if (match) {
+      openedFromLink.current = true;
+      setViewingItem(match);
+    }
+  }, [approvals]);
 
   // Reject Modal
   const [rejectItem, setRejectItem] = useState<ApprovalItem | null>(null);
@@ -221,7 +244,7 @@ export function ApprovalsPageShell({ activeTab }: { activeTab: ApprovalStatus })
   const handleApprove = async (item: ApprovalItem) => {
     setBusy(true);
     try {
-      await api.post(`/approval/${item.id}/approve`);
+      await api.post(`/approval/${item.id}/approve`, approverRemarks.trim() ? { remarks: approverRemarks.trim() } : {});
       if (viewingItem?.id === item.id) setViewingItem(null);
       await load();
       flash(t("apApprovedMsg", { docNo: item.doc_no }));
@@ -315,6 +338,8 @@ export function ApprovalsPageShell({ activeTab }: { activeTab: ApprovalStatus })
         return <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-[var(--radius-xs)] bg-indigo-500/10 text-indigo-700 dark:text-indigo-400 border border-indigo-500/20"><Building2 className="h-3 w-3" /> {t("apDocType_STOCK_TRANSFER")}</span>;
       case "STAGE_CLOSE":
         return <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-[var(--radius-xs)] bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/20"><Layers className="h-3 w-3" /> {t("apDocType_STAGE_CLOSE")}</span>;
+      case "FEED_REQUISITION":
+        return <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-[var(--radius-xs)] bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/20"><Wheat className="h-3 w-3" /> {t("apDocType_FEED_REQUISITION")}</span>;
       default:
         return <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-[var(--radius-xs)] bg-rose-500/10 text-rose-700 dark:text-rose-400 border border-rose-500/20"><Stethoscope className="h-3 w-3" /> {t("apDocType_VET_DISPOSAL")}</span>;
     }
@@ -556,6 +581,14 @@ export function ApprovalsPageShell({ activeTab }: { activeTab: ApprovalStatus })
               </div>
             </div>
 
+            {viewingItem.doc_type === "FEED_REQUISITION" && viewingItem.document_id && (
+              <FeedRequisitionApprovalDetail
+                documentId={viewingItem.document_id}
+                pending={viewingItem.status === "PENDING"}
+                remarks={approverRemarks}
+                onRemarksChange={setApproverRemarks}
+              />
+            )}
             {viewingItem.status === "APPROVED" && viewingItem.approver && (
               <div className="p-2.5 rounded-[var(--radius-xs)] bg-emerald-500/10 border border-emerald-500/20 text-emerald-700 dark:text-emerald-400">
                 <p className="font-semibold">✓ {t("apAuthorizedBy", { approver: viewingItem.approver })}</p>
