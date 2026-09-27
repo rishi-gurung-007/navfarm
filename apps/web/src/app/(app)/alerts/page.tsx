@@ -5,7 +5,7 @@ import AlertPanel from "@/components/console/production/alert-panel";
 
 export default function ProductionAlertsPage() {
   return (
-    <ProductionPageShell titleKey="navAlerts">
+    <ProductionPageShell titleKey="navAlerts" fill>
       {() => <AlertPanel />}
     </ProductionPageShell>
   );

@@ -46,11 +46,14 @@ export function useProductionPageState() {
 
 export function ProductionPageShell({
   titleKey,
+  fill = false,
   children,
 }: {
   /** Translation key, not a literal — every Production route used to pass an
       English string, so these titles stayed English in every other language. */
   titleKey: TranslationKeys;
+  /** Plan S: fixed-height page; only its table scrolls. */
+  fill?: boolean;
   children: (activeLob: string) => React.ReactNode;
 }) {
   const { ready, activeLob, mayView } = useProductionPageState();
@@ -75,10 +78,11 @@ export function ProductionPageShell({
   }
 
   return (
-    <ConsolePage>
+    <ConsolePage fill={fill}>
       <PageHeader
         title={title}
         description={t("ppsPageDescription", { lob: tLob(activeLob) })}
+        sticky={!fill}
       />
       {children(activeLob)}
     </ConsolePage>

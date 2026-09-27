@@ -1,148 +1,184 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { AlertTriangle, Loader2, Inbox, CheckCircle2 } from "lucide-react";
+/**
+ * The Alerts page (D24, Rishi 27 Sep): batch KPI alerts and feed alerts in
+ * one list, with a type and farm filter. Opening the page evaluates the feed
+ * rules of every farm the user may open, once — there is still no scheduler,
+ * so diet-change and deadline alerts are only as fresh as the last
+ * evaluation. A user without the feed grant still sees their batch alerts.
+ * Fixed-height page: the table is the one thing that scrolls (review C).
+ */
+import { useCallback, useEffect, useRef, useState } from "react";
+import { CheckCircle2, Inbox, Loader2 } from "lucide-react";
 import { api } from "@/services/api-client";
 import { InlineAlert } from "@/components/ui/alert";
-import { Pagination } from "@/components/ui/pagination";
-import { getActiveCompanyId } from "@/hooks/useAuth";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Field } from "@/components/ui/field";
+import { ScrollTable } from "@/components/ui/scroll-table";
+import { getActiveCompanyId, getStoredUser } from "@/hooks/useAuth";
 import { useLanguage } from "@/hooks/useLanguage";
-import { StatusBadge } from "@/components/ui/status-badge";
+import { cn } from "@/lib/utils";
+import { formatStampShort } from "@/utils/date-short";
+import type { TranslationKeys } from "@/utils/translations";
+import { loadFeedFarms, type FeedFarm } from "@/components/console/inventory/use-feed-farm";
+import { PRIORITY_LABEL, labelOf, variantOf } from "@/components/console/inventory/requisition-labels";
+import { AlertRow, AlertState, fromBatchAlert, fromFeedAlert, mergeAlerts } from "./alerts-list";
 
-const PAGE_SIZE = 25;
+type TypeFilter = "ALL" | "BATCH" | "FEED";
+type ShowFilter = "OPEN" | "ALL";
 
-type Row = Record<string, any>;
-
-const S = {
-  surface: { backgroundColor: "var(--surface)", borderColor: "var(--border)" },
-  primary: { color: "var(--text-primary)" },
-  sub: { color: "var(--text-secondary)" },
-  muted: { color: "var(--text-muted)" },
-  accent: { color: "var(--accent)" },
-  input: { backgroundColor: "var(--input-bg)", color: "var(--input-text)", borderColor: "var(--input-border)" },
+const STATE_KEY: Record<AlertState, TranslationKeys> = {
+  OPEN: "alrtStatusOpen", READ: "alrtStatusRead", ACKNOWLEDGED: "alrtStatusAcknowledged", RESOLVED: "alrtStatusResolved",
 };
-
-function unwrap<T = any>(res: any): T {
-  return (Array.isArray(res) ? res : res?.data ?? res) as T;
-}
-
-const SEVERITY_ICON_COLOR: Record<string, string> = {
-  WARNING: "var(--warning)",
-  CRITICAL: "var(--danger)",
+const COLUMNS = ["alrtColPriority", "alrtColType", "alrtColAlert", "alrtColFarm", "alrtColRaised", "alrtColStatus", "alrtColAction"] as const;
+const inputStyle = { backgroundColor: "var(--input-bg)", color: "var(--input-text)", borderColor: "var(--input-border)" };
+const TH = "h-9 whitespace-nowrap px-3 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]";
+const TD = "whitespace-nowrap px-3 py-1.5 text-xs text-[var(--text-primary)]";
+const SMALL_BADGE = "px-1.5 py-0 text-[10px]";
+const unwrapList = (res: any): any[] => {
+  const raw = res?.data ?? res;
+  return Array.isArray(raw) ? raw : [];
 };
 
 export default function AlertPanel() {
   const { t } = useLanguage();
-  const [rows, setRows] = useState<Row[]>([]);
-  const [loading, setLoading] = useState(false);
+  const tRef = useRef(t);
+  tRef.current = t;
+
+  const [farms, setFarms] = useState<FeedFarm[]>([]);
+  const [type, setType] = useState<TypeFilter>("ALL");
+  const [farmId, setFarmId] = useState("");
+  const [show, setShow] = useState<ShowFilter>("OPEN");
+  const [rows, setRows] = useState<AlertRow[]>([]);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [severityFilter, setSeverityFilter] = useState("");
-  const [readFilter, setReadFilter] = useState("");
+  const [notice, setNotice] = useState("");
   const [acting, setActing] = useState<string | null>(null);
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(PAGE_SIZE);
+  const evaluated = useRef(false);
+  const farmsRef = useRef<FeedFarm[]>([]);
 
-  const companyId = getActiveCompanyId();
-
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     setError("");
+    if (!evaluated.current) {
+      evaluated.current = true;
+      try {
+        farmsRef.current = await loadFeedFarms(getStoredUser() as any);
+      } catch {
+        farmsRef.current = [];
+      }
+      setFarms(farmsRef.current);
+      try {
+        const res: any = await api.post("/feed-alert/evaluate-scope", {});
+        const result = res?.data ?? res;
+        const short = [...(result?.failed ?? []), ...(result?.forecastErrors ?? [])].map((f: any) => f.farmCode);
+        if (short.length) setNotice(tRef.current("alrtFeedPartly", { farms: [...new Set(short)].sort().join(", ") }));
+      } catch {
+        // No feed grant, or the evaluation failed: the batch alerts still show.
+        setNotice(tRef.current("alrtFeedCheckFailed"));
+      }
+    }
+    const codeOf = (id: string | null) => farmsRef.current.find((f) => f.farmId === id)?.code ?? null;
     try {
-      const params = new URLSearchParams();
-      if (companyId) params.set("companyId", companyId);
-      if (severityFilter) params.set("severity", severityFilter);
-      if (readFilter) params.set("isRead", readFilter);
-      params.set("limit", "200");
-      const res = await api.get(`/alert?${params.toString()}`);
-      setRows(unwrap<Row[]>(res) || []);
+      const batchParams = new URLSearchParams();
+      const companyId = getActiveCompanyId();
+      if (companyId) batchParams.set("companyId", companyId);
+      if (farmId) batchParams.set("farmId", farmId);
+      if (show === "OPEN") batchParams.set("isRead", "false");
+      batchParams.set("limit", "200");
+      const feedParams = new URLSearchParams({ status: show === "OPEN" ? "ACTIVE" : "ALL" });
+      if (farmId) feedParams.set("farmId", farmId);
+      const [batch, feed] = await Promise.all([
+        type === "FEED" ? Promise.resolve([]) : api.get(`/alert?${batchParams.toString()}`).then(unwrapList),
+        type === "BATCH" ? Promise.resolve([]) : api.get(`/feed-alert/scope?${feedParams.toString()}`).then(unwrapList).catch(() => []),
+      ]);
+      setRows(mergeAlerts(batch.map((a) => fromBatchAlert(a, codeOf)), feed.map(fromFeedAlert)));
     } catch (err: any) {
-      setError(err?.message || t("alrtLoadFailed"));
+      setError(err?.message || tRef.current("alrtLoadFailed"));
+      setRows([]);
     } finally {
       setLoading(false);
     }
-  };
+  }, [type, farmId, show]);
 
   useEffect(() => {
     load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [severityFilter, readFilter]);
+  }, [load]);
 
-  useEffect(() => { setPage(1); }, [severityFilter, readFilter, pageSize]);
-  const pagedRows = rows.slice((page - 1) * pageSize, page * pageSize);
-
-  const markRead = async (id: string) => {
-    setActing(id);
+  const act = async (row: AlertRow) => {
+    setActing(row.key);
     try {
-      await api.post(`/alert/${id}/read`, { companyId });
-      load();
+      if (row.kind === "FEED") await api.post(`/feed-alert/${row.id}/acknowledge`, {});
+      else await api.post(`/alert/${row.id}/read`, { companyId: row.companyId });
+      await load();
     } catch (err: any) {
-      setError(err?.message || t("alrtMarkReadFailed"));
+      setError(err?.message || tRef.current(row.kind === "FEED" ? "alrtAckFailed" : "alrtMarkReadFailed"));
     } finally {
       setActing(null);
     }
   };
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="text-lg font-semibold" style={S.primary}>{t("alrtPageTitle")}</h2>
-          <p className="mt-0.5 text-xs" style={S.sub}>{t("alrtPageSubtitle")}</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <select value={severityFilter} onChange={(e) => setSeverityFilter(e.target.value)} className="nf-input-sm px-2" style={S.input}>
-            <option value="">{t("alrtAllSeverities")}</option>
-            <option value="WARNING">{t("alrtSeverityWarning")}</option>
-            <option value="CRITICAL">{t("alrtSeverityCritical")}</option>
+    <div data-fill-body>
+      <div className="flex shrink-0 flex-wrap items-end gap-3">
+        <Field label={t("alrtType")} htmlFor="alrt-type">
+          <select id="alrt-type" className="nf-input-sm nf-select" style={inputStyle} value={type} onChange={(e) => setType(e.target.value as TypeFilter)}>
+            <option value="ALL">{t("alrtTypeAll")}</option>
+            <option value="BATCH">{t("alrtTypeBatch")}</option>
+            <option value="FEED">{t("alrtTypeFeed")}</option>
           </select>
-          <select value={readFilter} onChange={(e) => setReadFilter(e.target.value)} className="nf-input-sm px-2" style={S.input}>
-            <option value="">{t("alrtAll")}</option>
-            <option value="false">{t("alrtUnread")}</option>
-            <option value="true">{t("alrtRead")}</option>
+        </Field>
+        <Field label={t("alrtFarm")} htmlFor="alrt-farm">
+          <select id="alrt-farm" className="nf-input-sm nf-select" style={inputStyle} value={farmId} onChange={(e) => setFarmId(e.target.value)}>
+            <option value="">{t("alrtFarmAll")}</option>
+            {farms.map((f) => <option key={f.farmId} value={f.farmId}>{f.code} — {f.name}</option>)}
           </select>
-        </div>
+        </Field>
+        <Field label={t("alrtShow")} htmlFor="alrt-show">
+          <select id="alrt-show" className="nf-input-sm nf-select" style={inputStyle} value={show} onChange={(e) => setShow(e.target.value as ShowFilter)}>
+            <option value="OPEN">{t("alrtShowOpen")}</option>
+            <option value="ALL">{t("alrtShowAll")}</option>
+          </select>
+        </Field>
       </div>
 
-      {error && (
-        <InlineAlert>{error}</InlineAlert>
-      )}
+      {notice && <InlineAlert variant="warning">{notice}</InlineAlert>}
+      {error && <InlineAlert>{error}</InlineAlert>}
 
-      <div className="flex flex-col gap-2">
-        {loading ? (
-          <div className="rounded-[var(--radius-md)] border p-10 text-center text-xs" style={S.surface}><Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" style={S.accent} /> {t("alrtLoading")}</div>
-        ) : rows.length === 0 ? (
-          <div className="rounded-[var(--radius-md)] border p-10 text-center text-xs" style={{ ...S.surface, ...S.sub }}><Inbox className="mx-auto mb-2 h-6 w-6" style={S.muted} /> {t("alrtNoAlerts")}</div>
-        ) : (
-          pagedRows.map((alert) => (
-            <div key={alert.alert_id} className="flex items-start justify-between gap-3 rounded-[var(--radius-md)] border p-4" style={{ ...S.surface, opacity: alert.is_read ? 0.6 : 1 }}>
-              <div className="flex items-start gap-3">
-                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" style={{ color: SEVERITY_ICON_COLOR[alert.severity] || "var(--warning)" }} />
-                <div>
-                  <div className="flex items-center gap-2">
-                    <StatusBadge status={alert.severity} />
-                    <p className="text-sm font-semibold" style={S.primary}>{alert.title}</p>
-                  </div>
-                  <p className="mt-1 text-xs" style={S.sub}>{alert.message}</p>
-                  <p className="mt-1 text-[11px]" style={S.muted}>
-                    {t("alrtExpectedActual", { expected: alert.expected_value ?? "—", actual: alert.actual_value ?? "—" })}
-                    {alert.deviation_pct !== null && alert.deviation_pct !== undefined ? ` · ${t("alrtDeviationPct", { pct: Number(alert.deviation_pct).toFixed(2) })}` : ""}
-                    {" · "}{new Date(alert.created_at).toLocaleString()}
-                  </p>
-                </div>
-              </div>
-              {!alert.is_read && (
-                <button onClick={() => markRead(alert.alert_id)} disabled={acting === alert.alert_id} className="flex shrink-0 items-center gap-1 rounded-lg border px-2.5 py-1 text-[11px] font-semibold" style={S.surface}>
-                  <CheckCircle2 className="h-3 w-3" /> {acting === alert.alert_id ? "…" : t("alrtMarkRead")}
-                </button>
-              )}
-            </div>
-          ))
-        )}
-      </div>
-
-      {!loading && rows.length > 0 && (
-        <Pagination page={page} pageSize={pageSize} total={rows.length} onPageChange={setPage} onPageSizeChange={setPageSize} />
-      )}
+      <ScrollTable label={t("alrtTableLabel")}>
+        <thead>
+          <tr>{COLUMNS.map((c) => <th key={c} scope="col" className={TH}>{t(c)}</th>)}</tr>
+        </thead>
+        <tbody>
+          {loading ? (
+            <tr><td colSpan={COLUMNS.length} className="px-3 py-10 text-center text-xs text-[var(--text-secondary)]"><Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" /> {t("alrtLoading")}</td></tr>
+          ) : rows.length === 0 ? (
+            <tr><td colSpan={COLUMNS.length} className="px-3 py-10 text-center text-xs text-[var(--text-secondary)]"><Inbox className="mx-auto mb-2 h-6 w-6" /> {t("alrtNoAlerts")}</td></tr>
+          ) : (
+            rows.map((row) => (
+              <tr key={row.key} className={row.state === "OPEN" ? undefined : "opacity-70"}>
+                <td className={TD}><Badge variant={variantOf(PRIORITY_LABEL, row.priority)} className={SMALL_BADGE}>{labelOf(PRIORITY_LABEL, row.priority, t)}</Badge></td>
+                <td className={cn(TD, "text-[var(--text-secondary)]")}>{t(row.kind === "FEED" ? "alrtTypeFeed" : "alrtTypeBatch")}</td>
+                <td className={cn(TD, "max-w-[36rem]")}>
+                  <span className="font-medium">{row.title}</span>
+                  <span className="ml-2 inline-block max-w-[24rem] truncate align-bottom text-[var(--text-secondary)]" title={row.message}>{row.message}</span>
+                </td>
+                <td className={TD}>{row.farmCode ?? "—"}</td>
+                <td className={cn(TD, "tabular-nums")}>{formatStampShort(row.raisedAt, row.raisedUtc)}</td>
+                <td className={TD}>{t(STATE_KEY[row.state])}</td>
+                <td className={TD}>
+                  {row.state === "OPEN" && (
+                    <Button size="sm" variant="outline" className="h-7 px-2.5 text-[11px]" onClick={() => act(row)} disabled={acting === row.key}>
+                      <CheckCircle2 className="h-3 w-3" /> {t(row.kind === "FEED" ? "alrtAcknowledge" : "alrtMarkRead")}
+                    </Button>
+                  )}
+                </td>
+              </tr>
+            ))
+          )}
+        </tbody>
+      </ScrollTable>
     </div>
   );
 }
