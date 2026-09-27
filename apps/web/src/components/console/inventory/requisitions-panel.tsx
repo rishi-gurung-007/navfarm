@@ -28,6 +28,7 @@ import { FeedFarmSelect, feedFarmLabel } from "./feed-farm-select";
 import {
   FEED_TYPE_LABEL, PRIORITY_LABEL, PURPOSE_LABEL, REQ_STATUS_LABEL, REQ_TYPE_LABEL, SOURCE_LABEL, SUPPLY_LABEL, labelOf, variantOf,
 } from "./requisition-labels";
+import { RequisitionNewDialog } from "./requisition-new-dialog";
 import { useFeedFarm } from "./use-feed-farm";
 
 interface ListRow {
@@ -142,6 +143,7 @@ export default function RequisitionsPanel() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [creating, setCreating] = useState(false);
 
   const show = (view: RequisitionView | null) => {
     setSelected(view);
@@ -274,6 +276,7 @@ export default function RequisitionsPanel() {
           </Field>
         </div>
         <div className="flex flex-wrap gap-2">
+          <Button size="sm" variant="outline" onClick={() => setCreating(true)} disabled={!farmId || busy}>{t("rqNew")}</Button>
           <Button size="sm" onClick={draftFromForecast} disabled={!farmId || busy}>{t("rqDraftFromForecast")}</Button>
         </div>
       </div>
@@ -393,6 +396,20 @@ export default function RequisitionsPanel() {
             ))}
           </tbody>
         </ScrollTable>
+      )}
+
+      {farmId && (
+        <RequisitionNewDialog
+          open={creating}
+          farmId={farmId}
+          onClose={() => setCreating(false)}
+          onCreated={(view) => {
+            setCreating(false);
+            show(view);
+            setNotice(tRef.current("rqCreated"));
+            loadList();
+          }}
+        />
       )}
     </div>
   );
