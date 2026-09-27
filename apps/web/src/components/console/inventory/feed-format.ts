@@ -25,3 +25,19 @@ export function formatDate(iso: string | null | undefined): string {
   if (!y || !m || !d) return "—";
   return `${String(d).padStart(2, "0")}-${MONTHS[m - 1]}-${y}`;
 }
+
+/** "YYYY-MM-DD" -> "DD/MM/YY", the field specification's date format (spec D16); null/undefined/unparseable -> "—". */
+export function formatDateShort(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const [y, m, d] = iso.split("-").map(Number);
+  if (!y || !m || !d) return "—";
+  return `${String(d).padStart(2, "0")}/${String(m).padStart(2, "0")}/${String(y % 100).padStart(2, "0")}`;
+}
+
+/** Calendar-day arithmetic on "YYYY-MM-DD" at UTC midnight, the same way the API does it. */
+export function addDaysIso(iso: string, days: number): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d));
+  date.setUTCDate(date.getUTCDate() + days);
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
+}
