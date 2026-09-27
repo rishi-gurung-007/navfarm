@@ -1,13 +1,14 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { ClsService } from 'nestjs-cls';
-import { and, eq, inArray, isNotNull, isNull, gt, notInArray, or, sql } from 'drizzle-orm';
+import { and, eq, gte, inArray, isNotNull, isNull, gt, lte, notInArray, or, sql } from 'drizzle-orm';
 import * as schema from '../../../core/database/schema';
-import { activeFarmOfCompany, batchScopeConditions, farmScope, FARM_SCOPE_KEY, FarmScope } from '../../../common/farm-scope';
-import { InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
-import { SiloFeedService } from '../silo-feed/silo-feed.service';
+import { activeFarmOfCompany, batchScopeConditions, farmScope, FARM_SCOPE_KEY, FarmScope, restrictedScopeConditions } from '../../../common/farm-scope';
+import { FeedStockMovement, InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
 import { FeedRow, stageDayRange } from '../../production/lifecycle/feed-row-days';
-import { buildFeedForecast, DietChange, ForecastFlag, ForecastInput, ForecastRow, ForecastSource, isTimeZone, todayInZone } from './feed-forecast.engine';
+import { buildFeedForecast, DailyForecastRow, DietChange, ForecastFlag, ForecastInput, ForecastRow, ForecastSource, isTimeZone, todayInZone } from './feed-forecast.engine';
+import { DEFAULT_SPAN_DAYS, MAX_SPAN_DAYS, spanProblem } from './feed-forecast.view';
+import { stockAsOf } from './feed-forecast.stock';
 import { QueryFeedForecastDto } from './dto/feed-forecast.dto';
 
 /**
@@ -23,9 +24,8 @@ export function locationLobConditions(scope: FarmScope) {
     : [];
 }
 
-/** Workbook checkpoint 15: the forecast looks at most 45 days past `from`. */
-export const MAX_SPAN_DAYS = 45;
-const DEFAULT_SPAN_DAYS = 7;
+// Checkpoint 15's limit lives with the views (feed-forecast.view.ts); re-exported for the requisition, which imports it from here.
+export { MAX_SPAN_DAYS };
 
 /** Animals that have left the register no longer eat — same list batch-transfer and daily entry use. */
 const GONE_STATUSES = ['DEAD', 'SOLD', 'CULLED', 'SLAUGHTERED'];
@@ -49,10 +49,18 @@ export interface ForecastFarm {
 
 export interface FeedForecastResponse {
   planningDate: string;
+  /** The farm's own day (D16) and the zone it was read in — a planning date before it is AS_OF_PAST (Q8). */
+  today: string;
+  timeZone: string | null;
   from: string;
   to: string;
+  /** How far the run-down was looked for (Q12): at least `to`, at most 45 days past the planning date. */
+  horizonTo: string;
   farm: { id: string; code: string; name: string };
+  refillBufferDays: number;
+  leadTimeDays: number;
   rows: ForecastRow[];
+  daily: DailyForecastRow[];
   flags: ForecastFlag[];
   // Plan B: the requisition's lines and the DIET_CHANGE alert read these (engine Task 2).
   sources: ForecastSource[];
@@ -166,30 +174,6 @@ export function projectSegments(
   return segments;
 }
 
-/**
- * One silo as the engine sees it. An empty silo is passed with no item and a
- * zero balance rather than dropped: the engine then never matches it, so a
- * shed it feeds falls through to another silo or the STORE exactly as D6/D9
- * say. Feed is held in KG; a balance in any other unit is refused outright,
- * because the forecast would otherwise add bags to kilograms and report a
- * run-down date that is off by the bag weight.
- */
-export function siloInput(
-  silo: { siloId: string; siloCode: string },
-  resident: { item_id: string; on_hand_qty: number; uoms: string[] } | null,
-): ForecastInput['silos'][number] {
-  if (!resident) return { siloId: silo.siloId, siloCode: silo.siloCode, itemId: null, balanceKg: 0 };
-  // Every balance row of the item, not just the first: the ledger groups by
-  // unit, so a KG row can sit beside a BAG row of the same feed.
-  const foreign = resident.uoms.find((u) => u !== 'KG');
-  if (foreign) {
-    throw new ConflictException(
-      `Silo '${silo.siloCode}' holds its feed in ${foreign}, not KG — the forecast cannot add bags to kilograms.`,
-    );
-  }
-  return { siloId: silo.siloId, siloCode: silo.siloCode, itemId: resident.item_id, balanceKg: resident.on_hand_qty };
-}
-
 /** A location's SHED: itself, or the nearest SHED above it (PEN -> SHED, CRATE -> PEN -> SHED); null if none. */
 export function resolveShed(locationId: string | null | undefined, locationById: Map<string, LocationNode>): string | null {
   let current = locationId ? locationById.get(locationId) : undefined;
@@ -242,14 +226,21 @@ export function buildInputBatches(args: {
   activeShedIds: Set<string>;
   planningDate: string;
   to: string;
+  /** Latest header that counts as started; defaults to planningDate. The service passes max(planningDate, today) (Ruling I1). */
+  headerCutoff?: string;
 }): { batches: InputBatch[]; flags: ForecastFlag[] } {
   const { batchRows, animalGroups, headers, stages, locationById, activeShedIds, planningDate, to } = args;
+  const headerCutoff = args.headerCutoff ?? planningDate;
 
   // One header per (batch, stage) is the schema's intent (uq_scheduler_header_batch_stage),
   // but if several exist the latest that has already started wins — a future one is a plan, not a fact.
+  // "Already started" is judged against today's register, not a back-dated planning date (Ruling I1, Q8):
+  // batches and stages are read as they stand today, so a stage entered after a past planning date is
+  // still the stage the batch is in, and dropping its header would start it at the batch's own start —
+  // the wrong day of stage, the wrong diet row, and a wrong stage block.
   const headerOf = new Map<string, HeaderRow>();
   for (const h of [...headers].sort((a, b) => a.effective_from.localeCompare(b.effective_from))) {
-    if (h.effective_from <= planningDate) headerOf.set(`${h.batch_id}:${h.stage_id}`, h);
+    if (h.effective_from <= headerCutoff) headerOf.set(`${h.batch_id}:${h.stage_id}`, h);
   }
 
   const batches: InputBatch[] = [];
@@ -339,7 +330,6 @@ export class FeedForecastService {
   constructor(
     private readonly cls: ClsService,
     private readonly ledgerService: InventoryLedgerService,
-    private readonly siloFeedService: SiloFeedService,
   ) {}
 
   private get db(): MySql2Database<typeof schema> {
@@ -468,26 +458,53 @@ export class FeedForecastService {
    * computeForFarm would then have had no bound on the span at all) so every
    * caller, HTTP or internal, is held to the same 45-day cap. from/to default
    * as the report does.
+   *
+   * Plan R: the planning date may be chosen (±45 days of the farm's today, Q8);
+   * stock is read as of the stock date — the planning date, or today when
+   * planning ahead, the days in between being walked (D19); the run-down may be
+   * looked for up to `horizonTo`, capped at 45 days past the planning date and
+   * never before `to` (Q12). A caller that has already read the farm's day
+   * passes it as `clock`, so one evaluation never reads the zone twice.
    */
-  async computeForFarm(farmId: string, companyId: string, tenantId: string, range: { from?: string; to?: string } = {}): Promise<FeedForecastResponse> {
-    const { today: planningDate } = await this.farmToday(companyId, tenantId);
+  async computeForFarm(
+    farmId: string,
+    companyId: string,
+    tenantId: string,
+    range: { from?: string; to?: string; planningDate?: string; horizonTo?: string } = {},
+    clock?: FarmClock,
+  ): Promise<FeedForecastResponse> {
+    const { today, timeZone } = clock ?? (await this.farmToday(companyId, tenantId));
+    const planningDate = range.planningDate ?? today;
+    if (!isCalendarDay(planningDate)) throw new BadRequestException('planningDate must be a calendar date (YYYY-MM-DD).');
+    // Q8: heads and stages are always today's register, so an as-of date far from today would mislead.
+    if (Math.abs(diffDays(today, planningDate)) > MAX_SPAN_DAYS) {
+      throw new BadRequestException(`The planning date must be within ${MAX_SPAN_DAYS} days of today (${today}).`);
+    }
     const from = range.from ?? planningDate;
     const to = range.to ?? addDays(from, DEFAULT_SPAN_DAYS);
     if (!isCalendarDay(from) || !isCalendarDay(to)) {
       throw new BadRequestException('from and to must be calendar dates (YYYY-MM-DD).');
     }
-    if (to < from) throw new BadRequestException('to must not be before from.');
-    if (diffDays(from, to) > MAX_SPAN_DAYS) {
-      throw new BadRequestException(`The forecast covers at most ${MAX_SPAN_DAYS} days after from.`);
-    }
+    const span = spanProblem(from, to);
+    if (span) throw new BadRequestException(span);
+    const cap = addDays(planningDate, MAX_SPAN_DAYS);
+    const wanted = range.horizonTo && isCalendarDay(range.horizonTo) ? range.horizonTo : to;
+    const capped = wanted < cap ? wanted : cap;
+    const horizonTo = capped > to ? capped : to;
+    const stockDate = planningDate < today ? planningDate : today;
+    // Ruling I1: scheduler headers are today's register — see buildInputBatches.
+    const headerCutoff = planningDate > today ? planningDate : today;
     return this.withFarmScope(farmId, companyId, async () => {
       const farm = await this.loadFarm(farmId, tenantId);
-      const { input, flags: loadFlags } = await this.loadInput(farm, planningDate, from, to, tenantId);
-      const { rows, flags, sources, dietChanges } = buildFeedForecast(input);
+      const { input, flags: loadFlags } = await this.loadInput(farm, planningDate, from, to, tenantId, { stockDate, horizonTo, headerCutoff });
+      const { rows, flags, sources, dietChanges, daily } = buildFeedForecast(input);
+      const asOf: ForecastFlag[] = planningDate < today ? [{ kind: 'AS_OF_PAST', planningDate, today }] : [];
       return {
-        planningDate, from, to,
+        planningDate, today, timeZone, from, to, horizonTo,
         farm: { id: farm.id, code: farm.code, name: farm.name },
-        rows, flags: [...flags, ...loadFlags], sources, dietChanges,
+        refillBufferDays: farm.refillBufferDays,
+        leadTimeDays: farm.leadTimeDays,
+        rows, daily, flags: [...flags, ...loadFlags, ...asOf], sources, dietChanges,
       };
     });
   }
@@ -584,11 +601,12 @@ export class FeedForecastService {
     from: string,
     to: string,
     tenantId: string,
+    opts: { stockDate: string; horizonTo: string; headerCutoff: string },
   ): Promise<{ input: ForecastInput; flags: ForecastFlag[] }> {
     const companyId = farm.companyId;
-    // getForecast has already replaced the CLS scope with the effective one
-    // (fix round 2, finding 1) — every read below, direct or through
-    // siloFeedService/ledgerService, sees the chosen farm this way.
+    // computeForFarm has already replaced the CLS scope with the effective one
+    // (fix round 2, finding 1) — every read below, direct or through the
+    // ledger service, sees the chosen farm this way.
     const scope = farmScope(this.cls);
 
     // Every location on the farm in one read: sheds, silos and the store are
@@ -601,6 +619,7 @@ export class FeedForecastService {
         location_type: schema.locationMaster.location_type,
         parent_location_id: schema.locationMaster.parent_location_id,
         is_active: schema.locationMaster.is_active,
+        low_level_kg: schema.locationMaster.low_level_kg,
       })
       .from(schema.locationMaster)
       .where(
@@ -636,47 +655,47 @@ export class FeedForecastService {
       siloIdsByShed.set(link.shed_id, [...(siloIdsByShed.get(link.shed_id) ?? []), link.silo_id]);
     }
     const sheds = shedRows.map((s) => ({ shedId: s.location_id, shedCode: s.location_code, siloIds: siloIdsByShed.get(s.location_id) ?? [] }));
-
     const linkedSiloIds = [...new Set(links.map((l) => l.silo_id).filter((id) => activeSiloIds.has(id)))];
-    const residents = linkedSiloIds.length ? await this.siloFeedService.currentItems(linkedSiloIds, companyId, tenantId) : new Map();
-    const silos = siloRows
-      .filter((s) => linkedSiloIds.includes(s.location_id))
-      .map((s) => siloInput({ siloId: s.location_id, siloCode: s.location_code }, residents.get(s.location_id) ?? null));
 
-    const { batches, flags } = await this.loadBatches(farm, planningDate, to, tenantId, locationById, new Set(shedIds));
+    // Stages are projected to the run-down horizon, so a stage change just past `to` still moves the run-down (Q12).
+    const { batches, flags } = await this.loadBatches(farm, planningDate, opts.horizonTo, opts.headerCutoff, tenantId, locationById, new Set(shedIds));
     const feedRows = await this.loadFeedRows([...new Set(batches.map((b) => b.breedId))], companyId, tenantId);
 
     // The farm's STORE (D6 fallback). One per farm in every template; if a farm
     // somehow has two, the first by code is used — the forecast needs one pool.
     const storeRow = activeOfType('STORE')[0];
-    let store: ForecastInput['store'] = null;
-    if (storeRow) {
-      const feedItemIds = new Set(feedRows.map((r) => r.itemId));
-      const balances: Record<string, number> = {};
-      const stock = await this.ledgerService.getStockBalance({ companyId, warehouseId: storeRow.location_id } as any, tenantId);
-      for (const line of stock) {
-        // The store also holds medicine in PCS and the like; only a *feed*
-        // item held in a unit other than KG would corrupt the forecast.
-        if (!feedItemIds.has(line.item_id)) continue;
-        if (line.uom !== 'KG') {
-          throw new ConflictException(
-            `Store '${storeRow.location_code}' holds '${line.item_code}' in ${line.uom}, not KG — the forecast cannot add bags to kilograms.`,
-          );
-        }
-        balances[line.item_id] = (balances[line.item_id] ?? 0) + line.on_hand_qty;
-      }
-      store = { storeId: storeRow.location_id, storeCode: storeRow.location_code, balances };
-    }
+    const stockIds = [...linkedSiloIds, ...(storeRow ? [storeRow.location_id] : [])];
+    // Q6 / D19: the opening is the ledger strictly before the stock date; posted
+    // non-feeding movements from it on, and DRAFT transfers inside the walk,
+    // are incoming (Ruling on Task 6's carry). Feeding is left to the engine.
+    const ledger = stockIds.length
+      ? await this.ledgerService.getFeedStockAsOf({ companyId, warehouseIds: stockIds, stockDate: opts.stockDate, horizonTo: opts.horizonTo }, tenantId)
+      : { opening: [], movements: [] };
+    const drafts = stockIds.length ? await this.loadDraftTransfers(stockIds, companyId, tenantId, opts.stockDate, opts.horizonTo) : [];
+    const stock = stockAsOf({
+      silos: siloRows
+        .filter((s) => linkedSiloIds.includes(s.location_id))
+        .map((s) => ({ siloId: s.location_id, siloCode: s.location_code, lowLevelKg: s.low_level_kg == null ? null : Number(s.low_level_kg) })),
+      store: storeRow ? { storeId: storeRow.location_id, storeCode: storeRow.location_code } : null,
+      feedItemIds: new Set(feedRows.map((r) => r.itemId)),
+      opening: ledger.opening,
+      movements: ledger.movements,
+      drafts,
+    });
 
     const itemIds = new Set<string>(feedRows.map((r) => r.itemId));
-    for (const s of silos) if (s.itemId) itemIds.add(s.itemId);
+    for (const s of stock.silos) if (s.itemId) itemIds.add(s.itemId);
     const items: Record<string, string> = {};
+    const itemCodes: Record<string, string> = {};
     if (itemIds.size) {
       const itemRows = await this.db
-        .select({ item_id: schema.itemMaster.item_id, item_name: schema.itemMaster.item_name })
+        .select({ item_id: schema.itemMaster.item_id, item_name: schema.itemMaster.item_name, item_code: schema.itemMaster.item_code })
         .from(schema.itemMaster)
         .where(and(eq(schema.itemMaster.tenant_id, tenantId), inArray(schema.itemMaster.item_id, [...itemIds])));
-      for (const i of itemRows) items[i.item_id] = i.item_name;
+      for (const i of itemRows) {
+        items[i.item_id] = i.item_name;
+        itemCodes[i.item_id] = i.item_code; // Item No (D16)
+      }
     }
 
     return {
@@ -684,12 +703,16 @@ export class FeedForecastService {
         planningDate,
         from,
         to,
+        stockDate: opts.stockDate,
+        horizonTo: opts.horizonTo,
         refillBufferDays: farm.refillBufferDays,
         leadTimeDays: farm.leadTimeDays,
         sheds,
-        silos,
-        store,
+        silos: stock.silos,
+        store: stock.store,
+        incoming: stock.incoming,
         items,
+        itemCodes,
         batches,
         feedRows,
       },
@@ -697,11 +720,66 @@ export class FeedForecastService {
     };
   }
 
+  /**
+   * D19 "confirmed incoming", part (b) of open question Q2: stock transfers
+   * saved but not yet posted, dated inside the walk. Nothing in NAVFarm is in
+   * transit — a transfer posts both sides at once (stock-transfer.service
+   * post()) — so a dated DRAFT is the only booked-but-not-arrived feed until
+   * Plan C's Transfer Orders. Into one of the farm's silos or its store it is
+   * incoming; out of one it is negative, so a store-to-silo transfer is not
+   * counted in both places. A POSTED transfer is already among the ledger
+   * movements, so it is never counted here as well.
+   *
+   * Bounded like the ledger read it sits beside (Ruling M2): the locations are
+   * already the effective farm's (and, for a restricted caller, its LOB's or
+   * LOB-less), a transfer has no LOB of its own, so the caller's LOB is held
+   * against the item's — the same column a ledger row's lob_id is copied from.
+   */
+  private async loadDraftTransfers(
+    locationIds: string[],
+    companyId: string,
+    tenantId: string,
+    stockDate: string,
+    horizonTo: string,
+  ): Promise<FeedStockMovement[]> {
+    const T = schema.stockTransfer;
+    const TL = schema.stockTransferLine;
+    const common = [
+      eq(T.tenant_id, tenantId),
+      eq(T.company_id, companyId),
+      eq(T.status, 'DRAFT'),
+      isNull(T.deleted_at),
+      gte(T.posting_date, stockDate),
+      lte(T.posting_date, horizonTo),
+      ...restrictedScopeConditions(farmScope(this.cls), { companyId: T.company_id, lobId: schema.itemMaster.lob_id }),
+    ];
+    const qty = sql<string>`COALESCE(SUM(${TL.quantity}), 0)`;
+    const into = await this.db
+      .select({ warehouse_id: T.to_warehouse_id, item_id: TL.item_id, item_code: schema.itemMaster.item_code, uom: TL.uom, posting_date: T.posting_date, qty })
+      .from(T)
+      .innerJoin(TL, eq(TL.transfer_id, T.transfer_id))
+      .innerJoin(schema.itemMaster, eq(schema.itemMaster.item_id, TL.item_id))
+      .where(and(...common, inArray(T.to_warehouse_id, locationIds)))
+      .groupBy(T.to_warehouse_id, TL.item_id, schema.itemMaster.item_code, TL.uom, T.posting_date);
+    const out = await this.db
+      .select({ warehouse_id: T.from_warehouse_id, item_id: TL.item_id, item_code: schema.itemMaster.item_code, uom: TL.uom, posting_date: T.posting_date, qty })
+      .from(T)
+      .innerJoin(TL, eq(TL.transfer_id, T.transfer_id))
+      .innerJoin(schema.itemMaster, eq(schema.itemMaster.item_id, TL.item_id))
+      .where(and(...common, inArray(T.from_warehouse_id, locationIds)))
+      .groupBy(T.from_warehouse_id, TL.item_id, schema.itemMaster.item_code, TL.uom, T.posting_date);
+    return [
+      ...into.map((r) => ({ warehouse_id: r.warehouse_id, item_id: r.item_id, item_code: r.item_code, uom: r.uom, posting_date: r.posting_date, qty: Number(r.qty) })),
+      ...out.map((r) => ({ warehouse_id: r.warehouse_id, item_id: r.item_id, item_code: r.item_code, uom: r.uom, posting_date: r.posting_date, qty: -Number(r.qty) })),
+    ];
+  }
+
   /** Reads the ACTIVE batches of the farm and everything buildInputBatches needs to place them. */
   private async loadBatches(
     farm: ForecastFarm,
     planningDate: string,
-    to: string,
+    horizonTo: string,
+    headerCutoff: string,
     tenantId: string,
     locationById: Map<string, LocationNode>,
     activeShedIds: Set<string>,
@@ -812,7 +890,7 @@ export class FeedForecastService {
       ]),
     );
 
-    return buildInputBatches({ batchRows: fed, animalGroups, headers, stages, locationById, activeShedIds, planningDate, to });
+    return buildInputBatches({ batchRows: fed, animalGroups, headers, stages, locationById, activeShedIds, planningDate, to: horizonTo, headerCutoff });
   }
 
   /** Active lifecycle rows with a feed item and a positive rate, as stage-day ranges (feed-row-days.ts). */

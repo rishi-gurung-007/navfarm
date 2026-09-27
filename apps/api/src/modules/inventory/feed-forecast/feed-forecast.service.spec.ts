@@ -1,10 +1,9 @@
-import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { ClsService } from 'nestjs-cls';
 import { transactionCls, useFarmScope } from '../../../test-utils/transaction-cls';
-import { buildInputBatches, FeedForecastService, locationLobConditions, projectSegments, resolveShed, siloInput, StageInfo } from './feed-forecast.service';
+import { buildInputBatches, FeedForecastService, locationLobConditions, projectSegments, resolveShed, StageInfo } from './feed-forecast.service';
 import { InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
-import { SiloFeedService } from '../silo-feed/silo-feed.service';
 import { buildFeedForecast, ForecastInput, todayLocal } from './feed-forecast.engine';
 import { activeFarmOfCompany, FARM_SCOPE_KEY, farmScope } from '../../../common/farm-scope';
 import * as schema from '../../../core/database/schema';
@@ -16,7 +15,7 @@ import { MySqlDialect } from 'drizzle-orm/mysql-core';
 // loaded snapshot to the engine unchanged.
 jest.mock('./feed-forecast.engine', () => ({
   ...jest.requireActual('./feed-forecast.engine'), // the real calendar helpers (todayLocal lives there)
-  buildFeedForecast: jest.fn(() => ({ rows: [], flags: [] })),
+  buildFeedForecast: jest.fn(() => ({ rows: [], flags: [], sources: [], dietChanges: [], daily: [] })),
 }));
 
 // activeFarmOfCompany runs a real query against location_master; feed-forecast's
@@ -57,8 +56,7 @@ describe('FeedForecastService', () => {
       providers: [
         FeedForecastService,
         { provide: ClsService, useValue: cls },
-        { provide: InventoryLedgerService, useValue: { getStockBalance: jest.fn() } },
-        { provide: SiloFeedService, useValue: { currentItems: jest.fn() } },
+        { provide: InventoryLedgerService, useValue: { getFeedStockAsOf: jest.fn() } },
       ],
     }).compile();
     service = module.get(FeedForecastService);
@@ -113,25 +111,28 @@ describe('FeedForecastService', () => {
     expect(loadFarm).not.toHaveBeenCalled();
   });
 
-  it('happy path: planningDate is today, from/to default to today..today+7, the loaded input goes to the engine as-is, loader flags are appended', async () => {
+  it('happy path: planning date is the farm day, from/to default to it..+7, stock is read as of it, the loaded input goes to the engine as-is, loader flags are appended', async () => {
     jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate'] }).setSystemTime(new Date(2026, 8, 25, 10, 30));
     useFarmScope(cls, { farmId: 'farm-A', restricted: true, companyId: 'comp-1', lobId: 'lob-1' });
     const input = { planningDate: '2026-09-25', marker: 'loaded' } as unknown as ForecastInput;
     loadInput.mockResolvedValueOnce({ input, flags: [{ kind: 'BATCH_SHED_UNKNOWN', batchNo: 'B2' }] });
-    (buildFeedForecast as jest.Mock).mockReturnValueOnce({ rows: [{ batchNo: 'B1' }], flags: [{ kind: 'HEADS_ASSUMED_FLAT', batchNo: 'B1' }] });
+    (buildFeedForecast as jest.Mock).mockReturnValueOnce({
+      rows: [{ batchNo: 'B1' }], flags: [{ kind: 'HEADS_ASSUMED_FLAT', batchNo: 'B1' }], sources: [], dietChanges: [], daily: [],
+    });
 
-    const result = await service.getForecast({ farmId: 'farm-A' }, 'tenant-1', 'STANDARD_USER');
+    const result = await service.computeForFarm('farm-A', 'comp-1', 'tenant-1');
 
-    expect(loadInput).toHaveBeenCalledWith(FARM, '2026-09-25', '2026-09-25', '2026-10-02', 'tenant-1');
+    expect(loadInput).toHaveBeenCalledWith(FARM, '2026-09-25', '2026-09-25', '2026-10-02', 'tenant-1', {
+      stockDate: '2026-09-25', horizonTo: '2026-10-02', headerCutoff: '2026-09-25',
+    });
     expect(buildFeedForecast).toHaveBeenCalledWith(input);
     expect(result).toEqual({
-      planningDate: '2026-09-25',
-      from: '2026-09-25',
-      to: '2026-10-02',
-      farm: { id: 'farm-A', code: 'VIL100', name: 'Village 100' },
-      rows: [{ batchNo: 'B1' }],
+      planningDate: '2026-09-25', today: '2026-09-25', timeZone: null, from: '2026-09-25', to: '2026-10-02', horizonTo: '2026-10-02',
+      farm: { id: 'farm-A', code: 'VIL100', name: 'Village 100' }, refillBufferDays: 2, leadTimeDays: 0,
+      rows: [{ batchNo: 'B1' }], daily: [],
       // The engine's flags, then the loader's own (a batch placed on no known shed).
       flags: [{ kind: 'HEADS_ASSUMED_FLAT', batchNo: 'B1' }, { kind: 'BATCH_SHED_UNKNOWN', batchNo: 'B2' }],
+      sources: [], dietChanges: [],
     });
   });
 
@@ -147,7 +148,7 @@ describe('FeedForecastService', () => {
 
       expect(activeFarmOfCompany).toHaveBeenCalledWith(expect.anything(), 'farm-B', 'comp-1', 'tenant-1');
       expect(loadFarm).toHaveBeenCalledWith('farm-B', 'tenant-1');
-      expect(loadInput).toHaveBeenCalledWith(FARM, expect.any(String), expect.any(String), expect.any(String), 'tenant-1');
+      expect(loadInput).toHaveBeenCalledWith(FARM, expect.any(String), expect.any(String), expect.any(String), 'tenant-1', expect.any(Object));
       // useFarmScope stubs cls.get('farmScope') to a fixed object, so it can't
       // observe the CLS mutation itself — the dedicated 'CLS scope reaches
       // every downstream loader' spec below proves that with a real cls.
@@ -160,8 +161,7 @@ describe('FeedForecastService', () => {
         providers: [
           FeedForecastService,
           { provide: ClsService, useValue: lobCls },
-          { provide: InventoryLedgerService, useValue: { getStockBalance: jest.fn() } },
-          { provide: SiloFeedService, useValue: { currentItems: jest.fn() } },
+          { provide: InventoryLedgerService, useValue: { getFeedStockAsOf: jest.fn() } },
         ],
       }).compile();
       const lobService = module.get(FeedForecastService);
@@ -224,8 +224,7 @@ describe('FeedForecastService', () => {
           providers: [
             FeedForecastService,
             { provide: ClsService, useValue: tenantCls },
-            { provide: InventoryLedgerService, useValue: { getStockBalance: jest.fn() } },
-            { provide: SiloFeedService, useValue: { currentItems: jest.fn() } },
+            { provide: InventoryLedgerService, useValue: { getFeedStockAsOf: jest.fn() } },
           ],
         }).compile();
         const tenantService = module.get(FeedForecastService);
@@ -256,8 +255,7 @@ describe('FeedForecastService', () => {
         providers: [
           FeedForecastService,
           { provide: ClsService, useValue: tenantCls },
-          { provide: InventoryLedgerService, useValue: { getStockBalance: jest.fn() } },
-          { provide: SiloFeedService, useValue: { currentItems: jest.fn() } },
+          { provide: InventoryLedgerService, useValue: { getFeedStockAsOf: jest.fn() } },
         ],
       }).compile();
       const tenantService = module.get(FeedForecastService);
@@ -298,7 +296,7 @@ describe('FeedForecastService', () => {
     it('an OPERATIONAL_ADMIN naming a farm of another LOB gets NotFound', async () => {
       const lobCls = transactionCls(dbWithFarmLob('lob-2'));
       useFarmScope(lobCls, { farmId: 'farm-A', restricted: true, companyId: 'comp-1', lobId: 'lob-1' });
-      const lobService = new FeedForecastService(lobCls, {} as any, {} as any);
+      const lobService = new FeedForecastService(lobCls, {} as any);
       await expect(lobService.resolveFarm('farm-B', 'tenant-1', 'OPERATIONAL_ADMIN')).rejects.toBeInstanceOf(NotFoundException);
     });
 
@@ -336,6 +334,8 @@ describe('FeedForecastService', () => {
       function thenable(rows: unknown[]): any {
         const node: any = {
           where: () => thenable(rows),
+          innerJoin: () => thenable(rows),
+          groupBy: () => thenable(rows),
           limit: () => thenable(rows),
           orderBy: () => thenable(rows),
           then: (resolve: any) => resolve(rows),
@@ -374,13 +374,12 @@ describe('FeedForecastService', () => {
             {
               provide: InventoryLedgerService,
               useValue: {
-                getStockBalance: jest.fn(async () => {
+                getFeedStockAsOf: jest.fn(async () => {
                   capturedFarmId = farmScope(localCls).farmId;
-                  return [];
+                  return { opening: [], movements: [] };
                 }),
               },
             },
-            { provide: SiloFeedService, useValue: { currentItems: jest.fn() } },
           ],
         }).compile();
         const localService = module.get(FeedForecastService);
@@ -390,7 +389,7 @@ describe('FeedForecastService', () => {
       return { getCapturedFarmId: () => capturedFarmId };
     }
 
-    it('an admin pinned to farm A asking for farm B: the store balance read sees farmId B, not the pinned A', async () => {
+    it('an admin pinned to farm A asking for farm B: the stock read sees farmId B, not the pinned A', async () => {
       (activeFarmOfCompany as jest.Mock).mockResolvedValue(true);
 
       const { getCapturedFarmId } = await runWithEffectiveScope(
@@ -401,7 +400,7 @@ describe('FeedForecastService', () => {
       expect(getCapturedFarmId()).toBe('farm-B');
     });
 
-    it('a STANDARD_USER is unaffected: the store balance read still sees their own (only) farm', async () => {
+    it('a STANDARD_USER is unaffected: the stock read still sees their own (only) farm', async () => {
       const { getCapturedFarmId } = await runWithEffectiveScope(
         { farmId: 'farm-A', restricted: true, companyId: 'comp-1', lobId: 'lob-1' },
         (localService) => localService.getForecast({}, 'tenant-1', 'STANDARD_USER'),
@@ -540,6 +539,20 @@ describe('buildInputBatches', () => {
     expect(batches[0]).toEqual(expect.objectContaining({ shedId: 'shed-2', segments: [expect.objectContaining({ start: '2026-09-12' })] }));
   });
 
+  // Ruling I1: a back-dated planning date (Q8) still reads today's scheduler register — the header cutoff is
+  // max(planningDate, today), so a stage entered after the planning date keeps its own start and shed.
+  it('a header dated after a back-dated planning date but not after the header cutoff (today) is still used', () => {
+    const header = { batch_id: 'b1', stage_id: 'GIL', effective_from: '2026-09-22', location_id: 'pen-2' };
+    const pastPlan = { ...base, planningDate: '2026-09-19', batchRows: [batchWise], headers: [header] };
+    expect(buildInputBatches({ ...pastPlan, headerCutoff: '2026-09-26' }).batches[0]).toEqual(
+      expect.objectContaining({ shedId: 'shed-2', segments: [expect.objectContaining({ start: '2026-09-22' })] }),
+    );
+    // Without the cutoff the planning date bounds it, and the batch falls back to its own start and shed.
+    expect(buildInputBatches(pastPlan).batches[0]).toEqual(
+      expect.objectContaining({ shedId: 'shed-1', segments: [expect.objectContaining({ start: '2026-09-01' })] }),
+    );
+  });
+
   it('two animal stage groups become two input batches, each with its own heads and a distinguishable batchNo', () => {
     const { batches } = buildInputBatches({
       ...base,
@@ -647,24 +660,57 @@ describe('buildInputBatches', () => {
   });
 });
 
-describe('siloInput', () => {
-  it('an empty silo is passed with no item and zero balance', () => {
-    expect(siloInput({ siloId: 'S', siloCode: 'SILO-1' }, null)).toEqual({ siloId: 'S', siloCode: 'SILO-1', itemId: null, balanceKg: 0 });
-  });
+describe('loadDraftTransfers — D19 booked transfers (Q2, Ruling M2)', () => {
+  function draftDb(into: unknown[], out: unknown[]) {
+    const wheres: unknown[] = [];
+    const results = [into, out];
+    const chain = () => {
+      const rows = results.shift() ?? [];
+      const self: any = {
+        from: () => self,
+        innerJoin: () => self,
+        where: (w: unknown) => { wheres.push(w); return self; },
+        groupBy: () => self,
+        then: (res: (v: unknown[]) => unknown, rej: (e: unknown) => unknown) => Promise.resolve(rows).then(res, rej),
+      };
+      return self;
+    };
+    return { db: { select: () => chain() }, wheres };
+  }
+  const render = (w: unknown) => new MySqlDialect().sqlToQuery(w as any);
 
-  it('a KG balance is passed through', () => {
-    expect(siloInput({ siloId: 'S', siloCode: 'SILO-1' }, { item_id: 'I', on_hand_qty: 525, uoms: ['KG'] })).toEqual({
-      siloId: 'S',
-      siloCode: 'SILO-1',
-      itemId: 'I',
-      balanceKg: 525,
-    });
-  });
-
-  it('a balance held in any other unit is refused, naming the silo and the unit', () => {
-    expect(() => siloInput({ siloId: 'S', siloCode: 'SILO-1' }, { item_id: 'I', on_hand_qty: 10, uoms: ['KG', 'BAG'] })).toThrow(
-      new ConflictException("Silo 'SILO-1' holds its feed in BAG, not KG — the forecast cannot add bags to kilograms."),
+  it('reads DRAFT transfers dated from the stock date to the horizon, into (+) and out of (−) the farm\'s locations', async () => {
+    const { db, wheres } = draftDb(
+      [{ warehouse_id: 's1', item_id: 'r1', item_code: 'FEED-R1', uom: 'KG', posting_date: '2026-09-28', qty: '6000.0000' }],
+      [{ warehouse_id: 'st', item_id: 'r1', item_code: 'FEED-R1', uom: 'KG', posting_date: '2026-09-28', qty: '6000.0000' }],
     );
+    const cls = transactionCls(db);
+    useFarmScope(cls, { farmId: 'farm-A', restricted: false, companyId: 'comp-1', lobId: null });
+    const out = await (new FeedForecastService(cls, {} as any) as any).loadDraftTransfers(['s1', 'st'], 'comp-1', 'tenant-1', '2026-09-26', '2026-10-10');
+    expect(out).toEqual([
+      { warehouse_id: 's1', item_id: 'r1', item_code: 'FEED-R1', uom: 'KG', posting_date: '2026-09-28', qty: 6000 },
+      { warehouse_id: 'st', item_id: 'r1', item_code: 'FEED-R1', uom: 'KG', posting_date: '2026-09-28', qty: -6000 },
+    ]);
+    const [into, from] = wheres.map(render);
+    for (const q of [into, from]) {
+      expect(q.sql).toMatch(/`posting_date` >= \?/);
+      expect(q.sql).toMatch(/`posting_date` <= \?/);
+      expect(q.params).toEqual(expect.arrayContaining(['tenant-1', 'comp-1', 'DRAFT', '2026-09-26', '2026-10-10']));
+      expect(q.sql).not.toMatch(/`lob_id`/);
+    }
+    expect(into.sql).toMatch(/`to_warehouse_id` in/);
+    expect(from.sql).toMatch(/`from_warehouse_id` in/);
+  });
+
+  it('a restricted caller only sees drafts of its own LOB\'s items, as the ledger read does', async () => {
+    const { db, wheres } = draftDb([], []);
+    const cls = transactionCls(db);
+    useFarmScope(cls, { farmId: 'farm-A', restricted: true, companyId: 'comp-1', lobId: 'lob-1' });
+    await (new FeedForecastService(cls, {} as any) as any).loadDraftTransfers(['s1'], 'comp-1', 'tenant-1', '2026-09-26', '2026-10-10');
+    for (const q of wheres.map(render)) {
+      expect(q.sql).toMatch(/`item_master`\.`lob_id` = \?/);
+      expect(q.params).toContain('lob-1');
+    }
   });
 });
 
