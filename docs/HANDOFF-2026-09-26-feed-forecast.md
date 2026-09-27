@@ -11,6 +11,7 @@ Create button on a fresh tenant).
 | Branch | What | State |
 |---|---|---|
 | `feat/feed-forecast-a` | Plan A: silo↔shed links, one feed per silo, daily entry from the right silo, one feed line per diet row, forecast engine, `GET /feed-forecast`, Inventory → Feed Forecast page, demo seeds, migrations 0114–0116 | **Done, reviewed, live-verified.** Ready to merge to `main` after your review. 28 commits ahead of `main`. |
+| `feat/feed-forecast-report` | Plan R (cut from B): the report screen aligned with the 26 Sep field specification — D16–D20; migrations 0120 (lead time default 2) and 0121 (Reporting Period Master) | **Done, reviewed, verified** (`docs/VERIFICATION-2026-09-26-feed-forecast-r.md`). Contains Plans A and B, so it is the one branch to merge. |
 | `feat/feed-forecast-b` | Plan B (cut from A): silo low/high levels, alert rules master, in-app feed alerts, feed requisition (draft, decide, screen) — migrations 0117–0119 | **Done, reviewed, live-verified** (`docs/VERIFICATION-2026-09-26-feed-forecast-b.md`). Final whole-branch review: ready to merge after Plan A (fast-forward onto `origin/main` — not the stale local `main`). |
 
 Neither branch is pushed. Ledgers with every finding and ruling:
@@ -125,3 +126,33 @@ to the low level with confirmed incoming, an "indicative" flag, and a current /
 next stage block. Recommendations on wastage, days of stock, refill dates and
 the Reporting Period Master were given to Rishi; the report-alignment plan is
 written after his confirmation. Batch numbering is left as is (Rishi).
+
+## Plan R — report alignment (27 Sep)
+
+Branch `feat/feed-forecast-report` (contains A and B). Spec decisions D16–D20
+(`8b1e6b0`); plan `docs/superpowers/plans/2026-09-26-feed-forecast-r-report-alignment.md`;
+ledger `.superpowers/sdd/2026-09-26-feed-forecast-r-report-alignment/progress.md`.
+
+- One row per batch + item + date, grouped for Weekly / Reporting Period; the
+  Planning Date is selectable (default today in Africa/Harare); Item No;
+  DD/MM/YY; stage cards (current / next stage, date of stage change).
+- Per Day Intake without wastage; run-down, refill and orders with wastage (D17).
+- Days of Stock at silo level, whole days, shared-silo count (D18); labelled
+  against Run-Down, which now stops at the silo's low level and counts booked
+  (DRAFT) transfers; Date to Refill = run-down − 2, Required On = refill − lead
+  time, lead time default now 2 (migration 0120 moved all farms still at 0).
+- Reporting Period Master with a "generate July–June" button (migration 0121);
+  September 2026 = 30 Aug – 26 Sep. Nothing is seeded — an admin generates a year.
+- Requisitions order the forecast's shortfall, dated Required On; System Balance
+  and CRITICAL priority read the current ledger, as the low-feed alert does.
+
+Tasks 9–11 were finished by the other session (navfarm-e2) at your instruction;
+I re-ran every gate without cache and had the whole branch reviewed by a fresh
+reviewer, whose findings are fixed (`3c2e9bf`). Final gates: api 1383, web 258,
+typecheck clean, lint at baseline.
+
+Left in nf_devco by the verification: 12 reporting periods (2026/27),
+cancelled TR-000014, inactive VERIFY-LONG, REQ-VIL100-2026-00003.
+Deferred minors (in the ledger): API English error text shown as-is (Plan A
+pattern); raw `<tr>` in the grid header; roles-tab row under the NOTIFICATION
+comment.
