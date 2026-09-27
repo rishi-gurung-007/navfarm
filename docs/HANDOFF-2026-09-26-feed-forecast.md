@@ -15,7 +15,7 @@ Create button on a fresh tenant).
   (D21–D23), plain wording and a fixed-page / scrolling-table design.
   - Findings: `.superpowers/feed-forecast-sources/review-2026-09-27-running-app.md`
   - Decisions: spec rows D21–D27 in `docs/superpowers/specs/2026-09-25-feed-forecast-design.md`
-  - Plan: `docs/superpowers/plans/2026-09-27-feed-forecast-s-fixes.md`
+  - Plan: `docs/superpowers/plans/2026-09-27-feed-forecast-s-fixes.md` — 22 tasks + 20a (D28). Tasks 1–8 done by navfarm-e2 (29c98b2..ba6a938b); 9–22 executed next by navfarm-e2; the controller verifies and pushes at the end (Rishi, 27 Sep). Migration 0122 applied locally by the controller.
   - Ledger: `.superpowers/sdd/2026-09-27-feed-forecast-s-fixes/progress.md`
     (one line per finished task; resume at the first task without "complete").
 - Rules every agent follows: commit only with explicit paths; never nx.json;
