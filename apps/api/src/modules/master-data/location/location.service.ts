@@ -561,13 +561,20 @@ export class LocationService {
   }
 
   /**
-   * Master Setup §1 rows 10 and 12: one low level and one high level per
-   * silo, both kilograms whatever unit the capacity was typed in (capacity is
-   * compared after its TON→KG conversion). Either may be blank (Q8); when both
-   * are given the low must sit below the high, and neither may exceed what
-   * the silo physically holds.
+   * Master Setup §1 rows 10 and 12. D22 (Rishi, 27 Sep; supersedes Plan B's
+   * optional levels): a SILO must carry both, because the forecast's run-down
+   * and the FEED_BELOW_L1 / FEED_ABOVE alerts read them and a silo without
+   * them was silently never alerted on. `required` is decided by the caller
+   * from location_type, never from storage_type: 248 legacy pens and sheds
+   * carry storage_type SILO and must stay editable without levels. Both are
+   * kilograms whatever unit the capacity was typed in (capacity is compared
+   * after its TON→KG conversion); the low must sit below the high, and
+   * neither may exceed what the silo physically holds.
    */
-  private assertSiloLevels(lowKg: number | null | undefined, highKg: number | null | undefined, capacityKg: number | null) {
+  private assertSiloLevels(lowKg: number | null | undefined, highKg: number | null | undefined, capacityKg: number | null, required = false) {
+    if (required && (lowKg == null || highKg == null)) {
+      throw new BadRequestException('A silo needs both a Below Feed Level and an Above Threshold.');
+    }
     if (lowKg != null && highKg != null && lowKg >= highKg) {
       throw new ConflictException('The low feed level must be below the high feed level.');
     }
@@ -847,7 +854,7 @@ export class LocationService {
     this.assertSiloFieldsWhenSilo(dto.storage_type, dto.silo_capacity_kg, dto.silo_reorder_days, dto.silo_capacity_uom);
     if (dto.storage_type === 'SILO') {
       const capacityKg = siloCapacityToKg(dto.silo_capacity_kg, dto.silo_capacity_uom);
-      this.assertSiloLevels(dto.low_level_kg, dto.high_level_kg, capacityKg == null ? null : Number(capacityKg));
+      this.assertSiloLevels(dto.low_level_kg, dto.high_level_kg, capacityKg == null ? null : Number(capacityKg), typeCode === 'SILO');
     }
     if (dto.storage_type !== 'SILO') {
       dto.silo_capacity_kg = undefined;
@@ -1251,7 +1258,7 @@ export class LocationService {
       const effectiveLow = dto.low_level_kg !== undefined ? dto.low_level_kg : location.low_level_kg == null ? null : Number(location.low_level_kg);
       const effectiveHigh = dto.high_level_kg !== undefined ? dto.high_level_kg : location.high_level_kg == null ? null : Number(location.high_level_kg);
       const effectiveCapacity = updates.silo_capacity_kg !== undefined ? updates.silo_capacity_kg : location.silo_capacity_kg;
-      this.assertSiloLevels(effectiveLow, effectiveHigh, effectiveCapacity == null ? null : Number(effectiveCapacity));
+      this.assertSiloLevels(effectiveLow, effectiveHigh, effectiveCapacity == null ? null : Number(effectiveCapacity), location.location_type === 'SILO');
     }
     if (dto.low_level_kg !== undefined) updates.low_level_kg = dto.low_level_kg == null ? null : String(dto.low_level_kg);
     if (dto.high_level_kg !== undefined) updates.high_level_kg = dto.high_level_kg == null ? null : String(dto.high_level_kg);

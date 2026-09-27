@@ -232,6 +232,7 @@ describe('LocationService canonical hierarchy', () => {
     await expect(service.create({
       company_id: 'comp-1', parent_location_id: 'farm-1', location_name: 'Feed Silo',
       location_address: 'Farm Road', location_type: 'SILO', max_capacity: 2000, capacity_uom: 'KG',
+      low_level_kg: 200, high_level_kg: 1800,
     }, 'tenant-1')).rejects.toThrow(ConflictException);
   });
 
@@ -248,6 +249,7 @@ describe('LocationService canonical hierarchy', () => {
     await expect(service.create({
       company_id: 'comp-1', parent_location_id: 'shed-1',
       location_name: 'Feed Silo 1', location_address: 'Farm Road', location_type: 'SILO',
+      low_level_kg: 200, high_level_kg: 1800,
       capacity_uom: 'KG', silo_capacity_kg: 2000, silo_capacity_uom: 'KG', silo_reorder_days: 7,
     }, 'tenant-1')).rejects.toThrow('must be created under a FARM');
 
@@ -260,6 +262,7 @@ describe('LocationService canonical hierarchy', () => {
     await expect(service.create({
       company_id: 'comp-1', parent_location_id: 'farm-1',
       location_name: 'Feed Silo 1', location_address: 'Farm Road', location_type: 'SILO',
+      low_level_kg: 200, high_level_kg: 1800,
       capacity_uom: 'KG', silo_capacity_kg: 40, silo_reorder_days: 7,
     }, 'tenant-1')).rejects.toThrow('silo_capacity_uom');
   });
@@ -278,6 +281,7 @@ describe('LocationService canonical hierarchy', () => {
     const result = await service.create({
       company_id: 'comp-1', parent_location_id: 'farm-1',
       location_name: 'Feed Silo 1', location_address: 'Farm Road', location_type: 'SILO',
+      low_level_kg: 200, high_level_kg: 1800,
       capacity_uom: 'KG', silo_capacity_kg: 40, silo_capacity_uom: 'TON', silo_reorder_days: 7,
     }, 'tenant-1');
 
@@ -340,6 +344,7 @@ describe('LocationService canonical hierarchy', () => {
     const result = await service.create({
       company_id: 'comp-1', parent_location_id: 'farm-1',
       location_name: 'Feed Silo 1', location_address: 'Farm Road', location_type: 'SILO',
+      low_level_kg: 200, high_level_kg: 1800,
       capacity_uom: 'KG', silo_capacity_kg: 2000, silo_capacity_uom: 'KG', silo_reorder_days: 7,
       attached_sheds: ['shed-1'],
     }, 'tenant-1');
@@ -373,6 +378,7 @@ describe('LocationService canonical hierarchy', () => {
     const result = await service.create({
       company_id: 'comp-1', parent_location_id: 'farm-1',
       location_name: 'Feed Silo 2', location_address: 'Farm Road', location_type: 'SILO',
+      low_level_kg: 200, high_level_kg: 1800,
       capacity_uom: 'KG', silo_capacity_kg: 2000, silo_capacity_uom: 'KG', silo_reorder_days: 7,
       attached_sheds: ['shed-1'],
     }, 'tenant-1');
@@ -393,6 +399,7 @@ describe('LocationService canonical hierarchy', () => {
     await expect(service.create({
       company_id: 'comp-1', parent_location_id: 'farm-1',
       location_name: 'Feed Silo 2', location_address: 'Farm Road', location_type: 'SILO',
+      low_level_kg: 200, high_level_kg: 1800,
       capacity_uom: 'KG', silo_capacity_kg: 2000, silo_capacity_uom: 'KG', silo_reorder_days: 7,
       attached_sheds: ['shed-1'],
     }, 'tenant-1')).rejects.toThrow('already draws');
@@ -410,6 +417,7 @@ describe('LocationService canonical hierarchy', () => {
     await expect(service.create({
       company_id: 'comp-1', parent_location_id: 'farm-1',
       location_name: 'Feed Silo 1', location_address: 'Farm Road', location_type: 'SILO',
+      low_level_kg: 200, high_level_kg: 1800,
       capacity_uom: 'KG', silo_capacity_kg: 2000, silo_capacity_uom: 'KG', silo_reorder_days: 7,
       attached_sheds: ['shed-1'],
     }, 'tenant-1')).rejects.toThrow(BadRequestException);
@@ -424,6 +432,7 @@ describe('LocationService canonical hierarchy', () => {
     await expect(service.create({
       company_id: 'comp-1', parent_location_id: 'farm-1',
       location_name: 'Feed Silo 1', location_address: 'Farm Road', location_type: 'SILO',
+      low_level_kg: 200, high_level_kg: 1800,
       capacity_uom: 'KG', silo_capacity_kg: 2000, silo_capacity_uom: 'KG', silo_reorder_days: 7,
       attached_sheds: ['shed-1'],
     }, 'tenant-1')).rejects.toThrow('not on the same farm');
@@ -438,6 +447,7 @@ describe('LocationService canonical hierarchy', () => {
     await expect(service.create({
       company_id: 'comp-1', parent_location_id: 'farm-1',
       location_name: 'Feed Silo 1', location_address: 'Farm Road', location_type: 'SILO',
+      low_level_kg: 200, high_level_kg: 1800,
       capacity_uom: 'KG', silo_capacity_kg: 2000, silo_capacity_uom: 'KG', silo_reorder_days: 7,
       attached_sheds: ['ghost-shed'],
     }, 'tenant-1')).rejects.toThrow(BadRequestException);
@@ -457,6 +467,7 @@ describe('LocationService canonical hierarchy', () => {
     const silo = {
       location_id: 'silo-1', tenant_id: 'tenant-1', company_id: 'comp-1', location_code: 'FARM-001/SILO-001',
       location_type: 'SILO', location_level: 2, parent_location_id: 'farm-1', farm_id: 'farm-1',
+      low_level_kg: '200.00', high_level_kg: '1800.00',
       storage_type: 'SILO', silo_capacity_kg: '2000.00', silo_capacity_uom: 'KG', silo_reorder_days: 7,
     };
     const shedParent = {
@@ -477,6 +488,7 @@ describe('LocationService canonical hierarchy', () => {
     const silo = {
       location_id: 'silo-1', tenant_id: 'tenant-1', company_id: 'comp-1', location_code: 'FARM-001/SILO-001',
       location_type: 'SILO', location_level: 2, parent_location_id: 'farm-1', farm_id: 'farm-1',
+      low_level_kg: '200.00', high_level_kg: '1800.00',
       storage_type: 'SILO', silo_capacity_kg: '40000.00', silo_capacity_uom: 'TON', silo_reorder_days: 7,
     };
     selectResults.push(
@@ -634,6 +646,42 @@ describe('LocationService canonical hierarchy', () => {
     await expect(service.update('silo-1', { high_level_kg: 500 }, 'tenant-1'))
       .rejects.toThrow('The low feed level must be below the high feed level.');
     expect(txUpdate).not.toHaveBeenCalled();
+  });
+
+  it('refuses a new silo without both feed levels (D22)', async () => {
+    selectResults.push([company], [siloType], [farmParent()]);
+    await expect(service.create({
+      company_id: 'comp-1', parent_location_id: 'farm-1',
+      location_name: 'Feed Silo 1', location_address: 'Farm Road', location_type: 'SILO',
+      capacity_uom: 'KG', silo_capacity_kg: 12000, silo_capacity_uom: 'KG', silo_reorder_days: 7,
+      low_level_kg: 2400,
+    } as any, 'tenant-1')).rejects.toThrow('A silo needs both a Below Feed Level and an Above Threshold.');
+    expect(txInsert).not.toHaveBeenCalled();
+  });
+
+  it('refuses saving a silo that still has no levels, whatever else the edit changes (D22)', async () => {
+    const silo = {
+      location_id: 'silo-1', tenant_id: 'tenant-1', company_id: 'comp-1', location_code: 'FARM-001/SILO-001',
+      location_type: 'SILO', location_level: 2, parent_location_id: 'farm-1', farm_id: 'farm-1',
+      storage_type: 'SILO', silo_capacity_kg: '12000.00', silo_capacity_uom: 'KG', silo_reorder_days: 7,
+      low_level_kg: null, high_level_kg: null,
+    };
+    selectResults.push([silo], [siloType], [farmParent()], [{ parent_location_id: null }]);
+    await expect(service.update('silo-1', { location_name: 'Feed Silo 1b' }, 'tenant-1'))
+      .rejects.toThrow('A silo needs both a Below Feed Level and an Above Threshold.');
+    expect(txUpdate).not.toHaveBeenCalled();
+  });
+
+  it('does not require levels on a pen that carries a legacy SILO storage type (Review Focus 1)', async () => {
+    const pen = {
+      location_id: 'pen-1', tenant_id: 'tenant-1', company_id: 'comp-1', location_code: 'FARM-001/SHED-001/PEN-001',
+      location_type: 'PEN', location_level: 3, parent_location_id: 'shed-1', farm_id: 'farm-1',
+      storage_type: 'SILO', silo_capacity_kg: null, silo_capacity_uom: null, silo_reorder_days: null,
+      low_level_kg: null, high_level_kg: null,
+    };
+    selectResults.push([pen], [{ ...siloType, type_code: 'PEN', type_name: 'Pen', code_prefix: 'PEN' }], [farmParent()], [{ parent_location_id: null }]);
+    const outcome = await service.update('pen-1', { location_name: 'Pen 1b' }, 'tenant-1').then(() => null, (e: Error) => e);
+    expect(outcome?.message ?? '').not.toContain('Below Feed Level');
   });
 
   it('getLocationOccupancy aggregates headcounts, capacity utilization, and biosecurity status', async () => {

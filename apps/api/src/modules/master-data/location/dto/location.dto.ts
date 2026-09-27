@@ -177,14 +177,14 @@ export class CreateLocationDto {
   feed_lead_time_days?: number;
 
   // Master Setup §1 row 10: low feed alert at or below this System Balance.
-  @ApiProperty({ description: 'SILO: low feed alert when System Balance is at or below this many KG. Blank = no low alert.', required: false, nullable: true })
+  @ApiProperty({ description: 'SILO: low feed alert when System Balance is at or below this many KG. Required on a silo (D22).', required: false, nullable: true })
   @IsOptional()
   @IsNumber()
   @Min(0)
   low_level_kg?: number | null;
 
   // Master Setup §1 row 12: over-stock notice at or above this System Balance.
-  @ApiProperty({ description: 'SILO: over-stock notice when System Balance is at or above this many KG (typically 90% of capacity). Blank = none.', required: false, nullable: true })
+  @ApiProperty({ description: 'SILO: over-stock notice when System Balance is at or above this many KG (typically 90% of capacity). Required on a silo (D22).', required: false, nullable: true })
   @IsOptional()
   @IsNumber()
   @Min(0)
@@ -375,14 +375,14 @@ export class UpdateLocationDto {
   feed_lead_time_days?: number;
 
   // Master Setup §1 row 10: low feed alert at or below this System Balance.
-  @ApiProperty({ description: 'SILO: low feed alert when System Balance is at or below this many KG. Blank = no low alert.', required: false, nullable: true })
+  @ApiProperty({ description: 'SILO: low feed alert when System Balance is at or below this many KG. Required on a silo (D22).', required: false, nullable: true })
   @IsOptional()
   @IsNumber()
   @Min(0)
   low_level_kg?: number | null;
 
   // Master Setup §1 row 12: over-stock notice at or above this System Balance.
-  @ApiProperty({ description: 'SILO: over-stock notice when System Balance is at or above this many KG (typically 90% of capacity). Blank = none.', required: false, nullable: true })
+  @ApiProperty({ description: 'SILO: over-stock notice when System Balance is at or above this many KG (typically 90% of capacity). Required on a silo (D22).', required: false, nullable: true })
   @IsOptional()
   @IsNumber()
   @Min(0)

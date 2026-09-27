@@ -133,13 +133,16 @@ const location: MasterDataConfig = {
     { key: "silo_capacity_uom", label: "Silo Capacity UOM", type: "select", options: ["KG", "TON"].map((v) => ({ value: v, label: v })), defaultValue: "KG", visibleWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, requiredWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, helpText: "The unit the capacity above is entered in. The capacity is stored in kilograms whichever unit is chosen — a tonne figure is converted on save.", section: "Identification" },
     { key: "silo_reorder_days", label: "Silo Reorder Days", type: "number", min: 0, max: 365, step: "1", visibleWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, requiredWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, helpText: "Required when Storage Location is SILO.", section: "Identification" },
     // Master Setup §1 rows 10 and 12 (spec D10) — alongside Silo Reorder
-    // Days, not replacing it. Optional (Q8): blank means no alert of that kind.
+    // Days, not replacing it. Required on a silo since D22 (Rishi, 27 Sep):
+    // the forecast's run-down and the feed alerts read them.
     { key: "low_level_kg", label: "Below Feed Level (KG)", type: "number", min: 0, step: "1", nativeNumber: true,
-      visibleWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, section: "Identification",
-      helpText: "Low feed alert when this silo's System Balance is at or below this many kilograms. Leave blank for no low alert." },
+      visibleWhen: { anyOf: [{ key: "location_type", equals: "SILO" }] },
+      requiredWhen: { anyOf: [{ key: "location_type", equals: "SILO" }] }, section: "Identification",
+      helpText: "Low feed alert at or below this. Usually 20% of capacity." },
     { key: "high_level_kg", label: "Above Threshold (KG)", type: "number", min: 0, step: "1", nativeNumber: true,
-      visibleWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, section: "Identification",
-      helpText: "Over-stock notice when the System Balance is at or above this many kilograms — typically 90% of capacity. Leave blank for none." },
+      visibleWhen: { anyOf: [{ key: "location_type", equals: "SILO" }] },
+      requiredWhen: { anyOf: [{ key: "location_type", equals: "SILO" }] }, section: "Identification",
+      helpText: "Over-stock notice at or above this. Usually 90% of capacity." },
     // Feed Forecast's two per-farm timing offsets (spec D3): delivery distance
     // is per farm, so both live on the FARM row rather than on each silo.
     { key: "feed_refill_buffer_days", label: "Feed Refill Buffer (Days)", type: "number", min: 0, max: 30, step: "1", nativeNumber: true,
