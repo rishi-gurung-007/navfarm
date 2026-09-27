@@ -106,7 +106,12 @@ describe('FeedForecastService — Plan B entry points', () => {
       const { cls, service, loadInput } = withToday('2026-09-26');
       const result = await cls.run(() => service.computeForFarm('farm-b', 'co-1', 'tenant-1', { planningDate: '2026-09-19' }));
       expect(loadInput.mock.calls[0][5]).toEqual({ stockDate: '2026-09-19', horizonTo: '2026-09-26', headerCutoff: '2026-09-26' });
-      expect(result.flags).toContainEqual({ kind: 'AS_OF_PAST', planningDate: '2026-09-19', today: '2026-09-26' });
+      expect(result.flags).toContainEqual({
+        kind: 'AS_OF_PAST', planningDate: '2026-09-19', today: '2026-09-26',
+        // The Task 6 carry ruling: the note says what is today's register and what that costs a back-dated view.
+        note: "Stock is shown as of 2026-09-19; batches, head counts and stages are today's register (2026-09-26), not as they stood then. "
+          + 'A batch that entered its current stage after 2026-09-19 carries no demand for the days before that stage began.',
+      });
     });
 
     it('a future planning date walks from today\'s stock and raises no as-of note', async () => {

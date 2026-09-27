@@ -107,7 +107,8 @@ export type ForecastFlag =
   // was passed with no shed and draws on the STORE — flagged so it is not mistaken for a D6 shed-without-silo.
   | { kind: 'BATCH_SHED_UNKNOWN'; batchNo: string }
   // Raised by the service (Plan R, Q8): the planning date is in the past — balances are as of it, heads are today's.
-  | { kind: 'AS_OF_PAST'; planningDate: string; today: string };
+  // `note` says so in words, including the ruling's consequence that days before a batch's current stage began carry no demand.
+  | { kind: 'AS_OF_PAST'; planningDate: string; today: string; note: string };
 
 export interface ForecastRow {
   batchNo: string;

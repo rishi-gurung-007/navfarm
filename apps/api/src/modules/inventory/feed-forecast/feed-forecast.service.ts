@@ -7,7 +7,7 @@ import { activeFarmOfCompany, batchScopeConditions, farmScope, FARM_SCOPE_KEY, F
 import { FeedStockMovement, InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
 import { FeedRow, stageDayRange } from '../../production/lifecycle/feed-row-days';
 import { buildFeedForecast, DailyForecastRow, DietChange, ForecastFlag, ForecastInput, ForecastRow, ForecastSource, isTimeZone, todayInZone } from './feed-forecast.engine';
-import { DEFAULT_SPAN_DAYS, MAX_SPAN_DAYS, spanProblem } from './feed-forecast.view';
+import { DEFAULT_SPAN_DAYS, ForecastView, groupRows, MAX_SPAN_DAYS, PeriodRange, ReportRow, resolveViewRange, spanProblem } from './feed-forecast.view';
 import { stockAsOf } from './feed-forecast.stock';
 import { QueryFeedForecastDto } from './dto/feed-forecast.dto';
 
@@ -65,6 +65,8 @@ export interface FeedForecastResponse {
   // Plan B: the requisition's lines and the DIET_CHANGE alert read these (engine Task 2).
   sources: ForecastSource[];
   dietChanges: DietChange[];
+  /** Plan R: each batch's current / next stage block (field specification, supporting block). */
+  stages: StageBlock[];
 }
 
 export interface ResolvedFarm {
@@ -76,6 +78,93 @@ export interface ResolvedFarm {
 export interface FarmClock {
   today: string;
   timeZone: string | null;
+}
+
+/**
+ * Field specification, Supporting Stage / Diet Reference Block: the stage the
+ * batch is in (dated from when it actually entered it — its scheduler header,
+ * else the batch start), the next stage from Stage Master, and the day the
+ * batch is due to change. Stage Master's typical duration dates both; without
+ * one the dates stay open rather than being guessed. A change that fell due
+ * on or before the planning date and was not posted is marked, because the
+ * forecast keeps feeding the recorded stage (Plan A fix round 1).
+ */
+export interface StageBlock {
+  batchId: string;
+  batchNo: string;
+  shedCode: string;
+  currentStageCode: string;
+  currentFrom: string;
+  currentTo: string | null;
+  nextStageCode: string | null;
+  nextFrom: string | null;
+  nextTo: string | null;
+  stageChangeDate: string | null;
+  stageChangeOverdue: boolean; // due on or before the planning date but not posted
+}
+
+/**
+ * One block per input batch (an ANIMAL_WISE or REGISTERED batch is one per
+ * stage group, as its report rows are). The current stage is the batch's
+ * first segment — the recorded one, never a projection — so its start is the
+ * scheduler header buildInputBatches chose under the header cutoff (Ruling
+ * I1: today's register, not a back-dated planning date).
+ */
+export function stageBlocksFor(
+  batches: ForecastInput['batches'],
+  stages: Map<string, StageInfo>,
+  shedCodeById: Map<string, string>,
+  planningDate: string,
+): StageBlock[] {
+  return batches
+    .map((b) => {
+      const current = b.segments[0];
+      const stage = stages.get(current.stageId);
+      const currentTo = stage?.durationDays && stage.durationDays >= 1 ? addDays(current.start, stage.durationDays - 1) : null;
+      // A retired successor is not a stage the batch can move into (projectSegments refuses it too).
+      const candidate = stage?.nextStageId ? stages.get(stage.nextStageId) : undefined;
+      const next = candidate && candidate.isActive ? candidate : undefined;
+      const nextFrom = currentTo && next ? addDays(currentTo, 1) : null;
+      const nextTo = nextFrom && next?.durationDays && next.durationDays >= 1 ? addDays(nextFrom, next.durationDays - 1) : null;
+      return {
+        batchId: b.batchId,
+        batchNo: b.batchNo,
+        shedCode: shedCodeById.get(b.shedId) ?? '',
+        currentStageCode: current.stageCode,
+        currentFrom: current.start,
+        currentTo,
+        nextStageCode: next?.stageCode ?? null,
+        nextFrom,
+        nextTo,
+        stageChangeDate: nextFrom,
+        stageChangeOverdue: nextFrom !== null && nextFrom <= planningDate,
+      };
+    })
+    .sort((a, b) => (a.shedCode !== b.shedCode ? a.shedCode.localeCompare(b.shedCode) : a.batchNo.localeCompare(b.batchNo)));
+}
+
+/** GET /feed-forecast (Plan R): the field specification's report — grouped rows, the stage block and the range it covers. */
+export interface FeedForecastReport {
+  planningDate: string;
+  today: string;
+  timeZone: string | null;
+  view: ForecastView;
+  from: string;
+  to: string;
+  /** First date forecast (Q7): the planning date or `from`, whichever is later; null when the range ends before the planning date. */
+  forecastFrom: string | null;
+  /** Q7 said in words: set whenever part or all of the range lies before the planning date and so is not forecast. */
+  forecastNote: string | null;
+  horizonTo: string;
+  period: PeriodRange | null;
+  farm: { id: string; code: string; name: string };
+  refillBufferDays: number;
+  leadTimeDays: number;
+  rows: ReportRow[];
+  stages: StageBlock[];
+  flags: ForecastFlag[];
+  sources: ForecastSource[];
+  dietChanges: DietChange[];
 }
 
 export interface StageInfo {
@@ -136,6 +225,20 @@ function diffDays(a: string, b: string): number {
 /** YYYY-MM-DD *and* a real day: Date.UTC rolls 2026-02-31 over to 3 March, so the parse must round-trip. */
 function isCalendarDay(iso: string): boolean {
   return ISO_DAY.test(iso) && new Date(parseIsoUtc(iso)).toISOString().slice(0, 10) === iso;
+}
+
+/**
+ * The AS_OF_PAST note (Q8 and the Task 6 carry ruling). Only balances are
+ * rebuilt as of a past planning date; the batch set, head counts and stages
+ * are read as they stand today, so a batch that entered its current stage
+ * after the planning date is fed nothing for the days before that stage
+ * began — said here so the gap is never read as "no feed needed".
+ */
+export function asOfPastNote(planningDate: string, today: string): string {
+  return (
+    `Stock is shown as of ${planningDate}; batches, head counts and stages are today's register (${today}), not as they stood then. ` +
+    `A batch that entered its current stage after ${planningDate} carries no demand for the days before that stage began.`
+  );
 }
 
 /**
@@ -340,9 +443,121 @@ export class FeedForecastService {
     return tenantDb;
   }
 
-  async getForecast(query: QueryFeedForecastDto, tenantId: string, userType?: string): Promise<FeedForecastResponse> {
+  /**
+   * GET /feed-forecast (Plan R). The view only chooses the range and how the
+   * engine's per-date rows are grouped (feed-forecast.view.ts); whatever the
+   * view, the run-down is looked for 45 days past the planning date (Q12).
+   *
+   * Every date the caller sends is checked here, before anything is read, even
+   * one the chosen view does not use (`from` under PERIOD, `to` under DAILY or
+   * WEEKLY): the DTO's IsDateString admits a timestamp or a rolled-over day
+   * such as 2026-02-31, and a malformed value must answer 400, never be
+   * quietly dropped because this view happens not to need it.
+   */
+  async getForecast(query: QueryFeedForecastDto, tenantId: string, userType?: string): Promise<FeedForecastReport> {
     const { farmId, companyId } = await this.resolveFarm(query.farmId, tenantId, userType);
-    return this.computeForFarm(farmId, companyId, tenantId, { from: query.from, to: query.to });
+    for (const [name, value] of [['planningDate', query.planningDate], ['from', query.from], ['to', query.to]] as const) {
+      if (value !== undefined && !isCalendarDay(value)) throw new BadRequestException(`${name} must be a calendar date (YYYY-MM-DD).`);
+    }
+    const clock = await this.farmToday(companyId, tenantId);
+    const planningDate = query.planningDate ?? clock.today;
+    // Q8, checked again in computeForFarm: here as well so a Reporting Period is not looked up for a date that is refused.
+    if (Math.abs(diffDays(clock.today, planningDate)) > MAX_SPAN_DAYS) {
+      throw new BadRequestException(`The planning date must be within ${MAX_SPAN_DAYS} days of today (${clock.today}).`);
+    }
+    const view: ForecastView = query.view ?? 'CUSTOM';
+    let period: PeriodRange | null = null;
+    if (view === 'PERIOD') {
+      const periods = await this.loadPeriods(companyId, tenantId);
+      period = query.periodId
+        ? periods.find((p) => p.periodId === query.periodId) ?? null
+        : periods.find((p) => p.startDate <= planningDate && planningDate <= p.endDate) ?? null;
+      if (!period) {
+        throw new BadRequestException(
+          query.periodId ? 'Reporting period not found.' : `No reporting period covers ${planningDate}. Add one under Master Data → Reporting Periods.`,
+        );
+      }
+    } else if (query.periodId !== undefined) {
+      // A period chosen for another view would be silently ignored — say so instead.
+      throw new BadRequestException('periodId applies only to the Reporting Period view.');
+    }
+    const { from, to } = resolveViewRange({ view, planningDate, from: query.from, to: query.to, period });
+    const span = spanProblem(from, to, period);
+    if (span) throw new BadRequestException(span);
+    // The walk runs from the stock date to at least `to`; a range far past the planning date would make it unbounded,
+    // and nothing beyond Q12's 45-day horizon is forecast anyway.
+    const reach = addDays(planningDate, MAX_SPAN_DAYS);
+    if (to > reach) {
+      throw new BadRequestException(`The forecast reaches at most ${MAX_SPAN_DAYS} days past the planning date (to ${reach}).`);
+    }
+    const result = await this.computeForFarm(farmId, companyId, tenantId, { from, to, planningDate, horizonTo: reach }, clock);
+    // Q7: an "as of" forecast has no projection for days already behind the planning date.
+    const forecastFrom = to < planningDate ? null : from > planningDate ? from : planningDate;
+    const forecastNote = forecastFrom === null
+      ? `Nothing in ${from} to ${to} is forecast: the range ends before the planning date (${planningDate}). Move the planning date back to see it.`
+      : forecastFrom > from
+        ? `Dates before the planning date (${planningDate}) are not forecast. Move the planning date back to see them.`
+        : null;
+    return {
+      planningDate: result.planningDate,
+      today: result.today,
+      timeZone: result.timeZone,
+      view,
+      from,
+      to,
+      forecastFrom,
+      forecastNote,
+      horizonTo: result.horizonTo,
+      period,
+      farm: result.farm,
+      refillBufferDays: result.refillBufferDays,
+      leadTimeDays: result.leadTimeDays,
+      rows: groupRows(result.daily, view, from),
+      stages: result.stages,
+      flags: result.flags,
+      sources: result.sources,
+      dietChanges: result.dietChanges,
+    };
+  }
+
+  /**
+   * GET /feed-forecast/periods: the periods the Reporting Period view may use,
+   * for the caller's farm (D13, D20). Through resolveFarm, so a farm login gets
+   * its own company's list and an unknown user type fails closed.
+   */
+  async listPeriods(queryFarmId: string | undefined, tenantId: string, userType: string | undefined): Promise<PeriodRange[]> {
+    const { companyId } = await this.resolveFarm(queryFarmId, tenantId, userType);
+    return this.loadPeriods(companyId, tenantId);
+  }
+
+  /**
+   * The company's own active reporting periods by start date (D20). Ruling M5:
+   * the company's rows only — never a tenant-template (company NULL) row, the
+   * same line the Reporting Period Master's own company scope draws, so the
+   * report can never cut by a calendar the company's master screen does not show.
+   */
+  private async loadPeriods(companyId: string, tenantId: string): Promise<PeriodRange[]> {
+    const P = schema.reportingPeriod;
+    const rows = await this.db
+      .select({
+        period_id: P.period_id,
+        period_code: P.period_code,
+        start_date: P.start_date,
+        end_date: P.end_date,
+        stock_take_date: P.stock_take_date,
+        production_start_date: P.production_start_date,
+      })
+      .from(P)
+      .where(and(eq(P.tenant_id, tenantId), eq(P.company_id, companyId), eq(P.is_active, true), isNull(P.deleted_at)))
+      .orderBy(P.start_date);
+    return rows.map((r) => ({
+      periodId: r.period_id,
+      periodCode: r.period_code,
+      startDate: r.start_date,
+      endDate: r.end_date,
+      stockTakeDate: r.stock_take_date,
+      productionStartDate: r.production_start_date,
+    }));
   }
 
   /**
@@ -501,15 +716,16 @@ export class FeedForecastService {
     const headerCutoff = planningDate > today ? planningDate : today;
     return this.withFarmScope(farmId, companyId, async () => {
       const farm = await this.loadFarm(farmId, tenantId);
-      const { input, flags: loadFlags } = await this.loadInput(farm, planningDate, from, to, tenantId, { stockDate, horizonTo, headerCutoff });
+      const { input, flags: loadFlags, stageBlocks } = await this.loadInput(farm, planningDate, from, to, tenantId, { stockDate, horizonTo, headerCutoff });
       const { rows, flags, sources, dietChanges, daily } = buildFeedForecast(input);
-      const asOf: ForecastFlag[] = planningDate < today ? [{ kind: 'AS_OF_PAST', planningDate, today }] : [];
+      const asOf: ForecastFlag[] = planningDate < today ? [{ kind: 'AS_OF_PAST', planningDate, today, note: asOfPastNote(planningDate, today) }] : [];
       return {
         planningDate, today, timeZone, from, to, horizonTo,
         farm: { id: farm.id, code: farm.code, name: farm.name },
         refillBufferDays: farm.refillBufferDays,
         leadTimeDays: farm.leadTimeDays,
         rows, daily, flags: [...flags, ...loadFlags, ...asOf], sources, dietChanges,
+        stages: stageBlocks ?? [],
       };
     });
   }
@@ -609,7 +825,7 @@ export class FeedForecastService {
     to: string,
     tenantId: string,
     opts: { stockDate: string; horizonTo: string; headerCutoff: string },
-  ): Promise<{ input: ForecastInput; flags: ForecastFlag[] }> {
+  ): Promise<{ input: ForecastInput; flags: ForecastFlag[]; stageBlocks: StageBlock[] }> {
     const companyId = farm.companyId;
     // computeForFarm has already replaced the CLS scope with the effective one
     // (fix round 2, finding 1) — every read below, direct or through the
@@ -665,7 +881,7 @@ export class FeedForecastService {
     const linkedSiloIds = [...new Set(links.map((l) => l.silo_id).filter((id) => activeSiloIds.has(id)))];
 
     // Stages are projected to the run-down horizon, so a stage change just past `to` still moves the run-down (Q12).
-    const { batches, flags } = await this.loadBatches(farm, planningDate, opts.horizonTo, opts.headerCutoff, tenantId, locationById, new Set(shedIds));
+    const { batches, flags, stages } = await this.loadBatches(farm, planningDate, opts.horizonTo, opts.headerCutoff, tenantId, locationById, new Set(shedIds));
     const feedRows = await this.loadFeedRows([...new Set(batches.map((b) => b.breedId))], companyId, tenantId);
 
     // The farm's STORE (D6 fallback). One per farm in every template; if a farm
@@ -705,6 +921,8 @@ export class FeedForecastService {
       }
     }
 
+    const stageBlocks = stageBlocksFor(batches, stages, new Map(shedRows.map((s) => [s.location_id, s.location_code])), planningDate);
+
     return {
       input: {
         planningDate,
@@ -724,6 +942,7 @@ export class FeedForecastService {
         feedRows,
       },
       flags,
+      stageBlocks,
     };
   }
 
@@ -790,7 +1009,7 @@ export class FeedForecastService {
     tenantId: string,
     locationById: Map<string, LocationNode>,
     activeShedIds: Set<string>,
-  ): Promise<{ batches: InputBatch[]; flags: ForecastFlag[] }> {
+  ): Promise<{ batches: InputBatch[]; flags: ForecastFlag[]; stages: Map<string, StageInfo> }> {
     const scope = farmScope(this.cls);
     const batchRows = await this.db
       .select({
@@ -818,7 +1037,7 @@ export class FeedForecastService {
         ),
       );
     const fed = batchRows.filter((b) => b.breed_id);
-    if (!fed.length) return { batches: [], flags: [] };
+    if (!fed.length) return { batches: [], flags: [], stages: new Map() };
     const batchIds = fed.map((b) => b.batch_id);
 
     const animalGroups = new Map<string, { stageId: string | null; heads: number }[]>();
@@ -897,7 +1116,8 @@ export class FeedForecastService {
       ]),
     );
 
-    return buildInputBatches({ batchRows: fed, animalGroups, headers, stages, locationById, activeShedIds, planningDate, to: horizonTo, headerCutoff });
+    // Stage Master is returned as well: the stage block dates the current and next stage from it.
+    return { ...buildInputBatches({ batchRows: fed, animalGroups, headers, stages, locationById, activeShedIds, planningDate, to: horizonTo, headerCutoff }), stages };
   }
 
   /** Active lifecycle rows with a feed item and a positive rate, as stage-day ranges (feed-row-days.ts). */

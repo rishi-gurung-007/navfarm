@@ -2,7 +2,7 @@ import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { ClsService } from 'nestjs-cls';
 import { transactionCls, useFarmScope } from '../../../test-utils/transaction-cls';
-import { buildInputBatches, FeedForecastService, locationLobConditions, projectSegments, resolveShed, StageInfo } from './feed-forecast.service';
+import { buildInputBatches, FeedForecastService, locationLobConditions, projectSegments, resolveShed, stageBlocksFor, StageInfo } from './feed-forecast.service';
 import { InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
 import { buildFeedForecast, ForecastInput, todayLocal } from './feed-forecast.engine';
 import { activeFarmOfCompany, FARM_SCOPE_KEY, farmScope } from '../../../common/farm-scope';
@@ -133,6 +133,7 @@ describe('FeedForecastService', () => {
       // The engine's flags, then the loader's own (a batch placed on no known shed).
       flags: [{ kind: 'HEADS_ASSUMED_FLAT', batchNo: 'B1' }, { kind: 'BATCH_SHED_UNKNOWN', batchNo: 'B2' }],
       sources: [], dietChanges: [],
+      stages: [],
     });
   });
 
@@ -731,5 +732,215 @@ describe('locationLobConditions', () => {
   it('adds nothing for an unrestricted caller or one with no LOB', () => {
     expect(locationLobConditions({ farmId: 'farm-A', restricted: false, companyId: 'comp-1', lobId: 'lob-1' })).toEqual([]);
     expect(locationLobConditions({ farmId: 'farm-A', restricted: true, companyId: 'comp-1', lobId: null })).toEqual([]);
+  });
+});
+
+describe('FeedForecastService.getForecast — views, periods and the report (Plan R)', () => {
+  let service: FeedForecastService;
+  let compute: jest.SpyInstance;
+  const daily = (over: Record<string, unknown> = {}) => ({
+    date: '2026-09-23', batchId: 'b', batchNo: 'WG-2026-38', shedCode: 'GRS/SHED-003', stageCode: 'WEANER',
+    itemId: 'r1', itemNo: 'FEED-R1', itemName: 'Weaner Diet R1', lifecycleId: 'row-r1', sourceType: 'SILO', sourceCode: 'GRS/SILO-001',
+    currentInventoryKg: 1500, heads: 1000, feedRateKg: 2, perDayIntakeKg: 2000, wastagePct: 0, demandKg: 2000,
+    daysOfStock: 0, sharedBatchCount: 1, indicative: true,
+    runDownDate: '2026-09-23', refillDate: '2026-09-21', requiredOn: '2026-09-19', overdue: true, ...over,
+  });
+  const computed = {
+    planningDate: '2026-09-23', today: '2026-09-23', timeZone: 'Africa/Harare', from: '2026-09-23', to: '2026-09-29', horizonTo: '2026-11-07',
+    farm: { id: 'farm-A', code: 'GRS', name: 'Grasmere' }, refillBufferDays: 2, leadTimeDays: 2, rows: [],
+    daily: [daily(), daily({ date: '2026-09-24', currentInventoryKg: 0 }), daily({ date: '2026-09-25', currentInventoryKg: 0 })],
+    flags: [], sources: [], dietChanges: [], stages: [],
+  };
+  const september = { periodId: 'p9', periodCode: '2026-09', startDate: '2026-08-30', endDate: '2026-09-26', stockTakeDate: '2026-09-26', productionStartDate: '2026-09-27' };
+
+  beforeEach(() => {
+    const cls = transactionCls({});
+    useFarmScope(cls, { farmId: 'farm-A', restricted: true, companyId: 'comp-1', lobId: null });
+    service = new FeedForecastService(cls, {} as any);
+    jest.spyOn(service, 'farmToday').mockResolvedValue({ today: '2026-09-23', timeZone: 'Africa/Harare' });
+    compute = jest.spyOn(service, 'computeForFarm').mockResolvedValue(computed as any);
+  });
+
+  it('WEEKLY: 7 days from the week start, one row per batch and item with the week\'s totals, run-down looked for 45 days ahead', async () => {
+    const report = await service.getForecast({ view: 'WEEKLY' }, 'tenant-1', 'STANDARD_USER');
+    expect(compute).toHaveBeenCalledWith(
+      'farm-A', 'comp-1', 'tenant-1',
+      { from: '2026-09-23', to: '2026-09-29', planningDate: '2026-09-23', horizonTo: '2026-11-07' },
+      { today: '2026-09-23', timeZone: 'Africa/Harare' },
+    );
+    expect(report.rows).toHaveLength(1);
+    expect(report.rows[0]).toMatchObject({ date: '2026-09-23', dateTo: '2026-09-25', days: 3, intakeKg: 6000, currentInventoryKg: 1500, itemNo: 'FEED-R1' });
+    expect(report).toMatchObject({ view: 'WEEKLY', forecastFrom: '2026-09-23', forecastNote: null, period: null, timeZone: 'Africa/Harare', leadTimeDays: 2 });
+  });
+
+  it('DAILY: one date, the planning date unless another is chosen', async () => {
+    await service.getForecast({ view: 'DAILY', from: '2026-09-25' }, 'tenant-1', 'STANDARD_USER');
+    expect(compute.mock.calls[0][3]).toMatchObject({ from: '2026-09-25', to: '2026-09-25', horizonTo: '2026-11-07' });
+  });
+
+  it('PERIOD: From/To come from the period covering the planning date; days before the planning date are not forecast (Q7)', async () => {
+    jest.spyOn(service as any, 'loadPeriods').mockResolvedValue([september]);
+    const report = await service.getForecast({ view: 'PERIOD' }, 'tenant-1', 'STANDARD_USER');
+    expect(compute.mock.calls[0][3]).toMatchObject({ from: '2026-08-30', to: '2026-09-26' });
+    expect(report).toMatchObject({ from: '2026-08-30', to: '2026-09-26', forecastFrom: '2026-09-23', period: { periodCode: '2026-09' } });
+    expect(report.forecastNote).toBe('Dates before the planning date (2026-09-23) are not forecast. Move the planning date back to see them.');
+  });
+
+  it('refuses a reporting period longer than the 45-day horizon, naming it, and computes nothing (Review Focus 3)', async () => {
+    jest.spyOn(service as any, 'loadPeriods').mockResolvedValue([{ ...september, periodId: 'p-long', periodCode: '2026-X', startDate: '2026-08-01', endDate: '2026-09-19' }]);
+    await expect(service.getForecast({ view: 'PERIOD', periodId: 'p-long' }, 'tenant-1', 'STANDARD_USER')).rejects.toThrow(
+      new BadRequestException('Reporting period 2026-X runs 50 days (2026-08-01 to 2026-09-19); the forecast covers at most 46.'),
+    );
+    expect(compute).not.toHaveBeenCalled();
+  });
+
+  it('says where to add a period when none covers the planning date, and refuses an unknown period id', async () => {
+    jest.spyOn(service as any, 'loadPeriods').mockResolvedValue([]);
+    await expect(service.getForecast({ view: 'PERIOD' }, 'tenant-1', 'STANDARD_USER')).rejects.toThrow(
+      new BadRequestException('No reporting period covers 2026-09-23. Add one under Master Data → Reporting Periods.'),
+    );
+    await expect(service.getForecast({ view: 'PERIOD', periodId: 'nope' }, 'tenant-1', 'STANDARD_USER')).rejects.toThrow(
+      new BadRequestException('Reporting period not found.'),
+    );
+    expect(compute).not.toHaveBeenCalled();
+  });
+
+  it('marks a range that ends before the planning date as not forecast, and says so', async () => {
+    const report = await service.getForecast({ from: '2026-09-10', to: '2026-09-15' }, 'tenant-1', 'STANDARD_USER');
+    expect(report.forecastFrom).toBeNull();
+    expect(report.forecastNote).toBe(
+      'Nothing in 2026-09-10 to 2026-09-15 is forecast: the range ends before the planning date (2026-09-23). Move the planning date back to see it.',
+    );
+  });
+
+  it('refuses a planning date that is not a calendar day', async () => {
+    await expect(service.getForecast({ planningDate: '2026-02-31' }, 'tenant-1', 'STANDARD_USER')).rejects.toThrow(BadRequestException);
+    expect(compute).not.toHaveBeenCalled();
+  });
+
+  it('refuses a malformed date even where the view does not use it — never silently ignored', async () => {
+    const loadPeriods = jest.spyOn(service as any, 'loadPeriods').mockResolvedValue([september]);
+    await expect(service.getForecast({ view: 'PERIOD', from: '2026-09-23T10:00:00Z' }, 'tenant-1', 'STANDARD_USER')).rejects.toThrow(
+      new BadRequestException('from must be a calendar date (YYYY-MM-DD).'),
+    );
+    await expect(service.getForecast({ view: 'DAILY', to: '2026-09-31' }, 'tenant-1', 'STANDARD_USER')).rejects.toThrow(
+      new BadRequestException('to must be a calendar date (YYYY-MM-DD).'),
+    );
+    await expect(service.getForecast({ view: 'WEEKLY', periodId: september.periodId }, 'tenant-1', 'STANDARD_USER')).rejects.toThrow(
+      new BadRequestException('periodId applies only to the Reporting Period view.'),
+    );
+    expect(loadPeriods).not.toHaveBeenCalled();
+    expect(compute).not.toHaveBeenCalled();
+  });
+
+  it('refuses a planning date more than 45 days from today before looking up a period (Q8)', async () => {
+    const loadPeriods = jest.spyOn(service as any, 'loadPeriods').mockResolvedValue([september]);
+    await expect(service.getForecast({ view: 'PERIOD', planningDate: '2026-11-08' }, 'tenant-1', 'STANDARD_USER')).rejects.toThrow(
+      new BadRequestException('The planning date must be within 45 days of today (2026-09-23).'),
+    );
+    expect(loadPeriods).not.toHaveBeenCalled();
+    expect(compute).not.toHaveBeenCalled();
+  });
+
+  it('refuses a range that ends more than 45 days past the planning date (Q12: nothing is forecast beyond it)', async () => {
+    await expect(service.getForecast({ from: '2026-11-01', to: '2026-11-08' }, 'tenant-1', 'STANDARD_USER')).rejects.toThrow(
+      new BadRequestException('The forecast reaches at most 45 days past the planning date (to 2026-11-07).'),
+    );
+    await expect(service.getForecast({ from: '2026-11-01', to: '2026-11-07' }, 'tenant-1', 'STANDARD_USER')).resolves.toBeDefined();
+  });
+
+  it('passes the stage block through from the computed forecast', async () => {
+    const block = { batchId: 'b', batchNo: 'WG-2026-38', shedCode: 'GRS/SHED-003', currentStageCode: 'WEANER', currentFrom: '2026-09-01' };
+    compute.mockResolvedValueOnce({ ...computed, stages: [block] } as any);
+    const report = await service.getForecast({ view: 'DAILY' }, 'tenant-1', 'STANDARD_USER');
+    expect(report.stages).toEqual([block]);
+  });
+
+  it('listPeriods answers the farm company\'s periods after resolving the farm', async () => {
+    const loadPeriods = jest.spyOn(service as any, 'loadPeriods').mockResolvedValue([september]);
+    await expect(service.listPeriods(undefined, 'tenant-1', 'STANDARD_USER')).resolves.toEqual([september]);
+    expect(loadPeriods).toHaveBeenCalledWith('comp-1', 'tenant-1');
+    await expect(service.listPeriods('farm-B', 'tenant-1', 'STANDARD_USER')).rejects.toThrow(NotFoundException);
+  });
+
+  it('listPeriods holds a caller with no user type to the company-checked branch (resolveFarm fails closed)', async () => {
+    const loadPeriods = jest.spyOn(service as any, 'loadPeriods').mockResolvedValue([september]);
+    (activeFarmOfCompany as jest.Mock).mockResolvedValueOnce(false); // farm-B is not an active farm of comp-1
+    await expect(service.listPeriods('farm-B', 'tenant-1', undefined)).rejects.toThrow(NotFoundException);
+    expect(loadPeriods).not.toHaveBeenCalled();
+  });
+});
+
+describe('loadPeriods — the company\'s own reporting periods only (Ruling M5)', () => {
+  it('reads active, undeleted periods of the company by start date, never a tenant-template row', async () => {
+    const wheres: unknown[] = [];
+    const rows = [{ period_id: 'p9', period_code: '2026-09', start_date: '2026-08-30', end_date: '2026-09-26', stock_take_date: '2026-09-26', production_start_date: '2026-09-27' }];
+    const self: any = {
+      from: () => self,
+      where: (w: unknown) => { wheres.push(w); return self; },
+      orderBy: async () => rows,
+    };
+    const cls = transactionCls({ select: () => self });
+    const out = await (new FeedForecastService(cls, {} as any) as any).loadPeriods('comp-1', 'tenant-1');
+    expect(out).toEqual([{ periodId: 'p9', periodCode: '2026-09', startDate: '2026-08-30', endDate: '2026-09-26', stockTakeDate: '2026-09-26', productionStartDate: '2026-09-27' }]);
+    const q = new MySqlDialect().sqlToQuery(wheres[0] as any);
+    expect(q.sql).toMatch(/`company_id` = \?/);
+    expect(q.sql).not.toMatch(/`company_id` is null/);
+    expect(q.sql).toMatch(/`deleted_at` is null/);
+    expect(q.params).toEqual(expect.arrayContaining(['tenant-1', 'comp-1']));
+  });
+});
+
+describe('stageBlocksFor — current / next stage block (field spec supporting block)', () => {
+  const stages = new Map<string, StageInfo>([
+    ['wean', { stageId: 'wean', stageCode: 'WEANER', durationDays: 42, nextStageId: 'grow', isActive: true }],
+    ['grow', { stageId: 'grow', stageCode: 'GROWER', durationDays: 56, nextStageId: null, isActive: true }],
+    ['sow', { stageId: 'sow', stageCode: 'DRY_SOW', durationDays: null, nextStageId: 'grow', isActive: true }],
+    ['old', { stageId: 'old', stageCode: 'OLD', durationDays: 10, nextStageId: 'gone', isActive: true }],
+    ['gone', { stageId: 'gone', stageCode: 'RETIRED', durationDays: 10, nextStageId: null, isActive: false }],
+  ]);
+  const sheds = new Map([['h3', 'GRS/SHED-003']]);
+  const batch = (stageId: string, stageCode: string, start: string) => ({
+    batchId: 'b', batchNo: 'WG-2026-38', breedId: 'l', shedId: 'h3', heads: 1000,
+    segments: [{ stageId, stageCode, start, end: null, projected: false }],
+  });
+
+  it('dates the current stage from its entry, the next from the day after, and names the change date', () => {
+    expect(stageBlocksFor([batch('wean', 'WEANER', '2026-09-01')], stages, sheds, '2026-09-23')).toEqual([{
+      batchId: 'b', batchNo: 'WG-2026-38', shedCode: 'GRS/SHED-003',
+      currentStageCode: 'WEANER', currentFrom: '2026-09-01', currentTo: '2026-10-12',
+      nextStageCode: 'GROWER', nextFrom: '2026-10-13', nextTo: '2026-12-07',
+      stageChangeDate: '2026-10-13', stageChangeOverdue: false,
+    }]);
+  });
+
+  it('marks a change that fell due on or before the planning date but was not posted', () => {
+    const [block] = stageBlocksFor([batch('wean', 'WEANER', '2026-08-01')], stages, sheds, '2026-09-23');
+    expect(block).toMatchObject({ currentTo: '2026-09-11', stageChangeDate: '2026-09-12', stageChangeOverdue: true });
+  });
+
+  it('leaves the dates open when Stage Master gives no duration, and the next stage empty when there is none', () => {
+    expect(stageBlocksFor([batch('sow', 'DRY_SOW', '2026-09-01')], stages, sheds, '2026-09-23')[0])
+      .toMatchObject({ currentTo: null, nextStageCode: 'GROWER', nextFrom: null, stageChangeDate: null });
+    expect(stageBlocksFor([batch('grow', 'GROWER', '2026-09-01')], stages, sheds, '2026-09-23')[0])
+      .toMatchObject({ currentTo: '2026-10-26', nextStageCode: null, nextFrom: null, stageChangeDate: null, stageChangeOverdue: false });
+  });
+
+  it('does not offer a retired successor as the next stage, and a batch on no shed shows an empty shed', () => {
+    const noShed = { ...batch('old', 'OLD', '2026-09-20'), shedId: '' };
+    expect(stageBlocksFor([noShed], stages, sheds, '2026-09-23')[0])
+      .toMatchObject({ shedCode: '', currentTo: '2026-09-29', nextStageCode: null, nextFrom: null, stageChangeDate: null });
+  });
+
+  it('back-dated planning date: the current stage still starts at today\'s header, not the batch start (Ruling I1)', () => {
+    const locationById = new Map([['h3', { location_id: 'h3', location_type: 'SHED', parent_location_id: null }]]);
+    const { batches } = buildInputBatches({
+      batchRows: [{ batch_id: 'b', batch_no: 'WG-2026-38', breed_id: 'l', stage_id: 'grow', shed_id: 'h3', tracking_mode: 'BATCH_WISE', animal_tracking: null, start_date: '2026-07-01', opening_quantity: '1000', closing_quantity: null }],
+      animalGroups: new Map(),
+      headers: [{ batch_id: 'b', stage_id: 'grow', effective_from: '2026-09-15', location_id: 'h3' }],
+      stages, locationById, activeShedIds: new Set(['h3']),
+      planningDate: '2026-09-10', to: '2026-10-25', headerCutoff: '2026-09-23',
+    });
+    expect(stageBlocksFor(batches, stages, sheds, '2026-09-10')[0]).toMatchObject({ currentStageCode: 'GROWER', currentFrom: '2026-09-15', currentTo: '2026-11-09' });
   });
 });
