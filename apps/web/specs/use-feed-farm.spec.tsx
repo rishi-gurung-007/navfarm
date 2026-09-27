@@ -1,72 +1,92 @@
-import { renderHook, waitFor } from '@testing-library/react';
-import { useFeedFarm } from '../src/components/console/inventory/use-feed-farm';
+import { renderHook, waitFor, act } from '@testing-library/react';
+import { FEED_FARM_STORAGE_KEY, resetFeedFarmCache, useFeedFarm } from '../src/components/console/inventory/use-feed-farm';
 import { api } from '../src/services/api-client';
-import { getStoredUser, getActiveFarmId } from '../src/hooks/useAuth';
+import { getActiveCompanyId, getActiveFarmId, getActiveWorkspaceScope, getStoredUser } from '../src/hooks/useAuth';
 
 jest.mock('../src/services/api-client', () => ({ api: { get: jest.fn() } }));
-jest.mock('../src/hooks/useAuth', () => ({ getStoredUser: jest.fn(), getActiveFarmId: jest.fn() }));
+jest.mock('../src/hooks/useAuth', () => ({
+  getStoredUser: jest.fn(), getActiveFarmId: jest.fn(), getActiveCompanyId: jest.fn(), getActiveWorkspaceScope: jest.fn(),
+}));
 
 const get = api.get as jest.Mock;
+const farms = [
+  { farmId: 'farm-lex', code: 'LEX100', name: 'Lionshead Ext', companyId: 'co-1', companyName: 'Triple C' },
+  { farmId: 'farm-vil', code: 'VIL100', name: 'Villa Franca', companyId: 'co-1', companyName: 'Triple C' },
+];
 
-describe('useFeedFarm — D13', () => {
-  beforeEach(() => {
-    jest.clearAllMocks();
-  });
+beforeEach(() => {
+  jest.clearAllMocks();
+  resetFeedFarmCache();
+  localStorage.clear();
+  (getStoredUser as jest.Mock).mockReturnValue({ userId: 'u-admin', userType: 'TENANT_ADMIN' });
+  (getActiveFarmId as jest.Mock).mockReturnValue(null);
+  (getActiveCompanyId as jest.Mock).mockReturnValue(null);
+  (getActiveWorkspaceScope as jest.Mock).mockReturnValue('TENANT');
+  get.mockResolvedValue({ success: true, data: farms });
+});
 
-  it("fixes a STANDARD_USER to their own farm and never fetches the farm list", async () => {
-    (getStoredUser as jest.Mock).mockReturnValue({ userType: 'STANDARD_USER', farmId: 'farm-grs', farm: { location_code: 'GRS', location_name: 'Grasmere' } });
-    (getActiveFarmId as jest.Mock).mockReturnValue(null);
-
+describe('useFeedFarm (A3, A4, A5, D13)', () => {
+  it('fixes a STANDARD_USER to their own farm and never fetches', () => {
+    (getStoredUser as jest.Mock).mockReturnValue({ userType: 'STANDARD_USER', farmId: 'farm-vil', farm: { location_code: 'VIL100', location_name: 'Villa Franca' } });
     const { result } = renderHook(() => useFeedFarm());
-
-    expect(result.current.isFixed).toBe(true);
-    expect(result.current.farmId).toBe('farm-grs');
-    expect(result.current.fixedFarm).toEqual({ location_code: 'GRS', location_name: 'Grasmere' });
-    expect(result.current.farms).toEqual([]);
+    expect(result.current).toMatchObject({ isFixed: true, farmId: 'farm-vil', loaded: true, fixedFarm: { location_code: 'VIL100', location_name: 'Villa Franca' } });
     expect(get).not.toHaveBeenCalled();
   });
 
-  it('loads the farm list for a non-STANDARD user and defaults to the pinned farm', async () => {
-    (getStoredUser as jest.Mock).mockReturnValue({ userType: 'COMPANY_ADMIN' });
-    (getActiveFarmId as jest.Mock).mockReturnValue('farm-2');
-    const farms = [
-      { location_id: 'farm-1', location_code: 'GRS', location_name: 'Grasmere' },
-      { location_id: 'farm-2', location_code: 'WLM', location_name: 'Wollam' },
-    ];
-    get.mockResolvedValue({ data: farms });
-
-    const { result } = renderHook(() => useFeedFarm());
-
-    await waitFor(() => expect(get).toHaveBeenCalledWith('/location?locationType=FARM&rootOnly=true&isActive=true'));
-    await waitFor(() => expect(result.current.farms).toEqual(farms));
-    expect(result.current.isFixed).toBe(false);
-    expect(result.current.farmId).toBe('farm-2'); // the pinned farm, not the list's first entry
-    expect(result.current.fixedFarm).toBeNull();
+  it('asks for the farm list once however many screens mount (A3)', async () => {
+    const a = renderHook(() => useFeedFarm());
+    const b = renderHook(() => useFeedFarm());
+    await waitFor(() => expect(a.result.current.farms).toEqual(farms));
+    await waitFor(() => expect(b.result.current.farms).toEqual(farms));
+    expect(get).toHaveBeenCalledTimes(1);
+    expect(get).toHaveBeenCalledWith('/feed-forecast/farms');
   });
 
-  it('treats a non-array /location response as an empty farm list instead of crashing', async () => {
-    (getStoredUser as jest.Mock).mockReturnValue({ userType: 'COMPANY_ADMIN' });
-    (getActiveFarmId as jest.Mock).mockReturnValue(null);
-    get.mockResolvedValue({ data: { error: 'proxy timeout' } });
-
+  it('starts on the first farm by code when nothing is stored or pinned (S2)', async () => {
     const { result } = renderHook(() => useFeedFarm());
-
-    await waitFor(() => expect(get).toHaveBeenCalled());
-    expect(result.current.farms).toEqual([]);
-    expect(result.current.farmId).toBeNull();
+    await waitFor(() => expect(result.current.farmId).toBe('farm-lex'));
   });
 
-  it('falls back to the first farm in the list when no farm is pinned', async () => {
-    (getStoredUser as jest.Mock).mockReturnValue({ userType: 'TENANT_ADMIN' });
+  it('keeps a chosen farm for the next feed screen (A4)', async () => {
+    const first = renderHook(() => useFeedFarm());
+    await waitFor(() => expect(first.result.current.loaded).toBe(true));
+    act(() => first.result.current.setFarmId('farm-vil'));
+    expect(localStorage.getItem(FEED_FARM_STORAGE_KEY)).toBe('farm-vil');
+    const next = renderHook(() => useFeedFarm());
+    await waitFor(() => expect(next.result.current.loaded).toBe(true));
+    expect(next.result.current.farmId).toBe('farm-vil');
+  });
+
+  it('prefers the pinned farm over the first when nothing is stored, and drops a stored farm no longer offered', async () => {
+    (getActiveFarmId as jest.Mock).mockReturnValue('farm-vil');
+    const pinned = renderHook(() => useFeedFarm());
+    await waitFor(() => expect(pinned.result.current.farmId).toBe('farm-vil'));
+    localStorage.setItem(FEED_FARM_STORAGE_KEY, 'farm-gone');
     (getActiveFarmId as jest.Mock).mockReturnValue(null);
-    const farms = [
-      { location_id: 'farm-1', location_code: 'GRS', location_name: 'Grasmere' },
-      { location_id: 'farm-2', location_code: 'WLM', location_name: 'Wollam' },
-    ];
-    get.mockResolvedValue({ data: farms });
+    const stale = renderHook(() => useFeedFarm());
+    await waitFor(() => expect(stale.result.current.loaded).toBe(true));
+    expect(stale.result.current.farmId).toBe('farm-lex');
+  });
 
-    const { result } = renderHook(() => useFeedFarm());
+  it('asks again after a failed read, and reads a non-array body as no farms', async () => {
+    get.mockRejectedValueOnce(new Error('network'));
+    const failed = renderHook(() => useFeedFarm());
+    await waitFor(() => expect(failed.result.current.failed).toBe(true));
+    expect(failed.result.current.farmId).toBeNull();
+    get.mockResolvedValueOnce({ data: { error: 'proxy timeout' } });
+    const retry = renderHook(() => useFeedFarm());
+    await waitFor(() => expect(retry.result.current.loaded).toBe(true));
+    expect(get).toHaveBeenCalledTimes(2);
+    expect(retry.result.current.farms).toEqual([]);
+  });
 
-    await waitFor(() => expect(result.current.farmId).toBe('farm-1'));
+  it('asks again when the workspace changes', async () => {
+    const a = renderHook(() => useFeedFarm());
+    await waitFor(() => expect(a.result.current.loaded).toBe(true));
+    (getActiveWorkspaceScope as jest.Mock).mockReturnValue('COMPANY');
+    (getActiveCompanyId as jest.Mock).mockReturnValue('co-1');
+    const b = renderHook(() => useFeedFarm());
+    await waitFor(() => expect(b.result.current.loaded).toBe(true));
+    expect(get).toHaveBeenCalledTimes(2);
   });
 });

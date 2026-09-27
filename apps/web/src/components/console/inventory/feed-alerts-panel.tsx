@@ -109,7 +109,7 @@ export default function FeedAlertsPanel() {
           <Field label={t("falFarm")} htmlFor="fal-farm">
             <select id="fal-farm" className="nf-input-sm px-2" value={farmId ?? ""} onChange={(e) => setFarmId(e.target.value)}>
               {farms.map((f) => (
-                <option key={f.location_id} value={f.location_id}>{f.location_code} — {f.location_name}</option>
+                <option key={f.farmId} value={f.farmId}>{f.code} — {f.name}</option>
               ))}
             </select>
           </Field>

@@ -216,7 +216,7 @@ export default function FeedRequisitionPanel() {
           <Field label={t("frqFarm")} htmlFor="frq-farm">
             <select id="frq-farm" aria-label={t("frqFarm")} className="nf-input-sm px-2" value={farmId ?? ""} onChange={(e) => { setFarmId(e.target.value); show(null); }}>
               {farms.map((f) => (
-                <option key={f.location_id} value={f.location_id}>{f.location_code} — {f.location_name}</option>
+                <option key={f.farmId} value={f.farmId}>{f.code} — {f.name}</option>
               ))}
             </select>
           </Field>

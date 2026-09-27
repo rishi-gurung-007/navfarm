@@ -5,6 +5,9 @@
  * only be fixed in one place rather than drifting between the two copies.
  */
 
+// One definition of the D16 date format for every screen (Plan S, review A9).
+export { formatDateShort } from "@/utils/date-short";
+
 /** Unwraps the shared api client's `{ data }` envelope, or passes a bare payload through unchanged. */
 export function unwrap<T = any>(res: any): T {
   return (res?.data ?? res) as T;
@@ -24,14 +27,6 @@ export function formatDate(iso: string | null | undefined): string {
   const [y, m, d] = iso.split("-").map(Number);
   if (!y || !m || !d) return "—";
   return `${String(d).padStart(2, "0")}-${MONTHS[m - 1]}-${y}`;
-}
-
-/** "YYYY-MM-DD" -> "DD/MM/YY", the field specification's date format (spec D16); null/undefined/unparseable -> "—". */
-export function formatDateShort(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  const [y, m, d] = iso.split("-").map(Number);
-  if (!y || !m || !d) return "—";
-  return `${String(d).padStart(2, "0")}/${String(m).padStart(2, "0")}/${String(y % 100).padStart(2, "0")}`;
 }
 
 /** Calendar-day arithmetic on "YYYY-MM-DD" at UTC midnight, the same way the API does it. */
