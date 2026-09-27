@@ -260,13 +260,15 @@ export class FeedRequisitionService {
 
   async autoDraft(dto: AutoDraftFeedRequisitionDto, tenantId: string, user: UserCtx) {
     const { farmId, companyId } = await this.forecast.resolveFarm(dto.farmId, tenantId, user?.userType);
-    // D16: the forecast plans from today in the farm's time zone, so `to` is held to the same day.
-    const { today } = await this.forecast.farmToday(companyId, tenantId);
+    // D16: the forecast plans from today in the farm's time zone, so `to` is held to the same day —
+    // and the clock is handed on (M6) so the forecast plans on exactly the day `to` was checked against.
+    const clock = await this.forecast.farmToday(companyId, tenantId);
+    const { today } = clock;
     if (dto.to && (dto.to < today || diffDaysIso(today, dto.to) > MAX_SPAN_DAYS)) {
       throw new BadRequestException(`to must be between today and ${MAX_SPAN_DAYS} days ahead.`);
     }
     const outcome = await this.forecast.withFarmScope(farmId, companyId, async () => {
-      const forecast = await this.forecast.computeForFarm(farmId, companyId, tenantId, { to: dto.to });
+      const forecast = await this.forecast.computeForFarm(farmId, companyId, tenantId, { to: dto.to }, clock);
       const farm = await this.loadFarm(farmId, tenantId);
       const destinations = await this.loadDestinations(forecast.sources.map((s) => s.locationId), tenantId);
       // Task 3 carry: recommendLines synthesizes a destination it is not

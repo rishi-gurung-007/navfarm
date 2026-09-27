@@ -294,7 +294,14 @@ describe('FeedAlertService — evaluation (caller contract of planAlerts)', () =
       const computeForFarm = jest.fn().mockResolvedValue({ dietChanges: [] });
       const { service } = build(computeForFarm);
       await service.evaluateNow('farm-a', 't', 'COMPANY_ADMIN');
-      expect(computeForFarm).toHaveBeenCalledWith('farm-a', 'co', 't', expect.objectContaining({ from: '2026-09-25' }));
+      expect(computeForFarm).toHaveBeenCalledWith('farm-a', 'co', 't', expect.objectContaining({ from: '2026-09-25' }), expect.anything());
+    });
+
+    it('hands the clock it read to the forecast, so the zone is read once per evaluation (M6)', async () => {
+      const computeForFarm = jest.fn().mockResolvedValue({ dietChanges: [] });
+      const { service } = build(computeForFarm);
+      await service.evaluateNow('farm-a', 't', 'COMPANY_ADMIN');
+      expect(computeForFarm.mock.calls[0][4]).toEqual({ today: '2026-09-25', timeZone: 'Africa/Harare' });
     });
   });
 

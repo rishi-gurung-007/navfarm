@@ -487,8 +487,13 @@ export class FeedForecastService {
     }
     const span = spanProblem(from, to);
     if (span) throw new BadRequestException(span);
+    // A horizon that is sent must be a real day, like the other dates: silently falling back to `to` would hide the
+    // run-down the caller asked to see (fix round 1). Only its size is clamped below — that is Q12's rule, not an error.
+    if (range.horizonTo !== undefined && !isCalendarDay(range.horizonTo)) {
+      throw new BadRequestException('horizonTo must be a calendar date (YYYY-MM-DD).');
+    }
     const cap = addDays(planningDate, MAX_SPAN_DAYS);
-    const wanted = range.horizonTo && isCalendarDay(range.horizonTo) ? range.horizonTo : to;
+    const wanted = range.horizonTo ?? to;
     const capped = wanted < cap ? wanted : cap;
     const horizonTo = capped > to ? capped : to;
     const stockDate = planningDate < today ? planningDate : today;
@@ -511,8 +516,10 @@ export class FeedForecastService {
 
   /**
    * Runs `work` with the CLS farm scope replaced by this farm (fix round 2,
-   * finding 1: InventoryLedgerService and SiloFeedService read farmScope(cls)
-   * themselves). Public so the alert evaluator reads silo balances the same way.
+   * finding 1: InventoryLedgerService reads farmScope(cls) itself — here
+   * through getFeedStockAsOf, and SiloFeedService through getStockBalance for
+   * the alert evaluator). Public so the alert evaluator and the requisition
+   * read silo balances under the same farm.
    *
    * Every loader below must see the farm actually being reported on, not
    * whatever farm happens to be pinned in the header — otherwise an admin
@@ -520,10 +527,10 @@ export class FeedForecastService {
    * filtered back down to the pinned farm (or, worse, another company's).
    * Fix round 2, finding 1: this must replace the CLS-held scope itself
    * (`this.cls.set`), not just a value threaded through the caller's own
-   * loaders — InventoryLedgerService and SiloFeedService (via
-   * siloFeedService.currentItems -> ledgerService.getStockBalance) read
-   * farmScope(cls) independently for their own warehouse-balance queries, and
-   * never saw the effective farm before this fix. `cls.set` needs an active
+   * loaders — InventoryLedgerService (getFeedStockAsOf, the forecast's stock
+   * read; getStockBalance, reached through SiloFeedService by the alerts)
+   * applies farmScope(cls) independently in its own queries, and never saw the
+   * effective farm before this fix. `cls.set` needs an active
    * CLS context, so this runs `work` inside `cls.run()` — the same idiom
    * withTenantTransaction uses (tenant-transaction.ts) to open one when it
    * isn't already inside one; nested inside a real request it inherits the

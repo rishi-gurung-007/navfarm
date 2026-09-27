@@ -114,7 +114,7 @@ export class FeedAlertService {
           if (dietRules.length) {
             // The forecast only needs to look as far ahead as the widest DIET_CHANGE window (checkpoint 15 caps it at 45).
             const horizon = Math.min(45, Math.max(1, ...dietRules.map((r) => r.thresholdValue ?? 3)));
-            dietChanges = (await this.forecast.computeForFarm(farmId, companyId, tenantId, { from: today, to: addDays(today, horizon) })).dietChanges;
+            dietChanges = (await this.forecast.computeForFarm(farmId, companyId, tenantId, { from: today, to: addDays(today, horizon) }, { today, timeZone })).dietChanges;
           }
         }
       } catch (error) {

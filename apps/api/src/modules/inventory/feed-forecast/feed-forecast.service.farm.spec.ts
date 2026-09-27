@@ -132,6 +132,15 @@ describe('FeedForecastService — Plan B entry points', () => {
       expect(loadInput).not.toHaveBeenCalled();
     });
 
+    it('refuses a malformed horizonTo rather than ignoring it, before loading anything', async () => {
+      const { cls, service, loadInput } = withToday('2026-09-26');
+      await expect(cls.run(() => service.computeForFarm('farm-b', 'co-1', 'tenant-1', { horizonTo: '2026-02-31' })))
+        .rejects.toThrow('horizonTo must be a calendar date (YYYY-MM-DD).');
+      await expect(cls.run(() => service.computeForFarm('farm-b', 'co-1', 'tenant-1', { horizonTo: 'soon' })))
+        .rejects.toThrow('horizonTo must be a calendar date (YYYY-MM-DD).');
+      expect(loadInput).not.toHaveBeenCalled();
+    });
+
     it('a clock passed in is used instead of reading the farm zone again', async () => {
       const { cls, service, loadInput } = withToday('2026-09-26');
       const result = await cls.run(() => service.computeForFarm('farm-b', 'co-1', 'tenant-1', {}, { today: '2026-09-20', timeZone: null }));

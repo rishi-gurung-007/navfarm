@@ -223,6 +223,14 @@ describe('FeedRequisitionService.autoDraft', () => {
     expect(forecast.farmToday).toHaveBeenCalledWith('co-1', 'tenant-1');
     expect(forecast.computeForFarm).not.toHaveBeenCalled();
   });
+
+  it('plans on the same farm day it validated `to` against: the clock goes to the forecast (M6)', async () => {
+    const { service, forecast } = setup([], new Map());
+    forecast.farmToday.mockResolvedValueOnce({ today: '2026-09-26', timeZone: 'Africa/Harare' });
+    await service.autoDraft({ to: '2026-10-03' }, 'tenant-1', { userId: 'u-1', userType: 'COMPANY_ADMIN' }).catch(() => undefined);
+    expect(forecast.farmToday).toHaveBeenCalledTimes(1);
+    expect(forecast.computeForFarm).toHaveBeenCalledWith('farm-grs', 'co-1', 'tenant-1', { to: '2026-10-03' }, { today: '2026-09-26', timeZone: 'Africa/Harare' });
+  });
 });
 
 describe('FeedRequisitionService.findOne — by id, under the row\'s own farm (Ruling H3)', () => {

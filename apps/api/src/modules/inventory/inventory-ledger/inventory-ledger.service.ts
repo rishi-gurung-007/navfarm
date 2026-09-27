@@ -49,11 +49,6 @@ interface WriteNegativeEntryParams {
   userId?: string;
 }
 
-/**
- * Shared posting engine for the Inventory Ledger — the append-only movement
- * log every document type (Goods Receipt, Goods Issue, Stock Transfer, Stock
- * Adjustment) writes to. Ledger rows are never updated, only inserted.
- */
 /** A silo or store's signed stock of one item and unit, summed (Feed Forecast Plan R). */
 export interface FeedStockRow {
   warehouse_id: string;
@@ -68,6 +63,11 @@ export interface FeedStockMovement extends FeedStockRow {
   posting_date: string;
 }
 
+/**
+ * Shared posting engine for the Inventory Ledger — the append-only movement
+ * log every document type (Goods Receipt, Goods Issue, Stock Transfer, Stock
+ * Adjustment) writes to. Ledger rows are never updated, only inserted.
+ */
 @Injectable()
 export class InventoryLedgerService {
   constructor(private readonly cls: ClsService) {}
@@ -567,9 +567,13 @@ export class InventoryLedgerService {
    * agreed) — only POSITIVE and NEGATIVE entries move stock. `opening` is
    * everything posted before `stockDate`; `movements` is every posted
    * movement from `stockDate` to `horizonTo` that is not feeding — daily entry
-   * posts its feed as document_type BATCH and a goods issue as transaction_type
-   * CONSUMPTION — because feeding from the stock date on is exactly what the
-   * forecast projects, and counting both would take it twice. Farm-scoped like
+   * posts its feed as document_type BATCH (and its reversal copies that type),
+   * the only feeding there is: feeding from the stock date on is exactly what
+   * the forecast projects, and counting both would take it twice. A Goods
+   * Issue (transaction_type CONSUMPTION) is not feeding — feed issued out of a
+   * silo or store by hand is an outflow the projection knows nothing of — so
+   * it counts, signed, and its REVERSAL (same document_type, positive) nets it
+   * back out on the same terms (fix round 1, Ruling M7). Farm-scoped like
    * every read here.
    */
   async getFeedStockAsOf(
@@ -600,7 +604,6 @@ export class InventoryLedgerService {
         gte(L.posting_date, params.stockDate),
         lte(L.posting_date, params.horizonTo),
         ne(L.document_type, 'BATCH'),
-        ne(L.transaction_type, 'CONSUMPTION'),
       ))
       .groupBy(L.warehouse_id, L.item_id, L.uom, L.posting_date);
     return {
