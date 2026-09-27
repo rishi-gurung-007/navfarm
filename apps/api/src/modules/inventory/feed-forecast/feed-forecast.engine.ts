@@ -622,7 +622,10 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
       carried = Math.max(0, closing); // demand the silo cannot meet is not carried into the next day
     }
     openingByKey.set(key, opening);
-    const planningOpening = opening.get(input.planningDate) ?? balanceMicrogramsFor(sk);
+    // The fallback (a purely retrospective range, nothing walked) reads the raw
+    // opening, which can be negative since stockAsOf carries the signed ledger;
+    // stock on hand is never shown below zero, the same clamp the walk applies.
+    const planningOpening = opening.get(input.planningDate) ?? Math.max(0, balanceMicrogramsFor(sk));
 
     const sourceDailyDemandMicrograms = byDate.get(input.planningDate) ?? 0;
     const daysLeft = sourceDailyDemandMicrograms > 0 ? Math.floor(planningOpening / sourceDailyDemandMicrograms) : null;
