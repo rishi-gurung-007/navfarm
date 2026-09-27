@@ -140,7 +140,15 @@ export function stageBlocksFor(
         stageChangeOverdue: nextFrom !== null && nextFrom <= planningDate,
       };
     })
-    .sort((a, b) => (a.shedCode !== b.shedCode ? a.shedCode.localeCompare(b.shedCode) : a.batchNo.localeCompare(b.batchNo)));
+    // Stage is the last tie-break: batchId + currentStageCode is the web's row key (an ANIMAL_WISE batch has a block
+    // per stage group), so the order must be total over it and never depend on the order batches were loaded in.
+    .sort((a, b) =>
+      a.shedCode !== b.shedCode
+        ? a.shedCode.localeCompare(b.shedCode)
+        : a.batchNo !== b.batchNo
+          ? a.batchNo.localeCompare(b.batchNo)
+          : a.currentStageCode.localeCompare(b.currentStageCode),
+    );
 }
 
 /** GET /feed-forecast (Plan R): the field specification's report — grouped rows, the stage block and the range it covers. */
@@ -220,6 +228,31 @@ function addDays(iso: string, n: number): string {
 
 function diffDays(a: string, b: string): number {
   return Math.round((parseIsoUtc(b) - parseIsoUtc(a)) / 86_400_000);
+}
+
+/**
+ * Q8: heads and stages are always today's register, so an as-of date far from
+ * today would mislead. Shared by getForecast (checked before a Reporting
+ * Period is looked up) and computeForFarm (every caller), so the two can never
+ * word or bound it differently.
+ */
+function planningDateProblem(today: string, planningDate: string): string | null {
+  return Math.abs(diffDays(today, planningDate)) > MAX_SPAN_DAYS ? `The planning date must be within ${MAX_SPAN_DAYS} days of today (${today}).` : null;
+}
+
+/**
+ * Q12: nothing is forecast past 45 days after the planning date, and the walk
+ * runs from the stock date to at least `to`, so a later `to` is refused rather
+ * than walked. When the caller sent no `to` the date refused is one it never
+ * typed — the default from + 7 — so the message names that instead of
+ * pointing at a value the caller cannot see.
+ */
+function reachProblem(planningDate: string, to: string, toSent: boolean): string | null {
+  const reach = addDays(planningDate, MAX_SPAN_DAYS);
+  if (to <= reach) return null;
+  return toSent
+    ? `The forecast reaches at most ${MAX_SPAN_DAYS} days past the planning date (to ${reach}).`
+    : `No \`to\` was sent, so it defaults to from + ${DEFAULT_SPAN_DAYS} (${to}), past the forecast's reach of ${MAX_SPAN_DAYS} days after the planning date (${reach}). Send a \`to\` on or before ${reach}.`;
 }
 
 /** YYYY-MM-DD *and* a real day: Date.UTC rolls 2026-02-31 over to 3 March, so the parse must round-trip. */
@@ -462,9 +495,8 @@ export class FeedForecastService {
     const clock = await this.farmToday(companyId, tenantId);
     const planningDate = query.planningDate ?? clock.today;
     // Q8, checked again in computeForFarm: here as well so a Reporting Period is not looked up for a date that is refused.
-    if (Math.abs(diffDays(clock.today, planningDate)) > MAX_SPAN_DAYS) {
-      throw new BadRequestException(`The planning date must be within ${MAX_SPAN_DAYS} days of today (${clock.today}).`);
-    }
+    const dateProblem = planningDateProblem(clock.today, planningDate);
+    if (dateProblem) throw new BadRequestException(dateProblem);
     const view: ForecastView = query.view ?? 'CUSTOM';
     let period: PeriodRange | null = null;
     if (view === 'PERIOD') {
@@ -484,9 +516,12 @@ export class FeedForecastService {
     const { from, to } = resolveViewRange({ view, planningDate, from: query.from, to: query.to, period });
     const span = spanProblem(from, to, period);
     if (span) throw new BadRequestException(span);
-    // computeForFarm refuses a `to` past this reach; it is also the run-down horizon asked for (Q12).
+    // computeForFarm refuses a `to` past this reach (reachProblem); it is also the run-down horizon asked for (Q12).
+    // A CUSTOM view whose `to` was never sent passes none, so the refusal can say the default ran past the reach;
+    // computeForFarm defaults it to the same from + 7 resolveViewRange did.
     const reach = addDays(planningDate, MAX_SPAN_DAYS);
-    const result = await this.computeForFarm(farmId, companyId, tenantId, { from, to, planningDate, horizonTo: reach }, clock);
+    const sentTo = view === 'CUSTOM' && query.to === undefined ? undefined : to;
+    const result = await this.computeForFarm(farmId, companyId, tenantId, { from, to: sentTo, planningDate, horizonTo: reach }, clock);
     // Q7: an "as of" forecast has no projection for days already behind the planning date.
     const forecastFrom = to < planningDate ? null : from > planningDate ? from : planningDate;
     const forecastNote = forecastFrom === null
@@ -687,10 +722,8 @@ export class FeedForecastService {
     const { today, timeZone } = clock ?? (await this.farmToday(companyId, tenantId));
     const planningDate = range.planningDate ?? today;
     if (!isCalendarDay(planningDate)) throw new BadRequestException('planningDate must be a calendar date (YYYY-MM-DD).');
-    // Q8: heads and stages are always today's register, so an as-of date far from today would mislead.
-    if (Math.abs(diffDays(today, planningDate)) > MAX_SPAN_DAYS) {
-      throw new BadRequestException(`The planning date must be within ${MAX_SPAN_DAYS} days of today (${today}).`);
-    }
+    const dateProblem = planningDateProblem(today, planningDate);
+    if (dateProblem) throw new BadRequestException(dateProblem);
     const from = range.from ?? planningDate;
     const to = range.to ?? addDays(from, DEFAULT_SPAN_DAYS);
     if (!isCalendarDay(from) || !isCalendarDay(to)) {
@@ -703,13 +736,10 @@ export class FeedForecastService {
     if (range.horizonTo !== undefined && !isCalendarDay(range.horizonTo)) {
       throw new BadRequestException('horizonTo must be a calendar date (YYYY-MM-DD).');
     }
-    // The walk runs from the stock date to at least `to`; a range far past the planning date would make it unbounded,
-    // and nothing beyond Q12's 45-day horizon is forecast anyway. Held here, not only in getForecast, so the alert
-    // and requisition callers are bound by it too (follow-up).
+    // Held here, not in getForecast, so the alert and requisition callers are bound by the reach too (follow-up).
+    const reachError = reachProblem(planningDate, to, range.to !== undefined);
+    if (reachError) throw new BadRequestException(reachError);
     const cap = addDays(planningDate, MAX_SPAN_DAYS);
-    if (to > cap) {
-      throw new BadRequestException(`The forecast reaches at most ${MAX_SPAN_DAYS} days past the planning date (to ${cap}).`);
-    }
     const wanted = range.horizonTo ?? to;
     const capped = wanted < cap ? wanted : cap;
     const horizonTo = capped > to ? capped : to;
@@ -727,7 +757,7 @@ export class FeedForecastService {
         refillBufferDays: farm.refillBufferDays,
         leadTimeDays: farm.leadTimeDays,
         rows, daily, flags: [...flags, ...loadFlags, ...asOf], sources, dietChanges,
-        stages: stageBlocks ?? [],
+        stages: stageBlocks,
       };
     });
   }

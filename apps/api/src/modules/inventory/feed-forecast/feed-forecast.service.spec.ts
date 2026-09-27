@@ -64,6 +64,7 @@ describe('FeedForecastService', () => {
     loadInput = jest.spyOn(service as any, 'loadInput').mockImplementation(async (...args: any[]) => ({
       input: { planningDate: args[1], from: args[2], to: args[3] },
       flags: [],
+      stageBlocks: [],
     }));
     jest.spyOn(service, 'farmToday').mockImplementation(async () => ({ today: todayLocal(), timeZone: null }));
   });
@@ -115,7 +116,7 @@ describe('FeedForecastService', () => {
     jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate'] }).setSystemTime(new Date(2026, 8, 25, 10, 30));
     useFarmScope(cls, { farmId: 'farm-A', restricted: true, companyId: 'comp-1', lobId: 'lob-1' });
     const input = { planningDate: '2026-09-25', marker: 'loaded' } as unknown as ForecastInput;
-    loadInput.mockResolvedValueOnce({ input, flags: [{ kind: 'BATCH_SHED_UNKNOWN', batchNo: 'B2' }] });
+    loadInput.mockResolvedValueOnce({ input, flags: [{ kind: 'BATCH_SHED_UNKNOWN', batchNo: 'B2' }], stageBlocks: [] });
     (buildFeedForecast as jest.Mock).mockReturnValueOnce({
       rows: [{ batchNo: 'B1' }], flags: [{ kind: 'HEADS_ASSUMED_FLAT', batchNo: 'B1' }], sources: [], dietChanges: [], daily: [],
     });
@@ -135,6 +136,14 @@ describe('FeedForecastService', () => {
       sources: [], dietChanges: [],
       stages: [],
     });
+  });
+
+  it('the stage blocks loadInput built reach the computed result unchanged', async () => {
+    useFarmScope(cls, { farmId: 'farm-A', restricted: true, companyId: 'comp-1', lobId: 'lob-1' });
+    const block = { batchId: 'b1', batchNo: 'B1', shedCode: 'VIL100/SHED-004', currentStageCode: 'WEANER', currentFrom: '2026-09-22' };
+    loadInput.mockResolvedValueOnce({ input: {}, flags: [], stageBlocks: [block] });
+    const result = await service.computeForFarm('farm-A', 'comp-1', 'tenant-1');
+    expect(result.stages).toEqual([block]);
   });
 
   // Fix round 1: only STANDARD_USER is farm-bound on this endpoint. Every
@@ -239,7 +248,7 @@ describe('FeedForecastService', () => {
         let capturedScope: unknown;
         jest.spyOn(tenantService as any, 'loadInput').mockImplementation(async () => {
           capturedScope = farmScope(tenantCls);
-          return { input: {}, flags: [] };
+          return { input: {}, flags: [], stageBlocks: [] };
         });
 
         await tenantService.getForecast({ farmId: 'farm-B' }, 'tenant-1', 'TENANT_ADMIN');
@@ -852,6 +861,16 @@ describe('FeedForecastService.getForecast — views, periods and the report (Pla
     await expect(service.getForecast({ from: '2026-11-01', to: '2026-11-07' }, 'tenant-1', 'STANDARD_USER')).resolves.toBeDefined();
   });
 
+  it('CUSTOM with only `from` near the edge: the 400 says the default from + 7 runs past the reach, since no `to` was sent', async () => {
+    compute.mockImplementationOnce((...args: Parameters<FeedForecastService['computeForFarm']>) =>
+      FeedForecastService.prototype.computeForFarm.apply(service, args));
+    await expect(service.getForecast({ from: '2026-11-01' }, 'tenant-1', 'STANDARD_USER')).rejects.toThrow(
+      new BadRequestException(
+        'No `to` was sent, so it defaults to from + 7 (2026-11-08), past the forecast\'s reach of 45 days after the planning date (2026-11-07). Send a `to` on or before 2026-11-07.',
+      ),
+    );
+  });
+
   it('passes the stage block through from the computed forecast', async () => {
     const block = { batchId: 'b', batchNo: 'WG-2026-38', shedCode: 'GRS/SHED-003', currentStageCode: 'WEANER', currentFrom: '2026-09-01' };
     compute.mockResolvedValueOnce({ ...computed, stages: [block] } as any);
@@ -927,6 +946,13 @@ describe('stageBlocksFor — current / next stage block (field spec supporting b
       .toMatchObject({ currentTo: null, nextStageCode: 'GROWER', nextFrom: null, stageChangeDate: null });
     expect(stageBlocksFor([batch('grow', 'GROWER', '2026-09-01')], stages, sheds, '2026-09-23')[0])
       .toMatchObject({ currentTo: '2026-10-26', nextStageCode: null, nextFrom: null, stageChangeDate: null, stageChangeOverdue: false });
+  });
+
+  it('sorts by shed, batch and then stage — batchId + currentStageCode is the web row key, so the order must not depend on input order', () => {
+    const a = { ...batch('wean', 'WEANER', '2026-09-01'), batchNo: 'B-10' };
+    const b = { ...batch('grow', 'GROWER', '2026-09-01'), batchNo: 'B-10' };
+    expect(stageBlocksFor([a, b], stages, sheds, '2026-09-23').map((s) => s.currentStageCode)).toEqual(['GROWER', 'WEANER']);
+    expect(stageBlocksFor([b, a], stages, sheds, '2026-09-23').map((s) => s.currentStageCode)).toEqual(['GROWER', 'WEANER']);
   });
 
   it('does not offer a retired successor as the next stage, and a batch on no shed shows an empty shed', () => {

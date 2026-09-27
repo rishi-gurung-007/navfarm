@@ -38,7 +38,7 @@ describe('FeedForecastService — Plan B entry points', () => {
     jest.spyOn(service, 'farmToday').mockResolvedValue({ today: '2026-09-23', timeZone: null });
     const seen: Array<string | null> = [];
     jest.spyOn(service as any, 'loadFarm').mockImplementation(async () => { seen.push(farmScope(cls).farmId); return farm; });
-    jest.spyOn(service as any, 'loadInput').mockImplementation(async () => { seen.push(farmScope(cls).farmId); return { input: emptyInput, flags: [] }; });
+    jest.spyOn(service as any, 'loadInput').mockImplementation(async () => { seen.push(farmScope(cls).farmId); return { input: emptyInput, flags: [], stageBlocks: [] }; });
 
     const result = await cls.run(() => service.computeForFarm('farm-b', 'co-1', 'tenant-1', { from: '2026-09-23', to: '2026-09-29' }));
 
@@ -81,7 +81,7 @@ describe('FeedForecastService — Plan B entry points', () => {
       const service = new FeedForecastService(cls, {} as any);
       jest.spyOn(service, 'farmToday').mockResolvedValue({ today: '2026-09-26', timeZone: 'Africa/Harare' });
       jest.spyOn(service as any, 'loadFarm').mockResolvedValue(farm);
-      const loadInput = jest.spyOn(service as any, 'loadInput').mockResolvedValue({ input: { ...emptyInput, planningDate: '2026-09-26' }, flags: [] });
+      const loadInput = jest.spyOn(service as any, 'loadInput').mockResolvedValue({ input: { ...emptyInput, planningDate: '2026-09-26' }, flags: [], stageBlocks: [] });
       const result = await cls.run(() => service.computeForFarm('farm-b', 'co-1', 'tenant-1'));
       expect(loadInput.mock.calls[0][1]).toBe('2026-09-26');
       expect(result.planningDate).toBe('2026-09-26');
@@ -95,7 +95,7 @@ describe('FeedForecastService — Plan B entry points', () => {
       jest.spyOn(service, 'farmToday').mockResolvedValue({ today, timeZone: 'Africa/Harare' });
       jest.spyOn(service as any, 'loadFarm').mockResolvedValue(farm);
       const loadInput = jest.spyOn(service as any, 'loadInput').mockImplementation(async (...args: any[]) => ({
-        input: { ...emptyInput, planningDate: args[1], from: args[2], to: args[3] }, flags: [],
+        input: { ...emptyInput, planningDate: args[1], from: args[2], to: args[3] }, flags: [], stageBlocks: [],
       }));
       return { cls, service, loadInput };
     }
@@ -154,6 +154,13 @@ describe('FeedForecastService — Plan B entry points', () => {
       expect(loadInput).not.toHaveBeenCalled();
       await cls.run(() => service.computeForFarm('farm-b', 'co-1', 'tenant-1', { planningDate: '2026-09-20', from: '2026-10-01', to: '2026-11-04' }));
       expect(loadInput).toHaveBeenCalledTimes(1);
+    });
+
+    it('a `to` defaulted from `from` past the reach says so, since the caller never sent one', async () => {
+      const { cls, service, loadInput } = withToday('2026-09-26');
+      await expect(cls.run(() => service.computeForFarm('farm-b', 'co-1', 'tenant-1', { from: '2026-11-05' })))
+        .rejects.toThrow('No `to` was sent, so it defaults to from + 7 (2026-11-12), past the forecast\'s reach of 45 days after the planning date (2026-11-10). Send a `to` on or before 2026-11-10.');
+      expect(loadInput).not.toHaveBeenCalled();
     });
 
     it('a clock passed in is used instead of reading the farm zone again', async () => {
