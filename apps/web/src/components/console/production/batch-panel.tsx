@@ -42,6 +42,7 @@ import {
 import { StatusBadge } from '@/components/ui/status-badge';
 import { Badge } from '@/components/ui/badge';
 import BatchPerformanceCurvesPanel from '@/components/console/production/batch-performance-curves-panel';
+import { BatchShedField } from '@/components/console/production/batch-shed-field';
 import { useCompanyCurrency } from '@/hooks/useCompanyCurrency';
 import { formatQuantity } from '@/lib/utils';
 
@@ -2630,6 +2631,12 @@ export default function BatchPanel() {
                   {viewing.expected_end_date || '—'}
                 </p>
               </div>
+              <BatchShedField
+                key={`${viewing.batch_id}|${viewing.shed_id ?? ''}`}
+                batch={{ batch_id: viewing.batch_id, status: viewing.status, shed_id: viewing.shed_id ?? null, farm_id: viewing.farm_id ?? null }}
+                sheds={sheds as any}
+                onSaved={(shedId) => setViewing((v) => (v ? { ...v, shed_id: shedId } : v))}
+              />
               {viewing.current_stage_code && (
                 <div>
                   <p

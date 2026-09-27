@@ -12,6 +12,7 @@ import {
   UseInterceptors,
   UploadedFile,
   BadRequestException,
+  Patch,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -39,6 +40,7 @@ import {
   TransferStageDto,
   BulkDailyEntryDto,
   ReopenStageDayDto,
+  UpdateBatchShedDto,
 } from './dto/batch.dto';
 
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
@@ -131,6 +133,16 @@ export class BatchController {
       message: 'Batch updated successfully.',
       data: result,
     };
+  }
+
+  @Patch(':id/shed')
+  @RequirePermission('PRODUCTION', 'BATCH', 'edit')
+  @ApiOperation({ summary: "Set or change a batch's shed at any status before it closes (D21)" })
+  @ApiParam({ name: 'id', description: 'Batch UUID' })
+  async changeShed(@Param('id') id: string, @Body() dto: UpdateBatchShedDto, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const data = await this.batchService.changeShed(id, dto.shed_id ?? null, tenantId, req.user);
+    return { success: true, message: 'Batch shed saved.', data };
   }
 
   @Delete(':id')
