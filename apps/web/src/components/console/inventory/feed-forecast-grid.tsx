@@ -58,7 +58,12 @@ export interface StageBlock {
   stageChangeOverdue: boolean;
 }
 
-type Translate = (key: string, vars?: Record<string, unknown>) => string;
+// `any` for the key, as Task 9's brief specified: useLanguage's t is typed to
+// TranslationKeys, and a parameter typed `string` is contravariantly wider, so
+// the real t could not be passed in at all (tsc TS2322 from the panel). The
+// specs hand in a plain (key: string) mock, which this also accepts. The cost
+// is that a mistyped key inside this file is not caught by tsc.
+type Translate = (key: any, vars?: any) => string;
 
 /**
  * The field specification's Report Grid in its order, with two of ours: Source

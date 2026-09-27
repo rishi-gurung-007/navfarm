@@ -4,7 +4,7 @@ import FeedForecastPanel from '../src/components/console/inventory/feed-forecast
 import { api } from '../src/services/api-client';
 import { getStoredUser, getActiveFarmId } from '../src/hooks/useAuth';
 
-jest.mock('../src/services/api-client', () => ({ api: { get: jest.fn() } }));
+jest.mock('../src/services/api-client', () => ({ api: { get: jest.fn(), post: jest.fn() } }));
 // A stable `t` (defined once, inside the factory, not re-created per call) —
 // fix round 1: the fetch effect used to depend on `t`, and a mock that handed
 // back a fresh function identity on every render sent it into a render loop
@@ -18,13 +18,14 @@ jest.mock('../src/hooks/useLanguage', () => {
 jest.mock('../src/hooks/useAuth', () => ({ getStoredUser: jest.fn(), getActiveFarmId: jest.fn() }));
 
 const get = api.get as jest.Mock;
+const post = api.post as jest.Mock;
 const mockGetStoredUser = getStoredUser as jest.Mock;
 const mockGetActiveFarmId = getActiveFarmId as jest.Mock;
 
 /** api.get is called for both /location (farm picker) and /feed-forecast; tests that
  * care about fetch-loop / call-count regressions count the forecast calls only. */
 function forecastCallCount(): number {
-  return get.mock.calls.filter(([url]) => typeof url === 'string' && url.startsWith('/feed-forecast')).length;
+  return get.mock.calls.filter(([url]) => typeof url === 'string' && url.startsWith('/feed-forecast?')).length;
 }
 
 const standardUser = {
@@ -52,47 +53,35 @@ const forecastResponse = {
   message: 'Feed forecast retrieved successfully.',
   data: {
     planningDate: '2026-09-25',
+    today: '2026-09-25',
+    timeZone: 'Africa/Harare',
+    view: 'CUSTOM',
     from: '2026-09-25',
     to: '2026-10-02',
+    forecastFrom: '2026-09-25',
+    horizonTo: '2026-11-09',
+    period: null,
     farm: { id: 'farm-vil100', code: 'VIL100', name: 'VILLA FRANCA FARM' },
     rows: [
       {
-        batchNo: 'BATCH-000010',
-        itemId: 'item-1',
-        itemName: 'Weaner Grower Mash (18% CP)',
-        shedCode: '',
-        planningDate: '2026-09-25',
-        sourceType: 'STORE',
-        sourceCode: 'VIL100/STORE-001',
-        currentInventoryKg: 35525.6,
-        heads: 58,
-        perDayIntakeKg: 130.152,
-        sourceDailyDemandKg: 325.992,
-        daysLeft: 108,
-        runDownDate: null,
-        refillDate: null,
-        requiredOn: null,
-        overdue: false,
-        rangeDemandKg: 1041.216,
+        key: 'b10|item-1|VIL100/STORE-001|2026-09-25', batchId: 'b10', batchNo: 'BATCH-000010', shedCode: '', stageCode: 'WEANER',
+        itemId: 'item-1', itemNo: 'FEED-WG', itemName: 'Weaner Grower Mash (18% CP)', sourceType: 'STORE', sourceCode: 'VIL100/STORE-001',
+        date: '2026-09-25', dateTo: '2026-09-25', days: 1, currentInventoryKg: 35525.6, heads: 58, perDayIntakeKg: 127, wastagePct: 2.5,
+        intakeKg: 127, demandKg: 130.175, daysOfStock: 108, sharedBatchCount: 3, indicative: false,
+        runDownDate: null, refillDate: null, requiredOn: null, overdue: false,
       },
       {
-        batchNo: 'BATCH-000020',
-        itemId: 'item-2',
-        itemName: 'Dry Sow Gestation Mash (14% CP)',
-        shedCode: 'SHED-1',
-        planningDate: '2026-09-25',
-        sourceType: 'SILO',
-        sourceCode: 'VIL100/SILO-002',
-        currentInventoryKg: 200,
-        heads: 40,
-        perDayIntakeKg: 100,
-        sourceDailyDemandKg: 100,
-        daysLeft: 2,
-        runDownDate: '2026-09-27',
-        refillDate: '2026-09-25',
-        requiredOn: '2026-09-20',
-        overdue: true,
-        rangeDemandKg: 800,
+        key: 'b20|item-2|VIL100/SILO-002|2026-09-25', batchId: 'b20', batchNo: 'BATCH-000020', shedCode: 'SHED-1', stageCode: 'DRY_SOW',
+        itemId: 'item-2', itemNo: 'FEED-DS', itemName: 'Dry Sow Gestation Mash (14% CP)', sourceType: 'SILO', sourceCode: 'VIL100/SILO-002',
+        date: '2026-09-25', dateTo: '2026-09-25', days: 1, currentInventoryKg: 200, heads: 40, perDayIntakeKg: 100, wastagePct: 0,
+        intakeKg: 100, demandKg: 100, daysOfStock: 2, sharedBatchCount: 1, indicative: true,
+        runDownDate: '2026-09-26', refillDate: '2026-09-24', requiredOn: '2026-09-22', overdue: true,
+      },
+    ],
+    stages: [
+      {
+        batchId: 'b20', batchNo: 'BATCH-000020', shedCode: 'SHED-1', currentStageCode: 'DRY_SOW', currentFrom: '2026-09-01', currentTo: null,
+        nextStageCode: null, nextFrom: null, nextTo: null, stageChangeDate: null, stageChangeOverdue: false,
       },
     ],
     flags: [
@@ -102,9 +91,10 @@ const forecastResponse = {
   },
 };
 
-function routedGet(overrides?: { location?: any; feedForecast?: () => Promise<any> }) {
+function routedGet(overrides?: { location?: any; feedForecast?: () => Promise<any>; periods?: any }) {
   return (url: string) => {
     if (url.startsWith('/location')) return Promise.resolve(overrides?.location ?? farmList);
+    if (url.startsWith('/feed-forecast/periods')) return Promise.resolve(overrides?.periods ?? { success: true, data: [] });
     return overrides?.feedForecast ? overrides.feedForecast() : Promise.resolve(forecastResponse);
   };
 }
@@ -113,36 +103,32 @@ describe('FeedForecastPanel — tenant admin', () => {
   beforeEach(() => {
     get.mockReset();
     get.mockImplementation(routedGet());
+    post.mockReset();
     mockGetStoredUser.mockReset().mockReturnValue(tenantAdminUser);
     mockGetActiveFarmId.mockReset().mockReturnValue('farm-vil100');
   });
 
-  it('renders all 13 report columns in order', async () => {
+  it('renders the field specification\'s 14 columns in order', async () => {
     render(<FeedForecastPanel />);
     const table = await screen.findByRole('table');
     const headers = within(table).getAllByRole('columnheader').map((h) => h.textContent);
     expect(headers).toEqual([
-      'ffColBatchNo',
-      'ffColItemName',
-      'ffColShedNo',
-      'ffColPlanningDate',
-      'ffColSource',
-      'ffColCurrentInventoryKg',
-      'ffColCurrentPigs',
-      'ffColPerDayIntakeKg',
-      'ffColDaysLeft',
-      'ffColRunDown',
-      'ffColDateToRefill',
-      'ffColRequiredOn',
-      'ffColDemandInRangeKg',
+      'ffColBatchNo', 'ffColItemName', 'ffColItemNo', 'ffColShedNo', 'ffColPlanningDate', 'ffColSource',
+      'ffColCurrentInventoryKg', 'ffColCurrentPigs', 'ffColPerDayIntakeKg', 'ffColDaysOfStock',
+      'ffColRunDown', 'ffColDateToRefill', 'ffColRequiredOn', 'ffColFeedOutKg',
     ]);
   });
 
-  it('shows an Overdue badge for an overdue row and "Lasts the range" for a null run-down date', async () => {
+  it('shows Overdue, Indicative, the shared-silo count, "beyond" the horizon, the wastage note and the stage block', async () => {
     render(<FeedForecastPanel />);
     const table = await screen.findByRole('table');
     expect(within(table).getByText('ffOverdue')).toBeTruthy();
-    expect(within(table).getByText('ffLastsRange')).toBeTruthy();
+    expect(within(table).getByText('ffIndicative')).toBeTruthy();
+    expect(within(table).getByText('ffSharedSilo:{"count":3}')).toBeTruthy();
+    expect(within(table).getByText('ffBeyondHorizon:{"date":"09/11/26"}')).toBeTruthy();
+    expect(screen.getByText('ffWastageUsed:{"pcts":"2.5%"}')).toBeTruthy();
+    // The stage block: a <section aria-label> is a region (the notes below are a list too, so not getByRole('list')).
+    expect(screen.getByRole('region', { name: 'ffStagesTitle' })).toBeTruthy();
   });
 
   it('shows a farm select defaulting to the active farm for a non-STANDARD_USER', async () => {
@@ -252,26 +238,64 @@ describe('FeedForecastPanel — tenant admin', () => {
     expect(screen.getByText(/ffFlagBatchShedUnknown/)).toBeTruthy();
   });
 
-  it('shows a note and "—" in the Run Down column when the range ends before the planning date', async () => {
+  it('says nothing is forecast before the planning date when the range ends before it (Q7)', async () => {
     get.mockImplementation(
       routedGet({
         feedForecast: () => Promise.resolve({
           success: true,
-          data: {
-            ...forecastResponse.data,
-            to: '2026-09-20', // before planningDate 2026-09-25
-            rows: [{ ...forecastResponse.data.rows[0], runDownDate: null }],
-            flags: [],
-          },
+          data: { ...forecastResponse.data, from: '2026-09-10', to: '2026-09-20', forecastFrom: null, rows: [], stages: [], flags: [] },
         }),
       }),
     );
     render(<FeedForecastPanel />);
-    const table = await screen.findByRole('table');
-
+    await screen.findByRole('table');
     expect(screen.getByText(/ffNoteRangeBeforePlanning/)).toBeTruthy();
-    expect(within(table).getAllByText('—').length).toBeGreaterThan(0);
-    expect(within(table).queryByText('ffLastsRange')).toBeNull();
+    expect(screen.getByText(/ffNoRows/)).toBeTruthy();
+  });
+
+  it('first asks for the Custom view with no dates, so the API plans from the farm\'s today (D16)', async () => {
+    render(<FeedForecastPanel />);
+    await screen.findByRole('table');
+    expect(get.mock.calls.find(([url]) => url.startsWith('/feed-forecast?'))![0]).toBe('/feed-forecast?farmId=farm-vil100&view=CUSTOM');
+  });
+
+  it('sends a picked planning date as the as-of date', async () => {
+    render(<FeedForecastPanel />);
+    await screen.findByRole('table');
+    const input = screen.getByLabelText('ffPlanningDate') as HTMLInputElement;
+    const earlier = new Date(`${input.value}T00:00:00Z`);
+    earlier.setUTCDate(earlier.getUTCDate() - 3);
+    const picked = earlier.toISOString().slice(0, 10);
+    fireEvent.change(input, { target: { value: picked } });
+    await waitFor(() => expect(get.mock.calls.some(([url]) => url.includes(`planningDate=${picked}`))).toBe(true));
+  });
+
+  it('the Reporting Period view lists the farm\'s periods and asks for the one covering the planning date', async () => {
+    get.mockImplementation(routedGet({
+      periods: { success: true, data: [{ periodId: 'p9', periodCode: '2026-09', startDate: '2026-08-30', endDate: '2026-09-26', stockTakeDate: '2026-09-26', productionStartDate: '2026-09-27' }] },
+    }));
+    render(<FeedForecastPanel />);
+    await screen.findByRole('table');
+    fireEvent.change(screen.getByLabelText('ffView'), { target: { value: 'PERIOD' } });
+    await waitFor(() => expect(get.mock.calls.some(([url]) => url === '/feed-forecast/periods?farmId=farm-vil100')).toBe(true));
+    await waitFor(() => expect(get.mock.calls.some(([url]) => url === '/feed-forecast?farmId=farm-vil100&view=PERIOD')).toBe(true));
+    const select = screen.getByLabelText('ffReportingPeriod') as HTMLSelectElement;
+    expect(within(select).getByText('ffPeriodOption:{"code":"2026-09","from":"30/08/26","to":"26/09/26"}')).toBeTruthy();
+    expect(screen.queryByText(/ffGeneratePeriods/)).toBeNull();
+  });
+
+  it('offers to generate the business year when the company has no periods, then reloads (Q9)', async () => {
+    post.mockResolvedValue({ success: true, data: { created: ['2026-07'], skipped: [] } });
+    render(<FeedForecastPanel />);
+    await screen.findByRole('table');
+    fireEvent.change(screen.getByLabelText('ffView'), { target: { value: 'PERIOD' } });
+    const button = await screen.findByRole('button', { name: /ffGeneratePeriods/ });
+    const periodCalls = () => get.mock.calls.filter(([url]) => url.startsWith('/feed-forecast/periods')).length;
+    const before = periodCalls();
+    fireEvent.click(button);
+    // The response's planning date (25 Sep 2026) falls in the 2026–27 business year.
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/reporting-period/generate', { business_year_start: 2026 }));
+    await waitFor(() => expect(periodCalls()).toBeGreaterThan(before));
   });
 });
 

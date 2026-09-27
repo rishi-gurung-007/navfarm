@@ -1,10 +1,14 @@
 "use client";
 
 /**
- * Inventory -> Feed Forecast (Task 8, Feed Forecast Plan A). Renders the
- * report served by GET /feed-forecast (Task 7's engine, Task 6's math) —
- * docx Section 3's columns plus Source and Demand in Range, D1-D3/D6/D13/D14
- * of docs/superpowers/specs/2026-09-25-feed-forecast-design.md.
+ * Inventory -> Feed Forecast. Plan A built it (docx Section 3, D1–D6, D13,
+ * D14); Plan R aligns it with the client's field specification of 26 Sep
+ * (spec D16–D20): an as-of Planning Date (blank = today in the farm's time
+ * zone, which only the API knows), Daily / Weekly / Reporting Period / Custom
+ * views, a row per batch + item + date (grouped for Weekly and Reporting
+ * Period), Item No, DD/MM/YY dates and the current / next stage block. The
+ * grid and the stage block are feed-forecast-grid.tsx; the query per view is
+ * feed-forecast-query.ts.
  *
  * Farm scope follows the same STANDARD_USER-is-fixed rule as
  * WorkspaceScopeSwitcher (D13): a STANDARD_USER's farm is
@@ -16,34 +20,15 @@
  * farms") gets the API's 400 "Select a farm." with no way to pick one here.
  */
 import { useEffect, useRef, useState } from "react";
-import { Loader2, Inbox } from "lucide-react";
 import { api } from "@/services/api-client";
 import { InlineAlert } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { getActiveFarmId, getStoredUser } from "@/hooks/useAuth";
 import { useLanguage } from "@/hooks/useLanguage";
-import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
-import { formatDate, todayIso, unwrap } from "./feed-format";
-
-interface ForecastRow {
-  batchNo: string;
-  itemId: string;
-  itemName: string;
-  shedCode: string;
-  planningDate: string;
-  sourceType: "SILO" | "STORE" | "NONE";
-  sourceCode: string | null;
-  currentInventoryKg: number;
-  heads: number;
-  perDayIntakeKg: number | null;
-  sourceDailyDemandKg: number | null;
-  daysLeft: number | null;
-  runDownDate: string | null;
-  refillDate: string | null;
-  requiredOn: string | null;
-  overdue: boolean;
-  rangeDemandKg: number;
-}
+import type { TranslationKeys } from "@/utils/translations";
+import { formatDateShort, todayIso, unwrap } from "./feed-format";
+import { FeedForecastGrid, FeedForecastStages, ReportRow, StageBlock, wastageNote } from "./feed-forecast-grid";
+import { businessYearStartOf, forecastQueryString, FORECAST_VIEWS, ForecastView } from "./feed-forecast-query";
 
 type ForecastFlag =
   | { kind: "NO_FEED_ROW"; batchNo: string; stageCode: string; day: number; date: string }
@@ -51,14 +36,31 @@ type ForecastFlag =
   | { kind: "NO_SILO_HOLDS_ITEM"; shedCode: string; itemName: string }
   | { kind: "STAGE_CHANGE_PROJECTED"; batchNo: string; stageCode: string; date: string }
   | { kind: "HEADS_ASSUMED_FLAT"; batchNo: string }
-  | { kind: "BATCH_SHED_UNKNOWN"; batchNo: string };
+  | { kind: "BATCH_SHED_UNKNOWN"; batchNo: string }
+  | { kind: "AS_OF_PAST"; planningDate: string; today: string };
+
+interface PeriodOption {
+  periodId: string;
+  periodCode: string;
+  startDate: string;
+  endDate: string;
+  stockTakeDate: string;
+  productionStartDate: string;
+}
 
 interface ForecastData {
   planningDate: string;
+  today: string;
+  timeZone: string | null;
+  view: ForecastView;
   from: string;
   to: string;
+  forecastFrom: string | null;
+  horizonTo: string;
+  period: PeriodOption | null;
   farm: { id: string; code: string; name: string };
-  rows: ForecastRow[];
+  rows: ReportRow[];
+  stages: StageBlock[];
   flags: ForecastFlag[];
 }
 
@@ -68,30 +70,18 @@ interface FarmItem {
   location_name: string;
 }
 
-function addDaysIso(iso: string, days: number): string {
-  const [y, m, d] = iso.split("-").map(Number);
-  const date = new Date(Date.UTC(y, m - 1, d));
-  date.setUTCDate(date.getUTCDate() + days);
-  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
-}
+const VIEW_LABEL: Record<ForecastView, TranslationKeys> = { DAILY: "ffViewDaily", WEEKLY: "ffViewWeekly", PERIOD: "ffViewPeriod", CUSTOM: "ffViewCustom" };
 
-function fmtKg(n: number | null | undefined): string {
-  if (n === null || n === undefined) return "—";
-  return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
-}
+const inputStyle = { backgroundColor: "var(--input-bg)", color: "var(--input-text)", borderColor: "var(--input-border)" };
 
 /**
  * Groups consecutive/duplicate NO_FEED_ROW / OVERLAPPING_FEED_ROWS flags for
  * the same batch+stage into one range sentence, so a gap spanning several
- * days reads as one line instead of one per day — the interfaces note asks
- * for this because the API repeats the same flag per affected day.
+ * days reads as one line instead of one per day.
  */
 function groupDayFlags(
   flags: Array<{ batchNo: string; stageCode: string; day: number; date: string }>
 ): Array<{ batchNo: string; stageCode: string; dayFrom: number; dayTo: number; dateFrom: string; dateTo: string }> {
-  // De-duplicate identical (batchNo, stageCode, day) flags first — the engine
-  // can raise the same day more than once (e.g. once per overlapping feed
-  // row candidate), which would otherwise inflate a grouped range.
   const seen = new Set<string>();
   const deduped = flags.filter((f) => {
     const key = `${f.batchNo}:${f.stageCode}:${f.day}`;
@@ -117,16 +107,19 @@ function groupDayFlags(
   return groups;
 }
 
-/** Turns the flags the engine emits into the plain-English sentences shown below the table. */
+/** Turns the flags the engine and the service emit into the plain-English sentences shown below the grid. */
 function buildFlagSentences(flags: ForecastFlag[], t: (key: any, vars?: any) => string): string[] {
   const sentences: string[] = [];
+
+  const asOf = flags.find((f): f is Extract<ForecastFlag, { kind: "AS_OF_PAST" }> => f.kind === "AS_OF_PAST");
+  if (asOf) sentences.push(t("ffFlagAsOfPast", { date: formatDateShort(asOf.planningDate), today: formatDateShort(asOf.today) }));
 
   const noFeedRow = flags.filter((f): f is Extract<ForecastFlag, { kind: "NO_FEED_ROW" }> => f.kind === "NO_FEED_ROW");
   for (const g of groupDayFlags(noFeedRow)) {
     sentences.push(
       g.dayFrom === g.dayTo
-        ? t("ffFlagNoFeedRowSingle", { stageCode: g.stageCode, day: g.dayFrom, batchNo: g.batchNo, date: formatDate(g.dateFrom) })
-        : t("ffFlagNoFeedRowRange", { stageCode: g.stageCode, dayFrom: g.dayFrom, dayTo: g.dayTo, batchNo: g.batchNo, dateFrom: formatDate(g.dateFrom), dateTo: formatDate(g.dateTo) })
+        ? t("ffFlagNoFeedRowSingle", { stageCode: g.stageCode, day: g.dayFrom, batchNo: g.batchNo, date: formatDateShort(g.dateFrom) })
+        : t("ffFlagNoFeedRowRange", { stageCode: g.stageCode, dayFrom: g.dayFrom, dayTo: g.dayTo, batchNo: g.batchNo, dateFrom: formatDateShort(g.dateFrom), dateTo: formatDateShort(g.dateTo) })
     );
   }
 
@@ -134,27 +127,23 @@ function buildFlagSentences(flags: ForecastFlag[], t: (key: any, vars?: any) => 
   for (const g of groupDayFlags(overlapping)) {
     sentences.push(
       g.dayFrom === g.dayTo
-        ? t("ffFlagOverlappingSingle", { stageCode: g.stageCode, day: g.dayFrom, batchNo: g.batchNo, date: formatDate(g.dateFrom) })
-        : t("ffFlagOverlappingRange", { stageCode: g.stageCode, dayFrom: g.dayFrom, dayTo: g.dayTo, batchNo: g.batchNo, dateFrom: formatDate(g.dateFrom), dateTo: formatDate(g.dateTo) })
+        ? t("ffFlagOverlappingSingle", { stageCode: g.stageCode, day: g.dayFrom, batchNo: g.batchNo, date: formatDateShort(g.dateFrom) })
+        : t("ffFlagOverlappingRange", { stageCode: g.stageCode, dayFrom: g.dayFrom, dayTo: g.dayTo, batchNo: g.batchNo, dateFrom: formatDateShort(g.dateFrom), dateTo: formatDateShort(g.dateTo) })
     );
   }
 
-  // Distinct (shedCode, itemName) pairs only — the engine can raise this once per batch that hits the gap.
   const noSilo = new Map<string, { shedCode: string; itemName: string }>();
   for (const f of flags) if (f.kind === "NO_SILO_HOLDS_ITEM") noSilo.set(`${f.shedCode}:${f.itemName}`, f);
   for (const f of noSilo.values()) sentences.push(t("ffFlagNoSiloHoldsItem", { shedCode: f.shedCode, itemName: f.itemName }));
 
-  // Distinct (batchNo, stageCode, date) — one sentence per projected stage change.
   const stageChanges = new Map<string, { batchNo: string; stageCode: string; date: string }>();
   for (const f of flags) if (f.kind === "STAGE_CHANGE_PROJECTED") stageChanges.set(`${f.batchNo}:${f.stageCode}:${f.date}`, f);
-  for (const f of stageChanges.values()) sentences.push(t("ffFlagStageChangeProjected", { batchNo: f.batchNo, stageCode: f.stageCode, date: formatDate(f.date) }));
+  for (const f of stageChanges.values()) sentences.push(t("ffFlagStageChangeProjected", { batchNo: f.batchNo, stageCode: f.stageCode, date: formatDateShort(f.date) }));
 
-  // Distinct batches with no shed on record.
   const shedUnknownBatches = new Set(flags.filter((f) => f.kind === "BATCH_SHED_UNKNOWN").map((f) => (f as any).batchNo));
   for (const batchNo of shedUnknownBatches) sentences.push(t("ffFlagBatchShedUnknown", { batchNo }));
 
-  // HEADS_ASSUMED_FLAT is raised for every batch unconditionally (D11) and its
-  // wording carries no batch-specific detail — one sentence covers all of them.
+  // HEADS_ASSUMED_FLAT is raised for every batch unconditionally (D11) — one sentence covers all of them.
   if (flags.some((f) => f.kind === "HEADS_ASSUMED_FLAT")) sentences.push(t("ffFlagHeadsAssumedFlat"));
 
   return sentences;
@@ -162,11 +151,9 @@ function buildFlagSentences(flags: ForecastFlag[], t: (key: any, vars?: any) => 
 
 export default function FeedForecastPanel() {
   const { t } = useLanguage();
-  // t() is read inside the fetch effect's error handler, but the effect must
-  // not re-run just because the translation function's identity changed
-  // (some callers, including the test mock, hand back a new `t` on every
-  // render) — a ref keeps the effect's own dependency list to the request's
-  // actual inputs (farmId/dateFrom/dateTo) instead of looping on renders.
+  // t() is read inside effects and handlers, but the effects must not re-run
+  // just because the translation function's identity changed (the test mock
+  // and some callers hand back a new `t` on every render) — the tRef pattern.
   const tRef = useRef(t);
   tRef.current = t;
 
@@ -175,19 +162,22 @@ export default function FeedForecastPanel() {
 
   const [farms, setFarms] = useState<FarmItem[]>([]);
   const [selectedFarmId, setSelectedFarmId] = useState<string>(() => getActiveFarmId() || "");
-  const [dateFrom, setDateFrom] = useState<string>(() => todayIso());
-  const [dateTo, setDateTo] = useState<string>(() => addDaysIso(todayIso(), 7));
+  // "" = the API's default for each: planning date = the farm's today (D16), from/to = the view's own range.
+  const [view, setView] = useState<ForecastView>("CUSTOM");
+  const [planningDate, setPlanningDate] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [periodId, setPeriodId] = useState("");
+  const [periods, setPeriods] = useState<PeriodOption[] | null>(null);
+  const [reload, setReload] = useState(0);
+  const [generating, setGenerating] = useState(false);
   const [data, setData] = useState<ForecastData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
   // Non-STANDARD_USER types pick a farm; a STANDARD_USER's farm is fixed (D13).
   // farmsLoaded/farmsFailed distinguish "still loading" from "loaded, and
-  // either empty or the request itself failed" — the fallback effect below
-  // must not act on the former but must act on both of the latter (fix
-  // round 2, minor 3: a failed /location call used to leave a stale pinned
-  // farm selected with no matching option, since the old guard only fired
-  // once `farms` held rows).
+  // either empty or the request itself failed" (Plan A fix round 2).
   const [farmsLoaded, setFarmsLoaded] = useState(false);
   const [farmsFailed, setFarmsFailed] = useState(false);
   useEffect(() => {
@@ -212,17 +202,36 @@ export default function FeedForecastPanel() {
     };
   }, [isStandardUser]);
 
-  // If the farm list failed to load, came back empty, or the farm pinned by
-  // the workspace switcher isn't one of this user's selectable farms (a
-  // stale pin, or a farm outside the current company), fall back to no
-  // selection rather than leaving the select showing a value that matches
-  // none of its options (or silently querying a farm nobody confirmed).
+  // A failed or empty farm list, or a stale pin, falls back to no selection
+  // rather than a select showing a value that matches none of its options.
   useEffect(() => {
     if (isStandardUser || !selectedFarmId || !farmsLoaded) return;
     if (farmsFailed || !farms.some((f) => f.location_id === selectedFarmId)) setSelectedFarmId("");
   }, [farms, farmsLoaded, farmsFailed]);
 
   const farmId = isStandardUser ? getActiveFarmId() : selectedFarmId;
+
+  // The Reporting Period view's choices, read under the report's own grant (a farm login has no Master Data grant).
+  useEffect(() => {
+    if (view !== "PERIOD" || !farmId) {
+      setPeriods(null);
+      return;
+    }
+    let cancelled = false;
+    api
+      .get(`/feed-forecast/periods?${new URLSearchParams({ farmId }).toString()}`)
+      .then((res) => {
+        if (cancelled) return;
+        const list = unwrap<PeriodOption[]>(res);
+        setPeriods(Array.isArray(list) ? list : []);
+      })
+      .catch(() => {
+        if (!cancelled) setPeriods([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [farmId, view, reload]);
 
   useEffect(() => {
     if (!farmId) {
@@ -233,9 +242,8 @@ export default function FeedForecastPanel() {
     let cancelled = false;
     setLoading(true);
     setError("");
-    const params = new URLSearchParams({ farmId, from: dateFrom, to: dateTo });
     api
-      .get(`/feed-forecast?${params.toString()}`)
+      .get(`/feed-forecast?${forecastQueryString({ farmId, view, planningDate, from: dateFrom, to: dateTo, periodId })}`)
       .then((res) => {
         if (cancelled) return;
         setData(unwrap<ForecastData>(res));
@@ -251,20 +259,38 @@ export default function FeedForecastPanel() {
     return () => {
       cancelled = true;
     };
-  }, [farmId, dateFrom, dateTo]);
+  }, [farmId, view, planningDate, dateFrom, dateTo, periodId, reload]);
+
+  function changeView(next: ForecastView) {
+    setView(next);
+    setDateFrom("");
+    setDateTo("");
+    setPeriodId("");
+  }
+
+  // Open question Q9: an admin drafts the July–June year from the month-end-Saturday rule, then edits it in the master.
+  async function generatePeriods() {
+    const year = businessYearStartOf(planningDate || data?.planningDate || todayIso());
+    setGenerating(true);
+    try {
+      await api.post("/reporting-period/generate", { business_year_start: year });
+      setReload((n) => n + 1);
+    } catch (err: any) {
+      setError(err?.message || tRef.current("ffGenerateFailed"));
+    } finally {
+      setGenerating(false);
+    }
+  }
 
   // Guard every list read off the response: an envelope that failed to
-  // unwrap, or a payload missing `flags`, must render an empty state, not
-  // crash on .map/.find (interfaces note — a prior production crash came
-  // from exactly this).
-  const rows = Array.isArray(data?.rows) ? (data!.rows as ForecastRow[]) : [];
+  // unwrap, or a payload missing a list, renders empty rather than crashing.
+  const rows = Array.isArray(data?.rows) ? data!.rows : [];
+  const stages = Array.isArray(data?.stages) ? data!.stages : [];
   const flagSentences = data ? buildFlagSentences(Array.isArray(data.flags) ? data.flags : [], t) : [];
-
-  // D2: runDownDate is null both when the silo/store lasts the whole range
-  // and when the range ends before the planning date (nothing was walked
-  // yet, so there is nothing to report as "lasts"). The second case needs
-  // its own wording so it isn't read as good news.
-  const rangeBeforePlanning = !!data && data.to < data.planningDate;
+  const periodList = Array.isArray(periods) ? periods : [];
+  // Q7: nothing is forecast before the planning date.
+  const rangeBeforePlanning = !!data && data.forecastFrom === null;
+  const businessYear = businessYearStartOf(planningDate || data?.planningDate || todayIso());
 
   return (
     <div className="flex flex-col gap-4">
@@ -286,7 +312,7 @@ export default function FeedForecastPanel() {
               value={selectedFarmId}
               onChange={(e) => setSelectedFarmId(e.target.value)}
               className="nf-input-sm nf-select"
-              style={{ backgroundColor: "var(--input-bg)", color: "var(--input-text)", borderColor: "var(--input-border)" }}
+              style={inputStyle}
             >
               <option value="">{t("ffSelectFarm")}</option>
               {farms.map((f) => (
@@ -299,108 +325,99 @@ export default function FeedForecastPanel() {
         </div>
 
         <div>
-          <span className="nf-text-caption block">{t("ffPlanningDate")}</span>
-          <p className="mt-0.5 text-sm font-medium" style={{ color: "var(--text-primary)" }}>{formatDate(data?.planningDate)}</p>
+          <label className="nf-text-caption block" htmlFor="ff-planning">{t("ffPlanningDate")}</label>
+          <input
+            id="ff-planning"
+            type="date"
+            value={planningDate || data?.planningDate || ""}
+            onChange={(e) => setPlanningDate(e.target.value)}
+            className="nf-input-sm"
+            style={inputStyle}
+          />
+          {data && (
+            <p className="mt-0.5 text-xs" style={{ color: "var(--text-muted)" }}>
+              {data.timeZone ? t("ffTimeZone", { zone: data.timeZone }) : t("ffServerDay")}
+            </p>
+          )}
         </div>
 
         <div>
-          <label className="nf-text-caption block" htmlFor="ff-from">{t("ffDateFrom")}</label>
-          <input
-            id="ff-from"
-            type="date"
-            value={dateFrom}
-            onChange={(e) => setDateFrom(e.target.value)}
-            className="nf-input-sm"
-            style={{ backgroundColor: "var(--input-bg)", color: "var(--input-text)", borderColor: "var(--input-border)" }}
-          />
+          <label className="nf-text-caption block" htmlFor="ff-view">{t("ffView")}</label>
+          <select id="ff-view" value={view} onChange={(e) => changeView(e.target.value as ForecastView)} className="nf-input-sm nf-select" style={inputStyle}>
+            {FORECAST_VIEWS.map((v) => (
+              <option key={v} value={v}>{t(VIEW_LABEL[v])}</option>
+            ))}
+          </select>
         </div>
-        <div>
-          <label className="nf-text-caption block" htmlFor="ff-to">{t("ffDateTo")}</label>
-          <input
-            id="ff-to"
-            type="date"
-            value={dateTo}
-            onChange={(e) => setDateTo(e.target.value)}
-            className="nf-input-sm"
-            style={{ backgroundColor: "var(--input-bg)", color: "var(--input-text)", borderColor: "var(--input-border)" }}
-          />
-        </div>
+
+        {view === "PERIOD" ? (
+          <div>
+            <label className="nf-text-caption block" htmlFor="ff-period">{t("ffReportingPeriod")}</label>
+            <select id="ff-period" value={periodId} onChange={(e) => setPeriodId(e.target.value)} className="nf-input-sm nf-select" style={inputStyle}>
+              <option value="">{t("ffPeriodCovering")}</option>
+              {periodList.map((p) => (
+                <option key={p.periodId} value={p.periodId}>
+                  {t("ffPeriodOption", { code: p.periodCode, from: formatDateShort(p.startDate), to: formatDateShort(p.endDate) })}
+                </option>
+              ))}
+            </select>
+          </div>
+        ) : (
+          <div>
+            <label className="nf-text-caption block" htmlFor="ff-from">
+              {t(view === "DAILY" ? "ffDate" : view === "WEEKLY" ? "ffWeekStart" : "ffDateFrom")}
+            </label>
+            <input
+              id="ff-from"
+              type="date"
+              value={dateFrom || data?.from || ""}
+              onChange={(e) => setDateFrom(e.target.value)}
+              className="nf-input-sm"
+              style={inputStyle}
+            />
+          </div>
+        )}
+
+        {view === "CUSTOM" && (
+          <div>
+            <label className="nf-text-caption block" htmlFor="ff-to">{t("ffDateTo")}</label>
+            <input
+              id="ff-to"
+              type="date"
+              value={dateTo || data?.to || ""}
+              onChange={(e) => setDateTo(e.target.value)}
+              className="nf-input-sm"
+              style={inputStyle}
+            />
+          </div>
+        )}
       </div>
+
+      {view === "PERIOD" && !!farmId && periods !== null && periodList.length === 0 && (
+        <InlineAlert variant="info">
+          <span className="mr-3">{t("ffNoPeriods")}</span>
+          <Button variant="outline" onClick={generatePeriods} disabled={generating}>
+            {t("ffGeneratePeriods", { year: businessYear })}
+          </Button>
+        </InlineAlert>
+      )}
 
       {error && <InlineAlert>{error}</InlineAlert>}
 
       {rangeBeforePlanning && !error && (
-        <InlineAlert variant="info">{t("ffNoteRangeBeforePlanning", { date: formatDate(data!.planningDate) })}</InlineAlert>
+        <InlineAlert variant="info">{t("ffNoteRangeBeforePlanning", { date: formatDateShort(data!.planningDate) })}</InlineAlert>
       )}
 
       {error ? null : !farmId ? (
         <InlineAlert variant="info">{t("ffPickFarmPrompt")}</InlineAlert>
       ) : (
-        <Table>
-          <TableHeader>
-            <tr>
-              <TableHead>{t("ffColBatchNo")}</TableHead>
-              <TableHead>{t("ffColItemName")}</TableHead>
-              <TableHead>{t("ffColShedNo")}</TableHead>
-              <TableHead>{t("ffColPlanningDate")}</TableHead>
-              <TableHead>{t("ffColSource")}</TableHead>
-              <TableHead className="text-right">{t("ffColCurrentInventoryKg")}</TableHead>
-              <TableHead className="text-right">{t("ffColCurrentPigs")}</TableHead>
-              <TableHead className="text-right">{t("ffColPerDayIntakeKg")}</TableHead>
-              <TableHead className="text-right">{t("ffColDaysLeft")}</TableHead>
-              <TableHead>{t("ffColRunDown")}</TableHead>
-              <TableHead>{t("ffColDateToRefill")}</TableHead>
-              <TableHead>{t("ffColRequiredOn")}</TableHead>
-              <TableHead className="text-right">{t("ffColDemandInRangeKg")}</TableHead>
-            </tr>
-          </TableHeader>
-          <TableBody>
-            {loading ? (
-              <TableRow>
-                <TableCell colSpan={13} className="py-10 text-center" style={{ color: "var(--text-secondary)" }}>
-                  <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" style={{ color: "var(--accent)" }} /> {t("ffLoading")}
-                </TableCell>
-              </TableRow>
-            ) : rows.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={13} className="py-10 text-center" style={{ color: "var(--text-secondary)" }}>
-                  <Inbox className="mx-auto mb-2 h-6 w-6" style={{ color: "var(--text-muted)" }} /> {t("ffNoRows")}
-                </TableCell>
-              </TableRow>
-            ) : (
-              rows.map((row) => (
-                <TableRow key={`${row.batchNo}-${row.itemId}`}>
-                  <TableCell className="whitespace-nowrap" style={{ color: "var(--text-primary)" }}>{row.batchNo}</TableCell>
-                  <TableCell className="whitespace-nowrap" style={{ color: "var(--text-primary)" }}>{row.itemName}</TableCell>
-                  <TableCell className="whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>{row.shedCode || "—"}</TableCell>
-                  <TableCell className="whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>{formatDate(row.planningDate)}</TableCell>
-                  <TableCell className="whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>
-                    {row.sourceType === "NONE" ? t("ffNoSource") : row.sourceCode ?? "—"}
-                  </TableCell>
-                  <TableCell className="whitespace-nowrap text-right" style={{ color: "var(--text-primary)" }}>{fmtKg(row.currentInventoryKg)}</TableCell>
-                  <TableCell className="whitespace-nowrap text-right" style={{ color: "var(--text-primary)" }}>{row.heads}</TableCell>
-                  <TableCell className="whitespace-nowrap text-right" style={{ color: "var(--text-primary)" }}>{fmtKg(row.perDayIntakeKg)}</TableCell>
-                  <TableCell className="whitespace-nowrap text-right" style={{ color: "var(--text-primary)" }}>{row.daysLeft ?? "—"}</TableCell>
-                  <TableCell className="whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>
-                    {row.runDownDate !== null
-                      ? formatDate(row.runDownDate)
-                      : rangeBeforePlanning
-                        ? "—"
-                        : t("ffLastsRange")}
-                  </TableCell>
-                  <TableCell className="whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>{formatDate(row.refillDate)}</TableCell>
-                  <TableCell className="whitespace-nowrap">
-                    <div className="flex items-center gap-1.5">
-                      <span style={{ color: "var(--text-secondary)" }}>{formatDate(row.requiredOn)}</span>
-                      {row.overdue && <Badge variant="danger">{t("ffOverdue")}</Badge>}
-                    </div>
-                  </TableCell>
-                  <TableCell className="whitespace-nowrap text-right" style={{ color: "var(--text-primary)" }}>{fmtKg(row.rangeDemandKg)}</TableCell>
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
+        <>
+          <FeedForecastGrid rows={rows} loading={loading} horizonTo={data?.horizonTo ?? null} t={t} />
+          {rows.length > 0 && !loading && (
+            <p className="text-xs" style={{ color: "var(--text-secondary)" }}>{wastageNote(rows, t)}</p>
+          )}
+          {!loading && <FeedForecastStages stages={stages} t={t} />}
+        </>
       )}
 
       {flagSentences.length > 0 && (
