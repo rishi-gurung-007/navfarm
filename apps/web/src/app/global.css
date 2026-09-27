@@ -571,6 +571,15 @@ body {
     width: 100%;
   }
 
+  /* The breadcrumb carries max-width + margin-inline: auto, which centres it
+     inside a block <main>. As a COLUMN FLEX item those auto margins also stop
+     it stretching, so it shrank to its text and read as centred on a fill page
+     while every other screen has it left-aligned. A definite width restores
+     the block behaviour: capped at its max-width, the same box as the page. */
+  [data-shell-region='content']:has(> [data-fill-height]) > [data-shell-breadcrumb] {
+    width: 100%;
+  }
+
   [data-fill-height] > [data-fill-body] {
     flex: 1 1 auto;
   }

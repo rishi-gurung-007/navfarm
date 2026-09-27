@@ -116,6 +116,17 @@ describe('FeedForecastPanel — admin', () => {
     expect((screen.getByLabelText('ffDateTo') as HTMLInputElement).value).not.toBe('');
   });
 
+  it('keeps the filters on one row and the date pair together (review, 27 Sep)', async () => {
+    render(<FeedForecastPanel />);
+    await screen.findByRole('table');
+    const from = screen.getByLabelText('ffDateFrom');
+    const to = screen.getByLabelText('ffDateTo');
+    // Date From and Date To share a container, so a wrap can never leave "Date To" alone.
+    expect(from.closest('div')!.parentElement).toBe(to.closest('div')!.parentElement);
+    const row = screen.getByLabelText('ffPlanningDate').closest('[class*="flex-wrap"]')!;
+    expect(row.className).toContain('lg:flex-nowrap');
+  });
+
   it('fetches once on mount and once more after a date changes, without looping', async () => {
     render(<FeedForecastPanel />);
     await screen.findByRole('table');

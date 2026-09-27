@@ -177,7 +177,10 @@ export default function FeedForecastPanel() {
 
   return (
     <div data-fill-body>
-      <div className="flex shrink-0 flex-wrap items-end gap-3">
+      {/* One row at >=1024px (review, 27 Sep): a wrapped filter row left
+          "Date To" alone on a second line and took a third of the table's
+          height. The date pair shares a container so it never splits. */}
+      <div className="flex shrink-0 flex-wrap items-end gap-3 lg:flex-nowrap">
         <FeedFarmSelect id="ff-farm" label={t("ffFarm")} farms={farm.farms} farmId={farmId} onChange={farm.setFarmId} fixedLabel={fixedLabel} />
         <div>
           <label className={labelCls} htmlFor="ff-planning">{t("ffPlanningDate")}</label>
@@ -190,6 +193,7 @@ export default function FeedForecastPanel() {
             {FORECAST_VIEWS.map((v) => <option key={v} value={v}>{t(VIEW_LABEL[v])}</option>)}
           </select>
         </div>
+        <div className="flex min-w-0 items-end gap-3">
         {view === "PERIOD" ? (
           <div>
             <label className={labelCls} htmlFor="ff-period">{t("ffReportingPeriod")}</label>
@@ -212,6 +216,7 @@ export default function FeedForecastPanel() {
             <input id="ff-to" type="date" value={shownTo} onChange={(e) => setDateTo(e.target.value)} className="nf-input-sm mt-1.5" style={inputStyle} />
           </div>
         )}
+        </div>
       </div>
 
       {view === "PERIOD" && !!farmId && periodsFailed && <InlineAlert>{t("ffPeriodsLoadFailed")}</InlineAlert>}

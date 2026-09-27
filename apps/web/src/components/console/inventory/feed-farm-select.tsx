@@ -46,7 +46,7 @@ export function FeedFarmSelect({
   const option = (f: FeedFarm) => <option key={f.farmId} value={f.farmId}>{feedFarmLabel(f)}</option>;
   return (
     <Field label={label} htmlFor={id}>
-      <select id={id} className="nf-input-sm nf-select min-w-[14rem]" style={inputStyle} value={farmId ?? ""} onChange={(e) => onChange(e.target.value)}>
+      <select id={id} className="nf-input-sm nf-select w-full min-w-[11rem]" style={inputStyle} value={farmId ?? ""} onChange={(e) => onChange(e.target.value)}>
         {byCompany.size > 1
           ? [...byCompany].map(([company, farmsOf]) => (
               <optgroup key={company} label={company || "—"}>{farmsOf.map(option)}</optgroup>
