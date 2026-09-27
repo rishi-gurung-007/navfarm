@@ -318,6 +318,21 @@ export interface MasterDataField {
   searchable?: boolean;
 }
 
+/**
+ * A list column. `decimals`/`decimalsFromKey` trim a stored-precision number
+ * (display only). Plan S: `format: "date"` shows a day as DD/MM/YY (review
+ * A9), `labels` maps a stored code to its words and `format: "codes"`
+ * humanizes codes it has no label for (review A8) — both handle a list value.
+ */
+export type MasterDataColumn = {
+  key: string;
+  label: string;
+  decimals?: number;
+  decimalsFromKey?: string;
+  format?: "date" | "codes";
+  labels?: Record<string, string>;
+};
+
 export interface MasterDataConfig {
   key: string;
   /** Plural — the list heading and sidebar entry, e.g. "Item Categories". */
@@ -356,7 +371,7 @@ export interface MasterDataConfig {
    * present and greater than 0. Neither affects the form or the API payload —
    * display only.
    */
-  columns?: { key: string; label: string; decimals?: number; decimalsFromKey?: string }[];
+  columns?: MasterDataColumn[];
   group: string;
   /** Show a Nature of Business / Line of Business filter pair in the list toolbar (for entities whose table carries nob_id/lob_id). */
   supportsNobLobFilter?: boolean;

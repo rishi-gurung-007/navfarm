@@ -20,6 +20,7 @@ import { TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/compon
 import { getActiveCompanyId, getActiveWorkspaceScope, getStoredUser, hasPermission } from "@/hooks/useAuth";
 import { useLanguage } from "@/hooks/useLanguage";
 import { singularLabel } from "./labels";
+import { formatColumnValue } from "./column-format";
 import { cn } from "@/lib/utils";
 import type { MasterDataConfig, MasterDataField } from "./types";
 import AnimalDetailPanel from "./AnimalDetailPanel";
@@ -166,7 +167,7 @@ function resolveEndpoint(f: MasterDataField, form: Row): string | null {
   return f.entityEndpoint.replace("{value}", parentVal);
 }
 
-function displayValue(row: Row, key: string, yesLabel: string, noLabel: string, col?: { decimals?: number; decimalsFromKey?: string }): string {
+function displayValue(row: Row, key: string, yesLabel: string, noLabel: string, col?: { decimals?: number; decimalsFromKey?: string; format?: "date" | "codes"; labels?: Record<string, string> }): string {
   if ((key === "stage" || key === "stage_id") && (row.stage || row.stage_name || row.stage_code)) {
     return String(row.stage || row.stage_name || row.stage_code);
   }
@@ -177,6 +178,8 @@ function displayValue(row: Row, key: string, yesLabel: string, noLabel: string, 
     }
     return "—";
   }
+  const formatted = formatColumnValue(v, col);
+  if (formatted !== undefined) return formatted;
   if (typeof v === "boolean") return v ? yesLabel : noLabel;
   // A list column is a list of values, not the JSON that carried them. The euro
   // read `["DE","FR","NL"]` in the Countries column, brackets and quotes and

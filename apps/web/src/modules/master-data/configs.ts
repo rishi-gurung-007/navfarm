@@ -1369,38 +1369,72 @@ const reason: MasterDataConfig = {
 // the workbook's order. Recipient roles are role codes typed as chips (Q1: the
 // workbook's FARM_MANAGER / HEAD_OF_FARM exist in no tenant yet, so a picker
 // over role_master could not even offer them).
+// Plan S (review A8): the words the list and the form show for each stored code.
+const ALERT_EVENT_TYPES = [
+  { value: "FEED_BELOW_L1", label: "Feed at or below low level" },
+  { value: "FEED_ABOVE", label: "Feed at or above high level" },
+  { value: "DIET_CHANGE", label: "Diet change coming" },
+  { value: "REQ_DEADLINE", label: "Requisition deadline" },
+];
+const ALERT_TRIGGER_ENTITIES = [
+  { value: "SILO", label: "Silo" },
+  { value: "REQUISITION", label: "Requisition" },
+  { value: "FEED_PLAN", label: "Feed plan" },
+  { value: "STOCK_TAKE", label: "Stock take" },
+];
+const ALERT_THRESHOLD_REFERENCES = [
+  { value: "SILO_BELOW", label: "Silo's low level" },
+  { value: "SILO_ABOVE", label: "Silo's high level" },
+  { value: "FIXED_VALUE", label: "Fixed value" },
+];
+const ALERT_PRIORITIES = [
+  { value: "CRITICAL_FIRST_PRIORITY", label: "Urgent" },
+  { value: "CRITICAL", label: "Critical" },
+  { value: "WARNING", label: "Warning" },
+  { value: "INFO", label: "Info" },
+];
+const ALERT_FREQUENCIES = [
+  { value: "ONCE", label: "Once until resolved" },
+  { value: "DAILY", label: "Daily" },
+  { value: "ON_EACH_OCCURRENCE", label: "Each time the value changes" },
+  { value: "ESCALATING", label: "Escalating" },
+];
+const labelsOf = (options: { value: string; label: string }[]) => Object.fromEntries(options.map((o) => [o.value, o.label]));
+
 const alertRule: MasterDataConfig = {
   key: "alert-rule", label: "Alert Rules", singular: "Alert Rule", apiBase: "/alert-rule", idKey: "rule_id",
-  group: "Inventory", businessAdminOnly: true,
-  description: "Alerts and Notifications Master: which event raises an in-app alert, at what threshold, how urgently, for which roles, how often, and to whom it escalates.",
+  group: "Farm Operations", isPrimary: true, businessAdminOnly: true,
+  description: "Which feed events raise an alert, how urgently, and for whom.",
   columns: [
     { key: "notification_code", label: "Notification Code" }, { key: "notification_name", label: "Notification Name" },
-    { key: "event_type", label: "Event Type" }, { key: "priority_level", label: "Priority Level" },
-    { key: "recipient_roles", label: "Recipient Role(s)" }, { key: "frequency", label: "Frequency" },
+    { key: "event_type", label: "Event Type", labels: labelsOf(ALERT_EVENT_TYPES) },
+    { key: "priority_level", label: "Priority Level", labels: labelsOf(ALERT_PRIORITIES) },
+    { key: "recipient_roles", label: "Recipient Role(s)", format: "codes" },
+    { key: "frequency", label: "Frequency", labels: labelsOf(ALERT_FREQUENCIES) },
   ],
   fields: [
     { key: "company_id", label: "Company", type: "text", hideInForm: true },
     { key: "notification_code", label: "Notification Code", type: "text", required: true, createOnly: true, maxLength: 20 },
     { key: "notification_name", label: "Notification Name", type: "text", required: true, maxLength: 100 },
     { key: "event_type", label: "Event Type", type: "select", required: true,
-      options: ["FEED_BELOW_L1", "FEED_ABOVE", "DIET_CHANGE", "REQ_DEADLINE"].map((value) => ({ value, label: value })) },
+      options: ALERT_EVENT_TYPES },
     { key: "trigger_entity", label: "Trigger Entity", type: "select", required: true,
-      options: ["SILO", "REQUISITION", "FEED_PLAN", "STOCK_TAKE"].map((value) => ({ value, label: value })),
+      options: ALERT_TRIGGER_ENTITIES,
       helpText: "FEED_BELOW_L1 and FEED_ABOVE: SILO. DIET_CHANGE: FEED_PLAN. REQ_DEADLINE: REQUISITION." },
     { key: "threshold_reference", label: "Threshold Reference", type: "select", required: true,
-      options: ["SILO_BELOW", "SILO_ABOVE", "FIXED_VALUE"].map((value) => ({ value, label: value })),
+      options: ALERT_THRESHOLD_REFERENCES,
       helpText: "SILO_BELOW reads each silo's Below Feed Level, SILO_ABOVE its Above Threshold. FIXED_VALUE uses the value below." },
     { key: "threshold_value", label: "Threshold Value", type: "number", min: 0, nativeNumber: true,
       requiredWhen: { anyOf: [{ key: "threshold_reference", equals: "FIXED_VALUE" }] },
       helpText: "KG for a silo rule; days before the diet change for DIET_CHANGE; days before the submission deadline for REQ_DEADLINE." },
     { key: "priority_level", label: "Priority Level", type: "select", required: true,
-      options: ["CRITICAL_FIRST_PRIORITY", "CRITICAL", "WARNING", "INFO"].map((value) => ({ value, label: value })) },
+      options: ALERT_PRIORITIES },
     { key: "recipient_roles", label: "Recipient Role(s)", type: "string-list", required: true,
       helpText: "Role codes from Role Master. Tenant, company and operational admins see every alert regardless." },
     { key: "delivery_channel", label: "Delivery Channel", type: "select", required: true,
-      options: [{ value: "IN_APP", label: "IN_APP" }], helpText: "In-app only for now; email is not sent yet." },
+      options: [{ value: "IN_APP", label: "In app" }], helpText: "In-app only for now; email is not sent yet." },
     { key: "frequency", label: "Frequency", type: "select", required: true,
-      options: ["ONCE", "DAILY", "ON_EACH_OCCURRENCE", "ESCALATING"].map((value) => ({ value, label: value })),
+      options: ALERT_FREQUENCIES,
       helpText: "ONCE until resolved; DAILY re-alerts each day; ON_EACH_OCCURRENCE re-alerts when the value changes; ESCALATING adds the escalation role if nobody acknowledges in time." },
     { key: "escalation_after_hours", label: "Escalation After Hours", type: "number", min: 1, step: "1", nativeNumber: true,
       visibleWhen: { anyOf: [{ key: "frequency", equals: "ESCALATING" }] }, requiredWhen: { anyOf: [{ key: "frequency", equals: "ESCALATING" }] } },
@@ -1418,12 +1452,12 @@ const alertRule: MasterDataConfig = {
 // on Inventory → Feed Forecast (Reporting Period view) and edited here.
 const reportingPeriod: MasterDataConfig = {
   key: "reporting-period", label: "Reporting Periods", singular: "Reporting Period", apiBase: "/reporting-period", idKey: "period_id",
-  group: "Inventory", businessAdminOnly: true,
-  description: "Reporting Period Master: each month's period up to its month-end Saturday stock take, in a July–June business year. The Feed Forecast's Reporting Period view takes its dates from here.",
+  group: "Farm Operations", isPrimary: true, businessAdminOnly: true,
+  description: "Monthly periods of the July–June business year, each ending on the month-end Saturday.",
   columns: [
     { key: "period_code", label: "Period Code" }, { key: "business_year", label: "Business Year" },
-    { key: "start_date", label: "Start Date" }, { key: "end_date", label: "End Date" },
-    { key: "stock_take_date", label: "Stock Take Date" }, { key: "production_start_date", label: "Production Start Date" },
+    { key: "start_date", label: "Start Date", format: "date" }, { key: "end_date", label: "End Date", format: "date" },
+    { key: "stock_take_date", label: "Stock Take Date", format: "date" }, { key: "production_start_date", label: "Production Start Date", format: "date" },
   ],
   fields: [
     { key: "company_id", label: "Company", type: "text", hideInForm: true },
@@ -1944,7 +1978,7 @@ export const MASTER_DATA_GROUPS = ["Farm Operations", "Production", "Inventory",
  * by module. Masters not named here still appear; they're appended after, in
  * their existing relative order, so this only pins the front of the list.
  */
-export const MASTER_DATA_NAV_ORDER: string[] = ["location", "number-series", "item", "stage", "breed", "animal", "activity"];
+export const MASTER_DATA_NAV_ORDER: string[] = ["location", "number-series", "item", "stage", "breed", "animal", "activity", "reporting-period", "alert-rule"];
 
 export function getConfig(key: string): MasterDataConfig | undefined {
   if (key === "no-series") return MASTER_DATA_CONFIGS.find((c) => c.key === "number-series");
