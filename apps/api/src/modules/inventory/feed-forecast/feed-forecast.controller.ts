@@ -31,6 +31,17 @@ export class FeedForecastController {
     return { success: true, message: 'Reporting periods retrieved successfully.', data };
   }
 
+  // Read under the report's own grant for the same reason as 'periods': a farm
+  // login has no Master Data grant, and the farm picker is part of the report.
+  @Get('farms')
+  @RequirePermission('INVENTORY', 'LEDGER', 'view')
+  @ApiOperation({ summary: 'Farms the feed screens may offer this caller, by the same rules the report applies (review A2)' })
+  async farms(@Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const data = await this.feedForecastService.listFarms(tenantId, req.user?.userType);
+    return { success: true, message: 'Farms retrieved successfully.', data };
+  }
+
   @Get()
   @RequirePermission('INVENTORY', 'LEDGER', 'view')
   @ApiOperation({ summary: "Feed forecast for one farm: each batch's demand, its silo or store, and when that runs down" })

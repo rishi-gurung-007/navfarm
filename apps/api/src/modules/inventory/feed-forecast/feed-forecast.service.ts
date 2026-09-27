@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, Injectable, NotFoundException }
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { ClsService } from 'nestjs-cls';
 import { and, eq, gte, inArray, isNotNull, isNull, gt, lte, notInArray, or, sql } from 'drizzle-orm';
+import type { SQL } from 'drizzle-orm';
 import * as schema from '../../../core/database/schema';
 import { activeFarmOfCompany, batchScopeConditions, farmScope, FARM_SCOPE_KEY, FarmScope, restrictedScopeConditions } from '../../../common/farm-scope';
 import { FeedStockMovement, InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
@@ -45,6 +46,15 @@ export interface ForecastFarm {
   companyId: string;
   refillBufferDays: number;
   leadTimeDays: number;
+}
+
+/** One farm a feed screen may offer (review A2). companyName labels it in the tenant-wide workspace. */
+export interface FeedFarmOption {
+  farmId: string;
+  code: string;
+  name: string;
+  companyId: string;
+  companyName: string | null;
 }
 
 export interface FeedForecastResponse {
@@ -588,6 +598,56 @@ export class FeedForecastService {
       endDate: r.end_date,
       stockTakeDate: r.stock_take_date,
       productionStartDate: r.production_start_date,
+    }));
+  }
+
+  /**
+   * GET /feed-forecast/farms (review A2, A5): the farms the feed screens may
+   * offer this caller, by the rules resolveFarm applies — so the picker never
+   * lists a farm the report would then refuse, and never hides one it would
+   * open. A tenant admin in the tenant-wide workspace (no company pinned) gets
+   * every active farm of the tenant, which is what resolveFarm's
+   * activeFarmOfTenant already allowed; the location list the screens used
+   * before answered [] there. Sorted by code, the order the farms are known by.
+   */
+  async listFarms(tenantId: string, userType: string | undefined): Promise<FeedFarmOption[]> {
+    const scope = farmScope(this.cls);
+    const L = schema.locationMaster;
+    const conditions: SQL[] = [
+      eq(L.tenant_id, tenantId),
+      eq(L.location_type, 'FARM'),
+      isNull(L.parent_location_id),
+      eq(L.is_active, true),
+      isNull(L.deleted_at),
+    ];
+    if (userType === 'STANDARD_USER') {
+      if (!scope.farmId) return [];
+      conditions.push(eq(L.location_id, scope.farmId));
+      if (scope.companyId) conditions.push(eq(L.company_id, scope.companyId));
+    } else if (scope.companyId) {
+      conditions.push(eq(L.company_id, scope.companyId));
+      if (scope.restricted && scope.lobId) conditions.push(eq(L.lob_id, scope.lobId));
+    } else if (userType !== 'TENANT_ADMIN' && userType !== 'SYSTEM_ADMIN') {
+      return [];
+    }
+    const rows = await this.db
+      .select({
+        farm_id: L.location_id,
+        code: L.location_code,
+        name: L.location_name,
+        company_id: L.company_id,
+        company_name: schema.companyMaster.company_name,
+      })
+      .from(L)
+      .leftJoin(schema.companyMaster, eq(schema.companyMaster.company_id, L.company_id))
+      .where(and(...conditions))
+      .orderBy(L.location_code);
+    return rows.map((r) => ({
+      farmId: r.farm_id,
+      code: r.code,
+      name: r.name,
+      companyId: r.company_id as string,
+      companyName: r.company_name ?? null,
     }));
   }
 
