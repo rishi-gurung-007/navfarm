@@ -843,6 +843,9 @@ describe('FeedForecastService.getForecast — views, periods and the report (Pla
   });
 
   it('refuses a range that ends more than 45 days past the planning date (Q12: nothing is forecast beyond it)', async () => {
+    // The check lives in computeForFarm (follow-up), so this call goes through the real one; it refuses before loading.
+    compute.mockImplementationOnce((...args: Parameters<FeedForecastService['computeForFarm']>) =>
+      FeedForecastService.prototype.computeForFarm.apply(service, args));
     await expect(service.getForecast({ from: '2026-11-01', to: '2026-11-08' }, 'tenant-1', 'STANDARD_USER')).rejects.toThrow(
       new BadRequestException('The forecast reaches at most 45 days past the planning date (to 2026-11-07).'),
     );

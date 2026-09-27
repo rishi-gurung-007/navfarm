@@ -195,6 +195,22 @@ describe('buildFeedForecast — D19 walk edge cases (Plan R review of Task 2)', 
     expect(buildFeedForecast(input).sources[0]).toMatchObject({ sourceType: 'STORE', thresholdKg: 0, runDownDate: '2026-09-25' });
   });
 
+  // Follow-up ruling: a negative opening is ledger truth (feed posted before the item's only receipt) — it is carried
+  // into the day's arithmetic and only clamped after the day's inflow. nf_devco VIL100/STORE-001, ICAT-004-ITM-0002:
+  // −4,200 fed 10–23 Sep, +40,000 received 24 Sep → Current Inventory on 24 Sep is 35,800, not 40,000.
+  it('a store opening below zero is netted against that day\'s receipt, not reset to zero first', () => {
+    const input = oneSilo({
+      planningDate: '2026-09-24', from: '2026-09-24', to: '2026-09-30',
+      sheds: [{ shedId: 'h1', shedCode: 'VIL100/SHED-001', siloIds: [] }],
+      silos: [],
+      store: { storeId: 'st', storeCode: 'VIL100/STORE-001', balances: { r1: -4200 } },
+      incoming: [{ locationId: 'st', itemId: 'r1', date: '2026-09-24', kg: 40000 }],
+    });
+    const { sources, daily } = buildFeedForecast(input);
+    expect(sources[0]).toMatchObject({ sourceType: 'STORE', balanceKg: 35800 });
+    expect(daily.find((d) => d.date === '2026-09-24')).toMatchObject({ currentInventoryKg: 35800 });
+  });
+
   it('a silo that outlasts the horizon has no run-down, refill or required-on', () => {
     const { sources, rows, daily } = buildFeedForecast(oneSilo({ horizonTo: '2026-10-10' }, { balanceKg: 10000, lowLevelKg: 200 }));
     const none = { runDownDate: null, refillDate: null, requiredOn: null, overdue: false };

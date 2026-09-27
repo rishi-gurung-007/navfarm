@@ -10,6 +10,10 @@
  *   from the stock date on, signed. A silo's movements of another item are
  *   dropped — it can only take a different item once empty (D8), and that is
  *   the changeover the requisition flags, not stock the forecast can use.
+ * - An opening below zero is carried as it is (follow-up ruling): it is ledger
+ *   truth — feed posted before the item's only receipt — and the engine nets
+ *   it against that day's inflow before clamping at empty. Zeroing it here
+ *   would show a receipt of 40,000 over 4,200 already fed as 40,000 on hand.
  * - Feed is counted in KG only. A silo holding anything in another unit, or a
  *   store holding a *feed* item in one, is refused, as Plan A did: adding bags
  *   to kilograms would move every date the report shows.
@@ -59,7 +63,9 @@ export function stockAsOf(args: {
       .sort((a, b) => b.kg - a.kg);
     const firstIn = flows.find((f) => f.warehouse_id === s.siloId && f.qty > 0);
     const itemId = held[0]?.itemId ?? firstIn?.item_id ?? null;
-    return { siloId: s.siloId, siloCode: s.siloCode, itemId, balanceKg: held[0]?.kg ?? 0, lowLevelKg: s.lowLevelKg };
+    // The resident's own opening, negative included — for an item first booked in, what was fed of it before.
+    const balanceKg = itemId ? openingKg.get(`${s.siloId}|${itemId}`) ?? 0 : 0;
+    return { siloId: s.siloId, siloCode: s.siloCode, itemId, balanceKg, lowLevelKg: s.lowLevelKg };
   });
   const residentOf = new Map(silos.map((s) => [s.siloId, s.itemId]));
 
@@ -68,7 +74,7 @@ export function stockAsOf(args: {
     const balances: Record<string, number> = {};
     for (const [k, kg] of openingKg) {
       const [location, itemId] = k.split('|');
-      if (location === args.store.storeId && args.feedItemIds.has(itemId) && kg > EPS) balances[itemId] = kg;
+      if (location === args.store.storeId && args.feedItemIds.has(itemId) && Math.abs(kg) >= EPS) balances[itemId] = kg;
     }
     store = { storeId: args.store.storeId, storeCode: args.store.storeCode, balances };
   }

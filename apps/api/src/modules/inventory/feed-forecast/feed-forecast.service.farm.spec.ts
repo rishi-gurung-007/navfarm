@@ -146,6 +146,16 @@ describe('FeedForecastService — Plan B entry points', () => {
       expect(loadInput).not.toHaveBeenCalled();
     });
 
+    // Follow-up: the reach check lives here, so the alert and requisition callers are held to it as well as the report.
+    it('refuses a `to` more than 45 days past the planning date, before loading anything', async () => {
+      const { cls, service, loadInput } = withToday('2026-09-26');
+      await expect(cls.run(() => service.computeForFarm('farm-b', 'co-1', 'tenant-1', { planningDate: '2026-09-20', from: '2026-10-01', to: '2026-11-05' })))
+        .rejects.toThrow('The forecast reaches at most 45 days past the planning date (to 2026-11-04).');
+      expect(loadInput).not.toHaveBeenCalled();
+      await cls.run(() => service.computeForFarm('farm-b', 'co-1', 'tenant-1', { planningDate: '2026-09-20', from: '2026-10-01', to: '2026-11-04' }));
+      expect(loadInput).toHaveBeenCalledTimes(1);
+    });
+
     it('a clock passed in is used instead of reading the farm zone again', async () => {
       const { cls, service, loadInput } = withToday('2026-09-26');
       const result = await cls.run(() => service.computeForFarm('farm-b', 'co-1', 'tenant-1', {}, { today: '2026-09-20', timeZone: null }));

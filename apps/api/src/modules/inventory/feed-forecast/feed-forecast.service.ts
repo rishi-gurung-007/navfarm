@@ -484,12 +484,8 @@ export class FeedForecastService {
     const { from, to } = resolveViewRange({ view, planningDate, from: query.from, to: query.to, period });
     const span = spanProblem(from, to, period);
     if (span) throw new BadRequestException(span);
-    // The walk runs from the stock date to at least `to`; a range far past the planning date would make it unbounded,
-    // and nothing beyond Q12's 45-day horizon is forecast anyway.
+    // computeForFarm refuses a `to` past this reach; it is also the run-down horizon asked for (Q12).
     const reach = addDays(planningDate, MAX_SPAN_DAYS);
-    if (to > reach) {
-      throw new BadRequestException(`The forecast reaches at most ${MAX_SPAN_DAYS} days past the planning date (to ${reach}).`);
-    }
     const result = await this.computeForFarm(farmId, companyId, tenantId, { from, to, planningDate, horizonTo: reach }, clock);
     // Q7: an "as of" forecast has no projection for days already behind the planning date.
     const forecastFrom = to < planningDate ? null : from > planningDate ? from : planningDate;
@@ -707,7 +703,13 @@ export class FeedForecastService {
     if (range.horizonTo !== undefined && !isCalendarDay(range.horizonTo)) {
       throw new BadRequestException('horizonTo must be a calendar date (YYYY-MM-DD).');
     }
+    // The walk runs from the stock date to at least `to`; a range far past the planning date would make it unbounded,
+    // and nothing beyond Q12's 45-day horizon is forecast anyway. Held here, not only in getForecast, so the alert
+    // and requisition callers are bound by it too (follow-up).
     const cap = addDays(planningDate, MAX_SPAN_DAYS);
+    if (to > cap) {
+      throw new BadRequestException(`The forecast reaches at most ${MAX_SPAN_DAYS} days past the planning date (to ${cap}).`);
+    }
     const wanted = range.horizonTo ?? to;
     const capped = wanted < cap ? wanted : cap;
     const horizonTo = capped > to ? capped : to;

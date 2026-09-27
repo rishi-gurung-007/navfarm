@@ -53,6 +53,23 @@ describe('stockAsOf — silo and store stock for the forecast (Q2, Q6)', () => {
     ]);
   });
 
+  // Follow-up ruling: a negative opening is ledger truth, carried to the engine (which clamps after the day's inflow).
+  it('carries a negative store opening, and a silo\'s negative opening of the item booked into it', () => {
+    const out = stockAsOf({
+      ...base,
+      opening: [
+        { warehouse_id: 'st', item_id: 'r2', item_code: 'FEED-R2', uom: 'KG', qty: -4200 },
+        { warehouse_id: 's1', item_id: 'r1', item_code: 'FEED-R1', uom: 'KG', qty: -300 },
+      ],
+      movements: [
+        { warehouse_id: 'st', item_id: 'r2', item_code: 'FEED-R2', uom: 'KG', posting_date: '2026-09-24', qty: 40000 },
+        { warehouse_id: 's1', item_id: 'r1', item_code: 'FEED-R1', uom: 'KG', posting_date: '2026-09-25', qty: 2000 },
+      ],
+    });
+    expect(out.store).toEqual({ storeId: 'st', storeCode: 'GRS/STORE-001', balances: { r2: -4200 } });
+    expect(out.silos[0]).toEqual({ siloId: 's1', siloCode: 'GRS/SILO-001', itemId: 'r1', balanceKg: -300, lowLevelKg: 1000 });
+  });
+
   it('refuses feed held in anything but KG, naming the silo or the store item', () => {
     expect(() => stockAsOf({ ...base, opening: [{ warehouse_id: 's1', item_id: 'r1', item_code: 'FEED-R1', uom: 'BAG', qty: 10 }] }))
       .toThrow(new ConflictException("Silo 'GRS/SILO-001' holds its feed in BAG, not KG — the forecast cannot add bags to kilograms."));
