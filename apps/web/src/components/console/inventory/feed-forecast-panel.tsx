@@ -23,7 +23,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "@/services/api-client";
 import { InlineAlert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { getActiveFarmId, getStoredUser } from "@/hooks/useAuth";
+import { getActiveFarmId, getActiveWorkspaceScope, getStoredUser } from "@/hooks/useAuth";
 import { useLanguage } from "@/hooks/useLanguage";
 import type { TranslationKeys } from "@/utils/translations";
 import { formatDateShort, todayIso, unwrap } from "./feed-format";
@@ -169,8 +169,18 @@ export default function FeedForecastPanel() {
   const [dateTo, setDateTo] = useState("");
   const [periodId, setPeriodId] = useState("");
   const [periods, setPeriods] = useState<PeriodOption[] | null>(null);
+  // Distinguishes "the company has no periods yet" (periods === [], read OK)
+  // from "the periods read itself failed" — final review minor 5: the old
+  // code folded both into an empty array and showed "No periods" + the
+  // generate button either way, which reads as an offer to fix a failure a
+  // retry (not a generate) is what actually fixes.
+  const [periodsFailed, setPeriodsFailed] = useState(false);
   const [reload, setReload] = useState(0);
   const [generating, setGenerating] = useState(false);
+  // Separate from `error` (final review minor 5): `error` hides the grid
+  // (see the `error ? null : …` render below), and a refused generate must
+  // not take the grid down with it — it is shown beside the button instead.
+  const [generateError, setGenerateError] = useState("");
   const [data, setData] = useState<ForecastData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -215,18 +225,28 @@ export default function FeedForecastPanel() {
   useEffect(() => {
     if (view !== "PERIOD" || !farmId) {
       setPeriods(null);
+      setPeriodsFailed(false);
       return;
     }
     let cancelled = false;
+    setPeriodsFailed(false);
     api
       .get(`/feed-forecast/periods?${new URLSearchParams({ farmId }).toString()}`)
       .then((res) => {
         if (cancelled) return;
         const list = unwrap<PeriodOption[]>(res);
-        setPeriods(Array.isArray(list) ? list : []);
+        if (Array.isArray(list)) setPeriods(list);
+        else {
+          // An envelope that failed to unwrap into a list is as much a
+          // failed read as a rejected promise (minor 5).
+          setPeriods([]);
+          setPeriodsFailed(true);
+        }
       })
       .catch(() => {
-        if (!cancelled) setPeriods([]);
+        if (cancelled) return;
+        setPeriods([]);
+        setPeriodsFailed(true);
       });
     return () => {
       cancelled = true;
@@ -272,11 +292,13 @@ export default function FeedForecastPanel() {
   async function generatePeriods() {
     const year = businessYearStartOf(planningDate || data?.planningDate || todayIso());
     setGenerating(true);
+    setGenerateError("");
     try {
       await api.post("/reporting-period/generate", { business_year_start: year });
       setReload((n) => n + 1);
     } catch (err: any) {
-      setError(err?.message || tRef.current("ffGenerateFailed"));
+      // Beside the button, never through `error` — a refused generate must not hide the grid (minor 5).
+      setGenerateError(err?.message || tRef.current("ffGenerateFailed"));
     } finally {
       setGenerating(false);
     }
@@ -290,7 +312,18 @@ export default function FeedForecastPanel() {
   const periodList = Array.isArray(periods) ? periods : [];
   // Q7: nothing is forecast before the planning date.
   const rangeBeforePlanning = !!data && data.forecastFrom === null;
+  // Final review fix 3 (Important, ruling): the range can instead only
+  // PARTLY precede the planning date (e.g. the PERIOD view, whose period
+  // start is earlier than the date) — forecastFrom is then the planning
+  // date itself, later than `from`, rather than null.
+  const rangeStartsAtPlanning = !!data && data.forecastFrom !== null && data.forecastFrom > data.from;
   const businessYear = businessYearStartOf(planningDate || data?.planningDate || todayIso());
+  // Final review fix 2 (Important, ruling): api-client only sends
+  // x-active-company-id outside TENANT scope (apps/web/src/lib/api-client.ts)
+  // — a TENANT_ADMIN who has not switched into a company workspace has no
+  // active company, and generating periods there writes NULL-company
+  // template rows rather than the farm's own.
+  const isTenantWorkspace = getActiveWorkspaceScope() === "TENANT";
 
   return (
     <div className="flex flex-col gap-4">
@@ -393,12 +426,22 @@ export default function FeedForecastPanel() {
         )}
       </div>
 
-      {view === "PERIOD" && !!farmId && periods !== null && periodList.length === 0 && (
+      {view === "PERIOD" && !!farmId && periodsFailed && (
+        <InlineAlert>{t("ffPeriodsLoadFailed")}</InlineAlert>
+      )}
+
+      {view === "PERIOD" && !!farmId && !periodsFailed && periods !== null && periodList.length === 0 && (
         <InlineAlert variant="info">
           <span className="mr-3">{t("ffNoPeriods")}</span>
-          <Button variant="outline" onClick={generatePeriods} disabled={generating}>
+          <Button variant="outline" onClick={generatePeriods} disabled={generating || isTenantWorkspace}>
             {t("ffGeneratePeriods", { year: businessYear })}
           </Button>
+          {isTenantWorkspace && (
+            <span className="ml-3 text-xs" style={{ color: "var(--text-secondary)" }}>{t("ffGenerateNeedsCompany")}</span>
+          )}
+          {generateError && (
+            <span className="ml-3 text-xs" style={{ color: "var(--danger)" }}>{generateError}</span>
+          )}
         </InlineAlert>
       )}
 
@@ -406,6 +449,10 @@ export default function FeedForecastPanel() {
 
       {rangeBeforePlanning && !error && (
         <InlineAlert variant="info">{t("ffNoteRangeBeforePlanning", { date: formatDateShort(data!.planningDate) })}</InlineAlert>
+      )}
+
+      {rangeStartsAtPlanning && !error && (
+        <InlineAlert variant="info">{t("ffNoteRangeStartsAtPlanning", { date: formatDateShort(data!.forecastFrom!) })}</InlineAlert>
       )}
 
       {error ? null : !farmId ? (

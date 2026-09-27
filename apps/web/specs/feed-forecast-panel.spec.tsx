@@ -2,7 +2,7 @@ import React from 'react';
 import { render, screen, within, fireEvent, waitFor } from '@testing-library/react';
 import FeedForecastPanel from '../src/components/console/inventory/feed-forecast-panel';
 import { api } from '../src/services/api-client';
-import { getStoredUser, getActiveFarmId } from '../src/hooks/useAuth';
+import { getStoredUser, getActiveFarmId, getActiveWorkspaceScope } from '../src/hooks/useAuth';
 
 jest.mock('../src/services/api-client', () => ({ api: { get: jest.fn(), post: jest.fn() } }));
 // A stable `t` (defined once, inside the factory, not re-created per call) —
@@ -15,12 +15,13 @@ jest.mock('../src/hooks/useLanguage', () => {
   const stableT = (key: string, vars?: Record<string, any>) => (vars ? `${key}:${JSON.stringify(vars)}` : key);
   return { useLanguage: () => ({ t: stableT }) };
 });
-jest.mock('../src/hooks/useAuth', () => ({ getStoredUser: jest.fn(), getActiveFarmId: jest.fn() }));
+jest.mock('../src/hooks/useAuth', () => ({ getStoredUser: jest.fn(), getActiveFarmId: jest.fn(), getActiveWorkspaceScope: jest.fn() }));
 
 const get = api.get as jest.Mock;
 const post = api.post as jest.Mock;
 const mockGetStoredUser = getStoredUser as jest.Mock;
 const mockGetActiveFarmId = getActiveFarmId as jest.Mock;
+const mockGetActiveWorkspaceScope = getActiveWorkspaceScope as jest.Mock;
 
 /** api.get is called for both /location (farm picker) and /feed-forecast; tests that
  * care about fetch-loop / call-count regressions count the forecast calls only. */
@@ -106,6 +107,7 @@ describe('FeedForecastPanel — tenant admin', () => {
     post.mockReset();
     mockGetStoredUser.mockReset().mockReturnValue(tenantAdminUser);
     mockGetActiveFarmId.mockReset().mockReturnValue('farm-vil100');
+    mockGetActiveWorkspaceScope.mockReset().mockReturnValue('COMPANY');
   });
 
   it('renders the field specification\'s 14 columns in order', async () => {
@@ -297,6 +299,81 @@ describe('FeedForecastPanel — tenant admin', () => {
     await waitFor(() => expect(post).toHaveBeenCalledWith('/reporting-period/generate', { business_year_start: 2026 }));
     await waitFor(() => expect(periodCalls()).toBeGreaterThan(before));
   });
+
+  // Final review, Important 2 + ruling: a TENANT_ADMIN in the tenant-wide
+  // workspace (no active company — api-client only sends x-active-company-id
+  // outside TENANT scope) generating periods writes NULL-company template
+  // rows. No new endpoint; the button is disabled with a message instead.
+  it('disables Generate Periods and explains why in the tenant-wide workspace (final review ruling)', async () => {
+    mockGetActiveWorkspaceScope.mockReturnValue('TENANT');
+    render(<FeedForecastPanel />);
+    await screen.findByRole('table');
+    fireEvent.change(screen.getByLabelText('ffView'), { target: { value: 'PERIOD' } });
+    const button = await screen.findByRole('button', { name: /ffGeneratePeriods/ }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    expect(screen.getByText('ffGenerateNeedsCompany')).toBeTruthy();
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it('leaves Generate Periods enabled with no extra message in a company workspace', async () => {
+    mockGetActiveWorkspaceScope.mockReturnValue('COMPANY');
+    render(<FeedForecastPanel />);
+    await screen.findByRole('table');
+    fireEvent.change(screen.getByLabelText('ffView'), { target: { value: 'PERIOD' } });
+    const button = await screen.findByRole('button', { name: /ffGeneratePeriods/ }) as HTMLButtonElement;
+    expect(button.disabled).toBe(false);
+    expect(screen.queryByText('ffGenerateNeedsCompany')).toBeNull();
+  });
+
+  // Final review, minor 5: a refused generate (e.g. 403) must not hide the
+  // grid — the panel used to route it through the same `error` state that
+  // hides the table.
+  it('shows a refused generate beside the button without hiding the grid', async () => {
+    post.mockRejectedValue({ message: 'Forbidden.' });
+    render(<FeedForecastPanel />);
+    await screen.findByRole('table');
+    fireEvent.change(screen.getByLabelText('ffView'), { target: { value: 'PERIOD' } });
+    const button = await screen.findByRole('button', { name: /ffGeneratePeriods/ });
+    fireEvent.click(button);
+    await screen.findByText('Forbidden.');
+    expect(screen.getByRole('table')).toBeTruthy();
+  });
+
+  // Final review, minor 5: a failed /feed-forecast/periods read must show an
+  // error, not silently render "No periods" + the generate button as if the
+  // company genuinely had none.
+  it('shows an error, not "No periods", when the periods read itself fails', async () => {
+    get.mockImplementation((url: string) => {
+      if (url.startsWith('/location')) return Promise.resolve(farmList);
+      if (url.startsWith('/feed-forecast/periods')) return Promise.reject(new Error('network error'));
+      return Promise.resolve(forecastResponse);
+    });
+    render(<FeedForecastPanel />);
+    await screen.findByRole('table');
+    fireEvent.change(screen.getByLabelText('ffView'), { target: { value: 'PERIOD' } });
+    await screen.findByText('ffPeriodsLoadFailed');
+    expect(screen.queryByText('ffNoPeriods')).toBeNull();
+    expect(screen.queryByRole('button', { name: /ffGeneratePeriods/ })).toBeNull();
+  });
+
+  // Final review, Important + minor 1: when part of the range lies before
+  // the planning date (forecastFrom > from, e.g. the PERIOD view straddling
+  // it), the note must say rows start at the planning date — not the
+  // "nothing is forecast" wording reserved for forecastFrom === null.
+  it('notes that rows start at the planning date when the range only partly precedes it', async () => {
+    get.mockImplementation(
+      routedGet({
+        feedForecast: () => Promise.resolve({
+          success: true,
+          data: { ...forecastResponse.data, from: '2026-09-20', to: '2026-09-30', forecastFrom: '2026-09-25' },
+        }),
+      }),
+    );
+    render(<FeedForecastPanel />);
+    await screen.findByRole('table');
+    expect(screen.getByText(/ffNoteRangeStartsAtPlanning/)).toBeTruthy();
+    expect(screen.queryByText(/ffNoteRangeBeforePlanning/)).toBeNull();
+  });
 });
 
 describe('FeedForecastPanel — STANDARD_USER', () => {
@@ -305,6 +382,7 @@ describe('FeedForecastPanel — STANDARD_USER', () => {
     get.mockImplementation(routedGet());
     mockGetStoredUser.mockReset().mockReturnValue(standardUser);
     mockGetActiveFarmId.mockReset().mockReturnValue('farm-vil100');
+    mockGetActiveWorkspaceScope.mockReset().mockReturnValue('OPERATIONAL');
   });
 
   it('shows no farm select for a STANDARD_USER', async () => {

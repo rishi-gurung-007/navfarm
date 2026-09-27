@@ -99,4 +99,31 @@ describe('FeedForecastStages (field spec supporting block)', () => {
     const { container } = render(<FeedForecastStages stages={[]} t={t} />);
     expect(container.innerHTML).toBe('');
   });
+
+  // Final review fix 1 (Important): the API sorts stage blocks on
+  // (batchId, currentStageCode) — a batch can appear twice, once per
+  // concurrent stage (e.g. BATCH-000010's registered-breeding rows). A React
+  // key of batchId alone collides and React drops/merges one block.
+  it('renders both stage blocks for one batch with two concurrent stages', () => {
+    const shared = { batchId: 'b', batchNo: 'BATCH-000010', shedCode: 'SHED-1', currentFrom: '2026-08-01', currentTo: '2026-09-11', nextStageCode: null, nextFrom: null, nextTo: null, stageChangeDate: null, stageChangeOverdue: false };
+    render(<FeedForecastStages stages={[{ ...shared, currentStageCode: 'GESTATION' }, { ...shared, currentStageCode: 'LACTATION' }]} t={t} />);
+    const list = screen.getByRole('list');
+    expect(within(list).getAllByText('BATCH-000010 · SHED-1').length).toBe(2);
+    expect(within(list).getByText(/GESTATION/)).toBeTruthy();
+    expect(within(list).getByText(/LACTATION/)).toBeTruthy();
+  });
+});
+
+// Final review fix 5 (minor 3): Days of Stock and Run-Down look
+// contradictory side by side (a silo can show more Days of Stock than days
+// to its Run-Down) unless the screen says what each counts to.
+describe('column header hints (Days of Stock vs Run-Down)', () => {
+  it('titles the two columns with what each counts to', () => {
+    render(<FeedForecastGrid rows={[row()]} loading={false} horizonTo={null} t={t} />);
+    const headers = screen.getAllByRole('columnheader');
+    const daysOfStock = headers.find((h) => h.textContent === 'ffColDaysOfStock')!;
+    const runDown = headers.find((h) => h.textContent === 'ffColRunDown')!;
+    expect(daysOfStock.getAttribute('title')).toBe('ffDaysOfStockHint');
+    expect(runDown.getAttribute('title')).toBe('ffRunDownHint');
+  });
 });

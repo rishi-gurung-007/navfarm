@@ -79,6 +79,18 @@ export const GRID_COLUMNS = [
 
 const RIGHT_ALIGNED = new Set<string>(["ffColCurrentInventoryKg", "ffColCurrentPigs", "ffColPerDayIntakeKg", "ffColDaysOfStock", "ffColFeedOutKg"]);
 
+/**
+ * Final review fix 5 (minor 3): Days of Stock and Run-Down can disagree on
+ * screen (a full silo can show a high Days of Stock yet still carry a
+ * near-term Run-Down date on a shared silo, or vice versa) because they
+ * count to two different things — a header title makes that legible instead
+ * of looking contradictory.
+ */
+const HEADER_HINT: Partial<Record<(typeof GRID_COLUMNS)[number], string>> = {
+  ffColDaysOfStock: "ffDaysOfStockHint",
+  ffColRunDown: "ffRunDownHint",
+};
+
 export function fmtKg(n: number | null | undefined): string {
   if (n === null || n === undefined) return "—";
   return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
@@ -99,7 +111,7 @@ export function FeedForecastGrid({ rows, loading, horizonTo, t }: { rows: Report
       <TableHeader>
         <tr>
           {GRID_COLUMNS.map((c) => (
-            <TableHead key={c} className={RIGHT_ALIGNED.has(c) ? "text-right" : undefined}>{t(c)}</TableHead>
+            <TableHead key={c} title={HEADER_HINT[c] ? t(HEADER_HINT[c]) : undefined} className={RIGHT_ALIGNED.has(c) ? "text-right" : undefined}>{t(c)}</TableHead>
           ))}
         </tr>
       </TableHeader>
@@ -172,7 +184,11 @@ export function FeedForecastStages({ stages, t }: { stages: StageBlock[]; t: Tra
       <ul className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
         {stages.map((s) => (
           <li
-            key={s.batchId}
+            // The API sorts stage blocks on (batchId, currentStageCode) —
+            // final review fix 1 (Important): a batch with concurrent stages
+            // (e.g. a registered breeding batch) appears more than once, and
+            // a key of batchId alone collided, so React dropped all but one.
+            key={`${s.batchId}|${s.currentStageCode}`}
             className="rounded-[var(--radius-md)] border p-3 text-xs"
             style={{ borderColor: "var(--border)", backgroundColor: "var(--surface)", color: "var(--text-secondary)" }}
           >
