@@ -112,7 +112,7 @@ describe('FeedForecastPanel — tenant admin', () => {
 
   it('renders the field specification\'s 14 columns in order', async () => {
     render(<FeedForecastPanel />);
-    const table = await screen.findByRole('table');
+    const table = await screen.findByRole('table', { name: 'ffGridLabel' });
     const headers = within(table).getAllByRole('columnheader').map((h) => h.textContent);
     expect(headers).toEqual([
       'ffColBatchNo', 'ffColItemName', 'ffColItemNo', 'ffColShedNo', 'ffColPlanningDate', 'ffColSource',
@@ -123,19 +123,19 @@ describe('FeedForecastPanel — tenant admin', () => {
 
   it('shows Overdue, Indicative, the shared-silo count, "beyond" the horizon, the wastage note and the stage block', async () => {
     render(<FeedForecastPanel />);
-    const table = await screen.findByRole('table');
+    const table = await screen.findByRole('table', { name: 'ffGridLabel' });
     expect(within(table).getByText('ffOverdue')).toBeTruthy();
     expect(within(table).getByText('ffIndicative')).toBeTruthy();
-    expect(within(table).getByText('ffSharedSilo:{"count":3}')).toBeTruthy();
+    expect(within(table).getByText('ffSharedBy:{"count":3}')).toBeTruthy();
     expect(within(table).getByText('ffBeyondHorizon:{"date":"09/11/26"}')).toBeTruthy();
     expect(screen.getByText('ffWastageUsed:{"pcts":"2.5%"}')).toBeTruthy();
     // The stage block: a <section aria-label> is a region (the notes below are a list too, so not getByRole('list')).
-    expect(screen.getByRole('region', { name: 'ffStagesTitle' })).toBeTruthy();
+    expect(screen.getByRole('table', { name: 'ffStagesTitle' })).toBeTruthy();
   });
 
   it('shows a farm select defaulting to the active farm for a non-STANDARD_USER', async () => {
     render(<FeedForecastPanel />);
-    await screen.findByRole('table');
+    await screen.findByRole('table', { name: 'ffGridLabel' });
     const select = screen.getByRole('combobox', { name: 'ffPrimaryLocation' }) as HTMLSelectElement;
     expect(select).toBeTruthy();
     await waitFor(() => expect(select.value).toBe('farm-vil100'));
@@ -143,7 +143,7 @@ describe('FeedForecastPanel — tenant admin', () => {
 
   it('fetches the forecast once on mount and once more after a date changes, without looping (fix round 1)', async () => {
     render(<FeedForecastPanel />);
-    await screen.findByRole('table');
+    await screen.findByRole('table', { name: 'ffGridLabel' });
     expect(forecastCallCount()).toBe(1);
 
     // A date that is never the default: Date From starts at today, so a fixed
@@ -166,7 +166,7 @@ describe('FeedForecastPanel — tenant admin', () => {
       }),
     );
     render(<FeedForecastPanel />);
-    const table = await screen.findByRole('table');
+    const table = await screen.findByRole('table', { name: 'ffGridLabel' });
     expect(table).toBeTruthy();
   });
 
@@ -176,7 +176,7 @@ describe('FeedForecastPanel — tenant admin', () => {
     );
     render(<FeedForecastPanel />);
     await screen.findByText('Farm not found.');
-    expect(screen.queryByRole('table')).toBeNull();
+    expect(screen.queryByRole('table', { name: 'ffGridLabel' })).toBeNull();
     expect(screen.queryByText('ffNoRows')).toBeNull();
   });
 
@@ -232,7 +232,7 @@ describe('FeedForecastPanel — tenant admin', () => {
       }),
     );
     render(<FeedForecastPanel />);
-    await screen.findByRole('table');
+    await screen.findByRole('table', { name: 'ffGridLabel' });
 
     expect(screen.getByText(/ffFlagNoFeedRowRange/)).toBeTruthy();
     expect(screen.queryByText(/ffFlagNoFeedRowSingle/)).toBeNull();
@@ -250,20 +250,20 @@ describe('FeedForecastPanel — tenant admin', () => {
       }),
     );
     render(<FeedForecastPanel />);
-    await screen.findByRole('table');
+    await screen.findByRole('table', { name: 'ffGridLabel' });
     expect(screen.getByText(/ffNoteRangeBeforePlanning/)).toBeTruthy();
     expect(screen.getByText(/ffNoRows/)).toBeTruthy();
   });
 
   it('first asks for the Custom view with no dates, so the API plans from the farm\'s today (D16)', async () => {
     render(<FeedForecastPanel />);
-    await screen.findByRole('table');
+    await screen.findByRole('table', { name: 'ffGridLabel' });
     expect(get.mock.calls.find(([url]) => url.startsWith('/feed-forecast?'))![0]).toBe('/feed-forecast?farmId=farm-vil100&view=CUSTOM');
   });
 
   it('sends a picked planning date as the as-of date', async () => {
     render(<FeedForecastPanel />);
-    await screen.findByRole('table');
+    await screen.findByRole('table', { name: 'ffGridLabel' });
     const input = screen.getByLabelText('ffPlanningDate') as HTMLInputElement;
     const earlier = new Date(`${input.value}T00:00:00Z`);
     earlier.setUTCDate(earlier.getUTCDate() - 3);
@@ -277,7 +277,7 @@ describe('FeedForecastPanel — tenant admin', () => {
       periods: { success: true, data: [{ periodId: 'p9', periodCode: '2026-09', startDate: '2026-08-30', endDate: '2026-09-26', stockTakeDate: '2026-09-26', productionStartDate: '2026-09-27' }] },
     }));
     render(<FeedForecastPanel />);
-    await screen.findByRole('table');
+    await screen.findByRole('table', { name: 'ffGridLabel' });
     fireEvent.change(screen.getByLabelText('ffView'), { target: { value: 'PERIOD' } });
     await waitFor(() => expect(get.mock.calls.some(([url]) => url === '/feed-forecast/periods?farmId=farm-vil100')).toBe(true));
     await waitFor(() => expect(get.mock.calls.some(([url]) => url === '/feed-forecast?farmId=farm-vil100&view=PERIOD')).toBe(true));
@@ -289,7 +289,7 @@ describe('FeedForecastPanel — tenant admin', () => {
   it('offers to generate the business year when the company has no periods, then reloads (Q9)', async () => {
     post.mockResolvedValue({ success: true, data: { created: ['2026-07'], skipped: [] } });
     render(<FeedForecastPanel />);
-    await screen.findByRole('table');
+    await screen.findByRole('table', { name: 'ffGridLabel' });
     fireEvent.change(screen.getByLabelText('ffView'), { target: { value: 'PERIOD' } });
     const button = await screen.findByRole('button', { name: /ffGeneratePeriods/ });
     const periodCalls = () => get.mock.calls.filter(([url]) => url.startsWith('/feed-forecast/periods')).length;
@@ -307,7 +307,7 @@ describe('FeedForecastPanel — tenant admin', () => {
   it('disables Generate Periods and explains why in the tenant-wide workspace (final review ruling)', async () => {
     mockGetActiveWorkspaceScope.mockReturnValue('TENANT');
     render(<FeedForecastPanel />);
-    await screen.findByRole('table');
+    await screen.findByRole('table', { name: 'ffGridLabel' });
     fireEvent.change(screen.getByLabelText('ffView'), { target: { value: 'PERIOD' } });
     const button = await screen.findByRole('button', { name: /ffGeneratePeriods/ }) as HTMLButtonElement;
     expect(button.disabled).toBe(true);
@@ -318,7 +318,7 @@ describe('FeedForecastPanel — tenant admin', () => {
   it('leaves Generate Periods enabled with no extra message in a company workspace', async () => {
     mockGetActiveWorkspaceScope.mockReturnValue('COMPANY');
     render(<FeedForecastPanel />);
-    await screen.findByRole('table');
+    await screen.findByRole('table', { name: 'ffGridLabel' });
     fireEvent.change(screen.getByLabelText('ffView'), { target: { value: 'PERIOD' } });
     const button = await screen.findByRole('button', { name: /ffGeneratePeriods/ }) as HTMLButtonElement;
     expect(button.disabled).toBe(false);
@@ -331,12 +331,12 @@ describe('FeedForecastPanel — tenant admin', () => {
   it('shows a refused generate beside the button without hiding the grid', async () => {
     post.mockRejectedValue({ message: 'Forbidden.' });
     render(<FeedForecastPanel />);
-    await screen.findByRole('table');
+    await screen.findByRole('table', { name: 'ffGridLabel' });
     fireEvent.change(screen.getByLabelText('ffView'), { target: { value: 'PERIOD' } });
     const button = await screen.findByRole('button', { name: /ffGeneratePeriods/ });
     fireEvent.click(button);
     await screen.findByText('Forbidden.');
-    expect(screen.getByRole('table')).toBeTruthy();
+    expect(screen.getByRole('table', { name: 'ffGridLabel' })).toBeTruthy();
   });
 
   // Final review, minor 5: a failed /feed-forecast/periods read must show an
@@ -349,7 +349,7 @@ describe('FeedForecastPanel — tenant admin', () => {
       return Promise.resolve(forecastResponse);
     });
     render(<FeedForecastPanel />);
-    await screen.findByRole('table');
+    await screen.findByRole('table', { name: 'ffGridLabel' });
     fireEvent.change(screen.getByLabelText('ffView'), { target: { value: 'PERIOD' } });
     await screen.findByText('ffPeriodsLoadFailed');
     expect(screen.queryByText('ffNoPeriods')).toBeNull();
@@ -370,7 +370,7 @@ describe('FeedForecastPanel — tenant admin', () => {
       }),
     );
     render(<FeedForecastPanel />);
-    await screen.findByRole('table');
+    await screen.findByRole('table', { name: 'ffGridLabel' });
     expect(screen.getByText(/ffNoteRangeStartsAtPlanning/)).toBeTruthy();
     expect(screen.queryByText(/ffNoteRangeBeforePlanning/)).toBeNull();
   });
@@ -387,14 +387,14 @@ describe('FeedForecastPanel — STANDARD_USER', () => {
 
   it('shows no farm select for a STANDARD_USER', async () => {
     render(<FeedForecastPanel />);
-    await screen.findByRole('table');
+    await screen.findByRole('table', { name: 'ffGridLabel' });
     expect(screen.queryByRole('combobox', { name: 'ffPrimaryLocation' })).toBeNull();
   });
 
   it("falls back to the response farm's code/name when the stored user has no farm", async () => {
     mockGetStoredUser.mockReturnValue({ ...standardUser, farm: undefined });
     render(<FeedForecastPanel />);
-    await screen.findByRole('table');
+    await screen.findByRole('table', { name: 'ffGridLabel' });
     expect(screen.getByText('VIL100 — VILLA FRANCA FARM')).toBeTruthy();
   });
 });
