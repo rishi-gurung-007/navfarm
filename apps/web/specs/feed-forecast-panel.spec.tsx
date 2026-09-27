@@ -162,6 +162,17 @@ describe('FeedForecastPanel — admin', () => {
     expect(forecastCalls()).toHaveLength(0);
   });
 
+  it('shows an error with a retry when the farm list could not be read, not the empty state (Plan S follow-up)', async () => {
+    const retry = jest.fn();
+    mockFarm = adminFarm({ farmId: null, farms: [], failed: true, retry });
+    render(<FeedForecastPanel />);
+    expect(screen.getByText('ffFarmsLoadFailed')).toBeTruthy();
+    expect(screen.queryByText('ffNoFarms')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'ffRetry' }));
+    expect(retry).toHaveBeenCalled();
+    expect(forecastCalls()).toHaveLength(0);
+  });
+
   it('collects the notes in one collapsed panel', async () => {
     render(<FeedForecastPanel />);
     await screen.findByRole('table');

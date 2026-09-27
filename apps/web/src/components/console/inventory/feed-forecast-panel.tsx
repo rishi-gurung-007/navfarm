@@ -229,7 +229,14 @@ export default function FeedForecastPanel() {
       {rangeBeforePlanning && !error && <InlineAlert variant="info">{t("ffNoteRangeBeforePlanning", { date: formatDateShort(data!.planningDate) })}</InlineAlert>}
       {rangeStartsAtPlanning && !error && <InlineAlert variant="info">{t("ffNoteRangeStartsAtPlanning", { date: formatDateShort(data!.forecastFrom!) })}</InlineAlert>}
 
-      {!farm.loaded ? (
+      {farm.failed ? (
+        // The request failed: say so and offer to try again. "No farms to show."
+        // would claim this user has none, which is a different fact.
+        <InlineAlert>
+          <span className="mr-3">{t("ffFarmsLoadFailed")}</span>
+          <Button size="sm" variant="outline" onClick={farm.retry}>{t("ffRetry")}</Button>
+        </InlineAlert>
+      ) : !farm.loaded ? (
         <LoadingState label={t("ffLoading")} />
       ) : noFarms || (!farmId && !farm.isFixed) ? (
         <EmptyState title={t("ffNoFarms")} />

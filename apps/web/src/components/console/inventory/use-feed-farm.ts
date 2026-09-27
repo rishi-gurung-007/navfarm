@@ -75,6 +75,8 @@ export function useFeedFarm() {
   const [farms, setFarms] = useState<FeedFarm[]>([]);
   const [loaded, setLoaded] = useState(isFixed);
   const [failed, setFailed] = useState(false);
+  // Bumped by retry(): a failed read is not cached, so asking again is enough.
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     if (isFixed) return;
@@ -101,12 +103,24 @@ export function useFeedFarm() {
     return () => {
       alive = false;
     };
-  }, [isFixed]);
+  }, [isFixed, attempt]);
+
+  /**
+   * Ask for the farm list again after a failed read (Plan S follow-up: the
+   * screens showed "No farms to show." when the request itself had failed,
+   * which reads as "this user has no farms" — a different fact entirely).
+   */
+  const retry = () => {
+    resetFeedFarmCache();
+    setFailed(false);
+    setLoaded(false);
+    setAttempt((n) => n + 1);
+  };
 
   const setFarmId = (id: string | null) => {
     setFarmIdState(id);
     writeStored(id);
   };
 
-  return { farmId, setFarmId, farms, loaded, failed, isFixed, fixedFarm: isFixed ? (user?.farm ?? null) : null };
+  return { farmId, setFarmId, retry, farms, loaded, failed, isFixed, fixedFarm: isFixed ? (user?.farm ?? null) : null };
 }

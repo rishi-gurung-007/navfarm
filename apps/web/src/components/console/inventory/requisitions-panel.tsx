@@ -281,7 +281,14 @@ export default function RequisitionsPanel() {
       {error && <InlineAlert>{error}</InlineAlert>}
       {notice && <InlineAlert variant="success">{notice}</InlineAlert>}
 
-      {selected ? (
+      {farm.failed ? (
+        // The farm list itself failed to load; "No requisitions for this farm."
+        // would blame the data for a request that never arrived.
+        <InlineAlert>
+          <span className="mr-3">{t("rqFarmsLoadFailed")}</span>
+          <Button size="sm" variant="outline" onClick={farm.retry}>{t("rqRetry")}</Button>
+        </InlineAlert>
+      ) : selected ? (
         <>
           <div className="flex shrink-0 flex-wrap items-center gap-2">
             <Button size="sm" variant="ghost" onClick={() => show(null)}><ArrowLeft className="h-3.5 w-3.5" /> {t("rqBack")}</Button>

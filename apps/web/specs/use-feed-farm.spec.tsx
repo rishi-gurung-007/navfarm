@@ -80,6 +80,17 @@ describe('useFeedFarm (A3, A4, A5, D13)', () => {
     expect(retry.result.current.farms).toEqual([]);
   });
 
+  it('retries a failed read on request, and clears the failure (Plan S follow-up)', async () => {
+    get.mockRejectedValueOnce(new Error('network'));
+    const { result } = renderHook(() => useFeedFarm());
+    await waitFor(() => expect(result.current.failed).toBe(true));
+    get.mockResolvedValueOnce({ success: true, data: farms });
+    act(() => result.current.retry());
+    await waitFor(() => expect(result.current.farms).toEqual(farms));
+    expect(result.current.failed).toBe(false);
+    expect(result.current.farmId).toBe('farm-lex');
+  });
+
   it('asks again when the workspace changes', async () => {
     const a = renderHook(() => useFeedFarm());
     await waitFor(() => expect(a.result.current.loaded).toBe(true));

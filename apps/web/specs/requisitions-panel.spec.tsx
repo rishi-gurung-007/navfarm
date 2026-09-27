@@ -105,6 +105,16 @@ describe('RequisitionsPanel (D26)', () => {
     await waitFor(() => expect(put).toHaveBeenCalledWith('/feed-requisition/req-1', { remarks: '', lines: [{ line_id: 'L1', proposed_delivery_date: '2099-09-30' }] }));
   });
 
+  it('shows an error with a retry when the farm list could not be read (Plan S follow-up)', async () => {
+    const retry = jest.fn();
+    mockFarm = { ...mockFarm, farmId: null, farms: [], failed: true, retry };
+    render(<RequisitionsPanel />);
+    expect(screen.getByText('rqFarmsLoadFailed')).toBeTruthy();
+    expect(screen.queryByText('rqNone')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'rqRetry' }));
+    expect(retry).toHaveBeenCalled();
+  });
+
   it('opens the requisition named in the address (the Approvals inbox links here)', async () => {
     window.history.replaceState(null, '', '/inventory/requisitions?id=req-1');
     render(<RequisitionsPanel />);
