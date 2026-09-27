@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { api } from "@/services/api-client";
+import { API_ORIGIN } from "@/lib/api-client";
 import type { MasterDataField } from "./types";
 
 export function formatMasterValue(value: unknown, field?: MasterDataField): string {
@@ -59,5 +60,21 @@ export function MasterFieldValue({ field, value, record }: {
     return () => { cancelled = true; };
   }, [request, usesList, field, value]);
   if (entity) return <>{!request ? "Reference unavailable" : resolved?.request === request ? resolved.label : "Loading reference…"}</>;
+  if (field?.type === "image" && typeof value === "string" && value) {
+    const src = value.startsWith("http") ? value : `${API_ORIGIN}${value}`;
+    return (
+      <div className="flex items-center gap-3">
+        <img
+          src={src}
+          alt={field.label || "Image"}
+          className="h-14 w-14 rounded border object-cover cursor-pointer"
+          onClick={() => window.open(src, "_blank")}
+        />
+        <a href={src} target="_blank" rel="noreferrer" className="underline text-xs" style={{ color: "var(--accent)" }}>
+          View full image
+        </a>
+      </div>
+    );
+  }
   return <>{formatMasterValue(value, field)}</>;
 }

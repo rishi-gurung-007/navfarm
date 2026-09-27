@@ -8,6 +8,7 @@ import {
   CheckCircle2, Power
 } from "lucide-react";
 import { api } from "@/services/api-client";
+import { API_ORIGIN } from "@/lib/api-client";
 import { Dialog } from "@/components/ui/dialog";
 import { Drawer } from "@/components/ui/drawer";
 import { Popover } from "@/components/ui/popover";
@@ -485,6 +486,8 @@ export function MasterDataTable({
   const [form, setForm] = useState<Row>({});
   // Pending, not-yet-added input text for each "string-list" field's chip editor, keyed by field key.
   const [chipDrafts, setChipDrafts] = useState<Record<string, string>>({});
+  // Which "image" field is mid-upload, keyed by field key — disables its control and shows a spinner.
+  const [imageUploading, setImageUploading] = useState<Record<string, boolean>>({});
   const [saving, setSaving] = useState(false);
   const [activeFormTab, setActiveFormTab] = useState<string>("");
   const [entityReloadKey, setEntityReloadKey] = useState(0);
@@ -2073,6 +2076,69 @@ export function MasterDataTable({
         </div>
       );
     }
+    // A photo attached from disk rather than a URL pasted in — the field still
+    // stores a plain string (the served /uploads/... path), so every consumer
+    // of this value (list view, detail view, DTO) is unchanged; only how the
+    // value gets populated differs.
+    if (f.type === "image") {
+      const uploading = !!imageUploading[f.key];
+      const url = String(value || "");
+      const onPick = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        e.target.value = "";
+        if (!file) return;
+        setImageUploading((prev) => ({ ...prev, [f.key]: true }));
+        try {
+          const body = new FormData();
+          body.append("file", file);
+          const endpoint = f.uploadEndpoint || (config.apiBase ? `${config.apiBase}/upload-image` : "/item/upload-image");
+          let res: any;
+          try {
+            res = await api.post(endpoint, body);
+          } catch (uploadErr) {
+            if (endpoint !== "/item/upload-image") {
+              res = await api.post("/item/upload-image", body);
+            } else {
+              throw uploadErr;
+            }
+          }
+          const uploadedUrl = res?.data?.url || res?.url;
+          if (uploadedUrl) setField(f.key, uploadedUrl);
+        } catch (err: any) {
+          showToast.error(err?.message || "Failed to upload image.");
+        } finally {
+          setImageUploading((prev) => ({ ...prev, [f.key]: false }));
+        }
+      };
+      return (
+        <div className="flex items-center gap-3">
+          {url ? (
+            <img
+              src={url.startsWith("http") ? url : `${API_ORIGIN}${url}`}
+              alt=""
+              className="h-16 w-16 rounded-[var(--radius-sm)] border object-cover"
+              style={S.raised}
+            />
+          ) : (
+            <div className="flex h-16 w-16 items-center justify-center rounded-[var(--radius-sm)] border text-[10px]" style={{ ...S.surface, color: "var(--text-muted)" }}>
+              No photo
+            </div>
+          )}
+          <label
+            className="cursor-pointer rounded-lg border px-3 py-1.5 text-xs font-semibold"
+            style={{ ...S.surface, opacity: readOnly || uploading ? 0.6 : 1, pointerEvents: readOnly || uploading ? "none" : "auto" }}
+          >
+            {uploading ? "Uploading…" : url ? "Replace Photo" : "Upload Image"}
+            <input {...accessibility} type="file" accept="image/png,image/jpeg,image/webp,image/heic" className="hidden" onChange={onPick} disabled={readOnly || uploading} />
+          </label>
+          {url && !readOnly && (
+            <button type="button" onClick={() => setField(f.key, "")} className="text-xs font-medium underline" style={{ color: "var(--danger)" }}>
+              Remove
+            </button>
+          )}
+        </div>
+      );
+    }
     if (f.type === "textarea" || f.type === "json") {
       return (
         <textarea
@@ -2084,6 +2150,42 @@ export function MasterDataTable({
           className={`${inputCls} font-mono text-xs`}
           style={S.input}
         />
+      );
+    }
+    if (f.type === "select" && f.control === "checkbox") {
+      const options = f.options || [];
+      return (
+        <div className="flex h-11 items-center gap-4">
+          {options.map((o) => {
+            const checked = String(value) === o.value;
+            return (
+              <label
+                key={o.value}
+                className="flex items-center gap-2.5 px-3.5 py-2 rounded-lg border cursor-pointer select-none transition-all duration-150"
+                style={{
+                  ...S.surface,
+                  borderColor: checked ? "var(--accent)" : "var(--border)",
+                  backgroundColor: checked ? "rgba(var(--accent-rgb, 239, 107, 74), 0.08)" : "transparent",
+                  color: checked ? "var(--text-primary)" : "var(--text-secondary)",
+                  opacity: f.readOnly || isLockedByTemplate ? 0.6 : 1,
+                  pointerEvents: f.readOnly || isLockedByTemplate ? "none" : "auto",
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  disabled={f.readOnly || isLockedByTemplate}
+                  onChange={() => {
+                    setField(f.key, checked ? "" : o.value);
+                  }}
+                  className="h-4 w-4 rounded-[var(--radius-xs)] accent-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
+                  style={{ accentColor: "var(--accent)" }}
+                />
+                <span className="text-sm font-semibold">{o.label}</span>
+              </label>
+            );
+          })}
+        </div>
       );
     }
     // A short, weighed choice reads better as a segmented group than as a

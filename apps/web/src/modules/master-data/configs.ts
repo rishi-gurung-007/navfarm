@@ -59,12 +59,12 @@ const location: MasterDataConfig = {
     { key: "nob_id", label: "Nature of Business", type: "select-entity", entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], helpText: "Leave blank if this location is shared across all business verticals." },
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank if this location is shared across all LOBs under the selected NOB." },
     { key: "company_id", label: "Company", type: "text", hideInForm: true },
-    { key: "location_code", label: "Location Code", type: "text", readOnly: true, helpText: "Generated from the selected Location Type prefix and kept permanently.", section: "Identification" },
+    { key: "location_code", label: "Code", type: "text", readOnly: true, helpText: "Generated from the selected Location Type prefix and kept permanently.", section: "Identification" },
     {
       key: "location_type", label: "Location Type", type: "select-entity", required: true,
       entityEndpoint: "/location-type", entityValueKey: "type_code", entityLabelKeys: ["type_code", "type_name"], section: "Identification",
     },
-    { key: "location_name", label: "Location Name", type: "text", required: true, maxLength: 100, placeholder: "Porta Farm", section: "Identification" },
+    { key: "location_name", label: "Name", type: "text", required: true, maxLength: 100, placeholder: "Porta Farm", section: "Identification" },
     {
       key: "location_address", label: "Location Address", type: "text", maxLength: 255,
       visibleWhen: { anyOf: [{ key: "location_type", equals: "FARM" }] },
@@ -428,10 +428,10 @@ const animal: MasterDataConfig = {
       options: [{ value: "F", label: "Female" }, { value: "M", label: "Male" }],
     },
     { key: "dob", label: "Date of Birth", type: "date", helpText: "Leave blank if born on this farm and unknown, or imported/unknown.", section: "Identification" },
-    { key: "serial_number", label: "Serial Number", type: "text", maxLength: 50, helpText: "Asset tag from item_lot_serials, distinct from RFID/ear tag.", section: "Identification" },
-    { key: "rfid_tag", label: "RFID Tag", type: "text", helpText: "Unique if set.", section: "Identification" },
-    { key: "ear_tag", label: "Ear Tag Number", type: "text", section: "Identification" },
-    { key: "ear_tag_image_url", label: "Ear Tag Image URL", type: "text", placeholder: "https://cdn.navfarm.io/ear-tags/...", helpText: "Paste an image URL for now; direct file upload to Cloudflare R2 is planned for later.", section: "Identification" },
+    { key: "serial_number", label: "Serial Number", type: "text", maxLength: 50, helpText: "Asset tag from item_lot_serials, distinct from RFID / Tattoo number.", section: "Identification" },
+    { key: "rfid_tag", label: "RFID", type: "text", helpText: "Unique if set.", section: "Identification" },
+    { key: "ear_tag", label: "Tattoo Number", type: "text", section: "Identification" },
+    { key: "ear_tag_image_url", label: "Ear Tag Image", type: "image", uploadEndpoint: "/animal/upload-image", section: "Identification" },
     { key: "sire_animal_id", label: "Sire (Father)", type: "select-entity", searchable: true, entityEndpoint: "/animal", entityValueKey: "animal_id", entityLabelKeys: ["animal_code"], section: "Lineage" },
     { key: "dam_animal_id", label: "Dam (Mother)", type: "select-entity", searchable: true, entityEndpoint: "/animal", entityValueKey: "animal_id", entityLabelKeys: ["animal_code"], section: "Lineage" },
     {
@@ -974,7 +974,7 @@ const item: MasterDataConfig = {
     // entirely. All three now stand together, in the order they are decided.
     { key: "is_tracked", label: "Item Tracking", type: "boolean", filterOnly: true, seedFromAnyTrue: ["is_lot_tracked", "is_serial_tracked"], helpText: "Track individual lots or serial numbers of this item through the chain.", section: "Tracking" },
     {
-      key: "tracking_type", label: "Tracked By", type: "select", control: "segmented", filterOnly: true,
+      key: "tracking_type", label: "Tracked By", type: "select", control: "checkbox", filterOnly: true,
       options: [{ value: "LOT", label: "Lot" }, { value: "SERIAL", label: "Serial" }],
       defaultValue: "LOT",
       booleanColumns: { LOT: "is_lot_tracked", SERIAL: "is_serial_tracked" },
@@ -1027,7 +1027,7 @@ const item: MasterDataConfig = {
       helpText: "Up to 99 days. Required for MEDICINE/VACCINE items — minimum days after last administration before an animal treated with this item may be slaughtered.",
     },
     { key: "is_qr_enabled", label: "QR Tracking Enabled", type: "boolean" },
-    { key: "item_image_url", label: "Item Image URL", type: "text", placeholder: "https://cdn.navfarm.io/items/..." },
+    { key: "item_image_url", label: "Item Photo", type: "image" },
     { key: "inventory_gl_account", label: "Inventory GL Account", type: "select-entity", searchable: true, entityEndpoint: "/gl-account", entityValueKey: "gl_account_id", entityLabelKeys: ["account_code", "account_name"], helpText: "GL account this item posts inventory value to.", section: "Accounting" },
     { key: "cogs_gl_account", label: "COGS GL Account", type: "select-entity", searchable: true, entityEndpoint: "/gl-account", entityValueKey: "gl_account_id", entityLabelKeys: ["account_code", "account_name"], helpText: "GL account this item posts cost of goods sold to.", section: "Accounting" },
     { key: "is_blocked", label: "Blocked", type: "boolean", helpText: "A blocked item stays visible/historical but cannot be transacted.", section: "Accounting" },

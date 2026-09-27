@@ -799,6 +799,34 @@
       "when": 1790358100000,
       "tag": "0113_issue_transfer_lot_serial",
       "breakpoints": true
+    },
+    {
+      "idx": 114,
+      "version": "5",
+      "when": 1790358200000,
+      "tag": "0114_stock_adjustment_lot_serial",
+      "breakpoints": true
+    },
+    {
+      "idx": 115,
+      "version": "5",
+      "when": 1790358300000,
+      "tag": "0115_batch_input_line_lot_serial",
+      "breakpoints": true
+    },
+    {
+      "idx": 116,
+      "version": "5",
+      "when": 1790358400000,
+      "tag": "0116_item_tracking_series_fk",
+      "breakpoints": true
+    },
+    {
+      "idx": 117,
+      "version": "5",
+      "when": 1790358500000,
+      "tag": "0117_silo_feed_link",
+      "breakpoints": true
     }
   ]
 }
