@@ -23,8 +23,10 @@ import { userHasPermission } from '../../../common/permissions';
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { isDuplicateEntry } from '../../../common/filters/http-exception.filter';
 import { FeedForecastService, MAX_SPAN_DAYS } from '../../inventory/feed-forecast/feed-forecast.service';
-import { utcTimestamp } from '../../inventory/feed-forecast/feed-forecast.engine';
+import { utcTimestamp, type ForecastSource } from '../../inventory/feed-forecast/feed-forecast.engine';
 import { FeedAlertService } from '../../inventory/feed-alert/feed-alert.service';
+import { SiloFeedService } from '../../inventory/silo-feed/silo-feed.service';
+import { InventoryLedgerService } from '../../inventory/inventory-ledger/inventory-ledger.service';
 import { ApprovalService } from '../../production/approval/approval.service';
 import {
   DestinationInfo, DraftLine, FarmFeedSettings, FeedType, approvalProblems, bagCountFor, diffDaysIso, feedTypeOf, lineKey, planDraftUpsert,
@@ -70,6 +72,9 @@ export class FeedRequisitionService {
     // Approve/reject record their decision through its document-scoped path (Ruling C1).
     private readonly approvals: ApprovalService,
     private readonly feedAlerts: FeedAlertService,
+    // Ruling I4: the balance a line snapshots is the one FEED_BELOW_L1 alerts on — read the same way.
+    private readonly siloFeed: SiloFeedService,
+    private readonly ledger: InventoryLedgerService,
   ) {}
 
   private get db(): MySql2Database<typeof schema> {
@@ -258,6 +263,39 @@ export class FeedRequisitionService {
     };
   }
 
+  /**
+   * Ruling I4: every source's ledger balance as it stands now, keyed by
+   * lineKey — what a drafted line snapshots as System Balance and tests
+   * against the silo's low level (and so what CRITICAL_FIRST_PRIORITY rests
+   * on). The forecast's `balanceKg` is the start of the planning day, which
+   * leaves out feed already posted today (VIL100/SILO-004: 2,700 against a
+   * ledger of 2,684); FEED_BELOW_L1 reads the ledger now, and a requisition
+   * that disagreed with the alert about one silo's stock would help no one.
+   * So a silo is read exactly as the alert reads it (SiloFeedService.currentItems:
+   * the resident item's on-hand), and a store — which can hold several items —
+   * from the same getStockBalance, its item's KG rows (the forecast refuses a
+   * source held in any other unit before this runs). Called inside
+   * withFarmScope, so the ledger read carries the farm bound the alert's does.
+   */
+  private async currentBalances(sources: ForecastSource[], companyId: string, tenantId: string): Promise<Map<string, number>> {
+    const balances = new Map<string, number>();
+    const siloIds = [...new Set(sources.filter((s) => s.sourceType === 'SILO').map((s) => s.locationId))];
+    const storeIds = [...new Set(sources.filter((s) => s.sourceType === 'STORE').map((s) => s.locationId))];
+    if (siloIds.length) {
+      const residents = await this.siloFeed.currentItems(siloIds, companyId, tenantId);
+      for (const [siloId, resident] of residents) if (resident) balances.set(lineKey(siloId, resident.item_id), resident.on_hand_qty);
+    }
+    for (const storeId of storeIds) {
+      const rows = await this.ledger.getStockBalance({ companyId, warehouseId: storeId } as any, tenantId);
+      for (const r of rows) {
+        if (r.uom !== 'KG') continue;
+        const key = lineKey(storeId, r.item_id);
+        balances.set(key, (balances.get(key) ?? 0) + r.on_hand_qty);
+      }
+    }
+    return balances;
+  }
+
   async autoDraft(dto: AutoDraftFeedRequisitionDto, tenantId: string, user: UserCtx) {
     const { farmId, companyId } = await this.forecast.resolveFarm(dto.farmId, tenantId, user?.userType);
     // D16: the forecast plans from today in the farm's time zone, so `to` is held to the same day —
@@ -280,7 +318,13 @@ export class FeedRequisitionService {
       if (orphan) {
         throw new InternalServerErrorException(`Feed source ${orphan.sourceCode} has no location record; the draft was not written.`);
       }
-      const wanted = recommendLines({ planningDate: forecast.planningDate, to: forecast.to, sources: forecast.sources, destinations, settings: farm.settings });
+      // Plan R (Ruling I4) — intended changes to Plan B's drafts: the need is the forecast's shortfall to the
+      // low level with booked transfers counted (D19/Q3), the line is dated Required On (Q4), priority follows
+      // D19's run-down, and System Balance / the low-level test read the ledger now, as FEED_BELOW_L1 does.
+      const currentBalanceKg = await this.currentBalances(forecast.sources, companyId, tenantId);
+      const wanted = recommendLines({
+        planningDate: forecast.planningDate, to: forecast.to, sources: forecast.sources, destinations, settings: farm.settings, currentBalanceKg,
+      });
       const cycle = productionCycle(forecast.planningDate, farm.settings.productionWeekday);
       const runKey = runKeyFor(farm.code);
 

@@ -3,10 +3,31 @@
  *
  * Every number on a drafted feed requisition line comes from here, so the
  * workbook's own figures can be pinned in a unit test:
- * - Recommended quantity: Worked Example columns G–H, `MAX(0, requirement −
- *   opening)` then `CEILING(…, 3000)`; Engine Step 8 "Bulk rounding defaults
- *   to 3000 KG per compartment … Bagged rounds to 50 KG". Safety stock is 0
- *   and silo free capacity is not applied (Worked Example scope note; Q9).
+ * - Recommended quantity: the forecast's shortfall (Plan R, Q3) — the
+ *   largest deficit below the silo's low level through the window after
+ *   confirmed incoming — then `CEILING(…, 3000)`; with no low level and
+ *   nothing incoming that is the Worked Example's `MAX(0, requirement −
+ *   opening)` (columns G–H). Engine Step 8 "Bulk rounding defaults to 3000 KG
+ *   per compartment … Bagged rounds to 50 KG". Silo free capacity is not
+ *   applied (Q9 of Plan B).
+ * - Delivery date: the field specification's Required On (Plan R, Q4) —
+ *   run-down − refill buffer − lead time — or the planning date once that has
+ *   passed; `to` when nothing runs down in the window.
+ * - System Balance and the low-level test (Ruling I4): the ledger as it stands
+ *   now, the figure FEED_BELOW_L1 alerts on, handed in by the service as
+ *   `currentBalanceKg`. The forecast's own `balanceKg` is the start of the
+ *   planning day and so leaves out feed already posted today (VIL100/SILO-004
+ *   read 2,700 against a ledger of 2,684) — a requisition that called a silo
+ *   fine while the alert called it low would be the two disagreeing about one
+ *   number.
+ *
+ * Plan R changes Plan B's drafts on purpose (Ruling I4): the need is the
+ * shortfall to the low level with booked transfers counted, not requirement −
+ * opening; the line is dated Required On, not the run-down; and because the
+ * first shortage date is now D19's run-down (to the low level, on a day with
+ * demand or an outflow — 7f3469e), priority follows that earlier date. None of
+ * it moves the Worked Example: no low level and nothing incoming, so R1 still
+ * drafts 6,000 kg and R2 9,000 kg.
  * - Bag count: Requisition §1 row 23, quantity ÷ bag size (default 50).
  * - Remarks: checkpoint 18, more than 20 % from the recommendation.
  * - Submission cycle: checkpoint 22 — produced on the farm's production
@@ -120,19 +141,31 @@ export function recommendLines(args: {
   sources: ForecastSource[];
   destinations: Map<string, DestinationInfo>;
   settings: FarmFeedSettings;
+  /**
+   * Ruling I4: each (destination, item)'s ledger balance now, keyed by `lineKey`
+   * — an item missing from a given map has none on the ledger. Without a map
+   * (pure callers, tests) the forecast's start-of-day balance stands in.
+   */
+  currentBalanceKg?: Map<string, number>;
 }): DraftLine[] {
-  const { planningDate, to, sources, destinations, settings } = args;
+  const { planningDate, to, sources, destinations, settings, currentBalanceKg } = args;
   const lines: DraftLine[] = [];
   for (const s of sources) {
-    // Worked Example G8: MAX(0, requirement − opening). "Never offset next diet with stock of current diet" holds
-    // because each source is one container and one item.
-    const unroundedNeedKg = Math.max(0, round3(s.walkDemandKg - s.balanceKg));
-    if (unroundedNeedKg <= 0) continue;
+    // Q3 (Plan R): what an order must bring so the silo stays above its low level through `to`, incoming counted.
+    // "Never offset next diet with stock of current diet" still holds because each source is one container and one item.
+    const unroundedNeedKg = Math.max(0, round3(s.shortfallKg));
+    const runsDownInWindow = s.runDownDate !== null && s.runDownDate <= to;
+    if (unroundedNeedKg <= 0 && !runsDownInWindow) continue;
     const dest = destinations.get(s.locationId) ?? { locationId: s.locationId, locationType: s.sourceType, feedInBags: null, lowLevelKg: null };
     const feedType = feedTypeOf(dest);
-    const recommendedQtyKg = roundOrderKg(unroundedNeedKg, feedType, settings);
+    // A silo that lands exactly on its level still needs the next delivery: the smallest order, one compartment or bag.
+    const recommendedQtyKg = unroundedNeedKg > 0
+      ? roundOrderKg(unroundedNeedKg, feedType, settings)
+      : feedType === 'BULK' ? settings.bulkMultipleKg : settings.bagSizeKg;
+    const key = lineKey(s.locationId, s.itemId);
+    const systemBalanceKg = currentBalanceKg ? round3(currentBalanceKg.get(key) ?? 0) : s.balanceKg;
     lines.push({
-      key: lineKey(s.locationId, s.itemId),
+      key,
       destinationLocationId: s.locationId,
       sourceType: s.sourceType,
       sourceCode: s.sourceCode,
@@ -142,7 +175,7 @@ export function recommendLines(args: {
       isNextDiet: s.isNextDiet,
       daysBeforeDietChange: s.isNextDiet && s.firstDemandDate ? diffDaysIso(planningDate, s.firstDemandDate) : null,
       lifecycleRefId: s.lifecycleIds[0] ?? null,
-      systemBalanceKg: s.balanceKg,
+      systemBalanceKg,
       // Requisition §2 row 50 "Daily consumption for this silo": today's, or for a next diet its first day's.
       dailyRequirementKg: s.planningDayDemandKg > 0 ? s.planningDayDemandKg : s.firstDayDemandKg,
       daysRemaining: s.daysLeft,
@@ -150,10 +183,10 @@ export function recommendLines(args: {
       unroundedNeedKg,
       recommendedQtyKg,
       bagCount: bagCountFor(recommendedQtyKg, feedType, settings),
-      // Requisition §1 row 29: "Derived from earliest projected shortage". A need inside the window implies a
-      // shortage inside it, so `to` is only a guard.
-      proposedDeliveryDate: s.runDownDate ?? to,
-      belowLowLevel: dest.locationType === 'SILO' && dest.lowLevelKg !== null && s.balanceKg <= dest.lowLevelKg,
+      // Q4 (Plan R): the field specification's Required On "is the date used to populate the auto-drafted
+      // Requisition line"; one already past is due now. Nothing runs down in the window: `to`, as before.
+      proposedDeliveryDate: s.requiredOn ? (s.requiredOn < planningDate ? planningDate : s.requiredOn) : to,
+      belowLowLevel: dest.locationType === 'SILO' && dest.lowLevelKg !== null && systemBalanceKg <= dest.lowLevelKg,
       needsSiloChangeover: s.noSiloHoldsItem,
     });
   }

@@ -21,7 +21,7 @@ describe('FeedRequisitionService.createManual', () => {
     withFarmScope: jest.fn(async (_f: string, _c: string, work: () => Promise<unknown>) => work()),
     farmToday: jest.fn(async () => ({ today: serverToday(), timeZone: null })),
   };
-  const service = new FeedRequisitionService(transactionCls(db), forecast, {} as any, { evaluateFarmSafely: jest.fn() } as any);
+  const service = new FeedRequisitionService(transactionCls(db), forecast, {} as any, { evaluateFarmSafely: jest.fn() } as any, {} as any, {} as any);
 
   it('refuses a destination that is not an active silo or store of the farm', async () => {
     selectQueue.push(
@@ -104,8 +104,16 @@ function setup(sources: ForecastSource[], queues: Map<unknown, unknown[][]>) {
   const alerts: any = {
     evaluateFarmSafely: jest.fn(async (...args: unknown[]) => { evaluated.push({ args, inTx: cls.get('tenantPostingTransaction') === true }); }),
   };
-  const service = new FeedRequisitionService(cls, forecast, {} as any, alerts);
-  return { service, log, forecast, alerts, evaluated, cls, db };
+  // Ruling I4: the ledger now. By default silo-1 holds the source's item at the source's own balance.
+  const siloFeed: any = {
+    currentItems: jest.fn(async (ids: string[]) => new Map(ids.map((id) => {
+      const s = sources.find((x) => x.locationId === id);
+      return [id, s ? { item_id: s.itemId, item_code: s.itemId, item_description: s.itemName, on_hand_qty: s.balanceKg, uoms: ['KG'] } : null];
+    }))),
+  };
+  const ledger: any = { getStockBalance: jest.fn(async () => []) };
+  const service = new FeedRequisitionService(cls, forecast, {} as any, alerts, siloFeed, ledger);
+  return { service, log, forecast, alerts, evaluated, cls, db, siloFeed, ledger };
 }
 
 describe('FeedRequisitionService.autoDraft', () => {
@@ -158,6 +166,35 @@ describe('FeedRequisitionService.autoDraft', () => {
     expect(log.some((e) => e.op === 'insert')).toBe(false);
   });
 
+  it('snapshots the ledger balance now, not the forecast\'s start-of-day opening, and dates the line Required On (Ruling I4, Q4)', async () => {
+    const queues = new Map<unknown, unknown[][]>([
+      [schema.locationMaster, [[FARM_ROW], [SILO_ROW, { ...SILO_ROW, location_id: 'store-1', location_code: 'GRS/STORE-001', location_type: 'STORE', low_level_kg: null }], [{ location_id: 'farm-grs' }]]],
+      [schema.requisition, [[], [], [{ req: { requisition_id: 'new' }, farm_code: 'GRS', truck_target_kg: 30000 }]]],
+    ]);
+    const planningDay = serverToday();
+    const future = (n: number) => { const d = new Date(`${planningDay}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+    // Start of day 1,516 kg — above the 1,500 kg low level — but 16 kg was fed this morning: the ledger holds 1,500.
+    const silo = source({ balanceKg: 1516, runDownDate: future(4), refillDate: future(2), requiredOn: future(2), overdue: false });
+    const store = source({ sourceType: 'STORE', sourceCode: 'GRS/STORE-001', locationId: 'store-1', itemId: 'item-p', balanceKg: 900, shortfallKg: 100,
+      runDownDate: future(1), refillDate: future(-1), requiredOn: future(-1), overdue: true });
+    const { service, log, siloFeed, ledger } = setup([silo, store], queues);
+    siloFeed.currentItems.mockResolvedValueOnce(new Map([['silo-1', { item_id: 'item-r1', item_code: 'R1', item_description: null, on_hand_qty: 1500, uoms: ['KG'] }]]));
+    ledger.getStockBalance.mockResolvedValueOnce([
+      { item_id: 'item-p', uom: 'KG', on_hand_qty: 850 }, { item_id: 'item-p', uom: 'BAG', on_hand_qty: 3 }, { item_id: 'item-q', uom: 'KG', on_hand_qty: 40 },
+    ]);
+    await service.autoDraft({}, 'tenant-1', { userId: 'u-1', userType: 'COMPANY_ADMIN' });
+
+    expect(siloFeed.currentItems).toHaveBeenCalledWith(['silo-1'], 'co-1', 'tenant-1');
+    expect(ledger.getStockBalance).toHaveBeenCalledWith(expect.objectContaining({ companyId: 'co-1', warehouseId: 'store-1' }), 'tenant-1');
+    const header = log.find((e) => e.op === 'insert' && e.table === schema.requisition)!;
+    expect(header.values).toMatchObject({ priority: 'CRITICAL_FIRST_PRIORITY', required_date: planningDay });
+    const lines = log.find((e) => e.op === 'insert' && e.table === schema.requisitionLine)!;
+    expect(lines.values).toEqual([
+      expect.objectContaining({ destination_location_id: 'silo-1', system_balance_kg: '1500', unrounded_need_kg: '4500', proposed_delivery_date: future(2) }),
+      expect.objectContaining({ destination_location_id: 'store-1', system_balance_kg: '850', unrounded_need_kg: '100', recommended_qty_kg: '100', proposed_delivery_date: planningDay }),
+    ]);
+  });
+
   it('rerun: updates the cycle\'s one AUTO_DRAFT in place — no second requisition, an edited quantity kept (M9), a stale unedited line removed', async () => {
     const queues = new Map<unknown, unknown[][]>([
       [schema.locationMaster, [[FARM_ROW], [SILO_ROW], [{ location_id: 'farm-grs' }]]],
@@ -167,7 +204,7 @@ describe('FeedRequisitionService.autoDraft', () => {
         { line_id: 'L2', line_seq: 2, dest: 'silo-9', item: 'item-r9', quantity: '3000.0000', recommended: '3000.0000', edited: false },
       ]]],
     ]);
-    const { service, log } = setup([source({ walkDemandKg: 9000 })], queues);
+    const { service, log } = setup([source({ walkDemandKg: 9000, shortfallKg: 7500 })], queues);
     const out = await service.autoDraft({}, 'tenant-1', { userId: 'u-1', userType: 'COMPANY_ADMIN' });
     expect(out).toMatchObject({ requisitionId: 'req-1', created: false, linesDrafted: 1 });
 

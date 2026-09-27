@@ -92,13 +92,14 @@ describe('recommendLines — Worked Example', () => {
       expect.objectContaining({
         key: 's2|r2', destinationLocationId: 's2', itemId: 'r2', isNextDiet: true, daysBeforeDietChange: 3,
         dailyRequirementKg: 2500, daysRemaining: null, unroundedNeedKg: 9000, recommendedQtyKg: 9000,
-        proposedDeliveryDate: '2026-09-26',
+        proposedDeliveryDate: '2026-09-24', // Q4: Required On (run-down 26 Sep − 2 buffer − 0 lead)
       }),
     ]);
   });
 
   it('drafts nothing for a source whose stock covers the window', () => {
-    expect(recommendLines({ planningDate: '2026-09-23', to: '2026-09-29', sources: [{ ...r1, balanceKg: 6000 }], destinations: new Map([silo('s1')]), settings: S })).toEqual([]);
+    const covered = { ...r1, balanceKg: 6000, shortfallKg: 0, runDownDate: null, refillDate: null, requiredOn: null, overdue: false };
+    expect(recommendLines({ planningDate: '2026-09-23', to: '2026-09-29', sources: [covered], destinations: new Map([silo('s1')]), settings: S })).toEqual([]);
   });
 
   it('marks a silo at or below its low level (priority input) and a store fallback as needing a changeover', () => {
@@ -110,6 +111,49 @@ describe('recommendLines — Worked Example', () => {
       destinations: new Map([['st', { locationId: 'st', locationType: 'STORE', feedInBags: null, lowLevelKg: null }]]), settings: S,
     });
     expect(store).toMatchObject({ feedType: 'BAGGED', needsSiloChangeover: true, recommendedQtyKg: 9000, bagCount: 180 });
+  });
+});
+
+describe('recommendLines — Plan R (D19, Q3, Q4)', () => {
+  const draft = (source: ForecastSource) =>
+    recommendLines({ planningDate: '2026-09-23', to: '2026-09-29', sources: [source], destinations: new Map([silo('s1')]), settings: S });
+
+  it('drafts the engine\'s shortfall (low level and incoming counted), not requirement − opening', () => {
+    const [line] = draft({ ...r1, shortfallKg: 7000 });
+    expect(line).toMatchObject({ unroundedNeedKg: 7000, recommendedQtyKg: 9000 });
+  });
+
+  it('dates the line Required On, or the planning date when Required On has passed', () => {
+    expect(draft({ ...r1, requiredOn: '2026-09-25', overdue: false })[0].proposedDeliveryDate).toBe('2026-09-25');
+    expect(draft(r1)[0].proposedDeliveryDate).toBe('2026-09-23'); // Required On 21 Sep is already past
+  });
+
+  it('a run-down inside the window always drafts a line — landing exactly on the level orders one compartment (Review Focus 2)', () => {
+    const [line] = draft({ ...r1, shortfallKg: 0, runDownDate: '2026-09-29', refillDate: '2026-09-27', requiredOn: '2026-09-25', overdue: false });
+    expect(line).toMatchObject({ unroundedNeedKg: 0, recommendedQtyKg: 3000, firstShortageDate: '2026-09-29', proposedDeliveryDate: '2026-09-25' });
+  });
+
+  it('a run-down found only past the window drafts nothing', () => {
+    expect(draft({ ...r1, shortfallKg: 0, runDownDate: '2026-10-05', refillDate: '2026-10-03', requiredOn: '2026-10-01', overdue: false })).toEqual([]);
+  });
+
+  // Ruling I4: System Balance and the low-level test read the ledger as it stands now — FEED_BELOW_L1's figure —
+  // not the forecast's start-of-day opening, which leaves out feed already posted today.
+  it('snapshots the current ledger balance and tests the low level against it, not the start-of-day opening', () => {
+    const lines = recommendLines({
+      planningDate: '2026-09-23', to: '2026-09-29', sources: [{ ...r1, balanceKg: 1516 }],
+      destinations: new Map([silo('s1', { lowLevelKg: 1500 })]), settings: S,
+      currentBalanceKg: new Map([['s1|r1', 1500]]),
+    });
+    expect(lines[0]).toMatchObject({ systemBalanceKg: 1500, belowLowLevel: true, unroundedNeedKg: 4500, recommendedQtyKg: 6000 });
+  });
+
+  it('a silo with nothing of the item on the ledger now snapshots 0 kg', () => {
+    const [line] = recommendLines({
+      planningDate: '2026-09-23', to: '2026-09-29', sources: [r1], destinations: new Map([silo('s1', { lowLevelKg: 500 })]), settings: S,
+      currentBalanceKg: new Map(),
+    });
+    expect(line).toMatchObject({ systemBalanceKg: 0, belowLowLevel: true });
   });
 });
 
