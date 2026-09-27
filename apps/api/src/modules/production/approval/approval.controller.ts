@@ -1,7 +1,7 @@
 import { Controller, Get, Post, Delete, Param, Body, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { ApprovalService } from './approval.service';
-import { CreateApprovalRequestDto, DecideApprovalDto, QueryApprovalDto } from './dto/approval.dto';
+import { ApproveApprovalDto, CreateApprovalRequestDto, DecideApprovalDto, QueryApprovalDto } from './dto/approval.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
@@ -52,9 +52,9 @@ export class ApprovalController {
 
   @Post(':id/approve')
   @RequirePermission('PRODUCTION', 'APPROVAL', 'approve')
-  async approve(@Param('id') id: string, @Req() req: any) {
+  async approve(@Param('id') id: string, @Body() dto: ApproveApprovalDto, @Req() req: any) {
     const tenantId = req.user?.tenantId || req['tenantId'];
-    const data = await this.approvalService.approve(id, tenantId, req.user);
+    const data = await this.approvalService.approve(id, tenantId, req.user, dto?.remarks);
     return { success: true, message: 'Request approved.', data };
   }
 

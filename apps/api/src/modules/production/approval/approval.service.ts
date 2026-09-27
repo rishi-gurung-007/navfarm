@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ForbiddenException, ConflictException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { eq, and, or, isNull, gte, lte, desc, like, sql, SQL, inArray } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
@@ -8,7 +8,7 @@ import { CreateApprovalRequestDto, DecideApprovalDto, QueryApprovalDto } from '.
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { BatchService } from '../batch/batch.service';
 import { withTenantTransaction } from '../../../common/tenant-transaction';
-import { assertCompanyInScope, batchReferenceScopeConditions, batchScopeConditions, farmScope, restrictedScopeConditions } from '../../../common/farm-scope';
+import { assertCompanyInScope, batchReferenceScopeConditions, batchScopeConditions, farmScope, locationReferenceScopeConditions, restrictedScopeConditions } from '../../../common/farm-scope';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   const pad = (n: number) => String(n).padStart(2, '0');
@@ -34,6 +34,30 @@ const DOC_PREFIX: Record<string, string> = {
  * survive a logout, a different device, and are visible to the person who
  * actually raised them.
  */
+/** An approval_request row as the document handlers receive it. */
+export type ApprovalRequestRow = typeof schema.approvalRequest.$inferSelect;
+
+/**
+ * D25: what a farm-level document type (today FEED_REQUISITION) does when its
+ * approval request is decided or withdrawn. The document's own module
+ * registers it (FeedRequisitionService.onModuleInit), so this engine never
+ * imports the documents it serves — the requisition module already imports
+ * this one.
+ */
+export interface ApprovalDocumentHandler {
+  /**
+   * Inside the decision's transaction, after the request is locked and found
+   * PENDING and before it is marked decided. Throwing refuses the decision
+   * and nothing is written. `remarks` is the approver's remarks on approval
+   * and the reason on rejection.
+   */
+  decide(request: ApprovalRequestRow, decision: 'APPROVED' | 'REJECTED', remarks: string | null, tenantId: string, user: any): Promise<void>;
+  /** Inside the withdrawal's transaction. */
+  withdraw(request: ApprovalRequestRow, tenantId: string, user: any): Promise<void>;
+  /** After the decision commits (e.g. re-evaluating alerts). Must not throw. */
+  afterDecide?(request: ApprovalRequestRow, tenantId: string): Promise<void>;
+}
+
 @Injectable()
 export class ApprovalService {
   constructor(
@@ -41,6 +65,21 @@ export class ApprovalService {
     private readonly auditService: AuditLogService,
     private readonly batchService: BatchService,
   ) {}
+
+  private readonly documentHandlers = new Map<string, ApprovalDocumentHandler>();
+
+  /** D25: called once by a document module at start-up. */
+  registerDocumentHandler(docType: string, handler: ApprovalDocumentHandler): void {
+    this.documentHandlers.set(docType, handler);
+  }
+
+  /** A request naming a document must have a handler; deciding it without one would leave the document stranded. */
+  private handlerFor(request: ApprovalRequestRow): ApprovalDocumentHandler | undefined {
+    if (!request.document_id) return undefined;
+    const handler = this.documentHandlers.get(request.doc_type);
+    if (!handler) throw new BadRequestException(`No handler is registered for ${request.doc_type} documents.`);
+    return handler;
+  }
 
   private get db(): MySql2Database<typeof schema> {
     const tenantDb = this.cls.get<MySql2Database<typeof schema>>('tenantDb');
@@ -163,18 +202,25 @@ export class ApprovalService {
   }
 
   /**
-   * An approval reaches a farm only through its batch. One with no batch has no
-   * farm, so a restricted user never sees it; an admin sees it unless a farm is selected.
-   * A restricted user with no farm selected (an operational admin across farms)
-   * still sees only their own line of business.
+   * Who sees a request. A batch row reaches a farm through its batch, as it
+   * always has. D25: a farm-level document (no batch, farm_id set) reaches it
+   * through that farm — a farm user sees their own farm's, a company admin the
+   * company's, a restricted user their LOB's — which is what lets a farm's own
+   * approvers decide a feed requisition here. A row with neither stays visible
+   * only to a caller with no farm, company or restriction, exactly as before:
+   * the old batch_id IN (…) condition was never true for a NULL batch.
    */
   private farmConditions(): SQL[] {
     const scope = farmScope(this.cls);
-    return [
-      ...(scope.restricted ? [sql`${schema.approvalRequest.batch_id} IS NOT NULL`] : []),
-      ...batchReferenceScopeConditions(scope, schema.approvalRequest.batch_id),
-      ...restrictedScopeConditions(scope, { companyId: schema.approvalRequest.company_id }),
+    const R = schema.approvalRequest;
+    const paths: SQL[] = [
+      and(sql`${R.batch_id} IS NOT NULL`, ...batchReferenceScopeConditions(scope, R.batch_id))!,
+      and(isNull(R.batch_id), sql`${R.farm_id} IS NOT NULL`, ...locationReferenceScopeConditions(scope, R.farm_id))!,
     ];
+    if (!scope.restricted && !scope.farmId && !scope.companyId) {
+      paths.push(and(isNull(R.batch_id), isNull(R.farm_id))!);
+    }
+    return [or(...paths)!, ...restrictedScopeConditions(scope, { companyId: R.company_id })];
   }
 
   async findAll(query: QueryApprovalDto, tenantId: string) {
@@ -241,8 +287,8 @@ export class ApprovalService {
     return row;
   }
 
-  async approve(requestId: string, tenantId: string, userPayload?: any) {
-    return this.decide(requestId, 'APPROVED', tenantId, undefined, userPayload);
+  async approve(requestId: string, tenantId: string, userPayload?: any, remarks?: string) {
+    return this.decide(requestId, 'APPROVED', tenantId, remarks, userPayload);
   }
 
   async approveUnscheduledHealth(batchId: string, requestId: string, tenantId: string, userPayload?: any) {
@@ -254,7 +300,10 @@ export class ApprovalService {
   }
 
   private async decide(requestId: string, status: 'APPROVED' | 'REJECTED', tenantId: string, reason: string | undefined, userPayload?: any, expectedHealthBatchId?: string) {
-    return withTenantTransaction(this.cls, async () => {
+    // Set inside the transaction, run after it commits (D25): a document's
+    // follow-up work, such as re-evaluating feed alerts, must read committed rows.
+    const after: { run?: () => Promise<void> } = {};
+    const result = await withTenantTransaction(this.cls, async () => {
     // A locking read does not establish a repeatable-read snapshot. Every
     // decision locks the request first; health posting then locks its batch.
     const [current] = await this.db.select().from(schema.approvalRequest)
@@ -272,6 +321,12 @@ export class ApprovalService {
     if (current.status !== 'PENDING') {
       throw new BadRequestException(`This request was already ${current.status.toLowerCase()} and cannot be decided again.`);
     }
+
+    // D25: a farm document's own module decides what the decision means for
+    // it, and may refuse it (e.g. a feed requisition that needs remarks).
+    const handler = this.handlerFor(current);
+    await handler?.decide(current, status, reason?.trim() || null, tenantId, userPayload);
+    if (handler?.afterDecide) after.run = () => handler.afterDecide!(current, tenantId);
 
     if (status === 'APPROVED' && current.doc_type === 'UNSCHEDULED_HEALTH') {
       if (!current.batch_id) throw new BadRequestException('This health request has no batch.');
@@ -307,6 +362,8 @@ export class ApprovalService {
 
     return this.findOne(requestId, tenantId);
     });
+    await after.run?.();
+    return result;
   }
 
   /**
@@ -435,6 +492,98 @@ export class ApprovalService {
     });
   }
 
+  /**
+   * D25: a farm-level document (today a feed requisition) submitted for
+   * approval. The caller has already proved the farm is the actor's (the
+   * requisition resolves its own farm for this user and runs under
+   * withFarmScope), so this checks only that the farm is a FARM of that
+   * company in this tenant and that the document has no request open. It
+   * writes a PENDING row with farm_id and document_id, which is what makes it
+   * visible in the inbox to that farm's approvers (farmConditions), and a
+   * CREATE audit row carrying the document. Runs inside the caller's
+   * transaction when there is one, so the document and its request commit
+   * together.
+   */
+  async submitFarmDocument(
+    doc: {
+      documentType: string;
+      documentId: string;
+      documentNo: string;
+      farmId: string;
+      companyId: string;
+      title: string;
+      urgency?: 'HIGH' | 'MEDIUM' | 'LOW';
+      itemOrStage?: string | null;
+      requestedQty?: string | null;
+      uom?: string | null;
+      justification?: string | null;
+    },
+    tenantId: string,
+    userPayload?: any,
+  ): Promise<string> {
+    assertCompanyInScope(farmScope(this.cls), doc.companyId);
+    return withTenantTransaction(this.cls, async () => {
+      const [farm] = await this.db
+        .select({ code: schema.locationMaster.location_code, name: schema.locationMaster.location_name })
+        .from(schema.locationMaster)
+        .where(and(
+          eq(schema.locationMaster.location_id, doc.farmId),
+          eq(schema.locationMaster.company_id, doc.companyId),
+          eq(schema.locationMaster.tenant_id, tenantId),
+          eq(schema.locationMaster.location_type, 'FARM'),
+          isNull(schema.locationMaster.deleted_at),
+        ))
+        .limit(1);
+      if (!farm) throw new NotFoundException('Farm not found.');
+      const [open] = await this.db
+        .select({ request_id: schema.approvalRequest.request_id })
+        .from(schema.approvalRequest)
+        .where(and(
+          eq(schema.approvalRequest.tenant_id, tenantId),
+          eq(schema.approvalRequest.doc_type, doc.documentType),
+          eq(schema.approvalRequest.document_id, doc.documentId),
+          eq(schema.approvalRequest.status, 'PENDING'),
+          isNull(schema.approvalRequest.deleted_at),
+        ))
+        .limit(1);
+      if (open) throw new ConflictException(`${doc.documentNo} is already waiting for approval.`);
+
+      const requestId = randomUUID();
+      await this.db.insert(schema.approvalRequest).values({
+        request_id: requestId,
+        tenant_id: tenantId,
+        company_id: doc.companyId,
+        doc_type: doc.documentType,
+        // The document's own number: the inbox then names the requisition, not a second number for it.
+        doc_no: doc.documentNo.slice(0, 50),
+        title: doc.title.slice(0, 200),
+        requested_by: userPayload?.userId || null,
+        requestor_label: userPayload?.fullName || userPayload?.email || null,
+        requestor_role: (userPayload?.userType || '').replace(/_/g, ' ') || null,
+        location_label: `${farm.code} — ${farm.name ?? ''}`.trim().slice(0, 200),
+        farm_id: doc.farmId,
+        document_id: doc.documentId,
+        urgency: doc.urgency || 'MEDIUM',
+        item_or_stage: doc.itemOrStage || null,
+        requested_qty: doc.requestedQty || null,
+        uom: doc.uom || null,
+        justification: doc.justification || null,
+        status: 'PENDING',
+        created_by: userPayload?.userId || null,
+      });
+      await this.auditService.log({
+        tenantId,
+        companyId: doc.companyId,
+        userId: userPayload?.userId,
+        action: 'CREATE',
+        entityName: 'approval_request',
+        entityId: requestId,
+        newValues: { doc_no: doc.documentNo, doc_type: doc.documentType, title: doc.title, document_id: doc.documentId, farm_id: doc.farmId },
+      });
+      return requestId;
+    });
+  }
+
   private async postHealthTreatment(request: typeof schema.approvalRequest.$inferSelect, tenantId: string, userPayload?: any) {
     // Observations have no requested medicine quantity and need no stock issue.
     if (request.requested_qty == null) return;
@@ -478,6 +627,8 @@ export class ApprovalService {
     if (current.status !== 'PENDING') {
       throw new BadRequestException('Only a pending request can be withdrawn. A decided request is part of the audit trail.');
     }
+    // D25: a withdrawn farm document goes back to its owner as a draft.
+    await this.handlerFor(current)?.withdraw(current, tenantId, userPayload);
     await this.db
       .update(schema.approvalRequest)
       .set({ deleted_at: toMysqlTimestamp(), updated_by: userPayload?.userId || null })
@@ -509,6 +660,8 @@ export class ApprovalService {
       location_label: schema.approvalRequest.location_label,
       batch_id: schema.approvalRequest.batch_id,
       batch_no: schema.batchHeader.batch_no,
+      farm_id: schema.approvalRequest.farm_id,
+      document_id: schema.approvalRequest.document_id,
       urgency: schema.approvalRequest.urgency,
       item_or_stage: schema.approvalRequest.item_or_stage,
       requested_qty: schema.approvalRequest.requested_qty,

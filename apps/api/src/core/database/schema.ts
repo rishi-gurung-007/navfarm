@@ -4028,6 +4028,11 @@ export const approvalRequest = mysqlTable('approval_request', {
   requestor_role: varchar('requestor_role', { length: 60 }),
   location_label: varchar('location_label', { length: 200 }),
   batch_id: varchar('batch_id', { length: 36 }).references(() => batchHeader.batch_id, { onDelete: 'set null' }),
+  // D25 (Rishi, 27 Sep): a farm-level document (a feed requisition) has a farm
+  // but no batch; the inbox scopes it by this farm (0122). document_id names
+  // the document the request decides, so the decision can update it.
+  farm_id: varchar('farm_id', { length: 36 }),
+  document_id: varchar('document_id', { length: 36 }),
   urgency: varchar('urgency', { length: 10 }).default('MEDIUM').notNull(), // HIGH, MEDIUM, LOW
   item_or_stage: varchar('item_or_stage', { length: 200 }),
   requested_qty: varchar('requested_qty', { length: 100 }),
@@ -4047,6 +4052,8 @@ export const approvalRequest = mysqlTable('approval_request', {
   deleted_at: timestamp('deleted_at', { mode: 'string' }),
 }, (table) => ({
   areaFk: foreignKey({ columns: [table.operational_area_id], foreignColumns: [operationalAreaMaster.area_id], name: 'approval_request_area_fk' }).onDelete('set null'),
+  farmIdx: index('idx_approval_request_farm').on(table.farm_id),
+  documentIdx: index('idx_approval_request_document').on(table.doc_type, table.document_id),
 }));
 
 export const operationalAreaSettingsRelations = relations(operationalAreaSettings, ({ one }) => ({
