@@ -64,6 +64,32 @@ const likePrefix = (prefix: string) => `${prefix.replace(/[\\%_]/g, (c) => `\\${
 interface FarmRow { code: string; settings: FarmFeedSettings }
 type Destination = DestinationInfo & { code: string; farmId: string | null; isActive: boolean; rawType: string };
 
+/**
+ * The feed requisition list's columns (review A1, 27 Sep). The two totals are
+ * correlated subqueries, and the outer reference is written as raw SQL on
+ * purpose: in a single-table select Drizzle renders a column interpolated
+ * into sql`` without its table, so `${schema.requisition.requisition_id}`
+ * came out as a bare `requisition_id` that MySQL bound to requisition_line
+ * itself — every row counted every line of the farm. Exported so the
+ * rendered SQL is pinned by feed-requisition.list-sql.spec.ts.
+ */
+export function requisitionListFields() {
+  const R = schema.requisition;
+  const outer = sql.raw('`requisition`.`requisition_id`');
+  return {
+    requisition_id: R.requisition_id,
+    req_no: R.req_no,
+    requisition_type: R.requisition_type,
+    status: R.status,
+    priority: R.priority,
+    required_date: R.required_date,
+    submission_deadline: R.submission_deadline,
+    created_at: R.created_at,
+    line_count: sql<number>`(SELECT COUNT(*) FROM requisition_line rl WHERE rl.requisition_id = ${outer})`,
+    requested_kg: sql<string>`(SELECT COALESCE(SUM(rl.quantity), 0) FROM requisition_line rl WHERE rl.requisition_id = ${outer})`,
+  };
+}
+
 @Injectable()
 export class FeedRequisitionService {
   constructor(
@@ -587,18 +613,7 @@ export class FeedRequisitionService {
       ];
       if (query.status) conditions.push(eq(schema.requisition.status, query.status));
       return this.db
-        .select({
-          requisition_id: schema.requisition.requisition_id,
-          req_no: schema.requisition.req_no,
-          requisition_type: schema.requisition.requisition_type,
-          status: schema.requisition.status,
-          priority: schema.requisition.priority,
-          required_date: schema.requisition.required_date,
-          submission_deadline: schema.requisition.submission_deadline,
-          created_at: schema.requisition.created_at,
-          line_count: sql<number>`(SELECT COUNT(*) FROM requisition_line rl WHERE rl.requisition_id = ${schema.requisition.requisition_id})`,
-          requested_kg: sql<string>`(SELECT COALESCE(SUM(rl.quantity), 0) FROM requisition_line rl WHERE rl.requisition_id = ${schema.requisition.requisition_id})`,
-        })
+        .select(requisitionListFields())
         .from(schema.requisition)
         .where(and(...conditions))
         .orderBy(desc(schema.requisition.created_at))
