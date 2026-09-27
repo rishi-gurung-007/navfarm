@@ -1,12 +1,6 @@
-"use client";
+import { redirect } from "next/navigation";
 
-import { InventoryPageShell } from "@/components/console/inventory/inventory-page-shell";
-import FeedAlertsPanel from "@/components/console/inventory/feed-alerts-panel";
-
-export default function InventoryFeedAlertsPage() {
-  return (
-    <InventoryPageShell activeKey="feed-alerts">
-      <FeedAlertsPanel />
-    </InventoryPageShell>
-  );
+/** D24: feed alerts are shown on the one Alerts page; old links and bookmarks still land there. */
+export default function FeedAlertsMoved() {
+  redirect("/alerts");
 }

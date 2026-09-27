@@ -19,16 +19,6 @@ export function todayIso(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-export const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-
-/** "YYYY-MM-DD" -> "dd-MMM-yyyy"; null/undefined/unparseable -> "—". */
-export function formatDate(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  const [y, m, d] = iso.split("-").map(Number);
-  if (!y || !m || !d) return "—";
-  return `${String(d).padStart(2, "0")}-${MONTHS[m - 1]}-${y}`;
-}
-
 /** Calendar-day arithmetic on "YYYY-MM-DD" at UTC midnight, the same way the API does it. */
 export function addDaysIso(iso: string, days: number): string {
   const [y, m, d] = iso.split("-").map(Number);

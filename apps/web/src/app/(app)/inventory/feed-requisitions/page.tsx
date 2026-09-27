@@ -1,12 +1,6 @@
-"use client";
+import { redirect } from "next/navigation";
 
-import { InventoryPageShell } from "@/components/console/inventory/inventory-page-shell";
-import FeedRequisitionPanel from "@/components/console/inventory/feed-requisition-panel";
-
-export default function InventoryFeedRequisitionsPage() {
-  return (
-    <InventoryPageShell activeKey="feed-requisitions">
-      <FeedRequisitionPanel />
-    </InventoryPageShell>
-  );
+/** D26: Inventory → Feed Requisitions became Inventory → Requisitions; old links and bookmarks still land. */
+export default function FeedRequisitionsMoved() {
+  redirect("/inventory/requisitions");
 }
