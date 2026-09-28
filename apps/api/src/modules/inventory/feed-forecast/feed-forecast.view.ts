@@ -80,7 +80,7 @@ export interface ReportRow {
   heads: number; // as of `date`
   perDayIntakeKg: number; // as of `date`, no wastage (D17)
   intakeKg: number; // sum of per-day intake over the line — D34: the line's demand, wastage is gone
-  daysOfStock: number | null; // as of `date` (D18)
+  daysOfStock: number | null; // as of `date` (D35: the row's own inventory ÷ its intake)
   sharedBatchCount: number; // the most batches sharing the container on any day of the line
   indicative: boolean; // any day of the line
   runDownDate: string | null;

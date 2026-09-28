@@ -183,7 +183,8 @@ describe('buildFeedForecast — D19 walk edge cases (Plan R review of Task 2)', 
     expect(sources).toHaveLength(1);
     expect(sources[0]).toMatchObject({ runDownDate: '2026-09-26', thresholdKg: 300, planningDayDemandKg: 200 });
     expect(rows.map((r) => r.runDownDate)).toEqual(['2026-09-26', '2026-09-26']);
-    expect(daily.filter((d) => d.date === '2026-09-23').map((d) => [d.daysOfStock, d.sharedBatchCount])).toEqual([[5, 2], [5, 2]]);
+    // D35: each row divides the shared 1,000 kg by its OWN 100 kg/day intake, not the silo's combined 200.
+    expect(daily.filter((d) => d.date === '2026-09-23').map((d) => [d.daysOfStock, d.sharedBatchCount])).toEqual([[10, 2], [10, 2]]);
   });
 
   it('a store runs down to zero — it has no low level', () => {

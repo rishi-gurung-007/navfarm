@@ -90,6 +90,16 @@ describe('groupRows — Step 6 "Build dated forecast"', () => {
   });
 });
 
+describe('groupRows — Days of Stock passes the row-level division through (D35)', () => {
+  // The worked example has one batch, so its per-row number is the container's; the point is
+  // that grouping never recomputes it against the container's combined demand.
+  it('keeps the daily row Days of Stock on the grouped line', () => {
+    const rows = groupRows(daily, 'WEEKLY', '2026-09-23');
+    expect(rows[0].daysOfStock).toBe(0); // 1,500 kg opens the day and 2,000 kg is drawn that day
+    expect(rows[1].daysOfStock).toBe(0);
+  });
+});
+
 describe('resolveViewRange and spanProblem', () => {
   const period = { periodId: 'p9', periodCode: '2026-09', startDate: '2026-08-30', endDate: '2026-09-26', stockTakeDate: '2026-09-26', productionStartDate: '2026-09-27' };
 

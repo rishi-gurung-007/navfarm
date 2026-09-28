@@ -1540,7 +1540,7 @@ export const translations = {
     ffColPerDayIntakeKg: "Per Day Intake (Kg)",
     ffColDaysLeft: "No. of Days Inventory Left",
     ffColDaysOfStock: "Current No. of Days Stock",
-    ffDaysOfStockHint: "Days the stock lasts at today's use.",
+    ffDaysOfStockHint: "Current Inventory ÷ this row's Per Day Intake, whole days.",
     ffColRunDown: "Scale of Silo Level (Run Down)",
     ffRunDownHint: "Date the stock reaches the silo's low level.",
     ffColDateToRefill: "Date to Refill",

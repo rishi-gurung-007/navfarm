@@ -157,7 +157,7 @@ export interface DailyForecastRow {
   perDayIntakeKg: number; // D17: heads × rate, no wastage
   wastagePct: number;
   demandKg: number; // D34: heads × rate — the forecast carries no wastage
-  daysOfStock: number | null; // D18: floor(currentInventory ÷ the container's demand that day)
+  daysOfStock: number | null; // D35: floor(currentInventory ÷ this row's perDayIntakeKg)
   sharedBatchCount: number; // batches drawing on the same container and item that day
   indicative: boolean; // Q13
   runDownDate: string | null;
@@ -753,12 +753,14 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
 
   const daily: DailyForecastRow[] = dailyEntries.map((e) => {
     const p = projectionByKey.get(e.key)!;
-    const byDate = demandMicrogramsByKeyByDate.get(e.key) ?? new Map<string, number>();
     const opening = openingByKey.get(e.key)?.get(e.date) ?? 0;
-    const containerDemand = byDate.get(e.date) ?? 0;
+    const rowIntakeMicrograms = toMicrograms(e.heads * e.feedRow.kgPerHeadPerDay);
     // Q13: indicative when what this container feeds per day changes later in the window — a diet, rate or stage
-    // change of any batch on it — because the days-of-stock division assumes today's rate holds.
+    // change of any batch on it — because the balance the row divides is shared, and any change on the container
+    // (this batch's own rate or another batch drawing on the same silo/store) dates how long the stock really lasts.
     let indicative = false;
+    const byDate = demandMicrogramsByKeyByDate.get(e.key) ?? new Map<string, number>();
+    const containerDemand = byDate.get(e.date) ?? 0;
     for (const d of planDates) {
       if (d > e.date && (byDate.get(d) ?? 0) !== containerDemand) {
         indicative = true;
@@ -784,9 +786,12 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
       perDayIntakeKg: toKg(toMicrograms(e.heads * e.feedRow.kgPerHeadPerDay)),
       wastagePct: e.feedRow.wastagePct, // kept for the breed feed master's display; unused by the forecast (D34)
       demandKg: toKg(e.demandMicrograms),
-      // NONE is no container at all (every shed without a silo or store shares its key), so it has no stock to
-      // count days of and no batches to share with.
-      daysOfStock: e.sourceType !== 'NONE' && containerDemand > 0 ? Math.floor(opening / containerDemand) : null,
+      // D35 (supersedes D18): the specification defines Days of Stock as
+      // Current Inventory ÷ Per Day Intake of that row's batch — not the
+      // silo's combined use, so two batches sharing one silo each see their
+      // own division of the same balance. Whole days (floor); empty when the
+      // intake is 0; NONE has no container at all and no stock to divide.
+      daysOfStock: e.sourceType !== 'NONE' && e.heads > 0 && rowIntakeMicrograms > 0 ? Math.floor(opening / rowIntakeMicrograms) : null,
       sharedBatchCount: e.sourceType === 'NONE' ? 1 : (batchesByKeyDate.get(`${e.key}|${e.date}`)?.size ?? 1),
       indicative,
       runDownDate: p.runDownDate,

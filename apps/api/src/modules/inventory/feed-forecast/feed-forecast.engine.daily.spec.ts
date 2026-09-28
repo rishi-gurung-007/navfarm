@@ -99,10 +99,11 @@ describe('buildFeedForecast — shared silo, one batch changes diet (Review Focu
   const { daily } = buildFeedForecast(input);
   const at = (batchNo: string, date: string, itemId: string) => daily.find((d) => d.batchNo === batchNo && d.date === date && d.itemId === itemId)!;
 
-  it('divides the shared silo by both batches while both eat from it, and says it is shared', () => {
-    // SILO-001 feeds 200 kg/day to 25 Sep: opens 1,000 on 23 Sep → 5 days.
-    expect(at('GR-01', '2026-09-23', 'r1')).toMatchObject({ currentInventoryKg: 1000, daysOfStock: 5, sharedBatchCount: 2, indicative: true });
-    expect(at('GR-02', '2026-09-23', 'r1')).toMatchObject({ currentInventoryKg: 1000, daysOfStock: 5, sharedBatchCount: 2, indicative: true });
+  it('divides the shared silo by each row\'s own intake: 1,000 kg at 100 kg/day is 10 days on both rows (D35)', () => {
+    // D35 (supersedes D18): the specification's division is Current Inventory ÷
+    // Per Day Intake of that row's batch, not the silo's combined 200 kg/day.
+    expect(at('GR-01', '2026-09-23', 'r1')).toMatchObject({ currentInventoryKg: 1000, daysOfStock: 10, sharedBatchCount: 2, indicative: true });
+    expect(at('GR-02', '2026-09-23', 'r1')).toMatchObject({ currentInventoryKg: 1000, daysOfStock: 10, sharedBatchCount: 2, indicative: true });
   });
 
   it('after the change the silo feeds one batch: 400 kg at 100 kg/day is 4 days, not indicative any more', () => {
@@ -115,6 +116,24 @@ describe('buildFeedForecast — shared silo, one batch changes diet (Review Focu
       '2026-09-26 r2', '2026-09-27 r2', '2026-09-28 r2', '2026-09-29 r2',
     ]);
     expect(at('GR-02', '2026-09-26', 'r2')).toMatchObject({ sourceCode: 'GRS/SILO-002', currentInventoryKg: 500, daysOfStock: 5, sharedBatchCount: 1 });
+  });
+
+  it('a rate difference between the sharing batches leaves each row its own division (D35, ANIMAL_WISE-style heads)', () => {
+    // Same silo, two batches of different size: GR-BIG eats 200 kg/day, GR-SMALL 50 kg/day.
+    // Each row divides the shared balance by its OWN intake (D35), not the container's 250.
+    const sized: ForecastInput = {
+      ...input,
+      batches: [
+        { batchId: 'big', batchNo: 'GR-BIG', breedId: 'l', shedId: 'h1', heads: 200,
+          segments: [{ stageId: 'grower', stageCode: 'GROWER', start: '2026-09-01', end: null, projected: false }] },
+        { batchId: 'small', batchNo: 'GR-SMALL', breedId: 'l', shedId: 'h1', heads: 50,
+          segments: [{ stageId: 'grower', stageCode: 'GROWER', start: '2026-09-01', end: null, projected: false }] },
+      ],
+      feedRows: [row()],
+    };
+    const d = buildFeedForecast(sized).daily;
+    expect(d.find((x) => x.batchNo === 'GR-BIG')!.daysOfStock).toBe(5); // 1,000 ÷ 200
+    expect(d.find((x) => x.batchNo === 'GR-SMALL')!.daysOfStock).toBe(20); // 1,000 ÷ 50
   });
 });
 
