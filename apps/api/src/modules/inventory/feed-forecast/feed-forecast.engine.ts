@@ -134,9 +134,10 @@ export interface ForecastRow {
  * Plan R (spec D16–D18; field specification of 26 Sep, Report Grid): one row
  * per batch, feed item and forecast date. A diet change is a new item, so it
  * is a new row — never blended. Current Inventory is the container's
- * projected opening balance that day; Days of Stock is the container's, not
- * the batch's (D18); Per Day Intake leaves wastage out (D17) while demandKg
- * keeps it, because wasted feed still leaves the silo.
+ * projected opening balance that day; Per Day Intake and demand are heads ×
+ * feed rate — D34 dropped wastage from the forecast entirely (Rishi, 28 Sep:
+ * neither client document has it), so run-down, refill dates and requisition
+ * quantities all use the same number.
  */
 export interface DailyForecastRow {
   date: string;
@@ -155,7 +156,7 @@ export interface DailyForecastRow {
   feedRateKg: number; // kg per head per day
   perDayIntakeKg: number; // D17: heads × rate, no wastage
   wastagePct: number;
-  demandKg: number; // heads × rate × (1 + wastage %): what leaves the silo
+  demandKg: number; // D34: heads × rate — the forecast carries no wastage
   daysOfStock: number | null; // D18: floor(currentInventory ÷ the container's demand that day)
   sharedBatchCount: number; // batches drawing on the same container and item that day
   indicative: boolean; // Q13
@@ -314,9 +315,9 @@ function dateRange(from: string, to: string): string[] {
 
 /**
  * kg -> integer micrograms, so the balance walk (fix round 1, #4 above) divides and subtracts exactly.
- * Whole grams (1e3x) aren't fine-grained enough: e.g. 50 heads x 0.35 kg/day x 2.5% wastage is exactly
- * 17.9375 kg/day, which rounds to a half-gram at 1e3x scale and drifts the division. Micrograms (1e6x)
- * push that below any input precision this engine sees (kg/head/day, wastage%, head counts).
+ * Whole grams (1e3x) aren't fine-grained enough: 50 heads x 0.35 kg/day is exactly
+ * 17.5 kg/day but 40 x 1.03 is 41.2, whose thirds drift a gram-scale walk. Micrograms (1e6x)
+ * push that below any input precision this engine sees (kg/head/day, head counts).
  */
 function toMicrograms(kg: number): number {
   return Math.round(kg * 1_000_000);
@@ -528,7 +529,7 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
       }
 
       const feedRow = result.row;
-      const demandMicrograms = toMicrograms(batch.heads * feedRow.kgPerHeadPerDay * (1 + feedRow.wastagePct / 100));
+      const demandMicrograms = toMicrograms(batch.heads * feedRow.kgPerHeadPerDay); // D34: no wastage
       if (demandMicrograms <= 0) continue; // zero demand: no row, no source resolution, nothing to project
 
       const resolution = resolveSource(batch.shedId, feedRow.itemId);
@@ -781,7 +782,7 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
       heads: e.heads,
       feedRateKg: e.feedRow.kgPerHeadPerDay,
       perDayIntakeKg: toKg(toMicrograms(e.heads * e.feedRow.kgPerHeadPerDay)),
-      wastagePct: e.feedRow.wastagePct,
+      wastagePct: e.feedRow.wastagePct, // kept for the breed feed master's display; unused by the forecast (D34)
       demandKg: toKg(e.demandMicrograms),
       // NONE is no container at all (every shed without a silo or store shares its key), so it has no stock to
       // count days of and no batches to share with.

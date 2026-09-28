@@ -1,7 +1,8 @@
 import React from 'react';
 import { render, screen, within } from '@testing-library/react';
+import * as gridExports from '../src/components/console/inventory/feed-forecast-grid';
 import {
-  FeedForecastGrid, FeedForecastStages, GRID_COLUMNS, STAGE_COLUMNS, ReportRow, StageBlock, fmtKg, groupRows, wastageNote,
+  FeedForecastGrid, FeedForecastStages, GRID_COLUMNS, STAGE_COLUMNS, ReportRow, StageBlock, fmtKg, groupRows,
 } from '../src/components/console/inventory/feed-forecast-grid';
 import { addDaysIso, formatDateShort } from '../src/components/console/inventory/feed-format';
 
@@ -10,8 +11,8 @@ const t = (key: string, vars?: Record<string, unknown>) => (vars ? `${key}:${JSO
 const row = (over: Partial<ReportRow> = {}): ReportRow => ({
   key: 'b|r1|GRS/SILO-001|2026-09-23', batchId: 'b', batchNo: 'WG-2026-38', shedCode: 'GRS/SHED-003', stageCode: 'WEANER',
   itemId: 'r1', itemNo: 'FEED-R1', itemName: 'Weaner Diet R1', sourceType: 'SILO', sourceCode: 'GRS/SILO-001',
-  date: '2026-09-23', dateTo: '2026-09-23', days: 1, currentInventoryKg: 1500, heads: 1000, perDayIntakeKg: 2000, wastagePct: 0,
-  intakeKg: 2000, demandKg: 2000, daysOfStock: 0, sharedBatchCount: 1, indicative: false,
+  date: '2026-09-23', dateTo: '2026-09-23', days: 1, currentInventoryKg: 1500, heads: 1000, perDayIntakeKg: 2000,
+  intakeKg: 2000, daysOfStock: 0, sharedBatchCount: 1, indicative: false,
   runDownDate: '2026-09-23', refillDate: '2026-09-21', requiredOn: '2026-09-19', overdue: true, ...over,
 });
 
@@ -115,10 +116,9 @@ describe('FeedForecastGrid', () => {
   });
 });
 
-describe('wastageNote (D17)', () => {
-  it('names each allowance used, or says there is none', () => {
-    expect(wastageNote([row({ wastagePct: 5 }), row({ wastagePct: 2.5 }), row({ wastagePct: 5 })], t)).toBe('ffWastageUsed:{"pcts":"2.5%, 5%"}');
-    expect(wastageNote([row()], t)).toBe('ffWastageNone');
+describe('wastageNote (D34)', () => {
+  it('is gone: the screen no longer states a wastage allowance', () => {
+    expect((gridExports as Record<string, unknown>).wastageNote).toBeUndefined();
   });
 });
 

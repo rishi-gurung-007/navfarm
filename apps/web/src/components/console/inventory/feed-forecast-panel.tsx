@@ -20,7 +20,7 @@ import { getActiveWorkspaceScope } from "@/hooks/useAuth";
 import { useLanguage } from "@/hooks/useLanguage";
 import type { TranslationKeys } from "@/utils/translations";
 import { addDaysIso, formatDateShort, todayIso, unwrap } from "./feed-format";
-import { FeedForecastGrid, FeedForecastStages, ReportRow, StageBlock, wastageNote } from "./feed-forecast-grid";
+import { FeedForecastGrid, FeedForecastStages, ReportRow, StageBlock } from "./feed-forecast-grid";
 import { FeedForecastNotes, type ForecastFlag } from "./feed-forecast-notes";
 import { businessYearStartOf, forecastQueryString, FORECAST_VIEWS, ForecastView } from "./feed-forecast-query";
 import { FeedFarmSelect, feedFarmLabel } from "./feed-farm-select";
@@ -256,7 +256,6 @@ export default function FeedForecastPanel() {
               value={tab}
               onChange={(v) => setTab(v as "forecast" | "stages")}
             />
-            {rows.length > 0 && !loading && <p className="text-xs" style={{ color: "var(--text-secondary)" }}>{wastageNote(rows, t)}</p>}
           </div>
           {tab === "forecast"
             ? <FeedForecastGrid rows={rows} loading={loading} horizonTo={data?.horizonTo ?? null} t={t} />

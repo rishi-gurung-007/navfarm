@@ -192,7 +192,7 @@ describe('buildFeedForecast — shared silo across two sheds', () => {
   });
 });
 
-describe('buildFeedForecast — wastage', () => {
+describe('buildFeedForecast — D34: wastage dropped, demand is heads × rate', () => {
   const feedRows: FeedRow[] = [
     {
       lifecycleId: 'a',
@@ -229,9 +229,13 @@ describe('buildFeedForecast — wastage', () => {
     feedRows,
   };
 
-  it('10% wastage on 100 heads x 1 kg gives 110 kg/day', () => {
+  // D34 (Rishi, 28 Sep): neither client document has wastage. The feed row's
+  // wastagePct stays on the master but the forecast ignores it.
+  it('a 10% wastage on the feed row still gives 100 heads x 1 kg = 100 kg/day', () => {
     const { rows } = buildFeedForecast(input);
-    expect(rows[0].perDayIntakeKg).toBe(110);
+    expect(rows[0].perDayIntakeKg).toBe(100);
+    expect(rows[0].daysLeft).toBe(50); // 5,000 kg ÷ 100 kg/day
+    expect(rows[0].rangeDemandKg).toBe(100);
   });
 });
 
@@ -512,7 +516,7 @@ describe('buildFeedForecast — fix round 1: integer-gram balance walk at exact 
     expect(rows[0].runDownDate).toBe('2026-09-25'); // D19/Q1: closes at 0 kg at the end of the 3rd day (was D2's day 4)
   });
 
-  it('50 heads x 0.35 kg/day x 2.5% wastage (17.9375 kg/day) against 71.75 kg is exactly 4 days of stock', () => {
+  it('the 2.5% wastage on the row changes nothing: 50 heads x 0.35 = 17.5 kg/day against 71.75 kg is exactly 4 days', () => {
     const input = singleBatchInput({
       heads: 50,
       kgPerHeadPerDay: 0.35,
@@ -523,8 +527,8 @@ describe('buildFeedForecast — fix round 1: integer-gram balance walk at exact 
       to: '2026-09-29',
     });
     const { rows } = buildFeedForecast(input);
-    expect(rows[0].daysLeft).toBe(4);
-    expect(rows[0].runDownDate).toBe('2026-09-26'); // D19/Q1: closes at 0 kg at the end of the 4th day (was D2's day 5)
+    expect(rows[0].daysLeft).toBe(4); // 71.75 ÷ 17.5 = 4.1
+    expect(rows[0].runDownDate).toBe('2026-09-27'); // D19/Q1: closes at 0 kg at the end of the 5th day
   });
 
   it('balance exactly equal to one day of demand is 1 day of stock, not 0', () => {

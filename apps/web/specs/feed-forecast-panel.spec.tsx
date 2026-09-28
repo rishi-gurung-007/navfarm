@@ -37,15 +37,15 @@ const forecastResponse = {
       {
         key: 'b10|item-1|VIL100/STORE-001|2026-09-25', batchId: 'b10', batchNo: 'BATCH-000010', shedCode: '', stageCode: 'WEANER',
         itemId: 'item-1', itemNo: 'FEED-WG', itemName: 'Weaner Grower Mash (18% CP)', sourceType: 'STORE', sourceCode: 'VIL100/STORE-001',
-        date: '2026-09-25', dateTo: '2026-09-25', days: 1, currentInventoryKg: 35525.6, heads: 58, perDayIntakeKg: 127, wastagePct: 2.5,
-        intakeKg: 127, demandKg: 130.175, daysOfStock: 108, sharedBatchCount: 3, indicative: false,
+        date: '2026-09-25', dateTo: '2026-09-25', days: 1, currentInventoryKg: 35525.6, heads: 58, perDayIntakeKg: 127,
+        intakeKg: 127, daysOfStock: 108, sharedBatchCount: 3, indicative: false,
         runDownDate: null, refillDate: null, requiredOn: null, overdue: false,
       },
       {
         key: 'b20|item-2|VIL100/SILO-002|2026-09-25', batchId: 'b20', batchNo: 'BATCH-000020', shedCode: 'SHED-1', stageCode: 'DRY_SOW',
         itemId: 'item-2', itemNo: 'FEED-DS', itemName: 'Dry Sow Gestation Mash (14% CP)', sourceType: 'SILO', sourceCode: 'VIL100/SILO-002',
-        date: '2026-09-25', dateTo: '2026-09-25', days: 1, currentInventoryKg: 200, heads: 40, perDayIntakeKg: 100, wastagePct: 0,
-        intakeKg: 100, demandKg: 100, daysOfStock: 2, sharedBatchCount: 1, indicative: true,
+        date: '2026-09-25', dateTo: '2026-09-25', days: 1, currentInventoryKg: 200, heads: 40, perDayIntakeKg: 100,
+        intakeKg: 100, daysOfStock: 2, sharedBatchCount: 1, indicative: true,
         runDownDate: '2026-09-26', refillDate: '2026-09-24', requiredOn: '2026-09-22', overdue: true,
       },
     ],
@@ -85,7 +85,7 @@ describe('FeedForecastPanel — admin', () => {
     expect(get.mock.calls.some(([url]) => String(url).startsWith('/location'))).toBe(false);
   });
 
-  it('shows Overdue, Indicative, "after" the horizon and the wastage line; Stages is a tab', async () => {
+  it('shows Overdue, Indicative and "after" the horizon, and no wastage note (D34); Stages is a tab', async () => {
     render(<FeedForecastPanel />);
     const table = await screen.findByRole('table', { name: 'ffGridLabel' });
     expect(within(table).getByText('ffOverdue')).toBeTruthy();
@@ -93,7 +93,8 @@ describe('FeedForecastPanel — admin', () => {
     // "Shared by" was a badge in the Source cell, and went with it (D33).
     expect(within(table).queryByText(/ffSharedBy/)).toBeNull();
     expect(within(table).getByText('ffBeyondHorizon:{"date":"09/11/26"}')).toBeTruthy();
-    expect(screen.getByText('ffWastageUsed:{"pcts":"2.5%"}')).toBeTruthy();
+    // D34: the wastage note is gone — neither client document has wastage.
+    expect(screen.queryByText(/ffWastage/)).toBeNull();
     fireEvent.click(screen.getByRole('tab', { name: 'ffTabStages:{"count":1}' }));
     expect(screen.getByRole('table', { name: 'ffStagesTitle' })).toBeTruthy();
     expect(screen.queryByRole('table', { name: 'ffGridLabel' })).toBeNull();

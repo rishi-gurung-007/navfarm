@@ -1560,8 +1560,6 @@ export const translations = {
     ffIndicative: "Indicative",
     ffBeyondHorizon: "After {{date}}",
     ffNotDueBy: "Not due by {{date}}",
-    ffWastageUsed: "Intake is without wastage. Refill dates and orders add {{pcts}} wastage.",
-    ffWastageNone: "No wastage allowance on these diets.",
     ffStagesTitle: "Stages",
     ffStageChangeNotPosted: "Due, not posted",
     ffLoading: "Loading forecast…",

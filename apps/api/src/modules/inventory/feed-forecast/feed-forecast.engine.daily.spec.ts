@@ -57,8 +57,8 @@ const row = (over: Partial<FeedRow> = {}): FeedRow => ({
   fromDay: 1, toDay: 200, kgPerHeadPerDay: 1, wastagePct: 0, ...over,
 });
 
-describe('buildFeedForecast — D17 intake without wastage, D18 days of stock with it (Q5)', () => {
-  it('shows 100 kg intake but divides the silo by the 110 kg it loses a day', () => {
+describe('buildFeedForecast — D34: wastage dropped, demand is heads × rate', () => {
+  it('shows 100 kg intake and 100 kg demand — the row carries 10% wastage and it is ignored (D34)', () => {
     const input: ForecastInput = {
       planningDate: '2026-09-23', from: '2026-09-23', to: '2026-09-23', refillBufferDays: 2, leadTimeDays: 2,
       sheds: [{ shedId: 'h1', shedCode: 'GRS/SHED-001', siloIds: ['s1'] }],
@@ -68,7 +68,7 @@ describe('buildFeedForecast — D17 intake without wastage, D18 days of stock wi
         segments: [{ stageId: 'grower', stageCode: 'GROWER', start: '2026-09-01', end: null, projected: false }] }],
       feedRows: [row({ wastagePct: 10 })],
     };
-    expect(buildFeedForecast(input).daily[0]).toMatchObject({ perDayIntakeKg: 100, wastagePct: 10, demandKg: 110, daysOfStock: 4, itemNo: '' });
+    expect(buildFeedForecast(input).daily[0]).toMatchObject({ perDayIntakeKg: 100, demandKg: 100, daysOfStock: 5, itemNo: '' });
   });
 });
 

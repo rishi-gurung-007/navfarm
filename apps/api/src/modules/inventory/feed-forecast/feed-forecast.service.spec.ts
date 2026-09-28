@@ -757,7 +757,7 @@ describe('FeedForecastService.getForecast — views, periods and the report (Pla
   const daily = (over: Record<string, unknown> = {}) => ({
     date: '2026-09-23', batchId: 'b', batchNo: 'WG-2026-38', shedCode: 'GRS/SHED-003', stageCode: 'WEANER',
     itemId: 'r1', itemNo: 'FEED-R1', itemName: 'Weaner Diet R1', lifecycleId: 'row-r1', sourceType: 'SILO', sourceCode: 'GRS/SILO-001',
-    currentInventoryKg: 1500, heads: 1000, feedRateKg: 2, perDayIntakeKg: 2000, wastagePct: 0, demandKg: 2000,
+    currentInventoryKg: 1500, heads: 1000, feedRateKg: 2, perDayIntakeKg: 2000,
     daysOfStock: 0, sharedBatchCount: 1, indicative: true,
     runDownDate: '2026-09-23', refillDate: '2026-09-21', requiredOn: '2026-09-19', overdue: true, ...over,
   });

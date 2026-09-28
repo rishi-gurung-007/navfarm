@@ -29,11 +29,11 @@ describe('groupRows — Step 6 "Build dated forecast"', () => {
     const rows = groupRows(daily, 'WEEKLY', '2026-09-23');
     expect(rows).toHaveLength(2);
     expect(rows[0]).toMatchObject({
-      itemNo: 'FEED-R1', date: '2026-09-23', dateTo: '2026-09-25', days: 3, intakeKg: 6000, demandKg: 6000,
+      itemNo: 'FEED-R1', date: '2026-09-23', dateTo: '2026-09-25', days: 3, intakeKg: 6000,
       currentInventoryKg: 1500, perDayIntakeKg: 2000, heads: 1000, indicative: true,
     });
-    // R2 carries 5 % wastage: intake 10,000 kg, 10,500 kg leaves the silo.
-    expect(rows[1]).toMatchObject({ itemNo: 'FEED-R2', date: '2026-09-26', dateTo: '2026-09-29', days: 4, intakeKg: 10000, demandKg: 10500, wastagePct: 5 });
+    // R2's feed row carries 5 % wastage, which D34 dropped: demand is heads × rate only.
+    expect(rows[1]).toMatchObject({ itemNo: 'FEED-R2', date: '2026-09-26', dateTo: '2026-09-29', days: 4, intakeKg: 10000 });
   });
 
   it('a stage change on the same feed inside a week starts a new line, so no row keeps a stage it has left', () => {
@@ -48,7 +48,6 @@ describe('groupRows — Step 6 "Build dated forecast"', () => {
   it('never changes the daily numbers: grouped totals equal the daily sums for every view', () => {
     for (const view of ['DAILY', 'WEEKLY', 'PERIOD', 'CUSTOM'] as const) {
       const rows = groupRows(daily, view, '2026-09-23');
-      expect(sum(rows.map((r) => r.demandKg))).toBe(sum(daily.map((d) => d.demandKg)));
       expect(sum(rows.map((r) => r.intakeKg))).toBe(sum(daily.map((d) => d.perDayIntakeKg)));
     }
   });

@@ -38,9 +38,7 @@ export interface ReportRow {
   currentInventoryKg: number;
   heads: number;
   perDayIntakeKg: number;
-  wastagePct: number;
   intakeKg: number;
-  demandKg: number;
   daysOfStock: number | null;
   sharedBatchCount: number;
   indicative: boolean;
@@ -97,12 +95,6 @@ const HEADER_HINT: Partial<Record<(typeof GRID_COLUMNS)[number], string>> = {
 export function fmtKg(n: number | null | undefined): string {
   if (n === null || n === undefined) return "—";
   return n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-
-/** D17: "The screen states the wastage allowance used." */
-export function wastageNote(rows: ReportRow[], t: Translate): string {
-  const pcts = [...new Set(rows.map((r) => r.wastagePct).filter((p) => p > 0))].sort((a, b) => a - b);
-  return pcts.length ? t("ffWastageUsed", { pcts: pcts.map((p) => `${p}%`).join(", ") }) : t("ffWastageNone");
 }
 
 /** Consecutive rows of one batch + item + source + stage form a group. */

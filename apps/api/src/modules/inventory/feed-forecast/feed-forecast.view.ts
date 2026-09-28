@@ -79,9 +79,7 @@ export interface ReportRow {
   currentInventoryKg: number; // as of `date`
   heads: number; // as of `date`
   perDayIntakeKg: number; // as of `date`, no wastage (D17)
-  wastagePct: number;
-  intakeKg: number; // sum of per-day intake over the line
-  demandKg: number; // sum of demand incl. wastage over the line
+  intakeKg: number; // sum of per-day intake over the line — D34: the line's demand, wastage is gone
   daysOfStock: number | null; // as of `date` (D18)
   sharedBatchCount: number; // the most batches sharing the container on any day of the line
   indicative: boolean; // any day of the line
@@ -101,7 +99,7 @@ export function bucketStart(view: ForecastView, from: string, date: string): str
 export function groupRows(daily: DailyForecastRow[], view: ForecastView, from: string): ReportRow[] {
   const byDate = [...daily].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
   // Sums in integer micrograms, like the engine, so 7 × 17.9375 kg is exactly 125.5625 kg.
-  const groups = new Map<string, { row: ReportRow; intake: number; demand: number }>();
+  const groups = new Map<string, { row: ReportRow; intake: number }>();
   for (const d of byDate) {
     const start = bucketStart(view, from, d.date);
     // Stage is part of the line: a batch that changes stage inside a week or
@@ -109,12 +107,10 @@ export function groupRows(daily: DailyForecastRow[], view: ForecastView, from: s
     // new line, so a grouped row never shows a stage it has already left.
     const key = `${d.batchId}|${d.stageCode}|${d.itemId}|${d.sourceCode ?? 'NONE'}|${start}`;
     const intake = Math.round(d.perDayIntakeKg * 1e6);
-    const demand = Math.round(d.demandKg * 1e6);
     const group = groups.get(key);
     if (!group) {
       groups.set(key, {
         intake,
-        demand,
         row: {
           key, batchId: d.batchId, batchNo: d.batchNo, shedCode: d.shedCode, stageCode: d.stageCode,
           itemId: d.itemId, itemNo: d.itemNo, itemName: d.itemName, sourceType: d.sourceType, sourceCode: d.sourceCode,
@@ -124,8 +120,8 @@ export function groupRows(daily: DailyForecastRow[], view: ForecastView, from: s
           // Reporting Period's `bucketStart` is `from` for every day, so a diet starting mid-period still gets
           // its own start here because rows are visited in date order and this is the first one seen for the key).
           date: d.date, dateTo: d.date, days: 1,
-          currentInventoryKg: d.currentInventoryKg, heads: d.heads, perDayIntakeKg: d.perDayIntakeKg, wastagePct: d.wastagePct,
-          intakeKg: d.perDayIntakeKg, demandKg: d.demandKg,
+          currentInventoryKg: d.currentInventoryKg, heads: d.heads, perDayIntakeKg: d.perDayIntakeKg,
+          intakeKg: d.perDayIntakeKg,
           daysOfStock: d.daysOfStock, sharedBatchCount: d.sharedBatchCount, indicative: d.indicative,
           runDownDate: d.runDownDate, refillDate: d.refillDate, requiredOn: d.requiredOn, overdue: d.overdue,
         },
@@ -133,11 +129,9 @@ export function groupRows(daily: DailyForecastRow[], view: ForecastView, from: s
       continue;
     }
     group.intake += intake;
-    group.demand += demand;
     group.row.dateTo = d.date;
     group.row.days += 1;
     group.row.intakeKg = group.intake / 1e6;
-    group.row.demandKg = group.demand / 1e6;
     group.row.indicative = group.row.indicative || d.indicative;
     group.row.sharedBatchCount = Math.max(group.row.sharedBatchCount, d.sharedBatchCount);
   }
