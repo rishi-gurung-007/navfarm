@@ -934,7 +934,8 @@ export class FeedRequisitionService implements OnModuleInit {
    * requisition approve grant as well as the inbox's (S5: approving commits
    * the mill), and re-checks the remarks rule on the approval day with the
    * approver's remarks or the saved ones — D25 keeps checkpoints 18 and 22 at
-   * approval. A rejection needs a reason, appended to the remarks.
+   * approval. Either decision appends what the approver wrote to the farm's
+   * own remarks; neither replaces them (F6).
    */
   private async decideFromApproval(request: ApprovalRequestRow, decision: 'APPROVED' | 'REJECTED', remarks: string | null, tenantId: string, user: UserCtx) {
     await this.assertMayDecide(user);
@@ -952,9 +953,14 @@ export class FeedRequisitionService implements OnModuleInit {
     const { today } = await this.forecast.farmToday(row.company_id, tenantId);
     const problems = approvalProblems({ lines: await this.linesForCheck(row.requisition_id), remarks: finalRemarks, today, submissionDeadline: row.submission_deadline });
     if (problems.length) throw new BadRequestException(problems.join(' '));
+    // F6: append, as a rejection does. Replacing threw away the farm's own
+    // justification — the very thing checkpoints 18 and 22 asked it for.
+    const storedRemarks = remarks
+      ? (row.remarks?.trim() ? `${row.remarks.trim()}\nApproved: ${remarks}` : `Approved: ${remarks}`)
+      : row.remarks ?? null;
     await this.db.update(schema.requisition).set({
       status: 'APPROVED',
-      remarks: finalRemarks,
+      remarks: storedRemarks,
       approved_by: user?.userId ?? null,
       approved_at: nowTs(),
       updated_by: user?.userId ?? null,

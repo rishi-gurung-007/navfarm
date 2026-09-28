@@ -72,7 +72,12 @@ function setup(queues: Map<unknown, unknown[][]>) {
   service.onModuleInit();
   const as = <T>(scope: FarmScope, work: () => Promise<T>) => cls.run(async () => { cls.set(FARM_SCOPE_KEY, scope); return work(); });
   const writes = () => log.filter((e) => e.op !== 'select');
-  return { service, approvals, evaluated, as, writes };
+  /** The audit rows the decision wrote, with their JSON columns read back. */
+  const audits = () => log
+    .filter((e) => e.op === 'insert' && e.table === schema.auditLog)
+    .flatMap((e) => (Array.isArray(e.values) ? e.values : [e.values]))
+    .map((v: any) => ({ action: v.action, newValues: v.new_values, oldValues: v.old_values }));
+  return { service, approvals, evaluated, as, writes, audits };
 }
 
 describe('isEditableFeedRequisition (D25)', () => {
@@ -185,7 +190,49 @@ describe('Feed requisition decided in the Approvals inbox (D25)', () => {
       [schema.requisitionLine, [[{ ...LINE_6000, quantity: '9000.0000' }]]],
     ]));
     await as(COMPANY_ADMIN_SCOPE, () => approvals.approve('ar-1', 'tenant-1', ADMIN, 'Extra pigs arriving'));
-    expect(writes().find((e) => e.table === schema.requisition)!.set).toMatchObject({ status: 'APPROVED', remarks: 'Extra pigs arriving' });
+    expect(writes().find((e) => e.table === schema.requisition)!.set).toMatchObject({ status: 'APPROVED', remarks: 'Approved: Extra pigs arriving' });
+  });
+
+  /**
+   * F6 (final review M3). The approval replaced the requisition's remarks
+   * with the approver's, so the farm's justification — the thing checkpoints
+   * 18 and 22 asked for — vanished from the document that carries it. A
+   * rejection already appends; an approval does now too.
+   */
+  it('appends the approver\'s remarks and keeps the farm\'s (F6)', async () => {
+    const withFarmRemarks = { ...PENDING_ROW, remarks: 'Extra pigs arriving Tuesday' };
+    const { approvals, as, writes } = setup(new Map<unknown, unknown[][]>([
+      [schema.approvalRequest, [[REQUEST], [REQUEST]]],
+      [schema.requisition, [[withFarmRemarks]]],
+      [schema.requisitionLine, [[{ ...LINE_6000, quantity: '9000.0000' }]]],
+    ]));
+    await as(COMPANY_ADMIN_SCOPE, () => approvals.approve('ar-1', 'tenant-1', ADMIN, 'Checked with the mill'));
+    expect(writes().find((e) => e.table === schema.requisition)!.set)
+      .toMatchObject({ status: 'APPROVED', remarks: 'Extra pigs arriving Tuesday\nApproved: Checked with the mill' });
+  });
+
+  it('leaves the farm\'s remarks alone when the approver adds none (F6)', async () => {
+    const withFarmRemarks = { ...PENDING_ROW, remarks: 'Extra pigs arriving Tuesday' };
+    const { approvals, as, writes } = setup(new Map<unknown, unknown[][]>([
+      [schema.approvalRequest, [[REQUEST], [REQUEST]]],
+      [schema.requisition, [[withFarmRemarks]]],
+      [schema.requisitionLine, [[LINE_6000]]],
+    ]));
+    await as(COMPANY_ADMIN_SCOPE, () => approvals.approve('ar-1', 'tenant-1', ADMIN));
+    expect(writes().find((e) => e.table === schema.requisition)!.set)
+      .toMatchObject({ status: 'APPROVED', remarks: 'Extra pigs arriving Tuesday' });
+  });
+
+  it('files an approval\'s remarks as remarks in the audit, not as a rejection reason (F6)', async () => {
+    const { approvals, as, audits } = setup(new Map<unknown, unknown[][]>([
+      [schema.approvalRequest, [[REQUEST], [REQUEST]]],
+      [schema.requisition, [[PENDING_ROW]]],
+      [schema.requisitionLine, [[LINE_6000]]],
+    ]));
+    await as(COMPANY_ADMIN_SCOPE, () => approvals.approve('ar-1', 'tenant-1', ADMIN, 'Checked with the mill'));
+    const entry = audits().find((a: any) => a.action === 'APPROVE');
+    expect(entry.newValues).toEqual({ status: 'APPROVED', remarks: 'Checked with the mill' });
+    expect(entry.newValues.rejection_reason).toBeUndefined();
   });
 
   it('rejecting needs a reason and records it on the requisition', async () => {

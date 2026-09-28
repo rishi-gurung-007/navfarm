@@ -375,7 +375,10 @@ export class ApprovalService {
       entityName: 'approval_request',
       entityId: requestId,
       oldValues: { status: 'PENDING' },
-      newValues: { status, rejection_reason: reason || null },
+      // F6: an approval's remarks are remarks. Filing them under
+      // rejection_reason made an approved document read as a rejected one in
+      // the audit ledger.
+      newValues: status === 'REJECTED' ? { status, rejection_reason: reason || null } : { status, remarks: reason || null },
     });
 
     return this.findOne(requestId, tenantId);
