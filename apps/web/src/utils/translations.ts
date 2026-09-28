@@ -1539,7 +1539,10 @@ export const translations = {
     ffColCurrentPigs: "Current No. of Pigs",
     ffColPerDayIntakeKg: "Per Day Intake (Kg)",
     ffColDaysLeft: "No. of Days Inventory Left",
-    ffColDaysOfStock: "Current No. of Days Stock",
+    // D33-a: the client's field specification writes this one without the dot
+    // ("Current No of Days Stock") while writing "Current No. of Pigs" with it.
+    // Word for word, theirs.
+    ffColDaysOfStock: "Current No of Days Stock",
     ffDaysOfStockHint: "Current Inventory ÷ this row's Per Day Intake, whole days.",
     ffColRunDown: "Scale of Silo Level (Run Down)",
     ffRunDownHint: "Date the stock reaches the silo's low level.",
