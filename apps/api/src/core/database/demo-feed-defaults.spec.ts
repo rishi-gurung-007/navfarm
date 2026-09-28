@@ -1,4 +1,4 @@
-import { DEMO_NEXT_STAGES, DEMO_SILO_FILL_PCT, DEMO_STAGE_DURATIONS, SILO_HIGH_LEVEL_PCT, SILO_LOW_LEVEL_PCT, defaultSiloLevels } from './demo-feed-defaults';
+import { DEMO_NEXT_STAGES, DEMO_SILO_FILL_PCT, DEMO_STAGE_DURATIONS, SILO_HIGH_LEVEL_PCT, SILO_LOW_LEVEL_PCT, defaultSiloLevels, siloFillKg } from './demo-feed-defaults';
 import { BBP_STAGE_SEED } from './piggery-bbp-stage-seed';
 
 describe('demo feed defaults (D22, D27, S7, S10)', () => {
@@ -25,5 +25,13 @@ describe('demo feed defaults (D22, D27, S7, S10)', () => {
     expect(DEMO_STAGE_DURATIONS).toEqual({ DRY_SOW: 7, FLUSH: 14, FARROWING: 3, WEANING: 1 });
     expect(DEMO_NEXT_STAGES).toEqual({ WEANER: 'GROWER', GROWER: 'FINISHER' });
     expect(DEMO_SILO_FILL_PCT).toBe(50);
+  });
+});
+
+describe('siloFillKg (S10)', () => {
+  it('fills a silo to half its capacity, or the fallback when the capacity is unknown', () => {
+    expect(siloFillKg(15000, 2000)).toBe(7500);
+    expect(siloFillKg(null, 2000)).toBe(2000);
+    expect(siloFillKg(0, 2000)).toBe(2000);
   });
 });

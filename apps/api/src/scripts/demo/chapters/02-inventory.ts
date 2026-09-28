@@ -42,6 +42,7 @@ import { StockAdjustmentService } from '../../../modules/inventory/stock-adjustm
 import * as schema from '../../../core/database/schema';
 import type { GoodsReceiptLineInput } from '../../../modules/inventory/goods-receipt/dto/goods-receipt.dto';
 import type { DemoChapter, DemoContext } from '../chapter';
+import { siloFillKg } from '../../../core/database/demo-feed-defaults';
 import { silosOf, tagOf, type DemoFarm, type DemoShed, type ShedRole } from '../farms';
 
 /**
@@ -100,6 +101,7 @@ const FEED_DEFAULT = FEED_GESTATION;
 
 /** The demo quantities — labelled demo facts, not client data. */
 const DEMO_OPERATIONS = {
+  /** Only for a silo with no recorded capacity; see siloFillKg (S10). */
   feedReceiptKgPerSilo: 2000,
   storeReceipt: [
     { item_code: MED_ANTIBIOTIC_1, quantity: 20, uom: 'PCS' },
@@ -225,6 +227,12 @@ export const inventoryChapter: DemoChapter = {
         if (existing.length === 0) {
           for (const silo of siloIds) {
             const feed = await itemByHandle(db, silo.feedHandle);
+            // S10: half the silo's capacity, so a fresh demo sits between its 20 % and 90 % levels.
+            const [capacity] = await db
+              .select({ kg: schema.locationMaster.silo_capacity_kg })
+              .from(schema.locationMaster)
+              .where(eq(schema.locationMaster.location_id, silo.id))
+              .limit(1);
             await receipts.create(
               {
                 company_id: ctx.companyId,
@@ -235,7 +243,7 @@ export const inventoryChapter: DemoChapter = {
                 lines: [
                   {
                     item_id: feed.item_id,
-                    quantity: DEMO_OPERATIONS.feedReceiptKgPerSilo,
+                    quantity: siloFillKg(capacity?.kg == null ? null : Number(capacity.kg), DEMO_OPERATIONS.feedReceiptKgPerSilo),
                     uom: 'KG',
                     rate: rateOf(feed.standard_cost),
                     lot_no: `DEMO-${farm.code}-${silo.feedHandle}`,

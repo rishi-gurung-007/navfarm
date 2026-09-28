@@ -34,10 +34,11 @@ import { batchesAndAnimalsChapter } from './demo/chapters/03-batches-and-animals
 import { dailyEntriesChapter } from './demo/chapters/04-daily-entries';
 import { breedingChapter } from './demo/chapters/05-breeding';
 import { approvalsChapter } from './demo/chapters/06-approvals';
+import { feedPlanningChapter } from './demo/chapters/07-feed-planning';
 import { VOLUME_PROFILES, type VolumeProfileName } from './demo/farms';
 import type { DemoChapter, DemoContext } from './demo/chapter';
 
-const CHAPTERS: DemoChapter[] = [identityChapter, storesAndItemsChapter, inventoryChapter, batchesAndAnimalsChapter, dailyEntriesChapter, breedingChapter, approvalsChapter];
+const CHAPTERS: DemoChapter[] = [identityChapter, storesAndItemsChapter, inventoryChapter, batchesAndAnimalsChapter, dailyEntriesChapter, breedingChapter, approvalsChapter, feedPlanningChapter];
 
 function parseArgs(argv: string[]): { apply: boolean; chapter?: string; forceOnExisting: boolean; volume: VolumeProfileName } {
   let apply = false;

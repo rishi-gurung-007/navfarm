@@ -27,3 +27,8 @@ export const DEMO_STAGE_DURATIONS: Readonly<Record<string, number>> = { DRY_SOW:
 export const DEMO_NEXT_STAGES: Readonly<Record<string, string>> = { WEANER: 'GROWER', GROWER: 'FINISHER' };
 
 export const DEMO_SILO_FILL_PCT = 50;
+
+/** S10: what the demo's inventory chapter receives into a silo — half its capacity, or the old flat figure when it has none. */
+export function siloFillKg(capacityKg: number | null, fallbackKg: number): number {
+  return capacityKg && capacityKg > 0 ? Math.round((capacityKg * DEMO_SILO_FILL_PCT) / 100) : fallbackKg;
+}

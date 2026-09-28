@@ -15,7 +15,8 @@
  * Resume-safe: batches are located by their DEMO remarks token, animals by
  * ear_tag — a farm already carrying its demo herd is adopted, not duplicated.
  */
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
+import { stageEntryDaysAgo } from './feed-planning';
 import type { MySql2Database } from 'drizzle-orm/mysql2';
 import type { AnimalService } from '../../modules/piggery/animal/animal.service';
 import type { GoodsReceiptService } from '../../modules/inventory/goods-receipt/goods-receipt.service';
@@ -248,6 +249,13 @@ export async function registerBreedingStock(ctx: DemoContext, farm: DemoFarm, de
         eq(schema.animalRegister.is_active, true),
       ));
     if (batchAnimals.length) {
+      // B1: each destination stage's length, so an animal enters it early enough to still be in it today.
+      const durations = new Map(
+        (await db
+          .select({ stage_id: schema.stageMaster.stage_id, days: schema.stageMaster.typical_duration_days })
+          .from(schema.stageMaster)
+          .where(inArray(schema.stageMaster.stage_id, [...new Set(destStages)]))).map((r) => [r.stage_id, r.days] as const),
+      );
       let cursor = 0;
       for (const { animal_id, ear_tag } of batchAnimals) {
         const isBoar = (ear_tag ?? '').includes('BOAR');
@@ -256,7 +264,7 @@ export async function registerBreedingStock(ctx: DemoContext, farm: DemoFarm, de
         try {
           await animals.transitionStage(animal_id, {
             to_stage_id: target,
-            transition_date: dateNdaysAgo(5),
+            transition_date: dateNdaysAgo(stageEntryDaysAgo(durations.get(target) ?? null)),
             reason: 'DEMO_FLOW',
             remarks: `DEMO breeding-stock flow on ${farm.code}`,
           }, ctx.tenantId);
