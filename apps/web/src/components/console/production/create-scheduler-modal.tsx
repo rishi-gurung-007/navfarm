@@ -929,6 +929,7 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
                         ...f,
                         item_id: val,
                         item_description: sel?.item_name || f.item_description,
+                        lot_required: val ? !!(sel?.is_lot_tracked || sel?.is_serial_tracked) : f.lot_required,
                       }));
                     }}
                     options={consumableItems.map((it) => ({
@@ -976,10 +977,14 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
                     <input
                       type="checkbox"
                       checked={!!lineForm.lot_required}
+                      disabled={!!lineForm.item_id}
                       onChange={(e) => setLineForm((f: Row) => ({ ...f, lot_required: e.target.checked }))}
                     />
                     Lot number required (FIFO traceability)
                   </label>
+                  {lineForm.item_id && (
+                    <span className="text-[10px] pl-5" style={S.muted}>Auto-set from item's lot/serial tracking flag</span>
+                  )}
                 </div>
 
                 {(() => {

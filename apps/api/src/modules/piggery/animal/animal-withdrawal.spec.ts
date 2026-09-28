@@ -44,7 +44,7 @@ describe('recorded treatment withdrawal', () => {
       } }) })),
     };
     audit = { log: jest.fn().mockResolvedValue({}) };
-    service = new AnimalService(transactionCls(db), audit, {} as any, {} as any);
+    service = new AnimalService(transactionCls(db), audit, {} as any, {} as any, { record: jest.fn().mockResolvedValue('movement-1') } as any);
     jest.spyOn(service, 'findOne').mockImplementation(async () => ({ ...animal }));
   });
 

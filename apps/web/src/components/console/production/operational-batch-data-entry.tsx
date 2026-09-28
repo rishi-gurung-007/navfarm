@@ -42,6 +42,7 @@ import { getActiveCompanyId } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
 import { Dialog } from '@/components/ui/dialog';
 import { InlineAlert } from '@/components/ui/alert';
+import { LotSerialPicker } from '@/components/ui/lot-serial-picker';
 import {
   TableHeader,
   TableBody,
@@ -628,8 +629,13 @@ export default function OperationalBatchDataEntry() {
     setNoScheduler(false);
     setDataEntryError('');
 
+    const b = batches.find((x) => x.id === selectedBatchId);
     const targetStage =
-      overrideStageId !== undefined ? overrideStageId : selectedStageId;
+      overrideStageId !== undefined
+        ? overrideStageId
+        : b?.trackingMode === 'BATCH_WISE'
+          ? undefined
+          : selectedStageId;
     const stageParam = targetStage ? `&stageId=${targetStage}` : '';
 
     Promise.all([
@@ -919,7 +925,7 @@ export default function OperationalBatchDataEntry() {
 
   // Full animal roster for the current batch — backs the stage animal-count
   // popup and supplies the `animal` object AnimalStageTransitionModal needs.
-  useEffect(() => {
+  const loadBatchAnimalRoster = () => {
     if (!currentBatch?.id) {
       setBatchAnimalRoster([]);
       return;
@@ -941,8 +947,9 @@ export default function OperationalBatchDataEntry() {
       })
       .catch(() => setBatchAnimalRoster([]))
       .finally(() => setBatchAnimalRosterLoading(false));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentBatch?.id]);
+  };
+
+  useEffect(loadBatchAnimalRoster, [currentBatch?.id]);
 
   // Calculated Dynamic Metrics
   const batchMortality = currentBatch?.mortalityCount ?? 0;
@@ -975,7 +982,10 @@ export default function OperationalBatchDataEntry() {
       if (animalId) payload.animal_id = animalId;
       if (isTextCapture(line)) payload.entered_text = dataEntryTexts[key];
       else payload.entered_value = Number(dataEntryValues[key]);
-      if (line.lot_required) payload.lot_no = dataEntryLotNos[key];
+      if (line.lot_required) {
+        if (line.is_serial_tracked) payload.serial_no = dataEntryLotNos[key];
+        else payload.lot_no = dataEntryLotNos[key];
+      }
       if (line.line_type === 'TRANSFER')
         payload.destination_batch_id = dataEntryDestBatches[key];
       return payload;
@@ -1223,7 +1233,7 @@ export default function OperationalBatchDataEntry() {
         });
       }
       loadDataEntry();
-      setBatchAnimalRoster((prev) => [...prev]);
+      loadBatchAnimalRoster();
     } catch (err: any) {
       setBulkStageTransitionError(
         err?.message || 'Could not move these animals.',
@@ -1617,17 +1627,19 @@ export default function OperationalBatchDataEntry() {
             </div>
           )}
           {line.lot_required && (
-            <input
-              type="text"
-              value={dataEntryLotNos[key] ?? ''}
-              onChange={(e) =>
-                setDataEntryLotNos((v) => ({ ...v, [key]: e.target.value }))
-              }
-              placeholder={t('blPlaceholderLotNo')}
-              className={inputCls + ' mt-1'}
-              style={S.input}
-              disabled={rowLocked}
-            />
+            <div className="mt-1">
+              <LotSerialPicker
+                itemId={line.item_id || ''}
+                warehouseId={(currentBatch as any)?.warehouse_id}
+                trackingType={line.is_serial_tracked ? 'SERIAL' : 'LOT'}
+                value={dataEntryLotNos[key] ?? ''}
+                onChange={(val) =>
+                  setDataEntryLotNos((v) => ({ ...v, [key]: val }))
+                }
+                disabled={rowLocked}
+                placeholder={t('blPlaceholderLotNo')}
+              />
+            </div>
           )}
           {line.line_type === 'TRANSFER' && (
             <div className="mt-1 min-w-[160px]">
@@ -1830,6 +1842,7 @@ export default function OperationalBatchDataEntry() {
                     value={selectedBatchId}
                     onChange={(val) => {
                       userPickedDateRef.current = false;
+                      setSelectedStageId(null);
                       setSelectedBatchId(val);
                     }}
                     options={batches.map((b) => ({
@@ -3222,7 +3235,7 @@ export default function OperationalBatchDataEntry() {
         animal={stageTransitionAnimal}
         onSuccess={() => {
           loadDataEntry();
-          setBatchAnimalRoster((prev) => [...prev]);
+          loadBatchAnimalRoster();
         }}
         stages={stageMasterList}
         locations={locations}

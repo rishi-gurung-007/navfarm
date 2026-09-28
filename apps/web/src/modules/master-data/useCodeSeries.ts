@@ -69,14 +69,15 @@ export function useCodeSeries(key: string, form: Record<string, unknown>, enable
     const masterType = definition[0];
     const compId = getActiveCompanyId();
     const typeParam = type ? `&type=${encodeURIComponent(type)}` : '';
-    const previewUrl = `/no-series/preview-by-master?masterType=${masterType}${typeParam}${compId ? `&companyId=${compId}` : ''}`;
+    const parentParam = parentId ? `&parentId=${encodeURIComponent(parentId)}` : '';
+    const previewUrl = `/no-series/preview-by-master?masterType=${masterType}${typeParam}${parentParam}${compId ? `&companyId=${compId}` : ''}`;
 
     api.get(previewUrl)
       .then((modernRes: any) => {
         const modernData = modernRes?.data || modernRes;
-        if (modernData && typeof modernData === "object" && ("generated" in modernData || modernRes?.success)) {
+        if (modernData && typeof modernData === "object" && modernData.generated === true) {
           const settings: Settings = {
-            generated: modernData.generated === true,
+            generated: true,
             allowManual: modernData.allowManual !== false,
             preview: modernData.preview || modernData.next_number || "",
           };
@@ -176,7 +177,10 @@ export function useCodeSeries(key: string, form: Record<string, unknown>, enable
       if (!managedCode && !preview) return value;
       // Auto-generated (manual_nos = false): always show the live preview
       if (serial || (!allowManual && preview)) return preview;
-      // Manual (manual_nos = true): user value is authoritative; do not override user-cleared empty input
+      // Manual (manual_nos = true): user value is authoritative; provide preview as initial suggestion if empty
+      if (allowManual && preview && (value === "" || value === undefined || value === null)) {
+        return preview;
+      }
       return value;
     },
     loading: canGenerate && enabled && activeSettings === undefined && !result?.error,

@@ -149,7 +149,11 @@ export function doLinesTargetSameSubject(
 
   if (type === 'CONSUMPTION') {
     if (a.item_id && b.item_id) {
-      return a.item_id === b.item_id;
+      if (a.item_id !== b.item_id) return false;
+      if (a.activity_name && b.activity_name) {
+        return a.activity_name.trim().toLowerCase() === b.activity_name.trim().toLowerCase();
+      }
+      return true;
     }
     // If item not yet set or matching activity
     return !!a.activity_name && a.activity_name.trim().toLowerCase() === b.activity_name?.trim().toLowerCase();
@@ -157,14 +161,22 @@ export function doLinesTargetSameSubject(
 
   if (type === 'OUTPUT') {
     if (a.item_id && b.item_id) {
-      return a.item_id === b.item_id;
+      if (a.item_id !== b.item_id) return false;
+      if (a.activity_name && b.activity_name) {
+        return a.activity_name.trim().toLowerCase() === b.activity_name.trim().toLowerCase();
+      }
+      return true;
     }
     return !!a.activity_name && a.activity_name.trim().toLowerCase() === b.activity_name?.trim().toLowerCase();
   }
 
   if (type === 'RESOURCE') {
     if (a.resource_id && b.resource_id) {
-      return a.resource_id === b.resource_id;
+      if (a.resource_id !== b.resource_id) return false;
+      if (a.activity_name && b.activity_name) {
+        return a.activity_name.trim().toLowerCase() === b.activity_name.trim().toLowerCase();
+      }
+      return true;
     }
     return !!a.activity_name && a.activity_name.trim().toLowerCase() === b.activity_name?.trim().toLowerCase();
   }

@@ -4,11 +4,11 @@ import { Type } from 'class-transformer';
 import { MasterListQueryDto } from '../../../../common/master-list-query';
 
 /**
- * MANPOWER, EQUIPMENT and UTILITY. The client template also listed VEHICLE and
- * OTHER; both were removed on 15 September (Rishi). LABOR, the old alias for
- * MANPOWER, went earlier.
+ * MANPOWER and EQUIPMENT. The client template also listed VEHICLE, UTILITY and
+ * OTHER; UTILITY was removed per client request. VEHICLE and OTHER went earlier.
+ * LABOR, the old alias for MANPOWER, went earlier.
  */
-export const RESOURCE_TYPES = ['MANPOWER', 'EQUIPMENT', 'UTILITY'] as const;
+export const RESOURCE_TYPES = ['MANPOWER', 'EQUIPMENT'] as const;
 
 export class CreateResourceDto {
   @ApiProperty({ description: 'Company UUID scope ownership' })

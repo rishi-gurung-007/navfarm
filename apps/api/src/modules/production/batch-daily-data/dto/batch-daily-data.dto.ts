@@ -47,12 +47,20 @@ export class CreateBatchDailyDataDto {
   entered_text?: string;
 
   @ApiProperty({
-    description: 'Lot number — required when the line has lot_required',
+    description: "Lot number — required when the line has lot_required and the item is lot-tracked",
     required: false,
   })
   @IsOptional()
   @IsString()
   lot_no?: string;
+
+  @ApiProperty({
+    description: "Serial number — required when the line has lot_required and the item is serial-tracked",
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  serial_no?: string;
 
   @ApiProperty({
     description:

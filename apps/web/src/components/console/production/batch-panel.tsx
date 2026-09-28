@@ -926,8 +926,22 @@ export default function BatchPanel() {
         return;
       }
 
-      if (!header.opening_quantity)
+      if (!header.opening_quantity || Number(header.opening_quantity) <= 0)
         throw new Error(t('blErrOpeningQtyUomRequired'));
+
+      for (const l of inputLines) {
+        if (l.item_id) {
+          const it = items.find((x) => x.item_id === l.item_id);
+          const itName = it?.item_name || it?.item_code || 'Selected item';
+          if (!l.quantity || Number(l.quantity) <= 0) {
+            throw new Error(`Quantity must be greater than zero for item "${itName}".`);
+          }
+          if (!l.uom) {
+            throw new Error(`Unit of measure (UOM) is required for item "${itName}".`);
+          }
+        }
+      }
+
       const cleanLines = inputLines
         .filter((l) => l.item_id && l.quantity && l.uom)
         .map((l) => {
@@ -1379,7 +1393,7 @@ export default function BatchPanel() {
         !renewForm.uom
       )
         throw new Error(t('blErrRenewHeaderFieldsRequired'));
-      if (!renewForm.item_id || !renewForm.quantity || !renewForm.line_uom)
+      if (!renewForm.item_id || !renewForm.quantity || Number(renewForm.quantity) <= 0 || !renewForm.line_uom)
         throw new Error(t('blErrRenewInputLineRequired'));
       const it = items.find((x) => x.item_id === renewForm.item_id);
       if (it?.is_lot_tracked && !renewForm.lot_no) {

@@ -1536,7 +1536,9 @@ export function MasterDataTable({
         for (const [k, v] of Object.entries(f.clearsWhenOff)) payload[k] = v;
       }
       for (const f of visibleFields) {
-        if (f.filterOnly || (f.readOnly && !(f.key === "item_code" && isManualNoAllowed))) continue;
+        const isCodeField = f.key === numbering.codeKey;
+        const codeAllowsManual = isCodeField && (numbering.allowManual || isManualNoAllowed);
+        if (f.filterOnly || (f.readOnly && !codeAllowsManual)) continue;
         // A managed, manual-allowed code field is pre-filled with the series'
         // own next-number preview so the user always sees a value, but that is
         // a suggestion, not a choice. Sending it back untouched made every save
@@ -2370,7 +2372,9 @@ export function MasterDataTable({
         />
       );
     }
-    const isDisabled = (f.readOnly && !(f.key === "item_code" && isManualNoAllowed)) || isLockedByTemplate;
+    const isCodeField = f.key === numbering.codeKey;
+    const codeAllowsManual = isCodeField && (numbering.allowManual || isManualNoAllowed);
+    const isDisabled = (f.readOnly && !codeAllowsManual) || isLockedByTemplate;
     const isInteger = f.type === "number" && (f.step === "1" || !f.step);
     // A field like GPS Latitude/Longitude allows a negative sign only when its
     // floor is unset or itself negative — same rule the keydown guard below uses.

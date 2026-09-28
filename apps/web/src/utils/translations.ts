@@ -1232,7 +1232,7 @@ export const translations = {
     batchManagement: "Batch Management",
     batchList: "Batch List",
     batchStages: "Batch Stages",
-    animalAssignment: "Animal Assignment",
+    animalAssignment: "Animal Allocation",
     batchDataEntry: "Data Entry",
     scheduler: "Scheduler",
     feedManagement: "Batch History",

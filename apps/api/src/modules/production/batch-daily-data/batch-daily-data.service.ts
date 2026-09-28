@@ -7,7 +7,7 @@ import {
   forwardRef,
 } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, inArray, or, sql, isNull } from 'drizzle-orm';
+import { eq, and, inArray, or, sql, isNull, gt } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
@@ -87,9 +87,9 @@ export class BatchDailyDataService {
         `Line '${dto.line_id}' does not belong to batch '${batchId}'.`,
       );
     }
-    if (line.lot_required && !dto.lot_no) {
+    if (line.lot_required && !dto.lot_no && !dto.serial_no) {
       throw new BadRequestException(
-        `'${line.activity_name}' requires a lot number.`,
+        `'${line.activity_name}' requires a lot or serial number.`,
       );
     }
 
@@ -103,6 +103,8 @@ export class BatchDailyDataService {
       .select({
         tracking_mode: schema.batchHeader.tracking_mode,
         company_id: schema.batchHeader.company_id,
+        shed_id: schema.batchHeader.shed_id,
+        location_id: schema.batchHeader.location_id,
         // The last resort when resolving where a consumption line draws its
         // stock from: a batch whose scheduler records no shed or pen still
         // belongs to a farm, and that farm's store is the right source.
@@ -197,7 +199,8 @@ export class BatchDailyDataService {
       const unchanged =
         existingValue === incomingValue &&
         (existingRow.entered_text || null) === (dto.entered_text || null) &&
-        (existingRow.lot_no || null) === (dto.lot_no || null);
+        (existingRow.lot_no || null) === (dto.lot_no || null) &&
+        (existingRow.serial_no || null) === (dto.serial_no || null);
       if (unchanged) {
         return this.findForDate(batchId, dto.entry_date, tenantId);
       }
@@ -223,6 +226,7 @@ export class BatchDailyDataService {
           entered_value: dto.entered_value?.toString() ?? null,
           entered_text: dto.entered_text || null,
           lot_no: dto.lot_no || null,
+          serial_no: dto.serial_no || null,
           posted: false,
           posting_reference: null,
           alert_triggered: false,
@@ -236,6 +240,7 @@ export class BatchDailyDataService {
             entered_value: dto.entered_value?.toString() ?? null,
             entered_text: dto.entered_text || null,
             lot_no: dto.lot_no || null,
+            serial_no: dto.serial_no || null,
             remarks: dto.remarks || null,
             updated_by: userPayload?.userId || null,
             updated_at: toMysqlTimestamp(),
@@ -273,9 +278,10 @@ export class BatchDailyDataService {
         const sourceWarehouseId =
           line.line_type === 'CONSUMPTION'
             ? await this.resolveConsumptionWarehouse(
-                header.location_id,
+                header.location_id || batchRow?.shed_id || batchRow?.location_id,
                 line.activity_name,
                 batchRow?.farm_id ?? null,
+                item,
               )
             : undefined;
         const updated = await this.batchService.addTransaction(
@@ -295,6 +301,13 @@ export class BatchDailyDataService {
             // ("Insufficient stock for item ..."), so no second balance check
             // is written here; one would only be able to disagree with it.
             source_warehouse_id: sourceWarehouseId,
+            // Previously dropped here even though the lot_required guard above
+            // already demanded one — a lot/serial-tracked item could never
+            // actually be logged through this path: assertTracking() rejected
+            // the ledger write for having no lot/serial, since it never
+            // arrived past this object literal.
+            lot_no: dto.lot_no,
+            serial_no: dto.serial_no,
             remarks: dto.remarks || `${line.activity_name} — scheduled entry`,
           } as any,
           tenantId,
@@ -477,19 +490,75 @@ export class BatchDailyDataService {
           );
         let quantity = dto.entered_value;
         let rate = dto.rate ?? null;
+        let resourceId = line.resource_id;
+
         if (line.line_type === 'RESOURCE') {
-          if (!line.resource_id)
-            throw new ConflictException(
-              `'${line.activity_name}' has no resource configured.`,
-            );
+          if (!resourceId) {
+            // Fallback 1: check if activity_master has default_resource_id
+            try {
+              const [act] = await this.db
+                .select({ default_resource_id: schema.activityMaster.default_resource_id })
+                .from(schema.activityMaster)
+                .where(
+                  and(
+                    eq(schema.activityMaster.tenant_id, tenantId),
+                    eq(schema.activityMaster.activity_name, line.activity_name),
+                  ),
+                )
+                .limit(1);
+              if (act?.default_resource_id) {
+                resourceId = act.default_resource_id;
+              }
+            } catch {
+              // ignore
+            }
+
+            // Fallback 2: check if any active LABOR or matching resource exists
+            if (!resourceId) {
+              try {
+                const [matchedRes] = await this.db
+                  .select({ resource_id: schema.resourceMaster.resource_id, cost_rate: schema.resourceMaster.cost_rate })
+                  .from(schema.resourceMaster)
+                  .where(
+                    and(
+                      eq(schema.resourceMaster.tenant_id, tenantId),
+                      eq(schema.resourceMaster.is_active, true),
+                      or(
+                        eq(schema.resourceMaster.resource_name, line.activity_name),
+                        eq(schema.resourceMaster.resource_type, 'LABOR'),
+                      ),
+                    ),
+                  )
+                  .limit(1);
+                if (matchedRes) {
+                  resourceId = matchedRes.resource_id;
+                  if (rate == null && matchedRes.cost_rate != null) {
+                    rate = Number(matchedRes.cost_rate);
+                  }
+                }
+              } catch {
+                // ignore
+              }
+            }
+          }
+
+          if (rate == null && resourceId) {
+            try {
+              const [resource] = await this.db
+                .select()
+                .from(schema.resourceMaster)
+                .where(eq(schema.resourceMaster.resource_id, resourceId))
+                .limit(1);
+              rate =
+                resource?.cost_rate != null ? Number(resource.cost_rate) : null;
+            } catch {
+              // ignore
+            }
+          }
+
+          // If still no rate is set, default to 0 so unpriced operational tasks don't block posting the day
           if (rate == null) {
-            const [resource] = await this.db
-              .select()
-              .from(schema.resourceMaster)
-              .where(eq(schema.resourceMaster.resource_id, line.resource_id))
-              .limit(1);
-            rate =
-              resource?.cost_rate != null ? Number(resource.cost_rate) : null;
+            rate = 0;
           }
         } else if (rate == null) {
           // OVERHEAD lines are naturally entered as a single day's total cost —
@@ -498,18 +567,15 @@ export class BatchDailyDataService {
           rate = quantity;
           quantity = 1;
         }
-        if (rate == null)
-          throw new BadRequestException(
-            `'${line.activity_name}' needs a rate to post — supply one or set it on the resource.`,
-          );
+
         const updated = await this.batchService.addTransaction(
           batchId,
           {
             transaction_date: dto.entry_date,
             transaction_type: 'OVERHEAD',
-            resource_id: line.resource_id || undefined,
+            resource_id: resourceId || undefined,
             quantity,
-            rate,
+            rate: rate ?? 0,
             animal_id: dto.animal_id,
             remarks: dto.remarks || `${line.activity_name} — scheduled entry`,
           } as any,
@@ -671,6 +737,7 @@ export class BatchDailyDataService {
     locationId: string | null,
     activityName: string | null,
     batchFarmId: string | null,
+    item?: { item_id: string; item_type?: string | null } | null,
   ): Promise<string> {
     const columns = {
       location_id: schema.locationMaster.location_id,
@@ -699,6 +766,8 @@ export class BatchDailyDataService {
         .limit(1);
       return store?.location_id ?? null;
     };
+
+    const isFeedItem = !item?.item_type || item.item_type === 'FEED';
 
     // A scheduler that records no shed or pen is not a reason to refuse the
     // entry: plenty of batches are scheduled at farm level, and the feed still
@@ -730,13 +799,16 @@ export class BatchDailyDataService {
       if (parent) shed = parent;
     }
 
-    if (shed.feed_silo_id) return shed.feed_silo_id;
+    if (shed.feed_silo_id && isFeedItem) return shed.feed_silo_id;
 
     // farm_id is stamped on every descendant of a FARM (see the location
     // seeder); a shed sitting directly under the farm with no farm_id falls
     // back to its parent, which is that farm.
     const store = await storeOfFarm(shed.farm_id || shed.parent_location_id || batchFarmId);
     if (store) return store;
+
+    // If no store exists but shed has a silo, use it as fallback
+    if (shed.feed_silo_id) return shed.feed_silo_id;
 
     throw new BadRequestException(
       `'${activityName ?? 'This line'}' cannot be posted — no silo is attached to this batch's shed and its farm has no store to draw from. Attach a silo to the shed, or create the farm's store location.`,

@@ -11,7 +11,7 @@ describe('LocationService canonical hierarchy', () => {
   const txInsert = jest.fn();
   const txUpdate = jest.fn();
   const audit = { log: jest.fn() };
-  const numberSeries = { generateNext: jest.fn(), lockSeries: jest.fn() };
+  const numberSeries = { generateNext: jest.fn(), lockSeries: jest.fn(), findDefaultSeriesByMaster: jest.fn() };
 
   const makeSelectBuilder = (rows: any[]) => {
     const builder: any = {};
@@ -528,7 +528,7 @@ describe('hierarchical location codes', () => {
   // child location is `<parent code>/<TYPE>-<seq>`, and <seq> counts only
   // the siblings sharing that exact parent, never a company-wide total.
   let service: LocationService;
-  const numberSeries = { generateNext: jest.fn(), lockSeries: jest.fn() };
+  const numberSeries = { generateNext: jest.fn(), lockSeries: jest.fn(), findDefaultSeriesByMaster: jest.fn() };
 
   beforeEach(async () => {
     jest.clearAllMocks();
