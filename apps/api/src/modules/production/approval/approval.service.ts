@@ -226,7 +226,16 @@ export class ApprovalService {
   async findAll(query: QueryApprovalDto, tenantId: string) {
     const conditions: SQL[] = [eq(schema.approvalRequest.tenant_id, tenantId), isNull(schema.approvalRequest.deleted_at), ...this.farmConditions()];
     if (query.company_id) conditions.push(eq(schema.approvalRequest.company_id, query.company_id));
-    if (query.operational_area_id) conditions.push(eq(schema.approvalRequest.operational_area_id, query.operational_area_id));
+    // An area filter keeps rows of that area AND rows that carry no area yet:
+    // every approval_request row written before Plan S has a NULL area, so a
+    // strict equality emptied the inbox in an operational-area workspace. The
+    // company and farm/batch rules above still decide who may see a row.
+    if (query.operational_area_id) {
+      conditions.push(or(
+        eq(schema.approvalRequest.operational_area_id, query.operational_area_id),
+        isNull(schema.approvalRequest.operational_area_id),
+      )!);
+    }
     if (query.status) conditions.push(eq(schema.approvalRequest.status, query.status));
     if (query.doc_type) conditions.push(eq(schema.approvalRequest.doc_type, query.doc_type));
     if (query.from_date) conditions.push(gte(schema.approvalRequest.submitted_at, query.from_date));
@@ -264,7 +273,16 @@ export class ApprovalService {
   async counts(query: QueryApprovalDto, tenantId: string) {
     const conditions: SQL[] = [eq(schema.approvalRequest.tenant_id, tenantId), isNull(schema.approvalRequest.deleted_at), ...this.farmConditions()];
     if (query.company_id) conditions.push(eq(schema.approvalRequest.company_id, query.company_id));
-    if (query.operational_area_id) conditions.push(eq(schema.approvalRequest.operational_area_id, query.operational_area_id));
+    // An area filter keeps rows of that area AND rows that carry no area yet:
+    // every approval_request row written before Plan S has a NULL area, so a
+    // strict equality emptied the inbox in an operational-area workspace. The
+    // company and farm/batch rules above still decide who may see a row.
+    if (query.operational_area_id) {
+      conditions.push(or(
+        eq(schema.approvalRequest.operational_area_id, query.operational_area_id),
+        isNull(schema.approvalRequest.operational_area_id),
+      )!);
+    }
 
     const rows = await this.db
       .select({ status: schema.approvalRequest.status, n: sql<number>`COUNT(*)` })
@@ -422,6 +440,26 @@ export class ApprovalService {
         .limit(1);
       if (open) throw new ConflictException(`${doc.documentNo} is already waiting for approval.`);
 
+      // The workspace the farm submitted from, so an approver working in that
+      // operational area sees it. With no active area (an admin in the company
+      // workspace) the company's own area is used when there is exactly one;
+      // several is ambiguous, and null still lists under the rule above.
+      const active = this.cls.get<{ area_id?: string } | undefined>('activeOperationalArea');
+      let areaId: string | null = active?.area_id ?? null;
+      if (!areaId) {
+        const areas = await this.db
+          .select({ area_id: schema.operationalAreaMaster.area_id })
+          .from(schema.operationalAreaMaster)
+          .where(and(
+            eq(schema.operationalAreaMaster.tenant_id, tenantId),
+            eq(schema.operationalAreaMaster.company_id, doc.companyId),
+            eq(schema.operationalAreaMaster.is_active, true),
+            isNull(schema.operationalAreaMaster.deleted_at),
+          ))
+          .limit(2);
+        areaId = areas.length === 1 ? areas[0].area_id : null;
+      }
+
       const requestId = randomUUID();
       await this.db.insert(schema.approvalRequest).values({
         request_id: requestId,
@@ -435,6 +473,7 @@ export class ApprovalService {
         requestor_label: userPayload?.fullName || userPayload?.email || null,
         requestor_role: (userPayload?.userType || '').replace(/_/g, ' ') || null,
         location_label: `${farm.code} — ${farm.name ?? ''}`.trim().slice(0, 200),
+        operational_area_id: areaId,
         farm_id: doc.farmId,
         document_id: doc.documentId,
         urgency: doc.urgency || 'MEDIUM',

@@ -2072,6 +2072,7 @@ export const translations = {
     alrtLoadFailed: "Alerts could not be loaded.",
     alrtMarkReadFailed: "Failed to mark alert as read.",
     alrtTableLabel: "Alerts",
+    alrtPageDesc: "Batch and feed alerts for your farms.",
     alrtType: "Type",
     alrtTypeAll: "All alerts",
     alrtTypeBatch: "Batch performance",

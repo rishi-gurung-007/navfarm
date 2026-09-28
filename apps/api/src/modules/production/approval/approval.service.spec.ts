@@ -173,6 +173,19 @@ describe('ApprovalService farm scope', () => {
     expect(renderedWhere()).toContain('`approval_request`.`farm_id` is null');
   });
 
+  it('lists rows of the active area AND rows that carry no area yet (Plan S follow-up)', async () => {
+    useFarmScope(cls, { farmId: null, restricted: false, companyId: 'co-1', lobId: null });
+
+    await service.findAll({ operational_area_id: 'area-pig' } as any, 'tenant-1');
+
+    const q = dialect.sqlToQuery(capturedWhere as any);
+    // Every approval_request row in nf_devco has a NULL area, so a strict
+    // equality emptied the inbox in an operational-area workspace.
+    expect(q.sql).toContain('`approval_request`.`operational_area_id` = ?');
+    expect(q.sql).toContain('`approval_request`.`operational_area_id` is null');
+    expect(q.params).toContain('area-pig');
+  });
+
   it('refuses a batchless approval from a restricted user because it has no operational scope', async () => {
     useFarmScope(cls, { farmId: null, restricted: true, companyId: 'co-1', lobId: 'lob-pig' });
     mockDb.select.mockClear();
@@ -314,6 +327,43 @@ describe('ApprovalService farm documents (D25)', () => {
     expect(insert.values.batch_id).toBeUndefined();
     expect(log.filter((e) => e.op === 'insert' && e.table === schema.auditLog).map((e) => e.values.action)).toEqual(['CREATE']);
     expect(log.every((e) => e.inTx)).toBe(true);
+  });
+
+  it('stamps the active operational area on the request (Plan S follow-up)', async () => {
+    const { service, log, cls } = setup(new Map<unknown, unknown[][]>([
+      [schema.locationMaster, [[{ code: 'VIL100', name: 'Villa Franca' }]]],
+      [schema.approvalRequest, [[]]],
+    ]));
+    // Mirrors useFarmScope: the guard's context is supplied by patching get,
+    // since these specs run without a CLS run context.
+    const get = cls.get.bind(cls);
+    (cls as any).get = (key?: string) => (key === 'activeOperationalArea' ? { area_id: 'area-pig', company_id: 'co-1' } : get(key as any));
+    await service.submitFarmDocument({
+      documentType: 'FEED_REQUISITION', documentId: 'req-4', documentNo: 'REQ-1', farmId: 'farm-vil', companyId: 'co-1', title: 't',
+    }, 'tenant-1');
+    expect(log.find((e) => e.op === 'insert' && e.table === schema.approvalRequest)!.values.operational_area_id).toBe('area-pig');
+  });
+
+  it("falls back to the company's one operational area when none is active, and to null when there are several", async () => {
+    const one = setup(new Map<unknown, unknown[][]>([
+      [schema.locationMaster, [[{ code: 'VIL100', name: 'Villa Franca' }]]],
+      [schema.approvalRequest, [[]]],
+      [schema.operationalAreaMaster, [[{ area_id: 'area-pig' }]]],
+    ]));
+    await one.service.submitFarmDocument({
+      documentType: 'FEED_REQUISITION', documentId: 'req-4', documentNo: 'REQ-1', farmId: 'farm-vil', companyId: 'co-1', title: 't',
+    }, 'tenant-1');
+    expect(one.log.find((e) => e.op === 'insert' && e.table === schema.approvalRequest)!.values.operational_area_id).toBe('area-pig');
+
+    const many = setup(new Map<unknown, unknown[][]>([
+      [schema.locationMaster, [[{ code: 'VIL100', name: 'Villa Franca' }]]],
+      [schema.approvalRequest, [[]]],
+      [schema.operationalAreaMaster, [[{ area_id: 'area-pig' }, { area_id: 'area-dairy' }]]],
+    ]));
+    await many.service.submitFarmDocument({
+      documentType: 'FEED_REQUISITION', documentId: 'req-5', documentNo: 'REQ-2', farmId: 'farm-vil', companyId: 'co-1', title: 't',
+    }, 'tenant-1');
+    expect(many.log.find((e) => e.op === 'insert' && e.table === schema.approvalRequest)!.values.operational_area_id).toBeNull();
   });
 
   it('refuses a second open request for the same document', async () => {

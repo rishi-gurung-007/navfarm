@@ -47,6 +47,7 @@ export function useProductionPageState() {
 export function ProductionPageShell({
   titleKey,
   fill = false,
+  descriptionKey,
   children,
 }: {
   /** Translation key, not a literal — every Production route used to pass an
@@ -54,6 +55,13 @@ export function ProductionPageShell({
   titleKey: TranslationKeys;
   /** Plan S: fixed-height page; only its table scrolls. */
   fill?: boolean;
+  /**
+   * A page's own subtitle. Without one the shell's generic operational-area
+   * line is used, which read wrongly on Alerts ("Lifecycle tracking, batch
+   * feed & health logs…" under a list of alerts). Opt-in, so every other
+   * Production page keeps the line it has.
+   */
+  descriptionKey?: TranslationKeys;
   children: (activeLob: string) => React.ReactNode;
 }) {
   const { ready, activeLob, mayView } = useProductionPageState();
@@ -81,7 +89,7 @@ export function ProductionPageShell({
     <ConsolePage fill={fill}>
       <PageHeader
         title={title}
-        description={t("ppsPageDescription", { lob: tLob(activeLob) })}
+        description={descriptionKey ? t(descriptionKey) : t("ppsPageDescription", { lob: tLob(activeLob) })}
         sticky={!fill}
       />
       {children(activeLob)}
