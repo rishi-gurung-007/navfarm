@@ -9,9 +9,14 @@
  * placeholder, and the production day as a weekday name rather than the 0-6
  * the column stores. Saving a row sends all six for that farm, so clearing a
  * cell really clears it.
+ *
+ * Every column is budgeted to fit the narrowest workspace the shell gives it
+ * (FEED_PLANNING_LAYOUT): at 1024 the 260 px sidebar and the page's own
+ * padding leave 708 px, and the first cut of this table was 1159 px wide, so
+ * the Save button sat off the edge behind a sideways scroll.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Loader2, Save } from "lucide-react";
+import { Check, Loader2, Save } from "lucide-react";
 import { api } from "@/services/api-client";
 import { Button } from "@/components/ui/button";
 import { InlineAlert } from "@/components/ui/alert";
@@ -30,6 +35,29 @@ export const FEED_PLANNING_DEFAULTS = {
 
 export type FeedPlanningKey = keyof typeof FEED_PLANNING_DEFAULTS;
 
+/**
+ * The width of every cell, in pixels, so the row fits without a sideways
+ * scroll — feed-planning-panel.spec.tsx adds it up against the 708 px the
+ * shell leaves at 1024. The component renders from these figures, so a change
+ * here is a change on screen and the budget cannot drift away from it.
+ */
+const CELL_PADDING_PX = 12; // px-1.5 either side
+const FARM_PX = 116;
+const DAYS_INPUT_PX = 56;
+const KG_INPUT_PX = 72;
+const SELECT_PX = 104;
+const SAVE_PX = 30;
+const INPUTS_PX = [DAYS_INPUT_PX, DAYS_INPUT_PX, KG_INPUT_PX, KG_INPUT_PX, KG_INPUT_PX];
+
+export const FEED_PLANNING_LAYOUT = {
+  cellPaddingPx: CELL_PADDING_PX,
+  farmPx: FARM_PX,
+  inputsPx: INPUTS_PX,
+  selectPx: SELECT_PX,
+  savePx: SAVE_PX,
+  totalPx: FARM_PX + INPUTS_PX.reduce((a, b) => a + b, 0) + SELECT_PX + SAVE_PX + (1 + INPUTS_PX.length + 2) * CELL_PADDING_PX,
+} as const;
+
 export interface FeedPlanningFarm {
   farmId: string;
   code: string;
@@ -39,18 +67,20 @@ export interface FeedPlanningFarm {
   settings: Record<FeedPlanningKey, number | null>;
 }
 
-const NUMBER_COLUMNS: { key: Exclude<FeedPlanningKey, "feed_production_weekday">; labelKey: string; min: number; max?: number }[] = [
-  { key: "feed_refill_buffer_days", labelKey: "fpBuffer", min: 0, max: 30 },
-  { key: "feed_lead_time_days", labelKey: "fpLeadTime", min: 0, max: 30 },
-  { key: "feed_bulk_multiple_kg", labelKey: "fpBulkMultiple", min: 1 },
-  { key: "feed_bag_size_kg", labelKey: "fpBagSize", min: 1 },
-  { key: "feed_truck_target_kg", labelKey: "fpTruckTarget", min: 1 },
+const NUMBER_COLUMNS: { key: Exclude<FeedPlanningKey, "feed_production_weekday">; labelKey: string; unitKey: string; min: number; max?: number; widthPx: number }[] = [
+  { key: "feed_refill_buffer_days", labelKey: "fpBuffer", unitKey: "fpUnitDays", min: 0, max: 30, widthPx: DAYS_INPUT_PX },
+  { key: "feed_lead_time_days", labelKey: "fpLeadTime", unitKey: "fpUnitDays", min: 0, max: 30, widthPx: DAYS_INPUT_PX },
+  { key: "feed_bulk_multiple_kg", labelKey: "fpBulkMultiple", unitKey: "fpUnitKg", min: 1, widthPx: KG_INPUT_PX },
+  { key: "feed_bag_size_kg", labelKey: "fpBagSize", unitKey: "fpUnitKg", min: 1, widthPx: KG_INPUT_PX },
+  { key: "feed_truck_target_kg", labelKey: "fpTruckTarget", unitKey: "fpUnitKg", min: 1, widthPx: KG_INPUT_PX },
 ];
 
 const WEEKDAY_KEYS = ["fpDaySun", "fpDayMon", "fpDayTue", "fpDayWed", "fpDayThu", "fpDayFri", "fpDaySat"] as const;
 
-const TH = "h-9 whitespace-nowrap px-3 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]";
-const TD = "whitespace-nowrap px-3 py-1.5 text-xs text-[var(--text-primary)]";
+// The header wraps on purpose: a nowrap header was what made the columns
+// wider than their inputs, and so the table wider than its box.
+const TH = "px-1.5 py-1.5 align-bottom text-[10px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]";
+const TD = "px-1.5 py-1.5 text-xs text-[var(--text-primary)]";
 const inputStyle = { backgroundColor: "var(--input-bg)", color: "var(--input-text)", borderColor: "var(--input-border)" };
 
 /** The form holds strings, because an emptied cell is "" and means "clear it". */
@@ -156,7 +186,7 @@ export function FeedPlanningPanel() {
 
   return (
     <div className="space-y-3">
-      <p className="text-xs text-[var(--text-secondary)]">{t("fpIntro")}</p>
+      <p className="text-xs text-[var(--text-secondary)]">{t("fpIntro", { day: t(WEEKDAY_KEYS[FEED_PLANNING_DEFAULTS.feed_production_weekday]) })}</p>
       {rowError && <InlineAlert>{rowError.message}</InlineAlert>}
       {farms.length === 0 ? (
         <p className="text-xs text-[var(--text-secondary)]">{t("fpNoFarms")}</p>
@@ -164,12 +194,15 @@ export function FeedPlanningPanel() {
         <ScrollTable label={t("fpTableLabel")}>
           <thead>
             <tr>
-              <th scope="col" className={TH}>{t("fpColFarm")}</th>
+              <th scope="col" className={TH} style={{ width: FARM_PX + CELL_PADDING_PX }}>{t("fpColFarm")}</th>
               {NUMBER_COLUMNS.map((column) => (
-                <th key={column.key} scope="col" className={`${TH} text-right`}>{t(`${column.labelKey}Col` as any)}</th>
+                <th key={column.key} scope="col" className={`${TH} text-right`} style={{ width: column.widthPx + CELL_PADDING_PX }}>
+                  {t(`${column.labelKey}Col` as any)}
+                  <span className="block font-normal normal-case tracking-normal">{t(column.unitKey as any)}</span>
+                </th>
               ))}
-              <th scope="col" className={TH}>{t("fpProductionDayCol")}</th>
-              <th scope="col" className={TH} />
+              <th scope="col" className={TH} style={{ width: SELECT_PX + CELL_PADDING_PX }}>{t("fpProductionDayCol")}</th>
+              <th scope="col" className={TH} style={{ width: SAVE_PX + CELL_PADDING_PX }} />
             </tr>
           </thead>
           <tbody>
@@ -177,14 +210,16 @@ export function FeedPlanningPanel() {
               const draft = drafts[farm.farmId] ?? draftOf(farm);
               return (
                 <tr key={farm.farmId}>
-                  <td className={TD}>{farm.code} — {farm.name}</td>
+                  <td className={TD} style={{ width: FARM_PX + CELL_PADDING_PX }}>
+                    <span className="font-medium">{farm.code} — {farm.name}</span>
+                  </td>
                   {NUMBER_COLUMNS.map((column) => (
                     <td key={column.key} className={`${TD} text-right`}>
                       <input
                         type="number"
                         aria-label={t(column.labelKey as any, { farm: farm.code })}
-                        className="nf-input-sm w-24 text-right tabular-nums"
-                        style={inputStyle}
+                        className="nf-input-sm text-right tabular-nums"
+                        style={{ ...inputStyle, width: column.widthPx }}
                         min={column.min}
                         max={column.max}
                         step="1"
@@ -197,27 +232,30 @@ export function FeedPlanningPanel() {
                   <td className={TD}>
                     <select
                       aria-label={t("fpProductionDay", { farm: farm.code })}
-                      className="nf-input-sm nf-select w-32"
-                      style={inputStyle}
+                      className="nf-input-sm nf-select"
+                      style={{ ...inputStyle, width: SELECT_PX }}
                       value={draft.feed_production_weekday}
                       onChange={(e) => setCell(farm.farmId, "feed_production_weekday", e.target.value)}
                     >
-                      <option value="">{t("fpDayDefault", { day: t(WEEKDAY_KEYS[FEED_PLANNING_DEFAULTS.feed_production_weekday]) })}</option>
+                      {/* The standard day is named once, in the intro — a "Sunday (standard)" option here was wider than the whole column. */}
+                      <option value="">—</option>
                       {WEEKDAY_KEYS.map((dayKey, index) => (
                         <option key={dayKey} value={String(index)}>{t(dayKey)}</option>
                       ))}
                     </select>
                   </td>
-                  <td className={TD}>
+                  <td className={TD} style={{ width: SAVE_PX + CELL_PADDING_PX }}>
                     <Button
                       size="sm"
                       variant="outline"
-                      className="h-7 px-2.5 text-[11px]"
+                      className="h-7 px-0"
+                      style={{ width: SAVE_PX }}
                       aria-label={t("fpSave", { farm: farm.code })}
+                      title={saved === farm.farmId && !changed(farm.farmId) ? t("fpSaved") : t("fpSaveAction")}
                       disabled={!changed(farm.farmId) || saving === farm.farmId}
                       onClick={() => save(farm)}
                     >
-                      <Save className="h-3 w-3" /> {saved === farm.farmId && !changed(farm.farmId) ? t("fpSaved") : t("fpSaveAction")}
+                      {saved === farm.farmId && !changed(farm.farmId) ? <Check className="h-3.5 w-3.5" /> : <Save className="h-3.5 w-3.5" />}
                     </Button>
                   </td>
                 </tr>

@@ -1,6 +1,6 @@
 import React from 'react';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
-import { FeedPlanningPanel, FEED_PLANNING_DEFAULTS } from '../src/components/console/inventory/feed-planning-panel';
+import { FeedPlanningPanel, FEED_PLANNING_DEFAULTS, FEED_PLANNING_LAYOUT } from '../src/components/console/inventory/feed-planning-panel';
 import { api } from '../src/services/api-client';
 
 /**
@@ -112,5 +112,61 @@ describe('Feed Planning (D32)', () => {
     get.mockResolvedValue({ data: FARMS });
     fireEvent.click(screen.getByRole('button', { name: 'fpRetry' }));
     expect(await screen.findByText('VIL100 — Villa Franca')).toBeTruthy();
+  });
+});
+
+/**
+ * The row has to fit without a sideways scroll at 1440 and at 1024 (controller,
+ * 28 Sep: at 1440x900 it was 1159 px inside a 1114 px box, so the Save button
+ * was cut off). The shell is a grid — a 260 px sidebar beside the page, and the
+ * page's own lg:px-7 padding — so the content box is the window less 316 px:
+ * 1124 px at 1440, and 708 px at 1024, which is the one that binds.
+ *
+ * A jsdom test cannot lay the table out, so the budget is asserted from the
+ * widths the component declares. Keeping this honest means the widths live in
+ * FEED_PLANNING_LAYOUT and the component renders from it.
+ */
+describe('Feed Planning fits 1024 without a sideways scroll (D32 follow-up)', () => {
+  const CONTENT_AT_1024 = 1024 - 260 - 56;
+
+  it('budgets every column inside the 1024 content box', () => {
+    const { cellPaddingPx, farmPx, inputsPx, selectPx, savePx } = FEED_PLANNING_LAYOUT;
+    const columns = 1 + inputsPx.length + 2;
+    const total = farmPx + inputsPx.reduce((a, b) => a + b, 0) + selectPx + savePx + columns * cellPaddingPx;
+    expect(total).toBeLessThanOrEqual(CONTENT_AT_1024);
+    expect(FEED_PLANNING_LAYOUT.totalPx).toBe(total);
+  });
+
+  it('leaves room for the longest value each cell can hold', () => {
+    // 12px tabular numerals are about 7.2 px wide, and nf-input-sm adds 8 px of
+    // padding either side. Five digits is the widest figure any column takes.
+    const widestNumber = Math.ceil(5 * 7.2) + 16;
+    for (const width of FEED_PLANNING_LAYOUT.inputsPx) expect(width).toBeGreaterThanOrEqual(widestNumber);
+    // "Wednesday" at 12 px, plus the select's arrow and padding.
+    expect(FEED_PLANNING_LAYOUT.selectPx).toBeGreaterThanOrEqual(Math.ceil(9 * 6.9) + 20 + 16);
+  });
+
+  it('renders the inputs and the select at the budgeted widths', async () => {
+    render(<FeedPlanningPanel />);
+    await screen.findByRole('table', { name: 'fpTableLabel' });
+    const buffer = screen.getByLabelText('fpBuffer:{"farm":"VIL100"}') as HTMLInputElement;
+    expect(buffer.style.width).toBe(`${FEED_PLANNING_LAYOUT.inputsPx[0]}px`);
+    const day = screen.getByLabelText('fpProductionDay:{"farm":"VIL100"}') as HTMLSelectElement;
+    expect(day.style.width).toBe(`${FEED_PLANNING_LAYOUT.selectPx}px`);
+  });
+
+  it('keeps the unset production day narrow, with the standard day named in the intro instead', async () => {
+    render(<FeedPlanningPanel />);
+    await screen.findByRole('table', { name: 'fpTableLabel' });
+    const day = screen.getByLabelText('fpProductionDay:{"farm":"GRA100"}') as HTMLSelectElement;
+    expect(day.options[0].textContent).toBe('—');
+    expect(screen.getByText('fpIntro:{"day":"fpDaySun"}')).toBeTruthy();
+  });
+
+  it('saves with an icon-only button that still names the farm', async () => {
+    render(<FeedPlanningPanel />);
+    await screen.findByRole('table', { name: 'fpTableLabel' });
+    const save = screen.getByRole('button', { name: 'fpSave:{"farm":"VIL100"}' });
+    expect(save.textContent).toBe('');
   });
 });
