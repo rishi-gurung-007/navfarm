@@ -16,7 +16,7 @@ Create button on a fresh tenant).
     ledger `.superpowers/sdd/2026-09-27-feed-forecast-s-fixes/progress.md`
     (controller checks, rulings, parked minors); review `final-review.md` there.
   - Evidence: `docs/VERIFICATION-2026-09-27-feed-forecast-s.md` (API + MySQL),
-    migration rehearsal `migration-rehearsal.md` in the ledger folder, and the
+    migration rehearsal `docs/VERIFICATION-2026-09-28-plan-s-migration-rehearsal.md`, and the
     controller's browser check after Rishi's demo rebuild + migrations
     (1440×900, 1024×768, 375×812).
   - Local DBs: rebuilt and migrated by Rishi on 28 Sep (journal 127). `nf_kkp`

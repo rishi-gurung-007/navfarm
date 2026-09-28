@@ -502,7 +502,7 @@ exactly (a shed with several silos keeps the lowest).
 ### Plan S release (tenant migrations 0122–0126)
 
 What it changes on testers' data, and what it leaves alone (rehearsed on a
-server-like copy, `.superpowers/sdd/2026-09-27-feed-forecast-s-fixes/migration-rehearsal.md`):
+server-like copy, `docs/VERIFICATION-2026-09-28-plan-s-migration-rehearsal.md`):
 
 - **0122** adds `approval_request.farm_id` and `document_id` (feed requisitions are
   approved in the Approvals inbox) and fills them on the feed requisitions already

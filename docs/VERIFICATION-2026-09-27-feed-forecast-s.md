@@ -26,7 +26,7 @@ feed and approval reads with `x-workspace-scope: TENANT`.
 >    have no shed, the four ranged stage durations and the two successors are empty,
 >    and 248 pens, sheds and crates still carry `storage_type = 'SILO'`. Applying them
 >    is Rishi's action (the classifier refuses `db-migrate-all-tenants` to an agent);
->    they were rehearsed instead — `.superpowers/sdd/2026-09-27-feed-forecast-s-fixes/migration-rehearsal.md`.
+>    they were rehearsed instead — `docs/VERIFICATION-2026-09-28-plan-s-migration-rehearsal.md`.
 > 2. **No web dev server and no browser was started.** Nothing was listening on 2877 or
 >    3002, and this machine has 8 GB with ~200 MB unused: a Next dev server plus Chromium
 >    swaps it hard. Every check below is therefore through the running API and MySQL;
@@ -204,7 +204,7 @@ checksum, and the recovery for a part-way 0122.
 
 ```bash
 cd apps/api && pnpm nx run api:db-rebuild-demo -- --apply
-bash .superpowers/sdd/2026-09-27-feed-forecast-s-fixes/verify-after-rebuild.sh
+bash .superpowers/sdd/2026-09-27-feed-forecast-s-fixes/verify-after-rebuild.sh   # local dev machine only (git-ignored)
 ```
 
 **3. The browser steps** (Steps 1, 2, 3, 5 and 6 of Task 22), once 1 and 2 are done and a
