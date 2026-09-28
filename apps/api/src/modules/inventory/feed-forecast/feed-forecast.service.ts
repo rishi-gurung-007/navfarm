@@ -124,7 +124,14 @@ export interface StageBlock {
   nextStageCode: string | null;
   nextFrom: string | null;
   nextTo: string | null;
-  stageChangeDate: string | null;
+  /**
+   * D36 (Rishi, 28 Sep): the earliest day the stage could be left — the stage
+   * master's `min_days_before_move` — when the stage is event-based and that
+   * minimum sits strictly inside 0…latest. Null on a dated stage: its change
+   * is a day, not a window. The web shows "earliest – latest (expected)".
+   */
+  stageChangeEarliest: string | null;
+  stageChangeDate: string | null; // the latest day (typical_duration_days), which the forecast plans on
   stageChangeOverdue: boolean; // due on or before the planning date but not posted
 }
 
@@ -161,6 +168,14 @@ export function stageBlocksFor(
         nextStageCode: next?.stageCode ?? null,
         nextFrom,
         nextTo,
+        // D36: the earliest day the change could happen — the stage master's
+        // min_days_before_move, read as day N's end (same -1 convention as
+        // durationDays above) — shown only when it falls strictly inside
+        // 0…latest. The planned date itself stays the LATEST day (D36).
+        stageChangeEarliest:
+          nextFrom && next && stage?.minDays != null && stage.minDays > 0 && stage.minDays < stage.durationDays!
+            ? addDays(current.start, stage.minDays)
+            : null,
         stageChangeDate: nextFrom,
         stageChangeOverdue: nextFrom !== null && nextFrom <= planningDate,
       };
@@ -204,6 +219,8 @@ export interface StageInfo {
   stageId: string;
   stageCode: string;
   durationDays: number | null;
+  /** D36: min_days_before_move — the earliest day an event-based stage can be left. */
+  minDays?: number | null;
   nextStageId: string | null;
   isActive: boolean;
 }
@@ -319,8 +336,22 @@ export function projectSegments(
   to: string,
   stages: Map<string, StageInfo>,
 ): Segment[] {
+  // The initial segment carries the stage's change window (D36):
+  // changeWindowStart needs min_days_before_move, read off the same row.
   const first = stages.get(stageId);
-  const segments: Segment[] = [{ stageId, stageCode: first?.stageCode ?? stageId, start, end: null, projected: false }];
+  const segments: Segment[] = [{
+    stageId,
+    stageCode: first?.stageCode ?? stageId,
+    start,
+    end: null,
+    projected: false,
+    // D36: an event-based stage's change window — earliest day (min_days_before_move)
+    // to latest (typical_duration_days). Set when the minimum sits strictly inside
+    // 0…latest; the forecast still plans the change on the latest day.
+    ...(first?.minDays != null && first.minDays > 0 && first.durationDays != null && first.minDays < first.durationDays
+      ? { changeWindowStart: addDays(start, first.minDays) }
+      : {}),
+  }];
   while (segments.length < MAX_SEGMENTS) {
     const current = segments[segments.length - 1];
     const stage = stages.get(current.stageId);
@@ -1325,6 +1356,7 @@ export class FeedForecastService {
         stage_id: schema.stageMaster.stage_id,
         stage_code: schema.stageMaster.stage_code,
         typical_duration_days: schema.stageMaster.typical_duration_days,
+        min_days_before_move: schema.stageMaster.min_days_before_move,
         next_stage_id: schema.stageMaster.next_stage_id,
         is_active: schema.stageMaster.is_active,
       })
@@ -1344,6 +1376,7 @@ export class FeedForecastService {
           stageId: s.stage_id,
           stageCode: s.stage_code,
           durationDays: s.typical_duration_days,
+          minDays: s.min_days_before_move,
           nextStageId: s.next_stage_id,
           isActive: s.is_active,
         },

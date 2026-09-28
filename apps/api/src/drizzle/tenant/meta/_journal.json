@@ -918,6 +918,13 @@
       "when": 1791913200000,
       "tag": "0130_item_tracking_series_fk",
       "breakpoints": true
+    },
+    {
+      "idx": 131,
+      "version": "5",
+      "when": 1792000000000,
+      "tag": "0131_flush_latest_day",
+      "breakpoints": true
     }
   ]
 }

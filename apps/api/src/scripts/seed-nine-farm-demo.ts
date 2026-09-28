@@ -383,13 +383,15 @@ const SOW_STAGE_PLAN: StagePlan[] = [
     note: `Client period: "Gilt grower to ~210" (days of age), held as stage days 1-183 (age 28-210). The farm sheets write this phase as "gilt rearing 16 to 25 weeks" and "gilt rearing gilt to Service line (28 weeks to 35 weeks)". ${DEMO_CAVEAT}`,
   },
   {
-    stage: 'FLUSH', category: 'GILT', from: 1, to: 14,
+    // D36 (Rishi, 28 Sep): BBP §1.7 gives flush 3–5 days; held as stage days 1–5
+    // (the range's latest day), superseding the S7 hold of 14.
+    stage: 'FLUSH', category: 'GILT', from: 1, to: 5,
     feed: FEED.GESTATION, feedKgPerHeadPerDay: 3.5,
     bodyWeightKg: 135, adgGpd: 700, fcr: 3, mortalityPct: 0.3,
     vaccinations: [],
     medications: [],
     kpis: [{ metric: 'BCS_SCORE', lower_limit: 3, upper_limit: 3.5, severity: 'INFO' }],
-    note: `Client period: "Flush 14" (days). ${DEMO_CAVEAT}`,
+    note: `Client period: "Flush 14" (days) as submitted; BBP §1.7 gives 3–5 and D36 holds the stage's latest day as 5. ${DEMO_CAVEAT}`,
   },
   {
     stage: 'INSEMINATION', category: 'SOW', from: 1, to: 2,

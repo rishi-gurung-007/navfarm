@@ -429,13 +429,15 @@ describe('FeedForecastService', () => {
 });
 
 describe('projectSegments', () => {
-  const stage = (stageId: string, stageCode: string, durationDays: number | null, nextStageId: string | null, isActive = true): StageInfo => ({
-    stageId, stageCode, durationDays, nextStageId, isActive,
+  const stage = (stageId: string, stageCode: string, durationDays: number | null, nextStageId: string | null, isActive = true, minDays: number | null = null): StageInfo => ({
+    stageId, stageCode, durationDays, nextStageId, isActive, minDays,
   });
   const stages = new Map([
     ['S1', stage('S1', 'WEANER', 10, 'S2')],
     ['S2', stage('S2', 'GROWER', 5, 'S3')],
     ['S3', stage('S3', 'FINISHER', null, null)],
+    ['FLU', stage('FLU', 'FLUSH', 5, 'INS', true, 3)],
+    ['INS', stage('INS', 'INSEMINATION', 2, null)],
   ]);
 
   it('projects the next stages while each segment ends before `to`', () => {
@@ -467,6 +469,28 @@ describe('projectSegments', () => {
     expect(projectSegments('S1', '2026-09-20', '2026-09-20', '2026-10-15', withRetired)).toEqual([
       { stageId: 'S1', stageCode: 'WEANER', start: '2026-09-20', end: null, projected: false },
     ]);
+  });
+
+  it('carries the change window on the current segment of an event-based stage (D36)', () => {
+    // FLUSH entered 1 Sep, min 3, typical 5: earliest change 4 Sep, planned (latest) 6 Sep.
+    // INSEMINATION's segment stays open-ended: it has no successor to date an end from.
+    expect(projectSegments('FLU', '2026-09-01', '2026-09-01', '2026-09-20', stages)).toEqual([
+      { stageId: 'FLU', stageCode: 'FLUSH', start: '2026-09-01', end: '2026-09-05', projected: false, changeWindowStart: '2026-09-04' },
+      { stageId: 'INS', stageCode: 'INSEMINATION', start: '2026-09-06', end: null, projected: true },
+    ]);
+  });
+
+  it('no window when there is no minimum, or the minimum is 0, or it is not before the latest day (D36)', () => {
+    const noWindow = new Map([
+      ['A', stage('A', 'A', 5, 'B')], // no min
+      ['B', stage('B', 'B', 5, 'C', true, 0)], // min 0
+      ['C', stage('C', 'C', 4, 'D', true, 4)], // min == typical
+      ['D', stage('D', 'D', 4, 'E', true, 6)], // min past typical — nonsense, but no window either
+      ['E', stage('E', 'E', null, null)],
+    ]);
+    for (const id of ['A', 'B', 'C', 'D']) {
+      expect(projectSegments(id, '2026-09-01', '2026-09-01', '2026-09-20', noWindow)[0].changeWindowStart).toBeUndefined();
+    }
   });
 
   it('terminates on a cyclic chain', () => {
@@ -924,7 +948,9 @@ describe('stageBlocksFor — current / next stage block (field spec supporting b
   const stages = new Map<string, StageInfo>([
     ['wean', { stageId: 'wean', stageCode: 'WEANER', durationDays: 42, nextStageId: 'grow', isActive: true }],
     ['grow', { stageId: 'grow', stageCode: 'GROWER', durationDays: 56, nextStageId: null, isActive: true }],
-    ['sow', { stageId: 'sow', stageCode: 'DRY_SOW', durationDays: null, nextStageId: 'grow', isActive: true }],
+    ['sow', { stageId: 'sow', stageCode: 'DRY_SOW', durationDays: null, nextStageId: 'grow', isActive: true, minDays: 4 }],
+    ['flush', { stageId: 'flush', stageCode: 'FLUSH', durationDays: 5, nextStageId: 'ins', isActive: true, minDays: 3 }],
+    ['ins', { stageId: 'ins', stageCode: 'INSEMINATION', durationDays: 2, nextStageId: null, isActive: true }],
     ['old', { stageId: 'old', stageCode: 'OLD', durationDays: 10, nextStageId: 'gone', isActive: true }],
     ['gone', { stageId: 'gone', stageCode: 'RETIRED', durationDays: 10, nextStageId: null, isActive: false }],
   ]);
@@ -939,7 +965,7 @@ describe('stageBlocksFor — current / next stage block (field spec supporting b
       batchId: 'b', batchNo: 'WG-2026-38', shedCode: 'GRS/SHED-003',
       currentStageCode: 'WEANER', currentFrom: '2026-09-01', currentTo: '2026-10-12',
       nextStageCode: 'GROWER', nextFrom: '2026-10-13', nextTo: '2026-12-07',
-      stageChangeDate: '2026-10-13', stageChangeOverdue: false,
+      stageChangeEarliest: null, stageChangeDate: '2026-10-13', stageChangeOverdue: false,
     }]);
   });
 
@@ -966,6 +992,27 @@ describe('stageBlocksFor — current / next stage block (field spec supporting b
     const noShed = { ...batch('old', 'OLD', '2026-09-20'), shedId: '' };
     expect(stageBlocksFor([noShed], stages, sheds, '2026-09-23')[0])
       .toMatchObject({ shedCode: '', currentTo: '2026-09-29', nextStageCode: null, nextFrom: null, stageChangeDate: null });
+  });
+
+  it('an event-based stage shows the change window earliest – latest (expected) (D36)', () => {
+    // FLUSH entered 1 Sep: min 3 -> earliest change 4 Sep; typical 5 -> latest 6 Sep (the planned change date).
+    const [block] = stageBlocksFor([batch('flush', 'FLUSH', '2026-09-01')], stages, sheds, '2026-09-01');
+    expect(block).toMatchObject({
+      currentTo: '2026-09-05',
+      nextStageCode: 'INSEMINATION',
+      stageChangeEarliest: '2026-09-04',
+      stageChangeDate: '2026-09-06',
+      stageChangeOverdue: false,
+    });
+  });
+
+  it('no window when the stage has no minimum (earliest = 0) or the minimum is not before the latest (D36)', () => {
+    // WEANER has no min_days_before_move: the change date stands alone.
+    expect(stageBlocksFor([batch('wean', 'WEANER', '2026-09-01')], stages, sheds, '2026-09-23')[0].stageChangeEarliest).toBeNull();
+    // A stage whose minimum equals its typical duration has no range to show.
+    const tight = new Map(stages);
+    tight.set('tight', { stageId: 'tight', stageCode: 'TIGHT', durationDays: 4, nextStageId: 'ins', isActive: true, minDays: 4 });
+    expect(stageBlocksFor([batch('tight', 'TIGHT', '2026-09-01')], tight, sheds, '2026-09-01')[0].stageChangeEarliest).toBeNull();
   });
 
   it('back-dated planning date: the current stage still starts at today\'s header, not the batch start (Ruling I1)', () => {

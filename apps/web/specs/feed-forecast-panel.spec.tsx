@@ -51,7 +51,7 @@ const forecastResponse = {
     ],
     stages: [
       { batchId: 'b20', batchNo: 'BATCH-000020', shedCode: 'SHED-1', currentStageCode: 'DRY_SOW', currentFrom: '2026-09-01', currentTo: '2026-09-07',
-        nextStageCode: 'FLUSH', nextFrom: '2026-09-08', nextTo: '2026-09-21', stageChangeDate: '2026-09-08', stageChangeOverdue: true },
+        nextStageCode: 'FLUSH', nextFrom: '2026-09-08', nextTo: '2026-09-21', stageChangeEarliest: null, stageChangeDate: '2026-09-08', stageChangeOverdue: true },
     ],
     flags: [{ kind: 'HEADS_ASSUMED_FLAT', batchNo: 'BATCH-000010' }, { kind: 'BATCH_SHED_UNKNOWN', batchNo: 'BATCH-000010' }],
   },

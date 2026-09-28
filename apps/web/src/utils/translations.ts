@@ -1561,6 +1561,7 @@ export const translations = {
     ffBeyondHorizon: "After {{date}}",
     ffNotDueBy: "Not due by {{date}}",
     ffStagesTitle: "Stages",
+    ffChangeExpected: "expected",
     ffStageChangeNotPosted: "Due, not posted",
     ffLoading: "Loading forecast…",
     ffNoRows: "Nothing to forecast for these dates.",

@@ -92,7 +92,21 @@ export interface ForecastInput {
     breedId: string;
     shedId: string;
     heads: number;
-    segments: { stageId: string; stageCode: string; start: string; end: string | null; projected: boolean }[];
+    segments: {
+      stageId: string;
+      stageCode: string;
+      start: string;
+      end: string | null;
+      projected: boolean;
+      /**
+       * D36: the earliest day this segment could end (its stage's
+       * min_days_before_move), when the stage is event-based with a window
+       * 0 < earliest < latest. Set only on the CURRENT (recorded) segment —
+       * a posted move is a fact and its segments carry no window. Rows whose
+       * date falls on/after this day and before `end` are indicative.
+       */
+      changeWindowStart?: string | null;
+    }[];
   }[];
   feedRows: FeedRow[];
 }
@@ -491,6 +505,8 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
     sourceType: 'SILO' | 'STORE' | 'NONE';
     sourceCode: string | null;
     demandMicrograms: number;
+    /** D36: the date sits inside the segment's stage-change window (earliest…latest) — see DailyForecastRow. */
+    inChangeWindow: boolean;
   }
   const dailyEntries: DailyEntry[] = [];
   const batchesByKeyDate = new Map<string, Set<string>>();
@@ -532,6 +548,12 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
       const demandMicrograms = toMicrograms(batch.heads * feedRow.kgPerHeadPerDay); // D34: no wastage
       if (demandMicrograms <= 0) continue; // zero demand: no row, no source resolution, nothing to project
 
+      // D36: a row whose date falls inside the stage-change window — on or
+      // after the earliest day, before the planned (latest) day's successor —
+      // is indicative: the change may already have happened by then.
+      const inChangeWindow =
+        !!segment.changeWindowStart && date >= segment.changeWindowStart && segment.end !== null && date <= segment.end;
+
       const resolution = resolveSource(batch.shedId, feedRow.itemId);
       if (resolution.noSiloHoldsItem && date <= input.to) flagNoSilo(batch.shedId, feedRow.itemId);
       const sk = sourceKeyFor(resolution, feedRow.itemId);
@@ -559,6 +581,7 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
         dailyEntries.push({
           date, batchId: batch.batchId, batchNo: batch.batchNo, shedId: batch.shedId, heads: batch.heads,
           stageCode: segment.stageCode, feedRow, key: sk.key, sourceType: sk.sourceType, sourceCode: sk.sourceCode, demandMicrograms,
+          inChangeWindow,
         });
         const shareKey = `${sk.key}|${date}`;
         let sharing = batchesByKeyDate.get(shareKey);
@@ -793,7 +816,7 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
       // intake is 0; NONE has no container at all and no stock to divide.
       daysOfStock: e.sourceType !== 'NONE' && e.heads > 0 && rowIntakeMicrograms > 0 ? Math.floor(opening / rowIntakeMicrograms) : null,
       sharedBatchCount: e.sourceType === 'NONE' ? 1 : (batchesByKeyDate.get(`${e.key}|${e.date}`)?.size ?? 1),
-      indicative,
+      indicative: indicative || e.inChangeWindow,
       runDownDate: p.runDownDate,
       refillDate: p.refillDate,
       requiredOn: p.requiredOn,

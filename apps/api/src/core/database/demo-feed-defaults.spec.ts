@@ -22,7 +22,9 @@ describe('demo feed defaults (D22, D27, S7, S10)', () => {
       expect(seeded(code)).toBeDefined();
       expect(seeded(code)?.typical_duration_days).toBeUndefined();
     }
-    expect(DEMO_STAGE_DURATIONS).toEqual({ DRY_SOW: 7, FLUSH: 14, FARROWING: 3, WEANING: 1 });
+    // D36 (Rishi, 28 Sep): FLUSH's latest day is 5 — BBP §1.7 gives 3–5 and the
+    // stage master's typical_duration_days is the range's latest day (S7's 14 superseded).
+    expect(DEMO_STAGE_DURATIONS).toEqual({ DRY_SOW: 7, FLUSH: 5, FARROWING: 3, WEANING: 1 });
     expect(DEMO_NEXT_STAGES).toEqual({ WEANER: 'GROWER', GROWER: 'FINISHER' });
     expect(DEMO_SILO_FILL_PCT).toBe(50);
   });

@@ -59,6 +59,8 @@ export interface StageBlock {
   nextStageCode: string | null;
   nextFrom: string | null;
   nextTo: string | null;
+  /** D36: the earliest day the change could happen, on an event-based stage with a range. */
+  stageChangeEarliest: string | null;
   stageChangeDate: string | null;
   stageChangeOverdue: boolean;
 }
@@ -217,7 +219,11 @@ export function FeedForecastStages({ stages, t }: { stages: StageBlock[]; t: Tra
               <td className={TD}>{formatDateShort(s.currentTo)}</td>
               <td className={TD}>{s.nextStageCode ?? "—"}</td>
               <td className={TD}>
-                {formatDateShort(s.stageChangeDate)}
+                {/* D36: an event-based stage's change is a window — "earliest – latest (expected)";
+                    a dated stage's change is a day. Either can still be overdue (not posted). */}
+                {s.stageChangeEarliest
+                  ? `${formatDateShort(s.stageChangeEarliest)} – ${formatDateShort(s.stageChangeDate)} (${t("ffChangeExpected")})`
+                  : formatDateShort(s.stageChangeDate)}
                 {s.stageChangeOverdue && <Badge variant="warning" className={cn("ml-1.5", SMALL_BADGE)}>{t("ffStageChangeNotPosted")}</Badge>}
               </td>
             </tr>

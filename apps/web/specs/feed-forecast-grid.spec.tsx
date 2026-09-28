@@ -125,8 +125,14 @@ describe('wastageNote (D34)', () => {
 describe('FeedForecastStages — a table, not stacked cards (review C, A6)', () => {
   const block: StageBlock = {
     batchId: 'b', batchNo: 'WG-2026-38', shedCode: 'GRS/SHED-003', currentStageCode: 'WEANER', currentFrom: '2026-08-01', currentTo: '2026-09-11',
-    nextStageCode: 'GROWER', nextFrom: '2026-09-12', nextTo: '2026-11-06', stageChangeDate: '2026-09-12', stageChangeOverdue: true,
+    nextStageCode: 'GROWER', nextFrom: '2026-09-12', nextTo: '2026-11-06', stageChangeEarliest: null, stageChangeDate: '2026-09-12', stageChangeOverdue: true,
   };
+
+  it('shows an event-based stage change as the window earliest – latest (expected) (D36)', () => {
+    render(<FeedForecastStages stages={[{ ...block, stageChangeEarliest: '2026-09-10' }]} t={t} />);
+    const cell = within(screen.getAllByRole('row')[1]).getAllByRole('cell')[6];
+    expect(cell.textContent).toBe('10/09/26 – 12/09/26 (ffChangeExpected)ffStageChangeNotPosted');
+  });
 
   it('lists batch, current stage, from, to, next stage and change date, with a not-posted mark', () => {
     render(<FeedForecastStages stages={[block]} t={t} />);
@@ -143,7 +149,7 @@ describe('FeedForecastStages — a table, not stacked cards (review C, A6)', () 
   });
 
   it('renders both rows of a batch with two concurrent stages, and an empty state', () => {
-    const shared = { ...block, batchNo: 'BATCH-000010', nextStageCode: null, nextFrom: null, nextTo: null, stageChangeDate: null, stageChangeOverdue: false };
+    const shared = { ...block, batchNo: 'BATCH-000010', nextStageCode: null, nextFrom: null, nextTo: null, stageChangeEarliest: null, stageChangeDate: null, stageChangeOverdue: false };
     const { rerender } = render(<FeedForecastStages stages={[{ ...shared, currentStageCode: 'GESTATION' }, { ...shared, currentStageCode: 'LACTATION' }]} t={t} />);
     expect(screen.getAllByText('BATCH-000010')).toHaveLength(2);
     rerender(<FeedForecastStages stages={[]} t={t} />);

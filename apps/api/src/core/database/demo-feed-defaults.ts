@@ -23,7 +23,10 @@ export function defaultSiloLevels(capacityKg: number): { lowKg: number; highKg: 
   };
 }
 
-export const DEMO_STAGE_DURATIONS: Readonly<Record<string, number>> = { DRY_SOW: 7, FLUSH: 14, FARROWING: 3, WEANING: 1 };
+// D36 (Rishi, 28 Sep): FLUSH's latest day is 5 (BBP §1.7 gives 3–5; typical_duration_days
+// is the range's latest day), superseding the S7 value of 14. Migration 0131 moves existing
+// system rows that still say 14; the seed writes 5 so a fresh demo agrees with it.
+export const DEMO_STAGE_DURATIONS: Readonly<Record<string, number>> = { DRY_SOW: 7, FLUSH: 5, FARROWING: 3, WEANING: 1 };
 export const DEMO_NEXT_STAGES: Readonly<Record<string, string>> = { WEANER: 'GROWER', GROWER: 'FINISHER' };
 
 export const DEMO_SILO_FILL_PCT = 50;

@@ -13,6 +13,39 @@ const read = (tag: string) => readFileSync(join(dir, `${tag}.sql`), 'utf8');
 const statements = (tag: string) => read(tag).split('--> statement-breakpoint').map((s) => s.replace(/^--.*$/gm, '').trim()).filter(Boolean);
 const TAGS = ['0123_batch_shed_from_placement', '0124_silo_level_defaults', '0125_system_stage_timings'];
 
+/**
+ * D36 (Rishi, 28 Sep): FLUSH's latest day is 5, not the 14 Plan S's S7 set.
+ * Migration 0131 moves it on system rows only where it is still 14 — written
+ * here, applied to real tenants by the controller.
+ */
+describe('migration 0131 — FLUSH latest day 14 → 5 on system rows (D36)', () => {
+  const sql = statements('0131_flush_latest_day')[0];
+
+  it('is journalled after 0130, strictly increasing', () => {
+    const journal = JSON.parse(readFileSync(join(dir, 'meta/_journal.json'), 'utf8')).entries as Array<{ idx: number; when: number; tag: string }>;
+    expect(journal.find((e) => e.idx === 131)).toEqual({ idx: 131, version: '5', when: 1792000000000, tag: '0131_flush_latest_day', breakpoints: true });
+    const whens = journal.map((e) => e.when);
+    expect(whens.every((w, i) => i === 0 || w > whens[i - 1])).toBe(true);
+  });
+
+  it('updates system FLUSH stages at 14 to 5, and nothing else', () => {
+    expect(statements('0131_flush_latest_day')).toHaveLength(1);
+    expect(sql).toMatch(/^UPDATE `stage_master`/);
+    expect(sql).toContain('`typical_duration_days` = 5');
+    expect(sql).toContain('`is_system` = 1');
+    expect(sql).toContain("`stage_code` = 'FLUSH'");
+    expect(sql).toContain('`typical_duration_days` = 14');
+    expect(sql).toContain('`deleted_at` IS NULL');
+    expect(sql).not.toMatch(/\b(DELETE|DROP|TRUNCATE|ALTER|INSERT)\b/i);
+  });
+
+  it('does not leave the demo seed writing FLUSH = 14 into fresh databases', () => {
+    // The demo seed writes DEMO_STAGE_DURATIONS, so the two must agree here:
+    // FLUSH is 5 (D36) and the seed's other lengths are untouched.
+    expect(DEMO_STAGE_DURATIONS.FLUSH).toBe(5);
+  });
+});
+
 describe('Plan S data migrations (D21–D23)', () => {
   it('are journalled after 0122, a day apart', () => {
     const journal = JSON.parse(readFileSync(join(dir, 'meta/_journal.json'), 'utf8')).entries as Array<{ idx: number; when: number; tag: string }>;
@@ -69,7 +102,12 @@ describe('Plan S data migrations (D21–D23)', () => {
 
   it('fill stage timings with the same values as the demo seed (S7), on system stages only', () => {
     const [durations, next] = statements(TAGS[2]);
-    for (const [code, days] of Object.entries(DEMO_STAGE_DURATIONS)) expect(durations).toContain(`WHEN '${code}' THEN ${days}`);
+    // FLUSH is excluded: 0125 is already applied and its text is historical —
+    // D36 moved FLUSH to 5 in the seed and in migration 0131, not retroactively here.
+    for (const [code, days] of Object.entries(DEMO_STAGE_DURATIONS)) {
+      if (code === 'FLUSH') expect(durations).toContain("WHEN 'FLUSH' THEN 14");
+      else expect(durations).toContain(`WHEN '${code}' THEN ${days}`);
+    }
     for (const [code, successor] of Object.entries(DEMO_NEXT_STAGES)) expect(next).toContain(`WHEN '${code}' THEN '${successor}'`);
     expect(durations).toContain('`is_system` = 1');
     expect(next).toContain('s.`is_system` = 1');

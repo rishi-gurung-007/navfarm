@@ -72,6 +72,39 @@ describe('buildFeedForecast — D34: wastage dropped, demand is heads × rate', 
   });
 });
 
+describe('buildFeedForecast — D36: rows inside a stage-change window are indicative', () => {
+  // FLUSH from 1 Sep: earliest change 4 Sep (changeWindowStart), planned (latest) 6 Sep — the
+  // segment ends 5 Sep. Rows on 4–5 Sep sit inside the window and are indicative; 3 Sep is not.
+  const input: ForecastInput = {
+    planningDate: '2026-09-03', from: '2026-09-03', to: '2026-09-05', refillBufferDays: 2, leadTimeDays: 2,
+    sheds: [{ shedId: 'h1', shedCode: 'GRS/SHED-001', siloIds: ['s1'] }],
+    silos: [{ siloId: 's1', siloCode: 'GRS/SILO-001', itemId: 'r1', balanceKg: 100000 }],
+    store: null, items: { r1: 'Flush Diet' },
+    batches: [{ batchId: 'b1', batchNo: 'GR-2026-01', breedId: 'l', shedId: 'h1', heads: 100,
+      segments: [{
+        stageId: 'flush', stageCode: 'FLUSH', start: '2026-09-01', end: '2026-09-05', projected: false,
+        changeWindowStart: '2026-09-04',
+      }] }],
+    feedRows: [row({ stageId: 'flush' })],
+  };
+
+  it('marks 4–5 Sep indicative and leaves 3 Sep alone', () => {
+    expect(buildFeedForecast(input).daily.map((d) => [d.date, d.indicative])).toEqual([
+      ['2026-09-03', false],
+      ['2026-09-04', true],
+      ['2026-09-05', true],
+    ]);
+  });
+
+  it('a posted move is a fact: without the window nothing is indicative', () => {
+    const posted: ForecastInput = {
+      ...input,
+      batches: [{ ...input.batches[0], segments: [{ stageId: 'flush', stageCode: 'FLUSH', start: '2026-09-01', end: '2026-09-05', projected: false }] }],
+    };
+    expect(buildFeedForecast(posted).daily.every((d) => !d.indicative)).toBe(true);
+  });
+});
+
 describe('buildFeedForecast — shared silo, one batch changes diet (Review Focus 1)', () => {
   // Shed H1 has SILO-001 (R1, 1,000 kg) and SILO-002 (R2, 500 kg). GR-01 eats R1 all week; GR-02 eats R1 until
   // 25 Sep and R2 from 26 Sep (its own breed's rows: R1 days 1–25, R2 from day 26, stage entered 1 Sep).
