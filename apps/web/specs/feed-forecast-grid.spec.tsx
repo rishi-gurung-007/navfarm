@@ -26,11 +26,30 @@ describe('feed-format date helpers (D16)', () => {
 });
 
 describe('FeedForecastGrid', () => {
-  it("keeps the field specification's 14 columns in order", () => {
+  /**
+   * D33 (Rishi, 28 Sep): exactly the field specification's twelve columns.
+   * "Source" and "Feed incl. Wastage (Kg)" were ours, not the client's, and go
+   * — and "Shared by N" went with Source, since it was a badge inside that cell.
+   */
+  it("shows exactly the field specification's 12 columns, in its order (D33)", () => {
     render(<FeedForecastGrid rows={[row()]} loading={false} horizonTo="2026-11-07" t={t} />);
     const headers = within(screen.getByRole('table')).getAllByRole('columnheader').map((h) => h.textContent);
     expect(headers).toEqual([...GRID_COLUMNS]);
-    expect(GRID_COLUMNS).toHaveLength(14);
+    expect(GRID_COLUMNS).toEqual([
+      'ffColBatchNo', 'ffColItemName', 'ffColItemNo', 'ffColShedNo', 'ffColPlanningDate',
+      'ffColCurrentInventoryKg', 'ffColCurrentPigs', 'ffColPerDayIntakeKg', 'ffColDaysOfStock',
+      'ffColRunDown', 'ffColDateToRefill', 'ffColRequiredOn',
+    ]);
+    expect(GRID_COLUMNS).toHaveLength(12);
+  });
+
+  it('carries neither Source nor the wastage column any more (D33/D34)', () => {
+    render(<FeedForecastGrid rows={[row({ sourceType: 'STORE', sourceCode: 'VIL100/STORE-001', sharedBatchCount: 3 })]} loading={false} horizonTo="2026-11-07" t={t} />);
+    expect(GRID_COLUMNS as readonly string[]).not.toContain('ffColSource');
+    expect(GRID_COLUMNS as readonly string[]).not.toContain('ffColFeedOutKg');
+    const table = screen.getByRole('table');
+    expect(within(table).queryByText('VIL100/STORE-001')).toBeNull();
+    expect(within(table).queryByText(/ffSharedBy/)).toBeNull();
   });
 
   it('holds the header row and the Batch No and Item columns (sticky), and aligns numbers right with two decimals', () => {
@@ -41,8 +60,9 @@ describe('FeedForecastGrid', () => {
     expect(headers[2].hasAttribute('data-sticky-col')).toBe(false);
     const cells = within(screen.getAllByRole('row')[1]).getAllByRole('cell');
     expect(cells[0].getAttribute('data-sticky-col')).toBe('true');
-    expect(cells[6].textContent).toBe('1,500.00');
-    expect(cells[6].className).toContain('text-right');
+    // Current Inventory is column 6 of 12 now that Source has gone.
+    expect(cells[5].textContent).toBe('1,500.00');
+    expect(cells[5].className).toContain('text-right');
     expect(fmtKg(16.3)).toBe('16.30');
   });
 
@@ -55,13 +75,11 @@ describe('FeedForecastGrid', () => {
     expect(within(table).getByText('ffOverdue')).toBeTruthy();
   });
 
-  it('puts "shared by N" as a badge in the Source cell, worded for a store as well as a silo (A7)', () => {
-    render(<FeedForecastGrid rows={[row({ sourceType: 'STORE', sourceCode: 'VIL100/STORE-001', sharedBatchCount: 3, indicative: true, daysOfStock: 93 })]} loading={false} horizonTo={null} t={t} />);
+  it('marks an indicative Days of Stock, in its new column position (D33)', () => {
+    render(<FeedForecastGrid rows={[row({ indicative: true, daysOfStock: 93 })]} loading={false} horizonTo={null} t={t} />);
     const cells = within(screen.getAllByRole('row')[1]).getAllByRole('cell');
-    expect(within(cells[5]).getByText('ffSharedBy:{"count":3}')).toBeTruthy();
-    expect(screen.queryByText(/ffSharedSilo/)).toBeNull();
-    expect(within(cells[9]).getByText('93')).toBeTruthy();
-    expect(within(cells[9]).getByText('ffIndicative')).toBeTruthy();
+    expect(within(cells[8]).getByText('93')).toBeTruthy();
+    expect(within(cells[8]).getByText('ffIndicative')).toBeTruthy();
   });
 
   it("shows a grouped line's dates and says the stock lasts past the horizon when nothing runs down", () => {

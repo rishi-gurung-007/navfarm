@@ -73,10 +73,10 @@ describe('FeedForecastPanel — admin', () => {
     mockFarm = adminFarm();
   });
 
-  it("renders the field specification's 14 columns in order", async () => {
+  it("renders the field specification's 12 columns in order (D33)", async () => {
     render(<FeedForecastPanel />);
     const table = await screen.findByRole('table', { name: 'ffGridLabel' });
-    expect(within(table).getAllByRole('columnheader')).toHaveLength(14);
+    expect(within(table).getAllByRole('columnheader')).toHaveLength(12);
   });
 
   it('never fetches the farm list itself: the shared hook owns it (A3)', async () => {
@@ -85,12 +85,13 @@ describe('FeedForecastPanel — admin', () => {
     expect(get.mock.calls.some(([url]) => String(url).startsWith('/location'))).toBe(false);
   });
 
-  it('shows Overdue, Indicative, "Shared by", "after" the horizon and the wastage line; Stages is a tab', async () => {
+  it('shows Overdue, Indicative, "after" the horizon and the wastage line; Stages is a tab', async () => {
     render(<FeedForecastPanel />);
     const table = await screen.findByRole('table', { name: 'ffGridLabel' });
     expect(within(table).getByText('ffOverdue')).toBeTruthy();
     expect(within(table).getByText('ffIndicative')).toBeTruthy();
-    expect(within(table).getByText('ffSharedBy:{"count":3}')).toBeTruthy();
+    // "Shared by" was a badge in the Source cell, and went with it (D33).
+    expect(within(table).queryByText(/ffSharedBy/)).toBeNull();
     expect(within(table).getByText('ffBeyondHorizon:{"date":"09/11/26"}')).toBeTruthy();
     expect(screen.getByText('ffWastageUsed:{"pcts":"2.5%"}')).toBeTruthy();
     fireEvent.click(screen.getByRole('tab', { name: 'ffTabStages:{"count":1}' }));

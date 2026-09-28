@@ -74,15 +74,18 @@ type Translate = (key: any, vars?: any) => string;
  * after Planning Date (D6) and the feed that leaves the silo, wastage
  * included, last (D17).
  */
+// D33 (Rishi, 28 Sep): exactly the field specification's twelve columns, in its
+// order. "Source" and "Feed incl. Wastage (Kg)" were ours, not the client's, and
+// "Shared by N" went with Source — it was a badge inside that cell.
 export const GRID_COLUMNS = [
-  "ffColBatchNo", "ffColItemName", "ffColItemNo", "ffColShedNo", "ffColPlanningDate", "ffColSource",
+  "ffColBatchNo", "ffColItemName", "ffColItemNo", "ffColShedNo", "ffColPlanningDate",
   "ffColCurrentInventoryKg", "ffColCurrentPigs", "ffColPerDayIntakeKg", "ffColDaysOfStock",
-  "ffColRunDown", "ffColDateToRefill", "ffColRequiredOn", "ffColFeedOutKg",
+  "ffColRunDown", "ffColDateToRefill", "ffColRequiredOn",
 ] as const;
 
 export const STAGE_COLUMNS = ["ffStgBatch", "ffStgShed", "ffStgCurrent", "ffStgFrom", "ffStgTo", "ffStgNext", "ffStgChange"] as const;
 
-const RIGHT_ALIGNED = new Set<string>(["ffColCurrentInventoryKg", "ffColCurrentPigs", "ffColPerDayIntakeKg", "ffColDaysOfStock", "ffColFeedOutKg"]);
+const RIGHT_ALIGNED = new Set<string>(["ffColCurrentInventoryKg", "ffColCurrentPigs", "ffColPerDayIntakeKg", "ffColDaysOfStock"]);
 
 /** Days of Stock and Run-Down count to two different things; the header title says which. */
 const HEADER_HINT: Partial<Record<(typeof GRID_COLUMNS)[number], string>> = {
@@ -172,14 +175,6 @@ export function FeedForecastGrid({ rows, loading, horizonTo, t }: { rows: Report
               <td className={cn(TD, MUTED)}>{row.itemNo || "—"}</td>
               <td className={cn(TD, MUTED)}>{row.shedCode || "—"}</td>
               <td className={TD}>{row.days > 1 ? `${formatDateShort(row.date)} – ${formatDateShort(row.dateTo)}` : formatDateShort(row.date)}</td>
-              <td className={TD}>
-                {row.sourceType === "NONE" ? t("ffNoSource") : row.sourceCode ?? "—"}
-                {row.sharedBatchCount > 1 && (
-                  <Badge variant="neutral" className={cn("ml-1.5", SMALL_BADGE)} title={t("ffSharedTitle", { count: row.sharedBatchCount })}>
-                    {t("ffSharedBy", { count: row.sharedBatchCount })}
-                  </Badge>
-                )}
-              </td>
               <td className={cn(TD, NUM)}>{fmtKg(row.currentInventoryKg)}</td>
               <td className={cn(TD, NUM)}>{row.heads.toLocaleString("en-US")}</td>
               <td className={cn(TD, NUM)}>{fmtKg(row.perDayIntakeKg)}</td>
@@ -195,7 +190,6 @@ export function FeedForecastGrid({ rows, loading, horizonTo, t }: { rows: Report
                 <span className={cn(!row.requiredOn && MUTED)}>{row.requiredOn ? formatDateShort(row.requiredOn) : notDue}</span>
                 {row.overdue && <Badge variant="danger" className={cn("ml-1.5", SMALL_BADGE)}>{t("ffOverdue")}</Badge>}
               </td>
-              <td className={cn(TD, NUM)}>{fmtKg(row.demandKg)}</td>
             </tr>
           ))
         )}
