@@ -15,8 +15,8 @@
  * Resume-safe: batches are located by their DEMO remarks token, animals by
  * ear_tag — a farm already carrying its demo herd is adopted, not duplicated.
  */
-import { and, eq, inArray } from 'drizzle-orm';
-import { stageEntryDaysAgo } from './feed-planning';
+import { and, eq, inArray, sql } from 'drizzle-orm';
+import { breedingSiloLinks, stageEntryDaysAgo } from './feed-planning';
 import type { MySql2Database } from 'drizzle-orm/mysql2';
 import type { AnimalService } from '../../modules/piggery/animal/animal.service';
 import type { GoodsReceiptService } from '../../modules/inventory/goods-receipt/goods-receipt.service';
@@ -24,7 +24,7 @@ import type { SchedulerHeaderService } from '../../modules/production/scheduler-
 import * as schema from '../../core/database/schema';
 import type { DemoContext } from './chapter';
 import { batchBreedOf, batchRef, earTag, farmCanRegisterAnimals, pensForRole, tagOf, type DemoBreed, type DemoFarm } from './farms';
-import { rateOf, type ItemLookup, type BatchEnsurer } from './batch-helpers';
+import { rateOf, shedForStage, type ItemLookup, type BatchEnsurer } from './batch-helpers';
 
 /** N days ago, YYYY-MM-DD — the flow dates animals' stage transitions back to. */
 function dateNdaysAgo(days: number): string {
@@ -176,6 +176,22 @@ export async function registerBreedingStock(ctx: DemoContext, farm: DemoFarm, de
     openingQuantity: total,
     inputLines: receiptLines.map(({ item_id, quantity, uom, rate }) => ({ item_id, quantity, uom, rate })),
   });
+
+  // D31: the batch stands in a gilt house, but its sows eat the dry sow and
+  // farrowing houses' diets; link those silos to its shed so the forecast
+  // and the daily entries draw them from silos, not the farm store. Chapter
+  // 02 has already chosen each silo's feed from its first shed, so linking
+  // here cannot change what a silo holds. A re-run leaves an existing pair.
+  const batchShed = shedForStage(farm, stageCode);
+  if (batchShed) {
+    for (const siloId of breedingSiloLinks(farm, batchShed.shedId)) {
+      await db
+        .insert(schema.siloShedLink)
+        .values({ tenant_id: ctx.tenantId, company_id: ctx.companyId, silo_id: siloId, shed_id: batchShed.shedId })
+        .onDuplicateKeyUpdate({ set: { silo_id: sql`silo_id` } });
+      ctx.log(`${tagOf(farm)} breeding shed ${batchShed.code} also draws from silo ${siloId} (D31)`);
+    }
+  }
 
   // ── The animals themselves, one by one (Ruling 3), standing at pens.
   const [batchRow] = await db

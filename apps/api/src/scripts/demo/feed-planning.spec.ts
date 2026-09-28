@@ -1,4 +1,4 @@
-import { pickDemoLevels, stageEntryDaysAgo } from './feed-planning';
+import { breedingSiloLinks, pickDemoLevels, stageEntryDaysAgo } from './feed-planning';
 
 describe('stageEntryDaysAgo — no "Due, not posted" in a fresh demo (B1)', () => {
   it('keeps each animal inside its stage on the day the demo is built', () => {
@@ -24,5 +24,34 @@ describe('pickDemoLevels — one run-down inside the horizon, one alert now (B1,
 
   it('never proposes a low level at or above the silo\'s high level, nor a non-positive one', () => {
     expect(pickDemoLevels([source('A', 50, 10), source('B', 1000, 5)], new Map([['B', 1000]]))).toEqual([]);
+  });
+});
+
+describe('breedingSiloLinks — the breeding batch reaches its sow diets from silos (D31)', () => {
+  const shed = (shedId: string, role: string | null, siloIds: string[]) => ({ shedId, code: shedId, name: shedId, role, siloIds, penIds: [] }) as any;
+  const farm = {
+    sheds: [
+      shed('SHED-001', 'GILT', ['SILO-001']),
+      shed('SHED-002', 'DRY_SOW', ['SILO-002']),
+      shed('SHED-003', 'FARROWING', ['SILO-003']),
+      shed('SHED-004', 'WEANER', ['SILO-004']),
+      shed('SHED-007', 'BOAR', ['SILO-007']),
+    ],
+  };
+
+  it('links the dry sow and farrowing silos to a gilt house the breeding batch stands in', () => {
+    expect(breedingSiloLinks(farm, 'SHED-001')).toEqual(['SILO-002', 'SILO-003']);
+  });
+
+  it('adds nothing a shed already draws from, and nothing to a shed that is not a gilt house (D9: one feed per silo in a shed)', () => {
+    const linked = { sheds: farm.sheds.map((s) => (s.shedId === 'SHED-001' ? { ...s, siloIds: ['SILO-001', 'SILO-002'] } : s)) };
+    expect(breedingSiloLinks(linked, 'SHED-001')).toEqual(['SILO-003']);
+    expect(breedingSiloLinks(farm, 'SHED-002')).toEqual([]);
+    expect(breedingSiloLinks(farm, 'SHED-007')).toEqual([]);
+  });
+
+  it('skips a role the farm has no silo for', () => {
+    const noFarrowingSilo = { sheds: farm.sheds.map((s) => (s.role === 'FARROWING' ? { ...s, siloIds: [] } : s)) };
+    expect(breedingSiloLinks(noFarrowingSilo, 'SHED-001')).toEqual(['SILO-002']);
   });
 });

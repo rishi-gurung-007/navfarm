@@ -57,3 +57,29 @@ export function pickDemoLevels(
   }
   return out;
 }
+
+/**
+ * D31 (Rishi, 28 Sep): the silos to link to the shed the farm's registered
+ * breeding batch stands in. That batch opens at the gilt stage in a gilt
+ * house, whose silo holds grower mash, and its animals move on into flush,
+ * gestation, farrowing and lactation — so without these links the forecast
+ * fed every sow diet from the farm store. A silo may feed several sheds (D7);
+ * the first dry sow and first farrowing silo, in code order, join the gilt
+ * house, each holding a feed the gilt house's own silo does not (D9). Only a
+ * gilt house takes them: a dry sow, farrowing or boar house already holds
+ * one of those feeds, and a second silo of the same feed in one shed is what
+ * D9 forbids.
+ */
+export function breedingSiloLinks(
+  farm: { sheds: Array<{ shedId: string; role: string | null; siloIds: string[] }> },
+  batchShedId: string,
+): string[] {
+  const batchShed = farm.sheds.find((s) => s.shedId === batchShedId);
+  if (!batchShed || (batchShed.role !== 'GILT' && batchShed.role !== 'GILT_REARING')) return [];
+  const out: string[] = [];
+  for (const role of ['DRY_SOW', 'FARROWING']) {
+    const siloId = farm.sheds.find((s) => s.role === role && s.siloIds.length > 0)?.siloIds[0];
+    if (siloId && !batchShed.siloIds.includes(siloId) && !out.includes(siloId)) out.push(siloId);
+  }
+  return out;
+}
