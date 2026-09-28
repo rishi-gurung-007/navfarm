@@ -46,6 +46,26 @@ export interface FarmLocationSeedRow {
   feedInBags?: boolean;
 }
 
+/**
+ * What a seeded row's `storage_type` and `storage_name` should be (F4, D28).
+ * The client's location master states `storageType: "SILO"` on every shed,
+ * pen and crate — 248 rows — and the silo rules used to key on that value, so
+ * the Location form refused every save of them. Silo rules follow
+ * `location_type` now and migration 0126 clears the stale value; this keeps a
+ * rebuild from writing it back. The silo capacity a shed carries is the
+ * client's own figure and is left alone.
+ */
+export function storageFieldsFor(row: Pick<FarmLocationSeedRow, 'type' | 'storageType' | 'storageName'>): {
+  storage_type: string | null;
+  storage_name: string | null;
+} {
+  const real = row.type === 'SILO' || row.type === 'STORE';
+  return {
+    storage_type: real ? row.storageType ?? null : null,
+    storage_name: real ? row.storageName ?? null : null,
+  };
+}
+
 export const FARM_LOCATION_SEED: FarmLocationSeedRow[] = [
   { farm: "MULTIPLIER", code: "MUL100", type: "FARM", name: "GRASMERE FARM NORTON", address: "GRASMERE FARM NORTON", areaSize: 0.9769, areaUom: "HECTARE", maxCapacity: 10216.0, capacityUom: "HEAD" },
   { farm: "MULTIPLIER", code: "MUGR1", type: "SHED", parent: "__FARM__", name: "GROWER - H1", address: "GRASMERE FARM NORTON", areaSize: 215.98, areaUom: "SQM", maxCapacity: 229.0, capacityUom: "HEAD", storageType: "SILO", storageName: "MGH1", siloCapacityKg: 5800.0, siloReorderDays: 2.0, downtimeDays: 4.0, feedInBags: false },

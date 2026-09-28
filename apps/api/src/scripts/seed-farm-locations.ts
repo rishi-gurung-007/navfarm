@@ -29,7 +29,7 @@
  */
 import mysql, { RowDataPacket } from 'mysql2/promise';
 import { randomUUID } from 'node:crypto';
-import { FARM_LOCATION_SEED, FarmLocationSeedRow } from './lib/farm-location-seed-data';
+import { FARM_LOCATION_SEED, FarmLocationSeedRow, storageFieldsFor } from './lib/farm-location-seed-data';
 
 /** The area unit MULTIPLIER states its farm size in. No equivalent exists. */
 const UOM_ADDITIONS = [{ code: 'HECTARE', name: 'Hectare', type: 'AREA' }];
@@ -192,7 +192,10 @@ async function run() {
       const values = [
         scope.nob_id, scope.lob_id, r.name, r.address ?? null, r.type, parentId,
         LEVEL[r.type] ?? null, num(r.areaSize), r.areaUom ?? null, num(r.maxCapacity),
-        r.capacityUom ?? null, r.storageType ?? null, r.storageName ?? null,
+        // F4/D28: the template says SILO on every shed, pen and crate. Silo
+        // rules follow location_type now, and 0126 clears the stale value —
+        // a rebuild must not write it back.
+        r.capacityUom ?? null, storageFieldsFor(r).storage_type, storageFieldsFor(r).storage_name,
         // The templates state every silo capacity in kilograms — the column the
         // figure lands in is canonical KG regardless, and the uom only records
         // what the farm typed, so KG is the honest answer wherever a capacity
