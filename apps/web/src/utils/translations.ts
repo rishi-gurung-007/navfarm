@@ -1528,6 +1528,7 @@ export const translations = {
     ffLastsRange: "Lasts the range",
     ffIndicative: "Indicative",
     ffBeyondHorizon: "After {{date}}",
+    ffNotDueBy: "Not due by {{date}}",
     ffWastageUsed: "Intake is without wastage. Refill dates and orders add {{pcts}} wastage.",
     ffWastageNone: "No wastage allowance on these diets.",
     ffStagesTitle: "Stages",

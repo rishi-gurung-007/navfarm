@@ -68,6 +68,8 @@ describe('FeedForecastGrid', () => {
     render(<FeedForecastGrid rows={[row({ days: 3, dateTo: '2026-09-25', runDownDate: null, refillDate: null, requiredOn: null, overdue: false })]} loading={false} horizonTo="2026-11-07" t={t} />);
     expect(screen.getByText('23/09/26 – 25/09/26')).toBeTruthy();
     expect(screen.getByText('ffBeyondHorizon:{"date":"07/11/26"}')).toBeTruthy();
+    // D29: Date to Refill and Required On say nothing is due, not a bare dash.
+    expect(screen.getAllByText('ffNotDueBy:{"date":"07/11/26"}')).toHaveLength(2);
     expect(screen.queryByText('ffOverdue')).toBeNull();
   });
 

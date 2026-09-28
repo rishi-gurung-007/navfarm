@@ -44,6 +44,9 @@ which one won and why.
 | D26 | One Requisitions screen (Rishi, 27 Sep) | Inventory → **Requisitions** (renamed from Feed Requisitions) with a type filter (Feed now; other types later); drafted from the forecast or entered by hand. |
 | D27 | Silo low level default for existing data (Rishi, 27 Sep; confirms D22) | Low = 20 % of capacity, High = 90 % of capacity, where empty; editable. |
 | D28 | Legacy silo storage type on non-silo locations (Rishi, 27 Sep) | 248 PEN/SHED/CRATE rows carry `storage_type = 'SILO'` from the old location template, so every save of them demands silo fields and fails. Fix in Plan S: silo-field checks key on the location TYPE (SILO), never on storage_type; a migration clears `storage_type` on rows whose location type is not SILO or STORE (only where it is 'SILO'), touching nothing else. Feed-requisition approval in the Approvals inbox needs both the inbox approve grant and the requisition approve grant (S5). FLUSH is 14 days (S7). |
+| D29 | Refill dates when nothing runs down in the window (Rishi, 28 Sep) | When a source does not reach its low level (a silo) or zero (a store) inside the forecast window, Date to Refill and Required On read "Not due by <window end>" instead of "—", and Run Down keeps "After <window end>". |
+| D30 | Stores (Rishi, 28 Sep) | A store keeps running down to zero; no store low/high levels (one store holds several feeds). Nothing to migrate. |
+| D31 | Demo breeding sheds (Rishi, 28 Sep) | The demo's breeding batch is placed in a shed whose silos hold the sow diets it eats (gestation, lactation), so its forecast draws from silos, not the farm store. Seed and chapter change only; takes effect on the next demo rebuild. |
 
 ## Scope — four plans
 

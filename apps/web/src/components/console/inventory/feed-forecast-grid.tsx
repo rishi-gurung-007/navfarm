@@ -134,6 +134,9 @@ function StateRow({ colSpan, children }: { colSpan: number; children: ReactNode 
 }
 
 export function FeedForecastGrid({ rows, loading, horizonTo, t }: { rows: ReportRow[]; loading: boolean; horizonTo: string | null; t: Translate }) {
+  // D29: with no run-down inside the window there is nothing to refill or order
+  // yet; say so, rather than a bare dash that reads as missing data.
+  const notDue = horizonTo ? t("ffNotDueBy", { date: formatDateShort(horizonTo) }) : "—";
   return (
     <ScrollTable label={t("ffGridLabel")}>
       <thead>
@@ -187,9 +190,9 @@ export function FeedForecastGrid({ rows, loading, horizonTo, t }: { rows: Report
               <td className={TD}>
                 {row.runDownDate ? formatDateShort(row.runDownDate) : horizonTo ? t("ffBeyondHorizon", { date: formatDateShort(horizonTo) }) : "—"}
               </td>
-              <td className={TD}>{formatDateShort(row.refillDate)}</td>
+              <td className={cn(TD, !row.refillDate && MUTED)}>{row.refillDate ? formatDateShort(row.refillDate) : notDue}</td>
               <td className={TD}>
-                <span>{formatDateShort(row.requiredOn)}</span>
+                <span className={cn(!row.requiredOn && MUTED)}>{row.requiredOn ? formatDateShort(row.requiredOn) : notDue}</span>
                 {row.overdue && <Badge variant="danger" className={cn("ml-1.5", SMALL_BADGE)}>{t("ffOverdue")}</Badge>}
               </td>
               <td className={cn(TD, NUM)}>{fmtKg(row.demandKg)}</td>
