@@ -70,6 +70,12 @@ export interface IncomingFeed {
   kg: number;
 }
 
+/**
+ * D38: the standard refill buffer — the field specification's "− 2 days" — used
+ * for a store source and for a silo whose Silo Reorder Days was never set.
+ */
+export const DEFAULT_REFILL_BUFFER_DAYS = 2;
+
 export interface ForecastInput {
   planningDate: string;
   from: string;
@@ -78,10 +84,23 @@ export interface ForecastInput {
   stockDate?: string;
   /** Run-down, refill and required-on are searched up to here (Q12). Defaults to `to`; an earlier date is ignored. */
   horizonTo?: string;
-  refillBufferDays: number;
+  /**
+   * D38 (28 Sep, refines D3): the refill buffer is per SILO now — the silo's
+   * own reorderDays below. A store, or a silo without the value, uses
+   * DEFAULT_REFILL_BUFFER_DAYS. The farm's feed_refill_buffer_days column is
+   * kept but no longer read.
+   */
   leadTimeDays: number;
   sheds: { shedId: string; shedCode: string; siloIds: string[] }[];
-  silos: { siloId: string; siloCode: string; itemId: string | null; balanceKg: number; lowLevelKg?: number | null }[];
+  silos: {
+    siloId: string;
+    siloCode: string;
+    itemId: string | null;
+    balanceKg: number;
+    lowLevelKg?: number | null;
+    /** D38: location_master.silo_reorder_days — days before run-down this silo must be refilled. */
+    reorderDays?: number | null;
+  }[];
   store: { storeId: string; storeCode: string; balances: Record<string, number> } | null;
   incoming?: IncomingFeed[];
   items: Record<string, string>; // itemId -> item name
@@ -457,6 +476,17 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
     return 0;
   }
 
+  /**
+   * D38: how many days before run-down this source must be refilled. A silo
+   * answers with its own reorder days; a store — and a silo whose value was
+   * never set — uses the field specification's standard 2.
+   */
+  function refillBufferDaysFor(sk: SourceKey): number {
+    if (sk.sourceType !== 'SILO' || !sk.siloId) return DEFAULT_REFILL_BUFFER_DAYS;
+    const days = siloById.get(sk.siloId)?.reorderDays;
+    return days != null && days >= 0 ? days : DEFAULT_REFILL_BUFFER_DAYS;
+  }
+
   /** D19: the silo's Below Feed Level; a store and a silo without one run down to zero. */
   function thresholdMicrogramsFor(sk: SourceKey): number {
     if (sk.sourceType !== 'SILO' || !sk.siloId) return 0;
@@ -666,7 +696,7 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
     const sourceDailyDemandMicrograms = byDate.get(input.planningDate) ?? 0;
     const daysLeft = sourceDailyDemandMicrograms > 0 ? Math.floor(planningOpening / sourceDailyDemandMicrograms) : null;
 
-    const refillDate = runDownDate !== null ? addDays(runDownDate, -input.refillBufferDays) : null;
+    const refillDate = runDownDate !== null ? addDays(runDownDate, -refillBufferDaysFor(sk)) : null;
     const requiredOn = refillDate !== null ? addDays(refillDate, -input.leadTimeDays) : null;
     const overdue = requiredOn !== null && requiredOn < input.planningDate;
 

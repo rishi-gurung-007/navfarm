@@ -25,7 +25,9 @@ import { useLanguage } from "@/hooks/useLanguage";
 
 /** What the client's workbook says a farm gets when it sets nothing (D3, D19, Requisition §1 rows 27-28, checkpoint 27). */
 export const FEED_PLANNING_DEFAULTS = {
-  feed_refill_buffer_days: 2,
+  // D38 (28 Sep): the refill buffer left this screen — it is per SILO now,
+  // the silo's own "Silo Reorder Days" on the Location form. The five below
+  // stay per farm: they describe the farm's delivery and order cycle.
   feed_lead_time_days: 2,
   feed_bulk_multiple_kg: 3000,
   feed_bag_size_kg: 50,
@@ -47,7 +49,8 @@ const DAYS_INPUT_PX = 56;
 const KG_INPUT_PX = 72;
 const SELECT_PX = 104;
 const SAVE_PX = 30;
-const INPUTS_PX = [DAYS_INPUT_PX, DAYS_INPUT_PX, KG_INPUT_PX, KG_INPUT_PX, KG_INPUT_PX];
+// D38: four number inputs now — lead time, then the three kilogram figures.
+const INPUTS_PX = [DAYS_INPUT_PX, KG_INPUT_PX, KG_INPUT_PX, KG_INPUT_PX];
 
 export const FEED_PLANNING_LAYOUT = {
   cellPaddingPx: CELL_PADDING_PX,
@@ -68,7 +71,6 @@ export interface FeedPlanningFarm {
 }
 
 const NUMBER_COLUMNS: { key: Exclude<FeedPlanningKey, "feed_production_weekday">; labelKey: string; unitKey: string; min: number; max?: number; widthPx: number }[] = [
-  { key: "feed_refill_buffer_days", labelKey: "fpBuffer", unitKey: "fpUnitDays", min: 0, max: 30, widthPx: DAYS_INPUT_PX },
   { key: "feed_lead_time_days", labelKey: "fpLeadTime", unitKey: "fpUnitDays", min: 0, max: 30, widthPx: DAYS_INPUT_PX },
   { key: "feed_bulk_multiple_kg", labelKey: "fpBulkMultiple", unitKey: "fpUnitKg", min: 1, widthPx: KG_INPUT_PX },
   { key: "feed_bag_size_kg", labelKey: "fpBagSize", unitKey: "fpUnitKg", min: 1, widthPx: KG_INPUT_PX },
@@ -87,7 +89,6 @@ const inputStyle = { backgroundColor: "var(--input-bg)", color: "var(--input-tex
 type RowDraft = Record<FeedPlanningKey, string>;
 
 const draftOf = (farm: FeedPlanningFarm): RowDraft => ({
-  feed_refill_buffer_days: farm.settings.feed_refill_buffer_days?.toString() ?? "",
   feed_lead_time_days: farm.settings.feed_lead_time_days?.toString() ?? "",
   feed_bulk_multiple_kg: farm.settings.feed_bulk_multiple_kg?.toString() ?? "",
   feed_bag_size_kg: farm.settings.feed_bag_size_kg?.toString() ?? "",
@@ -98,7 +99,6 @@ const draftOf = (farm: FeedPlanningFarm): RowDraft => ({
 const payloadOf = (draft: RowDraft): Record<FeedPlanningKey, number | null> => {
   const value = (raw: string) => (raw.trim() === "" ? null : Number(raw));
   return {
-    feed_refill_buffer_days: value(draft.feed_refill_buffer_days),
     feed_lead_time_days: value(draft.feed_lead_time_days),
     feed_bulk_multiple_kg: value(draft.feed_bulk_multiple_kg),
     feed_bag_size_kg: value(draft.feed_bag_size_kg),

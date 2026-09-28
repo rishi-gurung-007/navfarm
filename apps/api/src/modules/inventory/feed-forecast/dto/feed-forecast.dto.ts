@@ -48,7 +48,8 @@ export class QueryFeedPeriodsDto {
 }
 
 /**
- * D32: the six per-farm feed settings, edited on Settings → Inventory Setup →
+ * D32, narrowed by D38 to five: the refill buffer left this screen for the
+ * silo's own Silo Reorder Days. The per-farm settings, edited on Settings → Inventory Setup →
  * Feed Planning. Same bounds the Location form used before they moved. Every
  * one is optional and every one accepts null, which clears it back to the
  * client default (@IsOptional skips validation for null as well as for a
@@ -57,10 +58,6 @@ export class QueryFeedPeriodsDto {
  * holds whether or not a caller came through the validation pipe.
  */
 export class UpdateFeedFarmSettingsDto {
-  @ApiProperty({ description: 'The refill date is this many days before a silo runs out (D3). 0-30, null clears.', required: false, nullable: true })
-  @IsOptional() @IsInt() @Min(0) @Max(30)
-  feed_refill_buffer_days?: number | null;
-
   @ApiProperty({ description: 'Required On is this many days before the Date to Refill (D19, default 2). 0-30, null clears.', required: false, nullable: true })
   @IsOptional() @IsInt() @Min(0) @Max(30)
   feed_lead_time_days?: number | null;

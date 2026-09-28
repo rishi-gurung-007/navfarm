@@ -13,8 +13,8 @@ import { FeedForecastService } from './feed-forecast.service';
  * whose farm the caller may touch. It is deliberately NOT the generic
  * PUT /location, which demands Max Capacity and the rest of a farm's form.
  */
-const SIX = [
-  'feed_refill_buffer_days',
+// D38 narrowed these to five: the refill buffer is the silo's own reorder days.
+const FIVE = [
   'feed_lead_time_days',
   'feed_bulk_multiple_kg',
   'feed_bag_size_kg',
@@ -27,7 +27,7 @@ describe('FeedForecastService.listFarmSettings (D32)', () => {
   let where: unknown;
   const rows = [{
     farm_id: 'f-vil', code: 'VIL100', name: 'Villa Franca', company_id: 'co-1', company_name: 'Colcom Piggery',
-    feed_refill_buffer_days: 3, feed_lead_time_days: null, feed_bulk_multiple_kg: 3000,
+    feed_lead_time_days: null, feed_bulk_multiple_kg: 3000,
     feed_bag_size_kg: null, feed_truck_target_kg: 30000, feed_production_weekday: 0,
   }];
   const chain: any = { from: () => chain, leftJoin: () => chain, where: (w: unknown) => { where = w; return chain; }, orderBy: async () => rows };
@@ -35,14 +35,14 @@ describe('FeedForecastService.listFarmSettings (D32)', () => {
 
   beforeEach(() => { where = undefined; db.select.mockClear(); });
 
-  it('answers the farms the caller may open, in code order, with the six values and null where unset', async () => {
+  it('answers the farms the caller may open, in code order, with the five values and null where unset', async () => {
     const cls = transactionCls(db);
     useFarmScope(cls, { farmId: null, restricted: false, companyId: null, lobId: null });
     const list = await new FeedForecastService(cls, {} as any, { log: jest.fn() } as any).listFarmSettings('tenant-1', 'TENANT_ADMIN');
     expect(list).toEqual([{
       farmId: 'f-vil', code: 'VIL100', name: 'Villa Franca', companyId: 'co-1', companyName: 'Colcom Piggery',
       settings: {
-        feed_refill_buffer_days: 3, feed_lead_time_days: null, feed_bulk_multiple_kg: 3000,
+        feed_lead_time_days: null, feed_bulk_multiple_kg: 3000,
         feed_bag_size_kg: null, feed_truck_target_kg: 30000, feed_production_weekday: 0,
       },
     }]);
@@ -99,16 +99,16 @@ describe('FeedForecastService.updateFarmSettings (D32)', () => {
   const OWN = { farmId: 'f-vil', restricted: true, companyId: 'co-1', lobId: 'lob-pig' };
   const ADMIN = { farmId: null, restricted: false, companyId: 'co-1', lobId: null };
 
-  it('writes only the six columns, and nothing else', async () => {
+  it('writes only the five columns, and nothing else', async () => {
     const { service, state } = serviceFor(FARM, ADMIN);
     await service.updateFarmSettings('f-vil', {
-      feed_refill_buffer_days: 4, feed_lead_time_days: 1, feed_bulk_multiple_kg: 6000,
+      feed_lead_time_days: 1, feed_bulk_multiple_kg: 6000,
       feed_bag_size_kg: 25, feed_truck_target_kg: 28000, feed_production_weekday: 3,
     }, 'tenant-1', { userId: 'u-admin', userType: 'COMPANY_ADMIN' } as any);
     expect(state.table).toBe(schema.locationMaster);
-    expect(Object.keys(state.set).filter((k) => !['updated_by', 'updated_at'].includes(k)).sort()).toEqual([...SIX].sort());
+    expect(Object.keys(state.set).filter((k) => !['updated_by', 'updated_at'].includes(k)).sort()).toEqual([...FIVE].sort());
     expect(state.set).toMatchObject({
-      feed_refill_buffer_days: 4, feed_lead_time_days: 1, feed_bulk_multiple_kg: 6000,
+      feed_lead_time_days: 1, feed_bulk_multiple_kg: 6000,
       feed_bag_size_kg: 25, feed_truck_target_kg: 28000, feed_production_weekday: 3,
     });
     expect(dialect.sqlToQuery(state.updateWhere as any).params).toEqual(expect.arrayContaining(['f-vil', 'tenant-1']));
@@ -129,9 +129,8 @@ describe('FeedForecastService.updateFarmSettings (D32)', () => {
   });
 
   it.each([
-    ['feed_refill_buffer_days', 31],
-    ['feed_refill_buffer_days', -1],
     ['feed_lead_time_days', 31],
+    ['feed_lead_time_days', -1],
     ['feed_bulk_multiple_kg', 0],
     ['feed_bag_size_kg', 0],
     ['feed_truck_target_kg', 0],

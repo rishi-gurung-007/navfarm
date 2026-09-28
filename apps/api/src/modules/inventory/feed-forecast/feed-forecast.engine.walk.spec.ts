@@ -14,7 +14,7 @@ const row = (over: Partial<FeedRow> = {}): FeedRow => ({
 
 function oneSilo(over: Partial<ForecastInput> = {}, silo: Partial<ForecastInput['silos'][number]> = {}): ForecastInput {
   return {
-    planningDate: '2026-09-23', from: '2026-09-23', to: '2026-09-29', refillBufferDays: 2, leadTimeDays: 2,
+    planningDate: '2026-09-23', from: '2026-09-23', to: '2026-09-29', leadTimeDays: 2,
     sheds: [{ shedId: 'h1', shedCode: 'GRS/SHED-001', siloIds: ['s1'] }],
     silos: [{ siloId: 's1', siloCode: 'GRS/SILO-001', itemId: 'r1', balanceKg: 525, ...silo }],
     store: null,

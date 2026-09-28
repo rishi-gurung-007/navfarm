@@ -24,14 +24,14 @@ const FARMS = [
   {
     farmId: 'f-vil', code: 'VIL100', name: 'Villa Franca', companyId: 'co-1', companyName: 'Colcom',
     settings: {
-      feed_refill_buffer_days: 3, feed_lead_time_days: null, feed_bulk_multiple_kg: 6000,
+      feed_lead_time_days: 1, feed_bulk_multiple_kg: 6000,
       feed_bag_size_kg: null, feed_truck_target_kg: null, feed_production_weekday: 3,
     },
   },
   {
     farmId: 'f-gra', code: 'GRA100', name: 'Grasmere', companyId: 'co-1', companyName: 'Colcom',
     settings: {
-      feed_refill_buffer_days: null, feed_lead_time_days: null, feed_bulk_multiple_kg: null,
+      feed_lead_time_days: null, feed_bulk_multiple_kg: null,
       feed_bag_size_kg: null, feed_truck_target_kg: null, feed_production_weekday: null,
     },
   },
@@ -41,6 +41,29 @@ beforeEach(() => {
   jest.clearAllMocks();
   get.mockResolvedValue({ data: FARMS });
   put.mockResolvedValue({ data: { farmId: 'f-vil', settings: {} } });
+});
+
+describe('D38 — Refill Buffer is off Feed Planning', () => {
+  it('offers the five farm settings and no refill buffer', async () => {
+    render(<FeedPlanningPanel />);
+    await screen.findByRole('table', { name: 'fpTableLabel' });
+    expect(Object.keys(FEED_PLANNING_DEFAULTS)).toEqual([
+      'feed_lead_time_days', 'feed_bulk_multiple_kg', 'feed_bag_size_kg', 'feed_truck_target_kg', 'feed_production_weekday',
+    ]);
+    expect(screen.queryByLabelText('fpBuffer:{"farm":"VIL100"}')).toBeNull();
+    // 5 settings + the farm cell + the save cell
+    expect(within(screen.getByRole('table', { name: 'fpTableLabel' })).getAllByRole('columnheader')).toHaveLength(7);
+  });
+
+  it('sends only the five, so a save cannot write a refill buffer', async () => {
+    render(<FeedPlanningPanel />);
+    await screen.findByRole('table', { name: 'fpTableLabel' });
+    fireEvent.change(screen.getByLabelText('fpLeadTime:{"farm":"VIL100"}'), { target: { value: '4' } });
+    fireEvent.click(screen.getByRole('button', { name: 'fpSave:{"farm":"VIL100"}' }));
+    await waitFor(() => expect(put).toHaveBeenCalled());
+    expect(Object.keys(put.mock.calls[0][1])).not.toContain('feed_refill_buffer_days');
+    expect(Object.keys(put.mock.calls[0][1])).toHaveLength(5);
+  });
 });
 
 describe('Feed Planning (D32)', () => {
@@ -58,13 +81,13 @@ describe('Feed Planning (D32)', () => {
   it('shows a set value and offers the client default as a placeholder where nothing is set', async () => {
     render(<FeedPlanningPanel />);
     await screen.findByRole('table', { name: 'fpTableLabel' });
-    const buffer = screen.getByLabelText('fpBuffer:{"farm":"VIL100"}') as HTMLInputElement;
-    expect(buffer.value).toBe('3');
+    const lead = screen.getByLabelText('fpLeadTime:{"farm":"VIL100"}') as HTMLInputElement;
+    expect(lead.value).toBe('1');
     const bag = screen.getByLabelText('fpBagSize:{"farm":"VIL100"}') as HTMLInputElement;
     expect(bag.value).toBe('');
     expect(bag.placeholder).toBe(String(FEED_PLANNING_DEFAULTS.feed_bag_size_kg));
-    expect((screen.getByLabelText('fpLeadTime:{"farm":"GRA100"}') as HTMLInputElement).placeholder)
-      .toBe(String(FEED_PLANNING_DEFAULTS.feed_lead_time_days));
+    expect((screen.getByLabelText('fpBulkMultiple:{"farm":"GRA100"}') as HTMLInputElement).placeholder)
+      .toBe(String(FEED_PLANNING_DEFAULTS.feed_bulk_multiple_kg));
   });
 
   it('offers the production day as the seven weekdays, and falls back to the default day when unset', async () => {
@@ -76,15 +99,14 @@ describe('Feed Planning (D32)', () => {
     expect((screen.getByLabelText('fpProductionDay:{"farm":"GRA100"}') as HTMLSelectElement).value).toBe('');
   });
 
-  it('saves one row, sending only that farm\'s six values, with an unset cell as null', async () => {
+  it('saves one row, sending only that farm\'s five values, with an unset cell as null', async () => {
     render(<FeedPlanningPanel />);
     await screen.findByRole('table', { name: 'fpTableLabel' });
-    fireEvent.change(screen.getByLabelText('fpLeadTime:{"farm":"VIL100"}'), { target: { value: '1' } });
+    fireEvent.change(screen.getByLabelText('fpLeadTime:{"farm":"VIL100"}'), { target: { value: '2' } });
     fireEvent.change(screen.getByLabelText('fpProductionDay:{"farm":"VIL100"}'), { target: { value: '5' } });
     fireEvent.click(screen.getByRole('button', { name: 'fpSave:{"farm":"VIL100"}' }));
     await waitFor(() => expect(put).toHaveBeenCalledWith('/feed-forecast/farm-settings/f-vil', {
-      feed_refill_buffer_days: 3,
-      feed_lead_time_days: 1,
+      feed_lead_time_days: 2,
       feed_bulk_multiple_kg: 6000,
       feed_bag_size_kg: null,
       feed_truck_target_kg: null,
@@ -99,7 +121,7 @@ describe('Feed Planning (D32)', () => {
     await screen.findByRole('table', { name: 'fpTableLabel' });
     const save = screen.getByRole('button', { name: 'fpSave:{"farm":"GRA100"}' }) as HTMLButtonElement;
     expect(save.disabled).toBe(true);
-    fireEvent.change(screen.getByLabelText('fpBuffer:{"farm":"GRA100"}'), { target: { value: '4' } });
+    fireEvent.change(screen.getByLabelText('fpLeadTime:{"farm":"GRA100"}'), { target: { value: '4' } });
     expect(save.disabled).toBe(false);
     fireEvent.click(save);
     expect(await screen.findByText('feed_production_weekday must be a whole number between 0 and 6, or empty.')).toBeTruthy();
@@ -149,8 +171,8 @@ describe('Feed Planning fits 1024 without a sideways scroll (D32 follow-up)', ()
   it('renders the inputs and the select at the budgeted widths', async () => {
     render(<FeedPlanningPanel />);
     await screen.findByRole('table', { name: 'fpTableLabel' });
-    const buffer = screen.getByLabelText('fpBuffer:{"farm":"VIL100"}') as HTMLInputElement;
-    expect(buffer.style.width).toBe(`${FEED_PLANNING_LAYOUT.inputsPx[0]}px`);
+    const lead = screen.getByLabelText('fpLeadTime:{"farm":"VIL100"}') as HTMLInputElement;
+    expect(lead.style.width).toBe(`${FEED_PLANNING_LAYOUT.inputsPx[0]}px`);
     const day = screen.getByLabelText('fpProductionDay:{"farm":"VIL100"}') as HTMLSelectElement;
     expect(day.style.width).toBe(`${FEED_PLANNING_LAYOUT.selectPx}px`);
   });

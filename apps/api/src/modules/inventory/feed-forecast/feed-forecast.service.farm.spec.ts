@@ -12,9 +12,9 @@ import { todayLocal } from './feed-forecast.engine';
  * every loader runs under the farm being computed, not the pinned one.
  */
 describe('FeedForecastService — Plan B entry points', () => {
-  const farm = { id: 'farm-b', code: 'GRS', name: 'Grasmere', companyId: 'co-1', refillBufferDays: 2, leadTimeDays: 0 };
+  const farm = { id: 'farm-b', code: 'GRS', name: 'Grasmere', companyId: 'co-1', leadTimeDays: 0 };
   const emptyInput = {
-    planningDate: '2026-09-23', from: '2026-09-23', to: '2026-09-29', refillBufferDays: 2, leadTimeDays: 0,
+    planningDate: '2026-09-23', from: '2026-09-23', to: '2026-09-29', leadTimeDays: 0,
     sheds: [], silos: [], store: null, items: {}, batches: [], feedRows: [],
   };
 

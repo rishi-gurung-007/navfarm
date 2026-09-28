@@ -41,7 +41,7 @@ function dbWithFarmLob(lobId: string | null): object {
   };
 }
 
-const FARM = { id: 'farm-A', code: 'VIL100', name: 'Village 100', companyId: 'comp-1', refillBufferDays: 2, leadTimeDays: 0 };
+const FARM = { id: 'farm-A', code: 'VIL100', name: 'Village 100', companyId: 'comp-1', leadTimeDays: 0 };
 
 describe('FeedForecastService', () => {
   let service: FeedForecastService;
@@ -132,7 +132,7 @@ describe('FeedForecastService', () => {
     expect(buildFeedForecast).toHaveBeenCalledWith(input);
     expect(result).toEqual({
       planningDate: '2026-09-25', today: '2026-09-25', timeZone: null, from: '2026-09-25', to: '2026-10-02', horizonTo: '2026-10-02',
-      farm: { id: 'farm-A', code: 'VIL100', name: 'Village 100' }, refillBufferDays: 2, leadTimeDays: 0,
+      farm: { id: 'farm-A', code: 'VIL100', name: 'Village 100' }, leadTimeDays: 0,
       rows: [{ batchNo: 'B1' }], daily: [],
       // The engine's flags, then the loader's own (a batch placed on no known shed).
       flags: [{ kind: 'HEADS_ASSUMED_FLAT', batchNo: 'B1' }, { kind: 'BATCH_SHED_UNKNOWN', batchNo: 'B2' }],
@@ -787,7 +787,7 @@ describe('FeedForecastService.getForecast — views, periods and the report (Pla
   });
   const computed = {
     planningDate: '2026-09-23', today: '2026-09-23', timeZone: 'Africa/Harare', from: '2026-09-23', to: '2026-09-29', horizonTo: '2026-11-07',
-    farm: { id: 'farm-A', code: 'GRS', name: 'Grasmere' }, refillBufferDays: 2, leadTimeDays: 2, rows: [],
+    farm: { id: 'farm-A', code: 'GRS', name: 'Grasmere' }, leadTimeDays: 2, rows: [],
     daily: [daily(), daily({ date: '2026-09-24', currentInventoryKg: 0 }), daily({ date: '2026-09-25', currentInventoryKg: 0 })],
     flags: [], sources: [], dietChanges: [], stages: [],
   };

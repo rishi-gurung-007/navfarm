@@ -8,7 +8,7 @@ import { buildFeedForecast, ForecastInput } from './feed-forecast.engine';
  * 1,500 kg, SILO2 R2 1,000 kg.
  */
 const workedExample: ForecastInput = {
-  planningDate: '2026-09-23', from: '2026-09-23', to: '2026-09-29', refillBufferDays: 2, leadTimeDays: 0,
+  planningDate: '2026-09-23', from: '2026-09-23', to: '2026-09-29', leadTimeDays: 0,
   sheds: [{ shedId: 'h3', shedCode: 'GRS/SHED-003', siloIds: ['s1', 's2'] }],
   silos: [
     { siloId: 's1', siloCode: 'GRS/SILO-001', itemId: 'r1', balanceKg: 1500 },
@@ -99,7 +99,7 @@ describe('buildFeedForecast — sources and diet changes (Plan B)', () => {
     // from (20 Sep) is before planningDate (23 Sep); the single feed row (days 1-3 of the stage, 20-22 Sep) is
     // entirely consumed before the walk starts, so the container has nothing left to requisition.
     const input: ForecastInput = {
-      planningDate: '2026-09-23', from: '2026-09-20', to: '2026-09-25', refillBufferDays: 2, leadTimeDays: 0,
+      planningDate: '2026-09-23', from: '2026-09-20', to: '2026-09-25', leadTimeDays: 0,
       sheds: [{ shedId: 'h3', shedCode: 'GRS/SHED-003', siloIds: ['s0'] }],
       silos: [{ siloId: 's0', siloCode: 'GRS/SILO-000', itemId: 'r0', balanceKg: 500 }],
       store: null,

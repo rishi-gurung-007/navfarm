@@ -134,7 +134,10 @@ const STORE_CAPACITY = 1000;
 const STORE_CAPACITY_UOM = 'PCS';
 
 /** Silos are re-ordered a week ahead across the group. Ours, labelled as such. */
-const SILO_REORDER_DAYS = 7;
+// D38 (28 Sep): the demo's silos seed the standard 2 — the refill buffer is
+// per silo now, and 7 made every Date to Refill a week early. Existing silos
+// keep whatever they hold; there is no migration.
+const SILO_REORDER_DAYS = 2;
 
 /* ------------------------------------------------------------------------- */
 /* The three missing stages                                                   */

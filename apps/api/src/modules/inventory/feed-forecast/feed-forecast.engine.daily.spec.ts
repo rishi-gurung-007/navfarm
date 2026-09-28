@@ -8,7 +8,7 @@ import { buildFeedForecast, ForecastInput } from './feed-forecast.engine';
  * SILO2 R2 1,000 kg).
  */
 const workedExample: ForecastInput = {
-  planningDate: '2026-09-23', from: '2026-09-23', to: '2026-09-29', refillBufferDays: 2, leadTimeDays: 0,
+  planningDate: '2026-09-23', from: '2026-09-23', to: '2026-09-29', leadTimeDays: 0,
   sheds: [{ shedId: 'h3', shedCode: 'GRS/SHED-003', siloIds: ['s1', 's2'] }],
   silos: [
     { siloId: 's1', siloCode: 'GRS/SILO-001', itemId: 'r1', balanceKg: 1500 },
@@ -60,7 +60,7 @@ const row = (over: Partial<FeedRow> = {}): FeedRow => ({
 describe('buildFeedForecast — D34: wastage dropped, demand is heads × rate', () => {
   it('shows 100 kg intake and 100 kg demand — the row carries 10% wastage and it is ignored (D34)', () => {
     const input: ForecastInput = {
-      planningDate: '2026-09-23', from: '2026-09-23', to: '2026-09-23', refillBufferDays: 2, leadTimeDays: 2,
+      planningDate: '2026-09-23', from: '2026-09-23', to: '2026-09-23', leadTimeDays: 2,
       sheds: [{ shedId: 'h1', shedCode: 'GRS/SHED-001', siloIds: ['s1'] }],
       silos: [{ siloId: 's1', siloCode: 'GRS/SILO-001', itemId: 'r1', balanceKg: 525 }],
       store: null, items: { r1: 'Grower Diet' },
@@ -76,7 +76,7 @@ describe('buildFeedForecast — D36: rows inside a stage-change window are indic
   // FLUSH from 1 Sep: earliest change 4 Sep (changeWindowStart), planned (latest) 6 Sep — the
   // segment ends 5 Sep. Rows on 4–5 Sep sit inside the window and are indicative; 3 Sep is not.
   const input: ForecastInput = {
-    planningDate: '2026-09-03', from: '2026-09-03', to: '2026-09-05', refillBufferDays: 2, leadTimeDays: 2,
+    planningDate: '2026-09-03', from: '2026-09-03', to: '2026-09-05', leadTimeDays: 2,
     sheds: [{ shedId: 'h1', shedCode: 'GRS/SHED-001', siloIds: ['s1'] }],
     silos: [{ siloId: 's1', siloCode: 'GRS/SILO-001', itemId: 'r1', balanceKg: 100000 }],
     store: null, items: { r1: 'Flush Diet' },
@@ -109,7 +109,7 @@ describe('buildFeedForecast — shared silo, one batch changes diet (Review Focu
   // Shed H1 has SILO-001 (R1, 1,000 kg) and SILO-002 (R2, 500 kg). GR-01 eats R1 all week; GR-02 eats R1 until
   // 25 Sep and R2 from 26 Sep (its own breed's rows: R1 days 1–25, R2 from day 26, stage entered 1 Sep).
   const input: ForecastInput = {
-    planningDate: '2026-09-23', from: '2026-09-23', to: '2026-09-29', refillBufferDays: 2, leadTimeDays: 2,
+    planningDate: '2026-09-23', from: '2026-09-23', to: '2026-09-29', leadTimeDays: 2,
     sheds: [{ shedId: 'h1', shedCode: 'GRS/SHED-001', siloIds: ['s1', 's2'] }],
     silos: [
       { siloId: 's1', siloCode: 'GRS/SILO-001', itemId: 'r1', balanceKg: 1000 },
@@ -172,7 +172,7 @@ describe('buildFeedForecast — shared silo, one batch changes diet (Review Focu
 
 describe('buildFeedForecast — rows start at the planning date (Q7)', () => {
   const base: ForecastInput = {
-    planningDate: '2026-09-23', from: '2026-09-20', to: '2026-09-25', refillBufferDays: 2, leadTimeDays: 2,
+    planningDate: '2026-09-23', from: '2026-09-20', to: '2026-09-25', leadTimeDays: 2,
     sheds: [{ shedId: 'h1', shedCode: 'GRS/SHED-001', siloIds: ['s1'] }],
     silos: [{ siloId: 's1', siloCode: 'GRS/SILO-001', itemId: 'r1', balanceKg: 5000 }],
     store: null, items: { r1: 'Grower Diet' },
@@ -194,7 +194,7 @@ describe('buildFeedForecast — Current Inventory takes the day\'s posted moveme
   // 100 pigs at 1 kg = 100 kg/day from a 525 kg silo. The service passes posted receipts and non-feeding outflows
   // (goods issue, negative adjustment) dated inside the walk as signed `incoming`; the day's feeding is the forecast's.
   const input: ForecastInput = {
-    planningDate: '2026-09-23', from: '2026-09-23', to: '2026-09-26', refillBufferDays: 2, leadTimeDays: 2,
+    planningDate: '2026-09-23', from: '2026-09-23', to: '2026-09-26', leadTimeDays: 2,
     sheds: [{ shedId: 'h1', shedCode: 'GRS/SHED-001', siloIds: ['s1'] }],
     silos: [{ siloId: 's1', siloCode: 'GRS/SILO-001', itemId: 'r1', balanceKg: 525 }],
     store: null, items: { r1: 'Grower Diet' },
@@ -219,7 +219,7 @@ describe('buildFeedForecast — daily rows with no source, and the sort tie-brea
   // No silo and no store: two sheds eat R1 from nowhere. The NONE "container" is not a real one, so it has no days
   // of stock and no sharing across sheds.
   const input: ForecastInput = {
-    planningDate: '2026-09-23', from: '2026-09-23', to: '2026-09-23', refillBufferDays: 2, leadTimeDays: 2,
+    planningDate: '2026-09-23', from: '2026-09-23', to: '2026-09-23', leadTimeDays: 2,
     sheds: [{ shedId: 'h1', shedCode: 'GRS/SHED-001', siloIds: [] }, { shedId: 'h2', shedCode: 'GRS/SHED-002', siloIds: [] }],
     silos: [], store: null, items: { r1: 'Grower Diet' },
     batches: ['h1', 'h2'].map((shedId, i) => ({

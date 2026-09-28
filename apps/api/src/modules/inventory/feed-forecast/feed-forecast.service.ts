@@ -45,7 +45,8 @@ export interface ForecastFarm {
   code: string;
   name: string;
   companyId: string;
-  refillBufferDays: number;
+  // D38: the refill buffer is the SILO's own reorder days now; the farm's
+  // feed_refill_buffer_days column is kept but never read.
   leadTimeDays: number;
 }
 
@@ -60,7 +61,6 @@ export interface FeedFarmOption {
 
 /** D32: a farm on the Feed Planning screen, with its six settings (null = the client default applies). */
 export interface FeedFarmSettings {
-  feed_refill_buffer_days: number | null;
   feed_lead_time_days: number | null;
   feed_bulk_multiple_kg: number | null;
   feed_bag_size_kg: number | null;
@@ -82,7 +82,6 @@ export interface FeedForecastResponse {
   /** How far the run-down was looked for (Q12): at least `to`, at most 45 days past the planning date. */
   horizonTo: string;
   farm: { id: string; code: string; name: string };
-  refillBufferDays: number;
   leadTimeDays: number;
   rows: ForecastRow[];
   daily: DailyForecastRow[];
@@ -206,7 +205,6 @@ export interface FeedForecastReport {
   horizonTo: string;
   period: PeriodRange | null;
   farm: { id: string; code: string; name: string };
-  refillBufferDays: number;
   leadTimeDays: number;
   rows: ReportRow[];
   stages: StageBlock[];
@@ -598,7 +596,6 @@ export class FeedForecastService {
       horizonTo: result.horizonTo,
       period,
       farm: result.farm,
-      refillBufferDays: result.refillBufferDays,
       leadTimeDays: result.leadTimeDays,
       rows: groupRows(result.daily, view, from),
       stages: result.stages,
@@ -667,7 +664,8 @@ export class FeedForecastService {
    * Capacity and the rest of a farm's form).
    */
   private static readonly FARM_SETTINGS = [
-    { key: 'feed_refill_buffer_days', column: schema.locationMaster.feed_refill_buffer_days, min: 0, max: 30 },
+    // D38: the refill buffer is no longer one of these — it is the silo's own
+    // Silo Reorder Days. The column stays on location_master, unread.
     { key: 'feed_lead_time_days', column: schema.locationMaster.feed_lead_time_days, min: 0, max: 30 },
     { key: 'feed_bulk_multiple_kg', column: schema.locationMaster.feed_bulk_multiple_kg, min: 1, max: null },
     { key: 'feed_bag_size_kg', column: schema.locationMaster.feed_bag_size_kg, min: 1, max: null },
@@ -687,7 +685,6 @@ export class FeedForecastService {
         name: L.location_name,
         company_id: L.company_id,
         company_name: schema.companyMaster.company_name,
-        feed_refill_buffer_days: L.feed_refill_buffer_days,
         feed_lead_time_days: L.feed_lead_time_days,
         feed_bulk_multiple_kg: L.feed_bulk_multiple_kg,
         feed_bag_size_kg: L.feed_bag_size_kg,
@@ -705,7 +702,6 @@ export class FeedForecastService {
       companyId: r.company_id as string,
       companyName: r.company_name ?? null,
       settings: {
-        feed_refill_buffer_days: r.feed_refill_buffer_days ?? null,
         feed_lead_time_days: r.feed_lead_time_days ?? null,
         feed_bulk_multiple_kg: r.feed_bulk_multiple_kg ?? null,
         feed_bag_size_kg: r.feed_bag_size_kg ?? null,
@@ -739,7 +735,6 @@ export class FeedForecastService {
     if (!Object.keys(updates).length) throw new BadRequestException('Send at least one feed setting to change.');
     const [before] = await this.db
       .select({
-        feed_refill_buffer_days: schema.locationMaster.feed_refill_buffer_days,
         feed_lead_time_days: schema.locationMaster.feed_lead_time_days,
         feed_bulk_multiple_kg: schema.locationMaster.feed_bulk_multiple_kg,
         feed_bag_size_kg: schema.locationMaster.feed_bag_size_kg,
@@ -987,7 +982,6 @@ export class FeedForecastService {
       return {
         planningDate, today, timeZone, from, to, horizonTo,
         farm: { id: farm.id, code: farm.code, name: farm.name },
-        refillBufferDays: farm.refillBufferDays,
         leadTimeDays: farm.leadTimeDays,
         rows, daily, flags: [...flags, ...loadFlags, ...asOf], sources, dietChanges,
         stages: stageBlocks,
@@ -1055,7 +1049,6 @@ export class FeedForecastService {
         location_code: schema.locationMaster.location_code,
         location_name: schema.locationMaster.location_name,
         company_id: schema.locationMaster.company_id,
-        feed_refill_buffer_days: schema.locationMaster.feed_refill_buffer_days,
         feed_lead_time_days: schema.locationMaster.feed_lead_time_days,
       })
       .from(schema.locationMaster)
@@ -1077,7 +1070,6 @@ export class FeedForecastService {
       code: row.location_code,
       name: row.location_name,
       companyId: row.company_id,
-      refillBufferDays: row.feed_refill_buffer_days ?? 2,
       // D19: the column default moved from 0 to 2 (migration 0120); the same fallback applies to any row still null.
       leadTimeDays: row.feed_lead_time_days ?? 2,
     };
@@ -1108,6 +1100,8 @@ export class FeedForecastService {
         parent_location_id: schema.locationMaster.parent_location_id,
         is_active: schema.locationMaster.is_active,
         low_level_kg: schema.locationMaster.low_level_kg,
+        // D38: the refill buffer is this silo's own, not the farm's.
+        silo_reorder_days: schema.locationMaster.silo_reorder_days,
       })
       .from(schema.locationMaster)
       .where(
@@ -1163,7 +1157,13 @@ export class FeedForecastService {
     const stock = stockAsOf({
       silos: siloRows
         .filter((s) => linkedSiloIds.includes(s.location_id))
-        .map((s) => ({ siloId: s.location_id, siloCode: s.location_code, lowLevelKg: s.low_level_kg == null ? null : Number(s.low_level_kg) })),
+        .map((s) => ({
+          siloId: s.location_id,
+          siloCode: s.location_code,
+          lowLevelKg: s.low_level_kg == null ? null : Number(s.low_level_kg),
+          // D38: null here means the engine's standard 2.
+          reorderDays: s.silo_reorder_days == null ? null : Number(s.silo_reorder_days),
+        })),
       store: storeRow ? { storeId: storeRow.location_id, storeCode: storeRow.location_code } : null,
       feedItemIds: new Set(feedRows.map((r) => r.itemId)),
       opening: ledger.opening,
@@ -1195,7 +1195,6 @@ export class FeedForecastService {
         to,
         stockDate: opts.stockDate,
         horizonTo: opts.horizonTo,
-        refillBufferDays: farm.refillBufferDays,
         leadTimeDays: farm.leadTimeDays,
         sheds,
         silos: stock.silos,
