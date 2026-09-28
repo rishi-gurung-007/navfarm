@@ -932,6 +932,13 @@
       "when": 1792000000001,
       "tag": "0132_lifecycle_scope_from_breed",
       "breakpoints": true
+    },
+    {
+      "idx": 118,
+      "version": "5",
+      "when": 1790358600000,
+      "tag": "0118_batch_daily_data_serial_no",
+      "breakpoints": true
     }
   ]
 }

@@ -2876,6 +2876,7 @@ export const batchDailyData = mysqlTable(
     entered_text: varchar('entered_text', { length: 500 }),
     lot_id: varchar('lot_id', { length: 36 }),
     lot_no: varchar('lot_no', { length: 80 }),
+    serial_no: varchar('serial_no', { length: 100 }),
     resource_id: varchar('resource_id', { length: 36 }),
     posted: boolean('posted').default(false).notNull(),
     posting_reference: varchar('posting_reference', { length: 36 }), // inventory_ledger.ledger_id, journal_header.journal_id, or destination batch_id

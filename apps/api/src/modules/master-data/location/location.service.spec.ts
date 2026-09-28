@@ -13,7 +13,7 @@ describe('LocationService canonical hierarchy', () => {
   const txUpdate = jest.fn();
   const txDelete = jest.fn();
   const audit = { log: jest.fn() };
-  const numberSeries = { generateNext: jest.fn(), lockSeries: jest.fn() };
+  const numberSeries = { generateNext: jest.fn(), lockSeries: jest.fn(), findDefaultSeriesByMaster: jest.fn() };
   // D9 (which item may live where) is SiloFeedService's rule, not
   // LocationService's — these tests only need to know it was asked, and
   // whether it allowed or refused, not the item logic behind that answer.
@@ -832,7 +832,7 @@ describe('hierarchical location codes', () => {
   // child location is `<parent code>/<TYPE>-<seq>`, and <seq> counts only
   // the siblings sharing that exact parent, never a company-wide total.
   let service: LocationService;
-  const numberSeries = { generateNext: jest.fn(), lockSeries: jest.fn() };
+  const numberSeries = { generateNext: jest.fn(), lockSeries: jest.fn(), findDefaultSeriesByMaster: jest.fn() };
 
   beforeEach(async () => {
     jest.clearAllMocks();

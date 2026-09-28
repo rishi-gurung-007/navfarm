@@ -204,6 +204,7 @@ async function run() {
             master_type: 'ITEM',
             no_series_code: t.seriesPrefix,
             seq_length: 4,
+            is_default: false,
             manual_nos: false,
           });
           noSeriesIdByCode.set(t.seriesCode, noSeriesId);

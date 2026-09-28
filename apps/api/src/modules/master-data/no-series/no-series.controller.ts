@@ -51,11 +51,13 @@ export class NoSeriesController {
     @Query('masterType') masterType: string,
     @Query('companyId') queryCompanyId: string,
     @Query('type') type: string,
+    @Query('parentId') parentId: string,
+    @Query('record') record: string,
     @Req() req: any,
   ) {
     const tenantId = req.user?.tenantId || req['tenantId'];
     const companyId = queryCompanyId || req.headers?.['x-active-company-id'] || req.user?.companyId;
-    const result = await this.numberSeriesService.previewByMaster(masterType, tenantId, companyId, type);
+    const result = await this.numberSeriesService.previewByMaster(masterType, tenantId, companyId, type, parentId, record);
     return {
       success: true,
       message: 'Preview retrieved successfully.',

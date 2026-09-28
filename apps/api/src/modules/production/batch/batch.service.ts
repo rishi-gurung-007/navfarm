@@ -61,17 +61,6 @@ const toDays = (value: number, calcUnit: string): number => {
   return value;
 };
 
-// Splits `total` into `n` shares that sum back to exactly `total` — any
-// rounding remainder is absorbed into the last share. Mirrors the frontend's
-// animal-multi-select.tsx helper of the same name.
-const splitEvenly = (total: number, n: number): number[] => {
-  const base = Math.floor((total / n) * 10000) / 10000;
-  const shares = new Array(n).fill(base);
-  const remainder = Math.round((total - base * n) * 10000) / 10000;
-  shares[n - 1] = Math.round((shares[n - 1] + remainder) * 10000) / 10000;
-  return shares;
-};
-
 export interface UserContext {
   userId?: string;
   email?: string;
@@ -181,10 +170,38 @@ export class BatchService {
           'input_lines is required for BATCH_WISE batches.',
         );
       }
-      if (dto.opening_quantity === undefined || dto.opening_quantity === null) {
+      if (
+        dto.opening_quantity === undefined ||
+        dto.opening_quantity === null ||
+        Number(dto.opening_quantity) <= 0
+      ) {
         throw new BadRequestException(
-          'opening_quantity is required for BATCH_WISE batches.',
+          'opening_quantity is required for BATCH_WISE batches and must be greater than zero.',
         );
+      }
+
+      for (const line of dto.input_lines) {
+        if (!line.item_id) {
+          throw new BadRequestException(
+            'item_id is required for all batch input lines.',
+          );
+        }
+        const qty = Number(line.quantity);
+        if (
+          line.quantity === undefined ||
+          line.quantity === null ||
+          isNaN(qty) ||
+          qty <= 0
+        ) {
+          throw new BadRequestException(
+            'Quantity must be greater than zero for all batch input lines.',
+          );
+        }
+        if (!line.uom || !line.uom.trim()) {
+          throw new BadRequestException(
+            'uom is required for all batch input lines.',
+          );
+        }
       }
     }
 
@@ -245,6 +262,77 @@ export class BatchService {
         throw new BadRequestException(
           `Animal(s) do not belong to this Line of Business: ${wrongLob.map((a) => a.animal_code).join(', ')}.`,
         );
+      }
+    } else {
+      try {
+        const inputItemIds = dto.input_lines!.map((l) => l.item_id).filter(Boolean);
+        if (inputItemIds.length > 0 && typeof this.db.select === 'function') {
+          const selectObj = this.db.select();
+          if (selectObj?.from) {
+            const items = await selectObj
+              .from(schema.itemMaster)
+              .where(
+                and(
+                  inArray(schema.itemMaster.item_id, inputItemIds),
+                  eq(schema.itemMaster.tenant_id, tenantId),
+                  eq(schema.itemMaster.is_active, true),
+                  isNull(schema.itemMaster.deleted_at),
+                ),
+              );
+            if (items && items.length > 0) {
+              const itemMap = new Map(items.map((it: any) => [it.item_id, it]));
+              for (const line of dto.input_lines!) {
+                const it = itemMap.get(line.item_id);
+                if (it) {
+                  const itName = it.item_name || it.item_code;
+                  const lineQty = Number(line.quantity);
+                  if (
+                    it.is_biological_asset ||
+                    it.item_type === 'BIOLOGICAL_ASSET' ||
+                    it.item_type === 'LIVESTOCK'
+                  ) {
+                    if (!line.quantity || isNaN(lineQty) || lineQty <= 0) {
+                      throw new BadRequestException(
+                        `Biological asset item '${itName}' requires a valid quantity greater than zero.`,
+                      );
+                    }
+                  }
+                  if (line.source_batch_id) {
+                    const [sourceBatch] = await this.db
+                      .select({
+                        batch_id: schema.batchHeader.batch_id,
+                        batch_no: schema.batchHeader.batch_no,
+                        opening_quantity: schema.batchHeader.opening_quantity,
+                        closing_quantity: schema.batchHeader.closing_quantity,
+                      })
+                      .from(schema.batchHeader)
+                      .where(
+                        and(
+                          eq(schema.batchHeader.batch_id, line.source_batch_id),
+                          eq(schema.batchHeader.tenant_id, tenantId),
+                        ),
+                      )
+                      .limit(1);
+                    if (sourceBatch) {
+                      const availQty = Number(
+                        sourceBatch.closing_quantity ??
+                          sourceBatch.opening_quantity ??
+                          0,
+                      );
+                      if (availQty < lineQty) {
+                        throw new BadRequestException(
+                          `Insufficient quantity in source batch '${sourceBatch.batch_no}': available ${availQty}, requested ${lineQty}.`,
+                        );
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      } catch (err) {
+        if (err instanceof BadRequestException) throw err;
       }
     }
 
@@ -332,6 +420,7 @@ export class BatchService {
       expected_end_date: computedExpectedEndDate,
       status: 'DRAFT',
       tracking_mode: trackingMode,
+      animal_tracking: trackingMode === 'ANIMAL_WISE' ? 'REGISTERED' : 'COUNT_ONLY',
       uom: dto.uom,
       remarks: dto.remarks || null,
       created_by: userPayload?.userId || null,
@@ -511,31 +600,9 @@ export class BatchService {
         nca_book_value: '0.0000',
       });
 
-      // Livestock (breed_id set) batches get one animal_register row per head
-      // of opening_quantity, so every physical animal is individually
-      // selectable from day one instead of only whichever few a user later
-      // registers by hand. Deliberately does NOT post to bio_asset_ledger —
-      // activate() already posts one aggregate ACQUISITION entry for the
-      // batch's full input-line cost; a second, per-animal posting here would
-      // double-count the acquisition value in the ledger.
-      if (dto.breed_id) {
-        await this.registerPlaceholderAnimals({
-          batchId,
-          tenantId,
-          companyId: dto.company_id,
-          nobId: lob.nob_id,
-          lobId: dto.lob_id,
-          breedId: dto.breed_id,
-          locationId: dto.location_id || null,
-          headcount: dto.opening_quantity!,
-          entryDate: dto.start_date,
-          inputLines: dto.input_lines!,
-          sourceBatchId:
-            dto.input_lines!.find((l) => l.source_batch_id)?.source_batch_id ||
-            null,
-          userId: userPayload?.userId,
-        });
-      }
+      // Commercial batches track headcount via batchBioAssetState/batchHeader;
+      // they do not create individual animal records in animal_register (which is reserved
+      // for individually tagged breeding stock in ANIMAL_WISE batches or Animal Master).
     }
 
     if (
@@ -759,10 +826,38 @@ export class BatchService {
           'input_lines is required for BATCH_WISE batches.',
         );
       }
-      if (dto.opening_quantity === undefined || dto.opening_quantity === null) {
+      if (
+        dto.opening_quantity === undefined ||
+        dto.opening_quantity === null ||
+        Number(dto.opening_quantity) <= 0
+      ) {
         throw new BadRequestException(
-          'opening_quantity is required for BATCH_WISE batches.',
+          'opening_quantity is required for BATCH_WISE batches and must be greater than zero.',
         );
+      }
+
+      for (const line of dto.input_lines) {
+        if (!line.item_id) {
+          throw new BadRequestException(
+            'item_id is required for all batch input lines.',
+          );
+        }
+        const qty = Number(line.quantity);
+        if (
+          line.quantity === undefined ||
+          line.quantity === null ||
+          isNaN(qty) ||
+          qty <= 0
+        ) {
+          throw new BadRequestException(
+            'Quantity must be greater than zero for all batch input lines.',
+          );
+        }
+        if (!line.uom || !line.uom.trim()) {
+          throw new BadRequestException(
+            'uom is required for all batch input lines.',
+          );
+        }
       }
 
       const [existingPlaceholder] = await this.db
@@ -1626,130 +1721,6 @@ export class BatchService {
     }
   }
 
-  /**
-   * Auto-registers `headcount` placeholder animal_register rows for a
-   * newly-created BIO_ASSET batch. Per-animal fields that have no real
-   * source at batch-creation time are deliberately generic/even-split rather
-   * than guessed specifics — animal_type is the neutral COMMERCIAL_PIG (not
-   * SOW/BOAR/GILT, which would presume an unverified breeding-stock role),
-   * gender alternates M/F, and acquisition_cost is the batch's total
-   * input-line cost split evenly per head. All fields remain individually
-   * editable later via the normal animal-register edit flow.
-   */
-  private async registerPlaceholderAnimals(params: {
-    batchId: string;
-    tenantId: string;
-    companyId: string;
-    nobId: string;
-    lobId: string;
-    breedId: string;
-    locationId: string | null;
-    headcount: number;
-    entryDate: string;
-    inputLines: Array<{
-      item_id: string;
-      quantity: number;
-      rate?: number;
-      source_batch_id?: string;
-    }>;
-    sourceBatchId: string | null;
-    userId?: string;
-  }) {
-    const {
-      batchId,
-      tenantId,
-      companyId,
-      nobId,
-      lobId,
-      breedId,
-      locationId,
-      headcount,
-      entryDate,
-      inputLines,
-      sourceBatchId,
-      userId,
-    } = params;
-    if (headcount <= 0) return;
-
-    const itemId = inputLines[0]?.item_id;
-    if (!itemId) return; // no input line to attribute cost/item to — skip rather than guess
-
-    const totalCost = inputLines.reduce(
-      (sum, l) => sum + Number(l.quantity) * Number(l.rate || 0),
-      0,
-    );
-    const shares = splitEvenly(totalCost, headcount);
-    const entryType = sourceBatchId ? 'TRANSFERRED_IN' : 'PURCHASED_LOCAL';
-
-    const createdIds: string[] = [];
-    for (let i = 0; i < headcount; i++) {
-      const animalId = randomUUID();
-      // Sequential, not Promise.all — generateNext row-locks the series and
-      // must serialize to hand out distinct codes.
-      // Resolved, not hardcoded. This asked for ANIMAL_PIGGERY by name, which
-      // broke the moment the series was renamed to ANIMAL — resolveSeriesFor
-      // tries the LOB-specific ANIMAL_PIGGERY first and falls back to ANIMAL,
-      // so either naming works and a new LOB can still take its own series.
-      const animalSeries = await this.numberSeriesService.resolveSeriesFor(
-        'ANIMAL',
-        'PIGGERY',
-        tenantId,
-        companyId,
-      );
-      if (!animalSeries)
-        throw new BadRequestException(
-          'No animal number series is configured for this workspace.',
-        );
-      const animalCode = await this.numberSeriesService.generateNext(
-        animalSeries,
-        tenantId,
-        companyId,
-      );
-      const cost = shares[i];
-      await this.db.insert(schema.animalRegister).values({
-        animal_id: animalId,
-        tenant_id: tenantId,
-        company_id: companyId,
-        nob_id: nobId,
-        lob_id: lobId,
-        animal_code: animalCode,
-        animal_type: 'COMMERCIAL_PIG',
-        breed_id: breedId,
-        gender: i % 2 === 0 ? 'F' : 'M',
-        entry_type: entryType,
-        entry_date: entryDate,
-        source_batch_id: sourceBatchId || null,
-        item_id: itemId,
-        current_batch_id: batchId,
-        current_location_id: locationId,
-        acquisition_cost: cost.toFixed(4),
-        total_opening_asset_value: cost.toFixed(4),
-        current_bio_asset_value: cost.toFixed(4),
-        total_amortised: '0.0000',
-        book_value: cost.toFixed(4),
-        status: 'ACTIVE',
-        is_active: true,
-        created_by: userId || null,
-        updated_by: userId || null,
-      });
-      createdIds.push(animalId);
-    }
-
-    await this.auditService.log({
-      tenantId,
-      companyId,
-      userId,
-      action: 'CREATE',
-      entityName: 'animal_register',
-      entityId: batchId,
-      newValues: {
-        auto_registered_for_batch: batchId,
-        headcount,
-        animal_ids: createdIds,
-      },
-    });
-  }
-
   /** DRAFT → ACTIVE: consumes each input line from inventory via FIFO, mirrors to GL. */
   async activate(id: string, tenantId: string, userPayload?: UserContext) {
     const batch = await this.findOne(id);
@@ -2074,6 +2045,8 @@ export class BatchService {
         // pre-existing caller still does; supplied, it confines the draw to
         // that silo's (or store's) own layers.
         warehouseId: dto.source_warehouse_id,
+        lotNo: dto.lot_no,
+        serialNo: dto.serial_no,
         userId: userPayload?.userId,
       });
       await this.glPostingService.postInventoryLedgerEntry(
@@ -2148,6 +2121,8 @@ export class BatchService {
         uom: dto.uom,
         rate: isByProductRemoval ? dto.nrv_rate : dto.rate,
         batchNo: batch.batch_no,
+        lotNo: dto.lot_no,
+        serialNo: dto.serial_no,
         userId: userPayload?.userId,
       });
       await this.glPostingService.postInventoryLedgerEntry(
@@ -2575,7 +2550,8 @@ export class BatchService {
       .limit(1);
 
     // If no scheduler exists yet, check if stage has scheduler_auto_create enabled
-    if (!header) {
+    // Only auto-create if this effectiveStageId is the batch's current stage_id
+    if (!header && effectiveStageId === batch.stage_id) {
       const [stage] = await this.db
         .select()
         .from(schema.stageMaster)
@@ -3151,7 +3127,22 @@ export class BatchService {
       return this.getDataEntryByStage(batch, dateStr);
     }
 
-    const activeStageId = stageId || batch.stage_id;
+    let activeStageId = batch.stage_id;
+    if (stageId && stageId !== batch.stage_id) {
+      const [existing] = await this.db
+        .select({ stage_id: schema.schedulerHeader.stage_id })
+        .from(schema.schedulerHeader)
+        .where(
+          and(
+            eq(schema.schedulerHeader.batch_id, batch.batch_id),
+            eq(schema.schedulerHeader.stage_id, stageId),
+          ),
+        )
+        .limit(1);
+      if (existing) {
+        activeStageId = stageId;
+      }
+    }
     const activePairs = await this.loadActiveScheduleLines(
       batch,
       dateStr,
@@ -4178,6 +4169,8 @@ export class BatchService {
           item_type: string | null;
           item_code: string | null;
           withdrawal_days: number | null;
+          is_lot_tracked: boolean;
+          is_serial_tracked: boolean;
           resource_id: string | null;
           uom: string | null;
           occurrence: string;
@@ -4337,6 +4330,13 @@ export class BatchService {
           ? (itemRows.find((x) => x.item_id === line.item_id)
               ?.withdrawal_days ?? null)
           : null,
+        is_lot_tracked: line.lot_required
+          ? !!itemRows.find((x) => x.item_id === line.item_id)?.is_lot_tracked
+          : false,
+        is_serial_tracked: line.lot_required
+          ? !!itemRows.find((x) => x.item_id === line.item_id)
+              ?.is_serial_tracked
+          : false,
         resource_id: line.resource_id,
         uom,
         occurrence: line.occurrence,

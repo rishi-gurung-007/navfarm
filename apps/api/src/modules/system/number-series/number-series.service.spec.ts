@@ -482,4 +482,90 @@ describe('NumberSeriesService', () => {
       expect(result).toBe('ITEM_RAW_MATERIAL');
     });
   });
+
+  describe('updateNoSeriesRow and createNoSeriesRow default exclusivity', () => {
+    it('unsets is_default on other series of the same master type when updating to default', async () => {
+      const existingSeries = {
+        id: 'series-loc-1',
+        code: 'LOCATION',
+        document_type: 'LOCATION',
+        master_type: 'LOCATION',
+        tenant_id: 'tenant-123',
+        company_id: 'comp-1',
+        is_default: false,
+      };
+
+      // findOneById called first
+      mockDbSelect.mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockReturnValue({
+            limit: jest.fn().mockResolvedValue([existingSeries]),
+          }),
+        }),
+      });
+
+      // update mock
+      const mockSet = jest.fn().mockReturnValue({
+        where: jest.fn().mockResolvedValue({}),
+      });
+      mockDbUpdate.mockReturnValue({ set: mockSet });
+
+      // findOneById called at end
+      mockDbSelect.mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockReturnValue({
+            limit: jest.fn().mockResolvedValue([{ ...existingSeries, is_default: true }]),
+          }),
+        }),
+      });
+
+      const updated = await service.updateNoSeriesRow('series-loc-1', { is_default: true });
+      expect(mockDbUpdate).toHaveBeenCalled();
+      expect(mockSet).toHaveBeenCalledWith(expect.objectContaining({ is_default: false }));
+      expect(updated.is_default).toBe(true);
+    });
+
+    it('unsets is_default on existing series when creating a new series with is_default: true', async () => {
+      // Code uniqueness check
+      mockDbSelect.mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockReturnValue({
+            limit: jest.fn().mockResolvedValue([]),
+          }),
+        }),
+      });
+
+      const mockSet = jest.fn().mockReturnValue({
+        where: jest.fn().mockResolvedValue({}),
+      });
+      mockDbUpdate.mockReturnValue({ set: mockSet });
+      mockDbInsert.mockReturnValue({
+        values: jest.fn().mockResolvedValue({}),
+      });
+
+      // findOneById at end
+      mockDbSelect.mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockReturnValue({
+            limit: jest.fn().mockResolvedValue([{
+              id: 'new-id',
+              code: 'NS-LOC-2',
+              document_type: 'LOCATION',
+              is_default: true,
+            }]),
+          }),
+        }),
+      });
+
+      const created = await service.createNoSeriesRow(
+        { code: 'NS-LOC-2', document_type: 'LOCATION', is_default: true },
+        'tenant-123',
+        'comp-1',
+      );
+
+      expect(mockDbUpdate).toHaveBeenCalled();
+      expect(mockSet).toHaveBeenCalledWith(expect.objectContaining({ is_default: false }));
+      expect(created.is_default).toBe(true);
+    });
+  });
 });

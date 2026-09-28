@@ -168,7 +168,12 @@ export class LocationService {
    * The old per-type rows still resolve for anyone who has them; this only
    * stops new ones being minted.
    */
-  private async ensureCompanySeries(_type: typeof schema.locationTypeMaster.$inferSelect, tenantId: string, companyId?: string | null) {
+  private async ensureCompanySeries(type: typeof schema.locationTypeMaster.$inferSelect, tenantId: string, companyId?: string | null) {
+    const defaultSeries = await this.numberSeriesService.findDefaultSeriesByMaster?.('LOCATION', tenantId, companyId, type.type_code);
+    if (defaultSeries) {
+      return defaultSeries.code;
+    }
+
     const seriesCode = 'LOCATION';
     if (!companyId) return seriesCode;
     const [series] = await this.db.select().from(schema.noSeries).where(and(
@@ -290,7 +295,7 @@ export class LocationService {
     // location, the sibling count it guards) stays locked until the insert
     // below commits — two concurrent creates cannot produce the same code.
     const locationCode = dto.location_code?.trim()
-      ? await this.numberSeriesService.manualCode('LOCATION', dto.location_code, tenantId, companyId, typeCode)
+      ? await this.numberSeriesService.manualCode(seriesCode, dto.location_code, tenantId, companyId, typeCode)
       : await this.generateLocationCode(seriesCode, locationType, tenantId, companyId, parent, tx);
 
     // location_code is varchar(255). A deep hierarchical tree (each level

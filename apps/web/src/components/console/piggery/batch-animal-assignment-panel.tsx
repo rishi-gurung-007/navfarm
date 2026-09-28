@@ -188,7 +188,9 @@ export default function BatchAnimalAssignmentPanel() {
       .then((res) => {
         const list: any[] = Array.isArray(res) ? res : (res?.data ?? []);
         // Strictly filter to Animal-Wise batches
-        const registeredOnly = list.filter((b: any) => b.animal_tracking === "REGISTERED");
+        const registeredOnly = list.filter(
+          (b: any) => b.animal_tracking === "REGISTERED" || b.tracking_mode === "ANIMAL_WISE",
+        );
         const mapped: BatchOption[] = registeredOnly.map((b: any) => ({
           id: b.batch_id,
           code: b.batch_no,

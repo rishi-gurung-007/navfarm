@@ -1,7 +1,7 @@
 import { companyCondition, MASTER_TABLES, masterScopeConditions } from '../../../common/master-data-scope';
 import { Injectable, NotFoundException, ConflictException, BadRequestException, HttpException, HttpStatus } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, like, ne, not, or, isNull, sql, desc, getTableColumns, count } from 'drizzle-orm';
+import { eq, and, like, ne, not, or, isNull, sql, desc, getTableColumns, count, inArray } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
@@ -249,6 +249,21 @@ export class NumberSeriesService {
     }
 
     if (!series) {
+      const normalizedMaster = seriesCode.toUpperCase().replaceAll('-', '_');
+      if (MASTER_CODE_COLUMNS[normalizedMaster] || normalizedMaster === 'ITEM' || normalizedMaster === 'LOCATION') {
+        try {
+          const defaultSeries = await this.findDefaultSeriesByMaster(seriesCode, tenantId, companyId, undefined, executor);
+          if (defaultSeries) {
+            series = defaultSeries;
+            seriesCode = defaultSeries.code;
+          }
+        } catch {
+          // ignore
+        }
+      }
+    }
+
+    if (!series) {
       throw new NotFoundException(`Number series '${seriesCode}' not found for this tenant/company scope.`);
     }
     if (series.blocked) {
@@ -434,6 +449,14 @@ export class NumberSeriesService {
     const masterSeriesCode = masterKey.toUpperCase();
     if (await seriesExists(masterSeriesCode)) return masterSeriesCode;
 
+    // Check if a default series is configured for this master (e.g. custom series code or NS-*)
+    try {
+      const defaultSeries = await this.findDefaultSeriesByMaster(masterKey, tenantId, companyId, typeValue, executor);
+      if (defaultSeries) return defaultSeries.code;
+    } catch {
+      // Fall through
+    }
+
     return null;
   }
 
@@ -565,8 +588,12 @@ export class NumberSeriesService {
     // does for the real create. Without this, the preview skipped the segment
     // resolution above entirely and showed the bare sequence ("006") instead
     // of the type-prefixed code ("FARM-006") the save will actually produce.
-    if (query.master === 'LOCATION' && query.type && record.location_type === undefined) {
-      record.location_type = query.type;
+    if (query.master === 'LOCATION') {
+      if (query.type && record.location_type === undefined) {
+        record.location_type = query.type;
+      } else if (!query.type && record.location_type === undefined) {
+        record.location_type = series.no_series_code || series.prefix || 'LOC';
+      }
     }
     return { ...settings, preview: (await this.nextAvailableCode(series, tenantId, companyId, this.db, new Date(), record)).code };
   }
@@ -1082,29 +1109,42 @@ export class NumberSeriesService {
 
     const id = randomUUID();
     const isDefault = dto.is_default ?? true;
-    const documentType = dto.document_type || null;
+    const documentType = (dto.document_type || (dto as any).master_type || null)?.toUpperCase()?.replaceAll('-', '_');
+    const targetCompanyId = dto.company_id || companyId || null;
 
-    // If setting this series as default, automatically uncheck is_default on any existing series for the same master type
+    // If setting this series as default, automatically uncheck is_default on any existing series for the same master type in the same scope
     if (isDefault && documentType) {
+      const unsetConditions: any[] = [
+        or(
+          eq(schema.noSeries.document_type, documentType),
+          eq(schema.noSeries.master_type, documentType),
+        )!,
+        eq(schema.noSeries.is_default, true),
+      ];
+      if (tenantId) unsetConditions.push(eq(schema.noSeries.tenant_id, tenantId));
+      if (targetCompanyId) {
+        unsetConditions.push(eq(schema.noSeries.company_id, targetCompanyId));
+      } else {
+        unsetConditions.push(isNull(schema.noSeries.company_id));
+      }
+
       await this.db
         .update(schema.noSeries)
         .set({
           is_default: false,
           updated_at: toMysqlTimestamp() as any,
         })
-        .where(and(
-          eq(schema.noSeries.document_type, documentType),
-          eq(schema.noSeries.is_default, true),
-        ));
+        .where(and(...unsetConditions));
     }
 
     const newRecord = {
       id,
       tenant_id: tenantId || null,
-      company_id: dto.company_id || companyId || null,
+      company_id: targetCompanyId,
       code: dto.code,
       description: dto.description || null,
       document_type: documentType,
+      master_type: documentType,
       no_series_code: dto.no_series_code || null,
       seq_length: dto.seq_length ?? 4,
       increment_by: dto.increment_by ?? 1,
@@ -1149,9 +1189,33 @@ export class NumberSeriesService {
     query?: any,
   ) {
     const conditions: any[] = [];
-    if (documentType) conditions.push(eq(schema.noSeries.document_type, documentType.toUpperCase().replaceAll('-', '_')));
+    if (documentType) {
+      const normalizedDoc = documentType.toUpperCase().replaceAll('-', '_');
+      conditions.push(or(
+        eq(schema.noSeries.document_type, normalizedDoc),
+        eq(schema.noSeries.master_type, normalizedDoc),
+      )!);
+    }
     if (tenantId) conditions.push(eq(schema.noSeries.tenant_id, tenantId));
-    if (companyId) conditions.push(or(eq(schema.noSeries.company_id, companyId), isNull(schema.noSeries.company_id)));
+
+    if (companyId) {
+      // Check if this company has its own series (or check if any exist with this company_id)
+      const [companyCount] = await this.db
+        .select({ total: count() })
+        .from(schema.noSeries)
+        .where(and(
+          eq(schema.noSeries.company_id, companyId),
+          tenantId ? eq(schema.noSeries.tenant_id, tenantId) : undefined!,
+        ));
+      if (Number(companyCount?.total ?? 0) > 0) {
+        conditions.push(eq(schema.noSeries.company_id, companyId));
+      } else {
+        // Fall back to tenant-level templates if company hasn't copied/created any yet
+        conditions.push(isNull(schema.noSeries.company_id));
+      }
+    } else {
+      conditions.push(isNull(schema.noSeries.company_id));
+    }
     if (search) {
       const s = `%${search.trim()}%`;
       conditions.push(or(
@@ -1217,18 +1281,32 @@ export class NumberSeriesService {
       .where(eq(schema.noSeries.id, id))
       .limit(1);
     if (!series) throw new NotFoundException(`No. Series '${id}' not found.`);
-    if (!series.document_type) throw new BadRequestException('This series has no document type set.');
+    const targetType = (series.document_type || series.master_type)?.toUpperCase()?.replaceAll('-', '_');
+    if (!targetType) throw new BadRequestException('This series has no document/master type set.');
 
-    const conditions = [
-      eq(schema.noSeries.document_type, series.document_type),
+    const targetCompanyId = series.company_id || companyId || null;
+    const unsetConditions: any[] = [
+      or(
+        eq(schema.noSeries.document_type, targetType),
+        eq(schema.noSeries.master_type, targetType),
+      )!,
+      ne(schema.noSeries.id, id),
       eq(schema.noSeries.is_default, true),
     ];
-    if (tenantId) conditions.push(eq(schema.noSeries.tenant_id, tenantId));
+    if (tenantId || series.tenant_id) {
+      unsetConditions.push(eq(schema.noSeries.tenant_id, series.tenant_id || tenantId));
+    }
+    if (targetCompanyId) {
+      unsetConditions.push(eq(schema.noSeries.company_id, targetCompanyId));
+    } else {
+      unsetConditions.push(isNull(schema.noSeries.company_id));
+    }
+
     // Unset current default
     await this.db
       .update(schema.noSeries)
       .set({ is_default: false, updated_at: toMysqlTimestamp() as any })
-      .where(and(...conditions));
+      .where(and(...unsetConditions));
     // Set new default
     await this.db
       .update(schema.noSeries)
@@ -1371,17 +1449,17 @@ export class NumberSeriesService {
    * Finds the default active No. Series for a given Master Type (e.g. SUPPLIER, CUSTOMER, ITEM),
    * respecting company-level Inventory Setup configuration and optional master type subtype.
    */
-  async findDefaultSeriesByMaster(masterType: string, tenantId?: string, companyId?: string | null, type?: string | null) {
+  async findDefaultSeriesByMaster(
+    masterType: string,
+    tenantId?: string,
+    companyId?: string | null,
+    type?: string | null,
+    executor: MySql2Database<typeof schema> = this.db,
+  ) {
     const normalizedType = masterType.toUpperCase().replaceAll('-', '_');
     const normalizedSubType = type ? type.toUpperCase().replaceAll('-', '_') : null;
 
-    // Self-coded masters (see SELF_CODED_MASTERS) are not resolved from this
-    // table's generic rows — defer to the type-aware previewCode() path.
-    if (SELF_CODED_MASTERS.has(normalizedType)) {
-      return null;
-    }
-
-    // 0. If a subtype is passed, check if a specific series exists for it (e.g. NS-FEED, NS-MED, ITEM_FEED)
+    // 0. If a subtype is passed, check if a specific series exists for it (e.g. NS-FEED, NS-MED, ITEM_FEED, LOCATION_FARM)
     if (normalizedSubType) {
       const subConditions = [
         or(
@@ -1391,6 +1469,7 @@ export class NumberSeriesService {
           eq(schema.noSeries.code, `${normalizedType}-${normalizedSubType}`),
         ),
         eq(schema.noSeries.blocked, false),
+        isNull(schema.noSeries.deleted_at),
       ];
       if (tenantId) subConditions.push(eq(schema.noSeries.tenant_id, tenantId));
       if (companyId) {
@@ -1399,20 +1478,24 @@ export class NumberSeriesService {
           sql`${schema.noSeries.company_id} IS NULL`,
         )!);
       }
-      const [typeSeries] = await this.db
-        .select()
-        .from(schema.noSeries)
-        .where(and(...subConditions))
-        .orderBy(sql`${schema.noSeries.is_default} DESC, ${schema.noSeries.created_at} ASC`)
-        .limit(1);
+      try {
+        const [typeSeries] = await executor
+          .select()
+          .from(schema.noSeries)
+          .where(and(...subConditions))
+          .orderBy(sql`${schema.noSeries.is_default} DESC, ${schema.noSeries.created_at} ASC`)
+          .limit(1);
 
-      if (typeSeries) return typeSeries;
+        if (typeSeries) return typeSeries;
+      } catch {
+        // Fall through
+      }
     }
 
     // 1. Check if Company-specific Inventory Setup defines whether this master has number series applied
     if (tenantId && companyId) {
       try {
-        const [setup] = await this.db
+        const [setup] = await executor
           .select()
           .from(schema.inventorySetup)
           .where(and(
@@ -1429,24 +1512,14 @@ export class NumberSeriesService {
             if (masterCfg.enabled === false) {
               return null;
             }
-            // Explicit default series pinned in company inventory setup. Only
-            // honoured while that series still identifies as the default
-            // (is_default = true) — the Number Series screen's "Is Default"
-            // checkbox is the only control a user actually sees, and it edits
-            // is_default there, never this JSON pin. Without this check, an
-            // admin who changes the default on that screen (which correctly
-            // flips is_default on every series for the master, this one
-            // included) sees no effect at all: this pin, set once and never
-            // touched again, would keep silently overriding their choice
-            // forever. Once the pinned series is no longer flagged default,
-            // treat the pin as stale and fall through to the ordinary lookup.
             if (masterCfg.default_series_id) {
-              const [explicitSeries] = await this.db
+              const [explicitSeries] = await executor
                 .select()
                 .from(schema.noSeries)
                 .where(and(
                   eq(schema.noSeries.id, masterCfg.default_series_id),
                   eq(schema.noSeries.blocked, false),
+                  isNull(schema.noSeries.deleted_at),
                   eq(schema.noSeries.is_default, true),
                 ))
                 .limit(1);
@@ -1460,25 +1533,23 @@ export class NumberSeriesService {
     }
 
     // 2. Standard fallback query: matching document_type or code, ordered by is_default DESC.
-    // A bare document_type match must exclude subtype-template series (seeded
-    // for ITEM as NS-VAC, NS-FEED, NS-MED, NS-RAW, NS-LVS, one per Item Type) —
-    // those exist to be picked ONLY by the subtype match in step 0 above.
-    // Left in this pool, an unmanaged is_default flag on one of those templates
-    // can outrank the real generic default on the created_at tie-break, so
-    // creating an Item with no Item Type selected yet (the form's initial
-    // state) silently generates a code from whichever template happened to be
-    // marked default first — not from the series an admin just set as default
-    // for the master as a whole.
+    // For ITEM, exclude the seeded subtype templates (NS-VAC, etc.) from the generic match.
     const conditions = [
       or(
         and(
-          eq(schema.noSeries.document_type, normalizedType),
-          not(like(schema.noSeries.code, 'NS-%')),
+          or(
+            eq(schema.noSeries.document_type, normalizedType),
+            eq(schema.noSeries.master_type, normalizedType),
+          ),
+          normalizedType === 'ITEM'
+            ? not(inArray(schema.noSeries.code, ['NS-VAC', 'NS-FEED', 'NS-MED', 'NS-RAW', 'NS-LVS']))
+            : sql`1=1`,
         )!,
         eq(schema.noSeries.code, normalizedType),
         eq(schema.noSeries.code, `NS-${normalizedType}`),
       ),
       eq(schema.noSeries.blocked, false),
+      isNull(schema.noSeries.deleted_at),
     ];
     if (tenantId) conditions.push(eq(schema.noSeries.tenant_id, tenantId));
     if (companyId) {
@@ -1488,21 +1559,84 @@ export class NumberSeriesService {
       )!);
     }
 
-    const rows = await this.db
-      .select()
-      .from(schema.noSeries)
-      .where(and(...conditions))
-      .orderBy(sql`${schema.noSeries.is_default} DESC, ${schema.noSeries.created_at} ASC`);
+    try {
+      const rows = await executor
+        .select()
+        .from(schema.noSeries)
+        .where(and(...conditions))
+        .orderBy(sql`${schema.noSeries.is_default} DESC, ${schema.noSeries.created_at} ASC`);
 
-    return rows[0] || null;
+      return rows[0] || null;
+    } catch {
+      return null;
+    }
   }
 
   /**
    * Previews the next code by Master Type directly.
    */
-  async previewByMaster(masterType: string, tenantId?: string, companyId?: string | null, type?: string | null) {
+  async previewByMaster(
+    masterType: string,
+    tenantId?: string,
+    companyId?: string | null,
+    type?: string | null,
+    parentId?: string | null,
+    record?: string | null,
+  ) {
+    const normalizedType = masterType.toUpperCase().replaceAll('-', '_');
+    if (SELF_CODED_MASTERS.has(normalizedType) && tenantId) {
+      try {
+        const codeRes: any = await this.previewCode({
+          master: normalizedType,
+          type: type || undefined,
+          parentId: parentId || undefined,
+          record: record || undefined,
+        } as any, tenantId, companyId);
+        if (codeRes && codeRes.generated && codeRes.preview) {
+          return {
+            generated: true,
+            series_id: undefined,
+            series_code: codeRes.seriesCode,
+            prefix: codeRes.prefix,
+            seq_length: undefined,
+            preview: codeRes.preview,
+            next_number: codeRes.preview,
+            allowManual: codeRes.allowManual,
+            manual_nos: codeRes.allowManual,
+          };
+        }
+      } catch {
+        // Fall back to standard query below
+      }
+    }
+
     const series = await this.findDefaultSeriesByMaster(masterType, tenantId, companyId, type);
     if (!series) {
+      if (MASTER_CODE_COLUMNS[normalizedType] && tenantId) {
+        try {
+          const codeRes: any = await this.previewCode({
+            master: normalizedType,
+            type: type || undefined,
+            parentId: parentId || undefined,
+            record: record || undefined,
+          } as any, tenantId, companyId);
+          if (codeRes && codeRes.generated && codeRes.preview) {
+            return {
+              generated: true,
+              series_id: undefined,
+              series_code: codeRes.seriesCode,
+              prefix: codeRes.prefix,
+              seq_length: undefined,
+              preview: codeRes.preview,
+              next_number: codeRes.preview,
+              allowManual: codeRes.allowManual,
+              manual_nos: codeRes.allowManual,
+            };
+          }
+        } catch {
+          // fall through
+        }
+      }
       return {
         generated: false,
         allowManual: true,
@@ -1574,7 +1708,11 @@ export class NumberSeriesService {
     };
 
     if (dto.description !== undefined) updates.description = dto.description;
-    if (dto.document_type !== undefined) updates.document_type = dto.document_type;
+    if (dto.document_type !== undefined) {
+      const normalizedDoc = dto.document_type ? dto.document_type.toUpperCase().replaceAll('-', '_') : null;
+      updates.document_type = normalizedDoc;
+      updates.master_type = normalizedDoc;
+    }
     if (dto.no_series_code !== undefined) updates.no_series_code = dto.no_series_code;
     if (dto.seq_length !== undefined) updates.seq_length = dto.seq_length;
     if (dto.increment_by !== undefined) updates.increment_by = dto.increment_by;
@@ -1583,20 +1721,33 @@ export class NumberSeriesService {
     if (dto.last_no_used !== undefined) updates.last_no_used = dto.last_no_used;
     if (dto.blocked !== undefined) updates.blocked = dto.blocked;
 
-    const targetDocType = updates.document_type ?? existing.document_type;
-    // If setting this series as default, automatically uncheck is_default on any other series for the same master type
+    const targetDocType = (updates.document_type ?? updates.master_type ?? existing.document_type ?? existing.master_type)?.toUpperCase()?.replaceAll('-', '_');
+    // If setting this series as default, automatically uncheck is_default on any other series for the same master type in the SAME scope (company or tenant)
     if (updates.is_default === true && targetDocType) {
+      const unsetConditions: any[] = [
+        or(
+          eq(schema.noSeries.document_type, targetDocType),
+          eq(schema.noSeries.master_type, targetDocType),
+        )!,
+        ne(schema.noSeries.id, id),
+        eq(schema.noSeries.is_default, true),
+      ];
+      if (existing.tenant_id) {
+        unsetConditions.push(eq(schema.noSeries.tenant_id, existing.tenant_id));
+      }
+      if (existing.company_id) {
+        unsetConditions.push(eq(schema.noSeries.company_id, existing.company_id));
+      } else {
+        unsetConditions.push(isNull(schema.noSeries.company_id));
+      }
+
       await this.db
         .update(schema.noSeries)
         .set({
           is_default: false,
           updated_at: toMysqlTimestamp() as any,
         })
-        .where(and(
-          eq(schema.noSeries.document_type, targetDocType),
-          ne(schema.noSeries.id, id),
-          eq(schema.noSeries.is_default, true),
-        ));
+        .where(and(...unsetConditions));
     }
 
     await this.db.update(schema.noSeries).set(updates).where(eq(schema.noSeries.id, id));

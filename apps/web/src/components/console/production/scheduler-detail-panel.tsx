@@ -522,6 +522,7 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
                         ...f,
                         item_id: val,
                         item_description: sel?.item_name || f.item_description,
+                        lot_required: val ? !!(sel?.is_lot_tracked || sel?.is_serial_tracked) : f.lot_required,
                       }));
                     }}
                     options={(lineType === "CONSUMPTION" ? consumableItems : lineType === "TRANSFER" ? bioAssetItems : items).map((i) => ({
@@ -571,11 +572,19 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
                   />
                 </div>
 
-                <div className="flex items-end pb-2">
+                <div className="flex flex-col items-start pb-2 gap-0.5">
                   <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none" style={S.sub}>
-                    <input type="checkbox" checked={!!lineForm.lot_required} onChange={(e) => setLineForm((f: Row) => ({ ...f, lot_required: e.target.checked }))} />
+                    <input
+                      type="checkbox"
+                      checked={!!lineForm.lot_required}
+                      disabled={!!lineForm.item_id}
+                      onChange={(e) => setLineForm((f: Row) => ({ ...f, lot_required: e.target.checked }))}
+                    />
                     <span className="font-semibold">{t("scLotRequired")}</span>
                   </label>
+                  {lineForm.item_id && (
+                    <span className="text-[10px]" style={S.muted}>Auto-set from item's lot/serial tracking flag</span>
+                  )}
                 </div>
 
                 {(() => {

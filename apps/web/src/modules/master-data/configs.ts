@@ -288,6 +288,7 @@ const numberSeries: MasterDataConfig = {
     { key: "description", label: "Description" },
     { key: "no_series_code", label: "Prefix / Pattern" },
     { key: "seq_length", label: "Digits" },
+    { key: "is_default", label: "Default" },
     { key: "last_no_used", label: "Last No. Used" },
     { key: "manual_nos", label: "Allow Manual" },
   ],
@@ -1622,10 +1623,10 @@ const resource: MasterDataConfig = {
       // The client template lists MANPOWER, EQUIPMENT, VEHICLE, UTILITY, OTHER.
       // LABOR was a legacy alias for MANPOWER and offering both made the list
       // read as two ways to say the same thing, so it was dropped as a choice.
-      // VEHICLE and OTHER were removed on 15 September on Rishi's call. The API
+      // VEHICLE, UTILITY, and OTHER were removed on Rishi/user instruction. The API
       // refuses them as a new value; a row already holding one keeps it until
       // its type is changed.
-      options: ["MANPOWER", "EQUIPMENT", "UTILITY"].map((v) => ({ value: v, label: v })),
+      options: ["MANPOWER", "EQUIPMENT"].map((v) => ({ value: v, label: v })),
     },
     {
       key: "resource_sub_type", label: "Sub-Type", type: "select", section: "Identification",

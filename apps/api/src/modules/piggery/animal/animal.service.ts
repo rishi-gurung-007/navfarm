@@ -11,10 +11,10 @@ import * as schema from '../../../core/database/schema';
 import { BulkTransitionAnimalStageDto, CreateAnimalDto, UpdateAnimalDto, DisposeAnimalDto, QueryAnimalDto, TransitionAnimalStageDto } from './dto/animal.dto';
 
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
+import { AnimalMovementLogService } from '../animal-movement-log/animal-movement-log.service';
 
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { NobLobResolutionService } from '../../core/operational-area/nob-lob-resolution.service';
-import { AnimalMovementLogService } from '../animal-movement-log/animal-movement-log.service';
 import { listFilterConditions, listOrderBy } from '../../../common/master-list-query';
 
 const toMysqlTimestamp = (date: Date = new Date()) => date.toISOString().slice(0, 19).replace('T', ' ');

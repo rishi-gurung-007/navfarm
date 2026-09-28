@@ -501,6 +501,22 @@ export class AddBatchTransactionDto {
   @IsOptional()
   rate?: number;
 
+  @ApiProperty({
+    description: 'Lot No. — required when item_id is a lot-tracked item (CONSUMPTION/OUTPUT)',
+    required: false,
+  })
+  @IsString()
+  @IsOptional()
+  lot_no?: string;
+
+  @ApiProperty({
+    description: 'Serial No. — required when item_id is a serial-tracked item (CONSUMPTION/OUTPUT)',
+    required: false,
+  })
+  @IsString()
+  @IsOptional()
+  serial_no?: string;
+
   @ApiProperty({ description: 'Remarks', required: false })
   @IsString()
   @IsOptional()
