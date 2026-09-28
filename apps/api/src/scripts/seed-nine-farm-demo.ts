@@ -51,6 +51,7 @@ import {
   formatSeriesStem,
   nextSequenceInStem,
 } from '../modules/system/number-series/code-format.util';
+import { DEMO_NEXT_STAGES, DEMO_STAGE_DURATIONS, defaultSiloLevels } from '../core/database/demo-feed-defaults';
 
 /* ------------------------------------------------------------------------- */
 /* The nine farms                                                            */
@@ -448,6 +449,15 @@ const SOW_STAGE_PLAN: StagePlan[] = [
     note: `Weaning event at the end of the 28-day lactation. The farm sheets write the gilt-processing period around it as "birth" to "4 weeks". ${DEMO_CAVEAT}`,
   },
   {
+    stage: 'DRY_SOW', category: 'SOW', from: 1, to: 7,
+    feed: FEED.GESTATION, feedKgPerHeadPerDay: 2.5,
+    bodyWeightKg: 180, adgGpd: null, fcr: null, mortalityPct: 0.5,
+    vaccinations: [],
+    medications: [],
+    kpis: [{ metric: 'BCS_SCORE', lower_limit: 2.5, upper_limit: 3.5, severity: 'INFO' }],
+    note: `After weaning, before the next flush. BBP §1.7 gives 4-7 days; held as 7 (Plan S, S7). ${DEMO_CAVEAT}`,
+  },
+  {
     stage: 'WEANER', category: 'PIGLET', from: 1, to: 43,
     feed: FEED.GROWER, feedKgPerHeadPerDay: 0.8,
     bodyWeightKg: 20, adgGpd: 400, fcr: 1.8, mortalityPct: 2.5,
@@ -519,7 +529,7 @@ function stagePlanFor(farmRole: FarmRole, line: 'SOW' | 'BOAR'): StagePlan[] {
     switch (farmRole) {
       // Multiplier breeds and sends gilts on; it has no grow-out.
       case 'MULTIPLIER':
-        return ['QUARANTINE', 'GILT_GROWER', 'FLUSH', 'INSEMINATION', 'GESTATION', 'FARROWING', 'LACTATION', 'WEANING', 'WEANER'];
+        return ['QUARANTINE', 'GILT_GROWER', 'FLUSH', 'INSEMINATION', 'GESTATION', 'FARROWING', 'LACTATION', 'WEANING', 'DRY_SOW', 'WEANER'];
       // The Extension holds weaners and growers only.
       case 'WEANER_GROWER':
         return ['WEANER', 'GROWER'];
@@ -891,6 +901,16 @@ async function run() {
           siloReorderDays: SILO_REORDER_DAYS,
         });
         if (write) await db.query('UPDATE location_master SET warehouse_id = ? WHERE location_id = ?', [silo.placed.id, silo.placed.id]);
+        // D22 (Rishi, 27 Sep): a silo carries both feed levels. The demo's are
+        // the defaults migration 0124 gives existing silos (20 % / 90 %),
+        // written only where empty so a level edited on a re-seeded demo survives.
+        const levels = defaultSiloLevels(spec.siloCapacityKg);
+        if (write) {
+          await db.query(
+            'UPDATE location_master SET low_level_kg = COALESCE(low_level_kg, ?), high_level_kg = COALESCE(high_level_kg, ?) WHERE location_id = ?',
+            [dec(levels.lowKg), dec(levels.highKg), silo.placed.id],
+          );
+        }
         // Which silo this shed draws from. With the silo no longer the shed's
         // parent, silo_shed_link (0114) is the only thing that says so, and the
         // feed forecast reads it rather than walking the tree. The seed still
@@ -955,6 +975,31 @@ async function run() {
       }
     }
     plan.stagesAdded = stageAdded.length ? stageAdded : 'none — WEANER/GROWER/FINISHER already present';
+
+    // S7 (Plan S): durations and successors for the stages the demo's pigs
+    // walk through, so the forecast can date each stage change (review A6).
+    // Only where empty, in both scopes (tenant template and company copy) —
+    // the same rule migration 0125 applies to existing data.
+    if (write) {
+      for (const [code, days] of Object.entries(DEMO_STAGE_DURATIONS)) {
+        await db.query(
+          `UPDATE stage_master SET typical_duration_days = ?
+            WHERE tenant_id = ? AND lob_id = ? AND stage_code = ? AND typical_duration_days IS NULL AND deleted_at IS NULL`,
+          [days, scope.tenant_id, scope.lob_id, code],
+        );
+      }
+      for (const [code, next] of Object.entries(DEMO_NEXT_STAGES)) {
+        await db.query(
+          `UPDATE stage_master s
+             JOIN stage_master n ON n.tenant_id = s.tenant_id AND n.lob_id = s.lob_id AND n.company_id <=> s.company_id
+                                AND n.stage_code = ? AND n.deleted_at IS NULL
+              SET s.next_stage_id = n.stage_id
+            WHERE s.tenant_id = ? AND s.lob_id = ? AND s.stage_code = ? AND s.next_stage_id IS NULL AND s.deleted_at IS NULL`,
+          [next, scope.tenant_id, scope.lob_id, code],
+        );
+      }
+    }
+    plan.stageTimings = write ? 'durations and grow-out successors filled where empty' : 'would fill durations and grow-out successors where empty';
 
     // Company-scoped stages are what a batch's scheduler matches on.
     const [companyStages] = await db.query<RowDataPacket[]>(
