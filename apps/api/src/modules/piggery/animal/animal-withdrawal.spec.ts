@@ -44,7 +44,8 @@ describe('recorded treatment withdrawal', () => {
       } }) })),
     };
     audit = { log: jest.fn().mockResolvedValue({}) };
-    service = new AnimalService(transactionCls(db), audit, {} as any, {} as any);
+    // The fifth argument is AnimalMovementLogService; dispose() does not reach it here.
+    service = new AnimalService(transactionCls(db), audit, {} as any, {} as any, { record: jest.fn() } as any);
     jest.spyOn(service, 'findOne').mockImplementation(async () => ({ ...animal }));
   });
 
