@@ -47,6 +47,7 @@ which one won and why.
 | D29 | Refill dates when nothing runs down in the window (Rishi, 28 Sep) | When a source does not reach its low level (a silo) or zero (a store) inside the forecast window, Date to Refill and Required On read "Not due by <window end>" instead of "—", and Run Down keeps "After <window end>". |
 | D30 | Stores (Rishi, 28 Sep) | A store keeps running down to zero; no store low/high levels (one store holds several feeds). Nothing to migrate. |
 | D31 | Demo breeding sheds (Rishi, 28 Sep) | The demo's breeding batch is placed in a shed whose silos hold the sow diets it eats (gestation, lactation), so its forecast draws from silos, not the farm store. Seed and chapter change only; takes effect on the next demo rebuild. |
+| D32 | Where per-farm feed settings are edited (Rishi, 28 Sep) | The six feed settings (refill buffer, lead time, bulk order multiple, bag size, bulk truck target, production weekday) stay **per farm**, stored where they are (location_master columns on the FARM row; no migration). They are removed from the Add/Edit Location form — they describe how a farm's feed is ordered, not the farm — and edited on one **Settings → Inventory Setup → Feed Planning** screen: a table of the company's farms, one row per farm, the six values editable, blanks meaning the client defaults (2, 2, 3000, 50, 30000, Sunday). Production weekday is a Sunday–Saturday dropdown. The redundant "Silo Name" / "Store Name" field is removed from the Location form too (column kept). |
 
 ## Scope — four plans
 
