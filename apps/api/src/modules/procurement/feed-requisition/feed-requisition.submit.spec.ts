@@ -230,9 +230,9 @@ describe('Feed requisition decided in the Approvals inbox (D25)', () => {
       [schema.requisitionLine, [[LINE_6000]]],
     ]));
     await as(COMPANY_ADMIN_SCOPE, () => approvals.approve('ar-1', 'tenant-1', ADMIN, 'Checked with the mill'));
-    const entry = audits().find((a: any) => a.action === 'APPROVE');
+    const entry = audits().find((a: any) => a.action === 'APPROVE')!;
     expect(entry.newValues).toEqual({ status: 'APPROVED', remarks: 'Checked with the mill' });
-    expect(entry.newValues.rejection_reason).toBeUndefined();
+    expect((entry.newValues as any).rejection_reason).toBeUndefined();
   });
 
   it('rejecting needs a reason and records it on the requisition', async () => {
