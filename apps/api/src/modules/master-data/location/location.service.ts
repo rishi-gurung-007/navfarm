@@ -851,12 +851,19 @@ export class LocationService {
 
     // 4. SILO locations must carry silo tracking fields
     if (!dto.storage_type && typeCode === 'SILO') dto.storage_type = 'SILO';
-    this.assertSiloFieldsWhenSilo(dto.storage_type, dto.silo_capacity_kg, dto.silo_reorder_days, dto.silo_capacity_uom);
-    if (dto.storage_type === 'SILO') {
+    // D28 (Rishi, 27 Sep): the silo rules follow the location TYPE, not
+    // storage_type. storage_type is a legacy template column, and 248 pens,
+    // sheds and crates in nf_devco carry 'SILO' in it from the old template —
+    // reading it here demanded silo capacity of every one of them, so none
+    // could be saved at all. A type that is neither SILO nor STORE never
+    // keeps a storage type either, so no new row joins them.
+    this.assertSiloFieldsWhenSilo(typeCode, dto.silo_capacity_kg, dto.silo_reorder_days, dto.silo_capacity_uom);
+    if (typeCode !== 'SILO' && typeCode !== 'STORE') dto.storage_type = undefined;
+    if (typeCode === 'SILO') {
       const capacityKg = siloCapacityToKg(dto.silo_capacity_kg, dto.silo_capacity_uom);
-      this.assertSiloLevels(dto.low_level_kg, dto.high_level_kg, capacityKg == null ? null : Number(capacityKg), typeCode === 'SILO');
+      this.assertSiloLevels(dto.low_level_kg, dto.high_level_kg, capacityKg == null ? null : Number(capacityKg), true);
     }
-    if (dto.storage_type !== 'SILO') {
+    if (typeCode !== 'SILO') {
       dto.silo_capacity_kg = undefined;
       dto.silo_reorder_days = undefined;
       dto.silo_capacity_uom = undefined;
@@ -1170,7 +1177,11 @@ export class LocationService {
       ? dto.silo_capacity_uom
       : (location.silo_capacity_uom || (effectiveLocationType === 'SILO' ? 'KG' : null));
     const effectiveStorage = dto.storage_type !== undefined ? dto.storage_type : location.storage_type || (effectiveLocationType === 'SILO' ? 'SILO' : null);
-    this.assertSiloFieldsWhenSilo(effectiveStorage, effectiveSiloCapacity as any, effectiveSiloReorderDays as any, effectiveSiloCapacityUom as any);
+    // D28: the silo fields are demanded of a SILO, not of anything that merely
+    // carries the legacy storage_type (see create). A saved row that is not a
+    // SILO or a STORE loses the stale value in the same write.
+    this.assertSiloFieldsWhenSilo(effectiveLocationType, effectiveSiloCapacity as any, effectiveSiloReorderDays as any, effectiveSiloCapacityUom as any);
+    const clearsLegacyStorageType = effectiveLocationType !== 'SILO' && effectiveLocationType !== 'STORE' && location.storage_type === 'SILO';
 
     // attached_sheds is the silo's own field; see create().
     if (dto.attached_sheds !== undefined && effectiveLocationType !== 'SILO') {
@@ -1254,7 +1265,7 @@ export class LocationService {
     if (dto.silo_reorder_days !== undefined) updates.silo_reorder_days = dto.silo_reorder_days;
     // Levels are validated against the effective row, so saving only the
     // high level of a silo that already has a low one still checks the pair.
-    if (effectiveStorage === 'SILO') {
+    if (effectiveLocationType === 'SILO') {
       const effectiveLow = dto.low_level_kg !== undefined ? dto.low_level_kg : location.low_level_kg == null ? null : Number(location.low_level_kg);
       const effectiveHigh = dto.high_level_kg !== undefined ? dto.high_level_kg : location.high_level_kg == null ? null : Number(location.high_level_kg);
       const effectiveCapacity = updates.silo_capacity_kg !== undefined ? updates.silo_capacity_kg : location.silo_capacity_kg;
@@ -1262,13 +1273,15 @@ export class LocationService {
     }
     if (dto.low_level_kg !== undefined) updates.low_level_kg = dto.low_level_kg == null ? null : String(dto.low_level_kg);
     if (dto.high_level_kg !== undefined) updates.high_level_kg = dto.high_level_kg == null ? null : String(dto.high_level_kg);
-    if (effectiveStorage !== 'SILO') {
+    if (effectiveLocationType !== 'SILO') {
       updates.silo_capacity_kg = null;
       updates.silo_capacity_uom = null;
       updates.silo_reorder_days = null;
       updates.low_level_kg = null;
       updates.high_level_kg = null;
     }
+    // D28: a saved pen, shed or crate loses the legacy 'SILO' storage type.
+    if (clearsLegacyStorageType) updates.storage_type = null;
     if (dto.downtime_days_required !== undefined) updates.downtime_days_required = dto.downtime_days_required;
     if (dto.feed_refill_buffer_days !== undefined) updates.feed_refill_buffer_days = dto.feed_refill_buffer_days;
     if (dto.feed_lead_time_days !== undefined) updates.feed_lead_time_days = dto.feed_lead_time_days;

@@ -883,6 +883,13 @@
       "when": 1791481200000,
       "tag": "0125_system_stage_timings",
       "breakpoints": true
+    },
+    {
+      "idx": 126,
+      "version": "5",
+      "when": 1791567600000,
+      "tag": "0126_clear_legacy_silo_storage_type",
+      "breakpoints": true
     }
   ]
 }

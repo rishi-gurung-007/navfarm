@@ -16,13 +16,31 @@ const TAGS = ['0123_batch_shed_from_placement', '0124_silo_level_defaults', '012
 describe('Plan S data migrations (D21–D23)', () => {
   it('are journalled after 0122, a day apart', () => {
     const journal = JSON.parse(readFileSync(join(dir, 'meta/_journal.json'), 'utf8')).entries as Array<{ idx: number; when: number; tag: string }>;
-    const tail = journal.slice(-4);
-    expect(tail.map((e) => [e.idx, e.when, e.tag])).toEqual([
+    // Looked up by idx, not by position: Task 20a appends 0126 after these,
+    // and later work will append more.
+    const at = (idx: number) => {
+      const entry = journal.find((e) => e.idx === idx)!;
+      return [entry.idx, entry.when, entry.tag];
+    };
+    expect([122, 123, 124, 125, 126].map(at)).toEqual([
       [122, 1791222000000, '0122_approval_request_farm_document'],
       [123, 1791308400000, TAGS[0]],
       [124, 1791394800000, TAGS[1]],
       [125, 1791481200000, TAGS[2]],
+      [126, 1791567600000, '0126_clear_legacy_silo_storage_type'],
     ]);
+    // Strictly increasing, so the migrator's order is the order intended.
+    const whens = journal.map((e) => e.when);
+    expect(whens.every((w, i) => i === 0 || w > whens[i - 1])).toBe(true);
+  });
+
+  it('clears the legacy silo storage type on non-silo rows only (D28, 0126)', () => {
+    const sql = statements('0126_clear_legacy_silo_storage_type');
+    expect(sql).toHaveLength(1);
+    expect(sql[0]).toMatch(/^UPDATE /);
+    expect(sql[0]).toContain("`storage_type` = 'SILO'");
+    expect(sql[0]).toContain("`location_type` NOT IN ('SILO', 'STORE')");
+    expect(sql[0]).not.toMatch(/\b(DELETE|DROP|TRUNCATE|ALTER|INSERT)\b/i);
   });
 
   it('only UPDATE, and only where the column they set is still empty', () => {

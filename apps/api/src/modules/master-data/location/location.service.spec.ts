@@ -672,6 +672,55 @@ describe('LocationService canonical hierarchy', () => {
     expect(txUpdate).not.toHaveBeenCalled();
   });
 
+  it('saves a pen that carries a legacy SILO storage type, and clears it (D28)', async () => {
+    const pen = {
+      location_id: 'pen-1', tenant_id: 'tenant-1', company_id: 'comp-1', location_code: 'FARM-001/SHED-001/PEN-001',
+      location_type: 'PEN', location_level: 3, parent_location_id: 'shed-1', farm_id: 'farm-1',
+      storage_type: 'SILO', silo_capacity_kg: null, silo_capacity_uom: null, silo_reorder_days: null,
+      low_level_kg: null, high_level_kg: null,
+    };
+    const penType = { type_code: 'PEN', type_name: 'Pen', code_prefix: 'PEN', allowed_parent_types: ['SHED'], company_id: null };
+    const shedParent = {
+      location_id: 'shed-1', company_id: 'comp-1', location_type: 'SHED', location_code: 'FARM-001/SHED-001',
+      location_level: 2, farm_id: 'farm-1', shed_id: 'shed-1', warehouse_id: null,
+    };
+    selectResults.push([pen], [penType], [shedParent], [{ parent_location_id: 'farm-1' }], [{ parent_location_id: null }], [pen]);
+    await service.update('pen-1', { location_name: 'Pen 1b' }, 'tenant-1');
+    // 248 such rows in nf_devco could not be saved at all: the silo check read
+    // storage_type, not the location type.
+    expect(txUpdate).toHaveBeenCalled();
+    expect((txUpdate.mock.results[0].value.set as jest.Mock).mock.calls[0][0]).toMatchObject({ storage_type: null });
+  });
+
+  it('never stores a silo storage type on a new pen (D28)', async () => {
+    const penType = { type_code: 'PEN', type_name: 'Pen', code_prefix: 'PEN', allowed_parent_types: ['SHED'], company_id: null };
+    const shedParent = {
+      location_id: 'shed-1', company_id: 'comp-1', location_type: 'SHED', location_code: 'FARM-001/SHED-001',
+      location_level: 2, farm_id: 'farm-1', shed_id: 'shed-1', warehouse_id: null,
+    };
+    selectResults.push(
+      [company], [penType], [shedParent], [uom], [{ series_code: 'LOCATION' }],
+      [], // no existing PEN siblings under this shed yet
+      [{ location_id: 'pen-9', location_code: 'FARM-001/SHED-001/PEN-009', location_type: 'PEN', location_level: 3 }],
+    );
+    await service.create({
+      company_id: 'comp-1', parent_location_id: 'shed-1', location_name: 'Pen 9',
+      location_address: 'Farm Road', location_type: 'PEN', storage_type: 'SILO',
+      max_capacity: 20, capacity_uom: 'HEAD',
+    } as any, 'tenant-1');
+    expect(inserted().storage_type).toBeFalsy();
+    expect(inserted().silo_capacity_kg).toBeFalsy();
+  });
+
+  it('still refuses a SILO with no capacity, unit or reorder days (unchanged by D28)', async () => {
+    selectResults.push([company], [siloType], [farmParent()]);
+    await expect(service.create({
+      company_id: 'comp-1', parent_location_id: 'farm-1', location_name: 'Feed Silo 9',
+      location_address: 'Farm Road', location_type: 'SILO', storage_type: 'SILO',
+      low_level_kg: 200, high_level_kg: 1800,
+    } as any, 'tenant-1')).rejects.toThrow('A SILO location requires');
+  });
+
   it('does not require levels on a pen that carries a legacy SILO storage type (Review Focus 1)', async () => {
     const pen = {
       location_id: 'pen-1', tenant_id: 'tenant-1', company_id: 'comp-1', location_code: 'FARM-001/SHED-001/PEN-001',
