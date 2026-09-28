@@ -558,9 +558,14 @@ before the update are unchanged.
 committed the first ALTER. Put back what it added, then re-run:
 `ALTER TABLE approval_request DROP COLUMN farm_id;` (and `DROP COLUMN document_id`,
 `DROP INDEX idx_approval_request_farm`, `DROP INDEX idx_approval_request_document`
-for whichever of those exist). 0123–0126 change data only and roll back whole on a
-failure, so a re-run is enough. Rehearsed: the forced failure left `farm_id` behind
-and the journal at its old count, and the drop-and-re-run finished the release.
+for whichever of those exist). Then re-run: 0123–0126 change data only, and every
+one of their statements fills a value that is still empty, so running them again
+changes nothing and finishes whichever of them had not run. (They are not one
+transaction: 0122's `ALTER` commits it, and MySQL is back in autocommit for the
+rest — so a failure part-way through the release leaves the finished migrations
+applied and recorded. That is safe here precisely because each is idempotent.)
+Rehearsed: the forced failure left `farm_id` behind and the journal at its old
+count, and the drop-and-re-run finished the release.
 
 **Rolling back after testers have entered data**: do not restore the backup. The
 fills are defaults testers can edit; the lists saved above show which rows the release
