@@ -4,8 +4,11 @@
  * A feed requisition entered by hand (D26; Requisition §1 row 7, type
  * MANUAL). One line per silo or store and feed item; the API refuses the
  * same pair twice and anything that is not an active silo or store of the
- * farm, and its message is shown as it comes. The two lists are read only
- * when the dialog opens.
+ * farm, and its message is shown as it comes. Its two lists come from the
+ * feed module's own GET /feed-requisition/options (F3, review I3), read only
+ * when the dialog opens: the Master Data routes it used before answer with
+ * the tenant templates in a tenant-wide workspace and refuse a farm login
+ * outright, on a screen that lists the farm quite happily.
  */
 import { useEffect, useRef, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
@@ -19,6 +22,7 @@ import type { RequisitionView } from "./requisitions-panel";
 
 interface Destination { location_id: string; location_code: string; location_type: string }
 interface FeedItem { item_id: string; item_code: string; item_name: string }
+interface Options { destinations: Destination[]; items: FeedItem[] }
 interface Draft { dest: string; item: string; kg: string; date: string }
 
 const EMPTY: Draft = { dest: "", item: "", kg: "", date: "" };
@@ -51,17 +55,13 @@ export function RequisitionNewDialog({
     setLines([{ ...EMPTY }]);
     setRemarks("");
     setError("");
-    Promise.all([
-      api.get(`/location?${new URLSearchParams({ farmId, isActive: "true" }).toString()}`),
-      api.get("/item?itemType=FEED&isActive=true"),
-    ])
-      .then(([locRes, itemRes]) => {
+    api
+      .get(`/feed-requisition/options?${new URLSearchParams({ farmId }).toString()}`)
+      .then((res: any) => {
         if (!alive) return;
-        const locs = unwrap<Destination[]>(locRes);
-        const feed = unwrap<FeedItem[]>(itemRes);
-        setDestinations((Array.isArray(locs) ? locs : []).filter((l) => l.location_type === "SILO" || l.location_type === "STORE")
-          .sort((a, b) => a.location_code.localeCompare(b.location_code)));
-        setItems(Array.isArray(feed) ? feed : []);
+        const options = unwrap<Options>(res);
+        setDestinations(Array.isArray(options?.destinations) ? options.destinations : []);
+        setItems(Array.isArray(options?.items) ? options.items : []);
       })
       .catch((err: any) => {
         if (alive) setError(err?.message || tRef.current("rqLoadFailed"));

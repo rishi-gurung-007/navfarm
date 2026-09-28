@@ -14,13 +14,18 @@ const post = api.post as jest.Mock;
 
 beforeEach(() => {
   jest.clearAllMocks();
-  get.mockImplementation(async (url: string) => url.startsWith('/location')
-    ? { data: [
-      { location_id: 's1', location_code: 'VIL100/SILO-001', location_type: 'SILO' },
-      { location_id: 'st', location_code: 'VIL100/STORE-001', location_type: 'STORE' },
-      { location_id: 'p1', location_code: 'VIL100/SHED-001/PEN-001', location_type: 'PEN' },
-    ] }
-    : { data: [{ item_id: 'i1', item_code: 'FEED-R1', item_name: 'Weaner Diet R1' }] });
+  // F3: one feed-scoped read, not the two Master Data ones.
+  get.mockImplementation(async (_url: string) => ({
+    data: {
+      farmId: 'farm-vil',
+      companyId: 'co-1',
+      destinations: [
+        { location_id: 's1', location_code: 'VIL100/SILO-001', location_type: 'SILO' },
+        { location_id: 'st', location_code: 'VIL100/STORE-001', location_type: 'STORE' },
+      ],
+      items: [{ item_id: 'i1', item_code: 'FEED-R1', item_name: 'Weaner Diet R1' }],
+    },
+  }));
   post.mockResolvedValue({ data: { requisition_id: 'req-9', req_no: 'REQ-VIL100-2026-00009', lines: [] } });
 });
 
@@ -28,8 +33,10 @@ describe('RequisitionNewDialog (D26)', () => {
   it('offers only the farm\'s silos and store, and creates the requisition', async () => {
     const onCreated = jest.fn();
     render(<RequisitionNewDialog open farmId="farm-vil" onClose={jest.fn()} onCreated={onCreated} />);
-    await waitFor(() => expect(get).toHaveBeenCalledWith('/location?farmId=farm-vil&isActive=true'));
-    expect(get).toHaveBeenCalledWith('/item?itemType=FEED&isActive=true');
+    await waitFor(() => expect(get).toHaveBeenCalledWith('/feed-requisition/options?farmId=farm-vil'));
+    // The Master Data routes are not reachable for a farm login, and answer
+    // with templates in the tenant-wide workspace (F3, review I3).
+    expect(get.mock.calls.map((c) => String(c[0])).filter((u) => u.startsWith('/location') || u.startsWith('/item'))).toEqual([]);
     const dest = await screen.findByLabelText('rqNewDestination:{"line":1}') as HTMLSelectElement;
     await waitFor(() => expect(dest.options.length).toBe(3));
     expect([...dest.options].map((o) => o.textContent)).toEqual(['rqNewChoose', 'VIL100/SILO-001', 'VIL100/STORE-001']);

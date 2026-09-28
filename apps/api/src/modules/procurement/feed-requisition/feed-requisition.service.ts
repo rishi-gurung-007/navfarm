@@ -498,6 +498,64 @@ export class FeedRequisitionService implements OnModuleInit {
     return { ...outcome, requisition };
   }
 
+  /**
+   * What the New requisition dialog offers (F3, review I3). It used to read
+   * GET /location and GET /item, which are Master Data routes under the
+   * master scope: in the tenant-wide workspace those answer with the tenant
+   * templates or with nothing, and a farm login holds no Master Data grant at
+   * all — while the same screen lists the farm quite happily. These options
+   * follow the module's own rule instead: resolveFarm decides the farm, and
+   * what comes back is that farm's active silos and stores and its company's
+   * active feed items.
+   */
+  async options(farmIdIn: string | undefined, tenantId: string, user: UserCtx) {
+    const { farmId, companyId } = await this.forecast.resolveFarm(farmIdIn, tenantId, user?.userType);
+    return this.forecast.withFarmScope(farmId, companyId, async () => {
+      const destinations = await this.db
+        .select({
+          location_id: schema.locationMaster.location_id,
+          location_code: schema.locationMaster.location_code,
+          location_type: schema.locationMaster.location_type,
+        })
+        .from(schema.locationMaster)
+        .where(and(
+          eq(schema.locationMaster.tenant_id, tenantId),
+          eq(schema.locationMaster.company_id, companyId),
+          eq(schema.locationMaster.farm_id, farmId),
+          inArray(schema.locationMaster.location_type, ['SILO', 'STORE']),
+          eq(schema.locationMaster.is_active, true),
+          isNull(schema.locationMaster.deleted_at),
+        ));
+      const items = await this.db
+        .select({
+          item_id: schema.itemMaster.item_id,
+          item_code: schema.itemMaster.item_code,
+          item_name: schema.itemMaster.item_name,
+          uom_primary: schema.itemMaster.uom_primary,
+        })
+        .from(schema.itemMaster)
+        .where(this.feedItemConditions(tenantId, companyId));
+      const byCode = (a: { location_code: string }, b: { location_code: string }) => a.location_code.localeCompare(b.location_code);
+      return {
+        farmId,
+        companyId,
+        destinations: [...destinations].sort(byCode),
+        items: [...items].sort((a, b) => a.item_code.localeCompare(b.item_code)),
+      };
+    });
+  }
+
+  /** An item a feed requisition may name: this company's own, of type FEED, live. */
+  private feedItemConditions(tenantId: string, companyId: string): SQL {
+    return and(
+      eq(schema.itemMaster.tenant_id, tenantId),
+      eq(schema.itemMaster.company_id, companyId),
+      eq(schema.itemMaster.item_type, 'FEED'),
+      eq(schema.itemMaster.is_active, true),
+      isNull(schema.itemMaster.deleted_at),
+    )!;
+  }
+
   async createManual(dto: CreateManualFeedRequisitionDto, tenantId: string, user: UserCtx) {
     const { farmId, companyId } = await this.forecast.resolveFarm(dto.farmId, tenantId, user?.userType);
     const requisitionId = await this.forecast.withFarmScope(farmId, companyId, async () => {
@@ -515,13 +573,17 @@ export class FeedRequisitionService implements OnModuleInit {
         seen.add(key);
       }
       const itemIds = [...new Set(dto.lines.map((l) => l.item_id))];
+      // F3: the tenant alone is not a boundary — another company's item, a
+      // tenant template, a medicine or a blocked item was accepted here, and
+      // its name copied onto the line. The options endpoint offers exactly
+      // this set.
       const items = await this.db
         .select({ item_id: schema.itemMaster.item_id, item_name: schema.itemMaster.item_name })
         .from(schema.itemMaster)
-        .where(and(eq(schema.itemMaster.tenant_id, tenantId), inArray(schema.itemMaster.item_id, itemIds)));
+        .where(and(this.feedItemConditions(tenantId, companyId), inArray(schema.itemMaster.item_id, itemIds)));
       const nameOf = new Map(items.map((i) => [i.item_id, i.item_name]));
       const missing = itemIds.find((id) => !nameOf.has(id));
-      if (missing) throw new BadRequestException(`Feed item ${missing} was not found.`);
+      if (missing) throw new BadRequestException(`Feed item ${missing} is not an active feed item of this company.`);
 
       // D16: the requisition cycle is dated by the farm's day, the same one the forecast plans from.
       const { today: manualToday } = await this.forecast.farmToday(companyId, tenantId);

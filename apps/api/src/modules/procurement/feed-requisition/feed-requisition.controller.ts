@@ -28,6 +28,14 @@ export class FeedRequisitionController {
     return { success: true, message: 'Feed requisitions retrieved successfully.', data };
   }
 
+  @Get('options')
+  @RequirePermission('PROCUREMENT', 'REQUISITION', 'view')
+  @ApiOperation({ summary: "What a manual requisition may name: the farm's silos and stores, and its company's feed items" })
+  async options(@Query() query: QueryFeedRequisitionDto, @Req() req: any) {
+    const data = await this.feedRequisitions.options(query.farmId, req.user?.tenantId || req['tenantId'], req.user);
+    return { success: true, message: 'Feed requisition options retrieved successfully.', data };
+  }
+
   @Post('auto-draft')
   @RequirePermission('PROCUREMENT', 'REQUISITION', 'create')
   @ApiOperation({ summary: "Draft (or refresh) the farm's AUTO_DRAFT requisition for this cycle from the feed forecast (Engine Step 9)" })
