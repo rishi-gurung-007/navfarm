@@ -25,7 +25,7 @@ import type { ForecastInput, IncomingFeed } from './feed-forecast.engine';
 const EPS = 0.0001;
 
 export function stockAsOf(args: {
-  silos: { siloId: string; siloCode: string; lowLevelKg: number | null }[];
+  silos: { siloId: string; siloCode: string; lowLevelKg: number | null; reorderDays?: number | null }[];
   store: { storeId: string; storeCode: string } | null;
   feedItemIds: Set<string>;
   opening: FeedStockRow[];
@@ -65,7 +65,16 @@ export function stockAsOf(args: {
     const itemId = held[0]?.itemId ?? firstIn?.item_id ?? null;
     // The resident's own opening, negative included — for an item first booked in, what was fed of it before.
     const balanceKg = itemId ? openingKg.get(`${s.siloId}|${itemId}`) ?? 0 : 0;
-    return { siloId: s.siloId, siloCode: s.siloCode, itemId, balanceKg, lowLevelKg: s.lowLevelKg };
+    // D38: the refill buffer is this silo's own reorder days; undefined stays
+    // undefined so the engine's standard 2 applies (a store has none at all).
+    return {
+      siloId: s.siloId,
+      siloCode: s.siloCode,
+      itemId,
+      balanceKg,
+      lowLevelKg: s.lowLevelKg,
+      ...(s.reorderDays !== undefined ? { reorderDays: s.reorderDays } : {}),
+    };
   });
   const residentOf = new Map(silos.map((s) => [s.siloId, s.itemId]));
 

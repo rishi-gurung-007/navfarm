@@ -2,7 +2,7 @@ import { ConflictException } from '@nestjs/common';
 import { stockAsOf } from './feed-forecast.stock';
 
 const silos = [
-  { siloId: 's1', siloCode: 'GRS/SILO-001', lowLevelKg: 1000 },
+  { siloId: 's1', siloCode: 'GRS/SILO-001', lowLevelKg: 1000, reorderDays: 3 },
   { siloId: 's2', siloCode: 'GRS/SILO-002', lowLevelKg: null },
 ];
 const base = { silos, store: { storeId: 'st', storeCode: 'GRS/STORE-001' }, feedItemIds: new Set(['r1', 'r2']), opening: [], movements: [], drafts: [] };
@@ -18,8 +18,11 @@ describe('stockAsOf — silo and store stock for the forecast (Q2, Q6)', () => {
         { warehouse_id: 'st', item_id: 'med', item_code: 'MED-1', uom: 'PCS', qty: 40 }, // not feed: ignored
       ],
     });
+    // D38: the silo's own reorder days must survive the stock layer — a build
+    // of this module once dropped the field here, so the live forecast kept
+    // warning every silo with the standard 2 no matter what its row said.
     expect(out.silos).toEqual([
-      { siloId: 's1', siloCode: 'GRS/SILO-001', itemId: 'r1', balanceKg: 1500, lowLevelKg: 1000 },
+      { siloId: 's1', siloCode: 'GRS/SILO-001', itemId: 'r1', balanceKg: 1500, lowLevelKg: 1000, reorderDays: 3 },
       { siloId: 's2', siloCode: 'GRS/SILO-002', itemId: null, balanceKg: 0, lowLevelKg: null },
     ]);
     expect(out.store).toEqual({ storeId: 'st', storeCode: 'GRS/STORE-001', balances: { r2: 800 } });
@@ -67,7 +70,7 @@ describe('stockAsOf — silo and store stock for the forecast (Q2, Q6)', () => {
       ],
     });
     expect(out.store).toEqual({ storeId: 'st', storeCode: 'GRS/STORE-001', balances: { r2: -4200 } });
-    expect(out.silos[0]).toEqual({ siloId: 's1', siloCode: 'GRS/SILO-001', itemId: 'r1', balanceKg: -300, lowLevelKg: 1000 });
+    expect(out.silos[0]).toEqual({ siloId: 's1', siloCode: 'GRS/SILO-001', itemId: 'r1', balanceKg: -300, lowLevelKg: 1000, reorderDays: 3 });
   });
 
   it('refuses feed held in anything but KG, naming the silo or the store item', () => {
