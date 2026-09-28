@@ -26,6 +26,7 @@ describe('LocationService canonical hierarchy', () => {
     builder.orderBy = jest.fn(() => builder);
     builder.offset = jest.fn(() => builder);
     builder.leftJoin = jest.fn(() => builder);
+    builder.innerJoin = jest.fn(() => builder);
     builder.limit = jest.fn(async () => rows);
     builder.then = (resolve: (value: any[]) => unknown, reject: (reason: unknown) => unknown) =>
       Promise.resolve(rows).then(resolve, reject);
@@ -329,6 +330,67 @@ describe('LocationService canonical hierarchy', () => {
 
     expect(result.current_feed_item_code).toBeNull();
     expect(result.current_feed_item_name).toBeNull();
+  });
+
+  /**
+   * Checklist item 1a (28 Sep check): a silo's record showed the sheds it
+   * feeds, but a shed's record showed nothing about its silos — no field, no
+   * query, no column on the list. To answer "where does this shed get its
+   * feed?" you had to open every silo on the farm in turn. Read-only: the link
+   * is still edited from the silo's Attached Sheds.
+   */
+  it('a shed read returns the silos that feed it, in code order, each with the item it holds', async () => {
+    selectResults.push(
+      [{
+        location_id: 'shed-1', tenant_id: 'tenant-1', company_id: 'comp-1',
+        location_type: 'SHED', location_code: 'FARM-001/SHED-001',
+      }],
+      // the link rows, joined to the silo, deliberately out of code order
+      [
+        { location_id: 'silo-2', location_code: 'FARM-001/SILO-002', location_name: 'Silo 2' },
+        { location_id: 'silo-1', location_code: 'FARM-001/SILO-001', location_name: 'Silo 1' },
+      ],
+    );
+    siloFeedService.currentItems.mockResolvedValueOnce(new Map([
+      ['silo-1', { item_id: 'item-1', item_code: 'STARTER', item_description: 'Starter Feed', on_hand_qty: 500 }],
+      ['silo-2', null],
+    ]));
+
+    const result = await service.findOne('shed-1', 'tenant-1');
+
+    expect(siloFeedService.currentItems).toHaveBeenCalledWith(['silo-2', 'silo-1'], 'comp-1', 'tenant-1');
+    expect(result.attached_silos).toEqual([
+      { location_id: 'silo-1', location_code: 'FARM-001/SILO-001', location_name: 'Silo 1', current_feed_item_code: 'STARTER', current_feed_item_name: 'Starter Feed' },
+      { location_id: 'silo-2', location_code: 'FARM-001/SILO-002', location_name: 'Silo 2', current_feed_item_code: null, current_feed_item_name: null },
+    ]);
+    // Read-only: a shed is not given the silo's own editing field.
+    expect((result as any).attached_sheds).toBeUndefined();
+  });
+
+  it('a shed with no silo attached reads an empty list, and asks the ledger nothing', async () => {
+    selectResults.push(
+      [{
+        location_id: 'shed-1', tenant_id: 'tenant-1', company_id: 'comp-1',
+        location_type: 'SHED', location_code: 'FARM-001/SHED-001',
+      }],
+      [],
+    );
+
+    const result = await service.findOne('shed-1', 'tenant-1');
+
+    expect(result.attached_silos).toEqual([]);
+    expect(siloFeedService.currentItems).not.toHaveBeenCalled();
+  });
+
+  it('leaves a pen alone — attached_silos is a shed field', async () => {
+    selectResults.push([{
+      location_id: 'pen-1', tenant_id: 'tenant-1', company_id: 'comp-1',
+      location_type: 'PEN', location_code: 'FARM-001/SHED-001/PEN-001',
+    }]);
+
+    const result = await service.findOne('pen-1', 'tenant-1');
+
+    expect((result as any).attached_silos).toBeUndefined();
   });
 
   it('links the listed sheds in silo_shed_link, after SiloFeedService clears the attach', async () => {

@@ -101,6 +101,7 @@ export function MasterRecordView({ config, id, onClose }: { config: MasterDataCo
           </dl>
         </div>
       ))}
+      {config.key === "location" && record.location_type === "SHED" && <ShedSilos silos={record.attached_silos} />}
       {!!config.bcFields?.length && <section aria-label="Business Central" className="rounded-lg border border-[var(--border)] p-4">
         <h3 className="font-semibold">Business Central</h3>
         <p className="mt-1 text-xs text-[var(--text-muted)]">Read-only references from BC. A dash means no BC value has been received; it is not a zero or a confirmed status.</p>
@@ -113,4 +114,45 @@ export function MasterRecordView({ config, id, onClose }: { config: MasterDataCo
       </section>}
     </div>}
   </Dialog>;
+}
+
+/**
+ * Which silos feed this shed (checklist item 1a). The silo side has listed its
+ * sheds since D7; from the shed there was no way to see it at all, so answering
+ * "where does this shed get its feed?" meant opening every silo on the farm in
+ * turn. Read-only on purpose: `silo_shed_link` is written from the silo's
+ * Attached Sheds picker, and one editable place for a link is enough.
+ */
+function ShedSilos({ silos }: { silos: unknown }) {
+  const rows = Array.isArray(silos) ? (silos as AttachedSilo[]) : [];
+  return (
+    <section aria-label="Silos feeding this shed" className="rounded-lg border border-[var(--border)] p-4">
+      <h3 className="font-semibold">Silos feeding this shed</h3>
+      <p className="mt-1 text-xs text-[var(--text-muted)]">Edited on the silo, under Attached Sheds.</p>
+      {rows.length === 0 ? (
+        <p className="mt-3 text-sm">No silo feeds this shed yet.</p>
+      ) : (
+        <ul className="mt-3 space-y-2">
+          {rows.map((silo) => (
+            <li key={silo.location_id} className="text-sm">
+              <span className="font-medium">{silo.location_code} — {silo.location_name}</span>
+              <span className="ml-2 text-xs text-[var(--text-muted)]">
+                {silo.current_feed_item_name || silo.current_feed_item_code
+                  ? `holding ${silo.current_feed_item_name || silo.current_feed_item_code}`
+                  : "empty"}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+interface AttachedSilo {
+  location_id: string;
+  location_code: string;
+  location_name: string;
+  current_feed_item_code: string | null;
+  current_feed_item_name: string | null;
 }

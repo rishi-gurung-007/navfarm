@@ -109,6 +109,15 @@ export function siloCapacityForDisplay(
   return (uom?.toUpperCase() === 'TON' ? kg / 1000 : kg).toString();
 }
 
+/** One silo on a shed's record view (checklist 1a). Read-only. */
+export interface AttachedSilo {
+  location_id: string;
+  location_code: string;
+  location_name: string;
+  current_feed_item_code: string | null;
+  current_feed_item_name: string | null;
+}
+
 @Injectable()
 export class LocationService {
   constructor(
@@ -483,6 +492,44 @@ export class LocationService {
   }
 
   /** The read side of the same view: the sheds currently linked to this silo. */
+  /**
+   * The silos that feed one shed, in code order, each with the feed item it is
+   * holding now (checklist 1a). Read-only: `silo_shed_link` is written from the
+   * silo's Attached Sheds, and nothing here edits it.
+   */
+  private async attachedSilos(shedId: string, companyId: string | null, tenantId: string): Promise<AttachedSilo[]> {
+    const rows = await this.db
+      .select({
+        location_id: schema.locationMaster.location_id,
+        location_code: schema.locationMaster.location_code,
+        location_name: schema.locationMaster.location_name,
+      })
+      .from(schema.siloShedLink)
+      .innerJoin(schema.locationMaster, eq(schema.locationMaster.location_id, schema.siloShedLink.silo_id))
+      .where(and(
+        eq(schema.siloShedLink.tenant_id, tenantId),
+        eq(schema.siloShedLink.shed_id, shedId),
+        isNull(schema.locationMaster.deleted_at),
+      ));
+    if (!rows.length) return [];
+    // One ledger read per silo, so only ask when there is a silo to ask about.
+    const items = companyId
+      ? await this.siloFeedService.currentItems(rows.map((row) => row.location_id), companyId, tenantId)
+      : new Map<string, { item_code: string; item_description: string | null } | null>();
+    return rows
+      .map((row) => {
+        const current = items.get(row.location_id) ?? null;
+        return {
+          location_id: row.location_id,
+          location_code: row.location_code,
+          location_name: row.location_name,
+          current_feed_item_code: current?.item_code ?? null,
+          current_feed_item_name: current?.item_description ?? null,
+        };
+      })
+      .sort((a, b) => a.location_code.localeCompare(b.location_code));
+  }
+
   private async attachedShedIds(siloId: string, tenantId: string): Promise<string[]> {
     const rows = await this.db.select({ shed_id: schema.siloShedLink.shed_id })
       .from(schema.siloShedLink)
@@ -509,7 +556,19 @@ export class LocationService {
     const shaped = {
       ...row,
       silo_capacity_kg: siloCapacityForDisplay(row.silo_capacity_kg, row.silo_capacity_uom),
-    } as T & { attached_sheds?: string[]; current_feed_item_code?: string | null; current_feed_item_name?: string | null };
+    } as T & {
+      attached_sheds?: string[];
+      attached_silos?: AttachedSilo[];
+      current_feed_item_code?: string | null;
+      current_feed_item_name?: string | null;
+    };
+    if (row.location_type === 'SHED') {
+      // Checklist 1a: the silo side has shown its sheds since D7; the shed side
+      // showed nothing, so "where does this shed get its feed?" meant opening
+      // every silo on the farm. Read-only — the link is still edited from the
+      // silo's Attached Sheds picker.
+      shaped.attached_silos = await this.attachedSilos(row.location_id, row.company_id, tenantId);
+    }
     if (row.location_type === 'SILO') {
       shaped.attached_sheds = await this.attachedShedIds(row.location_id, tenantId);
       // company_id is required to create a SILO (create() enforces it), so a
