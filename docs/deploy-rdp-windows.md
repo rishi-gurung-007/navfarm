@@ -499,6 +499,75 @@ which would lose their entries. Ask for the down migration, which puts
 `feed_silo_id` back from the links and was tested to reproduce the old state
 exactly (a shed with several silos keeps the lowest).
 
+### Plan S release (tenant migrations 0122–0126)
+
+What it changes on testers' data, and what it leaves alone (rehearsed on a
+server-like copy, `.superpowers/sdd/2026-09-27-feed-forecast-s-fixes/migration-rehearsal.md`):
+
+- **0122** adds `approval_request.farm_id` and `document_id` (feed requisitions are
+  approved in the Approvals inbox) and fills them on the feed requisitions already
+  decided. It is DDL: see "If 0122 fails part-way" below. Other document types keep
+  both columns empty.
+- **0123** sets a batch's shed only where its live animals, or its scheduler
+  headers, name exactly one shed of its own company and farm. A shed someone chose
+  is never changed; ambiguous batches keep "no shed on record".
+- **0124** gives a silo without feed levels High = 90 % and Low = 20 % of its
+  capacity. A level someone set is never changed. A silo where the default would
+  break low < high keeps that level empty, and the form asks for it.
+- **0125** fills an empty duration on DRY_SOW (7), FLUSH (14), FARROWING (3) and
+  WEANING (1), and an empty next stage on WEANER → GROWER → FINISHER. System stages only.
+- **0126** clears the stale `storage_type = 'SILO'` on pens, sheds and crates loaded
+  from the old location template, which made every save of them demand a silo
+  capacity. Silos and stores keep theirs; no other column is touched.
+
+**Before stopping anything**, for each tenant database (read-only):
+
+```sql
+SELECT COUNT(*), MAX(created_at) FROM nf_<code>.__drizzle_migrations;   -- note it; the release adds 5 rows
+-- What the release will fill, kept so it can be told apart from later edits:
+SELECT location_id, location_code FROM nf_<code>.location_master
+ WHERE location_type='SILO' AND (low_level_kg IS NULL OR high_level_kg IS NULL);
+SELECT stage_id, stage_code, company_id FROM nf_<code>.stage_master
+ WHERE is_system=1 AND ((typical_duration_days IS NULL AND stage_code IN ('DRY_SOW','FLUSH','FARROWING','WEANING'))
+    OR (next_stage_id IS NULL AND stage_code IN ('WEANER','GROWER')));
+SELECT batch_id, batch_no FROM nf_<code>.batch_header WHERE shed_id IS NULL AND deleted_at IS NULL;
+SELECT location_id, location_code, location_type FROM nf_<code>.location_master
+ WHERE storage_type='SILO' AND location_type NOT IN ('SILO','STORE');
+```
+
+Save the four lists to `C:\navfarm-backups\plan-s-fill-$ts.txt`, then back up as above.
+
+**After `db-migrate-all-tenants`**, for each tenant:
+
+```sql
+SELECT COUNT(*), MAX(created_at) FROM nf_<code>.__drizzle_migrations;   -- +5 rows, 1791567600000
+SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='nf_<code>'
+  AND table_name='approval_request' AND column_name IN ('farm_id','document_id');   -- 2
+SELECT COUNT(*) FROM nf_<code>.location_master WHERE location_type='SILO'
+  AND (low_level_kg IS NULL OR high_level_kg IS NULL);   -- only silos where a tester's level blocks the default
+SELECT COUNT(*) FROM nf_<code>.location_master
+  WHERE storage_type='SILO' AND location_type NOT IN ('SILO','STORE');   -- 0
+```
+
+Then sign in as a tester: open Inventory → Feed Forecast (the page does not scroll,
+the table does), Inventory → Requisitions, the Alerts page (feed alerts are listed
+there now) and Approvals. Check that a tester's batch, goods receipt and silo from
+before the update are unchanged.
+
+**If 0122 fails part-way** (`Duplicate column name 'farm_id'` on a re-run): MySQL
+committed the first ALTER. Put back what it added, then re-run:
+`ALTER TABLE approval_request DROP COLUMN farm_id;` (and `DROP COLUMN document_id`,
+`DROP INDEX idx_approval_request_farm`, `DROP INDEX idx_approval_request_document`
+for whichever of those exist). 0123–0126 change data only and roll back whole on a
+failure, so a re-run is enough. Rehearsed: the forced failure left `farm_id` behind
+and the journal at its old count, and the drop-and-re-run finished the release.
+
+**Rolling back after testers have entered data**: do not restore the backup. The
+fills are defaults testers can edit; the lists saved above show which rows the release
+filled. 0122 can be reversed with the four statements above plus
+`DELETE FROM __drizzle_migrations WHERE created_at >= 1791222000000;`, once the
+previous build is back in place.
+
 Never run `db-rebuild-demo`, `setup-fresh-database` or any seed script on this
 server: they replace the testers' data.
 
