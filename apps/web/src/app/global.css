@@ -531,8 +531,10 @@ body {
   z-index: 3;
 }
 
+/* The edge of the held columns, so the columns scrolling under them read as
+   going underneath rather than running into them. */
 [data-table-scroll] [data-sticky-col='last'] {
-  box-shadow: 1px 0 0 var(--row-border);
+  box-shadow: 1px 0 0 var(--border), 6px 0 8px -6px rgba(0, 0, 0, 0.18);
 }
 
 /* A batch + item's consecutive dates read as one block, not a wall of rows. */
@@ -540,12 +542,22 @@ body {
   border-top: 1px solid var(--border);
 }
 
+/* Row shading is laid over an opaque cell colour: --row-hover is a
+   see-through tint, and a held cell with only the tint let the scrolled
+   columns show through it on hover. --surface-raised equals --surface in
+   the light theme, so alternate groups take a tint of their own. */
 [data-table-scroll] tbody tr[data-group-alt='true'] td {
-  background: var(--surface-raised);
+  background-color: var(--surface);
+  background-image: linear-gradient(var(--row-hover), var(--row-hover));
 }
 
 [data-table-scroll] tbody tr:hover td {
-  background: var(--row-hover);
+  background-color: var(--surface);
+  background-image: linear-gradient(var(--row-hover), var(--row-hover)), linear-gradient(var(--row-hover), var(--row-hover));
+}
+
+[data-table-scroll] tbody tr[data-group-alt='true']:hover td {
+  background-image: linear-gradient(var(--row-hover), var(--row-hover)), linear-gradient(var(--row-hover), var(--row-hover)), linear-gradient(var(--row-hover), var(--row-hover));
 }
 
 /* Two sticky columns would take a phone's whole width; there they scroll. */

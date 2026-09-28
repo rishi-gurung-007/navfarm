@@ -118,7 +118,7 @@ export function groupRows(rows: ReportRow[]): Array<{ row: ReportRow; start: boo
 }
 
 const BATCH_COL = { "--sticky-left": "0px" } as CSSProperties;
-const ITEM_COL = { "--sticky-left": "8.5rem" } as CSSProperties;
+const ITEM_COL = { "--sticky-left": "12.5rem" } as CSSProperties;
 const TH = "h-9 whitespace-nowrap px-3 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]";
 const TD = "whitespace-nowrap px-3 py-1.5 text-xs text-[var(--text-primary)]";
 const NUM = "text-right tabular-nums";
@@ -145,7 +145,7 @@ export function FeedForecastGrid({ rows, loading, horizonTo, t }: { rows: Report
               title={HEADER_HINT[c] ? t(HEADER_HINT[c]) : undefined}
               data-sticky-col={i === 0 ? "true" : i === 1 ? "last" : undefined}
               style={i === 0 ? BATCH_COL : i === 1 ? ITEM_COL : undefined}
-              className={cn(TH, i === 0 && "w-[8.5rem] min-w-[8.5rem]", i === 1 && "min-w-[13rem]", RIGHT_ALIGNED.has(c) && "text-right")}
+              className={cn(TH, i === 0 && "w-[12.5rem] min-w-[12.5rem] max-w-[12.5rem]", i === 1 && "min-w-[13rem]", RIGHT_ALIGNED.has(c) && "text-right")}
             >
               {t(c)}
             </th>
@@ -164,8 +164,8 @@ export function FeedForecastGrid({ rows, loading, horizonTo, t }: { rows: Report
         ) : (
           groupRows(rows).map(({ row, start, alt }) => (
             <tr key={row.key} data-group-start={start ? "true" : undefined} data-group-alt={alt ? "true" : undefined}>
-              <td data-sticky-col="true" style={BATCH_COL} className={cn(TD, "w-[8.5rem] min-w-[8.5rem] font-medium", !start && MUTED)}>{row.batchNo}</td>
-              <td data-sticky-col="last" style={ITEM_COL} title={row.itemName} className={cn(TD, "min-w-[13rem] max-w-[16rem] truncate", !start && MUTED)}>{row.itemName}</td>
+              <td data-sticky-col="true" style={BATCH_COL} title={row.batchNo} className={cn(TD, "w-[12.5rem] min-w-[12.5rem] max-w-[12.5rem] truncate font-medium", !start && MUTED)}>{row.batchNo}</td>
+              <td data-sticky-col="last" style={ITEM_COL} title={row.itemName} className={cn(TD, "min-w-[13rem] max-w-[14rem] truncate", !start && MUTED)}>{row.itemName}</td>
               <td className={cn(TD, MUTED)}>{row.itemNo || "—"}</td>
               <td className={cn(TD, MUTED)}>{row.shedCode || "—"}</td>
               <td className={TD}>{row.days > 1 ? `${formatDateShort(row.date)} – ${formatDateShort(row.dateTo)}` : formatDateShort(row.date)}</td>
