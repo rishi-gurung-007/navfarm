@@ -26,7 +26,7 @@ import { formatDateShort } from "@/utils/date-short";
 import { todayIso, unwrap } from "./feed-format";
 import { FeedFarmSelect, feedFarmLabel } from "./feed-farm-select";
 import {
-  FEED_TYPE_LABEL, PRIORITY_LABEL, PURPOSE_LABEL, REQ_STATUS_LABEL, REQ_TYPE_LABEL, SOURCE_LABEL, SUPPLY_LABEL, labelOf, variantOf,
+  FEED_TYPE_LABEL, PRIORITY_LABEL, PURPOSE_LABEL, REQ_STATUS_LABEL, REQ_TYPE_LABEL, SUPPLY_LABEL, labelOf, requisitionOrigin, variantOf,
 } from "./requisition-labels";
 import { RequisitionNewDialog } from "./requisition-new-dialog";
 import { useFeedFarm } from "./use-feed-farm";
@@ -300,8 +300,7 @@ export default function RequisitionsPanel() {
             {selected.priority && <Badge variant={variantOf(PRIORITY_LABEL, selected.priority)}>{labelOf(PRIORITY_LABEL, selected.priority, t)}</Badge>}
             <span className="text-xs" style={{ color: "var(--text-secondary)" }}>
               {t("rqHeaderLine", {
-                type: labelOf(REQ_TYPE_LABEL, selected.requisition_type, t),
-                source: labelOf(SOURCE_LABEL, selected.source, t),
+                origin: requisitionOrigin(selected.requisition_type, selected.source, t),
                 purpose: labelOf(PURPOSE_LABEL, selected.purpose, t),
                 supply: labelOf(SUPPLY_LABEL, selected.supply_source, t),
                 deadline: formatDateShort(selected.submission_deadline),

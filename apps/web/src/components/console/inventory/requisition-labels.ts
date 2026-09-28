@@ -35,6 +35,20 @@ export const SOURCE_LABEL: LabelMap = {
 export const PURPOSE_LABEL: LabelMap = { INTERNAL_TRANSFER: "reqPurposeTransfer" };
 export const SUPPLY_LABEL: LabelMap = { MILL: "reqSupplyMill" };
 
+/**
+ * Where a requisition came from, said once (F5). The type and the source say
+ * the same thing for the two ordinary pairs — the header read "From forecast
+ * · Forecast · Internal transfer from Mill" — while STOCK_TAKE_TRIGGERED and
+ * DIET_CHANGE_UPCOMING do add something, so those are kept beside the type.
+ */
+const SOURCE_REPEATS_TYPE: Record<string, string> = { FEED_FORECAST: 'AUTO_FORECAST', MANUAL: 'MANUAL_ENTRY' };
+
+export function requisitionOrigin(type: string | null | undefined, source: string | null | undefined, t: Translate): string {
+  const typeLabel = labelOf(REQ_TYPE_LABEL, type, t);
+  if (!type || !source || SOURCE_REPEATS_TYPE[type] === source) return typeLabel;
+  return `${typeLabel} · ${labelOf(SOURCE_LABEL, source, t)}`;
+}
+
 export function humanizeCode(code: string): string {
   return code
     .toLowerCase()

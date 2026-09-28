@@ -1411,7 +1411,7 @@ export const translations = {
     rqColLines: "Lines",
     rqColKg: "Requested (kg)",
     rqBack: "All requisitions",
-    rqHeaderLine: "{{type}} · {{source}} · {{purpose}} from {{supply}} · submit by {{deadline}} · production {{production}}",
+    rqHeaderLine: "{{origin}} · {{purpose}} from {{supply}} · submit by {{deadline}} · production {{production}}",
     rqFarmTotal: "Bulk total {{total}} kg: {{trips}} truck(s) of {{target}} kg.",
     rqColLine: "Line",
     rqColDestination: "Silo / store",
