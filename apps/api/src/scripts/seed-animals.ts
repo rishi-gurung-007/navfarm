@@ -85,10 +85,10 @@ async function main() {
 
       let registered = 0;
       for (const demoFarm of farms) {
-        const ref = await registerBreedingStock(ctx, demoFarm, { db, animals, schedulers, receipts, item, ensureBatch });
-        if (ref) registered += 1;
+        const refs = await registerBreedingStock(ctx, demoFarm, { db, animals, schedulers, receipts, item, ensureBatch });
+        if (refs) registered += 1;
       }
-      log(`\nDone — ${registered} of ${farms.length} farm(s) carry a registered-animals batch.`);
+      log(`\nDone — ${registered} of ${farms.length} farm(s) carry registered-animals batch(es).`);
     });
   } finally {
     await Promise.race([app.close(), new Promise((resolve) => setTimeout(resolve, 5000))]);

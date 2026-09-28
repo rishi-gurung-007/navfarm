@@ -25,6 +25,7 @@ import * as schema from '../../core/database/schema';
 import type { DemoContext } from './chapter';
 import { batchBreedOf, batchRef, earTag, farmCanRegisterAnimals, pensForRole, tagOf, type DemoBreed, type DemoFarm } from './farms';
 import { rateOf, shedForStage, type ItemLookup, type BatchEnsurer } from './batch-helpers';
+import { breedingBatchPlans } from './breeding-batch-split';
 
 /** N days ago, YYYY-MM-DD — the flow dates animals' stage transitions back to. */
 function dateNdaysAgo(days: number): string {
@@ -37,13 +38,22 @@ const ITEM_GILT = 'Replacement Breeding Gilt';
 
 type AnimalKind = 'SOW' | 'BOAR' | 'GILT';
 
-/** The registered batch's stage, by farm role, first match the breed carries. */
+/**
+ * The registered batches' stage preferences, by farm role. The GILT batch
+ * opens at the first of these the breed carries (GILT_GROWER almost always);
+ * the SOW batch opens at the sow stages. D37 splits the one former registered
+ * batch (which always stood at the gilt stage regardless of what was in it)
+ * into a gilt batch and a sow batch.
+ */
 const REGISTERED_STAGE_PREFERENCE: Record<DemoFarm['role'], string[]> = {
   MULTIPLIER: ['GILT_GROWER', 'FLUSH', 'INSEMINATION', 'GESTATION'],
   FARROW_TO_FINISH: ['GILT_GROWER', 'FLUSH', 'INSEMINATION', 'GESTATION', 'FARROWING', 'LACTATION'],
   AI_STATION: ['BOAR_AI'],
   GROW_OUT: [],
 };
+
+/** The SOW batch's stage: the first sow stage the breed carries, else null. */
+const SOW_STAGE_PREFERENCE = ['GESTATION', 'INSEMINATION', 'FLUSH'] as const;
 
 /** Demo facts per animal kind — ages and teat counts, varied deterministically. */
 const ANIMAL_FACTS: Record<AnimalKind, { gender: 'F' | 'M'; itemCode: string; baseAgeWeeks: number; ageSpread: number; teats?: number }> = {
@@ -61,9 +71,9 @@ export interface RegisterBreedingStockDeps {
   ensureBatch: BatchEnsurer;
 }
 
-/** Returns the DEMO remarks token of the batch created/adopted, or null if
+/** Returns the DEMO remarks tokens of the batches created/adopted, or null if
  * this farm's role/breed carries no registerable herd. */
-export async function registerBreedingStock(ctx: DemoContext, farm: DemoFarm, deps: RegisterBreedingStockDeps): Promise<string | null> {
+export async function registerBreedingStock(ctx: DemoContext, farm: DemoFarm, deps: RegisterBreedingStockDeps): Promise<string[] | null> {
   const { db, animals, schedulers, receipts, item, ensureBatch } = deps;
   const tag = tagOf(farm);
   const breed: DemoBreed | null = batchBreedOf(farm);
@@ -87,13 +97,26 @@ export async function registerBreedingStock(ctx: DemoContext, farm: DemoFarm, de
     return null;
   }
 
-  const stageCode = REGISTERED_STAGE_PREFERENCE[farm.role].find((code) => breed.lifecycleStages.has(code));
-  if (!stageCode) {
-    ctx.log(`${tag} breed ${breed.code} carries no lifecycle row for any of ${REGISTERED_STAGE_PREFERENCE[farm.role].join('/')} — no registered batch`);
+  // D37: two registered batches per farm — gilts on the gilt (GILT_GROWER)
+  // batch, sows and boars on the sow (gestation) batch — so each batch's
+  // head count equals the animals standing in it. The legacy single batch
+  // (ref without a suffix) stays addressable: a re-run over a database it
+  // built adopts it as the GILT batch by its old token rather than
+  // duplicating the herd.
+  const giltStageCode = REGISTERED_STAGE_PREFERENCE[farm.role].find((code) => breed.lifecycleStages.has(code));
+  const sowStageCode = SOW_STAGE_PREFERENCE.find((code) => breed.lifecycleStages.has(code));
+  if (!giltStageCode && !sowStageCode) {
+    ctx.log(`${tag} breed ${breed.code} carries no lifecycle row for any of ${REGISTERED_STAGE_PREFERENCE[farm.role].join('/')}/${SOW_STAGE_PREFERENCE.join('/')} — no registered batch`);
     return null;
   }
-  const stageId = breed.lifecycleStages.get(stageCode)!;
-  const ref = batchRef(farm.code, 'REG');
+  const plans = breedingBatchPlans({ giltStage: giltStageCode ?? null, sowStage: sowStageCode ?? null, herd });
+  if (!plans.length) {
+    ctx.log(`${tag} no animals to register — no registered batch`);
+    return null;
+  }
+  const stageByToken = new Map(plans.map((p) => [p.token, breed.lifecycleStages.get(p.stageCode)!]));
+  const refByToken = new Map(plans.map((p) => [p.token, p.token === 'GILT' ? batchRef(farm.code, 'REG') : batchRef(farm.code, 'REG-SOW')]));
+  const refs = plans.map((p) => refByToken.get(p.token)!);
 
   // The breeding stock's purchase document, one line per item kind.
   // AnimalService reads each animal's acquisition cost off this receipt's
@@ -164,104 +187,127 @@ export async function registerBreedingStock(ctx: DemoContext, farm: DemoFarm, de
     for (const line of missing) receiptIdByItem.set(line.item_id, topUpId);
   }
 
-  const total = herd.reduce((n, h) => n + h.count, 0);
-  const batchId = await ensureBatch({
-    ref,
-    farm,
-    animalTracking: 'REGISTERED',
-    stageId,
-    stageCode,
-    breedId: breed.breedId,
-    startDate,
-    openingQuantity: total,
-    inputLines: receiptLines.map(({ item_id, quantity, uom, rate }) => ({ item_id, quantity, uom, rate })),
-  });
+  const batchIds: Array<{ token: 'GILT' | 'SOW'; batchId: string; ref: string; stageCode: string; animals: Array<{ kind: 'SOW' | 'BOAR' | 'GILT'; count: number }> }> = [];
+  for (const plan of plans) {
+    // D37: each batch opens with exactly the animals it takes, so the batch's
+    // head count equals its animals (the one former batch opened with the
+    // whole herd while its animals stood in six later stages).
+    const planHeads = plan.animals.reduce((n, h) => n + h.count, 0);
+    const stageId = stageByToken.get(plan.token)!;
+    const batchId = await ensureBatch({
+      ref: refByToken.get(plan.token)!,
+      farm,
+      animalTracking: 'REGISTERED',
+      stageId,
+      stageCode: plan.stageCode,
+      breedId: breed.breedId,
+      startDate,
+      openingQuantity: planHeads,
+      inputLines: receiptLines.map(({ item_id, quantity, uom, rate }) => ({ item_id, quantity, uom, rate })),
+    });
+    batchIds.push({ token: plan.token, batchId, ref: refByToken.get(plan.token)!, stageCode: plan.stageCode, animals: plan.animals });
+  }
 
-  // D31: the batch stands in a gilt house, but its sows eat the dry sow and
-  // farrowing houses' diets; link those silos to its shed so the forecast
-  // and the daily entries draw them from silos, not the farm store. Chapter
-  // 02 has already chosen each silo's feed from its first shed, so linking
-  // here cannot change what a silo holds. A re-run leaves an existing pair.
-  const batchShed = shedForStage(farm, stageCode);
-  if (batchShed) {
-    for (const siloId of breedingSiloLinks(farm, batchShed.shedId)) {
-      await db
-        .insert(schema.siloShedLink)
-        .values({ tenant_id: ctx.tenantId, company_id: ctx.companyId, silo_id: siloId, shed_id: batchShed.shedId })
-        .onDuplicateKeyUpdate({ set: { silo_id: sql`silo_id` } });
-      ctx.log(`${tagOf(farm)} breeding shed ${batchShed.code} also draws from silo ${siloId} (D31)`);
+  // D31: the GILT batch stands in a gilt house, and its animals move on into
+  // flush, gestation, farrowing and lactation — so the dry sow and farrowing
+  // silos are linked to its shed and the sow diets still come from silos.
+  // The SOW batch stands in a dry sow house, whose own silo holds gestation
+  // mash already, so it needs no extra links. Chapter 02 has already chosen
+  // each silo's feed from its first shed, so linking cannot change what a
+  // silo holds. A re-run leaves an existing pair.
+  const giltPlan = batchIds.find((b) => b.token === 'GILT');
+  if (giltPlan) {
+    const batchShed = shedForStage(farm, giltPlan.stageCode);
+    if (batchShed) {
+      for (const siloId of breedingSiloLinks(farm, batchShed.shedId)) {
+        await db
+          .insert(schema.siloShedLink)
+          .values({ tenant_id: ctx.tenantId, company_id: ctx.companyId, silo_id: siloId, shed_id: batchShed.shedId })
+          .onDuplicateKeyUpdate({ set: { silo_id: sql`silo_id` } });
+        ctx.log(`${tagOf(farm)} breeding shed ${batchShed.code} also draws from silo ${siloId} (D31)`);
+      }
     }
   }
 
-  // ── The animals themselves, one by one (Ruling 3), standing at pens.
-  const [batchRow] = await db
-    .select({ stage_id: schema.batchHeader.stage_id })
+  // ── The animals themselves, one by one (Ruling 3), standing at pens, each
+  // in the batch its D37 plan says: gilts on the gilt batch, sows and boars
+  // on the sow batch.
+  const batchRows = await db
+    .select({ batch_id: schema.batchHeader.batch_id, stage_id: schema.batchHeader.stage_id })
     .from(schema.batchHeader)
-    .where(eq(schema.batchHeader.batch_id, batchId))
-    .limit(1);
-  if (!batchRow?.stage_id) throw new Error(`register-breeding-stock: batch on ${farm.code} carries no stage_id.`);
+    .where(inArray(schema.batchHeader.batch_id, batchIds.map((b) => b.batchId)));
+  const stageOfBatch = new Map(batchRows.map((b) => [b.batch_id, b.stage_id]));
 
   // An animal's breed must match its batch's, so every head on the farm's
-  // registered batch carries the farm's one batch breed — boars included.
+  // registered batches carries the farm's one batch breed — boars included.
   let created = 0;
-  for (const { kind, count } of herd) {
-    const facts = ANIMAL_FACTS[kind];
-    const pens = kind === 'BOAR'
-      ? pensForRole(farm, 'BOAR')
-      : kind === 'GILT'
-        ? pensForRole(farm, 'GILT', 'GILT_REARING')
-        : pensForRole(farm, 'DRY_SOW', 'GILT');
-    if (pens.length === 0) throw new Error(`register-breeding-stock: ${farm.code} has no pens to stand a ${kind} in.`);
-    const itemRow = await item(facts.itemCode);
+  for (const entry of batchIds) {
+    const batchStageId = stageOfBatch.get(entry.batchId);
+    if (!batchStageId) throw new Error(`register-breeding-stock: batch on ${farm.code} carries no stage_id.`);
+    for (const { kind, count } of entry.animals) {
+      const facts = ANIMAL_FACTS[kind];
+      const pens = kind === 'BOAR'
+        ? pensForRole(farm, 'BOAR')
+        : kind === 'GILT'
+          ? pensForRole(farm, 'GILT', 'GILT_REARING')
+          : pensForRole(farm, 'DRY_SOW', 'GILT');
+      if (pens.length === 0) throw new Error(`register-breeding-stock: ${farm.code} has no pens to stand a ${kind} in.`);
+      const itemRow = await item(facts.itemCode);
 
-    for (let i = 1; i <= count; i++) {
-      const tagNo = earTag(farm.code, kind, i);
-      const [already] = await db
-        .select({ animal_id: schema.animalRegister.animal_id })
-        .from(schema.animalRegister)
-        .where(eq(schema.animalRegister.ear_tag, tagNo))
-        .limit(1);
-      if (already) continue;
+      for (let i = 1; i <= count; i++) {
+        const tagNo = earTag(farm.code, kind, i);
+        const [already] = await db
+          .select({ animal_id: schema.animalRegister.animal_id })
+          .from(schema.animalRegister)
+          .where(eq(schema.animalRegister.ear_tag, tagNo))
+          .limit(1);
+        if (already) continue;
 
-      await animals.create(
-        {
-          company_id: ctx.companyId,
-          animal_type: kind,
-          breed_id: breed.breedId,
-          gender: facts.gender,
-          entry_type: 'PURCHASED_LOCAL',
-          entry_date: startDate,
-          age_at_entry_weeks: facts.baseAgeWeeks + (i % facts.ageSpread),
-          source_receipt_id: receiptIdByItem.get(itemRow.item_id)!,
-          item_id: itemRow.item_id,
-          ear_tag: tagNo,
-          current_batch_id: batchId,
-          current_location_id: pens[(i - 1) % pens.length],
-          current_stage_id: batchRow.stage_id,
-          no_of_teats: facts.teats === undefined ? undefined : facts.teats + (i % 3),
-        },
-        ctx.tenantId,
-      );
-      created += 1;
+        await animals.create(
+          {
+            company_id: ctx.companyId,
+            animal_type: kind,
+            breed_id: breed.breedId,
+            gender: facts.gender,
+            entry_type: 'PURCHASED_LOCAL',
+            entry_date: startDate,
+            age_at_entry_weeks: facts.baseAgeWeeks + (i % facts.ageSpread),
+            source_receipt_id: receiptIdByItem.get(itemRow.item_id)!,
+            item_id: itemRow.item_id,
+            ear_tag: tagNo,
+            current_batch_id: entry.batchId,
+            current_location_id: pens[(i - 1) % pens.length],
+            current_stage_id: batchStageId,
+            no_of_teats: facts.teats === undefined ? undefined : facts.teats + (i % 3),
+          },
+          ctx.tenantId,
+        );
+        created += 1;
+      }
     }
   }
   ctx.log(
     created > 0
-      ? `${tag} registered ${created} animal(s) onto ${ref} (${herd.map((h) => `${h.count} ${h.kind.toLowerCase()}`).join(', ')})`
-      : `${tag} every demo animal on ${ref} already registered — skipped`,
+      ? `${tag} registered ${created} animal(s) across ${refs.join(' + ')} (${herd.map((h) => `${h.count} ${h.kind.toLowerCase()}`).join(', ')})`
+      : `${tag} every demo animal on ${refs.join(' + ')} already registered — skipped`,
   );
 
-  // ── The farm's pig flow, walked once through the services.
+  // ── The farm's pig flow, walked once through the services, per D37 batch:
+  // each batch's animals (at their opening stage) move into the stages after
+  // that batch's own, and the batch grows a scheduler per destination stage.
   const flowStages = REGISTERED_STAGE_PREFERENCE[farm.role].filter((code) => breed.lifecycleStages.has(code));
-  const openingIdx = flowStages.indexOf(stageCode);
-  const destStages = flowStages.slice(openingIdx + 1).map((code) => breed.lifecycleStages.get(code)!);
-  if (destStages.length) {
+  for (const entry of batchIds) {
+    const openingIdx = flowStages.indexOf(entry.stageCode);
+    const destStages = (openingIdx >= 0 ? flowStages.slice(openingIdx + 1) : []).map((code) => breed.lifecycleStages.get(code)!);
+    if (!destStages.length) continue;
+    const batchStageId = stageOfBatch.get(entry.batchId);
+    if (!batchStageId) continue;
     const batchAnimals = await db
       .select({ animal_id: schema.animalRegister.animal_id, ear_tag: schema.animalRegister.ear_tag })
       .from(schema.animalRegister)
       .where(and(
-        eq(schema.animalRegister.current_batch_id, batchId),
-        eq(schema.animalRegister.current_stage_id, batchRow.stage_id),
+        eq(schema.animalRegister.current_batch_id, entry.batchId),
+        eq(schema.animalRegister.current_stage_id, batchStageId),
         eq(schema.animalRegister.is_active, true),
       ));
     if (batchAnimals.length) {
@@ -289,11 +335,11 @@ export async function registerBreedingStock(ctx: DemoContext, farm: DemoFarm, de
         }
       }
       for (const destStageId of new Set(destStages)) {
-        await schedulers.createForStage(batchId, destStageId, ctx.tenantId);
+        await schedulers.createForStage(entry.batchId, destStageId, ctx.tenantId);
       }
-      ctx.log(`${tag} spread ${batchAnimals.length} animal(s) and grew ${destStages.length} scheduler(s) across ${ref}'s flow`);
+      ctx.log(`${tag} spread ${batchAnimals.length} animal(s) and grew ${destStages.length} scheduler(s) across ${entry.ref}'s flow`);
     }
   }
 
-  return ref;
+  return refs;
 }

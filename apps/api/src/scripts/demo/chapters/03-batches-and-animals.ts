@@ -105,8 +105,10 @@ export const batchesAndAnimalsChapter: DemoChapter<BatchRefs> = {
         continue;
       }
 
-      // ── Registered breeding stock (shared with db-seed-animals).
-      refs.registered = (await registerBreedingStock(ctx, farm, { db, animals, schedulers, receipts, item, ensureBatch })) ?? undefined;
+      // ── Registered breeding stock (shared with db-seed-animals). D37: the
+      // tokens of every registered batch the farm got — the gilt batch and,
+      // where the farm has sows, the sow batch beside it.
+      refs.registered = (await registerBreedingStock(ctx, farm, { db, animals, schedulers, receipts, item, ensureBatch }))?.join(' + ') ?? undefined;
 
       // ── Count-only batches, one per allowed stage the breed carries.
       const startDate = new Date(Date.now() - farm.volume.days * 86_400_000).toISOString().slice(0, 10);
