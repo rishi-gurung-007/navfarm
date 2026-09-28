@@ -55,7 +55,7 @@ export interface FarmLocationSeedRow {
  * rebuild from writing it back. The silo capacity a shed carries is the
  * client's own figure and is left alone.
  */
-export function storageFieldsFor(row: Pick<FarmLocationSeedRow, 'type' | 'storageType' | 'storageName'>): {
+export function storageFieldsFor(row: { type: string; storageType?: string; storageName?: string }): {
   storage_type: string | null;
   storage_name: string | null;
 } {

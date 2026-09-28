@@ -20,11 +20,11 @@ describe('F4 — a seeded pen, shed or crate carries no silo storage type', () =
   });
 
   it('drops the silo name with the type, and keeps both on a real silo or store', () => {
-    expect(storageFieldsFor({ code: 'MUGR8P3', type: 'PEN', farm: 'M', name: 'PEN - 3', storageType: 'SILO', storageName: 'MGH8' }))
+    expect(storageFieldsFor({ type: 'PEN', storageType: 'SILO', storageName: 'MGH8' }))
       .toEqual({ storage_type: null, storage_name: null });
-    expect(storageFieldsFor({ code: 'X/SILO-1', type: 'SILO', farm: 'M', name: 'Silo 1', storageType: 'SILO', storageName: 'MGH8' }))
+    expect(storageFieldsFor({ type: 'SILO', storageType: 'SILO', storageName: 'MGH8' }))
       .toEqual({ storage_type: 'SILO', storage_name: 'MGH8' });
-    expect(storageFieldsFor({ code: 'X/STORE-1', type: 'STORE', farm: 'M', name: 'Store', storageType: 'STORE', storageName: 'STORE' }))
+    expect(storageFieldsFor({ type: 'STORE', storageType: 'STORE', storageName: 'STORE' }))
       .toEqual({ storage_type: 'STORE', storage_name: 'STORE' });
   });
 
