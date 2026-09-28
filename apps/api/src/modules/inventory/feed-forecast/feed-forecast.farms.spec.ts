@@ -28,7 +28,7 @@ describe('FeedForecastService.listFarms (A2)', () => {
   it('tenant admin with no company sees every company\'s farms, labelled with the company', async () => {
     const cls = transactionCls(db);
     useFarmScope(cls, { farmId: null, restricted: false, companyId: null, lobId: null });
-    const list = await new FeedForecastService(cls, {} as any).listFarms('tenant-1', 'TENANT_ADMIN');
+    const list = await new FeedForecastService(cls, {} as any, { log: jest.fn() } as any).listFarms('tenant-1', 'TENANT_ADMIN');
     expect(list).toEqual([{ farmId: 'f-vil', code: 'VIL100', name: 'Villa Franca', companyId: 'co-1', companyName: 'Colcom Piggery' }]);
     const q = rendered();
     expect(q.sql).toContain('`location_master`.`location_type` = ?');
@@ -40,7 +40,7 @@ describe('FeedForecastService.listFarms (A2)', () => {
   it('a company admin sees the company\'s farms only', async () => {
     const cls = transactionCls(db);
     useFarmScope(cls, { farmId: 'f-other', restricted: false, companyId: 'co-1', lobId: null });
-    await new FeedForecastService(cls, {} as any).listFarms('tenant-1', 'COMPANY_ADMIN');
+    await new FeedForecastService(cls, {} as any, { log: jest.fn() } as any).listFarms('tenant-1', 'COMPANY_ADMIN');
     const q = rendered();
     expect(q.sql).toContain('`location_master`.`company_id` = ?');
     expect(q.params).toContain('co-1');
@@ -51,7 +51,7 @@ describe('FeedForecastService.listFarms (A2)', () => {
   it('an operational admin sees the farms of their LOB only', async () => {
     const cls = transactionCls(db);
     useFarmScope(cls, { farmId: null, restricted: true, companyId: 'co-1', lobId: 'lob-pig' });
-    await new FeedForecastService(cls, {} as any).listFarms('tenant-1', 'OPERATIONAL_ADMIN');
+    await new FeedForecastService(cls, {} as any, { log: jest.fn() } as any).listFarms('tenant-1', 'OPERATIONAL_ADMIN');
     expect(rendered().sql).toContain('`location_master`.`lob_id` = ?');
     expect(rendered().params).toContain('lob-pig');
   });
@@ -59,7 +59,7 @@ describe('FeedForecastService.listFarms (A2)', () => {
   it('a farm user sees only their pinned farm', async () => {
     const cls = transactionCls(db);
     useFarmScope(cls, { farmId: 'f-vil', restricted: true, companyId: 'co-1', lobId: 'lob-pig' });
-    await new FeedForecastService(cls, {} as any).listFarms('tenant-1', 'STANDARD_USER');
+    await new FeedForecastService(cls, {} as any, { log: jest.fn() } as any).listFarms('tenant-1', 'STANDARD_USER');
     expect(rendered().sql).toContain('`location_master`.`location_id` = ?');
     expect(rendered().params).toContain('f-vil');
   });
@@ -72,7 +72,7 @@ describe('FeedForecastService.listFarms (A2)', () => {
     ] as const) {
       const cls = transactionCls(db);
       useFarmScope(cls, scope);
-      await expect(new FeedForecastService(cls, {} as any).listFarms('tenant-1', type)).resolves.toEqual([]);
+      await expect(new FeedForecastService(cls, {} as any, { log: jest.fn() } as any).listFarms('tenant-1', type)).resolves.toEqual([]);
     }
     expect(db.select).not.toHaveBeenCalled();
   });

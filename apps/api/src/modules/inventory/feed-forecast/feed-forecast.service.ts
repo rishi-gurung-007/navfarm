@@ -10,7 +10,8 @@ import { FeedRow, stageDayRange } from '../../production/lifecycle/feed-row-days
 import { buildFeedForecast, DailyForecastRow, dayShort, DietChange, ForecastFlag, ForecastInput, ForecastRow, ForecastSource, isTimeZone, todayInZone } from './feed-forecast.engine';
 import { DEFAULT_SPAN_DAYS, ForecastView, groupRows, MAX_SPAN_DAYS, PeriodRange, ReportRow, resolveViewRange, spanProblem } from './feed-forecast.view';
 import { stockAsOf } from './feed-forecast.stock';
-import { QueryFeedForecastDto } from './dto/feed-forecast.dto';
+import { QueryFeedForecastDto, UpdateFeedFarmSettingsDto } from './dto/feed-forecast.dto';
+import { AuditLogService } from '../../system/audit-log/audit-log.service';
 
 /**
  * The LOB bound on the forecast's location read for a restricted
@@ -55,6 +56,20 @@ export interface FeedFarmOption {
   name: string;
   companyId: string;
   companyName: string | null;
+}
+
+/** D32: a farm on the Feed Planning screen, with its six settings (null = the client default applies). */
+export interface FeedFarmSettings {
+  feed_refill_buffer_days: number | null;
+  feed_lead_time_days: number | null;
+  feed_bulk_multiple_kg: number | null;
+  feed_bag_size_kg: number | null;
+  feed_truck_target_kg: number | null;
+  feed_production_weekday: number | null;
+}
+
+export interface FeedFarmSettingsRow extends FeedFarmOption {
+  settings: FeedFarmSettings;
 }
 
 export interface FeedForecastResponse {
@@ -476,6 +491,7 @@ export class FeedForecastService {
   constructor(
     private readonly cls: ClsService,
     private readonly ledgerService: InventoryLedgerService,
+    private readonly auditService: AuditLogService,
   ) {}
 
   private get db(): MySql2Database<typeof schema> {
@@ -610,7 +626,126 @@ export class FeedForecastService {
    * activeFarmOfTenant already allowed; the location list the screens used
    * before answered [] there. Sorted by code, the order the farms are known by.
    */
-  async listFarms(tenantId: string, userType: string | undefined): Promise<FeedFarmOption[]> {
+  /**
+   * D32: the six per-farm feed settings, their columns and their bounds in one
+   * place. They stay on the FARM's location_master row — no migration — and
+   * are edited on Settings → Inventory Setup → Feed Planning rather than on
+   * the Add/Edit Location form, which showed them only because the generic
+   * form shows every column. Nothing else may be written through here, which
+   * is why this is not the generic PUT /location (that one also demands Max
+   * Capacity and the rest of a farm's form).
+   */
+  private static readonly FARM_SETTINGS = [
+    { key: 'feed_refill_buffer_days', column: schema.locationMaster.feed_refill_buffer_days, min: 0, max: 30 },
+    { key: 'feed_lead_time_days', column: schema.locationMaster.feed_lead_time_days, min: 0, max: 30 },
+    { key: 'feed_bulk_multiple_kg', column: schema.locationMaster.feed_bulk_multiple_kg, min: 1, max: null },
+    { key: 'feed_bag_size_kg', column: schema.locationMaster.feed_bag_size_kg, min: 1, max: null },
+    { key: 'feed_truck_target_kg', column: schema.locationMaster.feed_truck_target_kg, min: 1, max: null },
+    { key: 'feed_production_weekday', column: schema.locationMaster.feed_production_weekday, min: 0, max: 6 },
+  ] as const;
+
+  /** The same farms GET /feed-forecast/farms offers, each with its six settings (null = not set). */
+  async listFarmSettings(tenantId: string, userType: string | undefined): Promise<FeedFarmSettingsRow[]> {
+    const L = schema.locationMaster;
+    const conditions = this.farmListConditions(tenantId, userType);
+    if (!conditions) return [];
+    const rows = await this.db
+      .select({
+        farm_id: L.location_id,
+        code: L.location_code,
+        name: L.location_name,
+        company_id: L.company_id,
+        company_name: schema.companyMaster.company_name,
+        feed_refill_buffer_days: L.feed_refill_buffer_days,
+        feed_lead_time_days: L.feed_lead_time_days,
+        feed_bulk_multiple_kg: L.feed_bulk_multiple_kg,
+        feed_bag_size_kg: L.feed_bag_size_kg,
+        feed_truck_target_kg: L.feed_truck_target_kg,
+        feed_production_weekday: L.feed_production_weekday,
+      })
+      .from(L)
+      .leftJoin(schema.companyMaster, eq(schema.companyMaster.company_id, L.company_id))
+      .where(and(...conditions))
+      .orderBy(L.location_code);
+    return rows.map((r) => ({
+      farmId: r.farm_id,
+      code: r.code,
+      name: r.name,
+      companyId: r.company_id as string,
+      companyName: r.company_name ?? null,
+      settings: {
+        feed_refill_buffer_days: r.feed_refill_buffer_days ?? null,
+        feed_lead_time_days: r.feed_lead_time_days ?? null,
+        feed_bulk_multiple_kg: r.feed_bulk_multiple_kg ?? null,
+        feed_bag_size_kg: r.feed_bag_size_kg ?? null,
+        feed_truck_target_kg: r.feed_truck_target_kg ?? null,
+        feed_production_weekday: r.feed_production_weekday ?? null,
+      },
+    }));
+  }
+
+  /**
+   * D32: writes only the six columns, on a farm resolveFarm says this caller
+   * may open. A value of null clears the setting back to the client default; a
+   * key left out of the body is not touched.
+   */
+  async updateFarmSettings(farmIdIn: string, dto: UpdateFeedFarmSettingsDto, tenantId: string, user: { userId?: string; userType?: string } | undefined) {
+    const { farmId, companyId } = await this.resolveFarm(farmIdIn, tenantId, user?.userType);
+    const updates: Record<string, number | null> = {};
+    for (const setting of FeedForecastService.FARM_SETTINGS) {
+      const value = (dto as Record<string, unknown>)[setting.key];
+      if (value === undefined) continue;
+      if (value === null) {
+        updates[setting.key] = null;
+        continue;
+      }
+      if (typeof value !== 'number' || !Number.isInteger(value) || value < setting.min || (setting.max !== null && value > setting.max)) {
+        const range = setting.max === null ? `${setting.min} or more` : `between ${setting.min} and ${setting.max}`;
+        throw new BadRequestException(`${setting.key} must be a whole number ${range}, or empty.`);
+      }
+      updates[setting.key] = value;
+    }
+    if (!Object.keys(updates).length) throw new BadRequestException('Send at least one feed setting to change.');
+    const [before] = await this.db
+      .select({
+        feed_refill_buffer_days: schema.locationMaster.feed_refill_buffer_days,
+        feed_lead_time_days: schema.locationMaster.feed_lead_time_days,
+        feed_bulk_multiple_kg: schema.locationMaster.feed_bulk_multiple_kg,
+        feed_bag_size_kg: schema.locationMaster.feed_bag_size_kg,
+        feed_truck_target_kg: schema.locationMaster.feed_truck_target_kg,
+        feed_production_weekday: schema.locationMaster.feed_production_weekday,
+      })
+      .from(schema.locationMaster)
+      .where(eq(schema.locationMaster.location_id, farmId))
+      .limit(1);
+    await this.db
+      .update(schema.locationMaster)
+      .set({ ...updates, updated_by: user?.userId ?? null })
+      .where(and(
+        eq(schema.locationMaster.location_id, farmId),
+        eq(schema.locationMaster.tenant_id, tenantId),
+        eq(schema.locationMaster.location_type, 'FARM'),
+      ));
+    await this.auditService.log({
+      tenantId,
+      companyId,
+      userId: user?.userId,
+      action: 'UPDATE',
+      entityName: 'location_master',
+      entityId: farmId,
+      oldValues: before ?? undefined,
+      newValues: updates,
+    });
+    return { farmId, settings: updates };
+  }
+
+  /**
+   * Which farms this caller may be offered, as WHERE conditions — null when the
+   * answer is "none at all". Shared by GET /feed-forecast/farms and D32's
+   * farm-settings list so the two can never disagree about whose farms a user
+   * sees.
+   */
+  private farmListConditions(tenantId: string, userType: string | undefined): SQL[] | null {
     const scope = farmScope(this.cls);
     const L = schema.locationMaster;
     const conditions: SQL[] = [
@@ -621,15 +756,22 @@ export class FeedForecastService {
       isNull(L.deleted_at),
     ];
     if (userType === 'STANDARD_USER') {
-      if (!scope.farmId) return [];
+      if (!scope.farmId) return null;
       conditions.push(eq(L.location_id, scope.farmId));
       if (scope.companyId) conditions.push(eq(L.company_id, scope.companyId));
     } else if (scope.companyId) {
       conditions.push(eq(L.company_id, scope.companyId));
       if (scope.restricted && scope.lobId) conditions.push(eq(L.lob_id, scope.lobId));
     } else if (userType !== 'TENANT_ADMIN' && userType !== 'SYSTEM_ADMIN') {
-      return [];
+      return null;
     }
+    return conditions;
+  }
+
+  async listFarms(tenantId: string, userType: string | undefined): Promise<FeedFarmOption[]> {
+    const L = schema.locationMaster;
+    const conditions = this.farmListConditions(tenantId, userType);
+    if (!conditions) return [];
     const rows = await this.db
       .select({
         farm_id: L.location_id,

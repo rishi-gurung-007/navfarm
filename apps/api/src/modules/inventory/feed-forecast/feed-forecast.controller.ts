@@ -1,7 +1,7 @@
-import { Controller, Get, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Put, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { FeedForecastService } from './feed-forecast.service';
-import { QueryFeedForecastDto, QueryFeedPeriodsDto } from './dto/feed-forecast.dto';
+import { QueryFeedForecastDto, QueryFeedPeriodsDto, UpdateFeedFarmSettingsDto } from './dto/feed-forecast.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
@@ -40,6 +40,33 @@ export class FeedForecastController {
     const tenantId = req.user?.tenantId || req['tenantId'];
     const data = await this.feedForecastService.listFarms(tenantId, req.user?.userType);
     return { success: true, message: 'Farms retrieved successfully.', data };
+  }
+
+  /**
+   * D32: the six per-farm feed settings, read and written on their own screen
+   * (Settings → Inventory Setup → Feed Planning) instead of on the Add/Edit
+   * Location form. Read under the report's grant, like 'farms' above, so the
+   * table renders for anyone who may see the forecast the settings shape.
+   * Written under the location master's own edit right, because the row being
+   * changed is a farm's master row. Deliberately not the generic
+   * PUT /location, which also demands Max Capacity and the rest of the form.
+   */
+  @Get('farm-settings')
+  @RequirePermission('INVENTORY', 'LEDGER', 'view')
+  @ApiOperation({ summary: "Each farm this caller may open, with its six feed planning settings (D32)" })
+  async farmSettings(@Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const data = await this.feedForecastService.listFarmSettings(tenantId, req.user?.userType);
+    return { success: true, message: 'Feed planning settings retrieved successfully.', data };
+  }
+
+  @Put('farm-settings/:farmId')
+  @RequirePermission('MASTER_DATA', 'LOCATION', 'edit')
+  @ApiOperation({ summary: "One farm's feed planning settings; only those six columns are written (D32)" })
+  async updateFarmSettings(@Param('farmId', ParseUUIDPipe) farmId: string, @Body() dto: UpdateFeedFarmSettingsDto, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const data = await this.feedForecastService.updateFarmSettings(farmId, dto, tenantId, req.user);
+    return { success: true, message: 'Feed planning settings updated.', data };
   }
 
   @Get()
