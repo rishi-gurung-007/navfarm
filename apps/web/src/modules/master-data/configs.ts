@@ -143,26 +143,14 @@ const location: MasterDataConfig = {
       visibleWhen: { anyOf: [{ key: "location_type", equals: "SILO" }] },
       requiredWhen: { anyOf: [{ key: "location_type", equals: "SILO" }] }, section: "Identification",
       helpText: "Over-stock notice at or above this. Usually 90% of capacity." },
-    // Feed Forecast's two per-farm timing offsets (spec D3): delivery distance
-    // is per farm, so both live on the FARM row rather than on each silo.
-    { key: "feed_refill_buffer_days", label: "Feed Refill Buffer (Days)", type: "number", min: 0, max: 30, step: "1", nativeNumber: true,
-      visibleWhen: { anyOf: [{ key: "location_type", equals: "FARM" }] }, section: "Identification",
-      helpText: "Feed Forecast: the refill date is this many days before a silo runs out." },
-    { key: "feed_lead_time_days", label: "Feed Lead Time (Days)", type: "number", min: 0, max: 30, step: "1", nativeNumber: true,
-      visibleWhen: { anyOf: [{ key: "location_type", equals: "FARM" }] }, section: "Identification",
-      helpText: "Feed Forecast: Required On is this many days before the Date to Refill. Default 2." },
-    { key: "feed_bulk_multiple_kg", label: "Bulk Order Multiple (KG)", type: "number", min: 1, step: "1", nativeNumber: true,
-      visibleWhen: { anyOf: [{ key: "location_type", equals: "FARM" }] }, section: "Identification",
-      helpText: "Feed requisitions round bulk orders up to this many kilograms (one truck compartment). Default 3000." },
-    { key: "feed_bag_size_kg", label: "Feed Bag Size (KG)", type: "number", min: 1, step: "1", nativeNumber: true,
-      visibleWhen: { anyOf: [{ key: "location_type", equals: "FARM" }] }, section: "Identification",
-      helpText: "Bagged feed is ordered in whole bags of this weight. Default 50." },
-    { key: "feed_truck_target_kg", label: "Bulk Truck Target (KG)", type: "number", min: 1, step: "1", nativeNumber: true,
-      visibleWhen: { anyOf: [{ key: "location_type", equals: "FARM" }] }, section: "Identification",
-      helpText: "Normal truck load, shown against the farm's requested total. A target, not a cap — more is served by extra trips. Default 30000." },
-    { key: "feed_production_weekday", label: "Feed Production Day (0 = Sunday)", type: "number", min: 0, max: 6, step: "1", nativeNumber: true,
-      visibleWhen: { anyOf: [{ key: "location_type", equals: "FARM" }] }, section: "Identification",
-      helpText: "Weekday the mill produces this farm's feed, 0 = Sunday to 6 = Saturday. Requisitions are due the day before. Default 0." },
+    // D32 (Rishi, 28 Sep): the six per-farm feed settings — refill buffer, lead
+    // time, bulk order multiple, bag size, truck target, production weekday —
+    // are NOT edited here. They are columns on the farm's row, which is the
+    // only reason the generic form ever showed them; they describe how a
+    // farm's feed is ordered, not the farm. Settings → Inventory Setup → Feed
+    // Planning edits them through GET/PUT /feed-forecast/farm-settings. The
+    // columns and the location DTO are unchanged, so the forecast engine and
+    // the requisition rules keep reading them.
     // Which sheds this silo feeds. One silo may serve many sheds, and — since
     // silo_shed_link replaced the old one-silo-per-shed feed_silo_id column
     // (spec D7) — a shed may now draw from several silos too, one per feed
@@ -190,23 +178,9 @@ const location: MasterDataConfig = {
       helpText: "The sheds on this silo's parent farm that may take their feed from it. A shed can draw from several silos, one per feed item; two silos feeding the same shed may not hold the same feed.",
     },
     { key: "downtime_days_required", label: "Downtime Days Required", type: "number", min: 0, max: 365, step: "1", helpText: "Empty days required between batches for biosecurity.", section: "Identification" },
-    // The silo or store's own name-number. storage_type says which kind of
-    // store this is; this says which one — MULTIPLIER writes MGH1 against each
-    // grower house, Porta writes PSL FS - 01 and STORE.
-    //
-    // labelWhen follows location_type so the form asks for the one thing it is
-    // actually asking for (2026-09-24): by the time this field appears the
-    // type has already been chosen, and a person filling in a silo should read
-    // "Silo Name", not a slash-pair half of which does not apply to them. The
-    // static label stays as the fallback for a storage type added later with
-    // no entry here, and for the record view before a type is set.
-    {
-      key: "storage_name", label: "Silo / Store Name", type: "text", maxLength: 100, placeholder: "MGH1",
-      labelWhen: { key: "location_type", labels: { SILO: "Silo Name", STORE: "Store Name" } },
-      visibleWhen: { anyOf: [{ key: "storage_type", equals: ["STORE", "SILO"] }] },
-      helpText: "The name or number this location is known by on the farm.",
-      section: "Identification",
-    },
+    // D32: "Silo / Store Name" is gone from the form — it duplicated the
+    // required Name field. The storage_name column is kept, and the seeds
+    // still fill it for the silos and stores the client's master names.
     { key: "gps_latitude", label: "Latitude", type: "number", min: -90, max: 90, step: "0.00000001", placeholder: "-17.82722000", visibleWhen: { anyOf: [{ key: "location_type", equals: "FARM" }] }, helpText: "GPS latitude in decimal degrees, e.g. -17.82722000. Applies to Farm only.", section: "Identification" },
     { key: "gps_longitude", label: "Longitude", type: "number", min: -180, max: 180, step: "0.00000001", placeholder: "30.99755000", visibleWhen: { anyOf: [{ key: "location_type", equals: "FARM" }] }, helpText: "GPS longitude in decimal degrees, e.g. 30.99755000. Applies to Farm only.", section: "Identification" },
   ],
