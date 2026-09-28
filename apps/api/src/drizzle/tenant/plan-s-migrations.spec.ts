@@ -44,6 +44,31 @@ describe('migration 0131 — FLUSH latest day 14 → 5 on system rows (D36)', ()
     // FLUSH is 5 (D36) and the seed's other lengths are untouched.
     expect(DEMO_STAGE_DURATIONS.FLUSH).toBe(5);
   });
+
+  /**
+   * 593d7c96 follow-up (controller brief, 28 Sep): lifecycle rows created
+   * without company/nob/lob are invisible at company scope. Migration 0132
+   * copies the breed's scope onto rows that have none — rows under a tenant
+   * template breed (company NULL) and rows already carrying a scope are
+   * untouched, and nothing else changes. Written and rehearsed here; applied
+   * to real tenants by the controller.
+   */
+  it('migration 0132 stamps NULL-scope lifecycle rows from their breed, and nothing else', () => {
+    const sql = statements('0132_lifecycle_scope_from_breed')[0];
+    expect(statements('0132_lifecycle_scope_from_breed')).toHaveLength(1);
+    expect(sql).toMatch(/^UPDATE `breed_lifecycle_stages` l/);
+    expect(sql).toContain('JOIN `breed_master` b ON b.`breed_id` = l.`breed_id`');
+    expect(sql).toContain('l.`company_id` = b.`company_id`');
+    expect(sql).toContain('l.`nob_id` = b.`nob_id`');
+    expect(sql).toContain('l.`lob_id` = b.`lob_id`');
+    expect(sql).toContain('l.`company_id` IS NULL');
+    expect(sql).toContain('b.`company_id` IS NOT NULL');
+    expect(sql).not.toMatch(/\b(DELETE|DROP|TRUNCATE|ALTER|INSERT)\b/i);
+    // Journal strictly increasing is asserted globally above (0131's entry);
+    // 0132's `when` must land after 0131's.
+    const journal = JSON.parse(readFileSync(join(dir, 'meta/_journal.json'), 'utf8')).entries as Array<{ idx: number; when: number; tag: string }>;
+    expect(journal.find((e) => e.idx === 132)).toMatchObject({ idx: 132, tag: '0132_lifecycle_scope_from_breed', when: 1792000000001 });
+  });
 });
 
 describe('Plan S data migrations (D21–D23)', () => {

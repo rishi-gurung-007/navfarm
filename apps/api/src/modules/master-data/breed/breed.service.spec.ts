@@ -363,6 +363,129 @@ describe('BreedService', () => {
       expect(result.lifecycle_id).toBe('lc-1');
     });
 
+    // Found on the test server (Porta Farm): a lifecycle row listed fine but
+    // opening it said "Master record is not available in this workspace" — the
+    // create wrote no company/nob/lob, so enforceMasterRequest refused the row
+    // at company scope. The row must be stamped FROM THE BREED, not the request.
+    it('stamps the created row with the breed\'s company/nob/lob, never the request\'s (593d7c96 follow-up)', async () => {
+      mockDbSelect
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([
+            { breed_id: 'breed-1', tenant_id: 'tenant-123', company_id: 'co-1', nob_id: 'nob-1', lob_id: 'lob-1' },
+          ]) }) }),
+        })
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ stage_id: 'stage-lactation' }]) }) }),
+        })
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            leftJoin: jest.fn().mockReturnValue({
+              leftJoin: jest.fn().mockReturnValue({
+                where: jest.fn().mockReturnValue({
+                  limit: jest.fn().mockResolvedValue([{ lifecycle_id: 'lc-2', breed_id: 'breed-1' }]),
+                }),
+              }),
+            }),
+          }),
+        });
+      mockDbInsert.mockReturnValue({ values: jest.fn().mockResolvedValue({}) });
+
+      await service.createLifecycleStage(
+        {
+          // A malicious/buggy client sends its own scope; it must be ignored.
+          company_id: 'co-EVIL',
+          nob_id: 'nob-EVIL',
+          breed_id: 'breed-1',
+          stage_id: 'stage-lactation',
+          calc_unit: 'WEEK',
+          period_from: 1,
+          period_to: 4,
+        },
+        'tenant-123',
+        { userId: 'user-1' },
+      );
+
+      const values = mockDbInsert.mock.results[0].value.values.mock.calls[0][0];
+      expect(values.company_id).toBe('co-1');
+      expect(values.nob_id).toBe('nob-1');
+      expect(values.lob_id).toBe('lob-1');
+    });
+
+    it('a tenant-template breed (company NULL) stamps the row with NULLs, as before', async () => {
+      mockDbSelect
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([
+            { breed_id: 'breed-t', tenant_id: 'tenant-123', company_id: null, nob_id: 'nob-1', lob_id: null },
+          ]) }) }),
+        })
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ stage_id: 'stage-lactation' }]) }) }),
+        })
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            leftJoin: jest.fn().mockReturnValue({
+              leftJoin: jest.fn().mockReturnValue({
+                where: jest.fn().mockReturnValue({
+                  limit: jest.fn().mockResolvedValue([{ lifecycle_id: 'lc-3', breed_id: 'breed-t' }]),
+                }),
+              }),
+            }),
+          }),
+        });
+      mockDbInsert.mockReturnValue({ values: jest.fn().mockResolvedValue({}) });
+
+      await service.createLifecycleStage(
+        { breed_id: 'breed-t', stage_id: 'stage-lactation', calc_unit: 'WEEK', period_from: 1, period_to: 4 },
+        'tenant-123',
+      );
+      const values = mockDbInsert.mock.results[0].value.values.mock.calls[0][0];
+      expect(values.company_id).toBeNull();
+      expect(values.nob_id).toBe('nob-1');
+      expect(values.lob_id).toBeNull();
+    });
+
+    it('re-derives company/nob/lob from the breed on update — a request can never set them (ADDENDUM 3)', async () => {
+      mockDbSelect
+        .mockReturnValueOnce({
+          // findOneLifecycleStage
+          from: jest.fn().mockReturnValue({
+            leftJoin: jest.fn().mockReturnValue({
+              leftJoin: jest.fn().mockReturnValue({
+                where: jest.fn().mockReturnValue({
+                  limit: jest.fn().mockResolvedValue([{ lifecycle_id: 'lc-9', breed_id: 'breed-1', company_id: 'co-OLD' }]),
+                }),
+              }),
+            }),
+          }),
+        })
+        .mockReturnValueOnce({
+          // the breed re-read: company/nob/lob come from here
+          from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([
+            { breed_id: 'breed-1', company_id: 'co-1', nob_id: 'nob-1', lob_id: 'lob-1' },
+          ]) }) }),
+        })
+        .mockReturnValueOnce({
+          // findOneLifecycleStage again for the return
+          from: jest.fn().mockReturnValue({
+            leftJoin: jest.fn().mockReturnValue({
+              leftJoin: jest.fn().mockReturnValue({
+                where: jest.fn().mockReturnValue({
+                  limit: jest.fn().mockResolvedValue([{ lifecycle_id: 'lc-9', breed_id: 'breed-1', company_id: 'co-1' }]),
+                }),
+              }),
+            }),
+          }),
+        });
+      mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) }) });
+
+      await service.updateLifecycleStage('lc-9', { notes: 'updated' } as any, 'tenant-123', { userId: 'user-1' });
+
+      const updates = mockDbUpdate.mock.results[0].value.set.mock.calls[0][0];
+      expect(updates.company_id).toBe('co-1');
+      expect(updates.nob_id).toBe('nob-1');
+      expect(updates.lob_id).toBe('lob-1');
+    });
+
     describe('findAllLifecycleStages', () => {
       // Real SQL, not a spy: the list contract is only kept if the rendered
       // ORDER BY and WHERE actually change. Same idiom as master-data-scope.spec.
