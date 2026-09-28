@@ -109,6 +109,23 @@ describe('Sidebar consistency across workspace scopes', () => {
    * operational area, and exists nowhere else); what it may not do is reshuffle
    * the routes it has in common with another scope.
    */
+  /**
+   * F2 (final review I2). D24 puts feed alerts on the sidebar Alerts page and
+   * D25 puts feed requisitions in the Approvals inbox. Both are reachable from
+   * a company workspace — Inventory is in that sidebar, so Feed Forecast and
+   * Requisitions are — but neither Alerts nor Approvals was listed there, and
+   * the Inventory "Feed Alerts" tab that used to link them is gone. The routes
+   * worked if typed; they could not be found.
+   */
+  it('lists Alerts and Approvals in the company workspace too', () => {
+    const scopes = navByScope();
+    const company = [...scopes.COMPANY.keys()];
+    expect(company).toContain('/alerts');
+    expect(company).toContain('/approvals');
+    expect(scopes.COMPANY.get('/alerts')).toBe(scopes.OPERATIONAL.get('/alerts'));
+    expect(scopes.COMPANY.get('/approvals')).toBe(scopes.OPERATIONAL.get('/approvals'));
+  });
+
   it('keeps shared routes in one relative order across scopes', () => {
     const scopes = navByScope();
     const names = Object.keys(scopes).sort();

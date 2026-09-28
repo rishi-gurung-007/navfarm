@@ -5,7 +5,9 @@
  * one list, with a type and farm filter. Opening the page evaluates the feed
  * rules of every farm the user may open, once — there is still no scheduler,
  * so diet-change and deadline alerts are only as fresh as the last
- * evaluation. A user without the feed grant still sees their batch alerts.
+ * evaluation. The two lists are read independently (F1, review I1): a role
+ * that holds one grant and not the other keeps the half it may read, and the
+ * Type filter stops offering the half it may not.
  * Fixed-height page: the table is the one thing that scrolls (review C).
  */
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -55,6 +57,10 @@ export default function AlertPanel() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [acting, setActing] = useState<string | null>(null);
+  // Which halves the user may read. A list starts offered and is withdrawn
+  // when its own read is refused, so nothing flickers on a slow first load.
+  const [mayReadBatch, setMayReadBatch] = useState(true);
+  const [mayReadFeed, setMayReadFeed] = useState(true);
   const evaluated = useRef(false);
   const farmsRef = useRef<FeedFarm[]>([]);
 
@@ -89,11 +95,20 @@ export default function AlertPanel() {
       batchParams.set("limit", "200");
       const feedParams = new URLSearchParams({ status: show === "OPEN" ? "ACTIVE" : "ALL" });
       if (farmId) feedParams.set("farmId", farmId);
-      const [batch, feed] = await Promise.all([
+      // allSettled, not all: one refused list must not throw the other away.
+      const [batch, feed] = await Promise.allSettled([
         type === "FEED" ? Promise.resolve([]) : api.get(`/alert?${batchParams.toString()}`).then(unwrapList),
-        type === "BATCH" ? Promise.resolve([]) : api.get(`/feed-alert/scope?${feedParams.toString()}`).then(unwrapList).catch(() => []),
+        type === "BATCH" ? Promise.resolve([]) : api.get(`/feed-alert/scope?${feedParams.toString()}`).then(unwrapList),
       ]);
-      setRows(mergeAlerts(batch.map((a) => fromBatchAlert(a, codeOf)), feed.map(fromFeedAlert)));
+      if (type !== "FEED") setMayReadBatch(batch.status === "fulfilled");
+      if (type !== "BATCH") setMayReadFeed(feed.status === "fulfilled");
+      const rowsOf = <T,>(r: PromiseSettledResult<any[]>, map: (a: any) => T): T[] =>
+        r.status === "fulfilled" ? r.value.map(map) : [];
+      setRows(mergeAlerts(rowsOf(batch, (a) => fromBatchAlert(a, codeOf)), rowsOf(feed, fromFeedAlert)));
+      // Only a user who may read neither half is told the load failed.
+      setError(batch.status === "rejected" && feed.status === "rejected"
+        ? (batch.reason as any)?.message || tRef.current("alrtLoadFailed")
+        : "");
     } catch (err: any) {
       setError(err?.message || tRef.current("alrtLoadFailed"));
       setRows([]);
@@ -124,9 +139,9 @@ export default function AlertPanel() {
       <div className="flex shrink-0 flex-wrap items-end gap-3">
         <Field label={t("alrtType")} htmlFor="alrt-type">
           <select id="alrt-type" className="nf-input-sm nf-select" style={inputStyle} value={type} onChange={(e) => setType(e.target.value as TypeFilter)}>
-            <option value="ALL">{t("alrtTypeAll")}</option>
-            <option value="BATCH">{t("alrtTypeBatch")}</option>
-            <option value="FEED">{t("alrtTypeFeed")}</option>
+            {mayReadBatch && mayReadFeed && <option value="ALL">{t("alrtTypeAll")}</option>}
+            {mayReadBatch && <option value="BATCH">{t("alrtTypeBatch")}</option>}
+            {mayReadFeed && <option value="FEED">{t("alrtTypeFeed")}</option>}
           </select>
         </Field>
         <Field label={t("alrtFarm")} htmlFor="alrt-farm">
