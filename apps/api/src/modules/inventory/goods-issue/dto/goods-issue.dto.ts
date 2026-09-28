@@ -32,6 +32,16 @@ export class GoodsIssueLineInput {
   @IsNotEmpty()
   uom: string;
 
+  @ApiProperty({ description: 'Lot number being consumed — required when the item is lot-tracked', required: false })
+  @IsString()
+  @IsOptional()
+  lot_no?: string;
+
+  @ApiProperty({ description: 'Serial number being consumed — required when the item is serial-tracked', required: false })
+  @IsString()
+  @IsOptional()
+  serial_no?: string;
+
   @ApiProperty({ description: 'Line remarks', required: false })
   @IsString()
   @IsOptional()

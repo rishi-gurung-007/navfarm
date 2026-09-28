@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { InlineAlert } from "@/components/ui/alert";
 import { StatRow, StatCard } from "@/components/ui/stat-row";
 import { Badge } from "@/components/ui/badge";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { useLanguage } from "@/hooks/useLanguage";
 import { getActiveCompanyId } from "@/hooks/useAuth";
 
@@ -133,16 +134,22 @@ export default function BatchPerformanceCurvesPanel({
 
         <div className="flex items-center gap-2">
           {animals.length > 0 && (
-            <select
-              value={selectedAnimalId}
-              onChange={(e) => handleAnimalFilterChange(e.target.value)}
-              className="nf-input h-9 text-xs"
-            >
-              <option value="">{t("schedWholeBatch")}</option>
-              {animals.map((a) => (
-                <option key={a.animal_id} value={a.animal_id}>{a.ear_tag || a.animal_code}</option>
-              ))}
-            </select>
+            <div className="w-48">
+              <SearchableSelect
+                ariaLabel={t("schedWholeBatch")}
+                value={selectedAnimalId}
+                onChange={handleAnimalFilterChange}
+                options={[
+                  { value: "", label: t("schedWholeBatch") },
+                  ...animals.map((a) => ({
+                    value: a.animal_id,
+                    label: a.ear_tag || a.animal_code,
+                  })),
+                ]}
+                placeholder={t("schedWholeBatch")}
+                searchPlaceholder="Search animal…"
+              />
+            </div>
           )}
           {!batch.has_scheduler && (
             <Button size="sm" onClick={handleGenerateScheduler} disabled={generating}>

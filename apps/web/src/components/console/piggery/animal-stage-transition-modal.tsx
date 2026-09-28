@@ -10,6 +10,32 @@ import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { InlineAlert } from "@/components/ui/alert";
 import { useLanguage } from "@/hooks/useLanguage";
+import { SearchableSelect } from "@/components/ui/searchable-select";
+import { ReasonSelect } from "@/components/ui/reason-select";
+import type { ReasonRow } from "@/hooks/useReasons";
+
+export interface AnimalTransitionModalAnimal {
+  animal_id?: string;
+  animal_code?: string;
+  animal_type?: string;
+  breed_name?: string;
+  stage_code?: string;
+  stage_name?: string;
+  current_stage_id?: string;
+  entry_date?: string;
+  created_at?: string;
+  [key: string]: any;
+}
+
+export interface AnimalTransitionModalStage {
+  stage_id: string;
+  stage_code: string;
+  stage_name: string;
+  stage_category?: string;
+  next_stage_id?: string | null;
+  min_days_before_move?: number | null;
+  [key: string]: any;
+}
 
 type Row = Record<string, any>;
 
@@ -29,11 +55,12 @@ const S = {
 interface AnimalStageTransitionModalProps {
   open: boolean;
   onClose: () => void;
-  animal: Row | null;
+  animal: AnimalTransitionModalAnimal | null;
   onSuccess: () => void;
-  stages: Row[];
-  locations: Row[];
-  batches: Row[];
+  stages: AnimalTransitionModalStage[] | Row[];
+  locations?: Row[];
+  batches?: Row[];
+  reasons?: ReasonRow[] | Row[];
 }
 
 export default function AnimalStageTransitionModal({
@@ -42,6 +69,7 @@ export default function AnimalStageTransitionModal({
   animal,
   onSuccess,
   stages,
+  reasons,
 }: AnimalStageTransitionModalProps) {
   const [toStageId, setToStageId]       = useState("");
   const [transitionDate, setTransitionDate] = useState(new Date().toISOString().slice(0, 10));
@@ -61,9 +89,11 @@ export default function AnimalStageTransitionModal({
     setReason("");
     setRemarks("");
 
-    const currentStage = stages.find((s) => s.stage_id === animal.current_stage_id);
+    const currentStage = stages.find(
+      (s) => s.stage_id === animal.current_stage_id || (animal.stage_code && s.stage_code === animal.stage_code),
+    );
     if (currentStage?.next_stage_id) {
-      setToStageId(currentStage.next_stage_id);
+      setToStageId(String(currentStage.next_stage_id));
     } else {
       setToStageId("");
     }
@@ -71,10 +101,12 @@ export default function AnimalStageTransitionModal({
 
   if (!animal) return null;
 
-  const currentStage = stages.find((s) => s.stage_id === animal.current_stage_id);
-  const entryDate = animal.entry_date ? new Date(animal.entry_date) : new Date(animal.created_at || Date.now());
+  const currentStage = stages.find(
+    (s) => s.stage_id === animal.current_stage_id || (animal.stage_code && s.stage_code === animal.stage_code),
+  );
+  const entryDate = animal.entry_date ? new Date(String(animal.entry_date)) : new Date(String(animal.created_at || Date.now()));
   const daysInStage = Math.max(0, Math.floor((new Date(transitionDate).getTime() - entryDate.getTime()) / (1000 * 60 * 60 * 24)));
-  const minDays = currentStage?.min_days_before_move || 0;
+  const minDays = Number(currentStage?.min_days_before_move) || 0;
   const isPrematureMove = minDays > 0 && daysInStage < minDays;
 
   const handleSubmit = async () => {
@@ -98,8 +130,8 @@ export default function AnimalStageTransitionModal({
       });
       onSuccess();
       onClose();
-    } catch (err: any) {
-      setError(err?.message || t("astmFailedToRecordTransition"));
+    } catch (err: unknown) {
+      setError((err as Error)?.message || t("astmFailedToRecordTransition"));
     } finally {
       setSaving(false);
     }
@@ -109,7 +141,7 @@ export default function AnimalStageTransitionModal({
     <Dialog
       open={open}
       onClose={onClose}
-      title={t("astmModalTitle", { animalCode: animal.animal_code })}
+      title={t("astmModalTitle", { animalCode: animal.animal_code || "" })}
       description={t("astmModalDescription")}
       maxWidth="md"
       footer={
@@ -160,19 +192,18 @@ export default function AnimalStageTransitionModal({
         {/* Transition Form Inputs */}
         <div className="space-y-3">
           <div>
-            <label className="nf-label text-xs">{t("astmDestinationStageLabel")}</label>
-            <select
-              className="nf-input text-xs"
+            <label className="nf-label text-xs block mb-1">{t("astmDestinationStageLabel")}</label>
+            <SearchableSelect
+              ariaLabel={t("astmDestinationStageLabel")}
               value={toStageId}
-              onChange={(e) => setToStageId(e.target.value)}
-            >
-              <option value="">{t("astmSelectDestinationStagePlaceholder")}</option>
-              {stages.map((s) => (
-                <option key={s.stage_id} value={s.stage_id}>
-                  {s.stage_name} ({s.stage_code}) — {s.stage_category}
-                </option>
-              ))}
-            </select>
+              onChange={(val) => setToStageId(val)}
+              options={stages.map((s) => ({
+                value: s.stage_id,
+                label: `${s.stage_name} (${s.stage_code}) — ${s.stage_category}`,
+              }))}
+              placeholder={t("astmSelectDestinationStagePlaceholder")}
+              searchPlaceholder="Search stages…"
+            />
           </div>
 
           <div className="rounded-[var(--radius-md)] border p-3 text-xs" style={S.surface}>
@@ -190,15 +221,18 @@ export default function AnimalStageTransitionModal({
           </div>
 
           <div>
-            <label className="nf-label text-xs">
+            <label className="nf-label text-xs block mb-1">
               {t("astmReasonLabel")} {isPrematureMove ? t("astmRequiredForOverride") : t("astmOptionalSuffix")}
             </label>
-            <input
-              type="text"
-              className="nf-input text-xs"
-              placeholder={t("astmReasonPlaceholder")}
+            <ReasonSelect
+              ariaLabel={t("astmReasonLabel")}
               value={reason}
-              onChange={(e) => setReason(e.target.value)}
+              onChange={(val) => setReason(val)}
+              onClear={() => setReason("")}
+              placeholder={t("astmReasonPlaceholder") || "Select reason from Reason Master…"}
+              searchPlaceholder="Search reason code, description, category…"
+              reasons={reasons as ReasonRow[]}
+              stageCode={String(animal.stage_code || currentStage?.stage_code || "")}
             />
           </div>
 

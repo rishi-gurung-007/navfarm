@@ -130,16 +130,34 @@ export class NoSeriesController {
 
   @Get(':id/next-number')
   @RequirePermission('MASTER_DATA', 'ITEM', 'create')
-  @ApiOperation({ summary: 'Internal utility: Atomically generate and reserve next number from No. Series' })
+  @ApiOperation({ summary: 'Internal utility: Atomically generate and reserve next number(s) from No. Series' })
   @ApiParam({ name: 'id', description: 'No. Series UUID' })
-  async getNextNumber(@Param('id') id: string, @Req() req: any) {
+  async getNextNumber(@Param('id') id: string, @Query('count') countQuery: string | undefined, @Req() req: any) {
     const tenantId = req.user?.tenantId || req['tenantId'];
     const companyId = req.headers?.['x-active-company-id'] || req.user?.companyId;
-    const result = await this.numberSeriesService.generateNextNumberById(id, tenantId, companyId);
+    const count = Math.max(1, Math.min(parseInt(countQuery || '1', 10) || 1, 1000));
+    if (count === 1) {
+      const result = await this.numberSeriesService.generateNextNumberById(id, tenantId, companyId);
+      return {
+        success: true,
+        message: 'Next number generated successfully.',
+        data: { ...result, numbers: [result.next_number] },
+      };
+    }
+    const numbers: string[] = [];
+    let lastResult: any;
+    for (let i = 0; i < count; i++) {
+      lastResult = await this.numberSeriesService.generateNextNumberById(id, tenantId, companyId);
+      numbers.push(lastResult.next_number);
+    }
     return {
       success: true,
-      message: 'Next number generated successfully.',
-      data: result,
+      message: `${count} numbers generated successfully.`,
+      data: {
+        next_number: numbers[0],
+        numbers,
+        series: lastResult?.series,
+      },
     };
   }
 

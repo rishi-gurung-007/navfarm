@@ -94,6 +94,8 @@ export class GoodsIssueService {
         item_id: line.item_id,
         quantity: line.quantity.toString(),
         uom: line.uom,
+        lot_no: line.lot_no || null,
+        serial_no: line.serial_no || null,
         remarks: line.remarks || null,
       }))
     );
@@ -256,6 +258,8 @@ export class GoodsIssueService {
         transactionType: 'CONSUMPTION',
         quantity: Number(line.quantity),
         uom: line.uom,
+        lotNo: line.lot_no || undefined,
+        serialNo: line.serial_no || undefined,
         warehouseId: issue.warehouse_id,
         userId: userPayload?.userId,
       });

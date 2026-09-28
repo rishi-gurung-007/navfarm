@@ -736,7 +736,7 @@ export const itemMaster = mysqlTable('item_master', {
   is_serial_tracked: boolean('is_serial_tracked').default(false).notNull(),
   // Lot/serial number series for this item's tracking numbers — separate from item_code's
   // own 'ITEM' series (item.service.ts). References noSeries.id.
-  tracking_series_id: varchar('tracking_series_id', { length: 36 }),
+  tracking_series_id: varchar('tracking_series_id', { length: 36 }).references(() => noSeries.id, { onDelete: 'set null' }),
   is_biological_asset: boolean('is_biological_asset').default(false).notNull(),
   is_biological_costing_method: varchar('is_biological_costing_method', { length: 30 }),
   is_inventoriable: boolean('is_inventoriable').default(true).notNull(),
@@ -1213,11 +1213,16 @@ export const itemMasterRelations = relations(itemMaster, ({ one, many }) => ({
     fields: [itemMaster.item_template_id],
     references: [itemTemplate.id]
   }),
+  trackingSeries: one(noSeries, {
+    fields: [itemMaster.tracking_series_id],
+    references: [noSeries.id]
+  }),
   attributes: many(itemAttributeValues)
 }));
 
 export const noSeriesRelations = relations(noSeries, ({ many }) => ({
   templates: many(itemTemplate),
+  trackedItems: many(itemMaster),
 }));
 
 export const itemTemplateRelations = relations(itemTemplate, ({ one, many }) => ({
@@ -2273,6 +2278,8 @@ export const batchInputLine = mysqlTable('batch_input_line', {
   uom: varchar('uom', { length: 20 }).notNull(),
   rate: decimal('rate', { precision: 18, scale: 6 }),
   amount: decimal('amount', { precision: 18, scale: 4 }),
+  lot_no: varchar('lot_no', { length: 50 }),
+  serial_no: varchar('serial_no', { length: 100 }),
 }, (table) => ({
   batchFk: foreignKey({
     columns: [table.batch_id],
@@ -3737,6 +3744,12 @@ export const goodsIssueLine = mysqlTable('goods_issue_line', {
   item_id: varchar('item_id', { length: 36 }).notNull().references(() => itemMaster.item_id, { onDelete: 'restrict' }),
   quantity: decimal('quantity', { precision: 18, scale: 4 }).notNull(),
   uom: varchar('uom', { length: 20 }).notNull(),
+  // Which receipt layer this consumption draws down — required at post() when
+  // item_master.is_lot_tracked/is_serial_tracked says so (inventory-ledger.service.ts
+  // assertTracking()), so the lot/serial travels onto the inventory_ledger row the
+  // way it already does for goods_receipt_line.
+  lot_no: varchar('lot_no', { length: 50 }),
+  serial_no: varchar('serial_no', { length: 100 }),
   remarks: varchar('remarks', { length: 500 }),
 });
 
@@ -3781,6 +3794,11 @@ export const stockTransferLine = mysqlTable('stock_transfer_line', {
   item_id: varchar('item_id', { length: 36 }).notNull().references(() => itemMaster.item_id, { onDelete: 'restrict' }),
   quantity: decimal('quantity', { precision: 18, scale: 4 }).notNull(),
   uom: varchar('uom', { length: 20 }).notNull(),
+  // Same tracking contract as goods_issue_line — carried from the shipment leg
+  // onto the receipt leg by writeTransferEntries() so a lot/serial doesn't lose
+  // its identity crossing warehouses.
+  lot_no: varchar('lot_no', { length: 50 }),
+  serial_no: varchar('serial_no', { length: 100 }),
   remarks: varchar('remarks', { length: 500 }),
 });
 
@@ -3816,6 +3834,8 @@ export const stockAdjustmentLine = mysqlTable('stock_adjustment_line', {
   quantity: decimal('quantity', { precision: 18, scale: 4 }).notNull(), // signed: positive = found stock, negative = missing/damaged
   uom: varchar('uom', { length: 20 }).notNull(),
   rate: decimal('rate', { precision: 18, scale: 6 }), // required only when quantity is positive (validated at DTO level)
+  lot_no: varchar('lot_no', { length: 50 }),
+  serial_no: varchar('serial_no', { length: 100 }),
   remarks: varchar('remarks', { length: 500 }),
 }, (table) => ({
   adjustmentFk: foreignKey({

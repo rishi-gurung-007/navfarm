@@ -8,6 +8,7 @@ import { InventoryLedgerService } from '../inventory-ledger/inventory-ledger.ser
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
 import { SiloFeedService } from '../silo-feed/silo-feed.service';
 import { FeedAlertService } from '../feed-alert/feed-alert.service';
+import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { BadRequestException } from '@nestjs/common';
 import * as schema from '../../../core/database/schema';
 import { plainToInstance } from 'class-transformer';
@@ -72,6 +73,7 @@ describe('GoodsReceiptService', () => {
         { provide: InventoryLedgerService, useValue: { writePositiveEntry: mockWritePositiveEntry } },
         { provide: GlPostingService, useValue: { postInventoryLedgerEntry: jest.fn().mockResolvedValue({}) } },
         { provide: SiloFeedService, useValue: { assertCanReceive: mockAssertCanReceive } },
+        { provide: NumberSeriesService, useValue: { generateNextNumberById: jest.fn().mockResolvedValue({ next_number: 'TEST-001' }) } },
       ],
     }).compile();
 
@@ -203,6 +205,7 @@ describe('GoodsReceiptService', () => {
           { provide: InventoryLedgerService, useValue: { writePositiveEntry: mockWritePositiveEntry } },
           { provide: GlPostingService, useValue: { postInventoryLedgerEntry: jest.fn().mockResolvedValue({}) } },
           { provide: SiloFeedService, useValue: { assertCanReceive: mockAssertCanReceive } },
+          { provide: NumberSeriesService, useValue: { generateNextNumberById: jest.fn().mockResolvedValue({ next_number: 'TEST-001' }) } },
           { provide: FeedAlertService, useValue: feedAlerts },
         ],
       }).compile();
@@ -300,6 +303,7 @@ describe('GoodsReceiptService', () => {
           { provide: InventoryLedgerService, useValue: { writePositiveEntry: jest.fn().mockResolvedValue({ entry_no: 1 }) } },
           { provide: GlPostingService, useValue: { postInventoryLedgerEntry: jest.fn().mockResolvedValue({}) } },
           { provide: SiloFeedService, useValue: { assertCanReceive: jest.fn().mockResolvedValue(undefined) } },
+          { provide: NumberSeriesService, useValue: { generateNextNumberById: jest.fn().mockResolvedValue({ next_number: 'TEST-001' }) } },
         ],
       }).compile();
 

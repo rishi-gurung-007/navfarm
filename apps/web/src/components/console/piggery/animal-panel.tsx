@@ -15,6 +15,7 @@ import type { TranslationKeys } from "@/utils/translations";
 import { StatusBadge } from "@/components/ui/status-badge";
 import RfidScannerModal from "@/components/console/piggery/rfid-scanner-modal";
 import AnimalStageTransitionModal from "@/components/console/piggery/animal-stage-transition-modal";
+import { ReasonSelect } from "@/components/ui/reason-select";
 import {
   TableHeader, TableBody, TableRow, TableHead, TableCell,
 } from "@/components/ui/table";
@@ -1062,12 +1063,17 @@ export default function AnimalPanel() {
               SOLD/TRANSFERRED commonly has no catalog reason behind it. */}
           <div>
             <label className="nf-label" htmlFor="dispose-reason">{t("anpDisposalReason")}</label>
-            <select id="dispose-reason" className={inputCls} value={disposeForm.disposal_reason_id} onChange={(e) => setDisposeForm((f) => ({ ...f, disposal_reason_id: e.target.value }))}>
-              <option value="">{t("anpDisposalReasonNone")}</option>
-              {reasons
-                .filter((r) => disposeForm.disposal_type === "DIED" ? r.category === "MORTALITY" : ["DISPOSAL", "TRANSFER"].includes(r.category))
-                .map((r) => <option key={r.reason_id} value={r.reason_id}>{r.reason_code} — {r.reason_name}</option>)}
-            </select>
+            <ReasonSelect
+              id="dispose-reason"
+              ariaLabel={t("anpDisposalReason")}
+              value={disposeForm.disposal_reason_id}
+              valueFormat="id"
+              onChange={(val) => setDisposeForm((f) => ({ ...f, disposal_reason_id: val }))}
+              onClear={() => setDisposeForm((f) => ({ ...f, disposal_reason_id: "" }))}
+              category={disposeForm.disposal_type === "DIED" ? "MORTALITY" : ["DISPOSAL", "TRANSFER"]}
+              placeholder={t("anpDisposalReasonNone") || "Select disposal reason…"}
+              reasons={reasons as any}
+            />
           </div>
 
           <div>
@@ -1102,6 +1108,7 @@ export default function AnimalPanel() {
         stages={stages}
         locations={locations}
         batches={batches}
+        reasons={reasons as any}
       />
     </div>
   );

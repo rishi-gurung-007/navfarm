@@ -272,7 +272,7 @@ export default function ConsoleLayout({ children, modal }: { children: React.Rea
   // children. See specs/nav-scope-consistency.spec.ts.
   const batchChildren = [
     { label: t("batchList"), href: "/batches" },
-    { label: t("batchStages"), href: "/batches/stages" },
+    // { label: t("batchStages"), href: "/batches/stages" },
     { label: t("navBatchAnimals"), href: "/batches/animals" },
     { label: t("navBatchEntry"), href: "/batches/entry" },
     { label: t("navBatchRecords"), href: "/batches/records" },

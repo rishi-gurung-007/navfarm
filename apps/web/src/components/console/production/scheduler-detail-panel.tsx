@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { Plus, Loader2, Trash2, Pencil } from "lucide-react";
 import { api } from "@/services/api-client";
 import { Button } from "@/components/ui/button";
@@ -10,6 +10,7 @@ import { TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/compon
 import { useLanguage } from "@/hooks/useLanguage";
 import { findConflictingSchedulerLine } from "./scheduler-line-overlap";
 import { formatQuantity } from "@/lib/utils";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 
 type Row = Record<string, any>;
 
@@ -92,6 +93,28 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
   const [lineError, setLineError] = useState("");
   const [savingLine, setSavingLine] = useState(false);
   const [editingLineId, setEditingLineId] = useState<string | null>(null);
+
+  const consumableItems = useMemo(() => {
+    return items.filter(
+      (it) =>
+        (!it.is_biological_asset &&
+          it.is_biological_asset !== 1 &&
+          it.is_biological_asset !== "1" &&
+          it.item_type !== "LIVESTOCK") ||
+        it.item_id === lineForm.item_id
+    );
+  }, [items, lineForm.item_id]);
+
+  const bioAssetItems = useMemo(() => {
+    return items.filter(
+      (it) =>
+        Boolean(it.is_biological_asset) ||
+        it.is_biological_asset === 1 ||
+        it.is_biological_asset === "1" ||
+        it.item_type === "LIVESTOCK" ||
+        it.item_id === lineForm.item_id
+    );
+  }, [items, lineForm.item_id]);
 
   const load = () => {
     if (!schedulerId) return;
@@ -400,71 +423,161 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
         <div className="rounded-[var(--radius-md)] border p-3.5" style={S.raised}>
           <p className="mb-2.5 text-[11px] font-semibold uppercase tracking-wider" style={S.sub}>{editingLineId ? t("scEditLineTitle") : t("scAddLineTitle")}</p>
           {lineError && <div className="mb-2"><InlineAlert>{lineError}</InlineAlert></div>}
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-            <select value={lineForm.line_type} onChange={(e) => setLineForm((f: Row) => ({ ...f, line_type: e.target.value }))} className={`${inputCls} nf-select`} style={S.input} disabled={!!editingLineId && lineForm.source === "AUTO"}>
-              {LINE_TYPES.map((lt) => <option key={lt} value={lt}>{lt}</option>)}
-            </select>
-            <select value={lineForm.activity_name} onChange={(e) => handleSelectActivity(e.target.value)} className={`${inputCls} nf-select`} style={S.input}>
-              <option value="">— Activity catalog —</option>
-              {activities.filter((a) => a.line_type === lineForm.line_type).map((a) => (
-                <option key={a.activity_id} value={a.activity_name}>{a.activity_name} ({a.activity_code})</option>
-              ))}
-              {lineForm.activity_name && !activities.some((a) => a.activity_name === lineForm.activity_name && a.line_type === lineForm.line_type) && (
-                <option key="__EXISTING__" value={lineForm.activity_name}>{lineForm.activity_name}</option>
-              )}
-            </select>
-            <select value={lineForm.occurrence} onChange={(e) => setLineForm((f: Row) => ({ ...f, occurrence: e.target.value }))} className={`${inputCls} nf-select`} style={S.input}>
-              {OCCURRENCES.map((o) => <option key={o} value={o}>{o}</option>)}
-            </select>
-            <input type="number" min={1} placeholder={t("scPlaceholderStartDay")} value={lineForm.start_day} onChange={(e) => setLineForm((f: Row) => ({ ...f, start_day: e.target.value }))} className={inputCls} style={S.input} />
-            <input type="number" min={1} placeholder={t("scPlaceholderEndDay")} value={lineForm.end_day} onChange={(e) => setLineForm((f: Row) => ({ ...f, end_day: e.target.value }))} className={inputCls} style={S.input} />
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <div>
+              <label className="mb-1 block text-[11px] font-semibold" style={S.sub}>
+                Line Type <span className="text-red-500">*</span>
+              </label>
+              <SearchableSelect
+                ariaLabel="Line Type"
+                value={lineForm.line_type}
+                onChange={(val) => setLineForm((f: Row) => ({ ...f, line_type: val }))}
+                options={LINE_TYPES}
+                disabled={!!editingLineId && lineForm.source === "AUTO"}
+              />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-[11px] font-semibold" style={S.sub}>
+                Activity Name <span className="text-red-500">*</span>
+              </label>
+              <SearchableSelect
+                ariaLabel="Activity Name"
+                value={lineForm.activity_name}
+                onChange={(val) => handleSelectActivity(val)}
+                options={activities
+                  .filter((a) => a.line_type === lineForm.line_type)
+                  .map((a) => ({
+                    value: a.activity_name,
+                    label: `${a.activity_name} (${a.activity_code})`,
+                  }))}
+                placeholder="— Activity catalog —"
+                searchPlaceholder="Search activities…"
+              />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-[11px] font-semibold" style={S.sub}>
+                Occurrence <span className="text-red-500">*</span>
+              </label>
+              <SearchableSelect
+                ariaLabel="Occurrence"
+                value={lineForm.occurrence}
+                onChange={(val) => setLineForm((f: Row) => ({ ...f, occurrence: val }))}
+                options={OCCURRENCES}
+              />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-[11px] font-semibold" style={S.sub}>
+                Start Day <span className="text-red-500">*</span>
+              </label>
+              <input type="number" min={1} placeholder={t("scPlaceholderStartDay")} value={lineForm.start_day} onChange={(e) => setLineForm((f: Row) => ({ ...f, start_day: e.target.value }))} className={`${inputCls} w-full`} style={S.input} />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-[11px] font-semibold" style={S.sub}>
+                End Day
+              </label>
+              <input type="number" min={1} placeholder={t("scPlaceholderEndDay")} value={lineForm.end_day} onChange={(e) => setLineForm((f: Row) => ({ ...f, end_day: e.target.value }))} className={`${inputCls} w-full`} style={S.input} />
+            </div>
+
             {lineForm.occurrence === "WEEKLY" && (
-              <input type="number" min={1} max={7} placeholder={t("scPlaceholderDayOfWeek")} value={lineForm.day_of_week} onChange={(e) => setLineForm((f: Row) => ({ ...f, day_of_week: e.target.value }))} className={inputCls} style={S.input} />
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold" style={S.sub}>
+                  Day of Week (1=Mon..7=Sun)
+                </label>
+                <input type="number" min={1} max={7} placeholder={t("scPlaceholderDayOfWeek")} value={lineForm.day_of_week} onChange={(e) => setLineForm((f: Row) => ({ ...f, day_of_week: e.target.value }))} className={`${inputCls} w-full`} style={S.input} />
+              </div>
             )}
+
             {lineForm.occurrence === "CUSTOM" && (
-              <input placeholder={t("scPlaceholderCustomDays")} value={lineForm.custom_days} onChange={(e) => setLineForm((f: Row) => ({ ...f, custom_days: e.target.value }))} className={inputCls} style={S.input} />
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold" style={S.sub}>
+                  Custom Days (e.g. 1, 3, 7)
+                </label>
+                <input placeholder={t("scPlaceholderCustomDays")} value={lineForm.custom_days} onChange={(e) => setLineForm((f: Row) => ({ ...f, custom_days: e.target.value }))} className={`${inputCls} w-full`} style={S.input} />
+              </div>
             )}
-            <label className="flex items-center gap-1.5 text-xs" style={S.sub}>
-              <input type="checkbox" checked={!!lineForm.is_mandatory} onChange={(e) => setLineForm((f: Row) => ({ ...f, is_mandatory: e.target.checked }))} />
-              {t("scIsMandatory")}
-            </label>
+
+            <div className="flex items-end pb-2">
+              <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none" style={S.sub}>
+                <input type="checkbox" checked={!!lineForm.is_mandatory} onChange={(e) => setLineForm((f: Row) => ({ ...f, is_mandatory: e.target.checked }))} />
+                <span className="font-semibold">{t("scIsMandatory")}</span>
+              </label>
+            </div>
 
             {["CONSUMPTION", "OUTPUT", "TRANSFER"].includes(lineType) && (
               <>
-                <select
-                  value={lineForm.item_id}
-                  onChange={(e) => {
-                    const sel = items.find((i) => i.item_id === e.target.value);
-                    setLineForm((f: Row) => ({
-                      ...f,
-                      item_id: e.target.value,
-                      item_description: sel?.item_name || f.item_description,
-                    }));
-                  }}
-                  className={`${inputCls} nf-select`}
-                  style={S.input}
-                >
-                  <option value="">{t("scPlaceholderSelectItem")}</option>
-                  {items.map((i) => <option key={i.item_id} value={i.item_id}>{i.item_name} {i.uom_primary ? `(${i.uom_primary})` : ""}</option>)}
-                </select>
-                <input placeholder={t("scPlaceholderItemDescription")} value={lineForm.item_description} onChange={(e) => setLineForm((f: Row) => ({ ...f, item_description: e.target.value }))} className={inputCls} style={S.input} />
-                <input type="number" step="any" placeholder={t("scPlaceholderStandardQty")} value={lineForm.standard_qty} onChange={(e) => setLineForm((f: Row) => ({ ...f, standard_qty: e.target.value }))} className={inputCls} style={S.input} />
-                <label className="flex items-center gap-1.5 text-xs" style={S.sub}>
-                  <input type="checkbox" checked={!!lineForm.allow_qty_edit} onChange={(e) => setLineForm((f: Row) => ({ ...f, allow_qty_edit: e.target.checked }))} />
-                  Allow Qty Edit at Entry
-                </label>
+                <div>
+                  <label className="mb-1 block text-[11px] font-semibold" style={S.sub}>
+                    {lineType === "TRANSFER" ? "Biological Asset Item" : "Item"} <span className="text-red-500">*</span>
+                  </label>
+                  <SearchableSelect
+                    ariaLabel={lineType === "TRANSFER" ? "Biological Asset Item" : "Item"}
+                    value={lineForm.item_id}
+                    onChange={(val) => {
+                      const sel = items.find((i) => i.item_id === val);
+                      setLineForm((f: Row) => ({
+                        ...f,
+                        item_id: val,
+                        item_description: sel?.item_name || f.item_description,
+                      }));
+                    }}
+                    options={(lineType === "CONSUMPTION" ? consumableItems : lineType === "TRANSFER" ? bioAssetItems : items).map((i) => ({
+                      value: i.item_id,
+                      label: `${i.item_name} ${i.uom_primary ? `(${i.uom_primary})` : ""}`,
+                    }))}
+                    placeholder={lineType === "TRANSFER" ? "— Select Bio Asset —" : t("scPlaceholderSelectItem")}
+                    searchPlaceholder="Search items…"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-[11px] font-semibold" style={S.sub}>
+                    Item Description
+                  </label>
+                  <input placeholder={t("scPlaceholderItemDescription")} value={lineForm.item_description} onChange={(e) => setLineForm((f: Row) => ({ ...f, item_description: e.target.value }))} className={`${inputCls} w-full`} style={S.input} />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-[11px] font-semibold" style={S.sub}>
+                    Standard / Expected Qty
+                  </label>
+                  <input type="number" step="any" placeholder={t("scPlaceholderStandardQty")} value={lineForm.standard_qty} onChange={(e) => setLineForm((f: Row) => ({ ...f, standard_qty: e.target.value }))} className={`${inputCls} w-full`} style={S.input} />
+                </div>
+
+                <div className="flex items-end pb-2">
+                  <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none" style={S.sub}>
+                    <input type="checkbox" checked={!!lineForm.allow_qty_edit} onChange={(e) => setLineForm((f: Row) => ({ ...f, allow_qty_edit: e.target.checked }))} />
+                    <span className="font-semibold">Allow Qty Edit at Entry</span>
+                  </label>
+                </div>
               </>
             )}
+
             {lineType === "CONSUMPTION" && (
               <>
-                <select value={lineForm.qty_basis} onChange={(e) => setLineForm((f: Row) => ({ ...f, qty_basis: e.target.value }))} className={`${inputCls} nf-select`} style={S.input}>
-                  <option value="">{t("scPlaceholderQtyBasis")}</option>
-                  {QTY_BASES.map((q) => <option key={q} value={q}>{q}</option>)}
-                </select>
-                <label className="flex items-center gap-1.5 text-xs" style={S.sub}>
-                  <input type="checkbox" checked={!!lineForm.lot_required} onChange={(e) => setLineForm((f: Row) => ({ ...f, lot_required: e.target.checked }))} />
-                  {t("scLotRequired")}
-                </label>
+                <div>
+                  <label className="mb-1 block text-[11px] font-semibold" style={S.sub}>
+                    Quantity Basis
+                  </label>
+                  <SearchableSelect
+                    ariaLabel="Quantity Basis"
+                    value={lineForm.qty_basis}
+                    onChange={(val) => setLineForm((f: Row) => ({ ...f, qty_basis: val }))}
+                    options={QTY_BASES}
+                    placeholder={t("scPlaceholderQtyBasis")}
+                  />
+                </div>
+
+                <div className="flex items-end pb-2">
+                  <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none" style={S.sub}>
+                    <input type="checkbox" checked={!!lineForm.lot_required} onChange={(e) => setLineForm((f: Row) => ({ ...f, lot_required: e.target.checked }))} />
+                    <span className="font-semibold">{t("scLotRequired")}</span>
+                  </label>
+                </div>
+
                 {(() => {
                   const it = items.find((i) => i.item_id === lineForm.item_id);
                   return it?.withdrawal_days ? (
@@ -476,84 +589,155 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
                 })()}
               </>
             )}
+
             {lineType === "OUTPUT" && (
               <>
-                <select value={lineForm.output_basis} onChange={(e) => setLineForm((f: Row) => ({ ...f, output_basis: e.target.value }))} className={`${inputCls} nf-select`} style={S.input}>
-                  <option value="">{t("scPlaceholderOutputBasis")}</option>
-                  {OUTPUT_BASES.map((o) => <option key={o} value={o}>{o}</option>)}
-                </select>
-                <label className="flex items-center gap-1.5 text-xs" style={S.sub}>
-                  <input type="checkbox" checked={!!lineForm.creates_inventory} onChange={(e) => setLineForm((f: Row) => ({ ...f, creates_inventory: e.target.checked }))} />
-                  {t("scCreatesInventory")}
-                </label>
-                <label className="flex items-center gap-1.5 text-xs" style={S.sub}>
-                  <input type="checkbox" checked={!!lineForm.output_lot_auto} onChange={(e) => setLineForm((f: Row) => ({ ...f, output_lot_auto: e.target.checked }))} />
-                  Auto Create Lot
-                </label>
+                <div>
+                  <label className="mb-1 block text-[11px] font-semibold" style={S.sub}>
+                    Output Basis
+                  </label>
+                  <SearchableSelect
+                    ariaLabel="Output Basis"
+                    value={lineForm.output_basis}
+                    onChange={(val) => setLineForm((f: Row) => ({ ...f, output_basis: val }))}
+                    options={OUTPUT_BASES}
+                    placeholder={t("scPlaceholderOutputBasis")}
+                  />
+                </div>
+
+                <div className="flex items-end pb-2">
+                  <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none" style={S.sub}>
+                    <input type="checkbox" checked={!!lineForm.creates_inventory} onChange={(e) => setLineForm((f: Row) => ({ ...f, creates_inventory: e.target.checked }))} />
+                    <span className="font-semibold">{t("scCreatesInventory")}</span>
+                  </label>
+                </div>
+
+                <div className="flex items-end pb-2">
+                  <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none" style={S.sub}>
+                    <input type="checkbox" checked={!!lineForm.output_lot_auto} onChange={(e) => setLineForm((f: Row) => ({ ...f, output_lot_auto: e.target.checked }))} />
+                    <span className="font-semibold">Auto Create Lot</span>
+                  </label>
+                </div>
               </>
             )}
+
             {lineType === "DESCRIPTIVE" && (
               <>
-                <select
-                  value={lineForm.kpi_metric}
-                  onChange={(e) => {
-                    const metric = e.target.value;
-                    setLineForm((f: Row) => ({
-                      ...f,
-                      kpi_metric: metric,
-                      kpi_uom: KPI_UOM_MAP[metric] || (metric === "CUSTOM" ? f.kpi_uom : ""),
-                    }));
-                  }}
-                  className={`${inputCls} nf-select`}
-                  style={S.input}
-                >
-                  <option value="">— Select KPI Metric —</option>
-                  {KPI_METRICS.map((m) => (
-                    <option key={m} value={m}>{m.replace(/_/g, " ")}</option>
-                  ))}
-                </select>
-                <input
-                  placeholder={t("scPlaceholderKpiUom")}
-                  value={lineForm.kpi_uom}
-                  disabled={lineForm.kpi_metric !== "CUSTOM"}
-                  onChange={(e) => setLineForm((f: Row) => ({ ...f, kpi_uom: e.target.value }))}
-                  className={inputCls}
-                  style={S.input}
-                />
-                <input
-                  type="number"
-                  step="any"
-                  placeholder="Standard Target Value"
-                  value={lineForm.std_value}
-                  onChange={(e) => setLineForm((f: Row) => ({ ...f, std_value: e.target.value }))}
-                  className={inputCls}
-                  style={S.input}
-                />
-                <select
-                  value={lineForm.capture_per || "AVERAGE"}
-                  onChange={(e) => setLineForm((f: Row) => ({ ...f, capture_per: e.target.value }))}
-                  className={`${inputCls} nf-select`}
-                  style={S.input}
-                >
-                  {CAPTURE_PERS.map((cp) => (
-                    <option key={cp} value={cp}>{cp.replace(/_/g, " ")}</option>
-                  ))}
-                </select>
-                <input type="number" step="any" placeholder={t("scPlaceholderLowerLimit")} value={lineForm.lower_alert_limit} onChange={(e) => setLineForm((f: Row) => ({ ...f, lower_alert_limit: e.target.value }))} className={inputCls} style={S.input} />
-                <input type="number" step="any" placeholder={t("scPlaceholderUpperLimit")} value={lineForm.upper_alert_limit} onChange={(e) => setLineForm((f: Row) => ({ ...f, upper_alert_limit: e.target.value }))} className={inputCls} style={S.input} />
-                <select value={lineForm.alert_severity} onChange={(e) => setLineForm((f: Row) => ({ ...f, alert_severity: e.target.value }))} className={`${inputCls} nf-select`} style={S.input}>
-                  {ALERT_SEVERITIES.map((a) => <option key={a} value={a}>{a}</option>)}
-                </select>
+                <div>
+                  <label className="mb-1 block text-[11px] font-semibold" style={S.sub}>
+                    KPI Metric <span className="text-red-500">*</span>
+                  </label>
+                  <SearchableSelect
+                    ariaLabel="KPI Metric"
+                    value={lineForm.kpi_metric}
+                    onChange={(metric) => {
+                      setLineForm((f: Row) => ({
+                        ...f,
+                        kpi_metric: metric,
+                        kpi_uom: KPI_UOM_MAP[metric] || (metric === "CUSTOM" ? f.kpi_uom : ""),
+                      }));
+                    }}
+                    options={KPI_METRICS.map((m) => ({ value: m, label: m.replace(/_/g, " ") }))}
+                    placeholder="— Select KPI Metric —"
+                    searchPlaceholder="Search KPI metrics…"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-[11px] font-semibold" style={S.sub}>
+                    KPI UOM
+                  </label>
+                  <input
+                    placeholder={t("scPlaceholderKpiUom")}
+                    value={lineForm.kpi_uom}
+                    disabled={lineForm.kpi_metric !== "CUSTOM"}
+                    onChange={(e) => setLineForm((f: Row) => ({ ...f, kpi_uom: e.target.value }))}
+                    className={`${inputCls} w-full`}
+                    style={S.input}
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-[11px] font-semibold" style={S.sub}>
+                    Standard Target Value
+                  </label>
+                  <input
+                    type="number"
+                    step="any"
+                    placeholder="Standard Target Value"
+                    value={lineForm.std_value}
+                    onChange={(e) => setLineForm((f: Row) => ({ ...f, std_value: e.target.value }))}
+                    className={`${inputCls} w-full`}
+                    style={S.input}
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-[11px] font-semibold" style={S.sub}>
+                    Capture Method
+                  </label>
+                  <SearchableSelect
+                    ariaLabel="Capture Method"
+                    value={lineForm.capture_per || "AVERAGE"}
+                    onChange={(val) => setLineForm((f: Row) => ({ ...f, capture_per: val }))}
+                    options={CAPTURE_PERS.map((cp) => ({ value: cp, label: cp.replace(/_/g, " ") }))}
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-[11px] font-semibold" style={S.sub}>
+                    Lower Alert Limit
+                  </label>
+                  <input type="number" step="any" placeholder={t("scPlaceholderLowerLimit")} value={lineForm.lower_alert_limit} onChange={(e) => setLineForm((f: Row) => ({ ...f, lower_alert_limit: e.target.value }))} className={`${inputCls} w-full`} style={S.input} />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-[11px] font-semibold" style={S.sub}>
+                    Upper Alert Limit
+                  </label>
+                  <input type="number" step="any" placeholder={t("scPlaceholderUpperLimit")} value={lineForm.upper_alert_limit} onChange={(e) => setLineForm((f: Row) => ({ ...f, upper_alert_limit: e.target.value }))} className={`${inputCls} w-full`} style={S.input} />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-[11px] font-semibold" style={S.sub}>
+                    Alert Severity
+                  </label>
+                  <SearchableSelect
+                    ariaLabel="Alert Severity"
+                    value={lineForm.alert_severity}
+                    onChange={(val) => setLineForm((f: Row) => ({ ...f, alert_severity: val }))}
+                    options={ALERT_SEVERITIES}
+                  />
+                </div>
               </>
             )}
+
             {lineType === "OVERHEAD" && (
-              <input placeholder={t("scPlaceholderOverheadCategory")} value={lineForm.overhead_category} onChange={(e) => setLineForm((f: Row) => ({ ...f, overhead_category: e.target.value }))} className={inputCls} style={S.input} />
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold" style={S.sub}>
+                  Overhead Category
+                </label>
+                <input placeholder={t("scPlaceholderOverheadCategory")} value={lineForm.overhead_category} onChange={(e) => setLineForm((f: Row) => ({ ...f, overhead_category: e.target.value }))} className={`${inputCls} w-full`} style={S.input} />
+              </div>
             )}
+
             {lineType === "RESOURCE" && (
-              <select value={lineForm.resource_id} onChange={(e) => setLineForm((f: Row) => ({ ...f, resource_id: e.target.value }))} className={`${inputCls} nf-select`} style={S.input}>
-                <option value="">{t("scPlaceholderSelectResource")}</option>
-                {resources.map((r) => <option key={r.resource_id} value={r.resource_id}>{r.resource_name}</option>)}
-              </select>
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold" style={S.sub}>
+                  Resource <span className="text-red-500">*</span>
+                </label>
+                <SearchableSelect
+                  ariaLabel="Resource"
+                  value={lineForm.resource_id}
+                  onChange={(val) => setLineForm((f: Row) => ({ ...f, resource_id: val }))}
+                  options={resources.map((r) => ({
+                    value: r.resource_id,
+                    label: r.resource_name,
+                  }))}
+                  placeholder={t("scPlaceholderSelectResource")}
+                  searchPlaceholder="Search resources…"
+                />
+              </div>
             )}
           </div>
           <div className="mt-3 flex gap-2">

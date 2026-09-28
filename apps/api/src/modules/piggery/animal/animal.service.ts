@@ -1040,7 +1040,12 @@ export class AnimalService {
       .set(updates)
       .where(eq(schema.animalRegister.animal_id, id));
 
-    // Record IAS 41 Exit / Disposal in bio_asset_ledger for this tagged animal
+    // Record IAS 41 Exit / Disposal in bio_asset_ledger for this tagged animal.
+    // DIED gets the schema's own MORTALITY entry_type — every other exit
+    // (SOLD/SLAUGHTERED/TRANSFERRED) stays TRANSFORMATION, the closest fit
+    // among the types the schema defines. Previously every disposal type
+    // posted as TRANSFORMATION, so a death was indistinguishable from a sale
+    // in the ledger.
     if (bookValue != null) {
       await this.db.insert(schema.bioAssetLedger).values({
         entry_id: randomUUID(),
@@ -1048,7 +1053,7 @@ export class AnimalService {
         company_id: animal.company_id,
         bio_asset_item_id: animal.item_id,
         animal_id: id,
-        entry_type: 'TRANSFORMATION',
+        entry_type: dto.disposal_type === 'DIED' ? 'MORTALITY' : 'TRANSFORMATION',
         document_no: animal.animal_code,
         posting_date: dto.disposal_date,
         stage: animal.current_stage_id || null,
@@ -1305,13 +1310,36 @@ export class AnimalService {
     };
   }
 
+  /**
+   * bio_asset_ledger carries no reason column of its own — an animal has at
+   * most one disposal, so the reason picked in dispose() lives only on
+   * animal_register.disposal_reason_id. Joined in here rather than added as a
+   * ledger column: entry_type MORTALITY/TRANSFORMATION is the disposal row
+   * (the only two things dispose() ever writes, per animal.service.ts), so
+   * that's the row the reason belongs to.
+   */
   async getBioAssetLedger(animalId: string) {
-    await this.findOne(animalId);
-    return this.db
+    const animal = await this.findOne(animalId);
+    const entries = await this.db
       .select()
       .from(schema.bioAssetLedger)
       .where(eq(schema.bioAssetLedger.animal_id, animalId))
       .orderBy(schema.bioAssetLedger.posting_date);
+
+    if (!animal.disposal_reason_id) return entries;
+
+    const [reason] = await this.db
+      .select({ reason_code: schema.reasonMaster.reason_code, reason_name: schema.reasonMaster.reason_name })
+      .from(schema.reasonMaster)
+      .where(eq(schema.reasonMaster.reason_id, animal.disposal_reason_id))
+      .limit(1);
+    if (!reason) return entries;
+
+    return entries.map((entry) =>
+      entry.entry_type === 'MORTALITY' || entry.entry_type === 'TRANSFORMATION'
+        ? { ...entry, disposal_reason_code: reason.reason_code, disposal_reason_name: reason.reason_name }
+        : entry
+    );
   }
 
   /**

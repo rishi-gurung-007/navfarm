@@ -9,7 +9,8 @@ export type FieldType =
   | "select-entity"
   | "field-list"
   | "json"
-  | "string-list";
+  | "string-list"
+  | "image";
 
 export interface SelectOption {
   value: string;
@@ -234,7 +235,7 @@ export interface MasterDataField {
    * question, and a plain on/off switch is worse still: "off" cannot say what
    * it means.
    */
-  control?: "segmented";
+  control?: "segmented" | "checkbox";
   /**
    * Value this control starts on once it appears. A segmented choice between
    * two options has no meaningful empty state — "neither" is what the switch
@@ -289,6 +290,8 @@ export interface MasterDataField {
    * doesn't get rejected by a strict (forbidNonWhitelisted) update DTO.
    */
   jsonListKeys?: string[];
+  /** Custom endpoint for uploading image/file. Defaults to `${config.apiBase}/upload-image` with fallback to `/item/upload-image`. */
+  uploadEndpoint?: string;
   /** Only sent on create — omit from the edit form/payload (e.g. the API's update endpoint doesn't accept this field). */
   createOnly?: boolean;
   /**

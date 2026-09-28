@@ -3,6 +3,7 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { X, Loader2, ChevronRight } from "lucide-react";
 import { api } from "@/services/api-client";
+import { API_ORIGIN } from "@/lib/api-client";
 import { InlineAlert } from "@/components/ui/alert";
 import { ReadField } from "@/components/ui/field";
 
@@ -639,12 +640,30 @@ export default function AnimalDetailPanel({ row, onClose }: { row: Row; onClose:
             <ReadField label="Entry date" value={fmt(row.entry_date)} />
             <ReadField label="Sire" value={fmt(lineage.sire_code)} mono />
             <ReadField label="Dam" value={fmt(lineage.dam_code)} mono />
-            <ReadField mono label="RFID tag" value={fmt(row.rfid_tag)} />
-            <ReadField mono label="Ear tag number" value={fmt(row.ear_tag)} />
+            <ReadField mono label="RFID" value={fmt(row.rfid_tag)} />
+            <ReadField mono label="Tattoo number" value={fmt(row.ear_tag)} />
             <ReadField
               label="Ear tag image"
               value={row.ear_tag_image_url
-                ? <a href={row.ear_tag_image_url} target="_blank" rel="noreferrer" className="underline" style={{ color: "var(--accent)" }}>Open image</a>
+                ? (
+                  <div className="flex items-center gap-3">
+                    <img
+                      src={row.ear_tag_image_url.startsWith("http") ? row.ear_tag_image_url : `${API_ORIGIN}${row.ear_tag_image_url}`}
+                      alt="Ear tag"
+                      className="h-12 w-12 rounded-[var(--radius-sm)] border object-cover cursor-pointer"
+                      onClick={() => window.open(row.ear_tag_image_url.startsWith("http") ? row.ear_tag_image_url : `${API_ORIGIN}${row.ear_tag_image_url}`, "_blank")}
+                    />
+                    <a
+                      href={row.ear_tag_image_url.startsWith("http") ? row.ear_tag_image_url : `${API_ORIGIN}${row.ear_tag_image_url}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="underline text-xs"
+                      style={{ color: "var(--accent)" }}
+                    >
+                      Open full image
+                    </a>
+                  </div>
+                )
                 : ""}
             />
             {!isMale && <ReadField label="No. of teats" value={fmt(row.no_of_teats)} />}

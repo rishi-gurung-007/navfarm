@@ -1,17 +1,23 @@
-import { 
-  Controller, 
-  Get, 
-  Post, 
-  Put, 
-  Delete, 
-  Param, 
-  Body, 
-  Query, 
-  Req, 
-  UseGuards, 
-  Patch 
+import {
+  Controller,
+  Get,
+  Post,
+  Put,
+  Delete,
+  Param,
+  Body,
+  Query,
+  Req,
+  UseGuards,
+  UseInterceptors,
+  UploadedFile,
+  BadRequestException,
+  Patch
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth, ApiParam } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiBearerAuth, ApiParam, ApiConsumes, ApiBody } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { diskStorage } from 'multer';
+import { extname, resolve } from 'node:path';
 import { ItemService } from './item.service';
 import { CreateItemDto, UpdateItemDto, QueryItemDto, CreateItemFromTemplateDto } from './dto/item.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
@@ -39,6 +45,41 @@ export class ItemController {
       success: true,
       message: 'Item generated from template successfully.',
       data: result,
+    };
+  }
+
+  @Post('upload-image')
+  @RequirePermission('MASTER_DATA', 'ITEM', 'create')
+  @ApiOperation({ summary: 'Upload an Item photo to local disk and get back its served URL' })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({ schema: { type: 'object', properties: { file: { type: 'string', format: 'binary' } } } })
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: diskStorage({
+        destination: resolve(process.env.UPLOADS_DIR || 'apps/api/uploads'),
+        filename: (_req, file, cb) => {
+          const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+          cb(null, `item-image-${uniqueSuffix}${extname(file.originalname)}`);
+        },
+      }),
+      limits: { fileSize: 10 * 1024 * 1024 }, // 10MB max
+      fileFilter: (_req, file, cb) => {
+        const allowed = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/heic']);
+        if (!allowed.has(file.mimetype)) {
+          return cb(new BadRequestException('Only PNG, JPG, WebP or HEIC images are allowed.'), false);
+        }
+        cb(null, true);
+      },
+    }),
+  )
+  async uploadImage(@UploadedFile() file: any) {
+    if (!file) {
+      throw new BadRequestException('No file was uploaded.');
+    }
+    return {
+      success: true,
+      message: 'Image uploaded successfully.',
+      data: { url: `/uploads/${file.filename}` },
     };
   }
 

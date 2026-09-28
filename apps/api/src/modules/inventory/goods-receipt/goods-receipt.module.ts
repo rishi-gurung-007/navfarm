@@ -5,9 +5,10 @@ import { InventoryLedgerModule } from '../inventory-ledger/inventory-ledger.modu
 import { JournalModule } from '../../finance/journal/journal.module';
 import { SiloFeedModule } from '../silo-feed/silo-feed.module';
 import { FeedAlertModule } from '../feed-alert/feed-alert.module';
+import { NumberSeriesModule } from '../../system/number-series/number-series.module';
 
 @Module({
-  imports: [InventoryLedgerModule, JournalModule, SiloFeedModule, FeedAlertModule],
+  imports: [InventoryLedgerModule, JournalModule, SiloFeedModule, FeedAlertModule, NumberSeriesModule],
   controllers: [GoodsReceiptController],
   providers: [GoodsReceiptService],
   exports: [GoodsReceiptService],

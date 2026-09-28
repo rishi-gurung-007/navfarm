@@ -14,6 +14,7 @@ import { useLanguage } from "@/hooks/useLanguage";
 import SchedulerDetailPanel from "@/components/console/production/scheduler-detail-panel";
 import CreateSchedulerModal from "./create-scheduler-modal";
 import { formatQuantity } from "@/lib/utils";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 
 type Row = Record<string, any>;
 
@@ -79,10 +80,16 @@ export default function SchedulerListPanel() {
               style={S.input}
             />
           </div>
-          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className={`${inputCls} nf-select w-auto`} style={S.input}>
-            <option value="">{t("schFilterStatus")}</option>
-            {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
-          </select>
+          <div className="w-44">
+            <SearchableSelect
+              ariaLabel="Status Filter"
+              value={statusFilter}
+              onChange={(val) => setStatusFilter(val)}
+              options={STATUSES}
+              placeholder={t("schFilterStatus")}
+              onClear={statusFilter ? () => setStatusFilter("") : undefined}
+            />
+          </div>
           {loading && <Loader2 className="h-4 w-4 animate-spin" style={S.muted} />}
         </div>
         <Button

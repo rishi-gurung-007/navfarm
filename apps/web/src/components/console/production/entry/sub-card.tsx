@@ -6,6 +6,7 @@ import { api } from "@/services/api-client";
 import { ApiError } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { LotSerialPicker } from "@/components/ui/lot-serial-picker";
 import { TargetSelector } from "./target-selector";
 import type { EntryFormResponse, EntryStatus, FormLine, TargetScope } from "./types";
 
@@ -147,13 +148,18 @@ export function SubCard({
             aria-label={`${line.activity_name} — ${t("deValue")}`}
           />
           {line.lot_required && (
-            <Input
-              value={lot}
-              onChange={(e) => setLot(e.target.value)}
-              disabled={busy}
-              placeholder={t("deLot")}
-              aria-label={`${line.activity_name} — ${t("deLot")}`}
-            />
+            <div className="w-full">
+              <LotSerialPicker
+                itemId={line.item_id || ""}
+                warehouseId={(form.batch as any)?.warehouse_id}
+                trackingType="LOT"
+                value={lot}
+                onChange={(val) => setLot(val)}
+                disabled={busy}
+                placeholder={t("deLot") || "Select lot…"}
+                ariaLabel={`${line.activity_name} — ${t("deLot")}`}
+              />
+            </div>
           )}
           <Input
             value={remarks}

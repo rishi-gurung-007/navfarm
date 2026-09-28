@@ -5,8 +5,8 @@ import { eq, and, or, isNull, gte, lte, lt, ne, inArray, asc, desc, sql, isNotNu
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
-import { QueryInventoryLedgerDto, QueryStockBalanceDto } from './dto/inventory-ledger.dto';
-import { farmScope, locationOnFarm, restrictedScopeConditions } from '../../../common/farm-scope';
+import { QueryInventoryLedgerDto, QueryStockBalanceDto, QueryAvailableLotsDto, QueryAvailableSerialsDto } from './dto/inventory-ledger.dto';
+import { farmScope, locationOnFarm, locationReferenceScopeConditions, restrictedScopeConditions } from '../../../common/farm-scope';
 
 interface WritePositiveEntryParams {
   tenantId: string;
@@ -43,6 +43,7 @@ interface WriteNegativeEntryParams {
   quantity: number; // positive number — the amount being consumed/shipped/written off
   uom: string;
   lotNo?: string;
+  serialNo?: string;
   batchNo?: string;
   warehouseId?: string;
   locationId?: string;
@@ -135,6 +136,23 @@ export class InventoryLedgerService {
     });
   }
 
+  /**
+   * item_master.is_lot_tracked/is_serial_tracked (TDD row 11's three-way
+   * choice: LOT, SERIAL, or neither) says whether a movement of this item
+   * must carry that identity. Shared by every ledger write — receipt, issue,
+   * and both legs of a transfer — so a lot/serial-tracked item can't post
+   * anywhere without one, the same way goods_receipt_line already required it
+   * in practice even though nothing enforced it.
+   */
+  private assertTracking(item: typeof schema.itemMaster.$inferSelect, lotNo?: string, serialNo?: string) {
+    if (item.is_lot_tracked && !lotNo) {
+      throw new BadRequestException(`Item '${item.item_code}' is lot-tracked — a Lot No. is required.`);
+    }
+    if (item.is_serial_tracked && !serialNo) {
+      throw new BadRequestException(`Item '${item.item_code}' is serial-tracked — a Serial No. is required.`);
+    }
+  }
+
   /** Writes a POSITIVE (inbound) ledger entry — Goods Receipt lines, and positive Stock Adjustment lines. */
   async writePositiveEntry(params: WritePositiveEntryParams) {
     const [item] = await this.db
@@ -146,6 +164,7 @@ export class InventoryLedgerService {
     if (!item) {
       throw new BadRequestException(`Item with ID '${params.itemId}' not found.`);
     }
+    this.assertTracking(item, params.lotNo, params.serialNo);
 
     const rate = params.rate ?? 0;
     const ledgerId = randomUUID();
@@ -204,6 +223,7 @@ export class InventoryLedgerService {
       outboundLedgerId: string;
       quantity: number;
       lotNo?: string;
+      serialNo?: string;
       applicationDate: string;
       userId?: string;
       // Batch consumption draws from a company-wide pool and never sets this
@@ -238,6 +258,12 @@ export class InventoryLedgerService {
     }
     if (params.lotNo) {
       layerConditions.push(eq(schema.inventoryLedger.lot_no, params.lotNo));
+    }
+    // A serial identifies one physical unit, so it narrows the layer search the
+    // same way a lot narrows it to one batch — FIFO order among matches is
+    // moot for a serial since exactly one layer can carry it.
+    if (params.serialNo) {
+      layerConditions.push(eq(schema.inventoryLedger.serial_no, params.serialNo));
     }
 
     // Row-locked so two concurrent consumptions against the same layers can't
@@ -316,6 +342,7 @@ export class InventoryLedgerService {
     if (!item) {
       throw new BadRequestException(`Item with ID '${params.itemId}' not found.`);
     }
+    this.assertTracking(item, params.lotNo, params.serialNo);
 
     const ledgerId = randomUUID();
 
@@ -337,6 +364,7 @@ export class InventoryLedgerService {
         transaction_type: params.transactionType,
         quantity: (-Math.abs(params.quantity)).toString(),
         lot_no: params.lotNo || null,
+        serial_no: params.serialNo || null,
         uom: params.uom,
         uom_conversion_factor: item.uom_conversion_factor,
         batch_no: params.batchNo || null,
@@ -356,6 +384,7 @@ export class InventoryLedgerService {
           outboundLedgerId: ledgerId,
           quantity: params.quantity,
           lotNo: params.lotNo,
+          serialNo: params.serialNo,
           applicationDate: params.postingDate,
           userId: params.userId,
           warehouseId: params.warehouseId,
@@ -389,6 +418,8 @@ export class InventoryLedgerService {
     uom: string;
     fromWarehouseId: string;
     toWarehouseId: string;
+    lotNo?: string;
+    serialNo?: string;
     userId?: string;
   }) {
     const shipment = await this.writeNegativeEntry({
@@ -402,10 +433,17 @@ export class InventoryLedgerService {
       transactionType: 'TRANSFER_SHIPMENT',
       quantity: params.quantity,
       uom: params.uom,
+      lotNo: params.lotNo,
+      serialNo: params.serialNo,
       warehouseId: params.fromWarehouseId,
       userId: params.userId,
     });
 
+    // Carries the shipment's own lot/serial forward rather than params.lotNo/
+    // serialNo directly — same value today, but shipment.lot_no is what FIFO
+    // actually drew (relevant once a caller ever transfers without pinning a
+    // lot), so the receipt layer's identity is always true to what left the
+    // source warehouse.
     const receipt = await this.writePositiveEntry({
       tenantId: params.tenantId,
       companyId: params.companyId,
@@ -418,6 +456,8 @@ export class InventoryLedgerService {
       quantity: params.quantity,
       uom: params.uom,
       rate: Number(shipment.rate),
+      lotNo: shipment.lot_no || undefined,
+      serialNo: shipment.serial_no || undefined,
       warehouseId: params.toWarehouseId,
       userId: params.userId,
     });
@@ -614,5 +654,106 @@ export class InventoryLedgerService {
         .filter((r) => r.warehouse_id)
         .map((r) => ({ warehouse_id: r.warehouse_id!, item_id: r.item_id, item_code: r.item_code, uom: r.uom, posting_date: r.posting_date, qty: Number(r.qty) })),
     };
+  }
+
+  async getAvailableLots(query: QueryAvailableLotsDto, tenantId: string) {
+    const itemId = query.itemId || query.item_id;
+    if (!itemId) {
+      throw new BadRequestException('itemId is required.');
+    }
+    const warehouseId = query.warehouseId || query.warehouse_id;
+    const companyId = query.companyId || query.company_id;
+
+    const scope = farmScope(this.cls);
+    const conditions: any[] = [
+      eq(schema.inventoryLedger.tenant_id, tenantId),
+      eq(schema.inventoryLedger.item_id, itemId),
+      eq(schema.inventoryLedger.entry_type, 'POSITIVE'),
+      sql`CAST(${schema.inventoryLedger.remaining_quantity} AS DECIMAL(18,4)) > 0`,
+      isNotNull(schema.inventoryLedger.lot_no),
+      ne(schema.inventoryLedger.lot_no, ''),
+    ];
+
+    if (companyId) conditions.push(eq(schema.inventoryLedger.company_id, companyId));
+    if (warehouseId) conditions.push(eq(schema.inventoryLedger.warehouse_id, warehouseId));
+    conditions.push(...locationReferenceScopeConditions(scope, schema.inventoryLedger.warehouse_id));
+    conditions.push(...restrictedScopeConditions(scope, { companyId: schema.inventoryLedger.company_id }));
+
+    const rows = await this.db
+      .select({
+        lot_no: schema.inventoryLedger.lot_no,
+        remaining_quantity: sql<string>`COALESCE(SUM(${schema.inventoryLedger.remaining_quantity}), 0)`,
+        expiry_date: sql<string | null>`MIN(${schema.inventoryLedger.expiry_date})`,
+        posting_date: sql<string>`MIN(${schema.inventoryLedger.posting_date})`,
+      })
+      .from(schema.inventoryLedger)
+      .where(and(...conditions))
+      .groupBy(schema.inventoryLedger.lot_no);
+
+    return rows
+      .map((r) => ({
+        lot_no: r.lot_no!,
+        remaining_quantity: Number(r.remaining_quantity),
+        expiry_date: r.expiry_date,
+        posting_date: r.posting_date,
+      }))
+      .filter((r) => r.remaining_quantity > 0.0001)
+      .sort((a, b) => {
+        if (a.expiry_date && b.expiry_date) {
+          const expDiff = new Date(a.expiry_date).getTime() - new Date(b.expiry_date).getTime();
+          if (expDiff !== 0) return expDiff;
+        } else if (a.expiry_date && !b.expiry_date) {
+          return -1;
+        } else if (!a.expiry_date && b.expiry_date) {
+          return 1;
+        }
+        return new Date(a.posting_date).getTime() - new Date(b.posting_date).getTime();
+      });
+  }
+
+  async getAvailableSerials(query: QueryAvailableSerialsDto, tenantId: string) {
+    const itemId = query.itemId || query.item_id;
+    if (!itemId) {
+      throw new BadRequestException('itemId is required.');
+    }
+    const warehouseId = query.warehouseId || query.warehouse_id;
+    const companyId = query.companyId || query.company_id;
+
+    const scope = farmScope(this.cls);
+    const conditions: any[] = [
+      eq(schema.inventoryLedger.tenant_id, tenantId),
+      eq(schema.inventoryLedger.item_id, itemId),
+      eq(schema.inventoryLedger.entry_type, 'POSITIVE'),
+      sql`CAST(${schema.inventoryLedger.remaining_quantity} AS DECIMAL(18,4)) > 0`,
+      isNotNull(schema.inventoryLedger.serial_no),
+      ne(schema.inventoryLedger.serial_no, ''),
+    ];
+
+    if (companyId) conditions.push(eq(schema.inventoryLedger.company_id, companyId));
+    if (warehouseId) conditions.push(eq(schema.inventoryLedger.warehouse_id, warehouseId));
+    conditions.push(...locationReferenceScopeConditions(scope, schema.inventoryLedger.warehouse_id));
+    conditions.push(...restrictedScopeConditions(scope, { companyId: schema.inventoryLedger.company_id }));
+
+    const rows = await this.db
+      .select({
+        serial_no: schema.inventoryLedger.serial_no,
+        remaining_quantity: schema.inventoryLedger.remaining_quantity,
+        expiry_date: schema.inventoryLedger.expiry_date,
+        posting_date: schema.inventoryLedger.posting_date,
+        warehouse_id: schema.inventoryLedger.warehouse_id,
+      })
+      .from(schema.inventoryLedger)
+      .where(and(...conditions))
+      .orderBy(asc(schema.inventoryLedger.posting_date), asc(schema.inventoryLedger.created_at));
+
+    return rows
+      .map((r) => ({
+        serial_no: r.serial_no!,
+        remaining_quantity: Number(r.remaining_quantity),
+        expiry_date: r.expiry_date,
+        posting_date: r.posting_date,
+        warehouse_id: r.warehouse_id,
+      }))
+      .filter((r) => r.remaining_quantity > 0.0001);
   }
 }
