@@ -4,6 +4,7 @@ import { ClsService } from 'nestjs-cls';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { NobLobResolutionService } from '../../core/operational-area/nob-lob-resolution.service';
+import { AnimalMovementLogService } from '../animal-movement-log/animal-movement-log.service';
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { MySqlDialect } from 'drizzle-orm/mysql-core';
 import { transactionCls, useFarmScope } from '../../../test-utils/transaction-cls';
@@ -71,6 +72,8 @@ describe('AnimalService', () => {
         { provide: AuditLogService, useValue: { log: jest.fn().mockResolvedValue({}) } },
         { provide: NumberSeriesService, useValue: { generateNext: jest.fn().mockResolvedValue('PIG-2026-0001') } },
         { provide: NobLobResolutionService, useValue: nobLobResolution },
+        // Checklist 6: transitionStage records a STAGE_CHANGE row.
+        { provide: AnimalMovementLogService, useValue: { record: jest.fn().mockResolvedValue(undefined) } },
       ],
     }).compile();
 

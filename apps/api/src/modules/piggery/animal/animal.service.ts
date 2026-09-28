@@ -14,6 +14,7 @@ import { AuditLogService } from '../../system/audit-log/audit-log.service';
 
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { NobLobResolutionService } from '../../core/operational-area/nob-lob-resolution.service';
+import { AnimalMovementLogService } from '../animal-movement-log/animal-movement-log.service';
 import { listFilterConditions, listOrderBy } from '../../../common/master-list-query';
 
 const toMysqlTimestamp = (date: Date = new Date()) => date.toISOString().slice(0, 19).replace('T', ' ');
@@ -182,6 +183,7 @@ export class AnimalService {
     private readonly auditService: AuditLogService,
     private readonly numberSeriesService: NumberSeriesService,
     private readonly nobLobResolution: NobLobResolutionService,
+    private readonly movementLog: AnimalMovementLogService,
   ) {}
 
   private get db(): MySql2Database<typeof schema> {
@@ -1456,6 +1458,28 @@ export class AnimalService {
       .update(schema.animalRegister)
       .set(updates)
       .where(eq(schema.animalRegister.animal_id, id));
+
+    // Checklist item 6: the animal's own row keeps only the CURRENT stage, so
+    // without this the stage it came from is lost the moment it moves and
+    // "which animals were in which stage, from–to" has no source. The
+    // batch-level cascade already records these (batch.service.ts); this is the
+    // per-animal path, which bulkTransitionStage also loops through.
+    await this.movementLog.record({
+      tenantId,
+      companyId: animal.company_id,
+      animalId: id,
+      movementType: 'STAGE_CHANGE',
+      eventDate: dto.transition_date,
+      fromBatchId: animal.current_batch_id,
+      toBatchId: animal.current_batch_id,
+      fromStageId: animal.current_stage_id,
+      toStageId: dto.to_stage_id,
+      fromLocationId: animal.current_location_id,
+      toLocationId: animal.current_location_id,
+      reason: dto.reason ?? null,
+      remarks: dto.remarks ?? null,
+      userId: userPayload?.userId,
+    });
 
     await this.auditService.log({
       tenantId,
