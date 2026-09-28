@@ -8,18 +8,30 @@ Create button on a fresh tenant).
 
 ## How to continue (read first)
 
-- Branch: `feat/feed-forecast-report` (contains Plans A, B, R). Nothing merged or pushed.
-- Current work: **Plan S** — fixes from Rishi's review of the running app (27 Sep):
-  defects, one Alerts page and one Approvals flow for feed (D24–D26), required
-  silo levels (D22/D27), demo seed and data migrations for testers' data
-  (D21–D23), plain wording and a fixed-page / scrolling-table design.
-  - Findings: `.superpowers/feed-forecast-sources/review-2026-09-27-running-app.md`
-  - Decisions: spec rows D21–D27 in `docs/superpowers/specs/2026-09-25-feed-forecast-design.md`
-  - Plan: `docs/superpowers/plans/2026-09-27-feed-forecast-s-fixes.md` — 22 tasks + 20a (D28). Tasks 1–8 done by navfarm-e2 (29c98b2..ba6a938b); 9–22 executed next by navfarm-e2; the controller verifies and pushes at the end (Rishi, 27 Sep). Migration 0122 applied locally by the controller.
-  - Ledger: `.superpowers/sdd/2026-09-27-feed-forecast-s-fixes/progress.md`
-    (one line per finished task; resume at the first task without "complete").
+- Branch: `feat/feed-forecast-report` (Plans A, B, R and S) — **pushed to origin
+  28 Sep (219b9e02), not merged**. It contains `origin/main`; open a PR from it.
+- **Plan S is complete and verified** (28 Sep): 22 tasks + 20a, then a final
+  whole-branch review (0 Critical, 3 Important — all fixed, F1–F8).
+  - Plan: `docs/superpowers/plans/2026-09-27-feed-forecast-s-fixes.md`;
+    ledger `.superpowers/sdd/2026-09-27-feed-forecast-s-fixes/progress.md`
+    (controller checks, rulings, parked minors); review `final-review.md` there.
+  - Evidence: `docs/VERIFICATION-2026-09-27-feed-forecast-s.md` (API + MySQL),
+    migration rehearsal `migration-rehearsal.md` in the ledger folder, and the
+    controller's browser check after Rishi's demo rebuild + migrations
+    (1440×900, 1024×768, 375×812).
+  - Local DBs: rebuilt and migrated by Rishi on 28 Sep (journal 127). `nf_kkp`
+    no longer exists after the rebuild.
+- **Server release**: runbook `docs/deploy-rdp-windows.md` §13 "Plan S release
+  (tenant migrations 0122–0126)" — before/after checks, 0122 recovery. Server:
+  `db-bootstrap` AND `db-migrate-all-tenants`, never a rebuild.
+- Parked (ledger, "Final round parked"): no Withdraw button in the UI; raw stage
+  codes and Alert Rules help text; "late" uses the browser's day; Alerts page
+  re-evaluates every farm on open; future-dated journal `when` (next migration
+  must be set above 1791567600000); SYSTEM_ADMIN absent from the Production
+  shell gate; approval rows with neither farm nor batch visible only in the
+  tenant-wide view (pre-existing).
 - Rules every agent follows: commit only with explicit paths; never nx.json;
-  never push, merge or run db-rebuild-demo (Rishi runs it); verify writes by
+  never merge or run db-rebuild-demo (Rishi runs it); verify writes by
   driving the API and reading MySQL; run gates with `--skip-nx-cache`.
 
 ## Branches
