@@ -3543,6 +3543,12 @@ export const animalRegister = mysqlTable('animal_register', {
   ear_tag_image_url: varchar('ear_tag_image_url', { length: 500 }), // URL only for now; direct upload moves to Cloudflare R2 later
   sire_animal_id: varchar('sire_animal_id', { length: 36 }),
   dam_animal_id: varchar('dam_animal_id', { length: 36 }),
+  // D42 (0134): what the papers say a parent is, for the common case where the
+  // parent is not a registered animal here — a purchased or imported animal
+  // arrives named on paper only. Independent of entry type and of the pickers
+  // above: either, both or neither may be set on any animal.
+  sire_serial_no: varchar('sire_serial_no', { length: 100 }),
+  dam_serial_no: varchar('dam_serial_no', { length: 100 }),
   acquisition_cost: decimal('acquisition_cost', { precision: 18, scale: 4 }).notNull(),
   landing_cost: decimal('landing_cost', { precision: 18, scale: 4 }),
   total_opening_asset_value: decimal('total_opening_asset_value', { precision: 18, scale: 4 }).notNull(), // CALC at create

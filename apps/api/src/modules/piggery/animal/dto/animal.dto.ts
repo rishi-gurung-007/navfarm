@@ -127,6 +127,16 @@ export class CreateAnimalDto {
   @IsUUID()
   @IsOptional()
   dam_animal_id?: string;
+  @ApiProperty({ description: "Sire's serial/registration number as the papers give it — for a parent not registered here (D42). Any entry type.", required: false })
+  @IsString()
+  @IsOptional()
+  sire_serial_no?: string;
+
+  @ApiProperty({ description: "Dam's serial/registration number as the papers give it — for a parent not registered here (D42). Any entry type.", required: false })
+  @IsString()
+  @IsOptional()
+  dam_serial_no?: string;
+
 
   // animal_register.acquisition_cost/landing_cost are decimal(18,4) (schema.ts);
   // the bound below is that column's own ceiling (14 integer digits), not a
@@ -256,6 +266,16 @@ export class UpdateAnimalDto {
   @IsUUID()
   @IsOptional()
   dam_animal_id?: string;
+  @ApiProperty({ description: "Sire's serial/registration number as the papers give it — for a parent not registered here (D42). Any entry type.", required: false })
+  @IsString()
+  @IsOptional()
+  sire_serial_no?: string;
+
+  @ApiProperty({ description: "Dam's serial/registration number as the papers give it — for a parent not registered here (D42). Any entry type.", required: false })
+  @IsString()
+  @IsOptional()
+  dam_serial_no?: string;
+
 
   @ApiProperty({ required: false })
   @IsUUID()
@@ -412,6 +432,12 @@ export class QueryAnimalDto extends MasterListQueryDto {
   @IsOptional()
   @IsString()
   animalType?: string;
+
+  /** D42: the Sire picker asks for males and the Dam picker for females. */
+  @ApiProperty({ description: "Filter by sex — the data uses 'M' and 'F'.", required: false })
+  @IsOptional()
+  @IsString()
+  gender?: string;
 
   @ApiProperty({ required: false, enum: STATUSES })
   @IsOptional()

@@ -697,6 +697,10 @@ export class AnimalService {
       ear_tag_image_url: dto.ear_tag_image_url || null,
       sire_animal_id: dto.sire_animal_id || null,
       dam_animal_id: dto.dam_animal_id || null,
+      // D42: what the papers say, for a parent not registered here. Kept for
+      // every animal whatever its entry type, and independent of the two ids above.
+      sire_serial_no: dto.sire_serial_no?.trim() || null,
+      dam_serial_no: dto.dam_serial_no?.trim() || null,
       acquisition_cost: acquisitionCost.toString(),
       landing_cost: dto.landing_cost?.toString() || null,
       total_opening_asset_value: totalOpeningAssetValue.toString(),
@@ -831,6 +835,8 @@ export class AnimalService {
     conditions.push(...animalScopeConditions(farmScope(this.cls)));
     if (query.breedId) conditions.push(eq(schema.animalRegister.breed_id, query.breedId));
     if (query.animalType) conditions.push(eq(schema.animalRegister.animal_type, query.animalType));
+    // D42: the Sire picker lists males, the Dam picker females.
+    if (query.gender) conditions.push(eq(schema.animalRegister.gender, query.gender));
     if (query.status) conditions.push(eq(schema.animalRegister.status, query.status));
     if (query.currentBatchId) conditions.push(eq(schema.animalRegister.current_batch_id, query.currentBatchId));
     if (query.unassignedOnly) conditions.push(isNull(schema.animalRegister.current_batch_id));
@@ -938,6 +944,9 @@ export class AnimalService {
     if (dto.ear_tag !== undefined) updates.ear_tag = dto.ear_tag;
     if (dto.ear_tag_image_url !== undefined) updates.ear_tag_image_url = dto.ear_tag_image_url;
     if (dto.sire_animal_id !== undefined) updates.sire_animal_id = dto.sire_animal_id;
+    // D42: emptying the box clears the stored number.
+    if (dto.sire_serial_no !== undefined) updates.sire_serial_no = dto.sire_serial_no?.trim() || null;
+    if (dto.dam_serial_no !== undefined) updates.dam_serial_no = dto.dam_serial_no?.trim() || null;
     if (dto.dam_animal_id !== undefined) updates.dam_animal_id = dto.dam_animal_id;
     if (dto.parity_count !== undefined) updates.parity_count = dto.parity_count;
     if (dto.total_piglets_born_live !== undefined) updates.total_piglets_born_live = dto.total_piglets_born_live;

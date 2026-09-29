@@ -939,6 +939,13 @@
       "when": 1792000000002,
       "tag": "0133_batch_daily_data_serial_no",
       "breakpoints": true
+    },
+    {
+      "idx": 134,
+      "version": "5",
+      "when": 1792000000003,
+      "tag": "0134_animal_parent_serial_no",
+      "breakpoints": true
     }
   ]
 }

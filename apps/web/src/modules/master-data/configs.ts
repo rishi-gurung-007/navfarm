@@ -434,8 +434,20 @@ const animal: MasterDataConfig = {
     { key: "rfid_tag", label: "RFID", type: "text", helpText: "Unique if set.", section: "Identification" },
     { key: "ear_tag", label: "Tattoo Number", type: "text", section: "Identification" },
     { key: "ear_tag_image_url", label: "Ear Tag Image", type: "image", uploadEndpoint: "/animal/upload-image", section: "Identification" },
-    { key: "sire_animal_id", label: "Sire (Father)", type: "select-entity", searchable: true, entityEndpoint: "/animal", entityValueKey: "animal_id", entityLabelKeys: ["animal_code"], section: "Lineage" },
-    { key: "dam_animal_id", label: "Dam (Mother)", type: "select-entity", searchable: true, entityEndpoint: "/animal", entityValueKey: "animal_id", entityLabelKeys: ["animal_code"], section: "Lineage" },
+    // D42 (Rishi, 29 Sep): a parent is either a registered animal here — picked,
+    // and the list is narrowed to the right sex so a boar is never offered as a
+    // dam — or it is not, in which case the papers' serial number is typed
+    // beside it. Rishi's addendum: both serial fields are available for EVERY
+    // animal, whatever its entry type and whether or not a parent is picked, so
+    // neither carries a visibleWhen, a requiredWhen or a dependsOn.
+    { key: "sire_animal_id", label: "Sire (Father)", type: "select-entity", searchable: true, entityEndpoint: "/animal?gender=M", entityValueKey: "animal_id", entityLabelKeys: ["animal_code", "ear_tag"], section: "Lineage",
+      helpText: "A registered boar on this farm. Leave empty and use the serial number beside it when the sire is not registered here." },
+    { key: "sire_serial_no", label: "Sire Serial No.", type: "text", maxLength: 100, section: "Lineage",
+      helpText: "The sire's number as the papers give it. Use this for a bought or imported animal whose sire is not in NAVFarm." },
+    { key: "dam_animal_id", label: "Dam (Mother)", type: "select-entity", searchable: true, entityEndpoint: "/animal?gender=F", entityValueKey: "animal_id", entityLabelKeys: ["animal_code", "ear_tag"], section: "Lineage",
+      helpText: "A registered sow or gilt on this farm. Leave empty and use the serial number beside it when the dam is not registered here." },
+    { key: "dam_serial_no", label: "Dam Serial No.", type: "text", maxLength: 100, section: "Lineage",
+      helpText: "The dam's number as the papers give it. Use this for a bought or imported animal whose dam is not in NAVFarm." },
     {
       key: "entry_type", label: "Entry Type", type: "select", required: true, createOnly: true, section: "Acquisition",
       options: ["PURCHASED_IMPORTED", "PURCHASED_LOCAL", "BORN_ON_FARM", "TRANSFERRED_IN"].map((v) => ({ value: v, label: v.replace(/_/g, " ") })),

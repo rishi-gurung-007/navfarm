@@ -71,6 +71,29 @@ describe('migration 0131 — FLUSH latest day 14 → 5 on system rows (D36)', ()
   });
 });
 
+/**
+ * D42 (Rishi, 29 Sep): a parent is not always registered in NAVFarm — a
+ * purchased or imported animal arrives with its sire and dam named only on
+ * paper — so the register keeps what the papers say beside the optional pickers.
+ */
+describe('migration 0134 — the parents\' serial numbers on animal_register (D42)', () => {
+  it('is journalled after 0133, strictly increasing', () => {
+    const journal = JSON.parse(readFileSync(join(dir, 'meta/_journal.json'), 'utf8')).entries as Array<{ idx: number; when: number; tag: string }>;
+    expect(journal.find((e) => e.idx === 134)).toEqual({ idx: 134, version: '5', when: 1792000000003, tag: '0134_animal_parent_serial_no', breakpoints: true });
+    const whens = journal.map((e) => e.when);
+    expect(whens.every((w, i) => i === 0 || w > whens[i - 1])).toBe(true);
+  });
+
+  it('adds exactly the two nullable columns, and nothing else', () => {
+    const sql = statements('0134_animal_parent_serial_no');
+    expect(sql).toHaveLength(2);
+    expect(sql[0]).toBe('ALTER TABLE `animal_register` ADD `sire_serial_no` varchar(100);');
+    expect(sql[1]).toBe('ALTER TABLE `animal_register` ADD `dam_serial_no` varchar(100);');
+    // Nullable: every existing animal keeps a row that is still valid.
+    expect(sql.join(' ')).not.toMatch(/NOT NULL|DEFAULT|UPDATE|DROP/i);
+  });
+});
+
 describe('Plan S data migrations (D21–D23)', () => {
   it('are journalled after 0122, a day apart', () => {
     const journal = JSON.parse(readFileSync(join(dir, 'meta/_journal.json'), 'utf8')).entries as Array<{ idx: number; when: number; tag: string }>;
