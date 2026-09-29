@@ -3,7 +3,7 @@ import { GUARDS_METADATA } from '@nestjs/common/constants';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { ReasonAdministrationGuard, ReasonController } from './reason.controller';
-import { CreateReasonDto, QueryReasonDto } from './reason.dto';
+import { CreateReasonDto, QueryReasonDto, UpdateReasonDto } from './reason.dto';
 import { DOCUMENTED_REASONS, REASON_CATEGORIES } from '../../../core/database/reason-code-seed';
 import { MASTER_TABLES } from '../../../common/master-data-scope';
 import { companyTemplateTables, planTemplateCopies } from '../../core/company/copy-master-templates';
@@ -43,6 +43,12 @@ describe('Reason Master contract', () => {
       expect(r.sub_category?.length ?? 0).toBeLessThanOrEqual(50);
       expect(r.stage_filter_note?.length ?? 0).toBeLessThanOrEqual(100);
     }
+    // The form and the create DTO cap Description at 50 (Freebuff task-3,
+    // item 5). Exactly one transcribed row exceeds that — SEL-003 at 51, the
+    // client's own wording. The seed keeps the template verbatim (the seed is
+    // not the form), and the one-row overflow is flagged to Rishi rather than
+    // silently truncated here.
+    expect(DOCUMENTED_REASONS.filter((r) => r.reason_name.length > 50).map((r) => r.reason_code)).toEqual(['SEL-003']);
   });
   it('registers independent company templates and code generation', () => {
     expect(MASTER_TABLES.reason).toBe(reasonMaster);
@@ -57,6 +63,25 @@ describe('Reason Master contract', () => {
   it('validates categories, names and canonical stage codes', async () => {
     expect(await validate(plainToInstance(CreateReasonDto, DOCUMENTED_REASONS[0]))).toHaveLength(0);
     expect((await validate(plainToInstance(CreateReasonDto, { reason_name: '   ', category: 'MADE_UP', applicable_stages: ['bad code'] }))).length).toBeGreaterThan(0);
+  });
+
+  it('caps Description at 50 on create and update (Freebuff task-3 item 5)', async () => {
+    const ok = await validate(plainToInstance(CreateReasonDto, { reason_name: 'A'.repeat(50), category: 'MORTALITY' }));
+    expect(ok.find((e) => e.property === 'reason_name')).toBeUndefined();
+
+    const over = await validate(plainToInstance(CreateReasonDto, { reason_name: 'A'.repeat(51), category: 'MORTALITY' }));
+    expect(over.find((e) => e.property === 'reason_name')).toBeDefined();
+
+    const upd = await validate(plainToInstance(UpdateReasonDto, { reason_name: 'A'.repeat(51) }));
+    expect(upd.find((e) => e.property === 'reason_name')).toBeDefined();
+  });
+
+  it('caps search at the same 50 characters the form allows', async () => {
+    const ok = await validate(plainToInstance(QueryReasonDto, { search: 'A'.repeat(50) }));
+    expect(ok).toHaveLength(0);
+
+    const over = await validate(plainToInstance(QueryReasonDto, { search: 'A'.repeat(51) }));
+    expect(over.find((e) => e.property === 'search')).toBeDefined();
   });
   it('parses false correctly and rejects malformed boolean filters', async () => {
     const query = plainToInstance(QueryReasonDto, { isActive: 'false' });
