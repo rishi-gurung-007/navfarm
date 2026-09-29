@@ -500,10 +500,10 @@ const animal: MasterDataConfig = {
     { key: "disposal_type", label: "Disposal Type", type: "text", hideInForm: true, helpText: "Set via the Dispose action, not direct edit.", section: "Bio-Asset" },
     { key: "no_of_teats", label: "No. of Teats", type: "number", min: 0, max: 99, helpText: "BBP §6: below 15 blocks this gilt from selection regardless of TSI score.", visibleWhen: { anyOf: [{ key: "gender", equals: "F" }] }, requiredWhen: { anyOf: [{ key: "gender", equals: "F" }] }, section: "Bio-Asset" },
     { key: "tsi", label: "TSI", type: "number", step: "0.01", min: 0, max: 999, helpText: "Total Sow Index score.", section: "Bio-Asset" },
-    {
-      key: "grading", label: "Grading", type: "select", section: "Bio-Asset",
-      options: [{ value: "1", label: "1" }, { value: "2", label: "2" }, { value: "3", label: "3" }],
-    },
+    // Grading is a whole number 0–99, typed rather than picked: the old
+    // three-option select (1/2/3) could not record any other grade. Stored as
+    // text in the varchar(20) column; the API DTO validates the same range.
+    { key: "grading", label: "Grading", type: "number", min: 0, max: 99, step: "1", maxLength: 2, helpText: "Whole number from 0 to 99.", section: "Bio-Asset" },
     { key: "current_stage_id", label: "Current Stage", type: "select-entity", createOnly: true, entityEndpoint: "/stage", entityValueKey: "stage_id", entityLabelKeys: ["stage_code", "stage_name"], section: "Current Position" },
     { key: "current_batch_id", label: "Current Batch", type: "select-entity", searchable: true, createOnly: true, entityEndpoint: "/batch", entityValueKey: "batch_id", entityLabelKeys: ["batch_no"], helpText: "Choose where this animal is: a batch or a pen location on your farm.", section: "Current Position" },
     { key: "current_location_id", label: "Current Pen", type: "select-entity", searchable: true, createOnly: true, entityEndpoint: "/location?locationType=PEN", entityValueKey: "location_id", entityLabelKeys: ["location_code", "location_name"], helpText: "Animals are placed in Pens only. Choose where this animal is: a batch or a pen location.", section: "Current Position" },

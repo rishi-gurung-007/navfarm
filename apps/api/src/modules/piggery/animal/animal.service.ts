@@ -716,7 +716,10 @@ export class AnimalService {
       no_of_teats: dto.gender === 'F' ? dto.no_of_teats ?? null : null,
       expected_cull_date: dto.expected_cull_date || null,
       tsi: dto.tsi?.toString() ?? null,
-      grading: dto.grading || null,
+      // grading is a number 0–99 in the DTO; the column is varchar(20), so it
+      // is stored as text. ?? not ||: grading 0 is a valid grade, not an
+      // absence of one.
+      grading: dto.grading?.toString() ?? null,
       serial_number: dto.serial_number || null,
       notes: dto.notes || null,
       is_active: true,
@@ -961,7 +964,7 @@ export class AnimalService {
     if (dto.status !== undefined) updates.status = dto.status;
     if (dto.no_of_teats !== undefined) updates.no_of_teats = animal.gender === 'F' ? dto.no_of_teats : null;
     if (dto.tsi !== undefined) updates.tsi = dto.tsi?.toString() ?? null;
-    if (dto.grading !== undefined) updates.grading = dto.grading;
+    if (dto.grading !== undefined) updates.grading = dto.grading?.toString() ?? null;
     if (dto.serial_number !== undefined) updates.serial_number = dto.serial_number;
     if (dto.notes !== undefined) updates.notes = dto.notes;
 

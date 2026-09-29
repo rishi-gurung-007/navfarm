@@ -203,10 +203,16 @@ export class CreateAnimalDto {
   @Min(0)
   tsi?: number;
 
-  @ApiProperty({ description: 'Conformation/quality grading', required: false })
-  @IsString()
+  // Conformation/quality grading is a whole number 0–99 (two digits). The
+  // column is varchar(20) and stays so — the number is stored as text, no
+  // migration. The bound matches the web form's Grading field.
+  @ApiProperty({ description: 'Conformation/quality grading — whole number 0–99, stored as text (varchar column, no migration)', required: false })
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(99)
   @IsOptional()
-  grading?: string;
+  grading?: number;
 
   // Column is varchar(50) (schema.ts).
   @ApiProperty({ description: 'Serial number (asset tag), distinct from RFID/ear tag', required: false, maxLength: 50 })
@@ -368,10 +374,15 @@ export class UpdateAnimalDto {
   @Min(0)
   tsi?: number;
 
-  @ApiProperty({ description: 'Conformation/quality grading', required: false })
-  @IsString()
+  // Same bound as CreateAnimalDto: whole number 0–99, stored as text in the
+  // varchar(20) column.
+  @ApiProperty({ description: 'Conformation/quality grading — whole number 0–99, stored as text (varchar column, no migration)', required: false })
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(99)
   @IsOptional()
-  grading?: string;
+  grading?: number;
 
   // Column is varchar(50) (schema.ts).
   @ApiProperty({ description: 'Serial number (asset tag), distinct from RFID/ear tag', required: false, maxLength: 50 })

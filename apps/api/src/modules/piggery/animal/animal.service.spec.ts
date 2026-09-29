@@ -750,7 +750,7 @@ describe('AnimalService', () => {
       let updated: any;
       mockDbUpdate.mockReturnValue({ set: jest.fn().mockImplementation((v) => { updated = v; return { where: jest.fn().mockResolvedValue({}) }; }) });
 
-      await service.update('a-1', { grading: 'A' } as any, 'tenant-123');
+      await service.update('a-1', { grading: 7 } as any, 'tenant-123');
 
       expect(updated).not.toHaveProperty('age_at_entry_weeks');
     });
