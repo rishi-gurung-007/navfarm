@@ -27,6 +27,10 @@ const FARMS = [
       feed_lead_time_days: 1, feed_bulk_multiple_kg: 6000,
       feed_bag_size_kg: null, feed_truck_target_kg: null, feed_production_weekday: 3,
     },
+    silos: [
+      { locationId: 's-1', code: 'VIL100/SILO-001', name: 'Feed Silo 1', feedItemCode: 'ICAT-004-ITM-0002', feedItemName: 'Dry Sow Mash', capacityKg: 10000, lowLevelKg: 2000, highLevelKg: 9000, reorderDays: 3 },
+      { locationId: 's-2', code: 'VIL100/SILO-002', name: 'Feed Silo 2', feedItemCode: null, feedItemName: null, capacityKg: 20000, lowLevelKg: null, highLevelKg: null, reorderDays: null },
+    ],
   },
   {
     farmId: 'f-gra', code: 'GRA100', name: 'Grasmere', companyId: 'co-1', companyName: 'Colcom',
@@ -34,6 +38,7 @@ const FARMS = [
       feed_lead_time_days: null, feed_bulk_multiple_kg: null,
       feed_bag_size_kg: null, feed_truck_target_kg: null, feed_production_weekday: null,
     },
+    silos: [],
   },
 ];
 
@@ -190,5 +195,89 @@ describe('Feed Planning fits 1024 without a sideways scroll (D32 follow-up)', ()
     await screen.findByRole('table', { name: 'fpTableLabel' });
     const save = screen.getByRole('button', { name: 'fpSave:{"farm":"VIL100"}' });
     expect(save.textContent).toBe('');
+  });
+});
+
+
+/**
+ * D41 (Rishi, 29 Sep): the delivery settings stay per farm — one truck, one
+ * trip, one deadline per farm cycle — and each farm's silos are listed beneath
+ * it, their levels and reorder days editable there with the silo form's rules.
+ */
+describe('D41 — each farm\'s silos under its delivery settings', () => {
+  it('lists a farm\'s silos as code — name, with the feed each holds read-only', async () => {
+    render(<FeedPlanningPanel />);
+    const silos = await screen.findByRole('table', { name: 'fpSiloTableLabel:{"farm":"VIL100"}' });
+    const rows = within(silos).getAllByRole('row').slice(1);
+    expect(rows).toHaveLength(2);
+    expect(rows[0].textContent).toContain('VIL100/SILO-001 — Feed Silo 1');
+    expect(rows[0].textContent).toContain('Dry Sow Mash');
+    // an empty silo says so rather than leaving the cell blank
+    expect(rows[1].textContent).toMatch(/fpSiloEmpty/);
+  });
+
+  it('shows the feed held as text, never as a control', async () => {
+    render(<FeedPlanningPanel />);
+    const silos = await screen.findByRole('table', { name: 'fpSiloTableLabel:{"farm":"VIL100"}' });
+    const held = within(within(silos).getAllByRole('row')[1]).getAllByRole('cell')[1];
+    expect(within(held).queryAllByRole('textbox')).toHaveLength(0);
+    expect(within(held).queryAllByRole('spinbutton')).toHaveLength(0);
+  });
+
+  it('offers capacity, both levels and the reorder days per silo', async () => {
+    render(<FeedPlanningPanel />);
+    await screen.findByRole('table', { name: 'fpSiloTableLabel:{"farm":"VIL100"}' });
+    expect((screen.getByLabelText('fpSiloLow:{"silo":"VIL100/SILO-001"}') as HTMLInputElement).value).toBe('2000');
+    expect((screen.getByLabelText('fpSiloHigh:{"silo":"VIL100/SILO-001"}') as HTMLInputElement).value).toBe('9000');
+    expect((screen.getByLabelText('fpSiloReorder:{"silo":"VIL100/SILO-001"}') as HTMLInputElement).value).toBe('3');
+    // capacity is the silo's own figure, shown for context
+    expect(screen.getByText('10,000')).toBeTruthy();
+  });
+
+  it('saves one silo row through the silo endpoint, sending only what it holds', async () => {
+    render(<FeedPlanningPanel />);
+    await screen.findByRole('table', { name: 'fpSiloTableLabel:{"farm":"VIL100"}' });
+    fireEvent.change(screen.getByLabelText('fpSiloReorder:{"silo":"VIL100/SILO-001"}'), { target: { value: '1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'fpSiloSave:{"silo":"VIL100/SILO-001"}' }));
+    await waitFor(() => expect(put).toHaveBeenCalledWith('/feed-forecast/farm-settings/f-vil/silos/s-1', {
+      low_level_kg: 2000,
+      high_level_kg: 9000,
+      silo_reorder_days: 1,
+    }));
+  });
+
+  it('keeps a silo\'s Save off until that row is edited', async () => {
+    render(<FeedPlanningPanel />);
+    await screen.findByRole('table', { name: 'fpSiloTableLabel:{"farm":"VIL100"}' });
+    const save = screen.getByRole('button', { name: 'fpSiloSave:{"silo":"VIL100/SILO-001"}' }) as HTMLButtonElement;
+    expect(save.disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText('fpSiloLow:{"silo":"VIL100/SILO-001"}'), { target: { value: '2500' } });
+    expect(save.disabled).toBe(false);
+  });
+
+  it('shows the API\'s own refusal when the levels are wrong', async () => {
+    put.mockRejectedValue({ message: 'The low feed level must be below the high feed level.' });
+    render(<FeedPlanningPanel />);
+    await screen.findByRole('table', { name: 'fpSiloTableLabel:{"farm":"VIL100"}' });
+    fireEvent.change(screen.getByLabelText('fpSiloLow:{"silo":"VIL100/SILO-001"}'), { target: { value: '9500' } });
+    fireEvent.click(screen.getByRole('button', { name: 'fpSiloSave:{"silo":"VIL100/SILO-001"}' }));
+    expect(await screen.findByText('The low feed level must be below the high feed level.')).toBeTruthy();
+  });
+
+  it('says so when a farm has no silo', async () => {
+    render(<FeedPlanningPanel />);
+    await screen.findByRole('table', { name: 'fpTableLabel' });
+    expect(screen.getByText('fpNoSilos:{"farm":"GRA100"}')).toBeTruthy();
+  });
+
+  it('fits 1024 without a sideways scroll: the silo row is budgeted too', () => {
+    const { cellPaddingPx, siloPx, siloTotalPx, totalPx } = FEED_PLANNING_LAYOUT;
+    // silo, feed held, capacity, three inputs, save — every one padded.
+    expect(siloPx).toHaveLength(7);
+    expect(siloTotalPx).toBe(siloPx.reduce((a, b) => a + b, 0) + 5 * cellPaddingPx);
+    // The binding case: a 260 px sidebar and the page's own lg:px-7 leave 708 px.
+    expect(siloTotalPx).toBeLessThanOrEqual(1024 - 260 - 56);
+    // and the farm row above it still fits, so neither table scrolls sideways
+    expect(totalPx).toBeLessThanOrEqual(1024 - 260 - 56);
   });
 });

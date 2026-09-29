@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Param, ParseUUIDPipe, Put, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { FeedForecastService } from './feed-forecast.service';
-import { QueryFeedForecastDto, QueryFeedPeriodsDto, UpdateFeedFarmSettingsDto } from './dto/feed-forecast.dto';
+import { QueryFeedForecastDto, QueryFeedPeriodsDto, UpdateFeedFarmSettingsDto, UpdateSiloPlanningDto } from './dto/feed-forecast.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
@@ -67,6 +67,26 @@ export class FeedForecastController {
     const tenantId = req.user?.tenantId || req['tenantId'];
     const data = await this.feedForecastService.updateFarmSettings(farmId, dto, tenantId, req.user);
     return { success: true, message: 'Feed planning settings updated.', data };
+  }
+
+  /**
+   * D41: a silo's levels and reorder days, from Feed Planning. Written under the
+   * location master's own edit right, like the farm settings above — the row
+   * being changed is a silo's master row — and never through the generic
+   * PUT /location, which demands the whole silo form.
+   */
+  @Put('farm-settings/:farmId/silos/:siloId')
+  @RequirePermission('MASTER_DATA', 'LOCATION', 'edit')
+  @ApiOperation({ summary: "One silo's feed levels and reorder days; only those three columns are written (D41)" })
+  async updateSiloSettings(
+    @Param('farmId', ParseUUIDPipe) farmId: string,
+    @Param('siloId', ParseUUIDPipe) siloId: string,
+    @Body() dto: UpdateSiloPlanningDto,
+    @Req() req: any,
+  ) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const data = await this.feedForecastService.updateSiloSettings(farmId, siloId, dto, tenantId, req.user);
+    return { success: true, message: 'Silo feed planning updated.', data };
   }
 
   @Get()

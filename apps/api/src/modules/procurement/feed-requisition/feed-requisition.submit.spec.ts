@@ -62,7 +62,7 @@ function setup(queues: Map<unknown, unknown[][]>) {
   const ref = {} as { cls: ClsService };
   const { db, log } = recordingDb(queues, () => ref.cls);
   const cls = (ref.cls = transactionCls(db));
-  const forecast = new FeedForecastService(cls, {} as any, { log: jest.fn() } as any);
+  const forecast = new FeedForecastService(cls, {} as any, { log: jest.fn() } as any, { currentItems: jest.fn(async () => new Map()) } as any);
   const approvals = new ApprovalService(cls, new AuditLogService(cls), {} as any);
   const evaluated: Array<{ args: unknown[]; inTx: boolean }> = [];
   const alerts: any = {

@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsDateString, IsIn, IsInt, IsOptional, IsUUID, Max, Min } from 'class-validator';
+import { IsDateString, IsIn, IsInt, IsNumber, IsOptional, IsUUID, Max, Min } from 'class-validator';
 import { FORECAST_VIEWS } from '../feed-forecast.view';
 import type { ForecastView } from '../feed-forecast.view';
 
@@ -77,4 +77,24 @@ export class UpdateFeedFarmSettingsDto {
   @ApiProperty({ description: 'Weekday the mill produces this farm\'s feed, 0 = Sunday to 6 = Saturday (default 0). null clears.', required: false, nullable: true })
   @IsOptional() @IsInt() @Min(0) @Max(6)
   feed_production_weekday?: number | null;
+}
+
+/**
+ * D41: a silo's own feed planning values, edited from Settings → Inventory
+ * Setup → Feed Planning. Only these three; the same bounds the Location form
+ * uses, and feed-forecast.service.ts re-checks the level pair against the
+ * silo's capacity with the silo form's own rule.
+ */
+export class UpdateSiloPlanningDto {
+  @ApiProperty({ description: 'Low feed level in KG — the level a low-feed alert fires at.', required: false, nullable: true })
+  @IsOptional() @IsNumber() @Min(0)
+  low_level_kg?: number | null;
+
+  @ApiProperty({ description: 'High feed level in KG — the over-stock notice level.', required: false, nullable: true })
+  @IsOptional() @IsNumber() @Min(0)
+  high_level_kg?: number | null;
+
+  @ApiProperty({ description: 'Days before run-down this silo must be refilled (D38). 0-365.', required: false, nullable: true })
+  @IsOptional() @IsInt() @Min(0) @Max(365)
+  silo_reorder_days?: number | null;
 }

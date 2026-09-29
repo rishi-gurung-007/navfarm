@@ -13,6 +13,7 @@ import { NumberSeriesService } from '../../system/number-series/number-series.se
 import { generateCompositeCode } from '../../system/number-series/composite-code.util';
 import { segmentFields } from '../../system/number-series/code-format.util';
 import { SiloFeedService } from '../../inventory/silo-feed/silo-feed.service';
+import { assertSiloLevels } from '../../inventory/silo-feed/silo-levels';
 
 /**
  * The location types a warehouse reads as. WarehouseService projects exactly
@@ -635,17 +636,13 @@ export class LocationService {
    * after its TON→KG conversion); the low must sit below the high, and
    * neither may exceed what the silo physically holds.
    */
+  /**
+   * D41 moved the rule itself to silo-feed/silo-levels.ts, because Feed Planning
+   * edits the same three columns now and two screens must not be able to
+   * disagree about what is valid. This stays as the local name the call sites use.
+   */
   private assertSiloLevels(lowKg: number | null | undefined, highKg: number | null | undefined, capacityKg: number | null, required = false) {
-    if (required && (lowKg == null || highKg == null)) {
-      throw new BadRequestException('A silo needs both a Below Feed Level and an Above Threshold.');
-    }
-    if (lowKg != null && highKg != null && lowKg >= highKg) {
-      throw new ConflictException('The low feed level must be below the high feed level.');
-    }
-    if (capacityKg != null) {
-      if (highKg != null && highKg > capacityKg) throw new ConflictException('The high feed level cannot exceed the silo capacity.');
-      if (lowKg != null && lowKg > capacityKg) throw new ConflictException('The low feed level cannot exceed the silo capacity.');
-    }
+    assertSiloLevels(lowKg, highKg, capacityKg, required);
   }
 
   /**

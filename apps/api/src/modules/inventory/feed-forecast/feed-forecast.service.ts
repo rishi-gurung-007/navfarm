@@ -10,8 +10,10 @@ import { FeedRow, stageDayRange } from '../../production/lifecycle/feed-row-days
 import { buildFeedForecast, DailyForecastRow, dayShort, DietChange, ForecastFlag, ForecastInput, ForecastRow, ForecastSource, isTimeZone, todayInZone } from './feed-forecast.engine';
 import { DEFAULT_SPAN_DAYS, ForecastView, groupRows, MAX_SPAN_DAYS, PeriodRange, ReportRow, resolveViewRange, spanProblem } from './feed-forecast.view';
 import { stockAsOf } from './feed-forecast.stock';
-import { QueryFeedForecastDto, UpdateFeedFarmSettingsDto } from './dto/feed-forecast.dto';
+import { QueryFeedForecastDto, UpdateFeedFarmSettingsDto, UpdateSiloPlanningDto } from './dto/feed-forecast.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
+import { SiloFeedService } from '../silo-feed/silo-feed.service';
+import { assertSiloLevels } from '../silo-feed/silo-levels';
 
 /**
  * The LOB bound on the forecast's location read for a restricted
@@ -68,8 +70,24 @@ export interface FeedFarmSettings {
   feed_production_weekday: number | null;
 }
 
+/** D41: one silo of a farm, as Feed Planning lists it. */
+export interface FeedPlanningSilo {
+  locationId: string;
+  code: string;
+  name: string;
+  /** What it is holding now — read-only; null when it is empty. */
+  feedItemCode: string | null;
+  feedItemName: string | null;
+  capacityKg: number | null;
+  lowLevelKg: number | null;
+  highLevelKg: number | null;
+  reorderDays: number | null;
+}
+
 export interface FeedFarmSettingsRow extends FeedFarmOption {
   settings: FeedFarmSettings;
+  /** D41: the farm's silos, in code order. */
+  silos: FeedPlanningSilo[];
 }
 
 export interface FeedForecastResponse {
@@ -521,6 +539,8 @@ export class FeedForecastService {
     private readonly cls: ClsService,
     private readonly ledgerService: InventoryLedgerService,
     private readonly auditService: AuditLogService,
+    // D41: what each silo is holding now, for Feed Planning's read-only column.
+    private readonly siloFeedService: SiloFeedService,
   ) {}
 
   private get db(): MySql2Database<typeof schema> {
@@ -695,12 +715,15 @@ export class FeedForecastService {
       .leftJoin(schema.companyMaster, eq(schema.companyMaster.company_id, L.company_id))
       .where(and(...conditions))
       .orderBy(L.location_code);
+    // D41: every silo of these farms, in one read, then grouped per farm.
+    const silosByFarm = await this.siloPlanningRows(rows.map((r) => r.farm_id), tenantId);
     return rows.map((r) => ({
       farmId: r.farm_id,
       code: r.code,
       name: r.name,
       companyId: r.company_id as string,
       companyName: r.company_name ?? null,
+      silos: silosByFarm.get(r.farm_id) ?? [],
       settings: {
         feed_lead_time_days: r.feed_lead_time_days ?? null,
         feed_bulk_multiple_kg: r.feed_bulk_multiple_kg ?? null,
@@ -709,6 +732,136 @@ export class FeedForecastService {
         feed_production_weekday: r.feed_production_weekday ?? null,
       },
     }));
+  }
+
+  /**
+   * D41: the silos of these farms, in code order, each with what it is holding
+   * now. One location read and one balance read per silo (SiloFeedService), so a
+   * farm with no silo costs nothing.
+   */
+  private async siloPlanningRows(farmIds: string[], tenantId: string): Promise<Map<string, FeedPlanningSilo[]>> {
+    const byFarm = new Map<string, FeedPlanningSilo[]>();
+    if (!farmIds.length) return byFarm;
+    const L = schema.locationMaster;
+    const rows = await this.db
+      .select({
+        location_id: L.location_id,
+        farm_id: L.farm_id,
+        company_id: L.company_id,
+        location_code: L.location_code,
+        location_name: L.location_name,
+        silo_capacity_kg: L.silo_capacity_kg,
+        low_level_kg: L.low_level_kg,
+        high_level_kg: L.high_level_kg,
+        silo_reorder_days: L.silo_reorder_days,
+      })
+      .from(L)
+      .where(and(
+        eq(L.tenant_id, tenantId),
+        eq(L.location_type, 'SILO'),
+        inArray(L.farm_id, farmIds),
+        eq(L.is_active, true),
+        isNull(L.deleted_at),
+      ))
+      .orderBy(L.location_code);
+    if (!rows.length) return byFarm;
+
+    // The feed held, per company, only for the silos there are.
+    const held = new Map<string, { item_code: string; item_description: string | null } | null>();
+    const byCompany = new Map<string, string[]>();
+    for (const row of rows) {
+      if (!row.company_id) continue;
+      byCompany.set(row.company_id, [...(byCompany.get(row.company_id) ?? []), row.location_id]);
+    }
+    for (const [companyId, siloIds] of byCompany) {
+      const items = await this.siloFeedService.currentItems(siloIds, companyId, tenantId);
+      for (const [siloId, item] of items) held.set(siloId, item);
+    }
+
+    const num = (v: unknown) => (v == null ? null : Number(v));
+    for (const row of rows) {
+      const current = held.get(row.location_id) ?? null;
+      const silo: FeedPlanningSilo = {
+        locationId: row.location_id,
+        code: row.location_code,
+        name: row.location_name,
+        feedItemCode: current?.item_code ?? null,
+        feedItemName: current?.item_description ?? null,
+        capacityKg: num(row.silo_capacity_kg),
+        lowLevelKg: num(row.low_level_kg),
+        highLevelKg: num(row.high_level_kg),
+        reorderDays: num(row.silo_reorder_days),
+      };
+      const key = row.farm_id as string;
+      byFarm.set(key, [...(byFarm.get(key) ?? []), silo]);
+    }
+    return byFarm;
+  }
+
+  /**
+   * D41: a silo's feed levels and reorder days, edited from Feed Planning. It
+   * writes only those three columns, and it applies the SAME rules the silo
+   * form applies (silo-feed/silo-levels.ts) — a value sent alone is judged
+   * against the one already stored, so the pair is never checked by halves.
+   */
+  async updateSiloSettings(
+    farmIdIn: string,
+    siloId: string,
+    dto: UpdateSiloPlanningDto,
+    tenantId: string,
+    user: { userId?: string; userType?: string } | undefined,
+  ) {
+    const { farmId, companyId } = await this.resolveFarm(farmIdIn, tenantId, user?.userType);
+    const L = schema.locationMaster;
+    const [silo] = await this.db
+      .select({
+        location_id: L.location_id,
+        company_id: L.company_id,
+        farm_id: L.farm_id,
+        location_type: L.location_type,
+        location_code: L.location_code,
+        silo_capacity_kg: L.silo_capacity_kg,
+        low_level_kg: L.low_level_kg,
+        high_level_kg: L.high_level_kg,
+        silo_reorder_days: L.silo_reorder_days,
+      })
+      .from(L)
+      .where(and(eq(L.location_id, siloId), eq(L.tenant_id, tenantId), isNull(L.deleted_at)))
+      .limit(1);
+    // Fails closed on every mismatch: the wrong farm, the wrong company, or a
+    // location that is not a silo all answer the same "not found".
+    if (!silo || silo.location_type !== 'SILO' || silo.farm_id !== farmId || silo.company_id !== companyId) {
+      throw new NotFoundException('Silo not found on this farm.');
+    }
+
+    const num = (v: unknown) => (v == null ? null : Number(v));
+    const updates: Record<string, number | null> = {};
+    if (dto.low_level_kg !== undefined) updates.low_level_kg = dto.low_level_kg;
+    if (dto.high_level_kg !== undefined) updates.high_level_kg = dto.high_level_kg;
+    if (dto.silo_reorder_days !== undefined) updates.silo_reorder_days = dto.silo_reorder_days;
+    if (!Object.keys(updates).length) throw new BadRequestException('Send at least one silo setting to change.');
+
+    // The pair as it would stand after this change, against the silo's capacity.
+    const effectiveLow = dto.low_level_kg !== undefined ? dto.low_level_kg : num(silo.low_level_kg);
+    const effectiveHigh = dto.high_level_kg !== undefined ? dto.high_level_kg : num(silo.high_level_kg);
+    assertSiloLevels(effectiveLow, effectiveHigh, num(silo.silo_capacity_kg));
+
+    await this.db.update(L).set({ ...updates, updated_by: user?.userId ?? null }).where(eq(L.location_id, siloId));
+    await this.auditService.log({
+      tenantId,
+      companyId,
+      userId: user?.userId,
+      action: 'UPDATE',
+      entityName: 'location_master',
+      entityId: siloId,
+      oldValues: {
+        low_level_kg: num(silo.low_level_kg),
+        high_level_kg: num(silo.high_level_kg),
+        silo_reorder_days: num(silo.silo_reorder_days),
+      },
+      newValues: updates,
+    });
+    return { farmId, siloId, code: silo.location_code, settings: updates };
   }
 
   /**

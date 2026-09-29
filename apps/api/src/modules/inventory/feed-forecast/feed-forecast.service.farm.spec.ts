@@ -21,20 +21,20 @@ describe('FeedForecastService — Plan B entry points', () => {
   it('answers NotFound when a farm-bound user names another farm (D13)', async () => {
     const cls = transactionCls({});
     useFarmScope(cls, { farmId: 'farm-a', restricted: true, companyId: 'co-1', lobId: null });
-    const service = new FeedForecastService(cls, {} as any, { log: jest.fn() } as any);
+    const service = new FeedForecastService(cls, {} as any, { log: jest.fn() } as any, { currentItems: jest.fn(async () => new Map()) } as any);
     await expect(service.resolveFarm('farm-b', 'tenant-1', 'STANDARD_USER')).rejects.toBeInstanceOf(NotFoundException);
   });
 
   it('returns the pinned farm and its company for a farm-bound user who names none', async () => {
     const cls = transactionCls({});
     useFarmScope(cls, { farmId: 'farm-a', restricted: true, companyId: 'co-1', lobId: null });
-    const service = new FeedForecastService(cls, {} as any, { log: jest.fn() } as any);
+    const service = new FeedForecastService(cls, {} as any, { log: jest.fn() } as any, { currentItems: jest.fn(async () => new Map()) } as any);
     await expect(service.resolveFarm(undefined, 'tenant-1', 'STANDARD_USER')).resolves.toEqual({ farmId: 'farm-a', companyId: 'co-1' });
   });
 
   it('runs every loader under the computed farm and returns sources and diet changes', async () => {
     const cls = transactionCls({});
-    const service = new FeedForecastService(cls, {} as any, { log: jest.fn() } as any);
+    const service = new FeedForecastService(cls, {} as any, { log: jest.fn() } as any, { currentItems: jest.fn(async () => new Map()) } as any);
     jest.spyOn(service, 'farmToday').mockResolvedValue({ today: '2026-09-23', timeZone: null });
     const seen: Array<string | null> = [];
     jest.spyOn(service as any, 'loadFarm').mockImplementation(async () => { seen.push(farmScope(cls).farmId); return farm; });
@@ -61,24 +61,24 @@ describe('FeedForecastService — Plan B entry points', () => {
     }
 
     it('farmToday reads the company zone: 22:30 UTC on 25 Sep is 26 Sep in Harare (D16)', async () => {
-      const service = new FeedForecastService(transactionCls(zoneDb('Africa/Harare')), {} as any, { log: jest.fn() } as any);
+      const service = new FeedForecastService(transactionCls(zoneDb('Africa/Harare')), {} as any, { log: jest.fn() } as any, { currentItems: jest.fn(async () => new Map()) } as any);
       await expect(service.farmToday('co-1', 'tenant-1', Date.UTC(2026, 8, 25, 22, 30))).resolves.toEqual({ today: '2026-09-26', timeZone: 'Africa/Harare' });
     });
 
     it('farmToday looks a stored timezone_master id up to its IANA code', async () => {
-      const service = new FeedForecastService(transactionCls(zoneDb('tz-id-1', [{ code: 'Africa/Harare' }])), {} as any, { log: jest.fn() } as any);
+      const service = new FeedForecastService(transactionCls(zoneDb('tz-id-1', [{ code: 'Africa/Harare' }])), {} as any, { log: jest.fn() } as any, { currentItems: jest.fn(async () => new Map()) } as any);
       await expect(service.farmToday('co-1', 'tenant-1', Date.UTC(2026, 8, 25, 22, 30))).resolves.toEqual({ today: '2026-09-26', timeZone: 'Africa/Harare' });
     });
 
     it('farmToday falls back to the server day, and says so with a null zone, when the company has none', async () => {
-      const service = new FeedForecastService(transactionCls(zoneDb(null)), {} as any, { log: jest.fn() } as any);
+      const service = new FeedForecastService(transactionCls(zoneDb(null)), {} as any, { log: jest.fn() } as any, { currentItems: jest.fn(async () => new Map()) } as any);
       const ms = Date.UTC(2026, 8, 25, 12, 0);
       await expect(service.farmToday('co-1', 'tenant-1', ms)).resolves.toEqual({ today: todayLocal(ms), timeZone: null });
     });
 
     it('computeForFarm plans from the farm day, not the server day', async () => {
       const cls = transactionCls({});
-      const service = new FeedForecastService(cls, {} as any, { log: jest.fn() } as any);
+      const service = new FeedForecastService(cls, {} as any, { log: jest.fn() } as any, { currentItems: jest.fn(async () => new Map()) } as any);
       jest.spyOn(service, 'farmToday').mockResolvedValue({ today: '2026-09-26', timeZone: 'Africa/Harare' });
       jest.spyOn(service as any, 'loadFarm').mockResolvedValue(farm);
       const loadInput = jest.spyOn(service as any, 'loadInput').mockResolvedValue({ input: { ...emptyInput, planningDate: '2026-09-26' }, flags: [], stageBlocks: [] });
@@ -91,7 +91,7 @@ describe('FeedForecastService — Plan B entry points', () => {
   describe('computeForFarm — planning date, stock date and horizon (D16, D19, Q8, Q12)', () => {
     function withToday(today: string) {
       const cls = transactionCls({});
-      const service = new FeedForecastService(cls, {} as any, { log: jest.fn() } as any);
+      const service = new FeedForecastService(cls, {} as any, { log: jest.fn() } as any, { currentItems: jest.fn(async () => new Map()) } as any);
       jest.spyOn(service, 'farmToday').mockResolvedValue({ today, timeZone: 'Africa/Harare' });
       jest.spyOn(service as any, 'loadFarm').mockResolvedValue(farm);
       const loadInput = jest.spyOn(service as any, 'loadInput').mockImplementation(async (...args: any[]) => ({
