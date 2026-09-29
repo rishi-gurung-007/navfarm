@@ -26,6 +26,7 @@ import { FeedForecastService, MAX_SPAN_DAYS } from '../../inventory/feed-forecas
 import { utcTimestamp, type ForecastSource } from '../../inventory/feed-forecast/feed-forecast.engine';
 import { FeedAlertService } from '../../inventory/feed-alert/feed-alert.service';
 import { SiloFeedService } from '../../inventory/silo-feed/silo-feed.service';
+import { itemKindCondition } from '../../master-data/item/item-kind-filter';
 import { InventoryLedgerService } from '../../inventory/inventory-ledger/inventory-ledger.service';
 import { ApprovalService } from '../../production/approval/approval.service';
 import type { ApprovalRequestRow } from '../../production/approval/approval.service';
@@ -545,12 +546,17 @@ export class FeedRequisitionService implements OnModuleInit {
     });
   }
 
-  /** An item a feed requisition may name: this company's own, of type FEED, live. */
+  /**
+   * An item a feed requisition may name: this company's own, of a FEED kind,
+   * live. "Of a FEED kind" rather than item_type = 'FEED' because a tenant
+   * names its own item types — Porta Farm's is "FEED-001" (item kinds, 29 Sep),
+   * and on that tenant this condition matched nothing at all.
+   */
   private feedItemConditions(tenantId: string, companyId: string): SQL {
     return and(
       eq(schema.itemMaster.tenant_id, tenantId),
       eq(schema.itemMaster.company_id, companyId),
-      eq(schema.itemMaster.item_type, 'FEED'),
+      itemKindCondition('FEED', tenantId, companyId), // this path already knows its company
       eq(schema.itemMaster.is_active, true),
       isNull(schema.itemMaster.deleted_at),
     )!;
