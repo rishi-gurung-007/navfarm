@@ -189,6 +189,12 @@ export interface MasterDataField {
   readOnly?: boolean;
   /** Excluded from the list table */
   hideInTable?: boolean;
+  /**
+   * Column stays in the list table but is offered as no list filter — e.g. a
+   * resource's Next Maintenance Date and Cost Rate, which are system-tracked
+   * figures nobody narrows a resource list by.
+   */
+  noFilter?: boolean;
   /** When this field stands in as a list column (config.columns is omitted):
    *  same meaning as columns[].decimals/decimalsFromKey below. */
   decimals?: number;
@@ -342,6 +348,12 @@ export type MasterDataColumn = {
   decimalsFromKey?: string;
   format?: "date" | "codes";
   labels?: Record<string, string>;
+  /**
+   * Column stays in the list table but is offered as no list filter — e.g. a
+   * resource's Next Maintenance Date and Cost Rate, system-tracked figures
+   * nobody narrows a resource list by.
+   */
+  noFilter?: boolean;
 };
 
 export interface MasterDataConfig {

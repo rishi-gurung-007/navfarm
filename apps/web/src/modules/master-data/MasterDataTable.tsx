@@ -113,6 +113,16 @@ function currentLabel(f: MasterDataField, values: Row): string {
   return f.labelWhen.labels[String(values[f.labelWhen.key] ?? "")] || f.label;
 }
 
+/** What opening a row may do: a deactivated record opens read-only — view, no edit —
+ * and a read-only table offers no edit at all. Exported for the spec that pins the
+ * DEACTIVATED-opens-read-only rule (Resource, UOM). MySQL tinyint reaches here as
+ * 0 as readily as false, and both mean deactivated. */
+export function rowOpenAction(row: Row, readOnly: boolean): "edit" | "view" | "none" {
+  if (readOnly) return "none";
+  if (row.is_active === false || row.is_active === 0) return "view";
+  return "edit";
+}
+
 /** Whether `f` is required right now — statically, or via `requiredWhen` against the live form values. */
 function isFieldRequired(f: MasterDataField, form: Row): boolean {
   if (f.required) return true;
@@ -936,7 +946,7 @@ export function MasterDataTable({
           </Field>
         </FieldGroup>
       )}
-      {columns.map((c) => {
+      {columns.filter((c) => !c.noFilter).map((c) => {
         const choices = filterChoicesFor(c.key);
         const value = filterDraft[c.key] ?? "";
         const fieldId = `master-${config.key}-filter-${c.key}`;
@@ -1356,7 +1366,15 @@ export function MasterDataTable({
   }, [createOnly]);
 
   const openEdit = (row: Row) => {
-    if (readOnly) return;
+    const action = rowOpenAction(row, readOnly);
+    // A deactivated record opens read-only — view, no edit. Editing (or
+    // reactivating) is a deliberate action through the row's own toggle, not a
+    // side effect of opening it.
+    if (action === "view") {
+      setViewingId(String(row[config.idKey]));
+      return;
+    }
+    if (action === "none") return;
     setEditing(row);
     setIsManualNoAllowed(false);
     const initial: Row = {};
@@ -2887,7 +2905,7 @@ export function MasterDataTable({
                                   >
                                     {t("roleColView") ?? "View Details"}
                                   </MenuItem>
-                                  {!readOnly && (
+                                  {!readOnly && row.is_active !== false && (
                                     <MenuItem
                                       onSelect={() => openEdit(row)}
                                       leading={<Pencil className="h-4 w-4 text-[var(--text-muted)]" />}

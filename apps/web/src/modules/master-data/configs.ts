@@ -1625,15 +1625,17 @@ const resource: MasterDataConfig = {
     { key: "resource_code", label: "Code" },
     { key: "resource_name", label: "Name" },
     { key: "resource_type", label: "Type" },
-    { key: "cost_rate", label: "Cost Rate" },
-    { key: "next_maintenance_date", label: "Next Maintenance" },
+    // System-tracked figures nobody narrows a resource list by — shown in the
+    // table, offered as no filter.
+    { key: "cost_rate", label: "Cost Rate", noFilter: true },
+    { key: "next_maintenance_date", label: "Next Maintenance", noFilter: true },
   ],
   fields: [
     { key: "company_id", label: "Company", type: "text", hideInForm: true },
     { key: "nob_id", label: "Nature of Business", type: "select-entity", entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], helpText: "Leave blank if this resource is shared across all business verticals.", section: "Identification" },
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank if this resource is shared across all LOBs under the selected NOB.", section: "Identification" },
     { key: "resource_code", label: "Resource Code", type: "text", readOnly: true, placeholder: "Generated as RES-001", helpText: "Generated automatically from this company's Resource sequence.", section: "Identification" },
-    { key: "resource_name", label: "Resource Name", type: "text", required: true, placeholder: "Senior Laborer", section: "Identification" },
+    // Form order: Resource Code, Resource Type, Resource Sub-Type, Resource Name.
     {
       key: "resource_type", label: "Resource Type", type: "select", required: true, section: "Identification",
       // The client template lists MANPOWER, EQUIPMENT, VEHICLE, UTILITY, OTHER.
@@ -1645,13 +1647,14 @@ const resource: MasterDataConfig = {
       options: ["MANPOWER", "EQUIPMENT"].map((v) => ({ value: v, label: v })),
     },
     {
-      key: "resource_sub_type", label: "Sub-Type", type: "select", section: "Identification",
+      key: "resource_sub_type", label: "Resource Sub-Type", type: "select", section: "Identification",
       options: ["PERMANENT", "CONTRACT", "DAILY", "OWNED", "LEASED", "RENTED"].map((v) => ({ value: v, label: v })),
       helpText: "PERMANENT/CONTRACT/DAILY for labor; OWNED/LEASED/RENTED for equipment.",
     },
-    { key: "employee_id", label: "Employee ID", type: "text", placeholder: "EMP-001", helpText: "Labor/manpower only.", section: "People", visibleWhen: { anyOf: [{ key: "resource_type", equals: ["MANPOWER", "LABOR"] }] } },
-    { key: "designation", label: "Designation", type: "text", placeholder: "Senior Farm Worker", helpText: "Labor/manpower only.", section: "People", visibleWhen: { anyOf: [{ key: "resource_type", equals: ["MANPOWER", "LABOR"] }] } },
-    { key: "department", label: "Department", type: "text", placeholder: "Farm Operations", helpText: "Department or team.", section: "People", visibleWhen: { anyOf: [{ key: "resource_type", equals: ["MANPOWER", "LABOR"] }] } },
+    { key: "resource_name", label: "Resource Name", type: "text", required: true, placeholder: "Senior Laborer", section: "Identification" },
+    { key: "employee_id", label: "Employee ID", type: "text", placeholder: "EMP-001", helpText: "Labor/manpower only.", section: "People" },
+    { key: "designation", label: "Designation", type: "text", placeholder: "Senior Farm Worker", helpText: "Labor/manpower only.", section: "People" },
+    { key: "department", label: "Department", type: "text", placeholder: "Farm Operations", helpText: "Department or team.", section: "People" },
     { key: "capacity", label: "Capacity", type: "number", step: "0.01", min: 0, section: "Capacity & Cost" },
     // Left unfiltered: a resource's capacity spans MANPOWER (HEAD), EQUIPMENT (KG,
     // LITER for a tank, BAG for a mixer) and UTILITY — no single type fits.
@@ -1660,20 +1663,17 @@ const resource: MasterDataConfig = {
     // consumption), or per HEAD/trip — spans every type.
     { key: "unit", label: "Cost UOM", type: "select-entity", entityEndpoint: "/uom", entityValueKey: "uom_code", entityLabelKeys: ["uom_code", "uom_name"], section: "Capacity & Cost" },
     { key: "cost_rate", label: "Cost Rate", type: "number", step: "0.01", min: 0, section: "Capacity & Cost" },
-    { key: "cost_element", label: "Cost Element", type: "text", placeholder: "DIRECT_LABOR", helpText: "GL cost classification, e.g. DIRECT_LABOR / INDIRECT_LABOR / EQUIPMENT_HIRE / FUEL / MAINTENANCE.", section: "Capacity & Cost" },
+    { key: "cost_element", label: "Cost Element", type: "text", maxLength: 50, placeholder: "DIRECT_LABOR", helpText: "GL cost classification, e.g. DIRECT_LABOR / INDIRECT_LABOR / EQUIPMENT_HIRE / FUEL / MAINTENANCE.", section: "Capacity & Cost" },
     { key: "gl_cost_account", label: "GL Cost Account", type: "select-entity", searchable: true, entityEndpoint: "/gl-account", entityValueKey: "gl_account_id", entityLabelKeys: ["account_code", "account_name"], helpText: "GL account this resource posts cost to.", section: "Capacity & Cost" },
-    { key: "asset_code", label: "Asset Code", type: "text", placeholder: "ASSET-PELLETISER-01", helpText: "Equipment only.", section: "Asset", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
-    { key: "asset_make", label: "Asset Make", type: "text", section: "Asset", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
-    { key: "asset_model", label: "Asset Model", type: "text", section: "Asset", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
-    { key: "asset_serial_no", label: "Asset Serial No.", type: "text", section: "Asset", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
-    { key: "purchase_date", label: "Purchase Date", type: "date", section: "Asset", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
-    { key: "warranty_expiry_date", label: "Warranty Expiry", type: "date", section: "Asset", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
-    { key: "maintenance_frequency_days", label: "Maintenance Frequency (days)", type: "number", min: 0, helpText: "Days between scheduled services. Logging a completed service auto-calculates the next due date.", section: "Maintenance", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
-    { key: "maintenance_cost_per_service", label: "Est. Cost per Service", type: "number", step: "0.01", min: 0, section: "Maintenance", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
-    { key: "maintenance_vendor", label: "Preferred Maintenance Vendor", type: "text", section: "Maintenance", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
-    { key: "last_maintenance_date", label: "Last Maintenance (system-tracked)", type: "date", hideInForm: true, section: "Maintenance" },
-    { key: "next_maintenance_date", label: "Next Maintenance (system-tracked)", type: "date", hideInForm: true, section: "Maintenance" },
-    { key: "license_expiry", label: "License Expiry", type: "date", helpText: "License/certification expiry — alert 30 days before.", section: "Maintenance", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
+    { key: "asset_code", label: "Asset Code", type: "text", placeholder: "ASSET-PELLETISER-01", helpText: "Equipment only.", section: "Asset" },
+    { key: "asset_make", label: "Asset Make", type: "text", section: "Asset" },
+    { key: "asset_model", label: "Asset Model", type: "text", section: "Asset" },
+    { key: "asset_serial_no", label: "Asset Serial No.", type: "text", section: "Asset" },
+    { key: "purchase_date", label: "Purchase Date", type: "date", section: "Asset" },
+    { key: "warranty_expiry_date", label: "Warranty Expiry", type: "date", section: "Asset" },
+    { key: "maintenance_frequency_days", label: "Maintenance Frequency (days)", type: "number", min: 0, helpText: "Days between scheduled services. Logging a completed service auto-calculates the next due date.", section: "Maintenance" },
+    { key: "maintenance_cost_per_service", label: "Est. Cost per Service", type: "number", step: "0.01", min: 0, section: "Maintenance" },
+    { key: "maintenance_vendor", label: "Preferred Maintenance Vendor", type: "text", section: "Maintenance" },
   ],
 };
 
