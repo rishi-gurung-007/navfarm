@@ -1498,6 +1498,13 @@ export function MasterDataTable({
           setActiveFormTab(f.section || "Identification");
           throw new Error(`"${tLabel(currentLabel(f, form))}" is required.`);
         }
+        // A field with a character-format whitelist (f.pattern) is tested over
+        // its whole value at save — the HTML pattern attribute alone only
+        // validates on native form submit, which this dialog does not use.
+        if (!isEmpty && f.pattern && typeof v === "string" && !new RegExp(`^${f.pattern}$`).test(v)) {
+          setActiveFormTab(f.section || "Identification");
+          throw new Error(`"${tLabel(currentLabel(f, form))}" has characters it does not allow.`);
+        }
         if (isNumberSeriesForm && !isEmpty) {
           if (f.maxLength && typeof v === "string" && v.length > f.maxLength) {
             setActiveFormTab(f.section || "Identification");
@@ -2388,6 +2395,7 @@ export function MasterDataTable({
         min={f.min}
         max={f.max}
         maxLength={f.maxLength}
+        pattern={f.pattern}
         value={value}
         onKeyDown={(e) => {
           if (f.type === "number") {

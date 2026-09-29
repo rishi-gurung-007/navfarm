@@ -202,6 +202,14 @@ export interface MasterDataField {
   /** Maximum length for text inputs */
   maxLength?: number;
   /**
+   * Character-format whitelist for text inputs, as a regex source tested
+   * against the whole value (e.g. "[A-Za-z ]*" letters and spaces). Enforced
+   * at save with a clear error, and passed to the input as its HTML pattern —
+   * mirror whatever the DTO's @Matches enforces, so the form refuses what the
+   * API would reject rather than round-tripping a 400.
+   */
+  pattern?: string;
+  /**
    * Renders type "number" as a native <input type="number"> (spinner, browser
    * numeric validation) instead of the text-input-with-digit-filtering every
    * other number field uses. The text-input form exists to dodge two native
