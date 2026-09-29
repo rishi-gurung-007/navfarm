@@ -1,7 +1,13 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsInt, Min, Max, IsNumber } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsInt, Min, Max, IsNumber, Matches } from 'class-validator';
 import { Type } from 'class-transformer';
 import { MasterListQueryDto } from '../../../../common/master-list-query';
+
+// Freebuff task-3 item 7 (Rishi, 29 Sep 2026): UOM Name takes letters and
+// spaces only. The web form mirrors the same pattern in the uom config so the
+// form refuses what the API would reject. All 48 uom_master rows in nf_devco
+// already satisfy ^[A-Za-z ]+$ — nothing existing is stranded by this.
+const LETTERS_ONLY = /^[A-Za-z ]*$/;
 
 export class CreateUomDto {
   @ApiProperty({ description: 'Short code for the UOM. Optional when a number series is configured for UOMs — the code is generated then.', required: false, example: 'KG' })
@@ -9,9 +15,10 @@ export class CreateUomDto {
   @IsOptional()
   uom_code?: string;
 
-  @ApiProperty({ description: 'Full descriptive name', example: 'Kilogram' })
+  @ApiProperty({ description: 'Full descriptive name — letters and spaces only', example: 'Kilogram' })
   @IsString()
   @IsNotEmpty()
+  @Matches(LETTERS_ONLY, { message: 'uom_name must contain letters and spaces only' })
   uom_name: string;
 
   @ApiProperty({ description: 'UOM Type classification', example: 'WEIGHT', enum: ['WEIGHT', 'VOLUME', 'COUNT', 'AREA', 'TIME', 'OTHER'] })
@@ -57,9 +64,10 @@ export class UpdateUomDto {
   @IsOptional()
   uom_code?: string;
 
-  @ApiProperty({ description: 'Full descriptive name', required: false, example: 'Kilogram' })
+  @ApiProperty({ description: 'Full descriptive name — letters and spaces only', required: false, example: 'Kilogram' })
   @IsString()
   @IsOptional()
+  @Matches(LETTERS_ONLY, { message: 'uom_name must contain letters and spaces only' })
   uom_name?: string;
 
   @ApiProperty({ description: 'UOM Type classification', required: false, example: 'WEIGHT' })

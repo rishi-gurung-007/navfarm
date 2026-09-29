@@ -396,6 +396,13 @@ export interface MasterDataConfig {
    */
   columns?: MasterDataColumn[];
   group: string;
+  /**
+   * Hides the group badge chip next to the page title. The chip names the
+   * workbook section a master belongs to; Freebuff task-3 item 7 asked for it
+   * gone from the UOM page specifically, so this is opt-in per config rather
+   * than a global removal.
+   */
+  hideGroupBadge?: boolean;
   /** Show a Nature of Business / Line of Business filter pair in the list toolbar (for entities whose table carries nob_id/lob_id). */
   supportsNobLobFilter?: boolean;
   /**

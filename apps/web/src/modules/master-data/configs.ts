@@ -594,6 +594,10 @@ const uom: MasterDataConfig = {
   apiBase: "/uom",
   idKey: "uom_id",
   group: "Inventory",
+  // Freebuff task-3 item 7: the Inventory badge next to the page title reads as
+  // an icon the client asked to remove; the sidebar grouping itself still works
+  // off `group`, so only the chip is hidden here.
+  hideGroupBadge: true,
   isPrimary: true,
   lookupFor: ["item", "location", "resource"],
   columns: [
@@ -608,11 +612,14 @@ const uom: MasterDataConfig = {
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank if this unit is shared across all LOBs under the selected NOB." },
     { key: "company_id", label: "Company (blank = global)", type: "text", hideInForm: true },
     { key: "uom_code", label: "UOM Code", type: "text", required: true, createOnly: true, helpText: "Leave blank to derive from the unit name via the number series — or type a standard symbol such as KG, which then stays fixed. After create, a series-derived code follows the series when the name changes.", placeholder: "KG" },
-    { key: "uom_name", label: "UOM Name", type: "text", required: true, placeholder: "Kilogram", helpText: "Name of the unit (e.g. Kilogram, Litre)." },
+    { key: "uom_name", label: "UOM Name", type: "text", required: true, placeholder: "Kilogram", pattern: "[A-Za-z ]*", helpText: "Name of the unit (e.g. Kilogram, Litre). Letters and spaces only." },
     {
       key: "uom_type", label: "UOM Type", type: "select", required: true,
       options: ["WEIGHT", "VOLUME", "COUNT", "AREA", "TIME", "OTHER"].map((v) => ({ value: v, label: v })),
-      helpText: "Select unit type: WEIGHT, VOLUME, COUNT, AREA, TIME, or OTHER.",
+      // The consequence of the choice is invisible until a second base unit is
+      // attempted: one base unit per type is what makes From × Factor = To
+      // resolvable (uom.service.ts refuses a second base for the same type).
+      helpText: "Classifies the unit — WEIGHT, VOLUME, COUNT, AREA, TIME or OTHER. Conversions always land on the base unit of the same type, and each type keeps exactly one base unit.",
     },
     { key: "decimal_places", label: "Decimal Places", type: "number", min: 0 },
     { key: "is_base_uom", label: "Is Base Unit", type: "boolean" },

@@ -2480,7 +2480,7 @@ export function MasterDataTable({
                 {tLabel(config.label)}
               </h1>
 
-              {config.group && (
+              {config.group && !config.hideGroupBadge && (
                 <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium bg-[var(--surface-raised)] border border-[var(--border)] text-[var(--text-secondary)]">
                   {tLabel(config.group)}
                 </span>
