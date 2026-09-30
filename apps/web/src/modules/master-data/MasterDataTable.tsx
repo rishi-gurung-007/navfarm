@@ -3200,16 +3200,6 @@ export function MasterDataTable({
         title="Code already exists"
         presentation="compact"
         maxWidth="sm"
-        footer={
-          <button
-            type="button"
-            onClick={() => setDuplicateCodeMessage(null)}
-            className="rounded-lg px-4 py-2 text-sm font-semibold text-white"
-            style={{ backgroundColor: "var(--accent)" }}
-          >
-            Change code
-          </button>
-        }
       >
         <div className="space-y-2 text-sm">
           <p style={S.primary}>{duplicateCodeMessage}</p>

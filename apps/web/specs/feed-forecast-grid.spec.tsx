@@ -81,14 +81,15 @@ describe('FeedForecastGrid', () => {
     const cells = within(screen.getAllByRole('row')[1]).getAllByRole('cell');
     expect(within(cells[8]).getByText('93')).toBeTruthy();
     expect(within(cells[8]).getByText('ffIndicative')).toBeTruthy();
+    expect(cells[8].textContent).toBe('ffIndicative93');
   });
 
-  it("shows a grouped line's dates and says the stock lasts past the horizon when nothing runs down", () => {
+  it("shows a grouped line's dates and only dashes when forecast dates are not available", () => {
     render(<FeedForecastGrid rows={[row({ days: 3, dateTo: '2026-09-25', runDownDate: null, refillDate: null, requiredOn: null, overdue: false })]} loading={false} horizonTo="2026-11-07" t={t} />);
     expect(screen.getByText('23/09/26 – 25/09/26')).toBeTruthy();
-    expect(screen.getByText('ffBeyondHorizon:{"date":"07/11/26"}')).toBeTruthy();
-    // D29: Date to Refill and Required On say nothing is due, not a bare dash.
-    expect(screen.getAllByText('ffNotDueBy:{"date":"07/11/26"}')).toHaveLength(2);
+    const cells = within(screen.getAllByRole('row')[1]).getAllByRole('cell');
+    expect(cells.slice(9, 12).map((cell) => cell.textContent)).toEqual(['—', '—', '—']);
+    expect(screen.queryByText(/ffBeyondHorizon|ffNotDueBy/)).toBeNull();
     expect(screen.queryByText('ffOverdue')).toBeNull();
   });
 

@@ -130,10 +130,7 @@ function StateRow({ colSpan, children }: { colSpan: number; children: ReactNode 
   );
 }
 
-export function FeedForecastGrid({ rows, loading, horizonTo, t }: { rows: ReportRow[]; loading: boolean; horizonTo: string | null; t: Translate }) {
-  // D29: with no run-down inside the window there is nothing to refill or order
-  // yet; say so, rather than a bare dash that reads as missing data.
-  const notDue = horizonTo ? t("ffNotDueBy", { date: formatDateShort(horizonTo) }) : "—";
+export function FeedForecastGrid({ rows, loading, t }: { rows: ReportRow[]; loading: boolean; horizonTo: string | null; t: Translate }) {
   return (
     <ScrollTable label={t("ffGridLabel")}>
       <thead>
@@ -173,15 +170,15 @@ export function FeedForecastGrid({ rows, loading, horizonTo, t }: { rows: Report
               <td className={cn(TD, NUM)}>{row.heads.toLocaleString("en-US")}</td>
               <td className={cn(TD, NUM)}>{fmtKg(row.perDayIntakeKg)}</td>
               <td className={cn(TD, NUM)}>
-                <span>{row.daysOfStock ?? "—"}</span>
-                {row.indicative && <Badge variant="warning" className={cn("ml-1.5", SMALL_BADGE)}>{t("ffIndicative")}</Badge>}
+                <span className="inline-flex items-center justify-end gap-1.5">
+                  {row.indicative && <Badge variant="warning" className={SMALL_BADGE}>{t("ffIndicative")}</Badge>}
+                  <span>{row.daysOfStock ?? "—"}</span>
+                </span>
               </td>
+              <td className={cn(TD, !row.runDownDate && MUTED)}>{formatDateShort(row.runDownDate)}</td>
+              <td className={cn(TD, !row.refillDate && MUTED)}>{formatDateShort(row.refillDate)}</td>
               <td className={TD}>
-                {row.runDownDate ? formatDateShort(row.runDownDate) : horizonTo ? t("ffBeyondHorizon", { date: formatDateShort(horizonTo) }) : "—"}
-              </td>
-              <td className={cn(TD, !row.refillDate && MUTED)}>{row.refillDate ? formatDateShort(row.refillDate) : notDue}</td>
-              <td className={TD}>
-                <span className={cn(!row.requiredOn && MUTED)}>{row.requiredOn ? formatDateShort(row.requiredOn) : notDue}</span>
+                <span className={cn(!row.requiredOn && MUTED)}>{formatDateShort(row.requiredOn)}</span>
                 {row.overdue && <Badge variant="danger" className={cn("ml-1.5", SMALL_BADGE)}>{t("ffOverdue")}</Badge>}
               </td>
             </tr>

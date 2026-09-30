@@ -124,6 +124,7 @@ describe("master-data edit fields", () => {
     expect((await screen.findByRole("dialog", { name: "Code already exists" })).textContent).toContain(
       "Breed code 'BREED-EXISTING' already exists for Large White.",
     );
+    expect(screen.queryByRole("button", { name: "Change code" })).toBeNull();
     expect(screen.getByRole("dialog", { name: "Add Test Breed" })).toBeTruthy();
     expect((screen.getByRole("textbox", { name: "Code" }) as HTMLInputElement).value).toBe("BREED-EXISTING");
   });

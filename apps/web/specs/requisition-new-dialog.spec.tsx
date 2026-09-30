@@ -36,9 +36,11 @@ describe('RequisitionNewDialog (D26)', () => {
     expect(screen.getByText('rqNew')).toBeTruthy();
     expect(screen.getByText('rqNewPurposePrompt')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'rqNewPurposeFeed' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'rqNewCancel' })).toBeNull();
     expect(get).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'rqNewPurposeFeed' }));
     expect(screen.getByText('rqNewTitle')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'rqNewCancel' })).toBeNull();
     await waitFor(() => expect(get).toHaveBeenCalledWith('/feed-requisition/options?farmId=farm-vil'));
     // The Master Data routes are not reachable for a farm login, and answer
     // with templates in the tenant-wide workspace (F3, review I3).

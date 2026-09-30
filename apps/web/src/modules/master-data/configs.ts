@@ -131,18 +131,18 @@ const location: MasterDataConfig = {
     // live references for a cosmetic gain, and the stored value is still KG.
     { key: "silo_capacity_kg", label: "Silo Capacity", type: "number", min: 0, max: 999999.99, step: "0.01", visibleWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, requiredWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, helpText: "Required when Storage Location is SILO.", section: "Identification" },
     { key: "silo_capacity_uom", label: "Silo Capacity UOM", type: "select", options: ["KG", "TON"].map((v) => ({ value: v, label: v })), defaultValue: "KG", visibleWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, requiredWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, helpText: "The unit the capacity above is entered in. The capacity is stored in kilograms whichever unit is chosen — a tonne figure is converted on save.", section: "Identification" },
-    { key: "silo_reorder_days", label: "Silo Reorder Days", type: "number", min: 0, max: 365, step: "1", visibleWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, requiredWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, helpText: "How many days before this silo runs down to its low level it must be refilled. The Feed Forecast's Date to Refill is that many days before the run-down date. Standard 2.", section: "Identification" },
+    { key: "silo_reorder_days", label: "Refill Lead Time (days)", type: "number", min: 0, max: 365, step: "1", visibleWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, requiredWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, helpText: "How many days before this silo reaches its low stock level it must be refilled. The Feed Forecast's refill date is this many days before the run-down date. Standard 2.", section: "Identification" },
     // Master Setup §1 rows 10 and 12 (spec D10) — alongside Silo Reorder
     // Days, not replacing it. Required on a silo since D22 (Rishi, 27 Sep):
     // the forecast's run-down and the feed alerts read them.
     {
-      key: "low_level_kg", label: "Below Feed Level (KG)", type: "number", min: 0, step: "1", nativeNumber: true,
+      key: "low_level_kg", label: "Low Stock Level (kg)", type: "number", min: 0, step: "1", nativeNumber: true,
       visibleWhen: { anyOf: [{ key: "location_type", equals: "SILO" }] },
       requiredWhen: { anyOf: [{ key: "location_type", equals: "SILO" }] }, section: "Identification",
       helpText: "Low feed alert at or below this. Usually 20% of capacity."
     },
     {
-      key: "high_level_kg", label: "Above Threshold (KG)", type: "number", min: 0, step: "1", nativeNumber: true,
+      key: "high_level_kg", label: "High Stock Level (kg)", type: "number", min: 0, step: "1", nativeNumber: true,
       visibleWhen: { anyOf: [{ key: "location_type", equals: "SILO" }] },
       requiredWhen: { anyOf: [{ key: "location_type", equals: "SILO" }] }, section: "Identification",
       helpText: "Over-stock notice at or above this. Usually 90% of capacity."
@@ -1206,9 +1206,9 @@ const breedLifecycleStage: MasterDataConfig = {
       key: "season_type", label: "Season", type: "select",
       options: ["ALL", "SUMMER", "WINTER"].map((v) => ({ value: v, label: v.charAt(0) + v.slice(1).toLowerCase() })),
     },
-    { key: "feed_item_id", label: "Feed Item", type: "select-entity", searchable: true, entityEndpoint: "/item", entityValueKey: "item_id", entityLabelKeys: ["item_code", "item_name"] },
-    { key: "feed_qty_per_head_per_day_kg", label: "Feed Qty per Head per Day (KG)", type: "number", step: "0.01", min: 0 },
-    { key: "feed_wastage_pct", label: "Feed Wastage %", type: "number", step: "0.01", min: 0 },
+    { key: "feed_item_id", label: "Feed", type: "select-entity", searchable: true, entityEndpoint: "/item", entityValueKey: "item_id", entityLabelKeys: ["item_code", "item_name"] },
+    { key: "feed_qty_per_head_per_day_kg", label: "Daily Feed per Head (kg)", type: "number", step: "0.01", min: 0 },
+    { key: "feed_wastage_pct", label: "Feed Wastage (%)", type: "number", step: "0.01", min: 0 },
     { key: "std_body_weight_kg", label: "Std Body Weight (KG)", type: "number", step: "0.01", min: 0 },
     { key: "std_adg_gpd", label: "Std ADG (g/day)", type: "number", step: "0.01", min: 0 },
     { key: "std_fcr", label: "Std FCR", type: "number", step: "0.01", min: 0 },

@@ -102,12 +102,9 @@ export function RequisitionNewDialog({
       onClose={onClose}
       title={t(purpose === null ? "rqNew" : "rqNewTitle")}
       maxWidth="lg"
-      footer={
-        <div className="flex justify-end gap-2">
-          <Button variant="outline" size="sm" onClick={onClose}>{t("rqNewCancel")}</Button>
-          {purpose === "FEED" && <Button size="sm" onClick={create} disabled={busy || !complete}>{t("rqNewCreate")}</Button>}
-        </div>
-      }
+      footer={purpose === "FEED"
+        ? <Button size="sm" onClick={create} disabled={busy || !complete}>{t("rqNewCreate")}</Button>
+        : undefined}
     >
       {purpose === null ? (
         <div className="flex flex-col gap-4 text-xs">

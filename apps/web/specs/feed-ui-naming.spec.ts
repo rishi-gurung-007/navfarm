@@ -1,0 +1,43 @@
+import { getConfig } from "@/modules/master-data/configs";
+import { translations } from "@/utils/translations";
+
+describe("feed forecasting terminology", () => {
+  it("uses clear business names for planning and forecast dates", () => {
+    expect(translations.en).toMatchObject({
+      fpTableLabel: "Feed planning by farm and silo",
+      fpSiloColHeld: "Current feed",
+      fpSiloColCapacity: "Silo capacity",
+      fpSiloLowCol: "Low stock level",
+      fpSiloHighCol: "High stock level",
+      fpSiloReorderCol: "Refill lead time",
+      ffColBatchNo: "Batch No",
+      ffColItemName: "Item Name",
+      ffColItemNo: "Item No",
+      ffColShedNo: "Shed No",
+      ffColPlanningDate: "Planning Date",
+      ffColCurrentInventoryKg: "Current Inventory (Kg)",
+      ffColCurrentPigs: "Current No. of Pigs",
+      ffColPerDayIntakeKg: "Per Day Intake (Kg)",
+      ffColDaysOfStock: "Current No of Days Stock",
+      ffColRunDown: "Run Down",
+      ffColDateToRefill: "Date to Refill",
+      ffColRequiredOn: "Required On Date",
+    });
+    for (const retired of ["fpLeadTimeCol", "fpBulkMultipleCol", "fpBagSizeCol", "fpTruckTargetCol", "fpProductionDayCol"]) {
+      expect(translations.en).not.toHaveProperty(retired);
+    }
+  });
+
+  it("uses the same silo and lifecycle feed names in master forms", () => {
+    const location = getConfig("location")!;
+    const lifecycle = getConfig("breed-lifecycle-stage")!;
+    const label = (fields: typeof location.fields, key: string) => fields.find((field) => field.key === key)?.label;
+
+    expect(label(location.fields, "low_level_kg")).toBe("Low Stock Level (kg)");
+    expect(label(location.fields, "high_level_kg")).toBe("High Stock Level (kg)");
+    expect(label(location.fields, "silo_reorder_days")).toBe("Refill Lead Time (days)");
+    expect(label(lifecycle.fields, "feed_item_id")).toBe("Feed");
+    expect(label(lifecycle.fields, "feed_qty_per_head_per_day_kg")).toBe("Daily Feed per Head (kg)");
+    expect(label(lifecycle.fields, "feed_wastage_pct")).toBe("Feed Wastage (%)");
+  });
+});

@@ -2138,3 +2138,19 @@ labels (for example Breed, ISO3 and Code Prefix) so their meaning is not lost.
 Where the client model intentionally uses a different semantic field, that
 meaning is retained; Reason uses `Code` and `Description`, not an invented
 Reason Name.
+
+Feed Planning must present each farm as a collapsible grouping row and show
+only that farm's silos directly beneath it when expanded; silo rows must not
+be rendered later as a separate flat section. The supplied files support silo
+capacity, low/high stock levels and refill planning, but do not define delivery
+lead time, bulk multiple, bag size, truck target and production day as one
+five-field farm setup. Those five legacy farm inputs therefore do not appear
+on Feed Planning. They are not silently copied to silos: doing that would
+change forecast and requisition semantics without a defined source rule.
+
+The Feed Forecast grid keeps the supplied field specification's twelve labels
+and order. Rishi shortened only `Scale of Silo Level (Run Down)` to `Run Down`.
+Run-down, refill and required-on cells show a formatted date when one exists
+and a dash otherwise; phrases such as `After …` and `Not due by …` do not
+belong in date columns. In the days-of-stock cell the `Indicative` chip appears
+before the numeric value.

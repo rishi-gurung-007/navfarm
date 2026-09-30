@@ -604,9 +604,6 @@ export function ApprovalsPageShell({ activeTab }: { activeTab: ApprovalStatus })
             )}
 
             <div className="flex justify-end gap-2 pt-3 border-t" style={{ borderColor: "var(--border)" }}>
-              <Button variant="outline" onClick={() => setViewingItem(null)}>
-                {t("close")}
-              </Button>
               {viewingItem.status === "PENDING" && (
                 <>
                   <Button
