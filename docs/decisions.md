@@ -2273,16 +2273,146 @@ decisions:
   figure is a truck **target**, not a hard farm cap.
 - Requisition-deadline notification must be automatic rather than dependent on
   somebody opening the Alerts page. It remains `IN_APP` only.
-- Feed alerts are visible to `HEAD_OF_FARM`, `OPERATIONAL_ADMIN` and
-  `FARM_MANAGER` users, subject to their existing company/farm/operational-area
-  scope. This is visibility, not permission to approve a requisition.
+- Feed alerts are visible to `OPERATIONAL_ADMIN` (the Head of Farms business
+  persona) and `FARM_MANAGER` users, subject to their existing
+  LOB/operational-area or farm scope. This is visibility, not permission to
+  approve a requisition.
 
-The CSV states but does not fully specify several implementation choices. They
-remain open for Rishi rather than being inferred: where delivery lead time,
-bulk multiple, bag size, truck target and production schedule are configured;
-the percentage that means "approaching" the truck target; the exact
-Friday-evening time; the five-week normalization formula and completed-week
-boundary; whether plan `YYYYWW` is ISO week numbering; and the retained
-nine-to-four-farm database policy. The current four-farm seed work therefore
-remains blocked at its transition task and must not proceed to migration or RDP
-application without that policy, backups and explicit target approval.
+The CSV states but does not fully specify several implementation choices. The
+decisions below resolve the configuration ownership, truck warning percentage,
+deadline time, five-week boundary and week numbering. The retained
+nine-to-four-farm database policy remains open.
+
+Rishi confirmed that the local `nf_devco` database is disposable and may be
+rebuilt to the approved four-farm fixture. That permission applies only to the
+local demo database. A retained database and the RDP/test database remain
+protected: their nine-to-four-farm transition is still blocked until the
+retention policy, backup and exact target are approved. Local rebuild success
+must not be presented as proof that the retained transition is safe.
+
+The test-server tenant databases contain presentation data entered by testers
+and that data must be retained. They are not disposable demo databases and
+must not be rebuilt or reseeded. Rishi will provide the exact test-server data
+and tenant inventory during migration preparation. Before any tenant migration
+is applied, take and verify backups, review the generated SQL and preservation
+plan against that inventory, run the local and read-only/verification steps,
+and obtain explicit application approval. Until those prerequisites are met,
+work may prepare additive tenant-agnostic migrations and verify them on local
+`nf_devco`, but it must not apply them to the test server.
+
+## 2026-10-01 — Common requisition approval precedes release
+
+Rishi confirmed that approval and release are separate actions. A common
+requisition begins Open, is submitted for approval, becomes Approved only
+after the approval decision, and is then explicitly Released. Store shipment
+or Purchase/BC processing must not begin from a merely approved document;
+Release is the subsequent control that authorizes fulfilment. Rejection returns
+no released authority, and neither approval nor release may be inferred from
+the other.
+
+## 2026-10-01 — Feed integration, common requisition controls and farm personas
+
+Rishi approved the proposed Feed Forecast/Common Requisition integration
+recommendations, with the following clarifications.
+
+`FARM_MANAGER` is a distinct user type and persona, not a role label placed on
+a `STANDARD_USER`. Both are bound to one active farm, but their authority is
+different: `FARM_MANAGER` manages that farm's forecasts, counts, requisitions
+and approvals, while `STANDARD_USER` is the farm worker and receives only the
+operational data-entry permissions granted to that worker. `FARM_MANAGER` sits
+between `OPERATIONAL_ADMIN` and `STANDARD_USER` in the user hierarchy. "Head
+of Farms" is the business name for the existing `OPERATIONAL_ADMIN`, not
+another user type. That user controls and can see all authorized farms in the
+active LOB/operational area, but not farms outside that scope. Alert recipients
+and escalations described as `HEAD_OF_FARM` must therefore resolve to
+`OPERATIONAL_ADMIN`; the UI shows the business label "Head of Farms" while
+retaining `OPERATIONAL_ADMIN` as the stored technical user type, without
+introducing a second security principal. Department, approval and
+document permissions still apply inside those visibility boundaries.
+
+Feed deadlines are company configuration, not constants. Company Settings owns
+the production weekday, submission cutoff and reminder time in the company's
+timezone; the approved Triple C starting configuration is Friday 18:00 critical
+reminder, Saturday 12:00 submission cutoff and `Africa/Harare`. A configured
+farm override may refine the company schedule. Jobs and displayed deadlines
+must read the effective configuration and must not embed those example values
+in rule code.
+
+Stock-variance monetary evaluation uses the company's Finance base currency;
+all application amounts remain based in that currency. Both base currency and
+local currency are explicitly selected by the user in company configuration;
+local currency is not inferred from Country Master and no separate feed
+currency is introduced. The current company-visible entry in Exchange Rate
+Master supplies the local-currency display/conversion, not an historical rate
+selected by the physical-count date. Exchange Rate Master currently stores
+dated rows and does not require an explicit current marker. For the selected
+company and currency pair, "current" is the company-visible row with the newest
+`rate_date`; if rows share that date, the newest `created_at` is the deterministic
+tie-break. The selected rate row and rate must be snapshotted on the variance
+decision so later master changes do not rewrite its evidence.
+If base and local currency are the same, the conversion is 1 and no rate row is
+required. If they differ and no current pair exists, monetary escalation cannot
+be evaluated and the workflow must report the missing configuration rather
+than invent a rate.
+
+The approved percentage escalation rule is `variance percentage >= 5.00%`.
+The monetary threshold
+remains nullable and unconfigured until Triple C supplies it; absence of that
+threshold does not create a zero-value threshold. Both remain company settings
+so a later approved change does not require rule-code changes.
+
+Stock variance uses the existing Reason Master, not free text or a new reason
+table. A Reason's Code follows the configured Number Series and remains
+manually editable when that series allows manual numbers, exactly like other
+masters. Every nonzero variance requires one of those configured reasons.
+
+Common requisitions use separate approval, document and fulfilment state.
+Approval precedes Release. Procurement releases an approved Purchase; an
+authorized sender-department user releases an approved Store transfer; and a
+future Feed Mill Manager releases an approved feed requisition after mill
+consolidation. Until that mill phase exists, feed stops truthfully at Approved.
+Rejected documents return to Open for correction while retaining their decision
+history. Store applies only to Item requisitions; Fixed Asset and Service use
+Purchase. Partial shipment and receipt are allowed without over-shipment or
+over-receipt; Direct Transfer may post a selected partial shipment and its
+matching receipt together when the user has the explicit Direct Transfer
+permission. Purchase release without a working BC connection records
+`BC_PENDING` and never claims a successful sync.
+
+A user must not approve a manually created requisition that they created.
+System-generated feed drafts may be reviewed and approved by the Farm Manager
+for that farm; a manually created requisition from that same Farm Manager must
+go to the LOB's `OPERATIONAL_ADMIN` (Head of Farms) or another authorized
+approver. `STANDARD_USER` is the farm-worker persona: it may enter permitted
+physical counts and create or edit Open requisitions, but it has no approval,
+release, shipment, receipt or Direct Transfer authority unless an explicit
+permission is granted through the existing permission model.
+
+Department matching uses shared master identities rather than text comparison:
+Department is represented by a company Cost Center Master row of type
+`DEPARTMENT`, and both users and locations reference that identity. The sender
+department is limited by the source location and the user's authorization.
+Existing Inventory Ledger and financial/cost posting remain the Item Ledger and
+Value Entry evidence; a duplicate ledger is not created. Common Purchase and
+Feed Requisitions use separate company-owned Number Series.
+
+For feed configuration, supported SILO fields return to the SILO record in
+Location Master; the duplicate Silo Feed Setup screen is removed only after
+field and validation parity is verified. Company owns forecast horizon,
+schedules, truck target, bulk multiple and alert percentage; farm may override
+lead time and submission schedule; the feed item owns bag weight; and the silo
+owns capacity, thresholds, reorder days and feed type. An effective farm
+lifecycle row overrides its company row; missing or overlapping effective rows
+block only the affected forecast line. If several compatible silos remain,
+explicit destination configuration is required rather than an arbitrary pick.
+The approaching-truck warning begins at a configurable 90% and never turns the
+truck target into a hard cap.
+
+Generated July-June Reporting Periods remain inactive drafts until an
+administrator reviews and activates them. Physical count has a configurable
+Sunday 08:00 Triple C starting schedule and may also run on demand. Every
+nonzero variance requires Farm Manager approval before ledger posting. The
+later Tentative Plan uses five completed Wednesday-Tuesday weeks, normalizes
+actual consumption against lifecycle-expected consumption, and uses the ISO
+week containing the production date for `YYYYWW` when that deferred plan enters
+scope.

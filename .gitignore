@@ -51,6 +51,7 @@ apple.design.md
 .github/instructions/nx.instructions.md
 
 .claude/worktrees
+.worktrees/
 .claude/settings.local.json
 .nx/polygraph
 .nx/self-healing
