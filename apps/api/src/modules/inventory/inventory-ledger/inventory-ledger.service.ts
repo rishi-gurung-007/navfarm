@@ -1,7 +1,7 @@
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, or, isNull, gte, lte, asc, desc, sql, isNotNull, ne, like, SQL } from 'drizzle-orm';
+import { eq, and, or, isNull, gte, lte, lt, inArray, asc, desc, sql, isNotNull, ne, like, SQL } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
