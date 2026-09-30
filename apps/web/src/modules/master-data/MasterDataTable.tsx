@@ -567,6 +567,12 @@ export function MasterDataTable({
   const bcOwned = config.owner === "BC";
   const administrationRestricted = !!config.businessAdminOnly && !["TENANT_ADMIN", "COMPANY_ADMIN"].includes(currentUser?.userType || "");
   const readOnly = administrationRestricted;
+  const canApproveDraft = !config.draftLifecycle || hasPermission(
+    currentUser,
+    config.draftLifecycle.approvePermission.moduleCode,
+    config.draftLifecycle.approvePermission.resource,
+    "can_approve",
+  );
   const numbering = useCodeSeries(config.key, form, modalOpen && !editing);
   // A failed code preview used to disable Create outright. For a master whose
   // code is optional — UOM Conversion says "leave blank until the numbering
@@ -1758,6 +1764,7 @@ export function MasterDataTable({
    * flow), since it's trivially reversible by clicking again. */
   const handleToggleActive = async (row: Row) => {
     if (readOnly) return;
+    if (row.is_active === false && config.draftLifecycle && !canApproveDraft) return;
     const id = row[config.idKey];
     setTogglingId(id);
     try {
@@ -2955,7 +2962,8 @@ export function MasterDataTable({
                                       {t("edit")}
                                     </MenuItem>
                                   )}
-                                  {!readOnly && (config.supportsRestore ?? true) && (
+                                  {!readOnly && (config.supportsRestore ?? true)
+                                    && (!inactive || !config.draftLifecycle || canApproveDraft) && (
                                     <MenuItem
                                       onSelect={() => handleToggleActive(row)}
                                       disabled={togglingId === row[config.idKey]}
@@ -2989,7 +2997,8 @@ export function MasterDataTable({
                         )
                       ))}
                       {!ownsStatusColumn && <TableCell className="text-right">
-                        {!readOnly && (config.supportsRestore ?? true) ? (
+                        {!readOnly && (config.supportsRestore ?? true)
+                          && (!inactive || !config.draftLifecycle || canApproveDraft) ? (
                           <div className="flex items-center justify-end">
                             {/* The switch alone. It carried a text label beside
                                 it saying Active/Inactive — the same fact the

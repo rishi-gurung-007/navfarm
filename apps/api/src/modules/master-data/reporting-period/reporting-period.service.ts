@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 import * as schema from '../../../core/database/schema';
 import { companyCondition, masterScopeConditions, MasterScope } from '../../../common/master-data-scope';
 import { listFilterConditions, listOrderBy } from '../../../common/master-list-query';
+import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { addDays } from '../../inventory/feed-forecast/feed-forecast.engine';
 import { businessYearOf, generateBusinessYear, periodProblems, periodsOverlap } from './reporting-period.rules';
@@ -58,6 +59,13 @@ export class ReportingPeriodService {
   private async companyRows(companyId: string | null, tenantId: string): Promise<Row[]> {
     return this.db.select().from(table)
       .where(and(eq(table.tenant_id, tenantId), companyCondition(table.company_id, companyId), isNull(table.deleted_at)));
+  }
+
+  /** Serializes activation decisions for one exact company calendar. */
+  private async lockCompanyRows(companyId: string | null, tenantId: string): Promise<Row[]> {
+    return this.db.select().from(table)
+      .where(and(eq(table.tenant_id, tenantId), companyCondition(table.company_id, companyId), isNull(table.deleted_at)))
+      .for('update');
   }
 
   private shape(p: { period_code: string; start_date: string; end_date: string; stock_take_date?: string | null }): Shaped {
@@ -128,13 +136,20 @@ export class ReportingPeriodService {
 
   /** Activation is a separate reviewed action: derive and validate again from the stored row, then refuse any active overlap. */
   async activate(id: string, tenantId: string, user?: any) {
-    const before = await this.findOne(id, tenantId);
-    const shaped = this.shape(before);
-    this.assertFree(shaped, await this.companyRows(before.company_id, tenantId), id);
-    await this.db.update(table).set({
-      ...shaped, is_active: true, status: 'ACTIVE', updated_by: user?.userId, updated_at: nowTs(),
-    }).where(eq(table.period_id, id));
-    return this.log('ACTIVATE', await this.findOne(id, tenantId), user, before);
+    // Resolve the scope-visible target first only to identify the exact company
+    // lock. The target and every overlap candidate are re-read under that lock.
+    const visible = await this.findOne(id, tenantId);
+    return withTenantTransaction(this.cls, async () => {
+      const rows = await this.lockCompanyRows(visible.company_id, tenantId);
+      const before = rows.find((row) => row.period_id === id);
+      if (!before) throw new NotFoundException('Reporting period is not available in this workspace.');
+      const shaped = this.shape(before);
+      this.assertFree(shaped, rows, id);
+      await this.db.update(table).set({
+        ...shaped, is_active: true, status: 'ACTIVE', updated_by: user?.userId, updated_at: nowTs(),
+      }).where(eq(table.period_id, id));
+      return this.log('ACTIVATE', await this.findOne(id, tenantId), user, before);
+    });
   }
 
   /** Open question Q9: an admin's first draft of a July–June year; codes that exist, or dates an active period already covers, are skipped. */

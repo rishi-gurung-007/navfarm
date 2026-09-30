@@ -1,22 +1,35 @@
 import { BadRequestException, ConflictException } from '@nestjs/common';
+import { MySqlDialect } from 'drizzle-orm/mysql-core';
 import { transactionCls } from '../../../test-utils/transaction-cls';
 import { ReportingPeriodService } from './reporting-period.service';
 
 describe('ReportingPeriodService', () => {
   const selectQueue: unknown[][] = [];
+  const events: string[] = [];
+  const lockedConditions: unknown[] = [];
   const chain = (rows: unknown[]) => {
+    let condition: unknown;
     const self: any = {
-      from: () => self, where: () => self, orderBy: () => self, offset: () => self, limit: async () => rows,
+      from: () => self,
+      where: (next: unknown) => { condition = next; return self; },
+      orderBy: () => self,
+      offset: () => self,
+      limit: async () => rows,
+      for: (mode: string) => { events.push(`lock:${mode}`); lockedConditions.push(condition); return self; },
       then: (res: (v: unknown[]) => unknown, rej: (e: unknown) => unknown) => Promise.resolve(rows).then(res, rej),
     };
     return self;
   };
   const values = jest.fn(async () => undefined);
-  const set = jest.fn(() => ({ where: jest.fn(async () => undefined) }));
-  const db = {
+  const set = jest.fn(() => ({ where: jest.fn(async () => { events.push('update'); }) }));
+  const db: any = {
     select: jest.fn(() => chain(selectQueue.shift() ?? [])),
     insert: jest.fn(() => ({ values })),
     update: jest.fn(() => ({ set })),
+    transaction: jest.fn(async (work: (tx: unknown) => Promise<unknown>): Promise<unknown> => {
+      events.push('transaction');
+      return work(db);
+    }),
   };
   const service = new ReportingPeriodService(transactionCls(db), { log: jest.fn() } as any);
   const september = { company_id: 'co-1', period_code: '2026-09', start_date: '2026-08-30', end_date: '2026-09-26' };
@@ -27,7 +40,10 @@ describe('ReportingPeriodService', () => {
     db.select.mockClear();
     db.insert.mockClear();
     db.update.mockClear();
+    db.transaction.mockClear();
     set.mockClear();
+    events.length = 0;
+    lockedConditions.length = 0;
   });
 
   it('refuses an End Date that is not a Saturday before reading anything', async () => {
@@ -72,11 +88,12 @@ describe('ReportingPeriodService', () => {
   });
 
   it('revalidates an edited draft before explicit activation', async () => {
-    selectQueue.push([{
+    const invalid = {
       period_id: 'p9', tenant_id: 'tenant-1', company_id: 'co-1', period_code: '2026-09',
       start_date: '2026-08-30', end_date: '2026-09-25', stock_take_date: '2026-09-25',
       production_start_date: '2026-09-26', business_year: '2026-27', status: 'DRAFT', is_active: false,
-    }]);
+    };
+    selectQueue.push([invalid], [invalid]);
 
     await expect(service.activate('p9', 'tenant-1', { userId: 'u' })).rejects.toThrow(BadRequestException);
     expect(db.update).not.toHaveBeenCalled();
@@ -109,6 +126,41 @@ describe('ReportingPeriodService', () => {
     await service.activate('p9', 'tenant-1', { userId: 'u' });
 
     expect(set).toHaveBeenCalledWith(expect.objectContaining({ status: 'ACTIVE', is_active: true, updated_by: 'u' }));
+  });
+
+  it('locks the exact tenant/company calendar inside a transaction before validating and updating', async () => {
+    const draft = {
+      period_id: 'p9', tenant_id: 'tenant-1', company_id: 'co-1', period_code: '2026-09',
+      start_date: '2026-08-30', end_date: '2026-09-26', stock_take_date: '2026-09-26',
+      production_start_date: '2026-09-27', business_year: '2026-27', status: 'DRAFT', is_active: false,
+    };
+    selectQueue.push([draft], [draft], [{ ...draft, status: 'ACTIVE', is_active: true }]);
+
+    await service.activate('p9', 'tenant-1', { userId: 'u' });
+
+    expect(db.transaction).toHaveBeenCalledTimes(1);
+    expect(events).toEqual(expect.arrayContaining(['transaction', 'lock:update', 'update']));
+    expect(events.indexOf('transaction')).toBeLessThan(events.indexOf('lock:update'));
+    expect(events.indexOf('lock:update')).toBeLessThan(events.indexOf('update'));
+    expect(lockedConditions).toHaveLength(1);
+    const locked = new MySqlDialect().sqlToQuery(lockedConditions[0] as any);
+    expect(locked.sql).toMatch(/`tenant_id` = .*`company_id` = .*`deleted_at` is null/);
+    expect(locked.params).toEqual(['tenant-1', 'co-1']);
+  });
+
+  it('re-reads the target under the company lock and does not update when it disappeared', async () => {
+    const draft = {
+      period_id: 'p9', tenant_id: 'tenant-1', company_id: 'co-1', period_code: '2026-09',
+      start_date: '2026-08-30', end_date: '2026-09-26', stock_take_date: '2026-09-26',
+      production_start_date: '2026-09-27', business_year: '2026-27', status: 'DRAFT', is_active: false,
+    };
+    selectQueue.push([draft], []);
+
+    await expect(service.activate('p9', 'tenant-1', { userId: 'u' }))
+      .rejects.toThrow('Reporting period is not available in this workspace.');
+
+    expect(events).toContain('lock:update');
+    expect(db.update).not.toHaveBeenCalled();
   });
 
   it('does not overwrite an edited draft when generation is repeated', async () => {

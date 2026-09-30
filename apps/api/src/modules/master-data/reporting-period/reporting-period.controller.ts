@@ -24,8 +24,8 @@ export class ReportingPeriodController {
   async update(@Param('id') id: string, @Body() dto: UpdateReportingPeriodDto, @Req() req: any) { return { data: await this.periods.update(id, dto, req.user.tenantId, req.user) }; }
   @Delete(':id') @RequirePermission('MASTER_DATA', 'REPORTING_PERIOD', 'delete')
   async deactivate(@Param('id') id: string, @Req() req: any) { return { data: await this.periods.setActive(id, false, req.user.tenantId, req.user) }; }
-  @Patch(':id/activate') @RequirePermission('MASTER_DATA', 'REPORTING_PERIOD', 'edit')
+  @Patch(':id/activate') @RequirePermission('MASTER_DATA', 'REPORTING_PERIOD', 'approve')
   async activate(@Param('id') id: string, @Req() req: any) { return { data: await this.periods.activate(id, req.user.tenantId, req.user) }; }
-  @Patch(':id/restore') @RequirePermission('MASTER_DATA', 'REPORTING_PERIOD', 'edit')
+  @Patch(':id/restore') @RequirePermission('MASTER_DATA', 'REPORTING_PERIOD', 'approve')
   async restore(@Param('id') id: string, @Req() req: any) { return { data: await this.periods.activate(id, req.user.tenantId, req.user) }; }
 }

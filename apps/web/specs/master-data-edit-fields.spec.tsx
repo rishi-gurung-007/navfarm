@@ -6,6 +6,8 @@ import { LanguageProvider } from "@/hooks/useLanguage";
 import { ApiError } from "@/lib/api-client";
 import { api } from "@/services/api-client";
 
+const mockHasPermission = jest.fn(() => true);
+
 jest.mock("@/services/api-client", () => ({
   api: {
     get: jest.fn(),
@@ -22,7 +24,7 @@ jest.mock("@/hooks/useAuth", () => ({
   getActiveOperationalAreaId: () => null,
   getActiveOperationalArea: () => null,
   getStoredUser: () => ({ userType: "TENANT_ADMIN" }),
-  hasPermission: () => true,
+  hasPermission: (...args: unknown[]) => mockHasPermission(...args),
 }));
 
 jest.mock("@/hooks/useMediaQuery", () => ({ useIsDesktop: () => true }));
@@ -105,7 +107,10 @@ function expectStageTransitionFields(enabled: string[]) {
 }
 
 describe("master-data edit fields", () => {
-  beforeEach(() => jest.clearAllMocks());
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockHasPermission.mockReturnValue(true);
+  });
 
   it("shows create-only fields disabled, keeps mutable fields editable, and never exposes hideInForm fields", async () => {
     const config: MasterDataConfig = {
@@ -166,7 +171,10 @@ describe("master-data edit fields", () => {
       apiBase: "/reporting-period",
       idKey: "period_id",
       group: "Settings",
-      draftLifecycle: { activatePath: "activate" },
+      draftLifecycle: {
+        activatePath: "activate",
+        approvePermission: { moduleCode: "MASTER_DATA", resource: "REPORTING_PERIOD" },
+      },
       columns: [{ key: "period_code", label: "Code" }, { key: "status", label: "Status" }],
       fields: [
         { key: "period_code", label: "Code", type: "text", createOnly: true, required: true },
@@ -200,7 +208,10 @@ describe("master-data edit fields", () => {
       apiBase: "/reporting-period",
       idKey: "period_id",
       group: "Settings",
-      draftLifecycle: { activatePath: "activate" },
+      draftLifecycle: {
+        activatePath: "activate",
+        approvePermission: { moduleCode: "MASTER_DATA", resource: "REPORTING_PERIOD" },
+      },
       columns: [{ key: "period_code", label: "Code" }, { key: "status", label: "Status" }],
       fields: [{ key: "period_code", label: "Code", type: "text", createOnly: true, required: true }],
     };
@@ -214,6 +225,33 @@ describe("master-data edit fields", () => {
     fireEvent.click(await screen.findByText("Activate"));
 
     await waitFor(() => expect(api.patch).toHaveBeenCalledWith("/reporting-period/period-1/activate"));
+  });
+
+  it("hides Activate from a draft editor without reporting-period approval authority", async () => {
+    const config: MasterDataConfig = {
+      key: "reporting-period",
+      label: "Reporting Periods",
+      singular: "Reporting Period",
+      apiBase: "/reporting-period",
+      idKey: "period_id",
+      group: "Settings",
+      draftLifecycle: {
+        activatePath: "activate",
+        approvePermission: { moduleCode: "MASTER_DATA", resource: "REPORTING_PERIOD" },
+      },
+      columns: [{ key: "period_code", label: "Code" }, { key: "status", label: "Status" }],
+      fields: [{ key: "period_code", label: "Code", type: "text", createOnly: true, required: true }],
+    };
+    mockHasPermission.mockImplementation((_user, _module, _resource, action) => action !== "can_approve");
+    (api.get as jest.Mock).mockResolvedValue([{
+      period_id: "period-1", period_code: "2026-09", status: "DRAFT", is_active: false,
+    }]);
+
+    renderTable(config);
+    fireEvent.click(await screen.findByRole("button", { name: "Actions for 2026-09" }));
+
+    expect(await screen.findByText("Edit")).toBeTruthy();
+    expect(screen.queryByText("Activate")).toBeNull();
   });
 
   it("shows every Stage transition field on create and only enables fields relevant to the selected trigger", async () => {

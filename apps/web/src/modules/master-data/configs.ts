@@ -1487,7 +1487,10 @@ const alertRule: MasterDataConfig = {
 const reportingPeriod: MasterDataConfig = {
   key: "reporting-period", label: "Reporting Periods", singular: "Reporting Period", apiBase: "/reporting-period", idKey: "period_id",
   group: "Settings", isPrimary: false, businessAdminOnly: true,
-  draftLifecycle: { activatePath: "activate" },
+  draftLifecycle: {
+    activatePath: "activate",
+    approvePermission: { moduleCode: "MASTER_DATA", resource: "REPORTING_PERIOD" },
+  },
   statusActiveValues: ["ACTIVE"],
   description: "Review and edit inactive July–June draft periods, then activate them explicitly for forecasting.",
   columns: [

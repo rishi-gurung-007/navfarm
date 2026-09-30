@@ -300,12 +300,13 @@ export function hasPermission(
   user: NavUser | null,
   moduleCode: string,
   resource: string,
-  action: "can_view" | "can_create" | "can_edit"
+  action: "can_view" | "can_create" | "can_edit" | "can_approve"
 ): boolean {
   if (!user) return false;
-  if (user.userType === "TENANT_ADMIN" || user.userType === "COMPANY_ADMIN") return true;
-  if (user.userType === "OPERATIONAL_ADMIN") {
-    // Operational admins have full operational and master permissions within their assigned area
+  if (["SYSTEM_ADMIN", "TENANT_ADMIN", "COMPANY_ADMIN"].includes(user.userType)) return true;
+  if (user.userType === "OPERATIONAL_ADMIN" && action !== "can_approve") {
+    // Operational admins have broad operational edit access in their assigned
+    // area, but approval stays an explicit grant just as RolesGuard enforces.
     if (
       moduleCode === "PRODUCTION" ||
       moduleCode === "PIGGERY" ||
@@ -325,6 +326,7 @@ export function hasPermission(
     if (action === "can_view")   return !!p.canView;
     if (action === "can_create") return !!p.canCreate;
     if (action === "can_edit")   return !!p.canEdit;
+    if (action === "can_approve") return !!p.canApprove;
     return false;
   });
 }
