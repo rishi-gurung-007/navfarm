@@ -1,0 +1,200 @@
+# Task 4 implementation report — persisted forecast runs
+
+## Outcome
+
+Implemented Task 4 on `feat/feed-forecast-requisition-integration`. Ordinary
+`GET /feed-forecast` remains read-only and response-compatible. An explicitly
+authorized `POST /feed-forecast/runs` now creates an append-only header and
+dated-line snapshot in one tenant transaction, with a farm-local version
+stream serialized by locking the exact FARM row before reading the latest
+version. Run history is tenant/company/LOB/farm scoped. Matching editable feed
+requisition drafts can retain durable run/run-line provenance, while approved
+and pending requisitions are not selected for mutation.
+
+Implementation commit:
+`aba55858cc292f24d1abdd98a699b2527df94dc6`
+
+The evidence report is committed separately so it can contain the immutable
+implementation commit SHA above.
+
+## Interfaces delivered
+
+- Schema declarations for append-only `feed_forecast_run` and
+  `feed_forecast_run_line`, including unique `(farm_id, version)` and
+  `(company_id, run_code)` keys. No migration SQL or journal was created.
+- `FeedForecastRunService.createRun(input, output, actor)` returns
+  `{ runId, runCode, version }`.
+- `GET /feed-forecast/runs?farmId=...` lists the selected farm's saved versions.
+- `GET /feed-forecast/runs/:id` returns a scoped header plus its dated lines.
+- `POST /feed-forecast/runs` recalculates and explicitly saves the normalized
+  displayed forecast. It requires `INVENTORY/LEDGER/create`; history and the
+  ordinary forecast require `INVENTORY/LEDGER/view`.
+- Run headers snapshot tenant/company/farm, planning date, normalized view and
+  range, nullable Reporting Period, source cutoff, effective configuration
+  values/version/hash, creator, creation time and farm-local version.
+- Run lines snapshot date, batch, nullable shed/destination/current item,
+  required item, heads/rate, opening/receipt/demand/closing quantities,
+  shortage/recommended/required-on values and detached provenance. Missing
+  mandatory audit values are rejected before insert.
+- Requisition and line declarations now include restrictive foreign-key links
+  to the persisted run and run line. Auto-draft lookup only accepts an exact
+  tenant/company/farm/planning-date/CUSTOM-range match and takes the newest
+  matching version.
+- The Forecast panel has an explicit, create-authority-gated **Save Run**
+  action and farm-scoped run history. Page load and filter changes only issue
+  reads. Task 3's draft Reporting Period generation and active-period flow are
+  preserved.
+
+## Changed files
+
+- `apps/api/src/core/database/schema.ts`
+- `apps/api/src/modules/inventory/feed-forecast/dto/feed-forecast.dto.ts`
+- `apps/api/src/modules/inventory/feed-forecast/feed-forecast-run.rules.ts`
+- `apps/api/src/modules/inventory/feed-forecast/feed-forecast-run.rules.spec.ts`
+- `apps/api/src/modules/inventory/feed-forecast/feed-forecast-run.service.ts`
+- `apps/api/src/modules/inventory/feed-forecast/feed-forecast-run.service.spec.ts`
+- `apps/api/src/modules/inventory/feed-forecast/feed-forecast.controller.ts`
+- `apps/api/src/modules/inventory/feed-forecast/feed-forecast.controller.spec.ts`
+- `apps/api/src/modules/inventory/feed-forecast/feed-forecast.engine.ts`
+- `apps/api/src/modules/inventory/feed-forecast/feed-forecast.module.ts`
+- `apps/api/src/modules/inventory/feed-forecast/feed-forecast.service.ts`
+- `apps/api/src/modules/inventory/feed-forecast/feed-forecast.save-run.spec.ts`
+- `apps/api/src/modules/procurement/feed-requisition/feed-requisition.service.ts`
+- `apps/api/src/modules/procurement/feed-requisition/feed-requisition.service.spec.ts`
+- `apps/web/src/components/console/inventory/feed-forecast-panel.tsx`
+- `apps/web/src/components/console/inventory/feed-forecast-run-history.tsx`
+- `apps/web/specs/feed-forecast-panel.spec.tsx`
+- `apps/web/specs/feed-forecast-run-history.spec.tsx`
+- `apps/web/src/utils/translations.ts`
+
+## TDD evidence
+
+All commands were run from the isolated Task 4 worktree.
+
+### Initial run boundary and service
+
+1. RED:
+   `pnpm nx test api -- --runInBand --testPathPatterns='feed-forecast-run.rules|feed-forecast.controller'`
+   — 2 suites failed: the rules module did not exist and
+   `controller.saveRun` did not exist. The ordinary-GET read-only regression
+   already passed (1 passing test).
+2. GREEN: the same command — 2 suites, 5 tests passed.
+3. RED:
+   `pnpm nx test api -- --runInBand --testPathPatterns='feed-forecast-run.service'`
+   — 1 suite failed because the run service module did not exist.
+4. GREEN: the same command — 1 suite, 5 tests passed.
+5. RED:
+   `pnpm nx test api -- --runInBand --testPathPatterns='feed-forecast.save-run'`
+   — 1 test failed because `FeedForecastService.saveRun` did not exist.
+6. GREEN combined boundary:
+   `pnpm nx test api -- --runInBand --testPathPatterns='feed-forecast-run|feed-forecast.controller|feed-forecast.save-run'`
+   — 4 suites, 11 tests passed.
+
+### Requisition provenance and approved immutability
+
+1. RED:
+   `pnpm nx test api -- --runInBand --testPathPatterns='feed-requisition.service'`
+   — 1 failed, 24 passed. A new draft still held only the legacy timestamp key
+   and had no persisted run/run-line IDs. The companion approved-rerun
+   non-mutation case passed.
+2. GREEN: the same command — 1 suite, 25 tests passed.
+
+### History UI and action authority
+
+1. RED:
+   `pnpm nx test web -- --runInBand --testPathPatterns='feed-forecast-(panel|run-history)'`
+   — 2 suites failed: the history component did not exist and the panel had no
+   Save Run action; the panel's prior 23 tests passed.
+2. Initial GREEN: the same command — 2 suites, 25 tests passed.
+3. RED authority regression:
+   `pnpm nx test web -- --runInBand --testPathPatterns='feed-forecast-panel' -t='keeps run history visible'`
+   — 1 failed, 2 passed, 23 skipped because Save Run remained visible to a
+   view-only user.
+4. GREEN authority regression: the same command — 1 suite passed, 3 matched
+   tests passed, 23 skipped.
+5. Final GREEN after the added authority case:
+   `pnpm nx test web -- --runInBand --testPathPatterns='feed-forecast-(panel|run-history)'`
+   — 2 suites, 26 tests passed.
+
+### Concurrent allocation and complete audit rows
+
+1. RED:
+   `pnpm nx test api -- --runInBand --testPathPatterns='feed-forecast-run.rules|feed-forecast-run.service'`
+   — 1 suite failed and 1 passed; 1 test failed and 9 passed. The snapshot
+   builder accepted a line missing `confirmedReceiptKg`.
+2. GREEN: the same command — 2 suites, 10 tests passed. This slice includes a
+   stateful overlapping `Promise.all` test proving two same-farm saves persist
+   versions 1 and 2 and distinct run codes, plus the independent-farm stream
+   case.
+
+### Final focused GREEN
+
+- `pnpm nx test api -- --runInBand --testPathPatterns='feed-forecast-run|feed-forecast.controller|feed-forecast.save-run|feed-requisition.service'`
+  — 5 suites, 41 tests passed.
+- `pnpm nx test web -- --runInBand --testPathPatterns='feed-forecast-(panel|run-history)'`
+  — 2 suites, 26 tests passed.
+
+## Broader verification
+
+- `pnpm nx test api -- --runInBand --testPathPatterns='feed-forecast|feed-requisition|farm-scope-coverage'`
+  — 146 suites, 1,698 tests passed (the workspace Jest configuration expanded
+  this pattern to the complete API suite).
+- `pnpm nx test web -- --runInBand --testPathPatterns='feed-forecast|role-permissions-coverage|nav-scope-consistency'`
+  — 75 suites, 443 tests passed (complete web suite under this configuration).
+- `pnpm nx run-many -t typecheck -p api web` — both projects passed. API output
+  was served from the verified Nx cache on the final combined run; an explicit
+  `pnpm nx typecheck api` immediately beforehand also passed.
+- `git diff --check` — passed with no output.
+- `pnpm nx lint web` — nonzero inherited branch baseline: 999 findings,
+  93 errors and 906 warnings. No reported error is in a Task 4 file.
+- Focused ESLint over the five changed Task 4 web files — 0 errors,
+  19 warnings. Focused ESLint over the new run rules/service files after the
+  only two `prefer-const` findings were corrected — 0 errors, 23 warnings.
+
+One intermediate API typecheck intentionally recorded during cleanup failed
+with `TS2322`: TypeScript does not narrow several object properties after
+data-driven indexed validation loops. The fix retains the runtime validation
+and explicitly types the already-validated row; rerunning the exact
+`pnpm nx typecheck api` command passed.
+
+## Self-review
+
+- Confirmed `GET /feed-forecast` neither invokes the run service nor changes
+  its response shape; the internal daily result is returned only to the
+  explicit save path.
+- Confirmed the stable farm row is locked with `FOR UPDATE` before the latest
+  run version is read, including when no earlier run exists. Header and lines
+  use the same existing tenant transaction and there is no update/delete run
+  API.
+- Confirmed list/create/detail all pass tenant and company IDs through exact
+  FARM lookup, apply fixed farm/area scope, and add the restricted LOB predicate.
+  Unauthorized detail is normalized to not-found to avoid leaking existence.
+- Confirmed approved and pending requisitions are never selected as the
+  editable `AUTO_DRAFT`; no code updates their headers or lines. A current
+  editable auto-draft may refresh its links when its calculated lines refresh.
+- Confirmed task-owned schema changes only; no SQL, Drizzle journal, seed,
+  server, database or `nf_devco` changes were made.
+- Confirmed Task 3's Reporting Period draft generation copy/action and
+  active-only lookup remain covered by the complete API/web suites.
+- Reviewed all changed paths for Task 4 ownership and found no unrelated mill,
+  physical count, common requisition, BC, animal, breeding, costing or posting
+  work.
+
+## Assumptions and concerns
+
+- Repository search found no approved Feed Forecast Run Number Series. The
+  implementation therefore follows the brief's fallback and uses the stable
+  technical code `FFR-${farmId}-${version.padStart(6, '0')}`. This is not
+  presented as client numbering truth. A later client-facing number convention
+  needs Rishi's decision and a separately approved series.
+- The Save Run authority is `INVENTORY/LEDGER/create`; viewing forecast/run
+  history remains `INVENTORY/LEDGER/view`. The web action uses the same split.
+- An `AUTO_DRAFT` is treated as editable and may refresh to the newest exact
+  matching run. All non-editable statuses preserve their original links.
+- Task 12 must create/apply the physical migration before these declarations
+  can be used against a database. Per the hard boundary, no running app or DB
+  write verification was performed in Task 4.
+- The branch-wide web lint count is above the 85-error baseline documented in
+  `AGENTS.md`; those errors pre-existed Task 4 in shared Task 1–3 files. Task 4
+  adds no lint error, but the branch owner should retain the count as an
+  integration concern.
