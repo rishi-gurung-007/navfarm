@@ -164,7 +164,7 @@ async function itemByHandle(db: MySql2Database<typeof schema>, handle: string) {
 }
 
 /** The silos this chapter stocks on a farm, with the diet each one takes. */
-function stockedSilos(farm: DemoFarm): Array<{ id: string; code: string; feedHandle: string }> {
+export function stockedSilos(farm: DemoFarm): Array<{ id: string; code: string; feedHandle: string }> {
   // Silo -> the first shed that draws from it. A silo may feed several sheds
   // since 0114, and where two of them carry different roles the ration has to
   // be one or the other; the first in shed-code order is the stable choice.
@@ -180,6 +180,29 @@ function stockedSilos(farm: DemoFarm): Array<{ id: string; code: string; feedHan
       const role = shedBySilo.get(silo.id)?.role;
       return { ...silo, feedHandle: (role && FEED_BY_SHED_ROLE[role]) || FEED_DEFAULT };
     });
+}
+
+/**
+ * Which silo, if any, can legally receive a transfer from the first stocked
+ * silo — the one demonstration that intrinsically needs a second silo.
+ *
+ * Preference order: a free (unstocked) silo, then a stocked one already on
+ * the same ration. A silo holds one feed item at a time (D9), so a silo on a
+ * different ration is never a destination — assertSiloDestination in
+ * stock-transfer.service.ts would refuse it, and posting into it was exactly
+ * what killed an earlier rebuild. Returns null when no legal destination
+ * exists, which on the four-farm matrix is the 1:1 farm: one shed, one silo,
+ * nothing to move anything into. The chapter logs that skip rather than
+ * seeding a document the API is right to reject.
+ */
+export function siloTransferDestination(
+  stocked: Array<{ id: string; code: string; feedHandle: string }>,
+  allSilos: Array<{ id: string; code: string }>,
+): { id: string; code: string } | null {
+  if (stocked.length === 0) return null;
+  const free = allSilos.find((s) => !stocked.some((st) => st.id === s.id));
+  if (free) return free;
+  return stocked.slice(1).find((s) => s.feedHandle === stocked[0]!.feedHandle) ?? null;
 }
 
 export const inventoryChapter: DemoChapter = {
@@ -212,8 +235,16 @@ export const inventoryChapter: DemoChapter = {
       if (!store) throw new Error(`02-inventory: no Demo Medicine Store under ${farm.code} — run chapter 01-stores-and-items first.`);
 
       const siloIds = stockedSilos(farm);
-      if (siloIds.length < 2) {
-        throw new Error(`02-inventory: ${farm.code} has ${siloIds.length} silo(s); the chapter needs two to transfer between.`);
+      // Four-farm topology (plan Task 4): a 1:1 farm has exactly one silo, so
+      // "needs two to transfer between" was a hard stop for a farm shape the
+      // demo matrix now requires. Everything else in this chapter is per-silo
+      // or store-based and works unchanged on one; only the silo-to-silo
+      // transfer below intrinsically needs a second silo, and it already
+      // degrades to a logged skip when no legal destination exists. Receipts
+      // still run on the one silo; the issue, adjustments and store receipt
+      // never touched silos at all.
+      if (siloIds.length === 0) {
+        throw new Error(`02-inventory: ${farm.code} has no silos at all — run seed-four-farm-feed-demo.ts (or seed-nine-farm-demo.ts) --apply before the chapters.`);
       }
 
       const ref = (doc: string) => `DEMO-${farm.code}-${doc}`;
@@ -351,17 +382,21 @@ export const inventoryChapter: DemoChapter = {
           .from(schema.stockTransfer)
           .where(eq(schema.stockTransfer.remarks, ref('XSILO')))
           .limit(1);
-        const freeSilo = silosOf(farm).find((s) => !siloIds.some((stocked) => stocked.id === s.id));
-        const sameRationSilo = siloIds.slice(1).find((s) => s.feedHandle === siloIds[0].feedHandle);
-        const destinationSilo = freeSilo ?? sameRationSilo;
+        // On a 1:1 farm (one shed, one silo) there is no second silo to move
+        // anything to, and a silo-to-itself transfer is not a move. The
+        // destination search already refuses a different ration (D9), so the
+        // chain below posts only where a legal destination exists and logs the
+        // skip otherwise — which on the four-farm matrix is exactly the 1:1
+        // farm, the demonstration the plan says to skip there.
+        const destinationSilo = siloTransferDestination(siloIds, silosOf(farm));
         if (!existing && !destinationSilo) {
-          ctx.log(`${tag} silo transfer skipped — every silo is stocked with a different ration, and a silo holds one at a time`);
+          ctx.log(`${tag} silo transfer skipped — ${siloIds.length === 1 ? 'the farm has a single silo (1:1 topology)' : 'every silo is stocked with a different ration'}, and a silo holds one at a time`);
         } else if (!existing && destinationSilo) {
-          const feed = await itemByHandle(db, siloIds[0].feedHandle);
+          const feed = await itemByHandle(db, siloIds[0]!.feedHandle);
           const created = await transfers.create(
             {
               company_id: ctx.companyId,
-              from_warehouse_id: siloIds[0].id,
+              from_warehouse_id: siloIds[0]!.id,
               to_warehouse_id: destinationSilo.id,
               posting_date: postingDate,
               remarks: ref('XSILO'),

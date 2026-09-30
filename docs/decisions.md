@@ -2235,3 +2235,54 @@ rows; their silo rows display Code, Name, Linked Shed(s), Feed Type, physical
 Feed Item Code and Name, Capacity, Below Feed Level, Above Threshold, Reorder
 Days and Status. Only the two thresholds and Reorder Days are editable there.
 The Tentative/Actual Feed Plan remains a separate later feature.
+
+## 2026-09-30 — Feed Forecast Engine CSV follow-up: stock count enters scope; mill and feed plan stay later
+
+Rishi reviewed `NAVFarm_Feed forecast TDD with examples (Feed Forecast
+Engine).csv` against the implementation and made these scope and behaviour
+decisions:
+
+- The Tentative/Actual Feed Plan remains later work. Its mill-capacity fields
+  remain deferred with the mill workflow.
+- Physical silo stock count is now in scope. It is a separate dated
+  transaction. Every nonzero variance requires a reason and follows approval
+  before the shared inventory-ledger stock adjustment is posted; the forecast
+  recalculates from the posted balance. No Business Central call or simulated
+  integration state is part of this phase.
+- A forecast range has a configurable maximum of **45 calendar dates**. The
+  approved default remains seven calendar dates. Both counts are inclusive of
+  From and To, so a seven-day range ends at From + 6 and a 45-day range ends at
+  From + 44.
+- Projected population applies the known facts named by the CSV: scheduled
+  transfers, scheduled/known stage transitions and recorded mortality. Missing
+  future assumptions are flagged. A statistical or standard mortality
+  projection is still not invented.
+- Low-level run-down and true stock shortage are distinct. The configured low
+  level drives the low-feed alert and refill planning; Days of Feed Remaining
+  names the first forecast date on which projected stock for the silo and item
+  is insufficient. Neither silently replaces the other.
+- Next-diet readiness follows both rules in the CSV: the candidate silo must
+  match the feed item's handling type (`BULK` or `BAGGED`), and a silo that
+  still contains another item requires an authorized changeover. Existing D9
+  still prevents two linked positive-stock silos from supplying the same item
+  to one shed.
+- Refill recommendation considers the full shortage, safety stock, confirmed
+  inbound and silo free capacity. Free capacity constrains an individual
+  delivery; it does not erase the remaining requirement. The requirement may
+  therefore be split across more than one delivery/trip. The CSV's 30,000 KG
+  figure is a truck **target**, not a hard farm cap.
+- Requisition-deadline notification must be automatic rather than dependent on
+  somebody opening the Alerts page. It remains `IN_APP` only.
+- Feed alerts are visible to `HEAD_OF_FARM`, `OPERATIONAL_ADMIN` and
+  `FARM_MANAGER` users, subject to their existing company/farm/operational-area
+  scope. This is visibility, not permission to approve a requisition.
+
+The CSV states but does not fully specify several implementation choices. They
+remain open for Rishi rather than being inferred: where delivery lead time,
+bulk multiple, bag size, truck target and production schedule are configured;
+the percentage that means "approaching" the truck target; the exact
+Friday-evening time; the five-week normalization formula and completed-week
+boundary; whether plan `YYYYWW` is ISO week numbering; and the retained
+nine-to-four-farm database policy. The current four-farm seed work therefore
+remains blocked at its transition task and must not proceed to migration or RDP
+application without that policy, backups and explicit target approval.

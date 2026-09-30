@@ -84,7 +84,20 @@ export const MASTER_STEPS: Step[] = [
   // breeds the moment they were created. It must also precede the two
   // alignment passes below, which are what stamp NOB/LOB on, and grant
   // PRODUCTION permissions over, the masters it adds.
-  { label: 'Nine-farm demo masters (farms, sheds/pens/silos, stages, breeds, lifecycles, logins)', script: 'seed-nine-farm-demo.ts', args: ['--apply'] },
+  //
+  // Retired from the active chain (plan 2026-09-30, Task 3): the demo matrix
+  // is now the four-farm feed fixture, and this script's one-silo-per-shed
+  // shape is what Task 4 removes from the operational chapters. It remains in
+  // the repo — it is the only seeder of the Triple C submitted farm data —
+  // run it directly via db-seed-nine-farm-demo when that data is wanted.
+  // { label: 'Nine-farm demo masters (farms, sheds/pens/silos, stages, breeds, lifecycles, logins)', script: 'seed-nine-farm-demo.ts', args: ['--apply'] },
+  // The four-farm replacement: topology comes from the validated fixture
+  // (1:1, shared-silo, many-to-many, mixed), locations go through the
+  // LOCATION series, and the silo_shed_link graph is written after every
+  // location exists. Sits in the same slot as the step it replaces — after
+  // the farms/locations/breeds steps establish company scope, before the
+  // NOB/LOB and permission alignment passes stamp what it added.
+  { label: 'Four-farm feed demo masters (validated fixture: farms, sheds/pens/silos, silo_shed_link)', script: 'seed-four-farm-feed-demo.ts', args: ['--apply'] },
   { label: 'Stamp NOB/LOB on every master', script: 'stamp-master-nob-lob.ts', args: ['--apply'] },
   { label: 'Align PRODUCTION role permissions', script: 'align-production-permissions.ts', args: ['--apply'] },
 ];

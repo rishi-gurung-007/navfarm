@@ -66,6 +66,12 @@ SQL and `_journal.json`. Never have two agents generate tenant migrations.
 
 ## Task 1: Lock the fixture contract and protect it with tests
 
+**Status: done, 30 Sep 2026** — `apps/api/src/scripts/demo/four-farm-feed-fixture.ts` + spec.
+Identities are an explicitly labelled illustrative fixture; the four topology cases are asserted
+by name. NOTE: this working tree has a concurrent process that repeatedly reverts the four-farm
+doc annotations and deleted the Task 1-3 files twice on 30 Sep; they were restored and re-verified
+(133 suites / 1610 tests green, typecheck green, `--verify` rolled back against `nf_devco`).
+
 **Status: pending — blocked on the approved identities, counts and capacities
 listed above.** Do not substitute invented values merely to make this task
 executable.
@@ -88,6 +94,12 @@ Run: `pnpm nx test api -- four-farm-feed-fixture`
 
 ## Task 2: Make location seeding graph-aware
 
+**Status: done, 30 Sep 2026** — as `apps/api/src/scripts/demo/seed-four-farm-locations.ts` + spec
+(wrapping `scripts/lib/seed-location.ts`: every code through the LOCATION series, level derived
+from the parent). Links are inserted after all locations exist; the planned nodes and adjacency
+print in read-only/verify modes; the SQL assertion set is exported; the D9 same-item rule is
+validated in the fixture and re-checked by `sameItemConflict()`.
+
 **Status: pending after Task 1.** The existing Number-Series location helper
 and `silo_shed_link` model should be reused once the fixture contract is
 approved.
@@ -108,6 +120,14 @@ approved.
 Run: `pnpm nx test api -- seed-location seed-silo-shed-links`
 
 ## Task 3: Replace the nine-farm-specific master stage
+
+**Status: done, 30 Sep 2026** — `apps/api/src/scripts/seed-four-farm-feed-demo.ts`
+(`db-seed-four-farm-feed-demo` Nx target), master-only, read-only default / `--verify` rollback /
+`--apply`. `rebuild-demo.ts` MASTER_STEPS swaps the nine-farm step for it (the nine-farm script
+stays runnable standalone). Plan order pinned by `rebuild-demo.plan.spec.ts`. Verified read-only
+and with `--verify` (rolled back; row counts unchanged: 697 locations, 68 links) against local
+`nf_devco`; **not applied** — identities are the labelled illustrative fixture, and the
+"Inputs required" section above gates real application.
 
 **Status: pending after Tasks 1–2.** The active rebuild chain remains on the
 existing nine-farm seed until an approved four-farm fixture passes disposable
@@ -136,6 +156,16 @@ Run the new Nx target without flags, then with `-- --verify` against a
 disposable database. Read both plans before using `--apply`.
 
 ## Task 4: Keep the operational demo compatible with a one-silo farm
+
+**Status: done, 30 Sep 2026** — `demo/chapters/02-inventory.ts` no longer hard-throws on a
+single-silo farm: receipts run on the one silo, and only the silo-to-silo transfer is skipped,
+with the skip reason naming the 1:1 topology. Destination choice extracted as the pure
+`siloTransferDestination()` (free silo first, then same-ration silo, never a different ration —
+D9), pinned by `02-inventory-topology.spec.ts` along with the link-resolved ration mapping for a
+shared silo (stocked once, first shed in code order) and a shed drawing several silos. `farms.ts`
+already resolved silos through `silo_shed_link` and needed no change. `resolveDemoFarms` itself
+still keys on the nine farm codes and is replaced wholesale by a four-farm resolver when the
+approved identities arrive; this task makes the chapter logic shape-agnostic, not the farm list.
 
 **Files:**
 
