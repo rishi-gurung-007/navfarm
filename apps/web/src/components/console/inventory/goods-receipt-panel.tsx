@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef, useMemo } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { Plus, Trash2, Search, Loader2, Inbox, Eye, CheckCircle2, Pencil, ChevronDown, Sparkles } from "lucide-react";
 import { api } from "@/services/api-client";
 import { Dialog } from "@/components/ui/dialog";
@@ -12,6 +12,7 @@ import { TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/compon
 import { StatusBadge } from "@/components/ui/status-badge";
 import { useLanguage } from "@/hooks/useLanguage";
 import { SearchableSelect } from "@/components/ui/searchable-select";
+import { Popover, usePopoverSurface } from "@/components/ui/popover";
 
 const PAGE_SIZE = 25;
 
@@ -50,7 +51,6 @@ function LotDropdownPanel({
   currentLot,
   onSelectLot,
   onGenerate,
-  onClose,
   isGenerating,
 }: {
   itemId: string;
@@ -59,10 +59,9 @@ function LotDropdownPanel({
   currentLot: string;
   onSelectLot: (lotNo: string, expiryDate?: string) => void;
   onGenerate: () => void;
-  onClose: () => void;
   isGenerating?: boolean;
 }) {
-  const panelRef = useRef<HTMLDivElement>(null);
+  const { close } = usePopoverSurface();
   const [existingLots, setExistingLots] = useState<
     Array<{
       lot_no: string;
@@ -72,18 +71,6 @@ function LotDropdownPanel({
   >([]);
   const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState("");
-
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (panelRef.current && !panelRef.current.contains(event.target as Node)) {
-        onClose();
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-    };
-  }, [onClose]);
 
   useEffect(() => {
     if (!itemId) return;
@@ -124,8 +111,7 @@ function LotDropdownPanel({
 
   return (
     <div
-      ref={panelRef}
-      className="absolute top-full left-0 mt-1 z-50 w-80 rounded-lg border shadow-2xl p-3"
+      className="w-80 rounded-lg border shadow-2xl p-3"
       style={{
         backgroundColor: "var(--surface-raised)",
         borderColor: "var(--border)",
@@ -145,7 +131,7 @@ function LotDropdownPanel({
         </div>
         <button
           type="button"
-          onClick={onClose}
+          onClick={() => close()}
           className="text-xs px-1.5 py-0.5 rounded hover:bg-white/10"
           style={S.sub}
         >
@@ -157,9 +143,7 @@ function LotDropdownPanel({
         <button
           type="button"
           disabled={isGenerating}
-          onClick={() => {
-            onGenerate();
-          }}
+          onClick={onGenerate}
           className="w-full flex items-center justify-between px-2.5 py-1.5 rounded border text-xs font-medium transition-all mb-2.5 hover:bg-emerald-500/10 border-emerald-500/30 text-emerald-400"
           style={{ backgroundColor: "rgba(16, 185, 129, 0.05)" }}
         >
@@ -216,7 +200,7 @@ function LotDropdownPanel({
                       key={lot.lot_no}
                       onClick={() => {
                         onSelectLot(lot.lot_no, lot.expiry_date || undefined);
-                        onClose();
+                        close();
                       }}
                       className={`cursor-pointer transition-colors border-b ${
                         isSelected ? "bg-emerald-500/20 text-emerald-300" : "hover:bg-white/5"
@@ -247,7 +231,7 @@ function LotDropdownPanel({
             type="button"
             onClick={() => {
               onSelectLot("");
-              onClose();
+              close();
             }}
             className="text-[11px] text-zinc-400 hover:text-zinc-200"
           >
@@ -257,8 +241,8 @@ function LotDropdownPanel({
         <Button
           size="sm"
           variant="ghost"
-          onClick={onClose}
-          className="h-6 text-[11px] px-2"
+          onClick={() => close()}
+          className="h-6 text-[11px] px-2.5"
         >
           Done
         </Button>
@@ -270,38 +254,50 @@ function LotDropdownPanel({
 function SerialDropdownPanel({
   targetQty,
   serialValue,
+  hasSeries,
+  isGenerating,
+  onGenerate,
   onChange,
-  onClose,
 }: {
   targetQty: number;
   serialValue: string;
+  hasSeries: boolean;
+  isGenerating?: boolean;
+  onGenerate?: () => void;
   onChange: (serials: string) => void;
-  onClose: () => void;
 }) {
-  const panelRef = useRef<HTMLDivElement>(null);
+  const { close } = usePopoverSurface();
+  const serials = useMemo(() => {
+    return serialValue
+      ? serialValue.split(/[\n,]+/).map((s: string) => s.trim()).filter(Boolean)
+      : [];
+  }, [serialValue]);
+
+  const [items, setItems] = useState<string[]>(() => {
+    const arr = [...serials];
+    while (arr.length < targetQty) arr.push("");
+    return arr;
+  });
 
   useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (panelRef.current && !panelRef.current.contains(event.target as Node)) {
-        onClose();
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-    };
-  }, [onClose]);
+    const parsed = serialValue
+      ? serialValue.split(/[\n,]+/).map((s: string) => s.trim()).filter(Boolean)
+      : [];
+    const arr = [...parsed];
+    while (arr.length < targetQty) arr.push("");
+    setItems(arr);
+  }, [serialValue, targetQty]);
 
-  const serials = serialValue
-    ? serialValue.split(/[\n,]+/).map((s: string) => s.trim()).filter(Boolean)
-    : [];
-  const displayCount = Math.max(serials.length, targetQty);
-  const rows = Array.from({ length: displayCount }, (_, i) => serials[i] || "");
+  const updateItem = (index: number, val: string) => {
+    const next = [...items];
+    next[index] = val;
+    setItems(next);
+    onChange(next.map((s) => s.trim()).filter(Boolean).join(", "));
+  };
 
   return (
     <div
-      ref={panelRef}
-      className="absolute top-full left-0 mt-1 z-50 w-72 rounded-lg border shadow-2xl p-2.5"
+      className="w-80 rounded-lg border shadow-2xl p-3"
       style={{
         backgroundColor: "var(--surface-raised)",
         borderColor: "var(--border)",
@@ -311,12 +307,17 @@ function SerialDropdownPanel({
         className="flex items-center justify-between pb-2 mb-2 border-b"
         style={{ borderColor: "var(--border)" }}
       >
-        <span className="text-xs font-semibold" style={S.primary}>
-          Generated Serials ({serials.length}/{targetQty})
-        </span>
+        <div className="flex items-center gap-1.5">
+          <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase bg-blue-500/20 text-blue-300">
+            SERIAL NS
+          </span>
+          <span className="text-xs font-semibold" style={S.primary}>
+            Serials ({serials.length}/{targetQty})
+          </span>
+        </div>
         <button
           type="button"
-          onClick={onClose}
+          onClick={() => close()}
           className="text-xs px-1.5 py-0.5 rounded hover:bg-white/10"
           style={S.sub}
         >
@@ -324,33 +325,60 @@ function SerialDropdownPanel({
         </button>
       </div>
 
-      <div className="max-h-48 overflow-y-auto space-y-1.5 pr-1">
-        {rows.map((s, sIdx) => (
+      {hasSeries && (
+        <button
+          type="button"
+          disabled={isGenerating}
+          onClick={onGenerate}
+          className="w-full flex items-center justify-between px-2.5 py-1.5 rounded border text-xs font-medium transition-all mb-2.5 hover:bg-blue-500/10 border-blue-500/30 text-blue-400"
+          style={{ backgroundColor: "rgba(59, 130, 246, 0.05)" }}
+        >
+          <span className="flex items-center gap-1.5">
+            <Sparkles className="h-3.5 w-3.5 text-blue-400" />
+            {serials.length >= targetQty ? "Regenerate All Serials" : `Generate All ${targetQty} Serials`}
+          </span>
+          <span className="text-[10px] font-mono opacity-80">
+            {isGenerating ? "…" : "Preview (Series)"}
+          </span>
+        </button>
+      )}
+
+      <div className="max-h-56 overflow-y-auto space-y-1.5 pr-1">
+        {items.map((s, sIdx) => (
           <div key={sIdx} className="flex items-center gap-1.5">
-            <span className="text-[10px] font-mono px-1 py-0.5 rounded bg-black/25 text-zinc-400 w-6 text-center shrink-0">
+            <span className="text-[10px] font-mono px-1 py-0.5 rounded bg-black/30 text-zinc-400 w-7 text-center shrink-0 border border-white/5">
               #{sIdx + 1}
             </span>
             <input
               type="text"
               value={s}
               placeholder={`Serial #${sIdx + 1}`}
-              onChange={(e) => {
-                const updated = [...rows];
-                updated[sIdx] = e.target.value.trim();
-                onChange(updated.filter(Boolean).join(", "));
-              }}
+              onChange={(e) => updateItem(sIdx, e.target.value)}
               className="w-full text-xs h-7 px-2 font-mono rounded border"
               style={S.input}
             />
           </div>
         ))}
       </div>
-      <div className="mt-2 pt-2 border-t flex justify-end" style={{ borderColor: "var(--border)" }}>
+
+      <div className="mt-2.5 pt-2 border-t flex items-center justify-between" style={{ borderColor: "var(--border)" }}>
+        {serials.length > 0 ? (
+          <button
+            type="button"
+            onClick={() => {
+              setItems(Array.from({ length: targetQty }, () => ""));
+              onChange("");
+            }}
+            className="text-[11px] text-zinc-400 hover:text-zinc-200"
+          >
+            Clear Serials
+          </button>
+        ) : <div />}
         <Button
           size="sm"
           variant="ghost"
-          onClick={onClose}
-          className="h-6 text-[11px] px-2"
+          onClick={() => close()}
+          className="h-6 text-[11px] px-2.5"
         >
           Done
         </Button>
@@ -833,11 +861,11 @@ export default function GoodsReceiptPanel() {
                       </TableCell>
                       <TableCell className="px-2 py-1.5 min-w-[240px]">
                         {isLot ? (
-                          <div className="relative flex items-center gap-1.5 w-full">
+                          <div className="flex items-center gap-1.5 w-full">
                             <span className="px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wider uppercase bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 shrink-0">
                               LOT
                             </span>
-                            <div className="relative flex-1 flex items-center">
+                            <div className="relative flex-1 flex items-center min-w-0">
                               <input
                                 value={line.lot_no}
                                 onChange={(e) => setLineField(idx, "lot_no", e.target.value)}
@@ -845,16 +873,42 @@ export default function GoodsReceiptPanel() {
                                 className={`${inputCls} font-mono text-xs pr-7`}
                                 style={S.input}
                               />
-                              <button
-                                type="button"
-                                onClick={() => setOpenLotIdx(openLotIdx === idx ? null : idx)}
-                                className="absolute right-1 text-zinc-400 hover:text-zinc-200 p-1 rounded"
-                                title="Pick from existing lots or manage lot"
+                              <Popover
+                                open={openLotIdx === idx}
+                                onOpenChange={(open) => setOpenLotIdx(open ? idx : null)}
+                                floating
+                                align="end"
+                                side="bottom"
+                                haspopup="dialog"
+                                className="absolute right-1 top-1/2 -translate-y-1/2"
+                                panelClassName="nf-tracking-popover-panel"
+                                trigger={(triggerProps) => (
+                                  <button
+                                    {...triggerProps}
+                                    className="text-zinc-400 hover:text-zinc-200 p-1 rounded flex items-center justify-center"
+                                    title="Pick from existing lots or manage lot"
+                                  >
+                                    <ChevronDown
+                                      className={`h-3.5 w-3.5 transition-transform ${openLotIdx === idx ? "rotate-180" : ""}`}
+                                    />
+                                  </button>
+                                )}
                               >
-                                <ChevronDown
-                                  className={`h-3.5 w-3.5 transition-transform ${openLotIdx === idx ? "rotate-180" : ""}`}
+                                <LotDropdownPanel
+                                  itemId={line.item_id}
+                                  warehouseId={header.warehouse_id}
+                                  hasSeries={Boolean(hasSeries)}
+                                  currentLot={line.lot_no}
+                                  onSelectLot={(lotNo, expiryDate) => {
+                                    setLineField(idx, "lot_no", lotNo);
+                                    if (expiryDate) {
+                                      setLineField(idx, "expiry_date", expiryDate.slice(0, 10));
+                                    }
+                                  }}
+                                  onGenerate={() => handleGenerateTracking(idx, 'LOT')}
+                                  isGenerating={isGenerating}
                                 />
-                              </button>
+                              </Popover>
                             </div>
                             {hasSeries && (
                               <Button
@@ -869,24 +923,6 @@ export default function GoodsReceiptPanel() {
                                 {isGenerating ? "…" : "Gen"}
                               </Button>
                             )}
-
-                            {openLotIdx === idx && (
-                              <LotDropdownPanel
-                                itemId={line.item_id}
-                                warehouseId={header.warehouse_id}
-                                hasSeries={Boolean(hasSeries)}
-                                currentLot={line.lot_no}
-                                onSelectLot={(lotNo, expiryDate) => {
-                                  setLineField(idx, "lot_no", lotNo);
-                                  if (expiryDate) {
-                                    setLineField(idx, "expiry_date", expiryDate.slice(0, 10));
-                                  }
-                                }}
-                                onGenerate={() => handleGenerateTracking(idx, 'LOT')}
-                                onClose={() => setOpenLotIdx(null)}
-                                isGenerating={isGenerating}
-                              />
-                            )}
                           </div>
                         ) : isSerial ? (
                           <div className="flex items-center gap-1.5 w-full">
@@ -894,60 +930,70 @@ export default function GoodsReceiptPanel() {
                               SERIAL NS
                             </span>
                             {Math.round(Number(line.quantity || 1)) > 1 ? (
-                              <div className="relative flex-1">
-                                <button
-                                  type="button"
-                                  onClick={() => setOpenSerialIdx(openSerialIdx === idx ? null : idx)}
-                                  className="flex items-center justify-between w-full h-8 px-2.5 py-1 text-xs rounded border text-left transition-all"
-                                  style={{
-                                    backgroundColor: "var(--input-bg)",
-                                    borderColor: openSerialIdx === idx ? "var(--accent)" : "var(--input-border)",
-                                    color: line.serial_no ? "var(--text-primary)" : "var(--text-muted)",
+                              <div className="flex-1 min-w-0">
+                                <Popover
+                                  open={openSerialIdx === idx}
+                                  onOpenChange={(open) => setOpenSerialIdx(open ? idx : null)}
+                                  floating
+                                  align="start"
+                                  side="bottom"
+                                  haspopup="dialog"
+                                  className="w-full !block"
+                                  panelClassName="nf-tracking-popover-panel"
+                                  trigger={(triggerProps) => {
+                                    const serials = line.serial_no
+                                      ? line.serial_no.split(/[\n,]+/).map((s: string) => s.trim()).filter(Boolean)
+                                      : [];
+                                    const targetQty = Math.round(Number(line.quantity || 1));
+                                    return (
+                                      <button
+                                        {...triggerProps}
+                                        className="flex items-center justify-between w-full h-8 px-2.5 py-1 text-xs rounded border text-left transition-all"
+                                        style={{
+                                          backgroundColor: "var(--input-bg)",
+                                          borderColor: openSerialIdx === idx ? "var(--accent)" : "var(--input-border)",
+                                          color: line.serial_no ? "var(--text-primary)" : "var(--text-muted)",
+                                        }}
+                                      >
+                                        <span className="truncate font-mono text-xs">
+                                          {serials.length === 0
+                                            ? "Click Gen / Serials…"
+                                            : `${serials.length} Serials: ${serials[0]}${serials.length > 1 ? ", …" : ""}`}
+                                        </span>
+                                        <div className="flex items-center gap-1 shrink-0 ml-1.5">
+                                          {serials.length > 0 && (
+                                            <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-blue-500/20 text-blue-300">
+                                              {serials.length}/{targetQty}
+                                            </span>
+                                          )}
+                                          <ChevronDown
+                                            className={`h-3.5 w-3.5 transition-transform ${openSerialIdx === idx ? "rotate-180" : ""}`}
+                                          />
+                                        </div>
+                                      </button>
+                                    );
                                   }}
                                 >
-                                  <span className="truncate font-mono text-xs">
-                                    {(() => {
-                                      const serials = line.serial_no
-                                        ? line.serial_no.split(/[\n,]+/).map((s: string) => s.trim()).filter(Boolean)
-                                        : [];
-                                      if (serials.length === 0) return "Click Gen / Serials…";
-                                      return `${serials.length} Serials: ${serials[0]}${serials.length > 1 ? ", …" : ""}`;
-                                    })()}
-                                  </span>
-                                  <div className="flex items-center gap-1 shrink-0 ml-1.5">
-                                    {(() => {
-                                      const serials = line.serial_no
-                                        ? line.serial_no.split(/[\n,]+/).map((s: string) => s.trim()).filter(Boolean)
-                                        : [];
-                                      return serials.length > 0 ? (
-                                        <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-blue-500/20 text-blue-300">
-                                          {serials.length}/{Math.round(Number(line.quantity || 1))}
-                                        </span>
-                                      ) : null;
-                                    })()}
-                                    <ChevronDown
-                                      className={`h-3.5 w-3.5 transition-transform ${openSerialIdx === idx ? "rotate-180" : ""}`}
-                                    />
-                                  </div>
-                                </button>
-
-                                {openSerialIdx === idx && (
                                   <SerialDropdownPanel
                                     targetQty={Math.max(1, Math.round(Number(line.quantity || 1)))}
                                     serialValue={line.serial_no}
+                                    hasSeries={Boolean(hasSeries)}
+                                    isGenerating={isGenerating}
+                                    onGenerate={() => handleGenerateTracking(idx, 'SERIAL')}
                                     onChange={(val) => setLineField(idx, "serial_no", val)}
-                                    onClose={() => setOpenSerialIdx(null)}
                                   />
-                                )}
+                                </Popover>
                               </div>
                             ) : (
-                              <input
-                                value={line.serial_no}
-                                onChange={(e) => setLineField(idx, "serial_no", e.target.value)}
-                                placeholder={hasSeries ? "Auto / Enter Serial No." : "Serial No."}
-                                className={`${inputCls} font-mono text-xs`}
-                                style={S.input}
-                              />
+                              <div className="flex-1 min-w-0">
+                                <input
+                                  value={line.serial_no}
+                                  onChange={(e) => setLineField(idx, "serial_no", e.target.value)}
+                                  placeholder={hasSeries ? "Auto / Enter Serial No." : "Serial No."}
+                                  className={`${inputCls} font-mono text-xs`}
+                                  style={S.input}
+                                />
+                              </div>
                             )}
                             {hasSeries && (
                               <Button
