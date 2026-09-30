@@ -63,3 +63,22 @@ it('loads and saves company feed settings without inserting a client schedule in
     companyId: 'co-1', defaultForecastDays: 7, maxForecastDays: 45, submissionTime: '12:00',
   })));
 });
+
+it('accepts API-valid whole and decimal feed quantities and submits them', async () => {
+  render(<CompanyTab activeCompany={company} companies={[company]} currencies={currencies} tenantId="tenant-1" currentUser={{ userType: 'COMPANY_ADMIN' }} skipDirectory section="feed" />);
+  await waitFor(() => expect((screen.getByLabelText(/ctFeedDefaultForecastDays/) as HTMLInputElement).value).toBe('7'));
+  const truckTarget = screen.getByLabelText('ctFeedTruckTargetKg') as HTMLInputElement;
+  const bulkMultiple = screen.getByLabelText('ctFeedBulkMultipleKg') as HTMLInputElement;
+
+  fireEvent.change(truckTarget, { target: { value: '1000' } });
+  fireEvent.change(bulkMultiple, { target: { value: '2500.25' } });
+
+  expect(truckTarget.validity.stepMismatch).toBe(false);
+  expect(bulkMultiple.validity.stepMismatch).toBe(false);
+  expect(truckTarget.form?.checkValidity()).toBe(true);
+  fireEvent.click(screen.getByRole('button', { name: 'saveChanges' }));
+  await waitFor(() => expect(put).toHaveBeenCalledWith('/feed-settings', expect.objectContaining({
+    truckTargetKg: 1000,
+    bulkMultipleKg: 2500.25,
+  })));
+});
