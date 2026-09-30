@@ -1654,9 +1654,8 @@ html[data-theme='dark'] {
   --toastify-font-family: inherit;
 }
 
-.Toastify__toast-container--top-right {
+.Toastify__toast-container--top-center {
   top: 1.25rem !important;
-  right: 1.25rem !important;
   z-index: 99999 !important;
 }
 

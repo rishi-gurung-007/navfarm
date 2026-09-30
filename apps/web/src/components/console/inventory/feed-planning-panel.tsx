@@ -1,28 +1,34 @@
 "use client";
 
-/** Feed Planning: farms are collapsible grouping rows; planning values belong to their silos. */
+/** Silo Feed Setup: farms are collapsible grouping rows; setup values belong to their silos. */
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { Check, ChevronDown, ChevronRight, Loader2, Save } from "lucide-react";
 import { api } from "@/services/api-client";
 import { Button } from "@/components/ui/button";
 import { InlineAlert } from "@/components/ui/alert";
 import { ScrollTable } from "@/components/ui/scroll-table";
+import { StatusBadge } from "@/components/ui/status-badge";
 import { useLanguage } from "@/hooks/useLanguage";
 
 const CELL_PADDING_PX = 12; // px-1.5 either side
 const SAVE_PX = 30;
 
-const SILO_CELL_PX = 170;
-const HELD_CELL_PX = 130;
-const CAPACITY_PX = 72;
-const SILO_INPUTS_PX = [76, 76, 56];
-const SILO_PX = [SILO_CELL_PX, HELD_CELL_PX, CAPACITY_PX, ...SILO_INPUTS_PX, SAVE_PX];
+const CODE_PX = 105;
+const NAME_PX = 75;
+const SHEDS_PX = 130;
+const FEED_TYPE_PX = 55;
+const ITEM_CODE_PX = 95;
+const ITEM_NAME_PX = 105;
+const CAPACITY_PX = 55;
+const STATUS_PX = 55;
+const SILO_INPUTS_PX = [60, 60, 48];
+const SILO_PX = [CODE_PX, NAME_PX, SHEDS_PX, FEED_TYPE_PX, ITEM_CODE_PX, ITEM_NAME_PX, CAPACITY_PX, ...SILO_INPUTS_PX, STATUS_PX, SAVE_PX];
 
 export const FEED_PLANNING_LAYOUT = {
   cellPaddingPx: CELL_PADDING_PX,
   savePx: SAVE_PX,
   siloPx: SILO_PX,
-  siloTotalPx: SILO_PX.reduce((a, b) => a + b, 0) + (SILO_INPUTS_PX.length + 2) * CELL_PADDING_PX,
+  siloTotalPx: SILO_PX.reduce((a, b) => a + b, 0) + SILO_PX.length * CELL_PADDING_PX,
 } as const;
 
 export interface FeedPlanningFarm {
@@ -42,21 +48,24 @@ export interface FeedPlanningSilo {
   locationId: string;
   code: string;
   name: string;
+  linkedSheds: Array<{ locationId: string; code: string; name: string }>;
+  feedType: "BULK" | "BAGGED";
   feedItemCode: string | null;
   feedItemName: string | null;
   capacityKg: number | null;
   lowLevelKg: number | null;
   highLevelKg: number | null;
   reorderDays: number | null;
+  status: string;
 }
 
 type SiloKey = "low_level_kg" | "high_level_kg" | "silo_reorder_days";
 type SiloDraft = Record<SiloKey, string>;
 
 const SILO_COLUMNS: { key: SiloKey; labelKey: string; from: (s: FeedPlanningSilo) => number | null; widthPx: number }[] = [
-  { key: "low_level_kg", labelKey: "fpSiloLow", from: (s) => s.lowLevelKg, widthPx: 76 },
-  { key: "high_level_kg", labelKey: "fpSiloHigh", from: (s) => s.highLevelKg, widthPx: 76 },
-  { key: "silo_reorder_days", labelKey: "fpSiloReorder", from: (s) => s.reorderDays, widthPx: 56 },
+  { key: "low_level_kg", labelKey: "fpSiloLow", from: (s) => s.lowLevelKg, widthPx: SILO_INPUTS_PX[0] },
+  { key: "high_level_kg", labelKey: "fpSiloHigh", from: (s) => s.highLevelKg, widthPx: SILO_INPUTS_PX[1] },
+  { key: "silo_reorder_days", labelKey: "fpSiloReorder", from: (s) => s.reorderDays, widthPx: SILO_INPUTS_PX[2] },
 ];
 
 const siloDraftOf = (silo: FeedPlanningSilo): SiloDraft => ({
@@ -211,8 +220,12 @@ export function FeedPlanningPanel() {
                             <ScrollTable label={t("fpSiloTableLabel", { farm: farm.code })}>
                               <thead>
                                 <tr>
-                                  <th scope="col" className={TH} style={{ width: SILO_CELL_PX + CELL_PADDING_PX }}>{t("fpSiloColSilo")}</th>
-                                  <th scope="col" className={TH} style={{ width: HELD_CELL_PX + CELL_PADDING_PX }}>{t("fpSiloColHeld")}</th>
+                                  <th scope="col" className={TH} style={{ width: CODE_PX + CELL_PADDING_PX }}>{t("fpSiloColCode")}</th>
+                                  <th scope="col" className={TH} style={{ width: NAME_PX + CELL_PADDING_PX }}>{t("fpSiloColName")}</th>
+                                  <th scope="col" className={TH} style={{ width: SHEDS_PX + CELL_PADDING_PX }}>{t("fpSiloColSheds")}</th>
+                                  <th scope="col" className={TH} style={{ width: FEED_TYPE_PX + CELL_PADDING_PX }}>{t("fpSiloColFeedType")}</th>
+                                  <th scope="col" className={TH} style={{ width: ITEM_CODE_PX + CELL_PADDING_PX }}>{t("fpSiloColFeedItemCode")}</th>
+                                  <th scope="col" className={TH} style={{ width: ITEM_NAME_PX + CELL_PADDING_PX }}>{t("fpSiloColFeedItemName")}</th>
                                   <th scope="col" className={`${TH} text-right`} style={{ width: CAPACITY_PX + CELL_PADDING_PX }}>
                                     {t("fpSiloColCapacity")}
                                     <span className="block font-normal normal-case tracking-normal">{t("fpUnitKg")}</span>
@@ -225,6 +238,7 @@ export function FeedPlanningPanel() {
                                       </span>
                                     </th>
                                   ))}
+                                  <th scope="col" className={TH} style={{ width: STATUS_PX + CELL_PADDING_PX }}>{t("fpSiloColStatus")}</th>
                                   <th scope="col" className={TH} style={{ width: SAVE_PX + CELL_PADDING_PX }} />
                                 </tr>
                               </thead>
@@ -233,14 +247,23 @@ export function FeedPlanningPanel() {
                                   const siloDraft = siloDrafts[silo.locationId] ?? siloDraftOf(silo);
                                   return (
                                     <tr key={silo.locationId}>
-                                      <td className={TD} style={{ width: SILO_CELL_PX + CELL_PADDING_PX }}><span className="font-medium">{silo.code} — {silo.name}</span></td>
-                                      <td className={TD} style={{ width: HELD_CELL_PX + CELL_PADDING_PX }}><span className="text-[var(--text-secondary)]">{silo.feedItemName || silo.feedItemCode || t("fpSiloEmpty")}</span></td>
+                                      <td className={TD} style={{ width: CODE_PX + CELL_PADDING_PX }}><span className="font-medium">{silo.code}</span></td>
+                                      <td className={TD} style={{ width: NAME_PX + CELL_PADDING_PX }}>{silo.name}</td>
+                                      <td className={TD} style={{ width: SHEDS_PX + CELL_PADDING_PX }}>
+                                        {(silo.linkedSheds ?? []).length
+                                          ? silo.linkedSheds.map((shed) => `${shed.code} — ${shed.name}`).join(", ")
+                                          : "—"}
+                                      </td>
+                                      <td className={TD} style={{ width: FEED_TYPE_PX + CELL_PADDING_PX }}>{silo.feedType}</td>
+                                      <td className={TD} style={{ width: ITEM_CODE_PX + CELL_PADDING_PX }}>{silo.feedItemCode ?? "—"}</td>
+                                      <td className={TD} style={{ width: ITEM_NAME_PX + CELL_PADDING_PX }}>{silo.feedItemName ?? "—"}</td>
                                       <td className={`${TD} text-right tabular-nums`} style={{ width: CAPACITY_PX + CELL_PADDING_PX }}>{silo.capacityKg == null ? "—" : silo.capacityKg.toLocaleString("en-US")}</td>
                                       {SILO_COLUMNS.map((column) => (
                                         <td key={column.key} className={`${TD} text-right`}>
                                           <input type="number" aria-label={t(column.labelKey as any, { silo: silo.code })} className="nf-input-sm text-right tabular-nums" style={{ ...inputStyle, width: column.widthPx }} min={0} step="1" value={siloDraft[column.key]} onChange={(e) => setSiloCell(silo.locationId, column.key, e.target.value)} />
                                         </td>
                                       ))}
+                                      <td className={TD} style={{ width: STATUS_PX + CELL_PADDING_PX }}><StatusBadge status={silo.status} /></td>
                                       <td className={TD} style={{ width: SAVE_PX + CELL_PADDING_PX }}>
                                         <Button size="sm" variant="outline" className="h-7 px-0" style={{ width: SAVE_PX }} aria-label={t("fpSiloSave", { silo: silo.code })} title={siloSaved === silo.locationId && !siloChanged(silo.locationId) ? t("fpSaved") : t("fpSaveAction")} disabled={!siloChanged(silo.locationId) || siloSaving === silo.locationId} onClick={() => saveSilo(farm, silo)}>
                                           {siloSaved === silo.locationId && !siloChanged(silo.locationId) ? <Check className="h-3.5 w-3.5" /> : <Save className="h-3.5 w-3.5" />}

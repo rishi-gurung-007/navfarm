@@ -1992,36 +1992,22 @@ thing. Allowed parents are now `["FARM"]` in both scopes (the tenant template
 row and the company copy — master scope matching is exact, so both must move
 or the company-scoped form keeps the old rule).
 
-**One silo serves many sheds; a shed draws from exactly one silo.** Rishi's
-words: "one silo for multiple sheds or only one silo for a single shed in the
-same farm". Because the shed side is the *one* side, this is a nullable
-self-FK `location_master.feed_silo_id` on the SHED row, not a join table —
-one-silo-per-shed then cannot be violated by any code path, including a bad
-seed. The "Attached Sheds" multi-select on the silo form is a *view* of that
-column across the parent farm's sheds: selecting writes `feed_silo_id` on the
-chosen sheds, deselecting clears it. Migration `0113_silo_feed_link.sql`.
+**Superseded relationship decision.** The decision made on 24 Sep was “one
+silo serves many sheds; a shed draws from exactly one silo”, represented by
+`location_master.feed_silo_id`. That was subsequently replaced by migrations
+0114/0115 and the 30 Sep decision below: a shed may draw from several silos,
+with the feed item distinguishing the source. This paragraph remains only as
+decision history and must not be used to design or seed the current model.
 
-**Feed flows store -> silo -> shed, and the daily entry draws from the silo.**
-The gap this closes is not the one it first appeared to be. A CONSUMPTION line
-on a daily entry already posts to `inventory_ledger` — `batch-daily-data.service.ts`
--> `batchService.addTransaction` -> `writeNegativeEntry` — but passes no
-`warehouseId`, so every row lands with `warehouse_id` NULL and `applyFifo`
-draws stock company-wide. (`resource_ledger`, which reads like the feed path
-and whose schema comment says a resource booking has no warehouse, is dead:
-one writer, `resource-ledger.service.ts:57`, and no caller anywhere.) The fix
-is therefore to resolve a source warehouse and pass it, not to build a new
-posting path: `scheduler_header.location_id` — already loaded by `postEntry`
-and until now unused — gives the batch's shed; the shed's `feed_silo_id` gives
-the silo. "Block when short" needs no new check: `applyFifo` filters layers by
-`warehouse_id` and already throws when they do not cover the issue, so naming
-the silo *is* the block.
-
-**A shed with no silo falls back to the farm's STORE.** Bagged feed genuinely
-comes from the store — `location_master.feed_in_bags` has said so since the
-Location Master templates were loaded, and the breed lifecycle sheets read it.
-It also means the nine demo farms keep working before anyone attaches a silo:
-110 sheds exist against 53 silos, so the fallback is the common path, not the
-edge case.
+**Historical posting note, partly superseded.** The useful part of the 24 Sep
+finding remains: daily CONSUMPTION already posts through
+`batch-daily-data.service.ts` -> `batchService.addTransaction` ->
+`writeNegativeEntry`, and stock must remain on that shared inventory-ledger
+path rather than a second feed ledger. Its source-resolution description is
+obsolete: no current work may read `feed_silo_id`. Resolve candidate silos
+through `silo_shed_link` and distinguish them by feed item. Any bagged-feed
+store fallback must follow the current service and approved configuration; the
+old nine-farm count is not justification for inventing an implicit fallback.
 
 **Silo capacity is entered in KG or TON, and stored in KG.** Rishi: "for silo
 Capacity uom only two ton/kg". `silo_capacity_kg` keeps storing canonical
@@ -2154,3 +2140,98 @@ Run-down, refill and required-on cells show a formatted date when one exists
 and a dash otherwise; phrases such as `After …` and `Not due by …` do not
 belong in date columns. In the days-of-stock cell the `Indicative` chip appears
 before the numeric value.
+
+## 2026-09-30 — New-tenant provisioning: the placeholder claim must snapshot master templates, and company generation never falls back to tenant series
+
+Confirmed defect, reported by Rishi. A newly onboarded company could not generate a single number. The chain: tenant signup seeds tenant-template Number Series rows (STAGE among them, `SYSTEM_NO_SERIES_SEED`) and a placeholder company so the first admin has a valid company FK; the Setup Wizard's step 1 normally claims that placeholder in place rather than inserting a company — but its update branch never called `copyCompanyMasterTemplates()`, only the new-company branch did. So the company held no company-scoped STAGE series. Series resolution was happy to advertise the tenant template as a fallback, while `lockSeries()` — correctly — requires the exact company scope, and failed. Same class as the 2026-09-10 finding that `copy-master-templates.ts` existed and nothing called it: the mechanism was right and a call site was missing.
+
+Three decisions in the repair:
+
+- **The placeholder claim takes the same one-time snapshot as company creation**, inside the same transaction, gated on `company_code === 'PLACEHOLDER'`. An established company's profile edit must not re-copy: snapshot, not sync (the standing rule in `copy-master-templates.ts`), so later edits are idempotent no-ops by construction.
+- **Series resolution and preview now use the exact company scope that locking and generation use.** `findDefaultSeriesByMaster` used to union `company_id IS NULL` into company lookups and `resolveSeriesFor`/`previewByMaster` trusted it; both now reject a tenant template once a company workspace is in play (`seriesMatchesCompanyScope`). A tenant template is a definition to snapshot, not a shared counter — the same principle as `BATCH`, which only ever worked because template adoption gave each company its own row. Without the fix, a form could preview a code the save could not allocate.
+- **Existing affected companies are repaired additively** (`db-repair-company-template-snapshots`, registered as an Nx target): read-only by default, `--verify` writes in a transaction and rolls back, `--apply` commits. A company owning zero rows in every template table gets the full snapshot; a partially-owned company gets only missing Number Series rows, matched by unique code; existing identities, counters, `last_no_used` and configuration are never updated, deleted or reset. Partially-owned non-series tables are audit-only — there is no universal business key with which to merge them safely, and inventing one would violate the no-invented-data rule. `reseed-number-series.ts` is not used.
+
+Also in this repair: `migrate-all-tenants.ts` now records per-tenant failures and exits non-zero, instead of catching a failure and continuing so that exit code zero meant nothing.
+
+Regression coverage lives in `setup-wizard.service.spec.ts` (claim copies; established edit does not), `number-series.service.spec.ts` (tenant template never resolves or previews at company scope), and `setup-wizard-stage-chain.spec.ts` — the whole chain in one test: signup state → wizard claims placeholder → company STAGE row exists at `current_seq = 0` → preview/lock/generate run on the company row with the template's counter untouched → a Stage create consumes the company counter.
+
+## 2026-09-30 — Feed examples are seed fixtures; four farms exercise the silo topology
+
+Rishi confirmed that every value in the supplied feed worked examples is
+**illustrative seed data**. An example value is not a production default, a
+hardcoded business rule or confirmed Triple C master data merely because it
+appears in a workbook or TDD example column. Rules stated in description or
+validation columns still describe intended behaviour; conflicting or missing
+rules still come back to Rishi. Seed fixtures must label their source and stay
+replaceable and configurable.
+
+The controlled demo topology is exactly one tenant, one company, one active
+operational area for NOB Livestock / LOB Piggery, and **four farms**:
+
+1. Farm 1 has one shed and one silo, linked one-to-one.
+2. Farm 2 has several sheds supplied by one shared silo; each of those sheds
+   uses only that silo.
+3. Farm 3 has several sheds and several silos with deliberate cross-links.
+4. Farm 4 is the mixed case: an exclusive one-to-one pair, a silo serving
+   several sheds, and a shed drawing from several silos.
+
+Silos remain direct children of farms. `silo_shed_link` is the canonical
+many-to-many relationship. A shed may draw from multiple silos, and a silo may
+serve multiple sheds, but silos sharing a shed may not carry the same
+positive-stock feed item. Pens remain children of sheds. Exact identities and
+counts must come from approved client data or an explicitly labelled
+illustrative fixture; agents must not invent them as client data.
+
+The recommended configurable controls are approved for implementation:
+
+- forecast default view 7 days and configurable maximum 45 days;
+- capacity status GREEN below 90%, AMBER from 90% through 100%, and RED above
+  100%, with thresholds configurable rather than scattered constants;
+- a mill production slot is production date plus a configurable shift/slot;
+- every nonzero stock-take variance requires a reason, while Finance approval
+  is triggered by configurable percentage or monetary thresholds;
+- bag reconciliation tolerance is configurable, with 1% used only by the
+  illustrative seed;
+- an over-receipt is posted only with a variance reason, authorized by the Farm
+  Manager, and raises an in-app notification to the Feed Mill Manager;
+- one feed requisition header represents one farm and submission cycle, with
+  separate silo/item lines, including current- and next-diet lines.
+
+Feed fulfilment is **IN_HOUSE only for the current phase**. NAVFarm owns the
+workflow and ledger posting; it must not call or pretend to call Business
+Central. The design preserves a future `BC_INTEGRATED` mode by keeping business
+status separate from integration status and using stable document and line
+identifiers. Only `IN_APP` notifications are enabled now. Email, SMS, WhatsApp
+and BC integration are future additions, not simulated successes.
+
+The first seed revision is master-only: tenant/company/area, locations and
+their topology, Number-Series-driven codes, related feed/item/lifecycle
+masters, users only if explicitly included, and configuration fixtures.
+Batches, ledger movements, forecast runs, requisitions, transfers, receipts
+and stock takes are operational data and are not silently inserted by that
+master-only phase.
+
+## 2026-09-30 — Stage parity, company-owned Number Series and Silo Feed Setup
+
+Stage Create and Edit use the same visible transition fields. Nothing is
+hidden when the Transition Trigger changes: `MANUAL` disables all dependent
+transition fields, `AUTO_BY_DAY` enables Auto-Move On Day and Next Stage, and
+`EVENT_BASED` enables Alternate Next Stage and Alternate Trigger Condition.
+Changing the trigger does not erase stored values. This applies Rishi's rule
+that master fields remain visible while only applicable mutable fields are
+editable.
+
+Number Series counters are company-owned. Tenant-scope series are templates to
+snapshot, never fallback counters for a company workspace. The first Setup
+Wizard claim of the signup `PLACEHOLDER` company takes the company template
+snapshot in the same transaction; later profile edits do not repeat it. Older
+affected companies are repaired additively: existing rows and Number Series
+counters are preserved, only unambiguous missing rows are inserted, and
+partially owned non-Series tables are reported for review instead of guessed.
+
+The Inventory Setup tab previously called Feed Planning is **Silo Feed Setup**.
+It is not the TDD's Tentative/Actual Feed Plan. Farms are collapsible grouping
+rows; their silo rows display Code, Name, Linked Shed(s), Feed Type, physical
+Feed Item Code and Name, Capacity, Below Feed Level, Above Threshold, Reorder
+Days and Status. Only the two thresholds and Reorder Days are editable there.
+The Tentative/Actual Feed Plan remains a separate later feature.

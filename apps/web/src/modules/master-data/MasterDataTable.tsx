@@ -635,7 +635,10 @@ export function MasterDataTable({
     ? formFields.filter((field, index, fields) => fields.findIndex((candidate) => candidate.key === field.key) === index)
     : formFields
         .filter((f) => !f.editOnly)
-        .filter((f) => !f.visibleWhen || isFieldRequired({ ...f, required: false, requiredWhen: f.visibleWhen }, form))
+        // Stage transition fields stay visible so create and edit have the same
+        // shape. Their visibleWhen rule controls whether they are enabled below;
+        // changing the trigger never destroys a value already entered/stored.
+        .filter((f) => config.key === "stage" || !f.visibleWhen || isFieldRequired({ ...f, required: false, requiredWhen: f.visibleWhen }, form))
         .filter((f) => !entityRestrictionState(f, form, entityOptions)?.hidden)
         // Only the "no parent chosen yet" half hides the field; an empty filtered
         // list keeps it, disabled, so the form can say why it has nothing to offer.
@@ -1777,7 +1780,9 @@ export function MasterDataTable({
   const renderField = (f: MasterDataField) => {
     const isLockedByTemplate = templateLockedFields.has(f.key);
     const immutableOnEdit = !!editing && !!f.createOnly;
-    const fieldDisabled = readOnly || immutableOnEdit || !!f.readOnly || isLockedByTemplate;
+    const disabledByStageTrigger = config.key === "stage" && !!f.visibleWhen
+      && !isFieldRequired({ ...f, required: false, requiredWhen: f.visibleWhen }, form);
+    const fieldDisabled = readOnly || immutableOnEdit || !!f.readOnly || isLockedByTemplate || disabledByStageTrigger;
     const isCodeField = f.key === numbering.codeKey;
     const value = isCodeField && codeFieldTouchedRef.current
       ? (form[f.key] ?? "")
@@ -2417,7 +2422,7 @@ export function MasterDataTable({
       );
     }
     const codeAllowsManual = isCodeField && (numbering.allowManual || isManualNoAllowed);
-    const isDisabled = immutableOnEdit || isLockedByTemplate || (f.readOnly && !codeAllowsManual);
+    const isDisabled = immutableOnEdit || isLockedByTemplate || disabledByStageTrigger || (f.readOnly && !codeAllowsManual);
     const isInteger = f.type === "number" && (f.step === "1" || !f.step);
     // A field like GPS Latitude/Longitude allows a negative sign only when its
     // floor is unset or itself negative — same rule the keydown guard below uses.

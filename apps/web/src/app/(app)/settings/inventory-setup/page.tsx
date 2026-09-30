@@ -448,7 +448,7 @@ export default function InventorySetupPage() {
           General Controls
         </button>
 
-        {/* D32: the six per-farm feed settings, off the Location form and onto their own tab. */}
+        {/* D41: farms group the physical silos configured by Silo Feed Setup. */}
         <button
           type="button"
           onClick={() => setActiveTab("feed-planning")}
@@ -459,11 +459,11 @@ export default function InventorySetupPage() {
           }`}
         >
           <CalendarClock size={16} />
-          Feed Planning
+          Silo Feed Setup
         </button>
       </div>
 
-      {/* TAB 3: FEED PLANNING (D32) */}
+      {/* TAB 3: SILO FEED SETUP (D41) */}
       {activeTab === "feed-planning" && <FeedPlanningPanel />}
 
       {/* TAB 1: NUMBER SERIES SETUP */}

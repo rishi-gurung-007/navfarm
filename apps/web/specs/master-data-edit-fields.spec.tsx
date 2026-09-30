@@ -27,11 +27,82 @@ jest.mock("@/hooks/useAuth", () => ({
 
 jest.mock("@/hooks/useMediaQuery", () => ({ useIsDesktop: () => true }));
 
+beforeAll(() => {
+  Element.prototype.scrollIntoView = jest.fn();
+});
+
 const renderTable = (config: MasterDataConfig) => render(
   <LanguageProvider>
     <MasterDataTable config={config} />
   </LanguageProvider>,
 );
+
+const stageConfig: MasterDataConfig = {
+  key: "stage",
+  label: "Stages",
+  singular: "Stage",
+  apiBase: "/stage",
+  idKey: "stage_id",
+  group: "Production",
+  columns: [{ key: "stage_code", label: "Code" }],
+  fields: [
+    { key: "stage_code", label: "Code", type: "text", createOnly: true, required: true },
+    {
+      key: "transition_trigger",
+      label: "Transition Trigger",
+      type: "select",
+      required: true,
+      options: ["AUTO_BY_DAY", "MANUAL", "EVENT_BASED"].map((value) => ({ value, label: value.replaceAll("_", " ") })),
+    },
+    {
+      key: "auto_move_on_day",
+      label: "Auto-Move On Day",
+      type: "number",
+      visibleWhen: { anyOf: [{ key: "transition_trigger", equals: "AUTO_BY_DAY" }] },
+      requiredWhen: { anyOf: [{ key: "transition_trigger", equals: "AUTO_BY_DAY" }] },
+    },
+    {
+      key: "next_stage_id",
+      label: "Next Stage",
+      type: "select-entity",
+      entityEndpoint: "/stage",
+      entityValueKey: "stage_id",
+      entityLabelKeys: ["stage_code"],
+      visibleWhen: { anyOf: [{ key: "transition_trigger", equals: "AUTO_BY_DAY" }] },
+    },
+    {
+      key: "alt_next_stage_id",
+      label: "Alternate Next Stage",
+      type: "select-entity",
+      entityEndpoint: "/stage",
+      entityValueKey: "stage_id",
+      entityLabelKeys: ["stage_code"],
+      visibleWhen: { anyOf: [{ key: "transition_trigger", equals: "EVENT_BASED" }] },
+      requiredWhen: { anyOf: [{ key: "transition_trigger", equals: "EVENT_BASED" }] },
+    },
+    {
+      key: "alt_trigger_condition",
+      label: "Alternate Trigger Condition",
+      type: "select",
+      options: [{ value: "PREGNANCY_FAILED", label: "PREGNANCY FAILED" }],
+      visibleWhen: { anyOf: [{ key: "transition_trigger", equals: "EVENT_BASED" }] },
+      requiredWhen: { anyOf: [{ key: "transition_trigger", equals: "EVENT_BASED" }] },
+    },
+  ],
+};
+
+function chooseStaticOption(field: string, option: string) {
+  fireEvent.click(screen.getByRole("button", { name: field }));
+  fireEvent.click(screen.getByRole("option", { name: option }));
+}
+
+function expectStageTransitionFields(enabled: string[]) {
+  const fields = ["Auto-Move On Day", "Next Stage", "Alternate Next Stage", "Alternate Trigger Condition"];
+  for (const name of fields) {
+    const role = name === "Auto-Move On Day" ? "textbox" : "button";
+    expect((screen.getByRole(role, { name }) as HTMLInputElement | HTMLButtonElement).disabled).toBe(enabled.includes(name) ? false : true);
+  }
+}
 
 describe("master-data edit fields", () => {
   beforeEach(() => jest.clearAllMocks());
@@ -85,6 +156,52 @@ describe("master-data edit fields", () => {
     expect((screen.getByRole("textbox", { name: "Conditional Note" }) as HTMLInputElement).disabled).toBe(false);
     expect(screen.getAllByRole("textbox", { name: "Conditional Note" })).toHaveLength(1);
     expect(screen.queryByRole("textbox", { name: "Internal Value" })).toBeNull();
+  });
+
+  it("shows every Stage transition field on create and only enables fields relevant to the selected trigger", async () => {
+    (api.get as jest.Mock).mockResolvedValue([]);
+
+    renderTable(stageConfig);
+    fireEvent.click(await screen.findByRole("button", { name: "Add Stage" }));
+
+    expectStageTransitionFields([]);
+
+    chooseStaticOption("Transition Trigger", "AUTO BY DAY");
+    expectStageTransitionFields(["Auto-Move On Day", "Next Stage"]);
+
+    chooseStaticOption("Transition Trigger", "EVENT BASED");
+    expectStageTransitionFields(["Alternate Next Stage", "Alternate Trigger Condition"]);
+
+    chooseStaticOption("Transition Trigger", "MANUAL");
+    expectStageTransitionFields([]);
+  });
+
+  it("keeps every Stage transition field and its stored value on edit while disabling irrelevant fields", async () => {
+    (api.get as jest.Mock).mockResolvedValue([
+      {
+        stage_id: "stage-1",
+        stage_code: "WEANER",
+        transition_trigger: "AUTO_BY_DAY",
+        auto_move_on_day: 42,
+        next_stage_id: "stage-2",
+        alt_next_stage_id: "stage-3",
+        alt_trigger_condition: "PREGNANCY_FAILED",
+        is_active: true,
+      },
+      { stage_id: "stage-2", stage_code: "GROWER", is_active: true },
+      { stage_id: "stage-3", stage_code: "RECOVERY", is_active: true },
+    ]);
+
+    renderTable(stageConfig);
+    fireEvent.click(await screen.findByRole("button", { name: "Actions for WEANER" }));
+    fireEvent.click(await screen.findByText("Edit"));
+
+    expectStageTransitionFields(["Auto-Move On Day", "Next Stage"]);
+    expect((screen.getByRole("textbox", { name: "Auto-Move On Day" }) as HTMLInputElement).value).toBe("42");
+
+    chooseStaticOption("Transition Trigger", "EVENT BASED");
+    expectStageTransitionFields(["Alternate Next Stage", "Alternate Trigger Condition"]);
+    expect((screen.getByRole("textbox", { name: "Auto-Move On Day" }) as HTMLInputElement).value).toBe("42");
   });
 
   it("keeps creation open and shows a corrective dialog when a manually entered code conflicts", async () => {

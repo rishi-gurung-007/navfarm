@@ -3,6 +3,7 @@ import { MySql2Database } from 'drizzle-orm/mysql2';
 import { ClsService } from 'nestjs-cls';
 import { and, eq, gte, inArray, isNotNull, isNull, gt, lte, notInArray, or, sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/mysql-core';
 import * as schema from '../../../core/database/schema';
 import { activeFarmOfCompany, batchScopeConditions, farmScope, FARM_SCOPE_KEY, FarmScope, restrictedScopeConditions } from '../../../common/farm-scope';
 import { FeedStockMovement, InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
@@ -61,7 +62,7 @@ export interface FeedFarmOption {
   companyName: string | null;
 }
 
-/** D32: a farm on the Feed Planning screen, with its six settings (null = the client default applies). */
+/** D32: legacy farm-level settings retained in this response for API compatibility. */
 export interface FeedFarmSettings {
   feed_lead_time_days: number | null;
   feed_bulk_multiple_kg: number | null;
@@ -70,11 +71,13 @@ export interface FeedFarmSettings {
   feed_production_weekday: number | null;
 }
 
-/** D41: one silo of a farm, as Feed Planning lists it. */
+/** D41: one silo of a farm, as Silo Feed Setup lists it. */
 export interface FeedPlanningSilo {
   locationId: string;
   code: string;
   name: string;
+  linkedSheds: Array<{ locationId: string; code: string; name: string }>;
+  feedType: 'BULK' | 'BAGGED';
   /** What it is holding now — read-only; null when it is empty. */
   feedItemCode: string | null;
   feedItemName: string | null;
@@ -82,6 +85,7 @@ export interface FeedPlanningSilo {
   lowLevelKg: number | null;
   highLevelKg: number | null;
   reorderDays: number | null;
+  status: string;
 }
 
 export interface FeedFarmSettingsRow extends FeedFarmOption {
@@ -539,7 +543,7 @@ export class FeedForecastService {
     private readonly cls: ClsService,
     private readonly ledgerService: InventoryLedgerService,
     private readonly auditService: AuditLogService,
-    // D41: what each silo is holding now, for Feed Planning's read-only column.
+    // D41: what each silo is holding now, for Silo Feed Setup's read-only columns.
     private readonly siloFeedService: SiloFeedService,
   ) {}
 
@@ -677,9 +681,9 @@ export class FeedForecastService {
   /**
    * D32: the six per-farm feed settings, their columns and their bounds in one
    * place. They stay on the FARM's location_master row — no migration — and
-   * are edited on Settings → Inventory Setup → Feed Planning rather than on
-   * the Add/Edit Location form, which showed them only because the generic
-   * form shows every column. Nothing else may be written through here, which
+   * were moved off the Add/Edit Location form into their own endpoint; the generic
+   * form had exposed them only because it showed every column. Nothing else may
+   * be written through here, which
    * is why this is not the generic PUT /location (that one also demands Max
    * Capacity and the rest of a farm's form).
    */
@@ -750,10 +754,12 @@ export class FeedForecastService {
         company_id: L.company_id,
         location_code: L.location_code,
         location_name: L.location_name,
+        feed_in_bags: L.feed_in_bags,
         silo_capacity_kg: L.silo_capacity_kg,
         low_level_kg: L.low_level_kg,
         high_level_kg: L.high_level_kg,
         silo_reorder_days: L.silo_reorder_days,
+        status: L.status,
       })
       .from(L)
       .where(and(
@@ -765,6 +771,30 @@ export class FeedForecastService {
       ))
       .orderBy(L.location_code);
     if (!rows.length) return byFarm;
+
+    const Shed = alias(schema.locationMaster, 'feed_planning_shed') as unknown as typeof schema.locationMaster;
+    const shedLinks = await this.db
+      .select({
+        silo_id: schema.siloShedLink.silo_id,
+        shed_id: Shed.location_id,
+        shed_code: Shed.location_code,
+        shed_name: Shed.location_name,
+      })
+      .from(schema.siloShedLink)
+      .innerJoin(Shed, eq(Shed.location_id, schema.siloShedLink.shed_id))
+      .where(and(
+        eq(schema.siloShedLink.tenant_id, tenantId),
+        inArray(schema.siloShedLink.silo_id, rows.map((row) => row.location_id)),
+        eq(Shed.location_type, 'SHED'),
+        eq(Shed.is_active, true),
+        isNull(Shed.deleted_at),
+      ))
+      .orderBy(Shed.location_code);
+    const shedsBySilo = new Map<string, Array<{ locationId: string; code: string; name: string }>>();
+    for (const link of shedLinks) {
+      const linkedShed = { locationId: link.shed_id, code: link.shed_code, name: link.shed_name };
+      shedsBySilo.set(link.silo_id, [...(shedsBySilo.get(link.silo_id) ?? []), linkedShed]);
+    }
 
     // The feed held, per company, only for the silos there are.
     const held = new Map<string, { item_code: string; item_description: string | null } | null>();
@@ -785,12 +815,17 @@ export class FeedForecastService {
         locationId: row.location_id,
         code: row.location_code,
         name: row.location_name,
+        linkedSheds: shedsBySilo.get(row.location_id) ?? [],
+        // Match the established feed-requisition rule: only explicit true is bagged;
+        // a physical silo with the older nullable field unset remains bulk.
+        feedType: row.feed_in_bags === true ? 'BAGGED' : 'BULK',
         feedItemCode: current?.item_code ?? null,
         feedItemName: current?.item_description ?? null,
         capacityKg: num(row.silo_capacity_kg),
         lowLevelKg: num(row.low_level_kg),
         highLevelKg: num(row.high_level_kg),
         reorderDays: num(row.silo_reorder_days),
+        status: row.status,
       };
       const key = row.farm_id as string;
       byFarm.set(key, [...(byFarm.get(key) ?? []), silo]);
@@ -799,7 +834,7 @@ export class FeedForecastService {
   }
 
   /**
-   * D41: a silo's feed levels and reorder days, edited from Feed Planning. It
+   * D41: a silo's feed levels and reorder days, edited from Silo Feed Setup. It
    * writes only those three columns, and it applies the SAME rules the silo
    * form applies (silo-feed/silo-levels.ts) — a value sent alone is judged
    * against the one already stored, so the pair is never checked by halves.

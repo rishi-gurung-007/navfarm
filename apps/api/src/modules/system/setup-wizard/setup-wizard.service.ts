@@ -72,6 +72,13 @@ export class SetupWizardService implements OnModuleInit {
     return this.db.transaction(async (tx) => {
       let company;
       if (existing.length > 0) {
+        // Tenant signup creates a placeholder company so the first administrator
+        // has a valid company FK. Step 1 normally claims that row instead of
+        // inserting a new company, so this branch must take the same one-time
+        // master-template snapshot as the insert branch below. Use the original
+        // code, not the permanent all-zero id: later edits keep that id and must
+        // not re-copy independently owned company masters or reset counters.
+        const claimsPlaceholder = existing[0].company_code === 'PLACEHOLDER';
         // Update
         await tx
           .update(schema.companyMaster)
@@ -94,6 +101,10 @@ export class SetupWizardService implements OnModuleInit {
             primary_color_hex: dto.primary_color_hex || '#1F4E79',
           })
           .where(eq(schema.companyMaster.company_id, existing[0].company_id));
+
+        if (claimsPlaceholder) {
+          await copyCompanyMasterTemplates(tx, dto.tenant_id, existing[0].company_id);
+        }
 
         [company] = await tx
           .select()

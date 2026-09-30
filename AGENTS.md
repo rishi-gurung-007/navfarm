@@ -174,3 +174,88 @@ the message describes nothing that happened.
 - The Kill Sheet and DOA have **no tables**. BBP gives the kill sheet a process
   (attached to the transfer order, carcass weights per line, invoice =
   Delivered Qty × Avg Carcass Weight × Price/KG) but no field specification.
+
+## 8. Current feed programme — state and rules for future agents
+
+Read the 30 Sep 2026 entries at the end of `docs/decisions.md` before changing
+feed, locations, inventory, requisitions or demo data. The approved four-farm
+seed plan is `docs/superpowers/plans/2026-09-30-four-farm-feed-seed-and-migration.md`.
+
+### What exists now
+
+- Feed work through farm approval exists: farm/shed/silo setup, feed items,
+  lifecycle feed rows, batch/head-count inputs, ledger-derived silo stock,
+  daily forecast, run-down/refill/required-on dates, in-app feed alerts, feed
+  requisition drafting and farm approval. Do not describe later workflow as
+  complete merely because its fields appear in a reference document.
+- Mill consolidation/capacity execution, loading and dispatch, Transfer Order
+  receipt, stock take and period reconciliation are later phases unless Rishi
+  explicitly brings one into scope.
+- The current fulfilment mode is **IN_HOUSE**. Business Central is not connected.
+  Preserve stable IDs and a separate integration status so `BC_INTEGRATED` can
+  be added later, but do not add fake BC calls, references or success states.
+- Notifications are **IN_APP only**. Other channels are future work.
+- One feed requisition header is one farm/submission cycle; silo/item demand is
+  represented by lines. Feed is an internal transfer, displayed as “Internal
+  Feed Transfer”.
+
+### Silo topology
+
+- FARM, SHED, PEN and SILO are rows in `location_master`.
+  `parent_location_id` is canonical: SHED → FARM, PEN → SHED, SILO → FARM.
+- `silo_shed_link` is canonical and many-to-many. A silo may serve several
+  sheds and a shed may draw from several silos. The old `feed_silo_id` and the
+  old statement “a shed draws from exactly one silo” are superseded.
+- When several silos serve one shed, they must not hold the same positive-stock
+  feed item. Forecast and inventory posting use the link plus item, not an
+  invented primary silo.
+- The approved demo matrix is four farms: 1:1; one silo to many sheds; a
+  many-to-many farm; and a mixed farm containing 1:1, one-to-many and
+  many-to-one examples.
+
+### Examples and configuration
+
+- Every value in the supplied feed examples is illustrative seed data, not a
+  production default or confirmed client value. Keep examples in named seed
+  fixtures and label them. Never migrate an example into every customer row
+  merely because the document calls it a default.
+- Approved configurable recommendations: 7-day default forecast view and
+  45-day maximum; capacity GREEN <90%, AMBER 90–100%, RED >100%; production
+  date plus configurable shift/slot; configurable bag tolerance (illustrative
+  seed 1%); reason for every nonzero stock-take variance and configurable
+  Finance percentage/amount escalation.
+- Currency and the monetary Finance threshold remain open. Do not seed or
+  hardcode either as customer truth.
+
+### Seed and migration safety
+
+- The old master pipeline is nine-farm and `demo/chapters/02-inventory.ts`
+  assumes at least two silos per farm. Both assumptions must be removed before
+  claiming a four-farm full rebuild works.
+- Topology itself needs no new schema: `silo_shed_link` already supports 1:1,
+  1:N, N:1 and N:N. A retained nine-farm database needs an approved,
+  non-destructive transition policy; rerunning a seed will not remove old rows.
+- Keep the master-only seed separate from operational demo transactions. Never
+  run the destructive reset against RDP/test data.
+- `migrate-all-tenants.ts` attempts every registered tenant and now exits
+  non-zero if any tenant fails. Still inspect output for `FAILED` and query
+  every tenant's Drizzle journal after application. MySQL DDL is not
+  transactionally rolled back; take a backup first.
+- Tenant migration generation is hazardous because SQL/journal files extend
+  beyond the latest snapshot. One agent owns migration SQL and journal
+  numbering at a time; review generated SQL completely and never edit
+  `dist/drizzle`.
+
+### How to extend feed safely
+
+1. Identify the exact decision or reference row and distinguish rule text from
+   example values.
+2. Add or update `docs/decisions.md` before implementing a new interpretation.
+3. Keep business status independent of external integration status.
+4. Add a failing pure-rule/service test, implement through the existing shared
+   posting path, then verify the database after the write.
+5. Exercise the running UI and all affected topology shapes; code review and a
+   green unit suite alone are insufficient.
+6. Update the relevant implementation plan and this section when scope or
+   architecture changes, so another agent does not reconstruct history from
+   stale workbook examples.
