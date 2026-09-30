@@ -158,6 +158,64 @@ describe("master-data edit fields", () => {
     expect(screen.queryByRole("textbox", { name: "Internal Value" })).toBeNull();
   });
 
+  it("keeps a reviewed reporting-period draft inactive when its fields are edited", async () => {
+    const config: MasterDataConfig = {
+      key: "reporting-period",
+      label: "Reporting Periods",
+      singular: "Reporting Period",
+      apiBase: "/reporting-period",
+      idKey: "period_id",
+      group: "Settings",
+      draftLifecycle: { activatePath: "activate" },
+      columns: [{ key: "period_code", label: "Code" }, { key: "status", label: "Status" }],
+      fields: [
+        { key: "period_code", label: "Code", type: "text", createOnly: true, required: true },
+        { key: "start_date", label: "Start Date", type: "date", required: true },
+        { key: "end_date", label: "End Date", type: "date", required: true },
+      ],
+    };
+    (api.get as jest.Mock).mockResolvedValue([{
+      period_id: "period-1", period_code: "2026-09", start_date: "2026-08-30", end_date: "2026-09-26",
+      status: "DRAFT", is_active: false,
+    }]);
+    (api.put as jest.Mock).mockResolvedValue({});
+
+    renderTable(config);
+    fireEvent.click(await screen.findByRole("button", { name: "Actions for 2026-09" }));
+    fireEvent.click(await screen.findByText("Edit"));
+    fireEvent.change(await screen.findByLabelText("Start Date"), { target: { value: "2026-08-23" } });
+    fireEvent.click(screen.getByRole("button", { name: "Update" }));
+
+    await waitFor(() => expect(api.put).toHaveBeenCalledWith(
+      "/reporting-period/period-1",
+      expect.not.objectContaining({ status: "ACTIVE", is_active: true }),
+    ));
+  });
+
+  it("activates a reviewed reporting-period draft through the dedicated action", async () => {
+    const config: MasterDataConfig = {
+      key: "reporting-period",
+      label: "Reporting Periods",
+      singular: "Reporting Period",
+      apiBase: "/reporting-period",
+      idKey: "period_id",
+      group: "Settings",
+      draftLifecycle: { activatePath: "activate" },
+      columns: [{ key: "period_code", label: "Code" }, { key: "status", label: "Status" }],
+      fields: [{ key: "period_code", label: "Code", type: "text", createOnly: true, required: true }],
+    };
+    (api.get as jest.Mock).mockResolvedValue([{
+      period_id: "period-1", period_code: "2026-09", status: "DRAFT", is_active: false,
+    }]);
+    (api.patch as jest.Mock).mockResolvedValue({});
+
+    renderTable(config);
+    fireEvent.click(await screen.findByRole("button", { name: "Actions for 2026-09" }));
+    fireEvent.click(await screen.findByText("Activate"));
+
+    await waitFor(() => expect(api.patch).toHaveBeenCalledWith("/reporting-period/period-1/activate"));
+  });
+
   it("shows every Stage transition field on create and only enables fields relevant to the selected trigger", async () => {
     (api.get as jest.Mock).mockResolvedValue([]);
 

@@ -224,7 +224,7 @@ export default function FeedForecastPanel() {
         <InlineAlert variant="info">
           <span className="mr-3">{t("ffNoPeriods")}</span>
           <Button size="sm" variant="outline" onClick={generatePeriods} disabled={generating || isTenantWorkspace}>
-            {t("ffGeneratePeriods", { year: businessYear })}
+            {t("ffGenerateDraftPeriods", { year: businessYear })}
           </Button>
           {isTenantWorkspace && <span className="ml-3 text-xs" style={{ color: "var(--text-secondary)" }}>{t("ffGenerateNeedsCompany")}</span>}
           {generateError && <span className="ml-3 text-xs" style={{ color: "var(--danger)" }}>{generateError}</span>}

@@ -117,8 +117,9 @@ function currentLabel(f: MasterDataField, values: Row): string {
  * and a read-only table offers no edit at all. Exported for the spec that pins the
  * DEACTIVATED-opens-read-only rule (Resource, UOM). MySQL tinyint reaches here as
  * 0 as readily as false, and both mean deactivated. */
-export function rowOpenAction(row: Row, readOnly: boolean): "edit" | "view" | "none" {
+export function rowOpenAction(row: Row, readOnly: boolean, editableDraft = false): "edit" | "view" | "none" {
   if (readOnly) return "none";
+  if (editableDraft && row.status === "DRAFT") return "edit";
   if (row.is_active === false || row.is_active === 0) return "view";
   return "edit";
 }
@@ -1381,7 +1382,7 @@ export function MasterDataTable({
   }, [createOnly]);
 
   const openEdit = (row: Row) => {
-    const action = rowOpenAction(row, readOnly);
+    const action = rowOpenAction(row, readOnly, !!config.draftLifecycle);
     // A deactivated record opens read-only — view, no edit. Editing (or
     // reactivating) is a deliberate action through the row's own toggle, not a
     // side effect of opening it.
@@ -1628,7 +1629,7 @@ export function MasterDataTable({
       if (form.cogs_gl_account) {
         payload.cogs_gl_account = form.cogs_gl_account;
       }
-      if (editing?.status === "DRAFT") {
+      if (editing?.status === "DRAFT" && !config.draftLifecycle) {
         payload.status = "ACTIVE";
       }
 
@@ -1761,7 +1762,8 @@ export function MasterDataTable({
     setTogglingId(id);
     try {
       if (row.is_active === false) {
-        await api.patch(`${config.apiBase}/${id}/restore`);
+        const activationPath = config.draftLifecycle?.activatePath ?? "restore";
+        await api.patch(`${config.apiBase}/${id}/${activationPath}`);
         showToast.success("Activated successfully");
       } else {
         await api.delete(`${config.apiBase}/${id}`);
@@ -2945,7 +2947,7 @@ export function MasterDataTable({
                                   >
                                     {t("roleColView") ?? "View Details"}
                                   </MenuItem>
-                                  {!readOnly && row.is_active !== false && (
+                                  {!readOnly && rowOpenAction(row, false, !!config.draftLifecycle) === "edit" && (
                                     <MenuItem
                                       onSelect={() => openEdit(row)}
                                       leading={<Pencil className="h-4 w-4 text-[var(--text-muted)]" />}
@@ -2965,7 +2967,7 @@ export function MasterDataTable({
                                         )
                                       }
                                     >
-                                      {inactive ? t("restore") : t("deactivate")}
+                                      {inactive && config.draftLifecycle ? t("activate") : inactive ? t("restore") : t("deactivate")}
                                     </MenuItem>
                                   )}
                                   {!readOnly && config.supportsDelete !== false && !(config.supportsRestore ?? true) && (

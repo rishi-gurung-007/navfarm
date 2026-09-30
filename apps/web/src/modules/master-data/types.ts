@@ -412,6 +412,8 @@ export interface MasterDataConfig {
    * Conversions), so the table doesn't offer a Restore action that would 404.
    */
   supportsRestore?: boolean;
+  /** Opt-in reviewed-draft lifecycle. Inactive DRAFT rows remain editable and activate through this dedicated endpoint. */
+  draftLifecycle?: { activatePath: string };
   /** Whether the table row actions render a delete / deactivate trash button. Defaults to true. */
   supportsDelete?: boolean;
   /**

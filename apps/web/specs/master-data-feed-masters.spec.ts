@@ -16,6 +16,14 @@ describe('Reporting Period configuration and Alert Rules navigation', () => {
     expect(config.group).toBe('Settings');
     expect(config.businessAdminOnly).toBe(true);
     expect(MASTER_DATA_NAV_ORDER).not.toContain('reporting-period');
+    expect(config.draftLifecycle).toEqual({ activatePath: 'activate' });
+  });
+
+  it('shows draft status and keeps generated reporting periods reviewable before activation', () => {
+    const config = getConfig('reporting-period')!;
+    expect(config.columns).toContainEqual({ key: 'status', label: 'Status' });
+    expect(config.draftLifecycle).toEqual({ activatePath: 'activate' });
+    expect(config.statusActiveValues).toEqual(['ACTIVE']);
   });
 
   it('shows the reporting period dates as DD/MM/YY (A9)', () => {

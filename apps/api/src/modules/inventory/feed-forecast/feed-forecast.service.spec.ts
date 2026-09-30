@@ -952,6 +952,7 @@ describe('loadPeriods — the company\'s own reporting periods only (Ruling M5)'
     expect(q.sql).not.toMatch(/`company_id` is null/);
     expect(q.sql).toMatch(/`deleted_at` is null/);
     expect(q.params).toEqual(expect.arrayContaining(['tenant-1', 'comp-1']));
+    expect(q.params).toContain(true);
   });
 });
 

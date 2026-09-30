@@ -1487,11 +1487,14 @@ const alertRule: MasterDataConfig = {
 const reportingPeriod: MasterDataConfig = {
   key: "reporting-period", label: "Reporting Periods", singular: "Reporting Period", apiBase: "/reporting-period", idKey: "period_id",
   group: "Settings", isPrimary: false, businessAdminOnly: true,
-  description: "Monthly periods of the July–June business year, each ending on the month-end Saturday.",
+  draftLifecycle: { activatePath: "activate" },
+  statusActiveValues: ["ACTIVE"],
+  description: "Review and edit inactive July–June draft periods, then activate them explicitly for forecasting.",
   columns: [
     { key: "period_code", label: "Code" }, { key: "business_year", label: "Business Year" },
     { key: "start_date", label: "Start Date", format: "date" }, { key: "end_date", label: "End Date", format: "date" },
     { key: "stock_take_date", label: "Stock Take Date", format: "date" }, { key: "production_start_date", label: "Production Start Date", format: "date" },
+    { key: "status", label: "Status" },
   ],
   fields: [
     { key: "company_id", label: "Company", type: "text", hideInForm: true },

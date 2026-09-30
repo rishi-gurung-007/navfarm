@@ -95,7 +95,10 @@ export class ReportingPeriodService {
     const companyId = this.companyOf(dto.company_id);
     this.assertFree(shaped, await this.companyRows(companyId, tenantId));
     const period_id = randomUUID();
-    await this.db.insert(table).values({ period_id, tenant_id: tenantId, company_id: companyId, ...shaped, created_by: user?.userId, updated_by: user?.userId });
+    await this.db.insert(table).values({
+      period_id, tenant_id: tenantId, company_id: companyId, ...shaped,
+      status: 'DRAFT', is_active: false, created_by: user?.userId, updated_by: user?.userId,
+    });
     return this.log('CREATE', await this.findOne(period_id, tenantId), user);
   }
 
@@ -117,10 +120,21 @@ export class ReportingPeriodService {
   }
 
   async setActive(id: string, active: boolean, tenantId: string, user?: any) {
+    if (active) return this.activate(id, tenantId, user);
     const before = await this.findOne(id, tenantId);
-    if (active && !before.is_active) this.assertFree(before as unknown as Shaped, await this.companyRows(before.company_id, tenantId), id);
-    await this.db.update(table).set({ is_active: active, status: active ? 'ACTIVE' : 'INACTIVE', updated_by: user?.userId, updated_at: nowTs() }).where(eq(table.period_id, id));
-    return this.log(active ? 'RESTORE' : 'DEACTIVATE', await this.findOne(id, tenantId), user, before);
+    await this.db.update(table).set({ is_active: false, status: 'INACTIVE', updated_by: user?.userId, updated_at: nowTs() }).where(eq(table.period_id, id));
+    return this.log('DEACTIVATE', await this.findOne(id, tenantId), user, before);
+  }
+
+  /** Activation is a separate reviewed action: derive and validate again from the stored row, then refuse any active overlap. */
+  async activate(id: string, tenantId: string, user?: any) {
+    const before = await this.findOne(id, tenantId);
+    const shaped = this.shape(before);
+    this.assertFree(shaped, await this.companyRows(before.company_id, tenantId), id);
+    await this.db.update(table).set({
+      ...shaped, is_active: true, status: 'ACTIVE', updated_by: user?.userId, updated_at: nowTs(),
+    }).where(eq(table.period_id, id));
+    return this.log('ACTIVATE', await this.findOne(id, tenantId), user, before);
   }
 
   /** Open question Q9: an admin's first draft of a July–June year; codes that exist, or dates an active period already covers, are skipped. */
@@ -134,6 +148,13 @@ export class ReportingPeriodService {
         skipped.push({ period_code: draft.period_code, reason: 'already exists' });
         continue;
       }
+      const equivalentDraft = existing.find((r) => !r.is_active && r.status === 'DRAFT'
+        && r.start_date === draft.start_date && r.end_date === draft.end_date
+        && r.stock_take_date === draft.stock_take_date && r.production_start_date === draft.production_start_date);
+      if (equivalentDraft) {
+        skipped.push({ period_code: draft.period_code, reason: `equivalent draft exists as ${equivalentDraft.period_code}` });
+        continue;
+      }
       const clash = existing.find((r) => r.is_active && periodsOverlap(draft, r));
       if (clash) {
         skipped.push({ period_code: draft.period_code, reason: `overlaps ${clash.period_code}` });
@@ -143,7 +164,8 @@ export class ReportingPeriodService {
     }
     if (created.length) {
       await this.db.insert(table).values(created.map((p) => ({
-        period_id: randomUUID(), tenant_id: tenantId, company_id: companyId, ...p, created_by: user?.userId, updated_by: user?.userId,
+        period_id: randomUUID(), tenant_id: tenantId, company_id: companyId, ...p,
+        status: 'DRAFT', is_active: false, created_by: user?.userId, updated_by: user?.userId,
       })));
       await this.audit.log({
         tenantId, companyId: companyId || undefined, userId: user?.userId, action: 'GENERATE', entityName: 'reporting_period',

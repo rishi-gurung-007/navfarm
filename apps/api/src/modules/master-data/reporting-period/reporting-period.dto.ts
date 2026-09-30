@@ -24,6 +24,6 @@ export class QueryReportingPeriodDto extends MasterListQueryDto {
 
 export class GenerateReportingPeriodsDto {
   @ApiPropertyOptional() @IsOptional() @IsUUID() company_id?: string;
-  @ApiProperty({ description: 'The calendar year the July–June business year starts in, e.g. 2026 for 2026-27' })
+  @ApiProperty({ description: 'The calendar year the July–June business year starts in. Generation creates inactive DRAFT proposals only.' })
   @Type(() => Number) @IsInt() @Min(2000) @Max(2100) business_year_start: number;
 }

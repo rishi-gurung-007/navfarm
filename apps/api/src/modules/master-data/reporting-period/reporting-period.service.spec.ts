@@ -12,7 +12,12 @@ describe('ReportingPeriodService', () => {
     return self;
   };
   const values = jest.fn(async () => undefined);
-  const db = { select: jest.fn(() => chain(selectQueue.shift() ?? [])), insert: jest.fn(() => ({ values })) };
+  const set = jest.fn(() => ({ where: jest.fn(async () => undefined) }));
+  const db = {
+    select: jest.fn(() => chain(selectQueue.shift() ?? [])),
+    insert: jest.fn(() => ({ values })),
+    update: jest.fn(() => ({ set })),
+  };
   const service = new ReportingPeriodService(transactionCls(db), { log: jest.fn() } as any);
   const september = { company_id: 'co-1', period_code: '2026-09', start_date: '2026-08-30', end_date: '2026-09-26' };
 
@@ -21,6 +26,8 @@ describe('ReportingPeriodService', () => {
     values.mockClear();
     db.select.mockClear();
     db.insert.mockClear();
+    db.update.mockClear();
+    set.mockClear();
   });
 
   it('refuses an End Date that is not a Saturday before reading anything', async () => {
@@ -58,7 +65,75 @@ describe('ReportingPeriodService', () => {
     expect(out.created).toHaveLength(11);
     expect(out.skipped).toEqual([{ period_code: '2026-09', reason: 'already exists' }]);
     const rows = (values.mock.calls[0] as unknown[])[0] as Array<Record<string, unknown>>;
-    expect(rows[0]).toMatchObject({ company_id: 'co-1', period_code: '2026-07', start_date: '2026-06-28', end_date: '2026-07-25' });
+    expect(rows[0]).toMatchObject({
+      company_id: 'co-1', period_code: '2026-07', start_date: '2026-06-28', end_date: '2026-07-25',
+      status: 'DRAFT', is_active: false,
+    });
+  });
+
+  it('revalidates an edited draft before explicit activation', async () => {
+    selectQueue.push([{
+      period_id: 'p9', tenant_id: 'tenant-1', company_id: 'co-1', period_code: '2026-09',
+      start_date: '2026-08-30', end_date: '2026-09-25', stock_take_date: '2026-09-25',
+      production_start_date: '2026-09-26', business_year: '2026-27', status: 'DRAFT', is_active: false,
+    }]);
+
+    await expect(service.activate('p9', 'tenant-1', { userId: 'u' })).rejects.toThrow(BadRequestException);
+    expect(db.update).not.toHaveBeenCalled();
+  });
+
+  it('refuses explicit activation when the reviewed draft overlaps an active period', async () => {
+    const draft = {
+      period_id: 'p9', tenant_id: 'tenant-1', company_id: 'co-1', period_code: '2026-09',
+      start_date: '2026-08-30', end_date: '2026-09-26', stock_take_date: '2026-09-26',
+      production_start_date: '2026-09-27', business_year: '2026-27', status: 'DRAFT', is_active: false,
+    };
+    selectQueue.push([draft], [draft, {
+      period_id: 'p8', tenant_id: 'tenant-1', company_id: 'co-1', period_code: 'AUG-26',
+      start_date: '2026-08-01', end_date: '2026-09-05', stock_take_date: '2026-09-05',
+      production_start_date: '2026-09-06', business_year: '2026-27', status: 'ACTIVE', is_active: true,
+    }]);
+
+    await expect(service.activate('p9', 'tenant-1', { userId: 'u' })).rejects.toThrow(ConflictException);
+    expect(db.update).not.toHaveBeenCalled();
+  });
+
+  it('activates a valid reviewed draft only through the explicit action', async () => {
+    const draft = {
+      period_id: 'p9', tenant_id: 'tenant-1', company_id: 'co-1', period_code: '2026-09',
+      start_date: '2026-08-30', end_date: '2026-09-26', stock_take_date: '2026-09-26',
+      production_start_date: '2026-09-27', business_year: '2026-27', status: 'DRAFT', is_active: false,
+    };
+    selectQueue.push([draft], [draft], [{ ...draft, status: 'ACTIVE', is_active: true }]);
+
+    await service.activate('p9', 'tenant-1', { userId: 'u' });
+
+    expect(set).toHaveBeenCalledWith(expect.objectContaining({ status: 'ACTIVE', is_active: true, updated_by: 'u' }));
+  });
+
+  it('does not overwrite an edited draft when generation is repeated', async () => {
+    selectQueue.push([{
+      period_id: 'p9', period_code: '2026-09', start_date: '2026-08-23', end_date: '2026-09-26',
+      stock_take_date: '2026-09-20', is_active: false, status: 'DRAFT',
+    }]);
+
+    const out = await service.generate({ company_id: 'co-1', business_year_start: 2026 }, 'tenant-1', { userId: 'u' });
+
+    expect(out.created).not.toContain('2026-09');
+    expect(out.skipped).toContainEqual({ period_code: '2026-09', reason: 'already exists' });
+    expect(db.update).not.toHaveBeenCalled();
+  });
+
+  it('does not duplicate an equivalent draft whose reviewer changed only its code', async () => {
+    selectQueue.push([{
+      period_id: 'p9', period_code: 'SEP-26', start_date: '2026-08-30', end_date: '2026-09-26',
+      stock_take_date: '2026-09-26', production_start_date: '2026-09-27', is_active: false, status: 'DRAFT',
+    }]);
+
+    const out = await service.generate({ company_id: 'co-1', business_year_start: 2026 }, 'tenant-1', { userId: 'u' });
+
+    expect(out.created).not.toContain('2026-09');
+    expect(out.skipped).toContainEqual({ period_code: '2026-09', reason: 'equivalent draft exists as SEP-26' });
   });
 
   it('generate skips a period that would overlap one the admin edited by hand', async () => {

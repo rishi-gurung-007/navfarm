@@ -225,8 +225,9 @@ describe('FeedForecastPanel — admin', () => {
     render(<FeedForecastPanel />);
     await screen.findByRole('table');
     fireEvent.change(screen.getByLabelText('ffView'), { target: { value: 'PERIOD' } });
-    fireEvent.click(await screen.findByRole('button', { name: /ffGeneratePeriods/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /ffGenerateDraftPeriods/ }));
     await waitFor(() => expect(post).toHaveBeenCalledWith('/reporting-period/generate', { business_year_start: 2026 }));
+    expect(screen.getByRole('button', { name: /ffGenerateDraftPeriods/ })).toBeTruthy();
   });
 
   it('disables Generate Periods in the tenant-wide workspace and says why', async () => {
@@ -234,7 +235,7 @@ describe('FeedForecastPanel — admin', () => {
     render(<FeedForecastPanel />);
     await screen.findByRole('table');
     fireEvent.change(screen.getByLabelText('ffView'), { target: { value: 'PERIOD' } });
-    expect(((await screen.findByRole('button', { name: /ffGeneratePeriods/ })) as HTMLButtonElement).disabled).toBe(true);
+    expect(((await screen.findByRole('button', { name: /ffGenerateDraftPeriods/ })) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByText('ffGenerateNeedsCompany')).toBeTruthy();
   });
 
@@ -243,7 +244,7 @@ describe('FeedForecastPanel — admin', () => {
     render(<FeedForecastPanel />);
     await screen.findByRole('table');
     fireEvent.change(screen.getByLabelText('ffView'), { target: { value: 'PERIOD' } });
-    fireEvent.click(await screen.findByRole('button', { name: /ffGeneratePeriods/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /ffGenerateDraftPeriods/ }));
     await screen.findByText('Forbidden.');
     expect(screen.getByRole('table')).toBeTruthy();
   });

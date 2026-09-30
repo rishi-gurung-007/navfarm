@@ -32,6 +32,11 @@ describe("Deactivated row opens read-only", () => {
     expect(rowOpenAction(row({ is_active: false }), true)).toBe("none");
   });
 
+  it('lets an inactive DRAFT open for review only when its config opts into the draft lifecycle', () => {
+    expect(rowOpenAction(row({ is_active: false, status: 'DRAFT' }), false, true)).toBe('edit');
+    expect(rowOpenAction(row({ is_active: false, status: 'DRAFT' }), false)).toBe('view');
+  });
+
   it("applies to the Resource and UOM masters alike", () => {
     for (const key of ["resource", "uom"]) {
       expect(MASTER_DATA_CONFIGS.find((config) => config.key === key)).toBeDefined();
