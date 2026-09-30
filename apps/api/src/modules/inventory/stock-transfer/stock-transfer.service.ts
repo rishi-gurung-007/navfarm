@@ -29,6 +29,8 @@ export class StockTransferService {
     // the item is stocked in, so the capacity guard below needs the tenant's
     // own uom_conversion_master rather than an assumption about the unit.
     private readonly uomService: UomService,
+    private readonly siloFeedService: SiloFeedService,
+    @Optional() private readonly feedAlerts?: FeedAlertService,
   ) { }
 
   private get db(): MySql2Database<typeof schema> {
@@ -420,7 +422,7 @@ export class StockTransferService {
   }
 
   async post(id: string, tenantId: string, userPayload?: any) {
-    return withTenantTransaction(this.cls, async () => {
+    const posted = await withTenantTransaction(this.cls, async () => {
       const transfer = await this.loadForMutation(id, tenantId);
       this.assertDraft(transfer);
 

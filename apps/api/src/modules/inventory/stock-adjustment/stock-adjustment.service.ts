@@ -25,6 +25,7 @@ export class StockAdjustmentService {
     private readonly ledgerService: InventoryLedgerService,
     private readonly glPostingService: GlPostingService,
     private readonly numberSeriesService: NumberSeriesService,
+    @Optional() private readonly feedAlerts?: FeedAlertService,
   ) { }
 
   private get db(): MySql2Database<typeof schema> {
@@ -283,7 +284,7 @@ export class StockAdjustmentService {
   }
 
   async post(id: string, tenantId: string, userPayload?: any) {
-    return withTenantTransaction(this.cls, async () => {
+    const posted = await withTenantTransaction(this.cls, async () => {
       const adjustment = await this.findOne(id);
       this.assertDraft(adjustment);
 

@@ -527,11 +527,10 @@ export const SYSTEM_NO_SERIES_SEED: Array<{
   { series_code: 'COST_CENTER', series_name: 'Cost Center Code (typed, not generated)', document_type: 'COST_CENTER', prefix: 'CC', separator: '-', seq_length: 3, reset_frequency: 'NEVER', allow_manual: true, is_active: false },
   { series_code: 'GL_ACCOUNT', series_name: 'GL Account Code (typed; BC-owned catalog)', document_type: 'GL_ACCOUNT', prefix: 'GL', separator: '-', seq_length: 3, reset_frequency: 'NEVER', allow_manual: true, is_active: false },
   { series_code: 'GL_MAPPING', series_name: 'GL Mapping Code', document_type: 'GL_MAPPING', prefix: 'GLMAP', separator: '-', seq_length: 3, reset_frequency: 'NEVER', allow_manual: true },
-  // No LOT or SERIAL series. One item has many lots, so a lot number is not a
-  // property of the item — it belongs to the receipt that delivered it, and
-  // goods_receipt_line.lot_no is where it is captured. Nothing ever generated
-  // from these two; they existed only to give the Item form's Tracking No.
-  // Series picker something to offer.
+  // Lot and Serial tracking series (docs/decisions.md & TDD row 11-12).
+  // Auto-issues lot or serial numbers on Goods Receipt when omitted, or allows manual entry.
+  { series_code: 'ITEM_LOT', series_name: 'Lot Number Series', document_type: 'LOT', prefix: 'LOT', separator: '-', seq_length: 5, reset_frequency: 'NEVER', allow_manual: true },
+  { series_code: 'ITEM_SERIAL', series_name: 'Serial Number Series', document_type: 'SERIAL', prefix: 'SN', separator: '-', seq_length: 5, reset_frequency: 'NEVER', allow_manual: true },
 ];
 
 /**

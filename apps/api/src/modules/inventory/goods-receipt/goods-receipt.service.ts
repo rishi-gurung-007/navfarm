@@ -30,6 +30,7 @@ export class GoodsReceiptService {
     // SiloFeedService is the one home for them.
     private readonly siloFeedService: SiloFeedService,
     private readonly numberSeriesService: NumberSeriesService,
+    @Optional() private readonly feedAlerts?: FeedAlertService,
   ) { }
 
   private get db(): MySql2Database<typeof schema> {
@@ -450,7 +451,7 @@ export class GoodsReceiptService {
    * new offsetting documents, not edits.
    */
   async post(id: string, tenantId: string, userPayload?: any) {
-    return withTenantTransaction(this.cls, async () => {
+    const posted = await withTenantTransaction(this.cls, async () => {
       const receipt = await this.findOne(id);
       this.assertDraft(receipt);
       // The warehouse may have been deactivated after the receipt was drafted —
@@ -475,6 +476,8 @@ export class GoodsReceiptService {
           );
         }
       }
+
+      await this.assertSiloDestination(receipt, receipt.lines, tenantId);
 
       // Claim the DRAFT -> POSTED transition atomically before writing any
       // ledger/GL entries — see goods-issue.service.ts's post() for the full
