@@ -152,7 +152,22 @@ export default function GoodsReceiptPanel() {
   };
 
   const setLineField = (idx: number, key: string, value: any) => {
-    setLines((prev) => prev.map((l, i) => (i === idx ? { ...l, [key]: value } : l)));
+    setLines((prev) =>
+      prev.map((l, i) => {
+        if (i !== idx) return l;
+        if (key === "item_id") {
+          const selectedItem = items.find((it) => it.item_id === value);
+          return {
+            ...l,
+            item_id: value,
+            lot_no: "",
+            serial_no: "",
+            uom: selectedItem?.base_uom || l.uom || "",
+          };
+        }
+        return { ...l, [key]: value };
+      }),
+    );
   };
 
   const handleGenerateTracking = async (idx: number, type: 'LOT' | 'SERIAL') => {
@@ -197,7 +212,8 @@ export default function GoodsReceiptPanel() {
           quantity: Number(l.quantity),
           uom: l.uom,
           rate: l.rate ? Number(l.rate) : undefined,
-          lot_no: l.lot_no || undefined,
+          lot_no: l.lot_no ? String(l.lot_no).trim() || undefined : undefined,
+          serial_no: l.serial_no ? String(l.serial_no).trim() || undefined : undefined,
           expiry_date: l.expiry_date || undefined,
         }));
       if (cleanLines.length === 0) throw new Error(t("grpAddAtLeastOneLine"));
@@ -475,7 +491,7 @@ export default function GoodsReceiptPanel() {
                         <div className="flex items-center gap-1">
                           <input
                             value={line.lot_no}
-                            disabled={!isLot && isSerial}
+                            disabled={!isLot}
                             onChange={(e) => setLineField(idx, "lot_no", e.target.value)}
                             placeholder={isLot ? (hasSeries ? "Auto / Enter" : "Lot No.") : "—"}
                             className={inputCls}
@@ -500,7 +516,7 @@ export default function GoodsReceiptPanel() {
                         <div className="flex items-center gap-1">
                           <input
                             value={line.serial_no}
-                            disabled={!isSerial && isLot}
+                            disabled={!isSerial}
                             onChange={(e) => setLineField(idx, "serial_no", e.target.value)}
                             placeholder={isSerial ? (hasSeries ? "Auto / Enter" : "Serial No.") : "—"}
                             className={inputCls}
