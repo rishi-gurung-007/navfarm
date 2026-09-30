@@ -10,7 +10,12 @@ jest.mock('../src/hooks/useLanguage', () => {
   const stableT = (key: string, vars?: Record<string, any>) => (vars ? `${key}:${JSON.stringify(vars)}` : key);
   return { useLanguage: () => ({ t: stableT }) };
 });
-jest.mock('../src/hooks/useAuth', () => ({ getActiveWorkspaceScope: jest.fn() }));
+let mockCanSaveRun = true;
+jest.mock('../src/hooks/useAuth', () => ({
+  getActiveWorkspaceScope: jest.fn(),
+  getStoredUser: jest.fn(() => ({ userType: 'STANDARD_USER' })),
+  hasPermission: jest.fn(() => mockCanSaveRun),
+}));
 // The farm list and choice belong to the shared hook (use-feed-farm.spec.tsx); here it is a fixed answer.
 let mockFarm: any;
 jest.mock('../src/components/console/inventory/use-feed-farm', () => ({ useFeedFarm: () => mockFarm }));
@@ -57,9 +62,10 @@ const forecastResponse = {
   },
 };
 
-function routedGet(over?: { feedForecast?: () => Promise<any>; periods?: () => Promise<any> }) {
+function routedGet(over?: { feedForecast?: () => Promise<any>; periods?: () => Promise<any>; runs?: () => Promise<any> }) {
   return (url: string) => {
     if (url.startsWith('/feed-forecast/periods')) return over?.periods ? over.periods() : Promise.resolve({ success: true, data: [] });
+    if (url.startsWith('/feed-forecast/runs')) return over?.runs ? over.runs() : Promise.resolve({ success: true, data: [] });
     return over?.feedForecast ? over.feedForecast() : Promise.resolve(forecastResponse);
   };
 }
@@ -70,6 +76,7 @@ describe('FeedForecastPanel — admin', () => {
     get.mockReset().mockImplementation(routedGet());
     post.mockReset();
     mockScope.mockReset().mockReturnValue('COMPANY');
+    mockCanSaveRun = true;
     mockFarm = adminFarm();
   });
 
@@ -154,6 +161,33 @@ describe('FeedForecastPanel — admin', () => {
     await screen.findByRole('table');
     fireEvent.change(screen.getByLabelText('ffPlanningDate'), { target: { value: '2026-09-22' } });
     await waitFor(() => expect(forecastCalls().some(([url]) => url.includes('planningDate=2026-09-22'))).toBe(true));
+  });
+
+  it('does not persist a run on load or filter changes; Save Run posts the exact displayed filters', async () => {
+    post.mockResolvedValue({ success: true, data: { runId: 'run-1', runCode: 'FFR-farm-vil100-000001', version: 1 } });
+    render(<FeedForecastPanel />);
+    await screen.findByRole('table');
+    expect(post).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByLabelText('ffDateFrom'), { target: { value: '2026-09-26' } });
+    await waitFor(() => expect(forecastCalls()).toHaveLength(2));
+    expect(post).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'ffSaveRun' }));
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/feed-forecast/runs', {
+      farmId: 'farm-vil100', planningDate: '2026-09-25', view: 'CUSTOM',
+      from: '2026-09-26', to: '2026-10-02',
+    }));
+    expect(await screen.findByText('ffRunSaved:{"code":"FFR-farm-vil100-000001","version":1}')).toBeTruthy();
+  });
+
+  it('keeps run history visible but hides Save Run without create authority', async () => {
+    mockCanSaveRun = false;
+    render(<FeedForecastPanel />);
+
+    await screen.findByRole('table');
+    expect(screen.getByText('ffRunHistory:{"count":0}')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'ffSaveRun' })).toBeNull();
   });
 
   it('does not crash when the response has rows but no flags array', async () => {

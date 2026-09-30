@@ -176,6 +176,7 @@ export interface DailyForecastRow {
   date: string;
   batchId: string;
   batchNo: string;
+  shedId?: string;
   shedCode: string;
   stageCode: string;
   itemId: string;
@@ -184,12 +185,18 @@ export interface DailyForecastRow {
   lifecycleId: string;
   sourceType: 'SILO' | 'STORE' | 'NONE';
   sourceCode: string | null;
+  destinationLocationId?: string | null;
+  currentItemId?: string | null;
+  openingStockKg?: number;
+  confirmedReceiptKg?: number;
   currentInventoryKg: number; // projected System Balance at the start of `date` (Q6)
   heads: number;
   feedRateKg: number; // kg per head per day
   perDayIntakeKg: number; // D17: heads × rate, no wastage
   wastagePct: number;
   demandKg: number; // D34: heads × rate — the forecast carries no wastage
+  projectedClosingKg?: number;
+  recommendedQtyKg?: number;
   daysOfStock: number | null; // D35: floor(currentInventory ÷ this row's perDayIntakeKg)
   sharedBatchCount: number; // batches drawing on the same container and item that day
   indicative: boolean; // Q13
@@ -821,10 +828,14 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
       }
     }
     const itemId = e.feedRow.itemId;
+    const source = keyMeta.get(e.key)!;
+    const confirmedReceiptMicrograms = incomingByLocation.get(`${source.siloId ?? source.storeId}|${itemId}`)?.get(e.date) ?? 0;
+    const totalDemandMicrograms = byDate.get(e.date) ?? 0;
     return {
       date: e.date,
       batchId: e.batchId,
       batchNo: e.batchNo,
+      shedId: e.shedId,
       shedCode: shedById.get(e.shedId)?.shedCode ?? '',
       stageCode: e.stageCode,
       itemId,
@@ -833,12 +844,18 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
       lifecycleId: e.feedRow.lifecycleId,
       sourceType: e.sourceType,
       sourceCode: e.sourceCode,
+      destinationLocationId: source.siloId ?? source.storeId,
+      currentItemId: e.sourceType === 'NONE' ? null : itemId,
+      openingStockKg: toKg(opening - confirmedReceiptMicrograms),
+      confirmedReceiptKg: toKg(confirmedReceiptMicrograms),
       currentInventoryKg: toKg(opening),
       heads: e.heads,
       feedRateKg: e.feedRow.kgPerHeadPerDay,
       perDayIntakeKg: toKg(toMicrograms(e.heads * e.feedRow.kgPerHeadPerDay)),
       wastagePct: e.feedRow.wastagePct, // kept for the breed feed master's display; unused by the forecast (D34)
       demandKg: toKg(e.demandMicrograms),
+      projectedClosingKg: toKg(Math.max(0, opening - totalDemandMicrograms)),
+      recommendedQtyKg: p.shortfallKg,
       // D35 (supersedes D18): the specification defines Days of Stock as
       // Current Inventory ÷ Per Day Intake of that row's batch — not the
       // silo's combined use, so two batches sharing one silo each see their

@@ -16,7 +16,7 @@ import { InlineAlert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { EmptyState, LoadingState } from "@/components/ui/states";
 import { Tabs } from "@/components/ui/tabs";
-import { getActiveWorkspaceScope } from "@/hooks/useAuth";
+import { getActiveWorkspaceScope, getStoredUser, hasPermission } from "@/hooks/useAuth";
 import { useLanguage } from "@/hooks/useLanguage";
 import type { TranslationKeys } from "@/utils/translations";
 import { addDaysIso, formatDateShort, todayIso, unwrap } from "./feed-format";
@@ -25,6 +25,7 @@ import { FeedForecastNotes, type ForecastFlag } from "./feed-forecast-notes";
 import { businessYearStartOf, forecastQueryString, FORECAST_VIEWS, ForecastView } from "./feed-forecast-query";
 import { FeedFarmSelect, feedFarmLabel } from "./feed-farm-select";
 import { useFeedFarm } from "./use-feed-farm";
+import { FeedForecastRunHistory } from "./feed-forecast-run-history";
 
 interface PeriodOption {
   periodId: string;
@@ -78,6 +79,10 @@ export default function FeedForecastPanel() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [tab, setTab] = useState<"forecast" | "stages">("forecast");
+  const [savingRun, setSavingRun] = useState(false);
+  const [runMessage, setRunMessage] = useState("");
+  const [runError, setRunError] = useState("");
+  const [runHistoryReload, setRunHistoryReload] = useState(0);
 
   useEffect(() => {
     if (view !== "PERIOD" || !farmId) {
@@ -154,6 +159,30 @@ export default function FeedForecastPanel() {
     }
   }
 
+  async function saveRun() {
+    if (!farmId || !data) return;
+    setSavingRun(true);
+    setRunMessage("");
+    setRunError("");
+    try {
+      const response = await api.post("/feed-forecast/runs", {
+        farmId,
+        planningDate: planningDate || data.planningDate,
+        view,
+        from: dateFrom || data.from,
+        to: dateTo || data.to,
+        ...(view === "PERIOD" && (periodId || data.period?.periodId) ? { periodId: periodId || data.period!.periodId } : {}),
+      });
+      const saved = unwrap<{ runCode: string; version: number }>(response);
+      setRunMessage(tRef.current("ffRunSaved", { code: saved.runCode, version: saved.version }));
+      setRunHistoryReload((value) => value + 1);
+    } catch (err: any) {
+      setRunError(err?.message || tRef.current("ffSaveRunFailed"));
+    } finally {
+      setSavingRun(false);
+    }
+  }
+
   const rows = Array.isArray(data?.rows) ? data!.rows : [];
   const stages = Array.isArray(data?.stages) ? data!.stages : [];
   const flags = Array.isArray(data?.flags) ? data!.flags : [];
@@ -166,6 +195,7 @@ export default function FeedForecastPanel() {
   const shownTo = dateTo || data?.to || addDaysIso(shownFrom, 7);
   const businessYear = businessYearStartOf(shownPlanning);
   const isTenantWorkspace = getActiveWorkspaceScope() === "TENANT";
+  const canSaveRun = hasPermission(getStoredUser(), "INVENTORY", "LEDGER", "can_create");
   const fixedLabel = farm.isFixed
     ? farm.fixedFarm?.location_code
       ? feedFarmLabel({ code: farm.fixedFarm.location_code, name: farm.fixedFarm.location_name ?? "" })
@@ -256,11 +286,21 @@ export default function FeedForecastPanel() {
               value={tab}
               onChange={(v) => setTab(v as "forecast" | "stages")}
             />
+            <div className="flex items-center gap-2">
+              {runMessage && <span className="text-xs text-[var(--success)]">{runMessage}</span>}
+              {runError && <span className="text-xs text-[var(--danger)]">{runError}</span>}
+              {canSaveRun && (
+                <Button size="sm" onClick={saveRun} disabled={!data || loading || savingRun}>
+                  {savingRun ? t("ffSavingRun") : t("ffSaveRun")}
+                </Button>
+              )}
+            </div>
           </div>
           {tab === "forecast"
             ? <FeedForecastGrid rows={rows} loading={loading} horizonTo={data?.horizonTo ?? null} t={t} />
             : <FeedForecastStages stages={stages} t={t} />}
           <FeedForecastNotes flags={flags} t={t} />
+          {!!farmId && <FeedForecastRunHistory farmId={farmId} reloadToken={runHistoryReload} />}
         </>
       )}
     </div>

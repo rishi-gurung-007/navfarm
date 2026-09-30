@@ -293,7 +293,7 @@ export class FeedRequisitionService implements OnModuleInit {
   }
 
   /** The draft-time snapshot columns of a line (Requisition §2). */
-  private lineValues(line: DraftLine) {
+  private lineValues(line: DraftLine, forecastRunLineId?: string | null) {
     return {
       item_id: line.itemId,
       description: line.itemName.slice(0, 200),
@@ -313,7 +313,46 @@ export class FeedRequisitionService implements OnModuleInit {
       bag_count: line.bagCount,
       proposed_delivery_date: line.proposedDeliveryDate,
       needs_silo_changeover: line.needsSiloChangeover,
+      feed_forecast_run_line_id: forecastRunLineId ?? null,
     };
+  }
+
+  /**
+   * A persisted run may explain a system draft only when its exact forecast
+   * filters match this calculation. The first dated line for a destination +
+   * item is the stable origin link for the source-level requisition line.
+   */
+  private async matchingPersistedRun(
+    forecast: { planningDate: string; from?: string; to: string }, farmId: string, companyId: string, tenantId: string,
+  ): Promise<{ runId: string; runCode: string; lineBySource: Map<string, string> } | null> {
+    const [run] = await this.db.select({
+      run_id: schema.feedForecastRun.run_id,
+      run_code: schema.feedForecastRun.run_code,
+      version: schema.feedForecastRun.version,
+    }).from(schema.feedForecastRun).where(and(
+      eq(schema.feedForecastRun.tenant_id, tenantId),
+      eq(schema.feedForecastRun.company_id, companyId),
+      eq(schema.feedForecastRun.farm_id, farmId),
+      eq(schema.feedForecastRun.planning_date, forecast.planningDate),
+      eq(schema.feedForecastRun.view, 'CUSTOM'),
+      eq(schema.feedForecastRun.from_date, forecast.from ?? forecast.planningDate),
+      eq(schema.feedForecastRun.to_date, forecast.to),
+      isNull(schema.feedForecastRun.period_id),
+    )).orderBy(desc(schema.feedForecastRun.version)).limit(1);
+    if (!run) return null;
+    const lines = await this.db.select({
+      run_line_id: schema.feedForecastRunLine.run_line_id,
+      destination_location_id: schema.feedForecastRunLine.destination_location_id,
+      required_item_id: schema.feedForecastRunLine.required_item_id,
+    }).from(schema.feedForecastRunLine).where(eq(schema.feedForecastRunLine.run_id, run.run_id))
+      .orderBy(schema.feedForecastRunLine.forecast_date, schema.feedForecastRunLine.run_line_id);
+    const lineBySource = new Map<string, string>();
+    for (const line of lines) {
+      if (!line.destination_location_id) continue;
+      const key = lineKey(line.destination_location_id, line.required_item_id);
+      if (!lineBySource.has(key)) lineBySource.set(key, line.run_line_id);
+    }
+    return { runId: run.run_id, runCode: run.run_code, lineBySource };
   }
 
   /**
@@ -379,7 +418,9 @@ export class FeedRequisitionService implements OnModuleInit {
         planningDate: forecast.planningDate, to: forecast.to, sources: forecast.sources, destinations, settings: farm.settings, currentBalanceKg,
       });
       const cycle = productionCycle(forecast.planningDate, farm.settings.productionWeekday);
-      const runKey = runKeyFor(farm.code);
+      const persistedRun = await this.matchingPersistedRun(forecast, farmId, companyId, tenantId);
+      const runKey = persistedRun?.runCode ?? runKeyFor(farm.code);
+      const runLineFor = (line: DraftLine) => persistedRun?.lineBySource.get(lineKey(line.destinationLocationId, line.itemId)) ?? null;
 
       return this.numbered(() => withTenantTransaction(this.cls, async () => {
         await this.lockFarm(farmId, tenantId);
@@ -426,6 +467,7 @@ export class FeedRequisitionService implements OnModuleInit {
             required_date: drafted.map((l) => l.proposedDeliveryDate).sort()[0] ?? null,
           } : {}),
           forecast_run_key: runKey,
+          feed_forecast_run_id: persistedRun?.runId ?? null,
           production_date: cycle.productionDate,
           submission_deadline: cycle.submissionDeadline,
           updated_by: user?.userId ?? null,
@@ -451,7 +493,7 @@ export class FeedRequisitionService implements OnModuleInit {
           });
           await this.db.insert(schema.requisitionLine).values(
             plan.insert.map((line, i) => ({
-              requisition_id: requisitionId, line_seq: i + 1, quantity: String(line.recommendedQtyKg), quantity_edited: false, ...this.lineValues(line),
+              requisition_id: requisitionId, line_seq: i + 1, quantity: String(line.recommendedQtyKg), quantity_edited: false, ...this.lineValues(line, runLineFor(line)),
             })),
           );
           return { requisitionId, created: true, linesDrafted: plan.insert.length };
@@ -462,7 +504,7 @@ export class FeedRequisitionService implements OnModuleInit {
         }
         for (const u of plan.update) {
           await this.db.update(schema.requisitionLine).set({
-            ...this.lineValues(u.line),
+            ...this.lineValues(u.line, runLineFor(u.line)),
             // M9: an edited line keeps the farm's quantity (and its flag); only
             // the snapshot and the recommendation beside it are refreshed.
             ...(u.keepQuantity
@@ -474,7 +516,7 @@ export class FeedRequisitionService implements OnModuleInit {
           const maxSeq = Math.max(0, ...existing.map((l) => l.line_seq));
           await this.db.insert(schema.requisitionLine).values(
             plan.insert.map((line, i) => ({
-              requisition_id: draft.requisition_id, line_seq: maxSeq + i + 1, quantity: String(line.recommendedQtyKg), quantity_edited: false, ...this.lineValues(line),
+              requisition_id: draft.requisition_id, line_seq: maxSeq + i + 1, quantity: String(line.recommendedQtyKg), quantity_edited: false, ...this.lineValues(line, runLineFor(line)),
             })),
           );
         }

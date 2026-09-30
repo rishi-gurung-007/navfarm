@@ -1,7 +1,7 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Put, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { FeedForecastService } from './feed-forecast.service';
-import { QueryFeedForecastDto, QueryFeedPeriodsDto, UpdateFeedFarmSettingsDto, UpdateSiloPlanningDto } from './dto/feed-forecast.dto';
+import { QueryFeedForecastDto, QueryFeedForecastRunsDto, QueryFeedPeriodsDto, UpdateFeedFarmSettingsDto, UpdateSiloPlanningDto } from './dto/feed-forecast.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
@@ -40,6 +40,24 @@ export class FeedForecastController {
     const tenantId = req.user?.tenantId || req['tenantId'];
     const data = await this.feedForecastService.listFarms(tenantId, req.user?.userType);
     return { success: true, message: 'Farms retrieved successfully.', data };
+  }
+
+  @Get('runs')
+  @RequirePermission('INVENTORY', 'LEDGER', 'view')
+  @ApiOperation({ summary: 'Immutable feed forecast run history for one farm' })
+  async runs(@Query() query: QueryFeedForecastRunsDto, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const data = await this.feedForecastService.listRuns(query.farmId, tenantId, req.user?.userType);
+    return { success: true, message: 'Feed forecast runs retrieved successfully.', data };
+  }
+
+  @Get('runs/:id')
+  @RequirePermission('INVENTORY', 'LEDGER', 'view')
+  @ApiOperation({ summary: 'One immutable feed forecast run and its dated lines' })
+  async run(@Param('id', ParseUUIDPipe) id: string, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const data = await this.feedForecastService.findRun(id, tenantId);
+    return { success: true, message: 'Feed forecast run retrieved successfully.', data };
   }
 
   /**
@@ -101,5 +119,14 @@ export class FeedForecastController {
       message: 'Feed forecast retrieved successfully.',
       data: result,
     };
+  }
+
+  @Post('runs')
+  @RequirePermission('INVENTORY', 'LEDGER', 'create')
+  @ApiOperation({ summary: 'Save the displayed feed forecast as an immutable run' })
+  async saveRun(@Body() dto: QueryFeedForecastDto, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const data = await this.feedForecastService.saveRun(dto, tenantId, req.user);
+    return { success: true, message: 'Feed forecast run saved.', data };
   }
 }

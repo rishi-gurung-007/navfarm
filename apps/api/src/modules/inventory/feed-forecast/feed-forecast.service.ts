@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { ClsService } from 'nestjs-cls';
 import { and, eq, gte, inArray, isNotNull, isNull, gt, lte, notInArray, or, sql } from 'drizzle-orm';
@@ -16,6 +16,8 @@ import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { SiloFeedService } from '../silo-feed/silo-feed.service';
 import { assertSiloLevels } from '../silo-feed/silo-levels';
 import { isFarmBoundUserType } from '../../../common/user-type-hierarchy';
+import { withTenantTransaction } from '../../../common/tenant-transaction';
+import { FeedForecastRunService } from './feed-forecast-run.service';
 
 /**
  * The LOB bound on the forecast's location read for a restricted
@@ -235,6 +237,8 @@ export interface FeedForecastReport {
   sources: ForecastSource[];
   dietChanges: DietChange[];
 }
+
+type PersistableFeedForecastReport = FeedForecastReport & { daily: DailyForecastRow[] };
 
 export interface StageInfo {
   stageId: string;
@@ -546,6 +550,7 @@ export class FeedForecastService {
     private readonly auditService: AuditLogService,
     // D41: what each silo is holding now, for Silo Feed Setup's read-only columns.
     private readonly siloFeedService: SiloFeedService,
+    @Optional() private readonly runService?: FeedForecastRunService,
   ) {}
 
   private get db(): MySql2Database<typeof schema> {
@@ -567,7 +572,9 @@ export class FeedForecastService {
    * such as 2026-02-31, and a malformed value must answer 400, never be
    * quietly dropped because this view happens not to need it.
    */
-  async getForecast(query: QueryFeedForecastDto, tenantId: string, userType?: string): Promise<FeedForecastReport> {
+  async getForecast(query: QueryFeedForecastDto, tenantId: string, userType?: string, includeDaily?: false): Promise<FeedForecastReport>;
+  async getForecast(query: QueryFeedForecastDto, tenantId: string, userType: string | undefined, includeDaily: true): Promise<PersistableFeedForecastReport>;
+  async getForecast(query: QueryFeedForecastDto, tenantId: string, userType?: string, includeDaily = false): Promise<FeedForecastReport | PersistableFeedForecastReport> {
     const { farmId, companyId } = await this.resolveFarm(query.farmId, tenantId, userType);
     for (const [name, value] of [['planningDate', query.planningDate], ['from', query.from], ['to', query.to]] as const) {
       if (value !== undefined && !isCalendarDay(value)) throw new BadRequestException(`${name} must be a calendar date (YYYY-MM-DD).`);
@@ -609,7 +616,7 @@ export class FeedForecastService {
       : forecastFrom > from
         ? `Days before the planning date (${dayShort(planningDate)}) are not forecast.`
         : null;
-    return {
+    const report: FeedForecastReport = {
       planningDate: result.planningDate,
       today: result.today,
       timeZone: result.timeZone,
@@ -628,6 +635,40 @@ export class FeedForecastService {
       sources: result.sources,
       dietChanges: result.dietChanges,
     };
+    return includeDaily ? { ...report, daily: result.daily } : report;
+  }
+
+  /** Explicit persistence boundary. Ordinary getForecast calls never enter it. */
+  async saveRun(query: QueryFeedForecastDto, tenantId: string, actor?: { userId?: string; userType?: string }) {
+    if (!this.runService) throw new Error('Feed forecast run service is not configured.');
+    const runService = this.runService;
+    const sourceCutoffAt = new Date().toISOString().slice(0, 19).replace('T', ' ');
+    return withTenantTransaction(this.cls, async () => {
+      const { farmId, companyId } = await this.resolveFarm(query.farmId, tenantId, actor?.userType);
+      const output = await this.getForecast({ ...query, farmId }, tenantId, actor?.userType, true);
+      return runService.createRun({
+        tenantId,
+        companyId,
+        farmId,
+        planningDate: output.planningDate,
+        view: output.view,
+        from: output.from,
+        to: output.to,
+        periodId: output.period?.periodId ?? null,
+        sourceCutoffAt,
+      }, output as any, actor);
+    });
+  }
+
+  async listRuns(queryFarmId: string | undefined, tenantId: string, userType?: string) {
+    if (!this.runService) throw new Error('Feed forecast run service is not configured.');
+    const { farmId, companyId } = await this.resolveFarm(queryFarmId, tenantId, userType);
+    return this.runService.findAll(farmId, companyId, tenantId);
+  }
+
+  async findRun(runId: string, tenantId: string) {
+    if (!this.runService) throw new Error('Feed forecast run service is not configured.');
+    return this.runService.findOne(runId, tenantId);
   }
 
   /**

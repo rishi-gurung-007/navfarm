@@ -319,6 +319,54 @@ export const feedPlanningSetting = mysqlTable('feed_planning_setting', {
   companyIndex: index('idx_feed_planning_setting_company').on(table.company_id),
 }));
 
+/** Explicit, append-only saves of the Feed Forecast and its dated evidence. */
+export const feedForecastRun = mysqlTable('feed_forecast_run', {
+  run_id: varchar('run_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  run_code: varchar('run_code', { length: 80 }).notNull(),
+  tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+  company_id: varchar('company_id', { length: 36 }).notNull().references(() => companyMaster.company_id, { onDelete: 'restrict' }),
+  farm_id: varchar('farm_id', { length: 36 }).notNull().references((): AnyMySqlColumn => locationMaster.location_id, { onDelete: 'restrict' }),
+  version: int('version').notNull(),
+  planning_date: date('planning_date', { mode: 'string' }).notNull(),
+  view: varchar('view', { length: 20 }).notNull(),
+  from_date: date('from_date', { mode: 'string' }).notNull(),
+  to_date: date('to_date', { mode: 'string' }).notNull(),
+  period_id: varchar('period_id', { length: 36 }).references((): AnyMySqlColumn => reportingPeriod.period_id, { onDelete: 'restrict' }),
+  source_cutoff_at: timestamp('source_cutoff_at', { mode: 'string' }).notNull(),
+  config_snapshot: json('config_snapshot').$type<{ version: string; hash: string; values: unknown }>().notNull(),
+  created_by: varchar('created_by', { length: 36 }),
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+}, (table) => ({
+  farmVersionUnique: uniqueIndex('uq_feed_forecast_run_farm_version').on(table.farm_id, table.version),
+  companyCodeUnique: uniqueIndex('uq_feed_forecast_run_company_code').on(table.company_id, table.run_code),
+  tenantFarmIndex: index('idx_feed_forecast_run_tenant_farm').on(table.tenant_id, table.farm_id),
+}));
+
+export const feedForecastRunLine = mysqlTable('feed_forecast_run_line', {
+  run_line_id: varchar('run_line_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  run_id: varchar('run_id', { length: 36 }).notNull().references(() => feedForecastRun.run_id, { onDelete: 'restrict' }),
+  forecast_date: date('forecast_date', { mode: 'string' }).notNull(),
+  batch_id: varchar('batch_id', { length: 36 }).notNull().references((): AnyMySqlColumn => batchHeader.batch_id, { onDelete: 'restrict' }),
+  shed_id: varchar('shed_id', { length: 36 }).references((): AnyMySqlColumn => locationMaster.location_id, { onDelete: 'restrict' }),
+  destination_location_id: varchar('destination_location_id', { length: 36 }).references((): AnyMySqlColumn => locationMaster.location_id, { onDelete: 'restrict' }),
+  required_item_id: varchar('required_item_id', { length: 36 }).notNull().references((): AnyMySqlColumn => itemMaster.item_id, { onDelete: 'restrict' }),
+  current_item_id: varchar('current_item_id', { length: 36 }).references((): AnyMySqlColumn => itemMaster.item_id, { onDelete: 'restrict' }),
+  head_count: int('head_count').notNull(),
+  feed_rate_kg: decimal('feed_rate_kg', { precision: 18, scale: 6 }).notNull(),
+  opening_stock_kg: decimal('opening_stock_kg', { precision: 18, scale: 4 }).notNull(),
+  confirmed_receipt_kg: decimal('confirmed_receipt_kg', { precision: 18, scale: 4 }).notNull(),
+  daily_demand_kg: decimal('daily_demand_kg', { precision: 18, scale: 4 }).notNull(),
+  projected_closing_kg: decimal('projected_closing_kg', { precision: 18, scale: 4 }).notNull(),
+  shortage_date: date('shortage_date', { mode: 'string' }),
+  recommended_qty_kg: decimal('recommended_qty_kg', { precision: 18, scale: 4 }).notNull(),
+  required_on_date: date('required_on_date', { mode: 'string' }),
+  provenance_snapshot: json('provenance_snapshot').$type<Record<string, unknown>>().notNull(),
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+}, (table) => ({
+  runIndex: index('idx_feed_forecast_run_line_run').on(table.run_id),
+  destinationItemIndex: index('idx_feed_forecast_run_line_destination_item').on(table.destination_location_id, table.required_item_id),
+}));
+
 // ==========================================
 // 5. USERS & Granular RBAC Permissions
 // ==========================================
@@ -4173,6 +4221,7 @@ export const requisition = mysqlTable('requisition', {
   supply_source: varchar('supply_source', { length: 20 }), // MILL (row 30)
   priority: varchar('priority', { length: 30 }), // row 34
   forecast_run_key: varchar('forecast_run_key', { length: 64 }), // Engine Step 9 "Preserve run ID"
+  feed_forecast_run_id: varchar('feed_forecast_run_id', { length: 36 }).references(() => feedForecastRun.run_id, { onDelete: 'restrict' }),
   production_date: date('production_date', { mode: 'string' }),
   submission_deadline: date('submission_deadline', { mode: 'string' }), // row 35
   remarks: text('remarks'), // row 36
@@ -4214,6 +4263,7 @@ export const requisitionLine = mysqlTable('requisition_line', {
   // Ruling M9: set when the farm hand-edits a drafted quantity, so an
   // auto-draft rerun (Task 8) keeps this line instead of overwriting it.
   quantity_edited: boolean('quantity_edited').default(false).notNull(),
+  feed_forecast_run_line_id: varchar('feed_forecast_run_line_id', { length: 36 }).references(() => feedForecastRunLine.run_line_id, { onDelete: 'restrict' }),
   created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
 });
 

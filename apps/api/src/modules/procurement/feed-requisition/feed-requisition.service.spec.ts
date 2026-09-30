@@ -157,6 +157,39 @@ describe('FeedRequisitionService.autoDraft', () => {
     expect(evaluated).toEqual([{ args: ['farm-grs', 'co-1', 'tenant-1'], inTx: false }]);
   });
 
+  it('links a new editable draft to the matching persisted run and run line', async () => {
+    const queues = new Map<unknown, unknown[][]>([
+      [schema.feedForecastRun, [[{ run_id: 'run-5', run_code: 'FFR-farm-grs-000005', version: 5 }]]],
+      [schema.feedForecastRunLine, [[{ run_line_id: 'run-line-5', destination_location_id: 'silo-1', required_item_id: 'item-r1' }]]],
+      [schema.locationMaster, [[FARM_ROW], [SILO_ROW], [{ location_id: 'farm-grs' }]]],
+      [schema.requisition, [[], [], [{ req: { requisition_id: 'new' }, farm_code: 'GRS', truck_target_kg: 30000 }]]],
+    ]);
+    const { service, log } = setup([source()], queues);
+
+    await service.autoDraft({}, 'tenant-1', { userId: 'u-1', userType: 'FARM_MANAGER' });
+
+    expect(log.find((e) => e.op === 'insert' && e.table === schema.requisition)?.values).toMatchObject({
+      status: 'AUTO_DRAFT', feed_forecast_run_id: 'run-5', forecast_run_key: 'FFR-farm-grs-000005',
+    });
+    expect(log.find((e) => e.op === 'insert' && e.table === schema.requisitionLine)?.values)
+      .toEqual([expect.objectContaining({ feed_forecast_run_line_id: 'run-line-5' })]);
+  });
+
+  it('a later matching run never rewrites an approved requisition or its line links', async () => {
+    const queues = new Map<unknown, unknown[][]>([
+      [schema.feedForecastRun, [[{ run_id: 'run-6', run_code: 'FFR-farm-grs-000006', version: 6 }]]],
+      [schema.feedForecastRunLine, [[{ run_line_id: 'run-line-6', destination_location_id: 'silo-1', required_item_id: 'item-r1' }]]],
+      [schema.locationMaster, [[FARM_ROW], [SILO_ROW], [{ location_id: 'farm-grs' }]]],
+      [schema.requisition, [[{ requisition_id: 'approved-1', status: 'APPROVED', requisition_type: 'FEED_FORECAST' }]]],
+      [schema.requisitionLine, [[{ dest: 'silo-1', item: 'item-r1' }]]],
+    ]);
+    const { service, log } = setup([source()], queues);
+
+    await service.autoDraft({}, 'tenant-1', { userId: 'u-1', userType: 'FARM_MANAGER' });
+
+    expect(log.filter((e) => e.op === 'update' && (e.table === schema.requisition || e.table === schema.requisitionLine))).toEqual([]);
+  });
+
   it('passes every source its destination row from the DB — a source with none fails rather than silently losing its low level (Task 3 carry)', async () => {
     const queues = new Map<unknown, unknown[][]>([
       [schema.locationMaster, [[FARM_ROW], [/* silo-1 row missing */]]],

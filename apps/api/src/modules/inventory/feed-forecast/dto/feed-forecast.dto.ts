@@ -47,6 +47,8 @@ export class QueryFeedPeriodsDto {
   farmId?: string;
 }
 
+export class QueryFeedForecastRunsDto extends QueryFeedPeriodsDto {}
+
 /**
  * D32, narrowed by D38 to five: the refill buffer left this screen for the
  * silo's own Silo Reorder Days. The per-farm settings, edited on Settings → Inventory Setup →
