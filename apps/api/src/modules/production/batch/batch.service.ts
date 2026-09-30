@@ -1079,6 +1079,78 @@ export class BatchService {
   }
 
   /**
+   * D21 (Rishi, 27 Sep): the shed a batch stands in, set or changed at any
+   * status short of CLOSED/CANCELLED. The full edit (update) is DRAFT-only,
+   * and nearly every batch is ACTIVE by the time anyone notices it has no
+   * shed — the feed forecast then draws its feed from the farm store. The
+   * shed must be an active SHED of the batch's company and farm; a batch with
+   * no farm yet takes the shed's. Read scoped like every batch read here, so
+   * a batch outside the caller's farm/LOB is not found.
+   */
+  async changeShed(id: string, shedId: string | null, tenantId: string, userPayload?: UserContext) {
+    const [batch] = await this.db
+      .select({
+        batch_id: schema.batchHeader.batch_id,
+        batch_no: schema.batchHeader.batch_no,
+        status: schema.batchHeader.status,
+        company_id: schema.batchHeader.company_id,
+        farm_id: schema.batchHeader.farm_id,
+        shed_id: schema.batchHeader.shed_id,
+      })
+      .from(schema.batchHeader)
+      .where(and(
+        eq(schema.batchHeader.batch_id, id),
+        eq(schema.batchHeader.tenant_id, tenantId),
+        isNull(schema.batchHeader.deleted_at),
+        ...batchScopeConditions(farmScope(this.cls)),
+      ))
+      .limit(1);
+    if (!batch) throw new NotFoundException(`Batch with ID '${id}' not found.`);
+    if (batch.status === 'CLOSED' || batch.status === 'CANCELLED') {
+      throw new BadRequestException(`${batch.batch_no} is ${batch.status.toLowerCase()}; its shed can no longer be changed.`);
+    }
+    let farmId = batch.farm_id;
+    if (shedId) {
+      const [shed] = await this.db
+        .select({
+          location_id: schema.locationMaster.location_id,
+          location_type: schema.locationMaster.location_type,
+          company_id: schema.locationMaster.company_id,
+          farm_id: schema.locationMaster.farm_id,
+          parent_location_id: schema.locationMaster.parent_location_id,
+          is_active: schema.locationMaster.is_active,
+          deleted_at: schema.locationMaster.deleted_at,
+        })
+        .from(schema.locationMaster)
+        .where(and(eq(schema.locationMaster.location_id, shedId), eq(schema.locationMaster.tenant_id, tenantId)))
+        .limit(1);
+      if (!shed || shed.location_type !== 'SHED' || !shed.is_active || shed.deleted_at) {
+        throw new BadRequestException('Choose an active shed.');
+      }
+      if (shed.company_id !== batch.company_id) throw new BadRequestException('That shed belongs to another company.');
+      const shedFarm = shed.farm_id ?? shed.parent_location_id;
+      if (batch.farm_id && shedFarm !== batch.farm_id) throw new BadRequestException('That shed is on another farm.');
+      await assertLocationOnActiveFarm(this.db, farmScope(this.cls), shedId, 'Batch shed');
+      farmId = batch.farm_id ?? shedFarm;
+    }
+    await this.db
+      .update(schema.batchHeader)
+      .set({ shed_id: shedId, farm_id: farmId, updated_by: userPayload?.userId ?? null })
+      .where(eq(schema.batchHeader.batch_id, id));
+    await this.auditService.log({
+      tenantId,
+      companyId: batch.company_id,
+      userId: userPayload?.userId,
+      action: 'UPDATE',
+      entityName: 'batch_header',
+      entityId: id,
+      oldValues: { shed_id: batch.shed_id },
+      newValues: { shed_id: shedId },
+    });
+    return { batch_id: id, shed_id: shedId, farm_id: farmId };
+  }
+
+  /**
    * Copy-forward for perpetual/seasonal LOBs (orchards, apiaries) — creates a
    * new DRAFT batch carrying the source's config (breed, shed, costing method,
    * standard-cost assumptions) forward, needing only the new cycle's own
@@ -3357,6 +3429,9 @@ export class BatchService {
       }
     }
 
+    // Draft entries this call dispatches for real; their silo levels are
+    // re-checked once, when the dispatch loop ends (Ruling M6).
+    let postedDrafts = 0;
     const activePairs = await this.loadActiveScheduleLines(batch, dateStr);
     const mandatoryPairs = activePairs.filter(({ line }) => line.is_mandatory);
     if (mandatoryPairs.length) {
@@ -3397,21 +3472,33 @@ export class BatchService {
             eq(schema.batchDailyData.posted, false),
           ),
         );
-      for (const row of draftRows) {
-        await this.batchDailyDataService.postEntry(
-          batchId,
-          {
-            line_id: row.line_id,
-            entry_date: dateStr,
-            entered_value:
-              row.entered_value != null ? Number(row.entered_value) : undefined,
-            entered_text: row.entered_text || undefined,
-            lot_no: row.lot_no || undefined,
-            remarks: row.remarks || undefined,
-          } as any,
-          tenantId,
-          userPayload,
-        );
+      try {
+        for (const row of draftRows) {
+          await this.batchDailyDataService.postEntry(
+            batchId,
+            {
+              line_id: row.line_id,
+              entry_date: dateStr,
+              entered_value:
+                row.entered_value != null ? Number(row.entered_value) : undefined,
+              entered_text: row.entered_text || undefined,
+              lot_no: row.lot_no || undefined,
+              remarks: row.remarks || undefined,
+            } as any,
+            tenantId,
+            userPayload,
+            { deferFeedAlerts: true },
+          );
+          postedDrafts++;
+        }
+      } finally {
+        // Once per call (Ruling M6), and in a finally: if a later line throws,
+        // the lines before it have already moved stock (postEntry opens no
+        // transaction), so their silos are re-checked before the error goes
+        // on. The lock below moves no stock, so checking here rather than
+        // after it loses nothing; reevaluateFeedLevels never throws, so it
+        // cannot mask the original error.
+        if (postedDrafts) await this.batchDailyDataService.reevaluateFeedLevels(batch.farm_id, tenantId);
       }
     }
 
@@ -3980,6 +4067,8 @@ export class BatchService {
       )
       .limit(1);
 
+    // As in postBatchDay: one silo-level re-check for the day, not per line.
+    let postedDrafts = 0;
     if (header) {
       const activePairs = await this.loadScheduleLinesForHeader(
         header,
@@ -4044,24 +4133,31 @@ export class BatchService {
               eq(schema.batchDailyData.posted, false),
             ),
           );
-        for (const row of draftRows) {
-          await this.batchDailyDataService.postEntry(
-            batchId,
-            {
-              line_id: row.line_id,
-              entry_date: dateStr,
-              animal_id: row.animal_id || undefined,
-              entered_value:
-                row.entered_value != null
-                  ? Number(row.entered_value)
-                  : undefined,
-              entered_text: row.entered_text || undefined,
-              lot_no: row.lot_no || undefined,
-              remarks: row.remarks || undefined,
-            } as any,
-            tenantId,
-            userPayload,
-          );
+        try {
+          for (const row of draftRows) {
+            await this.batchDailyDataService.postEntry(
+              batchId,
+              {
+                line_id: row.line_id,
+                entry_date: dateStr,
+                animal_id: row.animal_id || undefined,
+                entered_value:
+                  row.entered_value != null
+                    ? Number(row.entered_value)
+                    : undefined,
+                entered_text: row.entered_text || undefined,
+                lot_no: row.lot_no || undefined,
+                remarks: row.remarks || undefined,
+              } as any,
+              tenantId,
+              userPayload,
+              { deferFeedAlerts: true },
+            );
+            postedDrafts++;
+          }
+        } finally {
+          // As in postBatchDay: once per call, and even when a later line throws.
+          if (postedDrafts) await this.batchDailyDataService.reevaluateFeedLevels(batch.farm_id, tenantId);
         }
       }
     }

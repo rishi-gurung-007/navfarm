@@ -127,6 +127,16 @@ export class CreateAnimalDto {
   @IsUUID()
   @IsOptional()
   dam_animal_id?: string;
+  @ApiProperty({ description: "Sire's serial/registration number as the papers give it — for a parent not registered here (D42). Any entry type.", required: false })
+  @IsString()
+  @IsOptional()
+  sire_serial_no?: string;
+
+  @ApiProperty({ description: "Dam's serial/registration number as the papers give it — for a parent not registered here (D42). Any entry type.", required: false })
+  @IsString()
+  @IsOptional()
+  dam_serial_no?: string;
+
 
   // animal_register.acquisition_cost/landing_cost are decimal(18,4) (schema.ts);
   // the bound below is that column's own ceiling (14 integer digits), not a
@@ -193,10 +203,16 @@ export class CreateAnimalDto {
   @Min(0)
   tsi?: number;
 
-  @ApiProperty({ description: 'Conformation/quality grading', required: false })
-  @IsString()
+  // Conformation/quality grading is a whole number 0–99 (two digits). The
+  // column is varchar(20) and stays so — the number is stored as text, no
+  // migration. The bound matches the web form's Grading field.
+  @ApiProperty({ description: 'Conformation/quality grading — whole number 0–99, stored as text (varchar column, no migration)', required: false })
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(99)
   @IsOptional()
-  grading?: string;
+  grading?: number;
 
   // Column is varchar(50) (schema.ts).
   @ApiProperty({ description: 'Serial number (asset tag), distinct from RFID/ear tag', required: false, maxLength: 50 })
@@ -256,6 +272,16 @@ export class UpdateAnimalDto {
   @IsUUID()
   @IsOptional()
   dam_animal_id?: string;
+  @ApiProperty({ description: "Sire's serial/registration number as the papers give it — for a parent not registered here (D42). Any entry type.", required: false })
+  @IsString()
+  @IsOptional()
+  sire_serial_no?: string;
+
+  @ApiProperty({ description: "Dam's serial/registration number as the papers give it — for a parent not registered here (D42). Any entry type.", required: false })
+  @IsString()
+  @IsOptional()
+  dam_serial_no?: string;
+
 
   @ApiProperty({ required: false })
   @IsUUID()
@@ -348,10 +374,15 @@ export class UpdateAnimalDto {
   @Min(0)
   tsi?: number;
 
-  @ApiProperty({ description: 'Conformation/quality grading', required: false })
-  @IsString()
+  // Same bound as CreateAnimalDto: whole number 0–99, stored as text in the
+  // varchar(20) column.
+  @ApiProperty({ description: 'Conformation/quality grading — whole number 0–99, stored as text (varchar column, no migration)', required: false })
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(99)
   @IsOptional()
-  grading?: string;
+  grading?: number;
 
   // Column is varchar(50) (schema.ts).
   @ApiProperty({ description: 'Serial number (asset tag), distinct from RFID/ear tag', required: false, maxLength: 50 })
@@ -412,6 +443,12 @@ export class QueryAnimalDto extends MasterListQueryDto {
   @IsOptional()
   @IsString()
   animalType?: string;
+
+  /** D42: the Sire picker asks for males and the Dam picker for females. */
+  @ApiProperty({ description: "Filter by sex — the data uses 'M' and 'F'.", required: false })
+  @IsOptional()
+  @IsString()
+  gender?: string;
 
   @ApiProperty({ required: false, enum: STATUSES })
   @IsOptional()

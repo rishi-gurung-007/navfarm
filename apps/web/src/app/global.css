@@ -477,6 +477,133 @@ body {
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
+   FIXED-HEIGHT PAGES (Feed Forecast Plan S, review C)
+
+   A page whose work surface is one large table — the feed forecast, the
+   requisitions, the alerts — holds its header and filters still, and only
+   the table scrolls, both ways, with its header row and first columns held.
+   ConsolePage fill sets data-fill-height; the page's body is a
+   [data-fill-body] flex column; its one [data-table-scroll] takes the
+   height that is left. Markup: components/ui/console-page.tsx and
+   components/ui/scroll-table.tsx.
+   ───────────────────────────────────────────────────────────────────────── */
+
+[data-fill-height] {
+  display: flex;
+  flex-direction: column;
+}
+
+[data-fill-body] {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-height: 0;
+}
+
+/* Below 1024px the document scrolls, as on every page; the table keeps a box
+   of its own so a 14-column grid never widens the page past the viewport. */
+[data-table-scroll] {
+  overflow: auto;
+  max-height: 70dvh;
+  overscroll-behavior: contain;
+}
+
+[data-table-scroll] thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--surface-raised);
+  border-bottom: 1px solid var(--row-border);
+}
+
+[data-table-scroll] tbody td {
+  border-bottom: 1px solid var(--row-border);
+  background: var(--surface);
+}
+
+[data-table-scroll] [data-sticky-col] {
+  position: sticky;
+  left: var(--sticky-left, 0);
+  z-index: 1;
+}
+
+[data-table-scroll] thead th[data-sticky-col] {
+  z-index: 3;
+}
+
+/* The edge of the held columns, so the columns scrolling under them read as
+   going underneath rather than running into them. */
+[data-table-scroll] [data-sticky-col='last'] {
+  box-shadow: 1px 0 0 var(--border), 6px 0 8px -6px rgba(0, 0, 0, 0.18);
+}
+
+/* A batch + item's consecutive dates read as one block, not a wall of rows. */
+[data-table-scroll] tbody tr[data-group-start='true']:not(:first-child) td {
+  border-top: 1px solid var(--border);
+}
+
+/* Row shading is laid over an opaque cell colour: --row-hover is a
+   see-through tint, and a held cell with only the tint let the scrolled
+   columns show through it on hover. --surface-raised equals --surface in
+   the light theme, so alternate groups take a tint of their own. */
+[data-table-scroll] tbody tr[data-group-alt='true'] td {
+  background-color: var(--surface);
+  background-image: linear-gradient(var(--row-hover), var(--row-hover));
+}
+
+[data-table-scroll] tbody tr:hover td {
+  background-color: var(--surface);
+  background-image: linear-gradient(var(--row-hover), var(--row-hover)), linear-gradient(var(--row-hover), var(--row-hover));
+}
+
+[data-table-scroll] tbody tr[data-group-alt='true']:hover td {
+  background-image: linear-gradient(var(--row-hover), var(--row-hover)), linear-gradient(var(--row-hover), var(--row-hover)), linear-gradient(var(--row-hover), var(--row-hover));
+}
+
+/* Two sticky columns would take a phone's whole width; there they scroll. */
+@media (max-width: 639.98px) {
+  [data-table-scroll] [data-sticky-col] {
+    position: static;
+    box-shadow: none;
+  }
+}
+
+@media (min-width: 1024px) {
+  /* <main> is the scroller here; with a fill page in it, it hands its height
+     to the page instead and stops scrolling. */
+  [data-shell-region='content']:has(> [data-fill-height]) {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  [data-shell-region='content'] > [data-fill-height] {
+    flex: 1 1 auto;
+    min-height: 0;
+    width: 100%;
+  }
+
+  /* The breadcrumb carries max-width + margin-inline: auto, which centres it
+     inside a block <main>. As a COLUMN FLEX item those auto margins also stop
+     it stretching, so it shrank to its text and read as centred on a fill page
+     while every other screen has it left-aligned. A definite width restores
+     the block behaviour: capped at its max-width, the same box as the page. */
+  [data-shell-region='content']:has(> [data-fill-height]) > [data-shell-breadcrumb] {
+    width: 100%;
+  }
+
+  [data-fill-height] > [data-fill-body] {
+    flex: 1 1 auto;
+  }
+
+  [data-fill-body] [data-table-scroll] {
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
    CONTEXTUAL NAVIGATION — LEVEL 2
 
    The module index. Quieter than the primary rail above it and quieter still

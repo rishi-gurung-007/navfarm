@@ -15,7 +15,10 @@ import { ShieldAlert } from "lucide-react";
  * the boilerplate that was duplicated across all of them: auth/permission
  * gate, active LOB, and the page shell chrome).
  */
-export function useProductionPageState() {
+/** A [module, resource] pair whose view grant also opens the page. */
+export type ExtraGrant = [moduleCode: string, resource: string];
+
+export function useProductionPageState(alsoAllow: ExtraGrant[] = []) {
   const router = useRouter();
   const [user, setUser] = useState<NavUser | null>(null);
   const [ready, setReady] = useState(false);
@@ -37,7 +40,8 @@ export function useProductionPageState() {
       user.userType === "OPERATIONAL_ADMIN" ||
       user.userType === "COMPANY_ADMIN" ||
       user.userType === "TENANT_ADMIN" ||
-      hasPermission(user, "PRODUCTION", "BATCH", "can_view")
+      hasPermission(user, "PRODUCTION", "BATCH", "can_view") ||
+      alsoAllow.some(([moduleCode, resource]) => hasPermission(user, moduleCode, resource, "can_view"))
     )
   );
 
@@ -46,14 +50,34 @@ export function useProductionPageState() {
 
 export function ProductionPageShell({
   titleKey,
+  fill = false,
+  descriptionKey,
+  alsoAllow,
   children,
 }: {
   /** Translation key, not a literal — every Production route used to pass an
       English string, so these titles stayed English in every other language. */
   titleKey: TranslationKeys;
+  /** Plan S: fixed-height page; only its table scrolls. */
+  fill?: boolean;
+  /**
+   * A page's own subtitle. Without one the shell's generic operational-area
+   * line is used, which read wrongly on Alerts ("Lifecycle tracking, batch
+   * feed & health logs…" under a list of alerts). Opt-in, so every other
+   * Production page keeps the line it has.
+   */
+  descriptionKey?: TranslationKeys;
+  /**
+   * Further view grants that open this page (F1, review I1). The shell's own
+   * gate is PRODUCTION/BATCH, which is right for a batch screen; Alerts also
+   * holds feed alerts, and a store or feed role reaches them with
+   * INVENTORY/LEDGER and no batch grant at all. Opt-in, so no other
+   * Production page is widened.
+   */
+  alsoAllow?: ExtraGrant[];
   children: (activeLob: string) => React.ReactNode;
 }) {
-  const { ready, activeLob, mayView } = useProductionPageState();
+  const { ready, activeLob, mayView } = useProductionPageState(alsoAllow);
   const { t, tLob } = useLanguage();
   const title = t(titleKey);
 
@@ -75,10 +99,11 @@ export function ProductionPageShell({
   }
 
   return (
-    <ConsolePage>
+    <ConsolePage fill={fill}>
       <PageHeader
         title={title}
-        description={t("ppsPageDescription", { lob: tLob(activeLob) })}
+        description={descriptionKey ? t(descriptionKey) : t("ppsPageDescription", { lob: tLob(activeLob) })}
+        sticky={!fill}
       />
       {children(activeLob)}
     </ConsolePage>

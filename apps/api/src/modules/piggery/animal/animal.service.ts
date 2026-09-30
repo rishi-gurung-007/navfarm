@@ -697,6 +697,10 @@ export class AnimalService {
       ear_tag_image_url: dto.ear_tag_image_url || null,
       sire_animal_id: dto.sire_animal_id || null,
       dam_animal_id: dto.dam_animal_id || null,
+      // D42: what the papers say, for a parent not registered here. Kept for
+      // every animal whatever its entry type, and independent of the two ids above.
+      sire_serial_no: dto.sire_serial_no?.trim() || null,
+      dam_serial_no: dto.dam_serial_no?.trim() || null,
       acquisition_cost: acquisitionCost.toString(),
       landing_cost: dto.landing_cost?.toString() || null,
       total_opening_asset_value: totalOpeningAssetValue.toString(),
@@ -712,7 +716,10 @@ export class AnimalService {
       no_of_teats: dto.gender === 'F' ? dto.no_of_teats ?? null : null,
       expected_cull_date: dto.expected_cull_date || null,
       tsi: dto.tsi?.toString() ?? null,
-      grading: dto.grading || null,
+      // grading is a number 0–99 in the DTO; the column is varchar(20), so it
+      // is stored as text. ?? not ||: grading 0 is a valid grade, not an
+      // absence of one.
+      grading: dto.grading?.toString() ?? null,
       serial_number: dto.serial_number || null,
       notes: dto.notes || null,
       is_active: true,
@@ -831,6 +838,8 @@ export class AnimalService {
     conditions.push(...animalScopeConditions(farmScope(this.cls)));
     if (query.breedId) conditions.push(eq(schema.animalRegister.breed_id, query.breedId));
     if (query.animalType) conditions.push(eq(schema.animalRegister.animal_type, query.animalType));
+    // D42: the Sire picker lists males, the Dam picker females.
+    if (query.gender) conditions.push(eq(schema.animalRegister.gender, query.gender));
     if (query.status) conditions.push(eq(schema.animalRegister.status, query.status));
     if (query.currentBatchId) conditions.push(eq(schema.animalRegister.current_batch_id, query.currentBatchId));
     if (query.unassignedOnly) conditions.push(isNull(schema.animalRegister.current_batch_id));
@@ -938,6 +947,9 @@ export class AnimalService {
     if (dto.ear_tag !== undefined) updates.ear_tag = dto.ear_tag;
     if (dto.ear_tag_image_url !== undefined) updates.ear_tag_image_url = dto.ear_tag_image_url;
     if (dto.sire_animal_id !== undefined) updates.sire_animal_id = dto.sire_animal_id;
+    // D42: emptying the box clears the stored number.
+    if (dto.sire_serial_no !== undefined) updates.sire_serial_no = dto.sire_serial_no?.trim() || null;
+    if (dto.dam_serial_no !== undefined) updates.dam_serial_no = dto.dam_serial_no?.trim() || null;
     if (dto.dam_animal_id !== undefined) updates.dam_animal_id = dto.dam_animal_id;
     if (dto.parity_count !== undefined) updates.parity_count = dto.parity_count;
     if (dto.total_piglets_born_live !== undefined) updates.total_piglets_born_live = dto.total_piglets_born_live;
@@ -952,7 +964,7 @@ export class AnimalService {
     if (dto.status !== undefined) updates.status = dto.status;
     if (dto.no_of_teats !== undefined) updates.no_of_teats = animal.gender === 'F' ? dto.no_of_teats : null;
     if (dto.tsi !== undefined) updates.tsi = dto.tsi?.toString() ?? null;
-    if (dto.grading !== undefined) updates.grading = dto.grading;
+    if (dto.grading !== undefined) updates.grading = dto.grading?.toString() ?? null;
     if (dto.serial_number !== undefined) updates.serial_number = dto.serial_number;
     if (dto.notes !== undefined) updates.notes = dto.notes;
 
@@ -1459,11 +1471,11 @@ export class AnimalService {
       .set(updates)
       .where(eq(schema.animalRegister.animal_id, id));
 
-    // The HISTORY/LOCATION TRACEABILITY tabs and batch-transfer.service.ts's
-    // own "did the caller already log a more precise entry" check both assume
-    // this call exists — it never did, so every pure stage change was invisible
-    // to animal_movement_log (batch-transfer's own moves logged correctly;
-    // only this path was missing).
+    // Checklist item 6: the animal's own row keeps only the CURRENT stage, so
+    // without this the stage it came from is lost the moment it moves and
+    // "which animals were in which stage, from–to" has no source. The
+    // batch-level cascade already records these (batch.service.ts); this is the
+    // per-animal path, which bulkTransitionStage also loops through.
     await this.movementLog.record({
       tenantId,
       companyId: animal.company_id,
@@ -1476,8 +1488,8 @@ export class AnimalService {
       toStageId: dto.to_stage_id,
       fromLocationId: animal.current_location_id,
       toLocationId: animal.current_location_id,
-      reason: dto.reason,
-      remarks: dto.remarks,
+      reason: dto.reason ?? null,
+      remarks: dto.remarks ?? null,
       userId: userPayload?.userId,
     });
 

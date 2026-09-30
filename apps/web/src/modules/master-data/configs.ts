@@ -131,14 +131,37 @@ const location: MasterDataConfig = {
     // live references for a cosmetic gain, and the stored value is still KG.
     { key: "silo_capacity_kg", label: "Silo Capacity", type: "number", min: 0, max: 999999.99, step: "0.01", visibleWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, requiredWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, helpText: "Required when Storage Location is SILO.", section: "Identification" },
     { key: "silo_capacity_uom", label: "Silo Capacity UOM", type: "select", options: ["KG", "TON"].map((v) => ({ value: v, label: v })), defaultValue: "KG", visibleWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, requiredWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, helpText: "The unit the capacity above is entered in. The capacity is stored in kilograms whichever unit is chosen — a tonne figure is converted on save.", section: "Identification" },
-    { key: "silo_reorder_days", label: "Silo Reorder Days", type: "number", min: 0, max: 365, step: "1", visibleWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, requiredWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, helpText: "Required when Storage Location is SILO.", section: "Identification" },
-    // Which sheds this silo feeds. One silo may serve many sheds, but a shed
-    // draws from exactly one silo, so the link is a feed_silo_id column on the
-    // SHED row (schema.ts) rather than a join table — one-silo-per-shed is
-    // then structurally true instead of a rule a validator has to keep
-    // re-checking. This multi-select is a view of that column read from the
-    // silo's side: ticking a shed writes this silo into that shed's
-    // feed_silo_id, unticking clears it.
+    { key: "silo_reorder_days", label: "Silo Reorder Days", type: "number", min: 0, max: 365, step: "1", visibleWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, requiredWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, helpText: "How many days before this silo runs down to its low level it must be refilled. The Feed Forecast's Date to Refill is that many days before the run-down date. Standard 2.", section: "Identification" },
+    // Master Setup §1 rows 10 and 12 (spec D10) — alongside Silo Reorder
+    // Days, not replacing it. Required on a silo since D22 (Rishi, 27 Sep):
+    // the forecast's run-down and the feed alerts read them.
+    {
+      key: "low_level_kg", label: "Below Feed Level (KG)", type: "number", min: 0, step: "1", nativeNumber: true,
+      visibleWhen: { anyOf: [{ key: "location_type", equals: "SILO" }] },
+      requiredWhen: { anyOf: [{ key: "location_type", equals: "SILO" }] }, section: "Identification",
+      helpText: "Low feed alert at or below this. Usually 20% of capacity."
+    },
+    {
+      key: "high_level_kg", label: "Above Threshold (KG)", type: "number", min: 0, step: "1", nativeNumber: true,
+      visibleWhen: { anyOf: [{ key: "location_type", equals: "SILO" }] },
+      requiredWhen: { anyOf: [{ key: "location_type", equals: "SILO" }] }, section: "Identification",
+      helpText: "Over-stock notice at or above this. Usually 90% of capacity."
+    },
+    // D32 (Rishi, 28 Sep): the six per-farm feed settings — refill buffer, lead
+    // time, bulk order multiple, bag size, truck target, production weekday —
+    // are NOT edited here. They are columns on the farm's row, which is the
+    // only reason the generic form ever showed them; they describe how a
+    // farm's feed is ordered, not the farm. Settings → Inventory Setup → Feed
+    // Planning edits them through GET/PUT /feed-forecast/farm-settings. The
+    // columns and the location DTO are unchanged, so the forecast engine and
+    // the requisition rules keep reading them.
+    // Which sheds this silo feeds. One silo may serve many sheds, and — since
+    // silo_shed_link replaced the old one-silo-per-shed feed_silo_id column
+    // (spec D7) — a shed may now draw from several silos too, one per feed
+    // item; D9 (never two silos feeding the same shed the same item) is
+    // enforced on the API side rather than by narrowing this picker. This
+    // multi-select is a view of that link table read from the silo's side:
+    // ticking a shed links it to this silo, unticking removes the link.
     //
     // dependsOn parent_location_id with {value} in the path scopes the list to
     // the farm chosen as this silo's parent, so a silo can never be attached
@@ -155,31 +178,13 @@ const location: MasterDataConfig = {
       dependsOn: "parent_location_id", requiresParent: true,
       visibleWhen: { anyOf: [{ key: "location_type", equals: "SILO" }] },
       emptyMultipleLabel: "None attached",
-      // A shed another silo already feeds is listed greyed with that silo
-      // named, rather than offered and then refused on save (Rishi,
-      // 2026-09-24: "Attached to", worded to be read at a glance).
-      disableOptionWhen: { key: "feed_silo_id", exceptMatchingField: "location_id", reasonKey: "feed_silo_name", reasonPrefix: "Attached to " },
       section: "Identification",
-      helpText: "The sheds on this silo's parent farm that take their feed from it. A shed draws from one silo only; a shed already attached to another silo is shown greyed out, and has to be detached from that silo first.",
+      helpText: "The sheds on this silo's parent farm that may take their feed from it. A shed can draw from several silos, one per feed item; two silos feeding the same shed may not hold the same feed.",
     },
     { key: "downtime_days_required", label: "Downtime Days Required", type: "number", min: 0, max: 365, step: "1", helpText: "Empty days required between batches for biosecurity.", section: "Identification" },
-    // The silo or store's own name-number. storage_type says which kind of
-    // store this is; this says which one — MULTIPLIER writes MGH1 against each
-    // grower house, Porta writes PSL FS - 01 and STORE.
-    //
-    // labelWhen follows location_type so the form asks for the one thing it is
-    // actually asking for (2026-09-24): by the time this field appears the
-    // type has already been chosen, and a person filling in a silo should read
-    // "Silo Name", not a slash-pair half of which does not apply to them. The
-    // static label stays as the fallback for a storage type added later with
-    // no entry here, and for the record view before a type is set.
-    {
-      key: "storage_name", label: "Silo / Store Name", type: "text", maxLength: 100, placeholder: "MGH1",
-      labelWhen: { key: "location_type", labels: { SILO: "Silo Name", STORE: "Store Name" } },
-      visibleWhen: { anyOf: [{ key: "storage_type", equals: ["STORE", "SILO"] }] },
-      helpText: "The name or number this location is known by on the farm.",
-      section: "Identification",
-    },
+    // D32: "Silo / Store Name" is gone from the form — it duplicated the
+    // required Name field. The storage_name column is kept, and the seeds
+    // still fill it for the silos and stores the client's master names.
     { key: "gps_latitude", label: "Latitude", type: "number", min: -90, max: 90, step: "0.00000001", placeholder: "-17.82722000", visibleWhen: { anyOf: [{ key: "location_type", equals: "FARM" }] }, helpText: "GPS latitude in decimal degrees, e.g. -17.82722000. Applies to Farm only.", section: "Identification" },
     { key: "gps_longitude", label: "Longitude", type: "number", min: -180, max: 180, step: "0.00000001", placeholder: "30.99755000", visibleWhen: { anyOf: [{ key: "location_type", equals: "FARM" }] }, helpText: "GPS longitude in decimal degrees, e.g. 30.99755000. Applies to Farm only.", section: "Identification" },
   ],
@@ -433,8 +438,28 @@ const animal: MasterDataConfig = {
     { key: "rfid_tag", label: "RFID", type: "text", helpText: "Unique if set.", section: "Identification" },
     { key: "ear_tag", label: "Tattoo Number", type: "text", section: "Identification" },
     { key: "ear_tag_image_url", label: "Ear Tag Image", type: "image", uploadEndpoint: "/animal/upload-image", section: "Identification" },
-    { key: "sire_animal_id", label: "Sire (Father)", type: "select-entity", searchable: true, entityEndpoint: "/animal", entityValueKey: "animal_id", entityLabelKeys: ["animal_code"], section: "Lineage" },
-    { key: "dam_animal_id", label: "Dam (Mother)", type: "select-entity", searchable: true, entityEndpoint: "/animal", entityValueKey: "animal_id", entityLabelKeys: ["animal_code"], section: "Lineage" },
+    // D42 (Rishi, 29 Sep): a parent is either a registered animal here — picked,
+    // and the list is narrowed to the right sex so a boar is never offered as a
+    // dam — or it is not, in which case the papers' serial number is typed
+    // beside it. Rishi's addendum: both serial fields are available for EVERY
+    // animal, whatever its entry type and whether or not a parent is picked, so
+    // neither carries a visibleWhen, a requiredWhen or a dependsOn.
+    {
+      key: "sire_animal_id", label: "Sire (Father)", type: "select-entity", searchable: true, entityEndpoint: "/animal?gender=M", entityValueKey: "animal_id", entityLabelKeys: ["animal_code", "ear_tag"], section: "Lineage",
+      helpText: "A registered boar on this farm. Leave empty and use the serial number beside it when the sire is not registered here."
+    },
+    {
+      key: "sire_serial_no", label: "Sire Serial No.", type: "text", maxLength: 100, section: "Lineage",
+      helpText: "The sire's number as the papers give it. Use this for a bought or imported animal whose sire is not in NAVFarm."
+    },
+    {
+      key: "dam_animal_id", label: "Dam (Mother)", type: "select-entity", searchable: true, entityEndpoint: "/animal?gender=F", entityValueKey: "animal_id", entityLabelKeys: ["animal_code", "ear_tag"], section: "Lineage",
+      helpText: "A registered sow or gilt on this farm. Leave empty and use the serial number beside it when the dam is not registered here."
+    },
+    {
+      key: "dam_serial_no", label: "Dam Serial No.", type: "text", maxLength: 100, section: "Lineage",
+      helpText: "The dam's number as the papers give it. Use this for a bought or imported animal whose dam is not in NAVFarm."
+    },
     {
       key: "entry_type", label: "Entry Type", type: "select", required: true, createOnly: true, section: "Acquisition",
       options: ["PURCHASED_IMPORTED", "PURCHASED_LOCAL", "BORN_ON_FARM", "TRANSFERRED_IN"].map((v) => ({ value: v, label: v.replace(/_/g, " ") })),
@@ -487,10 +512,10 @@ const animal: MasterDataConfig = {
     { key: "disposal_type", label: "Disposal Type", type: "text", hideInForm: true, helpText: "Set via the Dispose action, not direct edit.", section: "Bio-Asset" },
     { key: "no_of_teats", label: "No. of Teats", type: "number", min: 0, max: 99, helpText: "BBP §6: below 15 blocks this gilt from selection regardless of TSI score.", visibleWhen: { anyOf: [{ key: "gender", equals: "F" }] }, requiredWhen: { anyOf: [{ key: "gender", equals: "F" }] }, section: "Bio-Asset" },
     { key: "tsi", label: "TSI", type: "number", step: "0.01", min: 0, max: 999, helpText: "Total Sow Index score.", section: "Bio-Asset" },
-    {
-      key: "grading", label: "Grading", type: "select", section: "Bio-Asset",
-      options: [{ value: "1", label: "1" }, { value: "2", label: "2" }, { value: "3", label: "3" }],
-    },
+    // Grading is a whole number 0–99, typed rather than picked: the old
+    // three-option select (1/2/3) could not record any other grade. Stored as
+    // text in the varchar(20) column; the API DTO validates the same range.
+    { key: "grading", label: "Grading", type: "number", min: 0, max: 99, step: "1", maxLength: 2, helpText: "Whole number from 0 to 99.", section: "Bio-Asset" },
     { key: "current_stage_id", label: "Current Stage", type: "select-entity", createOnly: true, entityEndpoint: "/stage", entityValueKey: "stage_id", entityLabelKeys: ["stage_code", "stage_name"], section: "Current Position" },
     { key: "current_batch_id", label: "Current Batch", type: "select-entity", searchable: true, createOnly: true, entityEndpoint: "/batch", entityValueKey: "batch_id", entityLabelKeys: ["batch_no"], helpText: "Choose where this animal is: a batch or a pen location on your farm.", section: "Current Position" },
     { key: "current_location_id", label: "Current Pen", type: "select-entity", searchable: true, createOnly: true, entityEndpoint: "/location?locationType=PEN", entityValueKey: "location_id", entityLabelKeys: ["location_code", "location_name"], helpText: "Animals are placed in Pens only. Choose where this animal is: a batch or a pen location.", section: "Current Position" },
@@ -581,6 +606,10 @@ const uom: MasterDataConfig = {
   apiBase: "/uom",
   idKey: "uom_id",
   group: "Inventory",
+  // Freebuff task-3 item 7: the Inventory badge next to the page title reads as
+  // an icon the client asked to remove; the sidebar grouping itself still works
+  // off `group`, so only the chip is hidden here.
+  hideGroupBadge: true,
   isPrimary: true,
   lookupFor: ["item", "location", "resource"],
   columns: [
@@ -595,11 +624,14 @@ const uom: MasterDataConfig = {
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank if this unit is shared across all LOBs under the selected NOB." },
     { key: "company_id", label: "Company (blank = global)", type: "text", hideInForm: true },
     { key: "uom_code", label: "UOM Code", type: "text", required: true, createOnly: true, helpText: "Leave blank to derive from the unit name via the number series — or type a standard symbol such as KG, which then stays fixed. After create, a series-derived code follows the series when the name changes.", placeholder: "KG" },
-    { key: "uom_name", label: "UOM Name", type: "text", required: true, placeholder: "Kilogram", helpText: "Name of the unit (e.g. Kilogram, Litre)." },
+    { key: "uom_name", label: "UOM Name", type: "text", required: true, placeholder: "Kilogram", pattern: "[A-Za-z ]*", helpText: "Name of the unit (e.g. Kilogram, Litre). Letters and spaces only." },
     {
       key: "uom_type", label: "UOM Type", type: "select", required: true,
       options: ["WEIGHT", "VOLUME", "COUNT", "AREA", "TIME", "OTHER"].map((v) => ({ value: v, label: v })),
-      helpText: "Select unit type: WEIGHT, VOLUME, COUNT, AREA, TIME, or OTHER.",
+      // The consequence of the choice is invisible until a second base unit is
+      // attempted: one base unit per type is what makes From × Factor = To
+      // resolvable (uom.service.ts refuses a second base for the same type).
+      helpText: "Classifies the unit — WEIGHT, VOLUME, COUNT, AREA, TIME or OTHER. Conversions always land on the base unit of the same type, and each type keeps exactly one base unit.",
     },
     { key: "decimal_places", label: "Decimal Places", type: "number", min: 0 },
     { key: "is_base_uom", label: "Is Base Unit", type: "boolean" },
@@ -1235,11 +1267,13 @@ const breedLifecycleStage: MasterDataConfig = {
       key: "vaccination_protocol", label: "Vaccination Protocol", type: "json",
       jsonRow: [
         { key: "vaccine_item_id", label: "Vaccine", type: "select-entity", entityEndpoint: "/item?itemType=VACCINE", entityValueKey: "item_id", entityLabelKeys: ["item_code", "item_name"] },
-        { key: "trigger_type", label: "Triggered by", type: "select", options: [
-          { value: "AGE_WEEKS", label: "Age (weeks)" },
-          { value: "WEEKS_PREGNANT", label: "Weeks pregnant" },
-          { value: "PER_CYCLE", label: "Every pregnancy cycle" },
-        ] },
+        {
+          key: "trigger_type", label: "Triggered by", type: "select", options: [
+            { value: "AGE_WEEKS", label: "Age (weeks)" },
+            { value: "WEEKS_PREGNANT", label: "Weeks pregnant" },
+            { value: "PER_CYCLE", label: "Every pregnancy cycle" },
+          ]
+        },
         { key: "trigger_value", label: "At", type: "number", step: "0.5", min: 0 },
         { key: "dose_ml", label: "Dose (ml)", type: "number", step: "0.01", min: 0 },
         { key: "route", label: "Route", type: "select", options: ["IM", "SC", "IN", "ORAL"].map((v) => ({ value: v, label: v })) },
@@ -1341,6 +1375,131 @@ const reason: MasterDataConfig = {
   ],
 };
 
+// Alerts and Notifications Master — feed workbook, Master Setup §4, fields in
+// the workbook's order. Recipient roles are role codes typed as chips (Q1: the
+// workbook's FARM_MANAGER / HEAD_OF_FARM exist in no tenant yet, so a picker
+// over role_master could not even offer them).
+// Plan S (review A8): the words the list and the form show for each stored code.
+const ALERT_EVENT_TYPES = [
+  { value: "FEED_BELOW_L1", label: "Feed at or below low level" },
+  { value: "FEED_ABOVE", label: "Feed at or above high level" },
+  { value: "DIET_CHANGE", label: "Diet change coming" },
+  { value: "REQ_DEADLINE", label: "Requisition deadline" },
+];
+const ALERT_TRIGGER_ENTITIES = [
+  { value: "SILO", label: "Silo" },
+  { value: "REQUISITION", label: "Requisition" },
+  { value: "FEED_PLAN", label: "Feed plan" },
+  { value: "STOCK_TAKE", label: "Stock take" },
+];
+const ALERT_THRESHOLD_REFERENCES = [
+  { value: "SILO_BELOW", label: "Silo's low level" },
+  { value: "SILO_ABOVE", label: "Silo's high level" },
+  { value: "FIXED_VALUE", label: "Fixed value" },
+];
+const ALERT_PRIORITIES = [
+  { value: "CRITICAL_FIRST_PRIORITY", label: "Urgent" },
+  { value: "CRITICAL", label: "Critical" },
+  { value: "WARNING", label: "Warning" },
+  { value: "INFO", label: "Info" },
+];
+const ALERT_FREQUENCIES = [
+  { value: "ONCE", label: "Once until resolved" },
+  { value: "DAILY", label: "Daily" },
+  { value: "ON_EACH_OCCURRENCE", label: "Each time the value changes" },
+  { value: "ESCALATING", label: "Escalating" },
+];
+const labelsOf = (options: { value: string; label: string }[]) => Object.fromEntries(options.map((o) => [o.value, o.label]));
+
+const alertRule: MasterDataConfig = {
+  key: "alert-rule", label: "Alert Rules", singular: "Alert Rule", apiBase: "/alert-rule", idKey: "rule_id",
+  group: "Farm Operations", isPrimary: true, businessAdminOnly: true,
+  description: "Which feed events raise an alert, how urgently, and for whom.",
+  columns: [
+    { key: "notification_code", label: "Notification Code" }, { key: "notification_name", label: "Notification Name" },
+    { key: "event_type", label: "Event Type", labels: labelsOf(ALERT_EVENT_TYPES) },
+    { key: "priority_level", label: "Priority Level", labels: labelsOf(ALERT_PRIORITIES) },
+    { key: "recipient_roles", label: "Recipient Role(s)", format: "codes" },
+    { key: "frequency", label: "Frequency", labels: labelsOf(ALERT_FREQUENCIES) },
+  ],
+  fields: [
+    { key: "company_id", label: "Company", type: "text", hideInForm: true },
+    { key: "notification_code", label: "Notification Code", type: "text", required: true, createOnly: true, maxLength: 20 },
+    { key: "notification_name", label: "Notification Name", type: "text", required: true, maxLength: 100 },
+    {
+      key: "event_type", label: "Event Type", type: "select", required: true,
+      options: ALERT_EVENT_TYPES
+    },
+    {
+      key: "trigger_entity", label: "Trigger Entity", type: "select", required: true,
+      options: ALERT_TRIGGER_ENTITIES,
+      helpText: "FEED_BELOW_L1 and FEED_ABOVE: SILO. DIET_CHANGE: FEED_PLAN. REQ_DEADLINE: REQUISITION."
+    },
+    {
+      key: "threshold_reference", label: "Threshold Reference", type: "select", required: true,
+      options: ALERT_THRESHOLD_REFERENCES,
+      helpText: "SILO_BELOW reads each silo's Below Feed Level, SILO_ABOVE its Above Threshold. FIXED_VALUE uses the value below."
+    },
+    {
+      key: "threshold_value", label: "Threshold Value", type: "number", min: 0, nativeNumber: true,
+      requiredWhen: { anyOf: [{ key: "threshold_reference", equals: "FIXED_VALUE" }] },
+      helpText: "KG for a silo rule; days before the diet change for DIET_CHANGE; days before the submission deadline for REQ_DEADLINE."
+    },
+    {
+      key: "priority_level", label: "Priority Level", type: "select", required: true,
+      options: ALERT_PRIORITIES
+    },
+    {
+      key: "recipient_roles", label: "Recipient Role(s)", type: "string-list", required: true,
+      helpText: "Role codes from Role Master. Tenant, company and operational admins see every alert regardless."
+    },
+    {
+      key: "delivery_channel", label: "Delivery Channel", type: "select", required: true,
+      options: [{ value: "IN_APP", label: "In app" }], helpText: "In-app only for now; email is not sent yet."
+    },
+    {
+      key: "frequency", label: "Frequency", type: "select", required: true,
+      options: ALERT_FREQUENCIES,
+      helpText: "ONCE until resolved; DAILY re-alerts each day; ON_EACH_OCCURRENCE re-alerts when the value changes; ESCALATING adds the escalation role if nobody acknowledges in time."
+    },
+    {
+      key: "escalation_after_hours", label: "Escalation After Hours", type: "number", min: 1, step: "1", nativeNumber: true,
+      visibleWhen: { anyOf: [{ key: "frequency", equals: "ESCALATING" }] }, requiredWhen: { anyOf: [{ key: "frequency", equals: "ESCALATING" }] }
+    },
+    {
+      key: "escalation_role", label: "Escalation Recipient Role", type: "text", maxLength: 50,
+      visibleWhen: { anyOf: [{ key: "frequency", equals: "ESCALATING" }] }, requiredWhen: { anyOf: [{ key: "frequency", equals: "ESCALATING" }] }
+    },
+    {
+      key: "farm_id", label: "Farm Filter", type: "select-entity", entityEndpoint: "/location?locationType=FARM&rootOnly=true",
+      entityValueKey: "location_id", entityLabelKeys: ["location_code", "location_name"], helpText: "Leave blank for ALL farms."
+    },
+  ],
+};
+
+// Reporting Period Master — spec D20; workbook Master Setup row 10 in its
+// order. Business Year and Production Start Date are derived by the API
+// (Production Start = the Sunday after End), so they are table columns only
+// and never form fields. A year is drafted with "Generate July–June periods"
+// on Inventory → Feed Forecast (Reporting Period view) and edited here.
+const reportingPeriod: MasterDataConfig = {
+  key: "reporting-period", label: "Reporting Periods", singular: "Reporting Period", apiBase: "/reporting-period", idKey: "period_id",
+  group: "Farm Operations", isPrimary: true, businessAdminOnly: true,
+  description: "Monthly periods of the July–June business year, each ending on the month-end Saturday.",
+  columns: [
+    { key: "period_code", label: "Period Code" }, { key: "business_year", label: "Business Year" },
+    { key: "start_date", label: "Start Date", format: "date" }, { key: "end_date", label: "End Date", format: "date" },
+    { key: "stock_take_date", label: "Stock Take Date", format: "date" }, { key: "production_start_date", label: "Production Start Date", format: "date" },
+  ],
+  fields: [
+    { key: "company_id", label: "Company", type: "text", hideInForm: true },
+    { key: "period_code", label: "Period Code", type: "text", required: true, createOnly: true, maxLength: 20, helpText: "For example 2026-09 for the September 2026 period." },
+    { key: "start_date", label: "Start Date", type: "date", required: true, helpText: "Normally the Sunday after the previous period's End Date." },
+    { key: "end_date", label: "End Date", type: "date", required: true, helpText: "The month-end Saturday. Production Start Date is set to the Sunday after it." },
+    { key: "stock_take_date", label: "Stock Take Date", type: "date", helpText: "Leave blank to use the End Date." },
+  ],
+};
+
 const disease: MasterDataConfig = {
   key: "disease",
   label: "Diseases",
@@ -1435,27 +1594,31 @@ const supplier: MasterDataConfig = {
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank if this supplier is shared across all LOBs under the selected NOB." },
     { key: "company_id", label: "Company", type: "text", hideInForm: true },
     { key: "supplier_code", label: "Supplier Code", type: "text", readOnly: true, placeholder: "Generated as SUP-001", helpText: "Generated automatically from this company's Supplier sequence.", section: "Identification" },
-    { key: "supplier_name", label: "Supplier Name", type: "text", required: true, placeholder: "Feed Ingredients Corp Ltd", section: "Identification" },
+    { key: "supplier_name", label: "Supplier Name", type: "text", required: true, maxLength: 50, placeholder: "Feed Ingredients Corp Ltd", section: "Identification" },
     {
       key: "vendor_type", label: "Vendor Type", type: "select", section: "Identification",
       options: ["ANIMAL_SUPPLIER", "BREEDING_FARM", "SEMEN_SUPPLIER", "FEED_SUPPLIER", "MEDICINE_SUPPLIER", "EQUIPMENT_SUPPLIER", "SERVICES", "GENERAL"].map((v) => ({ value: v, label: v.replace(/_/g, " ") })),
     },
     { key: "is_approved", label: "Approved", type: "boolean", hideInForm: true, helpText: "Use the Approve action, not direct edit.", section: "Identification" },
-    { key: "email", label: "Email", type: "email", placeholder: "orders@feedingredients.com", section: "Contact" },
-    { key: "phone", label: "Phone", type: "text", section: "Contact" },
-    { key: "address_line1", label: "Address Line 1", type: "text", section: "Contact" },
-    { key: "city", label: "City", type: "text", section: "Contact" },
-    { key: "state", label: "State", type: "text", section: "Contact" },
-    { key: "country", label: "Country", type: "text", section: "Contact" },
-    { key: "pincode", label: "Postal code", type: "text", section: "Contact" },
-    { key: "tax_number", label: "Tax number", type: "text", section: "Commercial" },
-    { key: "payment_terms", label: "Payment Terms", type: "text", placeholder: "NET30", section: "Commercial" },
+    // Contact/address order: Phone No., Email Address, then Address: Country,
+    // State, Postal Code, City.
+    { key: "phone", label: "Phone No.", type: "text", maxLength: 50, section: "Contact" },
+    { key: "email", label: "Email Address", type: "email", placeholder: "orders@feedingredients.com", section: "Contact" },
+    { key: "country", label: "Country", type: "text", maxLength: 50, pattern: "[A-Za-z ]*", section: "Contact" },
+    { key: "state", label: "State", type: "text", maxLength: 50, pattern: "[A-Za-z ]*", section: "Contact" },
+    { key: "pincode", label: "Postal Code", type: "text", maxLength: 50, pattern: "[0-9]*", section: "Contact" },
+    { key: "city", label: "City", type: "text", maxLength: 50, pattern: "[A-Za-z ]*", section: "Contact" },
+    // Form-only removal, not a schema change: address_line1 stays a real
+    // supplier column and is still written by any caller that sends it.
+    { key: "address_line1", label: "Address Line 1", type: "text", hideInForm: true, maxLength: 50, section: "Contact" },
+    { key: "tax_number", label: "Tax Number", type: "text", maxLength: 50, section: "Commercial" },
+    { key: "payment_terms", label: "Payment Terms", type: "text", maxLength: 50, placeholder: "NET30", section: "Commercial" },
     { key: "credit_limit", label: "Credit Limit", type: "number", step: "0.01", min: 0, section: "Commercial" },
-    { key: "bank_account_no", label: "Bank Account Number", type: "text", helpText: "Stored encrypted. Enter a value here to replace it; leave blank to keep the existing one.", section: "Banking" },
-    { key: "bank_ifsc", label: "Bank IFSC / Routing Code", type: "text", section: "Banking" },
+    { key: "bank_account_no", label: "Bank Account Number", type: "text", maxLength: 50, helpText: "Stored encrypted. Enter a value here to replace it; leave blank to keep the existing one.", section: "Banking" },
+    { key: "bank_ifsc", label: "Bank IFSC / Routing Code", type: "text", maxLength: 50, section: "Banking" },
     { key: "bank_account_last4", label: "Bank Account (masked)", type: "text", hideInForm: true, section: "Banking" },
-    { key: "health_cert_url", label: "Health Certificate URL", type: "text", helpText: "Required for ANIMAL_SUPPLIER — checked before a Goods Receipt from this vendor can post.", section: "Compliance" },
-    { key: "breeding_farm_code", label: "Breeding Farm Registration No.", type: "text", helpText: "Required for ANIMAL_SUPPLIER / BREEDING_FARM.", section: "Compliance" },
+    { key: "health_cert_url", label: "Health Certificate URL", type: "text", maxLength: 50, helpText: "Required for ANIMAL_SUPPLIER — checked before a Goods Receipt from this vendor can post.", section: "Compliance" },
+    { key: "breeding_farm_code", label: "Breeding Farm Registration No.", type: "text", maxLength: 50, helpText: "Required for ANIMAL_SUPPLIER / BREEDING_FARM.", section: "Compliance" },
   ],
 };
 
@@ -1513,7 +1676,7 @@ const resource: MasterDataConfig = {
     { key: "nob_id", label: "Nature of Business", type: "select-entity", entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], helpText: "Leave blank if this resource is shared across all business verticals.", section: "Identification" },
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank if this resource is shared across all LOBs under the selected NOB.", section: "Identification" },
     { key: "resource_code", label: "Resource Code", type: "text", readOnly: true, placeholder: "Generated as RES-001", helpText: "Generated automatically from this company's Resource sequence.", section: "Identification" },
-    { key: "resource_name", label: "Resource Name", type: "text", required: true, placeholder: "Senior Laborer", section: "Identification" },
+    // Form order: Resource Code, Resource Type, Resource Sub-Type, Resource Name.
     {
       key: "resource_type", label: "Resource Type", type: "select", required: true, section: "Identification",
       // The client template lists MANPOWER, EQUIPMENT, VEHICLE, UTILITY, OTHER.
@@ -1525,13 +1688,14 @@ const resource: MasterDataConfig = {
       options: ["MANPOWER", "EQUIPMENT"].map((v) => ({ value: v, label: v })),
     },
     {
-      key: "resource_sub_type", label: "Sub-Type", type: "select", section: "Identification",
+      key: "resource_sub_type", label: "Resource Sub-Type", type: "select", section: "Identification",
       options: ["PERMANENT", "CONTRACT", "DAILY", "OWNED", "LEASED", "RENTED"].map((v) => ({ value: v, label: v })),
       helpText: "PERMANENT/CONTRACT/DAILY for labor; OWNED/LEASED/RENTED for equipment.",
     },
-    { key: "employee_id", label: "Employee ID", type: "text", placeholder: "EMP-001", helpText: "Labor/manpower only.", section: "People", visibleWhen: { anyOf: [{ key: "resource_type", equals: ["MANPOWER", "LABOR"] }] } },
-    { key: "designation", label: "Designation", type: "text", placeholder: "Senior Farm Worker", helpText: "Labor/manpower only.", section: "People", visibleWhen: { anyOf: [{ key: "resource_type", equals: ["MANPOWER", "LABOR"] }] } },
-    { key: "department", label: "Department", type: "text", placeholder: "Farm Operations", helpText: "Department or team.", section: "People", visibleWhen: { anyOf: [{ key: "resource_type", equals: ["MANPOWER", "LABOR"] }] } },
+    { key: "resource_name", label: "Resource Name", type: "text", required: true, placeholder: "Senior Laborer", section: "Identification" },
+    { key: "employee_id", label: "Employee ID", type: "text", placeholder: "EMP-001", helpText: "Labor/manpower only.", section: "People" },
+    { key: "designation", label: "Designation", type: "text", placeholder: "Senior Farm Worker", helpText: "Labor/manpower only.", section: "People" },
+    { key: "department", label: "Department", type: "text", placeholder: "Farm Operations", helpText: "Department or team.", section: "People" },
     { key: "capacity", label: "Capacity", type: "number", step: "0.01", min: 0, section: "Capacity & Cost" },
     // Left unfiltered: a resource's capacity spans MANPOWER (HEAD), EQUIPMENT (KG,
     // LITER for a tank, BAG for a mixer) and UTILITY — no single type fits.
@@ -1540,7 +1704,7 @@ const resource: MasterDataConfig = {
     // consumption), or per HEAD/trip — spans every type.
     { key: "unit", label: "Cost UOM", type: "select-entity", entityEndpoint: "/uom", entityValueKey: "uom_code", entityLabelKeys: ["uom_code", "uom_name"], section: "Capacity & Cost" },
     { key: "cost_rate", label: "Cost Rate", type: "number", step: "0.01", min: 0, section: "Capacity & Cost" },
-    { key: "cost_element", label: "Cost Element", type: "text", placeholder: "DIRECT_LABOR", helpText: "GL cost classification, e.g. DIRECT_LABOR / INDIRECT_LABOR / EQUIPMENT_HIRE / FUEL / MAINTENANCE.", section: "Capacity & Cost" },
+    { key: "cost_element", label: "Cost Element", type: "text", maxLength: 50, placeholder: "DIRECT_LABOR", helpText: "GL cost classification, e.g. DIRECT_LABOR / INDIRECT_LABOR / EQUIPMENT_HIRE / FUEL / MAINTENANCE.", section: "Capacity & Cost" },
     { key: "gl_cost_account", label: "GL Cost Account", type: "select-entity", searchable: true, entityEndpoint: "/gl-account", entityValueKey: "gl_account_id", entityLabelKeys: ["account_code", "account_name"], helpText: "GL account this resource posts cost to.", section: "Capacity & Cost" },
     { key: "asset_code", label: "Asset Code", type: "text", placeholder: "ASSET-PELLETISER-01", helpText: "Equipment only.", section: "Asset", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
     { key: "asset_make", label: "Asset Make", type: "text", section: "Asset", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
@@ -1838,7 +2002,7 @@ export const MASTER_DATA_CONFIGS: MasterDataConfig[] = [
   numberSeries, stage, activity,
   item, itemCategory, itemType, itemAttribute, itemTemplateConfig, uom, uomConversion,
   animal,
-  species, breed, breedLifecycleStage, kpiMetric, reason, disease, feedFormula,
+  species, breed, breedLifecycleStage, kpiMetric, reason, alertRule, reportingPeriod, disease, feedFormula,
   supplier, customer, resource,
   glAccount, glMapping, costCenter, country, currency, exchangeRate,
 ];
@@ -1851,7 +2015,7 @@ export const MASTER_DATA_GROUPS = ["Farm Operations", "Production", "Inventory",
  * by module. Masters not named here still appear; they're appended after, in
  * their existing relative order, so this only pins the front of the list.
  */
-export const MASTER_DATA_NAV_ORDER: string[] = ["location", "number-series", "item", "stage", "breed", "animal", "activity"];
+export const MASTER_DATA_NAV_ORDER: string[] = ["location", "number-series", "item", "stage", "breed", "animal", "activity", "reporting-period", "alert-rule"];
 
 export function getConfig(key: string): MasterDataConfig | undefined {
   if (key === "no-series") return MASTER_DATA_CONFIGS.find((c) => c.key === "number-series");

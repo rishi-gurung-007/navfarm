@@ -51,6 +51,7 @@ import {
   formatSeriesStem,
   nextSequenceInStem,
 } from '../modules/system/number-series/code-format.util';
+import { DEMO_NEXT_STAGES, DEMO_STAGE_DURATIONS, defaultSiloLevels } from '../core/database/demo-feed-defaults';
 
 /* ------------------------------------------------------------------------- */
 /* The nine farms                                                            */
@@ -133,7 +134,10 @@ const STORE_CAPACITY = 1000;
 const STORE_CAPACITY_UOM = 'PCS';
 
 /** Silos are re-ordered a week ahead across the group. Ours, labelled as such. */
-const SILO_REORDER_DAYS = 7;
+// D38 (28 Sep): the demo's silos seed the standard 2 — the refill buffer is
+// per silo now, and 7 made every Date to Refill a week early. Existing silos
+// keep whatever they hold; there is no migration.
+const SILO_REORDER_DAYS = 2;
 
 /* ------------------------------------------------------------------------- */
 /* The three missing stages                                                   */
@@ -321,7 +325,7 @@ interface KpiRow {
 interface StagePlan {
   stage: string;
   category: 'SOW' | 'GILT' | 'BOAR' | 'PIGLET' | 'COMMERCIAL_PIG';
-  /** Converted to days from the client's words; `note` keeps the words. */
+  /** Stage days (day 1 = the day the pig entered the stage), not days of age; `note` keeps the client's words. */
   from: number;
   to: number;
   feed: string;
@@ -345,10 +349,20 @@ const DEMO_CAVEAT = 'Demo benchmark, not a client-approved standard — confirm 
  * lifecycle sheets ("from service week" / "15 weeks pregnant", "birth" /
  * "4 weeks", "4 weeks of age" / "10 weeks of age"); the rest are Rishi's
  * wording of the same periods, because no submitted sheet words them.
+ *
+ * from/to are STAGE DAYS — day 1 is the day the pig entered the stage — per
+ * Rishi, 2026-09-25. The scheduler and the feed forecast both read
+ * period_from/period_to that way (modules/production/lifecycle/feed-row-days.ts,
+ * stageDayRange), so the client's age wording ("Weaner 28-70 of age") is kept
+ * in the note but the numbers are shifted to start at stage day 1 with each
+ * stage's length unchanged: WEANER 28-70 -> 1-43, GILT_GROWER 28-210 -> 1-183,
+ * GROWER 70-140 -> 1-71, FINISHER 140-170 -> 1-31, and QUARANTINE's 0 -> 1.
+ * Left as ages, a batch that entered WEANER or GILT_GROWER got no feed line
+ * for its first 27 stage days.
  */
 const SOW_STAGE_PLAN: StagePlan[] = [
   {
-    stage: 'QUARANTINE', category: 'GILT', from: 0, to: 28,
+    stage: 'QUARANTINE', category: 'GILT', from: 1, to: 28,
     feed: FEED.GESTATION, feedKgPerHeadPerDay: 2.5,
     bodyWeightKg: 110, adgGpd: 450, fcr: 3.2, mortalityPct: 0.5,
     vaccinations: [{ vaccine: VACCINE.PRRS, trigger_type: 'AGE_WEEKS', trigger_value: 26, dose_ml: 2, route: 'IM', withdrawal_days: 21 }],
@@ -360,7 +374,7 @@ const SOW_STAGE_PLAN: StagePlan[] = [
     note: `Client period: "Quarantine 0-28" (days from arrival). ${DEMO_CAVEAT}`,
   },
   {
-    stage: 'GILT_GROWER', category: 'GILT', from: 28, to: 210,
+    stage: 'GILT_GROWER', category: 'GILT', from: 1, to: 183,
     feed: FEED.GROWER, feedKgPerHeadPerDay: 2.2,
     bodyWeightKg: 120, adgGpd: 650, fcr: 2.9, mortalityPct: 1,
     vaccinations: [{ vaccine: VACCINE.PARVO, trigger_type: 'AGE_WEEKS', trigger_value: 24, dose_ml: 2, route: 'IM', withdrawal_days: 21 }],
@@ -369,16 +383,18 @@ const SOW_STAGE_PLAN: StagePlan[] = [
       { metric: 'ADG', lower_limit: 550, upper_limit: 800, severity: 'WARNING' },
       { metric: 'BODY_WEIGHT', lower_limit: 100, upper_limit: 140, severity: 'INFO' },
     ],
-    note: `Client period: "Gilt grower to ~210" (days of age). The farm sheets write this phase as "gilt rearing 16 to 25 weeks" and "gilt rearing gilt to Service line (28 weeks to 35 weeks)". ${DEMO_CAVEAT}`,
+    note: `Client period: "Gilt grower to ~210" (days of age), held as stage days 1-183 (age 28-210). The farm sheets write this phase as "gilt rearing 16 to 25 weeks" and "gilt rearing gilt to Service line (28 weeks to 35 weeks)". ${DEMO_CAVEAT}`,
   },
   {
-    stage: 'FLUSH', category: 'GILT', from: 1, to: 14,
+    // D36 (Rishi, 28 Sep): BBP §1.7 gives flush 3–5 days; held as stage days 1–5
+    // (the range's latest day), superseding the S7 hold of 14.
+    stage: 'FLUSH', category: 'GILT', from: 1, to: 5,
     feed: FEED.GESTATION, feedKgPerHeadPerDay: 3.5,
     bodyWeightKg: 135, adgGpd: 700, fcr: 3, mortalityPct: 0.3,
     vaccinations: [],
     medications: [],
     kpis: [{ metric: 'BCS_SCORE', lower_limit: 3, upper_limit: 3.5, severity: 'INFO' }],
-    note: `Client period: "Flush 14" (days). ${DEMO_CAVEAT}`,
+    note: `Client period: "Flush 14" (days) as submitted; BBP §1.7 gives 3–5 and D36 holds the stage's latest day as 5. ${DEMO_CAVEAT}`,
   },
   {
     stage: 'INSEMINATION', category: 'SOW', from: 1, to: 2,
@@ -438,7 +454,16 @@ const SOW_STAGE_PLAN: StagePlan[] = [
     note: `Weaning event at the end of the 28-day lactation. The farm sheets write the gilt-processing period around it as "birth" to "4 weeks". ${DEMO_CAVEAT}`,
   },
   {
-    stage: 'WEANER', category: 'PIGLET', from: 28, to: 70,
+    stage: 'DRY_SOW', category: 'SOW', from: 1, to: 7,
+    feed: FEED.GESTATION, feedKgPerHeadPerDay: 2.5,
+    bodyWeightKg: 180, adgGpd: null, fcr: null, mortalityPct: 0.5,
+    vaccinations: [],
+    medications: [],
+    kpis: [{ metric: 'BCS_SCORE', lower_limit: 2.5, upper_limit: 3.5, severity: 'INFO' }],
+    note: `After weaning, before the next flush. BBP §1.7 gives 4-7 days; held as 7 (Plan S, S7). ${DEMO_CAVEAT}`,
+  },
+  {
+    stage: 'WEANER', category: 'PIGLET', from: 1, to: 43,
     feed: FEED.GROWER, feedKgPerHeadPerDay: 0.8,
     bodyWeightKg: 20, adgGpd: 400, fcr: 1.8, mortalityPct: 2.5,
     vaccinations: [{ vaccine: VACCINE.PRRS, trigger_type: 'AGE_WEEKS', trigger_value: 6, dose_ml: 2, route: 'IM', withdrawal_days: 21 }],
@@ -448,10 +473,10 @@ const SOW_STAGE_PLAN: StagePlan[] = [
       { metric: 'FCR', lower_limit: null, upper_limit: 2, severity: 'WARNING' },
       { metric: 'MORTALITY_COUNT', lower_limit: null, upper_limit: 2, severity: 'CRITICAL' },
     ],
-    note: `Client period: "Weaner 28-70 of age" (days). The farm sheets write the same period as "4 weeks of age" to "10 weeks of age". ${DEMO_CAVEAT}`,
+    note: `Client period: "Weaner 28-70 of age" (days), held as stage days 1-43. The farm sheets write the same period as "4 weeks of age" to "10 weeks of age". ${DEMO_CAVEAT}`,
   },
   {
-    stage: 'GROWER', category: 'COMMERCIAL_PIG', from: 70, to: 140,
+    stage: 'GROWER', category: 'COMMERCIAL_PIG', from: 1, to: 71,
     feed: FEED.GROWER, feedKgPerHeadPerDay: 2,
     bodyWeightKg: 65, adgGpd: 700, fcr: 2.5, mortalityPct: 1.5,
     vaccinations: [],
@@ -460,10 +485,10 @@ const SOW_STAGE_PLAN: StagePlan[] = [
       { metric: 'ADG', lower_limit: 600, upper_limit: 800, severity: 'WARNING' },
       { metric: 'FCR', lower_limit: null, upper_limit: 2.7, severity: 'WARNING' },
     ],
-    note: `Client period: "Grower 70-140" (days of age). ${DEMO_CAVEAT}`,
+    note: `Client period: "Grower 70-140" (days of age), held as stage days 1-71. ${DEMO_CAVEAT}`,
   },
   {
-    stage: 'FINISHER', category: 'COMMERCIAL_PIG', from: 140, to: 170,
+    stage: 'FINISHER', category: 'COMMERCIAL_PIG', from: 1, to: 31,
     feed: FEED.FINISHER, feedKgPerHeadPerDay: 3,
     bodyWeightKg: 105, adgGpd: 850, fcr: 3, mortalityPct: 1,
     vaccinations: [],
@@ -472,11 +497,16 @@ const SOW_STAGE_PLAN: StagePlan[] = [
       { metric: 'BODY_WEIGHT', lower_limit: 95, upper_limit: 115, severity: 'WARNING' },
       { metric: 'FCR', lower_limit: null, upper_limit: 3.2, severity: 'WARNING' },
     ],
-    note: `Client period: "Finisher 140-170" (days of age). ${DEMO_CAVEAT}`,
+    note: `Client period: "Finisher 140-170" (days of age), held as stage days 1-31. ${DEMO_CAVEAT}`,
   },
 ];
 
-/** A boar line runs quarantine, then collection for the rest of its working life. */
+/**
+ * A boar line runs quarantine, then collection for the rest of its working
+ * life. Stage days, like SOW_STAGE_PLAN (Rishi, 2026-09-25; feed-row-days.ts
+ * reads them so): BOAR_AI was written as days of age 29-1095, the day after
+ * quarantine to the end of productive life, and is held as stage days 1-1067.
+ */
 const BOAR_STAGE_PLAN: StagePlan[] = [
   {
     ...SOW_STAGE_PLAN[0],
@@ -484,7 +514,7 @@ const BOAR_STAGE_PLAN: StagePlan[] = [
     note: `Client period: "Quarantine 0-28" (days from arrival). ${DEMO_CAVEAT}`,
   },
   {
-    stage: 'BOAR_AI', category: 'BOAR', from: 29, to: 1095,
+    stage: 'BOAR_AI', category: 'BOAR', from: 1, to: 1067,
     feed: FEED.GESTATION, feedKgPerHeadPerDay: 3,
     bodyWeightKg: 250, adgGpd: 300, fcr: 3.5, mortalityPct: 1,
     vaccinations: [{ vaccine: VACCINE.PARVO, trigger_type: 'AGE_WEEKS', trigger_value: 30, dose_ml: 2, route: 'IM', withdrawal_days: 21 }],
@@ -493,7 +523,7 @@ const BOAR_STAGE_PLAN: StagePlan[] = [
       { metric: 'SEMEN_MOTILITY', lower_limit: 70, upper_limit: null, severity: 'CRITICAL' },
       { metric: 'BCS_SCORE', lower_limit: 3, upper_limit: 3.5, severity: 'INFO' },
     ],
-    note: `Working life after quarantine, held in days of age to the boar productive life the sheets give (29 months). ${DEMO_CAVEAT}`,
+    note: `Working life after quarantine, to the boar productive life the sheets give (29 months), held as stage days 1-1067 (age 29-1095). ${DEMO_CAVEAT}`,
   },
 ];
 
@@ -504,7 +534,7 @@ function stagePlanFor(farmRole: FarmRole, line: 'SOW' | 'BOAR'): StagePlan[] {
     switch (farmRole) {
       // Multiplier breeds and sends gilts on; it has no grow-out.
       case 'MULTIPLIER':
-        return ['QUARANTINE', 'GILT_GROWER', 'FLUSH', 'INSEMINATION', 'GESTATION', 'FARROWING', 'LACTATION', 'WEANING', 'WEANER'];
+        return ['QUARANTINE', 'GILT_GROWER', 'FLUSH', 'INSEMINATION', 'GESTATION', 'FARROWING', 'LACTATION', 'WEANING', 'DRY_SOW', 'WEANER'];
       // The Extension holds weaners and growers only.
       case 'WEANER_GROWER':
         return ['WEANER', 'GROWER'];
@@ -668,8 +698,8 @@ async function run() {
     // SILO hangs off FARM, not off the shed it feeds. A silo is blown full by
     // the mill and drawn down by several sheds at once, so parenting it to one
     // of them made the tree state something the yard does not: that the silo
-    // belonged to that shed. Which shed draws from which silo is now the SHED's
-    // feed_silo_id, set below.
+    // belonged to that shed. Which sheds draw from which silo is now
+    // silo_shed_link, written below.
     for (const [child, parent] of [['SHED', 'FARM'], ['PEN', 'SHED'], ['SILO', 'FARM'], ['STORE', 'FARM']] as const) {
       const allowed = allowedParents.get(child);
       if (!allowed) throw new Error(`location_type_master has no ${child} row — run db-seed-farm-locations first.`);
@@ -845,12 +875,15 @@ async function run() {
         // leaving every silo a SILO-001 inside its own shed.
         //
         // Nothing downstream resolves a silo by its code: demo/farms.ts reads
-        // the SHED's feed_silo_id, and chapter 02 takes the ration from that
-        // shed's role. Renumbering is therefore free. What it is not is
+        // silo_shed_link, and chapter 02 takes the ration from that shed's
+        // role. Renumbering is therefore free. What it is not is
         // in-place: upsertLocation keys on location_code, so a database that
         // already holds the shed-stemmed silos gets the new ones inserted
-        // alongside them and the sheds repointed. The old rows have to be
-        // retired by hand, or the demo reseeded from empty.
+        // alongside them, and each shed a second silo_shed_link row beside the
+        // old silo's — nothing is repointed, since the link table only ever
+        // adds. The old silos and their links have to be retired by hand (two
+        // silos on one shed holding the same feed is what D9 forbids), or the
+        // demo reseeded from empty.
         //
         // shed_id is null for the same reason the parent moved: the silo is not
         // inside a shed. warehouse_id stays self-referential — a silo is a
@@ -873,10 +906,34 @@ async function run() {
           siloReorderDays: SILO_REORDER_DAYS,
         });
         if (write) await db.query('UPDATE location_master SET warehouse_id = ? WHERE location_id = ?', [silo.placed.id, silo.placed.id]);
+        // D22 (Rishi, 27 Sep): a silo carries both feed levels. The demo's are
+        // the defaults migration 0124 gives existing silos (20 % / 90 %),
+        // written only where empty so a level edited on a re-seeded demo survives.
+        const levels = defaultSiloLevels(spec.siloCapacityKg);
+        if (write) {
+          await db.query(
+            'UPDATE location_master SET low_level_kg = COALESCE(low_level_kg, ?), high_level_kg = COALESCE(high_level_kg, ?) WHERE location_id = ?',
+            [dec(levels.lowKg), dec(levels.highKg), silo.placed.id],
+          );
+        }
         // Which silo this shed draws from. With the silo no longer the shed's
-        // parent, this column is the only thing that still says so, and the
-        // feed forecast reads it rather than walking the tree.
-        if (write) await db.query('UPDATE location_master SET feed_silo_id = ? WHERE location_id = ?', [silo.placed.id, shed.placed.id]);
+        // parent, silo_shed_link (0114) is the only thing that says so, and the
+        // feed forecast reads it rather than walking the tree. The seed still
+        // gives each shed one silo of its own; the link table is what allows a
+        // second to be attached later without the first being forgotten.
+        //
+        // A re-run over a database that already holds the pair hits
+        // uq_silo_shed_link and the no-op update leaves the row as it was, the
+        // same way every other write in this script picks up where an earlier
+        // one stopped (and as seed-dev-tenant.ts writes the link). Not INSERT
+        // IGNORE: that would also swallow a foreign-key or NOT NULL failure and
+        // leave a shed silently without its silo.
+        if (write) {
+          await db.query(
+            'INSERT INTO silo_shed_link (link_id, tenant_id, company_id, silo_id, shed_id) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE silo_id = silo_id',
+            [randomUUID(), scope.tenant_id, scope.company_id, silo.placed.id, shed.placed.id],
+          );
+        }
         c.silos++;
       }
     }
@@ -923,6 +980,31 @@ async function run() {
       }
     }
     plan.stagesAdded = stageAdded.length ? stageAdded : 'none — WEANER/GROWER/FINISHER already present';
+
+    // S7 (Plan S): durations and successors for the stages the demo's pigs
+    // walk through, so the forecast can date each stage change (review A6).
+    // Only where empty, in both scopes (tenant template and company copy) —
+    // the same rule migration 0125 applies to existing data.
+    if (write) {
+      for (const [code, days] of Object.entries(DEMO_STAGE_DURATIONS)) {
+        await db.query(
+          `UPDATE stage_master SET typical_duration_days = ?
+            WHERE tenant_id = ? AND lob_id = ? AND stage_code = ? AND typical_duration_days IS NULL AND deleted_at IS NULL`,
+          [days, scope.tenant_id, scope.lob_id, code],
+        );
+      }
+      for (const [code, next] of Object.entries(DEMO_NEXT_STAGES)) {
+        await db.query(
+          `UPDATE stage_master s
+             JOIN stage_master n ON n.tenant_id = s.tenant_id AND n.lob_id = s.lob_id AND n.company_id <=> s.company_id
+                                AND n.stage_code = ? AND n.deleted_at IS NULL
+              SET s.next_stage_id = n.stage_id
+            WHERE s.tenant_id = ? AND s.lob_id = ? AND s.stage_code = ? AND s.next_stage_id IS NULL AND s.deleted_at IS NULL`,
+          [next, scope.tenant_id, scope.lob_id, code],
+        );
+      }
+    }
+    plan.stageTimings = write ? 'durations and grow-out successors filled where empty' : 'would fill durations and grow-out successors where empty';
 
     // Company-scoped stages are what a batch's scheduler matches on.
     const [companyStages] = await db.query<RowDataPacket[]>(

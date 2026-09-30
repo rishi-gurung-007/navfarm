@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, or, like, inArray, count, sql, desc } from 'drizzle-orm';
+import { eq, and, or, like, inArray, count, sql, desc, asc } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
@@ -11,6 +11,7 @@ import {
   CreateSchedulerLineDto, UpdateSchedulerLineDto, UpdateSchedulerHeaderStatusDto, QuerySchedulerHeaderDto,
 } from './dto/scheduler-header.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
+import { stageDayRange } from '../lifecycle/feed-row-days';
 
 /** "KPI UOM fetched as per KPI" — the unit a given kpi_metric is captured in isn't a free
  * choice, it's implied by the metric itself. Known metrics auto-derive kpi_uom (overriding
@@ -111,7 +112,13 @@ export class SchedulerHeaderService {
     stage: typeof schema.stageMaster.$inferSelect,
   ) {
     if (!batch.breed_id) return;
-    const [lifecycle] = await this.db
+    // All active rows for this breed+stage, oldest period first — not just one. A stage can
+    // carry several feed standards (R1 then R2, say), each active over its own period_from..
+    // period_to; data entry switches diet mid-stage by having two rows instead of editing one.
+    // Non-feed facts (mortality, output/weight, protocols) still come from a single row, exactly
+    // as before — orderBy makes "the first row" deterministic instead of whatever MySQL happened
+    // to return.
+    const lifecycleRows = await this.db
       .select()
       .from(schema.breedLifecycleStages)
       .where(and(
@@ -119,22 +126,43 @@ export class SchedulerHeaderService {
         eq(schema.breedLifecycleStages.stage_id, stageId),
         eq(schema.breedLifecycleStages.is_active, true),
       ))
-      .limit(1);
-    if (!lifecycle) return;
+      .orderBy(asc(schema.breedLifecycleStages.period_from));
+    if (!lifecycleRows.length) return;
+    const [lifecycle] = lifecycleRows; // first row by period_from — mortality/output/weight/protocols below are unchanged
 
     let seq = 1;
     const lines: (typeof schema.schedulerLine.$inferInsert)[] = [];
     const customDaysByLine: Record<string, number[]> = {};
 
-    if (lifecycle.feed_item_id && lifecycle.feed_qty_per_head_per_day_kg) {
-      const [feedItem] = await this.db.select({ item_name: schema.itemMaster.item_name }).from(schema.itemMaster).where(eq(schema.itemMaster.item_id, lifecycle.feed_item_id)).limit(1);
+    // One CONSUMPTION line per row that actually carries a feed standard (a row can exist for
+    // its mortality/output/protocol columns alone, with no feed_item_id). Each line's day range
+    // comes from stageDayRange() — the shared rule the forecast engine also imports — so this
+    // scheduler and that engine always agree on which days belong to which diet.
+    // The rate is a decimal column and so a string here: '0.0000' is truthy,
+    // so it is compared as a number — the forecast's loader filters with
+    // gt(rate, '0'), and a zero-rate line scheduled here would be a daily
+    // feed entry the forecast does not know exists.
+    const feedRows = lifecycleRows.filter((row) => row.feed_item_id && Number(row.feed_qty_per_head_per_day_kg) > 0);
+    for (const row of feedRows) {
+      let range: { fromDay: number; toDay: number };
+      try {
+        range = stageDayRange(row.calc_unit, row.period_from, row.period_to);
+      } catch (e) {
+        // Corrupt master data is the caller's to fix in Breed Master, so it is
+        // answered as a 400 naming the stage and the unit — not a bare 500.
+        throw new BadRequestException(
+          `Stage '${stage.stage_name}' of this batch's breed has a feed row with calc_unit '${row.calc_unit}' — ${(e as Error).message}. Fix the row in Breed Master before generating the scheduler.`,
+        );
+      }
+      const { fromDay, toDay } = range;
+      const [feedItem] = await this.db.select({ item_name: schema.itemMaster.item_name }).from(schema.itemMaster).where(eq(schema.itemMaster.item_id, row.feed_item_id as string)).limit(1);
       lines.push({
         line_id: randomUUID(), scheduler_id: schedulerId, line_seq: seq++, line_type: 'CONSUMPTION',
-        activity_name: `${stage.stage_name} Feed`, stage_id: stageId, occurrence: 'DAILY', start_day: 1, end_day: null,
-        is_mandatory: true, source: 'AUTO', lifecycle_ref_id: lifecycle.lifecycle_id,
-        nob_id: batch.nob_id, lob_id: batch.lob_id, item_id: lifecycle.feed_item_id,
+        activity_name: `${stage.stage_name} Feed — ${feedItem?.item_name ?? 'Unknown Item'}`, stage_id: stageId, occurrence: 'DAILY', start_day: fromDay, end_day: toDay,
+        is_mandatory: true, source: 'AUTO', lifecycle_ref_id: row.lifecycle_id,
+        nob_id: batch.nob_id, lob_id: batch.lob_id, item_id: row.feed_item_id,
         item_description: feedItem?.item_name ?? null,
-        standard_qty: lifecycle.feed_qty_per_head_per_day_kg, qty_basis: 'PER_HEAD',
+        standard_qty: row.feed_qty_per_head_per_day_kg, qty_basis: 'PER_HEAD',
         allow_qty_edit: true, lot_required: true,
       });
     }

@@ -21,6 +21,7 @@ import { TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/compon
 import { getActiveCompanyId, getActiveWorkspaceScope, getActiveOperationalArea, getStoredUser, hasPermission } from "@/hooks/useAuth";
 import { useLanguage } from "@/hooks/useLanguage";
 import { singularLabel } from "./labels";
+import { formatColumnValue } from "./column-format";
 import { cn } from "@/lib/utils";
 import type { MasterDataConfig, MasterDataField } from "./types";
 import AnimalDetailPanel from "./AnimalDetailPanel";
@@ -112,6 +113,16 @@ function currentLabel(f: MasterDataField, values: Row): string {
   return f.labelWhen.labels[String(values[f.labelWhen.key] ?? "")] || f.label;
 }
 
+/** What opening a row may do: a deactivated record opens read-only — view, no edit —
+ * and a read-only table offers no edit at all. Exported for the spec that pins the
+ * DEACTIVATED-opens-read-only rule (Resource, UOM). MySQL tinyint reaches here as
+ * 0 as readily as false, and both mean deactivated. */
+export function rowOpenAction(row: Row, readOnly: boolean): "edit" | "view" | "none" {
+  if (readOnly) return "none";
+  if (row.is_active === false || row.is_active === 0) return "view";
+  return "edit";
+}
+
 /** Whether `f` is required right now — statically, or via `requiredWhen` against the live form values. */
 function isFieldRequired(f: MasterDataField, form: Row): boolean {
   if (f.required) return true;
@@ -167,7 +178,7 @@ function resolveEndpoint(f: MasterDataField, form: Row): string | null {
   return f.entityEndpoint.replace("{value}", parentVal);
 }
 
-function displayValue(row: Row, key: string, yesLabel: string, noLabel: string, col?: { decimals?: number; decimalsFromKey?: string }): string {
+function displayValue(row: Row, key: string, yesLabel: string, noLabel: string, col?: { decimals?: number; decimalsFromKey?: string; format?: "date" | "codes"; labels?: Record<string, string> }): string {
   if ((key === "stage" || key === "stage_id") && (row.stage || row.stage_name || row.stage_code)) {
     return String(row.stage || row.stage_name || row.stage_code);
   }
@@ -178,6 +189,8 @@ function displayValue(row: Row, key: string, yesLabel: string, noLabel: string, 
     }
     return "—";
   }
+  const formatted = formatColumnValue(v, col);
+  if (formatted !== undefined) return formatted;
   if (typeof v === "boolean") return v ? yesLabel : noLabel;
   // A list column is a list of values, not the JSON that carried them. The euro
   // read `["DE","FR","NL"]` in the Countries column, brackets and quotes and
@@ -933,7 +946,7 @@ export function MasterDataTable({
           </Field>
         </FieldGroup>
       )}
-      {columns.map((c) => {
+      {columns.filter((c) => !c.noFilter).map((c) => {
         const choices = filterChoicesFor(c.key);
         const value = filterDraft[c.key] ?? "";
         const fieldId = `master-${config.key}-filter-${c.key}`;
@@ -1353,7 +1366,15 @@ export function MasterDataTable({
   }, [createOnly]);
 
   const openEdit = (row: Row) => {
-    if (readOnly) return;
+    const action = rowOpenAction(row, readOnly);
+    // A deactivated record opens read-only — view, no edit. Editing (or
+    // reactivating) is a deliberate action through the row's own toggle, not a
+    // side effect of opening it.
+    if (action === "view") {
+      setViewingId(String(row[config.idKey]));
+      return;
+    }
+    if (action === "none") return;
     setEditing(row);
     setIsManualNoAllowed(false);
     const initial: Row = {};
@@ -1397,15 +1418,6 @@ export function MasterDataTable({
       }
       initial[f.key] = v ?? (f.type === "boolean" ? false : "");
     });
-    // The loop above seeds declared fields only, so the record being edited has
-    // no way to recognise itself: every related row pointing back at it looks
-    // exactly like one pointing at somebody else. The form needs the record's
-    // own identity to tell "related to me" apart from "related to someone else"
-    // when rendering related-option lists — `disableOptionWhen` greys out a
-    // shed another silo feeds, and must not grey out the ones this silo feeds.
-    // It cannot reach a save: the payload is built from `visibleFields`, which
-    // only ever holds declared fields, and no config declares its own idKey.
-    initial[config.idKey] = row[config.idKey];
     // storage_type is hidden from the form (see configs.ts) and derived from
     // location_type — but it's hidden from formFields too, so the loop above
     // never seeded it from the row at all. Derive it fresh here rather than
@@ -1504,6 +1516,13 @@ export function MasterDataTable({
         if (isEmpty && isFieldRequired(f, form) && !isManagedCode) {
           setActiveFormTab(f.section || "Identification");
           throw new Error(`"${tLabel(currentLabel(f, form))}" is required.`);
+        }
+        // A field with a character-format whitelist (f.pattern) is tested over
+        // its whole value at save — the HTML pattern attribute alone only
+        // validates on native form submit, which this dialog does not use.
+        if (!isEmpty && f.pattern && typeof v === "string" && !new RegExp(`^${f.pattern}$`).test(v)) {
+          setActiveFormTab(f.section || "Identification");
+          throw new Error(`"${tLabel(currentLabel(f, form))}" has characters it does not allow.`);
         }
         if (isNumberSeriesForm && !isEmpty) {
           if (f.maxLength && typeof v === "string" && v.length > f.maxLength) {
@@ -2324,16 +2343,6 @@ export function MasterDataTable({
       if (f.multiple) {
         if (f.allOption) options = [f.allOption, ...options];
         const selected = parseStringList(form[f.key]);
-        // Owned by someone, and that someone is not the record open in this
-        // form. On create the form has no id yet, so every owned option greys.
-        const rule = f.disableOptionWhen;
-        const optionDisabledReason = rule
-          ? (o: Row) => {
-              const owner = String(o[rule.key] ?? "");
-              if (!owner || owner === String(form[rule.exceptMatchingField] ?? "")) return null;
-              return `${rule.reasonPrefix}${String(o[rule.reasonKey] ?? "") || t("mdAnotherRecord")}`;
-            }
-          : undefined;
         return (
           <EntityLookupField
             id={accessibility.id}
@@ -2348,7 +2357,6 @@ export function MasterDataTable({
             loading={!!resolvedEp && loadedOptions === undefined}
             placeholder={restrictedReason || (disabled ? t("selectXFirst", { name: parentLabel }) : t("selectPlaceholder"))}
             onCreate={relatedConfig ? () => setRelatedCreator({ field: f, config: relatedConfig }) : undefined}
-            optionDisabledReason={optionDisabledReason}
           />
         );
       }
@@ -2408,6 +2416,7 @@ export function MasterDataTable({
         min={f.min}
         max={f.max}
         maxLength={f.maxLength}
+        pattern={f.pattern}
         value={value}
         onKeyDown={(e) => {
           if (f.type === "number") {
@@ -2474,7 +2483,7 @@ export function MasterDataTable({
                 {tLabel(config.label)}
               </h1>
 
-              {config.group && (
+              {config.group && !config.hideGroupBadge && (
                 <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium bg-[var(--surface-raised)] border border-[var(--border)] text-[var(--text-secondary)]">
                   {tLabel(config.group)}
                 </span>
@@ -2899,7 +2908,7 @@ export function MasterDataTable({
                                   >
                                     {t("roleColView") ?? "View Details"}
                                   </MenuItem>
-                                  {!readOnly && (
+                                  {!readOnly && row.is_active !== false && (
                                     <MenuItem
                                       onSelect={() => openEdit(row)}
                                       leading={<Pencil className="h-4 w-4 text-[var(--text-muted)]" />}

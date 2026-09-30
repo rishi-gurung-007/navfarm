@@ -10,8 +10,8 @@ import type { MySql2Database } from 'drizzle-orm/mysql2';
 import type { BatchService } from '../../modules/production/batch/batch.service';
 import * as schema from '../../core/database/schema';
 import type { DemoContext } from './chapter';
-import type { DemoFarm } from './farms';
-import { tagOf } from './farms';
+import type { DemoFarm, DemoShed, ShedRole } from './farms';
+import { shedsWithRole, tagOf } from './farms';
 
 /**
  * `item_master.standard_cost` is a MySQL decimal, so Drizzle hands it back as
@@ -45,6 +45,47 @@ export function createItemLookup(db: MySql2Database<typeof schema>, companyId: s
     cache.set(name, row);
     return row;
   };
+}
+
+/**
+ * The shed roles a batch of each stage may stand in, most fitting first. The
+ * feed forecast draws a batch's feed from a silo attached to the batch's shed
+ * (spec D6-D9), and 02-inventory stocks each silo with the diet of its shed's
+ * role (FEED_BY_SHED_ROLE there): gestation mash for dry-sow and boar houses,
+ * lactation diet for farrowing, grower mash for gilt, weaner and grower
+ * houses, finisher feed for finishers. So placing a batch by this map puts it
+ * next to a silo that holds the item its stage's lifecycle row eats — checked
+ * against the demo sow and boar lines' breed_lifecycle_stages on nf_devco.
+ * WEANING (creep feed, which no demo silo holds) and the exit stages are left
+ * out on purpose: the demo never opens a batch at them.
+ */
+export const SHED_ROLES_BY_STAGE: Readonly<Record<string, readonly ShedRole[]>> = {
+  GESTATION: ['DRY_SOW'],
+  FLUSH: ['DRY_SOW'],
+  INSEMINATION: ['DRY_SOW'],
+  DRY_SOW: ['DRY_SOW'],
+  PRODUCTIVE_SOW: ['DRY_SOW'],
+  FARROWING: ['FARROWING'],
+  LACTATION: ['FARROWING'],
+  GILT_GROWER: ['GILT', 'GILT_REARING'],
+  WEANER: ['WEANER'],
+  GROWER: ['GROWER'],
+  FINISHER: ['FINISHER'],
+  QUARANTINE: ['BOAR'],
+  BOAR_AI: ['BOAR'],
+};
+
+/**
+ * The shed a new demo batch of this stage stands in: the first shed of a
+ * matching role, in code order, that has a silo; failing that the first
+ * matching shed without one (its feed then comes from the farm store, D6);
+ * failing that null, which the forecast reports honestly as BATCH_SHED_UNKNOWN.
+ */
+export function shedForStage(farm: DemoFarm, stageCode: string): DemoShed | null {
+  const roles = SHED_ROLES_BY_STAGE[stageCode];
+  if (!roles) return null;
+  const candidates = shedsWithRole(farm, ...roles);
+  return candidates.find((s) => s.siloId !== null) ?? candidates[0] ?? null;
 }
 
 export interface EnsureBatchOpts {
@@ -82,6 +123,13 @@ export function createBatchEnsurer(db: MySql2Database<typeof schema>, batches: B
       return existing.batch_id;
     }
 
+    // Placed at create time, not after: the auto-generated scheduler header
+    // copies the batch's shed as it is built, and the forecast finds a batch's
+    // silo through that shed. A batch with no shed would draw on the store.
+    const shed = shedForStage(opts.farm, opts.stageCode);
+    if (!shed) ctx.log(`${tag} no shed carries stage ${opts.stageCode} — batch ${opts.ref} left unplaced (forecast: BATCH_SHED_UNKNOWN)`);
+    else if (!shed.siloId) ctx.log(`${tag} shed ${shed.code} for stage ${opts.stageCode} has no silo — batch ${opts.ref} will draw on the store`);
+
     const created = await batches.create(
       {
         company_id: ctx.companyId,
@@ -93,6 +141,7 @@ export function createBatchEnsurer(db: MySql2Database<typeof schema>, batches: B
         costing_method: 'BIO_ASSET',
         breed_id: opts.breedId,
         stage_id: opts.stageId,
+        ...(shed ? { shed_id: shed.shedId } : {}),
         auto_generate_scheduler: true,
         start_date: opts.startDate,
         opening_quantity: opts.openingQuantity,
@@ -102,12 +151,14 @@ export function createBatchEnsurer(db: MySql2Database<typeof schema>, batches: B
       },
       ctx.tenantId,
     );
-    // BatchService.create() never sets animal_tracking or farm_id — both stay
-    // at their column defaults (COUNT_ONLY / NULL). AnimalService.create()
-    // reads both to decide whether, and where, an individual animal may be
-    // placed in this batch, so a REGISTERED batch (sows/gilts/boars created
-    // one by one) needs them set explicitly. Count-only batches keep
-    // animal_tracking's default and still need farm_id.
+    // BatchService.create() never sets animal_tracking, and derives farm_id
+    // only from a placed shed (NULL when shedForStage found none — the seed
+    // runs with no active farm in CLS). AnimalService.create() reads both to
+    // decide whether, and where, an individual animal may be placed in this
+    // batch, so a REGISTERED batch (sows/gilts/boars created one by one) needs
+    // them set explicitly. Count-only batches keep animal_tracking's default
+    // and still need farm_id when unplaced; writing it on a placed batch is
+    // the same value.
     await db
       .update(schema.batchHeader)
       .set({
@@ -116,7 +167,7 @@ export function createBatchEnsurer(db: MySql2Database<typeof schema>, batches: B
       })
       .where(eq(schema.batchHeader.batch_id, created.batch_id));
     await batches.activate(created.batch_id, ctx.tenantId);
-    ctx.log(`${tag} created + activated ${opts.animalTracking} batch ${created.batch_no} at ${opts.stageCode} (${opts.openingQuantity} head)`);
+    ctx.log(`${tag} created + activated ${opts.animalTracking} batch ${created.batch_no} at ${opts.stageCode} in ${shed?.code ?? 'no shed'} (${opts.openingQuantity} head)`);
     return created.batch_id;
   };
 }

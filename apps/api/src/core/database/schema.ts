@@ -1024,14 +1024,27 @@ export const locationMaster = mysqlTable('location_master', {
   // the stored number is canonical KG either way. Required when
   // location_type = SILO.
   silo_capacity_uom: varchar('silo_capacity_uom', { length: 10 }),
-  // The silo a SHED draws its feed from. Set on SHED rows only, pointing at a
-  // SILO under the same farm. One silo serves many sheds; a shed has exactly
-  // one silo, which this column makes structurally true without a join table.
-  // The "Attached Sheds" multi-select on the silo form writes this column on
-  // the selected sheds and clears it on the deselected ones.
-  feed_silo_id: varchar('feed_silo_id', { length: 36 }),
+  // Which silos a SHED draws its feed from lives in silo_shed_link, not here.
+  // A feed_silo_id column stood here until 0115: it made "a shed has exactly
+  // one silo" structurally true, which stopped being the rule once a shed could
+  // draw one feed item per silo (spec D7, D9).
+  // Spec D3: Date to Refill = run-down - buffer days; Required On = refill -
+  // lead time. Per farm because delivery distance is per farm. Read only on
+  // FARM rows.
+  feed_refill_buffer_days: int('feed_refill_buffer_days').default(2),
+  feed_lead_time_days: int('feed_lead_time_days').default(2),
   // Alert when silo stock covers less than this many days of consumption. Required when location_type = SILO.
   silo_reorder_days: int('silo_reorder_days'),
+  // Master Setup §1 rows 10 and 12 (spec D10): the single low feed level and
+  // the high (over-stock) level of a SILO, in KG. Null = not checked.
+  low_level_kg: decimal('low_level_kg', { precision: 12, scale: 2 }),
+  high_level_kg: decimal('high_level_kg', { precision: 12, scale: 2 }),
+  // FARM rows only — feed requisition rounding and cycle (Requisition §1 rows
+  // 27–28, checkpoints 22 and 27); defaults are the workbook's.
+  feed_bulk_multiple_kg: int('feed_bulk_multiple_kg').default(3000),
+  feed_bag_size_kg: int('feed_bag_size_kg').default(50),
+  feed_truck_target_kg: int('feed_truck_target_kg').default(30000),
+  feed_production_weekday: int('feed_production_weekday').default(0),
   // Mandatory empty days between batches at this location for biosecurity.
   downtime_days_required: int('downtime_days_required'),
   last_cleaned_date: date('last_cleaned_date', { mode: 'string' }),
@@ -1061,14 +1074,25 @@ export const locationMaster = mysqlTable('location_master', {
     foreignColumns: [locationMaster.location_id],
     name: 'loc_master_shed_id_fk'
   }).onDelete('restrict'),
-  feedSiloFk: foreignKey({
-    columns: [table.feed_silo_id],
-    foreignColumns: [table.location_id],
-    name: 'location_master_feed_silo_id_fk'
-  }).onDelete('restrict'),
   uqLocationCode: uniqueIndex('uq_location_master_tenant_company_code').on(
     table.tenant_id, table.company_id, table.location_code
   ),
+}));
+
+// Silo <-> shed, many-to-many (spec D7). A row says "this shed may draw feed
+// from this silo"; which silo a given posting uses is decided by the item the
+// silo holds (D9), not by this table.
+export const siloShedLink = mysqlTable('silo_shed_link', {
+  link_id: varchar('link_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+  company_id: varchar('company_id', { length: 36 }),
+  silo_id: varchar('silo_id', { length: 36 }).notNull().references(() => locationMaster.location_id, { onDelete: 'cascade' }),
+  shed_id: varchar('shed_id', { length: 36 }).notNull().references(() => locationMaster.location_id, { onDelete: 'cascade' }),
+  created_by: varchar('created_by', { length: 36 }),
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+}, (table) => ({
+  uqSiloShed: uniqueIndex('uq_silo_shed_link').on(table.silo_id, table.shed_id),
+  shedIdx: index('idx_silo_shed_link_shed').on(table.shed_id),
 }));
 
 // ==========================================
@@ -3236,6 +3260,103 @@ export const notificationLogRelations = relations(notificationLog, ({ one }) => 
   })
 }));
 
+/**
+ * Alerts and Notifications Master — feed workbook, Master Setup §4, one row
+ * per notification rule. farm_id null = "ALL" farms. recipient_roles holds
+ * role_master.role_code values as the client writes them (Q1). Plan B
+ * evaluates FEED_BELOW_L1, FEED_ABOVE, DIET_CHANGE and REQ_DEADLINE, and
+ * delivers IN_APP only.
+ */
+export const alertRule = mysqlTable('alert_rule', {
+  rule_id: varchar('rule_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+  company_id: varchar('company_id', { length: 36 }).references(() => companyMaster.company_id, { onDelete: 'cascade' }),
+  notification_code: varchar('notification_code', { length: 20 }).notNull(),
+  notification_name: varchar('notification_name', { length: 100 }).notNull(),
+  event_type: varchar('event_type', { length: 40 }).notNull(),
+  trigger_entity: varchar('trigger_entity', { length: 20 }).notNull(),
+  threshold_reference: varchar('threshold_reference', { length: 20 }).default('FIXED_VALUE').notNull(),
+  threshold_value: decimal('threshold_value', { precision: 18, scale: 4 }),
+  priority_level: varchar('priority_level', { length: 30 }).notNull(),
+  recipient_roles: json('recipient_roles').$type<string[]>().notNull(),
+  delivery_channel: varchar('delivery_channel', { length: 30 }).default('IN_APP').notNull(),
+  frequency: varchar('frequency', { length: 20 }).default('ONCE').notNull(),
+  escalation_after_hours: int('escalation_after_hours'),
+  escalation_role: varchar('escalation_role', { length: 50 }),
+  farm_id: varchar('farm_id', { length: 36 }).references(() => locationMaster.location_id, { onDelete: 'set null' }),
+  is_active: boolean('is_active').default(true).notNull(),
+  status: varchar('status', { length: 20 }).default('ACTIVE').notNull(),
+  created_by: varchar('created_by', { length: 36 }),
+  updated_by: varchar('updated_by', { length: 36 }),
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+  updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().notNull(),
+  deleted_at: timestamp('deleted_at', { mode: 'string' }),
+}, (table) => ({
+  uqCode: uniqueIndex('uq_alert_rule_code').on(table.tenant_id, table.company_id, table.notification_code),
+}));
+
+/** Reporting Period Master (spec D20, migration 0121). One row per company and period; business_year and production_start_date are derived on save. */
+export const reportingPeriod = mysqlTable('reporting_period', {
+  period_id: varchar('period_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+  company_id: varchar('company_id', { length: 36 }).references(() => companyMaster.company_id, { onDelete: 'cascade' }),
+  period_code: varchar('period_code', { length: 20 }).notNull(),
+  business_year: varchar('business_year', { length: 7 }).notNull(),
+  start_date: date('start_date', { mode: 'string' }).notNull(),
+  end_date: date('end_date', { mode: 'string' }).notNull(),
+  stock_take_date: date('stock_take_date', { mode: 'string' }).notNull(),
+  production_start_date: date('production_start_date', { mode: 'string' }).notNull(),
+  is_active: boolean('is_active').default(true).notNull(),
+  status: varchar('status', { length: 20 }).default('ACTIVE').notNull(),
+  created_by: varchar('created_by', { length: 36 }),
+  updated_by: varchar('updated_by', { length: 36 }),
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+  updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().notNull(),
+  deleted_at: timestamp('deleted_at', { mode: 'string' }),
+}, (table) => ({
+  uqCode: uniqueIndex('uq_reporting_period_code').on(table.tenant_id, table.company_id, table.period_code),
+  idxDates: index('idx_reporting_period_dates').on(table.tenant_id, table.company_id, table.start_date),
+}));
+
+/**
+ * In-app feed alerts raised from alert_rule (Plan B). active_key = dedup_key
+ * while ACTIVE, NULL once RESOLVED: the unique index is what makes "one open
+ * alert per rule and subject" (checkpoint 11) hold under concurrent postings.
+ */
+export const feedAlert = mysqlTable('feed_alert', {
+  alert_id: varchar('alert_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+  company_id: varchar('company_id', { length: 36 }).notNull().references(() => companyMaster.company_id, { onDelete: 'cascade' }),
+  farm_id: varchar('farm_id', { length: 36 }).notNull().references(() => locationMaster.location_id, { onDelete: 'cascade' }),
+  rule_id: varchar('rule_id', { length: 36 }).notNull().references(() => alertRule.rule_id, { onDelete: 'cascade' }),
+  notification_code: varchar('notification_code', { length: 20 }).notNull(),
+  event_type: varchar('event_type', { length: 40 }).notNull(),
+  priority_level: varchar('priority_level', { length: 30 }).notNull(),
+  subject_type: varchar('subject_type', { length: 20 }).notNull(), // SILO, BATCH, REQUISITION
+  subject_id: varchar('subject_id', { length: 36 }).notNull(),
+  item_id: varchar('item_id', { length: 36 }),
+  dedup_key: varchar('dedup_key', { length: 191 }).notNull(),
+  active_key: varchar('active_key', { length: 191 }),
+  status: varchar('status', { length: 20 }).default('ACTIVE').notNull(), // ACTIVE, RESOLVED
+  title: varchar('title', { length: 200 }).notNull(),
+  message: text('message').notNull(),
+  observed_value: decimal('observed_value', { precision: 18, scale: 4 }),
+  threshold_value: decimal('threshold_value', { precision: 18, scale: 4 }),
+  recipient_roles: json('recipient_roles').$type<string[]>().notNull(),
+  escalation_role: varchar('escalation_role', { length: 50 }),
+  escalated_at: timestamp('escalated_at', { mode: 'string' }),
+  acknowledged_by: varchar('acknowledged_by', { length: 36 }),
+  acknowledged_at: timestamp('acknowledged_at', { mode: 'string' }),
+  raised_at: timestamp('raised_at', { mode: 'string' }).notNull(),
+  last_notified_at: timestamp('last_notified_at', { mode: 'string' }).notNull(),
+  notify_count: int('notify_count').default(1).notNull(),
+  resolved_at: timestamp('resolved_at', { mode: 'string' }),
+  resolved_reason: varchar('resolved_reason', { length: 20 }),
+}, (table) => ({
+  uqActive: uniqueIndex('uq_feed_alert_active_key').on(table.active_key),
+  farmStatus: index('idx_feed_alert_farm_status').on(table.farm_id, table.status),
+}));
+
 // ==========================================
 // 9. INVENTORY ENGINE (Phase 3)
 // ==========================================
@@ -3422,6 +3543,12 @@ export const animalRegister = mysqlTable('animal_register', {
   ear_tag_image_url: varchar('ear_tag_image_url', { length: 500 }), // URL only for now; direct upload moves to Cloudflare R2 later
   sire_animal_id: varchar('sire_animal_id', { length: 36 }),
   dam_animal_id: varchar('dam_animal_id', { length: 36 }),
+  // D42 (0134): what the papers say a parent is, for the common case where the
+  // parent is not a registered animal here — a purchased or imported animal
+  // arrives named on paper only. Independent of entry type and of the pickers
+  // above: either, both or neither may be set on any animal.
+  sire_serial_no: varchar('sire_serial_no', { length: 100 }),
+  dam_serial_no: varchar('dam_serial_no', { length: 100 }),
   acquisition_cost: decimal('acquisition_cost', { precision: 18, scale: 4 }).notNull(),
   landing_cost: decimal('landing_cost', { precision: 18, scale: 4 }),
   total_opening_asset_value: decimal('total_opening_asset_value', { precision: 18, scale: 4 }).notNull(), // CALC at create
@@ -3928,6 +4055,11 @@ export const approvalRequest = mysqlTable('approval_request', {
   requestor_role: varchar('requestor_role', { length: 60 }),
   location_label: varchar('location_label', { length: 200 }),
   batch_id: varchar('batch_id', { length: 36 }).references(() => batchHeader.batch_id, { onDelete: 'set null' }),
+  // D25 (Rishi, 27 Sep): a farm-level document (a feed requisition) has a farm
+  // but no batch; the inbox scopes it by this farm (0122). document_id names
+  // the document the request decides, so the decision can update it.
+  farm_id: varchar('farm_id', { length: 36 }),
+  document_id: varchar('document_id', { length: 36 }),
   urgency: varchar('urgency', { length: 10 }).default('MEDIUM').notNull(), // HIGH, MEDIUM, LOW
   item_or_stage: varchar('item_or_stage', { length: 200 }),
   requested_qty: varchar('requested_qty', { length: 100 }),
@@ -3947,6 +4079,8 @@ export const approvalRequest = mysqlTable('approval_request', {
   deleted_at: timestamp('deleted_at', { mode: 'string' }),
 }, (table) => ({
   areaFk: foreignKey({ columns: [table.operational_area_id], foreignColumns: [operationalAreaMaster.area_id], name: 'approval_request_area_fk' }).onDelete('set null'),
+  farmIdx: index('idx_approval_request_farm').on(table.farm_id),
+  documentIdx: index('idx_approval_request_document').on(table.doc_type, table.document_id),
 }));
 
 export const operationalAreaSettingsRelations = relations(operationalAreaSettings, ({ one }) => ({
@@ -3985,12 +4119,24 @@ export const requisition = mysqlTable('requisition', {
   company_id: varchar('company_id', { length: 36 }).notNull().references(() => companyMaster.company_id, { onDelete: 'cascade' }),
   farm_id: varchar('farm_id', { length: 36 }).references(() => locationMaster.location_id, { onDelete: 'set null' }),
   req_no: varchar('req_no', { length: 50 }).notNull().unique(),
-  doc_type: varchar('doc_type', { length: 40 }).notNull().default('ITEM'), // ITEM, FA, SERVICE
-  status: varchar('status', { length: 30 }).notNull().default('DRAFT'), // DRAFT, PENDING_APPROVAL, APPROVED, REJECTED
+  doc_type: varchar('doc_type', { length: 40 }).notNull().default('ITEM'), // ITEM, FA, SERVICE, FEED
+  status: varchar('status', { length: 30 }).notNull().default('DRAFT'), // DRAFT, AUTO_DRAFT, PENDING_APPROVAL, APPROVED, REJECTED
   required_date: date('required_date', { mode: 'string' }),
   justification: text('justification'),
   approval_request_id: varchar('approval_request_id', { length: 36 }).references(() => approvalRequest.request_id, { onDelete: 'set null' }),
   linked_po_no: varchar('linked_po_no', { length: 50 }),
+  // Feed requisition header (Requisition and Loading Sheet §1). Null on ITEM/FA/SERVICE documents.
+  requisition_type: varchar('requisition_type', { length: 20 }), // FEED_FORECAST, MANUAL (row 7)
+  source: varchar('source', { length: 30 }), // AUTO_FORECAST, MANUAL_ENTRY, STOCK_TAKE_TRIGGERED, DIET_CHANGE_UPCOMING (row 8)
+  purpose: varchar('purpose', { length: 30 }), // INTERNAL_TRANSFER (row 31)
+  supply_source: varchar('supply_source', { length: 20 }), // MILL (row 30)
+  priority: varchar('priority', { length: 30 }), // row 34
+  forecast_run_key: varchar('forecast_run_key', { length: 64 }), // Engine Step 9 "Preserve run ID"
+  production_date: date('production_date', { mode: 'string' }),
+  submission_deadline: date('submission_deadline', { mode: 'string' }), // row 35
+  remarks: text('remarks'), // row 36
+  approved_by: varchar('approved_by', { length: 36 }), // row 37
+  approved_at: timestamp('approved_at', { mode: 'string' }), // row 38
   created_by: varchar('created_by', { length: 36 }),
   updated_by: varchar('updated_by', { length: 36 }),
   created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
@@ -4008,6 +4154,25 @@ export const requisitionLine = mysqlTable('requisition_line', {
   quantity: decimal('quantity', { precision: 18, scale: 4 }).notNull(),
   uom: varchar('uom', { length: 20 }).notNull(),
   est_rate: decimal('est_rate', { precision: 18, scale: 6 }),
+  // Feed line (Requisition and Loading Sheet §2). `quantity` is Requested Qty KG.
+  destination_location_id: varchar('destination_location_id', { length: 36 }).references(() => locationMaster.location_id, { onDelete: 'set null' }),
+  source_type: varchar('source_type', { length: 10 }), // SILO, STORE
+  feed_type: varchar('feed_type', { length: 10 }), // BULK, BAGGED
+  is_next_diet: boolean('is_next_diet').default(false).notNull(),
+  days_before_diet_change: int('days_before_diet_change'),
+  lifecycle_ref_id: varchar('lifecycle_ref_id', { length: 36 }),
+  system_balance_kg: decimal('system_balance_kg', { precision: 18, scale: 4 }),
+  daily_requirement_kg: decimal('daily_requirement_kg', { precision: 18, scale: 4 }),
+  days_remaining: int('days_remaining'),
+  first_shortage_date: date('first_shortage_date', { mode: 'string' }),
+  unrounded_need_kg: decimal('unrounded_need_kg', { precision: 18, scale: 4 }),
+  recommended_qty_kg: decimal('recommended_qty_kg', { precision: 18, scale: 4 }),
+  bag_count: int('bag_count'),
+  proposed_delivery_date: date('proposed_delivery_date', { mode: 'string' }),
+  needs_silo_changeover: boolean('needs_silo_changeover').default(false).notNull(),
+  // Ruling M9: set when the farm hand-edits a drafted quantity, so an
+  // auto-draft rerun (Task 8) keeps this line instead of overwriting it.
+  quantity_edited: boolean('quantity_edited').default(false).notNull(),
   created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
 });
 

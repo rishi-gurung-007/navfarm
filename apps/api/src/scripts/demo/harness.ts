@@ -77,7 +77,7 @@ export async function buildDemoContext(
 
   // All nine farms, with their sheds, silos, pens, store, breeds and the
   // volume this profile asks of each — resolved by code, never named.
-  const demoFarms = await resolveDemoFarms(tenantDb, company.company_id, volume);
+  const demoFarms = await resolveDemoFarms(tenantDb, tenant.tenant_id, company.company_id, volume);
   const byCode = new Map(demoFarms.map((f) => [f.code, f]));
   const grasmere = byCode.get('MUL100')!.farmId;
   const kintyre = byCode.get('POR100')!.farmId;

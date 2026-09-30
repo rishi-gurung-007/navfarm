@@ -11,6 +11,8 @@ import { ShieldAlert } from "lucide-react";
 
 const INVENTORY_SECTIONS = [
   { key: "balance", href: "/inventory/balance", labelKey: "invStockBalance" },
+  { key: "feed-forecast", href: "/inventory/feed-forecast", labelKey: "invFeedForecast" },
+  { key: "requisitions", href: "/inventory/requisitions", labelKey: "invRequisitions" },
   { key: "goods-receipt", href: "/inventory/goods-receipt", labelKey: "invGoodsReceipt" },
   { key: "transfers", href: "/inventory/transfers", labelKey: "invTransfers" },
   { key: "goods-issue", href: "/inventory/goods-issue", labelKey: "invGoodsIssue" },
@@ -50,7 +52,7 @@ function useInventoryPageState() {
   return { ready, scope, activeLob, mayView };
 }
 
-export function InventoryPageShell({ activeKey, children }: { activeKey: InventoryTabKey; children: React.ReactNode }) {
+export function InventoryPageShell({ activeKey, fill = false, children }: { activeKey: InventoryTabKey; fill?: boolean; children: React.ReactNode }) {
   const { t, tLob } = useLanguage();
   const router = useRouter();
   const { ready, scope, activeLob, mayView } = useInventoryPageState();
@@ -88,6 +90,8 @@ export function InventoryPageShell({ activeKey, children }: { activeKey: Invento
   }
 
   const title =
+    activeKey === "feed-forecast" ? t("invFeedForecastTitle") :
+    activeKey === "requisitions" ? t("invRequisitionsTitle") :
     activeKey === "goods-receipt" ? t("invGoodsReceiptTitle") :
     activeKey === "transfers" ? t("invTransfersTitle") :
     activeKey === "goods-issue" ? t("invGoodsIssueTitle") :
@@ -96,11 +100,14 @@ export function InventoryPageShell({ activeKey, children }: { activeKey: Invento
     scope === "OPERATIONAL" ? t("invUnitBalanceTitle", { lob: tLob(activeLob) }) : t("invCompanyBalanceTitle");
 
   const description =
+    activeKey === "feed-forecast" ? t("invFeedForecastDesc") :
+    activeKey === "requisitions" ? t("invRequisitionsDesc") :
     scope === "OPERATIONAL" ? t("invOperationalDesc", { lob: tLob(activeLob) }) : t("invCompanyDesc");
 
   return (
-    <ConsolePage>
-      <PageHeader title={title} description={description} />
+    // Plan S: a feed screen holds its header and filters still; only its table scrolls.
+    <ConsolePage fill={fill}>
+      <PageHeader title={title} description={description} sticky={!fill} />
       {children}
     </ConsolePage>
   );

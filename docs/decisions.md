@@ -2069,3 +2069,35 @@ drop guard now accepts `^nf_` names only, so it can no longer drop a
 `apps/api/src/core/database/database-names.ts`. No data was carried across —
 the RDP server is a fresh test setup, and locally the demo is rebuilt from
 empty. The TiDB demo cluster still holds `navfarm_master` and was not touched.
+
+## 2026-09-27 — Feed Forecast Plan R: the defaults the report runs on, awaiting Rishi
+
+The client's field specification (`NAVFarm_Feed_Forecast_Report_Field_Specification.docx`,
+26 Sep) fixed the report's columns and added a planning date, four views, a reporting-period
+calendar and a current/next stage block. Fourteen questions it left open were answered with
+defaults so the work could finish; each is cheap to change, and the code and tests follow the
+default rather than hedging between readings. Verified against `nf_devco` on 27 Sep —
+`docs/VERIFICATION-2026-09-26-feed-forecast-r.md`.
+
+| # | Question | The default it runs on |
+|---|---|---|
+| Q1 | The day a silo "runs down" | The first day **with demand** whose closing balance is at or below the low level (at or below zero when none is set). 500 kg at 100 kg/day runs down on day 5. Same rule as the low-feed alert. |
+| Q2 | What counts as confirmed incoming | Posted non-feeding ledger movements dated on or after the stock date, **plus** saved-but-unposted (DRAFT) stock transfers inside the window (out as negative). Approved requisitions are not counted — they would double-count once the feed arrives. Plan C replaces the DRAFT half with dispatched Transfer Orders. |
+| Q3 | The requisition's quantity | The largest projected deficit below the low level through the range, after incoming. With no low level and no incoming this is exactly the workbook's figure. |
+| Q4 | The requisition line's date | Required On, or the planning date when Required On has already passed. |
+| Q5 | Days of Stock with or without wastage | **With** — it divides by what actually leaves the silo, so it agrees with the run-down. Per Day Intake stays heads × rate without wastage, and the screen states the allowance used. |
+| Q6 | "As of the planning date" — start or end of day | The balance at the **start** of the day plus that day's deliveries. That day's feeding is the forecast's own demand, so a posted daily entry is never subtracted twice. |
+| Q7 | Days before the planning date inside the range | Not forecast; rows start at the planning date and the screen says so. |
+| Q8 | A back-dated planning date | Balances are as of that date; batches, head counts and stages are **today's** register, and the report says so (`AS_OF_PAST`). At most 45 days either side of today. |
+| Q9 | Where reporting periods come from | Nothing is seeded. An admin presses **Generate July–June periods**: End = the month's last Saturday, Start = the day after the previous End, Stock Take = End, Production Start = End + 1, code `YYYY-MM`. Every row stays editable. Note this makes the July period start in late June. |
+| Q10 | Must a period end on a Saturday | Enforced on create and edit; Stock Take must fall inside the period. |
+| Q11 | Farms already on lead time 0 | Migration 0120 changed the default to 2 **and** moved FARM rows still at 0 or NULL to 2 — all eleven in `nf_devco`. A farm that truly wants 0 re-enters it. |
+| Q12 | What each view shows | Daily = one date; Weekly = 7 days from the week start, grouped per batch + item + source; Reporting Period = the period's dates, grouped the same way; Custom = one row per date. Whatever the view, run-down, refill and Required On look up to 45 days past the planning date, so a one-day view still shows them. |
+| Q13 | When Days of Stock is "indicative" | When the container's daily demand for that item changes on any later date inside the range — a diet, rate or stage change of any batch it feeds. |
+| Q14 | Whose time zone "today" is | The company's `default_timezone_id` (Triple C = `Africa/Harare`); a missing or unknown zone falls back to the server's day, and the report names the zone it used. |
+
+Two consequences worth Rishi's eye. The generated calendar is a **draft from the rule, not the
+client's calendar** — the workbook's illustrative September (23 Aug – 26 Sep) differs from what
+the rule produces (30 Aug – 26 Sep), and the client has never supplied a period list. And feed
+alerts still reach nobody but admins, because the workbook's FARM_MANAGER and HEAD_OF_FARM
+roles do not exist on any tenant yet (Plan B's Q1, unchanged).

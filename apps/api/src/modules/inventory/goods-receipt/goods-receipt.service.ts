@@ -1,5 +1,5 @@
 import { withTenantTransaction } from '../../../common/tenant-transaction';
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Optional } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { eq, and, like, or, isNull, count, sql, inArray } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
@@ -10,6 +10,8 @@ import { CreateGoodsReceiptDto, UpdateGoodsReceiptDto, QueryGoodsReceiptDto } fr
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
+import { SiloFeedService } from '../silo-feed/silo-feed.service';
+import { FeedAlertService } from '../feed-alert/feed-alert.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
@@ -23,6 +25,10 @@ export class GoodsReceiptService {
     private readonly auditService: AuditLogService,
     private readonly ledgerService: InventoryLedgerService,
     private readonly glPostingService: GlPostingService,
+    // A receipt can land stock directly on a SILO (no stock transfer in
+    // between), so it is bound by the same D9 item rules as a transfer —
+    // SiloFeedService is the one home for them.
+    private readonly siloFeedService: SiloFeedService,
     private readonly numberSeriesService: NumberSeriesService,
   ) { }
 
@@ -55,6 +61,39 @@ export class GoodsReceiptService {
     if (row && (row.is_active === false || row.deleted_at)) {
       throw new BadRequestException('The selected warehouse is inactive.');
     }
+  }
+
+  /**
+   * A Goods Receipt whose warehouse is a SILO lands stock on it directly —
+   * no stock transfer in between — so it is the other moment (besides a
+   * posted transfer) a silo's contents can change. Checked at post(), same
+   * as stock-transfer's own guard, since a draft's numbers say nothing about
+   * what the silo will hold by the time it posts.
+   */
+  private async assertSiloDestination(
+    receipt: { company_id: string; warehouse_id: string },
+    lines: { item_id: string }[],
+    tenantId: string,
+  ): Promise<void> {
+    const [destination] = await this.db
+      .select({
+        location_id: schema.locationMaster.location_id,
+        location_name: schema.locationMaster.location_name,
+        location_type: schema.locationMaster.location_type,
+      })
+      .from(schema.locationMaster)
+      .where(eq(schema.locationMaster.location_id, receipt.warehouse_id))
+      .limit(1);
+    if (!destination || destination.location_type !== 'SILO') return;
+
+    await this.siloFeedService.assertCanReceive({
+      siloId: destination.location_id,
+      siloName: destination.location_name || destination.location_id,
+      companyId: receipt.company_id,
+      tenantId,
+      itemIds: [...new Set(lines.map((l) => l.item_id))],
+      documentLabel: 'Goods Receipt',
+    });
   }
 
   private async generateReceiptNo(tenantId: string, companyId: string, executor: MySql2Database<typeof schema> = this.db): Promise<string> {
@@ -491,5 +530,10 @@ export class GoodsReceiptService {
 
       return this.findOne(id);
     });
+    // Ruling M6: once per posting, after the transaction above has committed,
+    // and never able to fail it. The header's warehouse is where every line
+    // lands (Ruling M5: goods_receipt_line has no warehouse of its own).
+    await this.feedAlerts?.evaluateLevelsSafely([posted.warehouse_id], tenantId);
+    return posted;
   }
 }

@@ -1,5 +1,5 @@
 import { withTenantTransaction } from '../../../common/tenant-transaction';
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Optional } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { eq, and, like, isNull, count, sql, inArray } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
@@ -10,6 +10,7 @@ import { CreateStockAdjustmentDto, UpdateStockAdjustmentDto, QueryStockAdjustmen
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
+import { FeedAlertService } from '../feed-alert/feed-alert.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
@@ -362,5 +363,9 @@ export class StockAdjustmentService {
 
       return this.findOne(id);
     });
+    // Ruling M6: once per posting, after the transaction above has committed,
+    // and never able to fail it — an adjustment can take a silo below its low level.
+    await this.feedAlerts?.evaluateLevelsSafely([posted.warehouse_id], tenantId);
+    return posted;
   }
 }

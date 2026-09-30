@@ -1,12 +1,15 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException, ConflictException } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
+import { MySqlDialect } from 'drizzle-orm/mysql-core';
 import { BatchDailyDataService } from './batch-daily-data.service';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { BatchService } from '../batch/batch.service';
 import { BatchTransferService } from '../batch/batch-transfer.service';
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
 import { AnimalMovementLogService } from '../../piggery/animal-movement-log/animal-movement-log.service';
+import { SiloFeedService } from '../../inventory/silo-feed/silo-feed.service';
+import { FeedAlertService } from '../../inventory/feed-alert/feed-alert.service';
 
 describe('BatchDailyDataService', () => {
   let service: BatchDailyDataService;
@@ -27,13 +30,15 @@ describe('BatchDailyDataService', () => {
     location_id: 'shed-1',
   };
 
-  /** One `.from().where().limit()` answer, in the order postEntry asks for them. */
+  /** One `.from().where()[.orderBy()].limit()` answer, in the order postEntry asks for them. */
   const answers = (...results: unknown[][]) => {
     for (const result of results) {
+      const limit = jest.fn().mockResolvedValue(result);
       mockDbSelect.mockReturnValueOnce({
         from: jest.fn().mockReturnValue({
           where: jest.fn().mockReturnValue({
-            limit: jest.fn().mockResolvedValue(result),
+            limit,
+            orderBy: jest.fn().mockReturnValue({ limit }),
           }),
         }),
       });
@@ -46,6 +51,22 @@ describe('BatchDailyDataService', () => {
       from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([]) }),
     });
   };
+
+  /** silo_shed_link lookup (joined to the silo row) — no .limit() either, a
+   * shed can have several rows. Returns the where() mock so a test can read
+   * the condition it was handed. */
+  const answerSiloLinks = (siloIds: string[]) => {
+    const where = jest.fn().mockResolvedValue(siloIds.map((silo_id) => ({ silo_id })));
+    mockDbSelect.mockReturnValueOnce({
+      from: jest.fn().mockReturnValue({
+        innerJoin: jest.fn().mockReturnValue({ where }),
+      }),
+    });
+    return where;
+  };
+
+  const siloFeedService = { currentItems: jest.fn() };
+  const feedAlerts = { evaluateLevelsSafely: jest.fn() };
 
   const consumptionLine = {
     line_id: 'line-1',
@@ -60,6 +81,8 @@ describe('BatchDailyDataService', () => {
   beforeEach(async () => {
     mockDbSelect.mockReset();
     mockDbInsert.mockReset();
+    siloFeedService.currentItems.mockReset();
+    feedAlerts.evaluateLevelsSafely.mockReset().mockResolvedValue(undefined);
     mockDbInsert.mockReturnValue({
       values: jest.fn().mockReturnValue({
         onDuplicateKeyUpdate: jest.fn().mockResolvedValue({}),
@@ -90,6 +113,8 @@ describe('BatchDailyDataService', () => {
           provide: AnimalMovementLogService,
           useValue: { record: jest.fn().mockResolvedValue('movement-1') },
         },
+        { provide: SiloFeedService, useValue: siloFeedService },
+        { provide: FeedAlertService, useValue: feedAlerts },
       ],
     }).compile();
 
@@ -121,7 +146,12 @@ describe('BatchDailyDataService', () => {
     ).rejects.toThrow(ConflictException);
   });
 
-  it("delegates a CONSUMPTION entry to BatchService.addTransaction with the item's stock UOM", async () => {
+  // Ruling M6: a lone entry re-checks its farm's silo levels itself; a day
+  // post (BatchService.postBatchDay/postStageDay) defers it and checks once.
+  it.each([
+    ['re-checks the farm\'s silo levels afterwards', {}, [[['farm-1'], 'tenant-123']]],
+    ['leaves the silo re-check to the day post when deferred', { deferFeedAlerts: true }, []],
+  ])("delegates a CONSUMPTION entry to BatchService.addTransaction with the item's stock UOM, and %s", async (_label, opts, alertCalls) => {
     mockDbSelect
       .mockReturnValueOnce({
         from: jest.fn().mockReturnValue({
@@ -152,7 +182,7 @@ describe('BatchDailyDataService', () => {
           where: jest.fn().mockReturnValue({
             limit: jest
               .fn()
-              .mockResolvedValue([{ tracking_mode: 'BATCH_WISE' }]),
+              .mockResolvedValue([{ tracking_mode: 'BATCH_WISE', farm_id: 'farm-1' }]),
           }),
         }),
       }) // batch tracking_mode lookup
@@ -181,17 +211,21 @@ describe('BatchDailyDataService', () => {
                 location_type: 'SHED',
                 parent_location_id: 'farm-1',
                 farm_id: 'farm-1',
-                feed_silo_id: 'silo-1',
               },
             ]),
           }),
         }),
-      }) // feed source — the shed and the silo attached to it
-      .mockReturnValueOnce({
-        from: jest
-          .fn()
-          .mockReturnValue({ where: jest.fn().mockResolvedValue([]) }),
-      }); // findForDate at the end
+      }); // feed source — the batch's shed
+    answerSiloLinks(['silo-1']);
+    siloFeedService.currentItems.mockResolvedValueOnce(
+      new Map([
+        [
+          'silo-1',
+          { item_id: 'item-feed', item_code: 'FEED', item_description: null, on_hand_qty: 200 },
+        ],
+      ]),
+    );
+    answerFindForDate();
 
     (batchService.addTransaction as jest.Mock).mockResolvedValue({
       transactions: [
@@ -213,8 +247,10 @@ describe('BatchDailyDataService', () => {
       } as any,
       'tenant-123',
       { userId: 'user-1' },
+      opts,
     );
 
+    expect(feedAlerts.evaluateLevelsSafely.mock.calls).toEqual(alertCalls);
     expect(batchService.addTransaction).toHaveBeenCalledWith(
       'batch-1',
       expect.objectContaining({
@@ -675,13 +711,17 @@ describe('BatchDailyDataService', () => {
 
   /**
    * Client rule of 2026-09-24: feed flows farm STORE -> (stock transfer) ->
-   * SILO -> (daily entry) -> shed. Until now the CONSUMPTION leg wrote its
+   * SILO -> (daily entry) -> shed. A shed may now draw from several silos
+   * (silo_shed_link, Task 1) — the source is whichever attached silo
+   * currently holds the item this line posts (D9: a silo holds one item, so
+   * at most one attached silo can). Until now the CONSUMPTION leg wrote its
    * ledger row with no warehouse_id at all, so applyFifo drew the feed from
-   * whichever layer in the company happened to be oldest — the silo standing
-   * next to the shed was not consulted. The entry now names the source.
+   * whichever layer in the company happened to be oldest.
    */
-  describe('a feed entry draws from the shed’s silo', () => {
-    const postFeed = () =>
+  describe('a feed entry draws from the silo holding the posted item', () => {
+    const shed = { location_id: 'shed-1', location_type: 'SHED', parent_location_id: 'farm-1', farm_id: 'farm-1' };
+
+    const postFeed = (itemId = 'item-feed') =>
       service.postEntry(
         'batch-1',
         { line_id: 'line-1', entry_date: '2026-09-08', entered_value: 22.5 } as any,
@@ -702,18 +742,56 @@ describe('BatchDailyDataService', () => {
       });
     });
 
-    it('passes the silo attached to the shed as the source warehouse', async () => {
+    // Shed with two silos: S1 holds R1, S2 holds R2 — each posting must draw
+    // from the one silo actually carrying the item being posted, not "the"
+    // attached silo (D9 guarantees at most one of them can hold it).
+    it('draws from S2 when posting item R2 and the shed has two silos (S1=R1, S2=R2)', async () => {
       answers(
-        [consumptionLine],
+        [{ ...consumptionLine, item_id: 'item-r2' }],
         [header],
         [{ tracking_mode: 'BATCH_WISE' }],
         [],
-        [{ item_id: 'item-feed', uom_primary: 'KG' }],
-        [{ location_id: 'shed-1', location_type: 'SHED', parent_location_id: 'farm-1', farm_id: 'farm-1', feed_silo_id: 'silo-1' }],
+        [{ item_id: 'item-r2', uom_primary: 'KG' }],
+        [shed],
+      );
+      answerSiloLinks(['silo-1', 'silo-2']);
+      siloFeedService.currentItems.mockResolvedValueOnce(
+        new Map([
+          ['silo-1', { item_id: 'item-r1', item_code: 'R1', item_description: null, on_hand_qty: 100 }],
+          ['silo-2', { item_id: 'item-r2', item_code: 'R2', item_description: null, on_hand_qty: 50 }],
+        ]),
       );
       answerFindForDate();
 
-      await postFeed();
+      await postFeed('item-r2');
+
+      expect(batchService.addTransaction).toHaveBeenCalledWith(
+        'batch-1',
+        expect.objectContaining({ source_warehouse_id: 'silo-2' }),
+        'tenant-123',
+        { userId: 'user-1' },
+      );
+    });
+
+    it('draws from S1 when posting item R1 and the shed has two silos (S1=R1, S2=R2)', async () => {
+      answers(
+        [{ ...consumptionLine, item_id: 'item-r1' }],
+        [header],
+        [{ tracking_mode: 'BATCH_WISE' }],
+        [],
+        [{ item_id: 'item-r1', uom_primary: 'KG' }],
+        [shed],
+      );
+      answerSiloLinks(['silo-1', 'silo-2']);
+      siloFeedService.currentItems.mockResolvedValueOnce(
+        new Map([
+          ['silo-1', { item_id: 'item-r1', item_code: 'R1', item_description: null, on_hand_qty: 100 }],
+          ['silo-2', { item_id: 'item-r2', item_code: 'R2', item_description: null, on_hand_qty: 50 }],
+        ]),
+      );
+      answerFindForDate();
+
+      await postFeed('item-r1');
 
       expect(batchService.addTransaction).toHaveBeenCalledWith(
         'batch-1',
@@ -723,17 +801,21 @@ describe('BatchDailyDataService', () => {
       );
     });
 
-    // Data entry happens at PEN level on some farms; the silo is attached to
+    // Data entry happens at PEN level on some farms; a silo is attached to
     // the shed above it, never to the individual pen.
-    it('walks a PEN up to its shed to find the silo', async () => {
+    it('walks a PEN up to its shed, then draws from the silo holding the item', async () => {
       answers(
         [consumptionLine],
         [{ ...header, location_id: 'pen-3' }],
         [{ tracking_mode: 'BATCH_WISE' }],
         [],
         [{ item_id: 'item-feed', uom_primary: 'KG' }],
-        [{ location_id: 'pen-3', location_type: 'PEN', parent_location_id: 'shed-1', farm_id: 'farm-1', feed_silo_id: null }],
-        [{ location_id: 'shed-1', location_type: 'SHED', parent_location_id: 'farm-1', farm_id: 'farm-1', feed_silo_id: 'silo-1' }],
+        [{ location_id: 'pen-3', location_type: 'PEN', parent_location_id: 'shed-1', farm_id: 'farm-1' }],
+        [shed],
+      );
+      answerSiloLinks(['silo-1']);
+      siloFeedService.currentItems.mockResolvedValueOnce(
+        new Map([['silo-1', { item_id: 'item-feed', item_code: 'FEED', item_description: null, on_hand_qty: 200 }]]),
       );
       answerFindForDate();
 
@@ -747,16 +829,48 @@ describe('BatchDailyDataService', () => {
       );
     });
 
-    it("falls back to the farm's store when the shed has no silo attached", async () => {
+    // Medicine M: neither attached silo holds it, so the draw falls through
+    // to the farm store exactly as it does with no silo attached at all.
+    it("falls back to the farm's store when no attached silo holds the posted item", async () => {
+      answers(
+        [{ ...consumptionLine, item_id: 'item-medicine' }],
+        [header],
+        [{ tracking_mode: 'BATCH_WISE' }],
+        [],
+        [{ item_id: 'item-medicine', uom_primary: 'PCS' }],
+        [shed],
+      );
+      answerSiloLinks(['silo-1', 'silo-2']);
+      siloFeedService.currentItems.mockResolvedValueOnce(
+        new Map([
+          ['silo-1', { item_id: 'item-r1', item_code: 'R1', item_description: null, on_hand_qty: 100 }],
+          ['silo-2', { item_id: 'item-r2', item_code: 'R2', item_description: null, on_hand_qty: 50 }],
+        ]),
+      );
+      answers([{ location_id: 'store-1' }]);
+      answerFindForDate();
+
+      await postFeed('item-medicine');
+
+      expect(batchService.addTransaction).toHaveBeenCalledWith(
+        'batch-1',
+        expect.objectContaining({ source_warehouse_id: 'store-1' }),
+        'tenant-123',
+        { userId: 'user-1' },
+      );
+    });
+
+    it("falls back to the farm's store when the shed has no silos linked", async () => {
       answers(
         [consumptionLine],
         [header],
         [{ tracking_mode: 'BATCH_WISE' }],
         [],
         [{ item_id: 'item-feed', uom_primary: 'KG' }],
-        [{ location_id: 'shed-1', location_type: 'SHED', parent_location_id: 'farm-1', farm_id: 'farm-1', feed_silo_id: null }],
-        [{ location_id: 'store-1' }],
+        [shed],
       );
+      answerSiloLinks([]);
+      answers([{ location_id: 'store-1' }]);
       answerFindForDate();
 
       await postFeed();
@@ -769,18 +883,46 @@ describe('BatchDailyDataService', () => {
       );
     });
 
-    it('refuses the entry when neither a silo nor a store can be found', async () => {
+    // Minor 1 of the final review: the same silo rows the forecast reads —
+    // this tenant's links, to silos still active and not deleted.
+    it('reads only this tenant\'s links to active, undeleted silos', async () => {
       answers(
         [consumptionLine],
         [header],
         [{ tracking_mode: 'BATCH_WISE' }],
         [],
         [{ item_id: 'item-feed', uom_primary: 'KG' }],
-        [{ location_id: 'shed-1', location_type: 'SHED', parent_location_id: 'farm-1', farm_id: 'farm-1', feed_silo_id: null }],
-        [],
+        [shed],
       );
+      const where = answerSiloLinks([]);
+      answers([{ location_id: 'store-1' }]);
+      answerFindForDate();
 
-      await expect(postFeed()).rejects.toThrow(BadRequestException);
+      await postFeed();
+
+      const { sql: text, params } = new MySqlDialect().sqlToQuery(where.mock.calls[0][0]);
+      expect(text).toContain('`silo_shed_link`.`tenant_id` = ?');
+      expect(text).toContain('`location_master`.`is_active` = ?');
+      expect(text).toContain('`location_master`.`deleted_at` is null');
+      expect(params).toContain('tenant-123');
+    });
+
+    it('refuses the entry when no attached silo holds the item and there is no store', async () => {
+      answers(
+        [{ ...consumptionLine, item_id: 'item-medicine' }],
+        [header],
+        [{ tracking_mode: 'BATCH_WISE' }],
+        [],
+        [{ item_id: 'item-medicine', uom_primary: 'PCS' }],
+        [shed],
+      );
+      answerSiloLinks(['silo-1']);
+      siloFeedService.currentItems.mockResolvedValueOnce(
+        new Map([['silo-1', { item_id: 'item-r1', item_code: 'R1', item_description: null, on_hand_qty: 100 }]]),
+      );
+      answers([]);
+
+      await expect(postFeed('item-medicine')).rejects.toThrow(BadRequestException);
       expect(batchService.addTransaction).not.toHaveBeenCalled();
     });
 

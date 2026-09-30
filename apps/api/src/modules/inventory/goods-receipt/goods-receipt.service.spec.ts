@@ -6,6 +6,8 @@ import { MySqlDialect } from 'drizzle-orm/mysql-core';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
+import { SiloFeedService } from '../silo-feed/silo-feed.service';
+import { FeedAlertService } from '../feed-alert/feed-alert.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { BadRequestException } from '@nestjs/common';
 import * as schema from '../../../core/database/schema';
@@ -47,18 +49,30 @@ describe('GoodsReceiptService', () => {
   // out of service after the receipt was drafted cannot receive stock. Every
   // post test queues this first.
   const activeWarehouse = () => found({ is_active: true, deleted_at: null });
+  // post() re-reads the warehouse a second time for the silo item check —
+  // a STORE short-circuits assertSiloDestination immediately, matching every
+  // existing post test's non-silo warehouse.
+  const nonSiloWarehouse = () => found({ location_id: 'wh-1', location_type: 'STORE' });
+  // The other branch of the same re-read: a SILO destination routes through
+  // SiloFeedService instead of short-circuiting.
+  const siloWarehouse = () => found({ location_id: 'wh-1', location_type: 'SILO', location_name: 'Feed Silo 01' });
+  const mockAssertCanReceive = jest.fn();
+  const mockWritePositiveEntry = jest.fn();
 
   beforeEach(async () => {
     mockDbSelect.mockReset();
     mockDbUpdate.mockReset();
+    mockAssertCanReceive.mockReset().mockResolvedValue(undefined);
+    mockWritePositiveEntry.mockReset().mockResolvedValue({ entry_no: 1 });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         GoodsReceiptService,
         { provide: ClsService, useValue: transactionCls(mockDb) },
         { provide: AuditLogService, useValue: { log: jest.fn().mockResolvedValue({}) } },
-        { provide: InventoryLedgerService, useValue: { writePositiveEntry: jest.fn().mockResolvedValue({ entry_no: 1 }) } },
+        { provide: InventoryLedgerService, useValue: { writePositiveEntry: mockWritePositiveEntry } },
         { provide: GlPostingService, useValue: { postInventoryLedgerEntry: jest.fn().mockResolvedValue({}) } },
+        { provide: SiloFeedService, useValue: { assertCanReceive: mockAssertCanReceive } },
         { provide: NumberSeriesService, useValue: { generateNextNumberById: jest.fn().mockResolvedValue({ next_number: 'TEST-001' }) } },
       ],
     }).compile();
@@ -82,6 +96,7 @@ describe('GoodsReceiptService', () => {
 
       mockDbSelect.mockReturnValueOnce(activeWarehouse());
       mockDbSelect.mockReturnValueOnce(found({ supplier_id: 'sup-1', vendor_type: 'ANIMAL_SUPPLIER', health_cert_url: 'https://certs.example.com/farm.pdf' }));
+      mockDbSelect.mockReturnValueOnce(nonSiloWarehouse());
       mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ affectedRows: 1 }]) }) });
 
       const result = await service.post('gr-1', 'tenant-123', { userId: 'user-1' });
@@ -96,6 +111,7 @@ describe('GoodsReceiptService', () => {
 
       mockDbSelect.mockReturnValueOnce(activeWarehouse());
       mockDbSelect.mockReturnValueOnce(found({ supplier_id: 'sup-2', vendor_type: 'FEED_SUPPLIER', health_cert_url: null }));
+      mockDbSelect.mockReturnValueOnce(nonSiloWarehouse());
       mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ affectedRows: 1 }]) }) });
 
       const result = await service.post('gr-2', 'tenant-123', { userId: 'user-1' });
@@ -109,12 +125,54 @@ describe('GoodsReceiptService', () => {
         .mockResolvedValueOnce({ ...draftReceipt, supplier_id: null, status: 'POSTED' } as any);
 
       mockDbSelect.mockReturnValueOnce(activeWarehouse());
+      mockDbSelect.mockReturnValueOnce(nonSiloWarehouse());
       mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ affectedRows: 1 }]) }) });
 
       const result = await service.post('gr-3', 'tenant-123', { userId: 'user-1' });
 
-      expect(mockDbSelect).toHaveBeenCalledTimes(1); // the warehouse only — no supplier lookup needed
+      expect(mockDbSelect).toHaveBeenCalledTimes(2); // warehouse-active + silo-destination reads — no supplier lookup needed
       expect(result.status).toBe('POSTED');
+    });
+
+    // The other branch of assertSiloDestination: a SILO warehouse routes
+    // through SiloFeedService with the receipt's own item ids, instead of
+    // short-circuiting like every test above (all of which use a STORE).
+    it('routes a SILO destination through SiloFeedService.assertCanReceive before posting', async () => {
+      jest.spyOn(service, 'findOne')
+        .mockResolvedValueOnce({ ...draftReceipt, supplier_id: null } as any)
+        .mockResolvedValueOnce({ ...draftReceipt, supplier_id: null, status: 'POSTED' } as any);
+
+      mockDbSelect.mockReturnValueOnce(activeWarehouse());
+      mockDbSelect.mockReturnValueOnce(siloWarehouse());
+      mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ affectedRows: 1 }]) }) });
+
+      const result = await service.post('gr-3', 'tenant-123', { userId: 'user-1' });
+
+      expect(mockAssertCanReceive).toHaveBeenCalledWith(
+        expect.objectContaining({
+          siloId: 'wh-1',
+          companyId: 'comp-1',
+          itemIds: ['item-1'],
+          documentLabel: 'Goods Receipt',
+        }),
+      );
+      expect(result.status).toBe('POSTED');
+    });
+
+    it('aborts the post before the DRAFT -> POSTED claim when SiloFeedService refuses the item', async () => {
+      jest.spyOn(service, 'findOne').mockResolvedValueOnce({ ...draftReceipt, supplier_id: null } as any);
+
+      mockDbSelect.mockReturnValueOnce(activeWarehouse());
+      mockDbSelect.mockReturnValueOnce(siloWarehouse());
+      mockAssertCanReceive.mockRejectedValue(new BadRequestException(
+        "Cannot post this Goods Receipt — silo 'Feed Silo 01' already holds 'FEED-GROWER'. A silo holds one feed item at a time; empty it before moving a different item in.",
+      ));
+
+      await expect(service.post('gr-3', 'tenant-123', { userId: 'user-1' })).rejects.toThrow(/already holds 'FEED-GROWER'/);
+
+      // Refused before the status transition and before any stock movement.
+      expect(mockDbUpdate).not.toHaveBeenCalled();
+      expect(mockWritePositiveEntry).not.toHaveBeenCalled();
     });
   });
 
@@ -125,6 +183,78 @@ describe('GoodsReceiptService', () => {
   // captures the last `.where()` condition so a test can render the SQL and
   // check the farm join made it in. Local to this describe because the outer
   // suite's mock answers by call order instead.
+  // Ruling M6: a posting re-checks silo levels once, only after its
+  // transaction has committed, and nothing that goes wrong in that re-check
+  // can fail the posting it follows.
+  describe('feed alert hook', () => {
+    const postedReceipt = () => {
+      jest.spyOn(service, 'findOne')
+        .mockResolvedValueOnce({ ...draftReceipt, supplier_id: null } as any)
+        .mockResolvedValueOnce({ ...draftReceipt, supplier_id: null, status: 'POSTED' } as any);
+      mockDbSelect.mockReturnValueOnce(activeWarehouse());
+      mockDbSelect.mockReturnValueOnce(nonSiloWarehouse());
+      mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ affectedRows: 1 }]) }) });
+    };
+
+    const build = async (feedAlerts: unknown, cls: ClsService) => {
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [
+          GoodsReceiptService,
+          { provide: ClsService, useValue: cls },
+          { provide: AuditLogService, useValue: { log: jest.fn().mockResolvedValue({}) } },
+          { provide: InventoryLedgerService, useValue: { writePositiveEntry: mockWritePositiveEntry } },
+          { provide: GlPostingService, useValue: { postInventoryLedgerEntry: jest.fn().mockResolvedValue({}) } },
+          { provide: SiloFeedService, useValue: { assertCanReceive: mockAssertCanReceive } },
+          { provide: NumberSeriesService, useValue: { generateNextNumberById: jest.fn().mockResolvedValue({ next_number: 'TEST-001' }) } },
+          { provide: FeedAlertService, useValue: feedAlerts },
+        ],
+      }).compile();
+      service = module.get<GoodsReceiptService>(GoodsReceiptService);
+    };
+
+    it('re-checks the receipt warehouse once, after the transaction has committed', async () => {
+      const cls = transactionCls(mockDb);
+      let committed = false;
+      mockDbTransaction.mockImplementationOnce(async (work: (tx: any) => Promise<any>) => {
+        const result = await work(mockDb);
+        committed = true;
+        return result;
+      });
+      const seen: Array<{ committed: boolean; inTx: unknown }> = [];
+      const feedAlerts = { evaluateLevelsSafely: jest.fn(async () => { seen.push({ committed, inTx: cls.get('tenantPostingTransaction') }); }) };
+      await build(feedAlerts, cls);
+      postedReceipt();
+
+      const result = await service.post('gr-3', 'tenant-123', { userId: 'user-1' });
+
+      expect(result.status).toBe('POSTED');
+      expect(feedAlerts.evaluateLevelsSafely).toHaveBeenCalledTimes(1);
+      expect(feedAlerts.evaluateLevelsSafely).toHaveBeenCalledWith(['wh-1'], 'tenant-123');
+      expect(seen).toEqual([{ committed: true, inTx: undefined }]);
+    });
+
+    it('still posts when the re-check itself throws', async () => {
+      const cls = transactionCls(mockDb);
+      const alertRules = { ensureDefaultRules: jest.fn().mockRejectedValue(new Error('alert_rule is locked')) };
+      const feedAlerts = new FeedAlertService(cls, {} as any, {} as any, alertRules as any);
+      const warn = jest.spyOn((feedAlerts as any).logger, 'warn').mockImplementation(() => undefined);
+      await build(feedAlerts, cls);
+      postedReceipt();
+      // The hook's own read of the receipt warehouse: a silo on farm-1, so it goes on to evaluate that farm.
+      mockDbSelect.mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockResolvedValue([{ location_id: 'wh-1', location_type: 'SILO', farm_id: 'farm-1', company_id: 'comp-1' }]),
+        }),
+      });
+
+      const result = await service.post('gr-3', 'tenant-123', { userId: 'user-1' });
+
+      expect(result.status).toBe('POSTED');
+      expect(alertRules.ensureDefaultRules).toHaveBeenCalledWith('comp-1', 'tenant-123');
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('alert_rule is locked'));
+    });
+  });
+
   describe('farm scope', () => {
     const grasmere = { farmId: 'farm-g', restricted: true, companyId: 'co-1', lobId: 'lob-pig' };
 
@@ -172,6 +302,7 @@ describe('GoodsReceiptService', () => {
           { provide: AuditLogService, useValue: { log: jest.fn().mockResolvedValue({}) } },
           { provide: InventoryLedgerService, useValue: { writePositiveEntry: jest.fn().mockResolvedValue({ entry_no: 1 }) } },
           { provide: GlPostingService, useValue: { postInventoryLedgerEntry: jest.fn().mockResolvedValue({}) } },
+          { provide: SiloFeedService, useValue: { assertCanReceive: jest.fn().mockResolvedValue(undefined) } },
           { provide: NumberSeriesService, useValue: { generateNextNumberById: jest.fn().mockResolvedValue({ next_number: 'TEST-001' }) } },
         ],
       }).compile();

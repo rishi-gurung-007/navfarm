@@ -29,7 +29,7 @@
  */
 import mysql, { RowDataPacket } from 'mysql2/promise';
 import { randomUUID } from 'node:crypto';
-import { FARM_LOCATION_SEED, FarmLocationSeedRow } from './lib/farm-location-seed-data';
+import { FARM_LOCATION_SEED, FarmLocationSeedRow, storageFieldsFor } from './lib/farm-location-seed-data';
 
 /** The area unit MULTIPLIER states its farm size in. No equivalent exists. */
 const UOM_ADDITIONS = [{ code: 'HECTARE', name: 'Hectare', type: 'AREA' }];
@@ -46,8 +46,8 @@ const LOCATION_TYPE_ADDITIONS = [
  * SILO was seeded as FARM-or-SHED. A silo stands in the yard and is blown full
  * by the mill; several sheds draw from the one silo, so making it a child of a
  * shed said something untrue about the yard and left no way to record the other
- * sheds it feeds. A silo hangs off the FARM, and the shed's own feed_silo_id
- * records which silo it draws from.
+ * sheds it feeds. A silo hangs off the FARM, and silo_shed_link records which
+ * silos a shed draws from.
  *
  * This is an UPDATE, not an insert: LOCATION_TYPE_ADDITIONS above skips a type
  * that already exists, which every one of these does.
@@ -192,7 +192,10 @@ async function run() {
       const values = [
         scope.nob_id, scope.lob_id, r.name, r.address ?? null, r.type, parentId,
         LEVEL[r.type] ?? null, num(r.areaSize), r.areaUom ?? null, num(r.maxCapacity),
-        r.capacityUom ?? null, r.storageType ?? null, r.storageName ?? null,
+        // F4/D28: the template says SILO on every shed, pen and crate. Silo
+        // rules follow location_type now, and 0126 clears the stale value —
+        // a rebuild must not write it back.
+        r.capacityUom ?? null, storageFieldsFor(r).storage_type, storageFieldsFor(r).storage_name,
         // The templates state every silo capacity in kilograms — the column the
         // figure lands in is canonical KG regardless, and the uom only records
         // what the farm typed, so KG is the honest answer wherever a capacity

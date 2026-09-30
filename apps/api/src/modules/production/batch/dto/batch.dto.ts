@@ -1153,3 +1153,11 @@ export class QueryBatchTransferDto {
   @Min(0)
   offset?: number;
 }
+
+/** D21: set, change or clear a batch's shed at any status before it closes. */
+export class UpdateBatchShedDto {
+  @ApiProperty({ description: 'Shed (a SHED location of the batch farm), or null to clear', nullable: true, required: true })
+  @IsOptional()
+  @IsUUID()
+  shed_id: string | null;
+}

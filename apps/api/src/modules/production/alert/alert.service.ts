@@ -1,10 +1,10 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, desc } from 'drizzle-orm';
+import { eq, and, desc, getTableColumns } from 'drizzle-orm';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
 import { QueryAlertDto } from './dto/alert.dto';
-import { batchReferenceScopeConditions, farmScope } from '../../../common/farm-scope';
+import { batchOnFarm, batchReferenceScopeConditions, farmScope } from '../../../common/farm-scope';
 
 const toMysqlTimestamp = (date: Date = new Date()) => date.toISOString().slice(0, 19).replace('T', ' ');
 
@@ -26,15 +26,23 @@ export class AlertService {
 
     if (query.companyId) conditions.push(eq(schema.notificationAlertLog.company_id, query.companyId));
     if (query.batchId) conditions.push(eq(schema.notificationAlertLog.batch_id, query.batchId));
+    if (query.farmId) conditions.push(batchOnFarm(schema.notificationAlertLog.batch_id, query.farmId));
     if (query.severity) conditions.push(eq(schema.notificationAlertLog.severity, query.severity));
     if (query.isRead !== undefined) conditions.push(eq(schema.notificationAlertLog.is_read, query.isRead));
 
     const limit = query.limit || 50;
     const offset = query.offset || 0;
 
+    // D24: the batch number and farm travel with each row, so the one Alerts
+    // list can name the batch and filter by farm without a second read.
     return this.db
-      .select()
+      .select({
+        ...getTableColumns(schema.notificationAlertLog),
+        batch_no: schema.batchHeader.batch_no,
+        farm_id: schema.batchHeader.farm_id,
+      })
       .from(schema.notificationAlertLog)
+      .leftJoin(schema.batchHeader, eq(schema.batchHeader.batch_id, schema.notificationAlertLog.batch_id))
       .where(and(...conditions))
       .orderBy(desc(schema.notificationAlertLog.created_at))
       .limit(limit)

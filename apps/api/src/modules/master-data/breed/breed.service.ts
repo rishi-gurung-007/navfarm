@@ -756,7 +756,7 @@ export class BreedService {
   }
 
   async createLifecycleStage(dto: CreateBreedLifecycleStageDto, tenantId: string, userPayload?: any) {
-    await this.findOneBreed(dto.breed_id, tenantId);
+    const breed = await this.findOneBreed(dto.breed_id, tenantId);
 
     const [stage] = await this.db
       .select()
@@ -774,9 +774,14 @@ export class BreedService {
     }
     await this.assertLifecycleRows(dto, tenantId);
 
-    // breed_lifecycle_stages has no company_id — a row is scoped through its breed —
-    // so the code resolves against the tenant-wide series scope. Manual today,
-    // automatic once a BREED_LIFECYCLE_STAGE series is configured, null otherwise.
+    // The row carries company_id (0084) — a request may not choose its value:
+    // it is stamped FROM THE BREED, so a row created under a company breed is
+    // visible at that company's workspaces. 593d7c96's gap: rows were inserted
+    // with every scope column NULL and enforceMasterRequest then refused them
+    // in a company/operational workspace ("Master record is not available in
+    // this workspace"). The code resolves against the tenant-wide series scope
+    // regardless — manual today, automatic once a BREED_LIFECYCLE_STAGE series
+    // is configured, null otherwise.
     const lifecycleCode = await this.numberSeriesService.resolveOptionalCode('BREED_LIFECYCLE_STAGE', dto.lifecycle_code, tenantId, null, undefined, dto as unknown as Record<string, unknown>);
 
     const lifecycleId = randomUUID();
@@ -784,6 +789,11 @@ export class BreedService {
       lifecycle_id: lifecycleId,
       tenant_id: tenantId,
       lifecycle_code: lifecycleCode,
+      // From the breed row (ADDENDUM 3): never from the request — a request
+      // cannot scope a row into a company the breed does not belong to.
+      company_id: breed.company_id ?? null,
+      nob_id: breed.nob_id ?? null,
+      lob_id: breed.lob_id ?? null,
       breed_id: dto.breed_id,
       stage_id: dto.stage_id,
       category: dto.category || null,
@@ -930,6 +940,11 @@ export class BreedService {
 
   async updateLifecycleStage(id: string, dto: UpdateBreedLifecycleStageDto, tenantId: string, userPayload?: any) {
     const lifecycleStage = await this.findOneLifecycleStage(id);
+    // ADDENDUM 3: scope is re-derived FROM THE BREED on every update, so the
+    // row always carries its breed's company/nob/lob — a request can never set
+    // them to something else, and a row saved under 593d7c96's gap is stamped
+    // the first time it is edited.
+    const breed = await this.findOneBreed(lifecycleStage.breed_id, tenantId);
 
     if (dto.stage_id) {
       const [stage] = await this.db
@@ -981,6 +996,10 @@ export class BreedService {
     if (dto.alert_severity !== undefined) updates.alert_severity = dto.alert_severity;
     if (dto.notes !== undefined) updates.notes = dto.notes;
     if (dto.is_active !== undefined) updates.is_active = dto.is_active;
+    // From the breed, never the request (ADDENDUM 3).
+    updates.company_id = breed.company_id ?? null;
+    updates.nob_id = breed.nob_id ?? null;
+    updates.lob_id = breed.lob_id ?? null;
 
     await this.db
       .update(schema.breedLifecycleStages)

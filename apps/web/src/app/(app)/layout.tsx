@@ -330,6 +330,14 @@ export default function ConsoleLayout({ children, modal }: { children: React.Rea
       { label: t("navLivestock"), href: "/livestock", icon: Pill, children: livestockChildren },
       { label: t("inventoryStock"), href: "/inventory/balance", icon: Boxes, activePrefix: "/inventory" },
       { label: t("financeCosting"), href: "/finance/journal", icon: Landmark, activePrefix: "/finance" },
+      // Alerts and Approvals belong here as much as in an area (F1/F2, review
+      // I2): a company workspace has Inventory, so it has Feed Forecast and
+      // Requisitions — D24 puts the feed alerts on the Alerts page and D25
+      // sends a submitted requisition to the inbox. Both sat in the area nav
+      // only, so from here they could be typed but not found. Same position
+      // relative to the routes the two scopes share.
+      { label: t("navAlerts"), href: "/alerts", icon: AlertTriangle },
+      { label: t("approvals"), href: "/approvals", icon: CheckSquare, activePrefix: "/approvals" },
       { label: t("masterData"),      href: "/master-data",    icon: Database, activePrefix: "/master-data", children: masterDataChildren, flyout: true },
       // A company is the entity under the tenant; an operational area is only a
       // scope for one LOB inside it. Neither is grouped under Settings — they

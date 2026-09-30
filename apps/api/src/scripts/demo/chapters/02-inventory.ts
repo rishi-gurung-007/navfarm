@@ -16,7 +16,7 @@
  * reads them, never invents them. Quantities are demo facts from
  * DEMO_OPERATIONS. Every document's remarks/reason carries DEMO.
  *
- * Silos are resolved through each shed's `feed_silo_id`, not from hard-coded
+ * Silos are resolved through `silo_shed_link`, not from hard-coded
  * location codes and not from the location tree — a silo hangs off the farm
  * (`<CODE>/SILO-00n`) and may feed several sheds. Every seeded farm has at
  * least two, including the AI station and the grow-out site.
@@ -42,7 +42,8 @@ import { StockAdjustmentService } from '../../../modules/inventory/stock-adjustm
 import * as schema from '../../../core/database/schema';
 import type { GoodsReceiptLineInput } from '../../../modules/inventory/goods-receipt/dto/goods-receipt.dto';
 import type { DemoChapter, DemoContext } from '../chapter';
-import { silosOf, tagOf, type DemoFarm, type ShedRole } from '../farms';
+import { siloFillKg } from '../../../core/database/demo-feed-defaults';
+import { silosOf, tagOf, type DemoFarm, type DemoShed, type ShedRole } from '../farms';
 
 /**
  * `item_master.standard_cost` is a MySQL decimal, so Drizzle hands it back as
@@ -100,6 +101,7 @@ const FEED_DEFAULT = FEED_GESTATION;
 
 /** The demo quantities — labelled demo facts, not client data. */
 const DEMO_OPERATIONS = {
+  /** Only for a silo with no recorded capacity; see siloFillKg (S10). */
   feedReceiptKgPerSilo: 2000,
   storeReceipt: [
     { item_code: MED_ANTIBIOTIC_1, quantity: 20, uom: 'PCS' },
@@ -163,7 +165,16 @@ async function itemByHandle(db: MySql2Database<typeof schema>, handle: string) {
 
 /** The silos this chapter stocks on a farm, with the diet each one takes. */
 function stockedSilos(farm: DemoFarm): Array<{ id: string; code: string; feedHandle: string }> {
-  const shedBySilo = new Map(farm.sheds.filter((s) => s.siloId).map((s) => [s.siloId!, s]));
+  // Silo -> the first shed that draws from it. A silo may feed several sheds
+  // since 0114, and where two of them carry different roles the ration has to
+  // be one or the other; the first in shed-code order is the stable choice.
+  // This cannot average the two — a silo holds one feed item at a time (D9).
+  const shedBySilo = new Map<string, DemoShed>();
+  for (const shed of farm.sheds) {
+    for (const siloId of shed.siloIds) {
+      if (!shedBySilo.has(siloId)) shedBySilo.set(siloId, shed);
+    }
+  }
   return silosOf(farm)
     .map((silo) => {
       const role = shedBySilo.get(silo.id)?.role;
@@ -216,6 +227,12 @@ export const inventoryChapter: DemoChapter = {
         if (existing.length === 0) {
           for (const silo of siloIds) {
             const feed = await itemByHandle(db, silo.feedHandle);
+            // S10: half the silo's capacity, so a fresh demo sits between its 20 % and 90 % levels.
+            const [capacity] = await db
+              .select({ kg: schema.locationMaster.silo_capacity_kg })
+              .from(schema.locationMaster)
+              .where(eq(schema.locationMaster.location_id, silo.id))
+              .limit(1);
             await receipts.create(
               {
                 company_id: ctx.companyId,
@@ -226,7 +243,7 @@ export const inventoryChapter: DemoChapter = {
                 lines: [
                   {
                     item_id: feed.item_id,
-                    quantity: DEMO_OPERATIONS.feedReceiptKgPerSilo,
+                    quantity: siloFillKg(capacity?.kg == null ? null : Number(capacity.kg), DEMO_OPERATIONS.feedReceiptKgPerSilo),
                     uom: 'KG',
                     rate: rateOf(feed.standard_cost),
                     lot_no: `DEMO-${farm.code}-${silo.feedHandle}`,

@@ -4,6 +4,7 @@ import {
   BadRequestException,
   ConflictException,
   Inject,
+  Optional,
   forwardRef,
 } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
@@ -17,6 +18,8 @@ import { BatchService, type UserContext } from '../batch/batch.service';
 import { BatchTransferService } from '../batch/batch-transfer.service';
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
 import { AnimalMovementLogService } from '../../piggery/animal-movement-log/animal-movement-log.service';
+import { SiloFeedService } from '../../inventory/silo-feed/silo-feed.service';
+import { FeedAlertService } from '../../inventory/feed-alert/feed-alert.service';
 
 const toMysqlTimestamp = (date: Date = new Date()) =>
   date.toISOString().slice(0, 19).replace('T', ' ');
@@ -45,6 +48,11 @@ export class BatchDailyDataService {
     private readonly batchTransferService: BatchTransferService,
     private readonly glPostingService: GlPostingService,
     private readonly movementLog: AnimalMovementLogService,
+    private readonly siloFeedService: SiloFeedService,
+    // POST Day consumption lowers the silo it drew from (Plan A Task 4), so
+    // the farm's silo levels are re-checked afterwards (checkpoint 12).
+    // Optional so a testing module that does not provide it still builds.
+    @Optional() private readonly feedAlerts?: FeedAlertService,
   ) {}
 
   private get db(): MySql2Database<typeof schema> {
@@ -59,6 +67,10 @@ export class BatchDailyDataService {
     dto: CreateBatchDailyDataDto,
     tenantId: string,
     userPayload?: UserContext,
+    // BatchService.postBatchDay/postStageDay post a whole day's drafts through
+    // here one line at a time; they pass this and re-check the silo levels
+    // once for the day (Ruling M6), not once per line.
+    opts: { deferFeedAlerts?: boolean } = {},
   ) {
     // Throws (404/403) if the batch doesn't exist or isn't in the caller's
     // farm/company/lob scope — BatchService.findOne is the shared, audited
@@ -278,10 +290,12 @@ export class BatchDailyDataService {
         const sourceWarehouseId =
           line.line_type === 'CONSUMPTION'
             ? await this.resolveConsumptionWarehouse(
-                header.location_id || batchRow?.shed_id || batchRow?.location_id,
+                header.location_id,
+                line.item_id,
                 line.activity_name,
                 batchRow?.farm_id ?? null,
-                item,
+                header.company_id,
+                tenantId,
               )
             : undefined;
         const updated = await this.batchService.addTransaction(
@@ -710,20 +724,40 @@ export class BatchDailyDataService {
       },
     });
 
+    // Only CONSUMPTION and OUTPUT lines move item stock; the rest (overhead,
+    // resources, animal transfers) leave every silo where it was. This method
+    // opens no transaction of its own, so each write above has committed by
+    // here; the evaluation itself never throws (Ruling M6).
+    if (!opts.deferFeedAlerts && (line.line_type === 'CONSUMPTION' || line.line_type === 'OUTPUT')) {
+      await this.reevaluateFeedLevels(batchRow?.farm_id, tenantId);
+    }
+
     return this.findForDate(batchId, dto.entry_date, tenantId);
+  }
+
+  /**
+   * Re-checks the silo levels of the batch's farm (checkpoint 12). Public for
+   * BatchService's day posts, which defer the per-line check above and call
+   * this once after the whole day is in. Never throws.
+   */
+  async reevaluateFeedLevels(farmId: string | null | undefined, tenantId: string): Promise<void> {
+    await this.feedAlerts?.evaluateLevelsSafely([farmId], tenantId);
   }
 
   /**
    * Where a scheduled CONSUMPTION line's stock is actually drawn from.
    *
    * The client's feed flow (2026-09-24) is farm STORE -> (stock transfer) ->
-   * SILO -> (daily entry) -> shed, so a shed's feed is whatever its own silo
-   * holds — location_master.feed_silo_id, written by the "Attached Sheds"
-   * multi-select on the silo form. Data entry happens at PEN level on some
-   * farms, and a silo is attached to the shed above the pen, never to the pen
-   * itself, so a PEN walks up its parent first.
+   * SILO -> (daily entry) -> shed. A shed may now draw from several silos
+   * (silo_shed_link, Task 1), so the source is whichever of this shed's
+   * silos currently holds the item this line is posting (D9: a silo holds
+   * one feed item, so at most one of them can) — SiloFeedService.currentItems
+   * is the single place that reads silo residency. Data entry happens at PEN
+   * level on some farms, and a silo is attached to the shed above the pen,
+   * never to the pen itself, so a PEN walks up its parent first.
    *
-   * With no silo attached the farm's STORE is the source, and that is a real
+   * With no attached silo holding this item — none linked at all, or none of
+   * them carrying it — the farm's STORE is the source, and that is a real
    * answer rather than a stopgap: bagged feed (location_master.feed_in_bags,
    * carried per location on both client templates) genuinely is carried out
    * of the store, never blown into a silo. It also keeps every farm posting
@@ -732,19 +766,24 @@ export class BatchDailyDataService {
    * If neither resolves there is nowhere honest to take the stock from, and
    * guessing would put the batch's cost against another farm's inventory —
    * which is exactly what the warehouse-less ledger row used to do.
+   *
+   * Public so the demo's chapter 04 can size its silo top-ups against the
+   * very warehouse each entry will draw from, rather than a second copy of
+   * this rule that could drift from it.
    */
-  private async resolveConsumptionWarehouse(
+  async resolveConsumptionWarehouse(
     locationId: string | null,
+    itemId: string,
     activityName: string | null,
     batchFarmId: string | null,
-    item?: { item_id: string; item_type?: string | null } | null,
+    companyId: string,
+    tenantId: string,
   ): Promise<string> {
     const columns = {
       location_id: schema.locationMaster.location_id,
       location_type: schema.locationMaster.location_type,
       parent_location_id: schema.locationMaster.parent_location_id,
       farm_id: schema.locationMaster.farm_id,
-      feed_silo_id: schema.locationMaster.feed_silo_id,
     };
     // The farm's own store, which every fallback below ends at.
     const storeOfFarm = async (farmId: string | null) => {
@@ -763,11 +802,12 @@ export class BatchDailyDataService {
             ),
           ),
         )
+        // First by code, as the feed forecast picks a farm's store, so a farm
+        // that somehow carries two draws on the one the forecast reports.
+        .orderBy(schema.locationMaster.location_code)
         .limit(1);
       return store?.location_id ?? null;
     };
-
-    const isFeedItem = !item?.item_type || item.item_type === 'FEED';
 
     // A scheduler that records no shed or pen is not a reason to refuse the
     // entry: plenty of batches are scheduled at farm level, and the feed still
@@ -799,7 +839,30 @@ export class BatchDailyDataService {
       if (parent) shed = parent;
     }
 
-    if (shed.feed_silo_id && isFeedItem) return shed.feed_silo_id;
+    // Every silo linked to this shed (there may be several, or none) — the
+    // source is whichever one currently holds the item being posted.
+    // Bounded by tenant and by the silo still being live, the same rows the
+    // feed forecast reads (feed-forecast.service.ts loadInput): a link left
+    // pointing at a retired or deleted silo must not be drawn from here while
+    // the forecast shows the shed falling through to the store.
+    const siloLinks = await this.db
+      .select({ silo_id: schema.siloShedLink.silo_id })
+      .from(schema.siloShedLink)
+      .innerJoin(schema.locationMaster, eq(schema.locationMaster.location_id, schema.siloShedLink.silo_id))
+      .where(
+        and(
+          eq(schema.siloShedLink.tenant_id, tenantId),
+          eq(schema.siloShedLink.shed_id, shed.location_id),
+          eq(schema.locationMaster.is_active, true),
+          isNull(schema.locationMaster.deleted_at),
+        ),
+      );
+    if (siloLinks.length > 0) {
+      const siloIds = siloLinks.map((link) => link.silo_id);
+      const residents = await this.siloFeedService.currentItems(siloIds, companyId, tenantId);
+      const holdingSiloId = siloIds.find((siloId) => residents.get(siloId)?.item_id === itemId);
+      if (holdingSiloId) return holdingSiloId;
+    }
 
     // farm_id is stamped on every descendant of a FARM (see the location
     // seeder); a shed sitting directly under the farm with no farm_id falls
@@ -807,11 +870,8 @@ export class BatchDailyDataService {
     const store = await storeOfFarm(shed.farm_id || shed.parent_location_id || batchFarmId);
     if (store) return store;
 
-    // If no store exists but shed has a silo, use it as fallback
-    if (shed.feed_silo_id) return shed.feed_silo_id;
-
     throw new BadRequestException(
-      `'${activityName ?? 'This line'}' cannot be posted — no silo is attached to this batch's shed and its farm has no store to draw from. Attach a silo to the shed, or create the farm's store location.`,
+      `'${activityName ?? 'This line'}' cannot be posted — no silo attached to this batch's shed holds this item, and its farm has no store to draw from. Attach or fill a silo for this item, or create the farm's store location.`,
     );
   }
 

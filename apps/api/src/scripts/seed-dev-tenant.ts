@@ -499,7 +499,7 @@ export async function seedDevTenant() {
         // a SILO on the farm — both are farm-level structures, and SILO's
         // allowed_parent_types is ["FARM"] alone. The silo used to hang off the
         // shed, which said the shed owned it; one silo feeds several sheds, and
-        // the shed's feed_silo_id below is what actually records the draw.
+        // the silo_shed_link row below is what actually records the draw.
         const farmLoc = await seedLocation(tenantDb, locCtx, { key: cc.farmCode, name: cc.farmName, type: 'FARM', capacity: cc.farmCapacity });
         const farmId = farmLoc.id;
         const shedLoc = await seedLocation(tenantDb, locCtx, { key: cc.shedCode, name: cc.shedName, type: 'SHED', parent: farmLoc, subType: cc.shedType, capacity: cc.shedCapacity });
@@ -521,10 +521,15 @@ export async function seedDevTenant() {
         });
         // The one shed this dev tenant has draws from the one silo it has.
         // Without this the feed forecast has nothing to read: the silo is no
-        // longer the shed's parent, so there is no tree left to walk.
-        await tenantDb.update(tenant.locationMaster)
-          .set({ feed_silo_id: siloLoc.id })
-          .where(eq(tenant.locationMaster.location_id, shedLoc.id));
+        // longer the shed's parent, so there is no tree left to walk, and
+        // silo_shed_link (0114) is the only place the draw is recorded.
+        //
+        // onDuplicateKeyUpdate against uq_silo_shed_link rather than a plain
+        // insert because this script is re-run over an existing dev tenant; the
+        // set is the pair itself, so a second run is a no-op.
+        await tenantDb.insert(tenant.siloShedLink)
+          .values({ link_id: randomUUID(), tenant_id: tenantId, company_id: cc.id, silo_id: siloLoc.id, shed_id: shedLoc.id })
+          .onDuplicateKeyUpdate({ set: { silo_id: siloLoc.id } });
 
         // The operational area. It was never seeded here — a later coverage
         // script created it — so a fresh dev tenant had no area at all, and an

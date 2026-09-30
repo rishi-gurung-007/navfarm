@@ -72,7 +72,8 @@ describe('AnimalService', () => {
         { provide: AuditLogService, useValue: { log: jest.fn().mockResolvedValue({}) } },
         { provide: NumberSeriesService, useValue: { generateNext: jest.fn().mockResolvedValue('PIG-2026-0001') } },
         { provide: NobLobResolutionService, useValue: nobLobResolution },
-        { provide: AnimalMovementLogService, useValue: { record: jest.fn().mockResolvedValue('movement-1') } },
+        // Checklist 6: transitionStage records a STAGE_CHANGE row.
+        { provide: AnimalMovementLogService, useValue: { record: jest.fn().mockResolvedValue(undefined) } },
       ],
     }).compile();
 
@@ -105,6 +106,63 @@ describe('AnimalService', () => {
       await expect(
         service.create({ ...baseDto, entry_type: 'BORN_ON_FARM' }, 'tenant-123'),
       ).rejects.toThrow(BadRequestException);
+    });
+
+    /**
+     * D42 and Rishi's addendum: the parents' serial numbers are kept for EVERY
+     * animal, whatever its entry type and whether or not the parent is
+     * registered here. A purchased animal and a born-on-farm one both carry
+     * them, and neither needs a picked parent to do so.
+     */
+    it.each([
+      ['PURCHASED_IMPORTED', { source_receipt_id: 'grn-1' }],
+      ['BORN_ON_FARM', { source_batch_id: 'batch-1' }],
+    ])('keeps a typed sire and dam serial on a %s animal, with no parent picked', async (entryType, extra) => {
+      mockDbSelect
+        .mockReturnValueOnce(found({ company_id: 'comp-1' }))
+        .mockReturnValueOnce(found({ nob_id: 'nob-1' }))
+        .mockReturnValueOnce(found({ lob_id: 'lob-1' }))
+        .mockReturnValueOnce(found({ breed_id: 'breed-1' }))
+        .mockReturnValueOnce(found({ item_id: 'item-1' }))
+        // the purchased path reads the receipt, then its line for the rate;
+        // the born-on-farm path reads the source batch. One row answers both.
+        .mockReturnValueOnce(found({ receipt_id: 'grn-1', batch_id: 'batch-1' }))
+        .mockReturnValueOnce(found({ receipt_id: 'grn-1', item_id: 'item-1', rate: '2857.57' }))
+        .mockReturnValueOnce(found({ lob_code: 'PIGGERY' }))
+        .mockReturnValue(found({ animal_id: 'a-1', animal_code: 'PIG-2026-0001' }));
+      const inserted: any[] = [];
+      mockDbInsert.mockReturnValue({ values: jest.fn().mockImplementation((v) => { inserted.push(v); return Promise.resolve({}); }) });
+
+      await service.create({
+        ...baseDto,
+        entry_type: entryType,
+        ...extra,
+        sire_serial_no: '  SIRE-PAPER-77  ',
+        dam_serial_no: 'DAM-PAPER-88',
+      } as any, 'tenant-123', { userId: 'user-1' });
+
+      expect(inserted[0].sire_serial_no).toBe('SIRE-PAPER-77'); // trimmed
+      expect(inserted[0].dam_serial_no).toBe('DAM-PAPER-88');
+      expect(inserted[0].sire_animal_id).toBeNull();
+      expect(inserted[0].dam_animal_id).toBeNull();
+    });
+
+    it('stores nothing rather than an empty string when the boxes are left blank', async () => {
+      mockDbSelect
+        .mockReturnValueOnce(found({ company_id: 'comp-1' }))
+        .mockReturnValueOnce(found({ nob_id: 'nob-1' }))
+        .mockReturnValueOnce(found({ lob_id: 'lob-1' }))
+        .mockReturnValueOnce(found({ breed_id: 'breed-1' }))
+        .mockReturnValueOnce(found({ item_id: 'item-1' }))
+        .mockReturnValueOnce(found({ lob_code: 'PIGGERY' }))
+        .mockReturnValue(found({ animal_id: 'a-1', animal_code: 'PIG-2026-0001' }));
+      const inserted: any[] = [];
+      mockDbInsert.mockReturnValue({ values: jest.fn().mockImplementation((v) => { inserted.push(v); return Promise.resolve({}); }) });
+
+      await service.create({ ...baseDto, sire_serial_no: '   ', dam_serial_no: '' } as any, 'tenant-123', { userId: 'user-1' });
+
+      expect(inserted[0].sire_serial_no).toBeNull();
+      expect(inserted[0].dam_serial_no).toBeNull();
     });
 
     it('computes total_opening_asset_value and generates animal_code via NumberSeriesService', async () => {
@@ -692,7 +750,7 @@ describe('AnimalService', () => {
       let updated: any;
       mockDbUpdate.mockReturnValue({ set: jest.fn().mockImplementation((v) => { updated = v; return { where: jest.fn().mockResolvedValue({}) }; }) });
 
-      await service.update('a-1', { grading: 'A' } as any, 'tenant-123');
+      await service.update('a-1', { grading: 7 } as any, 'tenant-123');
 
       expect(updated).not.toHaveProperty('age_at_entry_weeks');
     });

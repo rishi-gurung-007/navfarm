@@ -38,6 +38,8 @@ import { CustomerModule } from './modules/master-data/customer/customer.module';
 import { ResourceModule } from './modules/master-data/resource/resource.module';
 import { DiseaseModule } from './modules/master-data/disease/disease.module';
 import { ReasonModule } from './modules/master-data/reason/reason.module';
+import { AlertRuleModule } from './modules/system/alert-rule/alert-rule.module';
+import { ReportingPeriodModule } from './modules/master-data/reporting-period/reporting-period.module';
 import { KpiMetricModule } from './modules/master-data/kpi-metric/kpi-metric.module';
 import { ActivityModule } from './modules/master-data/activity/activity.module';
 import { FeedFormulaModule } from './modules/master-data/feed-formula/feed-formula.module';
@@ -45,6 +47,8 @@ import { GlAccountModule } from './modules/finance/gl-account/gl-account.module'
 import { GlMappingModule } from './modules/finance/gl-mapping/gl-mapping.module';
 import { CostCenterModule } from './modules/finance/cost-center/cost-center.module';
 import { InventoryLedgerModule } from './modules/inventory/inventory-ledger/inventory-ledger.module';
+import { FeedForecastModule } from './modules/inventory/feed-forecast/feed-forecast.module';
+import { FeedAlertModule } from './modules/inventory/feed-alert/feed-alert.module';
 import { GoodsReceiptModule } from './modules/inventory/goods-receipt/goods-receipt.module';
 import { BioAssetLedgerModule } from './modules/inventory/bio-asset-ledger/bio-asset-ledger.module';
 import { GoodsIssueModule } from './modules/inventory/goods-issue/goods-issue.module';
@@ -61,6 +65,7 @@ import { BatchDailyDataModule } from './modules/production/batch-daily-data/batc
 import { ResourceLedgerModule } from './modules/production/resource-ledger/resource-ledger.module';
 import { AlertModule } from './modules/production/alert/alert.module';
 import { ApprovalModule } from './modules/production/approval/approval.module';
+import { FeedRequisitionModule } from './modules/procurement/feed-requisition/feed-requisition.module';
 import { MilkModule } from './modules/production/milk/milk.module';
 import { QcParameterModule } from './modules/production/qc-parameter/qc-parameter.module';
 import { QcModule } from './modules/production/qc/qc.module';
@@ -126,6 +131,8 @@ import { SystemController } from './system/system.controller';
     ResourceModule,
     DiseaseModule,
     ReasonModule,
+    AlertRuleModule,
+    ReportingPeriodModule,
     KpiMetricModule,
     ActivityModule,
     FeedFormulaModule,
@@ -133,6 +140,8 @@ import { SystemController } from './system/system.controller';
     GlMappingModule,
     CostCenterModule,
     InventoryLedgerModule,
+    FeedForecastModule,
+    FeedAlertModule,
     GoodsReceiptModule,
     BioAssetLedgerModule,
     GoodsIssueModule,
@@ -149,6 +158,8 @@ import { SystemController } from './system/system.controller';
     ResourceLedgerModule,
     AlertModule,
     ApprovalModule,
+    // Feed requisitions (Plan B). The generic RequisitionModule stays unregistered (Ruling C2).
+    FeedRequisitionModule,
     MilkModule,
     QcParameterModule,
     QcModule,

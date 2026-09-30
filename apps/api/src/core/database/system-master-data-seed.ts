@@ -143,8 +143,8 @@ export const SYSTEM_LOCATION_TYPE_SEED: Array<{
   // FARM only. A silo stands in the yard and is blown full by the mill; one
   // silo feeds several sheds, so making it a child of a shed claimed an
   // ownership the yard does not have and left the other sheds it feeds
-  // unrecordable. Which silo a shed draws from is the shed's own feed_silo_id
-  // (migration 0113), which is a many-sheds-to-one-silo link and not a tree.
+  // unrecordable. Which silos a shed draws from is silo_shed_link (migration
+  // 0114), a many-to-many link and not a tree.
   { type_code: 'SILO', type_name: 'Silo', code_prefix: 'SILO', allowed_parent_types: ['FARM'] },
 ];
 

@@ -27,7 +27,10 @@ describe("useCodeSeries on a tenant with no number series", () => {
 
     const { result } = renderHook(() => useCodeSeries("location", { location_type: "FARM-NEW-TENANT" }, true));
 
-    await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
+    // The first answer settles it now (Arun, 27 Sep: a { generated } reply is final),
+    // so the legacy /no-series fallback is not always called; what matters is that
+    // loading ends and Create is not held disabled.
+    await waitFor(() => expect(get).toHaveBeenCalled());
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.error).toBeUndefined();
     expect(result.current.managed).toBe(false);

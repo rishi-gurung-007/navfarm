@@ -1,9 +1,20 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsInt, Min, IsEmail, IsIn, IsNumber } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsInt, Min, IsEmail, IsIn, IsNumber, MaxLength, Matches } from 'class-validator';
 import { Type } from 'class-transformer';
 import { MasterListQueryDto } from '../../../../common/master-list-query';
 
 const VENDOR_TYPES = ['ANIMAL_SUPPLIER', 'BREEDING_FARM', 'SEMEN_SUPPLIER', 'FEED_SUPPLIER', 'MEDICINE_SUPPLIER', 'EQUIPMENT_SUPPLIER', 'SERVICES', 'GENERAL'] as const;
+
+// Freebuff task-3 item 3 (Rishi, 29 Sep 2026): descriptive text fields are
+// capped at 50; Country/State/City take letters and spaces only; Postal Code
+// digits only. The web form mirrors the same bounds (maxLength/pattern in the
+// supplier config) so the form refuses what the API would reject.
+const DESCRIPTIVE_MAX = 50;
+const LETTERS_ONLY = /^[A-Za-z ]*$/;
+const DIGITS_ONLY = /^[0-9]*$/;
+const letters = (extra = '') =>
+  Matches(LETTERS_ONLY, { message: `must contain letters and spaces only${extra ? ` (${extra})` : ''}` });
+const digits = () => Matches(DIGITS_ONLY, { message: 'must contain digits only' });
 
 export class CreateSupplierDto {
   @ApiProperty({ description: 'Company UUID scope ownership', example: 'company-uuid-here' })
@@ -16,9 +27,10 @@ export class CreateSupplierDto {
   @IsOptional()
   supplier_code?: string;
 
-  @ApiProperty({ description: 'Full legal name of the supplier', example: 'Feed Ingredients Corp Ltd' })
+  @ApiProperty({ description: 'Full legal name of the supplier', example: 'Feed Ingredients Corp Ltd', maxLength: 50 })
   @IsString()
   @IsNotEmpty()
+  @MaxLength(DESCRIPTIVE_MAX)
   supplier_name: string;
 
   @ApiProperty({ description: 'Contact email address', required: false, example: 'orders@feedingredients.com' })
@@ -26,44 +38,56 @@ export class CreateSupplierDto {
   @IsOptional()
   email?: string;
 
-  @ApiProperty({ description: 'Contact phone number', required: false, example: '+919999988888' })
+  @ApiProperty({ description: 'Contact phone number', required: false, example: '+919999988888', maxLength: 50 })
   @IsString()
   @IsOptional()
+  @MaxLength(DESCRIPTIVE_MAX)
   phone?: string;
 
-  @ApiProperty({ description: 'Government Tax Registration Number (e.g. VAT, GSTIN, EIN)', required: false, example: 'GSTIN123456789A' })
+  @ApiProperty({ description: 'Government Tax Registration Number (e.g. VAT, GSTIN, EIN)', required: false, example: 'GSTIN123456789A', maxLength: 50 })
   @IsString()
   @IsOptional()
+  @MaxLength(DESCRIPTIVE_MAX)
   tax_number?: string;
 
-  @ApiProperty({ description: 'Standard billing terms', required: false, example: 'NET30' })
+  @ApiProperty({ description: 'Standard billing terms', required: false, example: 'NET30', maxLength: 50 })
   @IsString()
   @IsOptional()
+  @MaxLength(DESCRIPTIVE_MAX)
   payment_terms?: string;
 
-  @ApiProperty({ description: 'Supplier street address line 1', required: false })
+  @ApiProperty({ description: 'Supplier street address line 1 — no longer asked on the form; kept for callers that still send it', required: false, maxLength: 50 })
   @IsString()
   @IsOptional()
+  @MaxLength(DESCRIPTIVE_MAX)
   address_line1?: string;
 
-  @ApiProperty({ description: 'City', required: false })
+  @ApiProperty({ description: 'City — letters and spaces only', required: false, maxLength: 50 })
   @IsString()
   @IsOptional()
+  @MaxLength(DESCRIPTIVE_MAX)
+  @letters('City')
   city?: string;
 
-  @ApiProperty({ description: 'State', required: false })
+  @ApiProperty({ description: 'State — letters and spaces only', required: false, maxLength: 50 })
   @IsString()
   @IsOptional()
+  @MaxLength(DESCRIPTIVE_MAX)
+  @letters('State')
   state?: string;
 
-  @ApiProperty({ description: 'Country', required: false })
+  @ApiProperty({ description: 'Country — letters and spaces only', required: false, maxLength: 50 })
   @IsString()
   @IsOptional()
+  @MaxLength(DESCRIPTIVE_MAX)
+  @letters('Country')
   country?: string;
 
-  @ApiProperty({ description: 'Postal area pincode', required: false })
+  @ApiProperty({ description: 'Postal Code — digits only', required: false, maxLength: 50 })
   @IsString()
   @IsOptional()
+  @MaxLength(DESCRIPTIVE_MAX)
+  @digits()
   pincode?: string;
 
   @ApiProperty({ description: 'Vendor classification', enum: VENDOR_TYPES, default: 'GENERAL', required: false })
@@ -72,24 +96,28 @@ export class CreateSupplierDto {
   @IsIn(VENDOR_TYPES)
   vendor_type?: string;
 
-  @ApiProperty({ description: 'Health certificate URL — required for ANIMAL_SUPPLIER, checked at Goods Receipt posting', required: false })
+  @ApiProperty({ description: 'Health certificate URL — required for ANIMAL_SUPPLIER, checked at Goods Receipt posting', required: false, maxLength: 50 })
   @IsString()
   @IsOptional()
+  @MaxLength(DESCRIPTIVE_MAX)
   health_cert_url?: string;
 
-  @ApiProperty({ description: 'Official breeding-farm government registration number — required for ANIMAL_SUPPLIER / BREEDING_FARM', required: false })
+  @ApiProperty({ description: 'Official breeding-farm government registration number — required for ANIMAL_SUPPLIER / BREEDING_FARM', required: false, maxLength: 50 })
   @IsString()
   @IsOptional()
+  @MaxLength(DESCRIPTIVE_MAX)
   breeding_farm_code?: string;
 
-  @ApiProperty({ description: 'Bank account number — stored encrypted, never returned in plaintext', required: false })
+  @ApiProperty({ description: 'Bank account number — stored encrypted, never returned in plaintext', required: false, maxLength: 50 })
   @IsString()
   @IsOptional()
+  @MaxLength(DESCRIPTIVE_MAX)
   bank_account_no?: string;
 
-  @ApiProperty({ description: 'Bank IFSC / routing code', required: false })
+  @ApiProperty({ description: 'Bank IFSC / routing code', required: false, maxLength: 50 })
   @IsString()
   @IsOptional()
+  @MaxLength(DESCRIPTIVE_MAX)
   bank_ifsc?: string;
 
   @ApiProperty({ description: 'Maximum outstanding payable before a new PO is blocked', required: false })
@@ -119,9 +147,10 @@ export class UpdateSupplierDto {
   @IsOptional()
   supplier_code?: string;
 
-  @ApiProperty({ required: false })
+  @ApiProperty({ required: false, maxLength: 50 })
   @IsString()
   @IsOptional()
+  @MaxLength(DESCRIPTIVE_MAX)
   supplier_name?: string;
 
   @ApiProperty({ required: false })
@@ -129,44 +158,56 @@ export class UpdateSupplierDto {
   @IsOptional()
   email?: string;
 
-  @ApiProperty({ required: false })
+  @ApiProperty({ required: false, maxLength: 50 })
   @IsString()
   @IsOptional()
+  @MaxLength(DESCRIPTIVE_MAX)
   phone?: string;
 
-  @ApiProperty({ required: false })
+  @ApiProperty({ required: false, maxLength: 50 })
   @IsString()
   @IsOptional()
+  @MaxLength(DESCRIPTIVE_MAX)
   tax_number?: string;
 
-  @ApiProperty({ required: false })
+  @ApiProperty({ required: false, maxLength: 50 })
   @IsString()
   @IsOptional()
+  @MaxLength(DESCRIPTIVE_MAX)
   payment_terms?: string;
 
-  @ApiProperty({ required: false })
+  @ApiProperty({ required: false, maxLength: 50 })
   @IsString()
   @IsOptional()
+  @MaxLength(DESCRIPTIVE_MAX)
   address_line1?: string;
 
-  @ApiProperty({ required: false })
+  @ApiProperty({ description: 'City — letters and spaces only', required: false, maxLength: 50 })
   @IsString()
   @IsOptional()
+  @MaxLength(DESCRIPTIVE_MAX)
+  @letters('City')
   city?: string;
 
-  @ApiProperty({ required: false })
+  @ApiProperty({ description: 'State — letters and spaces only', required: false, maxLength: 50 })
   @IsString()
   @IsOptional()
+  @MaxLength(DESCRIPTIVE_MAX)
+  @letters('State')
   state?: string;
 
-  @ApiProperty({ required: false })
+  @ApiProperty({ description: 'Country — letters and spaces only', required: false, maxLength: 50 })
   @IsString()
   @IsOptional()
+  @MaxLength(DESCRIPTIVE_MAX)
+  @letters('Country')
   country?: string;
 
-  @ApiProperty({ required: false })
+  @ApiProperty({ description: 'Postal Code — digits only', required: false, maxLength: 50 })
   @IsString()
   @IsOptional()
+  @MaxLength(DESCRIPTIVE_MAX)
+  @digits()
   pincode?: string;
 
   @ApiProperty({ required: false, enum: VENDOR_TYPES })
@@ -175,24 +216,28 @@ export class UpdateSupplierDto {
   @IsIn(VENDOR_TYPES)
   vendor_type?: string;
 
-  @ApiProperty({ required: false })
+  @ApiProperty({ required: false, maxLength: 50 })
   @IsString()
   @IsOptional()
+  @MaxLength(DESCRIPTIVE_MAX)
   health_cert_url?: string;
 
-  @ApiProperty({ required: false })
+  @ApiProperty({ required: false, maxLength: 50 })
   @IsString()
   @IsOptional()
+  @MaxLength(DESCRIPTIVE_MAX)
   breeding_farm_code?: string;
 
-  @ApiProperty({ description: 'Replaces the stored (encrypted) bank account number', required: false })
+  @ApiProperty({ description: 'Replaces the stored (encrypted) bank account number', required: false, maxLength: 50 })
   @IsString()
   @IsOptional()
+  @MaxLength(DESCRIPTIVE_MAX)
   bank_account_no?: string;
 
-  @ApiProperty({ required: false })
+  @ApiProperty({ required: false, maxLength: 50 })
   @IsString()
   @IsOptional()
+  @MaxLength(DESCRIPTIVE_MAX)
   bank_ifsc?: string;
 
   @ApiProperty({ required: false })

@@ -16,6 +16,7 @@ import {
   AlertCircle,
   X,
   Info,
+  CalendarClock,
 } from "lucide-react";
 import { api } from "@/services/api-client";
 import { getStoredUser, getActiveCompanyId, setActiveCompanyId } from "@/hooks/useAuth";
@@ -26,6 +27,7 @@ import { InlineAlert } from "@/components/ui/alert";
 import { Toast } from "@/components/ui/toast";
 import { Dialog } from "@/components/ui/dialog";
 import { LoadingState, ErrorState, EmptyState } from "@/components/ui/states";
+import { FeedPlanningPanel } from "@/components/console/inventory/feed-planning-panel";
 
 export interface MasterMeta {
   key: string;
@@ -83,7 +85,7 @@ export default function InventorySetupPage() {
     return getActiveCompanyId() || companies[0]?.company_id || "";
   });
 
-  const [activeTab, setActiveTab] = useState<"numbering" | "general">("numbering");
+  const [activeTab, setActiveTab] = useState<"numbering" | "general" | "feed-planning">("numbering");
   const [setupData, setSetupData] = useState<InventorySetupResponse | null>(null);
   const [localNumbering, setLocalNumbering] = useState<Record<string, { enabled: boolean; default_series_id: string | null }>>({});
   const [localGeneral, setLocalGeneral] = useState<GeneralConfig>({});
@@ -445,7 +447,24 @@ export default function InventorySetupPage() {
           <Sliders size={16} />
           General Controls
         </button>
+
+        {/* D32: the six per-farm feed settings, off the Location form and onto their own tab. */}
+        <button
+          type="button"
+          onClick={() => setActiveTab("feed-planning")}
+          className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === "feed-planning"
+              ? "border-[var(--accent)] text-[var(--accent)] font-semibold"
+              : "border-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+          }`}
+        >
+          <CalendarClock size={16} />
+          Feed Planning
+        </button>
       </div>
+
+      {/* TAB 3: FEED PLANNING (D32) */}
+      {activeTab === "feed-planning" && <FeedPlanningPanel />}
 
       {/* TAB 1: NUMBER SERIES SETUP */}
       {activeTab === "numbering" && (

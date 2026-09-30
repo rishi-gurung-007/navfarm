@@ -12,6 +12,8 @@ import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { generateCompositeCode } from '../../system/number-series/composite-code.util';
 import { segmentFields } from '../../system/number-series/code-format.util';
+import { SiloFeedService } from '../../inventory/silo-feed/silo-feed.service';
+import { assertSiloLevels } from '../../inventory/silo-feed/silo-levels';
 
 /**
  * The location types a warehouse reads as. WarehouseService projects exactly
@@ -108,12 +110,22 @@ export function siloCapacityForDisplay(
   return (uom?.toUpperCase() === 'TON' ? kg / 1000 : kg).toString();
 }
 
+/** One silo on a shed's record view (checklist 1a). Read-only. */
+export interface AttachedSilo {
+  location_id: string;
+  location_code: string;
+  location_name: string;
+  current_feed_item_code: string | null;
+  current_feed_item_name: string | null;
+}
+
 @Injectable()
 export class LocationService {
   constructor(
     private readonly cls: ClsService,
     private readonly auditService: AuditLogService,
     private readonly numberSeriesService: NumberSeriesService,
+    private readonly siloFeedService: SiloFeedService,
   ) {}
 
   private get db(): MySql2Database<typeof schema> {
@@ -333,9 +345,20 @@ export class LocationService {
       silo_capacity_kg: siloCapacityToKg(dto.silo_capacity_kg, dto.silo_capacity_uom),
       silo_capacity_uom: dto.silo_capacity_uom ?? null,
       silo_reorder_days: dto.silo_reorder_days ?? null,
+      low_level_kg: dto.storage_type === 'SILO' && dto.low_level_kg != null ? String(dto.low_level_kg) : null,
+      high_level_kg: dto.storage_type === 'SILO' && dto.high_level_kg != null ? String(dto.high_level_kg) : null,
+      ...(dto.feed_bulk_multiple_kg !== undefined ? { feed_bulk_multiple_kg: dto.feed_bulk_multiple_kg } : {}),
+      ...(dto.feed_bag_size_kg !== undefined ? { feed_bag_size_kg: dto.feed_bag_size_kg } : {}),
+      ...(dto.feed_truck_target_kg !== undefined ? { feed_truck_target_kg: dto.feed_truck_target_kg } : {}),
+      ...(dto.feed_production_weekday !== undefined ? { feed_production_weekday: dto.feed_production_weekday } : {}),
       downtime_days_required: dto.downtime_days_required ?? null,
       storage_name: dto.storage_name ?? null,
       feed_in_bags: null,
+      // Left out entirely, not written as null, when the caller sends nothing
+      // — the column defaults to 2 and 0 respectively, and a create that never
+      // mentioned feed timing should get that default rather than lose it.
+      ...(dto.feed_refill_buffer_days !== undefined ? { feed_refill_buffer_days: dto.feed_refill_buffer_days } : {}),
+      ...(dto.feed_lead_time_days !== undefined ? { feed_lead_time_days: dto.feed_lead_time_days } : {}),
       is_active: true,
       status: 'ACTIVE',
       extension_config: dto.extension_config ? JSON.stringify(dto.extension_config) : null,
@@ -363,17 +386,21 @@ export class LocationService {
   }
 
   /**
-   * Writes the "Attached Sheds" set from the silo's side.
+   * Writes the "Attached Sheds" set from the silo's side, into silo_shed_link
+   * (spec D7).
    *
-   * The set itself lives on the SHED rows, in feed_silo_id, never on the silo,
-   * because that is the side the cardinality can be enforced on: a single
-   * column holds one silo and no more, so "a shed draws from exactly one silo"
-   * is structurally true rather than a rule someone has to keep remembering.
-   * The silo form still edits the set from the silo end, so this reconciles the
-   * two — attach everything listed, detach anything that used to be listed and
-   * is not any more.
+   * A shed may now draw from several silos — one silo per feed item, so a
+   * shed with two feeds (say a creep ration and a sow ration) can hold two
+   * links. The old rule, "a shed draws from exactly one silo", lived here as a
+   * check against feed_silo_id; it is gone from this method because the real
+   * constraint is about the *item*, not the silo, and that is what D9 already
+   * enforces — SiloFeedService.assertAttachable refuses linking this silo to a
+   * shed another silo already feeds the same item to. The silo form still
+   * edits the set from the silo's side, so this reconciles the link table —
+   * attach everything listed, detach anything that used to be listed and is
+   * not any more.
    *
-   * Runs on the caller's transaction executor rather than this.db so the shed
+   * Runs on the caller's transaction executor rather than this.db so the link
    * writes are part of the same commit as the silo write.
    */
   private async syncAttachedSheds(
@@ -398,7 +425,6 @@ export class LocationService {
         location_type: schema.locationMaster.location_type,
         parent_location_id: schema.locationMaster.parent_location_id,
         farm_id: schema.locationMaster.farm_id,
-        feed_silo_id: schema.locationMaster.feed_silo_id,
       }).from(schema.locationMaster).where(and(
         inArray(schema.locationMaster.location_id, shedIds),
         eq(schema.locationMaster.tenant_id, tenantId),
@@ -426,72 +452,139 @@ export class LocationService {
             `Shed '${shed.location_code}' is not on the same farm as this silo.`,
           );
         }
-        // This is where "a shed draws from EXACTLY ONE silo" is enforced.
-        // Quietly taking a shed from another silo would leave that silo's own
-        // Attached Sheds list wrong with nothing said, so the second claim is
-        // refused and the shed named.
-        if (shed.feed_silo_id && shed.feed_silo_id !== siloId) {
-          throw new BadRequestException(
-            `Shed '${shed.location_code}' already draws its feed from another silo. `
-            + 'A shed draws from exactly one silo — detach it from that silo first.',
-          );
-        }
       }
+
+      // D9 at attach time: this silo may not be linked to a shed another silo
+      // already feeds the same item to. userId isn't part of this check — it
+      // only cares what each silo currently holds.
+      await this.siloFeedService.assertAttachable({
+        siloId, shedIds, companyId: companyId as string, tenantId,
+      });
     }
 
-    const updatedAt = toMysqlTimestamp();
-    // Detach first. A shed dropped from the list still points at this silo
-    // otherwise, and the attachment set could only ever grow.
-    const detachConditions = [
-      eq(schema.locationMaster.tenant_id, tenantId),
-      eq(schema.locationMaster.feed_silo_id, siloId),
+    // Detach first. A shed dropped from the list still carries a link
+    // otherwise, and the attachment set could only ever grow. With no shedIds
+    // at all, every link this silo holds is removed.
+    const deleteConditions = [
+      eq(schema.siloShedLink.tenant_id, tenantId),
+      eq(schema.siloShedLink.silo_id, siloId),
     ];
     if (shedIds.length) {
-      detachConditions.push(not(inArray(schema.locationMaster.location_id, shedIds)));
+      deleteConditions.push(not(inArray(schema.siloShedLink.shed_id, shedIds)));
     }
-    await tx.update(schema.locationMaster)
-      .set({ feed_silo_id: null, updated_by: userId || null, updated_at: updatedAt })
-      .where(and(...detachConditions));
+    await tx.delete(schema.siloShedLink).where(and(...deleteConditions));
 
     if (shedIds.length) {
-      await tx.update(schema.locationMaster)
-        .set({ feed_silo_id: siloId, updated_by: userId || null, updated_at: updatedAt })
+      // Only the pairs that are missing — re-saving an unchanged list must not
+      // collide on uq_silo_shed_link by re-inserting a row still standing.
+      const existing = await tx.select({ shed_id: schema.siloShedLink.shed_id })
+        .from(schema.siloShedLink)
         .where(and(
-          eq(schema.locationMaster.tenant_id, tenantId),
-          inArray(schema.locationMaster.location_id, shedIds),
+          eq(schema.siloShedLink.tenant_id, tenantId),
+          eq(schema.siloShedLink.silo_id, siloId),
         ));
+      const existingShedIds = new Set(existing.map((row) => row.shed_id));
+      const missing = shedIds.filter((shedId) => !existingShedIds.has(shedId));
+      if (missing.length) {
+        await tx.insert(schema.siloShedLink).values(missing.map((shedId) => ({
+          tenant_id: tenantId,
+          company_id: companyId,
+          silo_id: siloId,
+          shed_id: shedId,
+          created_by: userId || null,
+        })));
+      }
     }
   }
 
-  /** The read side of the same view: the sheds currently pointing at this silo. */
-  private async attachedShedIds(siloId: string, tenantId: string): Promise<string[]> {
-    const rows = await this.db.select({ location_id: schema.locationMaster.location_id })
-      .from(schema.locationMaster)
+  /** The read side of the same view: the sheds currently linked to this silo. */
+  /**
+   * The silos that feed one shed, in code order, each with the feed item it is
+   * holding now (checklist 1a). Read-only: `silo_shed_link` is written from the
+   * silo's Attached Sheds, and nothing here edits it.
+   */
+  private async attachedSilos(shedId: string, companyId: string | null, tenantId: string): Promise<AttachedSilo[]> {
+    const rows = await this.db
+      .select({
+        location_id: schema.locationMaster.location_id,
+        location_code: schema.locationMaster.location_code,
+        location_name: schema.locationMaster.location_name,
+      })
+      .from(schema.siloShedLink)
+      .innerJoin(schema.locationMaster, eq(schema.locationMaster.location_id, schema.siloShedLink.silo_id))
       .where(and(
-        eq(schema.locationMaster.tenant_id, tenantId),
-        eq(schema.locationMaster.feed_silo_id, siloId),
+        eq(schema.siloShedLink.tenant_id, tenantId),
+        eq(schema.siloShedLink.shed_id, shedId),
         isNull(schema.locationMaster.deleted_at),
+      ));
+    if (!rows.length) return [];
+    // One ledger read per silo, so only ask when there is a silo to ask about.
+    const items = companyId
+      ? await this.siloFeedService.currentItems(rows.map((row) => row.location_id), companyId, tenantId)
+      : new Map<string, { item_code: string; item_description: string | null } | null>();
+    return rows
+      .map((row) => {
+        const current = items.get(row.location_id) ?? null;
+        return {
+          location_id: row.location_id,
+          location_code: row.location_code,
+          location_name: row.location_name,
+          current_feed_item_code: current?.item_code ?? null,
+          current_feed_item_name: current?.item_description ?? null,
+        };
+      })
+      .sort((a, b) => a.location_code.localeCompare(b.location_code));
+  }
+
+  private async attachedShedIds(siloId: string, tenantId: string): Promise<string[]> {
+    const rows = await this.db.select({ shed_id: schema.siloShedLink.shed_id })
+      .from(schema.siloShedLink)
+      .where(and(
+        eq(schema.siloShedLink.tenant_id, tenantId),
+        eq(schema.siloShedLink.silo_id, siloId),
       ))
-      .orderBy(schema.locationMaster.location_code);
-    return rows.map((row) => row.location_id);
+      .orderBy(schema.siloShedLink.shed_id);
+    return rows.map((row) => row.shed_id);
   }
 
   /**
-   * The edit shape of a location: two of its fields are not what the column
+   * The edit shape of a location: some of its fields are not what the column
    * holds.
    *
    * silo_capacity_kg is canonical kilogrammes in the database but the form has
-   * to show the figure that was typed (see siloCapacityForDisplay), and
-   * attached_sheds is not a column here at all — it is read back off the shed
-   * rows, and only for a silo, since it means nothing anywhere else.
+   * to show the figure that was typed (see siloCapacityForDisplay).
+   * attached_sheds is not a column here at all — it is read back off
+   * silo_shed_link, and current_feed_item_code/name come from SiloFeedService
+   * rather than a column too; both only for a silo, since neither means
+   * anything for any other location type.
    */
   private async shapeForRead<T extends Record<string, any>>(row: T, tenantId: string) {
     const shaped = {
       ...row,
       silo_capacity_kg: siloCapacityForDisplay(row.silo_capacity_kg, row.silo_capacity_uom),
-    } as T & { attached_sheds?: string[] };
+    } as T & {
+      attached_sheds?: string[];
+      attached_silos?: AttachedSilo[];
+      current_feed_item_code?: string | null;
+      current_feed_item_name?: string | null;
+    };
+    if (row.location_type === 'SHED') {
+      // Checklist 1a: the silo side has shown its sheds since D7; the shed side
+      // showed nothing, so "where does this shed get its feed?" meant opening
+      // every silo on the farm. Read-only — the link is still edited from the
+      // silo's Attached Sheds picker.
+      shaped.attached_silos = await this.attachedSilos(row.location_id, row.company_id, tenantId);
+    }
     if (row.location_type === 'SILO') {
       shaped.attached_sheds = await this.attachedShedIds(row.location_id, tenantId);
+      // company_id is required to create a SILO (create() enforces it), so a
+      // row read back here should always carry one — the guard only protects
+      // a legacy or cross-scope row that somehow does not.
+      const current = row.company_id
+        ? (await this.siloFeedService.currentItems([row.location_id], row.company_id, tenantId)).get(row.location_id)
+        : null;
+      shaped.current_feed_item_code = current?.item_code ?? null;
+      shaped.current_feed_item_name = current?.item_description ?? null;
     }
     return shaped;
   }
@@ -530,6 +623,26 @@ export class LocationService {
         'A SILO location requires silo_capacity_kg, silo_capacity_uom (KG or TON) and silo_reorder_days.'
       );
     }
+  }
+
+  /**
+   * Master Setup §1 rows 10 and 12. D22 (Rishi, 27 Sep; supersedes Plan B's
+   * optional levels): a SILO must carry both, because the forecast's run-down
+   * and the FEED_BELOW_L1 / FEED_ABOVE alerts read them and a silo without
+   * them was silently never alerted on. `required` is decided by the caller
+   * from location_type, never from storage_type: 248 legacy pens and sheds
+   * carry storage_type SILO and must stay editable without levels. Both are
+   * kilograms whatever unit the capacity was typed in (capacity is compared
+   * after its TON→KG conversion); the low must sit below the high, and
+   * neither may exceed what the silo physically holds.
+   */
+  /**
+   * D41 moved the rule itself to silo-feed/silo-levels.ts, because Feed Planning
+   * edits the same three columns now and two screens must not be able to
+   * disagree about what is valid. This stays as the local name the call sites use.
+   */
+  private assertSiloLevels(lowKg: number | null | undefined, highKg: number | null | undefined, capacityKg: number | null, required = false) {
+    assertSiloLevels(lowKg, highKg, capacityKg, required);
   }
 
   /**
@@ -799,11 +912,24 @@ export class LocationService {
 
     // 4. SILO locations must carry silo tracking fields
     if (!dto.storage_type && typeCode === 'SILO') dto.storage_type = 'SILO';
-    this.assertSiloFieldsWhenSilo(dto.storage_type, dto.silo_capacity_kg, dto.silo_reorder_days, dto.silo_capacity_uom);
-    if (dto.storage_type !== 'SILO') {
+    // D28 (Rishi, 27 Sep): the silo rules follow the location TYPE, not
+    // storage_type. storage_type is a legacy template column, and 248 pens,
+    // sheds and crates in nf_devco carry 'SILO' in it from the old template —
+    // reading it here demanded silo capacity of every one of them, so none
+    // could be saved at all. A type that is neither SILO nor STORE never
+    // keeps a storage type either, so no new row joins them.
+    this.assertSiloFieldsWhenSilo(typeCode, dto.silo_capacity_kg, dto.silo_reorder_days, dto.silo_capacity_uom);
+    if (typeCode !== 'SILO' && typeCode !== 'STORE') dto.storage_type = undefined;
+    if (typeCode === 'SILO') {
+      const capacityKg = siloCapacityToKg(dto.silo_capacity_kg, dto.silo_capacity_uom);
+      this.assertSiloLevels(dto.low_level_kg, dto.high_level_kg, capacityKg == null ? null : Number(capacityKg), true);
+    }
+    if (typeCode !== 'SILO') {
       dto.silo_capacity_kg = undefined;
       dto.silo_reorder_days = undefined;
       dto.silo_capacity_uom = undefined;
+      dto.low_level_kg = undefined;
+      dto.high_level_kg = undefined;
     }
 
     // attached_sheds is the silo's own field. Accepting it on any other type
@@ -949,29 +1075,11 @@ export class LocationService {
       )!);
       conditions.push(eq(schema.locationMaster.is_active, true));
       conditions.push(isNull(schema.locationMaster.deleted_at));
-      // Every shed on the farm is returned, including the ones other silos
-      // already feed, because the picker shows those greyed out and names the
-      // silo that holds them (Rishi, 2026-09-24) rather than hiding them — a
-      // farm's layout is easier to read whole, and "why can't I pick that one"
-      // is answered on the row instead of in a refusal after the save. Each
-      // shed therefore carries feed_silo_id and feed_silo_name; the form greys
-      // a row whose feed_silo_id is set and is not the silo being edited.
-      //
-      // Hiding attached sheds instead would be actively wrong: opening an
-      // existing silo would offer a list with every shed it already feeds
-      // missing, showing selections with no matching option and detaching them
-      // on save.
-      //
-      // siloId is still honoured when given, for callers that do want the
-      // narrowed list. The exclusivity rule does not depend on either: it is
-      // enforced where it has to be anyway — syncAttachedSheds refuses a shed
-      // already fed by a different silo, with a message that names it.
-      if (query.siloId) {
-        conditions.push(or(
-          isNull(schema.locationMaster.feed_silo_id),
-          eq(schema.locationMaster.feed_silo_id, query.siloId),
-        )!);
-      }
+      // Every active shed on the farm is offered, full stop — a shed may now
+      // draw from several silos (D7), so "already attached to another silo" is
+      // no longer a reason to grey or hide one. D9 (one item per shed) is
+      // enforced where the item is known — SiloFeedService.assertAttachable on
+      // save — not here, where it is not.
     }
     if (query.rootOnly) {
       conditions.push(isNull(schema.locationMaster.parent_location_id));
@@ -1003,47 +1111,46 @@ export class LocationService {
     );
 
     // The list feeds the same edit form findOne does, so it owes the same
-    // shape — a capacity in the unit it was entered in, and a silo's sheds.
-    // The attachments come back in one query keyed by silo rather than one
-    // query per silo on the page.
+    // shape — a capacity in the unit it was entered in, a silo's sheds, and
+    // what a silo currently holds. Both come back in queries keyed by silo
+    // rather than one query per silo on the page.
     const rows = page.data as unknown as (typeof schema.locationMaster.$inferSelect)[];
-    const siloIds = rows.filter((row) => row.location_type === 'SILO').map((row) => row.location_id);
+    const silos = rows.filter((row) => row.location_type === 'SILO');
+    const siloIds = silos.map((row) => row.location_id);
     const attachedBySilo = new Map<string, string[]>();
+    const currentItemBySilo = new Map<string, { item_code: string; item_description: string | null } | null>();
     if (siloIds.length) {
-      const attachments = await this.db.select({
-        location_id: schema.locationMaster.location_id,
-        feed_silo_id: schema.locationMaster.feed_silo_id,
-      }).from(schema.locationMaster).where(and(
-        eq(schema.locationMaster.tenant_id, tenantId),
-        inArray(schema.locationMaster.feed_silo_id, siloIds),
-        isNull(schema.locationMaster.deleted_at),
-      )).orderBy(schema.locationMaster.location_code);
-      for (const attachment of attachments) {
-        if (!attachment.feed_silo_id) continue;
-        const existing = attachedBySilo.get(attachment.feed_silo_id) || [];
-        existing.push(attachment.location_id);
-        attachedBySilo.set(attachment.feed_silo_id, existing);
+      const links = await this.db.select({
+        silo_id: schema.siloShedLink.silo_id,
+        shed_id: schema.siloShedLink.shed_id,
+      }).from(schema.siloShedLink).where(and(
+        eq(schema.siloShedLink.tenant_id, tenantId),
+        inArray(schema.siloShedLink.silo_id, siloIds),
+      )).orderBy(schema.siloShedLink.shed_id);
+      for (const link of links) {
+        const existing = attachedBySilo.get(link.silo_id) || [];
+        existing.push(link.shed_id);
+        attachedBySilo.set(link.silo_id, existing);
       }
-    }
 
-    // The Attached Sheds picker greys out a shed that another silo already
-    // feeds and names that silo on the row, so a shed has to carry the name and
-    // not just the id. Resolved in one query for the whole page, the same way
-    // the attachments above are — a name per shed would be a query per row.
-    const owningSiloIds = [...new Set(
-      rows.filter((row) => row.location_type === 'SHED' && row.feed_silo_id)
-        .map((row) => row.feed_silo_id as string),
-    )];
-    const siloNameById = new Map<string, string>();
-    if (owningSiloIds.length) {
-      const silos = await this.db.select({
-        location_id: schema.locationMaster.location_id,
-        location_name: schema.locationMaster.location_name,
-      }).from(schema.locationMaster).where(and(
-        eq(schema.locationMaster.tenant_id, tenantId),
-        inArray(schema.locationMaster.location_id, owningSiloIds),
-      ));
-      for (const silo of silos) siloNameById.set(silo.location_id, silo.location_name);
+      // currentItems needs one company scope per call. A page is normally all
+      // one company (masterScopeConditions pins it), so this is one call in
+      // practice — grouping by the company each silo row actually carries
+      // only guards the rare cross-company listing, and still never issues a
+      // call per row.
+      const siloIdsByCompany = new Map<string, string[]>();
+      for (const silo of silos) {
+        if (!silo.company_id) continue;
+        const list = siloIdsByCompany.get(silo.company_id) || [];
+        list.push(silo.location_id);
+        siloIdsByCompany.set(silo.company_id, list);
+      }
+      for (const [scopedCompanyId, scopedSiloIds] of siloIdsByCompany) {
+        const items = await this.siloFeedService.currentItems(scopedSiloIds, scopedCompanyId, tenantId);
+        for (const [siloId, item] of items) {
+          currentItemBySilo.set(siloId, item ? { item_code: item.item_code, item_description: item.item_description } : null);
+        }
+      }
     }
 
     return {
@@ -1052,10 +1159,11 @@ export class LocationService {
         ...row,
         silo_capacity_kg: siloCapacityForDisplay(row.silo_capacity_kg, row.silo_capacity_uom),
         ...(row.location_type === 'SILO'
-          ? { attached_sheds: attachedBySilo.get(row.location_id) || [] }
-          : {}),
-        ...(row.location_type === 'SHED'
-          ? { feed_silo_name: row.feed_silo_id ? siloNameById.get(row.feed_silo_id) ?? null : null }
+          ? {
+              attached_sheds: attachedBySilo.get(row.location_id) || [],
+              current_feed_item_code: currentItemBySilo.get(row.location_id)?.item_code ?? null,
+              current_feed_item_name: currentItemBySilo.get(row.location_id)?.item_description ?? null,
+            }
           : {}),
       })),
     };
@@ -1130,7 +1238,11 @@ export class LocationService {
       ? dto.silo_capacity_uom
       : (location.silo_capacity_uom || (effectiveLocationType === 'SILO' ? 'KG' : null));
     const effectiveStorage = dto.storage_type !== undefined ? dto.storage_type : location.storage_type || (effectiveLocationType === 'SILO' ? 'SILO' : null);
-    this.assertSiloFieldsWhenSilo(effectiveStorage, effectiveSiloCapacity as any, effectiveSiloReorderDays as any, effectiveSiloCapacityUom as any);
+    // D28: the silo fields are demanded of a SILO, not of anything that merely
+    // carries the legacy storage_type (see create). A saved row that is not a
+    // SILO or a STORE loses the stale value in the same write.
+    this.assertSiloFieldsWhenSilo(effectiveLocationType, effectiveSiloCapacity as any, effectiveSiloReorderDays as any, effectiveSiloCapacityUom as any);
+    const clearsLegacyStorageType = effectiveLocationType !== 'SILO' && effectiveLocationType !== 'STORE' && location.storage_type === 'SILO';
 
     // attached_sheds is the silo's own field; see create().
     if (dto.attached_sheds !== undefined && effectiveLocationType !== 'SILO') {
@@ -1212,12 +1324,32 @@ export class LocationService {
       updates.silo_capacity_uom = effectiveSiloCapacityUom;
     }
     if (dto.silo_reorder_days !== undefined) updates.silo_reorder_days = dto.silo_reorder_days;
-    if (effectiveStorage !== 'SILO') {
+    // Levels are validated against the effective row, so saving only the
+    // high level of a silo that already has a low one still checks the pair.
+    if (effectiveLocationType === 'SILO') {
+      const effectiveLow = dto.low_level_kg !== undefined ? dto.low_level_kg : location.low_level_kg == null ? null : Number(location.low_level_kg);
+      const effectiveHigh = dto.high_level_kg !== undefined ? dto.high_level_kg : location.high_level_kg == null ? null : Number(location.high_level_kg);
+      const effectiveCapacity = updates.silo_capacity_kg !== undefined ? updates.silo_capacity_kg : location.silo_capacity_kg;
+      this.assertSiloLevels(effectiveLow, effectiveHigh, effectiveCapacity == null ? null : Number(effectiveCapacity), location.location_type === 'SILO');
+    }
+    if (dto.low_level_kg !== undefined) updates.low_level_kg = dto.low_level_kg == null ? null : String(dto.low_level_kg);
+    if (dto.high_level_kg !== undefined) updates.high_level_kg = dto.high_level_kg == null ? null : String(dto.high_level_kg);
+    if (effectiveLocationType !== 'SILO') {
       updates.silo_capacity_kg = null;
       updates.silo_capacity_uom = null;
       updates.silo_reorder_days = null;
+      updates.low_level_kg = null;
+      updates.high_level_kg = null;
     }
+    // D28: a saved pen, shed or crate loses the legacy 'SILO' storage type.
+    if (clearsLegacyStorageType) updates.storage_type = null;
     if (dto.downtime_days_required !== undefined) updates.downtime_days_required = dto.downtime_days_required;
+    if (dto.feed_refill_buffer_days !== undefined) updates.feed_refill_buffer_days = dto.feed_refill_buffer_days;
+    if (dto.feed_lead_time_days !== undefined) updates.feed_lead_time_days = dto.feed_lead_time_days;
+    if (dto.feed_bulk_multiple_kg !== undefined) updates.feed_bulk_multiple_kg = dto.feed_bulk_multiple_kg;
+    if (dto.feed_bag_size_kg !== undefined) updates.feed_bag_size_kg = dto.feed_bag_size_kg;
+    if (dto.feed_truck_target_kg !== undefined) updates.feed_truck_target_kg = dto.feed_truck_target_kg;
+    if (dto.feed_production_weekday !== undefined) updates.feed_production_weekday = dto.feed_production_weekday;
     if (dto.storage_name !== undefined) updates.storage_name = dto.storage_name;
     if (dto.is_active !== undefined) updates.is_active = dto.is_active;
     if (dto.status !== undefined) updates.status = dto.status;

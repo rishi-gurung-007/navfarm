@@ -50,6 +50,20 @@ interface WriteNegativeEntryParams {
   userId?: string;
 }
 
+/** A silo or store's signed stock of one item and unit, summed (Feed Forecast Plan R). */
+export interface FeedStockRow {
+  warehouse_id: string;
+  item_id: string;
+  item_code: string;
+  uom: string;
+  qty: number;
+}
+
+/** The same, for one posting date. */
+export interface FeedStockMovement extends FeedStockRow {
+  posting_date: string;
+}
+
 /**
  * Shared posting engine for the Inventory Ledger — the append-only movement
  * log every document type (Goods Receipt, Goods Issue, Stock Transfer, Stock
@@ -57,7 +71,7 @@ interface WriteNegativeEntryParams {
  */
 @Injectable()
 export class InventoryLedgerService {
-  constructor(private readonly cls: ClsService) {}
+  constructor(private readonly cls: ClsService) { }
 
   private get db(): MySql2Database<typeof schema> {
     const tenantDb = this.cls.get<MySql2Database<typeof schema>>('tenantDb');
@@ -613,6 +627,63 @@ export class InventoryLedgerService {
       return balances.filter((r) => r.reorder_level != null && r.on_hand_qty <= r.reorder_level);
     }
     return balances;
+  }
+
+  /**
+   * Feed Forecast (Plan R, spec D19, open question Q6): feed stock of the given
+   * silos and stores *as of a date*. getStockBalance reads FIFO remaining
+   * quantities, which have no date; the signed quantities do, and their sum is
+   * the same number (checked on nf_devco, 26 Sep: every silo and store
+   * agreed) — only POSITIVE and NEGATIVE entries move stock. `opening` is
+   * everything posted before `stockDate`; `movements` is every posted
+   * movement from `stockDate` to `horizonTo` that is not feeding — daily entry
+   * posts its feed as document_type BATCH (and its reversal copies that type),
+   * the only feeding there is: feeding from the stock date on is exactly what
+   * the forecast projects, and counting both would take it twice. A Goods
+   * Issue (transaction_type CONSUMPTION) is not feeding — feed issued out of a
+   * silo or store by hand is an outflow the projection knows nothing of — so
+   * it counts, signed, and its REVERSAL (same document_type, positive) nets it
+   * back out on the same terms (fix round 1, Ruling M7). Farm-scoped like
+   * every read here.
+   */
+  async getFeedStockAsOf(
+    params: { companyId: string; warehouseIds: string[]; stockDate: string; horizonTo: string },
+    tenantId: string,
+  ): Promise<{ opening: FeedStockRow[]; movements: FeedStockMovement[] }> {
+    if (!params.warehouseIds.length) return { opening: [], movements: [] };
+    const L = schema.inventoryLedger;
+    const base = [
+      eq(L.tenant_id, tenantId),
+      eq(L.company_id, params.companyId),
+      inArray(L.warehouse_id, params.warehouseIds),
+      inArray(L.entry_type, ['POSITIVE', 'NEGATIVE']),
+      ...this.farmConditions(),
+    ];
+    const qty = sql<string>`COALESCE(SUM(${L.quantity}), 0)`;
+    const itemCode = sql<string>`MAX(${L.item_code})`;
+    const opening = await this.db
+      .select({ warehouse_id: L.warehouse_id, item_id: L.item_id, item_code: itemCode, uom: L.uom, qty })
+      .from(L)
+      .where(and(...base, lt(L.posting_date, params.stockDate)))
+      .groupBy(L.warehouse_id, L.item_id, L.uom);
+    const movements = await this.db
+      .select({ warehouse_id: L.warehouse_id, item_id: L.item_id, item_code: itemCode, uom: L.uom, posting_date: L.posting_date, qty })
+      .from(L)
+      .where(and(
+        ...base,
+        gte(L.posting_date, params.stockDate),
+        lte(L.posting_date, params.horizonTo),
+        ne(L.document_type, 'BATCH'),
+      ))
+      .groupBy(L.warehouse_id, L.item_id, L.uom, L.posting_date);
+    return {
+      opening: opening
+        .filter((r) => r.warehouse_id)
+        .map((r) => ({ warehouse_id: r.warehouse_id!, item_id: r.item_id, item_code: r.item_code, uom: r.uom, qty: Number(r.qty) })),
+      movements: movements
+        .filter((r) => r.warehouse_id)
+        .map((r) => ({ warehouse_id: r.warehouse_id!, item_id: r.item_id, item_code: r.item_code, uom: r.uom, posting_date: r.posting_date, qty: Number(r.qty) })),
+    };
   }
 
   async getAvailableLots(query: QueryAvailableLotsDto, tenantId: string) {

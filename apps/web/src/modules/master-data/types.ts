@@ -189,6 +189,12 @@ export interface MasterDataField {
   readOnly?: boolean;
   /** Excluded from the list table */
   hideInTable?: boolean;
+  /**
+   * Column stays in the list table but is offered as no list filter — e.g. a
+   * resource's Next Maintenance Date and Cost Rate, which are system-tracked
+   * figures nobody narrows a resource list by.
+   */
+  noFilter?: boolean;
   /** When this field stands in as a list column (config.columns is omitted):
    *  same meaning as columns[].decimals/decimalsFromKey below. */
   decimals?: number;
@@ -201,6 +207,14 @@ export interface MasterDataField {
   max?: number;
   /** Maximum length for text inputs */
   maxLength?: number;
+  /**
+   * Character-format whitelist for text inputs, as a regex source tested
+   * against the whole value (e.g. "[A-Za-z ]*" letters and spaces). Enforced
+   * at save with a clear error, and passed to the input as its HTML pattern —
+   * mirror whatever the DTO's @Matches enforces, so the form refuses what the
+   * API would reject rather than round-tripping a 400.
+   */
+  pattern?: string;
   /**
    * Renders type "number" as a native <input type="number"> (spinner, browser
    * numeric validation) instead of the text-input-with-digit-filtering every
@@ -259,34 +273,6 @@ export interface MasterDataField {
    * against the label, which joins code and name for display only.
    */
   excludeValuesOf?: string[];
-  /**
-   * Greys an option out instead of letting it be chosen and then refused on
-   * save. An option is unavailable when its `key` column already holds an
-   * owner, except where that owner is this form's own `exceptMatchingField`
-   * value — which means the option belongs to the record being edited and must
-   * stay selectable, since giving it up is how it becomes free again. The
-   * greyed row carries `reasonPrefix` followed by the option's `reasonKey`, so
-   * it names who holds it rather than only saying no.
-   *
-   * A shed draws feed from exactly one silo: Attached Sheds lists every shed on
-   * the farm, and the API rejects one another silo already feeds. Hiding those
-   * rows would make the farm's layout unreadable and would strip a silo's own
-   * sheds out of its edit form; showing them greyed answers "why not that one"
-   * on the row, before anyone spends a save finding out.
-   *
-   * Honoured by the `multiple` entity lookup picker, which is the only control
-   * that renders its options as rows with room to say why.
-   */
-  disableOptionWhen?: {
-    /** Column on an option row naming its current owner, empty when unowned (e.g. "feed_silo_id"). */
-    key: string;
-    /** Field in this form whose value means the owner is this very record (e.g. the record's own id). */
-    exceptMatchingField: string;
-    /** Column on an option row holding the owner's display name, for the explanation (e.g. "feed_silo_name"). */
-    reasonKey: string;
-    /** Sentence the owner's name is appended to, trailing space included (e.g. "Attached to "). */
-    reasonPrefix: string;
-  };
   /**
    * A form-only control standing in for a set of boolean columns: the chosen
    * option's column is written `true` and every other one `false`. Set
@@ -349,6 +335,27 @@ export interface MasterDataField {
   searchable?: boolean;
 }
 
+/**
+ * A list column. `decimals`/`decimalsFromKey` trim a stored-precision number
+ * (display only). Plan S: `format: "date"` shows a day as DD/MM/YY (review
+ * A9), `labels` maps a stored code to its words and `format: "codes"`
+ * humanizes codes it has no label for (review A8) — both handle a list value.
+ */
+export type MasterDataColumn = {
+  key: string;
+  label: string;
+  decimals?: number;
+  decimalsFromKey?: string;
+  format?: "date" | "codes";
+  labels?: Record<string, string>;
+  /**
+   * Column stays in the list table but is offered as no list filter — e.g. a
+   * resource's Next Maintenance Date and Cost Rate, system-tracked figures
+   * nobody narrows a resource list by.
+   */
+  noFilter?: boolean;
+};
+
 export interface MasterDataConfig {
   key: string;
   /** Plural — the list heading and sidebar entry, e.g. "Item Categories". */
@@ -387,8 +394,15 @@ export interface MasterDataConfig {
    * present and greater than 0. Neither affects the form or the API payload —
    * display only.
    */
-  columns?: { key: string; label: string; decimals?: number; decimalsFromKey?: string }[];
+  columns?: MasterDataColumn[];
   group: string;
+  /**
+   * Hides the group badge chip next to the page title. The chip names the
+   * workbook section a master belongs to; Freebuff task-3 item 7 asked for it
+   * gone from the UOM page specifically, so this is opt-in per config rather
+   * than a global removal.
+   */
+  hideGroupBadge?: boolean;
   /** Show a Nature of Business / Line of Business filter pair in the list toolbar (for entities whose table carries nob_id/lob_id). */
   supportsNobLobFilter?: boolean;
   /**

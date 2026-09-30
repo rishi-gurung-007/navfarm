@@ -3,6 +3,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ClsService } from 'nestjs-cls';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
+import { SiloFeedService } from '../../inventory/silo-feed/silo-feed.service';
 import { LocationService, siloCapacityForDisplay, siloCapacityToKg } from './location.service';
 
 describe('LocationService canonical hierarchy', () => {
@@ -10,8 +11,13 @@ describe('LocationService canonical hierarchy', () => {
   const selectResults: any[][] = [];
   const txInsert = jest.fn();
   const txUpdate = jest.fn();
+  const txDelete = jest.fn();
   const audit = { log: jest.fn() };
   const numberSeries = { generateNext: jest.fn(), lockSeries: jest.fn(), findDefaultSeriesByMaster: jest.fn() };
+  // D9 (which item may live where) is SiloFeedService's rule, not
+  // LocationService's — these tests only need to know it was asked, and
+  // whether it allowed or refused, not the item logic behind that answer.
+  const siloFeedService = { assertAttachable: jest.fn(), currentItems: jest.fn() };
 
   const makeSelectBuilder = (rows: any[]) => {
     const builder: any = {};
@@ -20,6 +26,7 @@ describe('LocationService canonical hierarchy', () => {
     builder.orderBy = jest.fn(() => builder);
     builder.offset = jest.fn(() => builder);
     builder.leftJoin = jest.fn(() => builder);
+    builder.innerJoin = jest.fn(() => builder);
     builder.limit = jest.fn(async () => rows);
     builder.then = (resolve: (value: any[]) => unknown, reject: (reason: unknown) => unknown) =>
       Promise.resolve(rows).then(resolve, reject);
@@ -32,6 +39,7 @@ describe('LocationService canonical hierarchy', () => {
   const tx = {
     insert: txInsert,
     update: txUpdate,
+    delete: txDelete,
     select: jest.fn(() => makeSelectBuilder(selectResults.shift() || [])),
   };
   const db = {
@@ -67,7 +75,7 @@ describe('LocationService canonical hierarchy', () => {
   /** A shed on that same farm, free to attach. */
   const shedRow = () => ({
     location_id: 'shed-1', location_code: 'FARM-001/SHED-001', location_type: 'SHED',
-    parent_location_id: 'farm-1', farm_id: 'farm-1', feed_silo_id: null,
+    parent_location_id: 'farm-1', farm_id: 'farm-1',
   });
   /** The location_master row the create actually inserted. */
   const inserted = () => (txInsert.mock.results[0].value.values as jest.Mock).mock.calls[0][0];
@@ -80,9 +88,12 @@ describe('LocationService canonical hierarchy', () => {
     jest.clearAllMocks();
     txInsert.mockImplementation(() => ({ values: jest.fn().mockResolvedValue({}) }));
     txUpdate.mockImplementation(() => ({ set: jest.fn(() => ({ where: jest.fn().mockResolvedValue({}) })) }));
+    txDelete.mockImplementation(() => ({ where: jest.fn().mockResolvedValue({}) }));
     audit.log.mockResolvedValue({});
     numberSeries.generateNext.mockResolvedValue('FARM-001');
     numberSeries.lockSeries.mockResolvedValue({ series_id: 'series-1', seq_length: 3 });
+    siloFeedService.assertAttachable.mockResolvedValue(undefined);
+    siloFeedService.currentItems.mockResolvedValue(new Map());
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -90,6 +101,7 @@ describe('LocationService canonical hierarchy', () => {
         { provide: ClsService, useValue: { get: jest.fn(() => db) } },
         { provide: AuditLogService, useValue: audit },
         { provide: NumberSeriesService, useValue: numberSeries },
+        { provide: SiloFeedService, useValue: siloFeedService },
       ],
     }).compile();
     service = module.get(LocationService);
@@ -221,6 +233,7 @@ describe('LocationService canonical hierarchy', () => {
     await expect(service.create({
       company_id: 'comp-1', parent_location_id: 'farm-1', location_name: 'Feed Silo',
       location_address: 'Farm Road', location_type: 'SILO', max_capacity: 2000, capacity_uom: 'KG',
+      low_level_kg: 200, high_level_kg: 1800,
     }, 'tenant-1')).rejects.toThrow(ConflictException);
   });
 
@@ -237,6 +250,7 @@ describe('LocationService canonical hierarchy', () => {
     await expect(service.create({
       company_id: 'comp-1', parent_location_id: 'shed-1',
       location_name: 'Feed Silo 1', location_address: 'Farm Road', location_type: 'SILO',
+      low_level_kg: 200, high_level_kg: 1800,
       capacity_uom: 'KG', silo_capacity_kg: 2000, silo_capacity_uom: 'KG', silo_reorder_days: 7,
     }, 'tenant-1')).rejects.toThrow('must be created under a FARM');
 
@@ -249,6 +263,7 @@ describe('LocationService canonical hierarchy', () => {
     await expect(service.create({
       company_id: 'comp-1', parent_location_id: 'farm-1',
       location_name: 'Feed Silo 1', location_address: 'Farm Road', location_type: 'SILO',
+      low_level_kg: 200, high_level_kg: 1800,
       capacity_uom: 'KG', silo_capacity_kg: 40, silo_reorder_days: 7,
     }, 'tenant-1')).rejects.toThrow('silo_capacity_uom');
   });
@@ -267,6 +282,7 @@ describe('LocationService canonical hierarchy', () => {
     const result = await service.create({
       company_id: 'comp-1', parent_location_id: 'farm-1',
       location_name: 'Feed Silo 1', location_address: 'Farm Road', location_type: 'SILO',
+      low_level_kg: 200, high_level_kg: 1800,
       capacity_uom: 'KG', silo_capacity_kg: 40, silo_capacity_uom: 'TON', silo_reorder_days: 7,
     }, 'tenant-1');
 
@@ -281,31 +297,177 @@ describe('LocationService canonical hierarchy', () => {
     expect(result.silo_capacity_kg).toBe('40');
   });
 
-  it('attaches the listed sheds by writing feed_silo_id on the shed rows, and detaches the rest', async () => {
+  it('a silo read returns current_feed_item_code and current_feed_item_name from SiloFeedService.currentItems', async () => {
+    selectResults.push(
+      [{
+        location_id: 'silo-1', tenant_id: 'tenant-1', company_id: 'comp-1',
+        location_type: 'SILO', location_code: 'FARM-001/SILO-001',
+      }],
+      [], // no sheds attached
+    );
+    siloFeedService.currentItems.mockResolvedValueOnce(new Map([
+      ['silo-1', { item_id: 'item-1', item_code: 'STARTER', item_description: 'Starter Feed', on_hand_qty: 500 }],
+    ]));
+
+    const result = await service.findOne('silo-1', 'tenant-1');
+
+    expect(siloFeedService.currentItems).toHaveBeenCalledWith(['silo-1'], 'comp-1', 'tenant-1');
+    expect(result.current_feed_item_code).toBe('STARTER');
+    expect(result.current_feed_item_name).toBe('Starter Feed');
+  });
+
+  it('an empty silo reads current_feed_item_code and current_feed_item_name as null', async () => {
+    selectResults.push(
+      [{
+        location_id: 'silo-1', tenant_id: 'tenant-1', company_id: 'comp-1',
+        location_type: 'SILO', location_code: 'FARM-001/SILO-001',
+      }],
+      [],
+    );
+    siloFeedService.currentItems.mockResolvedValueOnce(new Map([['silo-1', null]]));
+
+    const result = await service.findOne('silo-1', 'tenant-1');
+
+    expect(result.current_feed_item_code).toBeNull();
+    expect(result.current_feed_item_name).toBeNull();
+  });
+
+  /**
+   * Checklist item 1a (28 Sep check): a silo's record showed the sheds it
+   * feeds, but a shed's record showed nothing about its silos — no field, no
+   * query, no column on the list. To answer "where does this shed get its
+   * feed?" you had to open every silo on the farm in turn. Read-only: the link
+   * is still edited from the silo's Attached Sheds.
+   */
+  it('a shed read returns the silos that feed it, in code order, each with the item it holds', async () => {
+    selectResults.push(
+      [{
+        location_id: 'shed-1', tenant_id: 'tenant-1', company_id: 'comp-1',
+        location_type: 'SHED', location_code: 'FARM-001/SHED-001',
+      }],
+      // the link rows, joined to the silo, deliberately out of code order
+      [
+        { location_id: 'silo-2', location_code: 'FARM-001/SILO-002', location_name: 'Silo 2' },
+        { location_id: 'silo-1', location_code: 'FARM-001/SILO-001', location_name: 'Silo 1' },
+      ],
+    );
+    siloFeedService.currentItems.mockResolvedValueOnce(new Map([
+      ['silo-1', { item_id: 'item-1', item_code: 'STARTER', item_description: 'Starter Feed', on_hand_qty: 500 }],
+      ['silo-2', null],
+    ]));
+
+    const result = await service.findOne('shed-1', 'tenant-1');
+
+    expect(siloFeedService.currentItems).toHaveBeenCalledWith(['silo-2', 'silo-1'], 'comp-1', 'tenant-1');
+    expect(result.attached_silos).toEqual([
+      { location_id: 'silo-1', location_code: 'FARM-001/SILO-001', location_name: 'Silo 1', current_feed_item_code: 'STARTER', current_feed_item_name: 'Starter Feed' },
+      { location_id: 'silo-2', location_code: 'FARM-001/SILO-002', location_name: 'Silo 2', current_feed_item_code: null, current_feed_item_name: null },
+    ]);
+    // Read-only: a shed is not given the silo's own editing field.
+    expect((result as any).attached_sheds).toBeUndefined();
+  });
+
+  it('a shed with no silo attached reads an empty list, and asks the ledger nothing', async () => {
+    selectResults.push(
+      [{
+        location_id: 'shed-1', tenant_id: 'tenant-1', company_id: 'comp-1',
+        location_type: 'SHED', location_code: 'FARM-001/SHED-001',
+      }],
+      [],
+    );
+
+    const result = await service.findOne('shed-1', 'tenant-1');
+
+    expect(result.attached_silos).toEqual([]);
+    expect(siloFeedService.currentItems).not.toHaveBeenCalled();
+  });
+
+  it('leaves a pen alone — attached_silos is a shed field', async () => {
+    selectResults.push([{
+      location_id: 'pen-1', tenant_id: 'tenant-1', company_id: 'comp-1',
+      location_type: 'PEN', location_code: 'FARM-001/SHED-001/PEN-001',
+    }]);
+
+    const result = await service.findOne('pen-1', 'tenant-1');
+
+    expect((result as any).attached_silos).toBeUndefined();
+  });
+
+  it('links the listed sheds in silo_shed_link, after SiloFeedService clears the attach', async () => {
     selectResults.push(
       [company], [siloType], [farmParent()], [uom], [series],
       [], // no existing SILO siblings
       [shedRow()], // the attached_sheds lookup
-      [{ location_id: 'silo-1', location_code: 'FARM-001/SILO-001', location_type: 'SILO', location_level: 2 }],
-      [{ location_id: 'shed-1' }], // read back off the shed rows
+      [], // no existing links yet for this brand-new silo
+      [{ location_id: 'silo-1', location_code: 'FARM-001/SILO-001', location_type: 'SILO', location_level: 2, company_id: 'comp-1' }],
+      [{ shed_id: 'shed-1' }], // read back off silo_shed_link
     );
 
     const result = await service.create({
       company_id: 'comp-1', parent_location_id: 'farm-1',
       location_name: 'Feed Silo 1', location_address: 'Farm Road', location_type: 'SILO',
+      low_level_kg: 200, high_level_kg: 1800,
       capacity_uom: 'KG', silo_capacity_kg: 2000, silo_capacity_uom: 'KG', silo_reorder_days: 7,
       attached_sheds: ['shed-1'],
     }, 'tenant-1');
 
-    // Two writes on the shed rows, in the same transaction as the silo insert:
-    // detach whatever used to point here, then attach what was listed.
-    expect(txUpdate).toHaveBeenCalledTimes(2);
-    expect((txUpdate.mock.results[0].value.set as jest.Mock).mock.calls[0][0])
-      .toEqual(expect.objectContaining({ feed_silo_id: null }));
-    expect((txUpdate.mock.results[1].value.set as jest.Mock).mock.calls[0][0].feed_silo_id)
-      .toBe(inserted().location_id);
+    // D9 (may this silo feed this shed the same item another silo already
+    // does?) is SiloFeedService's call, made once per attach, not assumed.
+    expect(siloFeedService.assertAttachable).toHaveBeenCalledWith({
+      siloId: inserted().location_id, shedIds: ['shed-1'], companyId: 'comp-1', tenantId: 'tenant-1',
+    });
+    // One delete (stale links) and one insert (missing links) on the link
+    // table, in the same transaction as the silo insert.
+    expect(txDelete).toHaveBeenCalledTimes(1);
+    expect(txInsert).toHaveBeenCalledTimes(2); // the location row, then the silo_shed_link row
     expect(db.transaction).toHaveBeenCalledTimes(1);
     expect(result.attached_sheds).toEqual(['shed-1']);
+  });
+
+  it('allows attaching a shed to a second silo — a shed may now draw from several silos, one per feed item (D7)', async () => {
+    // The old model refused this outright, reading the shed's own
+    // feed_silo_id; that check is gone from syncAttachedSheds. Whether two
+    // silos may share a shed is SiloFeedService.assertAttachable's call now
+    // (D9, item-based), and it is asked, not assumed to refuse.
+    selectResults.push(
+      [company], [siloType], [farmParent()], [uom], [series], [],
+      [shedRow()],
+      [], // no existing links yet for this silo
+      [{ location_id: 'silo-2', location_code: 'FARM-001/SILO-002', location_type: 'SILO', location_level: 2, company_id: 'comp-1' }],
+      [{ shed_id: 'shed-1' }],
+    );
+
+    const result = await service.create({
+      company_id: 'comp-1', parent_location_id: 'farm-1',
+      location_name: 'Feed Silo 2', location_address: 'Farm Road', location_type: 'SILO',
+      low_level_kg: 200, high_level_kg: 1800,
+      capacity_uom: 'KG', silo_capacity_kg: 2000, silo_capacity_uom: 'KG', silo_reorder_days: 7,
+      attached_sheds: ['shed-1'],
+    }, 'tenant-1');
+
+    expect(siloFeedService.assertAttachable).toHaveBeenCalledTimes(1);
+    expect(result.attached_sheds).toEqual(['shed-1']);
+  });
+
+  it("propagates SiloFeedService's refusal without writing anything to silo_shed_link", async () => {
+    selectResults.push(
+      [company], [siloType], [farmParent()], [uom], [series], [],
+      [shedRow()],
+    );
+    siloFeedService.assertAttachable.mockRejectedValueOnce(new BadRequestException(
+      "Cannot attach silo 'FARM-001/SILO-002' to shed 'FARM-001/SHED-001' — silo 'FARM-001/SILO-001' already draws 'STARTER' from there.",
+    ));
+
+    await expect(service.create({
+      company_id: 'comp-1', parent_location_id: 'farm-1',
+      location_name: 'Feed Silo 2', location_address: 'Farm Road', location_type: 'SILO',
+      low_level_kg: 200, high_level_kg: 1800,
+      capacity_uom: 'KG', silo_capacity_kg: 2000, silo_capacity_uom: 'KG', silo_reorder_days: 7,
+      attached_sheds: ['shed-1'],
+    }, 'tenant-1')).rejects.toThrow('already draws');
+
+    expect(txDelete).not.toHaveBeenCalled();
+    expect(txInsert).toHaveBeenCalledTimes(1); // the location row only — nothing on the link table
   });
 
   it('refuses to attach a location that is not a SHED', async () => {
@@ -317,6 +479,7 @@ describe('LocationService canonical hierarchy', () => {
     await expect(service.create({
       company_id: 'comp-1', parent_location_id: 'farm-1',
       location_name: 'Feed Silo 1', location_address: 'Farm Road', location_type: 'SILO',
+      low_level_kg: 200, high_level_kg: 1800,
       capacity_uom: 'KG', silo_capacity_kg: 2000, silo_capacity_uom: 'KG', silo_reorder_days: 7,
       attached_sheds: ['shed-1'],
     }, 'tenant-1')).rejects.toThrow(BadRequestException);
@@ -331,23 +494,10 @@ describe('LocationService canonical hierarchy', () => {
     await expect(service.create({
       company_id: 'comp-1', parent_location_id: 'farm-1',
       location_name: 'Feed Silo 1', location_address: 'Farm Road', location_type: 'SILO',
+      low_level_kg: 200, high_level_kg: 1800,
       capacity_uom: 'KG', silo_capacity_kg: 2000, silo_capacity_uom: 'KG', silo_reorder_days: 7,
       attached_sheds: ['shed-1'],
     }, 'tenant-1')).rejects.toThrow('not on the same farm');
-  });
-
-  it('refuses a shed that already draws from another silo — a shed draws from exactly one', async () => {
-    selectResults.push(
-      [company], [siloType], [farmParent()], [uom], [series], [],
-      [{ ...shedRow(), feed_silo_id: 'silo-other' }],
-    );
-
-    await expect(service.create({
-      company_id: 'comp-1', parent_location_id: 'farm-1',
-      location_name: 'Feed Silo 2', location_address: 'Farm Road', location_type: 'SILO',
-      capacity_uom: 'KG', silo_capacity_kg: 2000, silo_capacity_uom: 'KG', silo_reorder_days: 7,
-      attached_sheds: ['shed-1'],
-    }, 'tenant-1')).rejects.toThrow('exactly one silo');
   });
 
   it('refuses to attach a shed that was never created', async () => {
@@ -359,6 +509,7 @@ describe('LocationService canonical hierarchy', () => {
     await expect(service.create({
       company_id: 'comp-1', parent_location_id: 'farm-1',
       location_name: 'Feed Silo 1', location_address: 'Farm Road', location_type: 'SILO',
+      low_level_kg: 200, high_level_kg: 1800,
       capacity_uom: 'KG', silo_capacity_kg: 2000, silo_capacity_uom: 'KG', silo_reorder_days: 7,
       attached_sheds: ['ghost-shed'],
     }, 'tenant-1')).rejects.toThrow(BadRequestException);
@@ -378,6 +529,7 @@ describe('LocationService canonical hierarchy', () => {
     const silo = {
       location_id: 'silo-1', tenant_id: 'tenant-1', company_id: 'comp-1', location_code: 'FARM-001/SILO-001',
       location_type: 'SILO', location_level: 2, parent_location_id: 'farm-1', farm_id: 'farm-1',
+      low_level_kg: '200.00', high_level_kg: '1800.00',
       storage_type: 'SILO', silo_capacity_kg: '2000.00', silo_capacity_uom: 'KG', silo_reorder_days: 7,
     };
     const shedParent = {
@@ -398,6 +550,7 @@ describe('LocationService canonical hierarchy', () => {
     const silo = {
       location_id: 'silo-1', tenant_id: 'tenant-1', company_id: 'comp-1', location_code: 'FARM-001/SILO-001',
       location_type: 'SILO', location_level: 2, parent_location_id: 'farm-1', farm_id: 'farm-1',
+      low_level_kg: '200.00', high_level_kg: '1800.00',
       storage_type: 'SILO', silo_capacity_kg: '40000.00', silo_capacity_uom: 'TON', silo_reorder_days: 7,
     };
     selectResults.push(
@@ -409,11 +562,13 @@ describe('LocationService canonical hierarchy', () => {
 
     const result = await service.update('silo-1', { attached_sheds: [] }, 'tenant-1', { userId: 'user-1' });
 
-    // The silo row itself, then the detach. A shed dropped from the list still
-    // points at this silo otherwise, and the set could only ever grow.
-    expect(txUpdate).toHaveBeenCalledTimes(2);
-    expect((txUpdate.mock.results[1].value.set as jest.Mock).mock.calls[0][0])
-      .toEqual(expect.objectContaining({ feed_silo_id: null }));
+    // The silo row itself is one update; detaching everything is a delete on
+    // silo_shed_link, not a second update — a shed dropped from the list still
+    // carries a link otherwise, and the set could only ever grow. An empty
+    // list means no shedIds to validate or clear through SiloFeedService.
+    expect(txUpdate).toHaveBeenCalledTimes(1);
+    expect(txDelete).toHaveBeenCalledTimes(1);
+    expect(siloFeedService.assertAttachable).not.toHaveBeenCalled();
     expect(result.attached_sheds).toEqual([]);
   });
 
@@ -491,6 +646,155 @@ describe('LocationService canonical hierarchy', () => {
     expect(result.deleted_at).toBeNull();
   });
 
+  it('stores a silo low and high feed level in kilograms (Master Setup §1 rows 10 and 12)', async () => {
+    selectResults.push(
+      [company], [siloType], [farmParent()], [uom], [series],
+      [], // no existing SILO siblings under this farm yet
+      [{ location_id: 'silo-1', location_code: 'FARM-001/SILO-001', location_type: 'SILO', location_level: 2,
+         silo_capacity_kg: '12000.00', silo_capacity_uom: 'KG', low_level_kg: '1000.00', high_level_kg: '10800.00' }],
+      [], // no sheds attached to it
+    );
+
+    await service.create({
+      company_id: 'comp-1', parent_location_id: 'farm-1',
+      location_name: 'Feed Silo 1', location_address: 'Farm Road', location_type: 'SILO',
+      capacity_uom: 'KG', silo_capacity_kg: 12000, silo_capacity_uom: 'KG', silo_reorder_days: 7,
+      low_level_kg: 1000, high_level_kg: 10800,
+    } as any, 'tenant-1');
+
+    expect(inserted().low_level_kg).toBe('1000');
+    expect(inserted().high_level_kg).toBe('10800');
+  });
+
+  it('refuses a low feed level that is not below the high level', async () => {
+    selectResults.push([company], [siloType], [farmParent()]);
+    await expect(service.create({
+      company_id: 'comp-1', parent_location_id: 'farm-1',
+      location_name: 'Feed Silo 1', location_address: 'Farm Road', location_type: 'SILO',
+      capacity_uom: 'KG', silo_capacity_kg: 12000, silo_capacity_uom: 'KG', silo_reorder_days: 7,
+      low_level_kg: 5000, high_level_kg: 5000,
+    } as any, 'tenant-1')).rejects.toThrow('The low feed level must be below the high feed level.');
+    expect(txInsert).not.toHaveBeenCalled();
+  });
+
+  it('refuses a high feed level above the silo capacity, in kilograms even when capacity was typed in tonnes', async () => {
+    selectResults.push([company], [siloType], [farmParent()]);
+    await expect(service.create({
+      company_id: 'comp-1', parent_location_id: 'farm-1',
+      location_name: 'Feed Silo 1', location_address: 'Farm Road', location_type: 'SILO',
+      capacity_uom: 'KG', silo_capacity_kg: 12, silo_capacity_uom: 'TON', silo_reorder_days: 7,
+      low_level_kg: 1000, high_level_kg: 12500,
+    } as any, 'tenant-1')).rejects.toThrow('The high feed level cannot exceed the silo capacity.');
+  });
+
+  // L13: the create-path checks above cover the happy path and the two
+  // refusals; the update path re-validates the pair too — the brief's
+  // service comment on assertSiloLevels promises "either may be blank …
+  // when both are given the low must sit below the high", and that promise
+  // has to hold when only one side of an existing pair is edited, not only
+  // when both arrive together on create.
+  it('refuses raising the silo above a low level that already exists on the row, on update', async () => {
+    const silo = {
+      location_id: 'silo-1', tenant_id: 'tenant-1', company_id: 'comp-1', location_code: 'FARM-001/SILO-001',
+      location_type: 'SILO', location_level: 2, parent_location_id: 'farm-1', farm_id: 'farm-1',
+      storage_type: 'SILO', silo_capacity_kg: '12000.00', silo_capacity_uom: 'KG', silo_reorder_days: 7,
+      low_level_kg: '1000.00', high_level_kg: null,
+    };
+    selectResults.push(
+      [silo], [siloType], [farmParent()],
+      [{ parent_location_id: null }], // the cycle walk to the root
+    );
+
+    await expect(service.update('silo-1', { high_level_kg: 500 }, 'tenant-1'))
+      .rejects.toThrow('The low feed level must be below the high feed level.');
+    expect(txUpdate).not.toHaveBeenCalled();
+  });
+
+  it('refuses a new silo without both feed levels (D22)', async () => {
+    selectResults.push([company], [siloType], [farmParent()]);
+    await expect(service.create({
+      company_id: 'comp-1', parent_location_id: 'farm-1',
+      location_name: 'Feed Silo 1', location_address: 'Farm Road', location_type: 'SILO',
+      capacity_uom: 'KG', silo_capacity_kg: 12000, silo_capacity_uom: 'KG', silo_reorder_days: 7,
+      low_level_kg: 2400,
+    } as any, 'tenant-1')).rejects.toThrow('A silo needs both a Below Feed Level and an Above Threshold.');
+    expect(txInsert).not.toHaveBeenCalled();
+  });
+
+  it('refuses saving a silo that still has no levels, whatever else the edit changes (D22)', async () => {
+    const silo = {
+      location_id: 'silo-1', tenant_id: 'tenant-1', company_id: 'comp-1', location_code: 'FARM-001/SILO-001',
+      location_type: 'SILO', location_level: 2, parent_location_id: 'farm-1', farm_id: 'farm-1',
+      storage_type: 'SILO', silo_capacity_kg: '12000.00', silo_capacity_uom: 'KG', silo_reorder_days: 7,
+      low_level_kg: null, high_level_kg: null,
+    };
+    selectResults.push([silo], [siloType], [farmParent()], [{ parent_location_id: null }]);
+    await expect(service.update('silo-1', { location_name: 'Feed Silo 1b' }, 'tenant-1'))
+      .rejects.toThrow('A silo needs both a Below Feed Level and an Above Threshold.');
+    expect(txUpdate).not.toHaveBeenCalled();
+  });
+
+  it('saves a pen that carries a legacy SILO storage type, and clears it (D28)', async () => {
+    const pen = {
+      location_id: 'pen-1', tenant_id: 'tenant-1', company_id: 'comp-1', location_code: 'FARM-001/SHED-001/PEN-001',
+      location_type: 'PEN', location_level: 3, parent_location_id: 'shed-1', farm_id: 'farm-1',
+      storage_type: 'SILO', silo_capacity_kg: null, silo_capacity_uom: null, silo_reorder_days: null,
+      low_level_kg: null, high_level_kg: null,
+    };
+    const penType = { type_code: 'PEN', type_name: 'Pen', code_prefix: 'PEN', allowed_parent_types: ['SHED'], company_id: null };
+    const shedParent = {
+      location_id: 'shed-1', company_id: 'comp-1', location_type: 'SHED', location_code: 'FARM-001/SHED-001',
+      location_level: 2, farm_id: 'farm-1', shed_id: 'shed-1', warehouse_id: null,
+    };
+    selectResults.push([pen], [penType], [shedParent], [{ parent_location_id: 'farm-1' }], [{ parent_location_id: null }], [pen]);
+    await service.update('pen-1', { location_name: 'Pen 1b' }, 'tenant-1');
+    // 248 such rows in nf_devco could not be saved at all: the silo check read
+    // storage_type, not the location type.
+    expect(txUpdate).toHaveBeenCalled();
+    expect((txUpdate.mock.results[0].value.set as jest.Mock).mock.calls[0][0]).toMatchObject({ storage_type: null });
+  });
+
+  it('never stores a silo storage type on a new pen (D28)', async () => {
+    const penType = { type_code: 'PEN', type_name: 'Pen', code_prefix: 'PEN', allowed_parent_types: ['SHED'], company_id: null };
+    const shedParent = {
+      location_id: 'shed-1', company_id: 'comp-1', location_type: 'SHED', location_code: 'FARM-001/SHED-001',
+      location_level: 2, farm_id: 'farm-1', shed_id: 'shed-1', warehouse_id: null,
+    };
+    selectResults.push(
+      [company], [penType], [shedParent], [uom], [{ series_code: 'LOCATION' }],
+      [], // no existing PEN siblings under this shed yet
+      [{ location_id: 'pen-9', location_code: 'FARM-001/SHED-001/PEN-009', location_type: 'PEN', location_level: 3 }],
+    );
+    await service.create({
+      company_id: 'comp-1', parent_location_id: 'shed-1', location_name: 'Pen 9',
+      location_address: 'Farm Road', location_type: 'PEN', storage_type: 'SILO',
+      max_capacity: 20, capacity_uom: 'HEAD',
+    } as any, 'tenant-1');
+    expect(inserted().storage_type).toBeFalsy();
+    expect(inserted().silo_capacity_kg).toBeFalsy();
+  });
+
+  it('still refuses a SILO with no capacity, unit or reorder days (unchanged by D28)', async () => {
+    selectResults.push([company], [siloType], [farmParent()]);
+    await expect(service.create({
+      company_id: 'comp-1', parent_location_id: 'farm-1', location_name: 'Feed Silo 9',
+      location_address: 'Farm Road', location_type: 'SILO', storage_type: 'SILO',
+      low_level_kg: 200, high_level_kg: 1800,
+    } as any, 'tenant-1')).rejects.toThrow('A SILO location requires');
+  });
+
+  it('does not require levels on a pen that carries a legacy SILO storage type (Review Focus 1)', async () => {
+    const pen = {
+      location_id: 'pen-1', tenant_id: 'tenant-1', company_id: 'comp-1', location_code: 'FARM-001/SHED-001/PEN-001',
+      location_type: 'PEN', location_level: 3, parent_location_id: 'shed-1', farm_id: 'farm-1',
+      storage_type: 'SILO', silo_capacity_kg: null, silo_capacity_uom: null, silo_reorder_days: null,
+      low_level_kg: null, high_level_kg: null,
+    };
+    selectResults.push([pen], [{ ...siloType, type_code: 'PEN', type_name: 'Pen', code_prefix: 'PEN' }], [farmParent()], [{ parent_location_id: null }]);
+    const outcome = await service.update('pen-1', { location_name: 'Pen 1b' }, 'tenant-1').then(() => null, (e: Error) => e);
+    expect(outcome?.message ?? '').not.toContain('Below Feed Level');
+  });
+
   it('getLocationOccupancy aggregates headcounts, capacity utilization, and biosecurity status', async () => {
     selectResults.push(
       [{
@@ -540,6 +844,7 @@ describe('hierarchical location codes', () => {
         { provide: ClsService, useValue: { get: jest.fn() } },
         { provide: AuditLogService, useValue: { log: jest.fn() } },
         { provide: NumberSeriesService, useValue: numberSeries },
+        { provide: SiloFeedService, useValue: { assertAttachable: jest.fn(), currentItems: jest.fn() } },
       ],
     }).compile();
     service = module.get(LocationService);

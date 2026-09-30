@@ -17,6 +17,8 @@ import { GoodsIssueController } from '../modules/inventory/goods-issue/goods-iss
 import { StockAdjustmentController } from '../modules/inventory/stock-adjustment/stock-adjustment.controller';
 import { StockTransferController } from '../modules/inventory/stock-transfer/stock-transfer.controller';
 import { InventoryLedgerController } from '../modules/inventory/inventory-ledger/inventory-ledger.controller';
+import { FeedForecastController } from '../modules/inventory/feed-forecast/feed-forecast.controller';
+import { FeedAlertController } from '../modules/inventory/feed-alert/feed-alert.controller';
 import { AlertController } from '../modules/production/alert/alert.controller';
 import { MilkController } from '../modules/production/milk/milk.controller';
 import { QcController } from '../modules/production/qc/qc.controller';
@@ -25,6 +27,7 @@ import { BioAssetLedgerController } from '../modules/inventory/bio-asset-ledger/
 import { FinancialReportsController } from '../modules/finance/financial-reports/financial-reports.controller';
 import { BreedController } from '../modules/master-data/breed/breed.controller';
 import { RequisitionController } from '../modules/procurement/requisition/requisition.controller';
+import { FeedRequisitionController } from '../modules/procurement/feed-requisition/feed-requisition.controller';
 import { ResourceLedgerController } from '../modules/production/resource-ledger/resource-ledger.controller';
 
 /**
@@ -50,12 +53,13 @@ const SCOPED = {
   BatchController, BatchDailyDataController, BatchTransferController, SchedulerHeaderController,
   ApprovalController, AnimalController, AnimalMedicationLogController, AnimalMovementLogController, BreedingController,
   GoodsReceiptController, GoodsIssueController, StockAdjustmentController, StockTransferController,
-  InventoryLedgerController,
+  InventoryLedgerController, FeedForecastController, FeedAlertController,
   AlertController, MilkController, QcController, QrCodeController,
   BioAssetLedgerController,
   FinancialReportsController,
   BreedController,
   RequisitionController,
+  FeedRequisitionController,
   ResourceLedgerController,
 };
 
@@ -86,6 +90,7 @@ const EXEMPT: Record<string, string> = {
   'master-data/location/location.controller.ts': 'Master data; locations reference a farm but the master list itself is not farm-scoped for access — write paths that place a record on a location go through assertLocationOnActiveFarm instead.',
   'master-data/no-series/no-series.controller.ts': 'Master data, not farm-specific.',
   'master-data/reason/reason.controller.ts': 'Master data, not farm-specific.',
+  'master-data/reporting-period/reporting-period.controller.ts': 'Company master (Reporting Period Master, D20); periods are company-wide, not a farm\'s.',
   'master-data/resource/resource.controller.ts': 'Master data, not farm-specific.',
   'master-data/shed/shed.controller.ts': 'Master data, not farm-specific.',
   'master-data/supplier/supplier.controller.ts': 'Master data, not farm-specific.',
@@ -110,6 +115,7 @@ const EXEMPT: Record<string, string> = {
   'finance/journal/journal.controller.ts': 'Company-level finance ledger; finance is not farm-scoped (decided 2026-09-14).',
 
   // system — tenant/system administration and reference data
+  'system/alert-rule/alert-rule.controller.ts': 'Company master (Alerts and Notifications Master); a rule\'s farm_id filters where it applies, it is not an access boundary.',
   'system/audit-log/audit-log.controller.ts': 'Tenant-wide audit trail across every module, not a farm record.',
   'system/costing-method/costing-method.controller.ts': 'System-admin-only reference master data, not farm records.',
   'system/country/country.controller.ts': 'System-admin-only reference master data, not farm records.',

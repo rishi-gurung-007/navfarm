@@ -84,6 +84,14 @@ export class DecideApprovalDto {
   rejection_reason?: string;
 }
 
+/** D25: an approver's remarks on approval — a feed requisition needs them when it is late or more than 20 % off. */
+export class ApproveApprovalDto {
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  remarks?: string;
+}
+
 export class QueryApprovalDto {
   // The console appends the active company as `companyId`; the global pipe runs
   // forbidNonWhitelisted, so an undeclared param 400s the whole list request and
