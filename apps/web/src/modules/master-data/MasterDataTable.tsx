@@ -512,6 +512,7 @@ export function MasterDataTable({
   const codeFieldTouchedRef = useRef(false);
 
   const [confirmDelete, setConfirmDelete] = useState<Row | null>(null);
+  const [duplicateCodeMessage, setDuplicateCodeMessage] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [togglingId, setTogglingId] = useState<string | null>(null);
 
@@ -623,12 +624,22 @@ export function MasterDataTable({
     return Array.isArray(loaded) && loaded.length === 0;
   })();
 
-  const visibleFields = (editing ? formFields.filter((f) => !f.createOnly) : formFields.filter((f) => !f.editOnly))
-    .filter((f) => !f.visibleWhen || isFieldRequired({ ...f, required: false, requiredWhen: f.visibleWhen }, form))
-    .filter((f) => !entityRestrictionState(f, form, entityOptions)?.hidden)
-    // Only the "no parent chosen yet" half hides the field; an empty filtered
-    // list keeps it, disabled, so the form can say why it has nothing to offer.
-    .filter((f) => !parentFilterState(f, form, entityOptions).hidden);
+  // An edit is also the record's complete review card. Creation-only fields
+  // remain visible there for context, but render disabled and are omitted from
+  // the update payload below. Conditional gates continue to shape creation;
+  // they must not make already-stored values disappear when a record is edited.
+  const visibleFields = editing
+    // Some create forms define conditional variants for one stored key. Edit
+    // mode ignores those conditions so every stored field remains visible,
+    // but it must still render that key only once.
+    ? formFields.filter((field, index, fields) => fields.findIndex((candidate) => candidate.key === field.key) === index)
+    : formFields
+        .filter((f) => !f.editOnly)
+        .filter((f) => !f.visibleWhen || isFieldRequired({ ...f, required: false, requiredWhen: f.visibleWhen }, form))
+        .filter((f) => !entityRestrictionState(f, form, entityOptions)?.hidden)
+        // Only the "no parent chosen yet" half hides the field; an empty filtered
+        // list keeps it, disabled, so the form can say why it has nothing to offer.
+        .filter((f) => !parentFilterState(f, form, entityOptions).hidden);
   const columns = config.columns || config.fields.filter((f) => !f.hideInTable).slice(0, 5);
   // Status and Active are different facts — Status is the master's domain
   // state, Active is whether the record is live at all — but a master that
@@ -1244,6 +1255,7 @@ export function MasterDataTable({
 
   const openCreate = () => {
     if (readOnly) return;
+    setDuplicateCodeMessage(null);
     setEditing(null);
     setIsManualNoAllowed(false);
     setTemplateLockedFields(new Set());
@@ -1375,12 +1387,13 @@ export function MasterDataTable({
       return;
     }
     if (action === "none") return;
+    setDuplicateCodeMessage(null);
     setEditing(row);
     setIsManualNoAllowed(false);
     const initial: Row = {};
     // MySQL tinyint reaches here as 1 as readily as true, and both mean set.
     const columnIsOn = (key: string) => row[key] === true || row[key] === 1;
-    formFields.filter((f) => !f.createOnly).forEach((f) => {
+    formFields.forEach((f) => {
       // A form-only control has no column of its own, so its state has to be
       // read back out of the columns it stands for — otherwise an item that is
       // already lot-tracked opens with the tracking gate off and its own
@@ -1499,6 +1512,7 @@ export function MasterDataTable({
     try {
       const isNumberSeriesForm = config.key === "number-series" || config.key === "no-series";
       for (const f of visibleFields) {
+        if (editing && f.createOnly) continue;
         // filterOnly normally means "not saved, so nothing to check". A control
         // standing in for real columns is the exception: it is not sent under
         // its own key, but it does decide what gets written.
@@ -1556,6 +1570,7 @@ export function MasterDataTable({
         for (const [k, v] of Object.entries(f.clearsWhenOff)) payload[k] = v;
       }
       for (const f of visibleFields) {
+        if (editing && f.createOnly) continue;
         const isCodeField = f.key === numbering.codeKey;
         const codeAllowsManual = isCodeField && (numbering.allowManual || isManualNoAllowed);
         if (f.filterOnly || (f.readOnly && !codeAllowsManual)) continue;
@@ -1698,7 +1713,18 @@ export function MasterDataTable({
       }
     } catch (err: any) {
       const msg = err?.message || t("mdFailedToSave");
-      showToast.error(msg);
+      const manuallyEnteredCode = !!numbering.codeKey
+        && codeFieldTouchedRef.current
+        && String(form[numbering.codeKey] ?? "").trim() !== "";
+      if (!editing && err?.status === 409 && manuallyEnteredCode) {
+        // ApiError.message is extracted from the server's response payload by
+        // api-client. Some masters include the existing record's name/details
+        // in that message; preserve it verbatim rather than inventing fields
+        // the API did not return.
+        setDuplicateCodeMessage(msg);
+      } else {
+        showToast.error(msg);
+      }
       if (!editing) numbering.refresh();
     } finally {
       setSaving(false);
@@ -1750,6 +1776,8 @@ export function MasterDataTable({
 
   const renderField = (f: MasterDataField) => {
     const isLockedByTemplate = templateLockedFields.has(f.key);
+    const immutableOnEdit = !!editing && !!f.createOnly;
+    const fieldDisabled = readOnly || immutableOnEdit || !!f.readOnly || isLockedByTemplate;
     const isCodeField = f.key === numbering.codeKey;
     const value = isCodeField && codeFieldTouchedRef.current
       ? (form[f.key] ?? "")
@@ -1767,7 +1795,7 @@ export function MasterDataTable({
             type="checkbox"
             checked={!!value}
             onChange={(e) => setField(f.key, e.target.checked)}
-            disabled={isLockedByTemplate}
+            disabled={fieldDisabled}
             className="h-5 w-5 rounded-[var(--radius-xs)] accent-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-60"
           />
         </div>
@@ -1822,7 +1850,7 @@ export function MasterDataTable({
       }
       if (f.type === "select") {
         return (
-          <select {...accessibility} className={`${inputCls} nf-select`} style={S.input} disabled={readOnly}
+          <select {...accessibility} className={`${inputCls} nf-select`} style={S.input} disabled={fieldDisabled}
             value={String(value ?? "")} onChange={(e) => setField(f.key, e.target.value)}>
             <option value="">{f.placeholder || "None — use the prefix"}</option>
             {choices.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
@@ -1893,7 +1921,7 @@ export function MasterDataTable({
             <span className="text-[11px]" style={S.sub}>Example</span>
             <div className="mt-0.5 font-mono text-xs" style={S.primary}>{shown}</div>
           </div>
-          <select className={`${inputCls} nf-select`} style={S.input} disabled={readOnly || !remaining.length}
+          <select className={`${inputCls} nf-select`} style={S.input} disabled={fieldDisabled || !remaining.length}
             value="" onChange={(e) => {
               // A date joins the list already carrying its part, so the row has
               // something to show and the stored value is complete from the start.
@@ -1913,14 +1941,14 @@ export function MasterDataTable({
                 {/* A date can go into a code two ways, and the answer differs per
                     series: the animal code wants the year of birth, a daily
                     document wants the whole date. Asked here, on the row. */}
-                {dateFields.has(key) && !readOnly && (
+                {dateFields.has(key) && !fieldDisabled && (
                   <select className="rounded border px-1.5 py-0.5 text-[11px]" style={S.input} value={datePart}
                     onChange={(e) => setField(f.key, list.map((v, i) => i === idx ? `${key}:${e.target.value}` : v))}>
                     <option value="YEAR">Year only</option>
                     <option value="DATE">Full date</option>
                   </select>
                 )}
-                {!readOnly && <>
+                {!fieldDisabled && <>
                   <button type="button" onClick={() => move(idx, -1)} disabled={idx === 0} aria-label="Move earlier" className="rounded px-1.5 disabled:opacity-30" style={S.sub}>↑</button>
                   <button type="button" onClick={() => move(idx, 1)} disabled={idx === list.length - 1} aria-label="Move later" className="rounded px-1.5 disabled:opacity-30" style={S.sub}>↓</button>
                   <button type="button" onClick={() => setField(f.key, list.filter((_, i) => i !== idx))} aria-label="Remove" className="rounded px-1.5" style={{ color: "var(--danger)" }}>×</button>
@@ -1953,12 +1981,14 @@ export function MasterDataTable({
                 if (e.key === "Enter") { e.preventDefault(); addChip(); }
               }}
               placeholder={f.placeholder}
+              disabled={fieldDisabled}
               className={inputCls}
               style={S.input}
             />
             <button
               type="button"
               onClick={addChip}
+              disabled={fieldDisabled}
               className="shrink-0 rounded-lg border px-3 py-1.5 text-xs font-semibold"
               style={S.surface}
             >
@@ -1977,6 +2007,7 @@ export function MasterDataTable({
                   <button
                     type="button"
                     onClick={() => removeChip(idx)}
+                    disabled={fieldDisabled}
                     aria-label={`Remove ${val}`}
                     className="leading-none"
                     style={S.muted}
@@ -2028,7 +2059,7 @@ export function MasterDataTable({
                           labelKeys={col.entityLabelKeys || []}
                           onChange={(next) => write(rows.map((r, i) => i === idx ? { ...r, [col.key]: next } : r))}
                           multiple
-                          disabled={readOnly || (isLocked(row) && col.key === req?.key)}
+                          disabled={fieldDisabled || (isLocked(row) && col.key === req?.key)}
                           loading={!!col.entityEndpoint && entityOptions[col.entityEndpoint] === undefined}
                           placeholder={t("selectPlaceholder")}
                         />
@@ -2047,7 +2078,7 @@ export function MasterDataTable({
                               getLabel={(option) => entityLabel(option, col)}
                               getLabelParts={(option) => entityLabelPartsOf(option, col)}
                               columnHeaders={col.entityLabelKeys && col.entityLabelKeys.length > 1 ? ["Code", "Name"] : undefined}
-                              disabled={readOnly || (isLocked(row) && col.key === req?.key)}
+                              disabled={fieldDisabled || (isLocked(row) && col.key === req?.key)}
                               loading={!!col.entityEndpoint && entityOptions[col.entityEndpoint] === undefined}
                               placeholder={t("selectPlaceholder")}
                               searchPlaceholder={t("searchPlaceholder")}
@@ -2066,14 +2097,14 @@ export function MasterDataTable({
                       // accepted "IM", "im" and "intramuscular" as three
                       // different answers, and its Triggered by — which decides
                       // what the scheduler counts from — could be nonsense.
-                      <select id={rowFieldId} className={`${inputCls} nf-select`} style={S.input} disabled={readOnly}
+                      <select id={rowFieldId} className={`${inputCls} nf-select`} style={S.input} disabled={fieldDisabled}
                         value={String(row[col.key] ?? "")}
                         onChange={(e) => write(rows.map((r, i) => i === idx ? { ...r, [col.key]: e.target.value } : r))}>
                         <option value="">{col.placeholder || t("selectPlaceholder")}</option>
                         {(col.options || []).map((o) => <option key={o.value} value={o.value}>{tLabel(o.label)}</option>)}
                       </select>
                     ) : (
-                      <input id={rowFieldId} className={inputCls} style={S.input} disabled={readOnly}
+                      <input id={rowFieldId} className={inputCls} style={S.input} disabled={fieldDisabled}
                         type={col.type === "number" ? "number" : "text"} step={col.step} min={col.min} max={col.max} placeholder={col.placeholder}
                         value={String(row[col.key] ?? "")}
                         onKeyDown={(e) => {
@@ -2086,7 +2117,7 @@ export function MasterDataTable({
                   </Field>
                 );
               })}
-              {!readOnly && (isLocked(row)
+              {!fieldDisabled && (isLocked(row)
                 ? <span className="rounded-lg border px-2 py-1.5 text-xs font-medium" style={{ ...S.raised, color: "var(--text-muted)" }}>Mandatory</span>
                 : <button type="button" onClick={() => write(rows.filter((_, i) => i !== idx))}
                     className="rounded-lg border px-2 py-1.5 text-xs font-medium" style={{ ...S.surface, color: "var(--danger)" }}>
@@ -2094,7 +2125,7 @@ export function MasterDataTable({
                   </button>)}
             </div>
           ))}
-          {!readOnly && <button type="button" onClick={() => write([...rows, {}])}
+          {!fieldDisabled && <button type="button" onClick={() => write([...rows, {}])}
             className="self-start rounded-lg border px-3 py-1.5 text-xs font-semibold" style={S.surface}>
             <Plus className="mr-1 inline h-3 w-3" />{rows.length ? t("mdAddMore") : t("mdAdd")}
           </button>}
@@ -2151,12 +2182,12 @@ export function MasterDataTable({
           )}
           <label
             className="cursor-pointer rounded-lg border px-3 py-1.5 text-xs font-semibold"
-            style={{ ...S.surface, opacity: readOnly || uploading ? 0.6 : 1, pointerEvents: readOnly || uploading ? "none" : "auto" }}
+            style={{ ...S.surface, opacity: fieldDisabled || uploading ? 0.6 : 1, pointerEvents: fieldDisabled || uploading ? "none" : "auto" }}
           >
             {uploading ? "Uploading…" : url ? "Replace Photo" : "Upload Image"}
-            <input {...accessibility} type="file" accept="image/png,image/jpeg,image/webp,image/heic" className="hidden" onChange={onPick} disabled={readOnly || uploading} />
+            <input {...accessibility} type="file" accept="image/png,image/jpeg,image/webp,image/heic" className="hidden" onChange={onPick} disabled={fieldDisabled || uploading} />
           </label>
-          {url && !readOnly && (
+          {url && !fieldDisabled && (
             <button type="button" onClick={() => setField(f.key, "")} className="text-xs font-medium underline" style={{ color: "var(--danger)" }}>
               Remove
             </button>
@@ -2168,10 +2199,11 @@ export function MasterDataTable({
       return (
         <textarea
           {...accessibility}
-          value={value}
+          value={value ?? ""}
           onChange={(e) => setField(f.key, e.target.value)}
           placeholder={f.placeholder}
           rows={f.type === "json" ? 5 : 3}
+          disabled={fieldDisabled}
           className={`${inputCls} font-mono text-xs`}
           style={S.input}
         />
@@ -2192,14 +2224,14 @@ export function MasterDataTable({
                   borderColor: checked ? "var(--accent)" : "var(--border)",
                   backgroundColor: checked ? "rgba(var(--accent-rgb, 239, 107, 74), 0.08)" : "transparent",
                   color: checked ? "var(--text-primary)" : "var(--text-secondary)",
-                  opacity: f.readOnly || isLockedByTemplate ? 0.6 : 1,
-                  pointerEvents: f.readOnly || isLockedByTemplate ? "none" : "auto",
+                  opacity: fieldDisabled ? 0.6 : 1,
+                  pointerEvents: fieldDisabled ? "none" : "auto",
                 }}
               >
                 <input
                   type="checkbox"
                   checked={checked}
-                  disabled={f.readOnly || isLockedByTemplate}
+                  disabled={fieldDisabled}
                   onChange={() => {
                     setField(f.key, checked ? "" : o.value);
                   }}
@@ -2237,7 +2269,7 @@ export function MasterDataTable({
           className="nf-input flex items-center gap-1 p-1"
           style={S.input}
           onKeyDown={(e) => {
-            if (f.readOnly) return;
+            if (fieldDisabled) return;
             if (e.key === "ArrowRight" || e.key === "ArrowDown") { e.preventDefault(); step(1); }
             if (e.key === "ArrowLeft" || e.key === "ArrowUp") { e.preventDefault(); step(-1); }
           }}
@@ -2251,7 +2283,7 @@ export function MasterDataTable({
                 role="radio"
                 aria-checked={active}
                 tabIndex={active || (current < 0 && o === segments[0]) ? 0 : -1}
-                disabled={f.readOnly || isLockedByTemplate}
+                disabled={fieldDisabled}
                 onClick={() => setField(f.key, o.value)}
                 className="nf-press h-full flex-1 rounded-[var(--radius-xs)] text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
                 style={{
@@ -2295,8 +2327,8 @@ export function MasterDataTable({
           placeholder={t("selectPlaceholder")}
           searchPlaceholder={t("searchPlaceholder")}
           noMatchesLabel={t("mdNoMatches")}
-          disabled={isLockedByTemplate}
-          onClear={!isFieldRequired(f, form) && value && !isLockedByTemplate ? () => setField(f.key, "") : undefined}
+          disabled={fieldDisabled}
+          onClear={!isFieldRequired(f, form) && value && !fieldDisabled ? () => setField(f.key, "") : undefined}
         />
       );
     }
@@ -2353,7 +2385,7 @@ export function MasterDataTable({
             labelKeys={f.entityLabelKeys || []}
             onChange={(next) => setField(f.key, next)}
             multiple
-            disabled={disabled || !!f.readOnly || isLockedByTemplate}
+            disabled={disabled || fieldDisabled}
             loading={!!resolvedEp && loadedOptions === undefined}
             placeholder={restrictedReason || (disabled ? t("selectXFirst", { name: parentLabel }) : t("selectPlaceholder"))}
             onCreate={relatedConfig ? () => setRelatedCreator({ field: f, config: relatedConfig }) : undefined}
@@ -2373,19 +2405,19 @@ export function MasterDataTable({
           getLabel={(o) => entityLabel(o, f)}
           getLabelParts={(o) => entityLabelPartsOf(o, f)}
           columnHeaders={f.entityLabelKeys && f.entityLabelKeys.length > 1 ? ["Code", "Name"] : undefined}
-          disabled={disabled || !!f.readOnly || isLockedByTemplate}
+          disabled={disabled || fieldDisabled}
           loading={!!resolvedEp && loadedOptions === undefined}
           placeholder={placeholderText}
           searchPlaceholder={t("searchPlaceholder")}
           noMatchesLabel={t("mdNoMatches")}
-          onClear={!isFieldRequired(f, form) && value && !isLockedByTemplate ? () => setField(f.key, "") : undefined}
+          onClear={!isFieldRequired(f, form) && value && !fieldDisabled ? () => setField(f.key, "") : undefined}
           onCreate={relatedConfig ? () => setRelatedCreator({ field: f, config: relatedConfig }) : undefined}
           onViewAll={relatedConfig ? () => setRelatedPicker({ field: f, config: relatedConfig, options }) : undefined}
         />
       );
     }
     const codeAllowsManual = isCodeField && (numbering.allowManual || isManualNoAllowed);
-    const isDisabled = (f.readOnly && !codeAllowsManual) || isLockedByTemplate;
+    const isDisabled = immutableOnEdit || isLockedByTemplate || (f.readOnly && !codeAllowsManual);
     const isInteger = f.type === "number" && (f.step === "1" || !f.step);
     // A field like GPS Latitude/Longitude allows a negative sign only when its
     // floor is unset or itself negative — same rule the keydown guard below uses.
@@ -2417,7 +2449,7 @@ export function MasterDataTable({
         max={f.max}
         maxLength={f.maxLength}
         pattern={f.pattern}
-        value={value}
+        value={value ?? ""}
         onKeyDown={(e) => {
           if (f.type === "number") {
             // Block scientific notation 'e'/'E' always. '+' and '-' only when
@@ -3159,6 +3191,29 @@ export function MasterDataTable({
               </div>
             );
           })()}
+        </div>
+      </Dialog>
+
+      <Dialog
+        open={!!duplicateCodeMessage}
+        onClose={() => setDuplicateCodeMessage(null)}
+        title="Code already exists"
+        presentation="compact"
+        maxWidth="sm"
+        footer={
+          <button
+            type="button"
+            onClick={() => setDuplicateCodeMessage(null)}
+            className="rounded-lg px-4 py-2 text-sm font-semibold text-white"
+            style={{ backgroundColor: "var(--accent)" }}
+          >
+            Change code
+          </button>
+        }
+      >
+        <div className="space-y-2 text-sm">
+          <p style={S.primary}>{duplicateCodeMessage}</p>
+          <p style={S.sub}>This code is already in use. Change the code in the creation form and try again.</p>
         </div>
       </Dialog>
 

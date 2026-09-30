@@ -2101,3 +2101,40 @@ client's calendar** — the workbook's illustrative September (23 Aug – 26 Sep
 the rule produces (30 Aug – 26 Sep), and the client has never supplied a period list. And feed
 alerts still reach nobody but admins, because the workbook's FARM_MANAGER and HEAD_OF_FARM
 roles do not exist on any tenant yet (Plan B's Q1, unchanged).
+
+## 2026-09-30 — Master edit fields, manual codes and current feed scope
+
+Rishi confirmed that an edit form must show the same user-facing fields as
+creation. Fields marked `createOnly` remain visible but disabled; only mutable
+fields are editable. Internal `hideInForm` values remain system-owned rather
+than becoming user controls.
+
+Every master code follows its configured Number Series. When that series allows
+manual numbers, the user may replace the suggested code; when the code is left
+blank, the API allocates the next series value. A duplicate manual code blocks
+creation and must tell the user that the code already exists so it can be
+changed. No seed-data rewrite is part of this work.
+
+Requisition remains one common workflow beside Approvals. The create flow first
+asks what the requisition is for, but **Feed Requisition is the only available
+type for now**; later types are additive and are not to be invented now.
+
+Feed work is limited to the existing chain through farm approval: farm/shed/silo
+setup, feed items, lifecycle feed rows, batch state and head count, stock and
+confirmed incoming, daily forecast, run-down/refill/required-on, alerts,
+requisition, and farm approval. Mill consolidation/capacity, loading/dispatch/
+Transfer Order receipt, and physical stock take/period reconciliation are out
+of scope for the present task.
+
+The supplied Feed Forecast workbook and report-field DOCX require a reusable
+Reporting Period configuration for the July–June business year, forecast range,
+monthly stock take and period close. They do not require that configuration to
+appear under Farm Masters. Navigation therefore belongs in Settings while the
+existing Reporting Period data model remains unchanged.
+
+For every master, its own primary identity fields use the concise labels
+`Code` and `Name`. Referenced and secondary identifiers keep their qualified
+labels (for example Breed, ISO3 and Code Prefix) so their meaning is not lost.
+Where the client model intentionally uses a different semantic field, that
+meaning is retained; Reason uses `Code` and `Description`, not an invented
+Reason Name.

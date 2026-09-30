@@ -26,7 +26,7 @@ describe('FeedRequisitionApprovalDetail (D25)', () => {
     const cells = within(within(table).getAllByRole('row')[1]).getAllByRole('cell').map((c) => c.textContent);
     expect(cells).toEqual(['VIL100/SILO-004', 'FEED-R1 — Weaner Diet R1', '6,000', '9,000', '01/10/99']);
     expect(screen.getByText('apReqFarmRemarks:{"remarks":"Extra pigs arriving"}')).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'apReqOpen' }).getAttribute('href')).toBe('/inventory/requisitions?id=req-4');
+    expect(screen.getByRole('link', { name: 'apReqOpen' }).getAttribute('href')).toBe('/approvals/requisitions?id=req-4');
   });
 
   it('takes the approver\'s remarks while pending, and hides the box once decided', async () => {
