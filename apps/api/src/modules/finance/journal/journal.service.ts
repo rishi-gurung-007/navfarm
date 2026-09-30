@@ -1,7 +1,7 @@
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, like, isNull, count, inArray } from 'drizzle-orm';
+import { eq, and, like, isNull, count, sql, inArray } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
@@ -27,7 +27,7 @@ export class JournalService {
   constructor(
     private readonly cls: ClsService,
     private readonly auditService: AuditLogService,
-  ) {}
+  ) { }
 
   private get db(): MySql2Database<typeof schema> {
     const tenantDb = this.cls.get<MySql2Database<typeof schema>>('tenantDb');
@@ -45,11 +45,13 @@ export class JournalService {
   // routes through `createAndPostSystemJournal`.
   private async generateJournalNo(tenantId: string, companyId: string, executor: MySql2Database<typeof schema> = this.db): Promise<string> {
     const [row] = await executor
-      .select({ total: count() })
+      .select({
+        maxSeq: sql<number>`COALESCE(MAX(CAST(SUBSTRING(${schema.journalHeader.journal_no}, 4) AS UNSIGNED)), 0)`,
+      })
       .from(schema.journalHeader)
       .where(and(eq(schema.journalHeader.tenant_id, tenantId), eq(schema.journalHeader.company_id, companyId)))
       .for('update');
-    const seq = Number(row?.total || 0) + 1;
+    const seq = Number(row?.maxSeq || 0) + 1;
     return `JE-${String(seq).padStart(6, '0')}`;
   }
 
@@ -315,68 +317,68 @@ export class JournalService {
     userId?: string;
   }) {
     return withTenantTransaction(this.cls, async () => {
-    const totalDebit = params.lines.reduce((sum, l) => sum + l.debitAmount, 0);
-    const totalCredit = params.lines.reduce((sum, l) => sum + l.creditAmount, 0);
+      const totalDebit = params.lines.reduce((sum, l) => sum + l.debitAmount, 0);
+      const totalCredit = params.lines.reduce((sum, l) => sum + l.creditAmount, 0);
 
-    if (Math.abs(totalDebit - totalCredit) > 0.0001) {
-      throw new BadRequestException(
-        `System journal does not balance: total debits (${totalDebit.toFixed(4)}) must equal total credits (${totalCredit.toFixed(4)}).`
-      );
-    }
+      if (Math.abs(totalDebit - totalCredit) > 0.0001) {
+        throw new BadRequestException(
+          `System journal does not balance: total debits (${totalDebit.toFixed(4)}) must equal total credits (${totalCredit.toFixed(4)}).`
+        );
+      }
 
-    const journalId = randomUUID();
-    const postedTime = toMysqlTimestamp();
+      const journalId = randomUUID();
+      const postedTime = toMysqlTimestamp();
 
-    const journalNo = await this.db.transaction(async (tx) => {
-      const no = await this.generateJournalNo(params.tenantId, params.companyId, tx);
-      await tx.insert(schema.journalHeader).values({
-        journal_id: journalId,
-        tenant_id: params.tenantId,
-        company_id: params.companyId,
-        journal_no: no,
-        posting_date: params.postingDate,
-        source: 'SYSTEM',
-        source_document_type: params.sourceDocumentType,
-        source_document_no: params.sourceDocumentNo,
-        source_ledger_id: params.sourceLedgerId || null,
-        description: params.description || null,
-        status: 'POSTED',
-        total_debit: totalDebit.toString(),
-        total_credit: totalCredit.toString(),
-        posted_at: postedTime as any,
-        posted_by: params.userId || null,
-        created_by: params.userId || null,
-        updated_by: params.userId || null,
+      const journalNo = await this.db.transaction(async (tx) => {
+        const no = await this.generateJournalNo(params.tenantId, params.companyId, tx);
+        await tx.insert(schema.journalHeader).values({
+          journal_id: journalId,
+          tenant_id: params.tenantId,
+          company_id: params.companyId,
+          journal_no: no,
+          posting_date: params.postingDate,
+          source: 'SYSTEM',
+          source_document_type: params.sourceDocumentType,
+          source_document_no: params.sourceDocumentNo,
+          source_ledger_id: params.sourceLedgerId || null,
+          description: params.description || null,
+          status: 'POSTED',
+          total_debit: totalDebit.toString(),
+          total_credit: totalCredit.toString(),
+          posted_at: postedTime as any,
+          posted_by: params.userId || null,
+          created_by: params.userId || null,
+          updated_by: params.userId || null,
+        });
+        return no;
       });
-      return no;
-    });
 
-    await this.db.insert(schema.journalLine).values(
-      params.lines.map((line, idx) => ({
-        line_id: randomUUID(),
-        journal_id: journalId,
-        line_no: idx + 1,
-        gl_account_id: line.glAccountId,
-        cost_center_id: line.costCenterId || null,
-        debit_amount: line.debitAmount.toString(),
-        credit_amount: line.creditAmount.toString(),
-        description: line.description || null,
-        nob_id: line.nobId || null,
-        lob_id: line.lobId || null,
-      }))
-    );
+      await this.db.insert(schema.journalLine).values(
+        params.lines.map((line, idx) => ({
+          line_id: randomUUID(),
+          journal_id: journalId,
+          line_no: idx + 1,
+          gl_account_id: line.glAccountId,
+          cost_center_id: line.costCenterId || null,
+          debit_amount: line.debitAmount.toString(),
+          credit_amount: line.creditAmount.toString(),
+          description: line.description || null,
+          nob_id: line.nobId || null,
+          lob_id: line.lobId || null,
+        }))
+      );
 
-    await this.auditService.log({
-      tenantId: params.tenantId,
-      companyId: params.companyId,
-      userId: params.userId,
-      action: 'CREATE',
-      entityName: 'journal_header',
-      entityId: journalId,
-      newValues: { journal_no: journalNo, source: 'SYSTEM', ...params },
-    });
+      await this.auditService.log({
+        tenantId: params.tenantId,
+        companyId: params.companyId,
+        userId: params.userId,
+        action: 'CREATE',
+        entityName: 'journal_header',
+        entityId: journalId,
+        newValues: { journal_no: journalNo, source: 'SYSTEM', ...params },
+      });
 
-    return this.findOne(journalId);
+      return this.findOne(journalId);
     });
   }
 }

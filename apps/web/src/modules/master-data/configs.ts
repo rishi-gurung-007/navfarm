@@ -1506,7 +1506,7 @@ const resource: MasterDataConfig = {
     { key: "resource_name", label: "Name" },
     { key: "resource_type", label: "Type" },
     { key: "cost_rate", label: "Cost Rate" },
-    { key: "next_maintenance_date", label: "Next Maintenance" },
+    { key: "next_maintenance_date", label: "Next Service Date" },
   ],
   fields: [
     { key: "company_id", label: "Company", type: "text", hideInForm: true },
@@ -1552,7 +1552,7 @@ const resource: MasterDataConfig = {
     { key: "maintenance_cost_per_service", label: "Est. Cost per Service", type: "number", step: "0.01", min: 0, section: "Maintenance", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
     { key: "maintenance_vendor", label: "Preferred Maintenance Vendor", type: "text", section: "Maintenance", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
     { key: "last_maintenance_date", label: "Last Maintenance (system-tracked)", type: "date", hideInForm: true, section: "Maintenance" },
-    { key: "next_maintenance_date", label: "Next Maintenance (system-tracked)", type: "date", hideInForm: true, section: "Maintenance" },
+    { key: "next_maintenance_date", label: "Next Service Date", type: "date", helpText: "Next maintenance / service due date. Auto-updated when logging completed maintenance, or can be set manually.", section: "Maintenance", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
     { key: "license_expiry", label: "License Expiry", type: "date", helpText: "License/certification expiry — alert 30 days before.", section: "Maintenance", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
   ],
 };

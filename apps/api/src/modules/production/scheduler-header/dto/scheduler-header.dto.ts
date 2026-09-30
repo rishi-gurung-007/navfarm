@@ -1,6 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import {
-  IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsInt, Min, IsNumber, IsIn, IsArray, ValidateNested,
+  IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsInt, Min, Max, IsNumber, IsIn, IsArray, ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -187,10 +187,11 @@ export class CreateSchedulerLineDto {
   @Min(1)
   end_day?: number;
 
-  @ApiProperty({ description: '1=Monday..7=Sunday — required when occurrence=WEEKLY', required: false })
+  @ApiProperty({ description: '1=Monday..7=Sunday for WEEKLY; 1..28 for MONTHLY', required: false })
   @IsOptional()
   @IsInt()
   @Min(1)
+  @Max(28)
   day_of_week?: number;
 
   @ApiProperty({ description: 'Day numbers (from stage start) — required when occurrence=CUSTOM', required: false, type: [Number] })
@@ -347,6 +348,7 @@ export class UpdateSchedulerLineDto {
   @IsOptional()
   @IsInt()
   @Min(1)
+  @Max(28)
   day_of_week?: number;
 
   @ApiProperty({ required: false, type: [Number] })

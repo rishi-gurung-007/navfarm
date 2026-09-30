@@ -1,7 +1,7 @@
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, like, isNull, count, inArray } from 'drizzle-orm';
+import { eq, and, like, isNull, count, sql, inArray } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
@@ -24,7 +24,7 @@ export class StockAdjustmentService {
     private readonly ledgerService: InventoryLedgerService,
     private readonly glPostingService: GlPostingService,
     private readonly numberSeriesService: NumberSeriesService,
-  ) {}
+  ) { }
 
   private get db(): MySql2Database<typeof schema> {
     const tenantDb = this.cls.get<MySql2Database<typeof schema>>('tenantDb');
@@ -40,11 +40,13 @@ export class StockAdjustmentService {
   // same count and generating the same adjustment number.
   private async generateAdjustmentNo(tenantId: string, companyId: string, executor: MySql2Database<typeof schema> = this.db): Promise<string> {
     const [row] = await executor
-      .select({ total: count() })
+      .select({
+        maxSeq: sql<number>`COALESCE(MAX(CAST(SUBSTRING(${schema.stockAdjustment.adjustment_no}, 5) AS UNSIGNED)), 0)`,
+      })
       .from(schema.stockAdjustment)
       .where(and(eq(schema.stockAdjustment.tenant_id, tenantId), eq(schema.stockAdjustment.company_id, companyId)))
       .for('update');
-    const seq = Number(row?.total || 0) + 1;
+    const seq = Number(row?.maxSeq || 0) + 1;
     return `ADJ-${String(seq).padStart(6, '0')}`;
   }
 
@@ -52,38 +54,38 @@ export class StockAdjustmentService {
     assertCompanyInScope(farmScope(this.cls), dto.company_id);
     await assertLocationOnActiveFarm(this.db, farmScope(this.cls), dto.warehouse_id, 'Warehouse');
     return withTenantTransaction(this.cls, async () => {
-    const adjustmentId = randomUUID();
-    const adjustmentNo = await this.db.transaction(async (tx) => {
-      const no = await this.generateAdjustmentNo(tenantId, dto.company_id, tx);
-      await tx.insert(schema.stockAdjustment).values({
-        adjustment_id: adjustmentId,
-        tenant_id: tenantId,
-        company_id: dto.company_id,
-        adjustment_no: no,
-        posting_date: dto.posting_date,
-        warehouse_id: dto.warehouse_id,
-        reason: dto.reason || null,
-        remarks: dto.remarks || null,
-        status: 'DRAFT',
-        created_by: userPayload?.userId || null,
-        updated_by: userPayload?.userId || null,
+      const adjustmentId = randomUUID();
+      const adjustmentNo = await this.db.transaction(async (tx) => {
+        const no = await this.generateAdjustmentNo(tenantId, dto.company_id, tx);
+        await tx.insert(schema.stockAdjustment).values({
+          adjustment_id: adjustmentId,
+          tenant_id: tenantId,
+          company_id: dto.company_id,
+          adjustment_no: no,
+          posting_date: dto.posting_date,
+          warehouse_id: dto.warehouse_id,
+          reason: dto.reason || null,
+          remarks: dto.remarks || null,
+          status: 'DRAFT',
+          created_by: userPayload?.userId || null,
+          updated_by: userPayload?.userId || null,
+        });
+        return no;
       });
-      return no;
-    });
 
-    await this.insertLines(adjustmentId, dto.lines, tenantId);
+      await this.insertLines(adjustmentId, dto.lines, tenantId);
 
-    await this.auditService.log({
-      tenantId,
-      companyId: dto.company_id,
-      userId: userPayload?.userId,
-      action: 'CREATE',
-      entityName: 'stock_adjustment',
-      entityId: adjustmentId,
-      newValues: { adjustment_no: adjustmentNo, ...dto },
-    });
+      await this.auditService.log({
+        tenantId,
+        companyId: dto.company_id,
+        userId: userPayload?.userId,
+        action: 'CREATE',
+        entityName: 'stock_adjustment',
+        entityId: adjustmentId,
+        newValues: { adjustment_no: adjustmentNo, ...dto },
+      });
 
-    return this.findOne(adjustmentId);
+      return this.findOne(adjustmentId);
     });
   }
 
@@ -281,84 +283,84 @@ export class StockAdjustmentService {
 
   async post(id: string, tenantId: string, userPayload?: any) {
     return withTenantTransaction(this.cls, async () => {
-    const adjustment = await this.findOne(id);
-    this.assertDraft(adjustment);
+      const adjustment = await this.findOne(id);
+      this.assertDraft(adjustment);
 
-    if (!adjustment.lines || adjustment.lines.length === 0) {
-      throw new BadRequestException('Cannot post a Stock Adjustment with no lines.');
-    }
-
-    // Claim the DRAFT -> POSTED transition atomically before writing any
-    // ledger/GL entries — see goods-issue.service.ts's post() for the full
-    // rationale (closes both the double-post race and the "retry after a
-    // partial failure duplicates the successful lines" hole).
-    const [claim] = await this.db
-      .update(schema.stockAdjustment)
-      .set({
-        status: 'POSTED',
-        posted_at: toMysqlTimestamp() as any,
-        posted_by: userPayload?.userId || null,
-        updated_by: userPayload?.userId || null,
-      })
-      .where(and(eq(schema.stockAdjustment.adjustment_id, id), eq(schema.stockAdjustment.status, 'DRAFT')));
-
-    if (claim.affectedRows === 0) {
-      throw new BadRequestException('Stock Adjustment cannot be posted — it was already posted by another request.');
-    }
-
-    for (const line of adjustment.lines) {
-      const quantity = Number(line.quantity);
-      if (quantity > 0) {
-        const ledgerEntry = await this.ledgerService.writePositiveEntry({
-          tenantId,
-          companyId: adjustment.company_id,
-          itemId: line.item_id,
-          documentType: 'STOCK_ADJUSTMENT',
-          documentNo: adjustment.adjustment_no,
-          documentLineId: line.line_id,
-          postingDate: adjustment.posting_date,
-          transactionType: 'VARIANCE_POSITIVE',
-          quantity,
-          uom: line.uom,
-          rate: line.rate ? Number(line.rate) : 0,
-          lotNo: line.lot_no || undefined,
-          serialNo: line.serial_no || undefined,
-          warehouseId: adjustment.warehouse_id,
-          userId: userPayload?.userId,
-        });
-        await this.glPostingService.postInventoryLedgerEntry(ledgerEntry, userPayload?.userId);
-      } else if (quantity < 0) {
-        const ledgerEntry = await this.ledgerService.writeNegativeEntry({
-          tenantId,
-          companyId: adjustment.company_id,
-          itemId: line.item_id,
-          documentType: 'STOCK_ADJUSTMENT',
-          documentNo: adjustment.adjustment_no,
-          documentLineId: line.line_id,
-          postingDate: adjustment.posting_date,
-          transactionType: 'VARIANCE_NEGATIVE',
-          quantity: Math.abs(quantity),
-          uom: line.uom,
-          lotNo: line.lot_no || undefined,
-          serialNo: line.serial_no || undefined,
-          warehouseId: adjustment.warehouse_id,
-          userId: userPayload?.userId,
-        });
-        await this.glPostingService.postInventoryLedgerEntry(ledgerEntry, userPayload?.userId);
+      if (!adjustment.lines || adjustment.lines.length === 0) {
+        throw new BadRequestException('Cannot post a Stock Adjustment with no lines.');
       }
-    }
 
-    await this.auditService.log({
-      tenantId,
-      companyId: adjustment.company_id,
-      userId: userPayload?.userId,
-      action: 'POST',
-      entityName: 'stock_adjustment',
-      entityId: id,
-      newValues: { status: 'POSTED' },
-    });
+      // Claim the DRAFT -> POSTED transition atomically before writing any
+      // ledger/GL entries — see goods-issue.service.ts's post() for the full
+      // rationale (closes both the double-post race and the "retry after a
+      // partial failure duplicates the successful lines" hole).
+      const [claim] = await this.db
+        .update(schema.stockAdjustment)
+        .set({
+          status: 'POSTED',
+          posted_at: toMysqlTimestamp() as any,
+          posted_by: userPayload?.userId || null,
+          updated_by: userPayload?.userId || null,
+        })
+        .where(and(eq(schema.stockAdjustment.adjustment_id, id), eq(schema.stockAdjustment.status, 'DRAFT')));
 
-    return this.findOne(id);
+      if (claim.affectedRows === 0) {
+        throw new BadRequestException('Stock Adjustment cannot be posted — it was already posted by another request.');
+      }
+
+      for (const line of adjustment.lines) {
+        const quantity = Number(line.quantity);
+        if (quantity > 0) {
+          const ledgerEntry = await this.ledgerService.writePositiveEntry({
+            tenantId,
+            companyId: adjustment.company_id,
+            itemId: line.item_id,
+            documentType: 'STOCK_ADJUSTMENT',
+            documentNo: adjustment.adjustment_no,
+            documentLineId: line.line_id,
+            postingDate: adjustment.posting_date,
+            transactionType: 'VARIANCE_POSITIVE',
+            quantity,
+            uom: line.uom,
+            rate: line.rate ? Number(line.rate) : 0,
+            lotNo: line.lot_no || undefined,
+            serialNo: line.serial_no || undefined,
+            warehouseId: adjustment.warehouse_id,
+            userId: userPayload?.userId,
+          });
+          await this.glPostingService.postInventoryLedgerEntry(ledgerEntry, userPayload?.userId);
+        } else if (quantity < 0) {
+          const ledgerEntry = await this.ledgerService.writeNegativeEntry({
+            tenantId,
+            companyId: adjustment.company_id,
+            itemId: line.item_id,
+            documentType: 'STOCK_ADJUSTMENT',
+            documentNo: adjustment.adjustment_no,
+            documentLineId: line.line_id,
+            postingDate: adjustment.posting_date,
+            transactionType: 'VARIANCE_NEGATIVE',
+            quantity: Math.abs(quantity),
+            uom: line.uom,
+            lotNo: line.lot_no || undefined,
+            serialNo: line.serial_no || undefined,
+            warehouseId: adjustment.warehouse_id,
+            userId: userPayload?.userId,
+          });
+          await this.glPostingService.postInventoryLedgerEntry(ledgerEntry, userPayload?.userId);
+        }
+      }
+
+      await this.auditService.log({
+        tenantId,
+        companyId: adjustment.company_id,
+        userId: userPayload?.userId,
+        action: 'POST',
+        entityName: 'stock_adjustment',
+        entityId: id,
+        newValues: { status: 'POSTED' },
+      });
+
+      return this.findOne(id);
     });
   }
 }

@@ -579,12 +579,61 @@ export default function BatchPanel() {
   // unselectable (isAssignedElsewhere below), not silently hidden.
   const isAssignedElsewhere = (a: Row) =>
     !!a.current_batch_id && a.current_batch_id !== editingBatchId;
-  const unassignedAnimalCandidates = animalCandidates.filter(
-    (a) =>
-      (showAllAnimals || !isAssignedElsewhere(a)) &&
-      (!header.lob_id || a.lob_id === header.lob_id) &&
-      (!header.breed_id || a.breed_id === header.breed_id),
-  );
+
+  // Resolves the parent Shed ID for an animal's location (which is typically a PEN)
+  const getAnimalShedId = (locationId: string | null | undefined): string | null => {
+    if (!locationId) return null;
+    const l = locations.find((x) => x.location_id === locationId);
+    if (!l) return null;
+    if (l.location_type === 'SHED') return l.location_id;
+    return (l.shed_id as string) || (l.parent_location_id as string) || null;
+  };
+
+  // Map of shed_id -> count of candidate animals in that shed (for ANIMAL_WISE display)
+  const shedAnimalCounts = useMemo(() => {
+    if (trackingMode !== 'ANIMAL_WISE') return new Map<string, number>();
+    const map = new Map<string, number>();
+    for (const a of animalCandidates) {
+      if (!showAllAnimals && isAssignedElsewhere(a)) continue;
+      if (header.lob_id && a.lob_id !== header.lob_id) continue;
+      if (header.breed_id && a.breed_id !== header.breed_id) continue;
+      const sId = getAnimalShedId(a.current_location_id);
+      if (sId) {
+        map.set(sId, (map.get(sId) || 0) + 1);
+      }
+    }
+    return map;
+  }, [trackingMode, animalCandidates, locations, showAllAnimals, header.lob_id, header.breed_id, editingBatchId]);
+
+  const shedOptions = useMemo(() => {
+    return sheds.map((s) => {
+      const count = shedAnimalCounts.get(s.shed_id) || 0;
+      const countText = count === 1 ? '1 animal' : `${count} animals`;
+      const label = trackingMode === 'ANIMAL_WISE'
+        ? `${s.shed_code} — ${s.shed_name} (${countText})`
+        : `${s.shed_code} — ${s.shed_name}`;
+      return {
+        value: s.shed_id,
+        code: s.shed_code,
+        name: s.shed_name,
+        animal_count_display: countText,
+        label,
+      };
+    });
+  }, [sheds, shedAnimalCounts, trackingMode]);
+
+  const unassignedAnimalCandidates = (!showAllAnimals && !header.shed_id && !editingBatchId)
+    ? []
+    : animalCandidates.filter((a) => {
+        if (!showAllAnimals && isAssignedElsewhere(a)) return false;
+        if (header.lob_id && a.lob_id !== header.lob_id) return false;
+        if (header.breed_id && a.breed_id !== header.breed_id) return false;
+        if (!showAllAnimals && header.shed_id) {
+          const animalShedId = getAnimalShedId(a.current_location_id);
+          if (animalShedId !== header.shed_id) return false;
+        }
+        return true;
+      });
   // Stage options offered in the filter dropdown are only the stages actually
   // present among this LOB's unassigned candidates — no point listing a stage
   // nobody available is currently sitting in.
@@ -643,8 +692,18 @@ export default function BatchPanel() {
   const toggleAnimalSelected = (animalId: string) => {
     setSelectedAnimalIds((prev) => {
       const next = new Set(prev);
-      if (next.has(animalId)) next.delete(animalId);
-      else next.add(animalId);
+      if (next.has(animalId)) {
+        next.delete(animalId);
+      } else {
+        next.add(animalId);
+        if (!header.shed_id) {
+          const a = animalCandidates.find((c) => c.animal_id === animalId);
+          const aShedId = getAnimalShedId(a?.current_location_id);
+          if (aShedId) {
+            setHeader((h) => ({ ...h, shed_id: aShedId }));
+          }
+        }
+      }
       return next;
     });
   };
@@ -828,6 +887,15 @@ export default function BatchPanel() {
         errors.push(`Row ${line}: '${key}' is already assigned to a batch.`);
         continue;
       }
+      if (header.shed_id) {
+        const animalShedId = getAnimalShedId(animal.current_location_id);
+        if (animalShedId !== header.shed_id) {
+          errors.push(
+            `Row ${line}: '${key}' is not located in the selected shed.`,
+          );
+          continue;
+        }
+      }
       toSelect.add(animal.animal_id);
     }
 
@@ -893,6 +961,8 @@ export default function BatchPanel() {
         );
 
       if (trackingMode === 'ANIMAL_WISE') {
+        if (!header.shed_id)
+          throw new Error('Shed is required for an Animal Wise batch.');
         if (selectedAnimalIds.size === 0)
           throw new Error(
             'Select at least one animal for an Animal Wise batch.',
@@ -1883,23 +1953,59 @@ export default function BatchPanel() {
             <div className="flex flex-col gap-1.5">
               <label className="nf-text-label" style={S.sub}>
                 {t('blLabelShed')}
+                {trackingMode === 'ANIMAL_WISE' && (
+                  <span className="text-(--danger)"> *</span>
+                )}
               </label>
               <SearchableSelect
                 ariaLabel={t('blLabelShed')}
                 value={header.shed_id}
-                onChange={(val) =>
-                  setHeader((h) => ({ ...h, shed_id: val }))
+                onChange={(val) => {
+                  setHeader((h) => ({ ...h, shed_id: val }));
+                  if (trackingMode === 'ANIMAL_WISE') {
+                    setSelectedAnimalIds((prev) => {
+                      if (prev.size === 0) return prev;
+                      const next = new Set<string>();
+                      for (const id of prev) {
+                        const a = animalCandidates.find((c) => c.animal_id === id);
+                        if (a && val && getAnimalShedId(a.current_location_id) === val) {
+                          next.add(id);
+                        }
+                      }
+                      return next;
+                    });
+                  }
+                }}
+                options={shedOptions}
+                columnHeaders={
+                  trackingMode === 'ANIMAL_WISE'
+                    ? ['Code', 'Name', 'Animals']
+                    : ['Code', 'Name']
                 }
-                options={sheds.map((s) => ({
-                  value: s.shed_id,
-                  code: s.shed_code,
-                  name: s.shed_name,
-                  label: `${s.shed_code} — ${s.shed_name}`,
-                }))}
-                columnHeaders={['Code', 'Name']}
+                columns={
+                  trackingMode === 'ANIMAL_WISE'
+                    ? [
+                        { key: 'code', label: 'Code' },
+                        { key: 'name', label: 'Name' },
+                        { key: 'animal_count_display', label: 'Animals' },
+                      ]
+                    : [
+                        { key: 'code', label: 'Code' },
+                        { key: 'name', label: 'Name' },
+                      ]
+                }
                 placeholder={t('blSelectEllipsis')}
                 searchPlaceholder="Search sheds…"
-                onClear={header.shed_id ? () => setHeader((h) => ({ ...h, shed_id: '' })) : undefined}
+                onClear={
+                  header.shed_id
+                    ? () => {
+                        setHeader((h) => ({ ...h, shed_id: '' }));
+                        if (trackingMode === 'ANIMAL_WISE') {
+                          setSelectedAnimalIds(new Set());
+                        }
+                      }
+                    : undefined
+                }
               />
             </div>
             {trackingMode === 'BATCH_WISE' && (
@@ -2449,6 +2555,15 @@ export default function BatchPanel() {
                 >
                   Select Animals ({selectedAnimalIds.size} of{' '}
                   {selectableFilteredCandidates.length} selected)
+                  {showAllAnimals ? (
+                    <span className="ml-2 font-normal lowercase tracking-normal text-(--text-muted)">
+                      — all animals
+                    </span>
+                  ) : header.shed_id ? (
+                    <span className="ml-2 font-normal lowercase tracking-normal text-(--text-muted)">
+                      — in {sheds.find((s) => s.shed_id === header.shed_id)?.shed_name || 'selected shed'}
+                    </span>
+                  ) : null}
                 </p>
                 <div className="flex items-center gap-2">
                   <div className="w-36">
@@ -2570,11 +2685,21 @@ export default function BatchPanel() {
                 <p className="text-xs" style={S.muted}>
                   Select a Line of Business first.
                 </p>
+              ) : !header.shed_id && !showAllAnimals ? (
+                <div
+                  className="rounded-[var(--radius-sm)] border border-dashed p-6 text-center text-xs"
+                  style={{ ...S.surface, ...S.muted }}
+                >
+                  <p className="font-semibold text-sm mb-1" style={S.primary}>Select a Shed</p>
+                  <p>Please select a <strong>Shed</strong> above to view animals currently stationed in that shed, or check &ldquo;Show all animals&rdquo; below.</p>
+                </div>
               ) : filteredAnimalCandidates.length === 0 ? (
                 <p className="text-xs" style={S.muted}>
                   {header.breed_id
-                    ? 'No unassigned animals found matching the selected breed.'
-                    : 'No unassigned animals found for this Line of Business.'}
+                    ? 'No animals found matching the selected breed.'
+                    : header.shed_id && !showAllAnimals
+                      ? 'No unassigned animals found currently stationed in this shed.'
+                      : 'No animals found for this Line of Business.'}
                 </p>
               ) : (
                 <div

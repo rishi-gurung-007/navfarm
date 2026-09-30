@@ -1246,7 +1246,7 @@ export function MasterDataTable({
     });
     codeFieldTouchedRef.current = false;
     if (numbering.codeKey) {
-      const currentPreview = numbering.preview || (numbering.value(numbering.codeKey, "") as string);
+      const currentPreview = numbering.preview || (numbering.value(numbering.codeKey, undefined) as string);
       if (currentPreview) initial[numbering.codeKey] = currentPreview;
     }
     setForm(initial);
@@ -1260,7 +1260,7 @@ export function MasterDataTable({
   useEffect(() => {
     if (!modalOpen || editing || !numbering.codeKey) return;
     if (codeFieldTouchedRef.current) return;
-    const preview = numbering.preview || (numbering.value(numbering.codeKey, "") as string);
+    const preview = numbering.preview || (numbering.value(numbering.codeKey, undefined) as string);
     if (preview && (!form[numbering.codeKey] || !codeFieldTouchedRef.current)) {
       setForm((prev) => {
         if (codeFieldTouchedRef.current) return prev;
@@ -1492,15 +1492,16 @@ export function MasterDataTable({
         // its own key, but it does decide what gets written.
         if (f.filterOnly && !f.booleanColumns) continue;
         let v = form[f.key];
+        const isManagedCode = f.key === numbering.codeKey && numbering.managed;
         if ((v === "" || v === undefined || v === null) && f.key === numbering.codeKey && !codeFieldTouchedRef.current) {
-          const fallbackVal = numbering.preview || numbering.value(f.key, "");
+          const fallbackVal = numbering.preview || (numbering.value(f.key, undefined) as string);
           if (fallbackVal) {
             v = fallbackVal;
             form[f.key] = fallbackVal;
           }
         }
         const isEmpty = v === "" || v === undefined || v === null || (Array.isArray(v) && !v.length);
-        if (isEmpty && isFieldRequired(f, form)) {
+        if (isEmpty && isFieldRequired(f, form) && !isManagedCode) {
           setActiveFormTab(f.section || "Identification");
           throw new Error(`"${tLabel(currentLabel(f, form))}" is required.`);
         }
@@ -1546,12 +1547,12 @@ export function MasterDataTable({
         // generateNext()), so the series' current_seq never advanced no matter
         // how many records were created — only a genuinely edited code should
         // take the manual path.
-        if (f.key === numbering.codeKey && numbering.managed && numbering.allowManual && !codeFieldTouchedRef.current) {
+        if (f.key === numbering.codeKey && numbering.managed && numbering.allowManual && (!codeFieldTouchedRef.current || !form[f.key])) {
           continue;
         }
         let v = form[f.key];
         if ((v === "" || v === undefined || v === null) && f.key === numbering.codeKey && !codeFieldTouchedRef.current) {
-          const fallbackVal = numbering.preview || numbering.value(f.key, "");
+          const fallbackVal = numbering.preview || (numbering.value(f.key, undefined) as string);
           if (fallbackVal) v = fallbackVal;
         }
         // allOption is a display-only sentinel — "All Stages" selected alone
@@ -1730,7 +1731,10 @@ export function MasterDataTable({
 
   const renderField = (f: MasterDataField) => {
     const isLockedByTemplate = templateLockedFields.has(f.key);
-    const value = numbering.value(f.key, form[f.key] ?? "") as any;
+    const isCodeField = f.key === numbering.codeKey;
+    const value = isCodeField && codeFieldTouchedRef.current
+      ? (form[f.key] ?? "")
+      : (numbering.value(f.key, form[f.key] !== undefined && form[f.key] !== "" ? form[f.key] : undefined) as any);
     const accessibility = { id: `master-${config.key}-${f.key}`, "aria-label": tLabel(currentLabel(f, form)), "aria-required": isFieldRequired(f, form) };
     // No caption beside the box: every field in this form already carries its
     // label above the control, and repeating it here printed "Item Tracking"
@@ -2372,7 +2376,6 @@ export function MasterDataTable({
         />
       );
     }
-    const isCodeField = f.key === numbering.codeKey;
     const codeAllowsManual = isCodeField && (numbering.allowManual || isManualNoAllowed);
     const isDisabled = (f.readOnly && !codeAllowsManual) || isLockedByTemplate;
     const isInteger = f.type === "number" && (f.step === "1" || !f.step);
@@ -3078,6 +3081,7 @@ export function MasterDataTable({
                     const isSelected = currentTab === section;
                     const fieldsInSection = bySection.get(section) || [];
                     const missingRequired = fieldsInSection.some((f) => {
+                      if (f.key === numbering.codeKey && numbering.managed) return false;
                       if (!isFieldRequired(f, form)) return false;
                       const val = f.key === numbering.codeKey
                         ? (form[f.key] || (!codeFieldTouchedRef.current ? numbering.preview : ""))

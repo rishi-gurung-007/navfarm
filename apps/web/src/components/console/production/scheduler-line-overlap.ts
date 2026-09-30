@@ -48,6 +48,10 @@ export function formatPeriod(line: SchedulerLineCandidate): string {
     const dow = line.day_of_week ? `, Day ${line.day_of_week}` : '';
     return `Day ${start} to ${end} (Weekly${dow})`;
   }
+  if (line.occurrence === 'MONTHLY') {
+    const dom = line.day_of_week ? `, Day ${line.day_of_week}` : '';
+    return `Day ${start} to ${end} (Monthly${dom})`;
+  }
   return `Day ${start} to ${end}`;
 }
 
@@ -132,6 +136,14 @@ export function checkDaysOverlap(
     const dowA = a.day_of_week ? Number(a.day_of_week) : null;
     const dowB = b.day_of_week ? Number(b.day_of_week) : null;
     if (dowA && dowB) return dowA === dowB;
+    return true;
+  }
+
+  // MONTHLY vs MONTHLY
+  if (occA === 'MONTHLY' && occB === 'MONTHLY') {
+    const domA = a.day_of_week ? Number(a.day_of_week) : null;
+    const domB = b.day_of_week ? Number(b.day_of_week) : null;
+    if (domA && domB) return domA === domB;
     return true;
   }
 

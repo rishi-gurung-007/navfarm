@@ -1,7 +1,7 @@
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, like, isNull, count } from 'drizzle-orm';
+import { eq, and, like, isNull, count, sql } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
@@ -22,7 +22,7 @@ export class GoodsIssueService {
     private readonly auditService: AuditLogService,
     private readonly ledgerService: InventoryLedgerService,
     private readonly glPostingService: GlPostingService,
-  ) {}
+  ) { }
 
   private get db(): MySql2Database<typeof schema> {
     const tenantDb = this.cls.get<MySql2Database<typeof schema>>('tenantDb');
@@ -38,11 +38,13 @@ export class GoodsIssueService {
   // same count and generating the same issue number.
   private async generateIssueNo(tenantId: string, companyId: string, executor: MySql2Database<typeof schema> = this.db): Promise<string> {
     const [row] = await executor
-      .select({ total: count() })
+      .select({
+        maxSeq: sql<number>`COALESCE(MAX(CAST(SUBSTRING(${schema.goodsIssue.issue_no}, 4) AS UNSIGNED)), 0)`,
+      })
       .from(schema.goodsIssue)
       .where(and(eq(schema.goodsIssue.tenant_id, tenantId), eq(schema.goodsIssue.company_id, companyId)))
       .for('update');
-    const seq = Number(row?.total || 0) + 1;
+    const seq = Number(row?.maxSeq || 0) + 1;
     return `GI-${String(seq).padStart(6, '0')}`;
   }
 
@@ -50,38 +52,38 @@ export class GoodsIssueService {
     assertCompanyInScope(farmScope(this.cls), dto.company_id);
     await assertLocationOnActiveFarm(this.db, farmScope(this.cls), dto.warehouse_id, 'Warehouse');
     return withTenantTransaction(this.cls, async () => {
-    const issueId = randomUUID();
-    const issueNo = await this.db.transaction(async (tx) => {
-      const no = await this.generateIssueNo(tenantId, dto.company_id, tx);
-      await tx.insert(schema.goodsIssue).values({
-        issue_id: issueId,
-        tenant_id: tenantId,
-        company_id: dto.company_id,
-        issue_no: no,
-        posting_date: dto.posting_date,
-        warehouse_id: dto.warehouse_id,
-        cost_center_id: dto.cost_center_id || null,
-        remarks: dto.remarks || null,
-        status: 'DRAFT',
-        created_by: userPayload?.userId || null,
-        updated_by: userPayload?.userId || null,
+      const issueId = randomUUID();
+      const issueNo = await this.db.transaction(async (tx) => {
+        const no = await this.generateIssueNo(tenantId, dto.company_id, tx);
+        await tx.insert(schema.goodsIssue).values({
+          issue_id: issueId,
+          tenant_id: tenantId,
+          company_id: dto.company_id,
+          issue_no: no,
+          posting_date: dto.posting_date,
+          warehouse_id: dto.warehouse_id,
+          cost_center_id: dto.cost_center_id || null,
+          remarks: dto.remarks || null,
+          status: 'DRAFT',
+          created_by: userPayload?.userId || null,
+          updated_by: userPayload?.userId || null,
+        });
+        return no;
       });
-      return no;
-    });
 
-    await this.insertLines(issueId, dto.lines);
+      await this.insertLines(issueId, dto.lines);
 
-    await this.auditService.log({
-      tenantId,
-      companyId: dto.company_id,
-      userId: userPayload?.userId,
-      action: 'CREATE',
-      entityName: 'goods_issue',
-      entityId: issueId,
-      newValues: { issue_no: issueNo, ...dto },
-    });
+      await this.auditService.log({
+        tenantId,
+        companyId: dto.company_id,
+        userId: userPayload?.userId,
+        action: 'CREATE',
+        entityName: 'goods_issue',
+        entityId: issueId,
+        newValues: { issue_no: issueNo, ...dto },
+      });
 
-    return this.findOne(issueId);
+      return this.findOne(issueId);
     });
   }
 
@@ -217,67 +219,67 @@ export class GoodsIssueService {
 
   async post(id: string, tenantId: string, userPayload?: any) {
     return withTenantTransaction(this.cls, async () => {
-    const issue = await this.findOne(id);
-    this.assertDraft(issue);
+      const issue = await this.findOne(id);
+      this.assertDraft(issue);
 
-    if (!issue.lines || issue.lines.length === 0) {
-      throw new BadRequestException('Cannot post a Goods Issue with no lines.');
-    }
+      if (!issue.lines || issue.lines.length === 0) {
+        throw new BadRequestException('Cannot post a Goods Issue with no lines.');
+      }
 
-    // Claim the DRAFT -> POSTED transition atomically, before writing any
-    // ledger/GL entries: the WHERE also requires status='DRAFT', so if two
-    // concurrent post() calls race here only one UPDATE matches a row — the
-    // loser's affectedRows is 0 and it aborts before touching the ledger. This
-    // also closes the "retry after a partial failure" hole: since status is
-    // already POSTED once this succeeds, a retry hits assertDraft()'s
-    // rejection instead of silently re-running the loop and duplicating the
-    // lines that already succeeded.
-    const [claim] = await this.db
-      .update(schema.goodsIssue)
-      .set({
-        status: 'POSTED',
-        posted_at: toMysqlTimestamp() as any,
-        posted_by: userPayload?.userId || null,
-        updated_by: userPayload?.userId || null,
-      })
-      .where(and(eq(schema.goodsIssue.issue_id, id), eq(schema.goodsIssue.status, 'DRAFT')));
+      // Claim the DRAFT -> POSTED transition atomically, before writing any
+      // ledger/GL entries: the WHERE also requires status='DRAFT', so if two
+      // concurrent post() calls race here only one UPDATE matches a row — the
+      // loser's affectedRows is 0 and it aborts before touching the ledger. This
+      // also closes the "retry after a partial failure" hole: since status is
+      // already POSTED once this succeeds, a retry hits assertDraft()'s
+      // rejection instead of silently re-running the loop and duplicating the
+      // lines that already succeeded.
+      const [claim] = await this.db
+        .update(schema.goodsIssue)
+        .set({
+          status: 'POSTED',
+          posted_at: toMysqlTimestamp() as any,
+          posted_by: userPayload?.userId || null,
+          updated_by: userPayload?.userId || null,
+        })
+        .where(and(eq(schema.goodsIssue.issue_id, id), eq(schema.goodsIssue.status, 'DRAFT')));
 
-    if (claim.affectedRows === 0) {
-      throw new BadRequestException('Goods Issue cannot be posted — it was already posted by another request.');
-    }
+      if (claim.affectedRows === 0) {
+        throw new BadRequestException('Goods Issue cannot be posted — it was already posted by another request.');
+      }
 
-    for (const line of issue.lines) {
-      const ledgerEntry = await this.ledgerService.writeNegativeEntry({
+      for (const line of issue.lines) {
+        const ledgerEntry = await this.ledgerService.writeNegativeEntry({
+          tenantId,
+          companyId: issue.company_id,
+          itemId: line.item_id,
+          documentType: 'GOODS_ISSUE',
+          documentNo: issue.issue_no,
+          documentLineId: line.line_id,
+          postingDate: issue.posting_date,
+          transactionType: 'CONSUMPTION',
+          quantity: Number(line.quantity),
+          uom: line.uom,
+          lotNo: line.lot_no || undefined,
+          serialNo: line.serial_no || undefined,
+          warehouseId: issue.warehouse_id,
+          userId: userPayload?.userId,
+        });
+
+        await this.glPostingService.postInventoryLedgerEntry(ledgerEntry, userPayload?.userId);
+      }
+
+      await this.auditService.log({
         tenantId,
         companyId: issue.company_id,
-        itemId: line.item_id,
-        documentType: 'GOODS_ISSUE',
-        documentNo: issue.issue_no,
-        documentLineId: line.line_id,
-        postingDate: issue.posting_date,
-        transactionType: 'CONSUMPTION',
-        quantity: Number(line.quantity),
-        uom: line.uom,
-        lotNo: line.lot_no || undefined,
-        serialNo: line.serial_no || undefined,
-        warehouseId: issue.warehouse_id,
         userId: userPayload?.userId,
+        action: 'POST',
+        entityName: 'goods_issue',
+        entityId: id,
+        newValues: { status: 'POSTED' },
       });
 
-      await this.glPostingService.postInventoryLedgerEntry(ledgerEntry, userPayload?.userId);
-    }
-
-    await this.auditService.log({
-      tenantId,
-      companyId: issue.company_id,
-      userId: userPayload?.userId,
-      action: 'POST',
-      entityName: 'goods_issue',
-      entityId: id,
-      newValues: { status: 'POSTED' },
-    });
-
-    return this.findOne(id);
+      return this.findOne(id);
     });
   }
 }

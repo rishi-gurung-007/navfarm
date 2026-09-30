@@ -26,6 +26,8 @@ export class HttpExceptionFilter implements ExceptionFilter {
 
     if (status === HttpStatus.INTERNAL_SERVER_ERROR) {
       console.error('Unhandled Exception:', exception);
+    } else if (isDuplicateEntry(exception)) {
+      console.warn('[HttpExceptionFilter] Duplicate Entry Conflict:', (exception as any)?.cause?.message || (exception as any)?.message || exception);
     }
 
     const message =

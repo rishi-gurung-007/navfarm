@@ -1,7 +1,7 @@
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, or, isNull, gte, lte, asc, desc, sql, isNotNull, ne, SQL } from 'drizzle-orm';
+import { eq, and, or, isNull, gte, lte, asc, desc, sql, isNotNull, ne, like, SQL } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
@@ -497,19 +497,49 @@ export class InventoryLedgerService {
     if (query.itemId) conditions.push(eq(schema.inventoryLedger.item_id, query.itemId));
     if (query.locationId) conditions.push(eq(schema.inventoryLedger.location_id, query.locationId));
     if (query.warehouseId) conditions.push(eq(schema.inventoryLedger.warehouse_id, query.warehouseId));
-    if (query.transactionType) conditions.push(eq(schema.inventoryLedger.transaction_type, query.transactionType));
+    if (query.transactionType) {
+      if (query.transactionType === 'CONSUMPTION') {
+        conditions.push(
+          or(
+            eq(schema.inventoryLedger.transaction_type, 'CONSUMPTION'),
+            like(schema.inventoryLedger.transaction_type, '%CONSUMPTION%'),
+          ),
+        );
+      } else if (query.transactionType === 'OUTPUT') {
+        conditions.push(
+          or(
+            eq(schema.inventoryLedger.transaction_type, 'OUTPUT'),
+            like(schema.inventoryLedger.transaction_type, '%OUTPUT%'),
+          ),
+        );
+      } else {
+        conditions.push(eq(schema.inventoryLedger.transaction_type, query.transactionType));
+      }
+    }
     if (query.documentType) conditions.push(eq(schema.inventoryLedger.document_type, query.documentType));
+    if (query.documentNo) {
+      conditions.push(
+        or(
+          like(schema.inventoryLedger.document_no, `%${query.documentNo}%`),
+          like(schema.inventoryLedger.batch_no, `%${query.documentNo}%`),
+        )!,
+      );
+    }
     if (query.dateFrom) conditions.push(gte(schema.inventoryLedger.posting_date, query.dateFrom));
     if (query.dateTo) conditions.push(lte(schema.inventoryLedger.posting_date, query.dateTo));
 
     const limit = query.limit || 50;
     const offset = query.offset || 0;
 
+    const orderClauses = query.sortBy === 'posting_date'
+      ? [desc(schema.inventoryLedger.posting_date), desc(schema.inventoryLedger.created_at)]
+      : [desc(schema.inventoryLedger.created_at), desc(schema.inventoryLedger.posting_date)];
+
     return this.db
       .select()
       .from(schema.inventoryLedger)
       .where(and(...conditions))
-      .orderBy(desc(schema.inventoryLedger.posting_date), desc(schema.inventoryLedger.created_at))
+      .orderBy(...orderClauses)
       .limit(limit)
       .offset(offset);
   }

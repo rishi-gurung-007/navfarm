@@ -50,4 +50,35 @@ describe("useCodeSeries on a tenant with no number series", () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.preview).toBe("FARM-0001");
   });
+
+  it("does not snap back to preview when code field is cleared to empty string", async () => {
+    get.mockResolvedValue({ generated: true, allowManual: true, preview: "FARM-0001" });
+
+    const { result } = renderHook(() => useCodeSeries("location", { location_type: "FARM-SERIES-CLEAR" }, true));
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    // When value is undefined, initial suggestion is the preview
+    expect(result.current.value("location_code", undefined)).toBe("FARM-0001");
+    // When value is cleared to empty string, it stays empty and does NOT revert to preview
+    expect(result.current.value("location_code", "")).toBe("");
+    // When value is a custom string, it keeps the custom string
+    expect(result.current.value("location_code", "CUSTOM-01")).toBe("CUSTOM-01");
+  });
+
+  it("does not mark field as required when managed by number series", async () => {
+    get.mockResolvedValue({ generated: true, allowManual: true, preview: "FARM-0001" });
+
+    const { result } = renderHook(() => useCodeSeries("location", { location_type: "FARM-SERIES-REQ" }, true));
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    const transformedField = result.current.field({
+      key: "location_code",
+      label: "Code",
+      type: "text",
+      required: true,
+    });
+    // Managed code fields should not block save with required error
+    expect(transformedField.required).toBe(false);
+  });
 });
+

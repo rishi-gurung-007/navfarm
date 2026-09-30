@@ -125,6 +125,11 @@ export class CreateResourceDto {
   @IsOptional()
   maintenance_vendor?: string;
 
+  @ApiProperty({ description: 'Next scheduled maintenance / service date', required: false })
+  @IsDateString()
+  @IsOptional()
+  next_maintenance_date?: string;
+
   @ApiProperty({ description: 'GL account this resource posts cost to', required: false })
   @IsUUID()
   @IsOptional()
@@ -262,6 +267,11 @@ export class UpdateResourceDto {
   @IsString()
   @IsOptional()
   maintenance_vendor?: string;
+
+  @ApiProperty({ description: 'Next scheduled maintenance / service date', required: false })
+  @IsDateString()
+  @IsOptional()
+  next_maintenance_date?: string;
 
   @ApiProperty({ required: false })
   @IsUUID()

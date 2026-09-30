@@ -1,7 +1,7 @@
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, like, or, isNull, count, inArray } from 'drizzle-orm';
+import { eq, and, like, or, isNull, count, sql, inArray } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
@@ -24,7 +24,7 @@ export class GoodsReceiptService {
     private readonly ledgerService: InventoryLedgerService,
     private readonly glPostingService: GlPostingService,
     private readonly numberSeriesService: NumberSeriesService,
-  ) {}
+  ) { }
 
   private get db(): MySql2Database<typeof schema> {
     const tenantDb = this.cls.get<MySql2Database<typeof schema>>('tenantDb');
@@ -59,11 +59,13 @@ export class GoodsReceiptService {
 
   private async generateReceiptNo(tenantId: string, companyId: string, executor: MySql2Database<typeof schema> = this.db): Promise<string> {
     const [row] = await executor
-      .select({ total: count() })
+      .select({
+        maxSeq: sql<number>`COALESCE(MAX(CAST(SUBSTRING(${schema.goodsReceipt.receipt_no}, 4) AS UNSIGNED)), 0)`,
+      })
       .from(schema.goodsReceipt)
       .where(and(eq(schema.goodsReceipt.tenant_id, tenantId), eq(schema.goodsReceipt.company_id, companyId)))
       .for('update');
-    const seq = Number(row?.total || 0) + 1;
+    const seq = Number(row?.maxSeq || 0) + 1;
     return `GR-${String(seq).padStart(6, '0')}`;
   }
 
@@ -72,38 +74,38 @@ export class GoodsReceiptService {
     await assertLocationOnActiveFarm(this.db, farmScope(this.cls), dto.warehouse_id, 'Warehouse');
     await this.assertWarehouseActive(dto.warehouse_id);
     return withTenantTransaction(this.cls, async () => {
-    const receiptId = randomUUID();
-    let receiptNo = '';
-    await this.db.transaction(async (tx) => {
-      receiptNo = await this.generateReceiptNo(tenantId, dto.company_id, tx);
-      await tx.insert(schema.goodsReceipt).values({
-        receipt_id: receiptId,
-        tenant_id: tenantId,
-        company_id: dto.company_id,
-        receipt_no: receiptNo,
-        posting_date: dto.posting_date,
-        warehouse_id: dto.warehouse_id,
-        supplier_id: dto.supplier_id || null,
-        external_reference_no: dto.external_reference_no || null,
-        remarks: dto.remarks || null,
-        status: 'DRAFT',
-        created_by: userPayload?.userId || null,
-        updated_by: userPayload?.userId || null,
+      const receiptId = randomUUID();
+      let receiptNo = '';
+      await this.db.transaction(async (tx) => {
+        receiptNo = await this.generateReceiptNo(tenantId, dto.company_id, tx);
+        await tx.insert(schema.goodsReceipt).values({
+          receipt_id: receiptId,
+          tenant_id: tenantId,
+          company_id: dto.company_id,
+          receipt_no: receiptNo,
+          posting_date: dto.posting_date,
+          warehouse_id: dto.warehouse_id,
+          supplier_id: dto.supplier_id || null,
+          external_reference_no: dto.external_reference_no || null,
+          remarks: dto.remarks || null,
+          status: 'DRAFT',
+          created_by: userPayload?.userId || null,
+          updated_by: userPayload?.userId || null,
+        });
+        await this.insertLines(receiptId, dto.lines, dto.company_id, tenantId, tx);
       });
-      await this.insertLines(receiptId, dto.lines, dto.company_id, tenantId, tx);
-    });
 
-    await this.auditService.log({
-      tenantId,
-      companyId: dto.company_id,
-      userId: userPayload?.userId,
-      action: 'CREATE',
-      entityName: 'goods_receipt',
-      entityId: receiptId,
-      newValues: { receipt_no: receiptNo, ...dto },
-    });
+      await this.auditService.log({
+        tenantId,
+        companyId: dto.company_id,
+        userId: userPayload?.userId,
+        action: 'CREATE',
+        entityName: 'goods_receipt',
+        entityId: receiptId,
+        newValues: { receipt_no: receiptNo, ...dto },
+      });
 
-    return this.findOne(receiptId);
+      return this.findOne(receiptId);
     });
   }
 
@@ -410,84 +412,84 @@ export class GoodsReceiptService {
    */
   async post(id: string, tenantId: string, userPayload?: any) {
     return withTenantTransaction(this.cls, async () => {
-    const receipt = await this.findOne(id);
-    this.assertDraft(receipt);
-    // The warehouse may have been deactivated after the receipt was drafted —
-    // re-checked here so posting can never land stock on a dead location.
-    await this.assertWarehouseActive(receipt.warehouse_id);
+      const receipt = await this.findOne(id);
+      this.assertDraft(receipt);
+      // The warehouse may have been deactivated after the receipt was drafted —
+      // re-checked here so posting can never land stock on a dead location.
+      await this.assertWarehouseActive(receipt.warehouse_id);
 
-    if (!receipt.lines || receipt.lines.length === 0) {
-      throw new BadRequestException('Cannot post a Goods Receipt with no lines.');
-    }
-
-    // Spec: ANIMAL_SUPPLIER vendors must have a valid health certificate on file before
-    // their receipts can post — see supplier.service.ts's vendor_type/health_cert_url fields.
-    if (receipt.supplier_id) {
-      const [supplier] = await this.db
-        .select()
-        .from(schema.supplierMaster)
-        .where(eq(schema.supplierMaster.supplier_id, receipt.supplier_id))
-        .limit(1);
-      if (supplier?.vendor_type === 'ANIMAL_SUPPLIER' && !supplier.health_cert_url) {
-        throw new BadRequestException(
-          `Supplier '${supplier.supplier_name}' is an ANIMAL_SUPPLIER without a health certificate on file — cannot post this receipt.`
-        );
+      if (!receipt.lines || receipt.lines.length === 0) {
+        throw new BadRequestException('Cannot post a Goods Receipt with no lines.');
       }
-    }
 
-    // Claim the DRAFT -> POSTED transition atomically before writing any
-    // ledger/GL entries — see goods-issue.service.ts's post() for the full
-    // rationale (closes both the double-post race and the "retry after a
-    // partial failure duplicates the successful lines" hole).
-    const [claim] = await this.db
-      .update(schema.goodsReceipt)
-      .set({
-        status: 'POSTED',
-        posted_at: toMysqlTimestamp() as any,
-        posted_by: userPayload?.userId || null,
-        updated_by: userPayload?.userId || null,
-      })
-      .where(and(eq(schema.goodsReceipt.receipt_id, id), eq(schema.goodsReceipt.status, 'DRAFT')));
+      // Spec: ANIMAL_SUPPLIER vendors must have a valid health certificate on file before
+      // their receipts can post — see supplier.service.ts's vendor_type/health_cert_url fields.
+      if (receipt.supplier_id) {
+        const [supplier] = await this.db
+          .select()
+          .from(schema.supplierMaster)
+          .where(eq(schema.supplierMaster.supplier_id, receipt.supplier_id))
+          .limit(1);
+        if (supplier?.vendor_type === 'ANIMAL_SUPPLIER' && !supplier.health_cert_url) {
+          throw new BadRequestException(
+            `Supplier '${supplier.supplier_name}' is an ANIMAL_SUPPLIER without a health certificate on file — cannot post this receipt.`
+          );
+        }
+      }
 
-    if (claim.affectedRows === 0) {
-      throw new BadRequestException('Goods Receipt cannot be posted — it was already posted by another request.');
-    }
+      // Claim the DRAFT -> POSTED transition atomically before writing any
+      // ledger/GL entries — see goods-issue.service.ts's post() for the full
+      // rationale (closes both the double-post race and the "retry after a
+      // partial failure duplicates the successful lines" hole).
+      const [claim] = await this.db
+        .update(schema.goodsReceipt)
+        .set({
+          status: 'POSTED',
+          posted_at: toMysqlTimestamp() as any,
+          posted_by: userPayload?.userId || null,
+          updated_by: userPayload?.userId || null,
+        })
+        .where(and(eq(schema.goodsReceipt.receipt_id, id), eq(schema.goodsReceipt.status, 'DRAFT')));
 
-    for (const line of receipt.lines) {
-      const ledgerEntry = await this.ledgerService.writePositiveEntry({
+      if (claim.affectedRows === 0) {
+        throw new BadRequestException('Goods Receipt cannot be posted — it was already posted by another request.');
+      }
+
+      for (const line of receipt.lines) {
+        const ledgerEntry = await this.ledgerService.writePositiveEntry({
+          tenantId,
+          companyId: receipt.company_id,
+          itemId: line.item_id,
+          documentType: 'GOODS_RECEIPT',
+          documentNo: receipt.receipt_no,
+          documentLineId: line.line_id,
+          postingDate: receipt.posting_date,
+          externalReferenceNo: receipt.external_reference_no || undefined,
+          transactionType: 'PURCHASE',
+          quantity: Number(line.quantity),
+          uom: line.uom,
+          rate: line.rate ? Number(line.rate) : undefined,
+          lotNo: line.lot_no || undefined,
+          serialNo: line.serial_no || undefined,
+          expiryDate: line.expiry_date || undefined,
+          warehouseId: receipt.warehouse_id,
+          userId: userPayload?.userId,
+        });
+
+        await this.glPostingService.postInventoryLedgerEntry(ledgerEntry, userPayload?.userId);
+      }
+
+      await this.auditService.log({
         tenantId,
         companyId: receipt.company_id,
-        itemId: line.item_id,
-        documentType: 'GOODS_RECEIPT',
-        documentNo: receipt.receipt_no,
-        documentLineId: line.line_id,
-        postingDate: receipt.posting_date,
-        externalReferenceNo: receipt.external_reference_no || undefined,
-        transactionType: 'PURCHASE',
-        quantity: Number(line.quantity),
-        uom: line.uom,
-        rate: line.rate ? Number(line.rate) : undefined,
-        lotNo: line.lot_no || undefined,
-        serialNo: line.serial_no || undefined,
-        expiryDate: line.expiry_date || undefined,
-        warehouseId: receipt.warehouse_id,
         userId: userPayload?.userId,
+        action: 'POST',
+        entityName: 'goods_receipt',
+        entityId: id,
+        newValues: { status: 'POSTED' },
       });
 
-      await this.glPostingService.postInventoryLedgerEntry(ledgerEntry, userPayload?.userId);
-    }
-
-    await this.auditService.log({
-      tenantId,
-      companyId: receipt.company_id,
-      userId: userPayload?.userId,
-      action: 'POST',
-      entityName: 'goods_receipt',
-      entityId: id,
-      newValues: { status: 'POSTED' },
-    });
-
-    return this.findOne(id);
+      return this.findOne(id);
     });
   }
 }

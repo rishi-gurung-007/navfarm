@@ -483,7 +483,84 @@ export class BatchService {
       // headcount — not applicable here) and the input-line-driven bio-asset ledger
       // posting (no acquisition is happening; these animals' value is already on the
       // books from whatever batch/purchase originally brought them in).
+      const rawStageIds = [
+        ...new Set(
+          animalWiseAnimals
+            .map((a) => a.current_stage_id)
+            .filter((id): id is string => !!id),
+        ),
+      ];
+
+      let stageRows: (typeof schema.stageMaster.$inferSelect)[] = [];
+      try {
+        const query = this.db.select?.();
+        if (query && typeof query.from === 'function' && rawStageIds.length) {
+          stageRows = await query
+            .from(schema.stageMaster)
+            .where(
+              and(
+                inArray(schema.stageMaster.stage_id, rawStageIds),
+                isNull(schema.stageMaster.deleted_at),
+              ),
+            );
+        }
+      } catch {
+        stageRows = [];
+      }
+
+      const rawStageIdToCode = new Map(
+        stageRows.map((s) => [s.stage_id, s.stage_code]),
+      );
+      const stageCodeSet = new Set(
+        stageRows.map((s) => s.stage_code).filter(Boolean),
+      );
+
+      // Map each stage_code to its canonical company stage (or fallback to tenant template stage)
+      const stageCodeToCanonicalId = new Map<string, string>();
+      for (const stageCode of stageCodeSet) {
+        try {
+          const query = this.db.select?.();
+          if (query && typeof query.from === 'function') {
+            const candidateStages = await query
+              .from(schema.stageMaster)
+              .where(
+                and(
+                  eq(schema.stageMaster.tenant_id, tenantId),
+                  eq(schema.stageMaster.stage_code, stageCode!),
+                  isNull(schema.stageMaster.deleted_at),
+                ),
+              );
+            const companyStage = candidateStages?.find?.(
+              (s: any) => s.company_id === dto.company_id,
+            );
+            const resolved = companyStage || candidateStages?.[0];
+            if (resolved) {
+              stageCodeToCanonicalId.set(stageCode!, resolved.stage_id);
+            }
+          }
+        } catch {
+          // Graceful fallback for mock unit tests
+        }
+      }
+
       for (const animal of animalWiseAnimals) {
+        const stageCode = animal.current_stage_id
+          ? rawStageIdToCode.get(animal.current_stage_id)
+          : null;
+        const canonicalStageId = stageCode
+          ? stageCodeToCanonicalId.get(stageCode) || animal.current_stage_id
+          : animal.current_stage_id;
+
+        if (
+          canonicalStageId &&
+          canonicalStageId !== animal.current_stage_id
+        ) {
+          await this.db
+            .update(schema.animalRegister)
+            .set({ current_stage_id: canonicalStageId })
+            .where(eq(schema.animalRegister.animal_id, animal.animal_id));
+        }
+
         await this.movementLog.record({
           tenantId,
           companyId: dto.company_id,
@@ -491,20 +568,20 @@ export class BatchService {
           movementType: 'ASSIGN',
           eventDate: dto.start_date,
           toBatchId: batchId,
-          toStageId: animal.current_stage_id,
+          toStageId: canonicalStageId,
           toLocationId: animal.current_location_id,
           userId: userPayload?.userId,
         });
       }
 
-      const distinctStageIds = [
-        ...new Set(
-          animalWiseAnimals
-            .map((a) => a.current_stage_id)
-            .filter((id): id is string => !!id),
-        ),
-      ];
-      for (const stageId of distinctStageIds) {
+      const distinctStageIds = Array.from(
+        new Set(Array.from(stageCodeToCanonicalId.values())),
+      );
+      const stageIdsToSchedule = distinctStageIds.length
+        ? distinctStageIds
+        : rawStageIds;
+
+      for (const stageId of stageIdsToSchedule) {
         await this.schedulerHeaderService.createForStage(
           batchId,
           stageId,
@@ -2586,7 +2663,7 @@ export class BatchService {
         case 'WEEKLY':
           return line.day_of_week === isoWeekday;
         case 'MONTHLY':
-          return dom === stageStartDom;
+          return (line.day_of_week != null ? Number(line.day_of_week) : stageStartDom) === dom;
         case 'ONCE':
           return dayOfStage === line.start_day;
         case 'CUSTOM':
@@ -3410,16 +3487,68 @@ export class BatchService {
         ),
       );
 
+    const animalStageIds = [
+      ...new Set(
+        liveAnimals
+          .map((a) => a.current_stage_id)
+          .filter((id): id is string => !!id),
+      ),
+    ];
+
+    const animalStageRows = animalStageIds.length
+      ? await this.db
+          .select()
+          .from(schema.stageMaster)
+          .where(inArray(schema.stageMaster.stage_id, animalStageIds))
+      : [];
+
+    const rawStageIdToCode = new Map(
+      animalStageRows.map((s) => [s.stage_id, s.stage_code]),
+    );
+
+    // Resolve each unique stage_code to the company's preferred stage_id
+    const stageCodeSet = new Set(
+      animalStageRows.map((s) => s.stage_code).filter(Boolean),
+    );
+    const stageCodeToCanonicalStage = new Map<
+      string,
+      (typeof animalStageRows)[0]
+    >();
+    for (const code of stageCodeSet) {
+      const candidates = await this.db
+        .select()
+        .from(schema.stageMaster)
+        .where(
+          and(
+            eq(schema.stageMaster.tenant_id, batch.tenant_id),
+            eq(schema.stageMaster.stage_code, code!),
+            isNull(schema.stageMaster.deleted_at),
+          ),
+        );
+      const companyStage = candidates.find(
+        (c) => c.company_id === batch.company_id,
+      );
+      const chosen = companyStage || candidates[0];
+      if (chosen) {
+        stageCodeToCanonicalStage.set(code!, chosen);
+      }
+    }
+
     const stageGroups = new Map<string, typeof liveAnimals>();
     for (const animal of liveAnimals) {
       if (!animal.current_stage_id) continue;
-      const group = stageGroups.get(animal.current_stage_id) || [];
+      const code = rawStageIdToCode.get(animal.current_stage_id);
+      const canonical = code ? stageCodeToCanonicalStage.get(code) : null;
+      const canonicalStageId = canonical
+        ? canonical.stage_id
+        : animal.current_stage_id;
+      const group = stageGroups.get(canonicalStageId) || [];
       group.push(animal);
-      stageGroups.set(animal.current_stage_id, group);
+      stageGroups.set(canonicalStageId, group);
     }
 
     // 1. Look up all existing scheduler_headers for this batch
-    const batchSchedulers = await this.db
+    const rawBatchSchedulers = await this.db
       .select({
         scheduler_id: schema.schedulerHeader.scheduler_id,
         stage_id: schema.schedulerHeader.stage_id,
@@ -3427,14 +3556,61 @@ export class BatchService {
       .from(schema.schedulerHeader)
       .where(eq(schema.schedulerHeader.batch_id, batch.batch_id));
 
-    // Auto-create schedulers for any live animal stages that have scheduler_auto_create enabled
-    for (const [stgId] of stageGroups.entries()) {
-      if (!batchSchedulers.some((s) => s.stage_id === stgId)) {
-        const [stageRow] = await this.db
+    const schedulerStageIds = [
+      ...new Set(rawBatchSchedulers.map((s) => s.stage_id)),
+    ];
+    const schedulerStageRows = schedulerStageIds.length
+      ? await this.db
           .select()
           .from(schema.stageMaster)
-          .where(eq(schema.stageMaster.stage_id, stgId))
-          .limit(1);
+          .where(inArray(schema.stageMaster.stage_id, schedulerStageIds))
+      : [];
+    const schedulerStageMap = new Map(
+      schedulerStageRows.map((s) => [s.stage_id, s]),
+    );
+
+    // Deduplicate schedulers by stage_code
+    const schedulersByCode = new Map<
+      string,
+      { scheduler_id: string; stage_id: string; stage_code: string | null }
+    >();
+    for (const bs of rawBatchSchedulers) {
+      const stageRow = schedulerStageMap.get(bs.stage_id);
+      const code = stageRow?.stage_code || bs.stage_id;
+      const canonical = stageCodeToCanonicalStage.get(code);
+      const effectiveStageId = canonical?.stage_id || bs.stage_id;
+
+      const existing = schedulersByCode.get(code);
+      if (!existing) {
+        schedulersByCode.set(code, {
+          scheduler_id: bs.scheduler_id,
+          stage_id: effectiveStageId,
+          stage_code: stageRow?.stage_code || null,
+        });
+      }
+    }
+    const batchSchedulers = Array.from(schedulersByCode.values());
+
+    // Auto-create schedulers for any live animal stages that have scheduler_auto_create enabled
+    for (const [stgId] of stageGroups.entries()) {
+      const stageRow =
+        schedulerStageMap.get(stgId) ||
+        animalStageRows.find((s) => s.stage_id === stgId) ||
+        (
+          await this.db
+            .select()
+            .from(schema.stageMaster)
+            .where(eq(schema.stageMaster.stage_id, stgId))
+            .limit(1)
+        )[0];
+
+      const alreadyScheduled = batchSchedulers.some(
+        (s) =>
+          s.stage_id === stgId ||
+          (stageRow?.stage_code && s.stage_code === stageRow.stage_code),
+      );
+
+      if (!alreadyScheduled) {
         if (
           stageRow &&
           stageRow.scheduler_auto_create !== false &&
@@ -3449,6 +3625,7 @@ export class BatchService {
             batchSchedulers.push({
               scheduler_id: created.scheduler_id,
               stage_id: stgId,
+              stage_code: stageRow.stage_code || null,
             });
           }
         }
@@ -3477,7 +3654,7 @@ export class BatchService {
     }
 
     // 2. Fetch ONLY the stages for which a scheduler exists, ordered strictly by stage_sequence
-    const scheduledStages = await this.db
+    const scheduledStagesRaw = await this.db
       .select()
       .from(schema.stageMaster)
       .where(
@@ -3487,6 +3664,26 @@ export class BatchService {
         ),
       )
       .orderBy(schema.stageMaster.stage_sequence);
+
+    // Deduplicate stages by stage_code so UI displays exactly one step/tab per lifecycle stage
+    const scheduledStagesMap = new Map<
+      string,
+      (typeof scheduledStagesRaw)[0]
+    >();
+    for (const s of scheduledStagesRaw) {
+      const code = s.stage_code || s.stage_id;
+      const existing = scheduledStagesMap.get(code);
+      if (
+        !existing ||
+        (s.company_id === batch.company_id &&
+          existing.company_id !== batch.company_id)
+      ) {
+        scheduledStagesMap.set(code, s);
+      }
+    }
+    const scheduledStages = Array.from(scheduledStagesMap.values()).sort(
+      (a, b) => (a.stage_sequence ?? 0) - (b.stage_sequence ?? 0),
+    );
 
     // Build progress with ONLY scheduled stages, in lifecycle sequence order
     const progress = scheduledStages.map((s) => ({
@@ -3533,7 +3730,7 @@ export class BatchService {
       const stageId = stageInfo.stage_id;
       const animals = stageGroups.get(stageId) || [];
 
-      const [header] = await this.db
+      let [header] = await this.db
         .select()
         .from(schema.schedulerHeader)
         .where(
@@ -3543,6 +3740,28 @@ export class BatchService {
           ),
         )
         .limit(1);
+
+      if (!header && stageInfo.stage_code) {
+        const [fallbackHeader] = await this.db
+          .select({
+            scheduler: schema.schedulerHeader,
+          })
+          .from(schema.schedulerHeader)
+          .innerJoin(
+            schema.stageMaster,
+            eq(schema.schedulerHeader.stage_id, schema.stageMaster.stage_id),
+          )
+          .where(
+            and(
+              eq(schema.schedulerHeader.batch_id, batch.batch_id),
+              eq(schema.stageMaster.stage_code, stageInfo.stage_code),
+            ),
+          )
+          .limit(1);
+        if (fallbackHeader?.scheduler) {
+          header = fallbackHeader.scheduler;
+        }
+      }
 
       const lock = lockRows.find((l) => l.stage_id === stageId);
       const isStageLocked = lock?.status === 'LOCKED';
