@@ -147,17 +147,17 @@ export function SubCard({
             inputMode="decimal"
             aria-label={`${line.activity_name} — ${t("deValue")}`}
           />
-          {line.lot_required && (
+          {Boolean(line.lot_required || line.is_lot_tracked || line.is_serial_tracked) && (
             <div className="w-full">
               <LotSerialPicker
                 itemId={line.item_id || ""}
                 warehouseId={(form.batch as any)?.warehouse_id}
-                trackingType="LOT"
+                trackingType={line.is_serial_tracked ? "SERIAL" : "LOT"}
                 value={lot}
                 onChange={(val) => setLot(val)}
                 disabled={busy}
-                placeholder={t("deLot") || "Select lot…"}
-                ariaLabel={`${line.activity_name} — ${t("deLot")}`}
+                placeholder={line.is_serial_tracked ? "Select serial…" : (t("deLot") || "Select lot…")}
+                ariaLabel={`${line.activity_name} — ${line.is_serial_tracked ? "Serial" : (t("deLot") || "Lot")}`}
               />
             </div>
           )}

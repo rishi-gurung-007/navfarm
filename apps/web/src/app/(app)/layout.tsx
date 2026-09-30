@@ -285,6 +285,16 @@ export default function ConsoleLayout({ children, modal }: { children: React.Rea
         : t(section.labelKey),
     href: section.href,
   }));
+  const inventoryChildren = [
+    { label: t("invStockBalance"), href: "/inventory/balance" },
+    { label: t("invFeedForecast"), href: "/inventory/feed-forecast" },
+    { label: t("invRequisitions"), href: "/inventory/requisitions" },
+    { label: t("invGoodsReceipt"), href: "/inventory/goods-receipt" },
+    { label: t("invTransfers"), href: "/inventory/transfers" },
+    { label: t("invGoodsIssue"), href: "/inventory/goods-issue" },
+    { label: t("invStockAdjustment"), href: "/inventory/stock-adjustment" },
+    { label: t("invLedger"), href: "/inventory/ledger" },
+  ];
   // Same list master-data-page-shell.tsx used to render as its own docked
   // column — folded into the primary nav's hover flyout instead, in the
   // client-requested order (MASTER_DATA_NAV_ORDER), so there is exactly one
@@ -328,7 +338,7 @@ export default function ConsoleLayout({ children, modal }: { children: React.Rea
       // and a stage — which is exactly what the shared-order spec is for.
       { label: t("navSchedulers"), href: "/schedulers", icon: CalendarClock, activePrefix: "/schedulers" },
       { label: t("navLivestock"), href: "/livestock", icon: Pill, children: livestockChildren },
-      { label: t("inventoryStock"), href: "/inventory/balance", icon: Boxes, activePrefix: "/inventory" },
+      { label: t("inventoryStock"), href: "/inventory/balance", icon: Boxes, activePrefix: "/inventory", children: inventoryChildren, flyout: true },
       { label: t("financeCosting"), href: "/finance/journal", icon: Landmark, activePrefix: "/finance" },
       // Alerts and Approvals belong here as much as in an area (F1/F2, review
       // I2): a company workspace has Inventory, so it has Feed Forecast and
@@ -400,7 +410,7 @@ export default function ConsoleLayout({ children, modal }: { children: React.Rea
         // else, and that is the only per-LOB override.
         children: livestockChildren,
       },
-      { label: t("inventoryStock"), href: "/inventory/balance", icon: Boxes, activePrefix: "/inventory" },
+      { label: t("inventoryStock"), href: "/inventory/balance", icon: Boxes, activePrefix: "/inventory", children: inventoryChildren, flyout: true },
       { label: t("financeCosting"), href: "/finance/journal", icon: Landmark, activePrefix: "/finance" },
       { label: t("navAlerts"), href: "/alerts", icon: AlertTriangle },
       { label: t("navTraceability"), href: "/traceability", icon: Package },

@@ -773,8 +773,13 @@ export default function OperationalBatchDataEntry() {
           } else if (stages.length > 0 && !selectedStageId) {
             setSelectedStageId(stages[0].stage_id);
           }
-          for (const l of lines)
+          const initialLots: Record<string, string> = {};
+          for (const l of lines) {
             values[entryKey(l.line_id)] = defaultEntryValue(l);
+            if (l.already_entered_lot) {
+              initialLots[entryKey(l.line_id)] = l.already_entered_lot;
+            }
+          }
 
           const dayStatus: string | null = schedData?.lock_status || null;
           setLockInfo({
@@ -796,11 +801,11 @@ export default function OperationalBatchDataEntry() {
               return;
             }
           }
+          setDataEntryLotNos(initialLots);
         }
 
         setDataEntryValues(values);
         setDataEntryTexts({});
-        setDataEntryLotNos({});
         setDataEntryDestBatches({});
 
         // Dynamically update the batch stage from latest database record
@@ -962,7 +967,8 @@ export default function OperationalBatchDataEntry() {
     if (isTextCapture(line)) return !!dataEntryTexts[key];
     const rawValue = dataEntryValues[key];
     if (rawValue === undefined || rawValue === '') return false;
-    if (line.lot_required && !dataEntryLotNos[key]) return false;
+    const isTracked = Boolean(line.lot_required || line.is_lot_tracked || line.is_serial_tracked);
+    if (isTracked && !dataEntryLotNos[key]) return false;
     if (line.line_type === 'TRANSFER' && !dataEntryDestBatches[key])
       return false;
     return true;
@@ -982,7 +988,8 @@ export default function OperationalBatchDataEntry() {
       if (animalId) payload.animal_id = animalId;
       if (isTextCapture(line)) payload.entered_text = dataEntryTexts[key];
       else payload.entered_value = Number(dataEntryValues[key]);
-      if (line.lot_required) {
+      const isTracked = Boolean(line.lot_required || line.is_lot_tracked || line.is_serial_tracked);
+      if (isTracked) {
         if (line.is_serial_tracked) payload.serial_no = dataEntryLotNos[key];
         else payload.lot_no = dataEntryLotNos[key];
       }
@@ -1626,7 +1633,7 @@ export default function OperationalBatchDataEntry() {
               )}
             </div>
           )}
-          {line.lot_required && (
+          {Boolean(line.lot_required || line.is_lot_tracked || line.is_serial_tracked) && (
             <div className="mt-1">
               <LotSerialPicker
                 itemId={line.item_id || ''}
@@ -1637,7 +1644,7 @@ export default function OperationalBatchDataEntry() {
                   setDataEntryLotNos((v) => ({ ...v, [key]: val }))
                 }
                 disabled={rowLocked}
-                placeholder={t('blPlaceholderLotNo')}
+                placeholder={line.is_serial_tracked ? 'Select Serial No.…' : (t('blPlaceholderLotNo') || 'Select Lot No.…')}
               />
             </div>
           )}

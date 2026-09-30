@@ -746,7 +746,7 @@ export default function GoodsReceiptPanel() {
             </div>
             <div className="flex flex-col gap-1.5">
               <label className="nf-text-label" style={S.sub}>{t("grpPostingDate")} <span className="text-(--danger)">*</span></label>
-              <input type="date" value={header.posting_date} onChange={(e) => setHeader((h) => ({ ...h, posting_date: e.target.value }))} className={inputCls} style={S.input} />
+              <input type="date" value={header.posting_date} onChange={(e) => setHeader((h) => ({ ...h, posting_date: e.target.value }))} className={`${inputCls} nf-input-sm text-xs h-9 min-h-[36px] max-h-[36px] box-border`} style={S.input} />
             </div>
             <div className="flex flex-col gap-1.5">
               <label className="nf-text-label" style={S.sub}>{t("grpSupplier")}</label>
@@ -760,17 +760,17 @@ export default function GoodsReceiptPanel() {
                 columnHeaders={["Code", "Supplier Name"]}
                 getLabelParts={(s: any) => [s.supplier_code || "", s.supplier_name || ""]}
                 getLabel={(s: any) => (s ? `${s.supplier_code} — ${s.supplier_name}` : "")}
-                triggerClassName="w-full text-xs h-9"
+                triggerClassName="w-full text-xs h-9 min-h-[36px] max-h-[36px] box-border"
                 onClear={() => setHeader((h) => ({ ...h, supplier_id: "" }))}
               />
             </div>
             <div className="flex flex-col gap-1.5">
               <label className="nf-text-label" style={S.sub}>{t("grpExternalReference")}</label>
-              <input value={header.external_reference_no} onChange={(e) => setHeader((h) => ({ ...h, external_reference_no: e.target.value }))} placeholder={t("grpSupplierDcInvoiceNo")} className={inputCls} style={S.input} />
+              <input value={header.external_reference_no} onChange={(e) => setHeader((h) => ({ ...h, external_reference_no: e.target.value }))} placeholder={t("grpSupplierDcInvoiceNo")} className={`${inputCls} nf-input-sm text-xs h-9 min-h-[36px] max-h-[36px] box-border`} style={S.input} />
             </div>
             <div className="flex flex-col gap-1.5 sm:col-span-2">
               <label className="nf-text-label" style={S.sub}>{t("grpRemarks")}</label>
-              <textarea value={header.remarks} onChange={(e) => setHeader((h) => ({ ...h, remarks: e.target.value }))} rows={2} className={inputCls} style={S.input} />
+              <textarea value={header.remarks} onChange={(e) => setHeader((h) => ({ ...h, remarks: e.target.value }))} rows={2} className={`${inputCls} text-xs`} style={S.input} />
             </div>
           </div>
 
@@ -786,12 +786,12 @@ export default function GoodsReceiptPanel() {
               <TableHeader>
                 <tr className="border-b border-(--row-border)">
                   <TableHead className="h-auto px-3 py-2 min-w-[280px]">{t("grpColItem")}</TableHead>
-                  <TableHead className="h-auto px-3 py-2 w-20">{t("grpColQty")}</TableHead>
-                  <TableHead className="h-auto px-3 py-2 w-24">{t("grpColUom")}</TableHead>
-                  <TableHead className="h-auto px-3 py-2 w-20">{t("grpColRate")}</TableHead>
-                  <TableHead className="h-auto px-3 py-2 min-w-[240px]">Tracking (Lot / Serial)</TableHead>
-                  <TableHead className="h-auto px-3 py-2 w-32">{t("grpColExpiry")}</TableHead>
-                  <TableHead className="h-auto px-3 py-2 w-10"></TableHead>
+                  <TableHead className="h-auto px-3 py-2 w-24">{t("grpColQty")}</TableHead>
+                  <TableHead className="h-auto px-3 py-2 w-28">{t("grpColUom")}</TableHead>
+                  <TableHead className="h-auto px-3 py-2 w-24">{t("grpColRate")}</TableHead>
+                  <TableHead className="h-auto px-3 py-2 min-w-[260px]">Tracking (Lot / Serial)</TableHead>
+                  <TableHead className="h-auto px-3 py-2 w-36">{t("grpColExpiry")}</TableHead>
+                  <TableHead className="h-auto px-3 py-2 w-12 text-center"></TableHead>
                 </tr>
               </TableHeader>
               <TableBody>
@@ -801,6 +801,7 @@ export default function GoodsReceiptPanel() {
                   const isSerial = Boolean(it?.is_serial_tracked);
                   const hasSeries = Boolean(it?.tracking_series_id);
                   const isGenerating = generatingIdx === idx;
+                  const lineInputCls = "w-full h-9 min-h-[36px] max-h-[36px] px-2.5 py-1 text-xs rounded-[var(--radius-sm)] border outline-none transition-colors box-border";
 
                   return (
                     <TableRow key={idx}>
@@ -823,23 +824,23 @@ export default function GoodsReceiptPanel() {
                               ? `${itemRow.item_code} — ${itemRow.item_name}${itemRow.is_lot_tracked ? " [LOT]" : itemRow.is_serial_tracked ? " [SERIAL NS]" : ""}`
                               : ""
                           }
-                          triggerClassName="w-full text-xs h-8"
+                          triggerClassName="w-full text-xs h-9 min-h-[36px] max-h-[36px] box-border"
                         />
                       </TableCell>
-                      <TableCell className="px-2 py-1.5 w-20">
+                      <TableCell className="px-2 py-1.5 w-24">
                         <input
                           type="number"
                           value={line.quantity}
                           onChange={(e) => setLineField(idx, "quantity", e.target.value)}
-                          className={inputCls}
+                          className={lineInputCls}
                           style={S.input}
                         />
                       </TableCell>
-                      <TableCell className="px-2 py-1.5 w-24">
+                      <TableCell className="px-2 py-1.5 w-28">
                         <select
                           value={line.uom}
                           onChange={(e) => setLineField(idx, "uom", e.target.value)}
-                          className={`${inputCls} nf-select`}
+                          className={`${lineInputCls} nf-select appearance-none pr-7`}
                           style={S.input}
                         >
                           <option value="">{t("grpSelectEllipsis")}</option>
@@ -850,19 +851,19 @@ export default function GoodsReceiptPanel() {
                           ))}
                         </select>
                       </TableCell>
-                      <TableCell className="px-2 py-1.5 w-20">
+                      <TableCell className="px-2 py-1.5 w-24">
                         <input
                           type="number"
                           value={line.rate}
                           onChange={(e) => setLineField(idx, "rate", e.target.value)}
-                          className={inputCls}
+                          className={lineInputCls}
                           style={S.input}
                         />
                       </TableCell>
-                      <TableCell className="px-2 py-1.5 min-w-[240px]">
+                      <TableCell className="px-2 py-1.5 min-w-[260px]">
                         {isLot ? (
                           <div className="flex items-center gap-1.5 w-full">
-                            <span className="px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wider uppercase bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 shrink-0">
+                            <span className="h-9 px-2 text-[10px] font-bold tracking-wider uppercase bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 shrink-0 flex items-center justify-center rounded-[var(--radius-sm)]">
                               LOT
                             </span>
                             <div className="relative flex-1 flex items-center min-w-0">
@@ -870,7 +871,7 @@ export default function GoodsReceiptPanel() {
                                 value={line.lot_no}
                                 onChange={(e) => setLineField(idx, "lot_no", e.target.value)}
                                 placeholder={hasSeries ? "Auto / Enter or pick Lot…" : "Enter or pick Lot…"}
-                                className={`${inputCls} font-mono text-xs pr-7`}
+                                className={`${lineInputCls} font-mono text-xs pr-7`}
                                 style={S.input}
                               />
                               <Popover
@@ -917,7 +918,7 @@ export default function GoodsReceiptPanel() {
                                 variant="ghost"
                                 disabled={isGenerating}
                                 onClick={() => handleGenerateTracking(idx, 'LOT')}
-                                className="px-2 py-0.5 text-[11px] h-7 font-mono shrink-0 nf-btn-secondary"
+                                className="px-2.5 text-[11px] h-9 min-h-[36px] font-mono shrink-0 nf-btn-secondary"
                                 title="Preview next Lot No. from series"
                               >
                                 {isGenerating ? "…" : "Gen"}
@@ -926,7 +927,7 @@ export default function GoodsReceiptPanel() {
                           </div>
                         ) : isSerial ? (
                           <div className="flex items-center gap-1.5 w-full">
-                            <span className="px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wider uppercase bg-blue-500/15 text-blue-400 border border-blue-500/30 shrink-0">
+                            <span className="h-9 px-2 text-[10px] font-bold tracking-wider uppercase bg-blue-500/15 text-blue-400 border border-blue-500/30 shrink-0 flex items-center justify-center rounded-[var(--radius-sm)]">
                               SERIAL NS
                             </span>
                             {Math.round(Number(line.quantity || 1)) > 1 ? (
@@ -948,7 +949,7 @@ export default function GoodsReceiptPanel() {
                                     return (
                                       <button
                                         {...triggerProps}
-                                        className="flex items-center justify-between w-full h-8 px-2.5 py-1 text-xs rounded border text-left transition-all"
+                                        className={`flex items-center justify-between ${lineInputCls}`}
                                         style={{
                                           backgroundColor: "var(--input-bg)",
                                           borderColor: openSerialIdx === idx ? "var(--accent)" : "var(--input-border)",
@@ -990,7 +991,7 @@ export default function GoodsReceiptPanel() {
                                   value={line.serial_no}
                                   onChange={(e) => setLineField(idx, "serial_no", e.target.value)}
                                   placeholder={hasSeries ? "Auto / Enter Serial No." : "Serial No."}
-                                  className={`${inputCls} font-mono text-xs`}
+                                  className={`${lineInputCls} font-mono text-xs`}
                                   style={S.input}
                                 />
                               </div>
@@ -1002,7 +1003,7 @@ export default function GoodsReceiptPanel() {
                                 variant="ghost"
                                 disabled={isGenerating}
                                 onClick={() => handleGenerateTracking(idx, 'SERIAL')}
-                                className="px-2 py-0.5 text-[11px] h-7 font-mono shrink-0 nf-btn-secondary"
+                                className="px-2.5 text-[11px] h-9 min-h-[36px] font-mono shrink-0 nf-btn-secondary"
                                 title="Preview / Generate Serial No.(s) for quantity"
                               >
                                 {isGenerating ? "…" : "Gen"}
@@ -1010,28 +1011,31 @@ export default function GoodsReceiptPanel() {
                             )}
                           </div>
                         ) : (
-                          <span className="text-xs italic pl-2" style={S.muted}>
-                            — Not Tracked —
-                          </span>
+                          <div className="h-9 flex items-center pl-2">
+                            <span className="text-xs italic" style={S.muted}>
+                              — Not Tracked —
+                            </span>
+                          </div>
                         )}
                       </TableCell>
-                      <TableCell className="px-2 py-1.5 w-32">
+                      <TableCell className="px-2 py-1.5 w-36">
                         <input
                           type="date"
                           value={line.expiry_date}
                           onChange={(e) => setLineField(idx, "expiry_date", e.target.value)}
-                          className={inputCls}
+                          className={lineInputCls}
                           style={S.input}
                         />
                       </TableCell>
-                      <TableCell className="px-2 py-1.5">
+                      <TableCell className="px-2 py-1.5 w-12 text-center">
                         <button
                           onClick={() => removeLine(idx)}
                           type="button"
-                          className="rounded-[var(--radius-xs)] p-1 transition hover:bg-(--danger-muted)"
+                          className="h-9 w-9 flex items-center justify-center rounded-[var(--radius-sm)] transition hover:bg-(--danger-muted) mx-auto"
                           style={{ color: "var(--danger)" }}
+                          title="Remove line"
                         >
-                          <Trash2 className="h-3.5 w-3.5" />
+                          <Trash2 className="h-4 w-4" />
                         </button>
                       </TableCell>
                     </TableRow>
