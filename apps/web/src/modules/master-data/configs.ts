@@ -1958,16 +1958,14 @@ const currency: MasterDataConfig = {
  * has Finance entering the USD rate manually, and restating a past period needs
  * the rate as at that date.
  *
- * Every rate is quoted against the US dollar and reads "1 USD = rate", so the
- * base side is not on the form — the API fills it with USD (Rishi, 2026-09-11).
- * It is still shown as a column, so what the rate is measured against is never
- * left implicit.
+ * The source can be selected explicitly. When it is omitted, the API uses the
+ * active company's canonical base currency; it never assumes USD.
  */
 const exchangeRate: MasterDataConfig = {
   key: "exchange-rate",
   label: "Exchange Rates",
   singular: "Exchange Rate",
-  description: "Manually entered USD conversion rates. Each row reads 1 USD = rate, on a date.",
+  description: "Dated conversion rates for the active company. An omitted source uses that company's base currency.",
   apiBase: "/currency/rates",
   idKey: "rate_id",
   group: "Finance",
@@ -1983,13 +1981,18 @@ const exchangeRate: MasterDataConfig = {
   ],
   fields: [
     {
-      key: "to_currency_id", label: "Currency", type: "select-entity", required: true,
+      key: "from_currency_id", label: "Source Currency", type: "select-entity",
       entityEndpoint: "/currency", entityValueKey: "currency_id", entityLabelKeys: ["iso_code", "currency_name"],
-      helpText: "The currency being quoted against the US dollar.",
+      helpText: "Optional. When omitted, the active company's base currency is used.",
     },
     {
-      key: "rate", label: "Rate (1 USD =)", type: "number", min: 0, required: true, step: "0.000001", placeholder: "36.25",
-      helpText: "How many units of the chosen currency one US dollar buys. 1 USD = 36.25 ZWL is entered as 36.25.",
+      key: "to_currency_id", label: "Currency", type: "select-entity", required: true,
+      entityEndpoint: "/currency", entityValueKey: "currency_id", entityLabelKeys: ["iso_code", "currency_name"],
+      helpText: "The currency being quoted by this rate.",
+    },
+    {
+      key: "rate", label: "Conversion Rate", type: "number", min: 0, required: true, step: "0.000001", placeholder: "36.25",
+      helpText: "How many units of the quoted currency one unit of the source currency buys.",
     },
     {
       key: "rate_date", label: "Rate Date", type: "date", required: true,

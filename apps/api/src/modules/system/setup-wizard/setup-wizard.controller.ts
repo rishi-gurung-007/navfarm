@@ -110,6 +110,17 @@ export class SetupWizardController {
     return this.wizardService.saveStep5Currency(companyId, currencyId);
   }
 
+  @Post('step-5/:companyId/:baseCurrencyId/:localCurrencyId')
+  @WizardAccess({ admin: true, target: 'company' })
+  @ApiOperation({ summary: 'Step 5: Save explicit base and local currency selections atomically' })
+  async saveStep5Currencies(
+    @Param('companyId') companyId: string,
+    @Param('baseCurrencyId') baseCurrencyId: string,
+    @Param('localCurrencyId') localCurrencyId: string,
+  ) {
+    return this.wizardService.saveStep5Currency(companyId, baseCurrencyId, localCurrencyId);
+  }
+
   @Post('step-6/:companyId/:timezoneId/:countryId')
   @WizardAccess({ admin: true, target: 'company' })
   @ApiOperation({ summary: 'Step 6: Save default Timezone and Region references' })

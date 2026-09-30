@@ -44,6 +44,7 @@ export const SETTINGS_SECTIONS = [
   { key: "address", labelKey: "ctSecAddress", descKey: "ctSecAddressDesc" },
   { key: "contact", labelKey: "ctSecContact", descKey: "ctSecContactDesc" },
   { key: "localization", labelKey: "ctSecLocale", descKey: "ctSecLocaleDesc" },
+  { key: "feed", labelKey: "ctSecFeed", descKey: "ctSecFeedDesc" },
   { key: "fiscal", labelKey: "ctSecFiscal", descKey: "ctSecFiscalDesc" },
   { key: "modules", labelKey: "ctSecSectors", descKey: "ctSecSectorsDesc" },
 ] as const;
@@ -80,7 +81,7 @@ export default function CompanyTab({
   // The active section is the page's to own: it drives the shell sub-sidebar
   // and the URL, so it cannot live in local state here. Falls back to internal
   // state only when no owner is passed.
-  const [ownTab] = useState<"profile" | "address" | "contact" | "localization" | "fiscal" | "modules">("profile");
+  const [ownTab] = useState<"profile" | "address" | "contact" | "localization" | "feed" | "fiscal" | "modules">("profile");
   const settingsTab = (section as typeof ownTab) || ownTab;
 
   // Support catalogs fetched on mount
@@ -153,8 +154,28 @@ export default function CompanyTab({
   const [localizationForm, setLocalizationForm] = useState({
     default_language_id: "",
     base_currency_id: "",
+    local_currency_id: "",
     default_timezone_id: "Asia/Kolkata",
     country_id: "IND"
+  });
+
+  const [feedForm, setFeedForm] = useState({
+    defaultForecastDays: 7 as number | "",
+    maxForecastDays: 45 as number | "",
+    productionWeekday: "" as number | "",
+    productionShift: "",
+    submissionWeekday: "" as number | "",
+    submissionTime: "",
+    reminderWeekday: "" as number | "",
+    reminderTime: "",
+    physicalCountWeekday: "" as number | "",
+    physicalCountTime: "",
+    truckTargetKg: "" as number | "",
+    bulkMultipleKg: "" as number | "",
+    capacityWarningPct: 90 as number | "",
+    bagTolerancePct: "" as number | "",
+    financeVariancePct: 5 as number | "",
+    financeVarianceAmount: "" as number | "",
   });
 
   const [fiscalForm, setFiscalForm] = useState({
@@ -287,6 +308,7 @@ export default function CompanyTab({
       setLocalizationForm({
         default_language_id: comp.default_language_id || "",
         base_currency_id: comp.base_currency_id || "",
+        local_currency_id: setupDetails?.currencies?.find((currency: any) => currency.is_local)?.currency_id || "",
         default_timezone_id: comp.default_timezone_id || "Asia/Kolkata",
         country_id: comp.country_id || "IND"
       });
@@ -310,6 +332,35 @@ export default function CompanyTab({
       }
     }
   }, [setupDetails, targetCompany]);
+
+  useEffect(() => {
+    if (settingsTab !== "feed" || !targetCompany?.company_id) return;
+    let active = true;
+    api.get(`/feed-settings?companyId=${targetCompany.company_id}`).then((response: any) => {
+      if (!active) return;
+      const data = response?.data ?? response;
+      const formValue = (value: number | null | undefined) => value ?? "";
+      setFeedForm({
+        defaultForecastDays: data.defaultForecastDays ?? 7,
+        maxForecastDays: data.maxForecastDays ?? 45,
+        productionWeekday: formValue(data.productionWeekday),
+        productionShift: data.productionShift ?? "",
+        submissionWeekday: formValue(data.submissionWeekday),
+        submissionTime: data.submissionTime ?? "",
+        reminderWeekday: formValue(data.reminderWeekday),
+        reminderTime: data.reminderTime ?? "",
+        physicalCountWeekday: formValue(data.physicalCountWeekday),
+        physicalCountTime: data.physicalCountTime ?? "",
+        truckTargetKg: formValue(data.truckTargetKg),
+        bulkMultipleKg: formValue(data.bulkMultipleKg),
+        capacityWarningPct: data.capacityWarningPct ?? 90,
+        bagTolerancePct: formValue(data.bagTolerancePct),
+        financeVariancePct: data.financeVariancePct ?? 5,
+        financeVarianceAmount: formValue(data.financeVarianceAmount),
+      });
+    }).catch(() => active && setError("Feed settings could not be loaded."));
+    return () => { active = false; };
+  }, [settingsTab, targetCompany?.company_id]);
 
   const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
 
@@ -409,12 +460,33 @@ export default function CompanyTab({
           company_id: targetCompany.company_id
         });
       } else if (settingsTab === "localization") {
-        const { default_language_id, base_currency_id, default_timezone_id, country_id } = localizationForm;
+        const { default_language_id, base_currency_id, local_currency_id, default_timezone_id, country_id } = localizationForm;
         await Promise.all([
           api.post(`/setup/wizard/step-4/${targetCompany.company_id}/${default_language_id}`),
-          api.post(`/setup/wizard/step-5/${targetCompany.company_id}/${base_currency_id}`),
+          api.post(`/setup/wizard/step-5/${targetCompany.company_id}/${base_currency_id}/${local_currency_id}`),
           api.post(`/setup/wizard/step-6/${targetCompany.company_id}/${encodeURIComponent(default_timezone_id)}/${country_id.toUpperCase()}`)
         ]);
+      } else if (settingsTab === "feed") {
+        const numberOrNull = (value: number | "") => value === "" ? null : Number(value);
+        await api.put('/feed-settings', {
+          companyId: targetCompany.company_id,
+          defaultForecastDays: Number(feedForm.defaultForecastDays),
+          maxForecastDays: Number(feedForm.maxForecastDays),
+          productionWeekday: numberOrNull(feedForm.productionWeekday),
+          productionShift: feedForm.productionShift || null,
+          submissionWeekday: numberOrNull(feedForm.submissionWeekday),
+          submissionTime: feedForm.submissionTime || null,
+          reminderWeekday: numberOrNull(feedForm.reminderWeekday),
+          reminderTime: feedForm.reminderTime || null,
+          physicalCountWeekday: numberOrNull(feedForm.physicalCountWeekday),
+          physicalCountTime: feedForm.physicalCountTime || null,
+          truckTargetKg: numberOrNull(feedForm.truckTargetKg),
+          bulkMultipleKg: numberOrNull(feedForm.bulkMultipleKg),
+          capacityWarningPct: Number(feedForm.capacityWarningPct),
+          bagTolerancePct: numberOrNull(feedForm.bagTolerancePct),
+          financeVariancePct: Number(feedForm.financeVariancePct),
+          financeVarianceAmount: numberOrNull(feedForm.financeVarianceAmount),
+        });
       } else if (settingsTab === "fiscal") {
         const isAprilStart = parseInt(fiscalForm.fiscal_start_month as any) === 4;
         await api.post("/setup/wizard/step-7", {
@@ -1216,6 +1288,7 @@ export default function CompanyTab({
                       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                         <ReadField label={t("ctDefaultLanguage")} value={languages.find(l => l.lang_id === setupDetails?.company?.default_language_id)?.lang_name || setupDetails?.company?.default_language_id} />
                         <ReadField label={t("ctBaseCurrency")} value={currencies.find(c => c.currency_id === setupDetails?.company?.base_currency_id)?.currency_name || setupDetails?.company?.base_currency_id} />
+                        <ReadField label={t("ctLocalCurrency")} value={currencies.find(c => c.currency_id === setupDetails?.currencies?.find((currency: any) => currency.is_local)?.currency_id)?.currency_name || setupDetails?.currencies?.find((currency: any) => currency.is_local)?.currency_id} />
                         <ReadField mono label={t("ctDefaultTimezone")} value={setupDetails?.company?.default_timezone_id} />
                         <ReadField mono label={t("ctCountryLocaleCode")} value={setupDetails?.company?.country_id} />
                       </div>
@@ -1234,17 +1307,29 @@ export default function CompanyTab({
                               ))}
                             </Select>
                           </Field>
-                          {/* BBP-1 §1.1: "USD. All financial values stored in USD."
-                              Changing this restates every amount in the company. */}
-                          <Field className="sm:col-span-6" label={t("ctBaseCurrency")} htmlFor="cfg-ct-base-currency" tooltip={t("ctHintBaseCurrency")}>
+                          <Field className="sm:col-span-6" label={t("ctBaseCurrency")} htmlFor="cfg-ct-base-currency" required tooltip={t("ctHintBaseCurrency")}>
                             <Select
                               id="cfg-ct-base-currency"
                               value={localizationForm.base_currency_id}
                               onChange={(e) => setLocalizationForm({ ...localizationForm, base_currency_id: e.target.value })}
+                              required
                             >
                               <option value="">{t("ctSelectCurrency")}</option>
                               {currencies.map((c: any) => (
-                                <option key={c.currency_id} value={c.currency_id}>{c.currency_name} ({c.currency_code})</option>
+                                <option key={c.currency_id} value={c.currency_id}>{c.currency_name} ({c.iso_code || c.currency_code})</option>
+                              ))}
+                            </Select>
+                          </Field>
+                          <Field className="sm:col-span-6" label={t("ctLocalCurrency")} htmlFor="cfg-ct-local-currency" required tooltip={t("ctHintLocalCurrency")}>
+                            <Select
+                              id="cfg-ct-local-currency"
+                              value={localizationForm.local_currency_id}
+                              onChange={(e) => setLocalizationForm({ ...localizationForm, local_currency_id: e.target.value })}
+                              required
+                            >
+                              <option value="">{t("ctSelectCurrency")}</option>
+                              {currencies.map((c: any) => (
+                                <option key={c.currency_id} value={c.currency_id}>{c.currency_name} ({c.iso_code || c.currency_code})</option>
                               ))}
                             </Select>
                           </Field>
@@ -1275,6 +1360,66 @@ export default function CompanyTab({
                           <Button type="submit" disabled={saving} className="text-xs">
                             <Save className="w-4 h-4" /> {saving ? t("saving") : t("saveChanges")}
                           </Button>
+                        </div>
+                      </form>
+                    )
+                  )}
+
+                  {/* company feed planning settings */}
+                  {settingsTab === "feed" && (
+                    !isEditing ? (
+                      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                        <ReadField label={t("ctFeedDefaultForecastDays")} value={feedForm.defaultForecastDays} />
+                        <ReadField label={t("ctFeedMaxForecastDays")} value={feedForm.maxForecastDays} />
+                        <ReadField label={t("ctFeedCapacityWarningPct")} value={feedForm.capacityWarningPct} />
+                        <ReadField label={t("ctFeedFinanceVariancePct")} value={feedForm.financeVariancePct} />
+                      </div>
+                    ) : (
+                      <form onSubmit={handleSaveTab} className="flex flex-col gap-8">
+                        <FieldGroup title={t("ctFeedForecastGroup")}>
+                          <Field className="sm:col-span-3" label={t("ctFeedDefaultForecastDays")} htmlFor="feed-default-days" required>
+                            <Input id="feed-default-days" type="number" min={1} max={45} value={feedForm.defaultForecastDays} onChange={(e) => setFeedForm({ ...feedForm, defaultForecastDays: e.target.value === "" ? "" : Number(e.target.value) })} required />
+                          </Field>
+                          <Field className="sm:col-span-3" label={t("ctFeedMaxForecastDays")} htmlFor="feed-max-days" required>
+                            <Input id="feed-max-days" type="number" min={1} max={45} value={feedForm.maxForecastDays} onChange={(e) => setFeedForm({ ...feedForm, maxForecastDays: e.target.value === "" ? "" : Number(e.target.value) })} required />
+                          </Field>
+                          <Field className="sm:col-span-3" label={t("ctFeedTruckTargetKg")} htmlFor="feed-truck-target">
+                            <Input id="feed-truck-target" type="number" min={0} value={feedForm.truckTargetKg} onChange={(e) => setFeedForm({ ...feedForm, truckTargetKg: e.target.value === "" ? "" : Number(e.target.value) })} />
+                          </Field>
+                          <Field className="sm:col-span-3" label={t("ctFeedBulkMultipleKg")} htmlFor="feed-bulk-multiple">
+                            <Input id="feed-bulk-multiple" type="number" min={0} value={feedForm.bulkMultipleKg} onChange={(e) => setFeedForm({ ...feedForm, bulkMultipleKg: e.target.value === "" ? "" : Number(e.target.value) })} />
+                          </Field>
+                        </FieldGroup>
+
+                        <FieldGroup title={t("ctFeedScheduleGroup")}>
+                          {([
+                            ["productionWeekday", "ctFeedProductionWeekday"],
+                            ["submissionWeekday", "ctFeedSubmissionWeekday"],
+                            ["reminderWeekday", "ctFeedReminderWeekday"],
+                            ["physicalCountWeekday", "ctFeedPhysicalCountWeekday"],
+                          ] as const).map(([key, label]) => (
+                            <Field key={key} className="sm:col-span-3" label={t(label)} htmlFor={`feed-${key}`}>
+                              <Select id={`feed-${key}`} value={feedForm[key]} onChange={(e) => setFeedForm({ ...feedForm, [key]: e.target.value === "" ? "" : Number(e.target.value) })}>
+                                <option value="">{t("ctFeedNotConfigured")}</option>
+                                {["ctSunday", "ctMonday", "ctTuesday", "ctWednesday", "ctThursday", "ctFriday", "ctSaturday"].map((day, value) => <option key={day} value={value}>{t(day as any)}</option>)}
+                              </Select>
+                            </Field>
+                          ))}
+                          <Field className="sm:col-span-3" label={t("ctFeedProductionShift")} htmlFor="feed-production-shift"><Input id="feed-production-shift" value={feedForm.productionShift} onChange={(e) => setFeedForm({ ...feedForm, productionShift: e.target.value })} /></Field>
+                          <Field className="sm:col-span-3" label={t("ctFeedSubmissionTime")} htmlFor="feed-submission-time"><Input id="feed-submission-time" type="time" value={feedForm.submissionTime} onChange={(e) => setFeedForm({ ...feedForm, submissionTime: e.target.value })} /></Field>
+                          <Field className="sm:col-span-3" label={t("ctFeedReminderTime")} htmlFor="feed-reminder-time"><Input id="feed-reminder-time" type="time" value={feedForm.reminderTime} onChange={(e) => setFeedForm({ ...feedForm, reminderTime: e.target.value })} /></Field>
+                          <Field className="sm:col-span-3" label={t("ctFeedPhysicalCountTime")} htmlFor="feed-count-time"><Input id="feed-count-time" type="time" value={feedForm.physicalCountTime} onChange={(e) => setFeedForm({ ...feedForm, physicalCountTime: e.target.value })} /></Field>
+                        </FieldGroup>
+
+                        <FieldGroup title={t("ctFeedThresholdGroup")}>
+                          <Field className="sm:col-span-3" label={t("ctFeedCapacityWarningPct")} htmlFor="feed-capacity-warning" required><Input id="feed-capacity-warning" type="number" min={0} max={100} step="0.01" value={feedForm.capacityWarningPct} onChange={(e) => setFeedForm({ ...feedForm, capacityWarningPct: e.target.value === "" ? "" : Number(e.target.value) })} required /></Field>
+                          <Field className="sm:col-span-3" label={t("ctFeedBagTolerancePct")} htmlFor="feed-bag-tolerance"><Input id="feed-bag-tolerance" type="number" min={0} step="0.01" value={feedForm.bagTolerancePct} onChange={(e) => setFeedForm({ ...feedForm, bagTolerancePct: e.target.value === "" ? "" : Number(e.target.value) })} /></Field>
+                          <Field className="sm:col-span-3" label={t("ctFeedFinanceVariancePct")} htmlFor="feed-finance-pct" required><Input id="feed-finance-pct" type="number" min={0} step="0.01" value={feedForm.financeVariancePct} onChange={(e) => setFeedForm({ ...feedForm, financeVariancePct: e.target.value === "" ? "" : Number(e.target.value) })} required /></Field>
+                          <Field className="sm:col-span-3" label={t("ctFeedFinanceVarianceAmount")} htmlFor="feed-finance-amount"><Input id="feed-finance-amount" type="number" min={0} step="0.01" value={feedForm.financeVarianceAmount} onChange={(e) => setFeedForm({ ...feedForm, financeVarianceAmount: e.target.value === "" ? "" : Number(e.target.value) })} /></Field>
+                        </FieldGroup>
+
+                        <div className="flex justify-end border-t border-(--border) pt-4">
+                          <Button type="submit" disabled={saving} className="text-xs"><Save className="w-4 h-4" /> {saving ? t("saving") : t("saveChanges")}</Button>
                         </div>
                       </form>
                     )

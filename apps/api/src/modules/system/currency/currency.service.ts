@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, ConflictException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { eq, and, or, isNull, desc, like, ne } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/mysql-core';
@@ -20,15 +20,45 @@ export class CurrencyService {
     return tenantDb;
   }
 
-  /** The USD row every rate is quoted against. */
-  private async usdCurrencyId(): Promise<string> {
-    const [usd] = await this.db
-      .select({ id: schema.currencyMaster.currency_id })
-      .from(schema.currencyMaster)
-      .where(eq(schema.currencyMaster.iso_code, 'USD'))
+  private async companyBaseCurrencyId(companyId?: string | null): Promise<string> {
+    if (!companyId) throw new BadRequestException('An active company is required when the source currency is omitted.');
+    const [company] = await this.db
+      .select({ base_currency_id: schema.companyMaster.base_currency_id })
+      .from(schema.companyMaster)
+      .where(eq(schema.companyMaster.company_id, companyId))
       .limit(1);
-    if (!usd) throw new NotFoundException('No USD currency row — run db-sync-currency-master.');
-    return usd.id;
+    if (!company) throw new NotFoundException(`Company '${companyId}' not found.`);
+    return company.base_currency_id;
+  }
+
+  async currentRate(companyId: string, fromCurrencyId: string, toCurrencyId: string) {
+    if (fromCurrencyId === toCurrencyId) {
+      return { status: 'RESOLVED' as const, rateId: null, rate: 1, rateDate: null, createdAt: null, scope: 'IDENTITY' as const };
+    }
+    const rows = await this.db.select({
+      rate_id: schema.exchangeRate.rate_id,
+      company_id: schema.exchangeRate.company_id,
+      rate: schema.exchangeRate.rate,
+      rate_date: schema.exchangeRate.rate_date,
+      created_at: schema.exchangeRate.created_at,
+    }).from(schema.exchangeRate).where(and(
+      eq(schema.exchangeRate.from_currency_id, fromCurrencyId),
+      eq(schema.exchangeRate.to_currency_id, toCurrencyId),
+      or(eq(schema.exchangeRate.company_id, companyId), isNull(schema.exchangeRate.company_id)),
+    ));
+    const scoped = rows.filter((row) => row.company_id === companyId);
+    const visible = scoped.length ? scoped : rows.filter((row) => row.company_id === null);
+    visible.sort((a, b) => String(b.rate_date).localeCompare(String(a.rate_date)) || String(b.created_at).localeCompare(String(a.created_at)));
+    const selected = visible[0];
+    if (!selected) return { status: 'MISSING_RATE' as const, companyId, fromCurrencyId, toCurrencyId };
+    return {
+      status: 'RESOLVED' as const,
+      rateId: selected.rate_id,
+      rate: Number(selected.rate),
+      rateDate: selected.rate_date,
+      createdAt: selected.created_at,
+      scope: selected.company_id === companyId ? 'COMPANY' as const : 'LEGACY' as const,
+    };
   }
 
   /**
@@ -215,13 +245,13 @@ export class CurrencyService {
    * Exchange-rate CRUD for the Currencies screen's Exchange Rates tab.
    *
    * The pre-existing POST /currency/rate stays as it was for its own callers;
-   * these are the list/create/update/delete a master-data tab needs, which it
-   * did not have. Rates are anchored to USD and read "1 USD = <rate>", so
-   * from_currency_id defaults to the USD row (Rishi, 2026-09-11).
+   * these are the list/create/update/delete a master-data tab needs. The source
+   * stays explicit when supplied; only an omitted source uses the active
+   * company's canonical accounting currency.
    */
   async createRate(dto: CreateExchangeRateDto, companyId?: string | null) {
     const rateId = randomUUID();
-    const from = dto.from_currency_id || (await this.usdCurrencyId());
+    const from = dto.from_currency_id || (await this.companyBaseCurrencyId(companyId));
     if (from === dto.to_currency_id) {
       throw new ConflictException('A currency cannot have an exchange rate against itself.');
     }

@@ -268,14 +268,47 @@ export const companyCurrencyConfig = mysqlTable('company_currency_config', {
   company_id: varchar('company_id', { length: 36 }).notNull().references(() => companyMaster.company_id, { onDelete: 'cascade' }),
   currency_id: varchar('currency_id', { length: 36 }).notNull(),
   is_base: boolean('is_base').default(false).notNull(),
+  is_local: boolean('is_local').default(false).notNull(),
   is_reporting: boolean('is_reporting').default(false).notNull(),
   display_order: int('display_order').default(1).notNull()
 }, (table) => ({
+  companyCurrencyUnique: uniqueIndex('uq_company_currency_config_company_currency').on(table.company_id, table.currency_id),
   currencyFk: foreignKey({
     columns: [table.currency_id],
     foreignColumns: [currencyMaster.currency_id],
     name: 'comp_curr_config_curr_id_fk'
   }).onDelete('restrict')
+}));
+
+export const feedPlanningSetting = mysqlTable('feed_planning_setting', {
+  setting_id: varchar('setting_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+  company_id: varchar('company_id', { length: 36 }).notNull().references(() => companyMaster.company_id, { onDelete: 'cascade' }),
+  farm_id: varchar('farm_id', { length: 36 }).references((): AnyMySqlColumn => locationMaster.location_id, { onDelete: 'cascade' }),
+  default_forecast_days: int('default_forecast_days').default(7).notNull(),
+  max_forecast_days: int('max_forecast_days').default(45).notNull(),
+  production_weekday: int('production_weekday'),
+  production_shift: varchar('production_shift', { length: 30 }),
+  submission_weekday: int('submission_weekday'),
+  submission_time: varchar('submission_time', { length: 5 }),
+  reminder_weekday: int('reminder_weekday'),
+  reminder_time: varchar('reminder_time', { length: 5 }),
+  physical_count_weekday: int('physical_count_weekday'),
+  physical_count_time: varchar('physical_count_time', { length: 5 }),
+  truck_target_kg: decimal('truck_target_kg', { precision: 14, scale: 2 }),
+  bulk_multiple_kg: decimal('bulk_multiple_kg', { precision: 14, scale: 2 }),
+  capacity_warning_pct: decimal('capacity_warning_pct', { precision: 5, scale: 2 }).default('90.00').notNull(),
+  bag_tolerance_pct: decimal('bag_tolerance_pct', { precision: 5, scale: 2 }),
+  finance_variance_pct: decimal('finance_variance_pct', { precision: 5, scale: 2 }).default('5.00').notNull(),
+  finance_variance_amount: decimal('finance_variance_amount', { precision: 18, scale: 2 }),
+  is_active: boolean('is_active').default(true).notNull(),
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+  created_by: varchar('created_by', { length: 36 }),
+  updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().notNull(),
+  updated_by: varchar('updated_by', { length: 36 }),
+}, (table) => ({
+  companyFarmActiveUnique: uniqueIndex('uq_feed_planning_setting_scope_active').on(table.company_id, table.farm_id, table.is_active),
+  companyIndex: index('idx_feed_planning_setting_company').on(table.company_id),
 }));
 
 // ==========================================

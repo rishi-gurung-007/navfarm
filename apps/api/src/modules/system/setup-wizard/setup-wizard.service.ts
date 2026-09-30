@@ -307,12 +307,29 @@ export class SetupWizardService implements OnModuleInit {
     return { success: true };
   }
 
-  async saveStep5Currency(companyId: string, currencyId: string) {
+  async saveStep5Currency(companyId: string, currencyId: string, localCurrencyId?: string) {
     await this.db.transaction(async (tx) => {
       await tx
         .update(schema.companyMaster)
         .set({ base_currency_id: currencyId })
         .where(eq(schema.companyMaster.company_id, companyId));
+
+      if (localCurrencyId !== undefined) {
+        await tx.update(schema.companyCurrencyConfig)
+          .set({ is_base: false, is_local: false })
+          .where(eq(schema.companyCurrencyConfig.company_id, companyId));
+        const sameCurrency = currencyId === localCurrencyId;
+        await tx.insert(schema.companyCurrencyConfig).values({
+          curr_config_id: randomUUID(), company_id: companyId, currency_id: currencyId,
+          is_base: true, is_local: sameCurrency,
+        }).onDuplicateKeyUpdate({ set: { is_base: true, is_local: sameCurrency } });
+        if (!sameCurrency) {
+          await tx.insert(schema.companyCurrencyConfig).values({
+            curr_config_id: randomUUID(), company_id: companyId, currency_id: localCurrencyId,
+            is_base: false, is_local: true,
+          }).onDuplicateKeyUpdate({ set: { is_base: false, is_local: true } });
+        }
+      }
 
       await this.logStepCompletion(tx, companyId, 'BASE_CURRENCY');
     });
@@ -587,6 +604,7 @@ export class SetupWizardService implements OnModuleInit {
         decimal_places: schema.currencyMaster.decimal_places,
         symbol_position: schema.currencyMaster.symbol_position,
         is_base: schema.companyCurrencyConfig.is_base,
+        is_local: schema.companyCurrencyConfig.is_local,
         is_reporting: schema.companyCurrencyConfig.is_reporting,
       })
       .from(schema.companyCurrencyConfig)
