@@ -280,7 +280,8 @@ export class FeedAlertService {
     const resolved = await this.forecast.resolveFarm(row.farm_id, tenantId, user?.userType);
     if (resolved.farmId !== row.farm_id || resolved.companyId !== row.company_id) throw new NotFoundException('Alert not found.');
     const seesAll = SEES_ALL.includes(user?.userType ?? '');
-    if (!visibleTo(row, seesAll ? [] : await this.roleCodesOf(user?.userId, row.company_id), seesAll)) throw new NotFoundException('Alert not found.');
+    const roleCodes = seesAll ? [] : [...await this.roleCodesOf(user?.userId, row.company_id), normalizeFeedRecipientRole(user?.userType ?? '')];
+    if (!visibleTo(row, roleCodes, seesAll)) throw new NotFoundException('Alert not found.');
     const now = ts(Date.now());
     await this.db.update(schema.feedAlert).set({ acknowledged_by: user?.userId ?? null, acknowledged_at: now })
       .where(and(eq(schema.feedAlert.alert_id, alertId), eq(schema.feedAlert.tenant_id, tenantId)));

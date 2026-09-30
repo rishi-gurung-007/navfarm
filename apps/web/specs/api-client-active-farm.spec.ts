@@ -1,8 +1,8 @@
 /**
- * The API resolves a STANDARD_USER's farm itself from user_master.farm_id and
+ * The API resolves a farm-bound persona's farm itself from user_master.farm_id and
  * 403s if `x-active-farm-id` names anything else (see resolveFarmScope in
  * apps/api/src/common/farm-scope.ts). The client must never send that header
- * for a standard user, whatever is stored in `active_farm_id` — and must send
+ * for either farm-bound persona, whatever is stored in `active_farm_id` — and must send
  * it for every other user type that has selected one, exactly like the
  * existing x-active-company-id / x-active-operational-area-id headers.
  */
@@ -36,9 +36,9 @@ describe('apiRequest — x-active-farm-id', () => {
     expect(capturedHeaders?.get('x-active-farm-id')).toBe('farm-1');
   });
 
-  it('never sends x-active-farm-id for a standard user, even if one is stored', async () => {
+  it.each(['STANDARD_USER', 'FARM_MANAGER'])('never sends x-active-farm-id for a farm-bound %s, even if one is stored', async (userType) => {
     localStorage.setItem('navfarm_access_token', 'token');
-    localStorage.setItem('navfarm_auth_user', JSON.stringify({ userType: 'STANDARD_USER', farmId: 'farm-own' }));
+    localStorage.setItem('navfarm_auth_user', JSON.stringify({ userType, farmId: 'farm-own' }));
     // A stray value should not leak through even though setActiveFarmId()
     // refuses to write one for this user type.
     localStorage.setItem('active_farm_id', 'farm-other');
@@ -47,6 +47,7 @@ describe('apiRequest — x-active-farm-id', () => {
     await api.get('/batch');
 
     expect(capturedHeaders?.has('x-active-farm-id')).toBe(false);
+    expect(capturedHeaders?.get('x-workspace-scope')).toBe('OPERATIONAL');
   });
 
   it('omits x-active-farm-id when no farm is active', async () => {

@@ -172,19 +172,20 @@ export async function apiRequest<T>(path: string, options: ApiOptions = {}): Pro
   const activeCompanyId = stored('active_company_id');
   let userType: string | undefined;
   try { userType = JSON.parse(stored(AUTH_STORAGE.user) || '{}').userType; } catch { /* Authentication handles an invalid stored session. */ }
-  const workspaceScope = stored('active_workspace_scope') || (userType === 'TENANT_ADMIN' ? 'TENANT' : ['OPERATIONAL_ADMIN', 'STANDARD_USER'].includes(userType || '') ? 'OPERATIONAL' : 'COMPANY');
+  const isFarmBoundUser = userType === 'FARM_MANAGER' || userType === 'STANDARD_USER';
+  const workspaceScope = stored('active_workspace_scope') || (userType === 'TENANT_ADMIN' ? 'TENANT' : ['OPERATIONAL_ADMIN', 'FARM_MANAGER', 'STANDARD_USER'].includes(userType || '') ? 'OPERATIONAL' : 'COMPANY');
   if (workspaceScope) headers.set('x-workspace-scope', workspaceScope);
   if (activeCompanyId && workspaceScope !== 'TENANT') headers.set('x-active-company-id', activeCompanyId);
   else headers.delete('x-active-company-id');
   const activeAreaId = stored('active_operational_area_id');
   if (activeAreaId && (!workspaceScope || workspaceScope === 'OPERATIONAL')) headers.set('x-active-operational-area-id', activeAreaId);
   else headers.delete('x-active-operational-area-id');
-  // A STANDARD_USER's farm is fixed server-side (user_master.farm_id) — the
+  // A farm-bound user's farm is fixed server-side (user_master.farm_id) — the
   // API derives it and 403s on a header naming a different farm, so the
-  // client must never send one for that user type. Every other user type may
+  // client must never send one for that persona. Every other user type may
   // send it to select a single farm; absent means every farm in scope.
   const activeFarmId = stored('active_farm_id');
-  if (activeFarmId && userType !== 'STANDARD_USER') headers.set('x-active-farm-id', activeFarmId);
+  if (activeFarmId && !isFarmBoundUser) headers.set('x-active-farm-id', activeFarmId);
   else headers.delete('x-active-farm-id');
 
   const response = await fetch(`${API_BASE_URL}${path}`, {

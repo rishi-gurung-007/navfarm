@@ -336,6 +336,15 @@ describe('FeedAlertService — acknowledge (farm scope by the alert\'s own farm)
     expect(result).toMatchObject({ alert_id: 'al-1', acknowledged_by: 'u1' });
   });
 
+  it('lets a FARM_MANAGER acknowledge an alert addressed to that persona without a matching RBAC role code', async () => {
+    const resolveFarm = jest.fn(async () => ({ farmId: 'farm-a', companyId: 'co' }));
+    const { service, db } = build(resolveFarm, []);
+
+    await expect(service.acknowledge('al-1', 't', { userId: 'u1', userType: 'FARM_MANAGER' }))
+      .resolves.toMatchObject({ alert_id: 'al-1', acknowledged_by: 'u1' });
+    expect(db.update).toHaveBeenCalled();
+  });
+
   it('answers NotFound for an alert on a farm (or company) the caller may not see, and writes nothing', async () => {
     const resolveFarm = jest.fn(async () => { throw new NotFoundException('Farm not found.'); });
     const { service, db } = build(resolveFarm);
