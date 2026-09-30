@@ -1007,7 +1007,7 @@ const item: MasterDataConfig = {
     // entirely. All three now stand together, in the order they are decided.
     { key: "is_tracked", label: "Item Tracking", type: "boolean", filterOnly: true, seedFromAnyTrue: ["is_lot_tracked", "is_serial_tracked"], helpText: "Track individual lots or serial numbers of this item through the chain.", section: "Tracking" },
     {
-      key: "tracking_type", label: "Tracked By", type: "select", control: "checkbox", filterOnly: true,
+      key: "tracking_type", label: "Tracked By", type: "select", control: "toggle", filterOnly: true,
       options: [{ value: "LOT", label: "Lot" }, { value: "SERIAL", label: "Serial" }],
       defaultValue: "LOT",
       booleanColumns: { LOT: "is_lot_tracked", SERIAL: "is_serial_tracked" },

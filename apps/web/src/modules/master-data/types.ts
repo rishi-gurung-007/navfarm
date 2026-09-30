@@ -249,7 +249,7 @@ export interface MasterDataField {
    * question, and a plain on/off switch is worse still: "off" cannot say what
    * it means.
    */
-  control?: "segmented" | "checkbox";
+  control?: "segmented" | "checkbox" | "toggle";
   /**
    * Value this control starts on once it appears. A segmented choice between
    * two options has no meaningful empty state — "neither" is what the switch

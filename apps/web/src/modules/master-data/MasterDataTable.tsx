@@ -2177,6 +2177,71 @@ export function MasterDataTable({
         />
       );
     }
+    if (f.type === "select" && f.control === "toggle") {
+      const options = f.options || [
+        { value: "LOT", label: "Lot" },
+        { value: "SERIAL", label: "Serial" },
+      ];
+      const optLeft = options[0];
+      const optRight = options[1] || options[0];
+      const isRight = String(value) === optRight.value;
+      const isLeft = !isRight;
+
+      return (
+        <div className="flex h-11 items-center gap-3 select-none">
+          <button
+            type="button"
+            disabled={f.readOnly || isLockedByTemplate}
+            onClick={() => setField(f.key, optLeft.value)}
+            className="text-sm font-semibold tracking-wide transition-colors duration-150 cursor-pointer disabled:cursor-not-allowed"
+            style={{
+              color: isLeft ? "var(--accent)" : "var(--text-muted)",
+              opacity: isLeft ? 1 : 0.65,
+            }}
+          >
+            {optLeft.label}
+          </button>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={isRight}
+            aria-label={tLabel(currentLabel(f, form))}
+            disabled={f.readOnly || isLockedByTemplate}
+            onClick={() => {
+              setField(f.key, isRight ? optLeft.value : optRight.value);
+            }}
+            onKeyDown={(e) => {
+              if (f.readOnly || isLockedByTemplate) return;
+              if (e.key === "ArrowLeft") { e.preventDefault(); setField(f.key, optLeft.value); }
+              if (e.key === "ArrowRight") { e.preventDefault(); setField(f.key, optRight.value); }
+            }}
+            className="relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors duration-200 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] disabled:cursor-not-allowed disabled:opacity-50"
+            style={{
+              backgroundColor: isRight ? "var(--accent)" : "var(--border)",
+            }}
+          >
+            <span
+              className="pointer-events-none inline-block h-4.5 w-4.5 rounded-full bg-white shadow-md transform transition-transform duration-200 ease-in-out"
+              style={{
+                transform: isRight ? "translateX(1.375rem)" : "translateX(0.15rem)",
+              }}
+            />
+          </button>
+          <button
+            type="button"
+            disabled={f.readOnly || isLockedByTemplate}
+            onClick={() => setField(f.key, optRight.value)}
+            className="text-sm font-semibold tracking-wide transition-colors duration-150 cursor-pointer disabled:cursor-not-allowed"
+            style={{
+              color: isRight ? "var(--accent)" : "var(--text-muted)",
+              opacity: isRight ? 1 : 0.65,
+            }}
+          >
+            {optRight.label}
+          </button>
+        </div>
+      );
+    }
     if (f.type === "select" && f.control === "checkbox") {
       const options = f.options || [];
       return (
