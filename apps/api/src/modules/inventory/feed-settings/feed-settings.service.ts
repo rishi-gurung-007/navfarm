@@ -1,10 +1,10 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
-import { farmScope } from '../../../common/farm-scope';
+import { assertLobInScope, farmScope } from '../../../common/farm-scope';
 import { UpdateCompanyFeedSettingsDto } from './dto/feed-settings.dto';
 import { resolvePlanningRules } from './feed-settings.rules';
 
@@ -36,17 +36,19 @@ export class FeedSettingsService {
     const companySetting = settings.find((row) => row.farm_id === null) ?? null;
     const farmSetting = effectiveFarmId ? settings.find((row) => row.farm_id === effectiveFarmId) ?? null : null;
 
-    let farm: { location_id: string; company_id: string | null; feed_lead_time_days: number | null } | undefined;
+    let farm: { location_id: string; company_id: string | null; lob_id: string | null; feed_lead_time_days: number | null } | undefined;
     if (effectiveFarmId) {
       [farm] = await this.db.select({
         location_id: schema.locationMaster.location_id,
         company_id: schema.locationMaster.company_id,
+        lob_id: schema.locationMaster.lob_id,
         feed_lead_time_days: schema.locationMaster.feed_lead_time_days,
       }).from(schema.locationMaster).where(and(
         eq(schema.locationMaster.location_id, effectiveFarmId),
         eq(schema.locationMaster.location_type, 'FARM'),
       )).limit(1);
       if (!farm || farm.company_id !== companyId) throw new NotFoundException(`Farm '${effectiveFarmId}' is not part of company '${companyId}'.`);
+      assertLobInScope(scope, farm.lob_id);
     }
 
     const effective = resolvePlanningRules(companySetting);
@@ -74,7 +76,8 @@ export class FeedSettingsService {
   }
 
   async saveCompany(companyId: string, dto: UpdateCompanyFeedSettingsDto, tenantId: string, actorId?: string) {
-    if (farmScope(this.cls).farmId) throw new ForbiddenException('Farm-bound users cannot change company feed settings.');
+    const scope = farmScope(this.cls);
+    if (scope.restricted || scope.farmId) throw new ForbiddenException('Operationally scoped users cannot change company feed settings.');
     const current = await this.resolve(companyId);
     const candidate = {
       default_forecast_days: dto.defaultForecastDays ?? current.defaultForecastDays,
@@ -97,10 +100,6 @@ export class FeedSettingsService {
     resolvePlanningRules(candidate);
     if (!tenantId) throw new BadRequestException('Tenant context is required to save feed settings.');
 
-    const [existing] = await this.db.select({ setting_id: schema.feedPlanningSetting.setting_id })
-      .from(schema.feedPlanningSetting)
-      .where(and(eq(schema.feedPlanningSetting.company_id, companyId), isNull(schema.feedPlanningSetting.farm_id), eq(schema.feedPlanningSetting.is_active, true)))
-      .limit(1);
     const databaseValues = {
       ...candidate,
       truck_target_kg: candidate.truck_target_kg === null ? null : String(candidate.truck_target_kg),
@@ -112,14 +111,10 @@ export class FeedSettingsService {
       updated_at: new Date().toISOString().replace('T', ' ').substring(0, 19),
       updated_by: actorId ?? null,
     };
-    if (existing) {
-      await this.db.update(schema.feedPlanningSetting).set(databaseValues).where(eq(schema.feedPlanningSetting.setting_id, existing.setting_id));
-    } else {
-      await this.db.insert(schema.feedPlanningSetting).values({
-        setting_id: randomUUID(), tenant_id: tenantId, company_id: companyId, farm_id: null,
-        ...databaseValues, created_by: actorId ?? null,
-      });
-    }
+    await this.db.insert(schema.feedPlanningSetting).values({
+      setting_id: randomUUID(), tenant_id: tenantId, company_id: companyId, farm_id: null,
+      ...databaseValues, created_by: actorId ?? null,
+    }).onDuplicateKeyUpdate({ set: databaseValues });
     return this.resolve(companyId);
   }
 }

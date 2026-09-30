@@ -1384,10 +1384,10 @@ export default function CompanyTab({
                             <Input id="feed-max-days" type="number" min={1} max={45} value={feedForm.maxForecastDays} onChange={(e) => setFeedForm({ ...feedForm, maxForecastDays: e.target.value === "" ? "" : Number(e.target.value) })} required />
                           </Field>
                           <Field className="sm:col-span-3" label={t("ctFeedTruckTargetKg")} htmlFor="feed-truck-target">
-                            <Input id="feed-truck-target" type="number" min={0} value={feedForm.truckTargetKg} onChange={(e) => setFeedForm({ ...feedForm, truckTargetKg: e.target.value === "" ? "" : Number(e.target.value) })} />
+                            <Input id="feed-truck-target" type="number" min={0.01} value={feedForm.truckTargetKg} onChange={(e) => setFeedForm({ ...feedForm, truckTargetKg: e.target.value === "" ? "" : Number(e.target.value) })} />
                           </Field>
                           <Field className="sm:col-span-3" label={t("ctFeedBulkMultipleKg")} htmlFor="feed-bulk-multiple">
-                            <Input id="feed-bulk-multiple" type="number" min={0} value={feedForm.bulkMultipleKg} onChange={(e) => setFeedForm({ ...feedForm, bulkMultipleKg: e.target.value === "" ? "" : Number(e.target.value) })} />
+                            <Input id="feed-bulk-multiple" type="number" min={0.01} value={feedForm.bulkMultipleKg} onChange={(e) => setFeedForm({ ...feedForm, bulkMultipleKg: e.target.value === "" ? "" : Number(e.target.value) })} />
                           </Field>
                         </FieldGroup>
 

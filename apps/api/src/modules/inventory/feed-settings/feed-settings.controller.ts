@@ -4,18 +4,20 @@ import { RequirePermission } from '../../../common/decorators/require-permission
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { FarmScoped } from '../../../common/farm-scope';
+import { SetupWizardAccessGuard, WizardAccess } from '../../system/setup-wizard/setup-wizard-access.guard';
 import { QueryFeedSettingsDto, UpdateCompanyFeedSettingsDto } from './dto/feed-settings.dto';
 import { FeedSettingsService } from './feed-settings.service';
 
 @ApiTags('Feed Settings')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, SetupWizardAccessGuard)
 @Controller('feed-settings')
 @FarmScoped()
 export class FeedSettingsController {
   constructor(private readonly service: FeedSettingsService) {}
 
   @Get()
+  @WizardAccess({ admin: false, target: 'company', workspaceFallback: true })
   @RequirePermission('INVENTORY', 'LEDGER', 'view')
   @ApiOperation({ summary: 'Resolve effective company/farm feed-planning settings' })
   async get(@Query() query: QueryFeedSettingsDto, @Req() req: any) {
@@ -25,6 +27,7 @@ export class FeedSettingsController {
   }
 
   @Put()
+  @WizardAccess({ admin: true, target: 'company', workspaceFallback: true })
   @RequirePermission('MASTER_DATA', 'LOCATION', 'edit')
   @ApiOperation({ summary: 'Save company feed-planning settings' })
   async put(@Body() dto: UpdateCompanyFeedSettingsDto, @Req() req: any) {

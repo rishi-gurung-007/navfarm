@@ -302,12 +302,20 @@ export const feedPlanningSetting = mysqlTable('feed_planning_setting', {
   finance_variance_pct: decimal('finance_variance_pct', { precision: 5, scale: 2 }).default('5.00').notNull(),
   finance_variance_amount: decimal('finance_variance_amount', { precision: 18, scale: 2 }),
   is_active: boolean('is_active').default(true).notNull(),
+  // MySQL unique indexes allow repeated NULL values, so indexing nullable
+  // farm_id cannot enforce the one-active-row-per-scope contract. Active rows
+  // receive a non-null, type-prefixed scope identity; inactive rows remain NULL
+  // and may retain history without colliding.
+  active_scope_key: varchar('active_scope_key', { length: 38 }).generatedAlwaysAs(
+    sql`IF(\`is_active\`, IF(\`farm_id\` IS NULL, 'C:', CONCAT('F:', \`farm_id\`)), NULL)`,
+    { mode: 'stored' },
+  ),
   created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
   created_by: varchar('created_by', { length: 36 }),
   updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().notNull(),
   updated_by: varchar('updated_by', { length: 36 }),
 }, (table) => ({
-  companyFarmActiveUnique: uniqueIndex('uq_feed_planning_setting_scope_active').on(table.company_id, table.farm_id, table.is_active),
+  companyFarmActiveUnique: uniqueIndex('uq_feed_planning_setting_active_scope').on(table.company_id, table.active_scope_key),
   companyIndex: index('idx_feed_planning_setting_company').on(table.company_id),
 }));
 

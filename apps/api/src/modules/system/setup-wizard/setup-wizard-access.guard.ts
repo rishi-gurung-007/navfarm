@@ -20,6 +20,8 @@ import { isAdminUserType } from '../../../common/permissions';
 export interface WizardAccessRule {
   admin: boolean;
   target: 'none' | 'company' | 'profile';
+  /** Non-wizard controllers may derive the target from their active workspace. */
+  workspaceFallback?: boolean;
 }
 
 export const WIZARD_ACCESS_KEY = 'setup_wizard_access';
@@ -97,7 +99,13 @@ export class SetupWizardAccessGuard implements CanActivate {
 
     if (rule.target === 'none') return true;
 
-    const companyId = idOf(request.params?.companyId) ?? idOf(request.body?.company_id);
+    const explicitCompanyId = idOf(request.params?.companyId)
+      ?? idOf(request.body?.company_id)
+      ?? idOf(request.body?.companyId)
+      ?? idOf(request.query?.companyId);
+    const companyId = explicitCompanyId ?? (rule.workspaceFallback
+      ? idOf(request.headers?.['x-active-company-id']) ?? idOf(request.user?.companyId)
+      : undefined);
 
     if (rule.target === 'profile') {
       // The service falls through to creating a company in body tenant_id

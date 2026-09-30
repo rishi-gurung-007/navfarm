@@ -1,5 +1,7 @@
 import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { getTableConfig } from 'drizzle-orm/mysql-core';
 import { transactionCls, useFarmScope } from '../../../test-utils/transaction-cls';
+import * as schema from '../../../core/database/schema';
 import { FeedSettingsService } from './feed-settings.service';
 
 function databaseWithAnswers(...answers: unknown[][]) {
@@ -38,7 +40,7 @@ describe('FeedSettingsService.resolve', () => {
         submission_weekday: 5, submission_time: '16:00',
         production_weekday: 4, reminder_time: '10:00',
       }],
-      [{ location_id: 'farm-1', company_id: 'co-1', feed_lead_time_days: 3 }],
+      [{ location_id: 'farm-1', company_id: 'co-1', lob_id: 'lob-pig', feed_lead_time_days: 3 }],
     );
     const result = await new FeedSettingsService(transactionCls(db)).resolve('co-1', 'farm-1');
 
@@ -69,7 +71,7 @@ describe('FeedSettingsService.resolve', () => {
     await expect(new FeedSettingsService(transactionCls(databaseWithAnswers([]))).resolve('missing')).rejects.toThrow(NotFoundException);
     await expect(new FeedSettingsService(transactionCls(databaseWithAnswers(
       [{ company_id: 'co-1', default_timezone_id: 'UTC' }], [],
-      [{ location_id: 'farm-1', company_id: 'co-2', feed_lead_time_days: 2 }],
+      [{ location_id: 'farm-1', company_id: 'co-2', lob_id: 'lob-pig', feed_lead_time_days: 2 }],
     ))).resolve('co-1', 'farm-1')).rejects.toThrow(NotFoundException);
     await expect(new FeedSettingsService(transactionCls(databaseWithAnswers(
       [{ company_id: 'co-1', default_timezone_id: 'UTC' }],
@@ -83,9 +85,79 @@ describe('FeedSettingsService.resolve', () => {
     await expect(new FeedSettingsService(cls).resolve('co-1', 'farm-other')).rejects.toThrow(ForbiddenException);
   });
 
+  it('rejects an operational administrator reading a farm from another LOB', async () => {
+    const cls = transactionCls(databaseWithAnswers(
+      [{ company_id: 'co-1', default_timezone_id: 'UTC' }],
+      [],
+      [{ location_id: 'farm-other-lob', company_id: 'co-1', lob_id: 'lob-dairy', feed_lead_time_days: 2 }],
+    ));
+    useFarmScope(cls, { farmId: null, restricted: true, companyId: 'co-1', lobId: 'lob-pig' });
+    await expect(new FeedSettingsService(cls).resolve('co-1', 'farm-other-lob')).rejects.toThrow(ForbiddenException);
+  });
+
   it('does not let a farm-bound caller overwrite company-owned settings', async () => {
     const cls = transactionCls(databaseWithAnswers([]));
     useFarmScope(cls, { farmId: 'farm-assigned', restricted: true, companyId: 'co-1', lobId: 'pig' });
     await expect(new FeedSettingsService(cls).saveCompany('co-1', {}, 'tenant-1')).rejects.toThrow(ForbiddenException);
+  });
+
+  it('does not let a LOB-bound operational administrator overwrite company-owned settings', async () => {
+    const cls = transactionCls(databaseWithAnswers([]));
+    useFarmScope(cls, { farmId: null, restricted: true, companyId: 'co-1', lobId: 'lob-pig' });
+    await expect(new FeedSettingsService(cls).saveCompany('co-1', {}, 'tenant-1')).rejects.toThrow(ForbiddenException);
+  });
+});
+
+describe('FeedSettingsService company-row persistence', () => {
+  function databaseWithAtomicStore() {
+    let stored: Record<string, unknown> | null = null;
+    const upsert = jest.fn(async (config: { set: Record<string, unknown> }) => {
+      stored = stored ? { ...stored, ...config.set } : pendingValues;
+    });
+    let pendingValues: Record<string, unknown> = {};
+    const rowsFor = (table: unknown) => table === schema.companyMaster
+      ? [{ company_id: 'co-1', default_timezone_id: 'UTC' }]
+      : table === schema.feedPlanningSetting && stored ? [stored] : [];
+    const select = jest.fn(() => {
+      let table: unknown;
+      const chain: any = {
+        from: (value: unknown) => { table = value; return chain; },
+        where: () => chain,
+        limit: async () => rowsFor(table),
+        then: (resolve: (value: unknown[]) => unknown, reject: (error: unknown) => unknown) => Promise.resolve(rowsFor(table)).then(resolve, reject),
+      };
+      return chain;
+    });
+    const db: any = {
+      select,
+      insert: jest.fn(() => ({
+        values: (values: Record<string, unknown>) => {
+          pendingValues = values;
+          return { onDuplicateKeyUpdate: upsert };
+        },
+      })),
+    };
+    return { db, upsert, rows: () => stored ? [stored] : [] };
+  }
+
+  it('declares a non-null active scope key so MySQL can enforce one active company/farm row', () => {
+    const config = getTableConfig(schema.feedPlanningSetting);
+    const activeScope = config.columns.find((column) => column.name === 'active_scope_key');
+    const unique = config.indexes.find((index) => index.config.name === 'uq_feed_planning_setting_active_scope');
+
+    expect(activeScope?.generated).toEqual(expect.objectContaining({ type: 'always', mode: 'stored' }));
+    expect(unique?.config.columns.map((column: any) => column.name)).toEqual(['company_id', 'active_scope_key']);
+  });
+
+  it('uses one idempotent database upsert instead of a check-then-insert branch', async () => {
+    const { db, upsert, rows } = databaseWithAtomicStore();
+    const service = new FeedSettingsService(transactionCls(db));
+
+    await service.saveCompany('co-1', { submissionTime: '12:00' }, 'tenant-1', 'user-1');
+    await service.saveCompany('co-1', { submissionTime: '13:00' }, 'tenant-1', 'user-1');
+
+    expect(upsert).toHaveBeenCalledTimes(2);
+    expect(rows()).toHaveLength(1);
+    expect(rows()[0]).toEqual(expect.objectContaining({ company_id: 'co-1', farm_id: null, submission_time: '13:00' }));
   });
 });
