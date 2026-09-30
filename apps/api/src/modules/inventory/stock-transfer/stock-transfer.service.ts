@@ -29,6 +29,11 @@ export class StockTransferService {
     // the item is stocked in, so the capacity guard below needs the tenant's
     // own uom_conversion_master rather than an assumption about the unit.
     private readonly uomService: UomService,
+    // Silo receiving rules are shared with Goods Receipt so both posting paths
+    // enforce the same item, house and capacity constraints.
+    private readonly siloFeedService: SiloFeedService,
+    // Re-check feed thresholds only after the stock posting commits.
+    @Optional() private readonly feedAlerts?: FeedAlertService,
   ) { }
 
   private get db(): MySql2Database<typeof schema> {
@@ -420,7 +425,7 @@ export class StockTransferService {
   }
 
   async post(id: string, tenantId: string, userPayload?: any) {
-    return withTenantTransaction(this.cls, async () => {
+    const posted = await withTenantTransaction(this.cls, async () => {
       const transfer = await this.loadForMutation(id, tenantId);
       this.assertDraft(transfer);
 
