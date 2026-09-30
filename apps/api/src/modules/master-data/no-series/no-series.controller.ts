@@ -130,6 +130,20 @@ export class NoSeriesController {
     };
   }
 
+  @Get(':id/preview-numbers')
+  @RequirePermission('MASTER_DATA', 'ITEM', 'view')
+  @ApiOperation({ summary: 'Preview next number(s) from No. Series without committing/updating sequence' })
+  @ApiParam({ name: 'id', description: 'No. Series UUID' })
+  async previewNextNumbers(@Param('id') id: string, @Query('count') countQuery: string | undefined) {
+    const count = Math.max(1, Math.min(parseInt(countQuery || '1', 10) || 1, 1000));
+    const result = await this.numberSeriesService.previewNextNumbersById(id, count);
+    return {
+      success: true,
+      message: 'Next number(s) previewed successfully.',
+      data: result,
+    };
+  }
+
   @Get(':id/next-number')
   @RequirePermission('MASTER_DATA', 'ITEM', 'create')
   @ApiOperation({ summary: 'Internal utility: Atomically generate and reserve next number(s) from No. Series' })

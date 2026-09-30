@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Plus, Trash2, Search, Loader2, Inbox, Eye, CheckCircle2, Pencil } from "lucide-react";
+import { Plus, Trash2, Search, Loader2, Inbox, Eye, CheckCircle2, Pencil, ChevronDown } from "lucide-react";
 import { api } from "@/services/api-client";
 import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -11,6 +11,7 @@ import { getActiveCompanyId } from "@/hooks/useAuth";
 import { TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { useLanguage } from "@/hooks/useLanguage";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 
 const PAGE_SIZE = 25;
 
@@ -68,6 +69,7 @@ export default function GoodsReceiptPanel() {
   // only, and the Edit action itself never appears for it (see the table).
   const [editingId, setEditingId] = useState<string | null>(null);
   const [generatingIdx, setGeneratingIdx] = useState<number | null>(null);
+  const [openSerialIdx, setOpenSerialIdx] = useState<number | null>(null);
 
   const [viewing, setViewing] = useState<Row | null>(null);
   const [posting, setPosting] = useState(false);
@@ -178,7 +180,7 @@ export default function GoodsReceiptPanel() {
     setFormError("");
     try {
       const count = type === 'SERIAL' ? Math.max(1, parseInt(line.quantity || '1', 10) || 1) : 1;
-      const res = await api.get(`/no-series/${it.tracking_series_id}/next-number?count=${count}`);
+      const res = await api.get(`/no-series/${it.tracking_series_id}/preview-numbers?count=${count}`);
       const data = unwrap<any>(res);
       if (type === 'LOT') {
         const nextNum = data.next_number || (data.numbers && data.numbers[0]);
@@ -187,10 +189,13 @@ export default function GoodsReceiptPanel() {
         const nums = data.numbers || [data.next_number];
         if (nums && nums.length > 0) {
           setLineField(idx, 'serial_no', nums.join(', '));
+          if (nums.length > 1) {
+            setOpenSerialIdx(idx);
+          }
         }
       }
     } catch (err: any) {
-      setFormError(err?.message || 'Failed to generate number series');
+      setFormError(err?.message || 'Failed to preview number series');
     } finally {
       setGeneratingIdx(null);
     }
@@ -381,10 +386,18 @@ export default function GoodsReceiptPanel() {
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="flex flex-col gap-1.5">
               <label className="nf-text-label" style={S.sub}>{t("grpWarehouse")} <span className="text-(--danger)">*</span></label>
-              <select value={header.warehouse_id} onChange={(e) => setHeader((h) => ({ ...h, warehouse_id: e.target.value }))} className={`${inputCls} nf-select`} style={S.input}>
-                <option value="">{t("grpSelectEllipsis")}</option>
-                {warehouses.map((w) => <option key={w.warehouse_id} value={w.warehouse_id}>{w.warehouse_code} — {w.warehouse_name}</option>)}
-              </select>
+              <SearchableSelect
+                options={warehouses}
+                value={header.warehouse_id}
+                valueKey="warehouse_id"
+                onChange={(val) => setHeader((h) => ({ ...h, warehouse_id: val }))}
+                placeholder={t("grpSelectEllipsis")}
+                searchPlaceholder="Search warehouse…"
+                columnHeaders={["Code", "Warehouse Name"]}
+                getLabelParts={(w: any) => [w.warehouse_code || "", w.warehouse_name || ""]}
+                getLabel={(w: any) => (w ? `${w.warehouse_code} — ${w.warehouse_name}` : "")}
+                triggerClassName="w-full text-xs h-9"
+              />
             </div>
             <div className="flex flex-col gap-1.5">
               <label className="nf-text-label" style={S.sub}>{t("grpPostingDate")} <span className="text-(--danger)">*</span></label>
@@ -392,10 +405,19 @@ export default function GoodsReceiptPanel() {
             </div>
             <div className="flex flex-col gap-1.5">
               <label className="nf-text-label" style={S.sub}>{t("grpSupplier")}</label>
-              <select value={header.supplier_id} onChange={(e) => setHeader((h) => ({ ...h, supplier_id: e.target.value }))} className={`${inputCls} nf-select`} style={S.input}>
-                <option value="">{t("grpSelectEllipsis")}</option>
-                {suppliers.map((s) => <option key={s.supplier_id} value={s.supplier_id}>{s.supplier_code} — {s.supplier_name}</option>)}
-              </select>
+              <SearchableSelect
+                options={suppliers}
+                value={header.supplier_id}
+                valueKey="supplier_id"
+                onChange={(val) => setHeader((h) => ({ ...h, supplier_id: val }))}
+                placeholder={t("grpSelectEllipsis")}
+                searchPlaceholder="Search supplier…"
+                columnHeaders={["Code", "Supplier Name"]}
+                getLabelParts={(s: any) => [s.supplier_code || "", s.supplier_name || ""]}
+                getLabel={(s: any) => (s ? `${s.supplier_code} — ${s.supplier_name}` : "")}
+                triggerClassName="w-full text-xs h-9"
+                onClear={() => setHeader((h) => ({ ...h, supplier_id: "" }))}
+              />
             </div>
             <div className="flex flex-col gap-1.5">
               <label className="nf-text-label" style={S.sub}>{t("grpExternalReference")}</label>
@@ -418,14 +440,13 @@ export default function GoodsReceiptPanel() {
             <table className="w-full border-collapse text-left text-xs">
               <TableHeader>
                 <tr className="border-b border-(--row-border)">
-                  <TableHead className="h-auto px-3 py-2">{t("grpColItem")}</TableHead>
-                  <TableHead className="h-auto px-3 py-2">{t("grpColQty")}</TableHead>
-                  <TableHead className="h-auto px-3 py-2">{t("grpColUom")}</TableHead>
-                  <TableHead className="h-auto px-3 py-2">{t("grpColRate")}</TableHead>
-                  <TableHead className="h-auto px-3 py-2">Lot No.</TableHead>
-                  <TableHead className="h-auto px-3 py-2">Serial No.</TableHead>
-                  <TableHead className="h-auto px-3 py-2">{t("grpColExpiry")}</TableHead>
-                  <TableHead className="h-auto px-3 py-2"></TableHead>
+                  <TableHead className="h-auto px-3 py-2 min-w-[280px]">{t("grpColItem")}</TableHead>
+                  <TableHead className="h-auto px-3 py-2 w-20">{t("grpColQty")}</TableHead>
+                  <TableHead className="h-auto px-3 py-2 w-24">{t("grpColUom")}</TableHead>
+                  <TableHead className="h-auto px-3 py-2 w-20">{t("grpColRate")}</TableHead>
+                  <TableHead className="h-auto px-3 py-2 min-w-[240px]">Tracking (Lot / Serial)</TableHead>
+                  <TableHead className="h-auto px-3 py-2 w-32">{t("grpColExpiry")}</TableHead>
+                  <TableHead className="h-auto px-3 py-2 w-10"></TableHead>
                 </tr>
               </TableHeader>
               <TableBody>
@@ -438,21 +459,27 @@ export default function GoodsReceiptPanel() {
 
                   return (
                     <TableRow key={idx}>
-                      <TableCell className="px-2 py-1.5 min-w-[180px]">
-                        <select
+                      <TableCell className="px-2 py-1.5 min-w-[280px]">
+                        <SearchableSelect
+                          options={items}
                           value={line.item_id}
-                          onChange={(e) => setLineField(idx, "item_id", e.target.value)}
-                          className={`${inputCls} nf-select`}
-                          style={S.input}
-                        >
-                          <option value="">{t("grpSelectItemOptions", { count: items.length })}</option>
-                          {items.map((it, i) => (
-                            <option key={it.item_id} value={it.item_id}>
-                              {i + 1}. {it.item_code} — {it.item_name}
-                              {it.is_lot_tracked ? " [LOT]" : it.is_serial_tracked ? " [SERIAL]" : ""}
-                            </option>
-                          ))}
-                        </select>
+                          valueKey="item_id"
+                          onChange={(val) => setLineField(idx, "item_id", val)}
+                          placeholder={t("grpSelectItemOptions", { count: items.length })}
+                          searchPlaceholder="Search item code or name…"
+                          columnHeaders={["Item Code", "Item Name", "Tracking"]}
+                          getLabelParts={(itemRow: any) => [
+                            itemRow.item_code || "",
+                            itemRow.item_name || "",
+                            itemRow.is_lot_tracked ? "LOT" : itemRow.is_serial_tracked ? "SERIAL NS" : "—",
+                          ]}
+                          getLabel={(itemRow: any) =>
+                            itemRow
+                              ? `${itemRow.item_code} — ${itemRow.item_name}${itemRow.is_lot_tracked ? " [LOT]" : itemRow.is_serial_tracked ? " [SERIAL NS]" : ""}`
+                              : ""
+                          }
+                          triggerClassName="w-full text-xs h-8"
+                        />
                       </TableCell>
                       <TableCell className="px-2 py-1.5 w-20">
                         <input
@@ -487,55 +514,172 @@ export default function GoodsReceiptPanel() {
                           style={S.input}
                         />
                       </TableCell>
-                      <TableCell className="px-2 py-1.5 w-36">
-                        <div className="flex items-center gap-1">
-                          <input
-                            value={line.lot_no}
-                            disabled={!isLot}
-                            onChange={(e) => setLineField(idx, "lot_no", e.target.value)}
-                            placeholder={isLot ? (hasSeries ? "Auto / Enter" : "Lot No.") : "—"}
-                            className={inputCls}
-                            style={S.input}
-                          />
-                          {isLot && hasSeries && (
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="ghost"
-                              disabled={isGenerating}
-                              onClick={() => handleGenerateTracking(idx, 'LOT')}
-                              className="px-1.5 py-0.5 text-[10px] h-7 font-mono shrink-0"
-                              title="Generate next Lot No."
-                            >
-                              {isGenerating ? "…" : "Gen"}
-                            </Button>
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell className="px-2 py-1.5 w-36">
-                        <div className="flex items-center gap-1">
-                          <input
-                            value={line.serial_no}
-                            disabled={!isSerial}
-                            onChange={(e) => setLineField(idx, "serial_no", e.target.value)}
-                            placeholder={isSerial ? (hasSeries ? "Auto / Enter" : "Serial No.") : "—"}
-                            className={inputCls}
-                            style={S.input}
-                          />
-                          {isSerial && hasSeries && (
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="ghost"
-                              disabled={isGenerating}
-                              onClick={() => handleGenerateTracking(idx, 'SERIAL')}
-                              className="px-1.5 py-0.5 text-[10px] h-7 font-mono shrink-0"
-                              title="Generate Serial No.(s) for quantity"
-                            >
-                              {isGenerating ? "…" : "Gen"}
-                            </Button>
-                          )}
-                        </div>
+                      <TableCell className="px-2 py-1.5 min-w-[240px]">
+                        {isLot ? (
+                          <div className="flex items-center gap-1.5 w-full">
+                            <span className="px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wider uppercase bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 shrink-0">
+                              LOT
+                            </span>
+                            <input
+                              value={line.lot_no}
+                              onChange={(e) => setLineField(idx, "lot_no", e.target.value)}
+                              placeholder={hasSeries ? "Auto / Enter Lot No." : "Lot No."}
+                              className={`${inputCls} font-mono text-xs`}
+                              style={S.input}
+                            />
+                            {hasSeries && (
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="ghost"
+                                disabled={isGenerating}
+                                onClick={() => handleGenerateTracking(idx, 'LOT')}
+                                className="px-2 py-0.5 text-[11px] h-7 font-mono shrink-0 nf-btn-secondary"
+                                title="Preview next Lot No."
+                              >
+                                {isGenerating ? "…" : "Gen"}
+                              </Button>
+                            )}
+                          </div>
+                        ) : isSerial ? (
+                          <div className="flex items-center gap-1.5 w-full">
+                            <span className="px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wider uppercase bg-blue-500/15 text-blue-400 border border-blue-500/30 shrink-0">
+                              SERIAL NS
+                            </span>
+                            {Math.round(Number(line.quantity || 1)) > 1 ? (
+                              <div className="relative flex-1">
+                                <button
+                                  type="button"
+                                  onClick={() => setOpenSerialIdx(openSerialIdx === idx ? null : idx)}
+                                  className="flex items-center justify-between w-full h-8 px-2.5 py-1 text-xs rounded border text-left transition-all"
+                                  style={{
+                                    backgroundColor: "var(--input-bg)",
+                                    borderColor: openSerialIdx === idx ? "var(--accent)" : "var(--input-border)",
+                                    color: line.serial_no ? "var(--text-primary)" : "var(--text-muted)",
+                                  }}
+                                >
+                                  <span className="truncate font-mono text-xs">
+                                    {(() => {
+                                      const serials = line.serial_no
+                                        ? line.serial_no.split(/[\n,]+/).map((s: string) => s.trim()).filter(Boolean)
+                                        : [];
+                                      if (serials.length === 0) return "Click Gen / Serials…";
+                                      return `${serials.length} Serials: ${serials[0]}${serials.length > 1 ? ", …" : ""}`;
+                                    })()}
+                                  </span>
+                                  <div className="flex items-center gap-1 shrink-0 ml-1.5">
+                                    {(() => {
+                                      const serials = line.serial_no
+                                        ? line.serial_no.split(/[\n,]+/).map((s: string) => s.trim()).filter(Boolean)
+                                        : [];
+                                      return serials.length > 0 ? (
+                                        <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-blue-500/20 text-blue-300">
+                                          {serials.length}/{Math.round(Number(line.quantity || 1))}
+                                        </span>
+                                      ) : null;
+                                    })()}
+                                    <ChevronDown
+                                      className={`h-3.5 w-3.5 transition-transform ${openSerialIdx === idx ? "rotate-180" : ""}`}
+                                    />
+                                  </div>
+                                </button>
+
+                                {openSerialIdx === idx && (
+                                  <div
+                                    className="absolute top-full left-0 mt-1 z-50 w-72 rounded-lg border shadow-2xl p-2.5"
+                                    style={{
+                                      backgroundColor: "var(--surface-raised)",
+                                      borderColor: "var(--border)",
+                                    }}
+                                  >
+                                    <div
+                                      className="flex items-center justify-between pb-2 mb-2 border-b"
+                                      style={{ borderColor: "var(--border)" }}
+                                    >
+                                      <span className="text-xs font-semibold" style={S.primary}>
+                                        Generated Serials ({line.serial_no ? line.serial_no.split(/[\n,]+/).filter(Boolean).length : 0}/{Math.round(Number(line.quantity || 1))})
+                                      </span>
+                                      <button
+                                        type="button"
+                                        onClick={() => setOpenSerialIdx(null)}
+                                        className="text-xs px-1.5 py-0.5 rounded hover:bg-white/10"
+                                        style={S.sub}
+                                      >
+                                        ✕
+                                      </button>
+                                    </div>
+
+                                    <div className="max-h-48 overflow-y-auto space-y-1.5 pr-1">
+                                      {(() => {
+                                        const serials = line.serial_no
+                                          ? line.serial_no.split(/[\n,]+/).map((s: string) => s.trim()).filter(Boolean)
+                                          : [];
+                                        const targetQty = Math.max(1, Math.round(Number(line.quantity || 1)));
+                                        const displayCount = Math.max(serials.length, targetQty);
+                                        const rows = Array.from({ length: displayCount }, (_, i) => serials[i] || "");
+
+                                        return rows.map((s, sIdx) => (
+                                          <div key={sIdx} className="flex items-center gap-1.5">
+                                            <span className="text-[10px] font-mono px-1 py-0.5 rounded bg-black/25 text-zinc-400 w-6 text-center shrink-0">
+                                              #{sIdx + 1}
+                                            </span>
+                                            <input
+                                              type="text"
+                                              value={s}
+                                              placeholder={`Serial #${sIdx + 1}`}
+                                              onChange={(e) => {
+                                                const updated = [...rows];
+                                                updated[sIdx] = e.target.value.trim();
+                                                setLineField(idx, "serial_no", updated.filter(Boolean).join(", "));
+                                              }}
+                                              className="w-full text-xs h-7 px-2 font-mono rounded border"
+                                              style={S.input}
+                                            />
+                                          </div>
+                                        ));
+                                      })()}
+                                    </div>
+                                    <div className="mt-2 pt-2 border-t flex justify-end" style={{ borderColor: "var(--border)" }}>
+                                      <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        onClick={() => setOpenSerialIdx(null)}
+                                        className="h-6 text-[11px] px-2"
+                                      >
+                                        Done
+                                      </Button>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              <input
+                                value={line.serial_no}
+                                onChange={(e) => setLineField(idx, "serial_no", e.target.value)}
+                                placeholder={hasSeries ? "Auto / Enter Serial No." : "Serial No."}
+                                className={`${inputCls} font-mono text-xs`}
+                                style={S.input}
+                              />
+                            )}
+                            {hasSeries && (
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="ghost"
+                                disabled={isGenerating}
+                                onClick={() => handleGenerateTracking(idx, 'SERIAL')}
+                                className="px-2 py-0.5 text-[11px] h-7 font-mono shrink-0 nf-btn-secondary"
+                                title="Preview / Generate Serial No.(s) for quantity"
+                              >
+                                {isGenerating ? "…" : "Gen"}
+                              </Button>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-xs italic pl-2" style={S.muted}>
+                            — Not Tracked —
+                          </span>
+                        )}
                       </TableCell>
                       <TableCell className="px-2 py-1.5 w-32">
                         <input
@@ -597,8 +741,7 @@ export default function GoodsReceiptPanel() {
                     <TableHead className="h-auto px-3 py-2">{t("grpColQty")}</TableHead>
                     <TableHead className="h-auto px-3 py-2">{t("grpColUom")}</TableHead>
                     <TableHead className="h-auto px-3 py-2">{t("grpColRate")}</TableHead>
-                    <TableHead className="h-auto px-3 py-2">{t("grpColLotNo")}</TableHead>
-                    <TableHead className="h-auto px-3 py-2">Serial No.</TableHead>
+                    <TableHead className="h-auto px-3 py-2">Tracking (Lot / Serial)</TableHead>
                   </tr>
                 </TableHeader>
                 <TableBody>
@@ -608,8 +751,21 @@ export default function GoodsReceiptPanel() {
                       <TableCell className="px-3 py-2" style={S.primary}>{l.quantity}</TableCell>
                       <TableCell className="px-3 py-2" style={S.primary}>{l.uom}</TableCell>
                       <TableCell className="px-3 py-2" style={S.primary}>{l.rate ?? "—"}</TableCell>
-                      <TableCell className="px-3 py-2" style={S.primary}>{l.lot_no || "—"}</TableCell>
-                      <TableCell className="px-3 py-2 font-mono" style={S.primary}>{l.serial_no || "—"}</TableCell>
+                      <TableCell className="px-3 py-2 font-mono text-xs" style={S.primary}>
+                        {l.lot_no ? (
+                          <span className="inline-flex items-center gap-1 text-emerald-400">
+                            <span className="px-1.5 py-0.2 rounded text-[9px] font-semibold bg-emerald-500/20 border border-emerald-500/30">LOT</span>
+                            {l.lot_no}
+                          </span>
+                        ) : l.serial_no ? (
+                          <span className="inline-flex items-center gap-1 text-blue-400">
+                            <span className="px-1.5 py-0.2 rounded text-[9px] font-semibold bg-blue-500/20 border border-blue-500/30">SERIAL NS</span>
+                            {l.serial_no}
+                          </span>
+                        ) : (
+                          <span style={S.muted}>—</span>
+                        )}
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>

@@ -1446,6 +1446,91 @@ export class NumberSeriesService {
   }
 
   /**
+   * Previews multiple next numbers in sequence without updating last_no_used.
+   */
+  async previewNextNumbersById(
+    id: string,
+    count = 1,
+  ): Promise<{ next_number: string; numbers: string[]; series: typeof schema.noSeries.$inferSelect }> {
+    const series = await this.findOneById(id);
+    if (series.blocked) {
+      throw new BadRequestException(`No. Series [${series.code}] is blocked. Cannot generate item number.`);
+    }
+
+    const increment = series.increment_by || 1;
+    const padDigits = series.seq_length && series.seq_length > 0 ? series.seq_length : 4;
+    const prefix = series.no_series_code ?? (series.code ? `${series.code}-` : '');
+
+    let startVal = increment;
+    if (series.last_no_used) {
+      const match = series.last_no_used.match(/(\d+)$/);
+      if (match) {
+        startVal = parseInt(match[1], 10) + increment;
+      }
+    } else if (series.starting_no) {
+      const match = series.starting_no.match(/(\d+)$/);
+      if (match) {
+        startVal = parseInt(match[1], 10);
+      }
+    }
+
+    const numbers: string[] = [];
+    for (let i = 0; i < count; i++) {
+      const val = startVal + i * increment;
+      numbers.push(`${prefix}${String(val).padStart(padDigits, '0')}`);
+    }
+
+    return {
+      next_number: numbers[0] || `${prefix}${String(startVal).padStart(padDigits, '0')}`,
+      numbers,
+      series,
+    };
+  }
+
+  /**
+   * Updates last_no_used for a number series upon document posting if the used code is higher.
+   */
+  async recordLastNoUsed(id: string, usedCode: string, executor: any = this.db) {
+    if (!id || !usedCode) return;
+    try {
+      const series = await this.findOneById(id);
+      if (!series) return;
+
+      const newMatch = usedCode.match(/(\d+)$/);
+      const oldMatch = series.last_no_used ? series.last_no_used.match(/(\d+)$/) : null;
+
+      let shouldUpdate = false;
+      if (!series.last_no_used) {
+        shouldUpdate = true;
+      } else if (newMatch && oldMatch) {
+        const newNum = parseInt(newMatch[1], 10);
+        const oldNum = parseInt(oldMatch[1], 10);
+        if (newNum > oldNum) {
+          shouldUpdate = true;
+        }
+      } else {
+        shouldUpdate = true;
+      }
+
+      if (shouldUpdate) {
+        const updates: any = {
+          last_no_used: usedCode,
+          updated_at: toMysqlTimestamp() as any,
+        };
+        if (newMatch) {
+          updates.current_seq = parseInt(newMatch[1], 10);
+        }
+        await executor
+          .update(schema.noSeries)
+          .set(updates)
+          .where(eq(schema.noSeries.id, id));
+      }
+    } catch {
+      // Non-fatal if recording last number encounters an issue
+    }
+  }
+
+  /**
    * Finds the default active No. Series for a given Master Type (e.g. SUPPLIER, CUSTOMER, ITEM),
    * respecting company-level Inventory Setup configuration and optional master type subtype.
    */

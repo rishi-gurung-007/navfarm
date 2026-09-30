@@ -183,11 +183,9 @@ export class GoodsReceiptService {
               `Item '${item.item_code}' is lot-tracked — a Lot No. is required or a Tracking No. Series must be assigned.`,
             );
           }
-          const generated = await this.numberSeriesService.generateNextNumberById(
+          const generated = await this.numberSeriesService.previewNextNumbersById(
             item.tracking_series_id,
-            tenantId,
-            companyId,
-            executor,
+            1,
           );
           lotNo = generated.next_number;
         }
@@ -262,15 +260,11 @@ export class GoodsReceiptService {
               `Item '${item.item_code}' is serial-tracked — Serial No.(s) are required or a Tracking No. Series must be assigned.`,
             );
           }
-          for (let i = 0; i < qty; i++) {
-            const gen = await this.numberSeriesService.generateNextNumberById(
-              item.tracking_series_id,
-              tenantId,
-              companyId,
-              executor,
-            );
-            serials.push(gen.next_number);
-          }
+          const gen = await this.numberSeriesService.previewNextNumbersById(
+            item.tracking_series_id,
+            qty,
+          );
+          serials = gen.numbers;
         }
 
         for (const sn of serials) {
@@ -519,6 +513,26 @@ export class GoodsReceiptService {
         });
 
         await this.glPostingService.postInventoryLedgerEntry(ledgerEntry, userPayload?.userId);
+
+        if (line.serial_no || line.lot_no) {
+          try {
+            const [item] = await this.db
+              .select({ tracking_series_id: schema.itemMaster.tracking_series_id })
+              .from(schema.itemMaster)
+              .where(eq(schema.itemMaster.item_id, line.item_id))
+              .limit(1);
+
+            if (item?.tracking_series_id) {
+              if (line.serial_no) {
+                await this.numberSeriesService.recordLastNoUsed(item.tracking_series_id, line.serial_no);
+              } else if (line.lot_no) {
+                await this.numberSeriesService.recordLastNoUsed(item.tracking_series_id, line.lot_no);
+              }
+            }
+          } catch {
+            // Non-fatal if recording tracking series fails or in unit test mocks
+          }
+        }
       }
 
       await this.auditService.log({
