@@ -24,8 +24,8 @@
  * Plan R changes Plan B's drafts on purpose (Ruling I4): the need is the
  * shortfall to the low level with booked transfers counted, not requirement −
  * opening; the line is dated Required On, not the run-down; and because the
- * first shortage date is now D19's run-down (to the low level, on a day with
- * demand or an outflow — 7f3469e), priority follows that earlier date. None of
+ * first shortage date is the first day demand cannot be met, distinct from
+ * D19's earlier low-level run-down. None of
  * it moves the Worked Example: no low level and nothing incoming, so R1 still
  * drafts 6,000 kg and R2 9,000 kg.
  * - Bag count: Requisition §1 row 23, quantity ÷ bag size (default 50).
@@ -179,7 +179,7 @@ export function recommendLines(args: {
       // Requisition §2 row 50 "Daily consumption for this silo": today's, or for a next diet its first day's.
       dailyRequirementKg: s.planningDayDemandKg > 0 ? s.planningDayDemandKg : s.firstDayDemandKg,
       daysRemaining: s.daysLeft,
-      firstShortageDate: s.runDownDate,
+      firstShortageDate: s.shortageDate ?? null,
       unroundedNeedKg,
       recommendedQtyKg,
       bagCount: bagCountFor(recommendedQtyKg, feedType, settings),

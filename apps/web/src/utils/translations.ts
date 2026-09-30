@@ -1622,6 +1622,7 @@ export const translations = {
     ffRunHistoryLabel: "Saved feed forecast runs",
     ffRunHistoryRow: "Version {{version}} · {{view}} · {{from}} to {{to}}",
     ffRunHistoryFailed: "The saved run history could not be loaded.",
+    ffLoadingRunHistory: "Loading saved run history…",
     ffNoSavedRuns: "No saved runs for this farm.",
     ffNoteAsOf: "Past planning date",
     ffNoteNoFeedRow: "Days with no feed rate",

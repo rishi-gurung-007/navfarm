@@ -333,8 +333,9 @@ export const feedForecastRun = mysqlTable('feed_forecast_run', {
   to_date: date('to_date', { mode: 'string' }).notNull(),
   period_id: varchar('period_id', { length: 36 }).references((): AnyMySqlColumn => reportingPeriod.period_id, { onDelete: 'restrict' }),
   source_cutoff_at: timestamp('source_cutoff_at', { mode: 'string' }).notNull(),
+  source_snapshot: json('source_snapshot').$type<{ version: string; hash: string; values: unknown }>().notNull(),
   config_snapshot: json('config_snapshot').$type<{ version: string; hash: string; values: unknown }>().notNull(),
-  created_by: varchar('created_by', { length: 36 }),
+  created_by: varchar('created_by', { length: 36 }).notNull(),
   created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
 }, (table) => ({
   farmVersionUnique: uniqueIndex('uq_feed_forecast_run_farm_version').on(table.farm_id, table.version),
@@ -4263,7 +4264,11 @@ export const requisitionLine = mysqlTable('requisition_line', {
   // Ruling M9: set when the farm hand-edits a drafted quantity, so an
   // auto-draft rerun (Task 8) keeps this line instead of overwriting it.
   quantity_edited: boolean('quantity_edited').default(false).notNull(),
-  feed_forecast_run_line_id: varchar('feed_forecast_run_line_id', { length: 36 }).references(() => feedForecastRunLine.run_line_id, { onDelete: 'restrict' }),
+  // The requisition header is the sole relational run link. One aggregate
+  // requisition line can be supported by many dated run lines; keeping those
+  // IDs together avoids an independently mutable FK that can contradict the
+  // header's run.
+  feed_forecast_run_line_ids: json('feed_forecast_run_line_ids').$type<string[]>(),
   created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
 });
 

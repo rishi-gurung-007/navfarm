@@ -33,13 +33,13 @@ describe('buildFeedForecast — sources and diet changes (Plan B)', () => {
       {
         sourceType: 'SILO', sourceCode: 'GRS/SILO-001', locationId: 's1', itemId: 'r1', itemName: 'Weaner Diet R1',
         balanceKg: 1500, planningDayDemandKg: 2000, firstDemandDate: '2026-09-23', firstDayDemandKg: 2000,
-        walkDemandKg: 6000, daysLeft: 0, runDownDate: '2026-09-23', isNextDiet: false, noSiloHoldsItem: false,
+        walkDemandKg: 6000, daysLeft: 0, runDownDate: '2026-09-23', shortageDate: '2026-09-23', isNextDiet: false, noSiloHoldsItem: false,
         lifecycleIds: ['row-r1'], thresholdKg: 0, incomingKg: 0, shortfallKg: 4500, refillDate: '2026-09-21', requiredOn: '2026-09-21', overdue: true,
       },
       {
         sourceType: 'SILO', sourceCode: 'GRS/SILO-002', locationId: 's2', itemId: 'r2', itemName: 'Weaner Diet R2',
         balanceKg: 1000, planningDayDemandKg: 0, firstDemandDate: '2026-09-26', firstDayDemandKg: 2500,
-        walkDemandKg: 10000, daysLeft: null, runDownDate: '2026-09-26', isNextDiet: true, noSiloHoldsItem: false,
+        walkDemandKg: 10000, daysLeft: null, runDownDate: '2026-09-26', shortageDate: '2026-09-26', isNextDiet: true, noSiloHoldsItem: false,
         lifecycleIds: ['row-r2'], thresholdKg: 0, incomingKg: 0, shortfallKg: 9000, refillDate: '2026-09-24', requiredOn: '2026-09-24', overdue: false,
       },
     ]);

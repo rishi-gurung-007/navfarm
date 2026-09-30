@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { and, desc, eq, isNull } from 'drizzle-orm';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { randomUUID } from 'node:crypto';
@@ -48,6 +48,10 @@ export class FeedForecastRunService {
       location_id: schema.locationMaster.location_id,
       company_id: schema.locationMaster.company_id,
       lob_id: schema.locationMaster.lob_id,
+      feed_bulk_multiple_kg: schema.locationMaster.feed_bulk_multiple_kg,
+      feed_bag_size_kg: schema.locationMaster.feed_bag_size_kg,
+      feed_truck_target_kg: schema.locationMaster.feed_truck_target_kg,
+      feed_production_weekday: schema.locationMaster.feed_production_weekday,
     }).from(schema.locationMaster).where(and(
       eq(schema.locationMaster.location_id, farmId),
       eq(schema.locationMaster.company_id, companyId),
@@ -64,7 +68,13 @@ export class FeedForecastRunService {
     return farm;
   }
 
-  async createRun(input: CreateFeedForecastRunInput, output: FeedForecastResponse, actor?: Actor) {
+  async createRun(
+    input: CreateFeedForecastRunInput,
+    output: Pick<FeedForecastResponse, 'farm' | 'planningDate' | 'from' | 'to' | 'daily' | 'sourceSnapshot'>,
+    actor?: Actor,
+  ) {
+    if (!actor?.userId) throw new UnauthorizedException('An authenticated creator is required to save a forecast run.');
+    const creatorId = actor.userId;
     this.assertRequestedScope(input.companyId, input.farmId);
     if (output.farm.id !== input.farmId || output.planningDate !== input.planningDate || output.from !== input.from || output.to !== input.to) {
       throw new BadRequestException('The forecast output does not match the run filters.');
@@ -73,8 +83,17 @@ export class FeedForecastRunService {
     return withTenantTransaction(this.cls, async () => {
       // The stable farm row owns its version stream. This lock must precede
       // the version read, including when there is no earlier run row to lock.
-      await this.loadFarm(input.farmId, input.companyId, input.tenantId, true);
-      const configSnapshot = buildConfigSnapshot(await this.feedSettings.resolve(input.companyId, input.farmId));
+      const farm = await this.loadFarm(input.farmId, input.companyId, input.tenantId, true);
+      if (!output.sourceSnapshot) throw new BadRequestException('The forecast source snapshot is required.');
+      const configSnapshot = buildConfigSnapshot({
+        ...(await this.feedSettings.resolve(input.companyId, input.farmId)),
+        requisitionDraftSettings: {
+          bulkMultipleKg: farm.feed_bulk_multiple_kg ?? 3000,
+          bagSizeKg: farm.feed_bag_size_kg ?? 50,
+          truckTargetKg: farm.feed_truck_target_kg ?? 30000,
+          productionWeekday: farm.feed_production_weekday ?? 0,
+        },
+      });
       const [latest] = await this.db.select({ version: schema.feedForecastRun.version })
         .from(schema.feedForecastRun)
         .where(and(
@@ -93,8 +112,8 @@ export class FeedForecastRunService {
       await this.db.insert(schema.feedForecastRun).values({
         run_id: runId, run_code: runCode, tenant_id: input.tenantId, company_id: input.companyId, farm_id: input.farmId,
         version, planning_date: input.planningDate, view: input.view, from_date: input.from, to_date: input.to,
-        period_id: input.periodId, source_cutoff_at: input.sourceCutoffAt, config_snapshot: configSnapshot,
-        created_by: actor?.userId ?? null,
+        period_id: input.periodId, source_cutoff_at: input.sourceCutoffAt, source_snapshot: output.sourceSnapshot,
+        config_snapshot: configSnapshot, created_by: creatorId,
       });
       if (lines.length) {
         await this.db.insert(schema.feedForecastRunLine).values(lines.map((line) => ({

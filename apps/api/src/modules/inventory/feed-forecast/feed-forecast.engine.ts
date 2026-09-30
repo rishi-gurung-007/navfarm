@@ -201,6 +201,8 @@ export interface DailyForecastRow {
   sharedBatchCount: number; // batches drawing on the same container and item that day
   indicative: boolean; // Q13
   runDownDate: string | null;
+  /** First date total demand exceeds available opening stock; distinct from low-level run-down. */
+  shortageDate?: string | null;
   refillDate: string | null;
   requiredOn: string | null;
   overdue: boolean;
@@ -219,6 +221,8 @@ export interface ForecastSource {
   walkDemandKg: number; // combined demand planningDate..to
   daysLeft: number | null; // D1
   runDownDate: string | null; // D19
+  /** First forecast date on which this source cannot meet all demand. */
+  shortageDate?: string | null;
   isNextDiet: boolean; // a batch changes onto this item in the window and nothing eats it today
   noSiloHoldsItem: boolean; // a shed with silos draws it from the store because no silo holds it
   lifecycleIds: string[]; // lifecycle rows that produce its demand in the window, sorted
@@ -659,6 +663,7 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
     sourceDailyDemandKg: number | null;
     daysLeft: number | null;
     runDownDate: string | null;
+    shortageDate: string | null;
     refillDate: string | null;
     requiredOn: string | null;
     overdue: boolean;
@@ -682,12 +687,14 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
     const opening = new Map<string, number>();
     let carried = balanceMicrogramsFor(sk);
     let runDownDate: string | null = null;
+    let shortageDate: string | null = null;
     for (const date of walkDates) {
       // A transfer out can exceed what is there on paper; a silo is never below empty.
       const open = Math.max(0, carried + (inflow.get(date) ?? 0));
       opening.set(date, open);
       const demand = byDate.get(date) ?? 0;
       const closing = open - demand;
+      if (shortageDate === null && date >= input.planningDate && demand > open) shortageDate = date;
       // Only a day that takes feed out counts — eaten from, or a transfer out. Either can bring the silo to its low
       // level (so no shortfall is left without a date); a day with neither leaves an idle, empty silo alone.
       const outgoing = demand > 0 || (inflow.get(date) ?? 0) < 0;
@@ -731,6 +738,7 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
       sourceDailyDemandKg: toKg(sourceDailyDemandMicrograms),
       daysLeft,
       runDownDate,
+      shortageDate,
       refillDate,
       requiredOn,
       overdue,
@@ -798,6 +806,7 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
       walkDemandKg: p.walkDemandKg,
       daysLeft: p.daysLeft,
       runDownDate: p.runDownDate,
+      shortageDate: p.shortageDate,
       isNextDiet: nextDietKeys.has(key) && planningDayDemandKg === 0,
       noSiloHoldsItem: noSiloKeys.has(key),
       lifecycleIds: [...(lifecycleIdsByKey.get(key) ?? [])].sort(),
@@ -865,6 +874,7 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
       sharedBatchCount: e.sourceType === 'NONE' ? 1 : (batchesByKeyDate.get(`${e.key}|${e.date}`)?.size ?? 1),
       indicative: indicative || e.inChangeWindow,
       runDownDate: p.runDownDate,
+      shortageDate: p.shortageDate,
       refillDate: p.refillDate,
       requiredOn: p.requiredOn,
       overdue: p.overdue,

@@ -293,7 +293,7 @@ export class FeedRequisitionService implements OnModuleInit {
   }
 
   /** The draft-time snapshot columns of a line (Requisition §2). */
-  private lineValues(line: DraftLine, forecastRunLineId?: string | null) {
+  private lineValues(line: DraftLine, forecastRunLineIds?: string[] | null) {
     return {
       item_id: line.itemId,
       description: line.itemName.slice(0, 200),
@@ -313,22 +313,37 @@ export class FeedRequisitionService implements OnModuleInit {
       bag_count: line.bagCount,
       proposed_delivery_date: line.proposedDeliveryDate,
       needs_silo_changeover: line.needsSiloChangeover,
-      feed_forecast_run_line_id: forecastRunLineId ?? null,
+      feed_forecast_run_line_ids: forecastRunLineIds?.length ? forecastRunLineIds : null,
     };
   }
 
   /**
-   * A persisted run may explain a system draft only when its exact forecast
-   * filters match this calculation. The first dated line for a destination +
-   * item is the stable origin link for the source-level requisition line.
+   * A persisted run may explain a system draft only when it contains the
+   * exact engine inputs and requisition settings used for this calculation.
+   * A requisition line aggregates every dated run line for its destination +
+   * item; retaining all IDs avoids falsely presenting an arbitrary first day
+   * as the sole origin of an aggregate quantity.
    */
   private async matchingPersistedRun(
-    forecast: { planningDate: string; from?: string; to: string }, farmId: string, companyId: string, tenantId: string,
-  ): Promise<{ runId: string; runCode: string; lineBySource: Map<string, string> } | null> {
+    forecast: {
+      planningDate: string;
+      from?: string;
+      to: string;
+      sourceSnapshot?: { hash?: string };
+      sources: ForecastSource[];
+    },
+    settings: FarmFeedSettings,
+    wanted: DraftLine[],
+    farmId: string,
+    companyId: string,
+    tenantId: string,
+  ): Promise<{ runId: string; runCode: string; linesBySource: Map<string, string[]> } | null> {
     const [run] = await this.db.select({
       run_id: schema.feedForecastRun.run_id,
       run_code: schema.feedForecastRun.run_code,
       version: schema.feedForecastRun.version,
+      source_snapshot: schema.feedForecastRun.source_snapshot,
+      config_snapshot: schema.feedForecastRun.config_snapshot,
     }).from(schema.feedForecastRun).where(and(
       eq(schema.feedForecastRun.tenant_id, tenantId),
       eq(schema.feedForecastRun.company_id, companyId),
@@ -340,19 +355,40 @@ export class FeedRequisitionService implements OnModuleInit {
       isNull(schema.feedForecastRun.period_id),
     )).orderBy(desc(schema.feedForecastRun.version)).limit(1);
     if (!run) return null;
+    const runSource = run.source_snapshot as { hash?: unknown } | null;
+    const runConfig = run.config_snapshot as { values?: { requisitionDraftSettings?: Partial<FarmFeedSettings> } } | null;
+    const savedSettings = runConfig?.values?.requisitionDraftSettings;
+    if (!forecast.sourceSnapshot?.hash || runSource?.hash !== forecast.sourceSnapshot.hash || !savedSettings) return null;
+    const settingKeys: Array<keyof FarmFeedSettings> = ['bulkMultipleKg', 'bagSizeKg', 'truckTargetKg', 'productionWeekday'];
+    if (settingKeys.some((key) => savedSettings[key] !== settings[key])) return null;
+    // System Balance is read from the live ledger after the forecast because
+    // it includes postings made today. Such a posting can leave the engine's
+    // start-of-day input hash unchanged, so it is an additional equality
+    // boundary: do not label a changed draft as evidence from the old run.
+    const sourceByKey = new Map(forecast.sources.map((source) => [lineKey(source.locationId, source.itemId), source]));
+    if (wanted.some((line) => {
+      const source = sourceByKey.get(line.key);
+      return !source || Math.abs(line.systemBalanceKg - source.balanceKg) > 1e-6;
+    })) return null;
     const lines = await this.db.select({
       run_line_id: schema.feedForecastRunLine.run_line_id,
       destination_location_id: schema.feedForecastRunLine.destination_location_id,
       required_item_id: schema.feedForecastRunLine.required_item_id,
     }).from(schema.feedForecastRunLine).where(eq(schema.feedForecastRunLine.run_id, run.run_id))
       .orderBy(schema.feedForecastRunLine.forecast_date, schema.feedForecastRunLine.run_line_id);
-    const lineBySource = new Map<string, string>();
+    const linesBySource = new Map<string, string[]>();
     for (const line of lines) {
       if (!line.destination_location_id) continue;
       const key = lineKey(line.destination_location_id, line.required_item_id);
-      if (!lineBySource.has(key)) lineBySource.set(key, line.run_line_id);
+      const ids = linesBySource.get(key) ?? [];
+      ids.push(line.run_line_id);
+      linesBySource.set(key, ids);
     }
-    return { runId: run.run_id, runCode: run.run_code, lineBySource };
+    // A header link is all-or-nothing. If even one aggregate draft line has
+    // no dated contributors in this run, leave the header and every line
+    // detached instead of creating partial/misleading provenance.
+    if (wanted.some((line) => !linesBySource.get(line.key)?.length)) return null;
+    return { runId: run.run_id, runCode: run.run_code, linesBySource };
   }
 
   /**
@@ -418,9 +454,7 @@ export class FeedRequisitionService implements OnModuleInit {
         planningDate: forecast.planningDate, to: forecast.to, sources: forecast.sources, destinations, settings: farm.settings, currentBalanceKg,
       });
       const cycle = productionCycle(forecast.planningDate, farm.settings.productionWeekday);
-      const persistedRun = await this.matchingPersistedRun(forecast, farmId, companyId, tenantId);
-      const runKey = persistedRun?.runCode ?? runKeyFor(farm.code);
-      const runLineFor = (line: DraftLine) => persistedRun?.lineBySource.get(lineKey(line.destinationLocationId, line.itemId)) ?? null;
+      const persistedRun = await this.matchingPersistedRun(forecast, farm.settings, wanted, farmId, companyId, tenantId);
 
       return this.numbered(() => withTenantTransaction(this.cls, async () => {
         await this.lockFarm(farmId, tenantId);
@@ -458,6 +492,13 @@ export class FeedRequisitionService implements OnModuleInit {
           wanted,
         );
 
+        // A farm-edited line retained outside the current forecast cannot be
+        // explained by the current run. In that mixed case detach the entire
+        // editable document rather than link only some lines to its header.
+        const draftRun = plan.keep.length ? null : persistedRun;
+        const runKey = draftRun?.runCode ?? runKeyFor(farm.code);
+        const runLinesFor = (line: DraftLine) => draftRun?.linesBySource.get(lineKey(line.destinationLocationId, line.itemId)) ?? null;
+
         const drafted = [...plan.insert, ...plan.update.map((u) => u.line)];
         const header = {
           // A rerun that drafts nothing new but keeps the farm's own lines leaves
@@ -467,7 +508,7 @@ export class FeedRequisitionService implements OnModuleInit {
             required_date: drafted.map((l) => l.proposedDeliveryDate).sort()[0] ?? null,
           } : {}),
           forecast_run_key: runKey,
-          feed_forecast_run_id: persistedRun?.runId ?? null,
+          feed_forecast_run_id: draftRun?.runId ?? null,
           production_date: cycle.productionDate,
           submission_deadline: cycle.submissionDeadline,
           updated_by: user?.userId ?? null,
@@ -493,7 +534,7 @@ export class FeedRequisitionService implements OnModuleInit {
           });
           await this.db.insert(schema.requisitionLine).values(
             plan.insert.map((line, i) => ({
-              requisition_id: requisitionId, line_seq: i + 1, quantity: String(line.recommendedQtyKg), quantity_edited: false, ...this.lineValues(line, runLineFor(line)),
+              requisition_id: requisitionId, line_seq: i + 1, quantity: String(line.recommendedQtyKg), quantity_edited: false, ...this.lineValues(line, runLinesFor(line)),
             })),
           );
           return { requisitionId, created: true, linesDrafted: plan.insert.length };
@@ -504,7 +545,7 @@ export class FeedRequisitionService implements OnModuleInit {
         }
         for (const u of plan.update) {
           await this.db.update(schema.requisitionLine).set({
-            ...this.lineValues(u.line, runLineFor(u.line)),
+            ...this.lineValues(u.line, runLinesFor(u.line)),
             // M9: an edited line keeps the farm's quantity (and its flag); only
             // the snapshot and the recommendation beside it are refreshed.
             ...(u.keepQuantity
@@ -516,9 +557,17 @@ export class FeedRequisitionService implements OnModuleInit {
           const maxSeq = Math.max(0, ...existing.map((l) => l.line_seq));
           await this.db.insert(schema.requisitionLine).values(
             plan.insert.map((line, i) => ({
-              requisition_id: draft.requisition_id, line_seq: maxSeq + i + 1, quantity: String(line.recommendedQtyKg), quantity_edited: false, ...this.lineValues(line, runLineFor(line)),
+              requisition_id: draft.requisition_id, line_seq: maxSeq + i + 1, quantity: String(line.recommendedQtyKg), quantity_edited: false, ...this.lineValues(line, runLinesFor(line)),
             })),
           );
+        }
+        // A kept edited line has no current forecast source. Once the header
+        // advances (or detaches) it must not retain provenance from an older
+        // run, which would make the header and line contradict one another.
+        for (const keptLineId of plan.keep) {
+          await this.db.update(schema.requisitionLine)
+            .set({ feed_forecast_run_line_ids: null })
+            .where(eq(schema.requisitionLine.line_id, keptLineId));
         }
         if (!drafted.length && !plan.keep.length) {
           // Nothing is needed any more and the farm kept nothing: the draft goes, rather than lingering empty.

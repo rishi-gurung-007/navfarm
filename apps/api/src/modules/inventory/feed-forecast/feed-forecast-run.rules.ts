@@ -22,6 +22,11 @@ export function buildConfigSnapshot<T>(settings: T) {
   return { version: `sha256:${hash}`, hash, values };
 }
 
+/** Exact detached calculation inputs, sufficient to rerun the pure engine. */
+export function buildSourceSnapshot<T>(sources: T) {
+  return buildConfigSnapshot(sources);
+}
+
 export function technicalRunCode(farmId: string, version: number): string {
   return `FFR-${farmId}-${String(version).padStart(6, '0')}`;
 }
@@ -64,6 +69,7 @@ interface ForecastRunLineInput {
   demandKg?: number;
   projectedClosingKg?: number;
   runDownDate?: string | null;
+  shortageDate?: string | null;
   recommendedQtyKg?: number;
   requiredOn?: string | null;
   provenance?: unknown;
@@ -119,10 +125,13 @@ export function buildRunLineSnapshots(output: { daily: ForecastRunLineInput[] })
       confirmedReceiptKg: validated.confirmedReceiptKg,
       dailyDemandKg: validated.demandKg,
       projectedClosingKg: validated.projectedClosingKg,
-      shortageDate: line.runDownDate ?? null,
+      shortageDate: line.shortageDate ?? null,
       recommendedQtyKg: validated.recommendedQtyKg,
       requiredOnDate: line.requiredOn ?? null,
-      provenanceSnapshot: detached(line.provenance ?? {
+      provenanceSnapshot: {
+        ...(line.provenance && typeof line.provenance === 'object' && !Array.isArray(line.provenance)
+          ? detached(line.provenance) as Record<string, unknown>
+          : detached({
         batchNo: line.batchNo,
         shedCode: line.shedCode,
         stageCode: line.stageCode,
@@ -137,7 +146,9 @@ export function buildRunLineSnapshots(output: { daily: ForecastRunLineInput[] })
         indicative: line.indicative,
         refillDate: line.refillDate,
         overdue: line.overdue,
-      }),
+          })),
+        runDownDate: line.runDownDate ?? null,
+      },
     };
   });
 }

@@ -141,6 +141,10 @@ describe('FeedForecastService', () => {
       flags: [{ kind: 'HEADS_ASSUMED_FLAT', batchNo: 'B1' }, { kind: 'BATCH_SHED_UNKNOWN', batchNo: 'B2' }],
       sources: [], dietChanges: [],
       stages: [],
+      sourceSnapshot: expect.objectContaining({
+        hash: expect.stringMatching(/^[a-f0-9]{64}$/),
+        values: { engineInput: { planningDate: '2026-09-25', marker: 'loaded' } },
+      }),
     });
   });
 
@@ -822,6 +826,25 @@ describe('FeedForecastService.getForecast — views, periods and the report (Pla
     expect(report.rows).toHaveLength(1);
     expect(report.rows[0]).toMatchObject({ date: '2026-09-23', dateTo: '2026-09-25', days: 3, intakeKg: 6000, currentInventoryKg: 1500, itemNo: 'FEED-R1' });
     expect(report).toMatchObject({ view: 'WEEKLY', forecastFrom: '2026-09-23', forecastNote: null, period: null, timeZone: 'Africa/Harare', leadTimeDays: 2 });
+  });
+
+  it('keeps true shortage evidence internal to save/draft calculations so ordinary GET source fields stay compatible', async () => {
+    compute.mockResolvedValueOnce({
+      ...computed,
+      sources: [{
+        sourceType: 'SILO', sourceCode: 'GRS/SILO-001', locationId: 'silo-1', itemId: 'r1', itemName: 'R1',
+        balanceKg: 500, planningDayDemandKg: 100, firstDemandDate: '2026-09-23', firstDayDemandKg: 100,
+        walkDemandKg: 700, daysLeft: 5, runDownDate: '2026-09-27', shortageDate: '2026-09-29',
+        isNextDiet: false, noSiloHoldsItem: false, lifecycleIds: ['life-1'], thresholdKg: 100,
+        incomingKg: 0, shortfallKg: 200, refillDate: '2026-09-25', requiredOn: '2026-09-23', overdue: false,
+      }],
+    } as any);
+
+    const report = await service.getForecast({ view: 'DAILY' }, 'tenant-1', 'STANDARD_USER');
+
+    expect(report.sources[0]).toMatchObject({ runDownDate: '2026-09-27' });
+    expect(report.sources[0]).not.toHaveProperty('shortageDate');
+    expect(report).not.toHaveProperty('sourceSnapshot');
   });
 
   it('DAILY: one date, the planning date unless another is chosen', async () => {

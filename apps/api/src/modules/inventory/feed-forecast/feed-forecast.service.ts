@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException, Optional } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException, Optional, UnauthorizedException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { ClsService } from 'nestjs-cls';
 import { and, eq, gte, inArray, isNotNull, isNull, gt, lte, notInArray, or, sql } from 'drizzle-orm';
@@ -18,6 +18,7 @@ import { assertSiloLevels } from '../silo-feed/silo-levels';
 import { isFarmBoundUserType } from '../../../common/user-type-hierarchy';
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { FeedForecastRunService } from './feed-forecast-run.service';
+import { buildSourceSnapshot } from './feed-forecast-run.rules';
 
 /**
  * The LOB bound on the forecast's location read for a restricted
@@ -116,6 +117,8 @@ export interface FeedForecastResponse {
   dietChanges: DietChange[];
   /** Plan R: each batch's current / next stage block (field specification, supporting block). */
   stages: StageBlock[];
+  /** Detached, canonical pure-engine inputs. Saved runs use this as their deterministic source evidence. */
+  sourceSnapshot: { version: string; hash: string; values: { engineInput: ForecastInput } };
 }
 
 export interface ResolvedFarm {
@@ -238,7 +241,10 @@ export interface FeedForecastReport {
   dietChanges: DietChange[];
 }
 
-type PersistableFeedForecastReport = FeedForecastReport & { daily: DailyForecastRow[] };
+type PersistableFeedForecastReport = FeedForecastReport & {
+  daily: DailyForecastRow[];
+  sourceSnapshot: FeedForecastResponse['sourceSnapshot'];
+};
 
 export interface StageInfo {
   stageId: string;
@@ -616,6 +622,14 @@ export class FeedForecastService {
       : forecastFrom > from
         ? `Days before the planning date (${dayShort(planningDate)}) are not forecast.`
         : null;
+    // shortageDate is new run/requisition evidence. Keep the ordinary GET
+    // response compatible by exposing the same source shape it had before
+    // persisted runs; the explicit save path receives it on `daily` instead.
+    const reportSources = result.sources.map((source) => {
+      const compatible = { ...source };
+      delete compatible.shortageDate;
+      return compatible;
+    });
     const report: FeedForecastReport = {
       planningDate: result.planningDate,
       today: result.today,
@@ -632,18 +646,28 @@ export class FeedForecastService {
       rows: groupRows(result.daily, view, from),
       stages: result.stages,
       flags: result.flags,
-      sources: result.sources,
+      sources: reportSources,
       dietChanges: result.dietChanges,
     };
-    return includeDaily ? { ...report, daily: result.daily } : report;
+    return includeDaily ? { ...report, daily: result.daily, sourceSnapshot: result.sourceSnapshot } : report;
   }
 
   /** Explicit persistence boundary. Ordinary getForecast calls never enter it. */
   async saveRun(query: QueryFeedForecastDto, tenantId: string, actor?: { userId?: string; userType?: string }) {
     if (!this.runService) throw new Error('Feed forecast run service is not configured.');
+    if (!actor?.userId) throw new UnauthorizedException('An authenticated creator is required to save a forecast run.');
     const runService = this.runService;
-    const sourceCutoffAt = new Date().toISOString().slice(0, 19).replace('T', ' ');
     return withTenantTransaction(this.cls, async () => {
+      // This is transaction/database time, not application wall-clock time.
+      // It records when the evidence was taken; deterministic reconstruction
+      // comes from sourceSnapshot, which contains the exact detached engine
+      // inputs read by this transaction.
+      const [clockRows] = await this.db.execute(sql`SELECT CURRENT_TIMESTAMP AS source_cutoff_at`) as unknown as [
+        Array<{ source_cutoff_at: string }>,
+        unknown,
+      ];
+      const [clock] = clockRows;
+      if (!clock?.source_cutoff_at) throw new Error('Database source cutoff could not be established.');
       const { farmId, companyId } = await this.resolveFarm(query.farmId, tenantId, actor?.userType);
       const output = await this.getForecast({ ...query, farmId }, tenantId, actor?.userType, true);
       return runService.createRun({
@@ -655,8 +679,8 @@ export class FeedForecastService {
         from: output.from,
         to: output.to,
         periodId: output.period?.periodId ?? null,
-        sourceCutoffAt,
-      }, output as any, actor);
+        sourceCutoffAt: clock.source_cutoff_at,
+      }, output, actor);
     });
   }
 
@@ -1208,13 +1232,14 @@ export class FeedForecastService {
       const farm = await this.loadFarm(farmId, tenantId);
       const { input, flags: loadFlags, stageBlocks } = await this.loadInput(farm, planningDate, from, to, tenantId, { stockDate, horizonTo, headerCutoff });
       const { rows, flags, sources, dietChanges, daily } = buildFeedForecast(input);
+      const sourceSnapshot = buildSourceSnapshot({ engineInput: input });
       const asOf: ForecastFlag[] = planningDate < today ? [{ kind: 'AS_OF_PAST', planningDate, today, note: asOfPastNote(planningDate, today) }] : [];
       return {
         planningDate, today, timeZone, from, to, horizonTo,
         farm: { id: farm.id, code: farm.code, name: farm.name },
         leadTimeDays: farm.leadTimeDays,
         rows, daily, flags: [...flags, ...loadFlags, ...asOf], sources, dietChanges,
-        stages: stageBlocks,
+        stages: stageBlocks, sourceSnapshot,
       };
     });
   }

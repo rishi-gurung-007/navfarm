@@ -1,4 +1,4 @@
-import { buildConfigSnapshot, buildRunLineSnapshots, technicalRunCode } from './feed-forecast-run.rules';
+import { buildConfigSnapshot, buildRunLineSnapshots, buildSourceSnapshot, technicalRunCode } from './feed-forecast-run.rules';
 
 describe('feed forecast run snapshot rules', () => {
   it('hashes a detached effective-settings snapshot deterministically', () => {
@@ -28,7 +28,7 @@ describe('feed forecast run snapshot rules', () => {
         date: '2026-10-01', batchId: 'batch-1', shedId: 'shed-1', destinationLocationId: 'silo-1',
         itemId: 'item-required', currentItemId: 'item-current', heads: 42, feedRateKg: 2.5,
         openingStockKg: 600, confirmedReceiptKg: 100, demandKg: 105, projectedClosingKg: 595,
-        runDownDate: '2026-10-04', recommendedQtyKg: 900, requiredOn: '2026-10-02', provenance,
+        runDownDate: '2026-10-04', shortageDate: '2026-10-06', recommendedQtyKg: 900, requiredOn: '2026-10-02', provenance,
       }],
     };
 
@@ -40,9 +40,19 @@ describe('feed forecast run snapshot rules', () => {
       forecastDate: '2026-10-01', batchId: 'batch-1', shedId: 'shed-1', destinationLocationId: 'silo-1',
       requiredItemId: 'item-required', currentItemId: 'item-current', headCount: 42, feedRateKg: 2.5,
       openingStockKg: 600, confirmedReceiptKg: 100, dailyDemandKg: 105, projectedClosingKg: 595,
-      shortageDate: '2026-10-04', recommendedQtyKg: 900, requiredOnDate: '2026-10-02',
-      provenanceSnapshot: { flags: ['HEADS_ASSUMED_FLAT'], source: { lifecycleIds: ['life-1'] } },
+      shortageDate: '2026-10-06', recommendedQtyKg: 900, requiredOnDate: '2026-10-02',
+      provenanceSnapshot: { flags: ['HEADS_ASSUMED_FLAT'], source: { lifecycleIds: ['life-1'] }, runDownDate: '2026-10-04' },
     });
+  });
+
+  it('hashes and detaches the exact engine inputs used to create run evidence', () => {
+    const input = { stock: [{ ledgerId: 'ledger-1', qty: 500 }], batches: [{ batchId: 'batch-1', heads: 40 }] };
+    const first = buildSourceSnapshot(input);
+    const changed = buildSourceSnapshot({ ...input, stock: [{ ledgerId: 'ledger-1', qty: 499 }] });
+    input.stock[0].qty = 0;
+
+    expect(first.values).toEqual({ batches: [{ batchId: 'batch-1', heads: 40 }], stock: [{ ledgerId: 'ledger-1', qty: 500 }] });
+    expect(first.hash).not.toBe(changed.hash);
   });
 
   it('uses the documented technical run code fallback without inventing a client number series', () => {

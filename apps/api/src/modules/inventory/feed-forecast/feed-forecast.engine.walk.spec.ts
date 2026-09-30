@@ -46,6 +46,15 @@ describe('buildFeedForecast — D19 run-down to the low level', () => {
   it("keeps D1's 525 kg sample on day 6", () => {
     expect(buildFeedForecast(oneSilo()).sources[0].runDownDate).toBe('2026-09-28');
   });
+
+  it('keeps low-level run-down distinct from the first day demand cannot be met', () => {
+    // 525 kg at 100/day closes below the 400 kg low level on 24 Sep, but
+    // still meets demand through 27 Sep; only 25 kg is available on 28 Sep.
+    const { sources, daily } = buildFeedForecast(oneSilo({}, { lowLevelKg: 400 }));
+
+    expect(sources[0]).toMatchObject({ runDownDate: '2026-09-24', shortageDate: '2026-09-28' });
+    expect(daily[0]).toMatchObject({ runDownDate: '2026-09-24', shortageDate: '2026-09-28' });
+  });
 });
 
 describe('buildFeedForecast — confirmed incoming (D19, Q2)', () => {
