@@ -198,3 +198,144 @@ and explicitly types the already-validated row; rerunning the exact
   `AGENTS.md`; those errors pre-existed Task 4 in shared Task 1–3 files. Task 4
   adds no lint error, but the branch owner should retain the count as an
   integration concern.
+
+---
+
+## Independent-review remediation — 1 October 2026
+
+Review findings Important 1–5 and the Minor history finding were corrected in:
+
+`188ad11c98e1f64120eba973716a72169aa96e2a`
+
+### Corrected interfaces and invariants
+
+- A save obtains `CURRENT_TIMESTAMP` from the tenant database inside the same
+  transaction that loads and persists the forecast. This timestamp records
+  when the evidence was captured; it is not claimed to fence mutable tables.
+- Deterministic reconstruction comes from the new non-null
+  `feed_forecast_run.source_snapshot`: `{ version, hash, values }`, where
+  `values.engineInput` is a detached, canonical copy of the complete
+  `ForecastInput` passed to the pure engine. It includes the calculated dates,
+  batch/stage segments, heads, lifecycle rates, location/silo allocation,
+  stock balances, incoming movements, levels, items and lead time. The SHA-256
+  hash is an equality check in addition to that stored payload, not a
+  substitute for it. Detail reads return the stored payload rather than
+  consulting current master or ledger data.
+- The engine now calculates `shortageDate` independently as the first date on
+  which demand exceeds available opening stock. D19 low-level `runDownDate`
+  remains unchanged for display/refill planning and is retained in line
+  provenance; persisted `shortage_date` and requisition first-shortage use the
+  true insufficiency date. The new internal evidence is stripped from ordinary
+  GET source rows so the existing response shape stays compatible.
+- A requisition links to a saved run only if tenant/company/farm/date filters,
+  the exact engine-input hash, all requisition settings and the live system
+  balance used by the draft match. Every dated run-line ID contributing to an
+  aggregate destination/item line is stored together. Linkage is all-or-none:
+  a missing contributor or a retained farm-edited line detaches the editable
+  header and line provenance. Non-editable/approved requisitions remain outside
+  the rerun mutation path.
+- `feed_forecast_run.created_by` is non-null and both save service boundaries
+  refuse a missing authenticated user before forecast/database reads. No
+  system identity was invented.
+- The concurrency double now admits both transaction callbacks before either
+  proceeds, then applies a mutex only to the selected farm row. It asserts
+  same-farm versions `1/2` with one active same-farm lock and different-farm
+  versions `1/1` with two simultaneously active farm locks. This is an honest
+  transaction/row-lock mock, not a live two-connection database test.
+- Run history keys loaded data to the farm. A farm change synchronously hides
+  the prior rows and renders a loading state until the new request resolves.
+- Schema coherence uses the requisition header as the sole relational run FK.
+  Aggregate line evidence is a JSON list of contributing run-line IDs, so
+  there is no independently mutable single-line FK that can contradict the
+  header. Task 12 still owns the corresponding physical migration.
+
+### Review-fix changed files
+
+- `apps/api/src/core/database/schema.ts`
+- `apps/api/src/modules/inventory/feed-forecast/feed-forecast-run.rules.ts`
+- `apps/api/src/modules/inventory/feed-forecast/feed-forecast-run.rules.spec.ts`
+- `apps/api/src/modules/inventory/feed-forecast/feed-forecast-run.service.ts`
+- `apps/api/src/modules/inventory/feed-forecast/feed-forecast-run.service.spec.ts`
+- `apps/api/src/modules/inventory/feed-forecast/feed-forecast.engine.ts`
+- `apps/api/src/modules/inventory/feed-forecast/feed-forecast.engine.walk.spec.ts`
+- `apps/api/src/modules/inventory/feed-forecast/feed-forecast.engine.sources.spec.ts`
+- `apps/api/src/modules/inventory/feed-forecast/feed-forecast.service.ts`
+- `apps/api/src/modules/inventory/feed-forecast/feed-forecast.service.spec.ts`
+- `apps/api/src/modules/inventory/feed-forecast/feed-forecast.save-run.spec.ts`
+- `apps/api/src/modules/procurement/feed-requisition/feed-requisition.rules.ts`
+- `apps/api/src/modules/procurement/feed-requisition/feed-requisition.rules.spec.ts`
+- `apps/api/src/modules/procurement/feed-requisition/feed-requisition.service.ts`
+- `apps/api/src/modules/procurement/feed-requisition/feed-requisition.service.spec.ts`
+- `apps/web/src/components/console/inventory/feed-forecast-run-history.tsx`
+- `apps/web/specs/feed-forecast-run-history.spec.tsx`
+- `apps/web/src/utils/translations.ts`
+
+No migration SQL/journal, seed, demo data, server or database was changed or
+run.
+
+### Review-fix TDD evidence
+
+Focused RED was captured before implementation:
+
+- `pnpm nx test api -- --runInBand --testPathPatterns='feed-forecast.engine.walk|feed-forecast-run.rules|feed-forecast.save-run|feed-forecast-run.service|feed-requisition.service'`
+  — 5 suites failed; 10 tests failed and 57 passed. Failures proved the engine
+  had no independent insufficiency date, run lines saved low-level run-down as
+  shortage, saves used application wall-clock time and had no complete source
+  payload, creator remained nullable, and requisitions accepted stale source
+  evidence/one arbitrary dated line.
+- `pnpm nx test web -- --runInBand --testPathPatterns='feed-forecast-run-history'`
+  — 1 suite failed; 1 test failed and 1 passed because the previous farm row
+  remained visible after switching farms.
+- The prior concurrency test itself was the defect: its transaction-wide gate
+  made `Promise.all` sequential, so production could not produce a meaningful
+  RED. It was replaced rather than presenting that false green as concurrency
+  evidence.
+
+Focused GREEN after the complete fix:
+
+- `pnpm nx test api -- --runInBand --testPathPatterns='feed-forecast.engine.walk|feed-forecast.engine.sources|feed-forecast-run.rules|feed-forecast.save-run|feed-forecast-run.service|feed-forecast.service|feed-requisition.service'`
+  — 8 suites, 167 tests passed.
+- `pnpm nx test web -- --runInBand --testPathPatterns='feed-forecast-run-history'`
+  — 1 suite, 2 tests passed.
+- Final post-review boundary:
+  `pnpm nx test api -- --runInBand --testPathPatterns='feed-forecast.service|feed-forecast.save-run|feed-forecast-run.service|feed-requisition.service'`
+  — 5 suites, 130 tests passed.
+
+Additional focused regressions prove that the source payload is detached from
+later input mutation and returned on historical detail; current ledger changes,
+missing aggregate contributors and mixed kept/editable lines detach run
+provenance; exact matching aggregates retain all contributing line IDs; and
+ordinary GET omits persistence-only evidence.
+
+### Review-fix broader verification
+
+- `pnpm nx test api -- --runInBand` — 146 suites, 1,708 tests passed.
+- `pnpm nx test web -- --runInBand` — 75 suites, 444 tests passed. The final
+  repeat used verified Nx cache output; the same 75/444 suite had run directly
+  earlier in this remediation.
+- `pnpm nx run-many -t typecheck -p api web` — both projects passed.
+- `git diff --check` — passed with no output.
+- `pnpm nx lint api` — inherited nonzero branch baseline: 2,595 findings,
+  4 errors and 2,591 warnings. Focused ESLint on all review-fix API files:
+  0 errors, 149 warnings (existing project warning rules/test idioms).
+- `pnpm nx lint web` — inherited nonzero baseline: 999 findings, 93 errors and
+  906 warnings. Focused ESLint on the changed history spec/component and
+  translations: 0 findings.
+
+### Review-fix self-review and remaining concerns
+
+- Confirmed ordinary `GET /feed-forecast` remains a read-only path and neither
+  returns the persistence-only source snapshot nor changes its prior source
+  field shape. Only explicit `POST /feed-forecast/runs` persists.
+- Confirmed version/header/lines are still one tenant transaction, the stable
+  farm row is locked before the version read, and no run update/delete path
+  exists.
+- Confirmed create/list/detail scope checks and Task 3 Reporting Period behavior
+  remain covered by the complete suites.
+- Confirmed the technical fallback `FFR-${farmId}-${version}` remains the only
+  run code because no approved client-facing series exists. This is documented
+  technical identity, not client numbering truth.
+- A live DB/two-connection check was intentionally not run because the task
+  prohibits tenant/database/server actions. The corrected mock demonstrates
+  transaction overlap and per-farm locking; Task 12 migration/application must
+  still be followed by database-level verification in an authorized task.
