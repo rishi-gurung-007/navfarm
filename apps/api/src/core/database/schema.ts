@@ -369,6 +369,69 @@ export const feedForecastRunLine = mysqlTable('feed_forecast_run_line', {
   destinationItemIndex: index('idx_feed_forecast_run_line_destination_item').on(table.destination_location_id, table.required_item_id),
 }));
 
+/** Dated physical silo-count evidence. Approval and posting are completed by Task 6. */
+export const feedStockCount = mysqlTable('feed_stock_count', {
+  count_id: varchar('count_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  count_no: varchar('count_no', { length: 80 }).notNull(),
+  tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+  company_id: varchar('company_id', { length: 36 }).notNull().references(() => companyMaster.company_id, { onDelete: 'restrict' }),
+  farm_id: varchar('farm_id', { length: 36 }).notNull().references((): AnyMySqlColumn => locationMaster.location_id, { onDelete: 'restrict' }),
+  counted_at: timestamp('counted_at', { mode: 'string' }).notNull(),
+  schedule_source: varchar('schedule_source', { length: 20 }).notNull(), // SCHEDULED, ON_DEMAND
+  status: varchar('status', { length: 30 }).default('DRAFT').notNull(), // DRAFT, PENDING_APPROVAL, APPROVED, POSTED, REJECTED
+  approval_request_id: varchar('approval_request_id', { length: 36 }),
+  stock_adjustment_id: varchar('stock_adjustment_id', { length: 36 }),
+  created_by: varchar('created_by', { length: 36 }).notNull(),
+  submitted_by: varchar('submitted_by', { length: 36 }),
+  submitted_at: timestamp('submitted_at', { mode: 'string' }),
+  approved_by: varchar('approved_by', { length: 36 }),
+  approved_at: timestamp('approved_at', { mode: 'string' }),
+  posted_by: varchar('posted_by', { length: 36 }),
+  posted_at: timestamp('posted_at', { mode: 'string' }),
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+  updated_by: varchar('updated_by', { length: 36 }),
+  updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().notNull(),
+}, (table) => ({
+  occurrenceUnique: uniqueIndex('uq_feed_stock_count_occurrence').on(table.farm_id, table.counted_at),
+  companyNoUnique: uniqueIndex('uq_feed_stock_count_company_no').on(table.company_id, table.count_no),
+  tenantFarmIndex: index('idx_feed_stock_count_tenant_farm').on(table.tenant_id, table.farm_id),
+  approvalFk: foreignKey({
+    columns: [table.approval_request_id],
+    foreignColumns: [approvalRequest.request_id],
+    name: 'feed_stock_count_approval_fk',
+  }).onDelete('restrict'),
+  adjustmentFk: foreignKey({
+    columns: [table.stock_adjustment_id],
+    foreignColumns: [stockAdjustment.adjustment_id],
+    name: 'feed_stock_count_adjustment_fk',
+  }).onDelete('restrict'),
+}));
+
+export const feedStockCountLine = mysqlTable('feed_stock_count_line', {
+  count_line_id: varchar('count_line_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  count_id: varchar('count_id', { length: 36 }).notNull().references(() => feedStockCount.count_id, { onDelete: 'restrict' }),
+  silo_id: varchar('silo_id', { length: 36 }).notNull().references((): AnyMySqlColumn => locationMaster.location_id, { onDelete: 'restrict' }),
+  item_id: varchar('item_id', { length: 36 }).notNull().references((): AnyMySqlColumn => itemMaster.item_id, { onDelete: 'restrict' }),
+  system_qty_kg: decimal('system_qty_kg', { precision: 18, scale: 4 }).notNull(),
+  counted_qty_kg: decimal('counted_qty_kg', { precision: 18, scale: 4 }).notNull(),
+  variance_qty_kg: decimal('variance_qty_kg', { precision: 18, scale: 4 }).notNull(),
+  variance_pct_absolute: decimal('variance_pct_absolute', { precision: 12, scale: 6 }).notNull(),
+  reason_id: varchar('reason_id', { length: 36 }).references(() => reasonMaster.reason_id, { onDelete: 'restrict' }),
+  unit_cost_base: decimal('unit_cost_base', { precision: 18, scale: 6 }),
+  variance_value_base: decimal('variance_value_base', { precision: 18, scale: 4 }),
+  base_currency_id: varchar('base_currency_id', { length: 36 }).notNull().references(() => currencyMaster.currency_id, { onDelete: 'restrict' }),
+  local_currency_id: varchar('local_currency_id', { length: 36 }).references(() => currencyMaster.currency_id, { onDelete: 'restrict' }),
+  rate_id: varchar('rate_id', { length: 36 }).references(() => exchangeRate.rate_id, { onDelete: 'restrict' }),
+  rate_snapshot: json('rate_snapshot').$type<Record<string, unknown>>(),
+  variance_value_local: decimal('variance_value_local', { precision: 18, scale: 4 }),
+  monetary_status: varchar('monetary_status', { length: 30 }).notNull(), // RESOLVED, MISSING_COST, MISSING_RATE
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+  updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().notNull(),
+}, (table) => ({
+  siloItemUnique: uniqueIndex('uq_feed_stock_count_line_silo_item').on(table.count_id, table.silo_id, table.item_id),
+  countIndex: index('idx_feed_stock_count_line_count').on(table.count_id),
+}));
+
 // ==========================================
 // 5. USERS & Granular RBAC Permissions
 // ==========================================

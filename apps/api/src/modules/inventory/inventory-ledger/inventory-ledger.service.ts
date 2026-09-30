@@ -64,6 +64,16 @@ export interface FeedStockMovement extends FeedStockRow {
   posting_date: string;
 }
 
+/** Immutable item/quantity/cost evidence captured for a physical silo count. */
+export interface SiloStockEvidence {
+  warehouse_id: string;
+  item_id: string;
+  item_code: string;
+  uom: string;
+  system_qty_kg: number;
+  unit_cost_base: number | null;
+}
+
 /**
  * Shared posting engine for the Inventory Ledger — the append-only movement
  * log every document type (Goods Receipt, Goods Issue, Stock Transfer, Stock
@@ -684,6 +694,61 @@ export class InventoryLedgerService {
         .filter((r) => r.warehouse_id)
         .map((r) => ({ warehouse_id: r.warehouse_id!, item_id: r.item_id, item_code: r.item_code, uom: r.uom, posting_date: r.posting_date, qty: Number(r.qty) })),
     };
+  }
+
+  /**
+   * Exact ledger evidence visible when a physical count was taken. Unlike the
+   * daily forecast read, this also applies created_at so a later back-dated
+   * posting cannot rewrite what the counter could have known at countedAt.
+   * Cost is available only when every contributing movement has an amount.
+   */
+  async getSiloStockEvidenceAsOf(
+    params: { companyId: string; siloId: string; countedAt: string },
+    tenantId: string,
+  ): Promise<SiloStockEvidence[]> {
+    const L = schema.inventoryLedger;
+    const countDate = params.countedAt.slice(0, 10);
+    const rows = await this.db
+      .select({
+        warehouse_id: L.warehouse_id,
+        item_id: L.item_id,
+        item_code: sql<string>`MAX(${L.item_code})`,
+        uom: L.uom,
+        system_qty_kg: sql<string>`COALESCE(SUM(${L.quantity}), 0)`,
+        base_value: sql<string | null>`SUM(${L.amount})`,
+        valued_entries: sql<number>`COUNT(${L.amount})`,
+        costed_entries: sql<number>`SUM(CASE WHEN ${L.rate} IS NOT NULL AND ${L.rate} > 0 THEN 1 ELSE 0 END)`,
+        total_entries: sql<number>`COUNT(*)`,
+      })
+      .from(L)
+      .where(and(
+        eq(L.tenant_id, tenantId),
+        eq(L.company_id, params.companyId),
+        eq(L.warehouse_id, params.siloId),
+        inArray(L.entry_type, ['POSITIVE', 'NEGATIVE']),
+        lte(L.posting_date, countDate),
+        lte(L.created_at, params.countedAt),
+        ...this.farmConditions(),
+      ))
+      .groupBy(L.warehouse_id, L.item_id, L.uom);
+
+    return rows
+      .filter((row) => row.warehouse_id)
+      .map((row) => {
+        const quantity = Number(row.system_qty_kg);
+        const completeCost = Number(row.valued_entries) === Number(row.total_entries)
+          && Number(row.costed_entries) === Number(row.total_entries)
+          && row.base_value !== null
+          && Math.abs(quantity) > 0.000001;
+        return {
+          warehouse_id: row.warehouse_id!,
+          item_id: row.item_id,
+          item_code: row.item_code,
+          uom: row.uom,
+          system_qty_kg: quantity,
+          unit_cost_base: completeCost ? Number(row.base_value) / quantity : null,
+        };
+      });
   }
 
   async getAvailableLots(query: QueryAvailableLotsDto, tenantId: string) {
