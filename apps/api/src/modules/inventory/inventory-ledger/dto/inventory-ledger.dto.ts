@@ -33,6 +33,16 @@ export class QueryInventoryLedgerDto {
   @IsString()
   documentType?: string;
 
+  @ApiProperty({ description: 'Filter by document number / batch number', required: false })
+  @IsOptional()
+  @IsString()
+  documentNo?: string;
+
+  @ApiProperty({ description: 'Sort by field: created_at or posting_date', required: false })
+  @IsOptional()
+  @IsString()
+  sortBy?: 'created_at' | 'posting_date';
+
   @ApiProperty({ description: 'Posting date from (inclusive)', required: false })
   @IsOptional()
   @IsDateString()

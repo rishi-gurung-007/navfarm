@@ -97,10 +97,10 @@ export async function seedUnallocatedAnimals() {
     if (!giltItems.length) throw new Error('Replacement Breeding Gilt bio-asset item not found.');
     const giltItemId = giltItems[0].item_id;
 
-    // 6. Resolve GILT_GROWER stage
+    // 6. Resolve GILT_GROWER stage (prefer company-scoped, fallback to tenant-scoped)
     const [stageRows] = await conn.query<mysql.RowDataPacket[]>(
-      `SELECT stage_id FROM stage_master WHERE stage_code = 'GILT_GROWER' AND lob_id = ? AND is_active = 1 LIMIT 1`,
-      [lobId],
+      `SELECT stage_id FROM stage_master WHERE stage_code = 'GILT_GROWER' AND lob_id = ? AND (company_id = ? OR company_id IS NULL) AND is_active = 1 ORDER BY company_id DESC LIMIT 1`,
+      [lobId, companyId],
     );
     if (!stageRows.length) throw new Error('GILT_GROWER stage not found for this LOB.');
     const stageId = stageRows[0].stage_id;

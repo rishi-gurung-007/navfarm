@@ -135,14 +135,18 @@ const location: MasterDataConfig = {
     // Master Setup §1 rows 10 and 12 (spec D10) — alongside Silo Reorder
     // Days, not replacing it. Required on a silo since D22 (Rishi, 27 Sep):
     // the forecast's run-down and the feed alerts read them.
-    { key: "low_level_kg", label: "Below Feed Level (KG)", type: "number", min: 0, step: "1", nativeNumber: true,
+    {
+      key: "low_level_kg", label: "Below Feed Level (KG)", type: "number", min: 0, step: "1", nativeNumber: true,
       visibleWhen: { anyOf: [{ key: "location_type", equals: "SILO" }] },
       requiredWhen: { anyOf: [{ key: "location_type", equals: "SILO" }] }, section: "Identification",
-      helpText: "Low feed alert at or below this. Usually 20% of capacity." },
-    { key: "high_level_kg", label: "Above Threshold (KG)", type: "number", min: 0, step: "1", nativeNumber: true,
+      helpText: "Low feed alert at or below this. Usually 20% of capacity."
+    },
+    {
+      key: "high_level_kg", label: "Above Threshold (KG)", type: "number", min: 0, step: "1", nativeNumber: true,
       visibleWhen: { anyOf: [{ key: "location_type", equals: "SILO" }] },
       requiredWhen: { anyOf: [{ key: "location_type", equals: "SILO" }] }, section: "Identification",
-      helpText: "Over-stock notice at or above this. Usually 90% of capacity." },
+      helpText: "Over-stock notice at or above this. Usually 90% of capacity."
+    },
     // D32 (Rishi, 28 Sep): the six per-farm feed settings — refill buffer, lead
     // time, bulk order multiple, bag size, truck target, production weekday —
     // are NOT edited here. They are columns on the farm's row, which is the
@@ -440,14 +444,22 @@ const animal: MasterDataConfig = {
     // beside it. Rishi's addendum: both serial fields are available for EVERY
     // animal, whatever its entry type and whether or not a parent is picked, so
     // neither carries a visibleWhen, a requiredWhen or a dependsOn.
-    { key: "sire_animal_id", label: "Sire (Father)", type: "select-entity", searchable: true, entityEndpoint: "/animal?gender=M", entityValueKey: "animal_id", entityLabelKeys: ["animal_code", "ear_tag"], section: "Lineage",
-      helpText: "A registered boar on this farm. Leave empty and use the serial number beside it when the sire is not registered here." },
-    { key: "sire_serial_no", label: "Sire Serial No.", type: "text", maxLength: 100, section: "Lineage",
-      helpText: "The sire's number as the papers give it. Use this for a bought or imported animal whose sire is not in NAVFarm." },
-    { key: "dam_animal_id", label: "Dam (Mother)", type: "select-entity", searchable: true, entityEndpoint: "/animal?gender=F", entityValueKey: "animal_id", entityLabelKeys: ["animal_code", "ear_tag"], section: "Lineage",
-      helpText: "A registered sow or gilt on this farm. Leave empty and use the serial number beside it when the dam is not registered here." },
-    { key: "dam_serial_no", label: "Dam Serial No.", type: "text", maxLength: 100, section: "Lineage",
-      helpText: "The dam's number as the papers give it. Use this for a bought or imported animal whose dam is not in NAVFarm." },
+    {
+      key: "sire_animal_id", label: "Sire (Father)", type: "select-entity", searchable: true, entityEndpoint: "/animal?gender=M", entityValueKey: "animal_id", entityLabelKeys: ["animal_code", "ear_tag"], section: "Lineage",
+      helpText: "A registered boar on this farm. Leave empty and use the serial number beside it when the sire is not registered here."
+    },
+    {
+      key: "sire_serial_no", label: "Sire Serial No.", type: "text", maxLength: 100, section: "Lineage",
+      helpText: "The sire's number as the papers give it. Use this for a bought or imported animal whose sire is not in NAVFarm."
+    },
+    {
+      key: "dam_animal_id", label: "Dam (Mother)", type: "select-entity", searchable: true, entityEndpoint: "/animal?gender=F", entityValueKey: "animal_id", entityLabelKeys: ["animal_code", "ear_tag"], section: "Lineage",
+      helpText: "A registered sow or gilt on this farm. Leave empty and use the serial number beside it when the dam is not registered here."
+    },
+    {
+      key: "dam_serial_no", label: "Dam Serial No.", type: "text", maxLength: 100, section: "Lineage",
+      helpText: "The dam's number as the papers give it. Use this for a bought or imported animal whose dam is not in NAVFarm."
+    },
     {
       key: "entry_type", label: "Entry Type", type: "select", required: true, createOnly: true, section: "Acquisition",
       options: ["PURCHASED_IMPORTED", "PURCHASED_LOCAL", "BORN_ON_FARM", "TRANSFERRED_IN"].map((v) => ({ value: v, label: v.replace(/_/g, " ") })),
@@ -1255,11 +1267,13 @@ const breedLifecycleStage: MasterDataConfig = {
       key: "vaccination_protocol", label: "Vaccination Protocol", type: "json",
       jsonRow: [
         { key: "vaccine_item_id", label: "Vaccine", type: "select-entity", entityEndpoint: "/item?itemType=VACCINE", entityValueKey: "item_id", entityLabelKeys: ["item_code", "item_name"] },
-        { key: "trigger_type", label: "Triggered by", type: "select", options: [
-          { value: "AGE_WEEKS", label: "Age (weeks)" },
-          { value: "WEEKS_PREGNANT", label: "Weeks pregnant" },
-          { value: "PER_CYCLE", label: "Every pregnancy cycle" },
-        ] },
+        {
+          key: "trigger_type", label: "Triggered by", type: "select", options: [
+            { value: "AGE_WEEKS", label: "Age (weeks)" },
+            { value: "WEEKS_PREGNANT", label: "Weeks pregnant" },
+            { value: "PER_CYCLE", label: "Every pregnancy cycle" },
+          ]
+        },
         { key: "trigger_value", label: "At", type: "number", step: "0.5", min: 0 },
         { key: "dose_ml", label: "Dose (ml)", type: "number", step: "0.01", min: 0 },
         { key: "route", label: "Route", type: "select", options: ["IM", "SC", "IN", "ORAL"].map((v) => ({ value: v, label: v })) },
@@ -1412,32 +1426,54 @@ const alertRule: MasterDataConfig = {
     { key: "company_id", label: "Company", type: "text", hideInForm: true },
     { key: "notification_code", label: "Notification Code", type: "text", required: true, createOnly: true, maxLength: 20 },
     { key: "notification_name", label: "Notification Name", type: "text", required: true, maxLength: 100 },
-    { key: "event_type", label: "Event Type", type: "select", required: true,
-      options: ALERT_EVENT_TYPES },
-    { key: "trigger_entity", label: "Trigger Entity", type: "select", required: true,
+    {
+      key: "event_type", label: "Event Type", type: "select", required: true,
+      options: ALERT_EVENT_TYPES
+    },
+    {
+      key: "trigger_entity", label: "Trigger Entity", type: "select", required: true,
       options: ALERT_TRIGGER_ENTITIES,
-      helpText: "FEED_BELOW_L1 and FEED_ABOVE: SILO. DIET_CHANGE: FEED_PLAN. REQ_DEADLINE: REQUISITION." },
-    { key: "threshold_reference", label: "Threshold Reference", type: "select", required: true,
+      helpText: "FEED_BELOW_L1 and FEED_ABOVE: SILO. DIET_CHANGE: FEED_PLAN. REQ_DEADLINE: REQUISITION."
+    },
+    {
+      key: "threshold_reference", label: "Threshold Reference", type: "select", required: true,
       options: ALERT_THRESHOLD_REFERENCES,
-      helpText: "SILO_BELOW reads each silo's Below Feed Level, SILO_ABOVE its Above Threshold. FIXED_VALUE uses the value below." },
-    { key: "threshold_value", label: "Threshold Value", type: "number", min: 0, nativeNumber: true,
+      helpText: "SILO_BELOW reads each silo's Below Feed Level, SILO_ABOVE its Above Threshold. FIXED_VALUE uses the value below."
+    },
+    {
+      key: "threshold_value", label: "Threshold Value", type: "number", min: 0, nativeNumber: true,
       requiredWhen: { anyOf: [{ key: "threshold_reference", equals: "FIXED_VALUE" }] },
-      helpText: "KG for a silo rule; days before the diet change for DIET_CHANGE; days before the submission deadline for REQ_DEADLINE." },
-    { key: "priority_level", label: "Priority Level", type: "select", required: true,
-      options: ALERT_PRIORITIES },
-    { key: "recipient_roles", label: "Recipient Role(s)", type: "string-list", required: true,
-      helpText: "Role codes from Role Master. Tenant, company and operational admins see every alert regardless." },
-    { key: "delivery_channel", label: "Delivery Channel", type: "select", required: true,
-      options: [{ value: "IN_APP", label: "In app" }], helpText: "In-app only for now; email is not sent yet." },
-    { key: "frequency", label: "Frequency", type: "select", required: true,
+      helpText: "KG for a silo rule; days before the diet change for DIET_CHANGE; days before the submission deadline for REQ_DEADLINE."
+    },
+    {
+      key: "priority_level", label: "Priority Level", type: "select", required: true,
+      options: ALERT_PRIORITIES
+    },
+    {
+      key: "recipient_roles", label: "Recipient Role(s)", type: "string-list", required: true,
+      helpText: "Role codes from Role Master. Tenant, company and operational admins see every alert regardless."
+    },
+    {
+      key: "delivery_channel", label: "Delivery Channel", type: "select", required: true,
+      options: [{ value: "IN_APP", label: "In app" }], helpText: "In-app only for now; email is not sent yet."
+    },
+    {
+      key: "frequency", label: "Frequency", type: "select", required: true,
       options: ALERT_FREQUENCIES,
-      helpText: "ONCE until resolved; DAILY re-alerts each day; ON_EACH_OCCURRENCE re-alerts when the value changes; ESCALATING adds the escalation role if nobody acknowledges in time." },
-    { key: "escalation_after_hours", label: "Escalation After Hours", type: "number", min: 1, step: "1", nativeNumber: true,
-      visibleWhen: { anyOf: [{ key: "frequency", equals: "ESCALATING" }] }, requiredWhen: { anyOf: [{ key: "frequency", equals: "ESCALATING" }] } },
-    { key: "escalation_role", label: "Escalation Recipient Role", type: "text", maxLength: 50,
-      visibleWhen: { anyOf: [{ key: "frequency", equals: "ESCALATING" }] }, requiredWhen: { anyOf: [{ key: "frequency", equals: "ESCALATING" }] } },
-    { key: "farm_id", label: "Farm Filter", type: "select-entity", entityEndpoint: "/location?locationType=FARM&rootOnly=true",
-      entityValueKey: "location_id", entityLabelKeys: ["location_code", "location_name"], helpText: "Leave blank for ALL farms." },
+      helpText: "ONCE until resolved; DAILY re-alerts each day; ON_EACH_OCCURRENCE re-alerts when the value changes; ESCALATING adds the escalation role if nobody acknowledges in time."
+    },
+    {
+      key: "escalation_after_hours", label: "Escalation After Hours", type: "number", min: 1, step: "1", nativeNumber: true,
+      visibleWhen: { anyOf: [{ key: "frequency", equals: "ESCALATING" }] }, requiredWhen: { anyOf: [{ key: "frequency", equals: "ESCALATING" }] }
+    },
+    {
+      key: "escalation_role", label: "Escalation Recipient Role", type: "text", maxLength: 50,
+      visibleWhen: { anyOf: [{ key: "frequency", equals: "ESCALATING" }] }, requiredWhen: { anyOf: [{ key: "frequency", equals: "ESCALATING" }] }
+    },
+    {
+      key: "farm_id", label: "Farm Filter", type: "select-entity", entityEndpoint: "/location?locationType=FARM&rootOnly=true",
+      entityValueKey: "location_id", entityLabelKeys: ["location_code", "location_name"], helpText: "Leave blank for ALL farms."
+    },
   ],
 };
 
@@ -1632,10 +1668,8 @@ const resource: MasterDataConfig = {
     { key: "resource_code", label: "Code" },
     { key: "resource_name", label: "Name" },
     { key: "resource_type", label: "Type" },
-    // System-tracked figures nobody narrows a resource list by — shown in the
-    // table, offered as no filter.
-    { key: "cost_rate", label: "Cost Rate", noFilter: true },
-    { key: "next_maintenance_date", label: "Next Maintenance", noFilter: true },
+    { key: "cost_rate", label: "Cost Rate" },
+    { key: "next_maintenance_date", label: "Next Service Date" },
   ],
   fields: [
     { key: "company_id", label: "Company", type: "text", hideInForm: true },
@@ -1672,15 +1706,18 @@ const resource: MasterDataConfig = {
     { key: "cost_rate", label: "Cost Rate", type: "number", step: "0.01", min: 0, section: "Capacity & Cost" },
     { key: "cost_element", label: "Cost Element", type: "text", maxLength: 50, placeholder: "DIRECT_LABOR", helpText: "GL cost classification, e.g. DIRECT_LABOR / INDIRECT_LABOR / EQUIPMENT_HIRE / FUEL / MAINTENANCE.", section: "Capacity & Cost" },
     { key: "gl_cost_account", label: "GL Cost Account", type: "select-entity", searchable: true, entityEndpoint: "/gl-account", entityValueKey: "gl_account_id", entityLabelKeys: ["account_code", "account_name"], helpText: "GL account this resource posts cost to.", section: "Capacity & Cost" },
-    { key: "asset_code", label: "Asset Code", type: "text", placeholder: "ASSET-PELLETISER-01", helpText: "Equipment only.", section: "Asset" },
-    { key: "asset_make", label: "Asset Make", type: "text", section: "Asset" },
-    { key: "asset_model", label: "Asset Model", type: "text", section: "Asset" },
-    { key: "asset_serial_no", label: "Asset Serial No.", type: "text", section: "Asset" },
-    { key: "purchase_date", label: "Purchase Date", type: "date", section: "Asset" },
-    { key: "warranty_expiry_date", label: "Warranty Expiry", type: "date", section: "Asset" },
-    { key: "maintenance_frequency_days", label: "Maintenance Frequency (days)", type: "number", min: 0, helpText: "Days between scheduled services. Logging a completed service auto-calculates the next due date.", section: "Maintenance" },
-    { key: "maintenance_cost_per_service", label: "Est. Cost per Service", type: "number", step: "0.01", min: 0, section: "Maintenance" },
-    { key: "maintenance_vendor", label: "Preferred Maintenance Vendor", type: "text", section: "Maintenance" },
+    { key: "asset_code", label: "Asset Code", type: "text", placeholder: "ASSET-PELLETISER-01", helpText: "Equipment only.", section: "Asset", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
+    { key: "asset_make", label: "Asset Make", type: "text", section: "Asset", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
+    { key: "asset_model", label: "Asset Model", type: "text", section: "Asset", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
+    { key: "asset_serial_no", label: "Asset Serial No.", type: "text", section: "Asset", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
+    { key: "purchase_date", label: "Purchase Date", type: "date", section: "Asset", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
+    { key: "warranty_expiry_date", label: "Warranty Expiry", type: "date", section: "Asset", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
+    { key: "maintenance_frequency_days", label: "Maintenance Frequency (days)", type: "number", min: 0, helpText: "Days between scheduled services. Logging a completed service auto-calculates the next due date.", section: "Maintenance", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
+    { key: "maintenance_cost_per_service", label: "Est. Cost per Service", type: "number", step: "0.01", min: 0, section: "Maintenance", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
+    { key: "maintenance_vendor", label: "Preferred Maintenance Vendor", type: "text", section: "Maintenance", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
+    { key: "last_maintenance_date", label: "Last Maintenance (system-tracked)", type: "date", hideInForm: true, section: "Maintenance" },
+    { key: "next_maintenance_date", label: "Next Service Date", type: "date", helpText: "Next maintenance / service due date. Auto-updated when logging completed maintenance, or can be set manually.", section: "Maintenance", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
+    { key: "license_expiry", label: "License Expiry", type: "date", helpText: "License/certification expiry — alert 30 days before.", section: "Maintenance", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
   ],
 };
 

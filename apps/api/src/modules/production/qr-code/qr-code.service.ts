@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, count, isNull, or } from 'drizzle-orm';
+import { eq, and, count, isNull, or, sql } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
@@ -19,7 +19,7 @@ export class QrCodeService {
   constructor(
     private readonly cls: ClsService,
     private readonly auditService: AuditLogService,
-  ) {}
+  ) { }
 
   private get db(): MySql2Database<typeof schema> {
     const tenantDb = this.cls.get<MySql2Database<typeof schema>>('tenantDb');
@@ -31,10 +31,12 @@ export class QrCodeService {
 
   private async generatePackNo(tenantId: string, companyId: string): Promise<string> {
     const [row] = await this.db
-      .select({ total: count() })
+      .select({
+        maxSeq: sql<number>`COALESCE(MAX(CAST(SUBSTRING(${schema.qrCodeMaster.pack_no}, 6) AS UNSIGNED)), 0)`,
+      })
       .from(schema.qrCodeMaster)
       .where(and(eq(schema.qrCodeMaster.tenant_id, tenantId), eq(schema.qrCodeMaster.company_id, companyId)));
-    const seq = Number(row?.total || 0) + 1;
+    const seq = Number(row?.maxSeq || 0) + 1;
     return `PACK-${String(seq).padStart(6, '0')}`;
   }
 

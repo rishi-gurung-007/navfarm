@@ -29,15 +29,7 @@ export class StockTransferService {
     // the item is stocked in, so the capacity guard below needs the tenant's
     // own uom_conversion_master rather than an assumption about the unit.
     private readonly uomService: UomService,
-    // Item rules (one feed per silo, D9 sibling-shed check) live in
-    // SiloFeedService — shared with Goods Receipt so a silo obeys the same
-    // rules regardless of which document lands stock on it.
-    private readonly siloFeedService: SiloFeedService,
-    // Checkpoint 12's re-check of silo levels after the stock has moved. Optional
-    // so a testing module that does not provide it still builds; the hook is
-    // then a no-op.
-    @Optional() private readonly feedAlerts?: FeedAlertService,
-  ) {}
+  ) { }
 
   private get db(): MySql2Database<typeof schema> {
     const tenantDb = this.cls.get<MySql2Database<typeof schema>>('tenantDb');
@@ -53,60 +45,62 @@ export class StockTransferService {
   // same count and generating the same transfer number.
   private async generateTransferNo(tenantId: string, companyId: string, executor: MySql2Database<typeof schema> = this.db): Promise<string> {
     const [row] = await executor
-      .select({ total: count() })
+      .select({
+        maxSeq: sql<number>`COALESCE(MAX(CAST(SUBSTRING(${schema.stockTransfer.transfer_no}, 4) AS UNSIGNED)), 0)`,
+      })
       .from(schema.stockTransfer)
       .where(and(eq(schema.stockTransfer.tenant_id, tenantId), eq(schema.stockTransfer.company_id, companyId)))
       .for('update');
-    const seq = Number(row?.total || 0) + 1;
+    const seq = Number(row?.maxSeq || 0) + 1;
     return `TR-${String(seq).padStart(6, '0')}`;
   }
 
   async create(dto: CreateStockTransferDto, tenantId: string, userPayload?: any) {
     assertCompanyInScope(farmScope(this.cls), dto.company_id);
     return withTenantTransaction(this.cls, async () => {
-    if (dto.from_warehouse_id === dto.to_warehouse_id) {
-      throw new BadRequestException('Source and destination warehouse must be different.');
-    }
-    await assertLocationOnActiveFarm(this.db, farmScope(this.cls), dto.from_warehouse_id, 'Source warehouse');
-    await assertLocationOnActiveFarm(
-      this.db,
-      { ...farmScope(this.cls), farmId: null },
-      dto.to_warehouse_id,
-      'Destination warehouse',
-    );
+      if (dto.from_warehouse_id === dto.to_warehouse_id) {
+        throw new BadRequestException('Source and destination warehouse must be different.');
+      }
+      await assertLocationOnActiveFarm(this.db, farmScope(this.cls), dto.from_warehouse_id, 'Source warehouse');
+      await assertLocationOnActiveFarm(
+        this.db,
+        { ...farmScope(this.cls), farmId: null },
+        dto.to_warehouse_id,
+        'Destination warehouse',
+      );
 
-    const transferId = randomUUID();
-    const transferNo = await this.db.transaction(async (tx) => {
-      const no = await this.generateTransferNo(tenantId, dto.company_id, tx);
-      await tx.insert(schema.stockTransfer).values({
-        transfer_id: transferId,
-        tenant_id: tenantId,
-        company_id: dto.company_id,
-        transfer_no: no,
-        posting_date: dto.posting_date,
-        from_warehouse_id: dto.from_warehouse_id,
-        to_warehouse_id: dto.to_warehouse_id,
-        remarks: dto.remarks || null,
-        status: 'DRAFT',
-        created_by: userPayload?.userId || null,
-        updated_by: userPayload?.userId || null,
+      const transferId = randomUUID();
+      const transferNo = await this.db.transaction(async (tx) => {
+        const no = await this.generateTransferNo(tenantId, dto.company_id, tx);
+        await tx.insert(schema.stockTransfer).values({
+          transfer_id: transferId,
+          tenant_id: tenantId,
+          company_id: dto.company_id,
+          transfer_no: no,
+          posting_date: dto.posting_date,
+          from_warehouse_id: dto.from_warehouse_id,
+          to_warehouse_id: dto.to_warehouse_id,
+          remarks: dto.remarks || null,
+          status: 'DRAFT',
+          created_by: userPayload?.userId || null,
+          updated_by: userPayload?.userId || null,
+        });
+        return no;
       });
-      return no;
-    });
 
-    await this.insertLines(transferId, dto.lines);
+      await this.insertLines(transferId, dto.lines);
 
-    await this.auditService.log({
-      tenantId,
-      companyId: dto.company_id,
-      userId: userPayload?.userId,
-      action: 'CREATE',
-      entityName: 'stock_transfer',
-      entityId: transferId,
-      newValues: { transfer_no: transferNo, ...dto },
-    });
+      await this.auditService.log({
+        tenantId,
+        companyId: dto.company_id,
+        userId: userPayload?.userId,
+        action: 'CREATE',
+        entityName: 'stock_transfer',
+        entityId: transferId,
+        newValues: { transfer_no: transferNo, ...dto },
+      });
 
-    return this.findOne(transferId);
+      return this.findOne(transferId);
     });
   }
 
@@ -357,146 +351,146 @@ export class StockTransferService {
 
   async update(id: string, dto: UpdateStockTransferDto, tenantId: string, userPayload?: any) {
     return withTenantTransaction(this.cls, async () => {
-    const transfer = await this.loadForMutation(id, tenantId);
-    this.assertDraft(transfer);
+      const transfer = await this.loadForMutation(id, tenantId);
+      this.assertDraft(transfer);
 
-    // Both warehouses, changed or not, against create()'s rules. The source
-    // staying on the editor's farm is also what keeps the edited transfer
-    // visible to them whatever to_warehouse_id becomes.
-    const fromWarehouseId = dto.from_warehouse_id ?? transfer.from_warehouse_id;
-    const toWarehouseId = dto.to_warehouse_id ?? transfer.to_warehouse_id;
-    await this.assertWarehouses(fromWarehouseId, toWarehouseId);
+      // Both warehouses, changed or not, against create()'s rules. The source
+      // staying on the editor's farm is also what keeps the edited transfer
+      // visible to them whatever to_warehouse_id becomes.
+      const fromWarehouseId = dto.from_warehouse_id ?? transfer.from_warehouse_id;
+      const toWarehouseId = dto.to_warehouse_id ?? transfer.to_warehouse_id;
+      await this.assertWarehouses(fromWarehouseId, toWarehouseId);
 
-    const updates: any = {
-      updated_by: userPayload?.userId || null,
-      updated_at: toMysqlTimestamp(),
-    };
-    if (dto.from_warehouse_id !== undefined) updates.from_warehouse_id = dto.from_warehouse_id;
-    if (dto.to_warehouse_id !== undefined) updates.to_warehouse_id = dto.to_warehouse_id;
-    if (dto.posting_date !== undefined) updates.posting_date = dto.posting_date;
-    if (dto.remarks !== undefined) updates.remarks = dto.remarks;
+      const updates: any = {
+        updated_by: userPayload?.userId || null,
+        updated_at: toMysqlTimestamp(),
+      };
+      if (dto.from_warehouse_id !== undefined) updates.from_warehouse_id = dto.from_warehouse_id;
+      if (dto.to_warehouse_id !== undefined) updates.to_warehouse_id = dto.to_warehouse_id;
+      if (dto.posting_date !== undefined) updates.posting_date = dto.posting_date;
+      if (dto.remarks !== undefined) updates.remarks = dto.remarks;
 
-    await this.db.update(schema.stockTransfer).set(updates)
-      .where(and(eq(schema.stockTransfer.transfer_id, id), eq(schema.stockTransfer.status, 'DRAFT')));
+      await this.db.update(schema.stockTransfer).set(updates)
+        .where(and(eq(schema.stockTransfer.transfer_id, id), eq(schema.stockTransfer.status, 'DRAFT')));
 
-    if (dto.lines) {
-      await this.db.delete(schema.stockTransferLine).where(eq(schema.stockTransferLine.transfer_id, id));
-      await this.insertLines(id, dto.lines);
-    }
+      if (dto.lines) {
+        await this.db.delete(schema.stockTransferLine).where(eq(schema.stockTransferLine.transfer_id, id));
+        await this.insertLines(id, dto.lines);
+      }
 
-    await this.auditService.log({
-      tenantId,
-      companyId: transfer.company_id,
-      userId: userPayload?.userId,
-      action: 'UPDATE',
-      entityName: 'stock_transfer',
-      entityId: id,
-      oldValues: transfer,
-      newValues: updates,
-    });
+      await this.auditService.log({
+        tenantId,
+        companyId: transfer.company_id,
+        userId: userPayload?.userId,
+        action: 'UPDATE',
+        entityName: 'stock_transfer',
+        entityId: id,
+        oldValues: transfer,
+        newValues: updates,
+      });
 
-    return this.findOne(id);
+      return this.findOne(id);
     });
   }
 
   async remove(id: string, tenantId: string, userPayload?: any) {
     return withTenantTransaction(this.cls, async () => {
-    const transfer = await this.loadForMutation(id, tenantId);
-    this.assertDraft(transfer);
-    const deletedTime = toMysqlTimestamp();
+      const transfer = await this.loadForMutation(id, tenantId);
+      this.assertDraft(transfer);
+      const deletedTime = toMysqlTimestamp();
 
-    await this.db
-      .update(schema.stockTransfer)
-      .set({ status: 'CANCELLED', deleted_at: deletedTime as any, updated_by: userPayload?.userId || null })
-      .where(and(eq(schema.stockTransfer.transfer_id, id), eq(schema.stockTransfer.status, 'DRAFT')));
+      await this.db
+        .update(schema.stockTransfer)
+        .set({ status: 'CANCELLED', deleted_at: deletedTime as any, updated_by: userPayload?.userId || null })
+        .where(and(eq(schema.stockTransfer.transfer_id, id), eq(schema.stockTransfer.status, 'DRAFT')));
 
-    await this.auditService.log({
-      tenantId,
-      companyId: transfer.company_id,
-      userId: userPayload?.userId,
-      action: 'DELETE',
-      entityName: 'stock_transfer',
-      entityId: id,
-      oldValues: transfer,
-      newValues: { status: 'CANCELLED', deleted_at: deletedTime },
-    });
+      await this.auditService.log({
+        tenantId,
+        companyId: transfer.company_id,
+        userId: userPayload?.userId,
+        action: 'DELETE',
+        entityName: 'stock_transfer',
+        entityId: id,
+        oldValues: transfer,
+        newValues: { status: 'CANCELLED', deleted_at: deletedTime },
+      });
 
-    return { success: true, message: `Stock Transfer '${transfer.transfer_no}' has been cancelled.` };
+      return { success: true, message: `Stock Transfer '${transfer.transfer_no}' has been cancelled.` };
     });
   }
 
   async post(id: string, tenantId: string, userPayload?: any) {
-    const posted = await withTenantTransaction(this.cls, async () => {
-    const transfer = await this.loadForMutation(id, tenantId);
-    this.assertDraft(transfer);
+    return withTenantTransaction(this.cls, async () => {
+      const transfer = await this.loadForMutation(id, tenantId);
+      this.assertDraft(transfer);
 
-    // The source with the caller's full scope, farm included — posting drains
-    // it. (This used to drop farmId for both warehouses.)
-    await this.assertWarehouses(transfer.from_warehouse_id, transfer.to_warehouse_id);
+      // The source with the caller's full scope, farm included — posting drains
+      // it. (This used to drop farmId for both warehouses.)
+      await this.assertWarehouses(transfer.from_warehouse_id, transfer.to_warehouse_id);
 
-    if (!transfer.lines || transfer.lines.length === 0) {
-      throw new BadRequestException('Cannot post a Stock Transfer with no lines.');
-    }
+      if (!transfer.lines || transfer.lines.length === 0) {
+        throw new BadRequestException('Cannot post a Stock Transfer with no lines.');
+      }
 
-    // Before the DRAFT -> POSTED claim: a refusal here must leave the transfer
-    // a draft the farm can correct, which is also the order every other check
-    // in this method already follows.
-    await this.assertSiloDestination(transfer, transfer.lines, tenantId);
+      // Before the DRAFT -> POSTED claim: a refusal here must leave the transfer
+      // a draft the farm can correct, which is also the order every other check
+      // in this method already follows.
+      await this.assertSiloDestination(transfer, transfer.lines, tenantId);
 
-    // Claim the DRAFT -> POSTED transition atomically before writing any
-    // ledger/GL entries — see goods-issue.service.ts's post() for the full
-    // rationale (closes both the double-post race and the "retry after a
-    // partial failure duplicates the successful lines" hole).
-    const [claim] = await this.db
-      .update(schema.stockTransfer)
-      .set({
-        status: 'POSTED',
-        posted_at: toMysqlTimestamp() as any,
-        posted_by: userPayload?.userId || null,
-        updated_by: userPayload?.userId || null,
-      })
-      .where(and(eq(schema.stockTransfer.transfer_id, id), eq(schema.stockTransfer.status, 'DRAFT')));
+      // Claim the DRAFT -> POSTED transition atomically before writing any
+      // ledger/GL entries — see goods-issue.service.ts's post() for the full
+      // rationale (closes both the double-post race and the "retry after a
+      // partial failure duplicates the successful lines" hole).
+      const [claim] = await this.db
+        .update(schema.stockTransfer)
+        .set({
+          status: 'POSTED',
+          posted_at: toMysqlTimestamp() as any,
+          posted_by: userPayload?.userId || null,
+          updated_by: userPayload?.userId || null,
+        })
+        .where(and(eq(schema.stockTransfer.transfer_id, id), eq(schema.stockTransfer.status, 'DRAFT')));
 
-    if (claim.affectedRows === 0) {
-      throw new BadRequestException('Stock Transfer cannot be posted — it was already posted by another request.');
-    }
+      if (claim.affectedRows === 0) {
+        throw new BadRequestException('Stock Transfer cannot be posted — it was already posted by another request.');
+      }
 
-    for (const line of transfer.lines) {
-      const { shipment, receipt } = await this.ledgerService.writeTransferEntries({
+      for (const line of transfer.lines) {
+        const { shipment, receipt } = await this.ledgerService.writeTransferEntries({
+          tenantId,
+          companyId: transfer.company_id,
+          itemId: line.item_id,
+          documentNo: transfer.transfer_no,
+          documentLineId: line.line_id,
+          postingDate: transfer.posting_date,
+          quantity: Number(line.quantity),
+          uom: line.uom,
+          fromWarehouseId: transfer.from_warehouse_id,
+          toWarehouseId: transfer.to_warehouse_id,
+          lotNo: line.lot_no || undefined,
+          serialNo: line.serial_no || undefined,
+          userId: userPayload?.userId,
+        });
+
+        // Both legs post to GL independently (each carries its own
+        // transaction_type — TRANSFER_SHIPMENT / TRANSFER_RECEIPT — so
+        // gl_mapping_master resolves them separately, typically via an
+        // inventory-in-transit clearing account).
+        await this.glPostingService.postInventoryLedgerEntry(shipment, userPayload?.userId);
+        await this.glPostingService.postInventoryLedgerEntry(receipt, userPayload?.userId);
+      }
+
+      await this.auditService.log({
         tenantId,
         companyId: transfer.company_id,
-        itemId: line.item_id,
-        documentNo: transfer.transfer_no,
-        documentLineId: line.line_id,
-        postingDate: transfer.posting_date,
-        quantity: Number(line.quantity),
-        uom: line.uom,
-        fromWarehouseId: transfer.from_warehouse_id,
-        toWarehouseId: transfer.to_warehouse_id,
-        lotNo: line.lot_no || undefined,
-        serialNo: line.serial_no || undefined,
         userId: userPayload?.userId,
+        action: 'POST',
+        entityName: 'stock_transfer',
+        entityId: id,
+        newValues: { status: 'POSTED' },
       });
 
-      // Both legs post to GL independently (each carries its own
-      // transaction_type — TRANSFER_SHIPMENT / TRANSFER_RECEIPT — so
-      // gl_mapping_master resolves them separately, typically via an
-      // inventory-in-transit clearing account).
-      await this.glPostingService.postInventoryLedgerEntry(shipment, userPayload?.userId);
-      await this.glPostingService.postInventoryLedgerEntry(receipt, userPayload?.userId);
-    }
-
-    await this.auditService.log({
-      tenantId,
-      companyId: transfer.company_id,
-      userId: userPayload?.userId,
-      action: 'POST',
-      entityName: 'stock_transfer',
-      entityId: id,
-      newValues: { status: 'POSTED' },
-    });
-
-    return this.findOne(id);
+      return this.findOne(id);
     });
     // Ruling M6: once per posting, after the transaction above has committed,
     // and never able to fail it. Both ends — a transfer out of a silo lowers it.

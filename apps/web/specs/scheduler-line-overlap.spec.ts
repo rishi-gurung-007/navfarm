@@ -23,6 +23,10 @@ describe('scheduler-line-overlap validation', () => {
     it('formats CUSTOM occurrence', () => {
       expect(formatPeriod({ line_type: 'CONSUMPTION', occurrence: 'CUSTOM', custom_days: [3, 7, 14] })).toBe('Days 3, 7, 14 (Custom)');
     });
+
+    it('formats MONTHLY occurrence', () => {
+      expect(formatPeriod({ line_type: 'CONSUMPTION', occurrence: 'MONTHLY', start_day: 1, end_day: 60, day_of_week: 15 })).toBe('Day 1 to Day 60 (Monthly, Day 15)');
+    });
   });
 
   describe('doLinesTargetSameSubject', () => {

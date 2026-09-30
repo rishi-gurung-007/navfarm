@@ -106,6 +106,11 @@ export class ResourceService {
       maintenance_frequency_days: dto.maintenance_frequency_days ?? null,
       maintenance_cost_per_service: dto.maintenance_cost_per_service?.toString() || null,
       maintenance_vendor: dto.maintenance_vendor || null,
+      next_maintenance_date: dto.next_maintenance_date || null,
+      license_expiry: dto.license_expiry || null,
+      department: dto.department || null,
+      cost_element: dto.cost_element || null,
+      gl_cost_account: dto.gl_cost_account || null,
       is_active: true,
       status: 'ACTIVE',
       extension_config: dto.extension_config ? JSON.stringify(dto.extension_config) : null,
@@ -223,6 +228,11 @@ export class ResourceService {
     if (dto.maintenance_frequency_days !== undefined) updates.maintenance_frequency_days = dto.maintenance_frequency_days;
     if (dto.maintenance_cost_per_service !== undefined) updates.maintenance_cost_per_service = dto.maintenance_cost_per_service?.toString() || null;
     if (dto.maintenance_vendor !== undefined) updates.maintenance_vendor = dto.maintenance_vendor;
+    if (dto.next_maintenance_date !== undefined) updates.next_maintenance_date = dto.next_maintenance_date || null;
+    if (dto.license_expiry !== undefined) updates.license_expiry = dto.license_expiry || null;
+    if (dto.department !== undefined) updates.department = dto.department || null;
+    if (dto.cost_element !== undefined) updates.cost_element = dto.cost_element || null;
+    if (dto.gl_cost_account !== undefined) updates.gl_cost_account = dto.gl_cost_account || null;
     if (dto.is_active !== undefined) updates.is_active = dto.is_active;
     if (dto.status !== undefined) updates.status = dto.status;
     if (dto.extension_config !== undefined) updates.extension_config = JSON.stringify(dto.extension_config);

@@ -3,6 +3,8 @@
 import { useEffect, useState, useMemo } from "react";
 import {
   CalendarClock,
+  ChevronDown,
+  ChevronUp,
   Copy,
   Loader2,
   Pencil,
@@ -41,6 +43,22 @@ const OUTPUT_BASES = ["PER_SOW", "PER_BATCH", "PER_PEN"] as const;
 const DATA_ENTRY_LEVELS = ["SHED", "PEN", "FARM"] as const;
 const ALERT_SEVERITIES = ["INFO", "WARNING", "CRITICAL"] as const;
 const OVERHEAD_CATEGORIES = ["ELECTRICITY", "WATER", "FUEL", "REPAIR", "CLEANING", "CUSTOM"] as const;
+
+export const DAYS_OF_WEEK_OPTIONS = [
+  { value: "1", label: "Monday (Day 1)" },
+  { value: "2", label: "Tuesday (Day 2)" },
+  { value: "3", label: "Wednesday (Day 3)" },
+  { value: "4", label: "Thursday (Day 4)" },
+  { value: "5", label: "Friday (Day 5)" },
+  { value: "6", label: "Saturday (Day 6)" },
+  { value: "7", label: "Sunday (Day 7)" },
+];
+
+export const DAYS_OF_MONTH_OPTIONS = Array.from({ length: 28 }, (_, i) => {
+  const d = i + 1;
+  const sfx = (d % 10 === 1 && d !== 11) ? "st" : (d % 10 === 2 && d !== 12) ? "nd" : (d % 10 === 3 && d !== 13) ? "rd" : "th";
+  return { value: String(d), label: `Day ${d} (${d}${sfx} of month)` };
+});
 
 const KPI_METRICS = [
   "BODY_WEIGHT",
@@ -154,6 +172,10 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
   const [editingLineIndex, setEditingLineIndex] = useState<number | null>(null);
   const [lineForm, setLineForm] = useState<Row>(emptyLineForm());
   const [lineFormError, setLineFormError] = useState("");
+
+  // Collapsible sections
+  const [headerCollapsed, setHeaderCollapsed] = useState(false);
+  const [linesCollapsed, setLinesCollapsed] = useState(false);
 
   const selectedBatch = batches.find((b) => b.batch_id === batchId) || null;
   const selectedStage = stages.find((s) => s.stage_id === stageId) || null;
@@ -416,9 +438,27 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
       setLineFormError("Start Day cannot be greater than End Day.");
       return;
     }
-    if (lineForm.occurrence === "WEEKLY" && !lineForm.day_of_week) {
-      setLineFormError("Day of Week (1-7) is required for Weekly occurrence.");
-      return;
+    if (lineForm.occurrence === "WEEKLY") {
+      if (!lineForm.day_of_week) {
+        setLineFormError("Day of Week (1-7) is required for Weekly occurrence.");
+        return;
+      }
+      const dow = Number(lineForm.day_of_week);
+      if (!Number.isInteger(dow) || dow < 1 || dow > 7) {
+        setLineFormError("Day of Week must be between 1 (Monday) and 7 (Sunday).");
+        return;
+      }
+    }
+    if (lineForm.occurrence === "MONTHLY") {
+      if (!lineForm.day_of_week) {
+        setLineFormError("Specific Entry Day of Month (1–28) is required for Monthly occurrence.");
+        return;
+      }
+      const dom = Number(lineForm.day_of_week);
+      if (!Number.isInteger(dom) || dom < 1 || dom > 28) {
+        setLineFormError("Specific Entry Day of Month must be between 1 and 28.");
+        return;
+      }
     }
     if (lineForm.occurrence === "CUSTOM" && !lineForm.custom_days) {
       setLineFormError("At least one Custom Day number is required for Custom occurrence.");
@@ -429,7 +469,7 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
       ...lineForm,
       start_day: Number(lineForm.start_day) || 1,
       end_day: lineForm.end_day ? Number(lineForm.end_day) : null,
-      day_of_week: lineForm.occurrence === "WEEKLY" && lineForm.day_of_week ? Number(lineForm.day_of_week) : null,
+      day_of_week: (lineForm.occurrence === "WEEKLY" || lineForm.occurrence === "MONTHLY") && lineForm.day_of_week ? Number(lineForm.day_of_week) : null,
       custom_days: lineForm.occurrence === "CUSTOM" && lineForm.custom_days
         ? String(lineForm.custom_days).split(",").map((s: string) => Number(s.trim())).filter((n: number) => !Number.isNaN(n))
         : null,
@@ -515,161 +555,192 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
         <div className="flex flex-col gap-5 text-xs max-h-[78vh] overflow-y-auto pr-1">
           {error && <InlineAlert>{error}</InlineAlert>}
 
-          {/* Section 1: Header Configuration */}
-          <div className="rounded-[var(--radius-sm)] border p-4" style={S.surface}>
-            <p className="mb-3 text-[11px] font-bold uppercase tracking-wider flex items-center gap-1.5" style={S.primary}>
-              <CalendarClock className="h-3.5 w-3.5" style={{ color: "var(--accent)" }} />
-              1. Scheduler Header
-            </p>
-
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {/* Batch Selector */}
-              <div>
-                <label className="mb-1 block font-semibold" style={S.sub}>
-                  {t("schColBatch")} <span className="text-red-500">*</span>
-                </label>
-                {loadingBatches ? (
-                  <div className="flex items-center gap-2 py-1.5"><Loader2 className="h-4 w-4 animate-spin" style={S.muted} /><span style={S.muted}>Loading batches...</span></div>
-                ) : (
-                  <SearchableSelect
-                    ariaLabel="Batch"
-                    value={batchId}
-                    onChange={(val) => setBatchId(val)}
-                    options={batches.map((b) => ({
-                      value: b.batch_id,
-                      label: `${b.batch_no} ${b.stage_name ? `(${b.stage_name})` : ""} ${b.breed_name ? `• ${b.breed_name}` : ""}`.trim(),
-                    }))}
-                    placeholder="— Select a batch —"
-                    searchPlaceholder="Search batches…"
-                  />
+          {/* Section 1: Header Configuration (Collapsible) */}
+          <div className="rounded-[var(--radius-sm)] border overflow-hidden" style={S.surface}>
+            <div
+              className="flex items-center justify-between p-3.5 cursor-pointer select-none hover:bg-(--surface-raised) transition-colors"
+              onClick={() => setHeaderCollapsed((prev) => !prev)}
+            >
+              <div className="flex items-center gap-2 flex-wrap">
+                <CalendarClock className="h-4 w-4" style={{ color: "var(--accent)" }} />
+                <span className="text-xs font-bold uppercase tracking-wider" style={S.primary}>
+                  1. Scheduler Header
+                </span>
+                {headerCollapsed && selectedBatch && (
+                  <span className="rounded px-2 py-0.5 text-[11px] font-medium" style={S.raised}>
+                    {selectedBatch.batch_no} • {selectedStage?.stage_name || "Stage"} • {animalCount || 0} heads • {status}
+                  </span>
                 )}
               </div>
-
-              {/* Stage Selector (LOB-Filtered) */}
-              <div>
-                <label className="mb-1 block font-semibold" style={S.sub}>
-                  {t("schColStage")} <span className="text-red-500">*</span>
-                </label>
-                {loadingStages ? (
-                  <div className="flex items-center gap-2 py-1.5"><Loader2 className="h-4 w-4 animate-spin" style={S.muted} /><span style={S.muted}>Loading stages...</span></div>
-                ) : (
-                  <SearchableSelect
-                    ariaLabel="Stage"
-                    value={stageId}
-                    onChange={(val) => setStageId(val)}
-                    disabled={!batchId}
-                    options={stages.map((s) => ({
-                      value: s.stage_id,
-                      label: `${s.stage_name} ${s.typical_duration_days ? `(${s.typical_duration_days} days)` : ""}`.trim(),
-                    }))}
-                    placeholder="— Select stage —"
-                    searchPlaceholder="Search stages…"
-                  />
-                )}
-              </div>
-
-              {/* Data Entry Level */}
-              <div>
-                <label className="mb-1 block font-semibold" style={S.sub}>
-                  Data Entry Level
-                </label>
-                <SearchableSelect
-                  ariaLabel="Data Entry Level"
-                  value={dataEntryLevel}
-                  onChange={(val) => setDataEntryLevel(val)}
-                  options={DATA_ENTRY_LEVELS}
-                />
-              </div>
-
-              {/* Effective From */}
-              <div>
-                <label className="mb-1 block font-semibold" style={S.sub}>
-                  Effective From (Start Date) <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="date"
-                  value={effectiveFrom}
-                  onChange={(e) => setEffectiveFrom(e.target.value)}
-                  className={`${inputCls} w-full`}
-                  style={S.input}
-                />
-              </div>
-
-              {/* Effective To */}
-              <div>
-                <label className="mb-1 block font-semibold" style={S.sub}>
-                  Effective To (Expected End Date)
-                </label>
-                <input
-                  type="date"
-                  value={effectiveTo}
-                  onChange={(e) => setEffectiveTo(e.target.value)}
-                  className={`${inputCls} w-full`}
-                  style={S.input}
-                />
-              </div>
-
-              {/* Animal Count */}
-              <div>
-                <label className="mb-1 block font-semibold" style={S.sub}>
-                  Animal Count <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="number"
-                  min={0}
-                  step="1"
-                  value={animalCount}
-                  onChange={(e) => setAnimalCount(e.target.value)}
-                  placeholder="e.g. 20"
-                  className={`${inputCls} w-full`}
-                  style={S.input}
-                />
-              </div>
-
-              {/* Initial Status */}
-              <div>
-                <label className="mb-1 block font-semibold" style={S.sub}>
-                  Initial Status
-                </label>
-                <SearchableSelect
-                  ariaLabel="Initial Status"
-                  value={status}
-                  onChange={(val) => setStatus(val)}
-                  options={[
-                    { value: "DRAFT", label: "DRAFT (Review & Finalize)" },
-                    { value: "ACTIVE", label: "ACTIVE (Ready for Daily Entry)" },
-                  ]}
-                />
-              </div>
-
-              {/* Notes */}
-              <div className="sm:col-span-2">
-                <label className="mb-1 block font-semibold" style={S.sub}>
-                  Notes / Description
-                </label>
-                <input
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  placeholder="Optional free-text remarks regarding this stage schedule..."
-                  className={`${inputCls} w-full`}
-                  style={S.input}
-                />
-              </div>
+              <button
+                type="button"
+                className="p-1 rounded hover:bg-(--surface) text-[var(--text-secondary)] transition-transform"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setHeaderCollapsed((prev) => !prev);
+                }}
+                title={headerCollapsed ? "Expand Header" : "Collapse Header"}
+                aria-label={headerCollapsed ? "Expand Header" : "Collapse Header"}
+              >
+                {headerCollapsed ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
+              </button>
             </div>
+
+            {!headerCollapsed && (
+              <div className="p-4 pt-2 border-t border-[var(--border)]">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  {/* Batch Selector */}
+                  <div>
+                    <label className="mb-1 block font-semibold" style={S.sub}>
+                      {t("schColBatch")} <span className="text-red-500">*</span>
+                    </label>
+                    {loadingBatches ? (
+                      <div className="flex items-center gap-2 py-1.5"><Loader2 className="h-4 w-4 animate-spin" style={S.muted} /><span style={S.muted}>Loading batches...</span></div>
+                    ) : (
+                      <SearchableSelect
+                        ariaLabel="Batch"
+                        value={batchId}
+                        onChange={(val) => setBatchId(val)}
+                        options={batches.map((b) => ({
+                          value: b.batch_id,
+                          label: `${b.batch_no} ${b.stage_name ? `(${b.stage_name})` : ""} ${b.breed_name ? `• ${b.breed_name}` : ""}`.trim(),
+                        }))}
+                        placeholder="— Select a batch —"
+                        searchPlaceholder="Search batches…"
+                      />
+                    )}
+                  </div>
+
+                  {/* Stage Selector (LOB-Filtered) */}
+                  <div>
+                    <label className="mb-1 block font-semibold" style={S.sub}>
+                      {t("schColStage")} <span className="text-red-500">*</span>
+                    </label>
+                    {loadingStages ? (
+                      <div className="flex items-center gap-2 py-1.5"><Loader2 className="h-4 w-4 animate-spin" style={S.muted} /><span style={S.muted}>Loading stages...</span></div>
+                    ) : (
+                      <SearchableSelect
+                        ariaLabel="Stage"
+                        value={stageId}
+                        onChange={(val) => setStageId(val)}
+                        disabled={!batchId}
+                        options={stages.map((s) => ({
+                          value: s.stage_id,
+                          label: `${s.stage_name} ${s.typical_duration_days ? `(${s.typical_duration_days} days)` : ""}`.trim(),
+                        }))}
+                        placeholder="— Select stage —"
+                        searchPlaceholder="Search stages…"
+                      />
+                    )}
+                  </div>
+
+                  {/* Data Entry Level */}
+                  <div>
+                    <label className="mb-1 block font-semibold" style={S.sub}>
+                      Data Entry Level
+                    </label>
+                    <SearchableSelect
+                      ariaLabel="Data Entry Level"
+                      value={dataEntryLevel}
+                      onChange={(val) => setDataEntryLevel(val)}
+                      options={DATA_ENTRY_LEVELS}
+                    />
+                  </div>
+
+                  {/* Effective From */}
+                  <div>
+                    <label className="mb-1 block font-semibold" style={S.sub}>
+                      Effective From (Start Date) <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="date"
+                      value={effectiveFrom}
+                      onChange={(e) => setEffectiveFrom(e.target.value)}
+                      className={`${inputCls} w-full`}
+                      style={S.input}
+                    />
+                  </div>
+
+                  {/* Effective To */}
+                  <div>
+                    <label className="mb-1 block font-semibold" style={S.sub}>
+                      Effective To (Expected End Date)
+                    </label>
+                    <input
+                      type="date"
+                      value={effectiveTo}
+                      onChange={(e) => setEffectiveTo(e.target.value)}
+                      className={`${inputCls} w-full`}
+                      style={S.input}
+                    />
+                  </div>
+
+                  {/* Animal Count */}
+                  <div>
+                    <label className="mb-1 block font-semibold" style={S.sub}>
+                      Animal Count <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      step="1"
+                      value={animalCount}
+                      onChange={(e) => setAnimalCount(e.target.value)}
+                      placeholder="e.g. 20"
+                      className={`${inputCls} w-full`}
+                      style={S.input}
+                    />
+                  </div>
+
+                  {/* Initial Status */}
+                  <div>
+                    <label className="mb-1 block font-semibold" style={S.sub}>
+                      Initial Status
+                    </label>
+                    <SearchableSelect
+                      ariaLabel="Initial Status"
+                      value={status}
+                      onChange={(val) => setStatus(val)}
+                      options={[
+                        { value: "DRAFT", label: "DRAFT (Review & Finalize)" },
+                        { value: "ACTIVE", label: "ACTIVE (Ready for Daily Entry)" },
+                      ]}
+                    />
+                  </div>
+
+                  {/* Notes */}
+                  <div className="sm:col-span-2">
+                    <label className="mb-1 block font-semibold" style={S.sub}>
+                      Notes / Description
+                    </label>
+                    <input
+                      value={notes}
+                      onChange={(e) => setNotes(e.target.value)}
+                      placeholder="Optional free-text remarks regarding this stage schedule..."
+                      className={`${inputCls} w-full`}
+                      style={S.input}
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
-          {/* Section 2: Staged Activities (Lines) in Same Place */}
-          <div className="rounded-[var(--radius-sm)] border p-4" style={S.surface}>
-            <div className="mb-3 flex items-center justify-between">
-              <div>
-                <p className="text-[11px] font-bold uppercase tracking-wider" style={S.primary}>
-                  2. Scheduled Activities (Lines) ({lines.length})
-                </p>
-                <p className="text-[10px] mt-0.5" style={S.sub}>
-                  Define daily feed rations, vaccines, body weight targets, labour, and outputs.
-                </p>
-              </div>
+          {/* Section 2: Staged Activities (Lines) (Collapsible) */}
+          <div className="rounded-[var(--radius-sm)] border overflow-hidden" style={S.surface}>
+            <div
+              className="flex items-center justify-between p-3.5 cursor-pointer select-none hover:bg-(--surface-raised) transition-colors"
+              onClick={() => setLinesCollapsed((prev) => !prev)}
+            >
               <div className="flex items-center gap-2">
+                <span className="text-xs font-bold uppercase tracking-wider" style={S.primary}>
+                  2. Scheduled Activities (Lines)
+                </span>
+                <span className="rounded-full px-2 py-0.5 text-[10px] font-bold" style={{ backgroundColor: "var(--accent)", color: "white" }}>
+                  {lines.length}
+                </span>
+              </div>
+              <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
                 <Button
                   size="sm"
                   variant="outline"
@@ -684,67 +755,109 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
                   <Plus className="h-3.5 w-3.5" />
                   Add Activity
                 </Button>
+                <button
+                  type="button"
+                  className="p-1 rounded hover:bg-(--surface) text-[var(--text-secondary)] transition-transform"
+                  onClick={() => setLinesCollapsed((prev) => !prev)}
+                  title={linesCollapsed ? "Expand Lines" : "Collapse Lines"}
+                  aria-label={linesCollapsed ? "Expand Lines" : "Collapse Lines"}
+                >
+                  {linesCollapsed ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
+                </button>
               </div>
             </div>
 
-            {lines.length === 0 ? (
-              <div className="rounded-[var(--radius-sm)] border border-dashed py-6 text-center" style={{ borderColor: "var(--border)" }}>
-                <p className="text-xs font-medium" style={S.sub}>No custom activities added yet.</p>
-                <p className="text-[11px] mt-1" style={S.muted}>
-                  Click <strong>Add Activity</strong> above to schedule a feed ration, vaccination, or KPI target.
-                  (If left empty, standard lifecycle activities will be auto-generated).
-                </p>
-              </div>
-            ) : (
-              <div className="overflow-x-auto rounded-[var(--radius-sm)] border" style={S.surface}>
-                <table className="w-full border-collapse text-left text-xs">
-                  <TableHeader>
-                    <tr className="border-b border-[var(--row-border)]">
-                      <TableHead className="h-auto px-3 py-2">Seq</TableHead>
-                      <TableHead className="h-auto px-3 py-2">Type</TableHead>
-                      <TableHead className="h-auto px-3 py-2">Activity Name</TableHead>
-                      <TableHead className="h-auto px-3 py-2">Occurrence</TableHead>
-                      <TableHead className="h-auto px-3 py-2">Item / Metric / Resource</TableHead>
-                      <TableHead className="h-auto px-3 py-2">Std Qty / Target</TableHead>
-                      <TableHead className="h-auto px-3 py-2">Mandatory</TableHead>
-                      <TableHead className="h-auto px-3 py-2"></TableHead>
-                    </tr>
-                  </TableHeader>
-                  <TableBody>
-                    {lines.map((line, idx) => {
-                      const itemObj = items.find((i) => i.item_id === line.item_id);
-                      const resObj = resources.find((r) => r.resource_id === line.resource_id);
-                      const targetDisplay = line.line_type === "DESCRIPTIVE"
-                        ? (line.std_value != null ? `${line.std_value} ${line.kpi_uom || ""}` : "—")
-                        : line.standard_qty != null
-                        ? `${line.standard_qty} ${itemObj?.uom_primary || resObj?.uom || ""} ${line.qty_basis ? `(${line.qty_basis})` : ""}`
-                        : "—";
+            {!linesCollapsed && (
+              <div className="p-4 pt-2 border-t border-[var(--border)]">
+                {lines.length === 0 ? (
+                  <div className="rounded-[var(--radius-sm)] border border-dashed py-6 text-center" style={{ borderColor: "var(--border)" }}>
+                    <p className="text-xs font-medium" style={S.sub}>No custom activities added yet.</p>
+                    <p className="text-[11px] mt-1" style={S.muted}>
+                      Click <strong>Add Activity</strong> above to schedule a feed ration, vaccination, or KPI target.
+                      (If left empty, standard lifecycle activities will be auto-generated).
+                    </p>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto rounded-[var(--radius-sm)] border" style={S.surface}>
+                    <table className="w-full border-collapse text-left text-xs">
+                      <TableHeader>
+                        <tr className="border-b border-[var(--row-border)]">
+                          <TableHead className="h-auto px-3 py-2">Seq</TableHead>
+                          <TableHead className="h-auto px-3 py-2">Type</TableHead>
+                          <TableHead className="h-auto px-3 py-2">Activity Name</TableHead>
+                          <TableHead className="h-auto px-3 py-2">Occurrence</TableHead>
+                          <TableHead className="h-auto px-3 py-2">Item / Metric / Resource</TableHead>
+                          <TableHead className="h-auto px-3 py-2">Std Qty / Target</TableHead>
+                          <TableHead className="h-auto px-3 py-2">Mandatory</TableHead>
+                          <TableHead className="h-auto px-3 py-2"></TableHead>
+                        </tr>
+                      </TableHeader>
+                      <TableBody>
+                        {lines.map((line, idx) => {
+                          const itemObj = items.find((i) => i.item_id === line.item_id);
+                          const resObj = resources.find((r) => r.resource_id === line.resource_id);
+                          const uom = line.line_type === "DESCRIPTIVE"
+                            ? line.kpi_uom || (line.kpi_metric ? KPI_UOM_MAP[line.kpi_metric] : "")
+                            : itemObj?.uom_primary || itemObj?.uom || resObj?.uom || "";
 
-                      return (
-                        <TableRow key={idx}>
-                          <TableCell className="px-3 py-2 font-mono text-[11px]" style={S.sub}>{line.line_seq || idx + 1}</TableCell>
-                          <TableCell className="px-3 py-2">
-                            <span className="inline-block rounded px-1.5 py-0.5 text-[10px] font-bold" style={{ backgroundColor: "var(--surface-raised)", color: "var(--accent)" }}>
-                              {line.line_type}
-                            </span>
-                          </TableCell>
-                          <TableCell className="px-3 py-2 font-medium" style={S.primary}>{line.activity_name}</TableCell>
-                          <TableCell className="px-3 py-2" style={S.sub}>
-                            {line.occurrence} {line.day_of_week ? `(Day ${line.day_of_week})` : ""} {line.custom_days ? `[${line.custom_days}]` : ""}
-                          </TableCell>
-                          <TableCell className="px-3 py-2" style={S.sub}>
-                            {line.line_type === "DESCRIPTIVE"
-                              ? (line.kpi_metric ? line.kpi_metric.replace(/_/g, " ") : "—")
-                              : line.line_type === "RESOURCE"
-                              ? (resObj?.resource_name || line.resource_id || "—")
-                              : (itemObj?.item_name || line.item_description || "—")}
-                            {itemObj?.withdrawal_days ? (
-                              <span className="ml-1 text-[10px] font-bold text-amber-600">({itemObj.withdrawal_days}d w/d)</span>
-                            ) : null}
-                          </TableCell>
-                          <TableCell className="px-3 py-2 font-medium" style={S.primary}>{targetDisplay}</TableCell>
-                          <TableCell className="px-3 py-2" style={S.sub}>{line.is_mandatory ? "Yes" : "No"}</TableCell>
-                          <TableCell className="px-3 py-2 text-right">
+                          return (
+                            <TableRow key={idx}>
+                              <TableCell className="px-3 py-2 font-mono text-[11px]" style={S.sub}>{line.line_seq || idx + 1}</TableCell>
+                              <TableCell className="px-3 py-2">
+                                <span className="inline-block rounded px-1.5 py-0.5 text-[10px] font-bold" style={{ backgroundColor: "var(--surface-raised)", color: "var(--accent)" }}>
+                                  {line.line_type}
+                                </span>
+                              </TableCell>
+                              <TableCell className="px-3 py-2 font-medium" style={S.primary}>{line.activity_name}</TableCell>
+                              <TableCell className="px-3 py-2" style={S.sub}>
+                                {(() => {
+                                  if (line.occurrence === "WEEKLY" && line.day_of_week) {
+                                    const days = ["", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+                                    const dayName = days[Number(line.day_of_week)] || `Day ${line.day_of_week}`;
+                                    return <span className="font-medium text-sky-700 dark:text-sky-300">WEEKLY ({dayName})</span>;
+                                  }
+                                  if (line.occurrence === "MONTHLY" && line.day_of_week) {
+                                    const d = Number(line.day_of_week);
+                                    const sfx = (d % 10 === 1 && d !== 11) ? "st" : (d % 10 === 2 && d !== 12) ? "nd" : (d % 10 === 3 && d !== 13) ? "rd" : "th";
+                                    return <span className="font-medium text-indigo-700 dark:text-indigo-300">MONTHLY (Day {d}{sfx})</span>;
+                                  }
+                                  if (line.occurrence === "CUSTOM" && line.custom_days) {
+                                    const cDays = Array.isArray(line.custom_days)
+                                      ? line.custom_days.map((d: any) => d.day_number ?? d).join(", ")
+                                      : line.custom_days;
+                                    return <span>CUSTOM [{cDays}]</span>;
+                                  }
+                                  return <span>{line.occurrence}</span>;
+                                })()}
+                              </TableCell>
+                              <TableCell className="px-3 py-2" style={S.sub}>
+                                {line.line_type === "DESCRIPTIVE"
+                                  ? (line.kpi_metric ? line.kpi_metric.replace(/_/g, " ") : "—")
+                                  : line.line_type === "RESOURCE"
+                                  ? (resObj?.resource_name || line.resource_id || "—")
+                                  : (itemObj?.item_name || line.item_description || "—")}
+                                {itemObj?.withdrawal_days ? (
+                                  <span className="ml-1 text-[10px] font-bold text-amber-600">({itemObj.withdrawal_days}d w/d)</span>
+                                ) : null}
+                              </TableCell>
+                              <TableCell className="px-3 py-2 font-medium" style={S.primary}>
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span>
+                                    {line.line_type === "DESCRIPTIVE"
+                                      ? (line.std_value != null ? line.std_value : "—")
+                                      : (line.standard_qty != null ? line.standard_qty : "—")}
+                                  </span>
+                                  {uom && (
+                                    <span className="rounded bg-sky-500/10 px-1.5 py-0.5 font-mono text-[10px] font-bold text-sky-600 dark:text-sky-400">
+                                      {uom}
+                                    </span>
+                                  )}
+                                  {line.qty_basis && <span className="text-[10px]" style={S.muted}>({line.qty_basis})</span>}
+                                  {line.output_basis && <span className="text-[10px]" style={S.muted}>({line.output_basis})</span>}
+                                </div>
+                              </TableCell>
+                              <TableCell className="px-3 py-2" style={S.sub}>{line.is_mandatory ? "Yes" : "No"}</TableCell>
+                              <TableCell className="px-3 py-2 text-right">
                             <div className="flex items-center justify-end gap-1">
                               <button onClick={() => handleOpenEditLine(idx)} className="rounded p-1 hover:opacity-70" title="Edit">
                                 <Pencil className="h-3.5 w-3.5" style={S.sub} />
@@ -759,6 +872,8 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
                     })}
                   </TableBody>
                 </table>
+              </div>
+            )}
               </div>
             )}
           </div>
@@ -833,7 +948,18 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
               <SearchableSelect
                 ariaLabel="Occurrence"
                 value={lineForm.occurrence}
-                onChange={(val) => setLineForm((f: Row) => ({ ...f, occurrence: val }))}
+                onChange={(val) =>
+                  setLineForm((f: Row) => ({
+                    ...f,
+                    occurrence: val,
+                    day_of_week:
+                      val === "WEEKLY" && Number(f.day_of_week) > 7
+                        ? ""
+                        : val === "WEEKLY" || val === "MONTHLY"
+                        ? f.day_of_week
+                        : "",
+                  }))
+                }
                 options={OCCURRENCES}
               />
             </div>
@@ -868,16 +994,55 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
             {/* Conditional: Day of week for WEEKLY */}
             {lineForm.occurrence === "WEEKLY" && (
               <div>
-                <label className="mb-1 block font-semibold" style={S.sub}>Day of Week (1=Mon..7=Sun)</label>
-                <input
-                  type="number"
-                  min={1}
-                  max={7}
-                  value={lineForm.day_of_week}
-                  onChange={(e) => setLineForm((f: Row) => ({ ...f, day_of_week: e.target.value }))}
-                  className={`${inputCls} w-full`}
-                  style={S.input}
+                <div className="mb-1 flex items-center justify-between">
+                  <label className="font-semibold" style={S.sub}>
+                    Day of Week (1=Mon..7=Sun) <span className="text-red-500">*</span>
+                  </label>
+                  {lineForm.day_of_week && Number(lineForm.day_of_week) >= 1 && Number(lineForm.day_of_week) <= 7 && (
+                    <span className="font-medium text-[10px]" style={S.sub}>
+                      {DAYS_OF_WEEK_OPTIONS.find((o) => o.value === String(lineForm.day_of_week))?.label}
+                    </span>
+                  )}
+                </div>
+                <SearchableSelect
+                  ariaLabel="Day of Week"
+                  placeholder="Select day of week (Monday–Sunday)…"
+                  searchPlaceholder="Search day (e.g. Monday)…"
+                  value={lineForm.day_of_week ? String(lineForm.day_of_week) : ""}
+                  onChange={(val) => setLineForm((f: Row) => ({ ...f, day_of_week: val }))}
+                  options={DAYS_OF_WEEK_OPTIONS}
                 />
+              </div>
+            )}
+
+            {/* Conditional: Entry Day of Month for MONTHLY */}
+            {lineForm.occurrence === "MONTHLY" && (
+              <div>
+                <div className="mb-1 flex items-center justify-between">
+                  <label className="font-semibold" style={S.sub}>
+                    Specific Entry Day of Month (1–28) <span className="text-red-500">*</span>
+                  </label>
+                  {lineForm.day_of_week && Number(lineForm.day_of_week) >= 1 && Number(lineForm.day_of_week) <= 28 && (
+                    <span className="font-medium text-[10px]" style={S.sub}>
+                      {(() => {
+                        const d = Number(lineForm.day_of_week);
+                        const sfx = (d % 10 === 1 && d !== 11) ? "st" : (d % 10 === 2 && d !== 12) ? "nd" : (d % 10 === 3 && d !== 13) ? "rd" : "th";
+                        return `${d}${sfx} of every month`;
+                      })()}
+                    </span>
+                  )}
+                </div>
+                <SearchableSelect
+                  ariaLabel="Specific Entry Day of Month"
+                  placeholder="Select entry day (1–28)…"
+                  searchPlaceholder="Search day (e.g. 15)…"
+                  value={lineForm.day_of_week ? String(lineForm.day_of_week) : ""}
+                  onChange={(val) => setLineForm((f: Row) => ({ ...f, day_of_week: val }))}
+                  options={DAYS_OF_MONTH_OPTIONS}
+                />
+                <p className="mt-1 text-[10px]" style={S.muted}>
+                  Specifies the recurring day of the month (1–28) for this activity entry.
+                </p>
               </div>
             )}
 
@@ -934,7 +1099,7 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
                     }}
                     options={consumableItems.map((it) => ({
                       value: it.item_id,
-                      label: `${it.item_name} ${it.uom_primary ? `(${it.uom_primary})` : ""}`,
+                      label: `${it.item_name}`,
                     }))}
                     placeholder="— Select consumable item —"
                     searchPlaceholder="Search items…"
@@ -942,16 +1107,43 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
                 </div>
 
                 <div>
-                  <label className="mb-1 block font-semibold" style={S.sub}>Standard Qty per Occurrence</label>
-                  <input
-                    type="number"
-                    step="any"
-                    value={lineForm.standard_qty}
-                    onChange={(e) => setLineForm((f: Row) => ({ ...f, standard_qty: e.target.value }))}
-                    placeholder="e.g. 1.5"
-                    className={`${inputCls} w-full`}
-                    style={S.input}
-                  />
+                  <div className="mb-1 flex items-center justify-between">
+                    <label className="font-semibold" style={S.sub}>Standard Qty per Occurrence</label>
+                    {(() => {
+                      const sel = items.find((i) => i.item_id === lineForm.item_id);
+                      const uom = sel?.uom_primary || sel?.uom;
+                      return uom ? (
+                        <span className="rounded bg-sky-500/10 px-1.5 py-0.5 font-mono text-[10px] font-bold text-sky-600 dark:text-sky-400">
+                          UOM: {uom}
+                        </span>
+                      ) : null;
+                    })()}
+                  </div>
+                  <div className="relative flex items-center">
+                    <input
+                      type="number"
+                      step="any"
+                      value={lineForm.standard_qty}
+                      onChange={(e) => setLineForm((f: Row) => ({ ...f, standard_qty: e.target.value }))}
+                      placeholder={(() => {
+                        const sel = items.find((i) => i.item_id === lineForm.item_id);
+                        const uom = sel?.uom_primary || sel?.uom;
+                        return uom ? `e.g. 1.5 (${uom})` : "e.g. 1.5";
+                      })()}
+                      className={`${inputCls} w-full pr-16`}
+                      style={S.input}
+                    />
+                   
+                  </div>
+                  <p className="mt-1 text-[10px]" style={S.muted}>
+                    {(() => {
+                      const sel = items.find((i) => i.item_id === lineForm.item_id);
+                      const uom = sel?.uom_primary || sel?.uom;
+                      return uom
+                        ? `Units consumed in ${uom} (${lineForm.qty_basis || "PER_HEAD"})`
+                        : "Select an item above to view its consumption unit of measure.";
+                    })()}
+                  </p>
                 </div>
 
                 <div>
@@ -1018,16 +1210,51 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
                 </div>
 
                 <div>
-                  <label className="mb-1 block font-semibold" style={S.sub}>Standard Output Qty</label>
-                  <input
-                    type="number"
-                    step="any"
-                    value={lineForm.standard_qty}
-                    onChange={(e) => setLineForm((f: Row) => ({ ...f, standard_qty: e.target.value }))}
-                    placeholder="e.g. 10"
-                    className={`${inputCls} w-full`}
-                    style={S.input}
-                  />
+                  <div className="mb-1 flex items-center justify-between">
+                    <label className="font-semibold" style={S.sub}>Standard Output Qty</label>
+                    {(() => {
+                      const sel = items.find((i) => i.item_id === lineForm.item_id);
+                      const uom = sel?.uom_primary || sel?.uom;
+                      return uom ? (
+                        <span className="rounded bg-sky-500/10 px-1.5 py-0.5 font-mono text-[10px] font-bold text-sky-600 dark:text-sky-400">
+                          UOM: {uom}
+                        </span>
+                      ) : null;
+                    })()}
+                  </div>
+                  <div className="relative flex items-center">
+                    <input
+                      type="number"
+                      step="any"
+                      value={lineForm.standard_qty}
+                      onChange={(e) => setLineForm((f: Row) => ({ ...f, standard_qty: e.target.value }))}
+                      placeholder={(() => {
+                        const sel = items.find((i) => i.item_id === lineForm.item_id);
+                        const uom = sel?.uom_primary || sel?.uom;
+                        return uom ? `e.g. 10 (${uom})` : "e.g. 10";
+                      })()}
+                      className={`${inputCls} w-full pr-16`}
+                      style={S.input}
+                    />
+                    {(() => {
+                      const sel = items.find((i) => i.item_id === lineForm.item_id);
+                      const uom = sel?.uom_primary || sel?.uom;
+                      return uom ? (
+                        <span className="pointer-events-none absolute right-2 rounded px-1.5 py-0.5 font-mono text-[10px] font-bold" style={{ backgroundColor: "var(--surface-raised)", color: "var(--accent)" }}>
+                          {uom}
+                        </span>
+                      ) : null;
+                    })()}
+                  </div>
+                  <p className="mt-1 text-[10px]" style={S.muted}>
+                    {(() => {
+                      const sel = items.find((i) => i.item_id === lineForm.item_id);
+                      const uom = sel?.uom_primary || sel?.uom;
+                      return uom
+                        ? `Units produced in ${uom} (${lineForm.output_basis || "PER_BATCH"})`
+                        : "Select an output item above.";
+                    })()}
+                  </p>
                 </div>
 
                 <div>

@@ -177,8 +177,8 @@ export function useCodeSeries(key: string, form: Record<string, unknown>, enable
       if (!managedCode && !preview) return value;
       // Auto-generated (manual_nos = false): always show the live preview
       if (serial || (!allowManual && preview)) return preview;
-      // Manual (manual_nos = true): user value is authoritative; provide preview as initial suggestion if empty
-      if (allowManual && preview && (value === "" || value === undefined || value === null)) {
+      // Manual (manual_nos = true): user value is authoritative; provide preview as initial suggestion only when undefined or null
+      if (allowManual && preview && (value === undefined || value === null)) {
         return preview;
       }
       return value;
@@ -193,7 +193,7 @@ export function useCodeSeries(key: string, form: Record<string, unknown>, enable
       const manual = !!allowManual;
       return {
         ...field,
-        required: manual,
+        required: false,
         readOnly: !manual,
         placeholder: manual
           ? "Enter a unique code or keep the suggestion"

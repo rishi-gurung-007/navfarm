@@ -874,8 +874,22 @@ export class SchedulerHeaderService {
     if (missing.length) {
       throw new ConflictException(`${line_type} lines require: ${missing.join(', ')}.`);
     }
-    if (dto.occurrence === 'WEEKLY' && effective.day_of_week == null) {
-      throw new ConflictException('Occurrence WEEKLY requires day_of_week.');
+    if (dto.occurrence === 'WEEKLY') {
+      if (effective.day_of_week == null) {
+        throw new ConflictException('Occurrence WEEKLY requires day_of_week.');
+      }
+      const dow = Number(effective.day_of_week);
+      if (!Number.isInteger(dow) || dow < 1 || dow > 7) {
+        throw new ConflictException('Occurrence WEEKLY day_of_week must be an integer between 1 (Monday) and 7 (Sunday).');
+      }
+    }
+    if (dto.occurrence === 'MONTHLY') {
+      if (effective.day_of_week != null) {
+        const dom = Number(effective.day_of_week);
+        if (!Number.isInteger(dom) || dom < 1 || dom > 28) {
+          throw new ConflictException('Occurrence MONTHLY entry day of month must be an integer between 1 and 28.');
+        }
+      }
     }
     if (dto.occurrence === 'CUSTOM' && !(dto.custom_days && dto.custom_days.length)) {
       throw new ConflictException('Occurrence CUSTOM requires at least one custom day.');
@@ -946,6 +960,10 @@ export class SchedulerHeaderService {
     if (line.occurrence === 'WEEKLY') {
       const dow = line.day_of_week ? `, Day ${line.day_of_week}` : '';
       return `Day ${start} to ${end} (Weekly${dow})`;
+    }
+    if (line.occurrence === 'MONTHLY') {
+      const dom = line.day_of_week ? `, Day ${line.day_of_week}` : '';
+      return `Day ${start} to ${end} (Monthly${dom})`;
     }
     return `Day ${start} to ${end}`;
   }
@@ -1058,6 +1076,12 @@ export class SchedulerHeaderService {
       const dowA = a.day_of_week ? Number(a.day_of_week) : null;
       const dowB = b.day_of_week ? Number(b.day_of_week) : null;
       if (dowA && dowB) return dowA === dowB;
+      return true;
+    }
+    if (occA === 'MONTHLY' && occB === 'MONTHLY') {
+      const domA = a.day_of_week ? Number(a.day_of_week) : null;
+      const domB = b.day_of_week ? Number(b.day_of_week) : null;
+      if (domA && domB) return domA === domB;
       return true;
     }
     return true;
