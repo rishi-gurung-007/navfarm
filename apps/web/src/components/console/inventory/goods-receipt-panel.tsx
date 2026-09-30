@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Plus, Trash2, Search, Loader2, Inbox, Eye, CheckCircle2, Pencil, ChevronDown } from "lucide-react";
+import { useEffect, useState, useRef, useMemo } from "react";
+import { Plus, Trash2, Search, Loader2, Inbox, Eye, CheckCircle2, Pencil, ChevronDown, Sparkles } from "lucide-react";
 import { api } from "@/services/api-client";
 import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -43,6 +43,322 @@ const emptyLine = () => ({
   expiry_date: "",
 });
 
+function LotDropdownPanel({
+  itemId,
+  warehouseId,
+  hasSeries,
+  currentLot,
+  onSelectLot,
+  onGenerate,
+  onClose,
+  isGenerating,
+}: {
+  itemId: string;
+  warehouseId?: string;
+  hasSeries: boolean;
+  currentLot: string;
+  onSelectLot: (lotNo: string, expiryDate?: string) => void;
+  onGenerate: () => void;
+  onClose: () => void;
+  isGenerating?: boolean;
+}) {
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [existingLots, setExistingLots] = useState<
+    Array<{
+      lot_no: string;
+      remaining_quantity: number;
+      expiry_date: string | null;
+    }>
+  >([]);
+  const [loading, setLoading] = useState(false);
+  const [query, setQuery] = useState("");
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (panelRef.current && !panelRef.current.contains(event.target as Node)) {
+        onClose();
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [onClose]);
+
+  useEffect(() => {
+    if (!itemId) return;
+    let active = true;
+    setLoading(true);
+    const params = new URLSearchParams();
+    params.set("item_id", itemId);
+    if (warehouseId) params.set("warehouse_id", warehouseId);
+
+    api
+      .get(`/inventory-ledger/available-lots?${params.toString()}`)
+      .then((res) => {
+        if (!active) return;
+        const list = unwrap<any[]>(res) || [];
+        setExistingLots(list);
+      })
+      .catch(() => {
+        if (active) setExistingLots([]);
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [itemId, warehouseId]);
+
+  const filteredLots = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return existingLots;
+    return existingLots.filter(
+      (l) =>
+        (l.lot_no || "").toLowerCase().includes(q) ||
+        (l.expiry_date || "").includes(q)
+    );
+  }, [existingLots, query]);
+
+  return (
+    <div
+      ref={panelRef}
+      className="absolute top-full left-0 mt-1 z-50 w-80 rounded-lg border shadow-2xl p-3"
+      style={{
+        backgroundColor: "var(--surface-raised)",
+        borderColor: "var(--border)",
+      }}
+    >
+      <div
+        className="flex items-center justify-between pb-2 mb-2 border-b"
+        style={{ borderColor: "var(--border)" }}
+      >
+        <div className="flex items-center gap-1.5">
+          <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase bg-emerald-500/20 text-emerald-300">
+            LOT
+          </span>
+          <span className="text-xs font-semibold" style={S.primary}>
+            Select or Assign Lot
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="text-xs px-1.5 py-0.5 rounded hover:bg-white/10"
+          style={S.sub}
+        >
+          ✕
+        </button>
+      </div>
+
+      {hasSeries && (
+        <button
+          type="button"
+          disabled={isGenerating}
+          onClick={() => {
+            onGenerate();
+          }}
+          className="w-full flex items-center justify-between px-2.5 py-1.5 rounded border text-xs font-medium transition-all mb-2.5 hover:bg-emerald-500/10 border-emerald-500/30 text-emerald-400"
+          style={{ backgroundColor: "rgba(16, 185, 129, 0.05)" }}
+        >
+          <span className="flex items-center gap-1.5">
+            <Sparkles className="h-3.5 w-3.5 text-emerald-400" />
+            Generate Next Lot No.
+          </span>
+          <span className="text-[10px] font-mono opacity-80">
+            {isGenerating ? "…" : "Preview (Series)"}
+          </span>
+        </button>
+      )}
+
+      <div>
+        <div className="flex items-center justify-between text-[11px] font-medium mb-1" style={S.sub}>
+          <span>Existing Lots in Stock ({existingLots.length})</span>
+          {existingLots.length > 2 && (
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search lots…"
+              className="text-[10px] px-1.5 py-0.5 rounded border w-24 font-mono"
+              style={S.input}
+            />
+          )}
+        </div>
+
+        <div className="max-h-36 overflow-y-auto border rounded text-xs" style={{ borderColor: "var(--border-subtle)" }}>
+          {loading ? (
+            <div className="p-3 text-center text-xs" style={S.muted}>
+              Loading lots…
+            </div>
+          ) : filteredLots.length === 0 ? (
+            <div className="p-3 text-center text-[11px]" style={S.muted}>
+              {existingLots.length === 0
+                ? "No existing lots found. Enter or generate a new lot."
+                : "No matching lots found."}
+            </div>
+          ) : (
+            <table className="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr className="border-b text-[10px] uppercase font-semibold" style={{ borderColor: "var(--border-subtle)", color: "var(--text-muted)" }}>
+                  <th className="px-2 py-1">Lot No.</th>
+                  <th className="px-2 py-1 text-right">In Stock</th>
+                  <th className="px-2 py-1 text-right">Expiry</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredLots.map((lot) => {
+                  const isSelected = lot.lot_no === currentLot;
+                  return (
+                    <tr
+                      key={lot.lot_no}
+                      onClick={() => {
+                        onSelectLot(lot.lot_no, lot.expiry_date || undefined);
+                        onClose();
+                      }}
+                      className={`cursor-pointer transition-colors border-b ${
+                        isSelected ? "bg-emerald-500/20 text-emerald-300" : "hover:bg-white/5"
+                      }`}
+                      style={{ borderColor: "var(--border-subtle)" }}
+                    >
+                      <td className="px-2 py-1.5 font-mono text-xs font-medium">
+                        {lot.lot_no}
+                      </td>
+                      <td className="px-2 py-1.5 text-right font-mono text-[11px]">
+                        {lot.remaining_quantity}
+                      </td>
+                      <td className="px-2 py-1.5 text-right text-[11px]" style={S.muted}>
+                        {lot.expiry_date ? String(lot.expiry_date).slice(0, 10) : "—"}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+
+      <div className="mt-2.5 pt-2 border-t flex items-center justify-between" style={{ borderColor: "var(--border)" }}>
+        {currentLot ? (
+          <button
+            type="button"
+            onClick={() => {
+              onSelectLot("");
+              onClose();
+            }}
+            className="text-[11px] text-zinc-400 hover:text-zinc-200"
+          >
+            Clear Lot
+          </button>
+        ) : <div />}
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={onClose}
+          className="h-6 text-[11px] px-2"
+        >
+          Done
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function SerialDropdownPanel({
+  targetQty,
+  serialValue,
+  onChange,
+  onClose,
+}: {
+  targetQty: number;
+  serialValue: string;
+  onChange: (serials: string) => void;
+  onClose: () => void;
+}) {
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (panelRef.current && !panelRef.current.contains(event.target as Node)) {
+        onClose();
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [onClose]);
+
+  const serials = serialValue
+    ? serialValue.split(/[\n,]+/).map((s: string) => s.trim()).filter(Boolean)
+    : [];
+  const displayCount = Math.max(serials.length, targetQty);
+  const rows = Array.from({ length: displayCount }, (_, i) => serials[i] || "");
+
+  return (
+    <div
+      ref={panelRef}
+      className="absolute top-full left-0 mt-1 z-50 w-72 rounded-lg border shadow-2xl p-2.5"
+      style={{
+        backgroundColor: "var(--surface-raised)",
+        borderColor: "var(--border)",
+      }}
+    >
+      <div
+        className="flex items-center justify-between pb-2 mb-2 border-b"
+        style={{ borderColor: "var(--border)" }}
+      >
+        <span className="text-xs font-semibold" style={S.primary}>
+          Generated Serials ({serials.length}/{targetQty})
+        </span>
+        <button
+          type="button"
+          onClick={onClose}
+          className="text-xs px-1.5 py-0.5 rounded hover:bg-white/10"
+          style={S.sub}
+        >
+          ✕
+        </button>
+      </div>
+
+      <div className="max-h-48 overflow-y-auto space-y-1.5 pr-1">
+        {rows.map((s, sIdx) => (
+          <div key={sIdx} className="flex items-center gap-1.5">
+            <span className="text-[10px] font-mono px-1 py-0.5 rounded bg-black/25 text-zinc-400 w-6 text-center shrink-0">
+              #{sIdx + 1}
+            </span>
+            <input
+              type="text"
+              value={s}
+              placeholder={`Serial #${sIdx + 1}`}
+              onChange={(e) => {
+                const updated = [...rows];
+                updated[sIdx] = e.target.value.trim();
+                onChange(updated.filter(Boolean).join(", "));
+              }}
+              className="w-full text-xs h-7 px-2 font-mono rounded border"
+              style={S.input}
+            />
+          </div>
+        ))}
+      </div>
+      <div className="mt-2 pt-2 border-t flex justify-end" style={{ borderColor: "var(--border)" }}>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={onClose}
+          className="h-6 text-[11px] px-2"
+        >
+          Done
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 export default function GoodsReceiptPanel() {
   const { t } = useLanguage();
   const [rows, setRows] = useState<Row[]>([]);
@@ -70,6 +386,7 @@ export default function GoodsReceiptPanel() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [generatingIdx, setGeneratingIdx] = useState<number | null>(null);
   const [openSerialIdx, setOpenSerialIdx] = useState<number | null>(null);
+  const [openLotIdx, setOpenLotIdx] = useState<number | null>(null);
 
   const [viewing, setViewing] = useState<Row | null>(null);
   const [posting, setPosting] = useState(false);
@@ -516,17 +833,29 @@ export default function GoodsReceiptPanel() {
                       </TableCell>
                       <TableCell className="px-2 py-1.5 min-w-[240px]">
                         {isLot ? (
-                          <div className="flex items-center gap-1.5 w-full">
+                          <div className="relative flex items-center gap-1.5 w-full">
                             <span className="px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wider uppercase bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 shrink-0">
                               LOT
                             </span>
-                            <input
-                              value={line.lot_no}
-                              onChange={(e) => setLineField(idx, "lot_no", e.target.value)}
-                              placeholder={hasSeries ? "Auto / Enter Lot No." : "Lot No."}
-                              className={`${inputCls} font-mono text-xs`}
-                              style={S.input}
-                            />
+                            <div className="relative flex-1 flex items-center">
+                              <input
+                                value={line.lot_no}
+                                onChange={(e) => setLineField(idx, "lot_no", e.target.value)}
+                                placeholder={hasSeries ? "Auto / Enter or pick Lot…" : "Enter or pick Lot…"}
+                                className={`${inputCls} font-mono text-xs pr-7`}
+                                style={S.input}
+                              />
+                              <button
+                                type="button"
+                                onClick={() => setOpenLotIdx(openLotIdx === idx ? null : idx)}
+                                className="absolute right-1 text-zinc-400 hover:text-zinc-200 p-1 rounded"
+                                title="Pick from existing lots or manage lot"
+                              >
+                                <ChevronDown
+                                  className={`h-3.5 w-3.5 transition-transform ${openLotIdx === idx ? "rotate-180" : ""}`}
+                                />
+                              </button>
+                            </div>
                             {hasSeries && (
                               <Button
                                 type="button"
@@ -535,10 +864,28 @@ export default function GoodsReceiptPanel() {
                                 disabled={isGenerating}
                                 onClick={() => handleGenerateTracking(idx, 'LOT')}
                                 className="px-2 py-0.5 text-[11px] h-7 font-mono shrink-0 nf-btn-secondary"
-                                title="Preview next Lot No."
+                                title="Preview next Lot No. from series"
                               >
                                 {isGenerating ? "…" : "Gen"}
                               </Button>
+                            )}
+
+                            {openLotIdx === idx && (
+                              <LotDropdownPanel
+                                itemId={line.item_id}
+                                warehouseId={header.warehouse_id}
+                                hasSeries={Boolean(hasSeries)}
+                                currentLot={line.lot_no}
+                                onSelectLot={(lotNo, expiryDate) => {
+                                  setLineField(idx, "lot_no", lotNo);
+                                  if (expiryDate) {
+                                    setLineField(idx, "expiry_date", expiryDate.slice(0, 10));
+                                  }
+                                }}
+                                onGenerate={() => handleGenerateTracking(idx, 'LOT')}
+                                onClose={() => setOpenLotIdx(null)}
+                                isGenerating={isGenerating}
+                              />
                             )}
                           </div>
                         ) : isSerial ? (
@@ -585,71 +932,12 @@ export default function GoodsReceiptPanel() {
                                 </button>
 
                                 {openSerialIdx === idx && (
-                                  <div
-                                    className="absolute top-full left-0 mt-1 z-50 w-72 rounded-lg border shadow-2xl p-2.5"
-                                    style={{
-                                      backgroundColor: "var(--surface-raised)",
-                                      borderColor: "var(--border)",
-                                    }}
-                                  >
-                                    <div
-                                      className="flex items-center justify-between pb-2 mb-2 border-b"
-                                      style={{ borderColor: "var(--border)" }}
-                                    >
-                                      <span className="text-xs font-semibold" style={S.primary}>
-                                        Generated Serials ({line.serial_no ? line.serial_no.split(/[\n,]+/).filter(Boolean).length : 0}/{Math.round(Number(line.quantity || 1))})
-                                      </span>
-                                      <button
-                                        type="button"
-                                        onClick={() => setOpenSerialIdx(null)}
-                                        className="text-xs px-1.5 py-0.5 rounded hover:bg-white/10"
-                                        style={S.sub}
-                                      >
-                                        ✕
-                                      </button>
-                                    </div>
-
-                                    <div className="max-h-48 overflow-y-auto space-y-1.5 pr-1">
-                                      {(() => {
-                                        const serials = line.serial_no
-                                          ? line.serial_no.split(/[\n,]+/).map((s: string) => s.trim()).filter(Boolean)
-                                          : [];
-                                        const targetQty = Math.max(1, Math.round(Number(line.quantity || 1)));
-                                        const displayCount = Math.max(serials.length, targetQty);
-                                        const rows = Array.from({ length: displayCount }, (_, i) => serials[i] || "");
-
-                                        return rows.map((s, sIdx) => (
-                                          <div key={sIdx} className="flex items-center gap-1.5">
-                                            <span className="text-[10px] font-mono px-1 py-0.5 rounded bg-black/25 text-zinc-400 w-6 text-center shrink-0">
-                                              #{sIdx + 1}
-                                            </span>
-                                            <input
-                                              type="text"
-                                              value={s}
-                                              placeholder={`Serial #${sIdx + 1}`}
-                                              onChange={(e) => {
-                                                const updated = [...rows];
-                                                updated[sIdx] = e.target.value.trim();
-                                                setLineField(idx, "serial_no", updated.filter(Boolean).join(", "));
-                                              }}
-                                              className="w-full text-xs h-7 px-2 font-mono rounded border"
-                                              style={S.input}
-                                            />
-                                          </div>
-                                        ));
-                                      })()}
-                                    </div>
-                                    <div className="mt-2 pt-2 border-t flex justify-end" style={{ borderColor: "var(--border)" }}>
-                                      <Button
-                                        size="sm"
-                                        variant="ghost"
-                                        onClick={() => setOpenSerialIdx(null)}
-                                        className="h-6 text-[11px] px-2"
-                                      >
-                                        Done
-                                      </Button>
-                                    </div>
-                                  </div>
+                                  <SerialDropdownPanel
+                                    targetQty={Math.max(1, Math.round(Number(line.quantity || 1)))}
+                                    serialValue={line.serial_no}
+                                    onChange={(val) => setLineField(idx, "serial_no", val)}
+                                    onClose={() => setOpenSerialIdx(null)}
+                                  />
                                 )}
                               </div>
                             ) : (
