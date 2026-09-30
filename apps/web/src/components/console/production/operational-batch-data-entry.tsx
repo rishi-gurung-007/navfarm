@@ -3172,7 +3172,7 @@ export default function OperationalBatchDataEntry() {
                       Animal Code
                     </TableHead>
                     <TableHead className="h-auto px-3 py-2">Ear Tag</TableHead>
-                    <TableHead className="h-auto px-3 py-2">Sex</TableHead>
+                    <TableHead className="h-auto px-3 py-2">Gender</TableHead>
                     <TableHead className="h-auto px-3 py-2">Breed</TableHead>
                     <TableHead className="h-auto px-3 py-2">
                       Age (Weeks)
@@ -3203,7 +3203,11 @@ export default function OperationalBatchDataEntry() {
                           {a.ear_tag || '—'}
                         </TableCell>
                         <TableCell className="px-3 py-1.5" style={S.sub}>
-                          {a.gender === 'F' ? 'Female' : 'Male'}
+                          {a.gender === 'F' || a.gender === 'Female'
+                            ? 'Female'
+                            : a.gender === 'M' || a.gender === 'Male'
+                              ? 'Male'
+                              : (a.gender || '—')}
                         </TableCell>
                         <TableCell className="px-3 py-1.5" style={S.sub}>
                           {a.breed_name || '—'}

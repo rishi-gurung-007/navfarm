@@ -2807,7 +2807,7 @@ export default function BatchPanel() {
                           Ear Tag
                         </TableHead>
                         <TableHead className="h-auto px-3 py-2">
-                          Type / Sex
+                          Type / Gender
                         </TableHead>
                         <TableHead className="h-auto px-3 py-2">
                           Breed
