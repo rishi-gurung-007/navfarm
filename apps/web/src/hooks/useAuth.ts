@@ -30,7 +30,7 @@ export interface NavUser {
   userId:              string;
   email:               string;
   fullName:            string;
-  userType:            "SYSTEM_ADMIN" | "TENANT_ADMIN" | "COMPANY_ADMIN" | "OPERATIONAL_ADMIN" | "STANDARD_USER";
+  userType:            "SYSTEM_ADMIN" | "TENANT_ADMIN" | "COMPANY_ADMIN" | "OPERATIONAL_ADMIN" | "FARM_MANAGER" | "STANDARD_USER";
   companyId?:          string;
   company_id?:         string;
   tenantId?:           string;
@@ -101,7 +101,7 @@ export function getActiveWorkspaceScope(): WorkspaceScope {
     return "COMPANY";
   }
 
-  if (user.userType === "OPERATIONAL_ADMIN" || user.userType === "STANDARD_USER") {
+  if (user.userType === "OPERATIONAL_ADMIN" || user.userType === "FARM_MANAGER" || user.userType === "STANDARD_USER") {
     return "OPERATIONAL";
   }
 
@@ -244,7 +244,7 @@ export function setActiveOperationalArea(area: OperationalAreaRef | null): void 
 }
 
 /**
- * The active farm. A STANDARD_USER is bound to exactly one farm
+ * The active farm. FARM_MANAGER and STANDARD_USER are bound to exactly one farm
  * (user_master.farm_id, decided 2026-09-14/15) — it is never a switch, so
  * this always answers with the user's own farm and ignores anything stored.
  * Admin user types (system/tenant/company) and operational admins may view
@@ -255,7 +255,7 @@ export function getActiveFarmId(): string | null {
   if (typeof window === "undefined") return null;
   const user = getStoredUser();
   if (!user) return null;
-  if (user.userType === "STANDARD_USER") {
+  if (user.userType === "FARM_MANAGER" || user.userType === "STANDARD_USER") {
     return user.farmId ?? user.farm_id ?? null;
   }
   return localStorage.getItem("active_farm_id") || null;
@@ -264,9 +264,9 @@ export function getActiveFarmId(): string | null {
 export function setActiveFarmId(farmId: string | null): void {
   if (typeof window === "undefined") return;
   const user = getStoredUser();
-  // A standard user's farm is fixed — selecting one here would imply a
+  // A farm-bound user's farm is fixed — selecting one here would imply a
   // choice that does not exist.
-  if (user?.userType === "STANDARD_USER") return;
+  if (user?.userType === "FARM_MANAGER" || user?.userType === "STANDARD_USER") return;
   if (farmId) localStorage.setItem("active_farm_id", farmId);
   else localStorage.removeItem("active_farm_id");
 }

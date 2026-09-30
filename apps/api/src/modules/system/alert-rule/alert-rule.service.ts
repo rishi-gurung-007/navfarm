@@ -13,6 +13,10 @@ import { CreateAlertRuleDto, QueryAlertRuleDto, UpdateAlertRuleDto } from './ale
 const table = schema.alertRule;
 const nowTs = () => new Date().toISOString().slice(0, 19).replace('T', ' ');
 
+/** HEAD_OF_FARM is alert-rule legacy configuration, never a stored user type. */
+export const normalizeFeedRecipientRole = (role: string): string =>
+  role === 'HEAD_OF_FARM' ? 'OPERATIONAL_ADMIN' : role;
+
 /**
  * The five rules the feed workbook itself seeds per company (0118's own
  * INSERT, verbatim): FEED-BELOW-L1 (§4 column F, CRITICAL_FIRST_PRIORITY,

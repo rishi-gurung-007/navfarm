@@ -36,6 +36,15 @@ describe('resolveFarmScope', () => {
     await expect(resolveFarmScope(dbWith({ location_id: 'farm-g' }), req)).rejects.toThrow(new ForbiddenException('Not authorized for this farm.'));
   });
 
+  it('fixes a farm manager to their assigned farm and rejects a cross-farm header', async () => {
+    const own = await resolveFarmScope(dbWith({ location_id: 'farm-g' }), input('FARM_MANAGER', { user: { farmId: 'farm-g' } }));
+    expect(own).toEqual({ farmId: 'farm-g', restricted: true, companyId: 'co-1', lobId: 'lob-pig' });
+
+    const crossFarm = input('FARM_MANAGER', { user: { farmId: 'farm-g' }, headers: { 'x-active-farm-id': 'farm-k' } });
+    await expect(resolveFarmScope(dbWith({ location_id: 'farm-g' }), crossFarm))
+      .rejects.toThrow(new ForbiddenException('Not authorized for this farm.'));
+  });
+
   it('refuses a restricted user with no operational area', async () => {
     const req = input('OPERATIONAL_ADMIN', { activeArea: undefined });
     await expect(resolveFarmScope(dbWith(undefined), req)).rejects.toThrow(new BadRequestException('Select an operational area first.'));

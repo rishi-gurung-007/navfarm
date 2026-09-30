@@ -7,6 +7,7 @@ import { and, eq, isNull } from 'drizzle-orm';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../../core/database/schema';
 import { resolveJwtSecret } from '../../../../config/jwt.config';
+import { isFarmBoundUserType } from '../../../../common/user-type-hierarchy';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
@@ -51,7 +52,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       fullName: user.full_name,
       tenantId: user.tenant_id,
       companyId: user.company_id,
-      farmId: user.farm_id ?? null,
+      farmId: isFarmBoundUserType(user.user_type) ? user.farm_id ?? null : null,
       userType: user.user_type,
     };
   }

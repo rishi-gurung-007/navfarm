@@ -51,7 +51,7 @@ describe('UserService user-type hierarchy', () => {
     full_name: 'New User',
     email: 'new.user@example.test',
     password: 'longenough1',
-    ...(!user_type || user_type === 'STANDARD_USER' ? { farm_id: FARM } : {}),
+    ...(!user_type || user_type === 'FARM_MANAGER' || user_type === 'STANDARD_USER' ? { farm_id: FARM } : {}),
     ...(user_type ? { user_type } : {}),
   });
 
@@ -75,8 +75,8 @@ describe('UserService user-type hierarchy', () => {
       expect(update.map((e) => e.property)).toContain('user_type');
     });
 
-    it('accepts a known user_type', async () => {
-      const errors = await validate(plainToInstance(UpdateUserDto, { user_type: 'OPERATIONAL_ADMIN' }));
+    it('accepts FARM_MANAGER as a known user_type', async () => {
+      const errors = await validate(plainToInstance(UpdateUserDto, { user_type: 'FARM_MANAGER' }));
       expect(errors).toHaveLength(0);
     });
   });
@@ -99,6 +99,25 @@ describe('UserService user-type hierarchy', () => {
       queueUser(target(type, 'created'));
       await expect(service.create(createDto(type), requester('COMPANY_ADMIN'))).resolves.toMatchObject({ user_type: type });
       expect(values).toHaveBeenCalledWith(expect.objectContaining({ user_type: type }));
+    });
+
+    it('lets an OPERATIONAL_ADMIN create a FARM_MANAGER bound to one active farm', async () => {
+      selectResults.push([{ tenant_id: TENANT }]);
+      selectResults.push([{ location_id: FARM }]);
+      selectResults.push([]);
+      queueUser(target('FARM_MANAGER', 'created'));
+
+      await expect(service.create(createDto('FARM_MANAGER'), requester('OPERATIONAL_ADMIN')))
+        .resolves.toMatchObject({ user_type: 'FARM_MANAGER' });
+      expect(values).toHaveBeenCalledWith(expect.objectContaining({ user_type: 'FARM_MANAGER', farm_id: FARM }));
+    });
+
+    it('requires a farm when creating a FARM_MANAGER', async () => {
+      const dto = createDto('FARM_MANAGER');
+      delete dto.farm_id;
+      selectResults.push([{ tenant_id: TENANT }]);
+      await expect(service.create(dto, requester('OPERATIONAL_ADMIN')))
+        .rejects.toThrow(new BadRequestException('A farm manager must be assigned to a farm.'));
     });
 
     it('defaults an omitted user_type to STANDARD_USER, not the legacy STAFF', async () => {

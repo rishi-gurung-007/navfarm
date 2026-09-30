@@ -32,6 +32,15 @@ describe('FeedForecastService — Plan B entry points', () => {
     await expect(service.resolveFarm(undefined, 'tenant-1', 'STANDARD_USER')).resolves.toEqual({ farmId: 'farm-a', companyId: 'co-1' });
   });
 
+  it('answers NotFound when a FARM_MANAGER names another farm', async () => {
+    const cls = transactionCls({
+      select: () => ({ from: () => ({ where: () => ({ limit: async () => [{ location_id: 'farm-b' }] }) }) }),
+    });
+    useFarmScope(cls, { farmId: 'farm-a', restricted: true, companyId: 'co-1', lobId: null });
+    const service = new FeedForecastService(cls, {} as any, { log: jest.fn() } as any, { currentItems: jest.fn(async () => new Map()) } as any);
+    await expect(service.resolveFarm('farm-b', 'tenant-1', 'FARM_MANAGER')).rejects.toBeInstanceOf(NotFoundException);
+  });
+
   it('runs every loader under the computed farm and returns sources and diet changes', async () => {
     const cls = transactionCls({});
     const service = new FeedForecastService(cls, {} as any, { log: jest.fn() } as any, { currentItems: jest.fn(async () => new Map()) } as any);

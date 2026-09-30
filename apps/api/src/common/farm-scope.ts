@@ -4,6 +4,7 @@ import { AnyMySqlColumn } from 'drizzle-orm/mysql-core';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../core/database/schema';
+import { isFarmBoundUserType } from './user-type-hierarchy';
 
 /**
  * Farm scope — the second access boundary beside company/area.
@@ -17,8 +18,8 @@ import * as schema from '../core/database/schema';
 export const FARM_SCOPE_KEY = 'farmScope';
 export const FARM_SCOPED_KEY = 'farmScoped';
 
-/** User types whose operational reads are bounded by LOB and, for a standard user, one farm. */
-export const RESTRICTED_USER_TYPES = ['OPERATIONAL_ADMIN', 'STANDARD_USER'];
+/** User types whose operational reads are bounded by LOB and, for farm-bound personas, one farm. */
+export const RESTRICTED_USER_TYPES = ['OPERATIONAL_ADMIN', 'FARM_MANAGER', 'STANDARD_USER'];
 
 export interface FarmScope {
   /** The one farm in force, or null for every farm the company scope allows. */
@@ -82,13 +83,13 @@ export async function resolveFarmScope(db: Db, input: ResolveFarmScopeInput): Pr
   // Company-bound users must never become tenant-wide merely because a client
   // omitted the active-company header. Tenant/system admins legitimately have
   // no fixed company and remain unbounded until they select one.
-  const assignedCompanyId = ['COMPANY_ADMIN', 'OPERATIONAL_ADMIN', 'STANDARD_USER'].includes(user.userType)
+  const assignedCompanyId = ['COMPANY_ADMIN', 'OPERATIONAL_ADMIN', 'FARM_MANAGER', 'STANDARD_USER'].includes(user.userType)
     ? user.companyId
     : null;
   const companyId = activeArea?.company_id ?? activeCompanyId ?? assignedCompanyId ?? null;
   const lobId = restricted ? activeArea!.lob_id : null;
 
-  if (user.userType === 'STANDARD_USER') {
+  if (isFarmBoundUserType(user.userType)) {
     if (!user.farmId) throw new ForbiddenException('No farm is assigned to this user.');
     if (requested && requested !== user.farmId) throw new ForbiddenException('Not authorized for this farm.');
     if (!(await activeFarmOfCompany(db, user.farmId, companyId ?? undefined, tenantId))) {

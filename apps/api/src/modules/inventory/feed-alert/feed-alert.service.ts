@@ -9,7 +9,7 @@ import { FARM_SCOPE_KEY, FarmScope } from '../../../common/farm-scope';
 import { isDuplicateEntry } from '../../../common/filters/http-exception.filter';
 import { FeedForecastService } from '../feed-forecast/feed-forecast.service';
 import { SiloFeedService } from '../silo-feed/silo-feed.service';
-import { AlertRuleService } from '../../system/alert-rule/alert-rule.service';
+import { AlertRuleService, normalizeFeedRecipientRole } from '../../system/alert-rule/alert-rule.service';
 import { addDays, parseUtcTimestamp, todayInZone, todayLocal, utcTimestamp, type DietChange } from '../feed-forecast/feed-forecast.engine';
 import type { AlertFrequency, PriorityLevel } from '../../system/alert-rule/alert-rule.rules';
 import {
@@ -34,9 +34,12 @@ export function visibleTo(
   seesAll: boolean,
 ): boolean {
   if (seesAll) return true;
-  const recipients = Array.isArray(alert.recipient_roles) ? (alert.recipient_roles as string[]) : [];
-  if (recipients.some((r) => roleCodes.includes(r))) return true;
-  return !!alert.escalated_at && !!alert.escalation_role && roleCodes.includes(alert.escalation_role);
+  const recipients = Array.isArray(alert.recipient_roles)
+    ? (alert.recipient_roles as string[]).map(normalizeFeedRecipientRole)
+    : [];
+  const normalizedRoleCodes = roleCodes.map(normalizeFeedRecipientRole);
+  if (recipients.some((r) => normalizedRoleCodes.includes(r))) return true;
+  return !!alert.escalated_at && !!alert.escalation_role && normalizedRoleCodes.includes(normalizeFeedRecipientRole(alert.escalation_role));
 }
 
 /**
@@ -198,7 +201,7 @@ export class FeedAlertService {
       .orderBy(desc(schema.feedAlert.last_notified_at))
       .limit(200);
     const seesAll = SEES_ALL.includes(user?.userType ?? '');
-    const roleCodes = seesAll ? [] : await this.roleCodesOf(user?.userId, companyId);
+    const roleCodes = seesAll ? [] : [...await this.roleCodesOf(user?.userId, companyId), normalizeFeedRecipientRole(user?.userType ?? '')];
     return rows.filter((r) => visibleTo(r.alert, roleCodes, seesAll)).map((r) => ({ ...r.alert, farm_code: r.farm_code }));
   }
 
@@ -261,7 +264,7 @@ export class FeedAlertService {
     for (const r of rows) {
       if (companyOf.get(r.alert.farm_id) !== r.alert.company_id) continue;
       if (!seesAll && !rolesByCompany.has(r.alert.company_id)) {
-        rolesByCompany.set(r.alert.company_id, await this.roleCodesOf(user?.userId, r.alert.company_id));
+        rolesByCompany.set(r.alert.company_id, [...await this.roleCodesOf(user?.userId, r.alert.company_id), normalizeFeedRecipientRole(user?.userType ?? '')]);
       }
       if (visibleTo(r.alert, rolesByCompany.get(r.alert.company_id) ?? [], seesAll)) out.push({ ...r.alert, farm_code: r.farm_code });
     }

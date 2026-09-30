@@ -1,7 +1,7 @@
 import { ConflictException } from '@nestjs/common';
 import { MySqlDialect } from 'drizzle-orm/mysql-core';
 import { transactionCls } from '../../../test-utils/transaction-cls';
-import { AlertRuleService } from './alert-rule.service';
+import { AlertRuleService, normalizeFeedRecipientRole } from './alert-rule.service';
 
 /** "Only one low feed event applies per silo" (Master Setup §4 row 45). */
 describe('AlertRuleService', () => {
@@ -25,6 +25,10 @@ describe('AlertRuleService', () => {
     capturedWhere = undefined;
     (db.select as jest.Mock).mockClear();
     (db.insert as jest.Mock).mockReset();
+  });
+
+  it('maps legacy HEAD_OF_FARM recipients to the existing OPERATIONAL_ADMIN user type', () => {
+    expect(normalizeFeedRecipientRole('HEAD_OF_FARM')).toBe('OPERATIONAL_ADMIN');
   });
 
   it('refuses a second active FEED_BELOW_L1 rule for the same company and farm filter', async () => {

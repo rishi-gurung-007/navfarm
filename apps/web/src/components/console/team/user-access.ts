@@ -11,10 +11,16 @@ export const USER_TYPES = [
   "TENANT_ADMIN",
   "COMPANY_ADMIN",
   "OPERATIONAL_ADMIN",
+  "FARM_MANAGER",
   "STANDARD_USER",
 ] as const;
 
 export type UserType = (typeof USER_TYPES)[number];
+
+export function userTypeLabel(userType?: string | null): string {
+  if (userType === "OPERATIONAL_ADMIN") return "Head of Farms";
+  return (userType || "").toLowerCase().replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
 
 /** Higher is more privileged. Anything off the ladder ranks 0, below STANDARD_USER. */
 export function userTypeRank(userType?: string | null): number {

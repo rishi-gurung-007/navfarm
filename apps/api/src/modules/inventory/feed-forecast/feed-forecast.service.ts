@@ -15,6 +15,7 @@ import { QueryFeedForecastDto, UpdateFeedFarmSettingsDto, UpdateSiloPlanningDto 
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { SiloFeedService } from '../silo-feed/silo-feed.service';
 import { assertSiloLevels } from '../silo-feed/silo-levels';
+import { isFarmBoundUserType } from '../../../common/user-type-hierarchy';
 
 /**
  * The LOB bound on the forecast's location read for a restricted
@@ -969,7 +970,7 @@ export class FeedForecastService {
       eq(L.is_active, true),
       isNull(L.deleted_at),
     ];
-    if (userType === 'STANDARD_USER') {
+    if (isFarmBoundUserType(userType)) {
       if (!scope.farmId) return null;
       conditions.push(eq(L.location_id, scope.farmId));
       if (scope.companyId) conditions.push(eq(L.company_id, scope.companyId));
@@ -1024,23 +1025,23 @@ export class FeedForecastService {
   async resolveFarm(queryFarmId: string | undefined, tenantId: string, userType: string | undefined): Promise<ResolvedFarm> {
     const query = { farmId: queryFarmId };
     const scope = farmScope(this.cls);
-    // Ruling (fix round 1): only STANDARD_USER is farm-bound for this
-    // endpoint. STANDARD_USER keeps D13 — a request naming another farm
+    // Ruling (Task 1): only farm-bound personas are farm-bound for this
+    // endpoint. They keep D13 — a request naming another farm
     // answers NotFound, not Forbidden, so the endpoint does not confirm that
     // farm exists. Every other user type may ask for any active farm of
     // their company (LOB-checked for OPERATIONAL_ADMIN); the query farmId
     // wins over whatever the workspace switcher has pinned in the header, so
     // an admin can switch farms on this page without re-pinning first.
-    const isStandardUser = userType === 'STANDARD_USER';
+    const isFarmBoundUser = isFarmBoundUserType(userType);
     let farmId: string | undefined;
     // The company that validated the chosen farm — normally scope.companyId,
     // but a TENANT_ADMIN/SYSTEM_ADMIN in tenant-wide scope (no company
     // pinned) has none, so it is resolved from the farm itself (fix round 2,
     // finding 2).
     let effectiveCompanyId = scope.companyId;
-    if (isStandardUser) {
-      // Fix round 1 (security): the guard always pins a farm for a
-      // STANDARD_USER — a scope with none is a malformed session, not an
+    if (isFarmBoundUser) {
+      // The guard always pins a farm for a farm-bound persona — a scope with
+      // none is a malformed session, not an
       // unrestricted one, so it must not fall through to an unchecked query
       // farm.
       if (!scope.farmId) throw new NotFoundException('Farm not found.');

@@ -13,7 +13,7 @@ import { Select } from "../../ui/select";
 import { Field, ReadField } from "../../ui/field";
 import { Badge } from "../../ui/badge";
 import { SearchableEntitySelect } from "../../../modules/master-data/SearchableEntitySelect";
-import { assignableUserTypes, isTenantLevelUserType } from "./user-access";
+import { assignableUserTypes, isTenantLevelUserType, userTypeLabel } from "./user-access";
 
 type Row = Record<string, any>;
 
@@ -100,7 +100,7 @@ export function MemberDialog({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
-  const isStandard = form.user_type === "STANDARD_USER";
+  const isFarmBound = form.user_type === "FARM_MANAGER" || form.user_type === "STANDARD_USER";
 
   // Farms, areas and roles all belong to the chosen company, and the first two
   // are narrowed by who is asking — an operational admin is only offered the
@@ -138,7 +138,7 @@ export function MemberDialog({
     event.preventDefault();
     setError("");
     if (!companyId) { setError(t("usrSelectCompanyFirst")); return; }
-    if (isStandard && !form.farm_id) { setError(t("tmFarmRequired")); return; }
+    if (isFarmBound && !form.farm_id) { setError(t("tmFarmRequired")); return; }
     setSaving(true);
     try {
       if (isEdit) {
@@ -154,8 +154,8 @@ export function MemberDialog({
         // unchanged values keeps the API's "did this actually change?" check
         // quiet, and the form locks them anyway.
         if (!isSelf) payload.user_type = form.user_type;
-        // An empty string is not a UUID and a non-standard user has no farm.
-        if (isStandard && form.farm_id) payload.farm_id = form.farm_id;
+        // An empty string is not a UUID and a non-farm-bound user has no farm.
+        if (isFarmBound && form.farm_id) payload.farm_id = form.farm_id;
         await api.put(`/user/${member?.user_id}`, payload);
         const held = member?.roles?.[0];
         if (roleId && roleId !== held?.role_id) {
@@ -176,7 +176,7 @@ export function MemberDialog({
           employee_id: form.employee_id || undefined,
           department: form.department || undefined,
           designation: form.designation || undefined,
-          farm_id: isStandard && form.farm_id ? form.farm_id : undefined,
+          farm_id: isFarmBound && form.farm_id ? form.farm_id : undefined,
           operational_area_ids: areaIds,
         });
         if (roleId && created?.user_id) {
@@ -301,22 +301,22 @@ export function MemberDialog({
             )}
 
             {isSelf || typeOptions.length === 0 ? (
-              <ReadField label={t("tmFieldUserType")} value={(form.user_type || "").replace(/_/g, " ")} />
+              <ReadField label={t("tmFieldUserType")} value={userTypeLabel(form.user_type)} />
             ) : (
               <Field label={t("tmFieldUserType")} htmlFor="tm-user-type" required>
                 <Select id="tm-user-type" value={form.user_type}
                   onChange={(e) => setForm({ ...form, user_type: e.target.value })}>
                   {typeOptions.map((type) => (
-                    <option key={type} value={type}>{type.replace(/_/g, " ")}</option>
+                    <option key={type} value={type}>{userTypeLabel(type)}</option>
                   ))}
                 </Select>
               </Field>
             )}
 
-            {/* A farm is a standard user's boundary and nothing else's, so the
-                field appears for exactly that type — the rule the API applies
+            {/* A farm is a farm-bound user's boundary, so the
+                field appears for each fixed-farm persona — the rule the API applies
                 to `user_master.farm_id`. */}
-            {isStandard && (
+            {isFarmBound && (
               isSelf ? (
                 <ReadField
                   className="sm:col-span-2"

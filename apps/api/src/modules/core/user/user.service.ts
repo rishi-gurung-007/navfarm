@@ -7,7 +7,7 @@ import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
 import { CreateUserDto, UpdateUserDto, QueryUserDto } from './dto/user.dto';
 import { UserDirectoryService } from '../../../core/database/user-directory.service';
-import { canAssignUserType, isTenantLevelUserType, outranks } from '../../../common/user-type-hierarchy';
+import { canAssignUserType, isFarmBoundUserType, isTenantLevelUserType, outranks } from '../../../common/user-type-hierarchy';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 
 /**
@@ -81,8 +81,8 @@ export class UserService {
       throw new ForbiddenException('You can only create users in your own tenant.');
     }
     await this.assertCompanyInReach(requester, dto.company_id, dto.tenant_id);
-    if (userType === 'STANDARD_USER' && !dto.farm_id) {
-      throw new BadRequestException('A standard user must be assigned to a farm.');
+    if (isFarmBoundUserType(userType) && !dto.farm_id) {
+      throw new BadRequestException(`A ${userType === 'FARM_MANAGER' ? 'farm manager' : 'standard user'} must be assigned to a farm.`);
     }
     if (dto.farm_id) await this.assertActiveCompanyFarm(dto.farm_id, dto.company_id, dto.tenant_id);
     const areaIds = await this.validateAreas(dto.operational_area_ids, dto.company_id, dto.tenant_id, requester);
@@ -115,8 +115,8 @@ export class UserService {
         department: dto.department || null,
         designation: dto.designation || null,
         timezone_pref_id: dto.timezone_pref_id || null,
-        // A farm is a standard user's boundary; on any other type it would mean nothing.
-        farm_id: userType === 'STANDARD_USER' ? dto.farm_id || null : null,
+        // Farm-bound personas share one fixed farm; authority remains distinct in the user-type ladder.
+        farm_id: isFarmBoundUserType(userType) ? dto.farm_id || null : null,
         invited_by: requester?.userId || null,
       });
       await tx.insert(schema.userCompanyAssignments).values({
@@ -366,11 +366,11 @@ export class UserService {
     }
 
     const resultingType = typeChanged ? dto.user_type : user.user_type;
-    const resultingFarm = resultingType === 'STANDARD_USER' ? (dto.farm_id !== undefined ? dto.farm_id : user.farm_id) : null;
-    if (resultingType === 'STANDARD_USER' && !resultingFarm) {
-      throw new BadRequestException('A standard user must be assigned to a farm.');
+    const resultingFarm = isFarmBoundUserType(resultingType) ? (dto.farm_id !== undefined ? dto.farm_id : user.farm_id) : null;
+    if (isFarmBoundUserType(resultingType) && !resultingFarm) {
+      throw new BadRequestException(`A ${resultingType === 'FARM_MANAGER' ? 'farm manager' : 'standard user'} must be assigned to a farm.`);
     }
-    if (resultingType === 'STANDARD_USER' && dto.farm_id) await this.assertActiveCompanyFarm(dto.farm_id, user.company_id, user.tenant_id);
+    if (isFarmBoundUserType(resultingType) && dto.farm_id) await this.assertActiveCompanyFarm(dto.farm_id, user.company_id, user.tenant_id);
     const areaIds = areasRequestedChange
       ? await this.validateAreas(requestedAreaIds, user.company_id, user.tenant_id, requester)
       : undefined;
@@ -384,7 +384,7 @@ export class UserService {
     if (dto.designation !== undefined) updates.designation = dto.designation;
     if (dto.timezone_pref_id !== undefined) updates.timezone_pref_id = dto.timezone_pref_id;
     if (dto.is_active !== undefined) updates.is_active = dto.is_active;
-    // Moving a standard user to another type clears the farm, which would
+    // Moving a farm-bound user to another type clears the farm, which would
     // otherwise sit on the row with no meaning.
     if (resultingFarm !== (user.farm_id ?? null)) updates.farm_id = resultingFarm;
 
@@ -476,7 +476,7 @@ export class UserService {
     return { deleted: true, user_id: id };
   }
 
-  /** Top-level active farms of a company, for the standard user's farm selector — the same rule create/update enforce. */
+  /** Top-level active farms of a company, for a farm-bound user's selector — the same rule create/update enforce. */
   async assignableFarms(companyId: string, requester: RequestingUser, activeCompanyId?: string) {
     await this.assertCompanyInReach(requester, companyId, requester.tenantId, activeCompanyId);
     return this.db

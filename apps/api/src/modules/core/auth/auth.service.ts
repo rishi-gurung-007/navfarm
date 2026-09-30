@@ -18,6 +18,7 @@ import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { ConnectionManagerService } from '../../../core/database/connection-manager.service';
 import { EncryptionService } from '../../system/encryption/encryption.service';
 import { UserDirectoryService } from '../../../core/database/user-directory.service';
+import { canAssignUserType, isFarmBoundUserType } from '../../../common/user-type-hierarchy';
 import * as nodemailer from 'nodemailer';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
@@ -137,19 +138,13 @@ export class AuthService {
       }
 
       const requesterType = requestingUser.user_type;
-      if (requesterType === 'TENANT_ADMIN') {
-        if (dto.user_type !== 'COMPANY_ADMIN' && dto.user_type !== 'OPERATIONAL_ADMIN' && dto.user_type !== 'STANDARD_USER') {
-          throw new BadRequestException('Tenant Administrators can register Company Admins, Operational Admins, or Standard Users.');
+      if (dto.user_type === 'FARM_MANAGER') {
+        throw new BadRequestException('Farm Managers must be created through Team Management with an assigned farm.');
+      }
+      if (!canAssignUserType(requesterType, dto.user_type)) {
+        if (['TENANT_ADMIN', 'COMPANY_ADMIN', 'OPERATIONAL_ADMIN', 'FARM_MANAGER'].includes(requesterType)) {
+          throw new BadRequestException('You are not allowed to assign that user type.');
         }
-      } else if (requesterType === 'COMPANY_ADMIN') {
-        if (dto.user_type !== 'OPERATIONAL_ADMIN' && dto.user_type !== 'STANDARD_USER') {
-          throw new BadRequestException('Company Administrators can register Operational Admins and Standard Operators.');
-        }
-      } else if (requesterType === 'OPERATIONAL_ADMIN') {
-        if (dto.user_type !== 'STANDARD_USER') {
-          throw new BadRequestException('Operational Administrators can only register Standard Operators.');
-        }
-      } else {
         throw new ForbiddenException('Insufficient privileges to register user accounts.');
       }
     } else {
@@ -675,7 +670,7 @@ export class AuthService {
       // Table will exist once migrated
     }
 
-    // A STANDARD_USER's farm is fixed at user_master.farm_id (never a switch —
+    // A farm-bound persona's farm is fixed at user_master.farm_id (never a switch —
     // see farm-scope.ts). The web needs the farm's code/name to show it, not
     // just its id, so it does not have to make a second round trip before it
     // can render "Farm: <code — name>". Farm-less users (every admin type
@@ -704,7 +699,7 @@ export class AuthService {
       tenantId: user.tenant_id,
       companyId: user.company_id,
       userType: user.user_type,
-      farmId: user.farm_id ?? null,
+      farmId: isFarmBoundUserType(user.user_type) ? user.farm_id ?? null : null,
       companies,
       operationalAreas,
     };
@@ -745,7 +740,7 @@ export class AuthService {
         permissions,
         // Present only for a user who actually has one — an admin without a
         // fixed farm carries neither key, rather than a farmId that is null.
-        ...(user.farm_id ? { farmId: user.farm_id, ...(farm ? { farm } : {}) } : {}),
+        ...(isFarmBoundUserType(user.user_type) && user.farm_id ? { farmId: user.farm_id, ...(farm ? { farm } : {}) } : {}),
       },
     };
   }

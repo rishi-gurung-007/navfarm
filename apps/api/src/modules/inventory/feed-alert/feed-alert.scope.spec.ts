@@ -2,7 +2,7 @@ import { NotFoundException } from '@nestjs/common';
 import { MySqlDialect } from 'drizzle-orm/mysql-core';
 import { transactionCls } from '../../../test-utils/transaction-cls';
 import * as schema from '../../../core/database/schema';
-import { FeedAlertService } from './feed-alert.service';
+import { FeedAlertService, visibleTo } from './feed-alert.service';
 
 /**
  * D24 (Rishi, 27 Sep): feed alerts are shown in the one Alerts page, for every
@@ -66,6 +66,17 @@ describe('FeedAlertService — every farm in scope (D24)', () => {
     ], ['FARM_MANAGER']);
     const list = await service.listScope({}, 't', { userId: 'u', userType: 'STANDARD_USER' });
     expect(list.map((a: any) => a.alert_id)).toEqual(['mine']);
+  });
+
+  it('shows a FARM_MANAGER alerts addressed to the farm-manager persona', async () => {
+    const { service } = build([{ alert: alertRow({ alert_id: 'mine' }), farm_code: 'VIL100' }]);
+    const list = await service.listScope({}, 't', { userId: 'u', userType: 'FARM_MANAGER' });
+    expect(list.map((a: any) => a.alert_id)).toEqual(['mine']);
+  });
+
+  it('treats legacy HEAD_OF_FARM alert configuration as OPERATIONAL_ADMIN, not a user type', () => {
+    expect(visibleTo(alertRow({ recipient_roles: ['HEAD_OF_FARM'] }), ['OPERATIONAL_ADMIN'], false)).toBe(true);
+    expect(visibleTo(alertRow({ recipient_roles: [], escalated_at: '2026-10-01 08:00:00', escalation_role: 'HEAD_OF_FARM' }), ['OPERATIONAL_ADMIN'], false)).toBe(true);
   });
 
   it('drops a row whose company is not its farm\'s company in scope', async () => {
