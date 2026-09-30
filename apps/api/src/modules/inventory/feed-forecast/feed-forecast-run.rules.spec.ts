@@ -1,4 +1,7 @@
-import { buildConfigSnapshot, buildRunLineSnapshots, buildSourceSnapshot, technicalRunCode } from './feed-forecast-run.rules';
+import {
+  buildConfigSnapshot, buildOutputSnapshot, buildRunLineSnapshots, buildSourceSnapshot,
+  FORECAST_RUN_OUTPUT_HASH_VERSION, technicalRunCode,
+} from './feed-forecast-run.rules';
 
 describe('feed forecast run snapshot rules', () => {
   it('hashes a detached effective-settings snapshot deterministically', () => {
@@ -53,6 +56,28 @@ describe('feed forecast run snapshot rules', () => {
 
     expect(first.values).toEqual({ batches: [{ batchId: 'batch-1', heads: 40 }], stock: [{ ledgerId: 'ledger-1', qty: 500 }] });
     expect(first.hash).not.toBe(changed.hash);
+  });
+
+  it('hashes the material run-line multiset with a stable version and no volatile row identity', () => {
+    const lines = buildRunLineSnapshots({ daily: [{
+      date: '2026-10-01', batchId: 'batch-1', destinationLocationId: 'silo-1', itemId: 'item-1',
+      heads: 40, feedRateKg: 2.5, openingStockKg: 500, confirmedReceiptKg: 0, demandKg: 100,
+      projectedClosingKg: 400, shortageDate: null, recommendedQtyKg: 700,
+    }] });
+
+    const first = buildOutputSnapshot(lines);
+    const reordered = buildOutputSnapshot([...lines].reverse());
+    const changed = buildOutputSnapshot([{ ...lines[0], dailyDemandKg: 101 }]);
+
+    expect(first).toEqual(reordered);
+    expect(first).toEqual({
+      version: FORECAST_RUN_OUTPUT_HASH_VERSION,
+      hash: expect.stringMatching(/^[a-f0-9]{64}$/),
+      lineCount: 1,
+    });
+    expect(first.hash).not.toBe(changed.hash);
+    expect(first).not.toHaveProperty('runLineId');
+    expect(first).not.toHaveProperty('createdAt');
   });
 
   it('uses the documented technical run code fallback without inventing a client number series', () => {

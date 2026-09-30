@@ -160,6 +160,7 @@ describe('FeedForecastRunService', () => {
     ]));
     expect(header.columns.find((column) => column.name === 'created_by')?.notNull).toBe(true);
     expect(header.columns.find((column) => column.name === 'source_snapshot')?.notNull).toBe(true);
+    expect(header.columns.find((column) => column.name === 'output_snapshot')?.notNull).toBe(true);
     expect(requisitionLine.columns.some((column) => column.name === 'feed_forecast_run_line_id')).toBe(false);
     expect(requisitionLine.columns.some((column) => column.name === 'feed_forecast_run_line_ids')).toBe(true);
   });
@@ -185,6 +186,9 @@ describe('FeedForecastRunService', () => {
       period_id: null, source_cutoff_at: '2026-10-01 08:00:00', created_by: 'user-1',
       config_snapshot: expect.objectContaining({ hash: expect.stringMatching(/^[a-f0-9]{64}$/) }),
       source_snapshot: output.sourceSnapshot,
+      output_snapshot: {
+        version: 'forecast-run-lines:v1', hash: expect.stringMatching(/^[a-f0-9]{64}$/), lineCount: 1,
+      },
     });
     expect(log.find((entry) => entry.op === 'insert' && entry.table === schema.feedForecastRunLine)?.values)
       .toEqual([expect.objectContaining({ forecast_date: '2026-10-01', batch_id: 'batch-1', shed_id: 'shed-1', destination_location_id: 'silo-1' })]);

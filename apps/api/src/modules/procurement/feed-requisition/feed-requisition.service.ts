@@ -22,8 +22,12 @@ import { farmScope } from '../../../common/farm-scope';
 import { userHasPermission } from '../../../common/permissions';
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { isDuplicateEntry } from '../../../common/filters/http-exception.filter';
-import { FeedForecastService, MAX_SPAN_DAYS } from '../../inventory/feed-forecast/feed-forecast.service';
+import { FeedForecastService, MAX_SPAN_DAYS, type FeedForecastResponse } from '../../inventory/feed-forecast/feed-forecast.service';
 import { utcTimestamp, type ForecastSource } from '../../inventory/feed-forecast/feed-forecast.engine';
+import {
+  buildOutputSnapshot, buildRunLineSnapshots, FORECAST_RUN_OUTPUT_HASH_VERSION,
+  type ForecastRunLineSnapshot, type ForecastRunOutputSnapshot,
+} from '../../inventory/feed-forecast/feed-forecast-run.rules';
 import { FeedAlertService } from '../../inventory/feed-alert/feed-alert.service';
 import { SiloFeedService } from '../../inventory/silo-feed/silo-feed.service';
 import { itemKindCondition } from '../../master-data/item/item-kind-filter';
@@ -319,7 +323,9 @@ export class FeedRequisitionService implements OnModuleInit {
 
   /**
    * A persisted run may explain a system draft only when it contains the
-   * exact engine inputs and requisition settings used for this calculation.
+   * exact engine inputs, material engine output and requisition settings used
+   * for this calculation. Both the live run lines and the fresh calculation
+   * must reproduce the immutable header's versioned output hash.
    * A requisition line aggregates every dated run line for its destination +
    * item; retaining all IDs avoids falsely presenting an arbitrary first day
    * as the sole origin of an aggregate quantity.
@@ -331,6 +337,7 @@ export class FeedRequisitionService implements OnModuleInit {
       to: string;
       sourceSnapshot?: { hash?: string };
       sources: ForecastSource[];
+      daily: FeedForecastResponse['daily'];
     },
     settings: FarmFeedSettings,
     wanted: DraftLine[],
@@ -343,6 +350,7 @@ export class FeedRequisitionService implements OnModuleInit {
       run_code: schema.feedForecastRun.run_code,
       version: schema.feedForecastRun.version,
       source_snapshot: schema.feedForecastRun.source_snapshot,
+      output_snapshot: schema.feedForecastRun.output_snapshot,
       config_snapshot: schema.feedForecastRun.config_snapshot,
     }).from(schema.feedForecastRun).where(and(
       eq(schema.feedForecastRun.tenant_id, tenantId),
@@ -356,6 +364,7 @@ export class FeedRequisitionService implements OnModuleInit {
     )).orderBy(desc(schema.feedForecastRun.version)).limit(1);
     if (!run) return null;
     const runSource = run.source_snapshot as { hash?: unknown } | null;
+    const runOutput = run.output_snapshot as Partial<ForecastRunOutputSnapshot> | null;
     const runConfig = run.config_snapshot as { values?: { requisitionDraftSettings?: Partial<FarmFeedSettings> } } | null;
     const savedSettings = runConfig?.values?.requisitionDraftSettings;
     if (!forecast.sourceSnapshot?.hash || runSource?.hash !== forecast.sourceSnapshot.hash || !savedSettings) return null;
@@ -372,10 +381,51 @@ export class FeedRequisitionService implements OnModuleInit {
     })) return null;
     const lines = await this.db.select({
       run_line_id: schema.feedForecastRunLine.run_line_id,
+      forecast_date: schema.feedForecastRunLine.forecast_date,
+      batch_id: schema.feedForecastRunLine.batch_id,
+      shed_id: schema.feedForecastRunLine.shed_id,
       destination_location_id: schema.feedForecastRunLine.destination_location_id,
       required_item_id: schema.feedForecastRunLine.required_item_id,
+      current_item_id: schema.feedForecastRunLine.current_item_id,
+      head_count: schema.feedForecastRunLine.head_count,
+      feed_rate_kg: schema.feedForecastRunLine.feed_rate_kg,
+      opening_stock_kg: schema.feedForecastRunLine.opening_stock_kg,
+      confirmed_receipt_kg: schema.feedForecastRunLine.confirmed_receipt_kg,
+      daily_demand_kg: schema.feedForecastRunLine.daily_demand_kg,
+      projected_closing_kg: schema.feedForecastRunLine.projected_closing_kg,
+      shortage_date: schema.feedForecastRunLine.shortage_date,
+      recommended_qty_kg: schema.feedForecastRunLine.recommended_qty_kg,
+      required_on_date: schema.feedForecastRunLine.required_on_date,
+      provenance_snapshot: schema.feedForecastRunLine.provenance_snapshot,
     }).from(schema.feedForecastRunLine).where(eq(schema.feedForecastRunLine.run_id, run.run_id))
       .orderBy(schema.feedForecastRunLine.forecast_date, schema.feedForecastRunLine.run_line_id);
+    const persistedMaterial: ForecastRunLineSnapshot[] = lines.map((line) => ({
+      forecastDate: line.forecast_date,
+      batchId: line.batch_id,
+      shedId: line.shed_id,
+      destinationLocationId: line.destination_location_id,
+      requiredItemId: line.required_item_id,
+      currentItemId: line.current_item_id,
+      headCount: line.head_count,
+      feedRateKg: Number(line.feed_rate_kg),
+      openingStockKg: Number(line.opening_stock_kg),
+      confirmedReceiptKg: Number(line.confirmed_receipt_kg),
+      dailyDemandKg: Number(line.daily_demand_kg),
+      projectedClosingKg: Number(line.projected_closing_kg),
+      shortageDate: line.shortage_date,
+      recommendedQtyKg: Number(line.recommended_qty_kg),
+      requiredOnDate: line.required_on_date,
+      provenanceSnapshot: line.provenance_snapshot,
+    }));
+    const freshOutput = buildOutputSnapshot(buildRunLineSnapshots(forecast));
+    const persistedOutput = buildOutputSnapshot(persistedMaterial);
+    if (
+      runOutput?.version !== FORECAST_RUN_OUTPUT_HASH_VERSION
+      || runOutput.hash !== freshOutput.hash
+      || runOutput.lineCount !== freshOutput.lineCount
+      || runOutput.hash !== persistedOutput.hash
+      || runOutput.lineCount !== persistedOutput.lineCount
+    ) return null;
     const linesBySource = new Map<string, string[]>();
     for (const line of lines) {
       if (!line.destination_location_id) continue;

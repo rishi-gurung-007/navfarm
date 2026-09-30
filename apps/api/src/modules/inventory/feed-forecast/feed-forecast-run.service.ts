@@ -9,7 +9,7 @@ import * as schema from '../../../core/database/schema';
 import { FeedSettingsService } from '../feed-settings/feed-settings.service';
 import type { FeedForecastResponse } from './feed-forecast.service';
 import type { ForecastView } from './feed-forecast.view';
-import { buildConfigSnapshot, buildRunLineSnapshots, technicalRunCode } from './feed-forecast-run.rules';
+import { buildConfigSnapshot, buildOutputSnapshot, buildRunLineSnapshots, technicalRunCode } from './feed-forecast-run.rules';
 
 export interface CreateFeedForecastRunInput {
   tenantId: string;
@@ -108,11 +108,13 @@ export class FeedForecastRunService {
       const runId = randomUUID();
       const runCode = technicalRunCode(input.farmId, version);
       const lines = buildRunLineSnapshots(output);
+      const outputSnapshot = buildOutputSnapshot(lines);
 
       await this.db.insert(schema.feedForecastRun).values({
         run_id: runId, run_code: runCode, tenant_id: input.tenantId, company_id: input.companyId, farm_id: input.farmId,
         version, planning_date: input.planningDate, view: input.view, from_date: input.from, to_date: input.to,
         period_id: input.periodId, source_cutoff_at: input.sourceCutoffAt, source_snapshot: output.sourceSnapshot,
+        output_snapshot: outputSnapshot,
         config_snapshot: configSnapshot, created_by: creatorId,
       });
       if (lines.length) {

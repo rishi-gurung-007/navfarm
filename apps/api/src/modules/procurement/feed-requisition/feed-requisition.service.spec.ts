@@ -1,10 +1,12 @@
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { MySqlDialect } from 'drizzle-orm/mysql-core';
 import type { ClsService } from 'nestjs-cls';
+import { createHash } from 'node:crypto';
 import { transactionCls } from '../../../test-utils/transaction-cls';
 import { FARM_SCOPE_KEY, farmScope } from '../../../common/farm-scope';
 import * as schema from '../../../core/database/schema';
 import { todayInZone, type ForecastSource } from '../../inventory/feed-forecast/feed-forecast.engine';
+import { buildRunLineSnapshots, type ForecastRunLineSnapshot } from '../../inventory/feed-forecast/feed-forecast-run.rules';
 import { serverToday } from './feed-requisition.rules';
 import { FeedRequisitionService } from './feed-requisition.service';
 
@@ -88,7 +90,54 @@ const source = (over: Partial<ForecastSource> = {}): ForecastSource => ({
 const FARM_ROW = { location_code: 'GRS', feed_bulk_multiple_kg: 3000, feed_bag_size_kg: 50, feed_truck_target_kg: 30000, feed_production_weekday: 0 };
 const SILO_ROW = { location_id: 'silo-1', location_code: 'GRS/SILO-001', location_type: 'SILO', farm_id: 'farm-grs', is_active: true, feed_in_bags: null, low_level_kg: '1500.00' };
 
-function setup(sources: ForecastSource[], queues: Map<unknown, unknown[][]>) {
+const forecastDaily = (over: Record<string, unknown> = {}) => ({
+  date: serverToday(), batchId: 'batch-1', batchNo: 'BATCH-1', shedId: 'shed-1', shedCode: 'SHED-1', stageCode: 'WEANER',
+  destinationLocationId: 'silo-1', itemId: 'item-r1', itemNo: 'R1', itemName: 'Weaner Diet R1', currentItemId: 'item-r1',
+  heads: 1000, feedRateKg: 2, openingStockKg: 1500, confirmedReceiptKg: 0, demandKg: 2000,
+  projectedClosingKg: 0, runDownDate: serverToday(), shortageDate: serverToday(), recommendedQtyKg: 4500,
+  requiredOn: serverToday(), lifecycleId: 'row-r1', sourceType: 'SILO', sourceCode: 'GRS/SILO-001',
+  perDayIntakeKg: 2000, daysOfStock: 0, sharedBatchCount: 1, indicative: false, refillDate: serverToday(), overdue: true,
+  ...over,
+});
+
+const OUTPUT_HASH_VERSION = 'forecast-run-lines:v1';
+const canonical = (value: unknown): unknown => Array.isArray(value)
+  ? value.map(canonical)
+  : value && typeof value === 'object'
+    ? Object.fromEntries(Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => [key, canonical(entry)]))
+    : value;
+const outputSnapshot = (lines: ForecastRunLineSnapshot[]) => {
+  const values = lines.map((line) => canonical(line)).sort((left, right) => {
+    const leftJson = JSON.stringify(left);
+    const rightJson = JSON.stringify(right);
+    return leftJson < rightJson ? -1 : leftJson > rightJson ? 1 : 0;
+  });
+  const hash = createHash('sha256').update(`${OUTPUT_HASH_VERSION}\n${JSON.stringify(values)}`).digest('hex');
+  return { version: OUTPUT_HASH_VERSION, hash, lineCount: values.length };
+};
+const storedRunLine = (line: ForecastRunLineSnapshot, runLineId: string) => ({
+  run_line_id: runLineId,
+  forecast_date: line.forecastDate,
+  batch_id: line.batchId,
+  shed_id: line.shedId,
+  destination_location_id: line.destinationLocationId,
+  required_item_id: line.requiredItemId,
+  current_item_id: line.currentItemId,
+  head_count: line.headCount,
+  feed_rate_kg: String(line.feedRateKg),
+  opening_stock_kg: String(line.openingStockKg),
+  confirmed_receipt_kg: String(line.confirmedReceiptKg),
+  daily_demand_kg: String(line.dailyDemandKg),
+  projected_closing_kg: String(line.projectedClosingKg),
+  shortage_date: line.shortageDate,
+  recommended_qty_kg: String(line.recommendedQtyKg),
+  required_on_date: line.requiredOnDate,
+  provenance_snapshot: line.provenanceSnapshot,
+});
+
+function setup(sources: ForecastSource[], queues: Map<unknown, unknown[][]>, daily: ReturnType<typeof forecastDaily>[] = [forecastDaily()]) {
   // The recorder asks the CLS whether a write is inside the transaction; the CLS needs the recorder's db.
   const ref = {} as { cls: ClsService };
   const { db, log } = recordingDb(queues, () => ref.cls);
@@ -99,7 +148,7 @@ function setup(sources: ForecastSource[], queues: Map<unknown, unknown[][]>) {
     withFarmScope: jest.fn((farmId: string, companyId: string, work: () => Promise<unknown>) =>
       cls.run(async () => { cls.set(FARM_SCOPE_KEY, { ...farmScope(cls), farmId, companyId }); return work(); })),
     computeForFarm: jest.fn(async () => ({
-      planningDate: serverToday(), to: serverToday(), sources, farm: { id: 'farm-grs', code: 'GRS' },
+      planningDate: serverToday(), to: serverToday(), sources, daily, farm: { id: 'farm-grs', code: 'GRS' },
       sourceSnapshot: { version: 'sha256:fresh-source', hash: 'fresh-source', values: { engineInput: { sources: 'fresh' } } },
     })),
     farmToday: jest.fn(async () => ({ today: serverToday(), timeZone: null })),
@@ -161,20 +210,22 @@ describe('FeedRequisitionService.autoDraft', () => {
   });
 
   it('links a new editable draft only to exact source/config evidence and records every contributing run line', async () => {
+    const daily = [forecastDaily(), forecastDaily({ batchId: 'batch-2', batchNo: 'BATCH-2', heads: 500, demandKg: 1000 })];
+    const materialLines = buildRunLineSnapshots({ daily });
     const queues = new Map<unknown, unknown[][]>([
       [schema.feedForecastRun, [[{
         run_id: 'run-5', run_code: 'FFR-farm-grs-000005', version: 5,
-        source_snapshot: { hash: 'fresh-source' },
+        source_snapshot: { hash: 'fresh-source' }, output_snapshot: outputSnapshot(materialLines),
         config_snapshot: { values: { requisitionDraftSettings: { bulkMultipleKg: 3000, bagSizeKg: 50, truckTargetKg: 30000, productionWeekday: 0 } } },
       }]]],
       [schema.feedForecastRunLine, [[
-        { run_line_id: 'run-line-5a', destination_location_id: 'silo-1', required_item_id: 'item-r1' },
-        { run_line_id: 'run-line-5b', destination_location_id: 'silo-1', required_item_id: 'item-r1' },
+        storedRunLine(materialLines[0], 'run-line-5a'),
+        storedRunLine(materialLines[1], 'run-line-5b'),
       ]]],
       [schema.locationMaster, [[FARM_ROW], [SILO_ROW], [{ location_id: 'farm-grs' }]]],
       [schema.requisition, [[], [], [{ req: { requisition_id: 'new' }, farm_code: 'GRS', truck_target_kg: 30000 }]]],
     ]);
-    const { service, log } = setup([source()], queues);
+    const { service, log } = setup([source()], queues, daily);
 
     await service.autoDraft({}, 'tenant-1', { userId: 'u-1', userType: 'FARM_MANAGER' });
 
@@ -203,6 +254,52 @@ describe('FeedRequisitionService.autoDraft', () => {
       feed_forecast_run_id: null,
     });
     expect(log.find((e) => e.op === 'insert' && e.table === schema.requisitionLine)?.values)
+      .toEqual([expect.objectContaining({ feed_forecast_run_line_ids: null })]);
+  });
+
+  it('detaches an older engine output even when its exact input hash and requisition settings still match', async () => {
+    const currentDaily = forecastDaily();
+    const oldEngineLines = buildRunLineSnapshots({ daily: [{ ...currentDaily, demandKg: 1999, projectedClosingKg: 1 }] });
+    const queues = new Map<unknown, unknown[][]>([
+      [schema.feedForecastRun, [[{
+        run_id: 'run-old-engine', run_code: 'FFR-farm-grs-000004', version: 4,
+        source_snapshot: { hash: 'fresh-source' }, output_snapshot: outputSnapshot(oldEngineLines),
+        config_snapshot: { values: { requisitionDraftSettings: { bulkMultipleKg: 3000, bagSizeKg: 50, truckTargetKg: 30000, productionWeekday: 0 } } },
+      }]]],
+      [schema.feedForecastRunLine, [[storedRunLine(oldEngineLines[0], 'run-line-old')]]],
+      [schema.locationMaster, [[FARM_ROW], [SILO_ROW], [{ location_id: 'farm-grs' }]]],
+      [schema.requisition, [[], [], [{ req: { requisition_id: 'new' }, farm_code: 'GRS', truck_target_kg: 30000 }]]],
+    ]);
+    const { service, log } = setup([source()], queues, [currentDaily]);
+
+    await service.autoDraft({}, 'tenant-1', { userId: 'u-1', userType: 'FARM_MANAGER' });
+
+    expect(log.find((entry) => entry.op === 'insert' && entry.table === schema.requisition)?.values)
+      .toMatchObject({ feed_forecast_run_id: null });
+    expect(log.find((entry) => entry.op === 'insert' && entry.table === schema.requisitionLine)?.values)
+      .toEqual([expect.objectContaining({ feed_forecast_run_line_ids: null })]);
+  });
+
+  it('detaches when persisted run lines are only a partial multiset of the saved and freshly computed output', async () => {
+    const currentDaily = [forecastDaily(), forecastDaily({ date: serverToday(), batchId: 'batch-2', batchNo: 'BATCH-2', heads: 500, demandKg: 1000 })];
+    const completeLines = buildRunLineSnapshots({ daily: currentDaily });
+    const queues = new Map<unknown, unknown[][]>([
+      [schema.feedForecastRun, [[{
+        run_id: 'run-partial', run_code: 'FFR-farm-grs-000005', version: 5,
+        source_snapshot: { hash: 'fresh-source' }, output_snapshot: outputSnapshot(completeLines),
+        config_snapshot: { values: { requisitionDraftSettings: { bulkMultipleKg: 3000, bagSizeKg: 50, truckTargetKg: 30000, productionWeekday: 0 } } },
+      }]]],
+      [schema.feedForecastRunLine, [[storedRunLine(completeLines[0], 'run-line-only')]]],
+      [schema.locationMaster, [[FARM_ROW], [SILO_ROW], [{ location_id: 'farm-grs' }]]],
+      [schema.requisition, [[], [], [{ req: { requisition_id: 'new' }, farm_code: 'GRS', truck_target_kg: 30000 }]]],
+    ]);
+    const { service, log } = setup([source()], queues, currentDaily);
+
+    await service.autoDraft({}, 'tenant-1', { userId: 'u-1', userType: 'FARM_MANAGER' });
+
+    expect(log.find((entry) => entry.op === 'insert' && entry.table === schema.requisition)?.values)
+      .toMatchObject({ feed_forecast_run_id: null });
+    expect(log.find((entry) => entry.op === 'insert' && entry.table === schema.requisitionLine)?.values)
       .toEqual([expect.objectContaining({ feed_forecast_run_line_ids: null })]);
   });
 

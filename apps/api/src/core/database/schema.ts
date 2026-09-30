@@ -334,6 +334,7 @@ export const feedForecastRun = mysqlTable('feed_forecast_run', {
   period_id: varchar('period_id', { length: 36 }).references((): AnyMySqlColumn => reportingPeriod.period_id, { onDelete: 'restrict' }),
   source_cutoff_at: timestamp('source_cutoff_at', { mode: 'string' }).notNull(),
   source_snapshot: json('source_snapshot').$type<{ version: string; hash: string; values: unknown }>().notNull(),
+  output_snapshot: json('output_snapshot').$type<{ version: string; hash: string; lineCount: number }>().notNull(),
   config_snapshot: json('config_snapshot').$type<{ version: string; hash: string; values: unknown }>().notNull(),
   created_by: varchar('created_by', { length: 36 }).notNull(),
   created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),

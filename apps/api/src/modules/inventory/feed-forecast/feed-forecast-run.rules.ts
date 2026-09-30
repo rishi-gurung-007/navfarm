@@ -50,6 +50,36 @@ export interface ForecastRunLineSnapshot {
   provenanceSnapshot: unknown;
 }
 
+/**
+ * Stable material-output contract for forecast run evidence.
+ *
+ * v1 hashes the canonical, order-independent multiset of every
+ * ForecastRunLineSnapshot field. Database row IDs, creation timestamps and
+ * run header identity are deliberately outside the material line type and
+ * therefore outside the hash.
+ */
+export const FORECAST_RUN_OUTPUT_HASH_VERSION = 'forecast-run-lines:v1';
+
+export interface ForecastRunOutputSnapshot {
+  version: typeof FORECAST_RUN_OUTPUT_HASH_VERSION;
+  hash: string;
+  lineCount: number;
+}
+
+export function buildOutputSnapshot(lines: ForecastRunLineSnapshot[]): ForecastRunOutputSnapshot {
+  const material = lines
+    .map((line) => canonical(detached(line)))
+    .sort((left, right) => {
+      const leftJson = JSON.stringify(left);
+      const rightJson = JSON.stringify(right);
+      return leftJson < rightJson ? -1 : leftJson > rightJson ? 1 : 0;
+    });
+  const hash = createHash('sha256')
+    .update(`${FORECAST_RUN_OUTPUT_HASH_VERSION}\n${JSON.stringify(material)}`)
+    .digest('hex');
+  return { version: FORECAST_RUN_OUTPUT_HASH_VERSION, hash, lineCount: material.length };
+}
+
 interface ForecastRunLineInput {
   date?: string;
   batchId?: string;
