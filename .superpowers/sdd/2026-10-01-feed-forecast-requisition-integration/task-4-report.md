@@ -339,3 +339,114 @@ ordinary GET omits persistence-only evidence.
   prohibits tenant/database/server actions. The corrected mock demonstrates
   transaction overlap and per-farm locking; Task 12 migration/application must
   still be followed by database-level verification in an authorized task.
+
+---
+
+## Second independent-review remediation — 1 October 2026
+
+The remaining persisted-output linkage finding was corrected in:
+
+`9a554537cbaad62e5fa96e0eef0585e6253984da`
+
+### Corrected output-evidence contract
+
+- `feed_forecast_run.output_snapshot` is a required JSON header value with the
+  stable version `forecast-run-lines:v1`, a SHA-256 hash and the contributor
+  count. The hash input is the canonical, order-independent multiset of every
+  material `ForecastRunLineSnapshot` field. Volatile database run-line IDs,
+  run/header identity and creation timestamps are deliberately excluded.
+- A run computes that snapshot from the exact detached line objects used for
+  the immutable line inserts. The persisted run lines remain the complete
+  historical output evidence; the hash is an integrity/equality check and is
+  not represented as sufficient reconstruction data by itself.
+- Requisition auto-drafting now performs a three-way equality gate before it
+  attaches provenance: the stored header snapshot must equal the freshly
+  computed forecast output and must also equal a new hash/count recomputed from
+  every stored run line. The run-line query reads every material field, not
+  only destination/item identifiers. A version, hash, count, value or
+  contributor mismatch returns no matching run, so the requisition header and
+  every line remain detached.
+- Exact matches still preserve every contributing dated run-line ID for each
+  aggregate destination/item requisition line. Existing all-or-none behavior,
+  live-balance/config/input checks and edited-line detachment remain in place.
+
+### Changed files
+
+- `apps/api/src/core/database/schema.ts`
+- `apps/api/src/modules/inventory/feed-forecast/feed-forecast-run.rules.ts`
+- `apps/api/src/modules/inventory/feed-forecast/feed-forecast-run.rules.spec.ts`
+- `apps/api/src/modules/inventory/feed-forecast/feed-forecast-run.service.ts`
+- `apps/api/src/modules/inventory/feed-forecast/feed-forecast-run.service.spec.ts`
+- `apps/api/src/modules/procurement/feed-requisition/feed-requisition.service.ts`
+- `apps/api/src/modules/procurement/feed-requisition/feed-requisition.service.spec.ts`
+
+No migration SQL/journal, seed, demo data, running server or database was
+changed or run.
+
+### Focused RED evidence
+
+- `pnpm nx test api -- --runInBand --testPathPatterns='feed-requisition.service' -t='older engine output|partial multiset'`
+  — the older-engine case failed with the expected behavioral mismatch: the
+  new requisition received `feed_forecast_run_id: "run-old-engine"` instead of
+  `null` (1 failed, 29 skipped). Nx's shell forwarding also interpreted the
+  pipe and emitted `/bin/sh: partial: command not found`; the partial case was
+  therefore rerun separately rather than counting this malformed combined
+  invocation as its evidence.
+- `pnpm nx test api -- --runInBand --testPathPatterns='feed-requisition.service' '-t=partial.*multiset'`
+  — 1 suite failed; 1 test failed and 29 were skipped. A persisted one-line
+  subset of the expected two-line multiset incorrectly attached
+  `run-partial` instead of returning a null run link.
+- `pnpm nx test api -- --runInBand --testPathPatterns='feed-forecast-run.rules' '-t=material run-line multiset'`
+  — 1 suite failed; 1 test failed and 5 were skipped because
+  `buildOutputSnapshot` did not exist.
+
+These failures were captured before the output-snapshot implementation. The
+test fixtures derive their expected versioned SHA-256 independently of the
+production helper.
+
+### Focused GREEN evidence
+
+- `pnpm nx test api -- --runInBand --testPathPatterns='feed-requisition.service' '-t=older.*engine.*output'`
+  — 1 test passed and 29 were skipped.
+- `pnpm nx test api -- --runInBand --testPathPatterns='feed-requisition.service' '-t=partial.*multiset'`
+  — 1 test passed and 29 were skipped.
+- `pnpm nx test api -- --runInBand --testPathPatterns='feed-forecast-run.rules' '-t=material.*multiset'`
+  — 1 test passed and 5 were skipped.
+- `pnpm nx test api -- --runInBand --testPathPatterns='feed-forecast-run.rules|feed-forecast-run.service|feed-requisition.service'`
+  — 3 suites, 46 tests passed on the final post-implementation run.
+
+### Broader verification
+
+- `pnpm nx typecheck api` — passed.
+- `pnpm nx test api --skipNxCache -- --runInBand` — 146 suites, 1,711 tests
+  passed in an uncached final run.
+- `git diff --check` — passed with no output before the implementation commit.
+- `pnpm nx lint api --skipNxCache` — inherited nonzero baseline: 2,594
+  findings, 4 errors and 2,590 warnings. The four errors are outside Task 4 in
+  `goods-receipt.service.spec.ts`, `animal.dto.ts` (two), and
+  `batch.service.ts`.
+- Focused ESLint over the seven changed files — 0 errors and 78 warnings; no
+  Task 4 lint error was introduced.
+
+### Self-review, assumptions and concerns
+
+- Confirmed output equality covers the entire dated-line multiset and all its
+  material numeric, identity, date and provenance values. Removing a line,
+  changing an engine result while preserving the input hash, or mutating a
+  persisted material value causes detachment.
+- Confirmed ordinary `GET /feed-forecast` is untouched and remains read-only
+  and response-compatible. Only explicit Save Run persists the new header
+  snapshot.
+- Confirmed the saved hash is created inside the existing atomic run
+  transaction from the same normalized lines inserted immediately afterward;
+  immutable versioning, farm lock allocation and creator requirements are
+  unchanged.
+- Confirmed requisition provenance stays all-or-none. When output verification
+  fails, neither the header run FK nor any aggregate run-line ID list is
+  attached.
+- Existing physical databases do not yet have `output_snapshot`. Per the task
+  boundary, this change is a schema declaration only; Task 12 must add and
+  apply the migration before database/runtime verification is authorized.
+- Pre-versioned historical runs without an `output_snapshot` deliberately do
+  not qualify for new requisition linkage. No output hash is guessed or
+  backfilled, and no client-facing number-series behavior changed.
