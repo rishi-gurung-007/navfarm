@@ -105,3 +105,46 @@ export function assertVarianceReason(fact: Pick<VarianceFact, 'reasonRequired'>,
     throw new BadRequestException('A scope-visible Reason Master row is required for every nonzero stock variance.');
   }
 }
+
+/** Which authority decides a submitted physical count. */
+export type ApprovalRoute = 'FINANCE' | 'FARM_MANAGER';
+
+export interface RouteLineEvidence {
+  /** Absolute variance percentage as stored on the count line. */
+  variancePctAbsolute: number;
+  /** Signed base-currency value, or null when it could not be evaluated. */
+  varianceValueBase: number | null;
+}
+
+/**
+ * D21/Rishi: `variance percentage >= 5.00%` escalates to Finance; the monetary
+ * threshold is company configuration and stays null until Triple C supplies it.
+ * A null amount threshold is *not* a zero threshold, so it never triggers.
+ *
+ * When the amount threshold *is* configured, an unvalued line cannot be
+ * compared against it. Silently treating that as "below threshold" would let a
+ * possibly material variance reach a Farm Manager, so the decision is refused
+ * until the cost, exchange rate and local currency are configured.
+ */
+export function approvalRoute(
+  lines: RouteLineEvidence[],
+  config: { percentageThreshold: number; amountThreshold: number | null },
+): ApprovalRoute {
+  const live = lines.filter((line) => Number(line.variancePctAbsolute) !== 0);
+  if (live.some((line) => Math.abs(Number(line.variancePctAbsolute)) >= config.percentageThreshold)) {
+    return 'FINANCE';
+  }
+  if (config.amountThreshold !== null) {
+    if (live.some((line) => line.varianceValueBase === null || !Number.isFinite(Number(line.varianceValueBase)))) {
+      throw new BadRequestException(
+        'The company monetary variance threshold is configured but at least one variance has no valuation, '
+        + 'so Finance escalation cannot be evaluated. Configure the item cost, exchange rate and local currency '
+        + 'before deciding this count.',
+      );
+    }
+    if (live.some((line) => Math.abs(Number(line.varianceValueBase)) >= config.amountThreshold!)) {
+      return 'FINANCE';
+    }
+  }
+  return 'FARM_MANAGER';
+}

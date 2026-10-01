@@ -54,4 +54,12 @@ export class FeedStockCountController {
     const tenantId = req.user?.tenantId || req.tenantId;
     return { success: true, data: await this.service.submit(id, tenantId, req.user) };
   }
+
+  @Post(':id/post')
+  @RequirePermission('INVENTORY', 'STOCK_COUNT', 'approve')
+  @ApiOperation({ summary: 'Post an approved count to the shared inventory and GL path' })
+  async post(@Param('id', ParseUUIDPipe) id: string, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req.tenantId;
+    return { success: true, data: await this.service.postApprovedCount(id, tenantId, req.user) };
+  }
 }

@@ -43,6 +43,7 @@ function setup(queues: Map<unknown, unknown[][]>, scope: FarmScope = {
   };
   const settings = { resolve: jest.fn(async () => ({
     timezoneId: 'Africa/Harare', physicalCountWeekday: 1, physicalCountTime: '09:30',
+    financeVariancePct: 5, financeVarianceAmount: null,
   })) };
   const currency = { currentRate: jest.fn(async () => ({
     status: 'RESOLVED', rateId: 'rate-1', rate: 2, rateDate: '2026-10-01', createdAt: '2026-10-01 08:00:00', scope: 'COMPANY',
@@ -51,8 +52,17 @@ function setup(queues: Map<unknown, unknown[][]>, scope: FarmScope = {
     findOne: jest.fn(async (id: string) => ({ reason_id: id, is_active: true })),
     findActiveForOperationalScope: jest.fn(async (id: string) => ({ reason_id: id, is_active: true, status: 'ACTIVE', deleted_at: null })),
   };
-  const service = new FeedStockCountService(cls, ledger as any, settings as any, currency as any, reasons as any);
-  return { service, ledger, settings, currency, reasons, log, db };
+  const approvals = {
+    registerDocumentHandler: jest.fn(),
+    submitFarmDocument: jest.fn(async () => 'request-1'),
+  };
+  const adjustments = { create: jest.fn(), post: jest.fn() };
+  const feedAlerts = { evaluateFarmSafely: jest.fn() };
+  const service = new FeedStockCountService(
+    cls, ledger as any, settings as any, currency as any, reasons as any,
+    approvals as any, adjustments as any, feedAlerts as any,
+  );
+  return { service, ledger, settings, currency, reasons, approvals, adjustments, feedAlerts, log, db };
 }
 
 const farm = { location_id: 'farm-1', company_id: 'company-1', nob_id: 'nob-livestock', lob_id: 'lob-piggery' };
@@ -300,11 +310,15 @@ describe('FeedStockCountService', () => {
       [schema.feedStockCount, [[existing]]], [schema.locationMaster, [[farm]]],
       [schema.feedStockCountLine, [[{ count_line_id: 'line-1', variance_qty_kg: '-5', reason_id: 'reason-1' }]]],
     ]);
-    const { service, ledger, reasons, log } = setup(queues);
+    const { service, ledger, reasons, approvals, log } = setup(queues);
     await expect(service.submit('count-1', 'tenant-1', { userId: 'worker-1' })).resolves.toMatchObject({ status: 'PENDING_APPROVAL' });
     const submitted = log.find((entry) => entry.op === 'update' && entry.table === schema.feedStockCount)?.set;
-    expect(submitted).toMatchObject({ status: 'PENDING_APPROVAL', submitted_by: 'worker-1', updated_at: expect.any(String) });
-    expect(submitted).not.toHaveProperty('approval_request_id');
+    expect(submitted).toMatchObject({
+      status: 'PENDING_APPROVAL', approval_request_id: 'request-1', submitted_by: 'worker-1', updated_at: expect.any(String),
+    });
+    expect(approvals.submitFarmDocument).toHaveBeenCalledWith(expect.objectContaining({
+      documentType: 'FEED_STOCK_VARIANCE', documentId: 'count-1', farmId: 'farm-1', companyId: 'company-1',
+    }), 'tenant-1', expect.objectContaining({ userId: 'worker-1' }));
     expect(submitted).not.toHaveProperty('stock_adjustment_id');
     expect(ledger.getSiloStockEvidenceAsOf).not.toHaveBeenCalled();
     expect(reasons.findActiveForOperationalScope).toHaveBeenCalledWith('reason-1', 'tenant-1', {
