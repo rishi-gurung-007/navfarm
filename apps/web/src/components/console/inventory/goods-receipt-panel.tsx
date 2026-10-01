@@ -717,6 +717,7 @@ export default function GoodsReceiptPanel() {
         onClose={() => { if (!saving) { setModalOpen(false); setEditingId(null); } }}
         title={editingId ? t("grpEditGoodsReceiptTitle") : t("grpNewGoodsReceiptTitle")}
         maxWidth="xl"
+        className="max-w-5xl lg:max-w-6xl"
         footer={
           <Button size="sm" onClick={handleSave} disabled={saving} className="nf-btn-primary">
             {saving ? t("grpSaving") : editingId ? t("grpSaveChanges") : t("grpSaveDraft")}
@@ -782,16 +783,16 @@ export default function GoodsReceiptPanel() {
           </div>
 
           <div className="overflow-x-auto rounded-[var(--radius-sm)] border" style={S.surface}>
-            <table className="w-full border-collapse text-left text-xs">
+            <table className="w-full border-collapse text-left text-xs min-w-[960px]">
               <TableHeader>
                 <tr className="border-b border-(--row-border)">
-                  <TableHead className="h-auto px-3 py-2 min-w-[280px]">{t("grpColItem")}</TableHead>
-                  <TableHead className="h-auto px-3 py-2 w-24">{t("grpColQty")}</TableHead>
-                  <TableHead className="h-auto px-3 py-2 w-28">{t("grpColUom")}</TableHead>
-                  <TableHead className="h-auto px-3 py-2 w-24">{t("grpColRate")}</TableHead>
-                  <TableHead className="h-auto px-3 py-2 min-w-[260px]">Tracking (Lot / Serial)</TableHead>
-                  <TableHead className="h-auto px-3 py-2 w-36">{t("grpColExpiry")}</TableHead>
-                  <TableHead className="h-auto px-3 py-2 w-12 text-center"></TableHead>
+                  <TableHead className="h-auto px-3 py-2 min-w-[260px]">{t("grpColItem")}</TableHead>
+                  <TableHead className="h-auto px-3 py-2 w-28 min-w-[105px]">{t("grpColQty")}</TableHead>
+                  <TableHead className="h-auto px-3 py-2 w-24 min-w-[85px]">{t("grpColUom")}</TableHead>
+                  <TableHead className="h-auto px-3 py-2 w-24 min-w-[85px]">{t("grpColRate")}</TableHead>
+                  <TableHead className="h-auto px-3 py-2 min-w-[280px]">Tracking (Lot / Serial)</TableHead>
+                  <TableHead className="h-auto px-3 py-2 w-36 min-w-[140px]">{t("grpColExpiry")}</TableHead>
+                  <TableHead className="h-auto px-3 py-2 w-10 min-w-[40px] text-center"></TableHead>
                 </tr>
               </TableHeader>
               <TableBody>
@@ -805,7 +806,7 @@ export default function GoodsReceiptPanel() {
 
                   return (
                     <TableRow key={idx}>
-                      <TableCell className="px-2 py-1.5 min-w-[280px]">
+                      <TableCell className="px-2 py-1.5 min-w-[260px]">
                         <SearchableSelect
                           options={items}
                           value={line.item_id}
@@ -827,16 +828,19 @@ export default function GoodsReceiptPanel() {
                           triggerClassName="w-full text-xs h-9 min-h-[36px] max-h-[36px] box-border"
                         />
                       </TableCell>
-                      <TableCell className="px-2 py-1.5 w-24">
+                      <TableCell className="px-2 py-1.5 w-28 min-w-[105px]">
                         <input
                           type="number"
+                          min="0"
+                          step="any"
+                          placeholder="0"
                           value={line.quantity}
                           onChange={(e) => setLineField(idx, "quantity", e.target.value)}
-                          className={lineInputCls}
+                          className={`${lineInputCls} text-left font-mono [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none`}
                           style={S.input}
                         />
                       </TableCell>
-                      <TableCell className="px-2 py-1.5 w-28">
+                      <TableCell className="px-2 py-1.5 w-24 min-w-[85px]">
                         <select
                           value={line.uom}
                           onChange={(e) => setLineField(idx, "uom", e.target.value)}
@@ -851,16 +855,19 @@ export default function GoodsReceiptPanel() {
                           ))}
                         </select>
                       </TableCell>
-                      <TableCell className="px-2 py-1.5 w-24">
+                      <TableCell className="px-2 py-1.5 w-24 min-w-[85px]">
                         <input
                           type="number"
+                          min="0"
+                          step="any"
+                          placeholder="0.00"
                           value={line.rate}
                           onChange={(e) => setLineField(idx, "rate", e.target.value)}
-                          className={lineInputCls}
+                          className={`${lineInputCls} text-left font-mono [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none`}
                           style={S.input}
                         />
                       </TableCell>
-                      <TableCell className="px-2 py-1.5 min-w-[260px]">
+                      <TableCell className="px-2 py-1.5 min-w-[280px]">
                         {isLot ? (
                           <div className="flex items-center gap-1.5 w-full">
                             <span className="h-9 px-2 text-[10px] font-bold tracking-wider uppercase bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 shrink-0 flex items-center justify-center rounded-[var(--radius-sm)]">
@@ -1072,14 +1079,14 @@ export default function GoodsReceiptPanel() {
             </div>
 
             <div className="overflow-x-auto rounded-[var(--radius-sm)] border" style={S.surface}>
-              <table className="w-full border-collapse text-left text-xs">
+              <table className="w-full border-collapse text-left text-xs min-w-[720px]">
                 <TableHeader>
                   <tr className="border-b border-(--row-border)">
-                    <TableHead className="h-auto px-3 py-2">{t("grpColItem")}</TableHead>
-                    <TableHead className="h-auto px-3 py-2">{t("grpColQty")}</TableHead>
-                    <TableHead className="h-auto px-3 py-2">{t("grpColUom")}</TableHead>
-                    <TableHead className="h-auto px-3 py-2">{t("grpColRate")}</TableHead>
-                    <TableHead className="h-auto px-3 py-2">Tracking (Lot / Serial)</TableHead>
+                    <TableHead className="h-auto px-3 py-2 min-w-[240px]">{t("grpColItem")}</TableHead>
+                    <TableHead className="h-auto px-3 py-2 w-28 min-w-[90px]">{t("grpColQty")}</TableHead>
+                    <TableHead className="h-auto px-3 py-2 w-24 min-w-[80px]">{t("grpColUom")}</TableHead>
+                    <TableHead className="h-auto px-3 py-2 w-24 min-w-[80px]">{t("grpColRate")}</TableHead>
+                    <TableHead className="h-auto px-3 py-2 min-w-[220px]">Tracking (Lot / Serial)</TableHead>
                   </tr>
                 </TableHeader>
                 <TableBody>
