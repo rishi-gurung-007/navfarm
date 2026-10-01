@@ -4,7 +4,7 @@ import { RequirePermission } from '../../../common/decorators/require-permission
 import { FarmScoped } from '../../../common/farm-scope';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
-import { CreateFeedStockCountDto, QueryFeedStockCountDto, UpdateFeedStockCountDto } from './dto/feed-stock-count.dto';
+import { CreateFeedStockCountDto, QueryFeedStockCountDto, QueryFeedStockCountEvidenceDto, UpdateFeedStockCountDto } from './dto/feed-stock-count.dto';
 import { FeedStockCountService } from './feed-stock-count.service';
 
 @ApiTags('Feed Stock Count')
@@ -21,6 +21,15 @@ export class FeedStockCountController {
   async list(@Query() query: QueryFeedStockCountDto, @Req() req: any) {
     const tenantId = req.user?.tenantId || req.tenantId;
     return { success: true, data: await this.service.list(query, tenantId) };
+  }
+
+  // Declared before :id so "evidence" is never parsed as a UUID.
+  @Get('evidence')
+  @RequirePermission('INVENTORY', 'STOCK_COUNT', 'view')
+  @ApiOperation({ summary: 'List the silo/item ledger pairs a new physical count may cover' })
+  async evidence(@Query() query: QueryFeedStockCountEvidenceDto, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req.tenantId;
+    return { success: true, data: await this.service.evidence(query, tenantId) };
   }
 
   @Get(':id')

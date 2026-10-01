@@ -90,6 +90,71 @@ describe('isEditableFeedRequisition (D25)', () => {
   });
 });
 
+describe('Feed requisition approval authority (Task 7)', () => {
+  const FARM_MANAGER = { userId: 'u-manager', userType: 'FARM_MANAGER' };
+  const MANAGER_GRANT = {
+    moduleCode: 'PROCUREMENT', resource: 'REQUISITION',
+    canView: true, canCreate: true, canEdit: true, canDelete: false, canApprove: true, canExport: false, canPrint: false,
+  };
+  const REQUESTED_BY_MANAGER = { ...REQUEST, requested_by: 'u-manager' };
+
+  it('refuses a Farm Manager approving the manual requisition they submitted', async () => {
+    const { approvals, as, writes } = setup(new Map<unknown, unknown[][]>([
+      [schema.approvalRequest, [[REQUESTED_BY_MANAGER], [{ ...REQUESTED_BY_MANAGER, status: 'APPROVED' }]]],
+      [schema.requisition, [[{ ...PENDING_ROW, source: 'MANUAL_ENTRY', created_by: 'u-manager' }]]],
+      [schema.requisitionLine, [[LINE_6000]]],
+      [schema.userRoleAssignment, [[MANAGER_GRANT]]],
+    ]));
+    await expect(as(COMPANY_ADMIN_SCOPE, () => approvals.approve('ar-1', 'tenant-1', FARM_MANAGER)))
+      .rejects.toBeInstanceOf(ForbiddenException);
+    expect(writes()).toEqual([]);
+  });
+
+  it('lets a Farm Manager approve their own farm system forecast draft (D25)', async () => {
+    const { approvals, as, writes } = setup(new Map<unknown, unknown[][]>([
+      [schema.approvalRequest, [[REQUESTED_BY_MANAGER], [{ ...REQUESTED_BY_MANAGER, status: 'APPROVED' }]]],
+      [schema.requisition, [[{ ...PENDING_ROW, source: 'AUTO_FORECAST', created_by: 'u-manager' }]]],
+      [schema.requisitionLine, [[LINE_6000]]],
+      [schema.userRoleAssignment, [[MANAGER_GRANT]]],
+    ]));
+    await expect(as(COMPANY_ADMIN_SCOPE, () => approvals.approve('ar-1', 'tenant-1', FARM_MANAGER)))
+      .resolves.toMatchObject({ status: 'APPROVED' });
+    expect(writes().find((e) => e.table === schema.requisition)!.set).toMatchObject({ status: 'APPROVED' });
+  });
+
+  it('treats a stock-take or diet-change trigger as a system document too', async () => {
+    const { approvals, as, writes } = setup(new Map<unknown, unknown[][]>([
+      [schema.approvalRequest, [[REQUESTED_BY_MANAGER], [{ ...REQUESTED_BY_MANAGER, status: 'APPROVED' }]]],
+      [schema.requisition, [[{ ...PENDING_ROW, source: 'STOCK_TAKE_TRIGGERED', created_by: 'u-manager' }]]],
+      [schema.requisitionLine, [[LINE_6000]]],
+      [schema.userRoleAssignment, [[MANAGER_GRANT]]],
+    ]));
+    await expect(as(COMPANY_ADMIN_SCOPE, () => approvals.approve('ar-1', 'tenant-1', FARM_MANAGER)))
+      .resolves.toMatchObject({ status: 'APPROVED' });
+    expect(writes().some((e) => e.table === schema.requisition)).toBe(true);
+  });
+
+  it('keeps an approved requisition immutable: neither an edit nor a resubmit writes anything', async () => {
+    const approved = { ...PENDING_ROW, status: 'APPROVED', source: 'MANUAL_ENTRY' };
+    const editor = setup(new Map<unknown, unknown[][]>([
+      [schema.requisition, [[{ farm_id: 'farm-grs', company_id: 'co-1' }], [approved]]],
+      [schema.locationMaster, [[{ location_id: 'farm-grs' }]]],
+    ]));
+    await expect(editor.as(COMPANY_ADMIN_SCOPE, () => editor.service.update('req-1', { remarks: 'changed' }, 'tenant-1', ADMIN)))
+      .rejects.toThrow(/can no longer be changed/);
+    expect(editor.writes()).toEqual([]);
+
+    const resubmit = setup(new Map<unknown, unknown[][]>([
+      [schema.requisition, [[{ farm_id: 'farm-grs', company_id: 'co-1' }], [approved]]],
+      [schema.locationMaster, [[{ location_id: 'farm-grs' }]]],
+      [schema.requisitionLine, [[LINE_6000]]],
+    ]));
+    await expect(resubmit.as(COMPANY_ADMIN_SCOPE, () => resubmit.service.submit('req-1', {}, 'tenant-1', ADMIN)))
+      .rejects.toThrow(/can no longer be changed/);
+    expect(resubmit.writes()).toEqual([]);
+  });
+});
+
 describe('FeedRequisitionService.submit (D25)', () => {
   it('raises a PENDING request for the farm and sets the requisition waiting, in one transaction, then re-evaluates alerts', async () => {
     const { service, as, writes, evaluated } = setup(new Map<unknown, unknown[][]>([

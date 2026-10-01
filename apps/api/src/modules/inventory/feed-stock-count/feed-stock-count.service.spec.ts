@@ -37,7 +37,9 @@ function setup(queues: Map<unknown, unknown[][]>, scope: FarmScope = {
   const originalGet = cls.get.bind(cls);
   cls.get = ((key?: string) => key === FARM_SCOPE_KEY ? scope : originalGet(key as any)) as typeof cls.get;
   const ledger = {
-    getSiloStockEvidenceAsOf: jest.fn(async () => [{
+    getSiloStockEvidenceAsOf: jest.fn(async (): Promise<Array<{
+      warehouse_id: string; item_id: string; item_code: string; uom: string; system_qty_kg: number; unit_cost_base: number | null;
+    }>> => [{
       warehouse_id: 'silo-1', item_id: 'item-1', item_code: 'FEED-1', uom: 'KG', system_qty_kg: 100, unit_cost_base: 4,
     }]),
   };
@@ -65,10 +67,10 @@ function setup(queues: Map<unknown, unknown[][]>, scope: FarmScope = {
   return { service, ledger, settings, currency, reasons, approvals, adjustments, feedAlerts, log, db };
 }
 
-const farm = { location_id: 'farm-1', company_id: 'company-1', nob_id: 'nob-livestock', lob_id: 'lob-piggery' };
+const farm = { location_id: 'farm-1', company_id: 'company-1', nob_id: 'nob-livestock', lob_id: 'lob-piggery', location_code: 'FARM-001' };
 const silo = {
   location_id: 'silo-1', company_id: 'company-1', lob_id: 'lob-piggery', farm_id: 'farm-1',
-  parent_location_id: 'farm-1', location_type: 'SILO', is_active: true, deleted_at: null,
+  parent_location_id: 'farm-1', location_type: 'SILO', is_active: true, deleted_at: null, location_code: 'SILO-001',
 };
 const company = { base_currency_id: 'base' };
 const local = { currency_id: 'local' };
@@ -267,6 +269,45 @@ describe('FeedStockCountService', () => {
     const lineDuplicate = setup(createQueues());
     await expect(lineDuplicate.service.create({ ...createDto, lines: [createDto.lines[0], { ...createDto.lines[0] }] } as any, 'tenant-1', { userId: 'worker-1' }))
       .rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it('enumerates exactly the countable silo/item ledger pairs for an instant', async () => {
+    const { service, ledger } = setup(createQueues());
+    ledger.getSiloStockEvidenceAsOf.mockResolvedValue([
+      { warehouse_id: 'silo-1', item_id: 'item-1', item_code: 'FEED-1', uom: 'KG', system_qty_kg: 100, unit_cost_base: 4 },
+      { warehouse_id: 'silo-1', item_id: 'item-2', item_code: 'FEED-2', uom: 'KG', system_qty_kg: 50, unit_cost_base: null },
+    ]);
+    await expect(service.evidence({ companyId: 'company-1', farmId: 'farm-1', countedAt: '2026-10-05T07:30:00.000Z' }, 'tenant-1'))
+      .resolves.toEqual({
+        farmId: 'farm-1', companyId: 'company-1', countedAt: '2026-10-05T07:30:00.000Z', postingDate: '2026-10-05',
+        silos: [{ siloId: 'silo-1', siloCode: 'SILO-001' }],
+        pairs: [
+          { siloId: 'silo-1', siloCode: 'SILO-001', itemId: 'item-1', itemCode: 'FEED-1', uom: 'KG', systemQtyKg: 100, costAvailable: true },
+          { siloId: 'silo-1', siloCode: 'SILO-001', itemId: 'item-2', itemCode: 'FEED-2', uom: 'KG', systemQtyKg: 50, costAvailable: false },
+        ],
+      });
+    // The same cutoff create() will use, so the preview cannot promise a pair
+    // the transaction then rejects.
+    expect(ledger.getSiloStockEvidenceAsOf).toHaveBeenCalledWith({
+      companyId: 'company-1', siloIds: ['silo-1'], postingDate: '2026-10-05', countedAtEpochSeconds: 1791185400,
+    }, 'tenant-1');
+  });
+
+  it('defaults the evidence instant to now for an on-demand count', async () => {
+    const { service, ledger } = setup(createQueues());
+    const before = Math.floor(Date.now() / 1000);
+    const result = await service.evidence({ companyId: 'company-1', farmId: 'farm-1' }, 'tenant-1');
+    expect(result.countedAt).toMatch(/Z$/);
+    expect(Math.floor(Date.parse(result.countedAt) / 1000)).toBeGreaterThanOrEqual(before);
+    expect(ledger.getSiloStockEvidenceAsOf).toHaveBeenCalledWith(
+      expect.objectContaining({ companyId: 'company-1', siloIds: ['silo-1'] }), 'tenant-1',
+    );
+  });
+
+  it('refuses count evidence for a farm outside the caller scope', async () => {
+    const { service, ledger } = setup(new Map(), { farmId: 'farm-1', companyId: 'company-1', lobId: 'lob-piggery', restricted: true });
+    await expect(service.evidence({ companyId: 'company-1', farmId: 'farm-2' }, 'tenant-1')).rejects.toBeInstanceOf(ForbiddenException);
+    expect(ledger.getSiloStockEvidenceAsOf).not.toHaveBeenCalled();
   });
 
   it('edits only draft counted evidence from its stored system/cost/rate snapshot', async () => {

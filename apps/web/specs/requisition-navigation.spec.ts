@@ -9,8 +9,16 @@ describe('common requisitions navigation', () => {
     expect(read('src/components/console/approvals/approvals-page-shell.tsx')).toContain('router.push("/approvals/requisitions")');
   });
 
-  it('keeps old inventory URLs as redirects to the common requisition screen', () => {
+  it('keeps the common inventory URL as a redirect to the common requisition screen', () => {
     expect(read('src/app/(app)/inventory/requisitions/page.tsx')).toContain('redirect(`/approvals/requisitions${query}`)');
-    expect(read('src/app/(app)/inventory/feed-requisitions/page.tsx')).toContain('redirect(`/approvals/requisitions${query}`)');
+  });
+
+  it('sends the old feed-requisitions bookmark to the Feed Forecast feed-requisition tab', () => {
+    // It used to point at the common Requisitions screen, which is a different
+    // document — feed orders are a Feed Forecast tab now.
+    const page = read('src/app/(app)/inventory/feed-requisitions/page.tsx');
+    expect(page).not.toContain('redirect(`/approvals/requisitions${query}`)');
+    expect(page).toContain('params.set("tab", "feed-requisition")');
+    expect(page).toContain('redirect(`/inventory/feed-forecast?${params.toString()}`)');
   });
 });

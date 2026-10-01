@@ -126,7 +126,7 @@ const TD = "whitespace-nowrap px-3 py-1.5 text-xs text-[var(--text-primary)]";
 const NUM = "text-right tabular-nums";
 const SMALL_BADGE = "px-1.5 py-0 text-[10px]";
 
-export default function RequisitionsPanel() {
+export function FeedRequisitionPanel() {
   const { t } = useLanguage();
   const tRef = useRef(t);
   tRef.current = t;
@@ -413,3 +413,6 @@ export default function RequisitionsPanel() {
     </div>
   );
 }
+
+/** The Feed Forecast page renders this as one of its three tabs (Task 7). */
+export default FeedRequisitionPanel;

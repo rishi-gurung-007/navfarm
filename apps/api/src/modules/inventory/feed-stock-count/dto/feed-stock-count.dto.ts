@@ -98,3 +98,19 @@ export class QueryFeedStockCountDto {
   @IsIn(FEED_STOCK_COUNT_STATUSES)
   status?: FeedStockCountStatus;
 }
+
+export class QueryFeedStockCountEvidenceDto {
+  @ApiProperty()
+  @IsUUID()
+  companyId!: string;
+
+  @ApiProperty()
+  @IsUUID()
+  farmId!: string;
+
+  @ApiPropertyOptional({ description: 'ISO observation instant; defaults to now for an on-demand count' })
+  @IsOptional()
+  @IsISO8601({ strict: true })
+  @Matches(/(?:Z|[+-]\d{2}:\d{2})$/i, { message: 'countedAt must include Z or an explicit UTC offset' })
+  countedAt?: string;
+}

@@ -500,6 +500,15 @@ body {
   min-height: 0;
 }
 
+/* A tabbed fill page (Inventory → Feed Forecast) keeps one [data-fill-body]
+   per tab inside the page's own [data-fill-body]. The direct-child rule below
+   only reaches the outer one, so without this each mounted panel would size to
+   its content and its table would stop filling the height the tab bar leaves. */
+[data-fill-body] [data-fill-body] {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
 /* Below 1024px the document scrolls, as on every page; the table keeps a box
    of its own so a 14-column grid never widens the page past the viewport. */
 [data-table-scroll] {

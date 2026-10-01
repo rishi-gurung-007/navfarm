@@ -1,0 +1,153 @@
+import React from 'react';
+import { render, screen, fireEvent } from '@testing-library/react';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import FeedForecastTabs, {
+  FEED_FORECAST_TABS,
+  feedForecastTabQuery,
+  readFeedForecastTab,
+} from '../src/components/console/inventory/feed-forecast-tabs';
+
+// Mount counters live inside the mock factories (jest allows only `mock*`
+// `var`s there — it rejects `let`/`const` as out-of-scope), so a panel that
+// mounts twice is visible from the test.
+/* eslint-disable no-var */
+var mockForecastMounts = 0;
+var mockCountMounts = 0;
+/* eslint-enable no-var */
+
+jest.mock('../src/components/console/inventory/feed-forecast-panel', () => {
+  const { useEffect, useState } = jest.requireActual('react');
+  return {
+    __esModule: true,
+    default: function MockForecast() {
+      const [bumps, setBumps] = useState(0);
+      // Mount only: the function itself runs on every render.
+      useEffect(() => {
+        mockForecastMounts += 1;
+      }, []);
+      return (
+        <div data-testid="panel-forecast">
+          <span data-testid="forecast-bumps">{bumps}</span>
+          <button type="button" onClick={() => setBumps((n) => n + 1)}>bump</button>
+        </div>
+      );
+    },
+  };
+});
+jest.mock('../src/components/console/inventory/requisitions-panel', () => ({
+  __esModule: true,
+  FeedRequisitionPanel: () => <div data-testid="panel-requisition" />,
+  default: () => <div data-testid="panel-requisition" />,
+}));
+jest.mock('../src/components/console/inventory/feed-stock-count-panel', () => {
+  const { useEffect } = jest.requireActual('react');
+  return {
+    __esModule: true,
+    default: function MockCount() {
+      useEffect(() => {
+        mockCountMounts += 1;
+      }, []);
+      return <div data-testid="panel-count" />;
+    },
+  };
+});
+jest.mock('../src/hooks/useLanguage', () => {
+  const stableT = (key: string, vars?: Record<string, any>) => (vars ? `${key}:${JSON.stringify(vars)}` : key);
+  return { useLanguage: () => ({ t: stableT }) };
+});
+
+const read = (path: string) => readFileSync(join(__dirname, '..', path), 'utf8');
+/** The wrapper each panel sits in; that element carries the show/hide style. */
+const displayOf = (tab: string) => document.querySelector(`[data-feed-tab="${tab}"]`)!.getAttribute('style') ?? '';
+
+describe('Feed Forecast tab selection is carried by the URL', () => {
+  it('reads each supported tab and falls back to the forecast for anything else', () => {
+    expect(FEED_FORECAST_TABS).toEqual(['forecast', 'feed-requisition', 'physical-count']);
+    expect(readFeedForecastTab('forecast')).toBe('forecast');
+    expect(readFeedForecastTab('feed-requisition')).toBe('feed-requisition');
+    expect(readFeedForecastTab('physical-count')).toBe('physical-count');
+    expect(readFeedForecastTab(null)).toBe('forecast');
+    expect(readFeedForecastTab(undefined)).toBe('forecast');
+    expect(readFeedForecastTab('')).toBe('forecast');
+    expect(readFeedForecastTab('not-a-tab')).toBe('forecast');
+  });
+
+  it('builds the query the old feed-requisitions redirect lands on', () => {
+    expect(feedForecastTabQuery('feed-requisition')).toBe('tab=feed-requisition');
+    expect(readFeedForecastTab(new URLSearchParams(feedForecastTabQuery('feed-requisition')).get('tab')))
+      .toBe('feed-requisition');
+  });
+});
+
+describe('FeedForecastTabs', () => {
+  beforeEach(() => {
+    mockForecastMounts = 0;
+    mockCountMounts = 0;
+  });
+
+  it('shows all three tabs and marks the selected one', () => {
+    render(<FeedForecastTabs tab="forecast" onTabChange={() => undefined} />);
+    const list = screen.getByRole('tablist');
+    expect(Array.from(list.querySelectorAll('[role="tab"]')).map((node) => node.textContent))
+      .toEqual(['fftTabForecast', 'fftTabFeedRequisition', 'fftTabPhysicalCount']);
+    expect(screen.getByRole('tab', { name: 'fftTabForecast' }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByRole('tab', { name: 'fftTabPhysicalCount' }).getAttribute('aria-selected')).toBe('false');
+  });
+
+  it('asks for the requested tab and shows only that panel', () => {
+    render(<FeedForecastTabs tab="physical-count" onTabChange={() => undefined} />);
+    expect(screen.getByTestId('panel-count')).toBeTruthy();
+    expect(screen.queryByTestId('panel-forecast')).toBeNull();
+    expect(displayOf('physical-count')).not.toBe('none');
+  });
+
+  it('hands a tab click to the owner so the URL, not this component, holds it', () => {
+    const onTabChange = jest.fn();
+    render(<FeedForecastTabs tab="forecast" onTabChange={onTabChange} />);
+    fireEvent.click(screen.getByRole('tab', { name: 'fftTabPhysicalCount' }));
+    expect(onTabChange).toHaveBeenCalledWith('physical-count');
+  });
+
+  it('keeps a panel mounted once so its state survives switching away and back', () => {
+    const { rerender } = render(<FeedForecastTabs tab="forecast" onTabChange={() => undefined} />);
+    expect(mockForecastMounts).toBe(1);
+
+    fireEvent.click(screen.getByRole('button', { name: 'bump' }));
+    expect(screen.getByTestId('forecast-bumps').textContent).toBe('1');
+
+    // Away to Physical Count: the forecast stays mounted, just hidden.
+    rerender(<FeedForecastTabs tab="physical-count" onTabChange={() => undefined} />);
+    expect(mockCountMounts).toBe(1);
+    expect(displayOf('physical-count')).not.toContain('none');
+    expect(screen.getByTestId('forecast-bumps').textContent).toBe('1');
+    expect(displayOf('forecast')).toContain('none');
+
+    // …and back: no second mount, and the value it held is still there.
+    rerender(<FeedForecastTabs tab="forecast" onTabChange={() => undefined} />);
+    expect(mockForecastMounts).toBe(1);
+    expect(screen.getByTestId('forecast-bumps').textContent).toBe('1');
+  });
+
+  it('does not mount a tab that was never opened', () => {
+    render(<FeedForecastTabs tab="forecast" onTabChange={() => undefined} />);
+    expect(screen.queryByTestId('panel-requisition')).toBeNull();
+    expect(screen.queryByTestId('panel-count')).toBeNull();
+  });
+
+  it('renders no farm picker of its own: the shared hook is the one farm context', () => {
+    const source = read('src/components/console/inventory/feed-forecast-tabs.tsx');
+    expect(source).not.toContain('FeedFarmSelect');
+    expect(source).not.toMatch(/^\s*import .*useFeedFarm/m);
+  });
+});
+
+describe('the three feed screens read one shared farm selection', () => {
+  it.each([
+    'src/components/console/inventory/feed-forecast-panel.tsx',
+    'src/components/console/inventory/requisitions-panel.tsx',
+    'src/components/console/inventory/feed-stock-count-panel.tsx',
+  ])('%s chooses its farm through useFeedFarm', (path) => {
+    expect(read(path)).toContain('useFeedFarm()');
+  });
+});

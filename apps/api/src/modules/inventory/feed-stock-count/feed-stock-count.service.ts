@@ -115,6 +115,7 @@ export class FeedStockCountService implements OnModuleInit {
     const silos = await this.db.select({
       location_id: schema.locationMaster.location_id,
       company_id: schema.locationMaster.company_id,
+      location_code: schema.locationMaster.location_code,
       lob_id: schema.locationMaster.lob_id,
       farm_id: schema.locationMaster.farm_id,
       parent_location_id: schema.locationMaster.parent_location_id,
@@ -202,6 +203,45 @@ export class FeedStockCountService implements OnModuleInit {
 
   private countNo(farmId: string, countedAtEpochSeconds: number): string {
     return `FSC-${farmId}-${countedAtEpochSeconds}`;
+  }
+
+  /**
+   * What a new count may cover: exactly the silo/item ledger pairs `create`
+   * will demand, read through the same cutoff so the screen cannot offer a row
+   * the transaction then rejects. Read-only — it creates nothing.
+   */
+  async evidence(
+    query: { companyId: string; farmId: string; countedAt?: string },
+    tenantId: string,
+  ) {
+    const instant = parseOffsetInstant(query.countedAt ?? new Date(Math.floor(Date.now() / 1000) * 1000).toISOString());
+    await this.loadFarm(query.farmId, query.companyId, tenantId);
+    const effective = await this.settings.resolve(query.companyId, query.farmId);
+    const postingDate = this.postingDate(new Date(instant.utcIso), effective.timezoneId);
+    const silos = await this.loadActiveSilos(query.farmId, query.companyId, tenantId);
+    const rows = await this.ledger.getSiloStockEvidenceAsOf({
+      companyId: query.companyId,
+      siloIds: silos.map((silo) => silo.location_id),
+      postingDate,
+      countedAtEpochSeconds: instant.epochSeconds,
+    }, tenantId);
+    const codeOf = new Map(silos.map((silo) => [silo.location_id, silo.location_code]));
+    return {
+      farmId: query.farmId,
+      companyId: query.companyId,
+      countedAt: instant.utcIso,
+      postingDate,
+      silos: silos.map((silo) => ({ siloId: silo.location_id, siloCode: silo.location_code })),
+      pairs: rows.map((row) => ({
+        siloId: row.warehouse_id,
+        siloCode: codeOf.get(row.warehouse_id) ?? null,
+        itemId: row.item_id,
+        itemCode: row.item_code,
+        uom: row.uom,
+        systemQtyKg: row.system_qty_kg,
+        costAvailable: row.unit_cost_base !== null,
+      })),
+    };
   }
 
   async create(dto: CreateFeedStockCountDto, tenantId: string, actor?: Actor) {

@@ -18,6 +18,7 @@ export const REQ_STATUS_LABEL: LabelMap = {
   APPROVED: { key: "reqStatusApproved", variant: "success" },
   REJECTED: { key: "reqStatusRejected", variant: "danger" },
   CANCELLED: { key: "reqStatusCancelled", variant: "neutral" },
+  POSTED: { key: "reqStatusPosted", variant: "success" },
 };
 
 export const PRIORITY_LABEL: LabelMap = {

@@ -1087,6 +1087,18 @@ export class FeedRequisitionService implements OnModuleInit {
   private async decideFromApproval(request: ApprovalRequestRow, decision: 'APPROVED' | 'REJECTED', remarks: string | null, tenantId: string, user: UserCtx) {
     await this.assertMayDecide(user);
     const row = await this.lockForApproval(request, tenantId);
+    // D25 (Rishi, 1 Oct): a person may not approve a requisition they created;
+    // a Farm Manager *may* approve a system-generated forecast draft for their
+    // farm, which is the path an auto-drafted cycle takes. So the refusal keys
+    // on how the document was raised, not on the user type.
+    if (
+      decision === 'APPROVED'
+      && user?.userId
+      && row.source === 'MANUAL_ENTRY'
+      && (request.requested_by === user.userId || row.created_by === user.userId)
+    ) {
+      throw new ForbiddenException('You may not approve a requisition you created. Another authorized approver must decide it.');
+    }
     if (decision === 'REJECTED') {
       if (!remarks) throw new BadRequestException('A rejection reason is required.');
       await this.db.update(schema.requisition).set({
