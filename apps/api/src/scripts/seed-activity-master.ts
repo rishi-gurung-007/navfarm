@@ -89,6 +89,17 @@ export const STANDARD_ACTIVITY_SEEDS = [
     default_lot_required: false,
     description: 'Water-soluble or feed-top electrolyte/vitamin booster mix.',
   },
+  {
+    activity_code: 'EAR_TAG',
+    activity_name: 'Ear Tagging & Identification',
+    line_type: 'CONSUMPTION' as const,
+    is_piggery_specific: true,
+    default_occurrence: 'ONCE',
+    default_qty_basis: 'PER_HEAD',
+    default_is_mandatory: false,
+    default_lot_required: true,
+    description: 'RFID ear tag attachment for individual animal identification.',
+  },
 
   // ── OUTPUT ──
   {

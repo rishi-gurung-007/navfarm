@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { ToastContainer } from 'react-toastify';
+import { ToastContainer, Slide } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import { AuthProvider } from '@/contexts/AuthContext';
 import { ThemeProvider, useTheme } from '@/hooks/useTheme';
@@ -11,7 +11,8 @@ function ThemedToastContainer() {
   const { theme } = useTheme();
   return (
     <ToastContainer
-      position="top-center"
+      position="top-right"
+      transition={Slide}
       autoClose={4000}
       hideProgressBar={false}
       newestOnTop

@@ -19,11 +19,10 @@ describe("toast placement around dialogs", () => {
     });
   });
 
-  it("keeps the top-right dialog close control unobstructed", async () => {
+  it("anchors toast notifications to the top-right", async () => {
     render(<Providers><div>Page</div></Providers>);
     act(() => { showToast.error("Test error"); });
 
-    await waitFor(() => expect(document.querySelector(".Toastify__toast-container--top-center")).not.toBeNull());
-    expect(document.querySelector(".Toastify__toast-container--top-right")).toBeNull();
+    await waitFor(() => expect(document.querySelector(".Toastify__toast-container--top-right")).not.toBeNull());
   });
 });

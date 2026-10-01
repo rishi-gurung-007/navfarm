@@ -20,6 +20,8 @@
     "typecheck": "pnpm nx run-many -t typecheck -p api web api-e2e web-e2e",
     "db:fresh-setup": "pnpm nx run api:db-fresh-setup",
     "db:fresh-full-seed": "pnpm nx run api:db-fresh-full-seed",
+    "db:seed": "pnpm nx run api:db-fresh-full-seed",
+    "seed": "pnpm nx run api:db-fresh-full-seed",
     "db:seed-clean": "pnpm nx run api:db-seed-clean",
     "graph": "pnpm nx graph"
   },

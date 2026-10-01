@@ -38,7 +38,7 @@ export class KpiMetricService {
   }
 
   async findOne(id: string, tenantId: string) {
-    const [row] = await this.db.select().from(table).where(and(eq(table.kpi_metric_id, id), ...this.scope(tenantId))).limit(1);
+    const [row] = await this.db.select().from(table).where(and(eq(table.kpi_metric_id, id), eq(table.tenant_id, tenantId))).limit(1);
     if (!row) throw new NotFoundException('KPI Metric is not available in this workspace.');
     return row;
   }

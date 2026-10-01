@@ -228,7 +228,7 @@ export class CostCenterService {
     const [cc] = await this.db
       .select()
       .from(schema.costCenterMaster)
-      .where(and(eq(schema.costCenterMaster.cost_center_id, id), isNull(schema.costCenterMaster.deleted_at)))
+      .where(eq(schema.costCenterMaster.cost_center_id, id))
       .limit(1);
 
     if (!cc) {

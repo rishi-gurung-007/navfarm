@@ -352,14 +352,14 @@ export default function StockTransferPanel() {
           </div>
 
           <div className="overflow-x-auto rounded-[var(--radius-sm)] border" style={S.surface}>
-            <table className="w-full border-collapse text-left text-xs">
+            <table className="w-full border-collapse text-left text-xs min-w-[700px]">
               <TableHeader>
                 <tr className="border-b border-(--row-border)">
-                  <TableHead className="h-auto px-3 py-2">{t("stpColItem")}</TableHead>
-                  <TableHead className="h-auto px-3 py-2">{t("stpColQty")}</TableHead>
-                  <TableHead className="h-auto px-3 py-2">{t("stpColUom")}</TableHead>
-                  <TableHead className="h-auto px-3 py-2">Lot / Serial</TableHead>
-                  <TableHead className="h-auto px-3 py-2"></TableHead>
+                  <TableHead className="h-auto px-3 py-2 min-w-[200px]">{t("stpColItem")}</TableHead>
+                  <TableHead className="h-auto px-3 py-2 w-28 min-w-[100px]">{t("stpColQty")}</TableHead>
+                  <TableHead className="h-auto px-3 py-2 w-24 min-w-[85px]">{t("stpColUom")}</TableHead>
+                  <TableHead className="h-auto px-3 py-2 min-w-[220px]">Lot / Serial</TableHead>
+                  <TableHead className="h-auto px-3 py-2 w-10 min-w-[40px]"></TableHead>
                 </tr>
               </TableHeader>
               <TableBody>
@@ -369,7 +369,7 @@ export default function StockTransferPanel() {
 
                   return (
                     <TableRow key={idx}>
-                      <TableCell className="px-2 py-1.5 min-w-[180px]">
+                      <TableCell className="px-2 py-1.5 min-w-[200px]">
                         <select value={line.item_id} onChange={(e) => setLineField(idx, "item_id", e.target.value)} className={`${inputCls} nf-select`} style={S.input}>
                           <option value="">{t("stpSelectItemOptions", { count: items.length })}</option>
                           {items.map((itItem, i) => (
@@ -379,13 +379,16 @@ export default function StockTransferPanel() {
                           ))}
                         </select>
                       </TableCell>
-                      <TableCell className="px-2 py-1.5 w-24">
+                      <TableCell className="px-2 py-1.5 w-28 min-w-[100px]">
                         <input
                           type="number"
+                          min="0"
+                          step="any"
+                          placeholder="0"
                           value={line.quantity}
                           disabled={trackingType === "SERIAL"}
                           onChange={(e) => setLineField(idx, "quantity", e.target.value)}
-                          className={inputCls}
+                          className={`${inputCls} font-mono [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none`}
                           style={S.input}
                         />
                       </TableCell>

@@ -189,7 +189,7 @@ export async function seedCleanE2E() {
       },
       {
         code: 'ITM-LOT-VACCINE',
-        name: 'Parvo-Shield Swine Vaccine (Lot Tracked)',
+        name: 'Parvo-Shield Swine Vaccine',
         type: 'VACCINE',
         uom: 'DOSE',
         val: 'FIFO',
@@ -201,7 +201,7 @@ export async function seedCleanE2E() {
       },
       {
         code: 'ITM-SER-TAG',
-        name: 'RFID Swine Ear Tag (Serial Tracked)',
+        name: 'RFID Swine Ear Tag',
         type: 'RAW_MATERIAL',
         uom: 'PCS',
         val: 'FIFO',

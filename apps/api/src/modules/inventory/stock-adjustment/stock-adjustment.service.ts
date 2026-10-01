@@ -25,7 +25,6 @@ export class StockAdjustmentService {
     private readonly ledgerService: InventoryLedgerService,
     private readonly glPostingService: GlPostingService,
     private readonly numberSeriesService: NumberSeriesService,
-    // Re-check feed thresholds only after the stock posting commits.
     @Optional() private readonly feedAlerts?: FeedAlertService,
   ) { }
 
