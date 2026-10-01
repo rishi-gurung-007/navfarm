@@ -1,4 +1,4 @@
-import { Controller, Get, Query, Req, UseGuards } from '@nestjs/common';
+import { Controller, Get, Param, Query, Req, UseGuards, NotFoundException } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { InventoryLedgerService } from './inventory-ledger.service';
 import { QueryInventoryLedgerDto, QueryStockBalanceDto, QueryAvailableLotsDto, QueryAvailableSerialsDto } from './dto/inventory-ledger.dto';
@@ -66,6 +66,22 @@ export class InventoryLedgerController {
     return {
       success: true,
       message: 'Available serials retrieved successfully.',
+      data: result,
+    };
+  }
+
+  @Get(':id')
+  @RequirePermission('INVENTORY', 'LEDGER', 'view')
+  @ApiOperation({ summary: 'Get details of a specific inventory ledger entry including FIFO applications' })
+  async findOne(@Param('id') id: string, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const result = await this.ledgerService.findOneWithDetails(id, tenantId);
+    if (!result) {
+      throw new NotFoundException(`Inventory ledger entry '${id}' not found.`);
+    }
+    return {
+      success: true,
+      message: 'Inventory ledger entry retrieved successfully.',
       data: result,
     };
   }

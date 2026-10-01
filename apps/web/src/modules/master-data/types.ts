@@ -24,8 +24,8 @@ export interface SelectOption {
  * value. */
 export interface RequiredCondition {
   key: string;
-  equals?: string | boolean | Array<string | boolean>;
-  notEquals?: string | boolean | Array<string | boolean>;
+  equals?: string | boolean | Array<string | boolean | null | undefined>;
+  notEquals?: string | boolean | Array<string | boolean | null | undefined>;
 }
 
 export interface MasterDataField {
@@ -35,13 +35,11 @@ export interface MasterDataField {
   required?: boolean;
   /**
    * Marks this field conditionally required — required only when at least one of `anyOf`'s
-   * conditions currently matches the form's live values (e.g. `standard_cost` required only
-   * when `valuation_method` is `STANDARD`). Shown with the same asterisk as `required`, and
-   * enforced client-side on save; the API enforces the same rule independently.
+   * conditions (or all of `allOf`'s conditions) currently matches the form's live values.
    */
-  requiredWhen?: { anyOf: RequiredCondition[] };
-  /** Render and submit only while at least one condition matches. */
-  visibleWhen?: { anyOf: RequiredCondition[] };
+  requiredWhen?: { anyOf?: RequiredCondition[]; allOf?: RequiredCondition[] };
+  /** Render and submit only while condition matches. Supports anyOf or allOf. */
+  visibleWhen?: { anyOf?: RequiredCondition[]; allOf?: RequiredCondition[] };
   placeholder?: string;
   helpText?: string;
   /** Static dropdown options, for type: "select" */
@@ -445,4 +443,21 @@ export interface MasterDataConfig {
    * inline card. Order here is the order the cards appear.
    */
   lookupFor?: string[];
+  /** Sub-tabs that filter rows by a field value (e.g. resource_type: MANPOWER vs EQUIPMENT). */
+  filterTabs?: MasterDataFilterTabs;
+}
+
+export interface MasterDataFilterTabOption {
+  value: string;
+  label: string;
+  filterValues?: string[];
+  defaultFormValues?: Record<string, any>;
+  columns?: MasterDataColumn[];
+}
+
+export interface MasterDataFilterTabs {
+  key: string;
+  queryParam?: string;
+  options: MasterDataFilterTabOption[];
+  defaultTab?: string;
 }

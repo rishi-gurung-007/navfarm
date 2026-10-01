@@ -475,20 +475,39 @@ const animal: MasterDataConfig = {
     // enforced these as COND rules and rejected the wrong combination; the form
     // asked for both from everyone, so a born-on-farm piglet was offered a
     // goods receipt it could never legally carry.
-    { key: "source_receipt_id", searchable: true, label: "Source Goods Receipt", type: "select-entity", createOnly: true, entityEndpoint: "/goods-receipt", entityValueKey: "receipt_id", entityLabelKeys: ["receipt_no"], visibleWhen: { anyOf: [{ key: "entry_type", equals: ["PURCHASED_IMPORTED", "PURCHASED_LOCAL"] }] }, requiredWhen: { anyOf: [{ key: "entry_type", equals: ["PURCHASED_IMPORTED", "PURCHASED_LOCAL"] }] }, helpText: "The receipt this animal arrived on.", section: "Acquisition" },
+    { key: "source_receipt_id", searchable: true, label: "Source Goods Receipt", type: "select-entity", createOnly: true, entityEndpoint: "/goods-receipt", entityValueKey: "receipt_id", entityLabelKeys: ["receipt_no"], visibleWhen: { anyOf: [{ key: "entry_type", equals: ["PURCHASED_IMPORTED", "PURCHASED_LOCAL"] }] }, requiredWhen: { anyOf: [{ key: "entry_type", equals: "PURCHASED_IMPORTED" }] }, helpText: "The receipt this animal arrived on. Leave empty if N/A for local purchase.", section: "Acquisition" },
     { key: "source_batch_id", searchable: true, label: "Source Batch", type: "select-entity", createOnly: true, entityEndpoint: "/batch", entityValueKey: "batch_id", entityLabelKeys: ["batch_no"], visibleWhen: { anyOf: [{ key: "entry_type", equals: "BORN_ON_FARM" }] }, requiredWhen: { anyOf: [{ key: "entry_type", equals: "BORN_ON_FARM" }] }, helpText: "The farrowing batch this animal was born from.", section: "Acquisition" },
     // LIVESTOCK is the item type seeded for living biological assets. There is
     // no LIVING_ASSET item type; using it here left this required picker empty.
     { key: "item_id", searchable: true, label: "Item (Living Asset)", type: "select-entity", required: true, createOnly: true, entityEndpoint: "/item?itemType=LIVESTOCK", entityValueKey: "item_id", entityLabelKeys: ["item_code", "item_name"], section: "Acquisition" },
-    // Two fields, one column. A purchased animal's cost is read off its goods
-    // receipt by the API and anything typed here is discarded, so offering an
-    // editable box for it would take input it then throws away. Everything else
-    // has no document behind it and is entered by hand.
-    // max mirrors the DTO's @Max — animal_register.acquisition_cost/landing_cost
-    // are decimal(18,4) (schema.ts); this is that column's own ceiling, not a
-    // client-specified business limit.
-    { key: "acquisition_cost", label: "Acquisition Cost", type: "number", step: "0.01", min: 0, max: 99999999999999, readOnly: true, createOnly: true, visibleWhen: { anyOf: [{ key: "entry_type", equals: ["PURCHASED_IMPORTED", "PURCHASED_LOCAL"] }] }, helpText: "Taken from the rate on the source goods receipt.", section: "Acquisition" },
-    { key: "acquisition_cost", label: "Acquisition Cost", type: "number", step: "0.01", min: 0, max: 99999999999999, createOnly: true, requiredWhen: { anyOf: [{ key: "entry_type", equals: ["BORN_ON_FARM", "TRANSFERRED_IN"] }] }, visibleWhen: { anyOf: [{ key: "entry_type", equals: ["BORN_ON_FARM", "TRANSFERRED_IN"] }] }, section: "Acquisition" },
+    // An imported animal's cost is read off its goods receipt by the API and anything
+    // typed is discarded, so it stays readOnly. A local purchase without a GRN requires manual cost entry.
+    { key: "acquisition_cost", label: "Acquisition Cost", type: "number", step: "0.01", min: 0, max: 99999999999999, readOnly: true, createOnly: true, visibleWhen: { anyOf: [{ key: "entry_type", equals: "PURCHASED_IMPORTED" }] }, helpText: "Taken from the rate on the source goods receipt.", section: "Acquisition" },
+    {
+      key: "acquisition_cost",
+      label: "Acquisition Cost",
+      type: "number",
+      step: "0.01",
+      min: 0,
+      max: 99999999999999,
+      createOnly: true,
+      requiredWhen: {
+        anyOf: [
+          { key: "entry_type", equals: ["BORN_ON_FARM", "TRANSFERRED_IN"] },
+        ],
+        allOf: [
+          { key: "entry_type", equals: "PURCHASED_LOCAL" },
+          { key: "source_receipt_id", equals: "" },
+        ],
+      },
+      visibleWhen: {
+        anyOf: [
+          { key: "entry_type", equals: ["PURCHASED_LOCAL", "BORN_ON_FARM", "TRANSFERRED_IN"] },
+        ],
+      },
+      helpText: "Purchase price or production cost per animal. Required if no Source Goods Receipt is selected.",
+      section: "Acquisition",
+    },
     { key: "landing_cost", label: "Landing Cost", type: "number", step: "0.01", min: 0, max: 99999999999999, createOnly: true, helpText: "Transport/import duty/quarantine charges for imported animals.", section: "Acquisition" },
     // Acquisition Cost + Landing Cost, computed by the service on save. Shown
     // rather than hidden because it is the figure the opening bio-asset value
@@ -1039,7 +1058,7 @@ const item: MasterDataConfig = {
     // pair of flags where the form asked one question.
     { key: "is_lot_tracked", label: "Lot Tracked", type: "boolean", hideInForm: true, readOnly: true, hideInTable: true, visibleWhen: { anyOf: [{ key: "is_lot_tracked", equals: true }] }, section: "Tracking" },
     { key: "is_serial_tracked", label: "Serial Tracked", type: "boolean", hideInForm: true, readOnly: true, hideInTable: true, visibleWhen: { anyOf: [{ key: "is_serial_tracked", equals: true }] }, section: "Tracking" },
-    { key: "is_biological_asset", label: "Biological Asset", type: "boolean" },
+    { key: "is_biological_asset", label: "Biological Asset", type: "boolean", section: "Identification" },
     { key: "is_inventoriable", label: "Inventoriable", type: "boolean", helpText: "Held as stock, with a balance and a valuation. Off for services and consumables that are expensed on receipt.", section: "Inventory" },
     { key: "min_stock_level", label: "Min Stock Level", type: "number", step: "0.01", min: 0, visibleWhen: WHEN_INVENTORIED, section: "Inventory" },
     { key: "max_stock_level", label: "Max Stock Level", type: "number", step: "0.01", min: 0, visibleWhen: WHEN_INVENTORIED, section: "Inventory" },
@@ -1059,8 +1078,8 @@ const item: MasterDataConfig = {
       requiredWhen: { anyOf: [{ key: "item_type", equals: ["MEDICINE", "VACCINE"] }] },
       helpText: "Up to 99 days. Required for MEDICINE/VACCINE items — minimum days after last administration before an animal treated with this item may be slaughtered.",
     },
-    { key: "is_qr_enabled", label: "QR Tracking Enabled", type: "boolean" },
-    { key: "item_image_url", label: "Item Photo", type: "image" },
+    { key: "is_qr_enabled", label: "QR Tracking Enabled", type: "boolean", section: "Tracking" },
+    { key: "item_image_url", label: "Item Photo", type: "image", section: "Identification" },
     { key: "inventory_gl_account", label: "Inventory GL Account", type: "select-entity", searchable: true, entityEndpoint: "/gl-account", entityValueKey: "gl_account_id", entityLabelKeys: ["account_code", "account_name"], helpText: "GL account this item posts inventory value to.", section: "Accounting" },
     { key: "cogs_gl_account", label: "COGS GL Account", type: "select-entity", searchable: true, entityEndpoint: "/gl-account", entityValueKey: "gl_account_id", entityLabelKeys: ["account_code", "account_name"], helpText: "GL account this item posts cost of goods sold to.", section: "Accounting" },
     { key: "is_blocked", label: "Blocked", type: "boolean", helpText: "A blocked item stays visible/historical but cannot be transacted.", section: "Accounting" },
@@ -1068,7 +1087,7 @@ const item: MasterDataConfig = {
       // A Mandatory attribute is on every item in scope, so the form opens with
       // a row for each one already in place and no way to take it out. The
       // value is still typed per item; it is the row that is not optional.
-      key: "attributes", label: "Attribute Values", type: "json",
+      key: "attributes", label: "Attribute Values", type: "json", section: "Identification",
       requiredRows: { endpoint: "/item-attribute", flag: "is_mandatory", key: "attribute_id" },
       jsonListKeys: ["attribute_id", "attribute_value"],
       jsonRow: [
@@ -1177,7 +1196,10 @@ const breedLifecycleStage: MasterDataConfig = {
     { key: "nob_id", label: "Nature of Business", type: "select-entity", entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], helpText: "Leave blank if this lifecycle row is shared across all business verticals." },
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank if this lifecycle row is shared across all LOBs under the selected NOB." },
     { key: "lifecycle_code", label: "Lifecycle Code", type: "text", placeholder: "BLS-001", helpText: "Optional. Leave blank until the numbering convention is agreed; a series can generate it later." },
-    { key: "breed_id", label: "Breed", type: "select-entity", required: true, searchable: true, entityEndpoint: "/breed", entityValueKey: "breed_id", entityLabelKeys: ["breed_code", "breed_name"] },
+    // breed_id is set at creation and is immutable — UpdateBreedLifecycleStageDto does not
+    // accept it. readOnly: true keeps it visible in the edit form for context but tells
+    // MasterDataTable's save loop to exclude it from the PATCH body (see MasterDataTable.tsx ~L1561).
+    { key: "breed_id", label: "Breed", type: "select-entity", required: true, readOnly: true, searchable: true, entityEndpoint: "/breed", entityValueKey: "breed_id", entityLabelKeys: ["breed_code", "breed_name"] },
     { key: "stage_id", label: "Stage", type: "select-entity", required: true, entityEndpoint: "/stage", entityValueKey: "stage_id", entityLabelKeys: ["stage_code", "stage_name"] },
     {
       key: "category", label: "Category", type: "select",
@@ -1689,13 +1711,16 @@ const resource: MasterDataConfig = {
     },
     {
       key: "resource_sub_type", label: "Resource Sub-Type", type: "select", section: "Identification",
+      // Show the relevant sub-type options based on the selected resource type.
+      // MANPOWER/LABOR: employment mode. EQUIPMENT: ownership mode.
       options: ["PERMANENT", "CONTRACT", "DAILY", "OWNED", "LEASED", "RENTED"].map((v) => ({ value: v, label: v })),
-      helpText: "PERMANENT/CONTRACT/DAILY for labor; OWNED/LEASED/RENTED for equipment.",
+      helpText: "PERMANENT / CONTRACT / DAILY for Manpower; OWNED / LEASED / RENTED for Equipment.",
     },
     { key: "resource_name", label: "Resource Name", type: "text", required: true, placeholder: "Senior Laborer", section: "Identification" },
-    { key: "employee_id", label: "Employee ID", type: "text", placeholder: "EMP-001", helpText: "Labor/manpower only.", section: "People" },
-    { key: "designation", label: "Designation", type: "text", placeholder: "Senior Farm Worker", helpText: "Labor/manpower only.", section: "People" },
-    { key: "department", label: "Department", type: "text", placeholder: "Farm Operations", helpText: "Department or team.", section: "People" },
+    // People section — only relevant for Manpower/Labor resources.
+    { key: "employee_id", label: "Employee ID", type: "text", placeholder: "EMP-001", section: "People", visibleWhen: { anyOf: [{ key: "resource_type", equals: "MANPOWER" }] } },
+    { key: "designation", label: "Designation", type: "text", placeholder: "Senior Farm Worker", section: "People", visibleWhen: { anyOf: [{ key: "resource_type", equals: "MANPOWER" }] } },
+    { key: "department", label: "Department", type: "text", placeholder: "Farm Operations", helpText: "Department or team.", section: "People", visibleWhen: { anyOf: [{ key: "resource_type", equals: "MANPOWER" }] } },
     { key: "capacity", label: "Capacity", type: "number", step: "0.01", min: 0, section: "Capacity & Cost" },
     // Left unfiltered: a resource's capacity spans MANPOWER (HEAD), EQUIPMENT (KG,
     // LITER for a tank, BAG for a mixer) and UTILITY — no single type fits.
@@ -1706,18 +1731,19 @@ const resource: MasterDataConfig = {
     { key: "cost_rate", label: "Cost Rate", type: "number", step: "0.01", min: 0, section: "Capacity & Cost" },
     { key: "cost_element", label: "Cost Element", type: "text", maxLength: 50, placeholder: "DIRECT_LABOR", helpText: "GL cost classification, e.g. DIRECT_LABOR / INDIRECT_LABOR / EQUIPMENT_HIRE / FUEL / MAINTENANCE.", section: "Capacity & Cost" },
     { key: "gl_cost_account", label: "GL Cost Account", type: "select-entity", searchable: true, entityEndpoint: "/gl-account", entityValueKey: "gl_account_id", entityLabelKeys: ["account_code", "account_name"], helpText: "GL account this resource posts cost to.", section: "Capacity & Cost" },
-    { key: "asset_code", label: "Asset Code", type: "text", placeholder: "ASSET-PELLETISER-01", helpText: "Equipment only.", section: "Asset" },
-    { key: "asset_make", label: "Asset Make", type: "text", section: "Asset" },
-    { key: "asset_model", label: "Asset Model", type: "text", section: "Asset" },
-    { key: "asset_serial_no", label: "Asset Serial No.", type: "text", section: "Asset" },
-    { key: "purchase_date", label: "Purchase Date", type: "date", section: "Asset" },
-    { key: "warranty_expiry_date", label: "Warranty Expiry", type: "date", section: "Asset" },
-    { key: "maintenance_frequency_days", label: "Maintenance Frequency (days)", type: "number", min: 0, helpText: "Days between scheduled services. Logging a completed service auto-calculates the next due date.", section: "Maintenance" },
-    { key: "maintenance_cost_per_service", label: "Est. Cost per Service", type: "number", step: "0.01", min: 0, section: "Maintenance" },
-    { key: "maintenance_vendor", label: "Preferred Maintenance Vendor", type: "text", section: "Maintenance" },
-    { key: "last_maintenance_date", label: "Last Maintenance (system-tracked)", type: "date", hideInForm: true, section: "Maintenance" },
-    { key: "next_maintenance_date", label: "Next Service Date", type: "date", helpText: "Next maintenance / service due date. Auto-updated when logging completed maintenance, or can be set manually.", section: "Maintenance" },
-    { key: "license_expiry", label: "License Expiry", type: "date", helpText: "License/certification expiry — alert 30 days before.", section: "Maintenance" },
+    // Asset & Maintenance sections — only relevant for Equipment resources.
+    { key: "asset_code", label: "Asset Code", type: "text", placeholder: "ASSET-PELLETISER-01", section: "Asset", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
+    { key: "asset_make", label: "Asset Make", type: "text", section: "Asset", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
+    { key: "asset_model", label: "Asset Model", type: "text", section: "Asset", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
+    { key: "asset_serial_no", label: "Asset Serial No.", type: "text", section: "Asset", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
+    { key: "purchase_date", label: "Purchase Date", type: "date", section: "Asset", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
+    { key: "warranty_expiry_date", label: "Warranty Expiry", type: "date", section: "Asset", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
+    { key: "maintenance_frequency_days", label: "Maintenance Frequency (days)", type: "number", min: 0, helpText: "Days between scheduled services. Logging a completed service auto-calculates the next due date.", section: "Maintenance", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
+    { key: "maintenance_cost_per_service", label: "Est. Cost per Service", type: "number", step: "0.01", min: 0, section: "Maintenance", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
+    { key: "maintenance_vendor", label: "Preferred Maintenance Vendor", type: "text", section: "Maintenance", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
+    { key: "last_maintenance_date", label: "Last Maintenance (system-tracked)", type: "date", hideInForm: true, section: "Maintenance", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
+    { key: "next_maintenance_date", label: "Next Service Date", type: "date", helpText: "Next maintenance / service due date. Auto-updated when logging completed maintenance, or can be set manually.", section: "Maintenance", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
+    { key: "license_expiry", label: "License Expiry", type: "date", helpText: "License/certification expiry — alert 30 days before.", section: "Maintenance", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
   ],
 };
 

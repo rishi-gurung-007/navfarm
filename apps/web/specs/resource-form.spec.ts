@@ -23,12 +23,30 @@ describe("Resource form — field order", () => {
   });
 });
 
-describe("Resource form — EQUIPMENT and UTILITY show the same fields", () => {
-  it("does not gate any resource field on the resource type", () => {
-    const typeGated = resource.fields.filter((f) =>
-      f.visibleWhen?.anyOf.some((cond) => cond.key === "resource_type")
-    );
-    expect(typeGated).toEqual([]);
+describe("Resource form — fields gated by Resource Type", () => {
+  it("gates People section fields on MANPOWER and Asset/Maintenance fields on EQUIPMENT", () => {
+    const manpowerFields = resource.fields.filter((f) =>
+      f.visibleWhen?.anyOf.some((cond) => cond.key === "resource_type" && cond.equals === "MANPOWER")
+    ).map((f) => f.key);
+    expect(manpowerFields).toEqual(["employee_id", "designation", "department"]);
+
+    const equipmentFields = resource.fields.filter((f) =>
+      f.visibleWhen?.anyOf.some((cond) => cond.key === "resource_type" && cond.equals === "EQUIPMENT")
+    ).map((f) => f.key);
+    expect(equipmentFields).toEqual([
+      "asset_code",
+      "asset_make",
+      "asset_model",
+      "asset_serial_no",
+      "purchase_date",
+      "warranty_expiry_date",
+      "maintenance_frequency_days",
+      "maintenance_cost_per_service",
+      "maintenance_vendor",
+      "last_maintenance_date",
+      "next_maintenance_date",
+      "license_expiry",
+    ]);
   });
 });
 

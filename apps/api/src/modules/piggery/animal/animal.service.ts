@@ -562,20 +562,20 @@ export class AnimalService {
       'Item', dto.item_id,
     );
 
-    // COND rules from the spec: source_receipt_id required for purchased entries,
-    // source_batch_id required for on-farm births.
-    if (['PURCHASED_IMPORTED', 'PURCHASED_LOCAL'].includes(dto.entry_type) && !dto.source_receipt_id) {
-      throw new BadRequestException(`source_receipt_id is required when entry_type is '${dto.entry_type}'.`);
+    // COND rules from the spec: source_receipt_id required for imported purchased entries,
+    // source_batch_id required for on-farm births. For local purchases, source_receipt_id is optional;
+    // if omitted, acquisition_cost must be provided manually.
+    if (dto.entry_type === 'PURCHASED_IMPORTED' && !dto.source_receipt_id) {
+      throw new BadRequestException(`source_receipt_id is required when entry_type is 'PURCHASED_IMPORTED'.`);
     }
     if (dto.entry_type === 'BORN_ON_FARM' && !dto.source_batch_id) {
       throw new BadRequestException(`source_batch_id is required when entry_type is 'BORN_ON_FARM'.`);
     }
 
-    // A purchased animal's cost is a fact on the receipt it arrived on, not a
-    // number retyped into the register. Derived here and the caller's value
-    // discarded, so the register and the receipt cannot drift apart. Animals
-    // that were not purchased keep the cost as entered — there is no document
-    // to read it off.
+    // A purchased animal's cost is a fact on the receipt it arrived on when a receipt is provided.
+    // Derived here and the caller's value discarded, so the register and the receipt cannot drift apart.
+    // If no receipt is provided (allowed for local purchases, on-farm births, transfers), acquisition_cost
+    // must be provided by the caller.
     let acquisitionCost = dto.acquisition_cost;
     if (dto.source_receipt_id) {
       // A receipt reaches a farm through the warehouse it was received into.
@@ -611,13 +611,9 @@ export class AnimalService {
       acquisitionCost = Number(receiptLine.rate);
     }
 
-    // Only reachable for an entry with no receipt behind it: the form omits the
-    // field entirely for purchased animals (it is readOnly there, and readOnly
-    // fields are stripped from the payload), so this cannot be a plain
-    // "required field missing" on the DTO without breaking that path.
-    if (acquisitionCost === undefined || acquisitionCost === null) {
+    if (acquisitionCost === undefined || acquisitionCost === null || Number.isNaN(Number(acquisitionCost))) {
       throw new BadRequestException(
-        `Acquisition cost is required for a '${dto.entry_type}' entry — there is no goods receipt to read it from.`,
+        `Acquisition cost is required for a '${dto.entry_type}' entry when no source goods receipt is provided.`,
       );
     }
     if (dto.source_batch_id) {

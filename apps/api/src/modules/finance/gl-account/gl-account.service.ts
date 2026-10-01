@@ -233,7 +233,7 @@ export class GlAccountService {
     const [account] = await this.db
       .select()
       .from(schema.glAccountMaster)
-      .where(and(eq(schema.glAccountMaster.gl_account_id, id), isNull(schema.glAccountMaster.deleted_at)))
+      .where(eq(schema.glAccountMaster.gl_account_id, id))
       .limit(1);
 
     if (!account) {

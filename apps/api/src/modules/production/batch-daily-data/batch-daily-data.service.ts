@@ -8,7 +8,7 @@ import {
   forwardRef,
 } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, inArray, or, sql, isNull, gt } from 'drizzle-orm';
+import { eq, and, inArray, or, sql, isNull, gt, like, desc } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
@@ -270,7 +270,26 @@ export class BatchDailyDataService {
     switch (line.line_type) {
       case 'CONSUMPTION':
       case 'OUTPUT': {
-        if (!line.item_id)
+        let resolvedItemId = line.item_id;
+        if (!resolvedItemId && line.line_type === 'OUTPUT') {
+          const [matched] = await this.db
+            .select({ item_id: schema.itemMaster.item_id })
+            .from(schema.itemMaster)
+            .where(
+              and(
+                eq(schema.itemMaster.tenant_id, tenantId),
+                eq(schema.itemMaster.is_active, true),
+                or(
+                  like(schema.itemMaster.item_name, '%Piglet%'),
+                  eq(schema.itemMaster.item_type, 'LIVESTOCK'),
+                ),
+              ),
+            )
+            .orderBy(desc(schema.itemMaster.item_type))
+            .limit(1);
+          resolvedItemId = matched?.item_id || null;
+        }
+        if (!resolvedItemId)
           throw new ConflictException(
             `'${line.activity_name}' has no item configured — fix the line before posting entries against it.`,
           );
@@ -281,29 +300,58 @@ export class BatchDailyDataService {
         const [item] = await this.db
           .select()
           .from(schema.itemMaster)
-          .where(eq(schema.itemMaster.item_id, line.item_id))
+          .where(eq(schema.itemMaster.item_id, resolvedItemId))
           .limit(1);
         // Feed and medicine come out of somewhere physical: the silo standing
         // at this batch's shed, or the farm store behind it. Only CONSUMPTION
         // draws stock down — an OUTPUT line puts stock IN and has no source to
         // resolve, so it is left exactly as it was.
-        const sourceWarehouseId =
-          line.line_type === 'CONSUMPTION'
-            ? await this.resolveConsumptionWarehouse(
-                header.location_id,
-                line.item_id,
-                line.activity_name,
-                batchRow?.farm_id ?? null,
-                header.company_id,
-                tenantId,
-              )
-            : undefined;
+        let sourceWarehouseId: string | undefined;
+        if (line.line_type === 'CONSUMPTION') {
+          // If specific serial number(s) are supplied, resolve warehouse to the warehouse
+          // holding those serials so we draw from the exact warehouse where the stock physically exists.
+          if (dto.serial_no) {
+            const serials = dto.serial_no
+              .split(',')
+              .map((s) => s.trim())
+              .filter(Boolean);
+            if (serials.length > 0) {
+              const [serialLayer] = await this.db
+                .select({ warehouse_id: schema.inventoryLedger.warehouse_id })
+                .from(schema.inventoryLedger)
+                .where(
+                  and(
+                    eq(schema.inventoryLedger.tenant_id, tenantId),
+                    eq(schema.inventoryLedger.company_id, header.company_id),
+                    eq(schema.inventoryLedger.item_id, resolvedItemId),
+                    eq(schema.inventoryLedger.entry_type, 'POSITIVE'),
+                    inArray(schema.inventoryLedger.serial_no, serials),
+                    sql`CAST(${schema.inventoryLedger.remaining_quantity} AS DECIMAL(18,4)) > 0`,
+                  ),
+                )
+                .limit(1);
+              if (serialLayer?.warehouse_id) {
+                sourceWarehouseId = serialLayer.warehouse_id;
+              }
+            }
+          }
+          if (!sourceWarehouseId) {
+            sourceWarehouseId = await this.resolveConsumptionWarehouse(
+              header.location_id,
+              resolvedItemId,
+              line.activity_name,
+              batchRow?.farm_id ?? null,
+              header.company_id,
+              tenantId,
+            );
+          }
+        }
         const updated = await this.batchService.addTransaction(
           batchId,
           {
             transaction_date: dto.entry_date,
             transaction_type: line.line_type,
-            item_id: line.item_id,
+            item_id: resolvedItemId,
             quantity: dto.entered_value,
             uom: item?.uom_primary || 'PCS',
             rate: dto.rate,
@@ -332,7 +380,7 @@ export class BatchDailyDataService {
         const matchingTx = (updated.transactions || []).filter(
           (t: any) =>
             t.transaction_date === dto.entry_date &&
-            t.item_id === line.item_id &&
+            t.item_id === resolvedItemId &&
             t.transaction_type === line.line_type,
         );
         posted = true;

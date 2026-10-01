@@ -153,8 +153,17 @@ export function SubCard({
                 itemId={line.item_id || ""}
                 warehouseId={(form.batch as any)?.warehouse_id}
                 trackingType={line.is_serial_tracked ? "SERIAL" : "LOT"}
+                multiSelect={line.is_serial_tracked}
+                targetQuantity={line.standard_qty != null ? Number(line.standard_qty) : undefined}
                 value={lot}
-                onChange={(val) => setLot(val)}
+                align="end"
+                onChange={(val) => {
+                  setLot(val);
+                  if (line.is_serial_tracked) {
+                    const count = val ? val.split(',').map((s) => s.trim()).filter(Boolean).length : 0;
+                    setValue(count > 0 ? String(count) : '');
+                  }
+                }}
                 disabled={busy}
                 placeholder={line.is_serial_tracked ? "Select serial…" : (t("deLot") || "Select lot…")}
                 ariaLabel={`${line.activity_name} — ${line.is_serial_tracked ? "Serial" : (t("deLot") || "Lot")}`}

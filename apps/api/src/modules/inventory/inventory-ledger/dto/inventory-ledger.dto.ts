@@ -38,6 +38,11 @@ export class QueryInventoryLedgerDto {
   @IsString()
   documentNo?: string;
 
+  @ApiProperty({ description: 'Filter by entry type (POSITIVE or NEGATIVE)', required: false })
+  @IsOptional()
+  @IsString()
+  entryType?: string;
+
   @ApiProperty({ description: 'Sort by field: created_at or posting_date', required: false })
   @IsOptional()
   @IsString()

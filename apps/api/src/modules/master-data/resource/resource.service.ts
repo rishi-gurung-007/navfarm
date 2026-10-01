@@ -1,7 +1,7 @@
 import { companyCondition, masterScopeConditions } from '../../../common/master-data-scope';
 import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, like, or, isNull, isNotNull, lte } from 'drizzle-orm';
+import { eq, and, like, or, isNull, isNotNull, lte, inArray } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
@@ -155,7 +155,11 @@ export class ResourceService {
 
     conditions.push(...masterScopeConditions(this.cls, schema.resourceMaster, query.companyId));
     if (query.resourceType) {
-      conditions.push(eq(schema.resourceMaster.resource_type, query.resourceType));
+      if (query.resourceType.toUpperCase() === 'MANPOWER') {
+        conditions.push(inArray(schema.resourceMaster.resource_type, ['MANPOWER', 'LABOR']));
+      } else {
+        conditions.push(eq(schema.resourceMaster.resource_type, query.resourceType));
+      }
     }
     if (query.nobId) {
       conditions.push(eq(schema.resourceMaster.nob_id, query.nobId));

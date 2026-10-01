@@ -82,7 +82,7 @@ describe('AnimalService', () => {
   });
 
   describe('create', () => {
-    it('rejects a PURCHASED_LOCAL entry missing source_receipt_id', async () => {
+    it('rejects a PURCHASED_IMPORTED entry missing source_receipt_id', async () => {
       mockDbSelect
         .mockReturnValueOnce(found({ company_id: 'comp-1' }))
         .mockReturnValueOnce(found({ nob_id: 'nob-1' }))
@@ -91,8 +91,43 @@ describe('AnimalService', () => {
         .mockReturnValueOnce(found({ item_id: 'item-1' }));
 
       await expect(
-        service.create({ ...baseDto, entry_type: 'PURCHASED_LOCAL' }, 'tenant-123'),
+        service.create({ ...baseDto, entry_type: 'PURCHASED_IMPORTED' }, 'tenant-123'),
       ).rejects.toThrow(BadRequestException);
+    });
+
+    it('rejects a PURCHASED_LOCAL entry missing acquisition_cost when source_receipt_id is omitted', async () => {
+      mockDbSelect
+        .mockReturnValueOnce(found({ company_id: 'comp-1' }))
+        .mockReturnValueOnce(found({ nob_id: 'nob-1' }))
+        .mockReturnValueOnce(found({ lob_id: 'lob-1' }))
+        .mockReturnValueOnce(found({ breed_id: 'breed-1' }))
+        .mockReturnValueOnce(found({ item_id: 'item-1' }));
+
+      await expect(
+        service.create({ ...baseDto, entry_type: 'PURCHASED_LOCAL', acquisition_cost: undefined }, 'tenant-123'),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('allows a PURCHASED_LOCAL entry without source_receipt_id when acquisition_cost is provided', async () => {
+      mockDbSelect
+        .mockReturnValueOnce(found({ company_id: 'comp-1' }))
+        .mockReturnValueOnce(found({ nob_id: 'nob-1' }))
+        .mockReturnValueOnce(found({ lob_id: 'lob-1' }))
+        .mockReturnValueOnce(found({ breed_id: 'breed-1' }))
+        .mockReturnValueOnce(found({ item_id: 'item-1' }))
+        .mockReturnValueOnce(found({ lob_code: 'PIGGERY' }))
+        .mockReturnValue(found({ animal_id: 'a-1', animal_code: 'PIG-2026-0001' }));
+      const inserted: any[] = [];
+      mockDbInsert.mockReturnValue({ values: jest.fn().mockImplementation((v) => { inserted.push(v); return Promise.resolve({}); }) });
+
+      await service.create({
+        ...baseDto,
+        entry_type: 'PURCHASED_LOCAL',
+        acquisition_cost: 350.50,
+      } as any, 'tenant-123', { userId: 'user-1' });
+
+      expect(inserted[0].acquisition_cost).toBe('350.5');
+      expect(inserted[0].source_receipt_id).toBeNull();
     });
 
     it('rejects a BORN_ON_FARM entry missing source_batch_id', async () => {

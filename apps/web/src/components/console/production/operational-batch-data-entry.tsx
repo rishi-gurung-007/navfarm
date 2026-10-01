@@ -27,6 +27,8 @@ import {
   ChevronRight,
   ArrowRightCircle,
   Sparkles,
+  ExternalLink,
+  Inbox,
 } from 'lucide-react';
 import PiggeryLifecycleStepper, {
   type PiggeryStage,
@@ -55,6 +57,7 @@ import AnimalStageTransitionModal from '@/components/console/piggery/animal-stag
 import AnimalDetailsModal from '@/components/console/piggery/animal-details-modal';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { ReasonSelect } from '@/components/ui/reason-select';
+import AnimalSerialAssignmentModal from './animal-serial-assignment-modal';
 
 // file_url from the API is server-relative (e.g. "/uploads/xyz.jpg"). Next.js
 // proxies that same-origin path to the API alongside /api/v1.
@@ -210,6 +213,14 @@ export default function OperationalBatchDataEntry() {
   const [dataEntryDestBatches, setDataEntryDestBatches] = useState<
     Record<string, string>
   >({});
+
+  const isAnimalWise =
+    (currentBatch as any)?.trackingMode === 'ANIMAL_WISE' ||
+    (currentBatch as any)?.tracking_mode === 'ANIMAL_WISE';
+  const selectedStage = dataEntryStages.find(
+    (s) => s.stage_id === selectedStageId,
+  );
+  const [serialModalLine, setSerialModalLine] = useState<Row | null>(null);
 
   const [stageActionBusy, setStageActionBusy] = useState(false);
   const [stageActionError, setStageActionError] = useState('');
@@ -589,7 +600,7 @@ export default function OperationalBatchDataEntry() {
             stageDates: b.start_date
               ? `${b.start_date} – ${b.expected_end_date || 'ongoing'}`
               : '',
-            assignedCount: Number(b.opening_quantity) || 80,
+            assignedCount: Number(b.opening_quantity) || 0,
             currentCount:
               Number(b.closing_quantity ?? b.opening_quantity ?? 0) || 0,
             mortalityCount: 0,
@@ -690,22 +701,33 @@ export default function OperationalBatchDataEntry() {
           setNoScheduler(false);
           setLockInfo({ status: null }); // meaningless for ANIMAL_WISE — locking is per-stage below
 
+          const initialLots: Record<string, string> = {};
           for (const stage of stages) {
             (stage.animals || []).forEach((animal: Row, animalIdx: number) => {
               for (const line of animal.lines || []) {
                 const enteredStr = defaultEntryValue(line);
-                values[entryKey(line.line_id, animal.animal_id)] = enteredStr;
+                const k = entryKey(line.line_id, animal.animal_id);
+                values[k] = enteredStr;
+                if (line.already_entered_lot) {
+                  initialLots[k] = line.already_entered_lot;
+                }
                 // The "All animals in this stage" broadcast view has no real
                 // animal of its own to read an already-entered value from —
                 // without this, a value saved via broadcast reappeared blank
                 // the moment the page reloaded, even though it was saved for
                 // every animal. The first animal in the stage stands in as
                 // the template both here and in the broadcast row renderer.
-                if (animalIdx === 0)
+                if (animalIdx === 0) {
                   values[entryKey(line.line_id, '__ALL__')] = enteredStr;
+                  if (line.already_entered_lot) {
+                    initialLots[entryKey(line.line_id, '__ALL__')] =
+                      line.already_entered_lot;
+                  }
+                }
               }
             });
           }
+          setDataEntryLotNos(initialLots);
 
           // Prefer keeping the current selection if it still has animals AND
           // is not yet locked; otherwise auto-advance to the next active
@@ -968,7 +990,16 @@ export default function OperationalBatchDataEntry() {
     const rawValue = dataEntryValues[key];
     if (rawValue === undefined || rawValue === '') return false;
     const isTracked = Boolean(line.lot_required || line.is_lot_tracked || line.is_serial_tracked);
-    if (isTracked && !dataEntryLotNos[key]) return false;
+    if (isTracked) {
+      if (line.is_serial_tracked && animalId === '__ALL__') {
+        const pending = (selectedStage?.animals || []).filter((a: Row) => !a.is_posted);
+        if (pending.length === 0) return false;
+        const allAssigned = pending.every((a: Row) => Boolean(dataEntryLotNos[entryKey(line.line_id, a.animal_id)]));
+        if (!allAssigned) return false;
+      } else if (!dataEntryLotNos[key]) {
+        return false;
+      }
+    }
     if (line.line_type === 'TRANSFER' && !dataEntryDestBatches[key])
       return false;
     return true;
@@ -990,8 +1021,18 @@ export default function OperationalBatchDataEntry() {
       else payload.entered_value = Number(dataEntryValues[key]);
       const isTracked = Boolean(line.lot_required || line.is_lot_tracked || line.is_serial_tracked);
       if (isTracked) {
-        if (line.is_serial_tracked) payload.serial_no = dataEntryLotNos[key];
-        else payload.lot_no = dataEntryLotNos[key];
+        if (line.is_serial_tracked) {
+          const serialKey = animalId ? entryKey(line.line_id, animalId) : key;
+          payload.serial_no = dataEntryLotNos[serialKey] || dataEntryLotNos[key];
+          if (payload.serial_no) {
+            const count = payload.serial_no.split(',').map((s: string) => s.trim()).filter(Boolean).length;
+            if (count > 0) {
+              payload.entered_value = count;
+            }
+          }
+        } else {
+          payload.lot_no = dataEntryLotNos[key];
+        }
       }
       if (line.line_type === 'TRANSFER')
         payload.destination_batch_id = dataEntryDestBatches[key];
@@ -1537,6 +1578,25 @@ export default function OperationalBatchDataEntry() {
     );
   }
 
+  if (batches.length === 0 || !currentBatch) {
+    return (
+      <div className="space-y-6 animate-fade-in text-[var(--text-primary)]">
+        <div
+          className="rounded-[var(--radius-lg)] border border-[var(--border)] bg-[var(--surface)] p-12 text-center text-xs"
+          style={S.sub}
+        >
+          <Inbox className="mx-auto mb-3 h-8 w-8" style={S.muted} />
+          <p className="text-sm font-semibold text-[var(--text-primary)] mb-1">
+            {t('deNoBatches')}
+          </p>
+          <p className="text-xs text-[var(--text-muted)]">
+            {t('deNoBatchesBody')}
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   // Per-box header — no Parameter/Activity Type column any more, since the
   // box's own title (Feed Consumption, Mortality, …) already says that.
   const dataEntryTableHeader = (
@@ -1566,7 +1626,9 @@ export default function OperationalBatchDataEntry() {
     const allowEdit = line.allow_qty_edit !== false;
     const isRowDisabled = rowLocked || !allowEdit;
     const actualNumericVal =
-      !allowEdit && line.expected_qty != null
+      line.is_serial_tracked && dataEntryValues[key] !== undefined
+        ? dataEntryValues[key]
+        : !allowEdit && line.expected_qty != null
         ? String(line.expected_qty)
         : (dataEntryValues[key] ??
           (line.expected_qty != null ? String(line.expected_qty) : ''));
@@ -1620,13 +1682,20 @@ export default function OperationalBatchDataEntry() {
               <input
                 type="number"
                 value={actualNumericVal}
+                readOnly={line.is_serial_tracked}
                 onChange={(e) =>
                   setDataEntryValues((v) => ({ ...v, [key]: e.target.value }))
                 }
-                className={`${inputCls} ${!allowEdit ? 'opacity-75 bg-[var(--surface-muted)] cursor-not-allowed pr-6' : ''}`}
+                className={`${inputCls} ${!allowEdit || line.is_serial_tracked ? 'opacity-90 bg-[var(--surface-muted)] cursor-not-allowed pr-6' : ''}`}
                 style={S.input}
                 disabled={isRowDisabled}
-                title={!allowEdit ? 'Quantity edit disabled in scheduler' : undefined}
+                title={
+                  line.is_serial_tracked
+                    ? 'Quantity is automatically set by the number of selected serial numbers'
+                    : !allowEdit
+                    ? 'Quantity edit disabled in scheduler'
+                    : undefined
+                }
               />
               {!allowEdit && (
                 <Lock className="w-3 h-3 text-[var(--text-muted)] absolute right-2 pointer-events-none" />
@@ -1635,17 +1704,58 @@ export default function OperationalBatchDataEntry() {
           )}
           {Boolean(line.lot_required || line.is_lot_tracked || line.is_serial_tracked) && (
             <div className="mt-1">
-              <LotSerialPicker
-                itemId={line.item_id || ''}
-                warehouseId={(currentBatch as any)?.warehouse_id}
-                trackingType={line.is_serial_tracked ? 'SERIAL' : 'LOT'}
-                value={dataEntryLotNos[key] ?? ''}
-                onChange={(val) =>
-                  setDataEntryLotNos((v) => ({ ...v, [key]: val }))
-                }
-                disabled={rowLocked}
-                placeholder={line.is_serial_tracked ? 'Select Serial No.…' : (t('blPlaceholderLotNo') || 'Select Lot No.…')}
-              />
+              {broadcast && line.is_serial_tracked ? (() => {
+                const pendingStageAnimals = (selectedStage?.animals || []).filter((a: Row) => !a.is_posted);
+                const totalPending = pendingStageAnimals.length;
+                const assignedCount = totalPending > 0
+                  ? pendingStageAnimals.filter(
+                      (a: Row) => Boolean(dataEntryLotNos[entryKey(line.line_id, a.animal_id)])
+                    ).length
+                  : (selectedStage?.animals || []).filter(
+                      (a: Row) => Boolean(dataEntryLotNos[entryKey(line.line_id, a.animal_id)])
+                    ).length;
+                const isAllAssigned = totalPending > 0 && assignedCount === totalPending;
+                return (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setSerialModalLine(line)}
+                    className="h-8 text-xs gap-1.5 w-full justify-between"
+                    disabled={rowLocked}
+                  >
+                    <span className={`truncate font-medium ${isAllAssigned ? 'text-emerald-600 dark:text-emerald-400' : assignedCount > 0 ? 'text-amber-600 dark:text-amber-400' : ''}`}>
+                      {totalPending === 0
+                        ? `Serials Assigned (${assignedCount})`
+                        : isAllAssigned
+                        ? `✓ Serials Assigned (${assignedCount}/${totalPending})`
+                        : assignedCount > 0
+                        ? `Assign Serials (${assignedCount}/${totalPending})`
+                        : `Assign Serials… (${totalPending})`}
+                    </span>
+                    <ExternalLink className="w-3.5 h-3.5 opacity-70 shrink-0" />
+                  </Button>
+                );
+              })() : (
+                <LotSerialPicker
+                  itemId={line.item_id || ''}
+                  warehouseId={(currentBatch as any)?.warehouse_id}
+                  trackingType={line.is_serial_tracked ? 'SERIAL' : 'LOT'}
+                  multiSelect={line.is_serial_tracked}
+                  targetQuantity={line.expected_qty != null ? Number(line.expected_qty) : undefined}
+                  value={dataEntryLotNos[key] ?? ''}
+                  align="end"
+                  onChange={(val) => {
+                    setDataEntryLotNos((v) => ({ ...v, [key]: val }));
+                    if (line.is_serial_tracked) {
+                      const count = val ? val.split(',').map((s) => s.trim()).filter(Boolean).length : 0;
+                      setDataEntryValues((v) => ({ ...v, [key]: count > 0 ? String(count) : '' }));
+                    }
+                  }}
+                  disabled={rowLocked}
+                  placeholder={line.is_serial_tracked ? 'Select Serial No.…' : (t('blPlaceholderLotNo') || 'Select Lot No.…')}
+                />
+              )}
             </div>
           )}
           {line.line_type === 'TRANSFER' && (
@@ -1805,10 +1915,6 @@ export default function OperationalBatchDataEntry() {
     );
   };
 
-  const isAnimalWise = currentBatch?.trackingMode === 'ANIMAL_WISE';
-  const selectedStage = dataEntryStages.find(
-    (s) => s.stage_id === selectedStageId,
-  );
   const selectedProgress = dataEntryProgress.find(
     (p) => p.stage_id === selectedStageId,
   );
@@ -2285,26 +2391,21 @@ export default function OperationalBatchDataEntry() {
                     </Button>
                   </div>
                 </div>
-              ) : (
-                <div className="space-y-3">
-                  <PiggeryLifecycleStepper
-                    currentStageId={currentBatch?.currentStageId || 0}
-                  />
-                  <div className="flex items-center justify-between text-xs p-3 rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface)]">
-                    <span className="font-semibold text-[var(--text-secondary)]">
-                      Current Stage: <strong>{currentBatch?.currentStage}</strong> (Single active stage)
-                    </span>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={openChangeStage}
-                      className="h-7 text-xs gap-1.5 font-semibold"
-                    >
-                      <ArrowRightCircle className="h-3.5 w-3.5" /> Transfer Stage
-                    </Button>
-                  </div>
+              ) : currentBatch?.currentStage ? (
+                <div className="flex items-center justify-between text-xs p-3 rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface)]">
+                  <span className="font-semibold text-[var(--text-secondary)]">
+                    Current Stage: <strong>{currentBatch?.currentStage}</strong> (Single active stage)
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={openChangeStage}
+                    className="h-7 text-xs gap-1.5 font-semibold"
+                  >
+                    <ArrowRightCircle className="h-3.5 w-3.5" /> Transfer Stage
+                  </Button>
                 </div>
-              )}
+              ) : null}
             </>
           )}
 
@@ -3706,6 +3807,40 @@ export default function OperationalBatchDataEntry() {
             )}
           </div>
         </Dialog>
+      )}
+
+      {serialModalLine && (
+        <AnimalSerialAssignmentModal
+          open={Boolean(serialModalLine)}
+          onClose={() => setSerialModalLine(null)}
+          line={serialModalLine}
+          animals={selectedStage?.animals || []}
+          warehouseId={(currentBatch as any)?.warehouse_id}
+          currentAssignments={(() => {
+            const result: Record<string, string> = {};
+            (selectedStage?.animals || []).forEach((a: Row) => {
+              const k = entryKey(serialModalLine.line_id, a.animal_id);
+              if (dataEntryLotNos[k]) result[a.animal_id] = dataEntryLotNos[k];
+            });
+            return result;
+          })()}
+          onSaveAssignments={(assignments) => {
+            setDataEntryLotNos((prev) => {
+              const next = { ...prev };
+              Object.entries(assignments).forEach(([animalId, sNo]) => {
+                next[entryKey(serialModalLine.line_id, animalId)] = sNo;
+              });
+              return next;
+            });
+            const broadcastKey = entryKey(serialModalLine.line_id, '__ALL__');
+            if (!dataEntryValues[broadcastKey]) {
+              const def = defaultEntryValue(serialModalLine) || '1';
+              setDataEntryValues((prev) => ({ ...prev, [broadcastKey]: def }));
+            }
+            setSerialModalLine(null);
+          }}
+          stageName={selectedStage?.stage_name}
+        />
       )}
     </div>
   );
