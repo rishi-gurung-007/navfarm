@@ -6,6 +6,7 @@ import { MySql2Database } from 'drizzle-orm/mysql2';
 import { randomUUID } from 'node:crypto';
 import { ClsService } from 'nestjs-cls';
 import { farmScope } from '../../../common/farm-scope';
+import { mysqlTimestampFromEpoch, parseOffsetInstant } from '../../../common/mysql-utc-instant';
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import * as schema from '../../../core/database/schema';
 import { ReasonService } from '../../master-data/reason/reason.service';
@@ -19,7 +20,6 @@ import { assertVarianceReason, RateEvidence, varianceFact, VarianceFact } from '
 
 type Actor = { userId?: string; userType?: string } | undefined;
 
-const mysqlTimestamp = (value: string): string => new Date(value).toISOString().slice(0, 19).replace('T', ' ');
 const WEEKDAYS: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
 
 @Injectable()
@@ -50,6 +50,7 @@ export class FeedStockCountService {
     const query = this.db.select({
       location_id: schema.locationMaster.location_id,
       company_id: schema.locationMaster.company_id,
+      nob_id: schema.locationMaster.nob_id,
       lob_id: schema.locationMaster.lob_id,
     }).from(schema.locationMaster).where(and(
       eq(schema.locationMaster.location_id, farmId),
@@ -68,9 +69,9 @@ export class FeedStockCountService {
     return farm;
   }
 
-  private async loadSilo(siloId: string, farmId: string, companyId: string, tenantId: string) {
+  private async loadActiveSilos(farmId: string, companyId: string, tenantId: string) {
     const scope = farmScope(this.cls);
-    const [silo] = await this.db.select({
+    const silos = await this.db.select({
       location_id: schema.locationMaster.location_id,
       company_id: schema.locationMaster.company_id,
       lob_id: schema.locationMaster.lob_id,
@@ -80,7 +81,6 @@ export class FeedStockCountService {
       is_active: schema.locationMaster.is_active,
       deleted_at: schema.locationMaster.deleted_at,
     }).from(schema.locationMaster).where(and(
-      eq(schema.locationMaster.location_id, siloId),
       eq(schema.locationMaster.tenant_id, tenantId),
       eq(schema.locationMaster.company_id, companyId),
       eq(schema.locationMaster.farm_id, farmId),
@@ -89,12 +89,14 @@ export class FeedStockCountService {
       eq(schema.locationMaster.is_active, true),
       isNull(schema.locationMaster.deleted_at),
       ...(scope.restricted && scope.lobId ? [eq(schema.locationMaster.lob_id, scope.lobId)] : []),
-    )).limit(1);
-    if (!silo || silo.company_id !== companyId || silo.farm_id !== farmId || silo.parent_location_id !== farmId || silo.location_type !== 'SILO'
-      || !silo.is_active || silo.deleted_at || (scope.restricted && scope.lobId && silo.lob_id !== scope.lobId)) {
-      throw new BadRequestException('Select an active SILO belonging to the authorized farm.');
+    ));
+    if (!silos.length) throw new BadRequestException('The authorized farm has no active SILO locations to count.');
+    if (silos.some((silo) => silo.company_id !== companyId || silo.farm_id !== farmId || silo.parent_location_id !== farmId
+      || silo.location_type !== 'SILO' || !silo.is_active || silo.deleted_at
+      || (scope.restricted && scope.lobId && silo.lob_id !== scope.lobId))) {
+      throw new BadRequestException('Physical counts may use only active SILOs belonging to the authorized farm.');
     }
-    return silo;
+    return silos;
   }
 
   private async currencyEvidence(companyId: string) {
@@ -115,12 +117,16 @@ export class FeedStockCountService {
     return { baseCurrencyId: company.base_currency_id, localCurrencyId: local.currency_id, rate };
   }
 
-  private async assertReason(fact: VarianceFact, reasonId: string | null | undefined, tenantId: string): Promise<string | null> {
+  private async assertReason(
+    fact: VarianceFact,
+    reasonId: string | null | undefined,
+    tenantId: string,
+    scope: { companyId: string; nobId: string | null; lobId: string | null },
+  ): Promise<string | null> {
     assertVarianceReason(fact, reasonId);
     if (!fact.reasonRequired) return null;
     if (!reasonId) throw new BadRequestException('A Reason Master row is required for this variance.');
-    const reason = await this.reasons.findOne(reasonId, tenantId);
-    if (!reason.is_active) throw new BadRequestException('Select an active Reason Master row visible in this workspace.');
+    const reason = await this.reasons.findActiveForOperationalScope(reasonId, tenantId, scope);
     return reason.reason_id;
   }
 
@@ -145,15 +151,24 @@ export class FeedStockCountService {
     }
   }
 
-  private countNo(farmId: string, countedAt: string): string {
-    return `FSC-${farmId}-${countedAt.replace(/[-: ]/g, '')}`;
+  private postingDate(instant: Date, timezoneId: string): string {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: timezoneId, year: 'numeric', month: '2-digit', day: '2-digit',
+    }).formatToParts(instant);
+    const get = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value;
+    return `${get('year')}-${get('month')}-${get('day')}`;
+  }
+
+  private countNo(farmId: string, countedAtEpochSeconds: number): string {
+    return `FSC-${farmId}-${countedAtEpochSeconds}`;
   }
 
   async create(dto: CreateFeedStockCountDto, tenantId: string, actor?: Actor) {
     if (!actor?.userId) throw new UnauthorizedException('An authenticated creator is required.');
     const creatorId = actor.userId;
     this.assertRequestedScope(dto.companyId, dto.farmId);
-    const countedAt = mysqlTimestamp(dto.countedAt);
+    const instant = parseOffsetInstant(dto.countedAt);
+    const countedAt = mysqlTimestampFromEpoch(instant.epochSeconds);
     const duplicateKeys = new Set<string>();
     for (const line of dto.lines) {
       const key = `${line.siloId}:${line.itemId}`;
@@ -162,9 +177,10 @@ export class FeedStockCountService {
     }
     const effective = await this.settings.resolve(dto.companyId, dto.farmId);
     if (dto.scheduleSource === 'SCHEDULED') this.assertScheduledOccurrence(dto.countedAt, effective);
+    const postingDate = this.postingDate(new Date(instant.utcIso), effective.timezoneId);
 
     return withTenantTransaction(this.cls, async () => {
-      await this.loadFarm(dto.farmId, dto.companyId, tenantId, true);
+      const farm = await this.loadFarm(dto.farmId, dto.companyId, tenantId, true);
       const [duplicate] = await this.db.select({ count_id: schema.feedStockCount.count_id })
         .from(schema.feedStockCount).where(and(
           eq(schema.feedStockCount.tenant_id, tenantId),
@@ -174,18 +190,28 @@ export class FeedStockCountService {
         )).limit(1).for('update');
       if (duplicate) throw new ConflictException('A physical count already exists for this farm occurrence.');
 
+      const silos = await this.loadActiveSilos(dto.farmId, dto.companyId, tenantId);
+      const evidence = await this.ledger.getSiloStockEvidenceAsOf({
+        companyId: dto.companyId,
+        siloIds: silos.map((silo) => silo.location_id),
+        postingDate,
+        countedAtEpochSeconds: instant.epochSeconds,
+      }, tenantId);
+      const evidenceByPair = new Map(evidence.map((item) => [`${item.warehouse_id}:${item.item_id}`, item]));
+      if (evidenceByPair.size !== evidence.length || evidenceByPair.size !== dto.lines.length
+        || dto.lines.some((line) => !evidenceByPair.has(`${line.siloId}:${line.itemId}`))) {
+        throw new BadRequestException('Provide exactly one counted quantity for every active silo/item ledger pair in this occurrence.');
+      }
+
       const currency = await this.currencyEvidence(dto.companyId);
       const countId = randomUUID();
       const lineValues: Array<typeof schema.feedStockCountLine.$inferInsert> = [];
       for (const line of dto.lines) {
-        await this.loadSilo(line.siloId, dto.farmId, dto.companyId, tenantId);
-        const evidence = await this.ledger.getSiloStockEvidenceAsOf({
-          companyId: dto.companyId, siloId: line.siloId, countedAt,
-        }, tenantId);
-        const item = evidence.find((entry) => entry.item_id === line.itemId);
-        if (!item) throw new BadRequestException('The selected item has no ledger evidence in this silo at the count timestamp.');
+        const item = evidenceByPair.get(`${line.siloId}:${line.itemId}`)!;
         const fact = varianceFact(item.system_qty_kg, line.countedQtyKg, item.unit_cost_base, currency);
-        const reasonId = await this.assertReason(fact, line.reasonId, tenantId);
+        const reasonId = await this.assertReason(fact, line.reasonId, tenantId, {
+          companyId: dto.companyId, nobId: farm.nob_id, lobId: farm.lob_id,
+        });
         lineValues.push({
           count_line_id: randomUUID(), count_id: countId, silo_id: line.siloId, item_id: line.itemId,
           system_qty_kg: String(fact.systemQty), counted_qty_kg: String(fact.countedQty),
@@ -199,12 +225,19 @@ export class FeedStockCountService {
         });
       }
 
-      const count_no = this.countNo(dto.farmId, countedAt);
-      await this.db.insert(schema.feedStockCount).values({
-        count_id: countId, count_no, tenant_id: tenantId, company_id: dto.companyId, farm_id: dto.farmId,
-        counted_at: countedAt, schedule_source: dto.scheduleSource, status: 'DRAFT', created_by: creatorId,
-      });
-      await this.db.insert(schema.feedStockCountLine).values(lineValues);
+      const count_no = this.countNo(dto.farmId, instant.epochSeconds);
+      try {
+        await this.db.insert(schema.feedStockCount).values({
+          count_id: countId, count_no, tenant_id: tenantId, company_id: dto.companyId, farm_id: dto.farmId,
+          counted_at: countedAt, schedule_source: dto.scheduleSource, status: 'DRAFT', created_by: creatorId,
+        });
+        await this.db.insert(schema.feedStockCountLine).values(lineValues);
+      } catch (error) {
+        if ((error as { code?: string })?.code === 'ER_DUP_ENTRY') {
+          throw new ConflictException('A physical count already exists for this farm occurrence.');
+        }
+        throw error;
+      }
       return { count_id: countId, count_no, status: 'DRAFT' as const };
     });
   }
@@ -236,9 +269,9 @@ export class FeedStockCountService {
       eq(schema.feedStockCount.count_id, countId), eq(schema.feedStockCount.tenant_id, tenantId),
     )).limit(1).for('update');
     if (!count) throw new NotFoundException('Feed stock count not found.');
-    await this.loadFarm(count.farm_id, count.company_id, tenantId);
+    const farm = await this.loadFarm(count.farm_id, count.company_id, tenantId);
     if (count.status !== 'DRAFT') throw new BadRequestException('Only a draft physical count may be edited or submitted.');
-    return count;
+    return { count, farm };
   }
 
   async update(countId: string, dto: UpdateFeedStockCountDto, tenantId: string, actor?: Actor) {
@@ -250,7 +283,7 @@ export class FeedStockCountService {
       ids.add(line.countLineId);
     }
     return withTenantTransaction(this.cls, async () => {
-      const count = await this.mutableCount(countId, tenantId);
+      const { count, farm } = await this.mutableCount(countId, tenantId);
       const updatedAt = new Date().toISOString().slice(0, 19).replace('T', ' ');
       const stored = await this.db.select().from(schema.feedStockCountLine)
         .where(eq(schema.feedStockCountLine.count_id, countId));
@@ -263,7 +296,9 @@ export class FeedStockCountService {
           line.unit_cost_base === null ? null : Number(line.unit_cost_base), {
             baseCurrencyId: line.base_currency_id, localCurrencyId: line.local_currency_id, rate,
           });
-        const reasonId = await this.assertReason(fact, change.reasonId, tenantId);
+        const reasonId = await this.assertReason(fact, change.reasonId, tenantId, {
+          companyId: count.company_id, nobId: farm.nob_id, lobId: farm.lob_id,
+        });
         await this.db.update(schema.feedStockCountLine).set({
           counted_qty_kg: String(fact.countedQty), variance_qty_kg: String(fact.varianceQty),
           variance_pct_absolute: String(fact.variancePctAbsolute), reason_id: reasonId,
@@ -288,15 +323,18 @@ export class FeedStockCountService {
     if (!actor?.userId) throw new UnauthorizedException('An authenticated submitter is required.');
     const submitterId = actor.userId;
     return withTenantTransaction(this.cls, async () => {
-      const count = await this.mutableCount(countId, tenantId);
+      const { count, farm } = await this.mutableCount(countId, tenantId);
       const lines = await this.db.select().from(schema.feedStockCountLine)
         .where(eq(schema.feedStockCountLine.count_id, countId));
       if (!lines.length) throw new BadRequestException('A physical count requires at least one line.');
       for (const line of lines) {
         if (Number(line.variance_qty_kg) !== 0) {
           if (!line.reason_id) throw new BadRequestException('Every nonzero variance requires a Reason Master row before submission.');
-          const reason = await this.reasons.findOne(line.reason_id, tenantId);
-          if (!reason.is_active) throw new BadRequestException('Every variance reason must remain active and visible at submission.');
+          await this.reasons.findActiveForOperationalScope(line.reason_id, tenantId, {
+            companyId: count.company_id, nobId: farm.nob_id, lobId: farm.lob_id,
+          });
+        } else if (line.reason_id) {
+          throw new BadRequestException('Zero variance must not carry a reason.');
         }
       }
       const submittedAt = new Date().toISOString().slice(0, 19).replace('T', ' ');

@@ -7,6 +7,7 @@ import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
 import { QueryInventoryLedgerDto, QueryStockBalanceDto, QueryAvailableLotsDto, QueryAvailableSerialsDto } from './dto/inventory-ledger.dto';
 import { farmScope, locationOnFarm, locationReferenceScopeConditions, restrictedScopeConditions } from '../../../common/farm-scope';
+import { mysqlTimestampFromEpoch } from '../../../common/mysql-utc-instant';
 
 interface WritePositiveEntryParams {
   tenantId: string;
@@ -703,11 +704,11 @@ export class InventoryLedgerService {
    * Cost is available only when every contributing movement has an amount.
    */
   async getSiloStockEvidenceAsOf(
-    params: { companyId: string; siloId: string; countedAt: string },
+    params: { companyId: string; siloIds: string[]; postingDate: string; countedAtEpochSeconds: number },
     tenantId: string,
   ): Promise<SiloStockEvidence[]> {
+    if (!params.siloIds.length) return [];
     const L = schema.inventoryLedger;
-    const countDate = params.countedAt.slice(0, 10);
     const rows = await this.db
       .select({
         warehouse_id: L.warehouse_id,
@@ -724,10 +725,10 @@ export class InventoryLedgerService {
       .where(and(
         eq(L.tenant_id, tenantId),
         eq(L.company_id, params.companyId),
-        eq(L.warehouse_id, params.siloId),
+        inArray(L.warehouse_id, params.siloIds),
         inArray(L.entry_type, ['POSITIVE', 'NEGATIVE']),
-        lte(L.posting_date, countDate),
-        lte(L.created_at, params.countedAt),
+        lte(L.posting_date, params.postingDate),
+        lte(L.created_at, mysqlTimestampFromEpoch(params.countedAtEpochSeconds)),
         ...this.farmConditions(),
       ))
       .groupBy(L.warehouse_id, L.item_id, L.uom);
@@ -735,6 +736,11 @@ export class InventoryLedgerService {
     return rows
       .filter((row) => row.warehouse_id)
       .map((row) => {
+        if (row.uom.trim().toUpperCase() !== 'KG') {
+          throw new BadRequestException(
+            `Physical feed counts require ledger evidence in KG; item '${row.item_code}' has '${row.uom}'. Record an approved UOM conversion in the posting path before counting it.`,
+          );
+        }
         const quantity = Number(row.system_qty_kg);
         const completeCost = Number(row.valued_entries) === Number(row.total_entries)
           && Number(row.costed_entries) === Number(row.total_entries)
@@ -744,7 +750,7 @@ export class InventoryLedgerService {
           warehouse_id: row.warehouse_id!,
           item_id: row.item_id,
           item_code: row.item_code,
-          uom: row.uom,
+          uom: 'KG',
           system_qty_kg: quantity,
           unit_cost_base: completeCost ? Number(row.base_value) / quantity : null,
         };

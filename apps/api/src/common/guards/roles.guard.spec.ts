@@ -4,6 +4,32 @@ import { ClsService } from 'nestjs-cls';
 import { RolesGuard } from './roles.guard';
 import { CODE_PREVIEW_PERMISSION_KEY } from '../decorators/require-code-preview-permission.decorator';
 import { FARM_SCOPED_KEY } from '../farm-scope';
+import { REQUIRE_PERMISSION_KEY } from '../decorators/require-permission.decorator';
+
+describe('RolesGuard stock-count permission boundary', () => {
+  const permissions = jest.fn();
+  const query = { from: () => query, innerJoin: () => query, where: permissions };
+  const guard = new RolesGuard(
+    { getAllAndOverride: (key: string) => key === REQUIRE_PERMISSION_KEY
+      ? { moduleCode: 'INVENTORY', resource: 'STOCK_COUNT', action: 'create' }
+      : false } as unknown as Reflector,
+    { get: () => ({ select: jest.fn(() => query) }), set: jest.fn() } as unknown as ClsService,
+  );
+  const context = {
+    switchToHttp: () => ({ getRequest: () => ({ headers: {}, user: { userType: 'STANDARD_USER', userId: 'worker-1', tenantId: 'tenant-1' } }) }),
+    getHandler: () => undefined,
+    getClass: () => undefined,
+  } as unknown as ExecutionContext;
+
+  beforeEach(() => permissions.mockReset());
+
+  it('does not let forecast/ledger create authority satisfy stock-count entry', async () => {
+    permissions.mockResolvedValue([{ moduleCode: 'INVENTORY', resource: 'LEDGER', canCreate: true }]);
+    await expect(guard.canActivate(context)).rejects.toThrow('Insufficient permissions');
+    permissions.mockResolvedValue([{ moduleCode: 'INVENTORY', resource: 'STOCK_COUNT', canCreate: true }]);
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+  });
+});
 
 describe('RolesGuard operational context', () => {
   const area = { area_id: 'area-1', company_id: 'company-1', nob_id: 'livestock', lob_id: 'piggery' };

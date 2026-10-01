@@ -6,11 +6,11 @@ describe('FeedStockCountController authorization and delegation', () => {
 
   it('keeps visibility, entry, correction and submission permissions distinct', () => {
     const prototype = FeedStockCountController.prototype;
-    expect(Reflect.getMetadata(REQUIRE_PERMISSION_KEY, prototype.list)).toEqual({ moduleCode: 'INVENTORY', resource: 'LEDGER', action: 'view' });
-    expect(Reflect.getMetadata(REQUIRE_PERMISSION_KEY, prototype.detail)).toEqual({ moduleCode: 'INVENTORY', resource: 'LEDGER', action: 'view' });
-    expect(Reflect.getMetadata(REQUIRE_PERMISSION_KEY, prototype.create)).toEqual({ moduleCode: 'INVENTORY', resource: 'LEDGER', action: 'create' });
-    expect(Reflect.getMetadata(REQUIRE_PERMISSION_KEY, prototype.update)).toEqual({ moduleCode: 'INVENTORY', resource: 'LEDGER', action: 'edit' });
-    expect(Reflect.getMetadata(REQUIRE_PERMISSION_KEY, prototype.submit)).toEqual({ moduleCode: 'INVENTORY', resource: 'LEDGER', action: 'edit' });
+    expect(Reflect.getMetadata(REQUIRE_PERMISSION_KEY, prototype.list)).toEqual({ moduleCode: 'INVENTORY', resource: 'STOCK_COUNT', action: 'view' });
+    expect(Reflect.getMetadata(REQUIRE_PERMISSION_KEY, prototype.detail)).toEqual({ moduleCode: 'INVENTORY', resource: 'STOCK_COUNT', action: 'view' });
+    expect(Reflect.getMetadata(REQUIRE_PERMISSION_KEY, prototype.create)).toEqual({ moduleCode: 'INVENTORY', resource: 'STOCK_COUNT', action: 'create' });
+    expect(Reflect.getMetadata(REQUIRE_PERMISSION_KEY, prototype.update)).toEqual({ moduleCode: 'INVENTORY', resource: 'STOCK_COUNT', action: 'edit' });
+    expect(Reflect.getMetadata(REQUIRE_PERMISSION_KEY, prototype.submit)).toEqual({ moduleCode: 'INVENTORY', resource: 'STOCK_COUNT', action: 'edit' });
   });
 
   it('passes authenticated scope and actor to create and submit without approval/posting behavior', async () => {

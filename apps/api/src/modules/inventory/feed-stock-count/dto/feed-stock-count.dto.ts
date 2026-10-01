@@ -2,7 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
   ArrayMinSize, IsArray, IsEnum, IsISO8601, IsIn, IsNumber, IsOptional, IsString,
-  IsUUID, Min, ValidateNested,
+  IsUUID, Matches, Min, ValidateNested,
 } from 'class-validator';
 
 export const FEED_STOCK_COUNT_STATUSES = ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'POSTED', 'REJECTED'] as const;
@@ -42,6 +42,7 @@ export class CreateFeedStockCountDto {
 
   @ApiProperty({ description: 'ISO timestamp when the physical quantity was observed' })
   @IsISO8601({ strict: true })
+  @Matches(/(?:Z|[+-]\d{2}:\d{2})$/i, { message: 'countedAt must include Z or an explicit UTC offset' })
   countedAt!: string;
 
   @ApiProperty({ enum: FEED_STOCK_COUNT_SOURCES })

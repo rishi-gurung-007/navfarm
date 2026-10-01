@@ -16,7 +16,7 @@ export class FeedStockCountController {
   constructor(private readonly service: FeedStockCountService) {}
 
   @Get()
-  @RequirePermission('INVENTORY', 'LEDGER', 'view')
+  @RequirePermission('INVENTORY', 'STOCK_COUNT', 'view')
   @ApiOperation({ summary: 'List physical silo counts for one authorized farm' })
   async list(@Query() query: QueryFeedStockCountDto, @Req() req: any) {
     const tenantId = req.user?.tenantId || req.tenantId;
@@ -24,7 +24,7 @@ export class FeedStockCountController {
   }
 
   @Get(':id')
-  @RequirePermission('INVENTORY', 'LEDGER', 'view')
+  @RequirePermission('INVENTORY', 'STOCK_COUNT', 'view')
   @ApiOperation({ summary: 'Read one physical silo count and its immutable snapshot evidence' })
   async detail(@Param('id', ParseUUIDPipe) id: string, @Req() req: any) {
     const tenantId = req.user?.tenantId || req.tenantId;
@@ -32,7 +32,7 @@ export class FeedStockCountController {
   }
 
   @Post()
-  @RequirePermission('INVENTORY', 'LEDGER', 'create')
+  @RequirePermission('INVENTORY', 'STOCK_COUNT', 'create')
   @ApiOperation({ summary: 'Capture a draft physical silo count from ledger evidence' })
   async create(@Body() dto: CreateFeedStockCountDto, @Req() req: any) {
     const tenantId = req.user?.tenantId || req.tenantId;
@@ -40,7 +40,7 @@ export class FeedStockCountController {
   }
 
   @Put(':id')
-  @RequirePermission('INVENTORY', 'LEDGER', 'edit')
+  @RequirePermission('INVENTORY', 'STOCK_COUNT', 'edit')
   @ApiOperation({ summary: 'Correct counted quantity or reason while the count is draft' })
   async update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateFeedStockCountDto, @Req() req: any) {
     const tenantId = req.user?.tenantId || req.tenantId;
@@ -48,7 +48,7 @@ export class FeedStockCountController {
   }
 
   @Post(':id/submit')
-  @RequirePermission('INVENTORY', 'LEDGER', 'edit')
+  @RequirePermission('INVENTORY', 'STOCK_COUNT', 'edit')
   @ApiOperation({ summary: 'Submit draft evidence for later approval; does not post inventory' })
   async submit(@Param('id', ParseUUIDPipe) id: string, @Req() req: any) {
     const tenantId = req.user?.tenantId || req.tenantId;

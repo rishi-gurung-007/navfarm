@@ -3549,7 +3549,15 @@ export const inventoryLedger = mysqlTable('inventory_ledger', {
   category_id: varchar('category_id', { length: 36 }).references(() => itemCategoryMaster.category_id, { onDelete: 'restrict' }),
   created_by: varchar('created_by', { length: 36 }),
   created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
-});
+}, (table) => ({
+  countCutoffIndex: index('idx_inventory_ledger_count_cutoff').on(
+    table.tenant_id,
+    table.company_id,
+    table.warehouse_id,
+    table.posting_date,
+    table.created_at,
+  ),
+}));
 
 // FIFO matching: which inbound (receipt) ledger rows an outbound (consumption)
 // ledger row drew its quantity/cost from.

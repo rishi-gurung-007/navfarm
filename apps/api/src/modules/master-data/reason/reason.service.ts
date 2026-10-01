@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { and, eq, inArray, like, or, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, like, or, sql } from 'drizzle-orm';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { ClsService } from 'nestjs-cls';
 import { randomUUID } from 'node:crypto';
@@ -27,6 +27,24 @@ export class ReasonService {
   async findOne(id: string, tenantId: string) {
     const [row] = await this.db.select().from(table).where(and(eq(table.reason_id, id), ...this.scope(tenantId))).limit(1);
     if (!row) throw new NotFoundException('Reason is not available in this workspace.');
+    return row;
+  }
+  async findActiveForOperationalScope(
+    id: string,
+    tenantId: string,
+    scope: { companyId: string; nobId: string | null; lobId: string | null },
+  ) {
+    const [row] = await this.db.select().from(table).where(and(
+      eq(table.reason_id, id),
+      eq(table.tenant_id, tenantId),
+      eq(table.company_id, scope.companyId),
+      scope.nobId ? or(eq(table.nob_id, scope.nobId), isNull(table.nob_id)) : isNull(table.nob_id),
+      scope.lobId ? or(eq(table.lob_id, scope.lobId), isNull(table.lob_id)) : isNull(table.lob_id),
+      eq(table.is_active, true),
+      eq(table.status, 'ACTIVE'),
+      isNull(table.deleted_at),
+    )).limit(1);
+    if (!row) throw new NotFoundException('Select an active Reason Master row visible to this company and farm LOB.');
     return row;
   }
   async findAll(query: QueryReasonDto, tenantId: string) {

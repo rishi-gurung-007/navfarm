@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
-import { getTableConfig } from 'drizzle-orm/mysql-core';
+import { getTableConfig, MySqlDialect } from 'drizzle-orm/mysql-core';
 import { FARM_SCOPE_KEY, type FarmScope } from '../../../common/farm-scope';
 import * as schema from '../../../core/database/schema';
 import { transactionCls } from '../../../test-utils/transaction-cls';
@@ -47,12 +47,15 @@ function setup(queues: Map<unknown, unknown[][]>, scope: FarmScope = {
   const currency = { currentRate: jest.fn(async () => ({
     status: 'RESOLVED', rateId: 'rate-1', rate: 2, rateDate: '2026-10-01', createdAt: '2026-10-01 08:00:00', scope: 'COMPANY',
   })) };
-  const reasons = { findOne: jest.fn(async (id: string) => ({ reason_id: id, is_active: true })) };
+  const reasons = {
+    findOne: jest.fn(async (id: string) => ({ reason_id: id, is_active: true })),
+    findActiveForOperationalScope: jest.fn(async (id: string) => ({ reason_id: id, is_active: true, status: 'ACTIVE', deleted_at: null })),
+  };
   const service = new FeedStockCountService(cls, ledger as any, settings as any, currency as any, reasons as any);
   return { service, ledger, settings, currency, reasons, log, db };
 }
 
-const farm = { location_id: 'farm-1', company_id: 'company-1', lob_id: 'lob-piggery' };
+const farm = { location_id: 'farm-1', company_id: 'company-1', nob_id: 'nob-livestock', lob_id: 'lob-piggery' };
 const silo = {
   location_id: 'silo-1', company_id: 'company-1', lob_id: 'lob-piggery', farm_id: 'farm-1',
   parent_location_id: 'farm-1', location_type: 'SILO', is_active: true, deleted_at: null,
@@ -96,8 +99,13 @@ describe('FeedStockCountService', () => {
     await expect(service.create(createDto as any, 'tenant-1', { userId: 'worker-1', userType: 'STANDARD_USER' }))
       .resolves.toMatchObject({ status: 'DRAFT', count_no: expect.stringMatching(/^FSC-/) });
     expect(ledger.getSiloStockEvidenceAsOf).toHaveBeenCalledWith({
-      companyId: 'company-1', siloId: 'silo-1', countedAt: '2026-10-05 07:30:00',
+      companyId: 'company-1', siloIds: ['silo-1'], postingDate: '2026-10-05', countedAtEpochSeconds: 1791185400,
     }, 'tenant-1');
+    const headerInsert = log.find((entry) => entry.op === 'insert' && entry.table === schema.feedStockCount);
+    const countedAt = (headerInsert?.values as any).counted_at;
+    const rendered = new MySqlDialect().sqlToQuery(countedAt);
+    expect(rendered.sql.toLowerCase()).toBe('from_unixtime(?)');
+    expect(rendered.params).toEqual([1791185400]);
     const lineInsert = log.find((entry) => entry.op === 'insert' && entry.table === schema.feedStockCountLine);
     expect(lineInsert?.values).toEqual([expect.objectContaining({
       silo_id: 'silo-1', item_id: 'item-1', system_qty_kg: '100', counted_qty_kg: '95',
@@ -172,17 +180,61 @@ describe('FeedStockCountService', () => {
     expect(log.some((entry) => entry.op === 'insert')).toBe(false);
   });
 
+  it('rejects an occurrence that omits a server-derived silo/item pair', async () => {
+    const { service, ledger, log } = setup(createQueues());
+    ledger.getSiloStockEvidenceAsOf.mockResolvedValueOnce([
+      { warehouse_id: 'silo-1', item_id: 'item-1', item_code: 'FEED-1', uom: 'KG', system_qty_kg: 100, unit_cost_base: 4 },
+      { warehouse_id: 'silo-1', item_id: 'item-2', item_code: 'FEED-2', uom: 'KG', system_qty_kg: 50, unit_cost_base: 5 },
+    ]);
+    await expect(service.create(createDto as any, 'tenant-1', { userId: 'worker-1' }))
+      .rejects.toThrow('every active silo/item');
+    expect(log.some((entry) => entry.op === 'insert')).toBe(false);
+  });
+
+  it('loads count evidence once for the complete active-silo set instead of once per client line', async () => {
+    const { service, ledger } = setup(createQueues());
+    ledger.getSiloStockEvidenceAsOf.mockResolvedValue([
+      { warehouse_id: 'silo-1', item_id: 'item-1', item_code: 'FEED-1', uom: 'KG', system_qty_kg: 100, unit_cost_base: 4 },
+      { warehouse_id: 'silo-1', item_id: 'item-2', item_code: 'FEED-2', uom: 'KG', system_qty_kg: 50, unit_cost_base: 5 },
+    ]);
+    await service.create({
+      ...createDto,
+      lines: [...createDto.lines, { siloId: 'silo-1', itemId: 'item-2', countedQtyKg: 50 }],
+    } as any, 'tenant-1', { userId: 'worker-1' });
+    expect(ledger.getSiloStockEvidenceAsOf).toHaveBeenCalledTimes(1);
+    expect(ledger.getSiloStockEvidenceAsOf).toHaveBeenCalledWith({
+      companyId: 'company-1', siloIds: ['silo-1'], postingDate: '2026-10-05', countedAtEpochSeconds: 1791185400,
+    }, 'tenant-1');
+  });
+
+  it('maps a concurrent unique-occurrence insert collision to ConflictException', async () => {
+    const { service, db } = setup(createQueues());
+    db.insert.mockImplementationOnce(() => ({
+      values: jest.fn(async () => { throw Object.assign(new Error('duplicate'), { code: 'ER_DUP_ENTRY' }); }),
+    }));
+    await expect(service.create(createDto as any, 'tenant-1', { userId: 'worker-1' }))
+      .rejects.toBeInstanceOf(ConflictException);
+  });
+
   it('requires an active scope-visible Reason Master row for nonzero variance', async () => {
     const { service, reasons, log } = setup(createQueues());
-    reasons.findOne.mockRejectedValueOnce(new Error('not visible'));
+    reasons.findActiveForOperationalScope.mockRejectedValueOnce(new Error('not visible'));
     await expect(service.create(createDto as any, 'tenant-1', { userId: 'worker-1' })).rejects.toThrow('not visible');
     expect(log.some((entry) => entry.op === 'insert')).toBe(false);
+  });
+
+  it('validates a variance reason against the count company and farm NOB/LOB', async () => {
+    const { service, reasons } = setup(createQueues());
+    await service.create(createDto as any, 'tenant-1', { userId: 'worker-1' });
+    expect(reasons.findActiveForOperationalScope).toHaveBeenCalledWith('reason-1', 'tenant-1', {
+      companyId: 'company-1', nobId: 'nob-livestock', lobId: 'lob-piggery',
+    });
   });
 
   it('does not require or persist a reason for zero variance', async () => {
     const { service, reasons, log } = setup(createQueues());
     await service.create({ ...createDto, lines: [{ ...createDto.lines[0], countedQtyKg: 100, reasonId: undefined }] } as any, 'tenant-1', { userId: 'worker-1' });
-    expect(reasons.findOne).not.toHaveBeenCalled();
+    expect(reasons.findActiveForOperationalScope).not.toHaveBeenCalled();
     const line = log.find((entry) => entry.table === schema.feedStockCountLine)?.values[0];
     expect(line).toMatchObject({ variance_qty_kg: '0', reason_id: null });
   });
@@ -219,10 +271,13 @@ describe('FeedStockCountService', () => {
     const queues = new Map<unknown, unknown[][]>([
       [schema.feedStockCount, [[existing]]], [schema.locationMaster, [[farm]]], [schema.feedStockCountLine, [[storedLine]]],
     ]);
-    const { service, ledger, currency, log } = setup(queues);
+    const { service, ledger, currency, reasons, log } = setup(queues);
     await service.update('count-1', { lines: [{ countLineId: 'line-1', countedQtyKg: 90, reasonId: 'reason-2' }] } as any, 'tenant-1', { userId: 'worker-1' });
     expect(ledger.getSiloStockEvidenceAsOf).not.toHaveBeenCalled();
     expect(currency.currentRate).not.toHaveBeenCalled();
+    expect(reasons.findActiveForOperationalScope).toHaveBeenCalledWith('reason-2', 'tenant-1', {
+      companyId: 'company-1', nobId: 'nob-livestock', lobId: 'lob-piggery',
+    });
     expect(log.find((entry) => entry.op === 'update' && entry.table === schema.feedStockCountLine)?.set).toMatchObject({
       counted_qty_kg: '90', variance_qty_kg: '-10', variance_pct_absolute: '10', reason_id: 'reason-2',
       rate_snapshot: expect.objectContaining({ rate: 2 }), variance_value_local: '-80', updated_at: expect.any(String),
@@ -245,13 +300,28 @@ describe('FeedStockCountService', () => {
       [schema.feedStockCount, [[existing]]], [schema.locationMaster, [[farm]]],
       [schema.feedStockCountLine, [[{ count_line_id: 'line-1', variance_qty_kg: '-5', reason_id: 'reason-1' }]]],
     ]);
-    const { service, ledger, log } = setup(queues);
+    const { service, ledger, reasons, log } = setup(queues);
     await expect(service.submit('count-1', 'tenant-1', { userId: 'worker-1' })).resolves.toMatchObject({ status: 'PENDING_APPROVAL' });
     const submitted = log.find((entry) => entry.op === 'update' && entry.table === schema.feedStockCount)?.set;
     expect(submitted).toMatchObject({ status: 'PENDING_APPROVAL', submitted_by: 'worker-1', updated_at: expect.any(String) });
     expect(submitted).not.toHaveProperty('approval_request_id');
     expect(submitted).not.toHaveProperty('stock_adjustment_id');
     expect(ledger.getSiloStockEvidenceAsOf).not.toHaveBeenCalled();
+    expect(reasons.findActiveForOperationalScope).toHaveBeenCalledWith('reason-1', 'tenant-1', {
+      companyId: 'company-1', nobId: 'nob-livestock', lobId: 'lob-piggery',
+    });
     expect(log.some((entry) => entry.table === schema.inventoryLedger || entry.table === schema.stockAdjustment)).toBe(false);
+  });
+
+  it('rejects submission when a zero-variance line still carries a reason', async () => {
+    const existing = { count_id: 'count-1', tenant_id: 'tenant-1', company_id: 'company-1', farm_id: 'farm-1', status: 'DRAFT' };
+    const queues = new Map<unknown, unknown[][]>([
+      [schema.feedStockCount, [[existing]]], [schema.locationMaster, [[farm]]],
+      [schema.feedStockCountLine, [[{ count_line_id: 'line-1', variance_qty_kg: '0', reason_id: 'reason-1' }]]],
+    ]);
+    const { service, log } = setup(queues);
+    await expect(service.submit('count-1', 'tenant-1', { userId: 'worker-1' }))
+      .rejects.toThrow('Zero variance must not carry a reason');
+    expect(log.some((entry) => entry.op === 'update')).toBe(false);
   });
 });
