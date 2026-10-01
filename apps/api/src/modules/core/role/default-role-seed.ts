@@ -49,7 +49,7 @@ const MASTER_DATA_RESOURCES = [
 
 const INVENTORY_RESOURCES = [
   'BIO_ASSET_LEDGER', 'GOODS_ISSUE', 'GOODS_RECEIPT', 'LEDGER',
-  'STOCK_ADJUSTMENT', 'STOCK_TRANSFER',
+  'STOCK_ADJUSTMENT', 'STOCK_COUNT', 'STOCK_TRANSFER',
 ];
 
 const PRODUCTION_RESOURCES = [
@@ -109,6 +109,7 @@ export async function seedDefaultCompanyRoles(
     ...PRODUCTION_RESOURCES.map((r) => row(managerRoleId, { module: 'PRODUCTION', resource: r, view: true, create: true, edit: true, approve: true })),
     row(managerRoleId, { module: 'PIGGERY', resource: 'ANIMAL', view: true, create: true, edit: true, approve: true }),
     ...INVENTORY_RESOURCES.map((r) => row(managerRoleId, { module: 'INVENTORY', resource: r, view: true, create: true, edit: true, approve: true })),
+    row(managerRoleId, { module: 'PROCUREMENT', resource: 'REQUISITION', view: true, create: true, edit: true, approve: true }),
     ...MASTER_DATA_RESOURCES.map((r) => row(managerRoleId, { module: 'MASTER_DATA', resource: r, view: true, create: true, edit: true })),
     row(managerRoleId, { module: 'FINANCE', resource: 'JOURNAL', view: true }),
     row(managerRoleId, { module: 'FINANCE', resource: 'REPORTS', view: true }),
@@ -131,7 +132,9 @@ export async function seedDefaultCompanyRoles(
   await tx.insert(schema.rolePermissions).values([
     row(accountantRoleId, { module: 'FINANCE', resource: 'JOURNAL', view: true, create: true, edit: true, approve: true }),
     row(accountantRoleId, { module: 'FINANCE', resource: 'REPORTS', view: true }),
+    row(accountantRoleId, { module: 'FINANCE', resource: 'STOCK_VARIANCE', view: true, approve: true }),
     ...INVENTORY_RESOURCES.map((r) => row(accountantRoleId, { module: 'INVENTORY', resource: r, view: true })),
+    row(accountantRoleId, { module: 'PROCUREMENT', resource: 'REQUISITION', view: true, approve: true }),
     ...['GL_ACCOUNT', 'GL_MAPPING', 'COST_CENTER', 'ITEM', 'ITEM_CATEGORY', 'ITEM_TYPE', 'UOM', 'SUPPLIER', 'CUSTOMER', 'WAREHOUSE']
       .map((r) => row(accountantRoleId, { module: 'MASTER_DATA', resource: r, view: true, create: true, edit: true })),
     row(accountantRoleId, { module: 'PRODUCTION', resource: 'BATCH', view: true }),
@@ -165,8 +168,10 @@ export async function seedDefaultCompanyRoles(
     row(operatorRoleId, { module: 'INVENTORY', resource: 'GOODS_ISSUE', view: true, create: true }),
     row(operatorRoleId, { module: 'INVENTORY', resource: 'GOODS_RECEIPT', view: true, create: true }),
     row(operatorRoleId, { module: 'INVENTORY', resource: 'LEDGER', view: true }),
-    row(operatorRoleId, { module: 'INVENTORY', resource: 'STOCK_TRANSFER', view: true, create: true }),
+    row(operatorRoleId, { module: 'INVENTORY', resource: 'STOCK_COUNT', view: true, create: true, edit: true }),
+    row(operatorRoleId, { module: 'INVENTORY', resource: 'STOCK_TRANSFER', view: true, create: true, edit: true }),
     row(operatorRoleId, { module: 'INVENTORY', resource: 'BIO_ASSET_LEDGER', view: true }),
+    row(operatorRoleId, { module: 'PROCUREMENT', resource: 'REQUISITION', view: true, create: true }),
     // Read-only master data: the data-entry screens resolve items, sheds, pens,
     // breeds, medicines and feed formulas by id and render blank without them.
     ...MASTER_DATA_RESOURCES.map((r) => row(operatorRoleId, { module: 'MASTER_DATA', resource: r, view: true })),

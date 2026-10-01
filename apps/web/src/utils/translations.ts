@@ -1621,7 +1621,7 @@ export const translations = {
     // Inventory -> Feed Forecast page tabs (Task 7): one page holds the
     // forecast, the farm feed requisition and the physical count.
     fftTabForecast: "Forecast",
-    fftTabFeedRequisition: "Feed Requisition",
+    fftTabFeedRequisition: "Internal Feed Transfer",
     fftTabPhysicalCount: "Physical Count",
 
     // Physical Count tab: count entry, variance and approval/posting status.

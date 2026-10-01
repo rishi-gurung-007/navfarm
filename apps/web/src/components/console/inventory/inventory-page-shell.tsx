@@ -45,7 +45,19 @@ function useInventoryPageState() {
   }, [router]);
 
   const mayView = Boolean(
-    user && (user.userType === "OPERATIONAL_ADMIN" || user.userType === "COMPANY_ADMIN" || user.userType === "TENANT_ADMIN" || hasPermission(user, "INVENTORY", "GOODS_RECEIPT", "can_view"))
+    user && (
+      user.userType === "OPERATIONAL_ADMIN" ||
+      user.userType === "COMPANY_ADMIN" ||
+      user.userType === "TENANT_ADMIN" ||
+      user.userType === "SYSTEM_ADMIN" ||
+      hasPermission(user, "INVENTORY", "GOODS_RECEIPT", "can_view") ||
+      hasPermission(user, "INVENTORY", "STOCK_COUNT", "can_view") ||
+      hasPermission(user, "INVENTORY", "STOCK_TRANSFER", "can_view") ||
+      hasPermission(user, "INVENTORY", "STOCK_ADJUSTMENT", "can_view") ||
+      hasPermission(user, "INVENTORY", "LEDGER", "can_view") ||
+      hasPermission(user, "INVENTORY", "GOODS_ISSUE", "can_view") ||
+      hasPermission(user, "PROCUREMENT", "REQUISITION", "can_view")
+    )
   );
 
   return { ready, scope, activeLob, mayView };

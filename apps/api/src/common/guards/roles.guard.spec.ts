@@ -172,3 +172,105 @@ describe('RolesGuard farm scope', () => {
     expect(set).not.toHaveBeenCalledWith('farmScope', expect.anything());
   });
 });
+
+describe('RolesGuard document actions, persona constraints and explicit grants', () => {
+  const permissions = jest.fn();
+  const query = { from: () => query, innerJoin: () => query, where: permissions };
+  const select = jest.fn(() => query);
+
+  const buildGuardForPermission = (perm: { moduleCode: string; resource: string; action: string }) =>
+    new RolesGuard(
+      {
+        getAllAndOverride: (key: string) => (key === REQUIRE_PERMISSION_KEY ? perm : undefined),
+      } as unknown as Reflector,
+      { get: () => ({ select }), set: jest.fn() } as unknown as ClsService,
+    );
+
+  const context = (userType: string, userId = 'user-1') =>
+    ({
+      switchToHttp: () => ({
+        getRequest: () => ({
+          headers: {},
+          user: { userType, userId, tenantId: 'tenant-1', companyId: 'co-1' },
+        }),
+      }),
+      getHandler: () => undefined,
+      getClass: () => undefined,
+    }) as unknown as ExecutionContext;
+
+  beforeEach(() => {
+    permissions.mockReset();
+    select.mockClear();
+  });
+
+  it('STANDARD_USER receives none of the privileged actions by user type alone', async () => {
+    const guard = buildGuardForPermission({
+      moduleCode: 'PROCUREMENT',
+      resource: 'REQUISITION',
+      action: 'approve',
+    });
+    permissions.mockResolvedValue([]);
+    await expect(guard.canActivate(context('STANDARD_USER'))).rejects.toThrow('Insufficient permissions');
+  });
+
+  it('OPERATIONAL_ADMIN (Head of Farms) does not bypass document approval by user type alone', async () => {
+    const guard = buildGuardForPermission({
+      moduleCode: 'INVENTORY',
+      resource: 'STOCK_COUNT',
+      action: 'approve',
+    });
+    permissions.mockResolvedValue([]);
+    await expect(guard.canActivate(context('OPERATIONAL_ADMIN'))).rejects.toThrow('Insufficient permissions');
+  });
+
+  it('allows count entry when INVENTORY/STOCK_COUNT create grant is present', async () => {
+    const guard = buildGuardForPermission({
+      moduleCode: 'INVENTORY',
+      resource: 'STOCK_COUNT',
+      action: 'create',
+    });
+    permissions.mockResolvedValue([{ moduleCode: 'INVENTORY', resource: 'STOCK_COUNT', canCreate: true }]);
+    await expect(guard.canActivate(context('STANDARD_USER'))).resolves.toBe(true);
+  });
+
+  it('allows count approval when INVENTORY/STOCK_COUNT approve grant is present', async () => {
+    const guard = buildGuardForPermission({
+      moduleCode: 'INVENTORY',
+      resource: 'STOCK_COUNT',
+      action: 'approve',
+    });
+    permissions.mockResolvedValue([{ moduleCode: 'INVENTORY', resource: 'STOCK_COUNT', canApprove: true }]);
+    await expect(guard.canActivate(context('FARM_MANAGER'))).resolves.toBe(true);
+  });
+
+  it('allows requisition release when PROCUREMENT/REQUISITION approve grant is present', async () => {
+    const guard = buildGuardForPermission({
+      moduleCode: 'PROCUREMENT',
+      resource: 'REQUISITION',
+      action: 'approve',
+    });
+    permissions.mockResolvedValue([{ moduleCode: 'PROCUREMENT', resource: 'REQUISITION', canApprove: true }]);
+    await expect(guard.canActivate(context('STANDARD_USER'))).resolves.toBe(true);
+  });
+
+  it('allows staged transfer shipment/receipt when INVENTORY/STOCK_TRANSFER edit grant is present', async () => {
+    const guard = buildGuardForPermission({
+      moduleCode: 'INVENTORY',
+      resource: 'STOCK_TRANSFER',
+      action: 'edit',
+    });
+    permissions.mockResolvedValue([{ moduleCode: 'INVENTORY', resource: 'STOCK_TRANSFER', canEdit: true }]);
+    await expect(guard.canActivate(context('STANDARD_USER'))).resolves.toBe(true);
+  });
+
+  it('allows Finance stock variance approval when FINANCE/STOCK_VARIANCE approve grant is present', async () => {
+    const guard = buildGuardForPermission({
+      moduleCode: 'FINANCE',
+      resource: 'STOCK_VARIANCE',
+      action: 'approve',
+    });
+    permissions.mockResolvedValue([{ moduleCode: 'FINANCE', resource: 'STOCK_VARIANCE', canApprove: true }]);
+    await expect(guard.canActivate(context('STANDARD_USER'))).resolves.toBe(true);
+  });
+});
+

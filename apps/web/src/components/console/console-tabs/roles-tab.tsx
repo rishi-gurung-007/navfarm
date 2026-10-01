@@ -40,7 +40,7 @@ const DEFAULT_RESOURCES = [
   { module_code: "INVENTORY", resource: "GOODS_ISSUE", name: "Goods Issue", nameKey: "invGoodsIssue" },
   { module_code: "INVENTORY", resource: "STOCK_TRANSFER", name: "Stock Transfer", nameKey: "apDocType_STOCK_TRANSFER" },
   { module_code: "INVENTORY", resource: "STOCK_ADJUSTMENT", name: "Stock Adjustment", nameKey: "invStockAdjustment" },
-  { module_code: "INVENTORY", resource: "STOCK_COUNT", name: "Feed Stock Count", nameKey: "invStockAdjustmentTitle" },
+  { module_code: "INVENTORY", resource: "STOCK_COUNT", name: "Feed Stock Count", nameKey: "rolFeedStockCount" },
   { module_code: "INVENTORY", resource: "LEDGER", name: "Inventory Ledger", nameKey: "invLedger" },
   { module_code: "INVENTORY", resource: "BIO_ASSET_LEDGER", name: "Bio-Asset Ledger", nameKey: "blBioAssetLedgerTitle" },
   { module_code: "PROCUREMENT", resource: "REQUISITION", name: "Procurement Requisitions", nameKey: "rolProcurementRequisitions" },
