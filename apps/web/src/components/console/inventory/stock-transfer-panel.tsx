@@ -482,6 +482,9 @@ export default function StockTransferPanel() {
                   <tr className="border-b border-(--row-border)">
                     <TableHead className="h-auto px-3 py-2">{t("stpColItem")}</TableHead>
                     <TableHead className="h-auto px-3 py-2">{t("stpColQty")}</TableHead>
+                    {/* Task 10: cumulative event coverage per line, from findOne. */}
+                    <TableHead className="h-auto px-3 py-2">{t("stpColShipped")}</TableHead>
+                    <TableHead className="h-auto px-3 py-2">{t("stpColReceived")}</TableHead>
                     <TableHead className="h-auto px-3 py-2">{t("stpColUom")}</TableHead>
                     <TableHead className="h-auto px-3 py-2">Lot No.</TableHead>
                     <TableHead className="h-auto px-3 py-2">Serial No.</TableHead>
@@ -492,6 +495,8 @@ export default function StockTransferPanel() {
                     <TableRow key={l.line_id}>
                       <TableCell className="px-3 py-2" style={S.primary}>{itemLabel(l.item_id)}</TableCell>
                       <TableCell className="px-3 py-2" style={S.primary}>{l.quantity}</TableCell>
+                      <TableCell className="px-3 py-2" style={S.primary}>{l.qty_shipped ?? 0}</TableCell>
+                      <TableCell className="px-3 py-2" style={S.primary}>{l.qty_received ?? 0}</TableCell>
                       <TableCell className="px-3 py-2" style={S.primary}>{l.uom}</TableCell>
                       <TableCell className="px-3 py-2 font-mono" style={S.primary}>{l.lot_no || "—"}</TableCell>
                       <TableCell className="px-3 py-2 font-mono" style={S.primary}>{l.serial_no || "—"}</TableCell>

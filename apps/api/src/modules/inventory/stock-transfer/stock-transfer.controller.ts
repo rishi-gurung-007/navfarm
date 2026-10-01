@@ -1,7 +1,7 @@
 import { Controller, Get, Post, Put, Delete, Param, Body, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiParam } from '@nestjs/swagger';
 import { StockTransferService } from './stock-transfer.service';
-import { CreateStockTransferDto, UpdateStockTransferDto, QueryStockTransferDto } from './dto/stock-transfer.dto';
+import { CreateStockTransferDto, UpdateStockTransferDto, QueryStockTransferDto, PostShipmentDto, PostReceiptDto, PostDirectTransferDto } from './dto/stock-transfer.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
@@ -63,11 +63,41 @@ export class StockTransferController {
 
   @Post(':id/post')
   @RequirePermission('INVENTORY', 'STOCK_TRANSFER', 'edit')
-  @ApiOperation({ summary: 'Post a DRAFT Stock Transfer — writes shipment + receipt Inventory Ledger entries and locks it' })
+  @ApiOperation({ summary: 'Direct Transfer (compatibility): one shipment plus its matching receipt in one transaction' })
   @ApiParam({ name: 'id', description: 'Stock Transfer UUID' })
   async post(@Param('id') id: string, @Req() req: any) {
     const tenantId = req.user?.tenantId || req['tenantId'];
     const result = await this.stockTransferService.post(id, tenantId, req.user);
     return { success: true, message: 'Stock Transfer posted successfully.', data: result };
+  }
+
+  @Post(':id/shipment')
+  @RequirePermission('INVENTORY', 'STOCK_TRANSFER', 'edit')
+  @ApiOperation({ summary: 'Post a partial shipment event (Task 10); lot/serial identity rides the order line' })
+  @ApiParam({ name: 'id', description: 'Stock Transfer UUID' })
+  async shipment(@Param('id') id: string, @Body() dto: PostShipmentDto, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const result = await this.stockTransferService.postShipment(id, dto, tenantId, req.user);
+    return { success: true, message: 'Shipment posted.', data: result };
+  }
+
+  @Post(':id/receipt')
+  @RequirePermission('INVENTORY', 'STOCK_TRANSFER', 'edit')
+  @ApiOperation({ summary: 'Post a partial receipt event against a shipment; over-receipt is refused' })
+  @ApiParam({ name: 'id', description: 'Stock Transfer UUID' })
+  async receipt(@Param('id') id: string, @Body() dto: PostReceiptDto, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const result = await this.stockTransferService.postReceipt(id, dto, tenantId, req.user);
+    return { success: true, message: 'Receipt posted.', data: result };
+  }
+
+  @Post(':id/direct-transfer')
+  @RequirePermission('INVENTORY', 'STOCK_TRANSFER', 'edit')
+  @ApiOperation({ summary: 'Direct Transfer: a selected shipment and its matching receipt together in one transaction' })
+  @ApiParam({ name: 'id', description: 'Stock Transfer UUID' })
+  async directTransfer(@Param('id') id: string, @Body() dto: PostDirectTransferDto, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const result = await this.stockTransferService.postDirectTransfer(id, dto, tenantId, req.user);
+    return { success: true, message: 'Direct Transfer posted.', data: result };
   }
 }

@@ -3981,6 +3981,88 @@ export const stockTransferLine = mysqlTable('stock_transfer_line', {
   remarks: varchar('remarks', { length: 500 }),
 });
 
+// ---------------------------------------------------------------------------
+// Staged transfer execution (plan Task 10). Append-only partial events against
+// the stock_transfer order above; the atomic DRAFT→POSTED path stays and is
+// re-implemented as a direct transfer (one shipment + one matching receipt in
+// one transaction). Cumulative quantities are derived by summing the events —
+// never stored on the order line.
+// ---------------------------------------------------------------------------
+
+// Pre-shipment lot/serial allocations per transfer line (spec
+// "stock_transfer_tracking_assignment"). The shipment event copies the line's
+// assignments; the receipt copies them from the shipment.
+export const stockTransferTrackingAssignment = mysqlTable('stock_transfer_tracking_assignment', {
+  assignment_id: varchar('assignment_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+  transfer_id: varchar('transfer_id', { length: 36 }).notNull().references(() => stockTransfer.transfer_id, { onDelete: 'cascade' }),
+  line_id: varchar('line_id', { length: 36 }).notNull().references(() => stockTransferLine.line_id, { onDelete: 'cascade' }),
+  lot_no: varchar('lot_no', { length: 50 }),
+  serial_no: varchar('serial_no', { length: 100 }),
+  quantity: decimal('quantity', { precision: 18, scale: 4 }).notNull(),
+  created_by: varchar('created_by', { length: 36 }),
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+}, (table) => ({
+  lineIdx: index('idx_tracking_assignment_line').on(table.line_id),
+}));
+
+// One append-only shipment event. `quantity` is the event's own quantity;
+// the line's cumulative shipped quantity is the sum of its events.
+export const transferShipment = mysqlTable('transfer_shipment', {
+  shipment_id: varchar('shipment_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+  transfer_id: varchar('transfer_id', { length: 36 }).notNull().references(() => stockTransfer.transfer_id, { onDelete: 'restrict' }),
+  shipment_no: varchar('shipment_no', { length: 50 }).notNull(),
+  shipment_date: date('shipment_date', { mode: 'string' }).notNull(),
+  status: varchar('status', { length: 20 }).default('POSTED').notNull(),
+  created_by: varchar('created_by', { length: 36 }),
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+  deleted_at: timestamp('deleted_at', { mode: 'string' }),
+}, (table) => ({
+  transferIdx: index('idx_transfer_shipment_transfer').on(table.transfer_id),
+}));
+
+export const transferShipmentLine = mysqlTable('transfer_shipment_line', {
+  shipment_line_id: varchar('shipment_line_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  shipment_id: varchar('shipment_id', { length: 36 }).notNull().references(() => transferShipment.shipment_id, { onDelete: 'cascade' }),
+  line_id: varchar('line_id', { length: 36 }).notNull().references(() => stockTransferLine.line_id, { onDelete: 'restrict' }),
+  quantity: decimal('quantity', { precision: 18, scale: 4 }).notNull(),
+  uom: varchar('uom', { length: 20 }).notNull(),
+  // Copied from the line's tracking assignments at shipment time.
+  lot_no: varchar('lot_no', { length: 50 }),
+  serial_no: varchar('serial_no', { length: 100 }),
+});
+
+// One append-only receipt event, tied to the shipment it receives against —
+// which is what makes "a receipt cannot precede its shipment" structural.
+export const transferReceipt = mysqlTable('transfer_receipt', {
+  receipt_id: varchar('receipt_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+  transfer_id: varchar('transfer_id', { length: 36 }).notNull().references(() => stockTransfer.transfer_id, { onDelete: 'restrict' }),
+  shipment_id: varchar('shipment_id', { length: 36 }).references(() => transferShipment.shipment_id, { onDelete: 'set null' }),
+  receipt_no: varchar('receipt_no', { length: 50 }).notNull(),
+  receipt_date: date('receipt_date', { mode: 'string' }).notNull(),
+  status: varchar('status', { length: 20 }).default('POSTED').notNull(),
+  created_by: varchar('created_by', { length: 36 }),
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+  deleted_at: timestamp('deleted_at', { mode: 'string' }),
+}, (table) => ({
+  transferIdx: index('idx_transfer_receipt_transfer').on(table.transfer_id),
+  shipmentIdx: index('idx_transfer_receipt_shipment').on(table.shipment_id),
+}));
+
+export const transferReceiptLine = mysqlTable('transfer_receipt_line', {
+  receipt_line_id: varchar('receipt_line_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  receipt_id: varchar('receipt_id', { length: 36 }).notNull().references(() => transferReceipt.receipt_id, { onDelete: 'cascade' }),
+  shipment_line_id: varchar('shipment_line_id', { length: 36 }).references(() => transferShipmentLine.shipment_line_id, { onDelete: 'set null' }),
+  line_id: varchar('line_id', { length: 36 }).notNull().references(() => stockTransferLine.line_id, { onDelete: 'restrict' }),
+  quantity: decimal('quantity', { precision: 18, scale: 4 }).notNull(),
+  uom: varchar('uom', { length: 20 }).notNull(),
+  // Copied from the shipment line (spec: receipt copies from shipment).
+  lot_no: varchar('lot_no', { length: 50 }),
+  serial_no: varchar('serial_no', { length: 100 }),
+});
+
 export const stockAdjustment = mysqlTable('stock_adjustment', {
   adjustment_id: varchar('adjustment_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
   tenant_id: varchar('tenant_id', { length: 36 }).notNull(),

@@ -48,7 +48,9 @@ describe('StockTransferService', () => {
   const chain = (result: unknown[]) => {
     const self: any = {
       from: () => self,
+      innerJoin: () => self,
       where: (cond: unknown) => { capturedWhere ??= cond; return self; },
+      orderBy: () => self,
       limit: () => self,
       offset: () => self,
       for: () => self,
@@ -75,6 +77,11 @@ describe('StockTransferService', () => {
     rows.set(schema.stockTransfer, []);
     rows.set(schema.stockTransferLine, []);
     rows.set(schema.locationMaster, []);
+    // Task 10 event tables: the direct-transfer wrapper reads and writes them.
+    rows.set(schema.transferShipment, []);
+    rows.set(schema.transferShipmentLine, []);
+    rows.set(schema.transferReceipt, []);
+    rows.set(schema.transferReceiptLine, []);
 
     mockDbSelect.mockReset();
     mockDbInsert.mockReset();
@@ -85,8 +92,22 @@ describe('StockTransferService', () => {
     // Accepts by default; a test that cares about a refusal overrides it.
     mockAssertCanReceive.mockReset().mockResolvedValue(undefined);
     mockDbSelect.mockImplementation(() => ({ from: (table: unknown) => chain(rows.get(table) ?? []) }));
-    mockDbInsert.mockReturnValue({ values: jest.fn().mockResolvedValue({}) });
-    mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) }) });
+    mockDbInsert.mockImplementation((table: unknown) => ({
+      values: jest.fn(async (v: any) => {
+        // Event rows written by the direct-transfer path must be readable
+        // inside the same call: the receipt binds to the shipment it follows,
+        // and the POSTED claim recounts coverage from the event tables. The
+        // `qty` alias mirrors what the cumulative joins project (qty:
+        // quantity). Other inserts are ignored.
+        const bucket = rows.get(table);
+        if (bucket && v && typeof v === 'object' && ('shipment_id' in v || 'receipt_id' in v)) {
+          bucket.push({ ...v, qty: v.quantity });
+        }
+      }),
+    }));
+    // MySqlRawQueryResult is an array ([ResultSetHeader, ...]); the DRAFT →
+    // POSTED claim destructures it and reads affectedRows.
+    mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ affectedRows: 1 }]) }) });
 
     cls = transactionCls(mockDb);
     const module: TestingModule = await Test.createTestingModule({
