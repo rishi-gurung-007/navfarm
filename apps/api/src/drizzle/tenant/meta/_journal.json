@@ -946,6 +946,49 @@
       "when": 1792000000003,
       "tag": "0134_animal_parent_serial_no",
       "breakpoints": true
+    },
+    {
+      "idx": 135,
+      "version": "5",
+      "when": 1792000000004,
+      "tag": "0135_feed_planning_settings",
+      "breakpoints": true
+    },
+    {
+      "idx": 136,
+      "version": "5",
+      "when": 1792000000005,
+      "tag": "0136_feed_forecast_run",
+      "breakpoints": true
+    },
+    {
+      "idx": 137,
+      "version": "5",
+      "when": 1792000000006,
+      "tag": "0137_feed_stock_count",
+      "breakpoints": true
+    },
+    {
+      "idx": 138,
+      "version": "5",
+      "when": 1792000000007,
+      "tag": "0138_common_requisition",
+      "breakpoints": true
+    },
+    {
+      "idx": 139,
+      "version": "5",
+      "when": 1792000000008,
+      "tag": "0139_transfer_execution_events",
+      "breakpoints": true
+    },
+    {
+      "idx": 140,
+      "version": "5",
+      "when": 1792000000009,
+      "tag": "0140_alert_role_normalization",
+      "breakpoints": true
     }
   ]
 }
+

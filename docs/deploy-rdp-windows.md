@@ -573,6 +573,72 @@ filled. 0122 can be reversed with the four statements above plus
 `DELETE FROM __drizzle_migrations WHERE created_at >= 1791222000000;`, once the
 previous build is back in place.
 
+### Feed Forecast & Requisition Integration release (tenant migrations 0135–0140)
+
+What it adds and updates on tenant data (rehearsed on a disposable clone):
+
+- **0135** adds `company_currency_config.is_local` (default false), unique constraint
+  `uq_company_currency_config_company_currency`, and creates `feed_planning_setting` with
+  stored generated column `active_scope_key` and unique constraint `uq_feed_planning_setting_active_scope`.
+- **0136** updates `reporting_period` defaults to `is_active = false` and `status = 'DRAFT'`,
+  and creates `feed_forecast_run` and `feed_forecast_run_line` tables.
+- **0137** creates physical silo count tables `feed_stock_count` and `feed_stock_count_line`,
+  and index `idx_inventory_ledger_count_cutoff` on `inventory_ledger`.
+- **0138** adds `department_id` FKs on `user_master` and `location_master`, adds 16 header
+  columns on `requisition` and 6 line columns on `requisition_line`, and backfills
+  `approval_status`, `document_status`, `fulfilment_status`, and `integration_status` for
+  legacy requisitions.
+- **0139** creates staged transfer execution tables `stock_transfer_tracking_assignment`,
+  `transfer_shipment`, `transfer_shipment_line`, `transfer_receipt`, and `transfer_receipt_line`.
+- **0140** normalizes legacy alert recipient/escalation role `HEAD_OF_FARM` to `OPERATIONAL_ADMIN`
+  in `alert_rule` and `feed_alert`.
+
+**Before running `db-migrate-all-tenants`**, run preflight integrity checks on each tenant:
+
+```sql
+SELECT COUNT(*), MAX(created_at) FROM nf_<code>.__drizzle_migrations;   -- note it; baseline is 135 (idx 134, 1792000000003)
+
+-- Check for duplicate currency configs that would block 0135 unique index:
+SELECT company_id, currency_id, COUNT(*) FROM nf_<code>.company_currency_config
+ GROUP BY company_id, currency_id HAVING COUNT(*) > 1;                  -- must return 0 rows
+
+-- Count requisitions that will receive state dimension backfills in 0138:
+SELECT requisition_id, req_no, status FROM nf_<code>.requisition WHERE approval_status IS NULL;
+
+-- Count alert rules and alerts that will be normalized in 0140:
+SELECT rule_id, notification_code, recipient_roles, escalation_role FROM nf_<code>.alert_rule
+ WHERE escalation_role = 'HEAD_OF_FARM' OR JSON_CONTAINS(recipient_roles, '"HEAD_OF_FARM"');
+SELECT alert_id, notification_code, recipient_roles, escalation_role FROM nf_<code>.feed_alert
+ WHERE escalation_role = 'HEAD_OF_FARM' OR JSON_CONTAINS(recipient_roles, '"HEAD_OF_FARM"');
+```
+
+Alternatively, run the dry-run helper in read-only and verify modes:
+```powershell
+pnpm nx run api:db-backfill-feed-forecast-requisition
+pnpm nx run api:db-backfill-feed-forecast-requisition --args="--verify"
+```
+
+**After `db-migrate-all-tenants`**, verify for each tenant:
+
+```sql
+SELECT COUNT(*), MAX(created_at) FROM nf_<code>.__drizzle_migrations;   -- +6 rows (total 141, MAX created_at = 1792000000009)
+SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='nf_<code>'
+  AND table_name IN ('feed_planning_setting', 'feed_forecast_run', 'feed_forecast_run_line',
+                     'feed_stock_count', 'feed_stock_count_line', 'stock_transfer_tracking_assignment',
+                     'transfer_shipment', 'transfer_shipment_line', 'transfer_receipt', 'transfer_receipt_line');  -- 10 tables
+
+-- Requisitions with approval_status NULL:
+SELECT COUNT(*) FROM nf_<code>.requisition WHERE approval_status IS NULL;  -- must be 0
+
+-- Alert rules with legacy HEAD_OF_FARM:
+SELECT COUNT(*) FROM nf_<code>.alert_rule
+ WHERE escalation_role = 'HEAD_OF_FARM' OR JSON_CONTAINS(recipient_roles, '"HEAD_OF_FARM"');  -- must be 0
+```
+
+**If a migration fails part-way**:
+The migrations are strictly additive. Clean up only the partially added table or column reported in the error message before re-running `db-migrate-all-tenants`.
+
 Never run `db-rebuild-demo`, `setup-fresh-database` or any seed script on this
 server: they replace the testers' data.
+
 

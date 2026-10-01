@@ -284,7 +284,7 @@ export const feedPlanningSetting = mysqlTable('feed_planning_setting', {
   setting_id: varchar('setting_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
   tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
   company_id: varchar('company_id', { length: 36 }).notNull().references(() => companyMaster.company_id, { onDelete: 'cascade' }),
-  farm_id: varchar('farm_id', { length: 36 }).references((): AnyMySqlColumn => locationMaster.location_id, { onDelete: 'cascade' }),
+  farm_id: varchar('farm_id', { length: 36 }).references((): AnyMySqlColumn => locationMaster.location_id, { onDelete: 'restrict' }),
   default_forecast_days: int('default_forecast_days').default(7).notNull(),
   max_forecast_days: int('max_forecast_days').default(45).notNull(),
   production_weekday: int('production_weekday'),
