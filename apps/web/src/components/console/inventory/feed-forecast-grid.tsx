@@ -78,25 +78,164 @@ type Translate = (key: any, vars?: any) => string;
 // order. "Source" and "Feed incl. Wastage (Kg)" were ours, not the client's, and
 // "Shared by N" went with Source — it was a badge inside that cell.
 export const GRID_COLUMNS = [
-  "ffColBatchNo", "ffColItemName", "ffColItemNo", "ffColShedNo", "ffColPlanningDate",
-  "ffColCurrentInventoryKg", "ffColCurrentPigs", "ffColPerDayIntakeKg", "ffColDaysOfStock",
-  "ffColRunDown", "ffColDateToRefill", "ffColRequiredOn",
+  "ffColBatchNo", "ffColItemName", "ffColItemNo", "ffColShedNo",
+  "ffColCurrentInventoryKg", "ffColCurrentPigs", "ffColPerDayIntakeKg",
+  // Dynamic date columns are inserted here at render time (one per day or week)
+  "ffColDaysOfStock", "ffColRunDown", "ffColDateToRefill", "ffColRequiredOn",
 ] as const;
 
 export const STAGE_COLUMNS = ["ffStgBatch", "ffStgShed", "ffStgCurrent", "ffStgFrom", "ffStgTo", "ffStgNext", "ffStgChange"] as const;
 
-const RIGHT_ALIGNED = new Set<string>(["ffColCurrentInventoryKg", "ffColCurrentPigs", "ffColPerDayIntakeKg", "ffColDaysOfStock"]);
-
-/** Days of Stock and Run-Down count to two different things; the header title says which. */
-const HEADER_HINT: Partial<Record<(typeof GRID_COLUMNS)[number], string>> = {
-  ffColDaysOfStock: "ffDaysOfStockHint",
-  ffColRunDown: "ffRunDownHint",
-};
 
 /** Kilograms, grouped, always two decimals (review C: consistent decimals). */
 export function fmtKg(n: number | null | undefined): string {
   if (n === null || n === undefined) return "—";
   return n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+export function fmtRound(n: number | null | undefined): string {
+  if (n === null || n === undefined) return "—";
+  return Math.round(n).toLocaleString("en-US");
+}
+
+export interface PivotedFeedRow {
+  key: string;
+  batchId: string;
+  batchNo: string;
+  shedCode: string;
+  stageCode: string;
+  itemId: string;
+  itemNo: string;
+  itemName: string;
+  heads: number;
+  perDayIntakeKg: number;
+  openingInventoryKg: number;
+  dateMap: Record<string, { currentInventoryKg: number; intakeKg: number }>;
+  daysOfStock: number | null;
+  runDownDate: string | null;
+  refillDate: string | null;
+  requiredOn: string | null;
+  indicative: boolean;
+  overdue: boolean;
+}
+
+export interface ColumnSlot {
+  key: string;
+  label: string;
+  dateStart: string;
+  dateEnd: string;
+}
+
+export function diffDaysIso(a: string, b: string): number {
+  const [ya, ma, da] = a.split("-").map(Number);
+  const [yb, mb, db] = b.split("-").map(Number);
+  const utca = Date.UTC(ya, ma - 1, da);
+  const utcb = Date.UTC(yb, mb - 1, db);
+  return Math.round((utcb - utca) / 86400000);
+}
+
+/** Add n calendar days to an ISO date string (YYYY-MM-DD). */
+export function addDaysIso(isoDate: string, n: number): string {
+  const [y, m, d] = isoDate.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d + n));
+  return dt.toISOString().slice(0, 10);
+}
+
+export function pivotForecastRows(
+  rows: ReportRow[],
+  view?: string,
+  from?: string
+): { pivoted: PivotedFeedRow[]; columns: ColumnSlot[] } {
+  const map = new Map<string, PivotedFeedRow>();
+  const slotsMap = new Map<string, ColumnSlot>();
+
+  // Determine latest run-down date across all rows to cap the horizon
+  let maxRunDown: string | null = null;
+  for (const r of rows) {
+    if (r.runDownDate && (!maxRunDown || r.runDownDate > maxRunDown)) {
+      maxRunDown = r.runDownDate;
+    }
+  }
+
+  const baseFrom = from || (rows.length > 0 ? rows[0].date : "");
+
+  for (const r of rows) {
+    const groupKey = `${r.batchId}|${r.itemId}|${r.shedCode || ""}`;
+    let p = map.get(groupKey);
+    if (!p) {
+      p = {
+        key: groupKey,
+        batchId: r.batchId,
+        batchNo: r.batchNo,
+        shedCode: r.shedCode,
+        stageCode: r.stageCode,
+        itemId: r.itemId,
+        itemNo: r.itemNo,
+        itemName: r.itemName,
+        heads: r.heads,
+        perDayIntakeKg: r.perDayIntakeKg,
+        openingInventoryKg: r.currentInventoryKg,
+        dateMap: {},
+        daysOfStock: r.daysOfStock,
+        runDownDate: r.runDownDate,
+        refillDate: r.refillDate,
+        requiredOn: r.requiredOn,
+        indicative: r.indicative,
+        overdue: r.overdue,
+      };
+      map.set(groupKey, p);
+    }
+
+    let slotKey = r.date;
+    let slotStart = r.date;
+    let slotEnd = r.dateTo || r.date;
+    let label = formatDateShort(r.date);
+
+    if (view === "WEEKLY" && baseFrom) {
+      const diff = diffDaysIso(baseFrom, r.date);
+      const weekIdx = Math.max(0, Math.floor(diff / 7));
+      slotStart = addDaysIso(baseFrom, weekIdx * 7);
+      slotEnd = addDaysIso(slotStart, 6);
+      slotKey = slotStart;
+      label = `${formatDateShort(slotStart)} – ${formatDateShort(slotEnd)}`;
+    }
+
+    if (!slotsMap.has(slotKey)) {
+      slotsMap.set(slotKey, {
+        key: slotKey,
+        label,
+        dateStart: slotStart,
+        dateEnd: slotEnd,
+      });
+    }
+
+    if (!p.dateMap[slotKey]) {
+      p.dateMap[slotKey] = {
+        currentInventoryKg: r.currentInventoryKg,
+        intakeKg: r.intakeKg,
+      };
+    } else {
+      p.dateMap[slotKey].intakeKg += r.intakeKg;
+    }
+
+    if (r.runDownDate && !p.runDownDate) p.runDownDate = r.runDownDate;
+    if (r.refillDate && !p.refillDate) p.refillDate = r.refillDate;
+    if (r.requiredOn && !p.requiredOn) p.requiredOn = r.requiredOn;
+    if (r.daysOfStock !== null && (p.daysOfStock === null || r.daysOfStock < p.daysOfStock)) {
+      p.daysOfStock = r.daysOfStock;
+    }
+    if (r.overdue) p.overdue = true;
+  }
+
+  let sortedSlots = Array.from(slotsMap.values()).sort((a, b) => (a.dateStart < b.dateStart ? -1 : 1));
+  if (maxRunDown) {
+    const capped = sortedSlots.filter((s) => s.dateStart <= maxRunDown);
+    if (capped.length > 0) {
+      sortedSlots = capped;
+    }
+  }
+
+  return { pivoted: Array.from(map.values()), columns: sortedSlots };
 }
 
 /** Consecutive rows of one batch + item + source + stage form a group. */
@@ -130,59 +269,128 @@ function StateRow({ colSpan, children }: { colSpan: number; children: ReactNode 
   );
 }
 
-export function FeedForecastGrid({ rows, loading, t }: { rows: ReportRow[]; loading: boolean; horizonTo: string | null; t: Translate }) {
+export function FeedForecastGrid({
+  rows,
+  view,
+  from,
+  loading,
+  t,
+}: {
+  rows: ReportRow[];
+  view?: string;
+  from?: string;
+  loading: boolean;
+  horizonTo: string | null;
+  t: Translate;
+}) {
+  const { pivoted, columns } = pivotForecastRows(rows, view, from);
+  const totalCols = 7 + columns.length + 4;
+
   return (
-    <ScrollTable label={t("ffGridLabel")}>
+    <ScrollTable label={t("ffGridLabel")} className="w-full">
       <thead>
         <tr>
-          {GRID_COLUMNS.map((c, i) => (
-            <th
-              key={c}
-              scope="col"
-              title={HEADER_HINT[c] ? t(HEADER_HINT[c]) : undefined}
-              data-sticky-col={i === 0 ? "true" : i === 1 ? "last" : undefined}
-              style={i === 0 ? BATCH_COL : i === 1 ? ITEM_COL : undefined}
-              className={cn(TH, i === 0 && "w-[12.5rem] min-w-[12.5rem] max-w-[12.5rem]", i === 1 && "min-w-[13rem]", RIGHT_ALIGNED.has(c) && "text-right")}
-            >
-              {t(c)}
+          <th scope="col" data-sticky-col="true" style={BATCH_COL} className={cn(TH, "w-[12.5rem] min-w-[12.5rem] max-w-[12.5rem]")}>
+            {t("ffColBatchNo")}
+          </th>
+          <th scope="col" data-sticky-col="last" style={ITEM_COL} className={cn(TH, "min-w-[13rem]")}>
+            {t("ffColItemName")}
+          </th>
+          <th scope="col" className={TH}>{t("ffColItemNo")}</th>
+          <th scope="col" className={TH}>{t("ffColShedNo")}</th>
+          <th scope="col" className={cn(TH, "text-right")}>{t("ffColCurrentInventoryKg")}</th>
+          <th scope="col" className={cn(TH, "text-right")}>{t("ffColCurrentPigs")}</th>
+          <th scope="col" className={cn(TH, "text-right")}>{t("ffColPerDayIntakeKg")}</th>
+
+          {/* Dynamic Columns: Weekly or Daily */}
+          {columns.map((c) => (
+            <th key={c.key} scope="col" className={cn(TH, "text-right min-w-[7.5rem] bg-[var(--table-header-alt)]")}>
+              {c.label}
             </th>
           ))}
+
+          <th scope="col" title={t("ffDaysOfStockHint")} className={cn(TH, "text-right")}>
+            {t("ffColDaysOfStock")}
+          </th>
+          <th scope="col" title={t("ffRunDownHint")} className={TH}>
+            {t("ffColRunDown")}
+          </th>
+          <th scope="col" className={TH}>
+            {t("ffColDateToRefill")}
+          </th>
+          <th scope="col" className={TH}>
+            {t("ffColRequiredOn")}
+          </th>
         </tr>
       </thead>
       <tbody>
         {loading ? (
-          <StateRow colSpan={GRID_COLUMNS.length}>
+          <StateRow colSpan={totalCols}>
             <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" style={{ color: "var(--accent)" }} /> {t("ffLoading")}
           </StateRow>
-        ) : rows.length === 0 ? (
-          <StateRow colSpan={GRID_COLUMNS.length}>
+        ) : pivoted.length === 0 ? (
+          <StateRow colSpan={totalCols}>
             <Inbox className="mx-auto mb-2 h-6 w-6" style={{ color: "var(--text-muted)" }} /> {t("ffNoRows")}
           </StateRow>
         ) : (
-          groupRows(rows).map(({ row, start, alt }) => (
-            <tr key={row.key} data-group-start={start ? "true" : undefined} data-group-alt={alt ? "true" : undefined}>
-              <td data-sticky-col="true" style={BATCH_COL} title={row.batchNo} className={cn(TD, "w-[12.5rem] min-w-[12.5rem] max-w-[12.5rem] truncate font-medium", !start && MUTED)}>{row.batchNo}</td>
-              <td data-sticky-col="last" style={ITEM_COL} title={row.itemName} className={cn(TD, "min-w-[13rem] max-w-[14rem] truncate", !start && MUTED)}>{row.itemName}</td>
-              <td className={cn(TD, MUTED)}>{row.itemNo || "—"}</td>
-              <td className={cn(TD, MUTED)}>{row.shedCode || "—"}</td>
-              <td className={TD}>{row.days > 1 ? `${formatDateShort(row.date)} – ${formatDateShort(row.dateTo)}` : formatDateShort(row.date)}</td>
-              <td className={cn(TD, NUM)}>{fmtKg(row.currentInventoryKg)}</td>
-              <td className={cn(TD, NUM)}>{row.heads.toLocaleString("en-US")}</td>
-              <td className={cn(TD, NUM)}>{fmtKg(row.perDayIntakeKg)}</td>
-              <td className={cn(TD, NUM)}>
-                <span className="inline-flex items-center justify-end gap-1.5">
-                  {row.indicative && <Badge variant="warning" className={SMALL_BADGE}>{t("ffIndicative")}</Badge>}
-                  <span>{row.daysOfStock ?? "—"}</span>
-                </span>
-              </td>
-              <td className={cn(TD, !row.runDownDate && MUTED)}>{formatDateShort(row.runDownDate)}</td>
-              <td className={cn(TD, !row.refillDate && MUTED)}>{formatDateShort(row.refillDate)}</td>
-              <td className={TD}>
-                <span className={cn(!row.requiredOn && MUTED)}>{formatDateShort(row.requiredOn)}</span>
-                {row.overdue && <Badge variant="danger" className={cn("ml-1.5", SMALL_BADGE)}>{t("ffOverdue")}</Badge>}
-              </td>
-            </tr>
-          ))
+          pivoted.map((p, idx) => {
+            const isAlt = idx % 2 === 1;
+            return (
+              <tr key={p.key} data-group-alt={isAlt ? "true" : undefined} className={isAlt ? "bg-[var(--table-row-alt)]" : undefined}>
+                <td data-sticky-col="true" style={BATCH_COL} title={p.batchNo} className={cn(TD, "w-[12.5rem] min-w-[12.5rem] max-w-[12.5rem] truncate font-medium")}>
+                  {p.batchNo}
+                </td>
+                <td data-sticky-col="last" style={ITEM_COL} title={p.itemName} className={cn(TD, "min-w-[13rem] max-w-[14rem] truncate font-medium")}>
+                  {p.itemName}
+                </td>
+                <td className={cn(TD, MUTED)}>{p.itemNo || "—"}</td>
+                <td className={cn(TD, MUTED)}>{p.shedCode || "—"}</td>
+                <td className={cn(TD, NUM, "font-medium")}>{fmtRound(p.openingInventoryKg)}</td>
+                <td className={cn(TD, NUM)}>{p.heads.toLocaleString("en-US")}</td>
+                <td className={cn(TD, NUM)}>{fmtRound(p.perDayIntakeKg)}</td>
+
+                {/* Day-by-Day or Week-by-Week Run-down columns */}
+                {columns.map((c) => {
+                  const entry = p.dateMap[c.key];
+                  const isDepleted = p.runDownDate && c.dateStart >= p.runDownDate;
+                  if (!entry) {
+                    if (isDepleted) {
+                      return (
+                        <td key={c.key} className={cn(TD, NUM, "text-[var(--danger)] font-medium")}>
+                          0
+                        </td>
+                      );
+                    }
+                    return <td key={c.key} className={cn(TD, NUM, MUTED)}>—</td>;
+                  }
+                  const stock = entry.currentInventoryKg;
+                  const isEmpty = stock <= 0 || isDepleted;
+                  return (
+                    <td key={c.key} className={cn(TD, NUM, isEmpty && "text-[var(--danger)] font-medium")}>
+                      {fmtRound(isEmpty && stock <= 0 ? 0 : stock)}
+                    </td>
+                  );
+                })}
+
+                <td className={cn(TD, NUM)}>
+                  <span className="inline-flex items-center justify-end gap-1.5">
+                    {p.indicative && <Badge variant="warning" className={SMALL_BADGE}>{t("ffIndicative")}</Badge>}
+                    <span>{p.daysOfStock ?? "—"}</span>
+                  </span>
+                </td>
+                <td className={cn(TD, !p.runDownDate ? MUTED : "font-semibold text-[var(--danger)]")}>
+                  {formatDateShort(p.runDownDate)}
+                </td>
+                <td className={cn(TD, MUTED)}>
+                  {formatDateShort(p.refillDate)}
+                </td>
+                <td className={TD}>
+                  <span className={cn(!p.requiredOn && MUTED)}>{formatDateShort(p.requiredOn)}</span>
+                  {p.overdue && <Badge variant="danger" className={cn("ml-1.5", SMALL_BADGE)}>{t("ffOverdue")}</Badge>}
+                </td>
+              </tr>
+            );
+          })
         )}
       </tbody>
     </ScrollTable>

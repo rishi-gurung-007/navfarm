@@ -206,7 +206,7 @@ export default function FeedForecastPanel() {
   const noFarms = !farm.isFixed && farm.loaded && farm.farms.length === 0;
 
   return (
-    <div data-fill-body>
+    <div data-fill-body className="w-full">
       {/* One row at >=1024px (review, 27 Sep): a wrapped filter row left
           "Date To" alone on a second line and took a third of the table's
           height. The date pair shares a container so it never splits. */}
@@ -297,7 +297,7 @@ export default function FeedForecastPanel() {
             </div>
           </div>
           {tab === "forecast"
-            ? <FeedForecastGrid rows={rows} loading={loading} horizonTo={data?.horizonTo ?? null} t={t} />
+            ? <FeedForecastGrid rows={rows} view={view} from={shownFrom} loading={loading} horizonTo={data?.horizonTo ?? null} t={t} />
             : <FeedForecastStages stages={stages} t={t} />}
           <FeedForecastNotes flags={flags} t={t} />
           {!!farmId && <FeedForecastRunHistory farmId={farmId} reloadToken={runHistoryReload} />}

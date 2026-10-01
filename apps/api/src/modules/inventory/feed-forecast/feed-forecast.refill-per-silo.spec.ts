@@ -50,12 +50,12 @@ const bySilo = (result: ReturnType<typeof buildFeedForecast>) =>
 describe('D38 — the refill buffer is the silo\'s own reorder days', () => {
   it('gives two silos on one farm different refill dates from their own reorder days', () => {
     const out = bySilo(buildFeedForecast(input()));
-    // 500 kg at 100 kg/day runs down on the fifth day, 2026-09-27, for both.
-    expect(out['F/SILO-NEAR'].runDown).toBe('2026-09-27');
-    expect(out['F/SILO-FAR'].runDown).toBe('2026-09-27');
+    // 500 kg at 100 kg/day: Sep27 closes to 0. Sep28: open=0, demand=100, 100>0 → runDownDate=Sep28.
+    expect(out['F/SILO-NEAR'].runDown).toBe('2026-09-28');
+    expect(out['F/SILO-FAR'].runDown).toBe('2026-09-28');
     // …and each is warned by its own number of days, not one farm-wide figure.
-    expect(out['F/SILO-NEAR'].refill).toBe('2026-09-26'); // run-down − 1
-    expect(out['F/SILO-FAR'].refill).toBe('2026-09-22');  // run-down − 5
+    expect(out['F/SILO-NEAR'].refill).toBe('2026-09-27'); // run-down − 1
+    expect(out['F/SILO-FAR'].refill).toBe('2026-09-23');  // run-down − 5
   });
 
   it('falls back to 2 for a silo with no reorder days', () => {
@@ -65,8 +65,8 @@ describe('D38 — the refill buffer is the silo\'s own reorder days', () => {
         { siloId: 'far', siloCode: 'F/SILO-FAR', itemId: 'r2', balanceKg: 500, reorderDays: null },
       ],
     } as Partial<ForecastInput>)));
-    expect(out['F/SILO-NEAR'].refill).toBe('2026-09-25'); // run-down − 2
-    expect(out['F/SILO-FAR'].refill).toBe('2026-09-25');
+    expect(out['F/SILO-NEAR'].refill).toBe('2026-09-26'); // runDown Sep28 − 2
+    expect(out['F/SILO-FAR'].refill).toBe('2026-09-26');
   });
 
   it('uses 2 for a STORE source, which has no reorder days of its own', () => {
@@ -76,21 +76,21 @@ describe('D38 — the refill buffer is the silo\'s own reorder days', () => {
       store: { storeId: 'st', storeCode: 'F/STORE-001', balances: { r1: 500, r2: 500 } },
     } as Partial<ForecastInput>)));
     // The store is one source per item, each holding its own 500 kg at 100 kg/day,
-    // so each runs down on the fifth day and each is warned 2 days earlier.
-    expect(out['F/STORE-001'].runDown).toBe('2026-09-27');
-    expect(out['F/STORE-001'].refill).toBe('2026-09-25'); // run-down − 2
+    // so each runs down on Sep28 (demand exceeds zero stock) and each is warned 2 days earlier.
+    expect(out['F/STORE-001'].runDown).toBe('2026-09-28');
+    expect(out['F/STORE-001'].refill).toBe('2026-09-26'); // run-down − 2
   });
 
   it('subtracts the farm lead time from the silo\'s own refill date, not from a farm buffer', () => {
     const out = bySilo(buildFeedForecast(input({ leadTimeDays: 3 })));
-    expect(out['F/SILO-NEAR'].refill).toBe('2026-09-26');
-    expect(out['F/SILO-NEAR'].requiredOn).toBe('2026-09-23'); // refill − 3
-    expect(out['F/SILO-FAR'].requiredOn).toBe('2026-09-19');  // 09-22 − 3
+    expect(out['F/SILO-NEAR'].refill).toBe('2026-09-27'); // runDown Sep28 − 1
+    expect(out['F/SILO-NEAR'].requiredOn).toBe('2026-09-24'); // refill Sep27 − 3
+    expect(out['F/SILO-FAR'].requiredOn).toBe('2026-09-20');  // refill Sep23 − 3
   });
 
   it('no longer reads a farm-wide refill buffer: a silo with reorder days ignores it', () => {
     const out = bySilo(buildFeedForecast(input({ refillBufferDays: 30 } as Partial<ForecastInput>)));
-    expect(out['F/SILO-NEAR'].refill).toBe('2026-09-26');
-    expect(out['F/SILO-FAR'].refill).toBe('2026-09-22');
+    expect(out['F/SILO-NEAR'].refill).toBe('2026-09-27'); // runDown Sep28 − 1
+    expect(out['F/SILO-FAR'].refill).toBe('2026-09-23');  // runDown Sep28 − 5
   });
 });

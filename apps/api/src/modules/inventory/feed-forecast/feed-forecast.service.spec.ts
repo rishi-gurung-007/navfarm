@@ -820,7 +820,9 @@ describe('FeedForecastService.getForecast — views, periods and the report (Pla
     const report = await service.getForecast({ view: 'WEEKLY' }, 'tenant-1', 'STANDARD_USER');
     expect(compute).toHaveBeenCalledWith(
       'farm-A', 'comp-1', 'tenant-1',
-      { from: '2026-09-23', to: '2026-09-29', planningDate: '2026-09-23', horizonTo: '2026-11-07' },
+      // Task 11: the service now sends to=horizonTo for WEEKLY so computeForFarm validates bounds
+      // against the full reach, not just the 7-day window. The rows are then filtered down to from..to.
+      { from: '2026-09-23', to: '2026-11-07', planningDate: '2026-09-23', horizonTo: '2026-11-07' },
       { today: '2026-09-23', timeZone: 'Africa/Harare' },
     );
     expect(report.rows).toHaveLength(1);
@@ -926,13 +928,16 @@ describe('FeedForecastService.getForecast — views, periods and the report (Pla
     await expect(service.getForecast({ from: '2026-11-01', to: '2026-11-07' }, 'tenant-1', 'STANDARD_USER')).resolves.toBeDefined();
   });
 
-  it('CUSTOM with only `from` near the edge: the 400 says the default from + 7 runs past the reach, since no `to` was sent', async () => {
-    compute.mockImplementationOnce((...args: Parameters<FeedForecastService['computeForFarm']>) =>
-      FeedForecastService.prototype.computeForFarm.apply(service, args));
-    await expect(service.getForecast({ from: '2026-11-01' }, 'tenant-1', 'STANDARD_USER')).rejects.toThrow(
-      new BadRequestException(
-        'The range would end 08/11/26, after the last forecast day 07/11/26. Choose an end date on or before 07/11/26.',
-      ),
+  it('CUSTOM with only `from` near the edge: to defaults to reach so the range Nov1–Nov7 is valid (not Nov1–Nov8)', async () => {
+    // Under old code, from+7=Nov8 was sent to computeForFarm which threw 400 ("range would end Nov8").
+    // Under new code, sentTo=reach=Nov7 is sent instead, so no 400 is thrown by the range check.
+    // computeForFarm is given to=Nov7, which is within the 45-day reach.
+    expect(compute).not.toHaveBeenCalled(); // sanity guard
+    await service.getForecast({ from: '2026-11-01' }, 'tenant-1', 'STANDARD_USER');
+    expect(compute).toHaveBeenCalledWith(
+      'farm-A', 'comp-1', 'tenant-1',
+      { from: '2026-11-01', to: '2026-11-07', planningDate: '2026-09-23', horizonTo: '2026-11-07' },
+      { today: '2026-09-23', timeZone: 'Africa/Harare' },
     );
   });
 

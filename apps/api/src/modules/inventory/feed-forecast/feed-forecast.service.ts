@@ -613,7 +613,7 @@ export class FeedForecastService {
     // A CUSTOM view whose `to` was never sent passes none, so the refusal can say the default ran past the reach;
     // computeForFarm defaults it to the same from + 7 resolveViewRange did.
     const reach = addDays(planningDate, MAX_SPAN_DAYS);
-    const sentTo = view === 'CUSTOM' && query.to === undefined ? undefined : to;
+    const sentTo = query.to ?? (view === 'WEEKLY' || view === 'CUSTOM' ? reach : to);
     const result = await this.computeForFarm(farmId, companyId, tenantId, { from, to: sentTo, planningDate, horizonTo: reach }, clock);
     // Q7: an "as of" forecast has no projection for days already behind the planning date.
     const forecastFrom = to < planningDate ? null : from > planningDate ? from : planningDate;
@@ -636,7 +636,7 @@ export class FeedForecastService {
       timeZone: result.timeZone,
       view,
       from,
-      to,
+      to: sentTo ?? to,
       forecastFrom,
       forecastNote,
       horizonTo: result.horizonTo,

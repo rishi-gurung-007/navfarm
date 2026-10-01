@@ -34,6 +34,7 @@ const DEFAULT_RESOURCES = [
   // FINANCE (Phase 4)
   { module_code: "FINANCE", resource: "JOURNAL", name: "Journal Entries", nameKey: "jpJournalEntries" },
   { module_code: "FINANCE", resource: "REPORTS", name: "Financial Reports", nameKey: "rolFinancialReports" },
+  { module_code: "FINANCE", resource: "STOCK_VARIANCE", name: "Stock Variance (Finance approval)", nameKey: "rolStockVariance" },
   // INVENTORY (Phase 3)
   { module_code: "INVENTORY", resource: "GOODS_RECEIPT", name: "Goods Receipt", nameKey: "grpTitle" },
   { module_code: "INVENTORY", resource: "GOODS_ISSUE", name: "Goods Issue", nameKey: "invGoodsIssue" },

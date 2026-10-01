@@ -67,7 +67,7 @@ export default function FeedForecastTabs({ tab, onTabChange }: FeedForecastTabsP
   }, [tab]);
 
   return (
-    <div data-fill-body>
+    <div data-fill-body className="w-full">
       <Tabs
         items={FEED_FORECAST_TABS.map((key) => ({ value: key, label: t(TAB_LABEL[key]) }))}
         value={tab}
@@ -77,7 +77,7 @@ export default function FeedForecastTabs({ tab, onTabChange }: FeedForecastTabsP
         <div
           key={key}
           data-feed-tab={key}
-          className="flex min-h-0 flex-1 flex-col"
+          className="w-full flex min-h-0 flex-1 flex-col"
           // Inline, not the `hidden` attribute: Tailwind's `.flex` would win
           // over the UA `[hidden]` rule and the inactive panel would show.
           style={{ display: key === tab ? undefined : "none" }}

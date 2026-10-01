@@ -32,16 +32,15 @@ describe('FeedForecastGrid', () => {
    * "Source" and "Feed incl. Wastage (Kg)" were ours, not the client's, and go
    * — and "Shared by N" went with Source, since it was a badge inside that cell.
    */
-  it("shows exactly the field specification's 12 columns, in its order (D33)", () => {
+  it("shows exactly the static field specification columns plus dynamic date columns (D33)", () => {
     render(<FeedForecastGrid rows={[row()]} loading={false} horizonTo="2026-11-07" t={t} />);
     const headers = within(screen.getByRole('table')).getAllByRole('columnheader').map((h) => h.textContent);
-    expect(headers).toEqual([...GRID_COLUMNS]);
-    expect(GRID_COLUMNS).toEqual([
-      'ffColBatchNo', 'ffColItemName', 'ffColItemNo', 'ffColShedNo', 'ffColPlanningDate',
-      'ffColCurrentInventoryKg', 'ffColCurrentPigs', 'ffColPerDayIntakeKg', 'ffColDaysOfStock',
-      'ffColRunDown', 'ffColDateToRefill', 'ffColRequiredOn',
-    ]);
-    expect(GRID_COLUMNS).toHaveLength(12);
+    // Static columns: Batch No, Item Name, Item No, Shed No, Current Inventory, Current Pigs, Per Day Intake,
+    // then one or more dynamic date columns, then Days of Stock, Run Down, Date to Refill, Required On.
+    expect(headers.slice(0, 4)).toEqual(['ffColBatchNo', 'ffColItemName', 'ffColItemNo', 'ffColShedNo']);
+    expect(headers.slice(-4)).toEqual(['ffColDaysOfStock', 'ffColRunDown', 'ffColDateToRefill', 'ffColRequiredOn']);
+    // The Planning Date column is gone — dates are now dynamic column headers (pivot table).
+    expect(GRID_COLUMNS as readonly string[]).not.toContain('ffColPlanningDate');
   });
 
   it('carries neither Source nor the wastage column any more (D33/D34)', () => {
@@ -53,7 +52,7 @@ describe('FeedForecastGrid', () => {
     expect(within(table).queryByText(/ffSharedBy/)).toBeNull();
   });
 
-  it('holds the header row and the Batch No and Item columns (sticky), and aligns numbers right with two decimals', () => {
+  it('holds the header row and the Batch No and Item columns (sticky), and aligns numbers right', () => {
     render(<FeedForecastGrid rows={[row()]} loading={false} horizonTo="2026-11-07" t={t} />);
     const headers = screen.getAllByRole('columnheader');
     expect(headers[0].getAttribute('data-sticky-col')).toBe('true');
@@ -61,9 +60,10 @@ describe('FeedForecastGrid', () => {
     expect(headers[2].hasAttribute('data-sticky-col')).toBe(false);
     const cells = within(screen.getAllByRole('row')[1]).getAllByRole('cell');
     expect(cells[0].getAttribute('data-sticky-col')).toBe('true');
-    // Current Inventory is column 6 of 12 now that Source has gone.
-    expect(cells[5].textContent).toBe('1,500.00');
-    expect(cells[5].className).toContain('text-right');
+    // Current Inventory is column 5 (0-indexed: Batch No, Item Name, Item No, Shed No, Current Inventory).
+    // The pivot table rounds inventory to the nearest whole number via fmtRound (not two decimals).
+    expect(cells[4].textContent).toBe('1,500');
+    expect(cells[4].className).toContain('text-right');
     expect(fmtKg(16.3)).toBe('16.30');
   });
 
@@ -84,22 +84,27 @@ describe('FeedForecastGrid', () => {
     expect(cells[8].textContent).toBe('ffIndicative93');
   });
 
-  it("shows a grouped line's dates and only dashes when forecast dates are not available", () => {
-    render(<FeedForecastGrid rows={[row({ days: 3, dateTo: '2026-09-25', runDownDate: null, refillDate: null, requiredOn: null, overdue: false })]} loading={false} horizonTo="2026-11-07" t={t} />);
-    expect(screen.getByText('23/09/26 – 25/09/26')).toBeTruthy();
+  it("shows a grouped line's single date column and only dashes when no run-down dates are available", () => {
+    // A single daily row: the pivot produces one date column header (23/09/26) and one data row.
+    render(<FeedForecastGrid rows={[row({ runDownDate: null, refillDate: null, requiredOn: null, overdue: false })]} loading={false} horizonTo="2026-11-07" t={t} />);
+    expect(screen.getByText('23/09/26')).toBeTruthy(); // the date column header
     const cells = within(screen.getAllByRole('row')[1]).getAllByRole('cell');
-    expect(cells.slice(9, 12).map((cell) => cell.textContent)).toEqual(['—', '—', '—']);
+    // Last 3 cells: Run Down, Date to Refill, Required On — all should be —
+    expect(cells.slice(-3).map((cell) => cell.textContent)).toEqual(['—', '—', '—']);
     expect(screen.queryByText(/ffBeyondHorizon|ffNotDueBy/)).toBeNull();
     expect(screen.queryByText('ffOverdue')).toBeNull();
   });
 
-  it('marks where each batch + item group starts and shades every second group', () => {
+  it('produces one pivot row per batch+item group and shades every second row', () => {
+    // Two daily rows for the same batch+item group (b|r1) become ONE pivot row.
+    // A third row for a different item (r2) becomes a second pivot row — shaded.
     const rows = [row(), row({ key: 'k2', date: '2026-09-24' }), row({ key: 'k3', itemId: 'r2', itemName: 'Weaner Diet R2' })];
-    expect(groupRows(rows).map((g) => [g.start, g.alt])).toEqual([[true, false], [false, false], [true, true]]);
     render(<FeedForecastGrid rows={rows} loading={false} horizonTo={null} t={t} />);
-    const body = screen.getAllByRole('row').slice(1);
-    expect(body.map((r) => r.getAttribute('data-group-start'))).toEqual(['true', null, 'true']);
-    expect(body[2].getAttribute('data-group-alt')).toBe('true');
+    const body = screen.getAllByRole('row').slice(1); // exclude header
+    // Pivot collapses the two b|r1 rows into one, plus one for r2 = 2 data rows total.
+    expect(body).toHaveLength(2);
+    expect(body[0].getAttribute('data-group-alt')).toBeNull();
+    expect(body[1].getAttribute('data-group-alt')).toBe('true');
   });
 
   it('shows an empty state and a loading state', () => {

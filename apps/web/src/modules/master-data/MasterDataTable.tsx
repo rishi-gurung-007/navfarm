@@ -2873,18 +2873,19 @@ export function MasterDataTable({
                     sale/slaughter/death". An active flag beside that says
                     nothing the Status column has not already said. */}
                 {!ownsStatusColumn && <TableHead className="text-right">{t("activeColumn")}</TableHead>}
+                <TableHead className="w-10 text-right"><span className="sr-only">Actions</span></TableHead>
               </tr>
             </TableHeader>
             <TableBody>
               {loading ? (
                 <tr>
-                  <TableCell colSpan={columns.length + (ownsStatusColumn ? 0 : 1)} className="py-10 text-center" style={S.sub}>
+                  <TableCell colSpan={columns.length + (ownsStatusColumn ? 0 : 1) + 1} className="py-10 text-center" style={S.sub}>
                     <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" style={S.accent} /> {t("loadingEllipsis")}
                   </TableCell>
                 </tr>
               ) : rows.length === 0 ? (
                 <tr>
-                  <TableCell colSpan={columns.length + (ownsStatusColumn ? 0 : 1)} className="py-10 text-center" style={S.sub}>
+                  <TableCell colSpan={columns.length + (ownsStatusColumn ? 0 : 1) + 1} className="py-10 text-center" style={S.sub}>
                     <Inbox className="mx-auto mb-2 h-6 w-6" style={S.muted} />
                     {t("noRecordsYet", { name: tLabel(config.label).toLowerCase() })}
                     {!readOnly && <button onClick={openCreate} className="mt-2 block w-full font-semibold" style={S.accent}>{t("addFirstOne")}</button>}
@@ -2921,79 +2922,9 @@ export function MasterDataTable({
                             </span>
                           </TableCell>
                         ) : (
-                        <TableCell key={c.key} className="whitespace-nowrap" style={S.primary}>
-                          {c.key === columns[0]?.key ? (
-                            <div className="flex items-center justify-between gap-1.5 group">
-                              <span>{displayValue(row, c.key, t("mdYes"), t("mdNo"), c)}</span>
-                              <Popover
-                                open={actionMenuRowId === String(row[config.idKey])}
-                                onOpenChange={(isOpen) => setActionMenuRowId(isOpen ? String(row[config.idKey]) : null)}
-                                align="start"
-                                floating
-                                haspopup="menu"
-                                trigger={(props) => (
-                                  <button
-                                    {...props}
-                                    type="button"
-                                    aria-label={`Actions for ${String(row[columns[0]?.key] ?? "")}`}
-                                    title="Actions"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      props.onClick();
-                                    }}
-                                    className="p-1 rounded text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-raised)] transition cursor-pointer"
-                                  >
-                                    <MoreHorizontal className="h-4 w-4" />
-                                  </button>
-                                )}
-                              >
-                                <Menu label="Row Actions">
-                                  <MenuItem
-                                    onSelect={() => setViewingId(String(row[config.idKey]))}
-                                    leading={<Eye className="h-4 w-4 text-[var(--text-muted)]" />}
-                                  >
-                                    {t("roleColView") ?? "View Details"}
-                                  </MenuItem>
-                                  {!readOnly && rowOpenAction(row, false, !!config.draftLifecycle) === "edit" && (
-                                    <MenuItem
-                                      onSelect={() => openEdit(row)}
-                                      leading={<Pencil className="h-4 w-4 text-[var(--text-muted)]" />}
-                                    >
-                                      {t("edit")}
-                                    </MenuItem>
-                                  )}
-                                  {!readOnly && (config.supportsRestore ?? true)
-                                    && (!inactive || !config.draftLifecycle || canApproveDraft) && (
-                                    <MenuItem
-                                      onSelect={() => handleToggleActive(row)}
-                                      disabled={togglingId === row[config.idKey]}
-                                      leading={
-                                        inactive ? (
-                                          <CheckCircle2 className="h-4 w-4 text-[var(--success)]" />
-                                        ) : (
-                                          <Power className="h-4 w-4 text-[var(--warning)]" />
-                                        )
-                                      }
-                                    >
-                                      {inactive && config.draftLifecycle ? t("activate") : inactive ? t("restore") : t("deactivate")}
-                                    </MenuItem>
-                                  )}
-                                  {!readOnly && config.supportsDelete !== false && !(config.supportsRestore ?? true) && (
-                                    <MenuItem
-                                      onSelect={() => setConfirmDelete(row)}
-                                      tone="danger"
-                                      leading={<Trash2 className="h-4 w-4 text-[var(--danger)]" />}
-                                    >
-                                      {t("deactivate")}
-                                    </MenuItem>
-                                  )}
-                                </Menu>
-                              </Popover>
-                            </div>
-                          ) : (
-                            displayValue(row, c.key, t("mdYes"), t("mdNo"), c)
-                          )}
-                        </TableCell>
+                          <TableCell key={c.key} className="whitespace-nowrap" style={S.primary}>
+                            {displayValue(row, c.key, t("mdYes"), t("mdNo"), c)}
+                          </TableCell>
                         )
                       ))}
                       {!ownsStatusColumn && <TableCell className="text-right">
@@ -3033,6 +2964,72 @@ export function MasterDataTable({
                           </span>
                         )}
                       </TableCell>}
+                      <TableCell className="w-10 text-right whitespace-nowrap">
+                        <Popover
+                          open={actionMenuRowId === String(row[config.idKey])}
+                          onOpenChange={(isOpen) => setActionMenuRowId(isOpen ? String(row[config.idKey]) : null)}
+                          align="end"
+                          floating
+                          haspopup="menu"
+                          trigger={(props) => (
+                            <button
+                              {...props}
+                              type="button"
+                              aria-label={`Actions for ${String(row[columns[0]?.key] ?? "")}`}
+                              title="Actions"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                props.onClick();
+                              }}
+                              className="p-1 rounded text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-raised)] transition cursor-pointer"
+                            >
+                              <MoreHorizontal className="h-4 w-4" />
+                            </button>
+                          )}
+                        >
+                          <Menu label="Row Actions">
+                            <MenuItem
+                              onSelect={() => setViewingId(String(row[config.idKey]))}
+                              leading={<Eye className="h-4 w-4 text-[var(--text-muted)]" />}
+                            >
+                              {t("roleColView") ?? "View Details"}
+                            </MenuItem>
+                            {!readOnly && rowOpenAction(row, false, !!config.draftLifecycle) === "edit" && (
+                              <MenuItem
+                                onSelect={() => openEdit(row)}
+                                leading={<Pencil className="h-4 w-4 text-[var(--text-muted)]" />}
+                              >
+                                {t("edit")}
+                              </MenuItem>
+                            )}
+                            {!readOnly && (config.supportsRestore ?? true)
+                              && (!inactive || !config.draftLifecycle || canApproveDraft) && (
+                              <MenuItem
+                                onSelect={() => handleToggleActive(row)}
+                                disabled={togglingId === row[config.idKey]}
+                                leading={
+                                  inactive ? (
+                                    <CheckCircle2 className="h-4 w-4 text-[var(--success)]" />
+                                  ) : (
+                                    <Power className="h-4 w-4 text-[var(--warning)]" />
+                                  )
+                                }
+                              >
+                                {inactive && config.draftLifecycle ? t("activate") : inactive ? t("restore") : t("deactivate")}
+                              </MenuItem>
+                            )}
+                            {!readOnly && config.supportsDelete !== false && !(config.supportsRestore ?? true) && (
+                              <MenuItem
+                                onSelect={() => setConfirmDelete(row)}
+                                tone="danger"
+                                leading={<Trash2 className="h-4 w-4 text-[var(--danger)]" />}
+                              >
+                                {t("deactivate")}
+                              </MenuItem>
+                            )}
+                          </Menu>
+                        </Popover>
+                      </TableCell>
                     </TableRow>
                   );
                 })

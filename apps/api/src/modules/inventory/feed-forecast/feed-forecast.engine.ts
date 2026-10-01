@@ -695,10 +695,8 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
       const demand = byDate.get(date) ?? 0;
       const closing = open - demand;
       if (shortageDate === null && date >= input.planningDate && demand > open) shortageDate = date;
-      // Only a day that takes feed out counts — eaten from, or a transfer out. Either can bring the silo to its low
-      // level (so no shortfall is left without a date); a day with neither leaves an idle, empty silo alone.
-      const outgoing = demand > 0 || (inflow.get(date) ?? 0) < 0;
-      if (runDownDate === null && date >= input.planningDate && outgoing && closing <= threshold) runDownDate = date;
+      // Rishi ruling: runDownDate is the date the silo does not have enough feed to feed the animals
+      if (runDownDate === null && date >= input.planningDate && demand > open) runDownDate = date;
       carried = Math.max(0, closing); // demand the silo cannot meet is not carried into the next day
     }
     openingByKey.set(key, opening);

@@ -19,7 +19,7 @@ export function ScrollTable({
   return (
     <div
       data-table-scroll
-      className={cn("rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface)]", className)}
+      className={cn("w-full rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface)]", className)}
       {...rest}
     >
       <table aria-label={label} className="w-max min-w-full border-separate border-spacing-0 text-left text-xs">
