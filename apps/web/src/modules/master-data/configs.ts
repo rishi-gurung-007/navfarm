@@ -28,8 +28,8 @@ const locationType: MasterDataConfig = {
     { key: "nob_id", label: "Nature of Business", type: "select-entity", entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], helpText: "Leave blank if this location type is shared across all business verticals." },
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank if this location type is shared across all LOBs under the selected NOB." },
     { key: "company_id", label: "Company", type: "text", hideInForm: true },
-    { key: "type_code", label: "Type Code", type: "text", required: true, placeholder: "FARM", createOnly: true, helpText: "The type's own identity code. Fixed after create — locations reference it by this code." },
-    { key: "type_name", label: "Type Name", type: "text", required: true, placeholder: "Farm" },
+    { key: "type_code", label: "Code", type: "text", required: true, placeholder: "FARM", createOnly: true, helpText: "The type's own identity code. Fixed after create — locations reference it by this code." },
+    { key: "type_name", label: "Name", type: "text", required: true, placeholder: "Farm" },
     { key: "code_prefix", label: "Code Prefix", type: "text", required: true, placeholder: "FARM", helpText: "Future locations use PREFIX-001, PREFIX-002, and so on." },
     {
       key: "allowed_parent_types", label: "Allowed Parent Types", type: "select-entity", multiple: true,
@@ -131,18 +131,18 @@ const location: MasterDataConfig = {
     // live references for a cosmetic gain, and the stored value is still KG.
     { key: "silo_capacity_kg", label: "Silo Capacity", type: "number", min: 0, max: 999999.99, step: "0.01", visibleWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, requiredWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, helpText: "Required when Storage Location is SILO.", section: "Identification" },
     { key: "silo_capacity_uom", label: "Silo Capacity UOM", type: "select", options: ["KG", "TON"].map((v) => ({ value: v, label: v })), defaultValue: "KG", visibleWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, requiredWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, helpText: "The unit the capacity above is entered in. The capacity is stored in kilograms whichever unit is chosen — a tonne figure is converted on save.", section: "Identification" },
-    { key: "silo_reorder_days", label: "Silo Reorder Days", type: "number", min: 0, max: 365, step: "1", visibleWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, requiredWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, helpText: "How many days before this silo runs down to its low level it must be refilled. The Feed Forecast's Date to Refill is that many days before the run-down date. Standard 2.", section: "Identification" },
+    { key: "silo_reorder_days", label: "Refill Lead Time (days)", type: "number", min: 0, max: 365, step: "1", visibleWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, requiredWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, helpText: "How many days before this silo reaches its low stock level it must be refilled. The Feed Forecast's refill date is this many days before the run-down date. Standard 2.", section: "Identification" },
     // Master Setup §1 rows 10 and 12 (spec D10) — alongside Silo Reorder
     // Days, not replacing it. Required on a silo since D22 (Rishi, 27 Sep):
     // the forecast's run-down and the feed alerts read them.
     {
-      key: "low_level_kg", label: "Below Feed Level (KG)", type: "number", min: 0, step: "1", nativeNumber: true,
+      key: "low_level_kg", label: "Low Stock Level (kg)", type: "number", min: 0, step: "1", nativeNumber: true,
       visibleWhen: { anyOf: [{ key: "location_type", equals: "SILO" }] },
       requiredWhen: { anyOf: [{ key: "location_type", equals: "SILO" }] }, section: "Identification",
       helpText: "Low feed alert at or below this. Usually 20% of capacity."
     },
     {
-      key: "high_level_kg", label: "Above Threshold (KG)", type: "number", min: 0, step: "1", nativeNumber: true,
+      key: "high_level_kg", label: "High Stock Level (kg)", type: "number", min: 0, step: "1", nativeNumber: true,
       visibleWhen: { anyOf: [{ key: "location_type", equals: "SILO" }] },
       requiredWhen: { anyOf: [{ key: "location_type", equals: "SILO" }] }, section: "Identification",
       helpText: "Over-stock notice at or above this. Usually 90% of capacity."
@@ -213,8 +213,8 @@ const stage: MasterDataConfig = {
     { key: "company_id", label: "Company", type: "text", hideInForm: true },
     { key: "nob_id", label: "Nature of Business", type: "select-entity", required: true, entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], section: "Identification" },
     { key: "lob_id", label: "Line of Business", type: "select-entity", required: true, entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", section: "Identification" },
-    { key: "stage_code", label: "Stage Code", type: "text", required: true, createOnly: true, helpText: "Leave blank to derive from the stage name via the number series. After create, the code follows the series when the name changes — refused while a batch or log still uses the old code.", placeholder: "QUARANTINE", section: "Identification" },
-    { key: "stage_name", label: "Stage Name", type: "text", required: true, placeholder: "Quarantine", section: "Identification" },
+    { key: "stage_code", label: "Code", type: "text", required: true, createOnly: true, helpText: "Leave blank to derive from the stage name via the number series. After create, the code follows the series when the name changes — refused while a batch or log still uses the old code.", placeholder: "QUARANTINE", section: "Identification" },
+    { key: "stage_name", label: "Name", type: "text", required: true, placeholder: "Quarantine", section: "Identification" },
     {
       key: "stage_category", label: "Category", type: "select", required: true, section: "Identification",
       options: ["PRE_PRODUCTIVE", "PRODUCTIVE", "OUTPUT", "DISPOSAL"].map((v) => ({ value: v, label: v.replace(/_/g, " ") })),
@@ -301,7 +301,7 @@ const numberSeries: MasterDataConfig = {
   // !blocked) like every other master, not repeated as its own data column.
   fields: [
     { key: "company_id", label: "Company", type: "text", hideInForm: true },
-    { key: "code", label: "Series Code", type: "text", required: true, createOnly: true, maxLength: 20, placeholder: "NS-SUP", helpText: "Unique identifier for this number series (max 20 characters)." },
+    { key: "code", label: "Code", type: "text", required: true, createOnly: true, maxLength: 20, placeholder: "NS-SUP", helpText: "Unique identifier for this number series (max 20 characters)." },
     {
       key: "document_type",
       label: "Applies To (Master)",
@@ -363,8 +363,8 @@ const activity: MasterDataConfig = {
   ],
   fields: [
     { key: "company_id", label: "Company", type: "text", hideInForm: true },
-    { key: "activity_code", label: "Activity Code", type: "text", required: true, placeholder: "e.g. MORN_FEED", createOnly: true, helpText: "Short unique uppercase code (e.g. MORN_FEED) for lookups and reporting." },
-    { key: "activity_name", label: "Activity Name", type: "text", required: true, placeholder: "e.g. Morning Feed" },
+    { key: "activity_code", label: "Code", type: "text", required: true, placeholder: "e.g. MORN_FEED", createOnly: true, helpText: "Short unique uppercase code (e.g. MORN_FEED) for lookups and reporting." },
+    { key: "activity_name", label: "Name", type: "text", required: true, placeholder: "e.g. Morning Feed" },
     {
       key: "line_type", label: "Activity Type", type: "select", required: true,
       options: [
@@ -412,7 +412,7 @@ const animal: MasterDataConfig = {
     { key: "status", label: "Status" },
   ],
   fields: [
-    { key: "animal_code", label: "Animal Code", type: "text", required: true, createOnly: true, section: "Identification" },
+    { key: "animal_code", label: "Code", type: "text", required: true, createOnly: true, section: "Identification" },
     { key: "company_id", label: "Company", type: "text", hideInForm: true },
     { key: "nob_id", label: "Nature of Business", type: "select-entity", required: true, createOnly: true, entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], section: "Identification" },
     { key: "lob_id", label: "Line of Business", type: "select-entity", required: true, createOnly: true, entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", section: "Identification" },
@@ -579,8 +579,8 @@ const itemCategory: MasterDataConfig = {
     { key: "nob_id", label: "Nature of Business", type: "select-entity", entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], helpText: "Leave blank if this category is shared across all business verticals." },
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank if this category is shared across all LOBs under the selected NOB." },
     { key: "company_id", label: "Company", type: "text", hideInForm: true },
-    { key: "category_code", label: "Category Code", type: "text", required: true, createOnly: true, helpText: "Leave blank to derive from the category name via the number series. After create, the code follows the series when the name changes.", placeholder: "FEED" },
-    { key: "category_name", label: "Category Name", type: "text", required: true, placeholder: "Animal Feed Products" },
+    { key: "category_code", label: "Code", type: "text", required: true, createOnly: true, helpText: "Leave blank to derive from the category name via the number series. After create, the code follows the series when the name changes.", placeholder: "FEED" },
+    { key: "category_name", label: "Name", type: "text", required: true, placeholder: "Animal Feed Products" },
     {
       key: "item_type", label: "Item Type", type: "select-entity", entityEndpoint: "/item-type", entityValueKey: "type_code", entityLabelKeys: ["type_code", "type_name"],
       helpText: "Assigns this category to an Item Type so it shows up in the Item form's Category picker once that type is chosen. Leave blank for a category not yet classified.",
@@ -611,8 +611,8 @@ const itemType: MasterDataConfig = {
     // code. The field is create-only because UpdateItemTypeDto has no type_code,
     // and the global pipe's forbidNonWhitelisted would 400 the whole edit if the
     // form kept resending it.
-    { key: "type_code", label: "Type Code", type: "text", required: true, placeholder: "RAW_MATERIAL", createOnly: true, helpText: "Leave blank to derive from the type name via the number series. After create, the code follows the series when the name changes — refused while an item still uses the old code." },
-    { key: "type_name", label: "Type Name", type: "text", required: true, placeholder: "Raw Material" },
+    { key: "type_code", label: "Code", type: "text", required: true, placeholder: "RAW_MATERIAL", createOnly: true, helpText: "Leave blank to derive from the type name via the number series. After create, the code follows the series when the name changes — refused while an item still uses the old code." },
+    { key: "type_name", label: "Name", type: "text", required: true, placeholder: "Raw Material" },
     { key: "description", label: "Description", type: "textarea" },
   ],
 };
@@ -642,8 +642,8 @@ const uom: MasterDataConfig = {
     { key: "nob_id", label: "Nature of Business", type: "select-entity", entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], helpText: "Leave blank if this unit is shared across all business verticals." },
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank if this unit is shared across all LOBs under the selected NOB." },
     { key: "company_id", label: "Company (blank = global)", type: "text", hideInForm: true },
-    { key: "uom_code", label: "UOM Code", type: "text", required: true, createOnly: true, helpText: "Leave blank to derive from the unit name via the number series — or type a standard symbol such as KG, which then stays fixed. After create, a series-derived code follows the series when the name changes.", placeholder: "KG" },
-    { key: "uom_name", label: "UOM Name", type: "text", required: true, placeholder: "Kilogram", pattern: "[A-Za-z ]*", helpText: "Name of the unit (e.g. Kilogram, Litre). Letters and spaces only." },
+    { key: "uom_code", label: "Code", type: "text", required: true, createOnly: true, helpText: "Leave blank to derive from the unit name via the number series — or type a standard symbol such as KG, which then stays fixed. After create, a series-derived code follows the series when the name changes.", placeholder: "KG" },
+    { key: "uom_name", label: "Name", type: "text", required: true, placeholder: "Kilogram", pattern: "[A-Za-z ]*", helpText: "Name of the unit (e.g. Kilogram, Litre). Letters and spaces only." },
     {
       key: "uom_type", label: "UOM Type", type: "select", required: true,
       options: ["WEIGHT", "VOLUME", "COUNT", "AREA", "TIME", "OTHER"].map((v) => ({ value: v, label: v })),
@@ -689,7 +689,7 @@ const uomConversion: MasterDataConfig = {
     { key: "nob_id", label: "Nature of Business", type: "select-entity", entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], helpText: "Leave blank if this conversion is shared across all business verticals." },
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank if this conversion is shared across all LOBs under the selected NOB." },
     { key: "company_id", label: "Company (blank = global)", type: "text", hideInForm: true },
-    { key: "conversion_code", label: "Conversion Code", type: "text", placeholder: "CONV-001" },
+    { key: "conversion_code", label: "Code", type: "text", placeholder: "CONV-001" },
     // The four fields below are the whole of the client's "UOM Conversion" sheet
     // (Unit Of Measure.xlsx). Their wording is the sheet's own, not a paraphrase.
     {
@@ -741,8 +741,8 @@ const itemAttribute: MasterDataConfig = {
     { key: "company_id", label: "Company (blank = global)", type: "text", hideInForm: true },
     { key: "nob_id", label: "Nature of Business", type: "select-entity", entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], helpText: "Leave blank to make this attribute available across all NOBs." },
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank to make this attribute available across all LOBs under the selected NOB." },
-    { key: "attribute_code", label: "Attribute Code", type: "text", required: true, createOnly: true, maxLength: 255, helpText: "Leave blank to derive from the attribute name via the number series. After create, the code follows the series when the name changes.", placeholder: "PROTEIN_PCT" },
-    { key: "attribute_name", label: "Attribute Name", type: "text", required: true, maxLength: 100, placeholder: "Protein %" },
+    { key: "attribute_code", label: "Code", type: "text", required: true, createOnly: true, maxLength: 255, helpText: "Leave blank to derive from the attribute name via the number series. After create, the code follows the series when the name changes.", placeholder: "PROTEIN_PCT" },
+    { key: "attribute_name", label: "Name", type: "text", required: true, maxLength: 100, placeholder: "Protein %" },
     // Client review, 2026-09-21: replaces Data Type + Unit on the form. This
     // reverses the 2026-09-08 call below (TDD row 132's "(UOM master)")
     // against reusing uom_master here, on the client's own instruction — if
@@ -783,7 +783,7 @@ const itemTemplateConfig: MasterDataConfig = {
   tabLabel: "Item Templates",
   supportsNobLobFilter: false,
   columns: [
-    { key: "template_code", label: "Template Code" },
+    { key: "template_code", label: "Code" },
     { key: "template_description", label: "Description" },
     { key: "item_type", label: "Item Type" },
     { key: "category_code", label: "Category" },
@@ -793,7 +793,7 @@ const itemTemplateConfig: MasterDataConfig = {
   ],
   fields: [
     { key: "company_id", label: "Company", type: "text", hideInForm: true },
-    { key: "template_code", label: "Template Code", type: "text", required: true, createOnly: true, maxLength: 20, placeholder: "FEED-BROILER", helpText: "Unique template identifier code (max 20 characters)." },
+    { key: "template_code", label: "Code", type: "text", required: true, createOnly: true, maxLength: 20, placeholder: "FEED-BROILER", helpText: "Unique template identifier code (max 20 characters)." },
     { key: "template_description", label: "Description", type: "text", placeholder: "Broiler Starter Feed Template" },
     {
       key: "no_series_id",
@@ -966,9 +966,9 @@ const item: MasterDataConfig = {
     { key: "item_template_id", label: "Item Template ID", type: "text", hideInForm: true },
     { key: "nob_id", label: "Nature of Business", type: "select-entity", entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], helpText: "Leave blank if this item is used across all business verticals.", section: "Classification" },
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank if this item is used across all LOBs under the selected NOB.", section: "Classification" },
-    { key: "item_code", label: "Item Code", type: "text", readOnly: true, helpText: "Assigned from the Item number series unless manual entry is selected.", section: "Identification" },
+    { key: "item_code", label: "Code", type: "text", readOnly: true, helpText: "Assigned from the Item number series unless manual entry is selected.", section: "Identification" },
     { key: "item_type", label: "Item Type", type: "select-entity", required: true, entityEndpoint: "/item-type", entityValueKey: "type_code", entityLabelKeys: ["type_code", "type_name"], section: "Identification" },
-    { key: "item_name", label: "Item Name", type: "text", required: true, placeholder: "Sow lactation feed", section: "Identification" },
+    { key: "item_name", label: "Name", type: "text", required: true, placeholder: "Sow lactation feed", section: "Identification" },
     {
       // Depends on Item Type via the query mechanism, not path substitution — a
       // category is not nested under a type in the URL, it's filtered by it. See
@@ -1118,8 +1118,8 @@ const species: MasterDataConfig = {
     { key: "nob_id", label: "Nature of Business", type: "select-entity", entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], helpText: "Leave blank if this species is shared across all business verticals." },
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank if this species is shared across all LOBs under the selected NOB." },
     { key: "company_id", label: "Company (blank = global)", type: "text", hideInForm: true },
-    { key: "species_code", label: "Species Code", type: "text", required: true, createOnly: true, helpText: "Leave blank to derive from the species name via the number series. After create, the code follows the series when the name changes.", placeholder: "PIG" },
-    { key: "species_name", label: "Species Name", type: "text", required: true, placeholder: "Domestic Pig" },
+    { key: "species_code", label: "Code", type: "text", required: true, createOnly: true, helpText: "Leave blank to derive from the species name via the number series. After create, the code follows the series when the name changes.", placeholder: "PIG" },
+    { key: "species_name", label: "Name", type: "text", required: true, placeholder: "Domestic Pig" },
   ],
 };
 
@@ -1141,8 +1141,8 @@ const breed: MasterDataConfig = {
     { key: "company_id", label: "Company (blank = global)", type: "text", hideInForm: true },
     { key: "nob_id", label: "Nature of Business", type: "select-entity", required: true, entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], section: "Identification" },
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank if this breed applies to all LOBs under the selected NOB.", section: "Identification" },
-    { key: "breed_code", label: "Breed Code", type: "text", required: true, createOnly: true, helpText: "Leave blank to derive from the breed name via the BREED series. After create, the code follows the series when the name changes.", section: "Identification" },
-    { key: "breed_name", label: "Breed Name", type: "text", required: true, placeholder: "Yorkshire", section: "Identification" },
+    { key: "breed_code", label: "Code", type: "text", required: true, createOnly: true, helpText: "Leave blank to derive from the breed name via the BREED series. After create, the code follows the series when the name changes.", section: "Identification" },
+    { key: "breed_name", label: "Name", type: "text", required: true, placeholder: "Yorkshire", section: "Identification" },
     { key: "species_id", label: "Species", type: "select-entity", entityEndpoint: "/species", entityValueKey: "species_id", entityLabelKeys: ["species_code", "species_name"], section: "Identification" },
     {
       key: "breed_type", label: "Breed Type", type: "select", section: "Identification",
@@ -1195,7 +1195,7 @@ const breedLifecycleStage: MasterDataConfig = {
   fields: [
     { key: "nob_id", label: "Nature of Business", type: "select-entity", entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], helpText: "Leave blank if this lifecycle row is shared across all business verticals." },
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank if this lifecycle row is shared across all LOBs under the selected NOB." },
-    { key: "lifecycle_code", label: "Lifecycle Code", type: "text", placeholder: "BLS-001", helpText: "Optional. Leave blank until the numbering convention is agreed; a series can generate it later." },
+    { key: "lifecycle_code", label: "Code", type: "text", placeholder: "BLS-001", helpText: "Optional. Leave blank until the numbering convention is agreed; a series can generate it later." },
     // breed_id is set at creation and is immutable — UpdateBreedLifecycleStageDto does not
     // accept it. readOnly: true keeps it visible in the edit form for context but tells
     // MasterDataTable's save loop to exclude it from the PATCH body (see MasterDataTable.tsx ~L1561).
@@ -1228,9 +1228,9 @@ const breedLifecycleStage: MasterDataConfig = {
       key: "season_type", label: "Season", type: "select",
       options: ["ALL", "SUMMER", "WINTER"].map((v) => ({ value: v, label: v.charAt(0) + v.slice(1).toLowerCase() })),
     },
-    { key: "feed_item_id", label: "Feed Item", type: "select-entity", searchable: true, entityEndpoint: "/item", entityValueKey: "item_id", entityLabelKeys: ["item_code", "item_name"] },
-    { key: "feed_qty_per_head_per_day_kg", label: "Feed Qty per Head per Day (KG)", type: "number", step: "0.01", min: 0 },
-    { key: "feed_wastage_pct", label: "Feed Wastage %", type: "number", step: "0.01", min: 0 },
+    { key: "feed_item_id", label: "Feed", type: "select-entity", searchable: true, entityEndpoint: "/item", entityValueKey: "item_id", entityLabelKeys: ["item_code", "item_name"] },
+    { key: "feed_qty_per_head_per_day_kg", label: "Daily Feed per Head (kg)", type: "number", step: "0.01", min: 0 },
+    { key: "feed_wastage_pct", label: "Feed Wastage (%)", type: "number", step: "0.01", min: 0 },
     { key: "std_body_weight_kg", label: "Std Body Weight (KG)", type: "number", step: "0.01", min: 0 },
     { key: "std_adg_gpd", label: "Std ADG (g/day)", type: "number", step: "0.01", min: 0 },
     { key: "std_fcr", label: "Std FCR", type: "number", step: "0.01", min: 0 },
@@ -1355,7 +1355,7 @@ const reason: MasterDataConfig = {
   // every master in this app surfaces it that way, not as a data column, so
   // it isn't repeated here as a field.
   columns: [
-    { key: "reason_code", label: "Reason Code" }, { key: "category", label: "Category" }, { key: "sub_category", label: "Sub-Category" },
+    { key: "reason_code", label: "Code" }, { key: "category", label: "Category" }, { key: "sub_category", label: "Sub-Category" },
     { key: "reason_name", label: "Description" }, { key: "applicable_stages", label: "Stage Filter" }, { key: "mandatory_comment", label: "Mandatory Comment" },
   ],
   supportsNobLobFilter: true,
@@ -1363,7 +1363,7 @@ const reason: MasterDataConfig = {
     { key: "nob_id", label: "Nature of Business", type: "select-entity", entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], helpText: "Leave blank if this reason is shared across all business verticals." },
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank if this reason is shared across all LOBs under the selected NOB." },
     { key: "company_id", label: "Company", type: "text", hideInForm: true },
-    { key: "reason_code", label: "Reason Code", type: "text", required: true, createOnly: true },
+    { key: "reason_code", label: "Code", type: "text", required: true, createOnly: true },
     {
       key: "category", label: "Category", type: "select", required: true,
       options: ["MORTALITY", "CULL", "RETURN", "SELECTION", "DISPOSAL", "TRANSFER", "SCAN", "ADJUSTMENT", "REQUISITION"].map((value) => ({ value, label: value })),
@@ -1438,7 +1438,7 @@ const alertRule: MasterDataConfig = {
   group: "Farm Operations", isPrimary: true, businessAdminOnly: true,
   description: "Which feed events raise an alert, how urgently, and for whom.",
   columns: [
-    { key: "notification_code", label: "Notification Code" }, { key: "notification_name", label: "Notification Name" },
+    { key: "notification_code", label: "Code" }, { key: "notification_name", label: "Name" },
     { key: "event_type", label: "Event Type", labels: labelsOf(ALERT_EVENT_TYPES) },
     { key: "priority_level", label: "Priority Level", labels: labelsOf(ALERT_PRIORITIES) },
     { key: "recipient_roles", label: "Recipient Role(s)", format: "codes" },
@@ -1446,8 +1446,8 @@ const alertRule: MasterDataConfig = {
   ],
   fields: [
     { key: "company_id", label: "Company", type: "text", hideInForm: true },
-    { key: "notification_code", label: "Notification Code", type: "text", required: true, createOnly: true, maxLength: 20 },
-    { key: "notification_name", label: "Notification Name", type: "text", required: true, maxLength: 100 },
+    { key: "notification_code", label: "Code", type: "text", required: true, createOnly: true, maxLength: 20 },
+    { key: "notification_name", label: "Name", type: "text", required: true, maxLength: 100 },
     {
       key: "event_type", label: "Event Type", type: "select", required: true,
       options: ALERT_EVENT_TYPES
@@ -1503,19 +1503,21 @@ const alertRule: MasterDataConfig = {
 // order. Business Year and Production Start Date are derived by the API
 // (Production Start = the Sunday after End), so they are table columns only
 // and never form fields. A year is drafted with "Generate July–June periods"
-// on Inventory → Feed Forecast (Reporting Period view) and edited here.
+// on Inventory → Feed Forecast (Reporting Period view) and edited from
+// Settings → Reporting Periods. It still uses the shared master-data engine;
+// only its navigation reflects that it is a company calendar, not farm data.
 const reportingPeriod: MasterDataConfig = {
   key: "reporting-period", label: "Reporting Periods", singular: "Reporting Period", apiBase: "/reporting-period", idKey: "period_id",
-  group: "Farm Operations", isPrimary: true, businessAdminOnly: true,
+  group: "Settings", isPrimary: false, businessAdminOnly: true,
   description: "Monthly periods of the July–June business year, each ending on the month-end Saturday.",
   columns: [
-    { key: "period_code", label: "Period Code" }, { key: "business_year", label: "Business Year" },
+    { key: "period_code", label: "Code" }, { key: "business_year", label: "Business Year" },
     { key: "start_date", label: "Start Date", format: "date" }, { key: "end_date", label: "End Date", format: "date" },
     { key: "stock_take_date", label: "Stock Take Date", format: "date" }, { key: "production_start_date", label: "Production Start Date", format: "date" },
   ],
   fields: [
     { key: "company_id", label: "Company", type: "text", hideInForm: true },
-    { key: "period_code", label: "Period Code", type: "text", required: true, createOnly: true, maxLength: 20, helpText: "For example 2026-09 for the September 2026 period." },
+    { key: "period_code", label: "Code", type: "text", required: true, createOnly: true, maxLength: 20, helpText: "For example 2026-09 for the September 2026 period." },
     { key: "start_date", label: "Start Date", type: "date", required: true, helpText: "Normally the Sunday after the previous period's End Date." },
     { key: "end_date", label: "End Date", type: "date", required: true, helpText: "The month-end Saturday. Production Start Date is set to the Sunday after it." },
     { key: "stock_take_date", label: "Stock Take Date", type: "date", helpText: "Leave blank to use the End Date." },
@@ -1540,8 +1542,8 @@ const disease: MasterDataConfig = {
     { key: "nob_id", label: "Nature of Business", type: "select-entity", entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], helpText: "Leave blank if this disease is shared across all business verticals." },
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank if this disease is shared across all LOBs under the selected NOB." },
     { key: "company_id", label: "Company", type: "text", hideInForm: true },
-    { key: "disease_code", label: "Disease Code", type: "text", required: true, placeholder: "DIS-ND" },
-    { key: "disease_name", label: "Disease Name", type: "text", required: true, placeholder: "Newcastle Disease" },
+    { key: "disease_code", label: "Code", type: "text", required: true, placeholder: "DIS-ND" },
+    { key: "disease_name", label: "Name", type: "text", required: true, placeholder: "Newcastle Disease" },
     { key: "scientific_name", label: "Scientific Name", type: "text", placeholder: "Avian paramyxovirus 1" },
     { key: "symptoms", label: "Symptoms", type: "textarea" },
     { key: "treatment_guideline", label: "Treatment Guideline", type: "textarea" },
@@ -1565,8 +1567,8 @@ const feedFormula: MasterDataConfig = {
   ],
   fields: [
     { key: "company_id", label: "Company", type: "text", hideInForm: true },
-    { key: "formula_code", label: "Formula Code", type: "text", required: true, placeholder: "FORM-BR-STARTER" },
-    { key: "formula_name", label: "Formula Name", type: "text", required: true, placeholder: "Broiler Starter Feed Formula" },
+    { key: "formula_code", label: "Code", type: "text", required: true, placeholder: "FORM-BR-STARTER" },
+    { key: "formula_name", label: "Name", type: "text", required: true, placeholder: "Broiler Starter Feed Formula" },
     { key: "nob_id", label: "Nature of Business", type: "select-entity", entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], filterOnly: true, helpText: "Scopes the Produced Item picker below — feed formulas aren't NOB/LOB-scoped themselves." },
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", filterOnly: true },
     {
@@ -1615,8 +1617,8 @@ const supplier: MasterDataConfig = {
     { key: "nob_id", label: "Nature of Business", type: "select-entity", entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], helpText: "Leave blank if this supplier is shared across all business verticals." },
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank if this supplier is shared across all LOBs under the selected NOB." },
     { key: "company_id", label: "Company", type: "text", hideInForm: true },
-    { key: "supplier_code", label: "Supplier Code", type: "text", readOnly: true, placeholder: "Generated as SUP-001", helpText: "Generated automatically from this company's Supplier sequence.", section: "Identification" },
-    { key: "supplier_name", label: "Supplier Name", type: "text", required: true, maxLength: 50, placeholder: "Feed Ingredients Corp Ltd", section: "Identification" },
+    { key: "supplier_code", label: "Code", type: "text", readOnly: true, placeholder: "Generated as SUP-001", helpText: "Generated automatically from this company's Supplier sequence.", section: "Identification" },
+    { key: "supplier_name", label: "Name", type: "text", required: true, maxLength: 50, placeholder: "Feed Ingredients Corp Ltd", section: "Identification" },
     {
       key: "vendor_type", label: "Vendor Type", type: "select", section: "Identification",
       options: ["ANIMAL_SUPPLIER", "BREEDING_FARM", "SEMEN_SUPPLIER", "FEED_SUPPLIER", "MEDICINE_SUPPLIER", "EQUIPMENT_SUPPLIER", "SERVICES", "GENERAL"].map((v) => ({ value: v, label: v.replace(/_/g, " ") })),
@@ -1663,8 +1665,8 @@ const customer: MasterDataConfig = {
     { key: "nob_id", label: "Nature of Business", type: "select-entity", entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], helpText: "Leave blank if this customer is shared across all business verticals." },
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank if this customer is shared across all LOBs under the selected NOB." },
     { key: "company_id", label: "Company", type: "text", hideInForm: true },
-    { key: "customer_code", label: "Customer Code", type: "text", readOnly: true, placeholder: "Generated as CUS-001", helpText: "Generated automatically from this company's Customer sequence.", section: "Identification" },
-    { key: "customer_name", label: "Customer Name", type: "text", required: true, placeholder: "John Doe Wholesalers", section: "Identification" },
+    { key: "customer_code", label: "Code", type: "text", readOnly: true, placeholder: "Generated as CUS-001", helpText: "Generated automatically from this company's Customer sequence.", section: "Identification" },
+    { key: "customer_name", label: "Name", type: "text", required: true, placeholder: "John Doe Wholesalers", section: "Identification" },
     { key: "email", label: "Email", type: "email", placeholder: "billing@johndoe.com", section: "Contact" },
     { key: "mobile", label: "Mobile", type: "text", required: true, section: "Contact" },
     { key: "address_line1", label: "Address Line 1", type: "text", section: "Contact" },
@@ -1697,7 +1699,7 @@ const resource: MasterDataConfig = {
     { key: "company_id", label: "Company", type: "text", hideInForm: true },
     { key: "nob_id", label: "Nature of Business", type: "select-entity", entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], helpText: "Leave blank if this resource is shared across all business verticals.", section: "Identification" },
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank if this resource is shared across all LOBs under the selected NOB.", section: "Identification" },
-    { key: "resource_code", label: "Resource Code", type: "text", readOnly: true, placeholder: "Generated as RES-001", helpText: "Generated automatically from this company's Resource sequence.", section: "Identification" },
+    { key: "resource_code", label: "Code", type: "text", readOnly: true, placeholder: "Generated as RES-001", helpText: "Generated automatically from this company's Resource sequence.", section: "Identification" },
     // Form order: Resource Code, Resource Type, Resource Sub-Type, Resource Name.
     {
       key: "resource_type", label: "Resource Type", type: "select", required: true, section: "Identification",
@@ -1716,10 +1718,10 @@ const resource: MasterDataConfig = {
       options: ["PERMANENT", "CONTRACT", "DAILY", "OWNED", "LEASED", "RENTED"].map((v) => ({ value: v, label: v })),
       helpText: "PERMANENT / CONTRACT / DAILY for Manpower; OWNED / LEASED / RENTED for Equipment.",
     },
-    { key: "resource_name", label: "Resource Name", type: "text", required: true, placeholder: "Senior Laborer", section: "Identification" },
+    { key: "resource_name", label: "Name", type: "text", required: true, placeholder: "Senior Laborer", section: "Identification" },
     // People section — only relevant for Manpower/Labor resources.
-    { key: "employee_id", label: "Employee ID", type: "text", placeholder: "EMP-001", section: "People", visibleWhen: { anyOf: [{ key: "resource_type", equals: "MANPOWER" }] } },
-    { key: "designation", label: "Designation", type: "text", placeholder: "Senior Farm Worker", section: "People", visibleWhen: { anyOf: [{ key: "resource_type", equals: "MANPOWER" }] } },
+    { key: "employee_id", label: "Employee ID", type: "text", placeholder: "EMP-001", helpText: "Labor/manpower only.", section: "People", visibleWhen: { anyOf: [{ key: "resource_type", equals: "MANPOWER" }] } },
+    { key: "designation", label: "Designation", type: "text", placeholder: "Senior Farm Worker", helpText: "Labor/manpower only.", section: "People", visibleWhen: { anyOf: [{ key: "resource_type", equals: "MANPOWER" }] } },
     { key: "department", label: "Department", type: "text", placeholder: "Farm Operations", helpText: "Department or team.", section: "People", visibleWhen: { anyOf: [{ key: "resource_type", equals: "MANPOWER" }] } },
     { key: "capacity", label: "Capacity", type: "number", step: "0.01", min: 0, section: "Capacity & Cost" },
     // Left unfiltered: a resource's capacity spans MANPOWER (HEAD), EQUIPMENT (KG,
@@ -1732,7 +1734,7 @@ const resource: MasterDataConfig = {
     { key: "cost_element", label: "Cost Element", type: "text", maxLength: 50, placeholder: "DIRECT_LABOR", helpText: "GL cost classification, e.g. DIRECT_LABOR / INDIRECT_LABOR / EQUIPMENT_HIRE / FUEL / MAINTENANCE.", section: "Capacity & Cost" },
     { key: "gl_cost_account", label: "GL Cost Account", type: "select-entity", searchable: true, entityEndpoint: "/gl-account", entityValueKey: "gl_account_id", entityLabelKeys: ["account_code", "account_name"], helpText: "GL account this resource posts cost to.", section: "Capacity & Cost" },
     // Asset & Maintenance sections — only relevant for Equipment resources.
-    { key: "asset_code", label: "Asset Code", type: "text", placeholder: "ASSET-PELLETISER-01", section: "Asset", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
+    { key: "asset_code", label: "Asset Code", type: "text", placeholder: "ASSET-PELLETISER-01", helpText: "Equipment only.", section: "Asset", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
     { key: "asset_make", label: "Asset Make", type: "text", section: "Asset", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
     { key: "asset_model", label: "Asset Model", type: "text", section: "Asset", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
     { key: "asset_serial_no", label: "Asset Serial No.", type: "text", section: "Asset", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
@@ -1741,7 +1743,7 @@ const resource: MasterDataConfig = {
     { key: "maintenance_frequency_days", label: "Maintenance Frequency (days)", type: "number", min: 0, helpText: "Days between scheduled services. Logging a completed service auto-calculates the next due date.", section: "Maintenance", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
     { key: "maintenance_cost_per_service", label: "Est. Cost per Service", type: "number", step: "0.01", min: 0, section: "Maintenance", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
     { key: "maintenance_vendor", label: "Preferred Maintenance Vendor", type: "text", section: "Maintenance", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
-    { key: "last_maintenance_date", label: "Last Maintenance (system-tracked)", type: "date", hideInForm: true, section: "Maintenance", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
+    { key: "last_maintenance_date", label: "Last Maintenance (system-tracked)", type: "date", readOnly: true, section: "Maintenance", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
     { key: "next_maintenance_date", label: "Next Service Date", type: "date", helpText: "Next maintenance / service due date. Auto-updated when logging completed maintenance, or can be set manually.", section: "Maintenance", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
     { key: "license_expiry", label: "License Expiry", type: "date", helpText: "License/certification expiry — alert 30 days before.", section: "Maintenance", visibleWhen: { anyOf: [{ key: "resource_type", equals: "EQUIPMENT" }] } },
   ],
@@ -1775,8 +1777,8 @@ const glAccount: MasterDataConfig = {
     { key: "nob_id", label: "Nature of Business", type: "select-entity", entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], helpText: "Leave blank if this G/L account is shared across all business verticals." },
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank if this G/L account is shared across all LOBs under the selected NOB." },
     { key: "company_id", label: "Company", type: "text", hideInForm: true },
-    { key: "account_code", label: "Account Code", type: "text", required: true, placeholder: "101000", section: "Identification" },
-    { key: "account_name", label: "Account Name", type: "text", required: true, placeholder: "Cash at Bank", section: "Identification" },
+    { key: "account_code", label: "Code", type: "text", required: true, placeholder: "101000", section: "Identification" },
+    { key: "account_name", label: "Name", type: "text", required: true, placeholder: "Cash at Bank", section: "Identification" },
     {
       key: "account_type", label: "Account Type", type: "select", required: true, section: "Identification",
       options: ["ASSET", "LIABILITY", "EQUITY", "INCOME", "EXPENSE"].map((v) => ({ value: v, label: v })),
@@ -1801,7 +1803,7 @@ const glMapping: MasterDataConfig = {
   ],
   fields: [
     { key: "company_id", label: "Company", type: "text", hideInForm: true },
-    { key: "mapping_code", label: "Mapping Code", type: "text", placeholder: "MAP-001", helpText: "Optional. Leave blank until the numbering convention is agreed; a series can generate it later." },
+    { key: "mapping_code", label: "Code", type: "text", placeholder: "MAP-001", helpText: "Optional. Leave blank until the numbering convention is agreed; a series can generate it later." },
     { key: "item_category_id", label: "Item Category", type: "select-entity", entityEndpoint: "/item-category", entityValueKey: "category_id", entityLabelKeys: ["category_code", "category_name"] },
     { key: "nob_id", label: "Nature of Business", type: "select-entity", entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], helpText: "Leave blank to match all NOBs." },
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank to match all LOBs under the selected NOB." },
@@ -1873,8 +1875,8 @@ const costCenter: MasterDataConfig = {
     { key: "nob_id", label: "Nature of Business", type: "select-entity", entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], helpText: "Leave blank if this cost centre is shared across all business verticals." },
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank if this cost centre is shared across all LOBs under the selected NOB." },
     { key: "company_id", label: "Company", type: "text", hideInForm: true },
-    { key: "cost_center_code", label: "Cost Center Code", type: "text", required: true, placeholder: "DEPT-ADMIN" },
-    { key: "cost_center_name", label: "Cost Center Name", type: "text", required: true, placeholder: "Administrative Department" },
+    { key: "cost_center_code", label: "Code", type: "text", required: true, placeholder: "DEPT-ADMIN" },
+    { key: "cost_center_name", label: "Name", type: "text", required: true, placeholder: "Administrative Department" },
     {
       key: "cost_center_type", label: "Cost Center Type", type: "select", required: true,
       options: ["DEPARTMENT", "FARM", "WAREHOUSE", "PROJECT", "OTHER"].map((v) => ({ value: v, label: v })),
@@ -1926,8 +1928,8 @@ const country: MasterDataConfig = {
     { key: "flag_emoji", label: "Flag" },
   ],
   fields: [
-    { key: "iso2", label: "ISO Code", type: "text", required: true, placeholder: "ZW", helpText: "The two-letter ISO 3166-1 alpha-2 code. This is what currencies and addresses store." },
-    { key: "country_name", label: "Country Name", type: "text", required: true, placeholder: "Zimbabwe" },
+    { key: "iso2", label: "Code", type: "text", required: true, placeholder: "ZW", helpText: "The two-letter ISO 3166-1 alpha-2 code. This is what currencies and addresses store." },
+    { key: "country_name", label: "Name", type: "text", required: true, placeholder: "Zimbabwe" },
     { key: "iso3", label: "ISO3 Code", type: "text", required: true, placeholder: "ZWE", helpText: "The three-letter ISO 3166-1 alpha-3 code." },
     { key: "phone_code", label: "Dialing Code", type: "text", placeholder: "+263" },
     { key: "flag_emoji", label: "Flag", type: "text", placeholder: "🇿🇼" },
@@ -1951,8 +1953,8 @@ const currency: MasterDataConfig = {
     { key: "decimal_places", label: "Decimals" },
   ],
   fields: [
-    { key: "iso_code", label: "Currency Code", type: "text", required: true, placeholder: "USD", helpText: "The three-letter ISO 4217 code. Saved uppercase, and unique." },
-    { key: "currency_name", label: "Currency Name", type: "text", required: true, placeholder: "US Dollar" },
+    { key: "iso_code", label: "Code", type: "text", required: true, placeholder: "USD", helpText: "The three-letter ISO 4217 code. Saved uppercase, and unique." },
+    { key: "currency_name", label: "Name", type: "text", required: true, placeholder: "US Dollar" },
     { key: "symbol", label: "Symbol", type: "text", required: true, placeholder: "$" },
     {
       // Countries, not one country: the euro is legal tender across the
@@ -2041,7 +2043,7 @@ export const MASTER_DATA_GROUPS = ["Farm Operations", "Production", "Inventory",
  * by module. Masters not named here still appear; they're appended after, in
  * their existing relative order, so this only pins the front of the list.
  */
-export const MASTER_DATA_NAV_ORDER: string[] = ["location", "number-series", "item", "stage", "breed", "animal", "activity", "reporting-period", "alert-rule"];
+export const MASTER_DATA_NAV_ORDER: string[] = ["location", "number-series", "item", "stage", "breed", "animal", "activity", "alert-rule"];
 
 export function getConfig(key: string): MasterDataConfig | undefined {
   if (key === "no-series") return MASTER_DATA_CONFIGS.find((c) => c.key === "number-series");

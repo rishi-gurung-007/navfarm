@@ -11,7 +11,7 @@
  * outright, on a screen that lists the farm quite happily.
  */
 import { useEffect, useRef, useState } from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, Wheat } from "lucide-react";
 import { api } from "@/services/api-client";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
@@ -48,9 +48,10 @@ export function RequisitionNewDialog({
   const [remarks, setRemarks] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [purpose, setPurpose] = useState<"FEED" | null>(null);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || purpose !== "FEED") return;
     let alive = true;
     setLines([{ ...EMPTY }]);
     setRemarks("");
@@ -69,7 +70,11 @@ export function RequisitionNewDialog({
     return () => {
       alive = false;
     };
-  }, [open, farmId]);
+  }, [open, farmId, purpose]);
+
+  useEffect(() => {
+    if (open) setPurpose(null);
+  }, [open]);
 
   const setLine = (i: number, patch: Partial<Draft>) => setLines((cur) => cur.map((l, j) => (j === i ? { ...l, ...patch } : l)));
   const complete = lines.every((l) => l.dest && l.item && Number(l.kg) > 0 && l.date);
@@ -95,15 +100,31 @@ export function RequisitionNewDialog({
     <Dialog
       open={open}
       onClose={onClose}
-      title={t("rqNewTitle")}
+      title={t(purpose === null ? "rqNew" : "rqNewTitle")}
       maxWidth="lg"
-      footer={
-        <div className="flex justify-end gap-2">
-          <Button variant="outline" size="sm" onClick={onClose}>{t("rqNewCancel")}</Button>
-          <Button size="sm" onClick={create} disabled={busy || !complete}>{t("rqNewCreate")}</Button>
-        </div>
-      }
+      footer={purpose === "FEED"
+        ? <Button size="sm" onClick={create} disabled={busy || !complete}>{t("rqNewCreate")}</Button>
+        : undefined}
     >
+      {purpose === null ? (
+        <div className="flex flex-col gap-4 text-xs">
+          <p className="text-sm text-[var(--text-secondary)]">{t("rqNewPurposePrompt")}</p>
+          <button
+            type="button"
+            aria-label={t("rqNewPurposeFeed")}
+            onClick={() => setPurpose("FEED")}
+            className="nf-press flex items-center gap-3 rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface)] p-4 text-left hover:bg-[var(--surface-raised)]"
+          >
+            <span className="flex h-9 w-9 items-center justify-center rounded-[var(--radius-sm)] bg-amber-500/10 text-amber-700 dark:text-amber-400">
+              <Wheat className="h-4 w-4" />
+            </span>
+            <span>
+              <span className="block text-sm font-semibold text-[var(--text-primary)]">{t("rqNewPurposeFeed")}</span>
+              <span className="mt-0.5 block text-xs text-[var(--text-secondary)]">{t("rqNewPurposeFeedHint")}</span>
+            </span>
+          </button>
+        </div>
+      ) : (
       <div className="flex flex-col gap-3 text-xs">
         {lines.map((line, i) => (
           <div key={i} className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1fr_7rem_9rem_auto] sm:items-end">
@@ -139,6 +160,7 @@ export function RequisitionNewDialog({
         </Field>
         {error && <p style={{ color: "var(--danger)" }}>{error}</p>}
       </div>
+      )}
     </Dialog>
   );
 }

@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsOptional, IsUUID, IsInt, Min, IsDateString, IsBoolean } from 'class-validator';
+import { IsString, IsOptional, IsUUID, IsInt, Min, IsDateString, IsBoolean, IsIn } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class QueryInventoryLedgerDto {
@@ -45,7 +45,7 @@ export class QueryInventoryLedgerDto {
 
   @ApiProperty({ description: 'Sort by field: created_at or posting_date', required: false })
   @IsOptional()
-  @IsString()
+  @IsIn(['created_at', 'posting_date'])
   sortBy?: 'created_at' | 'posting_date';
 
   @ApiProperty({ description: 'Posting date from (inclusive)', required: false })
@@ -162,4 +162,3 @@ export class QueryAvailableSerialsDto {
   @IsUUID()
   company_id?: string;
 }
-

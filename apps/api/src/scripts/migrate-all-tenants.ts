@@ -29,6 +29,7 @@ async function run() {
   try {
     const tenants = await masterDb.select().from(master.tenantMaster);
     console.log(`Found ${tenants.length} tenant(s) in ${masterDatabase}.`);
+    const failedTenants: string[] = [];
 
     for (const t of tenants) {
       const tenantPool = mysql.createPool({
@@ -48,9 +49,14 @@ async function run() {
         console.log(`  [${t.tenant_code}] migrations applied (or already up to date).`);
       } catch (err) {
         console.error(`  [${t.tenant_code}] FAILED:`, err instanceof Error ? err.message : err);
+        failedTenants.push(t.tenant_code);
       } finally {
         await tenantPool.end();
       }
+    }
+
+    if (failedTenants.length > 0) {
+      throw new Error(`Tenant migrations failed for: ${failedTenants.join(', ')}`);
     }
 
     console.log('Done.');

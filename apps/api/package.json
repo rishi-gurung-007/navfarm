@@ -60,6 +60,14 @@
           "command": "node --import tsx src/scripts/reseed-number-series.ts"
         }
       },
+      "db-repair-company-template-snapshots": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --env-file-if-exists=.env --import tsx src/scripts/repair-company-template-snapshots.ts"
+        }
+      },
       "db-stamp-master-nob-lob": {
         "executor": "nx:run-commands",
         "options": {
@@ -425,6 +433,14 @@
         "cache": false,
         "options": {
           "command": "node --env-file-if-exists=.env --import tsx src/scripts/seed-nine-farm-demo.ts",
+          "cwd": "apps/api"
+        }
+      },
+      "db-seed-four-farm-feed-demo": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "command": "node --env-file-if-exists=.env --import tsx src/scripts/seed-four-farm-feed-demo.ts",
           "cwd": "apps/api"
         }
       },

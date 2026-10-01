@@ -452,12 +452,21 @@ export class NumberSeriesService {
     // Check if a default series is configured for this master (e.g. custom series code or NS-*)
     try {
       const defaultSeries = await this.findDefaultSeriesByMaster(masterKey, tenantId, companyId, typeValue, executor);
-      if (defaultSeries) return defaultSeries.code;
+      if (defaultSeries && this.seriesMatchesCompanyScope(defaultSeries, companyId)) return defaultSeries.code;
     } catch {
       // Fall through
     }
 
     return null;
+  }
+
+  /** Number allocation is company-owned once a company workspace is active.
+   * A tenant template is a definition to snapshot, not a shared counter. */
+  private seriesMatchesCompanyScope(
+    series: Pick<typeof schema.noSeries.$inferSelect, 'company_id'>,
+    companyId?: string | null,
+  ): boolean {
+    return companyId ? series.company_id === companyId : series.company_id == null;
   }
 
   /**
@@ -1557,12 +1566,7 @@ export class NumberSeriesService {
         isNull(schema.noSeries.deleted_at),
       ];
       if (tenantId) subConditions.push(eq(schema.noSeries.tenant_id, tenantId));
-      if (companyId) {
-        subConditions.push(or(
-          eq(schema.noSeries.company_id, companyId),
-          sql`${schema.noSeries.company_id} IS NULL`,
-        )!);
-      }
+      if (tenantId || companyId) subConditions.push(companyCondition(schema.noSeries.company_id, companyId));
       try {
         const [typeSeries] = await executor
           .select()
@@ -1603,6 +1607,8 @@ export class NumberSeriesService {
                 .from(schema.noSeries)
                 .where(and(
                   eq(schema.noSeries.id, masterCfg.default_series_id),
+                  eq(schema.noSeries.tenant_id, tenantId),
+                  companyCondition(schema.noSeries.company_id, companyId),
                   eq(schema.noSeries.blocked, false),
                   isNull(schema.noSeries.deleted_at),
                   eq(schema.noSeries.is_default, true),
@@ -1637,12 +1643,7 @@ export class NumberSeriesService {
       isNull(schema.noSeries.deleted_at),
     ];
     if (tenantId) conditions.push(eq(schema.noSeries.tenant_id, tenantId));
-    if (companyId) {
-      conditions.push(or(
-        eq(schema.noSeries.company_id, companyId),
-        sql`${schema.noSeries.company_id} IS NULL`,
-      )!);
-    }
+    if (tenantId || companyId) conditions.push(companyCondition(schema.noSeries.company_id, companyId));
 
     try {
       const rows = await executor
@@ -1695,7 +1696,8 @@ export class NumberSeriesService {
       }
     }
 
-    const series = await this.findDefaultSeriesByMaster(masterType, tenantId, companyId, type);
+    const candidate = await this.findDefaultSeriesByMaster(masterType, tenantId, companyId, type);
+    const series = candidate && this.seriesMatchesCompanyScope(candidate, companyId) ? candidate : null;
     if (!series) {
       if (MASTER_CODE_COLUMNS[normalizedType] && tenantId) {
         try {

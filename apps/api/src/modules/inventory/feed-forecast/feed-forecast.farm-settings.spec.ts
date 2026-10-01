@@ -6,7 +6,7 @@ import { FeedForecastService } from './feed-forecast.service';
 
 /**
  * D32 (Rishi, 28 Sep). The six per-farm feed settings leave the Location form
- * and are edited on Settings → Inventory Setup → Feed Planning. They stay
+ * and were originally edited on Settings → Inventory Setup. They stay
  * where they are stored — columns on the FARM's location_master row, no
  * migration — so this endpoint writes exactly those six and nothing else, and
  * it fails closed the way the rest of the module does: resolveFarm decides
@@ -171,11 +171,10 @@ describe('FeedForecastService.updateFarmSettings (D32)', () => {
 });
 
 /**
- * D41 (Rishi, 29 Sep): Feed Planning lists each farm's silos under its delivery
- * settings, and the levels and reorder days are editable there. The delivery
- * settings stay per farm — one truck, one trip, one deadline per farm cycle.
+ * D41 (Rishi, 29 Sep): Silo Feed Setup lists each farm's silos, and only the
+ * levels and reorder days are editable there.
  */
-describe('FeedForecastService silos on Feed Planning (D41)', () => {
+describe('FeedForecastService silos on Silo Feed Setup (D41)', () => {
   const chain = (rows: unknown[]) => {
     const self: any = { from: () => self, leftJoin: () => self, innerJoin: () => self, where: () => self, orderBy: () => self,
       limit: async () => rows, then: (res: (v: unknown[]) => unknown, rej: (e: unknown) => unknown) => Promise.resolve(rows).then(res, rej) };
@@ -192,16 +191,20 @@ describe('FeedForecastService silos on Feed Planning (D41)', () => {
   const FARM = { farm_id: 'f-vil', code: 'VIL100', name: 'Villa Franca', company_id: 'co-1', company_name: 'T',
     feed_lead_time_days: 2, feed_bulk_multiple_kg: null, feed_bag_size_kg: null, feed_truck_target_kg: null, feed_production_weekday: null };
   const SILO = { location_id: 's-1', farm_id: 'f-vil', company_id: 'co-1', location_code: 'VIL100/SILO-001', location_name: 'Feed Silo 1',
-    silo_capacity_kg: '10000', low_level_kg: '2000', high_level_kg: '9000', silo_reorder_days: 3 };
+    feed_in_bags: false, silo_capacity_kg: '10000', low_level_kg: '2000', high_level_kg: '9000', silo_reorder_days: 3, status: 'ACTIVE' };
+  const SHED_LINKS = [
+    { silo_id: 's-1', shed_id: 'sh-1', shed_code: 'VIL100/SHED-001', shed_name: 'Dry Sow House' },
+    { silo_id: 's-1', shed_id: 'sh-2', shed_code: 'VIL100/SHED-002', shed_name: 'Farrowing House' },
+  ];
 
   beforeEach(() => { selectQueue.length = 0; jest.clearAllMocks(); });
 
   const service = (cls: any, siloFeed: any = forecast) => new FeedForecastService(cls, {} as any, audit as any, siloFeed as any);
 
-  it('lists each farm with its silos, the feed each holds, capacity, both levels and its reorder days', async () => {
+  it('returns the complete read-only Silo Feed Setup identity, allocation, handling, feed and status fields', async () => {
     const cls = transactionCls(db);
     useFarmScope(cls, { farmId: null, restricted: false, companyId: 'co-1', lobId: null });
-    selectQueue.push([FARM], [SILO]);
+    selectQueue.push([FARM], [SILO], SHED_LINKS);
     forecast.currentItems.mockResolvedValueOnce(new Map([['s-1', { item_id: 'i1', item_code: 'ICAT-004-ITM-0002', item_description: 'Dry Sow Mash', on_hand_qty: 4200 }]]));
 
     const list = await service(cls).listFarmSettings('tenant-1', 'COMPANY_ADMIN');
@@ -210,12 +213,18 @@ describe('FeedForecastService silos on Feed Planning (D41)', () => {
       locationId: 's-1',
       code: 'VIL100/SILO-001',
       name: 'Feed Silo 1',
+      linkedSheds: [
+        { locationId: 'sh-1', code: 'VIL100/SHED-001', name: 'Dry Sow House' },
+        { locationId: 'sh-2', code: 'VIL100/SHED-002', name: 'Farrowing House' },
+      ],
+      feedType: 'BULK',
       feedItemCode: 'ICAT-004-ITM-0002',
       feedItemName: 'Dry Sow Mash',
       capacityKg: 10000,
       lowLevelKg: 2000,
       highLevelKg: 9000,
       reorderDays: 3,
+      status: 'ACTIVE',
     }]);
   });
 

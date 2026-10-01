@@ -48,6 +48,41 @@ describe('NumberSeriesService', () => {
     service = module.get<NumberSeriesService>(NumberSeriesService);
   });
 
+  describe('exact company scope resolution', () => {
+    it('does not resolve a tenant template as a company-owned series', async () => {
+      const noExactRows = { from: () => ({ where: () => ({ limit: async () => [] }) }) };
+      mockDbSelect.mockReturnValue(noExactRows);
+      jest.spyOn(service, 'findDefaultSeriesByMaster').mockResolvedValue({
+        id: 'tenant-stage',
+        tenant_id: 'tenant',
+        company_id: null,
+        code: 'STAGE',
+      } as any);
+
+      await expect(service.resolveSeriesFor('STAGE', 'PRODUCTIVE', 'tenant', 'company')).resolves.toBeNull();
+    });
+
+    it('does not preview a tenant template as a usable company counter', async () => {
+      jest.spyOn(service, 'findDefaultSeriesByMaster').mockResolvedValue({
+        id: 'tenant-stage',
+        tenant_id: 'tenant',
+        company_id: null,
+        code: 'STAGE',
+        no_series_code: 'STG-',
+        seq_length: 3,
+      } as any);
+      jest.spyOn(service, 'previewCode').mockResolvedValue({ generated: false, allowManual: true } as any);
+      const previewById = jest.spyOn(service, 'previewNextNumberById').mockResolvedValue({ next_number: 'STG-001' } as any);
+
+      await expect(service.previewByMaster('STAGE', 'tenant', 'company')).resolves.toMatchObject({
+        generated: false,
+        allowManual: true,
+        preview: '',
+      });
+      expect(previewById).not.toHaveBeenCalled();
+    });
+  });
+
   describe('manualCode', () => {
     it('normalizes a manual code without incrementing its number series', async () => {
       jest.spyOn(service, 'resolveCodeSettings').mockResolvedValue({ generated: true, allowManual: true });

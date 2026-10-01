@@ -29,7 +29,10 @@ export class StockTransferService {
     // the item is stocked in, so the capacity guard below needs the tenant's
     // own uom_conversion_master rather than an assumption about the unit.
     private readonly uomService: UomService,
+    // Silo receiving rules are shared with Goods Receipt so both posting paths
+    // enforce the same item, house and capacity constraints.
     private readonly siloFeedService: SiloFeedService,
+    // Re-check feed thresholds only after the stock posting commits.
     @Optional() private readonly feedAlerts?: FeedAlertService,
   ) { }
 

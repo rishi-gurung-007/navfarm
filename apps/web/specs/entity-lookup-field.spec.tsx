@@ -94,6 +94,7 @@ describe("EntityLookupField", () => {
 
     expect(onChange).toHaveBeenCalledWith(["WEANER", "GROWER"]);
     expect(screen.getByRole("dialog", { name: "Select Applicable Stages" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Done" })).toBeNull();
   });
 
   it("calls onCreate from the dialog creation affordance", () => {

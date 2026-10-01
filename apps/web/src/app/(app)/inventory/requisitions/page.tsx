@@ -1,12 +1,14 @@
-"use client";
+import { redirect } from "next/navigation";
 
-import { InventoryPageShell } from "@/components/console/inventory/inventory-page-shell";
-import RequisitionsPanel from "@/components/console/inventory/requisitions-panel";
+type Search = Record<string, string | string[] | undefined>;
 
-export default function InventoryRequisitionsPage() {
-  return (
-    <InventoryPageShell activeKey="requisitions" fill>
-      <RequisitionsPanel />
-    </InventoryPageShell>
-  );
+/** Old Inventory bookmarks remain valid after Requisitions moved into Approvals. */
+export default async function InventoryRequisitionsMoved({ searchParams }: { searchParams: Promise<Search> }) {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(await searchParams)) {
+    if (Array.isArray(value)) value.forEach((item) => params.append(key, item));
+    else if (value !== undefined) params.set(key, value);
+  }
+  const query = params.size ? `?${params.toString()}` : "";
+  redirect(`/approvals/requisitions${query}`);
 }

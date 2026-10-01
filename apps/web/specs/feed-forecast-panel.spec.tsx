@@ -85,14 +85,15 @@ describe('FeedForecastPanel — admin', () => {
     expect(get.mock.calls.some(([url]) => String(url).startsWith('/location'))).toBe(false);
   });
 
-  it('shows Overdue, Indicative and "after" the horizon, and no wastage note (D34); Stages is a tab', async () => {
+  it('shows Overdue and Indicative, uses a dash beyond the horizon, and keeps Stages as a tab', async () => {
     render(<FeedForecastPanel />);
     const table = await screen.findByRole('table', { name: 'ffGridLabel' });
     expect(within(table).getByText('ffOverdue')).toBeTruthy();
     expect(within(table).getByText('ffIndicative')).toBeTruthy();
     // "Shared by" was a badge in the Source cell, and went with it (D33).
     expect(within(table).queryByText(/ffSharedBy/)).toBeNull();
-    expect(within(table).getByText('ffBeyondHorizon:{"date":"09/11/26"}')).toBeTruthy();
+    expect(within(table).queryByText(/ffBeyondHorizon|ffNotDueBy/)).toBeNull();
+    expect(within(table).getAllByText('—').length).toBeGreaterThan(0);
     // D34: the wastage note is gone — neither client document has wastage.
     expect(screen.queryByText(/ffWastage/)).toBeNull();
     fireEvent.click(screen.getByRole('tab', { name: 'ffTabStages:{"count":1}' }));

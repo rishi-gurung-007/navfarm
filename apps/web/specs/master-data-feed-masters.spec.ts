@@ -1,13 +1,21 @@
 import { MASTER_DATA_CONFIGS, MASTER_DATA_NAV_ORDER, getConfig } from '../src/modules/master-data/configs';
 import { formatColumnValue } from '../src/modules/master-data/column-format';
 
-describe('Reporting Periods and Alert Rules in the Farm Master menu (review A10, S6)', () => {
-  it.each(['reporting-period', 'alert-rule'])('%s is a menu entry under Farm Operations, admin-gated like the other masters', (key) => {
-    const config = getConfig(key)!;
+describe('Reporting Period configuration and Alert Rules navigation', () => {
+  it('keeps Alert Rules in Farm Masters', () => {
+    const config = getConfig('alert-rule')!;
     expect(config.isPrimary).toBe(true);
     expect(config.group).toBe('Farm Operations');
     expect(config.businessAdminOnly).toBe(true);
-    expect(MASTER_DATA_NAV_ORDER).toContain(key);
+    expect(MASTER_DATA_NAV_ORDER).toContain('alert-rule');
+  });
+
+  it('places Reporting Periods in Settings, not Farm Masters', () => {
+    const config = getConfig('reporting-period')!;
+    expect(config.isPrimary).toBe(false);
+    expect(config.group).toBe('Settings');
+    expect(config.businessAdminOnly).toBe(true);
+    expect(MASTER_DATA_NAV_ORDER).not.toContain('reporting-period');
   });
 
   it('shows the reporting period dates as DD/MM/YY (A9)', () => {

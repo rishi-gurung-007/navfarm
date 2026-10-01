@@ -369,7 +369,7 @@ export function ApprovalsPageShell({ activeTab }: { activeTab: ApprovalStatus })
 
           <Button
             size="sm"
-            onClick={() => setCreateModalOpen(true)}
+            onClick={() => router.push("/approvals/requisitions")}
             className="nf-btn-primary text-xs h-8 gap-1.5 shrink-0"
           >
             <Plus className="h-3.5 w-3.5" /> {t("apNewRequest")}
@@ -604,9 +604,6 @@ export function ApprovalsPageShell({ activeTab }: { activeTab: ApprovalStatus })
             )}
 
             <div className="flex justify-end gap-2 pt-3 border-t" style={{ borderColor: "var(--border)" }}>
-              <Button variant="outline" onClick={() => setViewingItem(null)}>
-                {t("close")}
-              </Button>
               {viewingItem.status === "PENDING" && (
                 <>
                   <Button

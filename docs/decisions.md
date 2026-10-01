@@ -1992,36 +1992,22 @@ thing. Allowed parents are now `["FARM"]` in both scopes (the tenant template
 row and the company copy — master scope matching is exact, so both must move
 or the company-scoped form keeps the old rule).
 
-**One silo serves many sheds; a shed draws from exactly one silo.** Rishi's
-words: "one silo for multiple sheds or only one silo for a single shed in the
-same farm". Because the shed side is the *one* side, this is a nullable
-self-FK `location_master.feed_silo_id` on the SHED row, not a join table —
-one-silo-per-shed then cannot be violated by any code path, including a bad
-seed. The "Attached Sheds" multi-select on the silo form is a *view* of that
-column across the parent farm's sheds: selecting writes `feed_silo_id` on the
-chosen sheds, deselecting clears it. Migration `0113_silo_feed_link.sql`.
+**Superseded relationship decision.** The decision made on 24 Sep was “one
+silo serves many sheds; a shed draws from exactly one silo”, represented by
+`location_master.feed_silo_id`. That was subsequently replaced by migrations
+0114/0115 and the 30 Sep decision below: a shed may draw from several silos,
+with the feed item distinguishing the source. This paragraph remains only as
+decision history and must not be used to design or seed the current model.
 
-**Feed flows store -> silo -> shed, and the daily entry draws from the silo.**
-The gap this closes is not the one it first appeared to be. A CONSUMPTION line
-on a daily entry already posts to `inventory_ledger` — `batch-daily-data.service.ts`
--> `batchService.addTransaction` -> `writeNegativeEntry` — but passes no
-`warehouseId`, so every row lands with `warehouse_id` NULL and `applyFifo`
-draws stock company-wide. (`resource_ledger`, which reads like the feed path
-and whose schema comment says a resource booking has no warehouse, is dead:
-one writer, `resource-ledger.service.ts:57`, and no caller anywhere.) The fix
-is therefore to resolve a source warehouse and pass it, not to build a new
-posting path: `scheduler_header.location_id` — already loaded by `postEntry`
-and until now unused — gives the batch's shed; the shed's `feed_silo_id` gives
-the silo. "Block when short" needs no new check: `applyFifo` filters layers by
-`warehouse_id` and already throws when they do not cover the issue, so naming
-the silo *is* the block.
-
-**A shed with no silo falls back to the farm's STORE.** Bagged feed genuinely
-comes from the store — `location_master.feed_in_bags` has said so since the
-Location Master templates were loaded, and the breed lifecycle sheets read it.
-It also means the nine demo farms keep working before anyone attaches a silo:
-110 sheds exist against 53 silos, so the fallback is the common path, not the
-edge case.
+**Historical posting note, partly superseded.** The useful part of the 24 Sep
+finding remains: daily CONSUMPTION already posts through
+`batch-daily-data.service.ts` -> `batchService.addTransaction` ->
+`writeNegativeEntry`, and stock must remain on that shared inventory-ledger
+path rather than a second feed ledger. Its source-resolution description is
+obsolete: no current work may read `feed_silo_id`. Resolve candidate silos
+through `silo_shed_link` and distinguish them by feed item. Any bagged-feed
+store fallback must follow the current service and approved configuration; the
+old nine-farm count is not justification for inventing an implicit fallback.
 
 **Silo capacity is entered in KG or TON, and stored in KG.** Rishi: "for silo
 Capacity uom only two ton/kg". `silo_capacity_kg` keeps storing canonical
@@ -2101,3 +2087,332 @@ client's calendar** — the workbook's illustrative September (23 Aug – 26 Sep
 the rule produces (30 Aug – 26 Sep), and the client has never supplied a period list. And feed
 alerts still reach nobody but admins, because the workbook's FARM_MANAGER and HEAD_OF_FARM
 roles do not exist on any tenant yet (Plan B's Q1, unchanged).
+
+## 2026-09-30 — Master edit fields, manual codes and current feed scope
+
+Rishi confirmed that an edit form must show the same user-facing fields as
+creation. Fields marked `createOnly` remain visible but disabled; only mutable
+fields are editable. Internal `hideInForm` values remain system-owned rather
+than becoming user controls.
+
+Every master code follows its configured Number Series. When that series allows
+manual numbers, the user may replace the suggested code; when the code is left
+blank, the API allocates the next series value. A duplicate manual code blocks
+creation and must tell the user that the code already exists so it can be
+changed. No seed-data rewrite is part of this work.
+
+Requisition remains one common workflow beside Approvals. The create flow first
+asks what the requisition is for, but **Feed Requisition is the only available
+type for now**; later types are additive and are not to be invented now.
+
+Feed work is limited to the existing chain through farm approval: farm/shed/silo
+setup, feed items, lifecycle feed rows, batch state and head count, stock and
+confirmed incoming, daily forecast, run-down/refill/required-on, alerts,
+requisition, and farm approval. Mill consolidation/capacity, loading/dispatch/
+Transfer Order receipt, and physical stock take/period reconciliation are out
+of scope for the present task.
+
+The supplied Feed Forecast workbook and report-field DOCX require a reusable
+Reporting Period configuration for the July–June business year, forecast range,
+monthly stock take and period close. They do not require that configuration to
+appear under Farm Masters. Navigation therefore belongs in Settings while the
+existing Reporting Period data model remains unchanged.
+
+For every master, its own primary identity fields use the concise labels
+`Code` and `Name`. Referenced and secondary identifiers keep their qualified
+labels (for example Breed, ISO3 and Code Prefix) so their meaning is not lost.
+Where the client model intentionally uses a different semantic field, that
+meaning is retained; Reason uses `Code` and `Description`, not an invented
+Reason Name.
+
+Feed Planning must present each farm as a collapsible grouping row and show
+only that farm's silos directly beneath it when expanded; silo rows must not
+be rendered later as a separate flat section. The supplied files support silo
+capacity, low/high stock levels and refill planning, but do not define delivery
+lead time, bulk multiple, bag size, truck target and production day as one
+five-field farm setup. Those five legacy farm inputs therefore do not appear
+on Feed Planning. They are not silently copied to silos: doing that would
+change forecast and requisition semantics without a defined source rule.
+
+The Feed Forecast grid keeps the supplied field specification's twelve labels
+and order. Rishi shortened only `Scale of Silo Level (Run Down)` to `Run Down`.
+Run-down, refill and required-on cells show a formatted date when one exists
+and a dash otherwise; phrases such as `After …` and `Not due by …` do not
+belong in date columns. In the days-of-stock cell the `Indicative` chip appears
+before the numeric value.
+
+## 2026-09-30 — New-tenant provisioning: the placeholder claim must snapshot master templates, and company generation never falls back to tenant series
+
+Confirmed defect, reported by Rishi. A newly onboarded company could not generate a single number. The chain: tenant signup seeds tenant-template Number Series rows (STAGE among them, `SYSTEM_NO_SERIES_SEED`) and a placeholder company so the first admin has a valid company FK; the Setup Wizard's step 1 normally claims that placeholder in place rather than inserting a company — but its update branch never called `copyCompanyMasterTemplates()`, only the new-company branch did. So the company held no company-scoped STAGE series. Series resolution was happy to advertise the tenant template as a fallback, while `lockSeries()` — correctly — requires the exact company scope, and failed. Same class as the 2026-09-10 finding that `copy-master-templates.ts` existed and nothing called it: the mechanism was right and a call site was missing.
+
+Three decisions in the repair:
+
+- **The placeholder claim takes the same one-time snapshot as company creation**, inside the same transaction, gated on `company_code === 'PLACEHOLDER'`. An established company's profile edit must not re-copy: snapshot, not sync (the standing rule in `copy-master-templates.ts`), so later edits are idempotent no-ops by construction.
+- **Series resolution and preview now use the exact company scope that locking and generation use.** `findDefaultSeriesByMaster` used to union `company_id IS NULL` into company lookups and `resolveSeriesFor`/`previewByMaster` trusted it; both now reject a tenant template once a company workspace is in play (`seriesMatchesCompanyScope`). A tenant template is a definition to snapshot, not a shared counter — the same principle as `BATCH`, which only ever worked because template adoption gave each company its own row. Without the fix, a form could preview a code the save could not allocate.
+- **Existing affected companies are repaired additively** (`db-repair-company-template-snapshots`, registered as an Nx target): read-only by default, `--verify` writes in a transaction and rolls back, `--apply` commits. A company owning zero rows in every template table gets the full snapshot; a partially-owned company gets only missing Number Series rows, matched by unique code; existing identities, counters, `last_no_used` and configuration are never updated, deleted or reset. Partially-owned non-series tables are audit-only — there is no universal business key with which to merge them safely, and inventing one would violate the no-invented-data rule. `reseed-number-series.ts` is not used.
+
+Also in this repair: `migrate-all-tenants.ts` now records per-tenant failures and exits non-zero, instead of catching a failure and continuing so that exit code zero meant nothing.
+
+Regression coverage lives in `setup-wizard.service.spec.ts` (claim copies; established edit does not), `number-series.service.spec.ts` (tenant template never resolves or previews at company scope), and `setup-wizard-stage-chain.spec.ts` — the whole chain in one test: signup state → wizard claims placeholder → company STAGE row exists at `current_seq = 0` → preview/lock/generate run on the company row with the template's counter untouched → a Stage create consumes the company counter.
+
+## 2026-09-30 — Feed examples are seed fixtures; four farms exercise the silo topology
+
+Rishi confirmed that every value in the supplied feed worked examples is
+**illustrative seed data**. An example value is not a production default, a
+hardcoded business rule or confirmed Triple C master data merely because it
+appears in a workbook or TDD example column. Rules stated in description or
+validation columns still describe intended behaviour; conflicting or missing
+rules still come back to Rishi. Seed fixtures must label their source and stay
+replaceable and configurable.
+
+The controlled demo topology is exactly one tenant, one company, one active
+operational area for NOB Livestock / LOB Piggery, and **four farms**:
+
+1. Farm 1 has one shed and one silo, linked one-to-one.
+2. Farm 2 has several sheds supplied by one shared silo; each of those sheds
+   uses only that silo.
+3. Farm 3 has several sheds and several silos with deliberate cross-links.
+4. Farm 4 is the mixed case: an exclusive one-to-one pair, a silo serving
+   several sheds, and a shed drawing from several silos.
+
+Silos remain direct children of farms. `silo_shed_link` is the canonical
+many-to-many relationship. A shed may draw from multiple silos, and a silo may
+serve multiple sheds, but silos sharing a shed may not carry the same
+positive-stock feed item. Pens remain children of sheds. Exact identities and
+counts must come from approved client data or an explicitly labelled
+illustrative fixture; agents must not invent them as client data.
+
+The recommended configurable controls are approved for implementation:
+
+- forecast default view 7 days and configurable maximum 45 days;
+- capacity status GREEN below 90%, AMBER from 90% through 100%, and RED above
+  100%, with thresholds configurable rather than scattered constants;
+- a mill production slot is production date plus a configurable shift/slot;
+- every nonzero stock-take variance requires a reason, while Finance approval
+  is triggered by configurable percentage or monetary thresholds;
+- bag reconciliation tolerance is configurable, with 1% used only by the
+  illustrative seed;
+- an over-receipt is posted only with a variance reason, authorized by the Farm
+  Manager, and raises an in-app notification to the Feed Mill Manager;
+- one feed requisition header represents one farm and submission cycle, with
+  separate silo/item lines, including current- and next-diet lines.
+
+Feed fulfilment is **IN_HOUSE only for the current phase**. NAVFarm owns the
+workflow and ledger posting; it must not call or pretend to call Business
+Central. The design preserves a future `BC_INTEGRATED` mode by keeping business
+status separate from integration status and using stable document and line
+identifiers. Only `IN_APP` notifications are enabled now. Email, SMS, WhatsApp
+and BC integration are future additions, not simulated successes.
+
+The first seed revision is master-only: tenant/company/area, locations and
+their topology, Number-Series-driven codes, related feed/item/lifecycle
+masters, users only if explicitly included, and configuration fixtures.
+Batches, ledger movements, forecast runs, requisitions, transfers, receipts
+and stock takes are operational data and are not silently inserted by that
+master-only phase.
+
+## 2026-09-30 — Stage parity, company-owned Number Series and Silo Feed Setup
+
+Stage Create and Edit use the same visible transition fields. Nothing is
+hidden when the Transition Trigger changes: `MANUAL` disables all dependent
+transition fields, `AUTO_BY_DAY` enables Auto-Move On Day and Next Stage, and
+`EVENT_BASED` enables Alternate Next Stage and Alternate Trigger Condition.
+Changing the trigger does not erase stored values. This applies Rishi's rule
+that master fields remain visible while only applicable mutable fields are
+editable.
+
+Number Series counters are company-owned. Tenant-scope series are templates to
+snapshot, never fallback counters for a company workspace. The first Setup
+Wizard claim of the signup `PLACEHOLDER` company takes the company template
+snapshot in the same transaction; later profile edits do not repeat it. Older
+affected companies are repaired additively: existing rows and Number Series
+counters are preserved, only unambiguous missing rows are inserted, and
+partially owned non-Series tables are reported for review instead of guessed.
+
+The Inventory Setup tab previously called Feed Planning is **Silo Feed Setup**.
+It is not the TDD's Tentative/Actual Feed Plan. Farms are collapsible grouping
+rows; their silo rows display Code, Name, Linked Shed(s), Feed Type, physical
+Feed Item Code and Name, Capacity, Below Feed Level, Above Threshold, Reorder
+Days and Status. Only the two thresholds and Reorder Days are editable there.
+The Tentative/Actual Feed Plan remains a separate later feature.
+
+## 2026-09-30 — Feed Forecast Engine CSV follow-up: stock count enters scope; mill and feed plan stay later
+
+Rishi reviewed `NAVFarm_Feed forecast TDD with examples (Feed Forecast
+Engine).csv` against the implementation and made these scope and behaviour
+decisions:
+
+- The Tentative/Actual Feed Plan remains later work. Its mill-capacity fields
+  remain deferred with the mill workflow.
+- Physical silo stock count is now in scope. It is a separate dated
+  transaction. Every nonzero variance requires a reason and follows approval
+  before the shared inventory-ledger stock adjustment is posted; the forecast
+  recalculates from the posted balance. No Business Central call or simulated
+  integration state is part of this phase.
+- A forecast range has a configurable maximum of **45 calendar dates**. The
+  approved default remains seven calendar dates. Both counts are inclusive of
+  From and To, so a seven-day range ends at From + 6 and a 45-day range ends at
+  From + 44.
+- Projected population applies the known facts named by the CSV: scheduled
+  transfers, scheduled/known stage transitions and recorded mortality. Missing
+  future assumptions are flagged. A statistical or standard mortality
+  projection is still not invented.
+- Low-level run-down and true stock shortage are distinct. The configured low
+  level drives the low-feed alert and refill planning; Days of Feed Remaining
+  names the first forecast date on which projected stock for the silo and item
+  is insufficient. Neither silently replaces the other.
+- Next-diet readiness follows both rules in the CSV: the candidate silo must
+  match the feed item's handling type (`BULK` or `BAGGED`), and a silo that
+  still contains another item requires an authorized changeover. Existing D9
+  still prevents two linked positive-stock silos from supplying the same item
+  to one shed.
+- Refill recommendation considers the full shortage, safety stock, confirmed
+  inbound and silo free capacity. Free capacity constrains an individual
+  delivery; it does not erase the remaining requirement. The requirement may
+  therefore be split across more than one delivery/trip. The CSV's 30,000 KG
+  figure is a truck **target**, not a hard farm cap.
+- Requisition-deadline notification must be automatic rather than dependent on
+  somebody opening the Alerts page. It remains `IN_APP` only.
+- Feed alerts are visible to `OPERATIONAL_ADMIN` (the Head of Farms business
+  persona) and `FARM_MANAGER` users, subject to their existing
+  LOB/operational-area or farm scope. This is visibility, not permission to
+  approve a requisition.
+
+The CSV states but does not fully specify several implementation choices. The
+decisions below resolve the configuration ownership, truck warning percentage,
+deadline time, five-week boundary and week numbering. The retained
+nine-to-four-farm database policy remains open.
+
+Rishi confirmed that the local `nf_devco` database is disposable and may be
+rebuilt to the approved four-farm fixture. That permission applies only to the
+local demo database. A retained database and the RDP/test database remain
+protected: their nine-to-four-farm transition is still blocked until the
+retention policy, backup and exact target are approved. Local rebuild success
+must not be presented as proof that the retained transition is safe.
+
+The test-server tenant databases contain presentation data entered by testers
+and that data must be retained. They are not disposable demo databases and
+must not be rebuilt or reseeded. Rishi will provide the exact test-server data
+and tenant inventory during migration preparation. Before any tenant migration
+is applied, take and verify backups, review the generated SQL and preservation
+plan against that inventory, run the local and read-only/verification steps,
+and obtain explicit application approval. Until those prerequisites are met,
+work may prepare additive tenant-agnostic migrations and verify them on local
+`nf_devco`, but it must not apply them to the test server.
+
+## 2026-10-01 — Common requisition approval precedes release
+
+Rishi confirmed that approval and release are separate actions. A common
+requisition begins Open, is submitted for approval, becomes Approved only
+after the approval decision, and is then explicitly Released. Store shipment
+or Purchase/BC processing must not begin from a merely approved document;
+Release is the subsequent control that authorizes fulfilment. Rejection returns
+no released authority, and neither approval nor release may be inferred from
+the other.
+
+## 2026-10-01 — Feed integration, common requisition controls and farm personas
+
+Rishi approved the proposed Feed Forecast/Common Requisition integration
+recommendations, with the following clarifications.
+
+`FARM_MANAGER` is a distinct user type and persona, not a role label placed on
+a `STANDARD_USER`. Both are bound to one active farm, but their authority is
+different: `FARM_MANAGER` manages that farm's forecasts, counts, requisitions
+and approvals, while `STANDARD_USER` is the farm worker and receives only the
+operational data-entry permissions granted to that worker. `FARM_MANAGER` sits
+between `OPERATIONAL_ADMIN` and `STANDARD_USER` in the user hierarchy. "Head
+of Farms" is the business name for the existing `OPERATIONAL_ADMIN`, not
+another user type. That user controls and can see all authorized farms in the
+active LOB/operational area, but not farms outside that scope. Alert recipients
+and escalations described as `HEAD_OF_FARM` must therefore resolve to
+`OPERATIONAL_ADMIN`; the UI shows the business label "Head of Farms" while
+retaining `OPERATIONAL_ADMIN` as the stored technical user type, without
+introducing a second security principal. Department, approval and
+document permissions still apply inside those visibility boundaries.
+
+Feed deadlines are company configuration, not constants. Company Settings owns
+the production weekday, submission cutoff and reminder time in the company's
+timezone; the approved Triple C starting configuration is Friday 18:00 critical
+reminder, Saturday 12:00 submission cutoff and `Africa/Harare`. A configured
+farm override may refine the company schedule. Jobs and displayed deadlines
+must read the effective configuration and must not embed those example values
+in rule code.
+
+Stock-variance monetary evaluation uses the company's Finance base currency;
+all application amounts remain based in that currency. Both base currency and
+local currency are explicitly selected by the user in company configuration;
+local currency is not inferred from Country Master and no separate feed
+currency is introduced. The current company-visible entry in Exchange Rate
+Master supplies the local-currency display/conversion, not an historical rate
+selected by the physical-count date. Exchange Rate Master currently stores
+dated rows and does not require an explicit current marker. For the selected
+company and currency pair, "current" is the company-visible row with the newest
+`rate_date`; if rows share that date, the newest `created_at` is the deterministic
+tie-break. The selected rate row and rate must be snapshotted on the variance
+decision so later master changes do not rewrite its evidence.
+If base and local currency are the same, the conversion is 1 and no rate row is
+required. If they differ and no current pair exists, monetary escalation cannot
+be evaluated and the workflow must report the missing configuration rather
+than invent a rate.
+
+The approved percentage escalation rule is `variance percentage >= 5.00%`.
+The monetary threshold
+remains nullable and unconfigured until Triple C supplies it; absence of that
+threshold does not create a zero-value threshold. Both remain company settings
+so a later approved change does not require rule-code changes.
+
+Stock variance uses the existing Reason Master, not free text or a new reason
+table. A Reason's Code follows the configured Number Series and remains
+manually editable when that series allows manual numbers, exactly like other
+masters. Every nonzero variance requires one of those configured reasons.
+
+Common requisitions use separate approval, document and fulfilment state.
+Approval precedes Release. Procurement releases an approved Purchase; an
+authorized sender-department user releases an approved Store transfer; and a
+future Feed Mill Manager releases an approved feed requisition after mill
+consolidation. Until that mill phase exists, feed stops truthfully at Approved.
+Rejected documents return to Open for correction while retaining their decision
+history. Store applies only to Item requisitions; Fixed Asset and Service use
+Purchase. Partial shipment and receipt are allowed without over-shipment or
+over-receipt; Direct Transfer may post a selected partial shipment and its
+matching receipt together when the user has the explicit Direct Transfer
+permission. Purchase release without a working BC connection records
+`BC_PENDING` and never claims a successful sync.
+
+A user must not approve a manually created requisition that they created.
+System-generated feed drafts may be reviewed and approved by the Farm Manager
+for that farm; a manually created requisition from that same Farm Manager must
+go to the LOB's `OPERATIONAL_ADMIN` (Head of Farms) or another authorized
+approver. `STANDARD_USER` is the farm-worker persona: it may enter permitted
+physical counts and create or edit Open requisitions, but it has no approval,
+release, shipment, receipt or Direct Transfer authority unless an explicit
+permission is granted through the existing permission model.
+
+Department matching uses shared master identities rather than text comparison:
+Department is represented by a company Cost Center Master row of type
+`DEPARTMENT`, and both users and locations reference that identity. The sender
+department is limited by the source location and the user's authorization.
+Existing Inventory Ledger and financial/cost posting remain the Item Ledger and
+Value Entry evidence; a duplicate ledger is not created. Common Purchase and
+Feed Requisitions use separate company-owned Number Series.
+
+For feed configuration, supported SILO fields return to the SILO record in
+Location Master; the duplicate Silo Feed Setup screen is removed only after
+field and validation parity is verified. Company owns forecast horizon,
+schedules, truck target, bulk multiple and alert percentage; farm may override
+lead time and submission schedule; the feed item owns bag weight; and the silo
+owns capacity, thresholds, reorder days and feed type. An effective farm
+lifecycle row overrides its company row; missing or overlapping effective rows
+block only the affected forecast line. If several compatible silos remain,
+explicit destination configuration is required rather than an arbitrary pick.
+The approaching-truck warning begins at a configurable 90% and never turns the
+truck target into a hard cap.
+
+Generated July-June Reporting Periods remain inactive drafts until an
+administrator reviews and activates them. Physical count has a configurable
+Sunday 08:00 Triple C starting schedule and may also run on demand. Every
+nonzero variance requires Farm Manager approval before ledger posting. The
+later Tentative Plan uses five completed Wednesday-Tuesday weeks, normalizes
+actual consumption against lifecycle-expected consumption, and uses the ISO
+week containing the production date for `YYYYWW` when that deferred plan enters
+scope.

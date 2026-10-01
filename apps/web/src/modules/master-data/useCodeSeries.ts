@@ -177,10 +177,14 @@ export function useCodeSeries(key: string, form: Record<string, unknown>, enable
       if (!managedCode && !preview) return value;
       // Auto-generated (manual_nos = false): always show the live preview
       if (serial || (!allowManual && preview)) return preview;
-      // Manual (manual_nos = true): user value is authoritative; provide preview as initial suggestion only when undefined or null
-      if (allowManual && preview && (value === undefined || value === null)) {
-        return preview;
-      }
+      // Manual (manual_nos = true): the user's value is authoritative. The
+      // suggested code fills the field exactly once — openCreate seeds it and
+      // the preview-arrival effect in MasterDataTable fills it before the first
+      // edit — but this reader must NOT re-suggest into an empty field:
+      // 3595d134 made it refill whenever the field was empty, so clearing the
+      // code to type a custom one snapped straight back to the series preview
+      // and no custom code could ever be typed.
+      if ((value === undefined || value === null) && preview) return preview;
       return value;
     },
     loading: canGenerate && enabled && activeSettings === undefined && !result?.error,
