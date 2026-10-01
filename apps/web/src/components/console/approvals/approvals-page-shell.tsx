@@ -16,6 +16,7 @@ import {
   Stethoscope,
   Building2,
   Plus,
+  ClipboardList,
 } from "lucide-react";
 import { getStoredUser, NavUser, getActiveCompanyId, getActiveOperationalAreaId } from "@/hooks/useAuth";
 import { api } from "@/services/api-client";
@@ -27,6 +28,7 @@ import { Dialog } from "@/components/ui/dialog";
 import { TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { useCompanyCurrency, formatMoney, type CompanyCurrency } from "@/hooks/useCompanyCurrency";
 import { FeedRequisitionApprovalDetail } from "./feed-requisition-approval-detail";
+import { RequisitionApprovalDetail } from "./requisition-approval-detail";
 
 export type ApprovalStatus = "PENDING" | "APPROVED" | "REJECTED";
 
@@ -340,6 +342,8 @@ export function ApprovalsPageShell({ activeTab }: { activeTab: ApprovalStatus })
         return <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-[var(--radius-xs)] bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/20"><Layers className="h-3 w-3" /> {t("apDocType_STAGE_CLOSE")}</span>;
       case "FEED_REQUISITION":
         return <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-[var(--radius-xs)] bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/20"><Wheat className="h-3 w-3" /> {t("apDocType_FEED_REQUISITION")}</span>;
+      case "REQUISITION":
+        return <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-[var(--radius-xs)] bg-sky-500/10 text-sky-700 dark:text-sky-400 border border-sky-500/20"><ClipboardList className="h-3 w-3" /> {t("apDocType_REQUISITION")}</span>;
       default:
         return <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-[var(--radius-xs)] bg-rose-500/10 text-rose-700 dark:text-rose-400 border border-rose-500/20"><Stethoscope className="h-3 w-3" /> {t("apDocType_VET_DISPOSAL")}</span>;
     }
@@ -588,6 +592,9 @@ export function ApprovalsPageShell({ activeTab }: { activeTab: ApprovalStatus })
                 remarks={approverRemarks}
                 onRemarksChange={setApproverRemarks}
               />
+            )}
+            {viewingItem.doc_type === "REQUISITION" && viewingItem.document_id && (
+              <RequisitionApprovalDetail documentId={viewingItem.document_id} />
             )}
             {viewingItem.status === "APPROVED" && viewingItem.approver && (
               <div className="p-2.5 rounded-[var(--radius-xs)] bg-emerald-500/10 border border-emerald-500/20 text-emerald-700 dark:text-emerald-400">

@@ -72,6 +72,26 @@ export class RequisitionController {
     return { success: true, message: 'Requisition rejected.', data };
   }
 
+  @Post(':id/release')
+  @RequirePermission('PROCUREMENT', 'REQUISITION', 'approve')
+  @ApiOperation({ summary: 'Release an approved requisition — Purchase records BC_PENDING, Store becomes TRANSFER_OPEN. Approval never implies release.' })
+  @ApiParam({ name: 'id' })
+  async release(@Param('id') id: string, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const data = await this.requisitions.release(id, tenantId, req.user);
+    return { success: true, message: 'Requisition released.', data };
+  }
+
+  @Post(':id/reopen')
+  @RequirePermission('PROCUREMENT', 'REQUISITION', 'create')
+  @ApiOperation({ summary: 'Return a rejected requisition to an editable Open draft; the decision history stays on its approval request' })
+  @ApiParam({ name: 'id' })
+  async reopen(@Param('id') id: string, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const data = await this.requisitions.reopen(id, tenantId, req.user);
+    return { success: true, message: 'Requisition reopened.', data };
+  }
+
   @Post(':id/link-po')
   @RequirePermission('PROCUREMENT', 'REQUISITION', 'approve')
   @ApiOperation({ summary: 'Store the D365BC PO number on an approved requisition (§7.2 step 7)' })

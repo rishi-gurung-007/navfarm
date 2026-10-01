@@ -334,3 +334,62 @@ export function legacyStatusFor(approvalStatus: ApprovalStatus, documentStatus: 
   if (approvalStatus === 'APPROVED') return 'APPROVED';
   return 'DRAFT';
 }
+
+// --------------------------------------------------------------------------------
+// Release — approval never implies release, release never bypasses approval
+// (decisions.md, 1 Oct: "Common requisition approval precedes release").
+// --------------------------------------------------------------------------------
+
+export interface ReleaseState {
+  status?: string | null;
+  approval_status?: string | null;
+  document_status?: string | null;
+  fulfilment_status?: string | null;
+  integration_status?: string | null;
+  released_by?: string | null;
+  /** 'STORE' releases to TRANSFER_OPEN; 'PURCHASE' records BC_PENDING. Default STORE. */
+  purpose?: string | null;
+}
+
+/**
+ * May this document be released, and what does release write? The guard reads
+ * the projected states, so a legacy row (status APPROVED only) releases
+ * exactly like a new row. On success the result is the full write set:
+ * `document_status RELEASED`, the legacy `status` left at APPROVED (release is
+ * additive authority, so old callers still read APPROVED), and for a Store
+ * document `fulfilment_status TRANSFER_OPEN` — the internal transfer Task 10
+ * fulfils. A Purchase document keeps NOT_APPLICABLE fulfilment and records
+ * BC_PENDING integration instead: Business Central is not connected, so the
+ * release records a pending handoff and never claims a sync.
+ */
+export function releaseTransition(row: ReleaseState): {
+  status: string;
+  approval_status: ApprovalStatus;
+  document_status: DocumentStatus;
+  fulfilment_status: FulfilmentStatus;
+  integration_status: IntegrationStatus;
+} {
+  const states = projectRequisitionStates(row);
+  if (states.document_status === 'CANCELLED') {
+    throw new BadRequestException('A cancelled requisition cannot be released.');
+  }
+  if (states.document_status === 'RELEASED') {
+    throw new BadRequestException('Requisition already released.');
+  }
+  if (states.approval_status !== 'APPROVED') {
+    throw new BadRequestException('A requisition must be approved before it can be released; approval never implies release.');
+  }
+  const isPurchase = row.purpose === 'PURCHASE';
+  return {
+    status: 'APPROVED',
+    approval_status: 'APPROVED', // unchanged by release, written explicitly
+    document_status: 'RELEASED',
+    fulfilment_status: isPurchase ? 'NOT_APPLICABLE' : 'TRANSFER_OPEN',
+    integration_status: isPurchase ? 'BC_PENDING' : 'NOT_APPLICABLE',
+  };
+}
+
+/** REJECTED → OPEN: the document is correctable again; the decision history stays on the approval request. */
+export function reopenTransition(): { status: string; approval_status: ApprovalStatus; document_status: DocumentStatus; approval_request_id: null } {
+  return { status: 'DRAFT', approval_status: 'OPEN', document_status: 'OPEN', approval_request_id: null };
+}

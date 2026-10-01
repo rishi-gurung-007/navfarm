@@ -39,7 +39,7 @@ function makeDb() {
   return { db, selectResults, setCalls, insertValues, select, insert, update };
 }
 
-const approvalsMock = () => ({ create: jest.fn(), approve: jest.fn(), reject: jest.fn() });
+const approvalsMock = () => ({ create: jest.fn(), approve: jest.fn(), reject: jest.fn(), submitFarmDocument: jest.fn() });
 
 const departmentRow = (id: string, over: Record<string, unknown> = {}) => ({
   cost_center_id: id, tenant_id: TENANT, company_id: 'co-1',
@@ -300,7 +300,7 @@ describe('RequisitionService.submit and decide — the new states are written be
   it('submit raises the approval request and sets PENDING_APPROVAL on both dimensions', async () => {
     const { db, selectResults, setCalls } = makeDb();
     const approval = approvalsMock();
-    approval.create.mockResolvedValue({ request_id: 'ar-1' });
+    approval.submitFarmDocument = jest.fn(async () => 'ar-1');
     selectResults.push(
       [headerRow({ status: 'DRAFT', approval_status: 'OPEN', document_status: 'OPEN' })], // row lock
       [headerRow({ status: 'PENDING_APPROVAL', approval_status: 'PENDING_APPROVAL', approval_request_id: 'ar-1' })], // read back
@@ -309,8 +309,8 @@ describe('RequisitionService.submit and decide — the new states are written be
     const service = new RequisitionService(transactionCls(db), approval as any);
     const result = await service.submit('req-1', 'weekly pull', TENANT, { userId: 'u1', email: 'a@example.test', userType: 'STANDARD_USER' });
 
-    expect(approval.create).toHaveBeenCalledWith(
-      expect.objectContaining({ doc_type: 'REQUISITION' }), TENANT, expect.anything(),
+    expect(approval.submitFarmDocument).toHaveBeenCalledWith(
+      expect.objectContaining({ documentType: 'REQUISITION', documentId: 'req-1' }), TENANT, expect.anything(),
     );
     expect(setCalls[0]).toMatchObject({ status: 'PENDING_APPROVAL', approval_status: 'PENDING_APPROVAL', approval_request_id: 'ar-1' });
     expect(result.approval_status).toBe('PENDING_APPROVAL');

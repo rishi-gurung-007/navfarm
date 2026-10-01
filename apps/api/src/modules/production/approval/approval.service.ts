@@ -404,9 +404,12 @@ export class ApprovalService {
       documentType: string;
       documentId: string;
       documentNo: string;
-      farmId: string;
+      /** A farm-level document is scoped to this farm in the inbox; a company-level one (farmId undefined) is visible to unrestricted approvers only. */
+      farmId?: string;
       companyId: string;
       title: string;
+      /** Overrides the derived "CODE — Name" label (company-level documents may name their own origin). */
+      location_label?: string | null;
       urgency?: 'HIGH' | 'MEDIUM' | 'LOW';
       itemOrStage?: string | null;
       requestedQty?: string | null;
@@ -418,18 +421,22 @@ export class ApprovalService {
   ): Promise<string> {
     assertCompanyInScope(farmScope(this.cls), doc.companyId);
     return withTenantTransaction(this.cls, async () => {
-      const [farm] = await this.db
-        .select({ code: schema.locationMaster.location_code, name: schema.locationMaster.location_name })
-        .from(schema.locationMaster)
-        .where(and(
-          eq(schema.locationMaster.location_id, doc.farmId),
-          eq(schema.locationMaster.company_id, doc.companyId),
-          eq(schema.locationMaster.tenant_id, tenantId),
-          eq(schema.locationMaster.location_type, 'FARM'),
-          isNull(schema.locationMaster.deleted_at),
-        ))
-        .limit(1);
-      if (!farm) throw new NotFoundException('Farm not found.');
+      let locationLabel: string | null = null;
+      if (doc.farmId) {
+        const [farm] = await this.db
+          .select({ code: schema.locationMaster.location_code, name: schema.locationMaster.location_name })
+          .from(schema.locationMaster)
+          .where(and(
+            eq(schema.locationMaster.location_id, doc.farmId),
+            eq(schema.locationMaster.company_id, doc.companyId),
+            eq(schema.locationMaster.tenant_id, tenantId),
+            eq(schema.locationMaster.location_type, 'FARM'),
+            isNull(schema.locationMaster.deleted_at),
+          ))
+          .limit(1);
+        if (!farm) throw new NotFoundException('Farm not found.');
+        locationLabel = `${farm.code} — ${farm.name ?? ''}`.trim();
+      }
       const [open] = await this.db
         .select({ request_id: schema.approvalRequest.request_id })
         .from(schema.approvalRequest)
@@ -475,9 +482,9 @@ export class ApprovalService {
         requested_by: userPayload?.userId || null,
         requestor_label: userPayload?.fullName || userPayload?.email || null,
         requestor_role: (userPayload?.userType || '').replace(/_/g, ' ') || null,
-        location_label: `${farm.code} — ${farm.name ?? ''}`.trim().slice(0, 200),
+        location_label: (doc.location_label || locationLabel)?.slice(0, 200) ?? null,
         operational_area_id: areaId,
-        farm_id: doc.farmId,
+        farm_id: doc.farmId ?? null,
         document_id: doc.documentId,
         urgency: doc.urgency || 'MEDIUM',
         item_or_stage: doc.itemOrStage || null,
@@ -494,7 +501,7 @@ export class ApprovalService {
         action: 'CREATE',
         entityName: 'approval_request',
         entityId: requestId,
-        newValues: { doc_no: doc.documentNo, doc_type: doc.documentType, title: doc.title, document_id: doc.documentId, farm_id: doc.farmId },
+        newValues: { doc_no: doc.documentNo, doc_type: doc.documentType, title: doc.title, document_id: doc.documentId, farm_id: doc.farmId ?? null },
       });
       return requestId;
     });

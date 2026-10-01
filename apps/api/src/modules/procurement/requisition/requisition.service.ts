@@ -40,9 +40,17 @@ import {
   lineBalances,
   normalizeCommonDocType,
   projectRequisitionStates,
+  releaseTransition,
+  reopenTransition,
 } from './requisition.rules';
 
 const REQUISITION_MODULE = { moduleCode: 'PROCUREMENT', resource: 'REQUISITION' } as const;
+
+/** The approval-engine document type for a common requisition. */
+export const COMMON_REQUISITION_DOC_TYPE = 'REQUISITION';
+
+/** UTC, whole-second — the one timestamp convention approved_at/POSTED use. */
+const nowTs = (): string => new Date().toISOString().slice(0, 19).replace('T', ' ');
 
 @Injectable()
 export class RequisitionService {
@@ -55,6 +63,19 @@ export class RequisitionService {
     const tenantDb = this.cls.get<MySql2Database<typeof schema>>('tenantDb');
     if (!tenantDb) throw new Error('Tenant database connection context not established.');
     return tenantDb;
+  }
+
+  /**
+   * D25: tells the approval engine what a decision on a common requisition
+   * request does — the same state moves the requisition API's own endpoints
+   * make, reached from the Approvals inbox. Registered at start-up so the
+   * engine never imports this module (it imports the engine).
+   */
+  onModuleInit(): void {
+    this.approvals.registerDocumentHandler(COMMON_REQUISITION_DOC_TYPE, {
+      decide: (request, decision, remarks, tenantId, user) => this.decideFromApproval(request, decision, remarks, tenantId, user),
+      withdraw: (request, tenantId, user) => this.withdrawFromApproval(request, tenantId, user),
+    });
   }
 
   private scopeConditions() {
@@ -294,7 +315,12 @@ export class RequisitionService {
     return rows.map((row) => ({ ...row, ...projectRequisitionStates(row) }));
   }
 
-  /** DRAFT → PENDING_APPROVAL, raising the linked approval_request (§17.2). */
+  /**
+   * DRAFT → PENDING_APPROVAL, raising the linked approval_request (§17.2).
+   * The request carries the document_id, so the inbox decides it through the
+   * registered handler; a farm requisition is visible to that farm's
+   * approvers, a company-level one to unrestricted approvers (D25).
+   */
   async submit(requisitionId: string, note: string | undefined, tenantId: string, userPayload?: { userId?: string; email?: string; userType?: string }) {
     return withTenantTransaction(this.cls, async () => {
       const [row] = await this.db
@@ -309,20 +335,21 @@ export class RequisitionService {
         .limit(1)
         .for('update');
       if (!row) throw new NotFoundException(`Requisition '${requisitionId}' not found.`);
+      if (row.doc_type === 'FEED') {
+        throw new BadRequestException('A feed requisition is submitted from the Feed Forecast page, not here.');
+      }
       if (row.status !== 'DRAFT') throw new BadRequestException(`Requisition ${row.req_no} is ${row.status} and cannot be submitted.`);
 
-      const farm = row.farm_id
-        ? (await this.db.select({ code: schema.locationMaster.location_code, name: schema.locationMaster.location_name })
-            .from(schema.locationMaster).where(eq(schema.locationMaster.location_id, row.farm_id)).limit(1))[0]
-        : undefined;
-      const created = await this.approvals.create(
+      const requestId = await this.approvals.submitFarmDocument(
         {
-          company_id: row.company_id,
-          doc_type: 'REQUISITION',
+          documentType: COMMON_REQUISITION_DOC_TYPE,
+          documentId: row.requisition_id,
+          documentNo: row.req_no,
+          farmId: row.farm_id ?? undefined,
+          companyId: row.company_id,
           title: `Requisition ${row.req_no}${note ? ` — ${note}` : ''}`,
-          location_label: farm ? `${farm.code} — ${farm.name ?? ''}`.trim() : undefined,
           urgency: 'MEDIUM',
-          item_or_stage: row.doc_type,
+          itemOrStage: row.doc_type,
           justification: row.justification ?? undefined,
         },
         tenantId,
@@ -330,7 +357,7 @@ export class RequisitionService {
       );
       await this.db
         .update(schema.requisition)
-        .set({ status: 'PENDING_APPROVAL', approval_status: 'PENDING_APPROVAL', approval_request_id: created.request_id, updated_by: userPayload?.userId ?? null })
+        .set({ status: 'PENDING_APPROVAL', approval_status: 'PENDING_APPROVAL', document_status: 'OPEN', approval_request_id: requestId, updated_by: userPayload?.userId ?? null })
         .where(eq(schema.requisition.requisition_id, requisitionId));
       return this.findOne(requisitionId, tenantId);
     });
@@ -361,6 +388,18 @@ export class RequisitionService {
       if (row.status !== 'PENDING_APPROVAL') {
         throw new BadRequestException(`Requisition ${row.req_no} is ${row.status}, not awaiting approval.`);
       }
+      // D25 (Rishi, 1 Oct): a person may not approve a requisition they
+      // created — the rule keys on how the document was raised and who raised
+      // it, not on the user's type, so an admin is refused on their own manual
+      // document exactly like anyone else.
+      if (
+        decision === 'APPROVED'
+        && userPayload?.userId
+        && row.source === 'MANUAL_ENTRY'
+        && (row.created_by === userPayload.userId || row.requester_user_id === userPayload.userId)
+      ) {
+        throw new ForbiddenException('You may not approve a requisition you created. Another authorized approver must decide it.');
+      }
       if (!row.approval_request_id) {
         throw new BadRequestException(`Requisition ${row.req_no} has no linked approval request.`);
       }
@@ -390,6 +429,190 @@ export class RequisitionService {
         .where(eq(schema.requisition.requisition_id, requisitionId));
       return this.findOne(requisitionId, tenantId);
     });
+  }
+
+  /**
+   * Release (Task 9, decisions 1 Oct): the control that authorizes fulfilment
+   * after approval — never a consequence of it. An approved Purchase records
+   * BC_PENDING; an approved Store becomes TRANSFER_OPEN, the state Task 10's
+   * shipments draw against.
+   *
+   * Who may release: Procurement for a Purchase document; the sender
+   * department (the requester's own department identity, falling back to the
+   * REQ/REQUISITION create grant when the document carries no department) for
+   * a Store document. The document is locked FOR UPDATE inside the tenant
+   * transaction, so two concurrent releases cannot both pass the state check.
+   */
+  async release(requisitionId: string, tenantId: string, userPayload?: { userId?: string; userType?: string }) {
+    return withTenantTransaction(this.cls, async () => {
+      const [row] = await this.db
+        .select()
+        .from(schema.requisition)
+        .where(and(
+          eq(schema.requisition.requisition_id, requisitionId),
+          eq(schema.requisition.tenant_id, tenantId),
+          isNull(schema.requisition.deleted_at),
+          ...this.scopeConditions(),
+        ))
+        .limit(1)
+        .for('update');
+      if (!row) throw new NotFoundException(`Requisition '${requisitionId}' not found.`);
+      if (row.doc_type === 'FEED') {
+        throw new BadRequestException('A feed requisition is released by the Feed Mill Manager after mill consolidation; feed stops at Approved for now.');
+      }
+      if (row.purpose === 'PURCHASE') {
+        await this.assertReleasePurchase(userPayload);
+      } else {
+        await this.assertReleaseStore(row, userPayload);
+      }
+      const transition = releaseTransition({ ...row, purpose: row.purpose });
+      await this.db
+        .update(schema.requisition)
+        .set({
+          ...transition,
+          released_by: userPayload?.userId ?? null,
+          released_at: nowTs(),
+          updated_by: userPayload?.userId ?? null,
+        })
+        .where(eq(schema.requisition.requisition_id, requisitionId));
+      return this.findOne(requisitionId, tenantId);
+    });
+  }
+
+  private async assertReleasePurchase(userPayload?: { userId?: string; userType?: string }): Promise<void> {
+    const may = await userHasPermission(this.db, userPayload, { moduleCode: 'PROCUREMENT', resource: 'REQUISITION', action: 'approve' });
+    if (!may) throw new ForbiddenException('Only Procurement may release a Purchase requisition.');
+  }
+
+  private async assertReleaseStore(
+    row: typeof schema.requisition.$inferSelect,
+    userPayload?: { userId?: string; userType?: string },
+  ): Promise<void> {
+    // The sender department releases the transfer. The requester's own
+    // department identity decides; without one on the document (legacy rows),
+    // the create grant on REQ/REQUISITION is the fallback authority.
+    if (row.sender_department_id && userPayload?.userId) {
+      const [user] = await this.db
+        .select({ department_id: schema.userMaster.department_id })
+        .from(schema.userMaster)
+        .where(eq(schema.userMaster.user_id, userPayload.userId))
+        .limit(1);
+      if (user?.department_id && user.department_id !== row.sender_department_id) {
+        throw new ForbiddenException('Only the sender department may release a Store requisition.');
+      }
+      if (user?.department_id) return;
+    }
+    const may = await userHasPermission(this.db, userPayload, { moduleCode: 'PROCUREMENT', resource: 'REQUISITION', action: 'create' });
+    if (!may) throw new ForbiddenException('Only the sender department may release a Store requisition.');
+  }
+
+  /**
+   * Reopen a rejected requisition: back to an editable Open draft. The decided
+   * approval request is detached — a new submit raises a new one — and the
+   * decision history stays on the old request and in the audit trail.
+   */
+  async reopen(requisitionId: string, tenantId: string, userPayload?: { userId?: string }) {
+    return withTenantTransaction(this.cls, async () => {
+      const [row] = await this.db
+        .select()
+        .from(schema.requisition)
+        .where(and(
+          eq(schema.requisition.requisition_id, requisitionId),
+          eq(schema.requisition.tenant_id, tenantId),
+          isNull(schema.requisition.deleted_at),
+          ...this.scopeConditions(),
+        ))
+        .limit(1)
+        .for('update');
+      if (!row) throw new NotFoundException(`Requisition '${requisitionId}' not found.`);
+      if (row.status !== 'REJECTED' && row.approval_status !== 'REJECTED') {
+        throw new BadRequestException('Only a rejected requisition can be reopened.');
+      }
+      await this.db
+        .update(schema.requisition)
+        .set({ ...reopenTransition(), updated_by: userPayload?.userId ?? null })
+        .where(eq(schema.requisition.requisition_id, requisitionId));
+      return this.findOne(requisitionId, tenantId);
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // The Approvals inbox's view of a common requisition (D25 handler). The
+  // request is locked by the engine; these methods move the document inside
+  // that same transaction.
+  // ---------------------------------------------------------------------------
+
+  private async lockForApproval(request: { request_id: string; document_id: string | null; company_id: string }, tenantId: string) {
+    const [row] = await this.db
+      .select()
+      .from(schema.requisition)
+      .where(and(
+        eq(schema.requisition.requisition_id, request.document_id ?? ''),
+        eq(schema.requisition.tenant_id, tenantId),
+        eq(schema.requisition.company_id, request.company_id),
+        isNull(schema.requisition.deleted_at),
+      ))
+      .limit(1)
+      .for('update');
+    if (!row || row.approval_request_id !== request.request_id) {
+      throw new NotFoundException('Requisition not found.');
+    }
+    if (row.status !== 'PENDING_APPROVAL') {
+      throw new BadRequestException(`Requisition ${row.req_no} is not waiting for this approval.`);
+    }
+    return row;
+  }
+
+  private async decideFromApproval(
+    request: { request_id: string; document_id: string | null; company_id: string; requested_by: string | null },
+    decision: 'APPROVED' | 'REJECTED',
+    remarks: string | null,
+    tenantId: string,
+    userPayload?: { userId?: string },
+  ): Promise<void> {
+    const row = await this.lockForApproval(request, tenantId);
+    // D25 (Rishi, 1 Oct): a person may not approve a requisition they created.
+    // Common drafts are manual by construction, so there is no system-source
+    // exception here (the feed document's own handler has one).
+    if (
+      decision === 'APPROVED'
+      && userPayload?.userId
+      && row.source !== 'AUTO_FORECAST'
+      && (row.created_by === userPayload.userId || row.requester_user_id === userPayload.userId)
+    ) {
+      throw new ForbiddenException('You may not approve a requisition you created. Another authorized approver must decide it.');
+    }
+    if (decision === 'REJECTED' && !remarks?.trim()) {
+      throw new BadRequestException('A rejection reason is required.');
+    }
+    await this.db
+      .update(schema.requisition)
+      .set({
+        status: decision,
+        approval_status: decision,
+        document_status: decision === 'APPROVED' ? 'APPROVED' : 'OPEN',
+        updated_by: userPayload?.userId ?? null,
+      })
+      .where(eq(schema.requisition.requisition_id, row.requisition_id));
+  }
+
+  /** A withdrawn request hands the requisition back as an Open draft. */
+  private async withdrawFromApproval(
+    request: { request_id: string; document_id: string | null; company_id: string },
+    tenantId: string,
+    userPayload?: { userId?: string },
+  ): Promise<void> {
+    const row = await this.lockForApproval(request, tenantId);
+    await this.db
+      .update(schema.requisition)
+      .set({
+        status: 'DRAFT',
+        approval_status: 'OPEN',
+        document_status: 'OPEN',
+        approval_request_id: null,
+        updated_by: userPayload?.userId ?? null,
+      })
+      .where(eq(schema.requisition.requisition_id, row.requisition_id));
   }
 
   /** §7.2 step 7: the D365BC PO number lands on the approved requisition. */
