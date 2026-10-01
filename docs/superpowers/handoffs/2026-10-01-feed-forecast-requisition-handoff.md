@@ -23,15 +23,16 @@ those plans or interpret their unticked boxes as unfinished work.
 - Design decisions: complete.
 - Design/spec document: complete.
 - Executable implementation plan: complete.
-- Feature implementation under this plan: not started.
-- New migration SQL: not created.
-- Local `nf_devco` migration application: not performed by this planning work.
-- Test-server migration: blocked on verified backups, tenant/data inventory and
-  explicit application approval.
-- Existing uncommitted work at handoff: `docs/decisions.md`. Preserve it.
+- Feature implementation (Tasks 1–11): complete and committed across `feat/feed-forecast-requisition-integration`.
+- Additive migrations (Task 12): 0135–0140 authored, tested, and rehearsed with 100% data preservation.
+- Full verification (Task 13): complete; report documented in `docs/VERIFICATION-2026-10-01-feed-forecast-requisition-integration.md`.
+  - API tests: 161 suites / 1,918 tests passed uncached.
+  - Web tests: 78 suites / 466 tests passed uncached.
+  - Typecheck: 0 errors across `api`, `web`, `web-e2e`.
+  - Web lint: exactly 93 errors (0 new errors, baseline maintained).
+  - Production builds: `api:build` and `web:build` succeeded cleanly.
+- Test-server migration: BLOCKED on verified backups, tenant/data inventory and explicit application approval from Rishi.
 
-Start with **Task 1** of the implementation plan. Write the failing tests before
-changing production code.
 
 ## What already exists and must be preserved
 
@@ -148,7 +149,7 @@ Tentative/Actual plan. Preserve stable references for those later phases.
 
 ## Immediate next action
 
-Execute Task 1 from the plan: add failing tests for the `FARM_MANAGER` hierarchy,
-farm scope, assignment rules, auth payload and legacy `HEAD_OF_FARM` alert
-mapping. Do not create a migration for Task 1; `user_type` is already a varchar
-and migration ownership is centralized in Task 12.
+1. Request final code review from Rishi for branch `feat/feed-forecast-requisition-integration`.
+2. Await verified test-server database backups, tenant inventory review, and explicit application approval from Rishi before unblocking `pnpm nx run api:db-migrate-all-tenants` on the server.
+3. Merge `feat/feed-forecast-requisition-integration` into the base branch once approved.
+
