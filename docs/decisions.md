@@ -2416,3 +2416,30 @@ later Tentative Plan uses five completed Wednesday-Tuesday weeks, normalizes
 actual consumption against lifecycle-expected consumption, and uses the ISO
 week containing the production date for `YYYYWW` when that deferred plan enters
 scope.
+
+## 2026-10-01 — runDownDate is the first day animals cannot be fed (supersedes Task 4 threshold ruling)
+
+Rishi's ruling, confirmed verbally 2026-10-01: **runDownDate is the first day
+demand exceeds the silo's available stock** (demand > opening balance, i.e. the
+day the animals cannot be fully fed from what is on hand). This supersedes the
+Task 4 implementation that set runDownDate to the first day the closing balance
+fell at or below the silo's low-level threshold.
+
+The threshold (lowLevelKg) remains meaningful for:
+- `shortfallKg` (the reorder deficit calculation);
+- `refillDate` and `requiredOn` (derived from runDownDate minus the silo's
+  reorder buffer and the farm's lead time);
+- operator alerts.
+
+`shortageDate` (first unmet demand day) is now identical to `runDownDate`
+because they use the same trigger condition. The old distinction
+("run-down reaches low level" vs. "stock is truly exhausted") is retired.
+
+Consequence: if a silo's balance stays above zero throughout the visible range
+but the threshold is breached, runDownDate is null (animals are not hungry)
+even though a shortfall still exists. That shortfall still drives a requisition;
+the visual run-down date just does not appear.
+
+All engine tests, service tests and web grid tests were re-pinned to the new
+semantics in commit `22b9bede` on `feat/feed-forecast-requisition-integration`.
+
