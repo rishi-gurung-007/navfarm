@@ -1,5 +1,6 @@
 import { companyCondition, masterScopeConditions } from '../../../common/master-data-scope';
 import { listFilterConditions, runMasterList } from '../../../common/master-list-query';
+import { assertDepartmentIdentity } from '../../../common/department-identity';
 import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { alias } from 'drizzle-orm/mysql-core';
@@ -353,6 +354,7 @@ export class LocationService {
       ...(dto.feed_production_weekday !== undefined ? { feed_production_weekday: dto.feed_production_weekday } : {}),
       downtime_days_required: dto.downtime_days_required ?? null,
       storage_name: dto.storage_name ?? null,
+      department_id: dto.department_id || null,
       feed_in_bags: null,
       // Left out entirely, not written as null, when the caller sends nothing
       // — the column defaults to 2 and 0 respectively, and a create that never
@@ -868,6 +870,18 @@ export class LocationService {
       throw new NotFoundException(`Company with ID '${dto.company_id}' not found.`);
     }
 
+    // Department is a Cost Center Master identity of type DEPARTMENT (decisions,
+    // 1 Oct) — validated before any type/parent/series work, and only when one
+    // is supplied, so every existing create is untouched.
+    if (dto.department_id) {
+      await assertDepartmentIdentity(this.db, {
+        tenantId,
+        companyId: dto.company_id,
+        departmentId: dto.department_id,
+        label: 'Department',
+      });
+    }
+
     const companyId = dto.company_id;
     const locationType = await this.resolveLocationType(dto.location_type, tenantId, companyId);
     const typeCode = locationType.type_code;
@@ -1279,6 +1293,15 @@ export class LocationService {
       }
     }
 
+    if (dto.department_id) {
+      await assertDepartmentIdentity(this.db, {
+        tenantId,
+        companyId: effectiveCompanyId,
+        departmentId: dto.department_id,
+        label: 'Department',
+      });
+    }
+
     const updates: any = {
       updated_by: userPayload?.userId || null,
       updated_at: toMysqlTimestamp(),
@@ -1351,6 +1374,7 @@ export class LocationService {
     if (dto.feed_truck_target_kg !== undefined) updates.feed_truck_target_kg = dto.feed_truck_target_kg;
     if (dto.feed_production_weekday !== undefined) updates.feed_production_weekday = dto.feed_production_weekday;
     if (dto.storage_name !== undefined) updates.storage_name = dto.storage_name;
+    if (dto.department_id !== undefined) updates.department_id = dto.department_id || null;
     if (dto.is_active !== undefined) updates.is_active = dto.is_active;
     if (dto.status !== undefined) updates.status = dto.status;
     if (dto.extension_config !== undefined) updates.extension_config = JSON.stringify(dto.extension_config);

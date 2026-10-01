@@ -198,6 +198,57 @@ describe('UserService user-type hierarchy', () => {
     });
   });
 
+  describe('department identity (Cost Center Master, type DEPARTMENT)', () => {
+    const departmentRow = (over: Record<string, unknown> = {}) => ({
+      cost_center_id: 'cc-1', tenant_id: TENANT, company_id: COMPANY,
+      cost_center_type: 'DEPARTMENT', is_active: true, deleted_at: null, ...over,
+    });
+
+    it('refuses a department_id that is not an active DEPARTMENT cost center of the company', async () => {
+      selectResults.push([{ tenant_id: TENANT }]); // the named company is in the requester's tenant
+      selectResults.push([{ location_id: FARM }]); // standard user needs its farm
+      selectResults.push([departmentRow({ cost_center_type: 'FARM' })]);
+      await expect(service.create({ ...createDto(), department_id: 'cc-1' }, requester('COMPANY_ADMIN')))
+        .rejects.toThrow('Department must be an active DEPARTMENT cost center of this company.');
+      expect(values).not.toHaveBeenCalled();
+    });
+
+    it('refuses a department belonging to another company', async () => {
+      selectResults.push([{ tenant_id: TENANT }]);
+      selectResults.push([{ location_id: FARM }]);
+      selectResults.push([departmentRow({ company_id: '99999999-9999-4999-8999-999999999999' })]);
+      await expect(service.create({ ...createDto(), department_id: 'cc-1' }, requester('COMPANY_ADMIN')))
+        .rejects.toThrow(BadRequestException);
+      expect(values).not.toHaveBeenCalled();
+    });
+
+    it('stores a valid department identity on the created user', async () => {
+      selectResults.push([{ tenant_id: TENANT }]);
+      selectResults.push([{ location_id: FARM }]);
+      selectResults.push([departmentRow()]);
+      selectResults.push([]); // no existing email
+      queueUser(target('STANDARD_USER', 'created'));
+      await service.create({ ...createDto(), department_id: 'cc-1' }, requester('COMPANY_ADMIN'));
+      expect(values).toHaveBeenCalledWith(expect.objectContaining({ department_id: 'cc-1' }));
+    });
+
+    it('refuses an update that names a non-DEPARTMENT cost center', async () => {
+      queueUser(target('COMPANY_ADMIN', 'requester-1'));
+      selectResults.push([departmentRow({ cost_center_type: 'PROJECT' })]);
+      await expect(service.update('requester-1', { department_id: 'cc-1' }, requester('COMPANY_ADMIN')))
+        .rejects.toThrow(BadRequestException);
+      expect(set).not.toHaveBeenCalled();
+    });
+
+    it('writes a valid department identity through the update path', async () => {
+      queueUser(target('COMPANY_ADMIN', 'requester-1'));
+      selectResults.push([departmentRow()]);
+      queueUser(target('COMPANY_ADMIN', 'requester-1'));
+      await service.update('requester-1', { department_id: 'cc-1' }, requester('COMPANY_ADMIN'));
+      expect(set).toHaveBeenCalledWith(expect.objectContaining({ department_id: 'cc-1' }));
+    });
+  });
+
   describe('remove', () => {
     it('forbids a COMPANY_ADMIN from deleting a TENANT_ADMIN', async () => {
       queueUser(target('TENANT_ADMIN'));

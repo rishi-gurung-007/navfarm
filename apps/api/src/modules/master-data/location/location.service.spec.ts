@@ -823,6 +823,54 @@ describe('LocationService canonical hierarchy', () => {
     expect(res[0].biosecurity_status).toBe('QUARANTINE_ACTIVE');
     expect(res[0].sick_animal_count).toBe(1);
   });
+
+  // Department on a location is the Cost Center Master identity of type
+  // DEPARTMENT (decisions.md, 1 Oct) — the sender department of a Store
+  // requisition is read from here, never compared as free text.
+  describe('department identity (Cost Center Master, type DEPARTMENT)', () => {
+    const departmentRow = (over: Record<string, unknown> = {}) => ({
+      cost_center_id: 'cc-dept', tenant_id: 'tenant-1', company_id: 'comp-1',
+      cost_center_type: 'DEPARTMENT', is_active: true, deleted_at: null, ...over,
+    });
+
+    it('refuses a department that is not an active DEPARTMENT cost center', async () => {
+      selectResults.push(
+        [company],
+        [departmentRow({ cost_center_type: 'WAREHOUSE' })],
+      );
+      await expect(service.create({
+        company_id: 'comp-1', location_name: 'Main Farm', location_address: 'Farm Road',
+        location_type: 'FARM', max_capacity: 100, capacity_uom: 'HEAD',
+        department_id: 'cc-dept',
+      }, 'tenant-1')).rejects.toThrow('Department must be an active DEPARTMENT cost center of this company.');
+      expect(txInsert).not.toHaveBeenCalled();
+    });
+
+    it('stores a valid department identity on the created location', async () => {
+      selectResults.push(
+        [company], [departmentRow()], [farmType], [uom], [series],
+        [{ location_id: 'loc-1', location_code: 'FARM-001', location_type: 'FARM', location_level: 1, department_id: 'cc-dept' }],
+      );
+      await service.create({
+        company_id: 'comp-1', location_name: 'Main Farm', location_address: 'Farm Road',
+        location_type: 'FARM', max_capacity: 100, capacity_uom: 'HEAD',
+        department_id: 'cc-dept',
+      }, 'tenant-1', { userId: 'user-1' });
+      const insertedRow = (txInsert.mock.results[0].value.values as jest.Mock).mock.calls[0][0];
+      expect(insertedRow.department_id).toBe('cc-dept');
+    });
+
+    it('refuses an update whose department is not a DEPARTMENT cost center', async () => {
+      selectResults.push(
+        [{ ...farmParent(), parent_location_id: null, storage_type: null, department_id: null }],
+        [farmType],
+        [departmentRow({ cost_center_type: 'PROJECT' })],
+      );
+      await expect(service.update('farm-1', { department_id: 'cc-dept' }, 'tenant-1'))
+        .rejects.toThrow('Department must be an active DEPARTMENT cost center of this company.');
+      expect(txUpdate).not.toHaveBeenCalled();
+    });
+  });
 });
 
 describe('hierarchical location codes', () => {

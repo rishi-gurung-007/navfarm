@@ -455,6 +455,11 @@ export const userMaster = mysqlTable('user_master', {
   user_type: varchar('user_type', { length: 20 }).default('STAFF').notNull(),
   employee_id: varchar('employee_id', { length: 50 }),
   department: varchar('department', { length: 100 }),
+  // Department as a Cost Center Master identity of type DEPARTMENT (decisions,
+  // 1 Oct: "both users and locations reference that identity"). The free-text
+  // `department` above stays as the legacy label for existing callers.
+  // Nullable and additive; validated in UserService, migration is Task 12.
+  department_id: varchar('department_id', { length: 36 }).references(() => costCenterMaster.cost_center_id, { onDelete: 'set null' }),
   designation: varchar('designation', { length: 100 }),
   profile_photo_url: varchar('profile_photo_url', { length: 500 }),
   lang_pref_id: varchar('lang_pref_id', { length: 36 }),
@@ -1203,6 +1208,11 @@ export const locationMaster = mysqlTable('location_master', {
   downtime_days_required: int('downtime_days_required'),
   last_cleaned_date: date('last_cleaned_date', { mode: 'string' }),
   last_disinfected_date: date('last_disinfected_date', { mode: 'string' }),
+  // The location's department — a Cost Center Master row of type DEPARTMENT
+  // (decisions, 1 Oct: "both users and locations reference that identity").
+  // A Store requisition's sender department is read from here, never compared
+  // as free text. Nullable and additive; migration is Task 12.
+  department_id: varchar('department_id', { length: 36 }).references(() => costCenterMaster.cost_center_id, { onDelete: 'set null' }),
   is_active: boolean('is_active').default(true).notNull(),
   status: varchar('status', { length: 20 }).default('ACTIVE').notNull(),
   created_by: varchar('created_by', { length: 36 }),
@@ -4287,10 +4297,38 @@ export const requisition = mysqlTable('requisition', {
   justification: text('justification'),
   approval_request_id: varchar('approval_request_id', { length: 36 }).references(() => approvalRequest.request_id, { onDelete: 'set null' }),
   linked_po_no: varchar('linked_po_no', { length: 50 }),
+  // Common requisition header (Rishi's 1 Oct specification, plan Task 8). All
+  // nullable and additive — no migration SQL in this task; `status` above stays
+  // the compatibility projection during this plan and requisition.rules.ts
+  // projects it onto the three state dimensions when these columns are null.
+  requisition_date: date('requisition_date', { mode: 'string' }),
+  main_location_id: varchar('main_location_id', { length: 36 }).references(() => locationMaster.location_id, { onDelete: 'set null' }),
+  // Snapshots: the name/department recorded on the document stay as they were
+  // at submission even if the user later renames or changes department; the
+  // source IDs stay for audit linkage.
+  requester_user_id: varchar('requester_user_id', { length: 36 }).references(() => userMaster.user_id, { onDelete: 'set null' }),
+  requester_name: varchar('requester_name', { length: 200 }),
+  requester_department_id: varchar('requester_department_id', { length: 36 }).references(() => costCenterMaster.cost_center_id, { onDelete: 'set null' }),
+  sender_department_id: varchar('sender_department_id', { length: 36 }).references(() => costCenterMaster.cost_center_id, { onDelete: 'set null' }),
+  // Three separate state dimensions (spec "Common requisition"), each nullable:
+  // approval OPEN/PENDING_APPROVAL/APPROVED/REJECTED,
+  // document OPEN/APPROVED/RELEASED/CANCELLED,
+  // fulfilment NOT_APPLICABLE/TRANSFER_OPEN/PARTIALLY_SHIPPED/SHIPPED/PARTIALLY_RECEIVED/RECEIVED.
+  approval_status: varchar('approval_status', { length: 30 }),
+  document_status: varchar('document_status', { length: 30 }),
+  fulfilment_status: varchar('fulfilment_status', { length: 40 }),
+  // Business status stays independent of external integration status. Purchase
+  // release records BC_PENDING here; no BC call exists (global constraint).
+  integration_status: varchar('integration_status', { length: 40 }),
+  from_location_id: varchar('from_location_id', { length: 36 }).references(() => locationMaster.location_id, { onDelete: 'set null' }),
+  to_location_id: varchar('to_location_id', { length: 36 }).references(() => locationMaster.location_id, { onDelete: 'set null' }),
+  direct_transfer: boolean('direct_transfer'), // null on legacy rows; explicit on new documents
+  released_by: varchar('released_by', { length: 36 }),
+  released_at: timestamp('released_at', { mode: 'string' }),
   // Feed requisition header (Requisition and Loading Sheet §1). Null on ITEM/FA/SERVICE documents.
   requisition_type: varchar('requisition_type', { length: 20 }), // FEED_FORECAST, MANUAL (row 7)
   source: varchar('source', { length: 30 }), // AUTO_FORECAST, MANUAL_ENTRY, STOCK_TAKE_TRIGGERED, DIET_CHANGE_UPCOMING (row 8)
-  purpose: varchar('purpose', { length: 30 }), // INTERNAL_TRANSFER (row 31)
+  purpose: varchar('purpose', { length: 30 }), // FEED: INTERNAL_TRANSFER (row 31). Common requisitions: STORE | PURCHASE (Task 8).
   supply_source: varchar('supply_source', { length: 20 }), // MILL (row 30)
   priority: varchar('priority', { length: 30 }), // row 34
   forecast_run_key: varchar('forecast_run_key', { length: 64 }), // Engine Step 9 "Preserve run ID"
@@ -4341,6 +4379,17 @@ export const requisitionLine = mysqlTable('requisition_line', {
   // IDs together avoids an independently mutable FK that can contradict the
   // header's run.
   feed_forecast_run_line_ids: json('feed_forecast_run_line_ids').$type<string[]>(),
+  // Common requisition line transfer quantities (plan Task 8): requested lives
+  // in `quantity`; to-ship/to-receive are the authorized targets, shipped/
+  // received accumulate from Task 10's events. All nullable and additive.
+  // Balance to Ship and Remaining to Receive are derived in
+  // requisition.rules.ts and deliberately not persisted.
+  from_location_id: varchar('from_location_id', { length: 36 }).references(() => locationMaster.location_id, { onDelete: 'set null' }),
+  to_location_id: varchar('to_location_id', { length: 36 }).references(() => locationMaster.location_id, { onDelete: 'set null' }),
+  qty_to_ship: decimal('qty_to_ship', { precision: 18, scale: 4 }),
+  qty_shipped: decimal('qty_shipped', { precision: 18, scale: 4 }),
+  qty_to_receive: decimal('qty_to_receive', { precision: 18, scale: 4 }),
+  qty_received: decimal('qty_received', { precision: 18, scale: 4 }),
   created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
 });
 

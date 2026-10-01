@@ -53,6 +53,11 @@ export class CreateUserDto {
   @IsOptional()
   department?: string;
 
+  @ApiProperty({ description: 'Department identity — a Cost Center Master row of type DEPARTMENT (decisions, 1 Oct)', required: false })
+  @IsUUID()
+  @IsOptional()
+  department_id?: string;
+
   @ApiProperty({ description: 'Job designation', required: false, example: 'Senior Farm Manager' })
   @IsString()
   @IsOptional()
@@ -101,6 +106,11 @@ export class UpdateUserDto {
   @IsString()
   @IsOptional()
   department?: string;
+
+  @ApiProperty({ description: 'Department identity — a Cost Center Master row of type DEPARTMENT (decisions, 1 Oct)', required: false })
+  @IsUUID()
+  @IsOptional()
+  department_id?: string;
 
   @ApiProperty({ description: 'Job designation', required: false, example: 'Senior Farm Manager' })
   @IsString()

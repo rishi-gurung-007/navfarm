@@ -19,6 +19,11 @@ export class CreateLocationDto {
   @IsOptional()
   lob_id?: string;
 
+  @ApiProperty({ description: 'Department identity — a Cost Center Master row of type DEPARTMENT (decisions, 1 Oct)', required: false })
+  @IsUUID()
+  @IsOptional()
+  department_id?: string;
+
   /** @deprecated Compatibility input for legacy callers. New records use parent_location_id. */
   @IsUUID()
   @IsOptional()
@@ -235,6 +240,11 @@ export class UpdateLocationDto {
   @IsString()
   @IsOptional()
   lob_id?: string;
+
+  @ApiProperty({ required: false, description: 'Department identity — a Cost Center Master row of type DEPARTMENT' })
+  @IsUUID()
+  @IsOptional()
+  department_id?: string;
 
   /** @deprecated Compatibility input; canonical hierarchy uses parent_location_id. */
   @IsUUID()

@@ -3,23 +3,34 @@ import { Type } from 'class-transformer';
 import {
   ArrayMinSize,
   IsArray,
+  IsBoolean,
   IsDateString,
+  IsIn,
   IsNotEmpty,
   IsNumber,
   IsOptional,
   IsString,
   IsUUID,
+  MaxLength,
   Min,
   ValidateNested,
 } from 'class-validator';
+import { REQUISITION_PURPOSES } from '../requisition.rules';
 
 /**
- * Requisition DTOs — Phase 9 MVP.
+ * Requisition DTOs — Phase 9 MVP, extended by Task 8 with the supplied
+ * common-requisition header and line fields.
  *
  * Fields named by the BBP feed flow (§7.2): item, farm, quantity, balance
  * context, proposed delivery date (`required_date`), and an approver-adjustable
- * quantity. `est_rate`, `description` and the number series are ours (no field
+ * quantity. Fields named by Rishi's 1 Oct specification (decisions.md):
+ * requisition date, main location, requester/sender department identities,
+ * Store/Purchase purpose, from/to sub-location, direct-transfer flag and
+ * remarks. `est_rate`, `description` and the number series are ours (no field
  * spec exists for requisitions) — flagged to Rishi in docs/decisions.md.
+ *
+ * requester_user_id / requester_name / requester_department_id are server-side
+ * snapshots taken from the signed-in user — deliberately not client inputs.
  */
 export class RequisitionLineInput {
   @ApiPropertyOptional({ description: 'Item — for ITEM requisitions' })
@@ -32,9 +43,10 @@ export class RequisitionLineInput {
   @IsUUID()
   resource_id?: string;
 
-  @ApiPropertyOptional({ description: 'Free description when no master record exists' })
+  @ApiPropertyOptional({ description: 'Free description when no master record exists — also the Fixed Asset/Service description (Task 8)' })
   @IsOptional()
   @IsString()
+  @MaxLength(200)
   description?: string;
 
   @ApiProperty()
@@ -53,6 +65,30 @@ export class RequisitionLineInput {
   @IsNumber()
   @Type(() => Number)
   est_rate?: number;
+
+  @ApiPropertyOptional({ description: 'Line source sub-location; defaults to the header source' })
+  @IsOptional()
+  @IsUUID()
+  from_location_id?: string;
+
+  @ApiPropertyOptional({ description: 'Line destination sub-location; defaults to the header destination' })
+  @IsOptional()
+  @IsUUID()
+  to_location_id?: string;
+
+  @ApiPropertyOptional({ description: 'Authorized shipment target; defaults to the requested quantity on a Store line' })
+  @IsOptional()
+  @IsNumber()
+  @Min(0.0001)
+  @Type(() => Number)
+  qty_to_ship?: number;
+
+  @ApiPropertyOptional({ description: 'Authorized receipt target; defaults to the to-ship quantity on a Store line' })
+  @IsOptional()
+  @IsNumber()
+  @Min(0.0001)
+  @Type(() => Number)
+  qty_to_receive?: number;
 }
 
 export class CreateRequisitionDto {
@@ -70,6 +106,51 @@ export class CreateRequisitionDto {
   @IsOptional()
   @IsString()
   doc_type?: string;
+
+  @ApiPropertyOptional({ enum: REQUISITION_PURPOSES, description: 'STORE (Item only) or PURCHASE — required by the service for common requisitions' })
+  @IsOptional()
+  @IsIn(REQUISITION_PURPOSES as unknown as string[])
+  purpose?: string;
+
+  @ApiPropertyOptional({ description: 'The requisition document date; defaults to the draft creation date' })
+  @IsOptional()
+  @IsDateString()
+  requisition_date?: string;
+
+  @ApiPropertyOptional({ description: 'Main (farm) location of the requisition; defaults to farm_id' })
+  @IsOptional()
+  @IsUUID()
+  main_location_id?: string;
+
+  @ApiPropertyOptional({ description: 'Requester department — a Cost Center Master row of type DEPARTMENT; defaults to the signed-in user’s department identity' })
+  @IsOptional()
+  @IsUUID()
+  requester_department_id?: string;
+
+  @ApiPropertyOptional({ description: 'Sender department — a Cost Center Master row of type DEPARTMENT (decisions, 1 Oct)' })
+  @IsOptional()
+  @IsUUID()
+  sender_department_id?: string;
+
+  @ApiPropertyOptional({ description: 'Source sub-location (required for a Store purpose)' })
+  @IsOptional()
+  @IsUUID()
+  from_location_id?: string;
+
+  @ApiPropertyOptional({ description: 'Destination sub-location (required for a Store purpose)' })
+  @IsOptional()
+  @IsUUID()
+  to_location_id?: string;
+
+  @ApiPropertyOptional({ description: 'Post shipment and its matching receipt together at fulfilment (explicit permission required)' })
+  @IsOptional()
+  @IsBoolean()
+  direct_transfer?: boolean;
+
+  @ApiPropertyOptional({ description: 'Free-text remarks on the document' })
+  @IsOptional()
+  @IsString()
+  remarks?: string;
 
   @ApiPropertyOptional({ description: 'Proposed delivery date (BBP §7.2 step 5)' })
   @IsOptional()

@@ -11,6 +11,13 @@
  * Farm scope rides the same `farmScope(this.cls)` every other module uses: a
  * farm-pinned caller sees only their farm's requisitions, and a requisition
  * for another farm is indistinguishable from one that never existed.
+ *
+ * Task 8 extends the document with the supplied common-requisition fields and
+ * the three separate state dimensions (approval / document / fulfilment+inte-
+ * gration). The legacy `status` column keeps being written on every transition
+ * and keeps being returned; where the new columns are null — every row that
+ * existed before this plan, and every FEED row the feed writer owns —
+ * requisition.rules.ts projects the states from it on read.
  */
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { and, desc, eq, isNull, sql } from 'drizzle-orm';
@@ -23,9 +30,18 @@ import { farmScope, assertCompanyInScope, assertLocationOnActiveFarm } from '../
 import { userHasPermission } from '../../../common/permissions';
 import { ApprovalService } from '../../production/approval/approval.service';
 import * as schema from '../../../core/database/schema';
-import { CreateRequisitionDto, DecideRequisitionDto, RequisitionLineInput } from './dto/requisition.dto';
+import { CreateRequisitionDto, DecideRequisitionDto } from './dto/requisition.dto';
+import { assertDepartmentIdentity } from '../../../common/department-identity';
+import {
+  assertDirectTransferEligible,
+  assertPurpose,
+  assertPurposeLocations,
+  assertRequisitionLines,
+  lineBalances,
+  normalizeCommonDocType,
+  projectRequisitionStates,
+} from './requisition.rules';
 
-const DOC_TYPES = ['ITEM', 'FA', 'SERVICE'] as const;
 const REQUISITION_MODULE = { moduleCode: 'PROCUREMENT', resource: 'REQUISITION' } as const;
 
 @Injectable()
@@ -65,25 +81,71 @@ export class RequisitionService {
     return `${prefix}${String((Number.isFinite(lastSeq) ? lastSeq : 0) + 1).padStart(4, '0')}`;
   }
 
-  private validateLines(lines: RequisitionLineInput[]) {
-    for (const line of lines) {
-      if (!line.item_id && !line.resource_id && !line.description?.trim()) {
-        throw new BadRequestException('Each requisition line needs an item, a resource, or a description.');
-      }
-    }
-  }
-
   async create(dto: CreateRequisitionDto, tenantId: string, userPayload?: { userId?: string }) {
     assertCompanyInScope(farmScope(this.cls), dto.company_id);
-    if (dto.farm_id) {
-      await assertLocationOnActiveFarm(this.db, farmScope(this.cls), dto.farm_id, 'Requisition farm');
+    // Rule failures come first: a refused document must not touch the database
+    // at all, and every message below is a pure one from requisition.rules.ts.
+    const docType = normalizeCommonDocType(dto.doc_type);
+    const purpose = assertPurpose(docType, dto.purpose);
+    assertRequisitionLines(docType, purpose, dto.lines);
+    assertPurposeLocations(purpose, dto.from_location_id, dto.to_location_id);
+    const directTransfer = Boolean(dto.direct_transfer);
+    if (directTransfer) {
+      assertDirectTransferEligible({ docType, purpose, fromLocationId: dto.from_location_id, toLocationId: dto.to_location_id });
     }
-    const docType = dto.doc_type && (DOC_TYPES as readonly string[]).includes(dto.doc_type) ? dto.doc_type : 'ITEM';
-    this.validateLines(dto.lines);
+
+    // Requester snapshot: the name and department recorded on the document
+    // stay as they are now while the source IDs stay for audit linkage. The
+    // department falls back to the signed-in user's own identity.
+    let requesterName: string | null = null;
+    let requesterDepartmentId: string | null = null;
+    if (userPayload?.userId) {
+      const [requester] = await this.db
+        .select({ full_name: schema.userMaster.full_name, department_id: schema.userMaster.department_id })
+        .from(schema.userMaster)
+        .where(eq(schema.userMaster.user_id, userPayload.userId))
+        .limit(1);
+      requesterName = requester?.full_name ?? null;
+      requesterDepartmentId = dto.requester_department_id ?? requester?.department_id ?? null;
+    } else {
+      requesterDepartmentId = dto.requester_department_id ?? null;
+    }
+
+    // A department is a Cost Center Master row of type DEPARTMENT, never free
+    // text (decisions, 1 Oct) — both identities are checked before any write.
+    if (requesterDepartmentId) {
+      await assertDepartmentIdentity(this.db, {
+        tenantId, companyId: dto.company_id, departmentId: requesterDepartmentId, label: 'Requester department',
+      });
+    }
+    if (dto.sender_department_id) {
+      await assertDepartmentIdentity(this.db, {
+        tenantId, companyId: dto.company_id, departmentId: dto.sender_department_id, label: 'Sender department',
+      });
+    }
+
+    const scope = farmScope(this.cls);
+    if (dto.farm_id) {
+      await assertLocationOnActiveFarm(this.db, scope, dto.farm_id, 'Requisition farm');
+    }
+    const mainLocationId = dto.main_location_id ?? dto.farm_id ?? null;
+    if (mainLocationId && mainLocationId !== dto.farm_id) {
+      await assertLocationOnActiveFarm(this.db, scope, mainLocationId, 'Requisition main location');
+    }
+    if (dto.from_location_id) {
+      await assertLocationOnActiveFarm(this.db, scope, dto.from_location_id, 'Requisition source location');
+    }
+    if (dto.to_location_id) {
+      await assertLocationOnActiveFarm(this.db, scope, dto.to_location_id, 'Requisition destination location');
+    }
 
     return withTenantTransaction(this.cls, async () => {
       const reqNo = await this.nextReqNo(dto.company_id, tenantId);
       const requisitionId = randomUUID();
+      // Document date defaults to the creation clock (the same UTC date
+      // created_at carries). A company-timezone default would need the Task 2
+      // feed settings in this service; a supplied date is stored as given.
+      const today = new Date().toISOString().slice(0, 10);
       await this.db.insert(schema.requisition).values({
         requisition_id: requisitionId,
         tenant_id: tenantId,
@@ -92,21 +154,49 @@ export class RequisitionService {
         req_no: reqNo,
         doc_type: docType,
         status: 'DRAFT',
+        // The three new dimensions start explicit on new documents; legacy
+        // rows stay null and are projected on read.
+        approval_status: 'OPEN',
+        document_status: 'OPEN',
+        fulfilment_status: 'NOT_APPLICABLE',
+        integration_status: 'NOT_APPLICABLE',
+        purpose,
+        requisition_date: dto.requisition_date ?? today,
+        main_location_id: mainLocationId,
+        requester_user_id: userPayload?.userId ?? null,
+        requester_name: requesterName,
+        requester_department_id: requesterDepartmentId,
+        sender_department_id: dto.sender_department_id ?? null,
+        from_location_id: dto.from_location_id ?? null,
+        to_location_id: dto.to_location_id ?? null,
+        direct_transfer: directTransfer,
+        remarks: dto.remarks ?? null,
         required_date: dto.required_date ?? null,
         justification: dto.justification ?? null,
         created_by: userPayload?.userId ?? null,
       });
       await this.db.insert(schema.requisitionLine).values(
-        dto.lines.map((line, index) => ({
-          requisition_id: requisitionId,
-          line_seq: index + 1,
-          item_id: line.item_id ?? null,
-          resource_id: line.resource_id ?? null,
-          description: line.description ?? null,
-          quantity: String(line.quantity),
-          uom: line.uom,
-          est_rate: line.est_rate !== undefined && line.est_rate !== null ? String(line.est_rate) : null,
-        })),
+        dto.lines.map((line, index) => {
+          const balances = lineBalances(line);
+          return {
+            requisition_id: requisitionId,
+            line_seq: index + 1,
+            item_id: line.item_id ?? null,
+            resource_id: line.resource_id ?? null,
+            description: line.description ?? null,
+            quantity: String(line.quantity),
+            uom: line.uom,
+            est_rate: line.est_rate !== undefined && line.est_rate !== null ? String(line.est_rate) : null,
+            from_location_id: line.from_location_id ?? dto.from_location_id ?? null,
+            to_location_id: line.to_location_id ?? dto.to_location_id ?? null,
+            // A Store line records its authorized targets up front; a Purchase
+            // line has no internal fulfilment, so its targets stay null.
+            qty_to_ship: purpose === 'STORE' ? String(balances.qty_to_ship) : null,
+            qty_to_receive: purpose === 'STORE' ? String(balances.qty_to_receive) : null,
+            qty_shipped: null,
+            qty_received: null,
+          };
+        }),
       );
       return this.findOne(requisitionId, tenantId);
     });
@@ -134,6 +224,12 @@ export class RequisitionService {
         quantity: schema.requisitionLine.quantity,
         uom: schema.requisitionLine.uom,
         est_rate: schema.requisitionLine.est_rate,
+        from_location_id: schema.requisitionLine.from_location_id,
+        to_location_id: schema.requisitionLine.to_location_id,
+        qty_to_ship: schema.requisitionLine.qty_to_ship,
+        qty_shipped: schema.requisitionLine.qty_shipped,
+        qty_to_receive: schema.requisitionLine.qty_to_receive,
+        qty_received: schema.requisitionLine.qty_received,
         item_code: schema.itemMaster.item_code,
         item_name: schema.itemMaster.item_name,
       })
@@ -141,7 +237,25 @@ export class RequisitionService {
       .leftJoin(schema.itemMaster, eq(schema.requisitionLine.item_id, schema.itemMaster.item_id))
       .where(eq(schema.requisitionLine.requisition_id, requisitionId))
       .orderBy(schema.requisitionLine.line_seq);
-    return { ...row, lines };
+    return {
+      ...row,
+      // Explicit columns win; nulls (legacy and FEED rows) project from
+      // `status`. The stored status itself is returned untouched.
+      ...projectRequisitionStates(row),
+      lines: lines.map((line) => {
+        const balances = lineBalances(line);
+        return {
+          ...line,
+          // Counted quantities come back as numbers (null means none yet);
+          // the stored targets stay exactly as written, and the two derived
+          // balances are computed, never persisted.
+          qty_shipped: balances.qty_shipped,
+          qty_received: balances.qty_received,
+          balance_to_ship: balances.balance_to_ship,
+          remaining_to_receive: balances.remaining_to_receive,
+        };
+      }),
+    };
   }
 
   async findAll(query: { company_id?: string; status?: string }, tenantId: string) {
@@ -152,7 +266,7 @@ export class RequisitionService {
     ];
     if (query.company_id) conditions.push(eq(schema.requisition.company_id, query.company_id));
     if (query.status) conditions.push(eq(schema.requisition.status, query.status));
-    return this.db
+    const rows = await this.db
       .select({
         requisition_id: schema.requisition.requisition_id,
         req_no: schema.requisition.req_no,
@@ -163,6 +277,11 @@ export class RequisitionService {
         required_date: schema.requisition.required_date,
         approval_request_id: schema.requisition.approval_request_id,
         linked_po_no: schema.requisition.linked_po_no,
+        requisition_date: schema.requisition.requisition_date,
+        approval_status: schema.requisition.approval_status,
+        document_status: schema.requisition.document_status,
+        fulfilment_status: schema.requisition.fulfilment_status,
+        integration_status: schema.requisition.integration_status,
         created_at: schema.requisition.created_at,
         line_count: sql<number>`(SELECT COUNT(*) FROM requisition_line rl WHERE rl.requisition_id = ${schema.requisition.requisition_id})`,
       })
@@ -171,6 +290,8 @@ export class RequisitionService {
       .where(and(...conditions))
       .orderBy(desc(schema.requisition.created_at))
       .limit(200);
+    // List responses carry the projected states beside the legacy status too.
+    return rows.map((row) => ({ ...row, ...projectRequisitionStates(row) }));
   }
 
   /** DRAFT → PENDING_APPROVAL, raising the linked approval_request (§17.2). */
@@ -209,15 +330,15 @@ export class RequisitionService {
       );
       await this.db
         .update(schema.requisition)
-        .set({ status: 'PENDING_APPROVAL', approval_request_id: created.request_id, updated_by: userPayload?.userId ?? null })
+        .set({ status: 'PENDING_APPROVAL', approval_status: 'PENDING_APPROVAL', approval_request_id: created.request_id, updated_by: userPayload?.userId ?? null })
         .where(eq(schema.requisition.requisition_id, requisitionId));
       return this.findOne(requisitionId, tenantId);
     });
   }
 
   /** Approve or reject through the linked approval_request — one decision row, one status. */
-  async decide(requisitionId: string, dto: DecideRequisitionDto, decision: 'APPROVED' | 'REJECTED', tenantId: string, userPayload?: { userId?: string }) {
-    const mayDecide = await userHasPermission(this.db, { userId: userPayload?.userId, userType: (userPayload as unknown as { userType?: string })?.userType }, {
+  async decide(requisitionId: string, dto: DecideRequisitionDto, decision: 'APPROVED' | 'REJECTED', tenantId: string, userPayload?: { userId?: string; email?: string; userType?: string }) {
+    const mayDecide = await userHasPermission(this.db, { userId: userPayload?.userId, userType: userPayload?.userType }, {
       moduleCode: REQUISITION_MODULE.moduleCode,
       resource: REQUISITION_MODULE.resource,
       action: 'approve',
@@ -257,6 +378,12 @@ export class RequisitionService {
         .update(schema.requisition)
         .set({
           status: decision,
+          // The three dimensions move together; `status` stays the legacy
+          // projection old callers read. A rejection returns the document to
+          // Open for correction while the decision history stays on the
+          // approval request and in `status` (decisions.md, 1 Oct).
+          approval_status: decision,
+          document_status: decision === 'APPROVED' ? 'APPROVED' : 'OPEN',
           linked_po_no: decision === 'APPROVED' ? (dto.linked_po_no ?? row.linked_po_no) : row.linked_po_no,
           updated_by: userPayload?.userId ?? null,
         })

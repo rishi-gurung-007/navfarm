@@ -8,6 +8,7 @@ import * as schema from '../../../core/database/schema';
 import { CreateUserDto, UpdateUserDto, QueryUserDto } from './dto/user.dto';
 import { UserDirectoryService } from '../../../core/database/user-directory.service';
 import { canAssignUserType, isFarmBoundUserType, isTenantLevelUserType, outranks } from '../../../common/user-type-hierarchy';
+import { assertDepartmentIdentity } from '../../../common/department-identity';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 
 /**
@@ -85,6 +86,17 @@ export class UserService {
       throw new BadRequestException(`A ${userType === 'FARM_MANAGER' ? 'farm manager' : 'standard user'} must be assigned to a farm.`);
     }
     if (dto.farm_id) await this.assertActiveCompanyFarm(dto.farm_id, dto.company_id, dto.tenant_id);
+    // Department is a Cost Center Master identity of type DEPARTMENT, never
+    // free text (decisions, 1 Oct). Checked only when one is supplied, so the
+    // legacy free-text `department` path keeps working unchanged.
+    if (dto.department_id) {
+      await assertDepartmentIdentity(this.db, {
+        tenantId: dto.tenant_id,
+        companyId: dto.company_id,
+        departmentId: dto.department_id,
+        label: 'Department',
+      });
+    }
     const areaIds = await this.validateAreas(dto.operational_area_ids, dto.company_id, dto.tenant_id, requester);
 
     const existing = await this.db
@@ -113,6 +125,7 @@ export class UserService {
         user_type: userType,
         employee_id: dto.employee_id || null,
         department: dto.department || null,
+        department_id: dto.department_id || null,
         designation: dto.designation || null,
         timezone_pref_id: dto.timezone_pref_id || null,
         // Farm-bound personas share one fixed farm; authority remains distinct in the user-type ladder.
@@ -223,6 +236,7 @@ export class UserService {
         user_type: schema.userMaster.user_type,
         employee_id: schema.userMaster.employee_id,
         department: schema.userMaster.department,
+        department_id: schema.userMaster.department_id,
         designation: schema.userMaster.designation,
         is_active: schema.userMaster.is_active,
         last_login_at: schema.userMaster.last_login_at,
@@ -375,12 +389,22 @@ export class UserService {
       ? await this.validateAreas(requestedAreaIds, user.company_id, user.tenant_id, requester)
       : undefined;
 
+    if (dto.department_id) {
+      await assertDepartmentIdentity(this.db, {
+        tenantId: user.tenant_id,
+        companyId: user.company_id,
+        departmentId: dto.department_id,
+        label: 'Department',
+      });
+    }
+
     const updates: any = {};
     if (dto.full_name !== undefined) updates.full_name = dto.full_name;
     if (dto.phone !== undefined) updates.phone = dto.phone;
     if (typeChanged) updates.user_type = dto.user_type;
     if (dto.employee_id !== undefined) updates.employee_id = dto.employee_id;
     if (dto.department !== undefined) updates.department = dto.department;
+    if (dto.department_id !== undefined) updates.department_id = dto.department_id || null;
     if (dto.designation !== undefined) updates.designation = dto.designation;
     if (dto.timezone_pref_id !== undefined) updates.timezone_pref_id = dto.timezone_pref_id;
     if (dto.is_active !== undefined) updates.is_active = dto.is_active;
