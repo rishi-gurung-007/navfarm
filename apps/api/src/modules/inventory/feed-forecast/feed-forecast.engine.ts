@@ -70,6 +70,25 @@ export interface IncomingFeed {
   kg: number;
 }
 
+/**
+ * A genuine batch_header PK — the only batch id a writer may persist
+ * (requisition_line_batch.batch_id, feed_forecast_run_line.batch_id,
+ * feed_alert.subject_id for a BATCH alert, all varchar(36) FKs/keys).
+ * Branded so the engine's composite aggregation key `batchId`
+ * (`<batch_id>:<stage_id>` for an ANIMAL_WISE/REGISTERED stage group) cannot
+ * be passed where one is required: doing so fails tsc, not MySQL (D1, 3 Oct;
+ * Task 9b fix round 1 made this compile-checked rather than commented).
+ */
+export type BatchPk = string & { readonly __brand: 'BatchPk' };
+
+/** The single way to mint a BatchPk: from a batch_header.batch_id read from the database. Refuses a composite key outright. */
+export function asBatchPk(batchHeaderId: string): BatchPk {
+  if (batchHeaderId.includes(':') || batchHeaderId.length > 36) {
+    throw new Error(`Not a batch_header id: ${batchHeaderId}`);
+  }
+  return batchHeaderId as BatchPk;
+}
+
 export interface ForecastInput {
   planningDate: string;
   from: string;
@@ -105,7 +124,7 @@ export interface ForecastInput {
      */
     batchId: string;
     /** The genuine batch_header PK, always — even when `batchId` is composite. Safe to persist (FK-valid). */
-    realBatchId: string;
+    realBatchId: BatchPk;
     batchNo: string;
     breedId: string;
     shedId: string;
@@ -173,7 +192,7 @@ export interface DailyForecastRow {
   /** The engine's own aggregation key — composite for an ANIMAL_WISE/REGISTERED stage group. Never persist; see `realBatchId`. */
   batchId: string;
   /** The genuine batch_header PK for this row, always real — persist this, never `batchId` (D1, 3 Oct). */
-  realBatchId: string;
+  realBatchId: BatchPk;
   batchNo: string;
   shedId?: string;
   shedCode: string;
@@ -242,7 +261,10 @@ export interface ForecastSource {
 }
 
 export interface DietChange {
+  /** The engine's aggregation key — composite for an ANIMAL_WISE/REGISTERED stage group. Never persist; see `realBatchId`. */
   batchId: string;
+  /** The genuine batch_header PK — what a DIET_CHANGE alert names as its subject (Task 9b fix round 1). */
+  realBatchId: BatchPk;
   batchNo: string;
   shedCode: string;
   fromItemId: string;
@@ -533,7 +555,7 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
   interface DailyEntry {
     date: string;
     batchId: string;
-    realBatchId: string;
+    realBatchId: BatchPk;
     batchNo: string;
     shedId: string;
     heads: number;
@@ -759,6 +781,7 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
         nextDietKeys.add(sourceKeyFor(next, item).key);
         dietChanges.push({
           batchId: batch.batchId,
+          realBatchId: batch.realBatchId,
           batchNo: batch.batchNo,
           shedCode: shedById.get(batch.shedId)?.shedCode ?? '',
           fromItemId: lastItem,

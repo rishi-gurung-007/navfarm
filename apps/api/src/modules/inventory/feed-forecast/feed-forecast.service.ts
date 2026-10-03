@@ -8,7 +8,7 @@ import * as schema from '../../../core/database/schema';
 import { activeFarmOfCompany, batchScopeConditions, farmScope, FARM_SCOPE_KEY, FarmScope, restrictedScopeConditions } from '../../../common/farm-scope';
 import { FeedStockMovement, InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
 import { FeedRow, stageDayRange } from '../../production/lifecycle/feed-row-days';
-import { buildFeedForecast, DailyForecastRow, dayShort, DietChange, ForecastFlag, ForecastInput, ForecastRow, ForecastSource, isTimeZone, todayInZone } from './feed-forecast.engine';
+import { asBatchPk, buildFeedForecast, DailyForecastRow, dayShort, DietChange, ForecastFlag, ForecastInput, ForecastRow, ForecastSource, isTimeZone, todayInZone } from './feed-forecast.engine';
 import { defaultWindowEnd, ForecastView, groupRows, MAX_SPAN_DAYS, PeriodRange, ReportRow, resolveViewRange, spanProblem } from './feed-forecast.view';
 import { stockAsOf } from './feed-forecast.stock';
 import { QueryFeedForecastDto, UpdateSiloPlanningDto } from './dto/feed-forecast.dto';
@@ -501,7 +501,7 @@ export function buildInputBatches(args: {
         // requisition_line_batch.batch_id and feed_forecast_run_line.batch_id). `realBatchId` below
         // is always the genuine PK and is what downstream writers must persist.
         batchId: animalWise ? `${b.batch_id}:${g.stageId}` : b.batch_id,
-        realBatchId: b.batch_id,
+        realBatchId: asBatchPk(b.batch_id),
         batchNo,
         breedId: b.breed_id,
         shedId,

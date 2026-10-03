@@ -55,6 +55,22 @@ describe('buildFeedForecast — sources and diet changes (Plan B)', () => {
     }]);
   });
 
+  /**
+   * Task 9b fix round 1, finding 2: an ANIMAL_WISE/REGISTERED stage group's
+   * batchId is the composite `<batch_id>:<stage_id>`; the DIET_CHANGE alert
+   * wrote it to feed_alert.subject_id (varchar(36)). The change must carry the
+   * genuine batch_header PK separately for that.
+   */
+  it('carries the real batch id beside a composite stage-group batchId', () => {
+    const input: ForecastInput = {
+      ...workedExample,
+      batches: [{ ...workedExample.batches[0], batchId: 'b:wean', realBatchId: 'b' as any }],
+    };
+    const { dietChanges } = buildFeedForecast(input);
+    expect(dietChanges).toHaveLength(1);
+    expect(dietChanges[0]).toMatchObject({ batchId: 'b:wean', realBatchId: 'b' });
+  });
+
   it('marks a next diet no silo on the shed holds as drawn from the store, flagged for changeover', () => {
     const input: ForecastInput = {
       ...workedExample,

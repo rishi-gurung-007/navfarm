@@ -140,7 +140,7 @@ describe('planAlerts — frequency (Master Setup §4 rows 52–54)', () => {
 
 describe('planAlerts — diet change (checkpoint 30)', () => {
   const change = {
-    batchId: 'b', batchNo: 'WG-2026-38', shedCode: 'GRS/SHED-003', fromItemId: 'r1', fromItemName: 'Weaner Diet R1',
+    batchId: 'b', realBatchId: 'b' as any, batchNo: 'WG-2026-38', shedCode: 'GRS/SHED-003', fromItemId: 'r1', fromItemName: 'Weaner Diet R1',
     toItemId: 'r2', toItemName: 'Weaner Diet R2', changeDate: '2026-09-26', nextSourceType: 'SILO' as const, nextSourceCode: 'GRS/SILO-002',
   };
 
@@ -149,6 +149,24 @@ describe('planAlerts — diet change (checkpoint 30)', () => {
     expect(plan.raise).toHaveLength(1);
     expect(plan.raise[0]).toMatchObject({ subjectType: 'BATCH', subjectId: 'b', itemId: 'r2', observedValue: 3, dedupKey: 'rule-diet|b|r2|2026-09-26' });
     expect(plan.raise[0].message).toBe('WG-2026-38 in GRS/SHED-003 changes from Weaner Diet R1 to Weaner Diet R2 on 26/09/26 (in 3 days). Next diet silo: GRS/SILO-002.');
+  });
+
+  /**
+   * Task 9b fix round 1, finding 2: for an ANIMAL_WISE/REGISTERED stage group
+   * DietChange.batchId is the engine's 73-char composite; subject_id is
+   * varchar(36), so the insert failed (ER_DATA_TOO_LONG) and the swallowed
+   * error meant DIET_CHANGE alerts were never raised for such a farm. The
+   * subject is the real batch; the dedup key may keep the composite (it is
+   * what tells two stage groups' changes apart).
+   */
+  it('names the real batch as the subject of a stage group\'s change, keeping the composite only in the dedup key', () => {
+    const composite = 'a1b2c3d4-0000-4000-8000-000000000001:a1b2c3d4-0000-4000-8000-0000000000ff';
+    const real = 'a1b2c3d4-0000-4000-8000-000000000001';
+    const plan = planAlerts(base({ rules: [dietRule], dietChanges: [{ ...change, batchId: composite, realBatchId: real as any }] }));
+    expect(plan.raise).toHaveLength(1);
+    expect(plan.raise[0].subjectId).toBe(real);
+    expect(plan.raise[0].subjectId.length).toBeLessThanOrEqual(36);
+    expect(plan.raise[0].dedupKey).toBe(`rule-diet|${composite}|r2|2026-09-26`);
   });
 
   it('says so when no silo holds the next diet', () => {

@@ -20,7 +20,7 @@
  * Ruling L12: no new copy of calendar-date arithmetic — diffDaysIso is the
  * engine's diffDays, re-exported by feed-requisition.rules (Task 3).
  */
-import { dayShort, type DietChange } from '../feed-forecast/feed-forecast.engine';
+import { dayShort, type BatchPk, type DietChange } from '../feed-forecast/feed-forecast.engine';
 import type { AlertFrequency, PriorityLevel } from '../../system/alert-rule/alert-rule.rules';
 import { diffDaysIso } from '../../procurement/feed-requisition/feed-requisition.rules';
 
@@ -73,17 +73,27 @@ export interface ActiveAlertFact {
   observedValue: number | null;
 }
 
-export interface AlertCandidate {
+/**
+ * What an alert is about. A BATCH subject must be a genuine batch_header PK:
+ * feed_alert.subject_id is varchar(36), and the engine's composite stage-group
+ * key (`<batch_id>:<stage_id>`, 73 chars) made the insert fail and DIET_CHANGE
+ * alerts silently never raise (Task 9b fix round 1). Branded so passing the
+ * composite fails tsc.
+ */
+export type AlertSubject =
+  | { subjectType: 'SILO'; subjectId: string }
+  | { subjectType: 'BATCH'; subjectId: BatchPk }
+  | { subjectType: 'REQUISITION'; subjectId: string };
+
+export type AlertCandidate = AlertSubject & {
   rule: AlertRuleFact;
   dedupKey: string;
-  subjectType: 'SILO' | 'BATCH' | 'REQUISITION';
-  subjectId: string;
   itemId: string | null;
   title: string;
   message: string;
   observedValue: number | null;
   thresholdValue: number | null;
-}
+};
 
 export type ResolveReason = 'RECOVERED' | 'PASSED' | 'CLOSED' | 'RULE_OFF' | 'SILO_INACTIVE';
 
@@ -157,7 +167,8 @@ function candidatesFor(rule: AlertRuleFact, input: PlanAlertsInput): AlertCandid
       const silo = dc.nextSourceType === 'SILO' && dc.nextSourceCode ? dc.nextSourceCode : 'none yet';
       const whenDiet = left === 0 ? 'today' : `in ${days(left)}`;
       out.push({
-        rule, dedupKey: `${rule.ruleId}|${dc.batchId}|${dc.toItemId}|${dc.changeDate}`, subjectType: 'BATCH', subjectId: dc.batchId, itemId: dc.toItemId,
+        // The dedup key keeps the composite: it is what tells two stage groups' changes apart. The subject is the real batch.
+        rule, dedupKey: `${rule.ruleId}|${dc.batchId}|${dc.toItemId}|${dc.changeDate}`, subjectType: 'BATCH', subjectId: dc.realBatchId, itemId: dc.toItemId,
         title: `Diet change in ${days(left)}: ${dc.batchNo}`,
         message: `${dc.batchNo} in ${dc.shedCode} changes from ${dc.fromItemName} to ${dc.toItemName} on ${dayShort(dc.changeDate)} (${whenDiet}). Next diet silo: ${silo}.`,
         observedValue: left, thresholdValue: window,

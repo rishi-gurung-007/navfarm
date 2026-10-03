@@ -5,7 +5,7 @@
  * see docs/superpowers/specs/2026-09-25-feed-forecast-design.md, D1-D3.
  */
 import { FeedRow } from '../../production/lifecycle/feed-row-days';
-import { buildFeedForecast, dayShort, ForecastInput, parseUtcTimestamp, todayInZone, todayLocal, utcTimestamp } from './feed-forecast.engine';
+import { asBatchPk, buildFeedForecast, dayShort, ForecastInput, parseUtcTimestamp, todayInZone, todayLocal, utcTimestamp } from './feed-forecast.engine';
 
 const workedExample: ForecastInput = {
   planningDate: '2026-09-23',
@@ -975,5 +975,13 @@ describe('buildFeedForecast — group identity stage survives a projected stage 
       ['2026-09-23', 'insem', 'flush', 'b'],
       ['2026-09-24', 'insem', 'flush', 'b'],
     ]);
+  });
+});
+
+describe('asBatchPk — the only way to mint a persistable batch id (9b fix round 1)', () => {
+  it('accepts a batch_header id and refuses the engine\'s composite stage-group key', () => {
+    const real = 'a1b2c3d4-0000-4000-8000-000000000001';
+    expect(asBatchPk(real)).toBe(real);
+    expect(() => asBatchPk(`${real}:a1b2c3d4-0000-4000-8000-0000000000ff`)).toThrow('Not a batch_header id');
   });
 });

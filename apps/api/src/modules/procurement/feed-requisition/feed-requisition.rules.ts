@@ -48,7 +48,7 @@
  * re-exported here as `addDaysIso`/`diffDaysIso` rather than copied, so a
  * calendar bug can only exist in one place.
  */
-import { addDays, dayShort, diffDays, todayLocal, type DailyForecastRow, type ForecastSource } from '../../inventory/feed-forecast/feed-forecast.engine';
+import { addDays, dayShort, diffDays, todayLocal, type BatchPk, type DailyForecastRow, type ForecastSource } from '../../inventory/feed-forecast/feed-forecast.engine';
 
 export type FeedType = 'BULK' | 'BAGGED';
 export type Priority = 'CRITICAL_FIRST_PRIORITY' | 'CRITICAL' | 'WARNING' | 'INFO';
@@ -412,7 +412,7 @@ export function lifecycleRefLabel(r: { breed_code?: string | null; stage_code?: 
 
 export interface LineBreakdownRow {
   /** The genuine batch_header PK — never the engine's composite aggregation key (D1, 3 Oct). */
-  batchId: string;
+  batchId: BatchPk;
   /**
    * The stage group's identity stage (DailyForecastRow.groupStageId) — NOT the
    * stage of the first day with demand, which a group projected into another

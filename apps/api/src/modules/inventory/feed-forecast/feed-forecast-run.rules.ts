@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import type { BatchPk } from './feed-forecast.engine';
 
 function canonical(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonical);
@@ -93,8 +94,8 @@ interface ForecastRunLineInput {
   date?: string;
   /** The engine's own composite aggregation key for an ANIMAL_WISE/REGISTERED batch — display/grouping only, never persisted. */
   batchId?: string;
-  /** The genuine batch_header PK — this is what gets written to feed_forecast_run_line.batch_id (D1, 3 Oct). */
-  realBatchId?: string;
+  /** The genuine batch_header PK — this is what gets written to feed_forecast_run_line.batch_id (D1, 3 Oct). Branded: the composite `batchId` does not type-check here. */
+  realBatchId?: BatchPk;
   batchNo?: string;
   shedId?: string;
   shedCode?: string;

@@ -366,3 +366,41 @@ describe('FeedAlertService — acknowledge (farm scope by the alert\'s own farm)
     expect(db.update).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * Task 9b fix round 1, finding 2, end to end through the service: a diet
+ * change of an ANIMAL_WISE/REGISTERED stage group is evaluated and INSERTED
+ * with subject_id = the real batch_header PK. Before the fix the 73-char
+ * composite reached feed_alert.subject_id (varchar(36)), MySQL refused it, and
+ * the safe callers swallowed the error — so the alert was never raised.
+ */
+describe('FeedAlertService — DIET_CHANGE for a stage group writes the real batch id', () => {
+  it('inserts subject_id = the genuine batch id, never the composite', async () => {
+    const real = 'a1b2c3d4-0000-4000-8000-000000000001';
+    const composite = `${real}:a1b2c3d4-0000-4000-8000-0000000000ff`;
+    const inserted: any[] = [];
+    const db: any = { insert: jest.fn(() => ({ values: jest.fn(async (v: any) => { inserted.push(v); }) })) };
+    const forecast = {
+      farmToday: jest.fn(async () => ({ today: '2026-09-25', timeZone: null })),
+      computeForFarm: jest.fn(async () => ({ dietChanges: [{
+        batchId: composite, realBatchId: real, batchNo: 'B-1 · FLUSH', shedCode: 'F/SHED-1', fromItemId: 'i1', fromItemName: 'Flushing',
+        toItemId: 'i2', toItemName: 'Insemination', changeDate: '2026-09-27', nextSourceType: 'SILO', nextSourceCode: 'F/SILO-2',
+      }] })),
+    };
+    const service = new FeedAlertService(transactionCls(db), forecast as any, {} as any, { ensureDefaultRules: jest.fn() } as any);
+    jest.spyOn(service as any, 'systemFarmScope').mockImplementation((...args: any[]) => args[2]());
+    jest.spyOn(service as any, 'loadRules').mockResolvedValue([{
+      ruleId: 'r-diet', notificationCode: 'DIET-CHANGE', eventType: 'DIET_CHANGE', thresholdReference: 'FIXED_VALUE', thresholdValue: 3,
+      priorityLevel: 'WARNING', recipientRoles: ['FARM_MANAGER'], frequency: 'ONCE', escalationAfterHours: null, escalationRole: null, farmId: null, isActive: true,
+    }]);
+    jest.spyOn(service as any, 'loadSiloLevels').mockResolvedValue([]);
+    jest.spyOn(service as any, 'loadOpenRequisitions').mockResolvedValue([]);
+    jest.spyOn(service as any, 'loadActive').mockResolvedValue([]);
+
+    await service.evaluateFarm('farm-a', 'co', 't');
+
+    expect(inserted).toHaveLength(1);
+    expect(inserted[0]).toMatchObject({ event_type: 'DIET_CHANGE', subject_type: 'BATCH', subject_id: real, item_id: 'i2' });
+    expect(inserted[0].subject_id.length).toBeLessThanOrEqual(36);
+  });
+});
