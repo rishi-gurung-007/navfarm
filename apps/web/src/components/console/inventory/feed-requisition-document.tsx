@@ -27,6 +27,13 @@ import {
 export interface FeedRequisitionBreakdownRow {
   batch_id: string;
   batch_no: string | null;
+  /**
+   * 9d D2: the stage group this row is for. requisition_line_batch's unique key
+   * is (line_id, batch_id, stage_id, shed_id) — a REGISTERED batch has several
+   * stage groups in one house, so batch + shed does not identify a row. NULL
+   * only on rows written before migration 0145.
+   */
+  stage_id?: string | null;
   shed_id: string | null;
   shed_code: string | null;
   heads: number | null;
@@ -347,7 +354,7 @@ export function FeedRequisitionDocument({
                           </thead>
                           <tbody>
                             {breakdown.map((b) => (
-                              <tr key={`${b.batch_id}|${b.shed_id ?? ""}`}>
+                              <tr key={`${b.batch_id}|${b.stage_id ?? ""}|${b.shed_id ?? ""}`}>
                                 <td className="whitespace-nowrap px-2 py-0.5 text-[var(--text-secondary)]">{b.batch_no ?? "—"}</td>
                                 <td className="whitespace-nowrap px-2 py-0.5 text-[var(--text-secondary)]">{b.shed_code ?? "—"}</td>
                                 <td className={cn("whitespace-nowrap px-2 py-0.5 text-[var(--text-secondary)]", NUM)}>{kg(b.heads)}</td>

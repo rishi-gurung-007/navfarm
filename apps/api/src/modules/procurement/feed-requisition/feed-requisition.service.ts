@@ -1384,6 +1384,11 @@ export class FeedRequisitionService implements OnModuleInit {
           line_id: schema.requisitionLineBatch.line_id,
           batch_id: schema.requisitionLineBatch.batch_id,
           batch_no: schema.batchHeader.batch_no,
+          // 9d D2: the stage group's identity stage. It is part of the row's own
+          // unique key (line_id, batch_id, stage_id, shed_id) — a REGISTERED
+          // batch has several stage groups in one house — so the document needs
+          // it to tell two of its breakdown rows apart.
+          stage_id: schema.requisitionLineBatch.stage_id,
           shed_id: schema.requisitionLineBatch.shed_id,
           shed_code: shed.location_code,
           heads: schema.requisitionLineBatch.heads,
@@ -1406,7 +1411,7 @@ export class FeedRequisitionService implements OnModuleInit {
     for (const b of breakdownRows) {
       const list = breakdownOf.get(b.line_id) ?? [];
       list.push({
-        batch_id: b.batch_id, batch_no: b.batch_no, shed_id: b.shed_id, shed_code: b.shed_code,
+        batch_id: b.batch_id, batch_no: b.batch_no, stage_id: b.stage_id, shed_id: b.shed_id, shed_code: b.shed_code,
         heads: b.heads, feed_rate_kg: b.feed_rate_kg == null ? null : Number(b.feed_rate_kg),
         lifecycle_ref_id: b.lifecycle_ref_id, lifecycle_ref_label: lifecycleRefLabel(b),
         demand_kg: Number(b.demand_kg), first_demand_date: b.first_demand_date,

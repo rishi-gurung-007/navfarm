@@ -168,3 +168,46 @@ describe("FeedRequisitionDocument — lines sub-form (Requisition §2)", () => {
     expect(screen.getByLabelText(en.rqdRemarks)).toBeTruthy();
   });
 });
+
+/**
+ * 9d D2 (Part A verification pass 2): a REGISTERED batch has several stage
+ * groups in one house, so the breakdown's rows were not unique on batch +
+ * shed — React logged "Encountered two children with the same key" four times
+ * on REQ-RIC100-2026-00002. requisition_line_batch's own unique key is
+ * (line_id, batch_id, stage_id, shed_id); the row key must carry the stage too.
+ */
+describe("FeedRequisitionDocument — breakdown row keys (9d D2)", () => {
+  const twoStageGroups = {
+    ...view,
+    lines: [
+      view.lines[0],
+      {
+        ...view.lines[1],
+        breakdown: [
+          { batch_id: "b7", stage_id: "stage-flush", batch_no: "BATCH-000007", shed_id: "h1", shed_code: "RIC100/SHED-001",
+            heads: 15, feed_rate_kg: 3.5, lifecycle_ref_label: "L-LINE FLUSH days 1–9", demand_kg: 472.5, first_demand_date: "2026-10-03" },
+          { batch_id: "b7", stage_id: "stage-gestation", batch_no: "BATCH-000007", shed_id: "h1", shed_code: "RIC100/SHED-001",
+            heads: 12, feed_rate_kg: 2.5, lifecycle_ref_label: "L-LINE GESTATION days 1–30", demand_kg: 900, first_demand_date: "2026-10-03" },
+        ],
+      },
+    ],
+  } as FeedRequisitionDocumentView;
+
+  it("renders both stage groups of one batch in one house with no duplicate-key error", () => {
+    const logged: string[] = [];
+    const spy = jest.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      logged.push(args.map((a) => String(a)).join(" "));
+    });
+    try {
+      render(<FeedRequisitionDocument view={twoStageGroups} editable={false} />);
+      const breakdown = screen.getByRole("table", { name: "Batches and houses for line 20000" });
+      // Header row plus one row per stage group.
+      expect(within(breakdown).getAllByRole("row")).toHaveLength(3);
+      expect(within(breakdown).getByText("472.5")).toBeTruthy();
+      expect(within(breakdown).getByText("900")).toBeTruthy();
+      expect(logged.filter((message) => /same key/i.test(message))).toEqual([]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
