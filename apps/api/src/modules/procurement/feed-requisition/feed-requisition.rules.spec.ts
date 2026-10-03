@@ -11,13 +11,13 @@ const r1: ForecastSource = {
   sourceType: 'SILO', sourceCode: 'GRS/SILO-001', locationId: 's1', itemId: 'r1', itemName: 'Weaner Diet R1',
   balanceKg: 1500, planningDayDemandKg: 2000, firstDemandDate: '2026-09-23', firstDayDemandKg: 2000, walkDemandKg: 6000,
   daysLeft: 0, runDownDate: '2026-09-23', shortageDate: '2026-09-23', isNextDiet: false, noSiloHoldsItem: false, lifecycleIds: ['row-r1'],
-  thresholdKg: 0, incomingKg: 0, shortfallKg: 4500, refillDate: '2026-09-21', requiredOn: '2026-09-21', overdue: true,
+  thresholdKg: 0, incomingKg: 0, shortfallKg: 4500, safetyStockKg: 0, deliveryDayOpeningKg: 1500,
 };
 const r2: ForecastSource = {
   sourceType: 'SILO', sourceCode: 'GRS/SILO-002', locationId: 's2', itemId: 'r2', itemName: 'Weaner Diet R2',
   balanceKg: 1000, planningDayDemandKg: 0, firstDemandDate: '2026-09-26', firstDayDemandKg: 2500, walkDemandKg: 10000,
   daysLeft: null, runDownDate: '2026-09-26', shortageDate: '2026-09-26', isNextDiet: true, noSiloHoldsItem: false, lifecycleIds: ['row-r2'],
-  thresholdKg: 0, incomingKg: 0, shortfallKg: 9000, refillDate: '2026-09-24', requiredOn: '2026-09-24', overdue: false,
+  thresholdKg: 0, incomingKg: 0, shortfallKg: 9000, safetyStockKg: 0, deliveryDayOpeningKg: 1000,
 };
 const silo = (id: string, extra: Partial<DestinationInfo> = {}): [string, DestinationInfo] =>
   [id, { locationId: id, locationType: 'SILO', feedInBags: null, lowLevelKg: null, ...extra }];
@@ -92,13 +92,13 @@ describe('recommendLines — Worked Example', () => {
       expect.objectContaining({
         key: 's2|r2', destinationLocationId: 's2', itemId: 'r2', isNextDiet: true, daysBeforeDietChange: 3,
         dailyRequirementKg: 2500, daysRemaining: null, unroundedNeedKg: 9000, recommendedQtyKg: 9000,
-        proposedDeliveryDate: '2026-09-24', // Q4: Required On (run-down 26 Sep − 2 buffer − 0 lead)
+        proposedDeliveryDate: '2026-09-26', // TEMPORARY (Task 3): shortage date 26 Sep; Task 5 sets the delivery-date rule
       }),
     ]);
   });
 
   it('drafts nothing for a source whose stock covers the window', () => {
-    const covered = { ...r1, balanceKg: 6000, shortfallKg: 0, runDownDate: null, refillDate: null, requiredOn: null, overdue: false };
+    const covered = { ...r1, balanceKg: 6000, shortfallKg: 0, runDownDate: null };
     expect(recommendLines({ planningDate: '2026-09-23', to: '2026-09-29', sources: [covered], destinations: new Map([silo('s1')]), settings: S })).toEqual([]);
   });
 
@@ -124,17 +124,18 @@ describe('recommendLines — Plan R (D19, Q3, Q4)', () => {
   });
 
   it('dates the line Required On, or the planning date when Required On has passed', () => {
-    expect(draft({ ...r1, requiredOn: '2026-09-25', overdue: false })[0].proposedDeliveryDate).toBe('2026-09-25');
-    expect(draft(r1)[0].proposedDeliveryDate).toBe('2026-09-23'); // Required On 21 Sep is already past
+    // TEMPORARY (Task 3): Required On is gone; the stand-in is the shortage date, clamped to the planning date. Task 5 rewrites this.
+    expect(draft({ ...r1, shortageDate: '2026-09-25' })[0].proposedDeliveryDate).toBe('2026-09-25');
+    expect(draft({ ...r1, shortageDate: '2026-09-20' })[0].proposedDeliveryDate).toBe('2026-09-23'); // already past → planning date
   });
 
   it('a run-down inside the window always drafts a line — landing exactly on the level orders one compartment (Review Focus 2)', () => {
-    const [line] = draft({ ...r1, shortfallKg: 0, runDownDate: '2026-09-29', shortageDate: null, refillDate: '2026-09-27', requiredOn: '2026-09-25', overdue: false });
-    expect(line).toMatchObject({ unroundedNeedKg: 0, recommendedQtyKg: 3000, firstShortageDate: null, proposedDeliveryDate: '2026-09-25' });
+    const [line] = draft({ ...r1, shortfallKg: 0, runDownDate: '2026-09-29', shortageDate: null });
+    expect(line).toMatchObject({ unroundedNeedKg: 0, recommendedQtyKg: 3000, firstShortageDate: null, proposedDeliveryDate: '2026-09-29' }); // TEMPORARY (Task 3): no shortage date → `to`
   });
 
   it('a run-down found only past the window drafts nothing', () => {
-    expect(draft({ ...r1, shortfallKg: 0, runDownDate: '2026-10-05', refillDate: '2026-10-03', requiredOn: '2026-10-01', overdue: false })).toEqual([]);
+    expect(draft({ ...r1, shortfallKg: 0, runDownDate: '2026-10-05' })).toEqual([]);
   });
 
   // Ruling I4: System Balance and the low-level test read the ledger as it stands now — FEED_BELOW_L1's figure —

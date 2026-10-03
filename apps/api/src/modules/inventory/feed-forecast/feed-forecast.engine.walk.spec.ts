@@ -14,7 +14,7 @@ const row = (over: Partial<FeedRow> = {}): FeedRow => ({
 
 function oneSilo(over: Partial<ForecastInput> = {}, silo: Partial<ForecastInput['silos'][number]> = {}): ForecastInput {
   return {
-    planningDate: '2026-09-23', from: '2026-09-23', to: '2026-09-29', leadTimeDays: 2,
+    planningDate: '2026-09-23', from: '2026-09-23', to: '2026-09-29',
     sheds: [{ shedId: 'h1', shedCode: 'GRS/SHED-001', siloIds: ['s1'] }],
     silos: [{ siloId: 's1', siloCode: 'GRS/SILO-001', itemId: 'r1', balanceKg: 525, ...silo }],
     store: null,
@@ -30,16 +30,15 @@ function oneSilo(over: Partial<ForecastInput> = {}, silo: Partial<ForecastInput[
 
 describe('buildFeedForecast — D19 run-down to the low level', () => {
   // Rishi ruling (2026-10-01): runDownDate is the first day demand > open (animals cannot be fed).
-  // The silo's low level (thresholdKg) affects shortfallKg, refillDate and requiredOn but not runDownDate.
+  // The silo's low level (thresholdKg) is an alert threshold only (3 Oct ruling 2): it affects neither runDownDate nor shortfallKg.
 
   it('runs down on the first day demand exceeds available stock — 525 kg closes to 25 on day 5, empties on day 6', () => {
     // 525 → 425, 325, 225, 125, 25. On Sep28 open=25, demand=100 → 100>25 → runDownDate.
-    // refillDate = Sep28 - 2 buffer = Sep26. requiredOn = Sep26 - 2 leadTime = Sep24. Not overdue (Sep24 >= Sep23).
     const { sources, rows } = buildFeedForecast(oneSilo({}, { lowLevelKg: 200 }));
     expect(sources[0]).toMatchObject({
-      runDownDate: '2026-09-28', refillDate: '2026-09-26', requiredOn: '2026-09-24', overdue: false, thresholdKg: 200, daysLeft: 5,
+      runDownDate: '2026-09-28', thresholdKg: 200, daysLeft: 5.3, // 525 ÷ 100 = 5.25 → 5.3
     });
-    expect(rows[0]).toMatchObject({ runDownDate: '2026-09-28', refillDate: '2026-09-26', requiredOn: '2026-09-24', overdue: false });
+    expect(rows[0]).toMatchObject({ runDownDate: '2026-09-28' });
   });
 
   it('with no low level, an exact multiple: 500 kg at 100 kg/day — demand exceeds zero stock on day 6', () => {
@@ -65,12 +64,12 @@ describe('buildFeedForecast — D19 run-down to the low level', () => {
 describe('buildFeedForecast — confirmed incoming (D19, Q2)', () => {
   it('a delivery that keeps stock above zero throughout the window: runDownDate is null', () => {
     // 525→425→325→525(+300)→425→325→225→125. Demand never exceeds open in the Sep23-Sep29 window.
-    // shortfallKg is still 75 (threshold-based) but no animals go hungry → runDownDate null.
+    // No animals go hungry → runDownDate null, and nothing is short either.
     const input = oneSilo({ incoming: [{ locationId: 's1', itemId: 'r1', date: '2026-09-25', kg: 300 }] }, { lowLevelKg: 200 });
     const { sources } = buildFeedForecast(input);
     expect(sources[0]).toMatchObject({ runDownDate: null, incomingKg: 300, balanceKg: 525 });
-    // Deficit below 200 kg at the end of 29 Sep: 700 demand + 200 level − 525 opening − 300 incoming.
-    expect(sources[0].shortfallKg).toBe(75);
+    // 700 demand − 525 opening − 300 incoming = −125 → 0; the 200 kg low level is not part of it (3 Oct ruling 2).
+    expect(sources[0].shortfallKg).toBe(0);
   });
 
   it('a delivery after the run-down does not hide it; runDownDate is the first day demand > open', () => {
@@ -99,7 +98,7 @@ describe('buildFeedForecast — forward planning date walks today\'s stock (Revi
     const input = oneSilo({ stockDate: '2026-09-23', planningDate: '2026-09-25', from: '2026-09-25' });
     // 525 → 425 (23) → 325 (24) = the opening on 25 Sep; then 225, 125, 25, −75 on 28 Sep.
     const { sources, rows } = buildFeedForecast(input);
-    expect(sources[0]).toMatchObject({ balanceKg: 325, daysLeft: 3, runDownDate: '2026-09-28' });
+    expect(sources[0]).toMatchObject({ balanceKg: 325, daysLeft: 3.3, runDownDate: '2026-09-28' });
     expect(rows[0].currentInventoryKg).toBe(325);
   });
 
@@ -138,7 +137,7 @@ describe('buildFeedForecast — run-down horizon past the range (Q12)', () => {
 
 describe('buildFeedForecast — the Worked Example is unchanged by D19 (Plan B numbers)', () => {
   it('shortfall equals requirement − opening when there is no low level and nothing incoming', () => {
-    const input = oneSilo({ leadTimeDays: 0 }, { balanceKg: 1500 });
+    const input = oneSilo({}, { balanceKg: 1500 });
     input.batches[0].heads = 2000; // 2,000 kg/day for 7 days = 14,000 kg against 1,500 kg
     expect(buildFeedForecast(input).sources[0].shortfallKg).toBe(12500);
   });
@@ -148,7 +147,7 @@ describe('buildFeedForecast — D19 walk edge cases (Plan R review of Task 2)', 
   it('a transfer out below the low level but no batch eating: shortfall exists, runDownDate is null (no animals go hungry)', () => {
     // The batch leaves the shed after 24 Sep; on 25 Sep a 700 kg transfer out drops the silo to 100 kg (< 200 level).
     // After Sep24, demand=0 every day → demand never > open → runDownDate=null under the new ruling.
-    // The threshold shortfall still exists: 700 demand(walk) + 200 threshold − 1000 opening − (−700 transfer) = 100.
+    // The low level no longer enters the shortfall: 200 demand(walk) − 1000 opening + 700 transferred out = −100 → 0.
     const input = oneSilo(
       {
         batches: [{
@@ -160,7 +159,7 @@ describe('buildFeedForecast — D19 walk edge cases (Plan R review of Task 2)', 
       { balanceKg: 1000, lowLevelKg: 200 },
     );
     expect(buildFeedForecast(input).sources[0]).toMatchObject({
-      runDownDate: null, refillDate: null, requiredOn: null, shortfallKg: 100,
+      runDownDate: null, shortfallKg: 0,
     });
   });
 
@@ -181,10 +180,9 @@ describe('buildFeedForecast — D19 walk edge cases (Plan R review of Task 2)', 
 
   it('a silo with 150 kg at 100/day: demand exceeds stock on the second planning day', () => {
     // Sep23: open=150, demand=100, 100>150=false. Sep24: open=50, demand=100, 100>50 → runDownDate=Sep24.
-    // refillDate=Sep24-2=Sep22. requiredOn=Sep22-2=Sep20. overdue: Sep20 < Sep23 → true.
-    // shortfallKg: 700 walk + 200 threshold − 150 opening = 750.
+    // shortfallKg: 700 walk − 150 opening = 550 (the 200 kg low level is an alert threshold, not part of it).
     expect(buildFeedForecast(oneSilo({}, { balanceKg: 150, lowLevelKg: 200 })).sources[0]).toMatchObject({
-      runDownDate: '2026-09-24', refillDate: '2026-09-22', requiredOn: '2026-09-20', overdue: true, shortfallKg: 750,
+      runDownDate: '2026-09-24', shortfallKg: 550,
     });
   });
 
@@ -233,12 +231,12 @@ describe('buildFeedForecast — D19 walk edge cases (Plan R review of Task 2)', 
     expect(daily.find((d) => d.date === '2026-09-24')).toMatchObject({ currentInventoryKg: 35800 });
   });
 
-  it('a silo that outlasts the horizon has no run-down, refill or required-on', () => {
+  it('a silo that outlasts the horizon has no run-down', () => {
     const { sources, rows, daily } = buildFeedForecast(oneSilo({ horizonTo: '2026-10-10' }, { balanceKg: 10000, lowLevelKg: 200 }));
-    const none = { runDownDate: null, refillDate: null, requiredOn: null, overdue: false };
+    const none = { runDownDate: null };
     expect(sources[0]).toMatchObject({ ...none, shortfallKg: 0 });
     expect(rows[0]).toMatchObject(none);
-    expect(daily.every((d) => d.runDownDate === null && d.requiredOn === null)).toBe(true);
+    expect(daily.every((d) => d.runDownDate === null)).toBe(true);
   });
 
   it('adds up several incoming rows on one date', () => {
@@ -261,7 +259,6 @@ describe('buildFeedForecast — D19 walk edge cases (Plan R review of Task 2)', 
 describe('buildFeedForecast — run-down needs demand or a transfer out that day (fix round 1)', () => {
   // SILO-001 holds R1 (1,000 kg); SILO-002 holds R2 and is empty. The batch changes onto R2 on 26 Sep (day 4).
   const nextDiet = (): ForecastInput => oneSilo({
-    leadTimeDays: 0,
     sheds: [{ shedId: 'h1', shedCode: 'GRS/SHED-001', siloIds: ['s1', 's2'] }],
     silos: [
       { siloId: 's1', siloCode: 'GRS/SILO-001', itemId: 'r1', balanceKg: 1000 },
@@ -274,7 +271,7 @@ describe('buildFeedForecast — run-down needs demand or a transfer out that day
   it('an empty next-diet silo idle until its diet starts runs down on the diet day, not the planning date', () => {
     const r2 = buildFeedForecast(nextDiet()).sources.find((s) => s.itemId === 'r2')!;
     expect(r2).toMatchObject({
-      isNextDiet: true, balanceKg: 0, runDownDate: '2026-09-26', refillDate: '2026-09-24', requiredOn: '2026-09-24', overdue: false,
+      isNextDiet: true, balanceKg: 0, runDownDate: '2026-09-26',
     });
   });
 
@@ -284,7 +281,7 @@ describe('buildFeedForecast — run-down needs demand or a transfer out that day
     expect(buildFeedForecast(input).sources.find((s) => s.itemId === 'r2')!.runDownDate).toBe('2026-09-26');
   });
 
-  it('never leaves a shortfall without a run-down and a Required On', () => {
+  it('never leaves a shortfall without a run-down and a shortage date', () => {
     const cases: ForecastInput[] = [
       nextDiet(),
       oneSilo({ incoming: [{ locationId: 's1', itemId: 'r1', date: '2026-09-25', kg: -500 }] }, { lowLevelKg: 100 }),
@@ -293,7 +290,7 @@ describe('buildFeedForecast — run-down needs demand or a transfer out that day
     ];
     for (const input of cases) {
       for (const s of buildFeedForecast(input).sources) {
-        if (s.shortfallKg > 0) expect(s.runDownDate !== null && s.requiredOn !== null).toBe(true);
+        if (s.shortfallKg > 0) expect(s.runDownDate !== null && s.shortageDate !== null).toBe(true);
       }
     }
   });

@@ -85,7 +85,7 @@ const source = (over: Partial<ForecastSource> = {}): ForecastSource => ({
   sourceType: 'SILO', sourceCode: 'GRS/SILO-001', locationId: 'silo-1', itemId: 'item-r1', itemName: 'Weaner Diet R1',
   balanceKg: 1500, planningDayDemandKg: 2000, firstDemandDate: '2026-09-23', firstDayDemandKg: 2000, walkDemandKg: 6000,
   daysLeft: 0, runDownDate: '2026-09-23', isNextDiet: false, noSiloHoldsItem: false, lifecycleIds: ['row-r1'],
-  thresholdKg: 0, incomingKg: 0, shortfallKg: 4500, refillDate: '2026-09-21', requiredOn: '2026-09-21', overdue: true, ...over,
+  thresholdKg: 0, incomingKg: 0, shortfallKg: 4500, safetyStockKg: 0, deliveryDayOpeningKg: 1500, ...over,
 });
 const FARM_ROW = { location_code: 'GRS', feed_bulk_multiple_kg: 3000, feed_bag_size_kg: 50, feed_truck_target_kg: 30000, feed_production_weekday: 0 };
 const SILO_ROW = { location_id: 'silo-1', location_code: 'GRS/SILO-001', location_type: 'SILO', farm_id: 'farm-grs', is_active: true, feed_in_bags: null, low_level_kg: '1500.00' };
@@ -379,9 +379,9 @@ describe('FeedRequisitionService.autoDraft', () => {
     const planningDay = serverToday();
     const future = (n: number) => { const d = new Date(`${planningDay}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
     // Start of day 1,516 kg — above the 1,500 kg low level — but 16 kg was fed this morning: the ledger holds 1,500.
-    const silo = source({ balanceKg: 1516, runDownDate: future(4), refillDate: future(2), requiredOn: future(2), overdue: false });
+    const silo = source({ balanceKg: 1516, runDownDate: future(4), shortageDate: future(2) });
     const store = source({ sourceType: 'STORE', sourceCode: 'GRS/STORE-001', locationId: 'store-1', itemId: 'item-p', balanceKg: 900, shortfallKg: 100,
-      runDownDate: future(1), refillDate: future(-1), requiredOn: future(-1), overdue: true });
+      runDownDate: future(1), shortageDate: future(-1) });
     const { service, log, siloFeed, ledger } = setup([silo, store], queues);
     siloFeed.currentItems.mockResolvedValueOnce(new Map([['silo-1', { item_id: 'item-r1', item_code: 'R1', item_description: null, on_hand_qty: 1500, uoms: ['KG'] }]]));
     ledger.getStockBalance.mockResolvedValueOnce([

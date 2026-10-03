@@ -187,7 +187,8 @@ export function recommendLines(args: {
       bagCount: bagCountFor(recommendedQtyKg, feedType, settings),
       // Q4 (Plan R): the field specification's Required On "is the date used to populate the auto-drafted
       // Requisition line"; one already past is due now. Nothing runs down in the window: `to`, as before.
-      proposedDeliveryDate: s.requiredOn ? (s.requiredOn < planningDate ? planningDate : s.requiredOn) : to,
+      // TEMPORARY (Task 3): requiredOn no longer exists; Task 5 replaces this with the shortage-date delivery rule.
+      proposedDeliveryDate: (s.shortageDate ?? to) < planningDate ? planningDate : (s.shortageDate ?? to),
       belowLowLevel: dest.locationType === 'SILO' && dest.lowLevelKg !== null && systemBalanceKg <= dest.lowLevelKg,
       needsSiloChangeover: s.noSiloHoldsItem,
     });

@@ -1450,7 +1450,6 @@ export class FeedForecastService {
         to,
         stockDate: opts.stockDate,
         horizonTo: opts.horizonTo,
-        leadTimeDays: farm.leadTimeDays,
         sheds,
         silos: stock.silos,
         store: stock.store,

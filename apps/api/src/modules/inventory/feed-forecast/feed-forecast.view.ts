@@ -84,9 +84,9 @@ export interface ReportRow {
   sharedBatchCount: number; // the most batches sharing the container on any day of the line
   indicative: boolean; // any day of the line
   runDownDate: string | null;
-  refillDate: string | null;
-  requiredOn: string | null;
-  overdue: boolean;
+  refillDate?: string | null;
+  requiredOn?: string | null;
+  overdue?: boolean;
 }
 
 /** The first date of the group `date` belongs to. */
@@ -123,7 +123,7 @@ export function groupRows(daily: DailyForecastRow[], view: ForecastView, from: s
           currentInventoryKg: d.currentInventoryKg, heads: d.heads, perDayIntakeKg: d.perDayIntakeKg,
           intakeKg: d.perDayIntakeKg,
           daysOfStock: d.daysOfStock, sharedBatchCount: d.sharedBatchCount, indicative: d.indicative,
-          runDownDate: d.runDownDate, refillDate: d.refillDate, requiredOn: d.requiredOn, overdue: d.overdue,
+          runDownDate: d.runDownDate,
         },
       });
       continue;

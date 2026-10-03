@@ -11,7 +11,6 @@ const workedExample: ForecastInput = {
   planningDate: '2026-09-23',
   from: '2026-09-23',
   to: '2026-09-29',
-  leadTimeDays: 0,
   sheds: [{ shedId: 'h3', shedCode: 'GRS/SHED-003', siloIds: ['s1', 's2'] }],
   silos: [
     { siloId: 's1', siloCode: 'GRS/SILO-001', itemId: 'r1', balanceKg: 1500 },
@@ -64,11 +63,8 @@ describe('buildFeedForecast — workbook worked example', () => {
       sourceCode: 'GRS/SILO-001',
       rangeDemandKg: 6000,
       perDayIntakeKg: 2000,
-      daysLeft: 0,
+      daysLeft: 0.8, // 1,500 ÷ 2,000 = 0.75 → 0.8
       runDownDate: '2026-09-23',
-      refillDate: '2026-09-21',
-      requiredOn: '2026-09-21',
-      overdue: true,
     });
     expect(r2).toMatchObject({
       sourceCode: 'GRS/SILO-002',
@@ -76,9 +72,6 @@ describe('buildFeedForecast — workbook worked example', () => {
       perDayIntakeKg: 2500,
       daysLeft: null,
       runDownDate: '2026-09-26',
-      refillDate: '2026-09-24',
-      requiredOn: '2026-09-24',
-      overdue: false,
     });
   });
 
@@ -106,7 +99,6 @@ describe('buildFeedForecast — D1 days-left sample', () => {
     planningDate: '2026-09-23',
     from: '2026-09-23',
     to: '2026-09-29',
-    leadTimeDays: 0,
     sheds: [{ shedId: 'h1', shedCode: 'GRS/SHED-001', siloIds: ['s1'] }],
     silos: [{ siloId: 's1', siloCode: 'GRS/SILO-001', itemId: 'r1', balanceKg: 525 }],
     store: null,
@@ -124,10 +116,10 @@ describe('buildFeedForecast — D1 days-left sample', () => {
     feedRows,
   };
 
-  it('525 kg at 100 kg/day gives daysLeft 5 and run-down 5 days out', () => {
+  it('525 kg at 100 kg/day gives daysLeft 5.3 and run-down 5 days out', () => {
     const { rows } = buildFeedForecast(input);
     const r = rows.find((row) => row.itemId === 'r1')!;
-    expect(r.daysLeft).toBe(5);
+    expect(r.daysLeft).toBe(5.3); // 525 ÷ 100 = 5.25 → 5.3, one decimal
     expect(r.runDownDate).toBe('2026-09-28');
   });
 });
@@ -150,7 +142,6 @@ describe('buildFeedForecast — shared silo across two sheds', () => {
     planningDate: '2026-09-23',
     from: '2026-09-23',
     to: '2026-09-29',
-    leadTimeDays: 0,
     sheds: [
       { shedId: 'h1', shedCode: 'GRS/SHED-001', siloIds: ['s1'] },
       { shedId: 'h2', shedCode: 'GRS/SHED-002', siloIds: ['s1'] },
@@ -183,7 +174,7 @@ describe('buildFeedForecast — shared silo across two sheds', () => {
     const { rows } = buildFeedForecast(input);
     expect(rows).toHaveLength(2);
     for (const r of rows) {
-      expect(r.daysLeft).toBe(2);
+      expect(r.daysLeft).toBe(2.3); // 450 ÷ 200 = 2.25 → 2.3
       expect(r.runDownDate).toBe('2026-09-25');
     }
   });
@@ -207,7 +198,6 @@ describe('buildFeedForecast — D34: wastage dropped, demand is heads × rate', 
     planningDate: '2026-09-23',
     from: '2026-09-23',
     to: '2026-09-23',
-    leadTimeDays: 0,
     sheds: [{ shedId: 'h1', shedCode: 'GRS/SHED-001', siloIds: ['s1'] }],
     silos: [{ siloId: 's1', siloCode: 'GRS/SILO-001', itemId: 'r1', balanceKg: 5000 }],
     store: null,
@@ -267,7 +257,6 @@ describe('buildFeedForecast — missing feed row inside a multi-day range', () =
     planningDate: '2026-09-23',
     from: '2026-09-23',
     to: '2026-09-25',
-    leadTimeDays: 0,
     sheds: [{ shedId: 'h1', shedCode: 'GRS/SHED-001', siloIds: ['s1'] }],
     silos: [{ siloId: 's1', siloCode: 'GRS/SILO-001', itemId: 'r1', balanceKg: 5000 }],
     store: null,
@@ -319,7 +308,6 @@ describe('buildFeedForecast — no silo holds the item', () => {
     planningDate: '2026-09-23',
     from: '2026-09-23',
     to: '2026-09-23',
-    leadTimeDays: 0,
     sheds: [{ shedId: 'h1', shedCode: 'GRS/SHED-001', siloIds: ['s1'] }],
     silos: [{ siloId: 's1', siloCode: 'GRS/SILO-001', itemId: 'r1', balanceKg: 1000 }],
     store: { storeId: 'st1', storeCode: 'GRS/STORE-001', balances: { r2: 300 } },
@@ -368,7 +356,6 @@ describe('buildFeedForecast — supply lasts the whole range', () => {
     planningDate: '2026-09-23',
     from: '2026-09-23',
     to: '2026-09-29',
-    leadTimeDays: 0,
     sheds: [{ shedId: 'h1', shedCode: 'GRS/SHED-001', siloIds: ['s1'] }],
     silos: [{ siloId: 's1', siloCode: 'GRS/SILO-001', itemId: 'r1', balanceKg: 100000 }],
     store: null,
@@ -386,13 +373,10 @@ describe('buildFeedForecast — supply lasts the whole range', () => {
     feedRows,
   };
 
-  it('never runs down: runDownDate null, overdue false', () => {
+  it('never runs down: runDownDate null', () => {
     const { rows } = buildFeedForecast(input);
     const r = rows[0];
     expect(r.runDownDate).toBeNull();
-    expect(r.refillDate).toBeNull();
-    expect(r.requiredOn).toBeNull();
-    expect(r.overdue).toBe(false);
   });
 });
 
@@ -414,7 +398,6 @@ describe('buildFeedForecast — projected stage change', () => {
     planningDate: '2026-09-23',
     from: '2026-09-23',
     to: '2026-09-23',
-    leadTimeDays: 0,
     sheds: [{ shedId: 'h1', shedCode: 'GRS/SHED-001', siloIds: ['s1'] }],
     silos: [{ siloId: 's1', siloCode: 'GRS/SILO-001', itemId: 'r1', balanceKg: 5000 }],
     store: null,
@@ -452,8 +435,6 @@ function singleBatchInput(opts: {
   planningDate: string;
   from: string;
   to: string;
-  refillBufferDays?: number;
-  leadTimeDays?: number;
 }): ForecastInput {
   const feedRows: FeedRow[] = [
     {
@@ -472,11 +453,8 @@ function singleBatchInput(opts: {
     planningDate: opts.planningDate,
     from: opts.from,
     to: opts.to,
-    leadTimeDays: opts.leadTimeDays ?? 0,
     sheds: [{ shedId: 'h1', shedCode: 'GRS/SHED-001', siloIds: ['s1'] }],
-    // D38: the buffer is the silo's own; these cases keep the old figure by
-    // putting it where it now lives.
-    silos: [{ siloId: 's1', siloCode: 'GRS/SILO-001', itemId: 'r1', balanceKg: opts.balanceKg, reorderDays: opts.refillBufferDays ?? 2 }],
+    silos: [{ siloId: 's1', siloCode: 'GRS/SILO-001', itemId: 'r1', balanceKg: opts.balanceKg }],
     store: null,
     items: { r1: 'Grower Diet' },
     batches: [
@@ -520,7 +498,7 @@ describe('buildFeedForecast — fix round 1: integer-gram balance walk at exact 
       to: '2026-09-29',
     });
     const { rows } = buildFeedForecast(input);
-    expect(rows[0].daysLeft).toBe(4); // 71.75 ÷ 17.5 = 4.1
+    expect(rows[0].daysLeft).toBe(4.1); // 71.75 ÷ 17.5 = 4.1
     expect(rows[0].runDownDate).toBe('2026-09-27'); // D19/Q1: closes at 0 kg at the end of the 5th day
   });
 
@@ -553,7 +531,7 @@ describe('buildFeedForecast — fix round 1: projection anchored to planningDate
     });
     const { rows } = buildFeedForecast(input);
     const r = rows.find((row) => row.itemId === 'r1')!;
-    expect(r.daysLeft).toBe(5);
+    expect(r.daysLeft).toBe(5.3); // 525 ÷ 100 = 5.25 → 5.3, one decimal
     expect(r.runDownDate).toBe('2026-09-28');
   });
 
@@ -571,7 +549,7 @@ describe('buildFeedForecast — fix round 1: projection anchored to planningDate
     });
     const { rows } = buildFeedForecast(input);
     const r = rows.find((row) => row.itemId === 'r1')!;
-    expect(r.daysLeft).toBe(2);
+    expect(r.daysLeft).toBe(2.5); // 250 ÷ 100
     expect(r.runDownDate).toBe('2026-09-25');
   });
 
@@ -588,9 +566,6 @@ describe('buildFeedForecast — fix round 1: projection anchored to planningDate
     const { rows } = buildFeedForecast(input);
     const r = rows.find((row) => row.itemId === 'r1')!;
     expect(r.runDownDate).toBeNull();
-    expect(r.refillDate).toBeNull();
-    expect(r.requiredOn).toBeNull();
-    expect(r.overdue).toBe(false);
   });
 });
 
@@ -612,7 +587,6 @@ describe('buildFeedForecast — D6: shed with no silo falls back to STORE with n
     planningDate: '2026-09-23',
     from: '2026-09-23',
     to: '2026-09-23',
-    leadTimeDays: 0,
     sheds: [{ shedId: 'h1', shedCode: 'GRS/SHED-001', siloIds: [] }],
     silos: [],
     store: { storeId: 'st1', storeCode: 'GRS/STORE-001', balances: { r1: 400 } },
@@ -657,7 +631,6 @@ describe('buildFeedForecast — NONE source: no silo holds it and there is no st
     planningDate: '2026-09-23',
     from: '2026-09-23',
     to: '2026-09-25',
-    leadTimeDays: 0,
     sheds: [{ shedId: 'h1', shedCode: 'GRS/SHED-001', siloIds: [] }],
     silos: [],
     store: null,
@@ -715,7 +688,6 @@ describe('buildFeedForecast — OVERLAPPING_FEED_ROWS', () => {
     planningDate: '2026-09-23',
     from: '2026-09-23',
     to: '2026-09-23',
-    leadTimeDays: 0,
     sheds: [{ shedId: 'h1', shedCode: 'GRS/SHED-001', siloIds: ['s1'] }],
     silos: [{ siloId: 's1', siloCode: 'GRS/SILO-001', itemId: 'r1', balanceKg: 5000 }],
     store: null,
@@ -765,7 +737,6 @@ describe('buildFeedForecast — two sheds falling back to one STORE, combined de
     planningDate: '2026-09-23',
     from: '2026-09-23',
     to: '2026-09-29',
-    leadTimeDays: 0,
     sheds: [
       { shedId: 'h1', shedCode: 'GRS/SHED-001', siloIds: [] },
       { shedId: 'h2', shedCode: 'GRS/SHED-002', siloIds: [] },
@@ -799,7 +770,7 @@ describe('buildFeedForecast — two sheds falling back to one STORE, combined de
     expect(rows).toHaveLength(2);
     for (const r of rows) {
       expect(r.sourceType).toBe('STORE');
-      expect(r.daysLeft).toBe(2);
+      expect(r.daysLeft).toBe(2.3); // 450 ÷ 200 = 2.25 → 2.3
       expect(r.runDownDate).toBe('2026-09-25');
     }
   });
@@ -835,7 +806,6 @@ describe('buildFeedForecast — demand changing across a stage boundary inside t
     planningDate: '2026-09-21',
     from: '2026-09-21',
     to: '2026-09-27',
-    leadTimeDays: 0,
     sheds: [{ shedId: 'h1', shedCode: 'GRS/SHED-001', siloIds: ['s1'] }],
     silos: [{ siloId: 's1', siloCode: 'GRS/SILO-001', itemId: 'r1', balanceKg: 100000 }],
     store: null,
@@ -896,7 +866,6 @@ describe('buildFeedForecast — a diet row that starts later in the horizon', ()
     planningDate: '2026-09-23',
     from: '2026-09-23',
     to: '2026-09-27',
-    leadTimeDays: 0,
     sheds: [{ shedId: 'h1', shedCode: 'GRS/SHED-001', siloIds: ['s1', 's0'] }],
     silos: [
       { siloId: 's0', siloCode: 'GRS/SILO-000', itemId: 'r0', balanceKg: 5000 },

@@ -8,7 +8,7 @@ import { buildFeedForecast, ForecastInput } from './feed-forecast.engine';
  * 1,500 kg, SILO2 R2 1,000 kg.
  */
 const workedExample: ForecastInput = {
-  planningDate: '2026-09-23', from: '2026-09-23', to: '2026-09-29', leadTimeDays: 0,
+  planningDate: '2026-09-23', from: '2026-09-23', to: '2026-09-29',
   sheds: [{ shedId: 'h3', shedCode: 'GRS/SHED-003', siloIds: ['s1', 's2'] }],
   silos: [
     { siloId: 's1', siloCode: 'GRS/SILO-001', itemId: 'r1', balanceKg: 1500 },
@@ -33,14 +33,14 @@ describe('buildFeedForecast — sources and diet changes (Plan B)', () => {
       {
         sourceType: 'SILO', sourceCode: 'GRS/SILO-001', locationId: 's1', itemId: 'r1', itemName: 'Weaner Diet R1',
         balanceKg: 1500, planningDayDemandKg: 2000, firstDemandDate: '2026-09-23', firstDayDemandKg: 2000,
-        walkDemandKg: 6000, daysLeft: 0, runDownDate: '2026-09-23', shortageDate: '2026-09-23', isNextDiet: false, noSiloHoldsItem: false,
-        lifecycleIds: ['row-r1'], thresholdKg: 0, incomingKg: 0, shortfallKg: 4500, refillDate: '2026-09-21', requiredOn: '2026-09-21', overdue: true,
+        walkDemandKg: 6000, daysLeft: 0.8, runDownDate: '2026-09-23', shortageDate: '2026-09-23', isNextDiet: false, noSiloHoldsItem: false,
+        lifecycleIds: ['row-r1'], thresholdKg: 0, incomingKg: 0, shortfallKg: 4500, safetyStockKg: 0, deliveryDayOpeningKg: 1500,
       },
       {
         sourceType: 'SILO', sourceCode: 'GRS/SILO-002', locationId: 's2', itemId: 'r2', itemName: 'Weaner Diet R2',
         balanceKg: 1000, planningDayDemandKg: 0, firstDemandDate: '2026-09-26', firstDayDemandKg: 2500,
         walkDemandKg: 10000, daysLeft: null, runDownDate: '2026-09-26', shortageDate: '2026-09-26', isNextDiet: true, noSiloHoldsItem: false,
-        lifecycleIds: ['row-r2'], thresholdKg: 0, incomingKg: 0, shortfallKg: 9000, refillDate: '2026-09-24', requiredOn: '2026-09-24', overdue: false,
+        lifecycleIds: ['row-r2'], thresholdKg: 0, incomingKg: 0, shortfallKg: 9000, safetyStockKg: 0, deliveryDayOpeningKg: 1000,
       },
     ]);
   });
@@ -99,7 +99,7 @@ describe('buildFeedForecast — sources and diet changes (Plan B)', () => {
     // from (20 Sep) is before planningDate (23 Sep); the single feed row (days 1-3 of the stage, 20-22 Sep) is
     // entirely consumed before the walk starts, so the container has nothing left to requisition.
     const input: ForecastInput = {
-      planningDate: '2026-09-23', from: '2026-09-20', to: '2026-09-25', leadTimeDays: 0,
+      planningDate: '2026-09-23', from: '2026-09-20', to: '2026-09-25',
       sheds: [{ shedId: 'h3', shedCode: 'GRS/SHED-003', siloIds: ['s0'] }],
       silos: [{ siloId: 's0', siloCode: 'GRS/SILO-000', itemId: 'r0', balanceKg: 500 }],
       store: null,
@@ -114,5 +114,43 @@ describe('buildFeedForecast — sources and diet changes (Plan B)', () => {
     };
     const { sources } = buildFeedForecast(input);
     expect(sources).toEqual([]);
+  });
+});
+
+describe('buildFeedForecast — TDD workbook alignment (3 Oct rulings 2 and 3)', () => {
+  const withLevels = (safetyStockKg?: number): ForecastInput => ({
+    ...workedExample,
+    safetyStockKg,
+    silos: workedExample.silos.map((s) => ({ ...s, lowLevelKg: 1000 })), // Master Setup row 10: 1,000 KG each
+  });
+
+  it('orders the workbook quantities even with the 1,000 KG Below Feed Level set', () => {
+    const { sources } = buildFeedForecast(withLevels());
+    expect(sources.map((s) => [s.itemId, s.walkDemandKg, s.shortfallKg, s.shortageDate, s.safetyStockKg]))
+      .toEqual([['r1', 6000, 4500, '2026-09-23', 0], ['r2', 10000, 9000, '2026-09-26', 0]]);
+  });
+
+  it('adds configured safety stock to the shortfall', () => {
+    const { sources } = buildFeedForecast(withLevels(500));
+    expect(sources.map((s) => s.shortfallKg)).toEqual([5000, 9500]);
+  });
+
+  it('no longer reports refill or required-on dates', () => {
+    const { sources, rows, daily } = buildFeedForecast(withLevels());
+    for (const o of [...sources, ...rows, ...daily]) {
+      expect(o).not.toHaveProperty('refillDate');
+      expect(o).not.toHaveProperty('requiredOn');
+      expect(o).not.toHaveProperty('overdue');
+    }
+  });
+
+  it('gives days remaining to one decimal and the delivery-day opening', () => {
+    const input = withLevels();
+    input.silos = input.silos.map((s) => (s.siloId === 's1' ? { ...s, balanceKg: 5500 } : s));
+    const r1 = buildFeedForecast(input).sources.find((s) => s.itemId === 'r1')!;
+    expect(r1.daysLeft).toBe(2.8); // 5,500 ÷ 2,000 = 2.75 → 2.8 (Silo Balance row 9: "about 2.75 days", one decimal)
+    // 5,500 lasts 23–24 Sep; on 25 Sep the opening is 1,500 against 2,000 demand → shortage 25 Sep, opening 1,500.
+    expect(r1.shortageDate).toBe('2026-09-25');
+    expect(r1.deliveryDayOpeningKg).toBe(1500);
   });
 });
