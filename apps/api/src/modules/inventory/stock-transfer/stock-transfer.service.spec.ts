@@ -259,7 +259,12 @@ describe('StockTransferService', () => {
         transfer_id: 'tr-1', company_id: 'co-1', status: 'DRAFT',
         from_warehouse_id: 'wh-1', to_warehouse_id: 'wh-2', lines: [],
       } as any);
+      // M6 (fix round 1) moved assertNotShipped ahead of assertWarehouses, so
+      // update()'s FIRST select is now the shipment-events read, not the
+      // source-warehouse read — this harmless empty queue entry is it ("no
+      // shipment"); the two real location overrides shift down by one.
       mockDbSelect
+        .mockReturnValueOnce({ from: () => chain([]) })
         .mockReturnValueOnce({ from: () => chain([{ location_id: 'wh-1', parent: 'farm-g', farm_id: 'farm-g', company_id: 'co-1', lob_id: 'lob-pig' }]) })
         .mockReturnValueOnce({ from: () => chain([{ location_id: 'wh-other', parent: 'farm-k', farm_id: 'farm-k', company_id: 'co-2', lob_id: 'lob-pig' }]) });
 
@@ -343,13 +348,90 @@ describe('StockTransferService', () => {
         transfer_id: 'tr-1', company_id: 'co-1', status: 'DRAFT',
         from_warehouse_id: 'store-k', to_warehouse_id: 'wh-1', lines: [],
       } as any);
-      mockDbSelect.mockReturnValueOnce({
-        from: () => chain([{ location_id: 'store-k', parent: 'farm-k', farm_id: 'farm-k', company_id: 'co-1', lob_id: 'lob-pig' }]),
-      });
+      // M6 (fix round 1): assertNotShipped's select (no shipment) runs before
+      // assertWarehouses's source-warehouse select.
+      mockDbSelect
+        .mockReturnValueOnce({ from: () => chain([]) })
+        .mockReturnValueOnce({
+          from: () => chain([{ location_id: 'store-k', parent: 'farm-k', farm_id: 'farm-k', company_id: 'co-1', lob_id: 'lob-pig' }]),
+        });
 
       await expect(service.update('tr-1', { lines: [{ item_id: 'item-1', quantity: 999, uom: 'KG' }] } as any, 'tenant-1'))
         .rejects.toThrow('Source warehouse is not on your active farm.');
       expect(mockDbUpdate).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * Fix round 1, M6: update() must check for a shipment (assertNotShipped)
+   * before it validates the warehouses (assertWarehouses) — the cheap,
+   * event-based refusal first, the two location reads only once that is clear.
+   * Before this fix the order was reversed.
+   */
+  describe('fix round 1, M6 — update() checks shipped stock before the warehouses', () => {
+    it('reports "stock has already shipped", not a warehouse error, even when the new destination would also fail validation', async () => {
+      useFarmScope(cls, { farmId: null, companyId: 'co-1', restricted: false, lobId: null });
+      jest.spyOn(service as any, 'loadForMutation').mockResolvedValue({
+        transfer_id: 'tr-1', transfer_no: 'TR-000001', company_id: 'co-1', status: 'IN_TRANSIT',
+        from_warehouse_id: 'wh-1', to_warehouse_id: 'wh-2', lines: [],
+      } as any);
+      rows.set(schema.transferShipment, [{ shipment_no: 'SH-2026-0001' }]);
+      // The destination the caller wants to move to does not exist — if
+      // assertWarehouses ran first, THIS is the error that would surface.
+      rows.set(schema.locationMaster, []);
+
+      await expect(service.update('tr-1', { to_warehouse_id: 'wh-bad' } as any, 'tenant-1'))
+        .rejects.toThrow('Stock Transfer TR-000001 cannot be edited — stock has already shipped on SH-2026-0001.');
+      expect(mockDbUpdate).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * M1 (fix round 1): the ordinary paths the new guards must not have broken
+   * — a DRAFT with no shipment or receipt event still cancels and still edits,
+   * exactly as before Task 4b's status-follows-events and no-edit-once-shipped
+   * guards were added.
+   */
+  describe('fix round 1, M1 — the ordinary paths still work', () => {
+    const openScope = { farmId: null, companyId: 'co-1', restricted: false, lobId: null };
+
+    it('remove() still cancels a DRAFT with no events (CANCELLED written)', async () => {
+      useFarmScope(cls, openScope);
+      jest.spyOn(service as any, 'loadForMutation').mockResolvedValue({
+        transfer_id: 'tr-1', transfer_no: 'TR-000001', company_id: 'co-1', status: 'DRAFT',
+        from_warehouse_id: 'wh-1', to_warehouse_id: 'wh-2', lines: [],
+      } as any);
+      // No shipment: assertNotShipped passes silently (default empty rows.get(schema.transferShipment)).
+      const setSpy = jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ affectedRows: 1 }]) });
+      mockDbUpdate.mockReturnValue({ set: setSpy });
+
+      const result = await service.remove('tr-1', 'tenant-1', { userId: 'u-1' } as any);
+
+      expect(setSpy).toHaveBeenCalledWith(expect.objectContaining({ status: 'CANCELLED' }));
+      expect(result).toEqual({ success: true, message: "Stock Transfer 'TR-000001' has been cancelled." });
+    });
+
+    it('update() still edits a DRAFT with no events', async () => {
+      useFarmScope(cls, openScope);
+      jest.spyOn(service as any, 'loadForMutation').mockResolvedValue({
+        transfer_id: 'tr-1', transfer_no: 'TR-000001', company_id: 'co-1', status: 'DRAFT',
+        from_warehouse_id: 'wh-1', to_warehouse_id: 'wh-2', lines: [],
+      } as any);
+      mockDbSelect
+        .mockReturnValueOnce({ from: () => chain([]) }) // assertNotShipped: no shipment
+        .mockReturnValueOnce({ from: () => chain([{ location_id: 'wh-1', parent: null, farm_id: null, company_id: 'co-1', lob_id: null }]) })
+        .mockReturnValueOnce({ from: () => chain([{ location_id: 'wh-2', parent: null, farm_id: null, company_id: 'co-1', lob_id: null }]) });
+      rows.set(schema.stockTransfer, [{
+        transfer_id: 'tr-1', transfer_no: 'TR-000001', tenant_id: 'tenant-1', status: 'DRAFT', deleted_at: null,
+        from_warehouse_id: 'wh-1', to_warehouse_id: 'wh-2',
+      }]);
+      rows.set(schema.stockTransferLine, []);
+      const setSpy = jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ affectedRows: 1 }]) });
+      mockDbUpdate.mockReturnValue({ set: setSpy });
+
+      await service.update('tr-1', { remarks: 'moved to dock 2' } as any, 'tenant-1', { userId: 'u-1' } as any);
+
+      expect(setSpy).toHaveBeenCalledWith(expect.objectContaining({ remarks: 'moved to dock 2' }));
     });
   });
 

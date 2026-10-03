@@ -232,6 +232,37 @@ describe('postReceipt — bound to its shipment', () => {
       posting_date: '2026-10-03', shipment_id: 'sh-other', lines: [{ line_id: 'line-1', quantity: 1 }],
     }, 'tenant-1', ADMIN))).rejects.toThrow(NotFoundException);
   });
+
+  /**
+   * Fix round 1, Important 1 (second instance): the over-receipt bound here
+   * compares input.quantity against alreadyShipped - alreadyReceived with NO
+   * tolerance, while its sibling bound three lines below it (against the
+   * shipment's own remaining value) already carries +1e-9. shippedByLine sums
+   * two real shipment events (0.6 + 0.7 = 1.2999999999999998 in IEEE754) —
+   * closing the order's last 0.7 then fails this bound even though nothing
+   * was actually over-received. This is the exact scenario the brief names
+   * (ordered 1.3, shipped 0.6+0.7, received 0.6+0.7 → POSTED) and it 400s
+   * here before transferStatusFor ever runs, so the status-tolerance fix
+   * alone cannot deliver that live outcome without this one too.
+   */
+  it('a float-summed shipment (0.6+0.7) does not refuse the receipt that closes it (ordered 1.3)', async () => {
+    const queues = baseQueues();
+    queues.set(schema.stockTransferLine, [[{ ...LINE, quantity: '1.3' }]]);
+    queues.set(schema.transferShipment, [[{ ...SHIPMENT }]]);
+    queues.set(schema.transferShipmentLine, [
+      [{ line_id: 'line-1', qty: '0.6' }, { line_id: 'line-1', qty: '0.7' }], // shippedQuantities: 1.2999999999999998
+      [{ ...SHIPMENT_LINE, quantity: '0.7' }],                                 // this shipment carried 0.7
+    ]);
+    queues.set(schema.transferReceiptLine, [
+      [{ line_id: 'line-1', qty: '0.6' }], // receivedQuantities: 0.6 already received
+      [],                                   // nothing received against THIS shipment yet
+    ]);
+    const { service, as } = setup(queues);
+    const result = await as(() => service.postReceipt('tr-1', {
+      posting_date: '2026-10-04', shipment_id: 'sh-1', lines: [{ line_id: 'line-1', quantity: 0.7 }],
+    }, 'tenant-1', ADMIN));
+    expect(result.lines).toEqual([{ line_id: 'line-1', qty_received: 0.7 }]);
+  });
 });
 
 describe('postDirectTransfer — one shipment plus its matching receipt', () => {

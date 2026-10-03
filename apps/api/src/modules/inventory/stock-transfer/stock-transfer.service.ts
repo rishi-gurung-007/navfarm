@@ -460,10 +460,13 @@ export class StockTransferService {
       // visible to them whatever to_warehouse_id becomes.
       const fromWarehouseId = dto.from_warehouse_id ?? transfer.from_warehouse_id;
       const toWarehouseId = dto.to_warehouse_id ?? transfer.to_warehouse_id;
-      await this.assertWarehouses(fromWarehouseId, toWarehouseId);
-      // Reads only above; nothing is written before both refusals.
+      // M6 (fix round 1): the cheap, event-based refusal first — if stock has
+      // already shipped the edit is refused outright, so there is no reason
+      // to also validate warehouses the caller may be trying to change.
+      // Reads only below; nothing is written before both refusals.
       await this.assertNotShipped(transfer, tenantId, 'edited');
       this.assertDraft(transfer);
+      await this.assertWarehouses(fromWarehouseId, toWarehouseId);
 
       const updates: any = {
         updated_by: userPayload?.userId || null,
@@ -667,7 +670,11 @@ export class StockTransferService {
         const alreadyShipped = shippedByLine.get(line.line_id) ?? 0;
         const alreadyReceived = receivedByLine.get(line.line_id) ?? 0;
         // Over-receipt is measured against what has shipped, never the order.
-        if (input.quantity > alreadyShipped - alreadyReceived) {
+        // The same 1e-9 tolerance as the shipment-level bound just below (and
+        // assertShipment) — alreadyShipped sums real event rows in JS float
+        // arithmetic, so closing a line shipped as e.g. 0.6 + 0.7 must not
+        // read as short of 0.7 remaining (fix round 1, Important 1).
+        if (input.quantity > alreadyShipped - alreadyReceived + 1e-9) {
           throw new BadRequestException('Receipt quantity exceeds the remaining quantity to receive.');
         }
         // ...and against THIS shipment: a receipt cannot draw on what another
@@ -771,7 +778,10 @@ export class StockTransferService {
         if (!line) throw new BadRequestException(`Transfer line '${input.line_id}' is not part of ${row.transfer_no}.`);
         this.assertShipment(Number(line.quantity), shippedByLine.get(line.line_id) ?? 0, input.quantity, line);
         const remainingToReceive = (shippedByLine.get(line.line_id) ?? 0) + input.quantity - (receivedByLine.get(line.line_id) ?? 0);
-        if (input.quantity > remainingToReceive) {
+        // Same 1e-9 tolerance as postReceipt's identical bound (fix round 1,
+        // Important 1): shippedByLine/receivedByLine sum real event rows in
+        // JS float arithmetic.
+        if (input.quantity > remainingToReceive + 1e-9) {
           throw new BadRequestException('Receipt quantity exceeds the remaining quantity to receive.');
         }
       }
