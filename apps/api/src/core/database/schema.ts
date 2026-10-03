@@ -4459,7 +4459,7 @@ export const requisitionLine = mysqlTable('requisition_line', {
   lifecycle_ref_id: varchar('lifecycle_ref_id', { length: 36 }),
   system_balance_kg: decimal('system_balance_kg', { precision: 18, scale: 4 }),
   daily_requirement_kg: decimal('daily_requirement_kg', { precision: 18, scale: 4 }),
-  days_remaining: int('days_remaining'),
+  days_remaining: decimal('days_remaining', { precision: 6, scale: 1 }), // Silo Balance row 9: "Displayed to 1 decimal" (0143 widened INT)
   first_shortage_date: date('first_shortage_date', { mode: 'string' }),
   unrounded_need_kg: decimal('unrounded_need_kg', { precision: 18, scale: 4 }),
   recommended_qty_kg: decimal('recommended_qty_kg', { precision: 18, scale: 4 }),
@@ -4490,6 +4490,33 @@ export const requisitionLine = mysqlTable('requisition_line', {
   qty_received: decimal('qty_received', { precision: 18, scale: 4 }),
   created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
 });
+
+/**
+ * Task 9 (B1, Rishi 3 Oct): which batches in which houses a feed requisition
+ * order line is for. The order line stays one destination silo and item
+ * (Engine Step 8 rounds per compartment); this is its breakdown — Engine Step 9
+ * "draft lines per farm, batch, house, destination silo, item and required
+ * date", MOM Feed and Logistic 21 Aug 2026 "Per Batch, Per House, and Per
+ * Silo". Written by the auto-draft from the forecast's daily rows (demand
+ * summed over the window) and replaced on each rerun; manual lines have none.
+ */
+export const requisitionLineBatch = mysqlTable('requisition_line_batch', {
+  line_batch_id: varchar('line_batch_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  line_id: varchar('line_id', { length: 36 }).notNull(),
+  batch_id: varchar('batch_id', { length: 36 }).notNull(),
+  shed_id: varchar('shed_id', { length: 36 }),
+  heads: int('heads'),
+  feed_rate_kg: decimal('feed_rate_kg', { precision: 18, scale: 6 }),
+  lifecycle_ref_id: varchar('lifecycle_ref_id', { length: 36 }),
+  demand_kg: decimal('demand_kg', { precision: 18, scale: 4 }).notNull(),
+  first_demand_date: date('first_demand_date', { mode: 'string' }),
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+}, (table) => ({
+  uqLineBatchShed: uniqueIndex('uq_requisition_line_batch').on(table.line_id, table.batch_id, table.shed_id),
+  lineFk: foreignKey({ columns: [table.line_id], foreignColumns: [requisitionLine.line_id], name: 'requisition_line_batch_line_id_fk' }).onDelete('cascade'),
+  batchFk: foreignKey({ columns: [table.batch_id], foreignColumns: [batchHeader.batch_id], name: 'requisition_line_batch_batch_id_fk' }),
+  shedFk: foreignKey({ columns: [table.shed_id], foreignColumns: [locationMaster.location_id], name: 'requisition_line_batch_shed_id_fk' }).onDelete('set null'),
+}));
 
 export const requisitionRelations = relations(requisition, ({ one, many }) => ({
   company: one(companyMaster, { fields: [requisition.company_id], references: [companyMaster.company_id] }),

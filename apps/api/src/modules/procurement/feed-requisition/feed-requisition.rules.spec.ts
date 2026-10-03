@@ -1,6 +1,6 @@
 import { buildFeedForecast, type ForecastInput, type ForecastSource } from '../../inventory/feed-forecast/feed-forecast.engine';
 import {
-  DEFAULT_FEED_SETTINGS, DestinationInfo, approvalProblems, bagCountFor, deliveryDateNeedsRemarks, deviationNeedsRemarks, feedTypeOf, planDraftUpsert,
+  DEFAULT_FEED_SETTINGS, DestinationInfo, approvalProblems, bagCountFor, buildLineBreakdown, deliveryDateNeedsRemarks, lineChangeProblems, deviationNeedsRemarks, feedTypeOf, planDraftUpsert,
   productionCycle, recommendLines, requisitionPriority, roundOrderKg, runKeyFor, serverToday,
 } from './feed-requisition.rules';
 
@@ -323,5 +323,74 @@ describe('approvalProblems — checkpoints 18 and 22', () => {
   });
   it('refuses a requisition with no lines', () => {
     expect(approvalProblems({ lines: [], remarks: 'x', today: '2026-09-23', submissionDeadline: null })).toEqual(['A requisition needs at least one line to be approved.']);
+  });
+});
+
+describe('lineChangeProblems — Req. row 13 and cp. 4', () => {
+  const silo = (heldItemId: string | null, heldBalanceKg: number) => ({ locationType: 'SILO' as const, heldItemId, heldBalanceKg });
+  it('accepts the lifecycle item into a silo holding it', () => {
+    expect(lineChangeProblems({ requiredItemId: 'r1', itemId: 'r1', exceptionReason: null, destination: silo('r1', 1500) })).toEqual([]);
+  });
+  it('needs an exception reason for an item the lifecycle does not require', () => {
+    expect(lineChangeProblems({ requiredItemId: 'r1', itemId: 'r2', exceptionReason: null, destination: silo('r2', 0) }))
+      .toEqual(['Feed item differs from the lifecycle requirement: record an exception reason (Requisition row 13).']);
+    expect(lineChangeProblems({ requiredItemId: 'r1', itemId: 'r2', exceptionReason: 'Vet instruction', destination: silo('r2', 0) })).toEqual([]);
+  });
+  it('refuses a silo that still holds another item', () => {
+    expect(lineChangeProblems({ requiredItemId: 'r2', itemId: 'r2', exceptionReason: null, destination: silo('r1', 1500) }))
+      .toEqual(['Silo holds another feed with stock: choose a silo holding this item or an empty one (checkpoint 4).']);
+  });
+  it('accepts an empty silo whose last item was another, a store, and a blank reason is no reason', () => {
+    expect(lineChangeProblems({ requiredItemId: 'r2', itemId: 'r2', exceptionReason: null, destination: silo('r1', 0) })).toEqual([]);
+    expect(lineChangeProblems({ requiredItemId: 'r2', itemId: 'r2', exceptionReason: null, destination: { locationType: 'STORE', heldItemId: 'r1', heldBalanceKg: 500 } })).toEqual([]);
+    expect(lineChangeProblems({ requiredItemId: 'r1', itemId: 'r2', exceptionReason: '  ', destination: silo(null, 0) })).toHaveLength(1);
+  });
+  it('a line with no lifecycle requirement (manual) needs no exception', () => {
+    expect(lineChangeProblems({ requiredItemId: null, itemId: 'r2', exceptionReason: null, destination: silo(null, 0) })).toEqual([]);
+  });
+});
+
+/**
+ * B1 (Rishi, 3 Oct): the order line is per silo and item; beneath it, which
+ * batches in which houses it feeds — Engine Step 9 "draft lines per farm,
+ * batch, house, destination silo, item and required date".
+ */
+describe('buildLineBreakdown — per batch and house under each silo/item line (B1)', () => {
+  const row = (over: Record<string, unknown>) => ({
+    date: '2026-09-23', batchId: 'b1', batchNo: 'B-001', shedId: 'h3', shedCode: 'GRS/SHED-003', itemId: 'r1',
+    destinationLocationId: 's1', heads: 1000, feedRateKg: 0.5, demandKg: 500, lifecycleId: 'lc-r1', sourceType: 'SILO', ...over,
+  });
+  it('sums demand over the window per (batch, house), taking heads, rate and lifecycle row from the first day with demand', () => {
+    const daily = [
+      row({}),
+      row({ date: '2026-09-24', heads: 990, demandKg: 495 }),
+      row({ batchId: 'b2', batchNo: 'B-002', shedId: 'h4', shedCode: 'GRS/SHED-004', heads: 400, demandKg: 200 }),
+      row({ date: '2026-09-24', batchId: 'b2', batchNo: 'B-002', shedId: 'h4', shedCode: 'GRS/SHED-004', heads: 400, demandKg: 200 }),
+      row({ itemId: 'r2', destinationLocationId: 's2', demandKg: 300, lifecycleId: 'lc-r2', feedRateKg: 0.3 }),
+    ];
+    const out = buildLineBreakdown(daily as any, '2026-09-23', '2026-09-29');
+    expect(out.get('s1|r1')).toEqual([
+      { batchId: 'b1', batchNo: 'B-001', shedId: 'h3', shedCode: 'GRS/SHED-003', heads: 1000, feedRateKg: 0.5, lifecycleRefId: 'lc-r1', demandKg: 995, firstDemandDate: '2026-09-23' },
+      { batchId: 'b2', batchNo: 'B-002', shedId: 'h4', shedCode: 'GRS/SHED-004', heads: 400, feedRateKg: 0.5, lifecycleRefId: 'lc-r1', demandKg: 400, firstDemandDate: '2026-09-23' },
+    ]);
+    expect(out.get('s2|r2')).toEqual([
+      { batchId: 'b1', batchNo: 'B-001', shedId: 'h3', shedCode: 'GRS/SHED-003', heads: 1000, feedRateKg: 0.3, lifecycleRefId: 'lc-r2', demandKg: 300, firstDemandDate: '2026-09-23' },
+    ]);
+  });
+  it('leaves out rows with no destination, outside the window, or with no demand', () => {
+    const daily = [
+      row({ destinationLocationId: null, sourceType: 'NONE' }),
+      row({ date: '2026-09-22' }),
+      row({ date: '2026-09-30' }),
+      row({ batchId: 'b9', demandKg: 0 }),
+      row({ date: '2026-09-25', heads: 980, demandKg: 490 }),
+    ];
+    expect(buildLineBreakdown(daily as any, '2026-09-23', '2026-09-29').get('s1|r1')).toEqual([
+      { batchId: 'b1', batchNo: 'B-001', shedId: 'h3', shedCode: 'GRS/SHED-003', heads: 980, feedRateKg: 0.5, lifecycleRefId: 'lc-r1', demandKg: 490, firstDemandDate: '2026-09-25' },
+    ]);
+  });
+  it('a batch with no house keeps a null shed', () => {
+    const out = buildLineBreakdown([row({ shedId: undefined, shedCode: '' })] as any, '2026-09-23', '2026-09-29');
+    expect(out.get('s1|r1')?.[0]).toMatchObject({ shedId: null, demandKg: 500 });
   });
 });

@@ -48,7 +48,7 @@
  * re-exported here as `addDaysIso`/`diffDaysIso` rather than copied, so a
  * calendar bug can only exist in one place.
  */
-import { addDays, dayShort, diffDays, todayLocal, type ForecastSource } from '../../inventory/feed-forecast/feed-forecast.engine';
+import { addDays, dayShort, diffDays, todayLocal, type DailyForecastRow, type ForecastSource } from '../../inventory/feed-forecast/feed-forecast.engine';
 
 export type FeedType = 'BULK' | 'BAGGED';
 export type Priority = 'CRITICAL_FIRST_PRIORITY' | 'CRITICAL' | 'WARNING' | 'INFO';
@@ -350,4 +350,101 @@ export function approvalProblems(args: { lines: ApprovalLine[]; remarks: string 
     problems.push(`The submission deadline (${dayShort(args.submissionDeadline)}) has passed. Add remarks to explain.`);
   }
   return problems;
+}
+
+/**
+ * Requisition row 13 and checkpoint 4, when the farm changes a line's feed
+ * item or destination silo. An item the line's lifecycle row does not require
+ * is an exception and needs a reason; a silo still holding another feed with
+ * stock cannot take this one (one feed per silo — choose a silo holding this
+ * item or an empty one). A store holds many items, so only a silo is tested.
+ * A line with no lifecycle requirement (a manual line) has nothing to differ from.
+ */
+export const ITEM_EXCEPTION_PROBLEM = 'Feed item differs from the lifecycle requirement: record an exception reason (Requisition row 13).';
+export const SILO_HOLDS_OTHER_PROBLEM = 'Silo holds another feed with stock: choose a silo holding this item or an empty one (checkpoint 4).';
+
+export function lineChangeProblems(line: {
+  requiredItemId: string | null;
+  itemId: string;
+  exceptionReason: string | null;
+  destination: { locationType: 'SILO' | 'STORE'; heldItemId: string | null; heldBalanceKg: number };
+}): string[] {
+  const problems: string[] = [];
+  if (line.requiredItemId !== null && line.itemId !== line.requiredItemId && !line.exceptionReason?.trim()) {
+    problems.push(ITEM_EXCEPTION_PROBLEM);
+  }
+  const d = line.destination;
+  if (d.locationType === 'SILO' && d.heldItemId !== null && d.heldItemId !== line.itemId && d.heldBalanceKg > 1e-6) {
+    problems.push(SILO_HOLDS_OTHER_PROBLEM);
+  }
+  return problems;
+}
+
+/**
+ * The exception reason lives in the line's own `description` column (Task 9:
+ * no new column), prefixed so it is never mistaken for an item name.
+ */
+export const EXCEPTION_PREFIX = 'Exception: ';
+export function exceptionReasonOf(description: string | null | undefined): string | null {
+  return description?.startsWith(EXCEPTION_PREFIX) ? description.slice(EXCEPTION_PREFIX.length) : null;
+}
+
+/** Requisition §1 row 17 "Breed Lifecycle Row Reference": e.g. `L-LINE WEANER days 25–27`. */
+const CALC_UNIT_WORD: Record<string, string> = { DAY: 'days', WEEK: 'weeks', MONTH: 'months' };
+export function lifecycleRefLabel(r: { breed_code?: string | null; stage_code?: string | null; period_from?: number | null; period_to?: number | null; calc_unit?: string | null }): string | null {
+  if (!r.breed_code && !r.stage_code) return null;
+  const unit = r.calc_unit ? (CALC_UNIT_WORD[r.calc_unit] ?? r.calc_unit.toLowerCase()) : 'days';
+  const range = r.period_from != null && r.period_to != null ? ` ${unit} ${r.period_from}–${r.period_to}` : '';
+  return `${[r.breed_code, r.stage_code].filter(Boolean).join(' ')}${range}`;
+}
+
+export interface LineBreakdownRow {
+  batchId: string;
+  batchNo: string;
+  shedId: string | null;
+  shedCode: string;
+  heads: number;
+  feedRateKg: number;
+  lifecycleRefId: string | null;
+  demandKg: number;
+  firstDemandDate: string;
+}
+
+/**
+ * B1 (Rishi, 3 Oct): which batches in which houses each silo/item order line
+ * is for — Engine Step 9 "draft lines per farm, batch, house, destination
+ * silo, item and required date"; MOM Feed and Logistic 21 Aug 2026 "Per
+ * Batch, Per House, and Per Silo". Grouped from the forecast's daily rows by
+ * lineKey(destination, item), then by (batch, house), demand summed over the
+ * planning window. Heads, rate and lifecycle row are the first day with
+ * demand's — the figures the order was raised on. A row with no destination
+ * (nothing feeds it), outside the window, or with no demand adds nothing.
+ */
+export function buildLineBreakdown(daily: Pick<DailyForecastRow,
+  'date' | 'batchId' | 'batchNo' | 'shedId' | 'shedCode' | 'itemId' | 'destinationLocationId' | 'heads' | 'feedRateKg' | 'demandKg' | 'lifecycleId'>[],
+from: string, to: string): Map<string, LineBreakdownRow[]> {
+  const byLine = new Map<string, Map<string, LineBreakdownRow>>();
+  const ordered = [...daily].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  for (const d of ordered) {
+    if (!d.destinationLocationId || d.date < from || d.date > to || !(d.demandKg > 0)) continue;
+    const key = lineKey(d.destinationLocationId, d.itemId);
+    const rows = byLine.get(key) ?? new Map<string, LineBreakdownRow>();
+    byLine.set(key, rows);
+    const shedId = d.shedId ?? null;
+    const rowKey = `${d.batchId}|${shedId ?? ''}`;
+    const prior = rows.get(rowKey);
+    if (prior) {
+      prior.demandKg = round3(prior.demandKg + d.demandKg);
+      continue;
+    }
+    rows.set(rowKey, {
+      batchId: d.batchId, batchNo: d.batchNo, shedId, shedCode: d.shedCode, heads: d.heads, feedRateKg: d.feedRateKg,
+      lifecycleRefId: d.lifecycleId || null, demandKg: round3(d.demandKg), firstDemandDate: d.date,
+    });
+  }
+  const out = new Map<string, LineBreakdownRow[]>();
+  for (const [key, rows] of byLine) {
+    out.set(key, [...rows.values()].sort((a, b) => a.batchNo.localeCompare(b.batchNo) || a.shedCode.localeCompare(b.shedCode)));
+  }
+  return out;
 }

@@ -75,3 +75,45 @@ describe('Tenant migration 0142 — reconcile feed_stock_count with the code', (
     expect(sql.join('\n')).not.toMatch(/\b(DROP|DELETE FROM|TRUNCATE)\b/i);
   });
 });
+
+/**
+ * Task 9 (B1, B2): a feed requisition order line is one destination silo and
+ * item (Engine Step 8 rounds per compartment); its batch/house breakdown —
+ * "raised on the basis of Per Batch, Per House, and Per Silo" (MOM Feed and
+ * Logistic, 21 Aug 2026; Engine Step 9) — is a child table. Days Remaining is
+ * "Displayed to 1 decimal" (Silo Balance row 9), so the INT column widens.
+ */
+describe('Tenant migration 0143 — requisition line batch breakdown (additive)', () => {
+  it('is journalled at idx 143 after 0142', () => {
+    expect(journal().find((e) => e.idx === 143)).toEqual({
+      idx: 143, version: '5', when: 1792000000012, tag: '0143_requisition_line_batch', breakpoints: true,
+    });
+  });
+
+  it('creates requisition_line_batch, widens days_remaining, nothing destructive', () => {
+    const sql = statements('0143_requisition_line_batch');
+    expect(sql).toEqual([
+      [
+        'CREATE TABLE `requisition_line_batch` (',
+        '\t`line_batch_id` varchar(36) NOT NULL,',
+        '\t`line_id` varchar(36) NOT NULL,',
+        '\t`batch_id` varchar(36) NOT NULL,',
+        '\t`shed_id` varchar(36),',
+        '\t`heads` int,',
+        '\t`feed_rate_kg` decimal(18,6),',
+        '\t`lifecycle_ref_id` varchar(36),',
+        '\t`demand_kg` decimal(18,4) NOT NULL,',
+        '\t`first_demand_date` date,',
+        '\t`created_at` timestamp NOT NULL DEFAULT (now()),',
+        '\tCONSTRAINT `requisition_line_batch_line_batch_id` PRIMARY KEY(`line_batch_id`),',
+        '\tCONSTRAINT `uq_requisition_line_batch` UNIQUE(`line_id`,`batch_id`,`shed_id`)',
+        ');',
+      ].join('\n'),
+      'ALTER TABLE `requisition_line_batch` ADD CONSTRAINT `requisition_line_batch_line_id_fk` FOREIGN KEY (`line_id`) REFERENCES `requisition_line`(`line_id`) ON DELETE cascade ON UPDATE no action;',
+      'ALTER TABLE `requisition_line_batch` ADD CONSTRAINT `requisition_line_batch_batch_id_fk` FOREIGN KEY (`batch_id`) REFERENCES `batch_header`(`batch_id`) ON DELETE no action ON UPDATE no action;',
+      'ALTER TABLE `requisition_line_batch` ADD CONSTRAINT `requisition_line_batch_shed_id_fk` FOREIGN KEY (`shed_id`) REFERENCES `location_master`(`location_id`) ON DELETE set null ON UPDATE no action;',
+      'ALTER TABLE `requisition_line` MODIFY COLUMN `days_remaining` decimal(6,1);',
+    ]);
+    expect(sql.join('\n')).not.toMatch(/\b(DROP|DELETE FROM|TRUNCATE)\b/i);
+  });
+});

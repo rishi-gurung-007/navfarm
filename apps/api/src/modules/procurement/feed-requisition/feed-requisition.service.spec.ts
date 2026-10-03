@@ -428,7 +428,8 @@ describe('FeedRequisitionService.autoDraft', () => {
     const out = await service.autoDraft({}, 'tenant-1', { userId: 'u-1', userType: 'COMPANY_ADMIN' });
     expect(out).toMatchObject({ requisitionId: 'req-1', created: false, linesDrafted: 1 });
 
-    expect(log.filter((e) => e.op === 'insert')).toEqual([]);
+    // No second requisition and no new line. (B1: the matched line's batch/house breakdown is rewritten — see below.)
+    expect(log.filter((e) => e.op === 'insert' && e.table !== schema.requisitionLineBatch)).toEqual([]);
     const lineUpdate = log.find((e) => e.op === 'update' && e.table === schema.requisitionLine)!;
     // Recommendation refreshed to 9,000; the farm's 6,000 kept.
     expect(lineUpdate.set).toMatchObject({ recommended_qty_kg: '9000', feed_forecast_run_line_ids: null });
@@ -742,5 +743,155 @@ describe('FeedRequisitionService.createManual — row 9 across the cycle, number
     failing.db.insert.mockImplementation(() => ({ values: jest.fn(async () => { throw new Error('connection lost'); }) }));
     await expect(run(failing.service)).rejects.toThrow('connection lost');
     expect(failing.db.insert).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 9 — the requisition as a document: per batch/house breakdown under each
+// silo/item order line (B1), Days Remaining to one decimal (B2), item and
+// destination changes on a line (Req. row 13, cp. 4), and the header view.
+
+describe('FeedRequisitionService.autoDraft — batch/house breakdown (B1) and one-decimal Days Remaining (B2)', () => {
+  const twoBatches = () => [
+    forecastDaily(),
+    forecastDaily({ batchId: 'batch-2', batchNo: 'BATCH-2', shedId: 'shed-2', shedCode: 'SHED-2', heads: 500, feedRateKg: 2, demandKg: 1000 }),
+  ];
+
+  it('first run: one breakdown row per (batch, house) of the line, written with the line it belongs to', async () => {
+    const queues = new Map<unknown, unknown[][]>([
+      [schema.locationMaster, [[FARM_ROW], [SILO_ROW], [{ location_id: 'farm-grs' }]]],
+      [schema.requisition, [[], [], [{ req: { requisition_id: 'new' }, farm_code: 'GRS' }]]],
+    ]);
+    const { service, log } = setup([source({ daysLeft: 2.5 })], queues, twoBatches());
+    await service.autoDraft({}, 'tenant-1', { userId: 'u-1', userType: 'COMPANY_ADMIN' });
+
+    const lineInsert = log.find((e) => e.op === 'insert' && e.table === schema.requisitionLine)!;
+    const lineId = lineInsert.values[0].line_id;
+    expect(typeof lineId).toBe('string');
+    // B2: Silo Balance row 9 "Displayed to 1 decimal" — stored as 2.5, not rounded to 3.
+    expect(lineInsert.values[0].days_remaining).toBe('2.5');
+    const breakdown = log.find((e) => e.op === 'insert' && e.table === schema.requisitionLineBatch)!;
+    expect(breakdown.inTx).toBe(true);
+    expect(breakdown.values).toEqual([
+      expect.objectContaining({ line_id: lineId, batch_id: 'batch-1', shed_id: 'shed-1', heads: 1000, feed_rate_kg: '2', lifecycle_ref_id: 'row-r1', demand_kg: '2000', first_demand_date: serverToday() }),
+      expect.objectContaining({ line_id: lineId, batch_id: 'batch-2', shed_id: 'shed-2', heads: 500, feed_rate_kg: '2', lifecycle_ref_id: 'row-r1', demand_kg: '1000', first_demand_date: serverToday() }),
+    ]);
+  });
+
+  it('rerun replaces a matched line\'s breakdown rows inside the same transaction', async () => {
+    const queues = new Map<unknown, unknown[][]>([
+      [schema.locationMaster, [[FARM_ROW], [SILO_ROW], [{ location_id: 'farm-grs' }]]],
+      [schema.requisition, [[{ requisition_id: 'req-1', status: 'AUTO_DRAFT', requisition_type: 'FEED_FORECAST' }], [{ req: { requisition_id: 'req-1' }, farm_code: 'GRS' }]]],
+      [schema.requisitionLine, [[
+        { line_id: 'L1', line_seq: 10000, dest: 'silo-1', item: 'item-r1', quantity: '6000.0000', recommended: '6000.0000', edited: false },
+      ]]],
+    ]);
+    const { service, log } = setup([source()], queues, twoBatches());
+    await service.autoDraft({}, 'tenant-1', { userId: 'u-1', userType: 'COMPANY_ADMIN' });
+
+    const deleted = log.findIndex((e) => e.op === 'delete' && e.table === schema.requisitionLineBatch);
+    const inserted = log.findIndex((e) => e.op === 'insert' && e.table === schema.requisitionLineBatch);
+    expect(deleted).toBeGreaterThanOrEqual(0);
+    expect(render(log[deleted].where).params).toEqual(['L1']);
+    expect(inserted).toBeGreaterThan(deleted);
+    expect(log[inserted].values.map((v: any) => [v.line_id, v.batch_id])).toEqual([['L1', 'batch-1'], ['L1', 'batch-2']]);
+    expect(log[deleted].inTx && log[inserted].inTx).toBe(true);
+  });
+});
+
+describe('FeedRequisitionService.update — item and destination changes (Req. row 13, checkpoint 4)', () => {
+  const OWN = { farm_id: 'farm-grs', company_id: 'co-1' };
+  const OPEN_ROW = { requisition_id: 'req-1', req_no: 'REQ-GRS-2026-00041', status: 'AUTO_DRAFT', approval_request_id: null, remarks: null };
+  const LINE = {
+    line_id: 'L1', line_seq: 10000, item_id: 'item-r1', destination_location_id: 'silo-1', lifecycle_ref_id: 'row-r1',
+    description: 'Weaner Diet R1', feed_type: 'BULK', quantity: '6000.0000',
+  };
+  const SILO_2 = { ...SILO_ROW, location_id: 'silo-2', location_code: 'GRS/SILO-002' };
+  const queuesFor = () => new Map<unknown, unknown[][]>([
+    [schema.requisition, [[OWN], [OPEN_ROW], [{ req: { requisition_id: 'req-1' }, farm_code: 'GRS' }]]],
+    [schema.locationMaster, [[FARM_ROW], [SILO_2]]],
+    [schema.requisitionLine, [[LINE], []]],
+    [schema.breedLifecycleStages, [[{ feed_item_id: 'item-r1' }]]],
+    [schema.itemMaster, [[{ item_id: 'item-r2', item_name: 'Weaner Diet R2' }]]],
+  ]);
+
+  it('refuses an item the lifecycle does not require without an exception reason, writing nothing', async () => {
+    const { service, log, siloFeed } = setup([], queuesFor());
+    siloFeed.currentItems.mockResolvedValueOnce(new Map([['silo-2', null]]));
+    await expect(service.update('req-1', { lines: [{ line_id: 'L1', item_id: 'item-r2', destination_location_id: 'silo-2' }] } as any, 'tenant-1', { userId: 'u-1', userType: 'COMPANY_ADMIN' }))
+      .rejects.toThrow(new BadRequestException('Line 10000: Feed item differs from the lifecycle requirement: record an exception reason (Requisition row 13).'));
+    expect(log.filter((e) => e.op !== 'select')).toEqual([]);
+  });
+
+  it('with a reason: moves the line, stores the reason in description, and makes the line the farm\'s own', async () => {
+    const { service, log, siloFeed } = setup([], queuesFor());
+    siloFeed.currentItems.mockResolvedValueOnce(new Map([['silo-2', null]]));
+    await service.update('req-1', { lines: [{ line_id: 'L1', item_id: 'item-r2', destination_location_id: 'silo-2', exception_reason: 'Vet instruction' }] } as any, 'tenant-1', { userId: 'u-1', userType: 'COMPANY_ADMIN' });
+    expect(siloFeed.currentItems).toHaveBeenCalledWith(['silo-2'], 'co-1', 'tenant-1');
+    const lineUpdate = log.find((e) => e.op === 'update' && e.table === schema.requisitionLine)!;
+    expect(lineUpdate.set).toMatchObject({
+      item_id: 'item-r2', destination_location_id: 'silo-2', source_type: 'SILO', feed_type: 'BULK',
+      description: 'Exception: Vet instruction', quantity_edited: true,
+    });
+  });
+
+  it('refuses a silo that still holds another feed with stock (checkpoint 4)', async () => {
+    const queues = queuesFor();
+    const { service, log, siloFeed } = setup([], queues);
+    siloFeed.currentItems.mockResolvedValueOnce(new Map([['silo-2', { item_id: 'item-r9', on_hand_qty: 1500 }]]));
+    await expect(service.update('req-1', { lines: [{ line_id: 'L1', destination_location_id: 'silo-2' }] } as any, 'tenant-1', { userId: 'u-1', userType: 'COMPANY_ADMIN' }))
+      .rejects.toThrow(new BadRequestException('Line 10000: Silo holds another feed with stock: choose a silo holding this item or an empty one (checkpoint 4).'));
+    expect(log.filter((e) => e.op !== 'select')).toEqual([]);
+  });
+
+  it('refuses a destination that is not an active silo or store of the farm', async () => {
+    const queues = queuesFor();
+    queues.set(schema.locationMaster, [[FARM_ROW], [{ ...SILO_2, farm_id: 'farm-other' }]]);
+    const { service } = setup([], queues);
+    await expect(service.update('req-1', { lines: [{ line_id: 'L1', destination_location_id: 'silo-2' }] } as any, 'tenant-1', { userId: 'u-1', userType: 'COMPANY_ADMIN' }))
+      .rejects.toThrow(BadRequestException);
+  });
+});
+
+describe('FeedRequisitionService view — the document header and line display fields (Req. §1, §2)', () => {
+  it('returns the workbook header and each line with its codes, lifecycle row label and breakdown', async () => {
+    const REQ = { requisition_id: 'req-1', farm_id: 'farm-grs', company_id: 'co-1' };
+    const queues = new Map<unknown, unknown[][]>([
+      [schema.requisition, [[REQ], [{
+        req: {
+          ...REQ, req_no: 'REQ-GRS-2026-00041', requisition_date: null, created_at: '2026-09-23 06:00:00', required_date: '2026-09-23',
+          approved_by: 'u-9', approved_at: '2026-09-23 09:30:00', linked_transfer_id: null, feed_forecast_run_id: 'run-1', forecast_run_key: 'FFR-farm-grs-000001',
+        },
+        farm_code: 'GRS', farm_name: 'Green Ridge', approved_by_name: 'Mill Manager', linked_transfer_no: null, forecast_run_no: 'FFR-farm-grs-000001',
+      }]]],
+      [schema.requisitionLine, [[
+        { line: { line_id: 'L1', line_seq: 10000, quantity: '6000.0000', feed_type: 'BULK', is_next_diet: false, description: 'Weaner Diet R1', days_remaining: '0.8' },
+          item_code: 'R1', item_name: 'Weaner Diet R1', destination_code: 'GRS/SILO-001', required_item_id: 'item-r1',
+          breed_code: 'L-LINE', stage_code: 'WEANER', period_from: 21, period_to: 24, calc_unit: 'DAY' },
+        { line: { line_id: 'L2', line_seq: 20000, quantity: '9000.0000', feed_type: 'BULK', is_next_diet: true, description: 'Exception: Vet instruction', days_remaining: null },
+          item_code: 'R2', item_name: 'Weaner Diet R2', destination_code: 'GRS/SILO-002', required_item_id: 'item-r2',
+          breed_code: 'L-LINE', stage_code: 'WEANER', period_from: 25, period_to: 27, calc_unit: 'DAY' },
+      ]]],
+      [schema.requisitionLineBatch, [[
+        { line_id: 'L2', batch_id: 'b1', batch_no: 'B-001', shed_id: 'h3', shed_code: 'GRS/SHED-003', heads: 1000, feed_rate_kg: '0.500000',
+          lifecycle_ref_id: 'lc-r2', demand_kg: '995.0000', first_demand_date: '2026-09-26', breed_code: 'L-LINE', stage_code: 'WEANER', period_from: 25, period_to: 27, calc_unit: 'DAY' },
+      ]]],
+    ]);
+    const { service } = setup([], queues);
+    const view: any = await service.findOne('req-1', 'tenant-1', { userType: 'COMPANY_ADMIN' });
+    expect(view.header).toEqual({
+      farm_code: 'GRS', farm_name: 'Green Ridge', requisition_date: '2026-09-23', is_next_diet_requisition: true,
+      farm_total_requested_kg: 15000, truck_target_kg: 30000, bulk_multiple_kg: 3000, trips: 1, required_delivery_date: '2026-09-23',
+      approved_by_name: 'Mill Manager', linked_transfer_no: null, forecast_run_no: 'FFR-farm-grs-000001',
+    });
+    expect(view.lines[0]).toMatchObject({
+      item_code: 'R1', item_description: 'Weaner Diet R1', destination_code: 'GRS/SILO-001', lifecycle_ref_label: 'L-LINE WEANER days 21–24',
+      required_item_id: 'item-r1', exception_reason: null, breakdown: [],
+    });
+    expect(view.lines[1]).toMatchObject({
+      item_description: 'Weaner Diet R2', lifecycle_ref_label: 'L-LINE WEANER days 25–27', exception_reason: 'Vet instruction',
+      breakdown: [{ batch_id: 'b1', batch_no: 'B-001', shed_id: 'h3', shed_code: 'GRS/SHED-003', heads: 1000, feed_rate_kg: 0.5,
+        lifecycle_ref_label: 'L-LINE WEANER days 25–27', demand_kg: 995, first_demand_date: '2026-09-26' }],
+    });
   });
 });

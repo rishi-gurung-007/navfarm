@@ -29,11 +29,21 @@ export class CreateManualFeedRequisitionDto {
   lines: ManualFeedLineInput[];
 }
 
-/** Requisition §2 rows 53 and 56: the farm may change Requested Qty and Proposed Delivery Date. */
+/**
+ * Requisition §2 rows 53 and 56: the farm may change Requested Qty and Proposed
+ * Delivery Date; rows 43/55 and 45 (Task 9): the destination silo and the feed
+ * item — an item the lifecycle does not require needs an exception reason
+ * (Requisition row 13), and a silo holding another feed with stock is refused
+ * (checkpoint 4).
+ */
 export class FeedLineEditInput {
   @ApiProperty() @IsUUID() line_id: string;
   @ApiPropertyOptional() @IsOptional() @Type(() => Number) @IsNumber() @Min(0.001) quantity_kg?: number;
   @ApiPropertyOptional() @IsOptional() @IsDateString() proposed_delivery_date?: string;
+  @ApiPropertyOptional() @IsOptional() @IsUUID() item_id?: string;
+  @ApiPropertyOptional() @IsOptional() @IsUUID() destination_location_id?: string;
+  @ApiPropertyOptional({ description: 'Requisition row 13: why the line orders an item the lifecycle does not require' })
+  @IsOptional() @IsString() @MaxLength(180) exception_reason?: string;
 }
 
 export class UpdateFeedRequisitionDto {
