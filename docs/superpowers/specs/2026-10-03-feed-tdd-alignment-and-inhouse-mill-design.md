@@ -180,6 +180,38 @@ first copied into a farm-override Feed Planning Settings row where they differ f
   (cp. 31). Closed period blocks POST Day, receipts and adjustments dated in it (cp. 32). Stock take
   refused if the period does not exist (cp. 40).
 
+## 6a. Part E — one requisition document, two entry points for feed
+
+Rishi, 2026-10-03: a requisition has a header and lines; the common requisition and the Approvals
+inbox must cover feed too, and a feed requisition must be creatable from the Feed Forecast and from
+the common Requisitions page.
+
+- **One document.** Every requisition — Feed, Item, Fixed Asset, Service — is one `requisition`
+  header with `requisition_line` rows. Feed adds its workbook fields to the same header and lines
+  (Part A §3.2); there is no separate feed table.
+- **Header view** (all types): Requisition No., date, type, source, farm/location, status
+  (approval, document, fulfilment), priority, required/delivery date, remarks, approved by/at.
+  Feed adds submission deadline, forecast run, linked TO, farm total requested vs truck target
+  (Req. rows 26–27). **Lines grid** below it, editable while the document is open.
+- **Creating a feed requisition:**
+  1. *Feed Forecast → Feed Requisition tab* — **Draft from forecast** (AUTO_FORECAST, from the
+     saved run, Engine Step 9) or **New** (MANUAL_ENTRY).
+  2. *Approvals → Requisitions → New → Feed* — the same form and the same API
+     (`POST /feed-requisition`), farm chosen on the header.
+  Both produce the identical document. A manual feed line's item is checked against the
+  lifecycle-required item for that silo's sheds; a different item needs a recorded exception
+  reason (Req. row 13).
+- **Approvals → Requisitions** lists all types with a type filter. **New** offers Feed, Item,
+  Fixed Asset and Service. Item chooses Store or Purchase; Fixed Asset and Service use Purchase
+  (1 Oct ruling). Header + lines editor built on the existing common requisition API.
+- **Approvals inbox** — one inbox for every type. Feed: own-farm Farm Manager only (cp. 19),
+  remarks over 20 % deviation (cp. 18), both diet lines from one run approved together (cp. 23).
+  Common: existing approval engine; manual self-approval forbidden; system drafts follow the Farm
+  Manager path (1 Oct rulings).
+- **After approval:** Feed → loading sheet and consolidation (Part B). Item/Store → Release →
+  staged stock transfer (existing). Purchase → Release records `BC_PENDING` and allows a manual PO
+  number, unchanged from the 1 Oct ruling (purchase is not feed and is outside R4).
+
 ## 7. Data
 
 - **Migrations** (one owner): apply pending 0135–0140 locally; 0141 additive (new tables and
