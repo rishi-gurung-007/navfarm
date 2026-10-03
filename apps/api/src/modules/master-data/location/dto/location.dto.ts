@@ -164,23 +164,6 @@ export class CreateLocationDto {
   @IsOptional()
   storage_name?: string;
 
-  // Spec D3: Feed Forecast's refill date is run-down minus this many days.
-  // Per farm because delivery distance is per farm; applies to FARM rows.
-  @ApiProperty({ description: 'Feed Forecast: the refill date is this many days before a silo runs out. Applies to FARM.', required: false })
-  @IsOptional()
-  @IsInt()
-  @Min(0)
-  @Max(30)
-  feed_refill_buffer_days?: number;
-
-  // Spec D19: Required On = Date to Refill - this many days; default 2.
-  @ApiProperty({ description: 'Feed Forecast: Required On is this many days before the Date to Refill (spec D19, default 2). Applies to FARM.', required: false })
-  @IsOptional()
-  @IsInt()
-  @Min(0)
-  @Max(30)
-  feed_lead_time_days?: number;
-
   // Master Setup §1 row 10: low feed alert at or below this System Balance.
   @ApiProperty({ description: 'SILO: low feed alert when System Balance is at or below this many KG. Required on a silo (D22).', required: false, nullable: true })
   @IsOptional()
@@ -194,31 +177,6 @@ export class CreateLocationDto {
   @IsNumber()
   @Min(0)
   high_level_kg?: number | null;
-
-  @ApiProperty({ description: 'FARM: bulk feed orders round up to this many kilograms (Requisition §1 row 28, default 3000).', required: false })
-  @IsOptional()
-  @IsInt()
-  @Min(1)
-  feed_bulk_multiple_kg?: number;
-
-  @ApiProperty({ description: 'FARM: bagged feed rounds to whole bags of this many kilograms (checkpoint 27, default 50).', required: false })
-  @IsOptional()
-  @IsInt()
-  @Min(1)
-  feed_bag_size_kg?: number;
-
-  @ApiProperty({ description: 'FARM: normal bulk truck load in KG — a planning target, not a cap (Requisition §1 row 27, default 30000).', required: false })
-  @IsOptional()
-  @IsInt()
-  @Min(1)
-  feed_truck_target_kg?: number;
-
-  @ApiProperty({ description: 'FARM: weekday feed is produced for this farm, 0 = Sunday … 6 = Saturday. The requisition deadline is the day before (default Sunday, so Saturday).', required: false })
-  @IsOptional()
-  @IsInt()
-  @Min(0)
-  @Max(6)
-  feed_production_weekday?: number;
 
   @ApiProperty({ description: 'Flexible custom config configurations in JSON format', required: false })
   @IsOptional()
@@ -369,21 +327,6 @@ export class UpdateLocationDto {
   @IsOptional()
   storage_name?: string;
 
-  @ApiProperty({ description: 'Feed Forecast: the refill date is this many days before a silo runs out. Applies to FARM.', required: false })
-  @IsOptional()
-  @IsInt()
-  @Min(0)
-  @Max(30)
-  feed_refill_buffer_days?: number;
-
-  // Spec D19: Required On = Date to Refill - this many days; default 2.
-  @ApiProperty({ description: 'Feed Forecast: Required On is this many days before the Date to Refill (spec D19, default 2). Applies to FARM.', required: false })
-  @IsOptional()
-  @IsInt()
-  @Min(0)
-  @Max(30)
-  feed_lead_time_days?: number;
-
   // Master Setup §1 row 10: low feed alert at or below this System Balance.
   @ApiProperty({ description: 'SILO: low feed alert when System Balance is at or below this many KG. Required on a silo (D22).', required: false, nullable: true })
   @IsOptional()
@@ -397,31 +340,6 @@ export class UpdateLocationDto {
   @IsNumber()
   @Min(0)
   high_level_kg?: number | null;
-
-  @ApiProperty({ description: 'FARM: bulk feed orders round up to this many kilograms (Requisition §1 row 28, default 3000).', required: false })
-  @IsOptional()
-  @IsInt()
-  @Min(1)
-  feed_bulk_multiple_kg?: number;
-
-  @ApiProperty({ description: 'FARM: bagged feed rounds to whole bags of this many kilograms (checkpoint 27, default 50).', required: false })
-  @IsOptional()
-  @IsInt()
-  @Min(1)
-  feed_bag_size_kg?: number;
-
-  @ApiProperty({ description: 'FARM: normal bulk truck load in KG — a planning target, not a cap (Requisition §1 row 27, default 30000).', required: false })
-  @IsOptional()
-  @IsInt()
-  @Min(1)
-  feed_truck_target_kg?: number;
-
-  @ApiProperty({ description: 'FARM: weekday feed is produced for this farm, 0 = Sunday … 6 = Saturday. The requisition deadline is the day before (default Sunday, so Saturday).', required: false })
-  @IsOptional()
-  @IsInt()
-  @Min(0)
-  @Max(6)
-  feed_production_weekday?: number;
 
   @ApiProperty({ required: false })
   @IsBoolean()

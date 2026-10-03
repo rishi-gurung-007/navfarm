@@ -804,6 +804,7 @@ export class BreedService {
       season_type: dto.season_type || null,
       feed_item_id: dto.feed_item_id || null,
       feed_qty_per_head_per_day_kg: dto.feed_qty_per_head_per_day_kg?.toString() || null,
+      feed_form: dto.feed_form || null,
       feed_wastage_pct: dto.feed_wastage_pct?.toString() || null,
       std_body_weight_kg: dto.std_body_weight_kg?.toString() || null,
       std_adg_gpd: dto.std_adg_gpd?.toString() || null,
@@ -979,6 +980,7 @@ export class BreedService {
     if (dto.season_type !== undefined) updates.season_type = dto.season_type;
     if (dto.feed_item_id !== undefined) updates.feed_item_id = dto.feed_item_id;
     if (dto.feed_qty_per_head_per_day_kg !== undefined) updates.feed_qty_per_head_per_day_kg = dto.feed_qty_per_head_per_day_kg?.toString() || null;
+    if (dto.feed_form !== undefined) updates.feed_form = dto.feed_form || null;
     if (dto.feed_wastage_pct !== undefined) updates.feed_wastage_pct = dto.feed_wastage_pct?.toString() || null;
     if (dto.std_body_weight_kg !== undefined) updates.std_body_weight_kg = dto.std_body_weight_kg?.toString() || null;
     if (dto.std_adg_gpd !== undefined) updates.std_adg_gpd = dto.std_adg_gpd?.toString() || null;

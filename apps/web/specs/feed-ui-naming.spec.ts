@@ -39,11 +39,13 @@ describe("feed forecasting terminology", () => {
     const lifecycle = getConfig("breed-lifecycle-stage")!;
     const label = (fields: typeof location.fields, key: string) => fields.find((field) => field.key === key)?.label;
 
-    expect(label(location.fields, "low_level_kg")).toBe("Low Stock Level (kg)");
-    expect(label(location.fields, "high_level_kg")).toBe("High Stock Level (kg)");
+    expect(label(location.fields, "low_level_kg")).toBe("Below Feed Level KG");
+    expect(label(location.fields, "high_level_kg")).toBe("Above Threshold KG");
     expect(label(location.fields, "silo_reorder_days")).toBe("Refill Lead Time (days)");
     expect(label(lifecycle.fields, "feed_item_id")).toBe("Feed");
     expect(label(lifecycle.fields, "feed_qty_per_head_per_day_kg")).toBe("Daily Feed per Head (kg)");
+    expect(label(lifecycle.fields, "feed_form")).toBe("Feed Form");
+    expect(label(getConfig("item")!.fields, "diet_no")).toBe("Diet No.");
     expect(label(lifecycle.fields, "feed_wastage_pct")).toBe("Feed Wastage (%)");
   });
 });

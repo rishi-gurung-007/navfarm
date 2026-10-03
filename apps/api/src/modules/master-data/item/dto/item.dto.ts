@@ -139,6 +139,13 @@ export class CreateItemDto {
   @Min(0)
   reorder_level?: number;
 
+  @ApiProperty({ description: 'Diet number 1 to 14 (TDD Master Setup §2)', required: false })
+  @IsOptional()
+  @IsInt()
+  @Min(1, { message: 'Diet No. must be between 1 and 14.' })
+  @Max(14, { message: 'Diet No. must be between 1 and 14.' })
+  diet_no?: number;
+
   @ApiProperty({ description: 'Procurement lead time in days, for feed/stock forecast planning', required: false })
   @IsInt()
   @Min(0)
@@ -343,6 +350,13 @@ export class UpdateItemDto {
   @IsOptional()
   @Min(0)
   reorder_level?: number;
+
+  @ApiProperty({ description: 'Diet number 1 to 14 (TDD Master Setup §2)', required: false })
+  @IsOptional()
+  @IsInt()
+  @Min(1, { message: 'Diet No. must be between 1 and 14.' })
+  @Max(14, { message: 'Diet No. must be between 1 and 14.' })
+  diet_no?: number;
 
   @ApiProperty({ required: false })
   @IsInt()

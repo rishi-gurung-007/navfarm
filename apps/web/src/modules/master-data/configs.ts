@@ -143,16 +143,16 @@ const location: MasterDataConfig = {
     // Days, not replacing it. Required on a silo since D22 (Rishi, 27 Sep):
     // the forecast's run-down and the feed alerts read them.
     {
-      key: "low_level_kg", label: "Low Stock Level (kg)", type: "number", min: 0, step: "1", nativeNumber: true,
+      key: "low_level_kg", label: "Below Feed Level KG", type: "number", min: 0, step: "1", nativeNumber: true,
       visibleWhen: { anyOf: [{ key: "location_type", equals: "SILO" }] },
       requiredWhen: { anyOf: [{ key: "location_type", equals: "SILO" }] }, section: "Identification",
-      helpText: "Low feed alert at or below this. Usually 20% of capacity."
+      helpText: "Low feed alert when the System Balance is at or below this. Usually 20% of capacity."
     },
     {
-      key: "high_level_kg", label: "High Stock Level (kg)", type: "number", min: 0, step: "1", nativeNumber: true,
+      key: "high_level_kg", label: "Above Threshold KG", type: "number", min: 0, step: "1", nativeNumber: true,
       visibleWhen: { anyOf: [{ key: "location_type", equals: "SILO" }] },
       requiredWhen: { anyOf: [{ key: "location_type", equals: "SILO" }] }, section: "Identification",
-      helpText: "Over-stock notice at or above this. Usually 90% of capacity."
+      helpText: "Over-stock notice when the System Balance is at or above this. Usually 90% of capacity."
     },
     // D32 (Rishi, 28 Sep): the six per-farm feed settings — refill buffer, lead
     // time, bulk order multiple, bag size, truck target, production weekday —
@@ -1050,6 +1050,8 @@ const item: MasterDataConfig = {
     { key: "is_inventoriable", label: "Inventoriable", type: "boolean", helpText: "Held as stock, with a balance and a valuation. Off for services and consumables that are expensed on receipt.", section: "Inventory" },
     { key: "min_stock_level", label: "Min Stock Level", type: "number", step: "0.01", min: 0, visibleWhen: WHEN_INVENTORIED, section: "Inventory" },
     { key: "max_stock_level", label: "Max Stock Level", type: "number", step: "0.01", min: 0, visibleWhen: WHEN_INVENTORIED, section: "Inventory" },
+    // TDD Master Setup §2 / Loading Sheet row 65: the feed diet number, 1 to 14.
+    { key: "diet_no", label: "Diet No.", type: "number", min: 1, max: 14, step: "1", nativeNumber: true, helpText: "Feed diet number, 1 to 14.", section: "Inventory" },
     { key: "reorder_level", label: "Reorder Level", type: "number", step: "0.01", min: 0, visibleWhen: WHEN_INVENTORIED, section: "Inventory" },
     { key: "lead_time_days", label: "Lead Time (days)", type: "number", min: 0, visibleWhen: WHEN_INVENTORIED, helpText: "Procurement lead time, for feed/stock forecast planning.", section: "Inventory" },
     { key: "shelf_life_days", label: "Shelf Life (days)", type: "number", min: 0, visibleWhen: WHEN_INVENTORIED, section: "Inventory" },
@@ -1215,6 +1217,11 @@ const breedLifecycleStage: MasterDataConfig = {
     },
     { key: "feed_item_id", label: "Feed", type: "select-entity", searchable: true, entityEndpoint: "/item", entityValueKey: "item_id", entityLabelKeys: ["item_code", "item_name"] },
     { key: "feed_qty_per_head_per_day_kg", label: "Daily Feed per Head (kg)", type: "number", step: "0.01", min: 0 },
+    // TDD Master Setup row 37: how this stage's feed is supplied.
+    {
+      key: "feed_form", label: "Feed Form", type: "select",
+      options: [{ value: "BULK", label: "Bulk" }, { value: "BAGGED", label: "Bagged" }],
+    },
     { key: "feed_wastage_pct", label: "Feed Wastage (%)", type: "number", step: "0.01", min: 0 },
     { key: "std_body_weight_kg", label: "Std Body Weight (KG)", type: "number", step: "0.01", min: 0 },
     { key: "std_adg_gpd", label: "Std ADG (g/day)", type: "number", step: "0.01", min: 0 },

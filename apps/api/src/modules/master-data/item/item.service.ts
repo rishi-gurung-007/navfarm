@@ -310,6 +310,7 @@ export class ItemService {
       min_stock_level: dto.min_stock_level?.toString() || null,
       max_stock_level: dto.max_stock_level?.toString() || null,
       reorder_level: dto.reorder_level?.toString() || null,
+      diet_no: dto.diet_no ?? null,
       lead_time_days: dto.lead_time_days ?? null,
       shelf_life_days: dto.shelf_life_days ?? null,
       storage_temp_min: dto.storage_temp_min?.toString() || null,
@@ -759,6 +760,7 @@ export class ItemService {
     if (dto.min_stock_level !== undefined) updates.min_stock_level = dto.min_stock_level?.toString() || null;
     if (dto.max_stock_level !== undefined) updates.max_stock_level = dto.max_stock_level?.toString() || null;
     if (dto.reorder_level !== undefined) updates.reorder_level = dto.reorder_level?.toString() || null;
+    if (dto.diet_no !== undefined) updates.diet_no = dto.diet_no;
     if (dto.lead_time_days !== undefined) updates.lead_time_days = dto.lead_time_days;
     if (dto.shelf_life_days !== undefined) updates.shelf_life_days = dto.shelf_life_days;
     if (dto.storage_temp_min !== undefined) updates.storage_temp_min = dto.storage_temp_min?.toString() || null;

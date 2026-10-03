@@ -348,19 +348,13 @@ export class LocationService {
       silo_reorder_days: dto.silo_reorder_days ?? null,
       low_level_kg: dto.storage_type === 'SILO' && dto.low_level_kg != null ? String(dto.low_level_kg) : null,
       high_level_kg: dto.storage_type === 'SILO' && dto.high_level_kg != null ? String(dto.high_level_kg) : null,
-      ...(dto.feed_bulk_multiple_kg !== undefined ? { feed_bulk_multiple_kg: dto.feed_bulk_multiple_kg } : {}),
-      ...(dto.feed_bag_size_kg !== undefined ? { feed_bag_size_kg: dto.feed_bag_size_kg } : {}),
-      ...(dto.feed_truck_target_kg !== undefined ? { feed_truck_target_kg: dto.feed_truck_target_kg } : {}),
-      ...(dto.feed_production_weekday !== undefined ? { feed_production_weekday: dto.feed_production_weekday } : {}),
       downtime_days_required: dto.downtime_days_required ?? null,
       storage_name: dto.storage_name ?? null,
       department_id: dto.department_id || null,
       feed_in_bags: null,
-      // Left out entirely, not written as null, when the caller sends nothing
-      // — the column defaults to 2 and 0 respectively, and a create that never
-      // mentioned feed timing should get that default rather than lose it.
-      ...(dto.feed_refill_buffer_days !== undefined ? { feed_refill_buffer_days: dto.feed_refill_buffer_days } : {}),
-      ...(dto.feed_lead_time_days !== undefined ? { feed_lead_time_days: dto.feed_lead_time_days } : {}),
+      // The feed-era farm columns (refill buffer, lead time, bulk multiple, bag
+      // size, truck target, production weekday) are no longer written here
+      // (TDD Master Setup §1-3); they keep their column defaults on create.
       is_active: true,
       status: 'ACTIVE',
       extension_config: dto.extension_config ? JSON.stringify(dto.extension_config) : null,
@@ -1367,12 +1361,6 @@ export class LocationService {
     // D28: a saved pen, shed or crate loses the legacy 'SILO' storage type.
     if (clearsLegacyStorageType) updates.storage_type = null;
     if (dto.downtime_days_required !== undefined) updates.downtime_days_required = dto.downtime_days_required;
-    if (dto.feed_refill_buffer_days !== undefined) updates.feed_refill_buffer_days = dto.feed_refill_buffer_days;
-    if (dto.feed_lead_time_days !== undefined) updates.feed_lead_time_days = dto.feed_lead_time_days;
-    if (dto.feed_bulk_multiple_kg !== undefined) updates.feed_bulk_multiple_kg = dto.feed_bulk_multiple_kg;
-    if (dto.feed_bag_size_kg !== undefined) updates.feed_bag_size_kg = dto.feed_bag_size_kg;
-    if (dto.feed_truck_target_kg !== undefined) updates.feed_truck_target_kg = dto.feed_truck_target_kg;
-    if (dto.feed_production_weekday !== undefined) updates.feed_production_weekday = dto.feed_production_weekday;
     if (dto.storage_name !== undefined) updates.storage_name = dto.storage_name;
     if (dto.department_id !== undefined) updates.department_id = dto.department_id || null;
     if (dto.is_active !== undefined) updates.is_active = dto.is_active;

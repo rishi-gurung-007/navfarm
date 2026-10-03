@@ -636,6 +636,11 @@ export class CreateBreedLifecycleStageDto {
   @Min(0)
   feed_qty_per_head_per_day_kg?: number;
 
+  @ApiProperty({ description: 'Feed form for this stage: BULK (silo) or BAGGED (TDD Master Setup row 37)', required: false, enum: ['BULK', 'BAGGED'] })
+  @IsIn(['BULK', 'BAGGED'], { message: 'Feed Form must be BULK or BAGGED.' })
+  @IsOptional()
+  feed_form?: string;
+
   @ApiProperty({ description: 'Allowance for feed wastage in forecast calculation, %', required: false })
   @IsNumber()
   @IsOptional()
@@ -801,6 +806,11 @@ export class UpdateBreedLifecycleStageDto {
   @IsOptional()
   @Min(0)
   feed_qty_per_head_per_day_kg?: number;
+
+  @ApiProperty({ description: 'Feed form for this stage: BULK (silo) or BAGGED (TDD Master Setup row 37)', required: false, enum: ['BULK', 'BAGGED'] })
+  @IsIn(['BULK', 'BAGGED'], { message: 'Feed Form must be BULK or BAGGED.' })
+  @IsOptional()
+  feed_form?: string;
 
   @ApiProperty({ required: false })
   @IsNumber()
