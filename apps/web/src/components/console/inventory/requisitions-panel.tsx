@@ -175,7 +175,10 @@ export function FeedRequisitionPanel() {
   // Feed Forecast row 8 / Step 9: draft for the window the Forecast tab is showing, else the 7-day default.
   const draftFromForecast = () =>
     run(async () => {
-      const to = getForecastWindow(farmId)?.to ?? defaultWindowEnd(todayIso());
+      // The draft always starts at the farm's today, and the API refuses a `to` before it: a window that has
+      // already ended on the Forecast tab falls back to the default rather than posting a date that 400s.
+      const shared = getForecastWindow(farmId)?.to;
+      const to = shared && shared >= todayIso() ? shared : defaultWindowEnd(todayIso());
       const result = unwrap<{ requisition: RequisitionView | null }>(await api.post("/feed-requisition/auto-draft", { farmId, to }));
       const through = formatDateShort(to);
       if (result.requisition) {

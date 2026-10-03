@@ -76,6 +76,13 @@ describe('RequisitionsPanel (D26)', () => {
     expect(await screen.findByText('rqNothingToOrder:{"to":"18/10/99"}')).toBeTruthy();
   });
 
+  it("falls back to the default window when the shared `to` is already past, rather than posting a date the API refuses", async () => {
+    setForecastWindow({ farmId: 'farm-vil', from: '2020-01-01', to: '2020-01-07' });
+    render(<RequisitionsPanel />);
+    fireEvent.click(await screen.findByRole('button', { name: 'rqDraftFromForecast' }));
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/feed-requisition/auto-draft', { farmId: 'farm-vil', to: defaultWindowEnd(todayIso()) }));
+  });
+
   it("ignores another farm's window", async () => {
     setForecastWindow({ farmId: 'farm-other', from: '2099-09-20', to: '2099-10-18' });
     render(<RequisitionsPanel />);

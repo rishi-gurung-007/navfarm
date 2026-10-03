@@ -115,7 +115,10 @@ export class FeedForecastRunService {
           eq(schema.feedForecastRun.tenant_id, input.tenantId),
           eq(schema.feedForecastRun.company_id, input.companyId),
           like(schema.feedForecastRun.run_code, `${runCodePrefix(output.farm.code, input.planningDate)}%`),
-        ));
+        ))
+        // A current read, like the version read: under REPEATABLE READ a plain read would use the snapshot taken
+        // before the farm lock and miss a same-day save that committed meanwhile (duplicate NNN -> ER_DUP_ENTRY).
+        .for('update');
       const runCode = runCodeFor(output.farm.code, input.planningDate, sameDay.map((row) => row.run_code));
       const lines = buildRunLineSnapshots(output);
       const outputSnapshot = buildOutputSnapshot(lines);

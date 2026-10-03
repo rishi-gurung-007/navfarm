@@ -232,6 +232,29 @@ describe('FeedForecastRunService', () => {
     expect(codeRead).toBeLessThan(insert);
   });
 
+  it('reads the same-day run codes as a current read under the farm lock: a stale snapshot read would reuse a committed NNN (REPEATABLE READ)', async () => {
+    const staleCodes = [{ run_code: 'RUN-FARM-1-20261001-001' }];
+    const committedMeanwhile = [{ run_code: 'RUN-FARM-1-20261001-001' }, { run_code: 'RUN-FARM-1-20261001-002' }];
+    const { service, cls } = setup(new Map());
+    // Override the db: the version read and a locking code read see the committed rows; a plain read sees the old snapshot.
+    const db: any = cls.get('tenantDb');
+    db.select = jest.fn((fields?: Record<string, unknown>) => {
+      let table: unknown; let lock: string | undefined;
+      const chain: any = {
+        from: (t: unknown) => { table = t; return chain; }, where: () => chain, orderBy: () => chain, limit: () => chain,
+        for: (l: string) => { lock = l; return chain; },
+        then: (ok: any, fail: any) => Promise.resolve(
+          table === schema.locationMaster ? [{ location_id: 'farm-1', company_id: 'company-1', lob_id: 'lob-piggery' }]
+          : fields && 'run_code' in fields ? (lock === 'update' ? committedMeanwhile : staleCodes)
+          : [{ version: 6 }],
+        ).then(ok, fail),
+      };
+      return chain;
+    });
+    await expect(service.createRun(input, output as any, { userId: 'user-1' }))
+      .resolves.toMatchObject({ runCode: 'RUN-FARM-1-20261001-003' });
+  });
+
   it('starts an independent farm version stream at one', async () => {
     const queues = new Map<unknown, unknown[][]>([
       [schema.locationMaster, [[{ location_id: 'farm-2', company_id: 'company-1', lob_id: 'lob-piggery' }]]],
