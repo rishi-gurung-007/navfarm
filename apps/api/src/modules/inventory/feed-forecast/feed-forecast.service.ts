@@ -626,11 +626,12 @@ export class FeedForecastService {
     const { from, to } = resolveViewRange({ view, planningDate, from: query.from, to: query.to, period });
     const span = spanProblem(from, to, period);
     if (span) throw new BadRequestException(span);
-    // computeForFarm refuses a `to` past this reach (reachProblem); it is also the run-down horizon asked for (Q12).
-    // A CUSTOM view whose `to` was never sent passes none, so the refusal can say the default ran past the reach;
-    // computeForFarm defaults it to the same from + 6 resolveViewRange did.
+    // `reach` is the last forecast day (45 days after the planning date). computeForFarm refuses a `to` past it
+    // (reachProblem) and looks for the run-down up to `horizonTo` (Q12), so the horizon keeps the full reach.
+    // The computed and returned range is the one resolveViewRange chose: an omitted `to` means the 7-day default
+    // window (from + 6, Engine §5 row 67), never the reach. An explicit `to` is sent as typed and stays bound by it.
     const reach = addDays(planningDate, MAX_SPAN_DAYS);
-    const sentTo = query.to ?? (view === 'WEEKLY' || view === 'CUSTOM' ? reach : to);
+    const sentTo = query.to ?? to;
     const result = await this.computeForFarm(farmId, companyId, tenantId, { from, to: sentTo, planningDate, horizonTo: reach }, clock);
     // Q7: an "as of" forecast has no projection for days already behind the planning date.
     const forecastFrom = to < planningDate ? null : from > planningDate ? from : planningDate;
@@ -653,7 +654,7 @@ export class FeedForecastService {
       timeZone: result.timeZone,
       view,
       from,
-      to: sentTo ?? to,
+      to: sentTo,
       forecastFrom,
       forecastNote,
       horizonTo: result.horizonTo,
