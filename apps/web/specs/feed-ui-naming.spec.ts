@@ -21,15 +21,13 @@ describe("feed forecasting terminology", () => {
       ffColItemNo: "Item No",
       ffColShedNo: "Shed No",
       ffColPlanningDate: "Planning Date",
-      ffColCurrentInventoryKg: "Current Inventory (Kg)",
+      ffColCurrentInventoryKg: "System Balance (Kg)",
       ffColCurrentPigs: "Current No. of Pigs",
       ffColPerDayIntakeKg: "Per Day Intake (Kg)",
       ffColDaysOfStock: "Current No of Days Stock",
-      ffColRunDown: "Run Down",
-      ffColDateToRefill: "Date to Refill",
-      ffColRequiredOn: "Required On Date",
+      ffColFirstShortage: "First Shortage Date",
     });
-    for (const retired of ["fpLeadTimeCol", "fpBulkMultipleCol", "fpBagSizeCol", "fpTruckTargetCol", "fpProductionDayCol"]) {
+    for (const retired of ["ffColRunDown", "ffColDateToRefill", "ffColRequiredOn", "ffOverdue", "fpLeadTimeCol", "fpBulkMultipleCol", "fpBagSizeCol", "fpTruckTargetCol", "fpProductionDayCol"]) {
       expect(translations.en).not.toHaveProperty(retired);
     }
   });

@@ -44,14 +44,14 @@ const forecastResponse = {
         itemId: 'item-1', itemNo: 'FEED-WG', itemName: 'Weaner Grower Mash (18% CP)', sourceType: 'STORE', sourceCode: 'VIL100/STORE-001',
         date: '2026-09-25', dateTo: '2026-09-25', days: 1, currentInventoryKg: 35525.6, heads: 58, perDayIntakeKg: 127,
         intakeKg: 127, daysOfStock: 108, sharedBatchCount: 3, indicative: false,
-        runDownDate: null, refillDate: null, requiredOn: null, overdue: false,
+        runDownDate: null,
       },
       {
         key: 'b20|item-2|VIL100/SILO-002|2026-09-25', batchId: 'b20', batchNo: 'BATCH-000020', shedCode: 'SHED-1', stageCode: 'DRY_SOW',
         itemId: 'item-2', itemNo: 'FEED-DS', itemName: 'Dry Sow Gestation Mash (14% CP)', sourceType: 'SILO', sourceCode: 'VIL100/SILO-002',
         date: '2026-09-25', dateTo: '2026-09-25', days: 1, currentInventoryKg: 200, heads: 40, perDayIntakeKg: 100,
         intakeKg: 100, daysOfStock: 2, sharedBatchCount: 1, indicative: true,
-        runDownDate: '2026-09-26', refillDate: '2026-09-24', requiredOn: '2026-09-22', overdue: true,
+        runDownDate: '2026-09-26',
       },
     ],
     stages: [
@@ -80,10 +80,11 @@ describe('FeedForecastPanel — admin', () => {
     mockFarm = adminFarm();
   });
 
-  it("renders the field specification's 12 columns in order (D33)", async () => {
+  it("renders the seven static columns, one column per forecast date, Days of Stock and First Shortage Date", async () => {
     render(<FeedForecastPanel />);
     const table = await screen.findByRole('table', { name: 'ffGridLabel' });
-    expect(within(table).getAllByRole('columnheader')).toHaveLength(12);
+    // Both fixture rows fall on 25/09/26, so there is one date column.
+    expect(within(table).getAllByRole('columnheader')).toHaveLength(7 + 1 + 2);
   });
 
   it('never fetches the farm list itself: the shared hook owns it (A3)', async () => {
@@ -92,15 +93,15 @@ describe('FeedForecastPanel — admin', () => {
     expect(get.mock.calls.some(([url]) => String(url).startsWith('/location'))).toBe(false);
   });
 
-  it('shows Overdue and Indicative, uses a dash beyond the horizon, and keeps Stages as a tab', async () => {
+  it('shows Indicative, no Overdue and no placeholder dashes in the grid, and keeps Stages as a tab', async () => {
     render(<FeedForecastPanel />);
     const table = await screen.findByRole('table', { name: 'ffGridLabel' });
-    expect(within(table).getByText('ffOverdue')).toBeTruthy();
+    expect(within(table).queryByText('ffOverdue')).toBeNull();
     expect(within(table).getByText('ffIndicative')).toBeTruthy();
     // "Shared by" was a badge in the Source cell, and went with it (D33).
     expect(within(table).queryByText(/ffSharedBy/)).toBeNull();
     expect(within(table).queryByText(/ffBeyondHorizon|ffNotDueBy/)).toBeNull();
-    expect(within(table).getAllByText('—').length).toBeGreaterThan(0);
+    expect(within(table).queryAllByText('—')).toHaveLength(0);
     // D34: the wastage note is gone — neither client document has wastage.
     expect(screen.queryByText(/ffWastage/)).toBeNull();
     fireEvent.click(screen.getByRole('tab', { name: 'ffTabStages:{"count":1}' }));

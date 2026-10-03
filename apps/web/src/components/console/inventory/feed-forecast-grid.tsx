@@ -42,10 +42,8 @@ export interface ReportRow {
   daysOfStock: number | null;
   sharedBatchCount: number;
   indicative: boolean;
+  /** First forecast day demand exceeds the available opening stock (the API still names it runDownDate). */
   runDownDate: string | null;
-  refillDate: string | null;
-  requiredOn: string | null;
-  overdue: boolean;
 }
 
 /** The current / next stage of one batch (apps/api …/feed-forecast.service.ts StageBlock). */
@@ -81,7 +79,7 @@ export const GRID_COLUMNS = [
   "ffColBatchNo", "ffColItemName", "ffColItemNo", "ffColShedNo",
   "ffColCurrentInventoryKg", "ffColCurrentPigs", "ffColPerDayIntakeKg",
   // Dynamic date columns are inserted here at render time (one per day or week)
-  "ffColDaysOfStock", "ffColRunDown", "ffColDateToRefill", "ffColRequiredOn",
+  "ffColDaysOfStock", "ffColFirstShortage",
 ] as const;
 
 export const STAGE_COLUMNS = ["ffStgBatch", "ffStgShed", "ffStgCurrent", "ffStgFrom", "ffStgTo", "ffStgNext", "ffStgChange"] as const;
@@ -91,6 +89,11 @@ export const STAGE_COLUMNS = ["ffStgBatch", "ffStgShed", "ffStgCurrent", "ffStgF
 export function fmtKg(n: number | null | undefined): string {
   if (n === null || n === undefined) return "—";
   return n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+/** Days of stock to one decimal (3 Oct ruling); callers leave a null blank. */
+export function fmtDays(n: number): string {
+  return n.toFixed(1);
 }
 
 export function fmtRound(n: number | null | undefined): string {
@@ -113,10 +116,7 @@ export interface PivotedFeedRow {
   dateMap: Record<string, { currentInventoryKg: number; intakeKg: number }>;
   daysOfStock: number | null;
   runDownDate: string | null;
-  refillDate: string | null;
-  requiredOn: string | null;
   indicative: boolean;
-  overdue: boolean;
 }
 
 export interface ColumnSlot {
@@ -178,10 +178,7 @@ export function pivotForecastRows(
         dateMap: {},
         daysOfStock: r.daysOfStock,
         runDownDate: r.runDownDate,
-        refillDate: r.refillDate,
-        requiredOn: r.requiredOn,
         indicative: r.indicative,
-        overdue: r.overdue,
       };
       map.set(groupKey, p);
     }
@@ -219,12 +216,9 @@ export function pivotForecastRows(
     }
 
     if (r.runDownDate && !p.runDownDate) p.runDownDate = r.runDownDate;
-    if (r.refillDate && !p.refillDate) p.refillDate = r.refillDate;
-    if (r.requiredOn && !p.requiredOn) p.requiredOn = r.requiredOn;
     if (r.daysOfStock !== null && (p.daysOfStock === null || r.daysOfStock < p.daysOfStock)) {
       p.daysOfStock = r.daysOfStock;
     }
-    if (r.overdue) p.overdue = true;
   }
 
   let sortedSlots = Array.from(slotsMap.values()).sort((a, b) => (a.dateStart < b.dateStart ? -1 : 1));
@@ -284,7 +278,7 @@ export function FeedForecastGrid({
   t: Translate;
 }) {
   const { pivoted, columns } = pivotForecastRows(rows, view, from);
-  const totalCols = 7 + columns.length + 4;
+  const totalCols = 7 + columns.length + 2;
 
   return (
     <ScrollTable label={t("ffGridLabel")} className="w-full">
@@ -312,14 +306,8 @@ export function FeedForecastGrid({
           <th scope="col" title={t("ffDaysOfStockHint")} className={cn(TH, "text-right")}>
             {t("ffColDaysOfStock")}
           </th>
-          <th scope="col" title={t("ffRunDownHint")} className={TH}>
-            {t("ffColRunDown")}
-          </th>
-          <th scope="col" className={TH}>
-            {t("ffColDateToRefill")}
-          </th>
-          <th scope="col" className={TH}>
-            {t("ffColRequiredOn")}
+          <th scope="col" title={t("ffFirstShortageHint")} className={TH}>
+            {t("ffColFirstShortage")}
           </th>
         </tr>
       </thead>
@@ -343,8 +331,8 @@ export function FeedForecastGrid({
                 <td data-sticky-col="last" style={ITEM_COL} title={p.itemName} className={cn(TD, "min-w-[13rem] max-w-[14rem] truncate font-medium")}>
                   {p.itemName}
                 </td>
-                <td className={cn(TD, MUTED)}>{p.itemNo || "—"}</td>
-                <td className={cn(TD, MUTED)}>{p.shedCode || "—"}</td>
+                <td className={cn(TD, MUTED)}>{p.itemNo}</td>
+                <td className={cn(TD, MUTED)}>{p.shedCode}</td>
                 <td className={cn(TD, NUM, "font-medium")}>{fmtRound(p.openingInventoryKg)}</td>
                 <td className={cn(TD, NUM)}>{p.heads.toLocaleString("en-US")}</td>
                 <td className={cn(TD, NUM)}>{fmtRound(p.perDayIntakeKg)}</td>
@@ -361,7 +349,7 @@ export function FeedForecastGrid({
                         </td>
                       );
                     }
-                    return <td key={c.key} className={cn(TD, NUM, MUTED)}>—</td>;
+                    return <td key={c.key} className={cn(TD, NUM, MUTED)} />;
                   }
                   const stock = entry.currentInventoryKg;
                   const isEmpty = stock <= 0 || isDepleted;
@@ -375,18 +363,11 @@ export function FeedForecastGrid({
                 <td className={cn(TD, NUM)}>
                   <span className="inline-flex items-center justify-end gap-1.5">
                     {p.indicative && <Badge variant="warning" className={SMALL_BADGE}>{t("ffIndicative")}</Badge>}
-                    <span>{p.daysOfStock ?? "—"}</span>
+                    <span>{p.daysOfStock === null ? "" : fmtDays(p.daysOfStock)}</span>
                   </span>
                 </td>
-                <td className={cn(TD, !p.runDownDate ? MUTED : "font-semibold text-[var(--danger)]")}>
-                  {formatDateShort(p.runDownDate)}
-                </td>
-                <td className={cn(TD, MUTED)}>
-                  {formatDateShort(p.refillDate)}
-                </td>
-                <td className={TD}>
-                  <span className={cn(!p.requiredOn && MUTED)}>{formatDateShort(p.requiredOn)}</span>
-                  {p.overdue && <Badge variant="danger" className={cn("ml-1.5", SMALL_BADGE)}>{t("ffOverdue")}</Badge>}
+                <td className={cn(TD, p.runDownDate && "font-semibold text-[var(--danger)]")}>
+                  {p.runDownDate ? formatDateShort(p.runDownDate) : ""}
                 </td>
               </tr>
             );

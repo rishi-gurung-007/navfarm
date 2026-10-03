@@ -13,7 +13,7 @@ const row = (over: Partial<ReportRow> = {}): ReportRow => ({
   itemId: 'r1', itemNo: 'FEED-R1', itemName: 'Weaner Diet R1', sourceType: 'SILO', sourceCode: 'GRS/SILO-001',
   date: '2026-09-23', dateTo: '2026-09-23', days: 1, currentInventoryKg: 1500, heads: 1000, perDayIntakeKg: 2000,
   intakeKg: 2000, daysOfStock: 0, sharedBatchCount: 1, indicative: false,
-  runDownDate: '2026-09-23', refillDate: '2026-09-21', requiredOn: '2026-09-19', overdue: true, ...over,
+  runDownDate: '2026-09-23', ...over,
 });
 
 describe('feed-format date helpers (D16)', () => {
@@ -36,9 +36,13 @@ describe('FeedForecastGrid', () => {
     render(<FeedForecastGrid rows={[row()]} loading={false} horizonTo="2026-11-07" t={t} />);
     const headers = within(screen.getByRole('table')).getAllByRole('columnheader').map((h) => h.textContent);
     // Static columns: Batch No, Item Name, Item No, Shed No, Current Inventory, Current Pigs, Per Day Intake,
-    // then one or more dynamic date columns, then Days of Stock, Run Down, Date to Refill, Required On.
+    // then one or more dynamic date columns, then Days of Stock and First Shortage Date. Date to Refill, Required On
+    // and Overdue left with the lead-time model (3 Oct ruling): the forecast no longer computes them.
     expect(headers.slice(0, 4)).toEqual(['ffColBatchNo', 'ffColItemName', 'ffColItemNo', 'ffColShedNo']);
-    expect(headers.slice(-4)).toEqual(['ffColDaysOfStock', 'ffColRunDown', 'ffColDateToRefill', 'ffColRequiredOn']);
+    expect(headers.slice(-2)).toEqual(['ffColDaysOfStock', 'ffColFirstShortage']);
+    expect(headers).not.toContain('ffColDateToRefill');
+    expect(headers).not.toContain('ffColRequiredOn');
+    expect(headers).not.toContain('ffColRunDown');
     // The Planning Date column is gone — dates are now dynamic column headers (pivot table).
     expect(GRID_COLUMNS as readonly string[]).not.toContain('ffColPlanningDate');
   });
@@ -67,32 +71,59 @@ describe('FeedForecastGrid', () => {
     expect(fmtKg(16.3)).toBe('16.30');
   });
 
-  it('shows the Item No, DD/MM/YY dates and an Overdue badge', () => {
+  it('shows the Item No and DD/MM/YY dates: the date column header and the First Shortage Date', () => {
     render(<FeedForecastGrid rows={[row()]} loading={false} horizonTo="2026-11-07" t={t} />);
     const table = screen.getByRole('table');
     expect(within(table).getByText('FEED-R1')).toBeTruthy();
     expect(within(table).getAllByText('23/09/26').length).toBe(2);
-    expect(within(table).getByText('21/09/26')).toBeTruthy();
-    expect(within(table).getByText('ffOverdue')).toBeTruthy();
+    expect(within(table).queryByText('ffOverdue')).toBeNull();
   });
 
   it('marks an indicative Days of Stock, in its new column position (D33)', () => {
     render(<FeedForecastGrid rows={[row({ indicative: true, daysOfStock: 93 })]} loading={false} horizonTo={null} t={t} />);
     const cells = within(screen.getAllByRole('row')[1]).getAllByRole('cell');
-    expect(within(cells[8]).getByText('93')).toBeTruthy();
+    expect(within(cells[8]).getByText('93.0')).toBeTruthy();
     expect(within(cells[8]).getByText('ffIndicative')).toBeTruthy();
-    expect(cells[8].textContent).toBe('ffIndicative93');
+    expect(cells[8].textContent).toBe('ffIndicative93.0');
   });
 
-  it("shows a grouped line's single date column and only dashes when no run-down dates are available", () => {
+  it('shows Days of Stock with one decimal (3 Oct ruling)', () => {
+    const days = (daysOfStock: number | null) => {
+      const { unmount } = render(<FeedForecastGrid rows={[row({ daysOfStock })]} loading={false} horizonTo={null} t={t} />);
+      const text = within(screen.getAllByRole('row')[1]).getAllByRole('cell')[8].textContent;
+      unmount();
+      return text;
+    };
+    expect(days(2.5)).toBe('2.5');
+    expect(days(0)).toBe('0.0');
+    expect(days(6.04)).toBe('6.0');
+  });
+
+  it('puts the dates across as columns, one row per batch + item + shed, with no placeholder dashes in the grid body (2 Oct patch intent)', () => {
+    const rows = [
+      row({ date: '2026-09-23', dateTo: '2026-09-23', runDownDate: null, daysOfStock: null, itemNo: '', shedCode: '' }),
+      row({ key: 'k2', date: '2026-09-24', dateTo: '2026-09-24', runDownDate: null, daysOfStock: null, itemNo: '', shedCode: '' }),
+      // A second item has demand on the 24th only, so its 23rd slot has no entry.
+      row({ key: 'k3', itemId: 'r2', itemName: 'Weaner Diet R2', date: '2026-09-24', dateTo: '2026-09-24', runDownDate: null, daysOfStock: null }),
+    ];
+    render(<FeedForecastGrid rows={rows} loading={false} horizonTo={null} t={t} />);
+    const headers = screen.getAllByRole('columnheader').map((h) => h.textContent);
+    expect(headers).toEqual(expect.arrayContaining(['23/09/26', '24/09/26']));
+    const body = screen.getAllByRole('row').slice(1);
+    expect(body).toHaveLength(2);
+    const second = within(body[1]).getAllByRole('cell');
+    expect(second[7].textContent).toBe(''); // no 23rd entry: blank, not a dash
+    const texts = body.flatMap((r) => within(r).getAllByRole('cell').map((c) => c.textContent));
+    expect(texts).not.toContain('—');
+  });
+
+  it("shows a grouped line's single date column and a blank First Shortage Date when none is forecast", () => {
     // A single daily row: the pivot produces one date column header (23/09/26) and one data row.
-    render(<FeedForecastGrid rows={[row({ runDownDate: null, refillDate: null, requiredOn: null, overdue: false })]} loading={false} horizonTo="2026-11-07" t={t} />);
+    render(<FeedForecastGrid rows={[row({ runDownDate: null })]} loading={false} horizonTo="2026-11-07" t={t} />);
     expect(screen.getByText('23/09/26')).toBeTruthy(); // the date column header
     const cells = within(screen.getAllByRole('row')[1]).getAllByRole('cell');
-    // Last 3 cells: Run Down, Date to Refill, Required On — all should be —
-    expect(cells.slice(-3).map((cell) => cell.textContent)).toEqual(['—', '—', '—']);
+    expect(cells[cells.length - 1].textContent).toBe('');
     expect(screen.queryByText(/ffBeyondHorizon|ffNotDueBy/)).toBeNull();
-    expect(screen.queryByText('ffOverdue')).toBeNull();
   });
 
   it('produces one pivot row per batch+item group and shades every second row', () => {
@@ -114,11 +145,11 @@ describe('FeedForecastGrid', () => {
     expect(screen.getByText(/ffLoading/)).toBeTruthy();
   });
 
-  it('titles Days of Stock and Run-Down with what each counts to', () => {
+  it('titles Days of Stock and First Shortage Date with what each counts to', () => {
     render(<FeedForecastGrid rows={[row()]} loading={false} horizonTo={null} t={t} />);
     const headers = screen.getAllByRole('columnheader');
     expect(headers.find((h) => h.textContent === 'ffColDaysOfStock')!.getAttribute('title')).toBe('ffDaysOfStockHint');
-    expect(headers.find((h) => h.textContent === 'ffColRunDown')!.getAttribute('title')).toBe('ffRunDownHint');
+    expect(headers.find((h) => h.textContent === 'ffColFirstShortage')!.getAttribute('title')).toBe('ffFirstShortageHint');
   });
 });
 
