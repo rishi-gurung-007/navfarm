@@ -28,7 +28,8 @@ import { ScrollTable } from "@/components/ui/scroll-table";
 import { useLanguage } from "@/hooks/useLanguage";
 import { cn } from "@/lib/utils";
 import { formatDateShort } from "@/utils/date-short";
-import { todayIso, unwrap } from "./feed-format";
+import { defaultWindowEnd, todayIso, unwrap } from "./feed-format";
+import { getForecastWindow } from "./feed-forecast-window";
 import { FeedFarmSelect, feedFarmLabel } from "./feed-farm-select";
 import { PRIORITY_LABEL, REQ_STATUS_LABEL, REQ_TYPE_LABEL, labelOf, variantOf } from "./requisition-labels";
 import {
@@ -171,11 +172,16 @@ export function FeedRequisitionPanel() {
 
   const openRequisition = (id: string) => run(async () => show(unwrap<RequisitionView>(await api.get(`/feed-requisition/${id}`))));
 
+  // Feed Forecast row 8 / Step 9: draft for the window the Forecast tab is showing, else the 7-day default.
   const draftFromForecast = () =>
     run(async () => {
-      const result = unwrap<{ requisition: RequisitionView | null }>(await api.post("/feed-requisition/auto-draft", { farmId }));
-      if (result.requisition) show(result.requisition);
-      else setNotice(tRef.current("rqNothingToOrder"));
+      const to = getForecastWindow(farmId)?.to ?? defaultWindowEnd(todayIso());
+      const result = unwrap<{ requisition: RequisitionView | null }>(await api.post("/feed-requisition/auto-draft", { farmId, to }));
+      const through = formatDateShort(to);
+      if (result.requisition) {
+        show(result.requisition);
+        setNotice(tRef.current("rqDraftedThrough", { to: through }));
+      } else setNotice(tRef.current("rqNothingToOrder", { to: through }));
       await loadList();
     });
 

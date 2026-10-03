@@ -3,6 +3,7 @@ import { render, screen, within, fireEvent, waitFor } from '@testing-library/rea
 import FeedForecastPanel from '../src/components/console/inventory/feed-forecast-panel';
 import { api } from '../src/services/api-client';
 import { getActiveWorkspaceScope } from '../src/hooks/useAuth';
+import { getForecastWindow } from '../src/components/console/inventory/feed-forecast-window';
 
 jest.mock('../src/services/api-client', () => ({ api: { get: jest.fn(), post: jest.fn() } }));
 // A stable `t`: the effects must not depend on its identity (the tRef pattern).
@@ -85,6 +86,13 @@ describe('FeedForecastPanel — admin', () => {
     const table = await screen.findByRole('table', { name: 'ffGridLabel' });
     // Both fixture rows fall on 25/09/26, so there is one date column.
     expect(within(table).getAllByRole('columnheader')).toHaveLength(7 + 1 + 2);
+  });
+
+  it("shares the window on screen with the Feed Requisition tab's Draft from forecast (Feed Forecast row 8)", async () => {
+    render(<FeedForecastPanel />);
+    await screen.findByRole('table', { name: 'ffGridLabel' });
+    await waitFor(() => expect(getForecastWindow('farm-vil100')).toEqual({ farmId: 'farm-vil100', from: '2026-09-25', to: '2026-10-02' }));
+    expect(getForecastWindow('farm-oth')).toBeNull();
   });
 
   it('never fetches the farm list itself: the shared hook owns it (A3)', async () => {

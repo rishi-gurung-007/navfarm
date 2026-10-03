@@ -26,6 +26,7 @@ import { businessYearStartOf, forecastQueryString, FORECAST_VIEWS, ForecastView 
 import { FeedFarmSelect, feedFarmLabel } from "./feed-farm-select";
 import { useFeedFarm } from "./use-feed-farm";
 import { FeedForecastRunHistory } from "./feed-forecast-run-history";
+import { setForecastWindow } from "./feed-forecast-window";
 
 interface PeriodOption {
   periodId: string;
@@ -136,6 +137,11 @@ export default function FeedForecastPanel() {
       cancelled = true;
     };
   }, [farmId, view, planningDate, dateFrom, dateTo, periodId, reload]);
+
+  // Share the window on screen with the Feed Requisition tab's "Draft from forecast".
+  useEffect(() => {
+    if (farmId && data && data.farm.id === farmId) setForecastWindow({ farmId, from: data.from, to: data.to });
+  }, [farmId, data]);
 
   function changeView(next: ForecastView) {
     setView(next);

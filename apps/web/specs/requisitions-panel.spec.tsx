@@ -2,6 +2,8 @@ import React from 'react';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import RequisitionsPanel, { needsRemarks } from '../src/components/console/inventory/requisitions-panel';
 import { api } from '../src/services/api-client';
+import { resetForecastWindow, setForecastWindow } from '../src/components/console/inventory/feed-forecast-window';
+import { defaultWindowEnd, todayIso } from '../src/components/console/inventory/feed-format';
 
 jest.mock('../src/services/api-client', () => ({ api: { get: jest.fn(), post: jest.fn(), put: jest.fn() } }));
 jest.mock('../src/hooks/useLanguage', () => {
@@ -47,6 +49,7 @@ const view = {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  resetForecastWindow();
   window.history.replaceState(null, '', '/inventory/requisitions');
   mockFarm = { farmId: 'farm-vil', setFarmId: jest.fn(), farms: [{ farmId: 'farm-vil', code: 'VIL100', name: 'Villa Franca', companyId: 'co', companyName: 'T' }], loaded: true, failed: false, isFixed: false, fixedFarm: null };
   get.mockImplementation(async (url: string) => (url.startsWith('/feed-requisition/') ? { data: view } : { data: [listRow] }));
@@ -64,6 +67,22 @@ describe('needsRemarks — checkpoint 18', () => {
 });
 
 describe('RequisitionsPanel (D26)', () => {
+  it("drafts for the Forecast tab's selected window and names it in the notice (Feed Forecast row 8, Step 9)", async () => {
+    setForecastWindow({ farmId: 'farm-vil', from: '2099-09-20', to: '2099-10-18' });
+    post.mockImplementation(async () => ({ data: { requisitionId: null, requisition: null } }));
+    render(<RequisitionsPanel />);
+    fireEvent.click(await screen.findByRole('button', { name: 'rqDraftFromForecast' }));
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/feed-requisition/auto-draft', { farmId: 'farm-vil', to: '2099-10-18' }));
+    expect(await screen.findByText('rqNothingToOrder:{"to":"18/10/99"}')).toBeTruthy();
+  });
+
+  it("ignores another farm's window", async () => {
+    setForecastWindow({ farmId: 'farm-other', from: '2099-09-20', to: '2099-10-18' });
+    render(<RequisitionsPanel />);
+    fireEvent.click(await screen.findByRole('button', { name: 'rqDraftFromForecast' }));
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/feed-requisition/auto-draft', { farmId: 'farm-vil', to: defaultWindowEnd(todayIso()) }));
+  });
+
   it("lists the farm's requisitions with labels, not codes, and DD/MM/YY dates (A8, A9)", async () => {
     render(<RequisitionsPanel />);
     const table = await screen.findByRole('table', { name: 'rqListLabel' });
@@ -85,7 +104,7 @@ describe('RequisitionsPanel (D26)', () => {
     render(<RequisitionsPanel />);
     fireEvent.click(await screen.findByRole('button', { name: 'rqDraftFromForecast' }));
     await screen.findByText('REQ-VIL100-2026-00004', { selector: 'h2' });
-    expect(post).toHaveBeenCalledWith('/feed-requisition/auto-draft', { farmId: 'farm-vil' });
+    expect(post).toHaveBeenCalledWith('/feed-requisition/auto-draft', { farmId: 'farm-vil', to: defaultWindowEnd(todayIso()) });
     expect(screen.getByRole('button', { name: 'rqSubmit' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: /approve|reject/i })).toBeNull();
     // Task 9: the workbook header form, then the 15-column lines sub-form, with line 20000's batch/house breakdown nested beneath it.
