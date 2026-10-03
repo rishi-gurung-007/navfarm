@@ -369,6 +369,38 @@ export class StockTransferService {
     }
   }
 
+  /** Shipment numbers already posted against the transfer, oldest first. */
+  private async shipmentNos(transferId: string, tenantId: string): Promise<string[]> {
+    const rows = await this.db
+      .select({ shipment_no: schema.transferShipment.shipment_no })
+      .from(schema.transferShipment)
+      .where(and(
+        eq(schema.transferShipment.transfer_id, transferId),
+        eq(schema.transferShipment.tenant_id, tenantId),
+        isNull(schema.transferShipment.deleted_at),
+      ))
+      .orderBy(schema.transferShipment.shipment_no);
+    return rows.map((r) => r.shipment_no);
+  }
+
+  /**
+   * Once any shipment exists the order is fixed (Part E Task 4b): an edit
+   * replaces the lines with new ids and orphans the shipment/receipt lines,
+   * or moves the destination after the stock has left; a cancel leaves the
+   * stock in In Transit with no reversal. The events are read, not only the
+   * status, so a DRAFT row written before statuses followed events is
+   * refused too.
+   */
+  private async assertNotShipped(transfer: { transfer_id: string; transfer_no: string }, tenantId: string, action: 'edited' | 'cancelled') {
+    const shipped = await this.shipmentNos(transfer.transfer_id, tenantId);
+    if (shipped.length > 0) {
+      throw new BadRequestException(
+        `Stock Transfer ${transfer.transfer_no} cannot be ${action} — stock has already shipped on ${shipped.join(', ')}. ` +
+        'Receive what was shipped; the order can no longer change.',
+      );
+    }
+  }
+
   /**
    * A further shipment or receipt may be posted while the transfer is open:
    * DRAFT, IN_TRANSIT or PARTIALLY_RECEIVED (Part E Task 4b). assertDraft
@@ -422,7 +454,6 @@ export class StockTransferService {
   async update(id: string, dto: UpdateStockTransferDto, tenantId: string, userPayload?: any) {
     return withTenantTransaction(this.cls, async () => {
       const transfer = await this.loadForMutation(id, tenantId);
-      this.assertDraft(transfer);
 
       // Both warehouses, changed or not, against create()'s rules. The source
       // staying on the editor's farm is also what keeps the edited transfer
@@ -430,6 +461,9 @@ export class StockTransferService {
       const fromWarehouseId = dto.from_warehouse_id ?? transfer.from_warehouse_id;
       const toWarehouseId = dto.to_warehouse_id ?? transfer.to_warehouse_id;
       await this.assertWarehouses(fromWarehouseId, toWarehouseId);
+      // Reads only above; nothing is written before both refusals.
+      await this.assertNotShipped(transfer, tenantId, 'edited');
+      this.assertDraft(transfer);
 
       const updates: any = {
         updated_by: userPayload?.userId || null,
@@ -466,6 +500,7 @@ export class StockTransferService {
   async remove(id: string, tenantId: string, userPayload?: any) {
     return withTenantTransaction(this.cls, async () => {
       const transfer = await this.loadForMutation(id, tenantId);
+      await this.assertNotShipped(transfer, tenantId, 'cancelled');
       this.assertDraft(transfer);
       const deletedTime = toMysqlTimestamp();
 
@@ -698,11 +733,27 @@ export class StockTransferService {
   async postDirectTransfer(id: string, dto: PostDirectTransferDto, tenantId: string, userPayload?: any) {
     const transfer = await withTenantTransaction(this.cls, async () => {
       const row = await this.loadForMutation(id, tenantId);
+      if (dto.lines.length === 0 && row.status !== 'DRAFT') {
+        throw new BadRequestException(`Stock Transfer ${row.transfer_no} cannot be posted in one step — it is already ${row.status}.`);
+      }
       this.assertOpen(row);
       if (row.from_warehouse_id === row.to_warehouse_id) {
         throw new BadRequestException('A transfer needs two different warehouses.');
       }
       await this.assertWarehouses(row.from_warehouse_id, row.to_warehouse_id);
+      if (dto.lines.length === 0) {
+        // The one-step whole-order post (post(), or Direct Transfer with no
+        // lines) ships and receives every line in full, so it only fits a
+        // DRAFT with no events. Without this it failed later on the balance
+        // ("exceeds the remaining balance to ship"), which did not say why.
+        const shipped = await this.shipmentNos(id, tenantId);
+        if (shipped.length > 0) {
+          throw new BadRequestException(
+            `Stock Transfer ${row.transfer_no} cannot be posted in one step — it already has shipment ${shipped.join(', ')}. ` +
+            'Receive against the shipment, or post the remaining quantity with Direct Transfer.',
+          );
+        }
+      }
       await this.assertSiloDestination(row, row.lines, tenantId);
       if (!row.lines || row.lines.length === 0) {
         throw new BadRequestException('Cannot post a Stock Transfer with no lines.');

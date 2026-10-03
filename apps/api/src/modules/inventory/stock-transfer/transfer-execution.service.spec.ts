@@ -23,7 +23,7 @@
  * The old atomic post's own spec pins the compatibility wrapper; this spec
  * covers what the wrapper adds — partial events, bounds, event identity.
  */
-import { NotFoundException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import type { ClsService } from 'nestjs-cls';
 import { transactionCls } from '../../../test-utils/transaction-cls';
 import { FARM_SCOPE_KEY, type FarmScope } from '../../../common/farm-scope';
@@ -477,5 +477,74 @@ describe('Part E Task 4b — status follows the events', () => {
       .rejects.toThrow('already POSTED');
     expect(ledger.writeTransferShipment).not.toHaveBeenCalled();
     expect(ledger.writeTransferReceipt).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Part E Task 4b, requirement 2: once stock has moved, the order is fixed.
+ * Before, update() (assertDraft only) replaced the lines with new ids —
+ * orphaning shipment/receipt lines — or changed the destination after the
+ * stock had left, and remove() cancelled a transfer whose stock sat in In
+ * Transit with no reversal. A DRAFT row that already has a shipment (written
+ * before requirement 1) must be refused too, so the guard reads the events,
+ * not only the status.
+ */
+describe('Part E Task 4b — no edit, cancel or one-step post once stock has shipped', () => {
+  function shippedQueues(status: string) {
+    const queues = baseQueues();
+    queues.set(schema.stockTransfer, [[{ ...TRANSFER, status }]]);
+    queues.set(schema.transferShipment, [[{ shipment_no: 'SH-2026-0001' }]]);
+    return queues;
+  }
+
+  it.each(['DRAFT', 'IN_TRANSIT', 'PARTIALLY_RECEIVED'])('update() refuses a %s transfer that has a shipment, writing nothing', async (status) => {
+    const { service, as, log } = setup(shippedQueues(status));
+    await expect(as(() => service.update('tr-1', { to_warehouse_id: 'wh-other', lines: [{ item_id: 'item-1', quantity: 1, uom: 'EA' }] } as any, 'tenant-1', ADMIN)))
+      .rejects.toThrow('Stock Transfer TR-2026-0001 cannot be edited — stock has already shipped on SH-2026-0001.');
+    expect(log.filter((e) => e.op === 'update' || e.op === 'insert')).toHaveLength(0);
+  });
+
+  it.each(['DRAFT', 'IN_TRANSIT', 'PARTIALLY_RECEIVED'])('remove() refuses a %s transfer that has a shipment, writing nothing', async (status) => {
+    const { service, as, log } = setup(shippedQueues(status));
+    await expect(as(() => service.remove('tr-1', 'tenant-1', ADMIN)))
+      .rejects.toThrow('Stock Transfer TR-2026-0001 cannot be cancelled — stock has already shipped on SH-2026-0001.');
+    expect(log.filter((e) => e.op === 'update' || e.op === 'insert')).toHaveLength(0);
+  });
+
+  it('the refusals are 400s', async () => {
+    const { service, as } = setup(shippedQueues('IN_TRANSIT'));
+    await expect(as(() => service.remove('tr-1', 'tenant-1', ADMIN))).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('post() (the one-step whole-order post) refuses a DRAFT that already has a shipment, with a clear message', async () => {
+    const { service, as, ledger } = setup(shippedQueues('DRAFT'));
+    await expect(as(() => service.post('tr-1', 'tenant-1', ADMIN)))
+      .rejects.toThrow('Stock Transfer TR-2026-0001 cannot be posted in one step — it already has shipment SH-2026-0001.');
+    expect(ledger.writeTransferShipment).not.toHaveBeenCalled();
+  });
+
+  it('post() refuses a transfer that is no longer DRAFT', async () => {
+    const { service, as, ledger } = setup(shippedQueues('PARTIALLY_RECEIVED'));
+    await expect(as(() => service.post('tr-1', 'tenant-1', ADMIN)))
+      .rejects.toThrow('Stock Transfer TR-2026-0001 cannot be posted in one step — it is already PARTIALLY_RECEIVED.');
+    expect(ledger.writeTransferShipment).not.toHaveBeenCalled();
+  });
+
+  it('a partial Direct Transfer naming its lines is still allowed on an open transfer (decisions.md 1 Oct)', async () => {
+    const queues = baseQueues();
+    const open = { ...TRANSFER, status: 'IN_TRANSIT' };
+    queues.set(schema.stockTransfer, [[open], [open], [{ ...open }], [{ ...open }]]);
+    queues.set(schema.stockTransferLine, [[{ ...LINE }], [{ ...LINE }], [{ ...LINE }], [{ ...LINE }]]);
+    queues.set(schema.locationMaster, [...LOCATIONS.map((l) => [...l]), ...LOCATIONS.map((l) => [...l]), LOCATIONS[0], LOCATIONS[1]]);
+    queues.set(schema.transferShipmentLine, [
+      [{ line_id: 'line-1', qty: '6' }],                                   // outer shipped
+      [{ line_id: 'line-1', qty: '6' }],                                   // postShipment's shipped
+      [{ line_id: 'line-1', qty: '6' }, { line_id: 'line-1', qty: '4' }],  // postReceipt's shipped
+      [{ ...SHIPMENT_LINE, shipment_id: 'new', quantity: '4' }],          // the new shipment's lines
+    ]);
+    const { service, as, ledger } = setup(queues);
+    await as(() => service.postDirectTransfer('tr-1', { posting_date: '2026-10-04', lines: [{ line_id: 'line-1', quantity: 4 }] }, 'tenant-1', ADMIN));
+    expect(ledger.writeTransferShipment).toHaveBeenCalledTimes(1);
+    expect(ledger.writeTransferReceipt).toHaveBeenCalledTimes(1);
   });
 });
