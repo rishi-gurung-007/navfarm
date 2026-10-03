@@ -476,6 +476,58 @@ export class InventoryLedgerService {
     return { shipment, receipt };
   }
 
+  /**
+   * Part E Task 4: the shipment event's one ledger leg. Stock leaves the source
+   * now and reaches the destination only when it is received (1 Oct spec
+   * "Transfer execution"; 3 Oct spec Part B, cp. 46 "posts received KG once").
+   */
+  async writeTransferShipment(params: {
+    tenantId: string; companyId: string; itemId: string; documentNo: string; documentLineId: string;
+    postingDate: string; quantity: number; uom: string; fromWarehouseId: string;
+    lotNo?: string; serialNo?: string; userId?: string;
+  }) {
+    return this.writeNegativeEntry({
+      tenantId: params.tenantId, companyId: params.companyId, itemId: params.itemId,
+      documentType: 'STOCK_TRANSFER', documentNo: params.documentNo, documentLineId: params.documentLineId,
+      postingDate: params.postingDate, transactionType: 'TRANSFER_SHIPMENT', quantity: params.quantity, uom: params.uom,
+      lotNo: params.lotNo, serialNo: params.serialNo, warehouseId: params.fromWarehouseId, userId: params.userId,
+    });
+  }
+
+  /** The unit cost the shipment carried out of the source, so the receipt values the stock the same. */
+  async transferShipmentRate(params: { tenantId: string; shipmentNo: string; lineId: string }): Promise<number> {
+    const [row] = await this.db
+      .select({
+        amount: sql<string>`COALESCE(SUM(${schema.inventoryLedger.amount}), 0)`,
+        qty: sql<string>`COALESCE(SUM(${schema.inventoryLedger.quantity}), 0)`,
+      })
+      .from(schema.inventoryLedger)
+      .where(and(
+        eq(schema.inventoryLedger.tenant_id, params.tenantId),
+        eq(schema.inventoryLedger.document_type, 'STOCK_TRANSFER'),
+        eq(schema.inventoryLedger.document_no, params.shipmentNo),
+        eq(schema.inventoryLedger.document_line_id, params.lineId),
+        eq(schema.inventoryLedger.transaction_type, 'TRANSFER_SHIPMENT'),
+      ));
+    const qty = Math.abs(Number(row?.qty ?? 0));
+    if (!(qty > 0)) throw new BadRequestException(`Shipment ${params.shipmentNo} has no posted ledger entry for this line.`);
+    return Math.abs(Number(row?.amount ?? 0)) / qty;
+  }
+
+  /** The receipt event's one ledger leg: into the destination, at the shipment's rate. */
+  async writeTransferReceipt(params: {
+    tenantId: string; companyId: string; itemId: string; documentNo: string; documentLineId: string;
+    postingDate: string; quantity: number; uom: string; toWarehouseId: string; rate: number;
+    lotNo?: string; serialNo?: string; userId?: string;
+  }) {
+    return this.writePositiveEntry({
+      tenantId: params.tenantId, companyId: params.companyId, itemId: params.itemId,
+      documentType: 'STOCK_TRANSFER', documentNo: params.documentNo, documentLineId: params.documentLineId,
+      postingDate: params.postingDate, transactionType: 'TRANSFER_RECEIPT', quantity: params.quantity, uom: params.uom,
+      rate: params.rate, lotNo: params.lotNo, serialNo: params.serialNo, warehouseId: params.toWarehouseId, userId: params.userId,
+    });
+  }
+
   /** Ledger rows on the active farm. Batch issues carry no warehouse, so they reach their farm through the batch. */
   private farmConditions(): SQL[] {
     const scope = farmScope(this.cls);

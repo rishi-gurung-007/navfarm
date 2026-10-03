@@ -496,23 +496,13 @@ export class StockTransferService {
           lot_no: lotNo ?? null,
           serial_no: serialNo ?? null,
         });
-        const { shipment, receipt } = await this.ledgerService.writeTransferEntries({
-          tenantId,
-          companyId: transfer.company_id,
-          itemId: line.item_id,
-          documentNo: shipmentNo,
-          documentLineId: line.line_id,
-          postingDate: dto.posting_date,
-          quantity: qty,
-          uom: line.uom,
-          fromWarehouseId: transfer.from_warehouse_id,
-          toWarehouseId: transfer.to_warehouse_id,
-          lotNo: lotNo,
-          serialNo: serialNo,
-          userId: userPayload?.userId,
+        // Out of the source only; the destination leg is the receipt's (Part E Task 4).
+        const shipmentEntry = await this.ledgerService.writeTransferShipment({
+          tenantId, companyId: transfer.company_id, itemId: line.item_id, documentNo: shipmentNo, documentLineId: line.line_id,
+          postingDate: dto.posting_date, quantity: qty, uom: line.uom, fromWarehouseId: transfer.from_warehouse_id,
+          lotNo, serialNo, userId: userPayload?.userId,
         });
-        await this.glPostingService.postInventoryLedgerEntry(shipment, userPayload?.userId);
-        await this.glPostingService.postInventoryLedgerEntry(receipt, userPayload?.userId);
+        await this.glPostingService.postInventoryLedgerEntry(shipmentEntry, userPayload?.userId);
       }
 
       await this.auditService.log({
@@ -583,23 +573,14 @@ export class StockTransferService {
         if (input.quantity > alreadyShipped - alreadyReceived) {
           throw new BadRequestException('Receipt quantity exceeds the remaining quantity to receive.');
         }
-        const { shipment: shipEntry, receipt: recEntry } = await this.ledgerService.writeTransferEntries({
-          tenantId,
-          companyId: transfer.company_id,
-          itemId: line.item_id,
-          documentNo: receiptNo,
-          documentLineId: line.line_id,
-          postingDate: dto.posting_date,
-          quantity: input.quantity,
-          uom: line.uom,
-          fromWarehouseId: transfer.from_warehouse_id,
-          toWarehouseId: transfer.to_warehouse_id,
-          lotNo: shipmentLine.lot_no ?? undefined,
-          serialNo: shipmentLine.serial_no ?? undefined,
-          userId: userPayload?.userId,
+        // Into the destination only, at the rate the shipment carried out (Part E Task 4).
+        const rate = await this.ledgerService.transferShipmentRate({ tenantId, shipmentNo: shipment.shipment_no, lineId: line.line_id });
+        const receiptEntry = await this.ledgerService.writeTransferReceipt({
+          tenantId, companyId: transfer.company_id, itemId: line.item_id, documentNo: receiptNo, documentLineId: line.line_id,
+          postingDate: dto.posting_date, quantity: input.quantity, uom: line.uom, toWarehouseId: transfer.to_warehouse_id, rate,
+          lotNo: shipmentLine.lot_no ?? undefined, serialNo: shipmentLine.serial_no ?? undefined, userId: userPayload?.userId,
         });
-        await this.glPostingService.postInventoryLedgerEntry(shipEntry, userPayload?.userId);
-        await this.glPostingService.postInventoryLedgerEntry(recEntry, userPayload?.userId);
+        await this.glPostingService.postInventoryLedgerEntry(receiptEntry, userPayload?.userId);
         await this.db.insert(schema.transferReceiptLine).values({
           receipt_id: receiptId,
           shipment_line_id: shipmentLine.shipment_line_id,

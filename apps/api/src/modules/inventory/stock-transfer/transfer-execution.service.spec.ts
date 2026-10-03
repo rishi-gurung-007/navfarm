@@ -124,10 +124,17 @@ function setup(queues: Map<unknown, unknown[][]>) {
   const ref = {} as { cls: ClsService };
   const { db, log } = recordingDb(queues);
   const cls = (ref.cls = transactionCls(db));
+  const ledger = {
+    // Resolves like the real one, so a regression fails on the call assertion below, not a TypeError.
+    writeTransferEntries: jest.fn().mockResolvedValue({ shipment: {}, receipt: {} }),
+    writeTransferShipment: jest.fn().mockResolvedValue({ ledger_id: 'led-sh' }),
+    writeTransferReceipt: jest.fn().mockResolvedValue({ ledger_id: 'led-rc' }),
+    transferShipmentRate: jest.fn().mockResolvedValue(2.5),
+  };
   const service = new StockTransferService(
     cls,
     { log: jest.fn().mockResolvedValue({}) } as unknown as AuditLogService,
-    { writeTransferEntries: jest.fn().mockResolvedValue({ shipment: {}, receipt: {} }) } as unknown as InventoryLedgerService,
+    ledger as unknown as InventoryLedgerService,
     { postInventoryLedgerEntry: jest.fn() } as unknown as GlPostingService,
     { resolveConversionFactor: jest.fn().mockResolvedValue(1) } as unknown as UomService,
     { assertCanReceive: jest.fn().mockResolvedValue(undefined) } as unknown as SiloFeedService,
@@ -135,7 +142,7 @@ function setup(queues: Map<unknown, unknown[][]>) {
   const as = <T>(work: () => Promise<T>) => cls.run(async () => { cls.set(FARM_SCOPE_KEY, SCOPE); return work(); });
   const inserts = (table: unknown) => log.filter((e) => e.op === 'insert' && e.table === table).map((e) => e.values);
   const updateOf = (table: unknown) => log.find((e) => e.op === 'update' && e.table === table)?.set;
-  return { service, as, log, inserts, updateOf };
+  return { service, as, log, inserts, updateOf, ledger };
 }
 
 describe('postShipment — partial events against a DRAFT order', () => {
@@ -262,7 +269,7 @@ describe('postDirectTransfer — one shipment plus its matching receipt', () => 
   }
 
   it('writes both events and leaves the order open when coverage is partial', async () => {
-    const { service, as, inserts, updateOf } = setup(directQueues('4'));
+    const { service, as, inserts, updateOf, ledger } = setup(directQueues('4'));
     const result = await as(() => service.postDirectTransfer('tr-1', {
       posting_date: '2026-10-02', lines: [{ line_id: 'line-1', quantity: 4 }],
     }, 'tenant-1', ADMIN));
@@ -273,6 +280,13 @@ describe('postDirectTransfer — one shipment plus its matching receipt', () => 
     // 4 of 10 shipped and received: the order stays a correctable draft for
     // further events — the coverage gate decides, not the event count.
     expect(updateOf(schema.stockTransfer)).toBeUndefined();
+    // One leg per event: 4 out of the source at the shipment, 4 into the
+    // destination at the receipt — never both legs twice.
+    expect(ledger.writeTransferEntries).not.toHaveBeenCalled();
+    expect(ledger.writeTransferShipment).toHaveBeenCalledTimes(1);
+    expect(ledger.writeTransferShipment).toHaveBeenCalledWith(expect.objectContaining({ fromWarehouseId: 'wh-store', quantity: 4 }));
+    expect(ledger.writeTransferReceipt).toHaveBeenCalledTimes(1);
+    expect(ledger.writeTransferReceipt).toHaveBeenCalledWith(expect.objectContaining({ toWarehouseId: 'wh-farm', quantity: 4, rate: 2.5 }));
   });
 
   it('posts the legacy empty-lines payload as every line at full quantity and claims POSTED', async () => {
@@ -281,5 +295,29 @@ describe('postDirectTransfer — one shipment plus its matching receipt', () => 
       posting_date: '2026-10-02', lines: [],
     }, 'tenant-1', ADMIN));
     expect(updateOf(schema.stockTransfer)).toMatchObject({ status: 'POSTED' });
+  });
+});
+
+describe('Part E Task 4 — one ledger leg per event (cp. 46: received KG posted once)', () => {
+  it('a shipment takes the quantity out of the source only', async () => {
+    const { service, as, ledger } = setup(baseQueues());
+    await as(() => service.postShipment('tr-1', { posting_date: '2026-10-02', lines: [{ line_id: 'line-1', quantity: 6 }] }, 'tenant-1', ADMIN));
+    expect(ledger.writeTransferEntries).not.toHaveBeenCalled();
+    expect(ledger.writeTransferReceipt).not.toHaveBeenCalled();
+    expect(ledger.writeTransferShipment).toHaveBeenCalledTimes(1);
+    expect(ledger.writeTransferShipment).toHaveBeenCalledWith(expect.objectContaining({ fromWarehouseId: 'wh-store', quantity: 6, documentLineId: 'line-1', lotNo: 'LOT-9' }));
+  });
+
+  it('a receipt puts the quantity into the destination only, at the shipment rate', async () => {
+    const queues = baseQueues();
+    queues.set(schema.transferShipment, [[{ ...SHIPMENT }]]);
+    queues.set(schema.transferShipmentLine, [[{ line_id: 'line-1', qty: '6' }], [{ ...SHIPMENT_LINE }]]);
+    queues.set(schema.transferReceiptLine, [[]]);
+    const { service, as, ledger } = setup(queues);
+    await as(() => service.postReceipt('tr-1', { posting_date: '2026-10-03', shipment_id: 'sh-1', lines: [{ line_id: 'line-1', quantity: 4 }] }, 'tenant-1', ADMIN));
+    expect(ledger.writeTransferEntries).not.toHaveBeenCalled();
+    expect(ledger.writeTransferShipment).not.toHaveBeenCalled();
+    expect(ledger.transferShipmentRate).toHaveBeenCalledWith({ tenantId: 'tenant-1', shipmentNo: 'SH-2026-0001', lineId: 'line-1' });
+    expect(ledger.writeTransferReceipt).toHaveBeenCalledWith(expect.objectContaining({ toWarehouseId: 'wh-farm', quantity: 4, rate: 2.5, lotNo: 'LOT-9' }));
   });
 });

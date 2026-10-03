@@ -200,3 +200,30 @@ describe('InventoryLedgerService farm scope', () => {
     expect(readBackQueries[0]).not.toContain('`inventory_ledger`.`company_id` = ?');
   });
 });
+
+/**
+ * Part E Task 4: a receipt values its stock at the rate its shipment carried
+ * out of the source — |Σamount| ÷ |Σquantity| of that shipment line's
+ * TRANSFER_SHIPMENT rows — and refuses a shipment line with no posted leg.
+ */
+describe('InventoryLedgerService transferShipmentRate', () => {
+  const dialect = new MySqlDialect();
+  function serviceReturning(rows: unknown[]) {
+    const seen: { where?: unknown } = {};
+    const db: any = { select: jest.fn(() => ({ from: () => ({ where: async (cond: unknown) => { seen.where = cond; return rows; } }) })) };
+    return { service: new InventoryLedgerService(transactionCls(db)), seen };
+  }
+
+  it('divides the shipment line\'s total cost by its total quantity', async () => {
+    const { service, seen } = serviceReturning([{ amount: '-15', qty: '-6' }]);
+    await expect(service.transferShipmentRate({ tenantId: 'tenant-1', shipmentNo: 'SH-2026-0001', lineId: 'line-1' })).resolves.toBe(2.5);
+    const q = dialect.sqlToQuery(seen.where as any);
+    expect(q.params).toEqual(expect.arrayContaining(['tenant-1', 'STOCK_TRANSFER', 'SH-2026-0001', 'line-1', 'TRANSFER_SHIPMENT']));
+  });
+
+  it('refuses a shipment line with no posted ledger entry', async () => {
+    const { service } = serviceReturning([{ amount: '0', qty: '0' }]);
+    await expect(service.transferShipmentRate({ tenantId: 'tenant-1', shipmentNo: 'SH-2026-0001', lineId: 'line-1' }))
+      .rejects.toThrow('Shipment SH-2026-0001 has no posted ledger entry for this line.');
+  });
+});
