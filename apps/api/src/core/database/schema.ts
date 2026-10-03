@@ -297,6 +297,9 @@ export const feedPlanningSetting = mysqlTable('feed_planning_setting', {
   physical_count_time: varchar('physical_count_time', { length: 5 }),
   truck_target_kg: decimal('truck_target_kg', { precision: 14, scale: 2 }),
   bulk_multiple_kg: decimal('bulk_multiple_kg', { precision: 14, scale: 2 }),
+  // TDD Engine Step 8 / Dashboard row 60: configured safety stock; the Worked Example's buffer is zero.
+  safety_stock_kg: decimal('safety_stock_kg', { precision: 14, scale: 2 }).default('0.00').notNull(),
+  bag_size_kg: decimal('bag_size_kg', { precision: 14, scale: 2 }),
   capacity_warning_pct: decimal('capacity_warning_pct', { precision: 5, scale: 2 }).default('90.00').notNull(),
   bag_tolerance_pct: decimal('bag_tolerance_pct', { precision: 5, scale: 2 }),
   finance_variance_pct: decimal('finance_variance_pct', { precision: 5, scale: 2 }).default('5.00').notNull(),
@@ -879,6 +882,7 @@ export const itemMaster = mysqlTable('item_master', {
   item_code: varchar('item_code', { length: 255 }).notNull(),
   item_name: varchar('item_name', { length: 200 }).notNull(),
   item_type: varchar('item_type', { length: 30 }).notNull(),
+  diet_no: int('diet_no'), // TDD Master Setup §2 / Loading Sheet row 65: Diet number 1 to 14
   nob_id: varchar('nob_id', { length: 36 }).references(() => nobMaster.nob_id, { onDelete: 'restrict' }),
   lob_id: varchar('lob_id', { length: 36 }).references(() => lobMaster.lob_id, { onDelete: 'restrict' }),
   sub_category: varchar('sub_category', { length: 100 }), // Legacy text sub_category field
@@ -2291,6 +2295,7 @@ export const breedLifecycleStages = mysqlTable('breed_lifecycle_stages', {
   std_teats: int('std_teats'),
   season_type: varchar('season_type', { length: 20 }),
   feed_item_id: varchar('feed_item_id', { length: 36 }).references(() => itemMaster.item_id, { onDelete: 'restrict' }),
+  feed_form: varchar('feed_form', { length: 10 }), // TDD Master Setup row 37: BULK | BAGGED
   feed_qty_per_head_per_day_kg: decimal('feed_qty_per_head_per_day_kg', { precision: 8, scale: 4 }),
   feed_wastage_pct: decimal('feed_wastage_pct', { precision: 5, scale: 2 }),
   std_body_weight_kg: decimal('std_body_weight_kg', { precision: 8, scale: 3 }),
@@ -4412,6 +4417,7 @@ export const requisition = mysqlTable('requisition', {
   source: varchar('source', { length: 30 }), // AUTO_FORECAST, MANUAL_ENTRY, STOCK_TAKE_TRIGGERED, DIET_CHANGE_UPCOMING (row 8)
   purpose: varchar('purpose', { length: 30 }), // FEED: INTERNAL_TRANSFER (row 31). Common requisitions: STORE | PURCHASE (Task 8).
   supply_source: varchar('supply_source', { length: 20 }), // MILL (row 30)
+  linked_transfer_id: varchar('linked_transfer_id', { length: 36 }), // Req. §1 row 39: the Transfer Order created for this requisition
   priority: varchar('priority', { length: 30 }), // row 34
   forecast_run_key: varchar('forecast_run_key', { length: 64 }), // Engine Step 9 "Preserve run ID"
   feed_forecast_run_id: varchar('feed_forecast_run_id', { length: 36 }).references(() => feedForecastRun.run_id, { onDelete: 'restrict' }),
@@ -4425,7 +4431,13 @@ export const requisition = mysqlTable('requisition', {
   created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
   updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().onUpdateNow().notNull(),
   deleted_at: timestamp('deleted_at', { mode: 'string' }),
-});
+}, (table) => ({
+  linkedTransferFk: foreignKey({
+    columns: [table.linked_transfer_id],
+    foreignColumns: [stockTransfer.transfer_id],
+    name: 'requisition_linked_transfer_fk',
+  }).onDelete('set null'),
+}));
 
 export const requisitionLine = mysqlTable('requisition_line', {
   line_id: varchar('line_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
@@ -4450,6 +4462,9 @@ export const requisitionLine = mysqlTable('requisition_line', {
   first_shortage_date: date('first_shortage_date', { mode: 'string' }),
   unrounded_need_kg: decimal('unrounded_need_kg', { precision: 18, scale: 4 }),
   recommended_qty_kg: decimal('recommended_qty_kg', { precision: 18, scale: 4 }),
+  mill_approved_qty_kg: decimal('mill_approved_qty_kg', { precision: 18, scale: 4 }), // Consolidation row 126
+  recommended_delivery_date: date('recommended_delivery_date', { mode: 'string' }), // drafted date; edits need remarks (Req. row 29)
+  exceeds_silo_capacity: boolean('exceeds_silo_capacity').default(false).notNull(), // Engine Step 8 free-capacity warning
   bag_count: int('bag_count'),
   proposed_delivery_date: date('proposed_delivery_date', { mode: 'string' }),
   needs_silo_changeover: boolean('needs_silo_changeover').default(false).notNull(),
