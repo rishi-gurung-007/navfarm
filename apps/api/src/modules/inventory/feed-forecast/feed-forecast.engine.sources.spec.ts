@@ -1,4 +1,5 @@
 import { buildFeedForecast, ForecastInput } from './feed-forecast.engine';
+import { defaultWindowEnd } from './feed-forecast.view';
 
 /**
  * Plan B needs the engine's per-container view (one requisition line per silo
@@ -128,6 +129,11 @@ describe('buildFeedForecast — TDD workbook alignment (3 Oct rulings 2 and 3)',
     const { sources } = buildFeedForecast(withLevels());
     expect(sources.map((s) => [s.itemId, s.walkDemandKg, s.shortfallKg, s.shortageDate, s.safetyStockKg]))
       .toEqual([['r1', 6000, 4500, '2026-09-23', 0], ['r2', 10000, 9000, '2026-09-26', 0]]);
+  });
+
+  it('over the default window (no `to` sent) R1 is 6,000 and R2 is 10,000 KG, not the 12,500 an eighth day gave', () => {
+    const { sources } = buildFeedForecast({ ...withLevels(), to: defaultWindowEnd('2026-09-23') });
+    expect(sources.map((s) => [s.itemId, s.walkDemandKg, s.shortfallKg])).toEqual([['r1', 6000, 4500], ['r2', 10000, 9000]]);
   });
 
   it('adds configured safety stock to the shortfall', () => {

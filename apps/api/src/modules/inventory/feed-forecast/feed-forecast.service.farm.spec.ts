@@ -116,7 +116,7 @@ describe('FeedForecastService — Plan B entry points', () => {
     it('a past planning date reads stock as of that date, keeps today\'s stage headers, and says heads are today\'s', async () => {
       const { cls, service, loadInput } = withToday('2026-09-26');
       const result = await cls.run(() => service.computeForFarm('farm-b', 'co-1', 'tenant-1', { planningDate: '2026-09-19' }));
-      expect(loadInput.mock.calls[0][5]).toEqual({ stockDate: '2026-09-19', horizonTo: '2026-09-26', headerCutoff: '2026-09-26' });
+      expect(loadInput.mock.calls[0][5]).toEqual({ stockDate: '2026-09-19', horizonTo: '2026-09-25', headerCutoff: '2026-09-26' });
       expect(result.flags).toContainEqual({
         kind: 'AS_OF_PAST', planningDate: '2026-09-19', today: '2026-09-26',
         // The Task 6 carry ruling: the note says what is today's register and what that costs a back-dated view.
@@ -127,7 +127,7 @@ describe('FeedForecastService — Plan B entry points', () => {
     it('a future planning date walks from today\'s stock and raises no as-of note', async () => {
       const { cls, service, loadInput } = withToday('2026-09-26');
       const result = await cls.run(() => service.computeForFarm('farm-b', 'co-1', 'tenant-1', { planningDate: '2026-10-01' }));
-      expect(loadInput.mock.calls[0][5]).toEqual({ stockDate: '2026-09-26', horizonTo: '2026-10-08', headerCutoff: '2026-10-01' });
+      expect(loadInput.mock.calls[0][5]).toEqual({ stockDate: '2026-09-26', horizonTo: '2026-10-07', headerCutoff: '2026-10-01' });
       expect(result.flags.some((f) => f.kind === 'AS_OF_PAST')).toBe(false);
     });
 
@@ -169,7 +169,7 @@ describe('FeedForecastService — Plan B entry points', () => {
     it('a `to` defaulted from `from` past the reach says so, since the caller never sent one', async () => {
       const { cls, service, loadInput } = withToday('2026-09-26');
       await expect(cls.run(() => service.computeForFarm('farm-b', 'co-1', 'tenant-1', { from: '2026-11-05' })))
-        .rejects.toThrow('The range would end 12/11/26, after the last forecast day 10/11/26. Choose an end date on or before 10/11/26.');
+        .rejects.toThrow('The range would end 11/11/26, after the last forecast day 10/11/26. Choose an end date on or before 10/11/26.');
       expect(loadInput).not.toHaveBeenCalled();
     });
 

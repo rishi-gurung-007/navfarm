@@ -29,7 +29,7 @@ export class QueryFeedForecastDto {
   @IsDateString()
   from?: string;
 
-  @ApiProperty({ description: 'CUSTOM only: the last day; defaults to from + 7, at most from + 45 and planning date + 45', required: false })
+  @ApiProperty({ description: 'CUSTOM only: the last day; defaults to from + 6 (7 days inclusive), at most from + 45 and planning date + 45', required: false })
   @IsOptional()
   @IsDateString()
   to?: string;

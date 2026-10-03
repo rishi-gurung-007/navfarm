@@ -35,7 +35,7 @@ describe('FeedForecastService.siloStatus', () => {
     return { cls, service };
   }
 
-  it('forecasts seven days from the planning date, under the farm scope, and returns one row per silo', async () => {
+  it('forecasts seven days inclusive from the planning date, under the farm scope, and returns one row per silo', async () => {
     const { cls, service } = build();
     const compute = jest.spyOn(service, 'computeForFarm');
     const facts: Array<string | null> = [];
@@ -44,7 +44,7 @@ describe('FeedForecastService.siloStatus', () => {
 
     const out = await cls.run(() => service.siloStatus({ farmId: 'farm-b' }, 'tenant-1', 'TENANT_ADMIN'));
 
-    expect(compute).toHaveBeenCalledWith('farm-b', 'co-1', 'tenant-1', { planningDate: '2026-09-23', from: '2026-09-23', to: '2026-09-30' }, expect.anything());
+    expect(compute).toHaveBeenCalledWith('farm-b', 'co-1', 'tenant-1', { planningDate: '2026-09-23', from: '2026-09-23', to: '2026-09-29' }, expect.anything());
     expect(facts).toEqual(['farm-b']);
     expect(out.planningDate).toBe('2026-09-23');
     // Production day 6 (Saturday) after Wed 23 Sep is 26 Sep; the deadline is the day before.

@@ -11,7 +11,12 @@ import { addDays, dayShort, diffDays, type DailyForecastRow } from './feed-forec
 
 /** Workbook checkpoint 15: the forecast looks at most 45 days past `from` ("for example 45 days"). */
 export const MAX_SPAN_DAYS = 45;
-export const DEFAULT_SPAN_DAYS = 7;
+/** Workbook Worked Example "23 Sep to 29 Sep 2026, 7 days" and Engine §5 row 67: the default window is 7 calendar days inclusive. */
+export const DEFAULT_WINDOW_DAYS = 7;
+/** Last day of the default window: from + 6, since `from` itself is day one (from + 7 ordered an eighth day). */
+export function defaultWindowEnd(from: string): string {
+  return addDays(from, DEFAULT_WINDOW_DAYS - 1);
+}
 
 /** Open question Q12: Daily = one date, Weekly = 7 days grouped, Reporting Period = the period grouped, Custom = per date. */
 export const FORECAST_VIEWS = ['DAILY', 'WEEKLY', 'PERIOD', 'CUSTOM'] as const;
@@ -40,14 +45,14 @@ export function resolveViewRange(args: {
       return { from: start, to: start };
     case 'WEEKLY':
       // Row 67: "Weekly uses selected week start date" — any weekday; which one is a scheduler setting, not ours.
-      return { from: start, to: addDays(start, 6) };
+      return { from: start, to: defaultWindowEnd(start) };
     case 'PERIOD':
       // Field spec: "When 'Reporting Period' is chosen, From/To are pulled from the Reporting Period Master … not typed".
       if (!args.period) throw new Error('A Reporting Period view needs a period.');
       return { from: args.period.startDate, to: args.period.endDate };
     default:
-      // Same default as GET /feed-forecast has had since Plan A: to = from + 7.
-      return { from: start, to: args.to ?? addDays(start, DEFAULT_SPAN_DAYS) };
+      // Default window: 7 days inclusive, to = from + 6 (Engine §5 row 67).
+      return { from: start, to: args.to ?? defaultWindowEnd(start) };
   }
 }
 

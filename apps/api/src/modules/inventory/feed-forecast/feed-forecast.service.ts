@@ -9,7 +9,7 @@ import { activeFarmOfCompany, batchScopeConditions, farmScope, FARM_SCOPE_KEY, F
 import { FeedStockMovement, InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
 import { FeedRow, stageDayRange } from '../../production/lifecycle/feed-row-days';
 import { buildFeedForecast, DailyForecastRow, dayShort, DietChange, ForecastFlag, ForecastInput, ForecastRow, ForecastSource, isTimeZone, todayInZone } from './feed-forecast.engine';
-import { DEFAULT_SPAN_DAYS, ForecastView, groupRows, MAX_SPAN_DAYS, PeriodRange, ReportRow, resolveViewRange, spanProblem } from './feed-forecast.view';
+import { defaultWindowEnd, ForecastView, groupRows, MAX_SPAN_DAYS, PeriodRange, ReportRow, resolveViewRange, spanProblem } from './feed-forecast.view';
 import { stockAsOf } from './feed-forecast.stock';
 import { QueryFeedForecastDto, UpdateFeedFarmSettingsDto, UpdateSiloPlanningDto } from './dto/feed-forecast.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
@@ -321,7 +321,7 @@ function planningDateProblem(today: string, planningDate: string): string | null
  * Q12: nothing is forecast past 45 days after the planning date, and the walk
  * runs from the stock date to at least `to`, so a later `to` is refused rather
  * than walked. When the caller sent no `to` the date refused is one it never
- * typed — the default from + 7 — so the message names that instead of
+ * typed — the default from + 6 (7 days inclusive) — so the message names that instead of
  * pointing at a value the caller cannot see.
  */
 function reachProblem(planningDate: string, to: string, toSent: boolean): string | null {
@@ -623,7 +623,7 @@ export class FeedForecastService {
     if (span) throw new BadRequestException(span);
     // computeForFarm refuses a `to` past this reach (reachProblem); it is also the run-down horizon asked for (Q12).
     // A CUSTOM view whose `to` was never sent passes none, so the refusal can say the default ran past the reach;
-    // computeForFarm defaults it to the same from + 7 resolveViewRange did.
+    // computeForFarm defaults it to the same from + 6 resolveViewRange did.
     const reach = addDays(planningDate, MAX_SPAN_DAYS);
     const sentTo = query.to ?? (view === 'WEEKLY' || view === 'CUSTOM' ? reach : to);
     const result = await this.computeForFarm(farmId, companyId, tenantId, { from, to: sentTo, planningDate, horizonTo: reach }, clock);
@@ -1225,7 +1225,7 @@ export class FeedForecastService {
     const dateProblem = planningDateProblem(today, planningDate);
     if (dateProblem) throw new BadRequestException(dateProblem);
     const from = range.from ?? planningDate;
-    const to = range.to ?? addDays(from, DEFAULT_SPAN_DAYS);
+    const to = range.to ?? defaultWindowEnd(from);
     if (!isCalendarDay(from) || !isCalendarDay(to)) {
       throw new BadRequestException('from and to must be calendar dates (YYYY-MM-DD).');
     }
@@ -1290,7 +1290,7 @@ export class FeedForecastService {
     }
     const clock = await this.farmToday(companyId, tenantId);
     const planningDate = query.planningDate ?? clock.today;
-    const to = addDays(planningDate, DEFAULT_SPAN_DAYS);
+    const to = defaultWindowEnd(planningDate);
     const settings = toFarmFeedSettings(await this.feedSettings.resolveForFeedPlanning(companyId, farmId));
     const { submissionDeadline } = productionCycle(planningDate, settings.productionWeekday);
     return this.withFarmScope(farmId, companyId, async () => {

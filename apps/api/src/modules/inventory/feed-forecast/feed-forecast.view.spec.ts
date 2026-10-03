@@ -1,6 +1,6 @@
 import { FeedRow } from '../../production/lifecycle/feed-row-days';
 import { buildFeedForecast, ForecastInput } from './feed-forecast.engine';
-import { groupRows, MAX_SPAN_DAYS, resolveViewRange, spanProblem } from './feed-forecast.view';
+import { DEFAULT_WINDOW_DAYS, defaultWindowEnd, groupRows, MAX_SPAN_DAYS, resolveViewRange, spanProblem } from './feed-forecast.view';
 
 const workedExample: ForecastInput = {
   planningDate: '2026-09-23', from: '2026-09-23', to: '2026-09-29',
@@ -109,10 +109,17 @@ describe('resolveViewRange and spanProblem', () => {
     expect(resolveViewRange({ view: 'WEEKLY', planningDate: '2026-09-23', from: '2026-09-27' })).toEqual({ from: '2026-09-27', to: '2026-10-03' });
   });
 
-  it('PERIOD takes the Reporting Period Master dates; CUSTOM defaults to from + 7 (the Plan A default)', () => {
+  it('PERIOD takes the Reporting Period Master dates; CUSTOM defaults to 7 calendar days inclusive (from + 6)', () => {
     expect(resolveViewRange({ view: 'PERIOD', planningDate: '2026-09-23', period })).toEqual({ from: '2026-08-30', to: '2026-09-26' });
-    expect(resolveViewRange({ view: 'CUSTOM', planningDate: '2026-09-23' })).toEqual({ from: '2026-09-23', to: '2026-09-30' });
+    expect(resolveViewRange({ view: 'CUSTOM', planningDate: '2026-09-23' })).toEqual({ from: '2026-09-23', to: '2026-09-29' });
     expect(() => resolveViewRange({ view: 'PERIOD', planningDate: '2026-09-23', period: null })).toThrow('A Reporting Period view needs a period.');
+  });
+
+  it('the default window is 7 days inclusive: Worked Example 23 to 29 Sep, the same length as WEEKLY (Engine §5 row 67)', () => {
+    expect(DEFAULT_WINDOW_DAYS).toBe(7);
+    expect(defaultWindowEnd('2026-09-23')).toBe('2026-09-29');
+    expect(resolveViewRange({ view: 'CUSTOM', planningDate: '2026-09-23' }).to).toBe('2026-09-29');
+    expect(resolveViewRange({ view: 'WEEKLY', planningDate: '2026-09-23' }).to).toBe('2026-09-29');
   });
 
   it('accepts exactly 45 days after from and refuses 46, naming a reporting period when it is one (checkpoint 15)', () => {

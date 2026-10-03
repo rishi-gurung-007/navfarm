@@ -132,7 +132,7 @@ describe('FeedForecastService', () => {
     expect(loadFarm).not.toHaveBeenCalled();
   });
 
-  it('happy path: planning date is the farm day, from/to default to it..+7, stock is read as of it, the loaded input goes to the engine as-is plus configured safety stock, loader flags are appended', async () => {
+  it('happy path: planning date is the farm day, from/to default to it..+6 (7 days inclusive), stock is read as of it, the loaded input goes to the engine as-is plus configured safety stock, loader flags are appended', async () => {
     jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate'] }).setSystemTime(new Date(2026, 8, 25, 10, 30));
     useFarmScope(cls, { farmId: 'farm-A', restricted: true, companyId: 'comp-1', lobId: 'lob-1' });
     // Task 4 Step 1: the settings stub answers a configured safety stock; it
@@ -146,14 +146,14 @@ describe('FeedForecastService', () => {
 
     const result = await service.computeForFarm('farm-A', 'comp-1', 'tenant-1');
 
-    expect(loadInput).toHaveBeenCalledWith(FARM, '2026-09-25', '2026-09-25', '2026-10-02', 'tenant-1', {
-      stockDate: '2026-09-25', horizonTo: '2026-10-02', headerCutoff: '2026-09-25',
+    expect(loadInput).toHaveBeenCalledWith(FARM, '2026-09-25', '2026-09-25', '2026-10-01', 'tenant-1', {
+      stockDate: '2026-09-25', horizonTo: '2026-10-01', headerCutoff: '2026-09-25',
     });
     expect(feedSettings.resolveForFeedPlanning).toHaveBeenCalledWith('comp-1', 'farm-A');
     expect(buildFeedForecast).toHaveBeenCalledWith(expect.objectContaining({ planningDate: '2026-09-25', marker: 'loaded', safetyStockKg: 500 }));
     expect((buildFeedForecast as jest.Mock).mock.calls[0][0]).not.toHaveProperty('leadTimeDays');
     expect(result).toEqual({
-      planningDate: '2026-09-25', today: '2026-09-25', timeZone: null, from: '2026-09-25', to: '2026-10-02', horizonTo: '2026-10-02',
+      planningDate: '2026-09-25', today: '2026-09-25', timeZone: null, from: '2026-09-25', to: '2026-10-01', horizonTo: '2026-10-01',
       farm: { id: 'farm-A', code: 'VIL100', name: 'Village 100' },
       settings: { safetyStockKg: 500, bulkMultipleKg: 3000, bagSizeKg: 50 },
       rows: [{ batchNo: 'B1' }], daily: [],
@@ -167,6 +167,13 @@ describe('FeedForecastService', () => {
       }),
     });
     expect(result).not.toHaveProperty('leadTimeDays');
+  });
+
+  it('with no `to`, the planning window is 7 days inclusive: 23 to 29 Sep (Worked Example; Engine §5 row 67)', async () => {
+    useFarmScope(cls, { farmId: 'farm-A', restricted: true, companyId: 'comp-1', lobId: 'lob-1' });
+    loadInput.mockResolvedValueOnce({ input: {}, flags: [], stageBlocks: [] });
+    const result = await service.computeForFarm('farm-A', 'comp-1', 'tenant-1', { planningDate: '2026-09-23' }, { today: '2026-09-23', timeZone: null } as any);
+    expect([result.from, result.to]).toEqual(['2026-09-23', '2026-09-29']);
   });
 
   it('the stage blocks loadInput built reach the computed result unchanged', async () => {
