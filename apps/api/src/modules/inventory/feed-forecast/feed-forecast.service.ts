@@ -1,7 +1,7 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException, Optional, UnauthorizedException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { ClsService } from 'nestjs-cls';
-import { and, eq, gte, inArray, isNotNull, isNull, gt, lte, notInArray, or, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, isNull, gt, lte, notInArray, or, sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/mysql-core';
 import * as schema from '../../../core/database/schema';
@@ -1615,6 +1615,18 @@ export class FeedForecastService {
    * already the effective farm's (and, for a restricted caller, its LOB's or
    * LOB-less), a transfer has no LOB of its own, so the caller's LOB is held
    * against the item's — the same column a ledger row's lob_id is copied from.
+   *
+   * No lower bound on posting_date (fix round 1, Important 2): a transfer
+   * dated before the stock date is still open and still outstanding, so it
+   * must still count. The old gte(posting_date, stockDate) dropped it
+   * entirely, and the engine's own walk only visits stockDate..horizonTo
+   * anyway (feed-forecast.engine.ts), so even an undropped row would have
+   * been invisible at its own date. The outstanding quantity is therefore
+   * dated at max(posting_date, stockDate) below, landing it on the stock date
+   * instead of a date the walk never reaches. This undercounts confirmed
+   * incoming for a transfer that is, in truth, already later than planned —
+   * which feeds the shortfall, so the forecast errs toward ordering stock it
+   * already has coming rather than silently dropping it.
    */
   private async loadDraftTransfers(
     locationIds: string[],
@@ -1630,7 +1642,6 @@ export class FeedForecastService {
       eq(T.company_id, companyId),
       inArray(T.status, [...OPEN_TRANSFER_STATUSES]),
       isNull(T.deleted_at),
-      gte(T.posting_date, stockDate),
       lte(T.posting_date, horizonTo),
       ...restrictedScopeConditions(farmScope(this.cls), { companyId: T.company_id, lobId: schema.itemMaster.lob_id }),
     ];
@@ -1677,8 +1688,12 @@ export class FeedForecastService {
     const totals = new Map<string, FeedStockMovement>();
     const add = (r: (typeof into)[number], qty: number) => {
       if (!(Math.abs(qty) > 0)) return;
-      const key = [r.warehouse_id, r.item_id, r.uom, r.posting_date].join('|');
-      const row = totals.get(key) ?? { warehouse_id: r.warehouse_id, item_id: r.item_id, item_code: r.item_code, uom: r.uom, posting_date: r.posting_date, qty: 0 };
+      // Clamped at the stock date (fix round 1, Important 2): a transfer
+      // dated earlier is still outstanding today, and the walk never visits
+      // a date before stockDate, so its date here is max(posting_date, stockDate).
+      const date = r.posting_date < stockDate ? stockDate : r.posting_date;
+      const key = [r.warehouse_id, r.item_id, r.uom, date].join('|');
+      const row = totals.get(key) ?? { warehouse_id: r.warehouse_id, item_id: r.item_id, item_code: r.item_code, uom: r.uom, posting_date: date, qty: 0 };
       row.qty += qty;
       totals.set(key, row);
     };

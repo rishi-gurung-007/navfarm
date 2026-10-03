@@ -844,7 +844,7 @@ describe('loadDraftTransfers — D19 booked transfers (Q2, Ruling M2; Part E Tas
   };
   const R1 = { item_id: 'r1', item_code: 'FEED-R1', uom: 'KG', posting_date: '2026-09-28' };
 
-  it('reads open transfers dated from the stock date to the horizon, into (+) and out of (−) the farm\'s locations', async () => {
+  it('reads open transfers up to the horizon, into (+) and out of (−) the farm\'s locations — no lower bound on posting_date (fix round 1, Important 2)', async () => {
     const { db, wheres } = draftDb(
       [{ line_id: 'L1', warehouse_id: 's1', ...R1, qty: '6000.0000' }],
       [{ line_id: 'L1', warehouse_id: 'st', ...R1, qty: '6000.0000' }],
@@ -857,15 +857,45 @@ describe('loadDraftTransfers — D19 booked transfers (Q2, Ruling M2; Part E Tas
     ]);
     const [into, from] = wheres.map(render);
     for (const q of [into, from]) {
-      expect(q.sql).toMatch(/`posting_date` >= \?/);
+      // An open transfer dated before the stock date must not be dropped by
+      // a lower bound — see the test below. Only the upper bound (horizon) remains.
+      expect(q.sql).not.toMatch(/`posting_date` >= \?/);
       expect(q.sql).toMatch(/`posting_date` <= \?/);
       expect(q.sql).toMatch(/`status` in \(\?, \?, \?\)/);
-      expect(q.params).toEqual(expect.arrayContaining(['tenant-1', 'comp-1', 'DRAFT', 'IN_TRANSIT', 'PARTIALLY_RECEIVED', '2026-09-26', '2026-10-10']));
+      expect(q.params).toEqual(expect.arrayContaining(['tenant-1', 'comp-1', 'DRAFT', 'IN_TRANSIT', 'PARTIALLY_RECEIVED', '2026-10-10']));
       expect(q.params).not.toContain('POSTED');
       expect(q.sql).not.toMatch(/`lob_id`/);
     }
     expect(into.sql).toMatch(/`to_warehouse_id` in/);
     expect(from.sql).toMatch(/`from_warehouse_id` in/);
+  });
+
+  // Fix round 1, Important 2: a transfer dated before the stock date, shipped
+  // but unreceived, used to vanish — loadDraftTransfers filtered it out with
+  // gte(posting_date, stockDate), and even if it had not, the engine's walk
+  // only visits dates from stockDate on (feed-forecast.engine.ts: walkDates =
+  // dateRange(stockDate, horizonTo)), so a row dated before stockDate would
+  // never match any walk date either. The fix drops the lower bound on the
+  // query AND dates the outstanding quantity at max(posting_date, stockDate),
+  // so it lands on the stock date instead of being silently unreachable.
+  it('an open transfer dated before the stock date is dated AT the stock date, not dropped (ordered 10, shipped 6, unreceived)', async () => {
+    const early = { ...R1, posting_date: '2026-09-20' }; // before stockDate 2026-09-26
+    const { db, wheres } = draftDb(
+      [{ line_id: 'L1', warehouse_id: 's1', ...early, qty: '10' }], // destination (into)
+      [{ line_id: 'L1', warehouse_id: 'st', ...early, qty: '10' }], // source (out)
+      [{ line_id: 'L1', qty: '6' }], // shipped
+      [], // nothing received
+    );
+    const out = await load(db, ['s1', 'st']);
+    const clamped = { ...early, posting_date: '2026-09-26' };
+    expect(out).toEqual([
+      { warehouse_id: 's1', ...clamped, qty: 10 }, // pendingIn = ordered − received = 10
+      { warehouse_id: 'st', ...clamped, qty: -4 },  // pendingOut = ordered − shipped = 4
+    ]);
+    const [into, from] = wheres.map(render);
+    for (const q of [into, from]) {
+      expect(q.sql).not.toMatch(/`posting_date` >= \?/);
+    }
   });
 
   it('counts only what is outstanding: ordered 10, shipped 6, received 4 → source −4, destination +6', async () => {
