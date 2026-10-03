@@ -14,7 +14,6 @@ describe("feed forecasting terminology", () => {
       fpSiloColCapacity: "Capacity",
       fpSiloLowCol: "Below Feed Level",
       fpSiloHighCol: "Above Threshold",
-      fpSiloReorderCol: "Reorder Days",
       fpSiloColStatus: "Status",
       ffColBatchNo: "Batch No",
       ffColItemName: "Item Name",
@@ -27,7 +26,12 @@ describe("feed forecasting terminology", () => {
       ffColDaysOfStock: "Current No of Days Stock",
       ffColFirstShortage: "First Shortage Date",
     });
-    for (const retired of ["ffColRunDown", "ffColDateToRefill", "ffColRequiredOn", "ffOverdue", "fpLeadTimeCol", "fpBulkMultipleCol", "fpBagSizeCol", "fpTruckTargetCol", "fpProductionDayCol"]) {
+    for (const retired of [
+      "ffColRunDown", "ffColDateToRefill", "ffColRequiredOn", "ffOverdue", "fpLeadTimeCol", "fpBulkMultipleCol", "fpBagSizeCol", "fpTruckTargetCol", "fpProductionDayCol",
+      // M8 (final whole-branch review): a Task 8 queued removal that was dropped — silo_reorder_days
+      // left the Silo Feed Setup screen for Location Master (Task 4 ruling), orphaning these three.
+      "fpSiloReorderCol", "fpSiloReorder", "fpUnitDays",
+    ]) {
       expect(translations.en).not.toHaveProperty(retired);
     }
   });
