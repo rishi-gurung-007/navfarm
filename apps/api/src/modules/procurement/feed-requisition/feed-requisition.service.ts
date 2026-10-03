@@ -371,6 +371,9 @@ export class FeedRequisitionService implements OnModuleInit {
       source_snapshot: schema.feedForecastRun.source_snapshot,
       output_snapshot: schema.feedForecastRun.output_snapshot,
       config_snapshot: schema.feedForecastRun.config_snapshot,
+      planning_date: schema.feedForecastRun.planning_date,
+      from_date: schema.feedForecastRun.from_date,
+      to_date: schema.feedForecastRun.to_date,
     }).from(schema.feedForecastRun).where(and(
       eq(schema.feedForecastRun.tenant_id, tenantId),
       eq(schema.feedForecastRun.company_id, companyId),
@@ -382,6 +385,11 @@ export class FeedRequisitionService implements OnModuleInit {
       isNull(schema.feedForecastRun.period_id),
     )).orderBy(desc(schema.feedForecastRun.version)).limit(1);
     if (!run) return null;
+    // M6 (final whole-branch review): defence-in-depth against a mis-built WHERE —
+    // unlike the WHERE above, this re-check IS reachable through a test double that
+    // records calls but does not evaluate SQL predicates, so it is what actually
+    // lets the date-pinning path be tested directly.
+    if (run.from_date !== (forecast.from ?? forecast.planningDate) || run.to_date !== forecast.to || run.planning_date !== forecast.planningDate) return null;
     const runSource = run.source_snapshot as { hash?: unknown } | null;
     const runOutput = run.output_snapshot as Partial<ForecastRunOutputSnapshot> | null;
     const runConfig = run.config_snapshot as { values?: { requisitionDraftSettings?: Partial<FarmFeedSettings> } } | null;

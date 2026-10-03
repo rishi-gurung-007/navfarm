@@ -233,6 +233,10 @@ describe('FeedRequisitionService.autoDraft', () => {
         run_id: 'run-5', run_code: 'FFR-farm-grs-000005', version: 5,
         source_snapshot: { hash: 'fresh-source' }, output_snapshot: outputSnapshot(materialLines),
         config_snapshot: { values: { requisitionDraftSettings: { bulkMultipleKg: 3000, bagSizeKg: 50, truckTargetKg: 30000, productionWeekday: 0 } } },
+        // M6: matchingPersistedRun re-checks these in JS after the read, defence-in-depth against
+        // a mis-built WHERE — the default computeForFarm stub (setup()) gives planningDate/to
+        // serverToday() and no explicit from, so from falls back to planningDate.
+        planning_date: serverToday(), from_date: serverToday(), to_date: serverToday(),
       }]]],
       [schema.feedForecastRunLine, [[
         storedRunLine(materialLines[0], 'run-line-5a'),
@@ -265,6 +269,7 @@ describe('FeedRequisitionService.autoDraft', () => {
           run_id: 'run-new', run_code: runCode, version: 1,
           source_snapshot: { hash: 'fresh-source' }, output_snapshot: outputSnapshot(materialLines),
           config_snapshot: { values: { requisitionDraftSettings: { bulkMultipleKg: 3000, bagSizeKg: 50, truckTargetKg: 30000, productionWeekday: 0 } } },
+          planning_date: serverToday(), from_date: serverToday(), to_date: serverToday(),
         }],
       ]],
       [schema.feedForecastRunLine, [[storedRunLine(materialLines[0], 'run-line-new-a'), storedRunLine(materialLines[1], 'run-line-new-b')]]],
@@ -298,6 +303,7 @@ describe('FeedRequisitionService.autoDraft', () => {
         run_id: 'run-9', run_code: 'RUN-GRS-20260923-002', version: 9,
         source_snapshot: { hash: 'fresh-source' }, output_snapshot: outputSnapshot(materialLines),
         config_snapshot: { values: { requisitionDraftSettings: { bulkMultipleKg: 3000, bagSizeKg: 50, truckTargetKg: 30000, productionWeekday: 0 } } },
+        planning_date: serverToday(), from_date: serverToday(), to_date: serverToday(),
       }]]],
       [schema.feedForecastRunLine, [[storedRunLine(materialLines[0], 'run-line-9')]]],
       [schema.locationMaster, [[FARM_ROW], [SILO_ROW], [{ location_id: 'farm-grs' }]]],
@@ -307,6 +313,49 @@ describe('FeedRequisitionService.autoDraft', () => {
     await service.autoDraft({}, 'tenant-1', { userId: 'u-1', userType: 'FARM_MANAGER' });
     expect(forecast.saveRun).not.toHaveBeenCalled();
     expect(log.find((e) => e.op === 'insert' && e.table === schema.requisition)?.values).toMatchObject({ feed_forecast_run_id: 'run-9' });
+  });
+
+  /**
+   * M6 (final whole-branch review): matchingPersistedRun's WHERE pins planning_date/from_date/to_date,
+   * but this test double records a WHERE without evaluating it (recordingDb's `then` just shifts the
+   * table's queue) — the real defence here is the three-line JS re-check added after the read. Without
+   * it, a row with a matching hash/config/settings but a DIFFERENT window would be accepted, exactly as
+   * a mis-built WHERE would accept it; this is the one path that can prove the re-check works, because
+   * the WHERE itself is not reachable through this kind of mock.
+   */
+  it('rejects a run whose window differs even though it matches on hash/config/settings — the WHERE is not evaluated by this test double, only the JS re-check after it is (M6)', async () => {
+    const daily = [forecastDaily()];
+    const materialLines = buildRunLineSnapshots({ daily });
+    const runCode = `RUN-GRS-${serverToday().replace(/-/g, '')}-001`;
+    const queues = new Map<unknown, unknown[][]>([
+      [schema.feedForecastRun, [
+        [{ // a hash/config/settings match, but for a DIFFERENT window — what a mis-built WHERE would let through
+          run_id: 'run-wrong-window', run_code: 'RUN-GRS-20260101-009', version: 9,
+          source_snapshot: { hash: 'fresh-source' }, output_snapshot: outputSnapshot(materialLines),
+          config_snapshot: { values: { requisitionDraftSettings: { bulkMultipleKg: 3000, bagSizeKg: 50, truckTargetKg: 30000, productionWeekday: 0 } } },
+          planning_date: '2020-01-01', from_date: '2020-01-01', to_date: '2020-01-07',
+        }],
+        [{ // second look: the run saveRun just wrote for the REAL window
+          run_id: 'run-new', run_code: runCode, version: 1,
+          source_snapshot: { hash: 'fresh-source' }, output_snapshot: outputSnapshot(materialLines),
+          config_snapshot: { values: { requisitionDraftSettings: { bulkMultipleKg: 3000, bagSizeKg: 50, truckTargetKg: 30000, productionWeekday: 0 } } },
+          planning_date: serverToday(), from_date: serverToday(), to_date: serverToday(),
+        }],
+      ]],
+      [schema.feedForecastRunLine, [[storedRunLine(materialLines[0], 'run-line-new')]]],
+      [schema.locationMaster, [[FARM_ROW], [SILO_ROW], [{ location_id: 'farm-grs' }]]],
+      [schema.requisition, [[], [], [{ req: { requisition_id: 'new' }, farm_code: 'GRS', truck_target_kg: 30000 }]]],
+    ]);
+    const { service, log, forecast } = setup([source()], queues, daily);
+
+    await service.autoDraft({}, 'tenant-1', { userId: 'u-1', userType: 'FARM_MANAGER' });
+
+    // The first answer's window mismatch must be caught: a run is still saved for the real window,
+    // and the requisition links THAT run — never run-wrong-window.
+    expect(forecast.saveRun).toHaveBeenCalledTimes(1);
+    const header = log.find((e) => e.op === 'insert' && e.table === schema.requisition)?.values;
+    expect(header).toMatchObject({ feed_forecast_run_id: 'run-new', forecast_run_key: runCode });
+    expect(header.feed_forecast_run_id).not.toBe('run-wrong-window');
   });
 
   // 9d D1 (Pass 2): the source hash covers the engine input, horizonTo included. A run saved through
@@ -348,6 +397,7 @@ describe('FeedRequisitionService.autoDraft', () => {
         source_snapshot: { hash: hashFor({ from: query.from, to: query.to, horizonTo: addDaysIso(query.planningDate, 45) }) },
         output_snapshot: outputSnapshot(materialLines),
         config_snapshot: { values: { requisitionDraftSettings: { bulkMultipleKg: 3000, bagSizeKg: 50, truckTargetKg: 30000, productionWeekday: 0 } } },
+        planning_date: query.planningDate, from_date: query.from, to_date: query.to,
       };
       stored.lines = [storedRunLine(materialLines[0], `run-line-${runNo}`)];
       return { runId: `run-${runNo}`, runCode: stored.run.run_code, version: runNo };
@@ -398,6 +448,7 @@ describe('FeedRequisitionService.autoDraft', () => {
       run_id: 'run-stale', run_code: 'RUN-GRS-20260923-005', version: 5,
       source_snapshot: { hash: 'source-at-safety-0' }, output_snapshot: outputSnapshot(materialLines),
       config_snapshot: { values: { requisitionDraftSettings: { ...draftSettings } } },
+      planning_date: serverToday(), from_date: serverToday(), to_date: serverToday(),
     };
     // What saveRun actually wrote, read back by the second lookup — so the link asserted below is the
     // run that was saved, not merely the fact that saveRun was called.
@@ -421,6 +472,7 @@ describe('FeedRequisitionService.autoDraft', () => {
         run_id: 'run-fresh', run_code: freshCode, version: 6,
         source_snapshot: { hash: 'source-at-safety-500' }, output_snapshot: outputSnapshot(materialLines),
         config_snapshot: { values: { requisitionDraftSettings: { ...draftSettings } } },
+        planning_date: serverToday(), from_date: serverToday(), to_date: serverToday(),
       };
       return { runId: 'run-fresh', runCode: freshCode, version: 6 };
     });
