@@ -987,7 +987,7 @@ describe('FeedRequisitionService view — the document header and line display f
     const view: any = await service.findOne('req-1', 'tenant-1', { userType: 'COMPANY_ADMIN' });
     expect(view.header).toEqual({
       farm_code: 'GRS', farm_name: 'Green Ridge', requisition_date: '2026-09-23', is_next_diet_requisition: true,
-      farm_total_requested_kg: 15000, truck_target_kg: 30000, bulk_multiple_kg: 3000, trips: 1, required_delivery_date: '2026-09-23',
+      farm_total_requested_kg: 15000, truck_target_kg: 30000, bulk_multiple_kg: 3000, bag_size_kg: 50, trips: 1, required_delivery_date: '2026-09-23',
       approved_by_name: 'Mill Manager', linked_transfer_no: null, forecast_run_no: 'FFR-farm-grs-000001',
     });
     expect(view.lines[0]).toMatchObject({

@@ -1423,6 +1423,7 @@ export class FeedRequisitionService implements OnModuleInit {
         farm_total_requested_kg: farmTotal, // row 26
         truck_target_kg: truckTarget, // row 27 — a target, never a block
         bulk_multiple_kg: settings.bulkMultipleKg, // row 28
+        bag_size_kg: settings.bagSizeKg, // row 26: the bagged total is shown in bags of this size
         trips,
         required_delivery_date: row.req.required_date ?? null, // row 29: the earliest line delivery date
         approved_by_name: row.approved_by_name ?? null, // row 37

@@ -74,9 +74,34 @@ describe("FeedRequisitionDocument — header form (Requisition §1)", () => {
     expect(valueOf(en.rqdFarmName)).toBe("Green Ridge");
     expect(valueOf(en.rqdNextDiet)).toBe("Yes");
     expect(valueOf(en.rqdFarmTotal)).toMatch(/^15,000 KG of 30,000 KG target/);
+    expect(en.rqdFarmTotal).toBe("Bulk total requested (vs truck target)");
+    // No bagged line: no bagged total.
+    expect(screen.queryByText(en.rqdBaggedTotal, { selector: "span" })).toBeNull();
     expect(valueOf(en.rqdBulkMultiple)).toBe("3,000 KG");
     expect(valueOf(en.rqdForecastRun)).toBe("FFR-farm-grs-000001");
     expect(screen.queryByText(/Current Silo Feed Item/i)).toBeNull();
+  });
+});
+
+describe("FeedRequisitionDocument — bulk and bagged totals (Requisition row 26)", () => {
+  it("keeps the bulk total against the truck target and shows the bagged total separately, in KG and bags", () => {
+    const bagged = { ...view.lines[0], line_id: "L3", line_seq: 30000, feed_type: "BAGGED", quantity: "6000.0000", bag_count: 120 };
+    const mixed = {
+      ...view,
+      header: { ...view.header, bag_size_kg: 50 },
+      lines: [{ ...view.lines[1] }, bagged],
+    };
+    render(<FeedRequisitionDocument view={mixed} editable={false} />);
+    // One bulk line (9,000) — the bagged 6,000 is not folded into it, and not lost.
+    expect(valueOf(en.rqdFarmTotal)).toMatch(/^9,000 KG of 30,000 KG target/);
+    expect(valueOf(en.rqdBaggedTotal)).toBe("6,000 KG · 120 bags (50 KG each)");
+  });
+
+  it("a bagged-only requisition no longer reads 0 KG", () => {
+    const bagged = { ...view.lines[0], feed_type: "BAGGED", quantity: "6000.0000", bag_count: 120 };
+    render(<FeedRequisitionDocument view={{ ...view, header: { ...view.header, bag_size_kg: 50 }, lines: [bagged] }} editable={false} />);
+    expect(valueOf(en.rqdFarmTotal)).toMatch(/^0 KG of/);
+    expect(valueOf(en.rqdBaggedTotal)).toContain("6,000 KG");
   });
 });
 

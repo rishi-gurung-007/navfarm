@@ -73,6 +73,8 @@ export interface FeedRequisitionHeader {
   farm_total_requested_kg: number;
   truck_target_kg: number;
   bulk_multiple_kg: number;
+  /** Bag size from the feed planning settings; absent on a header written before 9c. */
+  bag_size_kg?: number;
   trips: number;
   required_delivery_date: string | null;
   approved_by_name: string | null;
@@ -179,6 +181,15 @@ export function FeedRequisitionDocument({
   const bulkTotal = lines.filter((l) => l.feed_type === "BULK").reduce((sum, l) => sum + requestedKgOf(l, edits[l.line_id]), 0);
   const target = header?.truck_target_kg ?? 0;
   const trips = target > 0 && bulkTotal > 0 ? Math.ceil(bulkTotal / target) : 0;
+  // Requisition row 26 counts bulk only; a bagged line is shown on its own so it is neither folded into the truck target nor invisible.
+  const baggedLines = lines.filter((l) => l.feed_type === "BAGGED");
+  const baggedKg = baggedLines.reduce((sum, l) => sum + requestedKgOf(l, edits[l.line_id]), 0);
+  const bagSize = header?.bag_size_kg ?? 0;
+  const baggedBags = baggedLines.reduce((sum, l) => {
+    const kgOf = requestedKgOf(l, edits[l.line_id]);
+    if (bagSize > 0) return sum + Math.ceil(kgOf / bagSize);
+    return sum + (edits[l.line_id]?.quantity === undefined ? (l.bag_count ?? 0) : 0);
+  }, 0);
 
   return (
     <div className="flex flex-col gap-4">
@@ -200,6 +211,12 @@ export function FeedRequisitionDocument({
         <ReadField className={HALF} label={t("rqdPurpose")} value={labelOf(PURPOSE_LABEL, view.purpose, t)} />
         <ReadField className={HALF} label={t("rqdFarmTotal")}
           value={t("rqdFarmTotalValue", { total: bulkTotal.toLocaleString("en-US"), target: target.toLocaleString("en-US"), trips })} />
+        {baggedLines.length > 0 && (
+          <ReadField className={HALF} label={t("rqdBaggedTotal")}
+            value={bagSize > 0
+              ? t("rqdBaggedTotalValue", { kg: baggedKg.toLocaleString("en-US"), bags: baggedBags.toLocaleString("en-US"), size: bagSize.toLocaleString("en-US") })
+              : t("rqdBaggedTotalNoSize", { kg: baggedKg.toLocaleString("en-US"), bags: baggedBags.toLocaleString("en-US") })} />
+        )}
         <ReadField className={HALF} label={t("rqdBulkMultiple")}
           value={header ? t("rqdKgValue", { kg: header.bulk_multiple_kg.toLocaleString("en-US") }) : null} />
         <ReadField className={HALF} label={t("rqdApprovedBy")} value={header?.approved_by_name} />
