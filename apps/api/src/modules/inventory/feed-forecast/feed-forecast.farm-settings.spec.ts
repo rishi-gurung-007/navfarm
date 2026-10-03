@@ -311,6 +311,34 @@ describe('FeedForecastService.updateSiloSettings (D41)', () => {
       .rejects.toThrow('The high feed level cannot exceed the silo capacity.');
   });
 
+  // Requisition / Loading Sheet row 15: Feed Type is BULK or BAGGED and drives
+  // rounding and truck type. Stored as location_master.feed_in_bags.
+  it('feedType BAGGED writes feed_in_bags true, BULK writes false', async () => {
+    selectQueue.push([{ location_id: 'f-vil' }], [SILO_ROW]);
+    await service(ADMIN).updateSiloSettings('f-vil', 's-1', { feedType: 'BAGGED' }, 'tenant-1', USER);
+    expect(state.set).toMatchObject({ feed_in_bags: true });
+    expect(state.set).not.toHaveProperty('low_level_kg');
+    selectQueue.push([{ location_id: 'f-vil' }], [SILO_ROW]);
+    await service(ADMIN).updateSiloSettings('f-vil', 's-1', { feedType: 'BULK', low_level_kg: 2500 }, 'tenant-1', USER);
+    expect(state.set).toMatchObject({ feed_in_bags: false, low_level_kg: 2500 });
+  });
+
+  it('refuses a feedType other than BULK or BAGGED and writes nothing', async () => {
+    selectQueue.push([{ location_id: 'f-vil' }], [SILO_ROW]);
+    await expect(service(ADMIN).updateSiloSettings('f-vil', 's-1', { feedType: 'LOOSE' } as any, 'tenant-1', USER))
+      .rejects.toBeInstanceOf(BadRequestException);
+    expect(state.set).toBeUndefined();
+  });
+
+  it('a feedType change is audit-logged with the old value', async () => {
+    selectQueue.push([{ location_id: 'f-vil' }], [{ ...SILO_ROW, feed_in_bags: false }]);
+    await service(ADMIN).updateSiloSettings('f-vil', 's-1', { feedType: 'BAGGED' }, 'tenant-1', USER);
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({
+      oldValues: expect.objectContaining({ feedType: 'BULK' }),
+      newValues: expect.objectContaining({ feedType: 'BAGGED' }),
+    }));
+  });
+
   it('refuses a silo that is not on the farm named in the path', async () => {
     selectQueue.push([{ location_id: 'f-vil' }], [{ ...SILO_ROW, farm_id: 'f-other' }]);
     await expect(service(ADMIN).updateSiloSettings('f-vil', 's-1', { low_level_kg: 2000 }, 'tenant-1', USER))

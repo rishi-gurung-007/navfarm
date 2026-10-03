@@ -66,7 +66,7 @@ export interface FeedPlanningSilo {
 }
 
 type SiloKey = "low_level_kg" | "high_level_kg";
-type SiloDraft = Record<SiloKey, string>;
+type SiloDraft = Record<SiloKey, string> & { feedType: "BULK" | "BAGGED" };
 
 const SILO_COLUMNS: { key: SiloKey; labelKey: string; from: (s: FeedPlanningSilo) => number | null; widthPx: number }[] = [
   { key: "low_level_kg", labelKey: "fpSiloLow", from: (s) => s.lowLevelKg, widthPx: SILO_INPUTS_PX[0] },
@@ -76,13 +76,15 @@ const SILO_COLUMNS: { key: SiloKey; labelKey: string; from: (s: FeedPlanningSilo
 const siloDraftOf = (silo: FeedPlanningSilo): SiloDraft => ({
   low_level_kg: silo.lowLevelKg?.toString() ?? "",
   high_level_kg: silo.highLevelKg?.toString() ?? "",
+  feedType: silo.feedType,
 });
 
-const siloPayloadOf = (draft: SiloDraft): Record<SiloKey, number | null> => {
+const siloPayloadOf = (draft: SiloDraft): Record<SiloKey, number | null> & { feedType: "BULK" | "BAGGED" } => {
   const value = (raw: string) => (raw.trim() === "" ? null : Number(raw));
   return {
     low_level_kg: value(draft.low_level_kg),
     high_level_kg: value(draft.high_level_kg),
+    feedType: draft.feedType,
   };
 };
 
@@ -137,6 +139,8 @@ export function FeedPlanningPanel() {
   const siloChanged = (siloId: string) => JSON.stringify(siloDrafts[siloId]) !== siloPristine[siloId];
   const setSiloCell = (siloId: string, key: SiloKey, raw: string) =>
     setSiloDrafts((cur) => ({ ...cur, [siloId]: { ...cur[siloId], [key]: raw } }));
+  const setSiloFeedType = (siloId: string, feedType: "BULK" | "BAGGED") =>
+    setSiloDrafts((cur) => ({ ...cur, [siloId]: { ...cur[siloId], feedType } }));
 
   /** D41: one silo's levels, through the silo endpoint. */
   const saveSilo = async (farm: FeedPlanningFarm, silo: FeedPlanningSilo) => {
@@ -152,6 +156,7 @@ export function FeedPlanningPanel() {
           ...x,
           lowLevelKg: settings.low_level_kg,
           highLevelKg: settings.high_level_kg,
+          feedType: settings.feedType,
         })),
       })));
       setSiloSaved(silo.locationId);
@@ -256,7 +261,12 @@ export function FeedPlanningPanel() {
                                           ? silo.linkedSheds.map((shed) => `${shed.code} — ${shed.name}`).join(", ")
                                           : "—"}
                                       </td>
-                                      <td className={TD} style={{ width: FEED_TYPE_PX + CELL_PADDING_PX }}>{silo.feedType}</td>
+                                      <td className={TD} style={{ width: FEED_TYPE_PX + CELL_PADDING_PX }}>
+                                        <select aria-label={t("fpSiloFeedType", { silo: silo.code })} className="nf-input-sm" style={{ ...inputStyle, width: FEED_TYPE_PX }} value={siloDraft.feedType} onChange={(e) => setSiloFeedType(silo.locationId, e.target.value as "BULK" | "BAGGED")}>
+                                          <option value="BULK">BULK</option>
+                                          <option value="BAGGED">BAGGED</option>
+                                        </select>
+                                      </td>
                                       <td className={TD} style={{ width: ITEM_CODE_PX + CELL_PADDING_PX }}>{silo.feedItemCode ?? "—"}</td>
                                       <td className={TD} style={{ width: ITEM_NAME_PX + CELL_PADDING_PX }}>{silo.feedItemName ?? "—"}</td>
                                       <td className={`${TD} text-right tabular-nums`} style={{ width: CAPACITY_PX + CELL_PADDING_PX }}>{silo.capacityKg == null ? "—" : silo.capacityKg.toLocaleString("en-US")}</td>

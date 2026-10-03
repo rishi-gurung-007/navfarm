@@ -75,7 +75,7 @@ describe('Silo Feed Setup — silos grouped by farm', () => {
     expect(screen.getByText('VIL100/SILO-001')).toBeTruthy();
     expect(screen.getByText('Feed Silo 1')).toBeTruthy();
     expect(screen.getByText('VIL100/SHED-001 — Dry Sow House')).toBeTruthy();
-    expect(screen.getByText('BULK')).toBeTruthy();
+    expect((screen.getByLabelText('fpSiloFeedType:{"silo":"VIL100/SILO-001"}') as HTMLSelectElement).value).toBe('BULK');
     expect(screen.getByText('FEED-1')).toBeTruthy();
     expect(screen.getByText('Dry Sow Mash')).toBeTruthy();
     expect(screen.getByText('ACTIVE')).toBeTruthy();
@@ -88,7 +88,21 @@ describe('Silo Feed Setup — silos grouped by farm', () => {
     fireEvent.change(low, { target: { value: '2500' } });
     fireEvent.click(screen.getByRole('button', { name: 'fpSiloSave:{"silo":"VIL100/SILO-001"}' }));
     await waitFor(() => expect(put).toHaveBeenCalledWith('/feed-forecast/farm-settings/f-vil/silos/s-1', {
-      low_level_kg: 2500, high_level_kg: 9000,
+      low_level_kg: 2500, high_level_kg: 9000, feedType: 'BULK',
+    }));
+  });
+
+  it('edits Feed Type as a BULK / BAGGED select and saves it', async () => {
+    render(<FeedPlanningPanel />);
+    await screen.findByRole('table', { name: 'Silo Feed Setup by farm and silo' });
+    expand('VIL100');
+    const select = screen.getByLabelText('fpSiloFeedType:{"silo":"VIL100/SILO-001"}') as HTMLSelectElement;
+    expect(Array.from(select.options).map((o) => o.value)).toEqual(['BULK', 'BAGGED']);
+    expect((screen.getByLabelText('fpSiloFeedType:{"silo":"VIL100/SILO-002"}') as HTMLSelectElement).value).toBe('BAGGED');
+    fireEvent.change(select, { target: { value: 'BAGGED' } });
+    fireEvent.click(screen.getByRole('button', { name: 'fpSiloSave:{"silo":"VIL100/SILO-001"}' }));
+    await waitFor(() => expect(put).toHaveBeenCalledWith('/feed-forecast/farm-settings/f-vil/silos/s-1', {
+      low_level_kg: 2000, high_level_kg: 9000, feedType: 'BAGGED',
     }));
   });
 

@@ -933,6 +933,7 @@ export class FeedForecastService {
         silo_capacity_kg: L.silo_capacity_kg,
         low_level_kg: L.low_level_kg,
         high_level_kg: L.high_level_kg,
+        feed_in_bags: L.feed_in_bags,
       })
       .from(L)
       .where(and(eq(L.location_id, siloId), eq(L.tenant_id, tenantId), isNull(L.deleted_at)))
@@ -944,9 +945,14 @@ export class FeedForecastService {
     }
 
     const num = (v: unknown) => (v == null ? null : Number(v));
-    const updates: Record<string, number | null> = {};
+    const updates: Record<string, number | null | boolean> = {};
     if (dto.low_level_kg !== undefined) updates.low_level_kg = dto.low_level_kg;
     if (dto.high_level_kg !== undefined) updates.high_level_kg = dto.high_level_kg;
+    // Feed Type (workbook row 15): BULK or BAGGED, stored as feed_in_bags.
+    if (dto.feedType !== undefined) {
+      if (dto.feedType !== 'BULK' && dto.feedType !== 'BAGGED') throw new BadRequestException('Feed Type must be BULK or BAGGED.');
+      updates.feed_in_bags = dto.feedType === 'BAGGED';
+    }
     if (!Object.keys(updates).length) throw new BadRequestException('Send at least one silo setting to change.');
 
     // The pair as it would stand after this change, against the silo's capacity.
@@ -965,8 +971,9 @@ export class FeedForecastService {
       oldValues: {
         low_level_kg: num(silo.low_level_kg),
         high_level_kg: num(silo.high_level_kg),
+        feedType: silo.feed_in_bags === true ? 'BAGGED' : 'BULK',
       },
-      newValues: updates,
+      newValues: { ...updates, ...(dto.feedType !== undefined ? { feedType: dto.feedType } : {}) },
     });
     return { farmId, siloId, code: silo.location_code, settings: updates };
   }

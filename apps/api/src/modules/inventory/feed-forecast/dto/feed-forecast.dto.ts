@@ -96,4 +96,8 @@ export class UpdateSiloPlanningDto {
   @ApiProperty({ description: 'High feed level in KG — the over-stock notice level.', required: false, nullable: true })
   @IsOptional() @IsNumber() @Min(0)
   high_level_kg?: number | null;
+
+  @ApiProperty({ description: 'Feed Type — BULK or BAGGED. Drives rounding and truck type (Requisition and Loading Sheet row 15); stored as feed_in_bags.', required: false, enum: ['BULK', 'BAGGED'] })
+  @IsOptional() @IsIn(['BULK', 'BAGGED'], { message: 'Feed Type must be BULK or BAGGED.' })
+  feedType?: 'BULK' | 'BAGGED';
 }

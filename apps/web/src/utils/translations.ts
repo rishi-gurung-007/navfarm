@@ -1478,6 +1478,7 @@ export const translations = {
     fpSiloHighCol: "Above Threshold",
     fpSiloReorderCol: "Reorder Days",
     fpSiloColStatus: "Status",
+    fpSiloFeedType: "Feed type for {{silo}}",
     fpSiloLow: "Below feed level in kilograms for {{silo}}",
     fpSiloHigh: "Above threshold in kilograms for {{silo}}",
     fpSiloReorder: "Reorder days for {{silo}}",
