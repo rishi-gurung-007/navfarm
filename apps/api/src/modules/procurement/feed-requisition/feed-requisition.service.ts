@@ -1138,6 +1138,13 @@ export class FeedRequisitionService implements OnModuleInit {
         recommended_qty_kg: null,
         unrounded_need_kg: null,
         exceeds_silo_capacity: false,
+        // M5 (final whole-branch review): recommended_delivery_date is the OLD
+        // (destination, item) pair's drafted date, same as the six columns above
+        // it — left in place, deliveryDateNeedsRemarks (Req. row 29) would keep
+        // comparing a date the farm proposes now against a recommendation that
+        // was never computed for this pairing. null here is the same "nothing
+        // to differ from" state a manual line starts in (rules.ts).
+        recommended_delivery_date: null,
       } : {}),
     };
   }

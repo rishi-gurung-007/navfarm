@@ -1130,7 +1130,7 @@ describe('FeedRequisitionService.update — item and destination changes (Req. r
     });
   });
 
-  it('a destination-only change blanks the old silo\'s forecast-derived columns rather than carrying them over (review finding: stale exceeds_silo_capacity hid a real warning)', async () => {
+  it('a destination-only change blanks the old silo\'s forecast-derived columns rather than carrying them over (review finding: stale exceeds_silo_capacity hid a real warning; M5: recommended_delivery_date blanks with its six siblings)', async () => {
     const { service, log, siloFeed } = setup([], queuesFor());
     siloFeed.currentItems.mockResolvedValueOnce(new Map([['silo-2', null]]));
     await service.update('req-1', { lines: [{ line_id: 'L1', destination_location_id: 'silo-2' }] } as any, 'tenant-1', { userId: 'u-1', userType: 'COMPANY_ADMIN' });
@@ -1140,6 +1140,9 @@ describe('FeedRequisitionService.update — item and destination changes (Req. r
       system_balance_kg: null, daily_requirement_kg: null, days_remaining: null,
       first_shortage_date: null, recommended_qty_kg: null, unrounded_need_kg: null,
       exceeds_silo_capacity: false,
+      // M5: left in place, deliveryDateNeedsRemarks would keep comparing a date the
+      // farm proposes now against the OLD (destination, item) pair's recommendation.
+      recommended_delivery_date: null,
     });
   });
 
