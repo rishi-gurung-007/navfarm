@@ -308,6 +308,27 @@ function addDays(iso: string, n: number): string {
   return new Date(parseIsoUtc(iso) + n * 86_400_000).toISOString().slice(0, 10);
 }
 
+/**
+ * The forecast's standard horizon: the run-down and the shortage date are
+ * looked for up to MAX_SPAN_DAYS past the planning date (Q12), whatever window
+ * is shown. getForecast (and so Save Run) and the requisition draft both use it.
+ */
+export function forecastHorizon(planningDate: string): string {
+  return addDays(planningDate, MAX_SPAN_DAYS);
+}
+
+/**
+ * 9d D1: the range a requisition draft computes its forecast over. A draft
+ * links the run saved for its window only when the two source hashes are
+ * equal, and the hash covers the whole engine input, horizonTo included — so
+ * the draft computes exactly what Save Run computes for a CUSTOM window from
+ * the planning date to `to`: the standard horizon, not `to`. The draft's
+ * order window (the shortfall, the lines) stays `to`.
+ */
+export function draftForecastRange(planningDate: string, to?: string): { planningDate: string; from: string; to: string; horizonTo: string } {
+  return { planningDate, from: planningDate, to: to ?? defaultWindowEnd(planningDate), horizonTo: forecastHorizon(planningDate) };
+}
+
 function diffDays(a: string, b: string): number {
   return Math.round((parseIsoUtc(b) - parseIsoUtc(a)) / 86_400_000);
 }
@@ -635,7 +656,7 @@ export class FeedForecastService {
     // (reachProblem) and looks for the run-down up to `horizonTo` (Q12), so the horizon keeps the full reach.
     // The computed and returned range is the one resolveViewRange chose: an omitted `to` means the 7-day default
     // window (from + 6, Engine §5 row 67), never the reach. An explicit `to` is sent as typed and stays bound by it.
-    const reach = addDays(planningDate, MAX_SPAN_DAYS);
+    const reach = forecastHorizon(planningDate);
     const sentTo = query.to ?? to;
     const result = await this.computeForFarm(farmId, companyId, tenantId, { from, to: sentTo, planningDate, horizonTo: reach }, clock);
     // Q7: an "as of" forecast has no projection for days already behind the planning date.

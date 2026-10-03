@@ -185,7 +185,9 @@ export function recommendLines(args: {
     const key = lineKey(s.locationId, s.itemId);
     const systemBalanceKg = currentBalanceKg ? round3(currentBalanceKg.get(key) ?? 0) : s.balanceKg;
     // Req. row 29: derived from the earliest projected shortage; nothing short in the window → the window's end.
-    const shortage = s.shortageDate ?? null;
+    // 9d D1: the shortage is looked for over the forecast's standard horizon, so it can fall past `to`; that is
+    // "nothing short in the window" too — the order window stays `to`.
+    const shortage = s.shortageDate && s.shortageDate <= to ? s.shortageDate : null;
     const recommendedDeliveryDate = shortage ? (shortage < planningDate ? planningDate : shortage) : to;
     // Engine Step 8 free-capacity warning: a direct KG comparison — silo_capacity_kg is always canonical KG.
     const capacityKg = dest.locationType === 'SILO' ? dest.capacityKg : null;

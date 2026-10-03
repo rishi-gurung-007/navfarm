@@ -22,7 +22,7 @@ import { farmScope } from '../../../common/farm-scope';
 import { userHasPermission } from '../../../common/permissions';
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { isDuplicateEntry } from '../../../common/filters/http-exception.filter';
-import { FeedForecastService, MAX_SPAN_DAYS, type FeedForecastResponse } from '../../inventory/feed-forecast/feed-forecast.service';
+import { draftForecastRange, FeedForecastService, MAX_SPAN_DAYS, type FeedForecastResponse } from '../../inventory/feed-forecast/feed-forecast.service';
 import { utcTimestamp, type ForecastSource } from '../../inventory/feed-forecast/feed-forecast.engine';
 import {
   buildOutputSnapshot, buildRunLineSnapshots, FORECAST_RUN_OUTPUT_HASH_VERSION,
@@ -501,7 +501,7 @@ export class FeedRequisitionService implements OnModuleInit {
       throw new BadRequestException(`to must be between today and ${MAX_SPAN_DAYS} days ahead.`);
     }
     const outcome = await this.forecast.withFarmScope(farmId, companyId, async () => {
-      const forecast = await this.forecast.computeForFarm(farmId, companyId, tenantId, { to: dto.to }, clock);
+      const forecast = await this.forecast.computeForFarm(farmId, companyId, tenantId, draftForecastRange(today, dto.to), clock);
       const farm = await this.loadFarm(farmId, companyId, tenantId);
       const destinations = await this.loadDestinations(forecast.sources.map((s) => s.locationId), tenantId);
       // Task 3 carry: recommendLines synthesizes a destination it is not

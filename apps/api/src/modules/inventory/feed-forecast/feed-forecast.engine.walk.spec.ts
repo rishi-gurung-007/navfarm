@@ -122,6 +122,18 @@ describe('buildFeedForecast — run-down horizon past the range (Q12)', () => {
     expect(rows[0].rangeDemandKg).toBe(300);
   });
 
+  // 9d D1: the requisition draft now computes over the standard horizon too. A delivery is dated no later
+  // than `to` (the order window), so the capacity check must read the opening on that day, not on a
+  // shortage day found past it.
+  it('reads the delivery-day opening on `to` when the shortage falls past it (9d D1)', () => {
+    // Safety stock 400: shortfall within the window (700 + 400 − 1000 = 100) with the shortage on Oct03.
+    const input = { ...oneSilo({ to: '2026-09-29', horizonTo: '2026-10-10' }, { balanceKg: 1000 }), safetyStockKg: 400 };
+    const { sources } = buildFeedForecast(input);
+    expect(sources[0]).toMatchObject({ shortageDate: '2026-10-03', shortfallKg: 100 });
+    // Opening on Sep29 = 1000 − 6 × 100 = 400 (on Oct03 it would be 0).
+    expect(sources[0].deliveryDayOpeningKg).toBe(400);
+  });
+
   it('flags a projected stage change only when it falls inside from..to', () => {
     const batch = (start: string): ForecastInput['batches'][number] => ({
       batchId: 'b1', batchNo: 'GR-2026-01', breedId: 'l', shedId: 'h1', heads: 100,

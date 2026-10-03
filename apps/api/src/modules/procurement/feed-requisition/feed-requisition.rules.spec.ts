@@ -152,6 +152,14 @@ describe('recommendLines — Plan R (D19, Q3, Q4)', () => {
     expect(pastShortage).toMatchObject({ recommendedDeliveryDate: '2026-09-23', proposedDeliveryDate: '2026-09-23' }); // already past → planning date
   });
 
+  // 9d D1: the draft's forecast now looks for the shortage over the standard horizon (planning + 45), as
+  // Save Run does, so a shortage can be found past `to`. The order window stays `to`: such a line is dated
+  // `to`, as it was when the search stopped at `to` — and its First Shortage Date is the real one.
+  it('dates the line `to` when the first shortage falls past the window (9d D1)', () => {
+    const [line] = draft({ ...r1, shortfallKg: 500, shortageDate: '2026-10-05' });
+    expect(line).toMatchObject({ recommendedDeliveryDate: '2026-09-29', proposedDeliveryDate: '2026-09-29', firstShortageDate: '2026-10-05' });
+  });
+
   it('dates the line `to` when nothing in the window is short', () => {
     const [line] = draft({ ...r1, shortageDate: null });
     expect(line).toMatchObject({ recommendedDeliveryDate: '2026-09-29', proposedDeliveryDate: '2026-09-29' });

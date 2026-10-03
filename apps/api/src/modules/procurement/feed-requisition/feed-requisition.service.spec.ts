@@ -309,6 +309,67 @@ describe('FeedRequisitionService.autoDraft', () => {
     expect(log.find((e) => e.op === 'insert' && e.table === schema.requisition)?.values).toMatchObject({ feed_forecast_run_id: 'run-9' });
   });
 
+  // 9d D1 (Pass 2): the source hash covers the engine input, horizonTo included. A run saved through
+  // Save Run / getForecast is computed with horizonTo = planning date + 45; a draft computed with
+  // horizonTo = `to` could never match it, so nothing was linked and every rerun saved another run.
+  it('links the run it saves, and a rerun over unchanged inputs saves no second run (9d D1)', async () => {
+    const daily = [forecastDaily()];
+    const materialLines = buildRunLineSnapshots({ daily });
+    const today = serverToday();
+    const to = addDaysIso(today, 9);
+    // The engine-input hash, as buildSourceSnapshot would give it: it depends on the horizon.
+    const hashFor = (range: { from?: string; to?: string; horizonTo?: string }) =>
+      `src|${range.from ?? today}|${range.to}|${range.horizonTo ?? range.to}`;
+    const stored: { run?: Record<string, unknown>; lines?: Record<string, unknown>[] } = {};
+    const queues = new Map<unknown, unknown[][]>([
+      // The runs table as it stands: whatever saveRun last wrote.
+      [schema.feedForecastRun, { shift: () => (stored.run ? [stored.run] : []) } as unknown as unknown[][]],
+      [schema.feedForecastRunLine, { shift: () => stored.lines ?? [] } as unknown as unknown[][]],
+      [schema.locationMaster, [[FARM_ROW], [SILO_ROW], [{ location_id: 'farm-grs' }], [FARM_ROW], [SILO_ROW], [{ location_id: 'farm-grs' }]]],
+      [schema.requisition, [
+        [], [], [{ req: { requisition_id: 'new' }, farm_code: 'GRS', truck_target_kg: 30000 }], // first draft
+        [{ requisition_id: 'req-1', status: 'AUTO_DRAFT', requisition_type: 'FEED_FORECAST' }], [{ req: { requisition_id: 'req-1' }, farm_code: 'GRS', truck_target_kg: 30000 }], // rerun
+      ]],
+      [schema.requisitionLine, [[], [
+        { line_id: 'L1', line_seq: 10000, dest: 'silo-1', item: 'item-r1', quantity: '6000.0000', recommended: '6000.0000', edited: false,
+          recommended_date: to, proposed_date: to },
+      ]]],
+    ]);
+    const { service, log, forecast } = setup([source()], queues, daily);
+    forecast.computeForFarm.mockImplementation(async (_f: string, _c: string, _t: string, range: { from?: string; to?: string; horizonTo?: string }) => ({
+      planningDate: today, from: range.from ?? today, to: range.to, sources: [source()], daily, farm: { id: 'farm-grs', code: 'GRS' },
+      sourceSnapshot: { version: 'sha256:fresh-source', hash: hashFor(range), values: {} },
+    }));
+    // Save Run computes through getForecast: the standard horizon, planning date + MAX_SPAN_DAYS.
+    forecast.saveRun.mockImplementation(async (query: { from: string; to: string; planningDate: string }) => {
+      const runNo = forecast.saveRun.mock.calls.length;
+      stored.run = {
+        run_id: `run-${runNo}`, run_code: `RUN-GRS-${today.replace(/-/g, '')}-00${runNo}`, version: runNo,
+        source_snapshot: { hash: hashFor({ from: query.from, to: query.to, horizonTo: addDaysIso(query.planningDate, 45) }) },
+        output_snapshot: outputSnapshot(materialLines),
+        config_snapshot: { values: { requisitionDraftSettings: { bulkMultipleKg: 3000, bagSizeKg: 50, truckTargetKg: 30000, productionWeekday: 0 } } },
+      };
+      stored.lines = [storedRunLine(materialLines[0], `run-line-${runNo}`)];
+      return { runId: `run-${runNo}`, runCode: stored.run.run_code, version: runNo };
+    });
+    const user = { userId: 'u-1', userType: 'FARM_MANAGER' };
+
+    await service.autoDraft({ to }, 'tenant-1', user);
+    expect(log.find((e) => e.op === 'insert' && e.table === schema.requisition)?.values)
+      .toMatchObject({ feed_forecast_run_id: 'run-1', forecast_run_key: `RUN-GRS-${today.replace(/-/g, '')}-001` });
+    expect(log.find((e) => e.op === 'insert' && e.table === schema.requisitionLine)?.values)
+      .toEqual([expect.objectContaining({ feed_forecast_run_line_ids: ['run-line-1'] })]);
+    // The draft's forecast is computed over the standard horizon, its order window stays `to`.
+    expect(forecast.computeForFarm).toHaveBeenLastCalledWith('farm-grs', 'co-1', 'tenant-1',
+      { planningDate: today, from: today, to, horizonTo: addDaysIso(today, 45) }, expect.anything());
+
+    await service.autoDraft({ to }, 'tenant-1', user);
+    expect(forecast.saveRun).toHaveBeenCalledTimes(1);
+    expect(log.find((e) => e.op === 'update' && e.table === schema.requisition)?.set).toMatchObject({ feed_forecast_run_id: 'run-1' });
+    expect(log.find((e) => e.op === 'update' && e.table === schema.requisitionLine)?.set)
+      .toMatchObject({ feed_forecast_run_line_ids: ['run-line-1'] });
+  });
+
   it('saves no run when the forecast wants nothing drafted', async () => {
     const queues = new Map<unknown, unknown[][]>([
       [schema.locationMaster, [[FARM_ROW], [SILO_ROW], [{ location_id: 'farm-grs' }]]],
@@ -466,7 +527,10 @@ describe('FeedRequisitionService.autoDraft', () => {
     const silo = source({ balanceKg: 1516, runDownDate: future(4), shortageDate: future(2) });
     const store = source({ sourceType: 'STORE', sourceCode: 'GRS/STORE-001', locationId: 'store-1', itemId: 'item-p', balanceKg: 900, shortfallKg: 100,
       runDownDate: future(1), shortageDate: future(-1) });
-    const { service, log, siloFeed, ledger } = setup([silo, store], queues);
+    const { service, log, siloFeed, ledger, forecast } = setup([silo, store], queues);
+    // A seven-day window, so the silo's shortage two days out falls inside it (9d D1: one past `to` is dated `to`).
+    const computed = forecast.computeForFarm.getMockImplementation();
+    forecast.computeForFarm.mockImplementation(async (...args: unknown[]) => ({ ...(await computed(...args)), to: future(6) }));
     siloFeed.currentItems.mockResolvedValueOnce(new Map([['silo-1', { item_id: 'item-r1', item_code: 'R1', item_description: null, on_hand_qty: 1500, uoms: ['KG'] }]]));
     ledger.getStockBalance.mockResolvedValueOnce([
       { item_id: 'item-p', uom: 'KG', on_hand_qty: 850 }, { item_id: 'item-p', uom: 'BAG', on_hand_qty: 3 }, { item_id: 'item-q', uom: 'KG', on_hand_qty: 40 },
@@ -671,7 +735,9 @@ describe('FeedRequisitionService.autoDraft', () => {
     forecast.farmToday.mockResolvedValueOnce({ today: '2026-09-26', timeZone: 'Africa/Harare' });
     await service.autoDraft({ to: '2026-10-03' }, 'tenant-1', { userId: 'u-1', userType: 'COMPANY_ADMIN' }).catch(() => undefined);
     expect(forecast.farmToday).toHaveBeenCalledTimes(1);
-    expect(forecast.computeForFarm).toHaveBeenCalledWith('farm-grs', 'co-1', 'tenant-1', { to: '2026-10-03' }, { today: '2026-09-26', timeZone: 'Africa/Harare' });
+    // 9d D1: planned from that farm day, over the standard horizon (planning date + 45), ordering to `to`.
+    expect(forecast.computeForFarm).toHaveBeenCalledWith('farm-grs', 'co-1', 'tenant-1',
+      { planningDate: '2026-09-26', from: '2026-09-26', to: '2026-10-03', horizonTo: '2026-11-10' }, { today: '2026-09-26', timeZone: 'Africa/Harare' });
   });
 });
 

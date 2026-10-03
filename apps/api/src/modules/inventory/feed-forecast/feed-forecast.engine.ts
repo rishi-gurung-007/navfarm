@@ -255,7 +255,7 @@ export interface ForecastSource {
   lifecycleIds: string[]; // lifecycle rows that produce its demand in the window, sorted
   thresholdKg: number; // the silo's Below Feed Level, 0 for none and for a store — an alert threshold, never part of the shortfall
   safetyStockKg: number; // configured safety stock added to the shortfall (default 0)
-  deliveryDayOpeningKg: number; // projected opening on shortageDate ?? to — what a delivery arrives onto
+  deliveryDayOpeningKg: number; // projected opening on the shortage date (no later than `to`) — what a delivery arrives onto
   incomingKg: number; // confirmed incoming after the planning date, up to `to`
   shortfallKg: number; // Dashboard row 60: demand + safety stock − opening − incoming, largest through `to` — what an order must bring
 }
@@ -747,7 +747,8 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
       if (date !== input.planningDate) incomingMicrograms += inflow.get(date) ?? 0; // the planning day's is in its opening
       shortfallMicrograms = Math.max(shortfallMicrograms, walkDemandMicrograms + safety - planningOpening - incomingMicrograms);
     }
-    const deliveryDay = shortageDate ?? input.to;
+    // 9d D1: a shortage found past `to` (in the run-down horizon) is delivered for by `to`, as Req. row 29 dates it.
+    const deliveryDay = shortageDate !== null && shortageDate <= input.to ? shortageDate : input.to;
     const deliveryDayOpeningMicrograms = opening.get(deliveryDay) ?? planningOpening;
 
     projectionByKey.set(key, {
