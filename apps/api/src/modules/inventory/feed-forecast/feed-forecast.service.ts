@@ -1268,7 +1268,14 @@ export class FeedForecastService {
     const settings = toFarmFeedSettings(await this.feedSettings.resolveForFeedPlanning(companyId, farmId));
     const { submissionDeadline } = productionCycle(planningDate, settings.productionWeekday);
     return this.withFarmScope(farmId, companyId, async () => {
-      const forecast = await this.computeForFarm(farmId, companyId, tenantId, { planningDate, from: planningDate, to }, clock);
+      // 9d F1: the window stays seven days (Projected Need, the shortfall and the recommended order are the
+      // week's), but the first shortage date is "determined from the dated item level projection" (Dashboard row
+      // 55 / Master Setup row 15) with no window limit — so the run-down is searched over the forecast's own
+      // standard horizon, exactly as the grid does. Without this the dashboard left First Shortage Date blank for
+      // a shortage 8-45 days out while the grid showed its date (pass 2: RIC100/SILO-002, LEX100/SILO-001).
+      const forecast = await this.computeForFarm(
+        farmId, companyId, tenantId, { planningDate, from: planningDate, to, horizonTo: forecastHorizon(planningDate) }, clock,
+      );
       const silos = await this.loadSiloFacts(farmId, companyId, tenantId);
       const requisitionStatusBySilo = await this.loadLatestRequisitionStatuses(farmId, tenantId, submissionDeadline);
       const rows = buildSiloStatus({ silos, result: forecast, requisitionStatusBySilo, submissionDeadline, settings });

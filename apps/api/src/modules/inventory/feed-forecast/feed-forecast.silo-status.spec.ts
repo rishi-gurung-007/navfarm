@@ -44,7 +44,9 @@ describe('FeedForecastService.siloStatus', () => {
 
     const out = await cls.run(() => service.siloStatus({ farmId: 'farm-b' }, 'tenant-1', 'TENANT_ADMIN'));
 
-    expect(compute).toHaveBeenCalledWith('farm-b', 'co-1', 'tenant-1', { planningDate: '2026-09-23', from: '2026-09-23', to: '2026-09-29' }, expect.anything());
+    // 9d F1: the shown window is still seven days; only the run-down/shortage search reaches the standard horizon.
+    expect(compute).toHaveBeenCalledWith('farm-b', 'co-1', 'tenant-1',
+      { planningDate: '2026-09-23', from: '2026-09-23', to: '2026-09-29', horizonTo: '2026-11-07' }, expect.anything());
     expect(facts).toEqual(['farm-b']);
     expect(out.planningDate).toBe('2026-09-23');
     // Production day 6 (Saturday) after Wed 23 Sep is 26 Sep; the deadline is the day before.
@@ -53,6 +55,49 @@ describe('FeedForecastService.siloStatus', () => {
     expect(out.rows[0]).toMatchObject({ siloId: 's1', currentDietItemId: 'r1', dailyRequirementKg: 2000, requisitionStatus: 'AUTO_DRAFT', submissionDeadline: '2026-09-25' });
     expect(buildFeedForecast(input).sources[0].shortfallKg).toBeGreaterThan(0);
     expect(out.rows[0].recommendedOrderKg).toBeGreaterThan(0);
+  });
+
+  /**
+   * 9d F1 (Part A verification pass 2): the dashboard left First Shortage Date
+   * blank for a shortage 8-45 days out while the forecast grid showed the date
+   * (RIC100/SILO-002 19/10/26, LEX100/SILO-001 22/10/26), because siloStatus
+   * computed with no horizonTo and so searched only its own seven-day window.
+   * Dashboard row 55 / Master Setup row 15: "Determine first shortage date
+   * from dated item level projection" — no window limit. Projected Need (and
+   * so the shortfall and the recommended order) stays the seven-day window.
+   */
+  it('reports a shortage on day 10 while Projected Need stays the seven-day window (9d F1)', async () => {
+    const { cls, service } = build();
+    const compute = jest.spyOn(service, 'computeForFarm');
+    // 100 heads at 1 kg/head/day on 950 kg: opening falls under a day's demand on day 10 (2026-10-02).
+    const slowShortage = {
+      ...input,
+      silos: [{ siloId: 's1', siloCode: 'GRS/SILO-001', itemId: 'r1', balanceKg: 950 }],
+      batches: [{ batchId: 'b', batchNo: 'WG-2026-38', breedId: 'l', shedId: 'h3', heads: 100,
+        segments: [{ stageId: 'wean', stageCode: 'WEANER', start: '2026-09-23', end: null, projected: false }] }],
+      feedRows: [{ lifecycleId: 'row-r1', breedId: 'l', stageId: 'wean', itemId: 'r1', itemName: 'Weaner Diet R1',
+        fromDay: 1, toDay: 90, kgPerHeadPerDay: 1, wastagePct: 0 }],
+    };
+    // As the real loadInput: the range and the horizon it is handed are what the engine walks.
+    jest.spyOn(service as any, 'loadInput').mockImplementation(async (...args: unknown[]) => {
+      const [, planningDate, from, to, , opts] = args as [unknown, string, string, string, string, { stockDate: string; horizonTo: string }];
+      return { input: { ...slowShortage, planningDate, from, to, horizonTo: opts.horizonTo }, flags: [], stageBlocks: [] };
+    });
+    jest.spyOn(service as any, 'loadSiloFacts').mockResolvedValue([{ ...siloFact, systemBalanceKg: 950 }]);
+    jest.spyOn(service as any, 'loadLatestRequisitionStatuses').mockResolvedValue(new Map());
+
+    const out = await cls.run(() => service.siloStatus({ farmId: 'farm-b' }, 'tenant-1', 'TENANT_ADMIN'));
+
+    expect(out.rows[0]).toMatchObject({
+      firstShortageDate: '2026-10-02', // day 10, outside the dashboard's own window
+      daysRemaining: 9.5,
+      projectedNeedKg: 700, // 7 days x 100 kg, unchanged by the longer horizon
+      projectedShortfallKg: 0,
+      recommendedOrderKg: 0,
+    });
+    // The grid's own horizon: the planning date plus MAX_SPAN_DAYS (Q12).
+    expect(compute).toHaveBeenCalledWith('farm-b', 'co-1', 'tenant-1',
+      { planningDate: '2026-09-23', from: '2026-09-23', to: '2026-09-29', horizonTo: '2026-11-07' }, expect.anything());
   });
 
   it('refuses a malformed planning date', async () => {
