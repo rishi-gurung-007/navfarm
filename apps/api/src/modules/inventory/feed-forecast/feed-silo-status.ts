@@ -62,6 +62,14 @@ export function buildSiloStatus(args: {
     const projectedNeedKg = round3(sources.reduce((sum, s) => sum + s.walkDemandKg + s.safetyStockKg, 0));
     const projectedShortfallKg = round3(sources.reduce((sum, s) => sum + Math.max(0, s.shortfallKg), 0));
     const recommendedOrderKg = sources.reduce((sum, s) => sum + roundOrderKg(Math.max(0, round3(s.shortfallKg)), silo.feedType, settings), 0);
+    // I2: the quantities above add across every source feeding this silo (current diet
+    // AND next diet), so the date fields must look across all of them too — otherwise a
+    // silo with a shortfall entirely on its next-diet source shows a positive Projected
+    // Shortfall/Recommended Order beside a blank First Shortage Date and a comfortable
+    // Days Remaining (both read from `primary` alone). dailyRequirementKg stays on
+    // `primary`: "daily consumption for this silo" is the current diet's by definition.
+    const shortageDates = sources.map((s) => s.shortageDate ?? null).filter((d): d is string => d !== null).sort();
+    const daysLeftValues = sources.map((s) => s.daysLeft).filter((d): d is number => d !== null);
 
     // The change this silo is party to: its item is being left, or it is the silo the new diet will draw from.
     const itemIds = new Set([...sources.map((s) => s.itemId), ...(silo.feedInSiloItemId ? [silo.feedInSiloItemId] : [])]);
@@ -79,8 +87,8 @@ export function buildSiloStatus(args: {
       ...silo,
       currentDietItemId: current?.itemId ?? null,
       dailyRequirementKg: primary ? (primary.planningDayDemandKg > 0 ? primary.planningDayDemandKg : primary.firstDayDemandKg) : 0,
-      daysRemaining: primary?.daysLeft ?? null,
-      firstShortageDate: primary?.shortageDate ?? null,
+      daysRemaining: daysLeftValues.length ? Math.min(...daysLeftValues) : null,
+      firstShortageDate: shortageDates[0] ?? null,
       projectedNeedKg,
       nextDietItemId: change?.toItemId ?? null,
       nextDietDate: change?.changeDate ?? null,

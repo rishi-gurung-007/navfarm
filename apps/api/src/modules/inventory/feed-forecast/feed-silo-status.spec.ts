@@ -72,6 +72,33 @@ describe('buildSiloStatus', () => {
     expect(row.alert).toBeNull();
   });
 
+  it('I2: the earliest shortage date and the minimum days left come from across all of a silo\'s sources, not from primary alone — dailyRequirementKg stays on primary (the workbook\'s Dashboard row 58 shape: current diet ample, next diet none)', () => {
+    const twoSourceSilo = {
+      sources: [
+        // current diet: ample stock, no shortage anywhere in the window.
+        { sourceType: 'SILO', locationId: 's1', itemId: 'r1', planningDayDemandKg: 400, firstDayDemandKg: 400, walkDemandKg: 2800, safetyStockKg: 0, shortfallKg: 0, daysLeft: 22.5, shortageDate: null },
+        // next diet: nothing eats it today, but the silo holds none of it — an immediate shortage.
+        { sourceType: 'SILO', locationId: 's1', itemId: 'r2', planningDayDemandKg: 0, firstDayDemandKg: 0, walkDemandKg: 1200, safetyStockKg: 0, shortfallKg: 1200, daysLeft: 0, shortageDate: '2026-09-24' },
+      ],
+      dietChanges: [],
+    };
+    const [row] = buildSiloStatus({
+      silos: [fact({ systemBalanceKg: 9000 })],
+      result: twoSourceSilo as any,
+      requisitionStatusBySilo: new Map(),
+      submissionDeadline: null,
+    });
+    // Before the fix, firstShortageDate/daysRemaining read `primary` (the current-diet
+    // source) only: a blank shortage date and a comfortable 22.5 days beside a real
+    // 1,200 kg shortfall and recommended order driven entirely by the next-diet source.
+    expect(row).toMatchObject({
+      dailyRequirementKg: 400,
+      firstShortageDate: '2026-09-24',
+      daysRemaining: 0,
+      projectedShortfallKg: 1200,
+    });
+  });
+
   it('shows a next diet only on silos serving the shed that changes (fix round 1, finding 2)', () => {
     const twoSheds = {
       sources: [],
