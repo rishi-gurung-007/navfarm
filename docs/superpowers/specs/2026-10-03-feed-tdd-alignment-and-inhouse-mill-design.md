@@ -122,7 +122,7 @@ first copied into a farm-override Feed Planning Settings row where they differ f
    (same path as stock adjustment), valued at the item's current unit cost.
 2. **Loading Instruction Sheet** — created when the Farm Manager approves a requisition
    (Req. §3). No. LOAD-ReqNo. One line per requisition line: delivery date, diet, description,
-   bin, farm silo, KG ordered (system); compartment no., KG loaded, loaded by, loading date-time
+   bin, farm silo, KG ordered (system: the requisition line's requested KG, replaced by the mill approved KG once consolidation sets it); compartment no., KG loaded, loaded by, loading date-time
    (mill). Status DRAFT → LOADED → DISPATCHED → RECEIVED.
 3. **Consolidation Sheet** — CONS-YYYYWW-NNN, one per production week. Loads APPROVED
    requisition lines only (cp. 41). Row per farm per diet: diet no., bin, farm requested KG,
@@ -198,7 +198,7 @@ approval → production output → consolidation (Diet 1 12,000 vs 20,000 GREEN)
 dispatch → receipt (SILO1 7,500) → POST Day (5,500) → stock take −100 KG → period close. Also
 cover: bagged destination, partial and over receipt, silo with a different non-empty item,
 capacity breach, one-to-many and many-to-many silo topologies. Report in
-`docs/VERIFICATION-2026-10-xx-feed-tdd-alignment.md`.
+`docs/VERIFICATION-<completion date>-feed-tdd-alignment.md`, dated the day verification finishes.
 
 ## 9. Out of scope
 
