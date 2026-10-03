@@ -2,6 +2,7 @@ import { transactionCls } from '../../../test-utils/transaction-cls';
 import { farmScope } from '../../../common/farm-scope';
 import { FeedForecastService } from './feed-forecast.service';
 import { buildFeedForecast } from './feed-forecast.engine';
+import { MySqlDialect } from 'drizzle-orm/mysql-core';
 
 const SETTINGS = { safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50, truckTargetKg: 30000, productionWeekday: 6 };
 const FEED_SETTINGS_STUB = { resolveForFeedPlanning: jest.fn(async () => SETTINGS) } as any;
@@ -20,7 +21,7 @@ describe('FeedForecastService.siloStatus', () => {
   const siloFact = {
     siloId: 's1', siloCode: 'GRS/SILO-001', houseCodes: ['GRS/SHED-003'], capacityKg: 12000, belowFeedLevelKg: 1000, aboveThresholdKg: 10800,
     feedInSiloItemId: 'r1', feedInSiloItemName: 'Weaner Diet R1', feedType: 'BULK', systemBalanceKg: 1500,
-    lastApprovedCountKg: null, lastApprovedCountAt: null, lastFeedReceiptDate: '2026-09-20', blocked: false,
+    lastApprovedCountKg: null, lastApprovedCountAt: null, lastFeedReceiptDate: '2026-09-20', nonKgBalance: false,
   };
 
   function build() {
@@ -38,7 +39,7 @@ describe('FeedForecastService.siloStatus', () => {
     const compute = jest.spyOn(service, 'computeForFarm');
     const facts: Array<string | null> = [];
     jest.spyOn(service as any, 'loadSiloFacts').mockImplementation(async () => { facts.push(farmScope(cls).farmId); return [siloFact]; });
-    jest.spyOn(service as any, 'loadOpenRequisitionStatuses').mockResolvedValue(new Map([['s1', 'AUTO_DRAFT']]));
+    jest.spyOn(service as any, 'loadLatestRequisitionStatuses').mockResolvedValue(new Map([['s1', 'AUTO_DRAFT']]));
 
     const out = await cls.run(() => service.siloStatus({ farmId: 'farm-b' }, 'tenant-1', 'TENANT_ADMIN'));
 
@@ -56,5 +57,68 @@ describe('FeedForecastService.siloStatus', () => {
   it('refuses a malformed planning date', async () => {
     const { cls, service } = build();
     await expect(cls.run(() => service.siloStatus({ planningDate: '2026-02-31' }, 'tenant-1', 'TENANT_ADMIN'))).rejects.toThrow(/calendar date/);
+  });
+});
+
+/** Fix round 1: what loadSiloFacts and loadOpenRequisitionStatuses read, with a query double that answers in order and keeps each where(). */
+describe('FeedForecastService silo facts and requisition status (fix round 1)', () => {
+  function fakeDb(answers: unknown[][]) {
+    const wheres: any[] = [];
+    const queue = [...answers];
+    const chain: any = {};
+    for (const m of ['select', 'from', 'innerJoin', 'orderBy', 'limit', 'groupBy']) chain[m] = () => chain;
+    chain.where = (cond: any) => { wheres.push(cond); return chain; };
+    chain.then = (resolve: any, reject: any) => Promise.resolve(queue.shift() ?? []).then(resolve, reject);
+    return { db: chain, wheres };
+  }
+  const planningSilo = (over: object) => ({
+    locationId: 's1', code: 'SILO-1', name: 'Silo 1', linkedSheds: [{ locationId: 'h', code: 'SHED-1', name: 'H' }], feedType: 'BULK',
+    feedItemCode: null, feedItemName: null, capacityKg: 12000, lowLevelKg: 1000, highLevelKg: 10800, status: 'ACTIVE', ...over,
+  });
+  const make = (db: any, balances: any[] = []) => {
+    const cls = transactionCls(db);
+    const service = new FeedForecastService(cls, { getStockBalance: jest.fn(async () => balances) } as any, { log: jest.fn() } as any, {} as any, FEED_SETTINGS_STUB);
+    return { cls, service };
+  };
+  const sqlOf = (cond: any) => new MySqlDialect().sqlToQuery(cond);
+
+  it('lists ACTIVE silos only; an INACTIVE silo is not returned (finding 1)', async () => {
+    const { db } = fakeDb([[], [{ warehouse_id: 's1', item_id: 'r1', item_description: 'R1', posting_date: '2026-09-20' }]]);
+    const { cls, service } = make(db, [{ item_id: 'r1', uom: 'KG', on_hand_qty: '1500' }]);
+    jest.spyOn(service as any, 'siloPlanningRows').mockResolvedValue(new Map([['farm-b', [planningSilo({}), planningSilo({ locationId: 's2', code: 'SILO-2', status: 'INACTIVE' })]]]));
+    const facts = await cls.run(() => (service as any).loadSiloFacts('farm-b', 'co-1', 'tenant-1'));
+    expect(facts.map((f: any) => f.siloId)).toEqual(['s1']);
+    expect(facts[0]).not.toHaveProperty('blocked');
+  });
+
+  it('reads only genuine receipts for Feed in Silo / Last Feed Receipt, never variances or reversals (finding 3)', async () => {
+    const { db, wheres } = fakeDb([[], []]);
+    const { cls, service } = make(db);
+    jest.spyOn(service as any, 'siloPlanningRows').mockResolvedValue(new Map([['farm-b', [planningSilo({})]]]));
+    await cls.run(() => (service as any).loadSiloFacts('farm-b', 'co-1', 'tenant-1'));
+    const text = wheres.map((w) => JSON.stringify(sqlOf(w))).join('\n');
+    expect(text).toContain('PURCHASE');
+    expect(text).toContain('TRANSFER_RECEIPT');
+    expect(text).not.toContain('VARIANCE_POSITIVE');
+    expect(text).toMatch(/REVERSAL/); // receipts that a REVERSAL row points at are skipped
+  });
+
+  it('sums KG rows only and flags a silo that also holds bags (finding 4)', async () => {
+    const { db } = fakeDb([[], [{ warehouse_id: 's1', item_id: 'r1', item_description: 'R1', posting_date: '2026-09-20' }]]);
+    const { cls, service } = make(db, [{ item_id: 'r1', uom: 'KG', on_hand_qty: '1500' }, { item_id: 'r1', uom: 'BAG', on_hand_qty: '40' }]);
+    jest.spyOn(service as any, 'siloPlanningRows').mockResolvedValue(new Map([['farm-b', [planningSilo({})]]]));
+    const [fact] = await cls.run(() => (service as any).loadSiloFacts('farm-b', 'co-1', 'tenant-1'));
+    expect(fact.systemBalanceKg).toBe(1500);
+    expect(fact.nonKgBalance).toBe(true);
+  });
+
+  it('picks the latest created requisition per silo, whatever order rows come back in (finding 5)', async () => {
+    const { db } = fakeDb([[
+      { destination: 's1', status: 'APPROVED', created_at: '2026-09-24 10:00:00' },
+      { destination: 's1', status: 'DRAFT', created_at: '2026-09-23 10:00:00' },
+    ]]);
+    const { cls, service } = make(db);
+    const map = await cls.run(() => (service as any).loadLatestRequisitionStatuses('farm-b', 'tenant-1', '2026-09-25'));
+    expect(map.get('s1')).toBe('APPROVED');
   });
 });

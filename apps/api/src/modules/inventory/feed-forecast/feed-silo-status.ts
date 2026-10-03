@@ -21,7 +21,8 @@ export interface SiloFact {
   lastApprovedCountKg: number | null;
   lastApprovedCountAt: string | null;
   lastFeedReceiptDate: string | null;
-  blocked: boolean;
+  /** The silo's feed also has balance rows in a unit other than KG; System Balance counts the KG rows only. */
+  nonKgBalance: boolean;
 }
 
 export interface SiloStatusRow extends SiloFact {
@@ -65,7 +66,7 @@ export function buildSiloStatus(args: {
     // The change this silo is party to: its item is being left, or it is the silo the new diet will draw from.
     const itemIds = new Set([...sources.map((s) => s.itemId), ...(silo.feedInSiloItemId ? [silo.feedInSiloItemId] : [])]);
     const change = result.dietChanges
-      .filter((c) => itemIds.has(c.fromItemId) || c.nextSourceCode === silo.siloCode)
+      .filter((c) => (itemIds.has(c.fromItemId) && silo.houseCodes.includes(c.shedCode)) || c.nextSourceCode === silo.siloCode)
       .sort((a, b) => a.changeDate.localeCompare(b.changeDate))[0] ?? null;
 
     const balance = silo.systemBalanceKg;

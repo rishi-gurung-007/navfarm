@@ -1654,7 +1654,7 @@ export const translations = {
     fsdBagged: "Bagged",
     fsdYes: "Yes",
     fsdNo: "No",
-    fsdBlocked: "Blocked",
+    fsdNonKg: "Non-KG stock excluded",
     fsdAlertCritical: "Critical — first priority",
     fsdAlertInfo: "Above threshold",
     fftTabFeedRequisition: "Internal Feed Transfer",

@@ -14,7 +14,7 @@ jest.mock('../src/components/console/inventory/use-feed-farm', () => ({
 
 const base = {
   houseCodes: ['GRS/SHED-003'], capacityKg: 12000, belowFeedLevelKg: 1000, aboveThresholdKg: 10800, feedInSiloItemId: 'r1', feedInSiloItemName: 'Weaner Diet R1',
-  feedType: 'BULK', systemBalanceKg: 1500, lastApprovedCountKg: null, lastApprovedCountAt: null, lastFeedReceiptDate: '2026-09-20', blocked: false,
+  feedType: 'BULK', systemBalanceKg: 1500, lastApprovedCountKg: null, lastApprovedCountAt: null, lastFeedReceiptDate: '2026-09-20', nonKgBalance: false,
   currentDietItemId: 'r1', dailyRequirementKg: 2000, daysRemaining: 0.8, firstShortageDate: '2026-09-23', projectedNeedKg: 6000, nextDietItemId: 'r2',
   nextDietDate: '2026-09-26', siloAvailableForNextDiet: true, projectedShortfallKg: 4500, recommendedOrderKg: 6000, requisitionStatus: null,
   submissionDeadline: '2026-09-25', alert: null,
@@ -28,7 +28,7 @@ describe('FeedSiloDashboard', () => {
       planningDate: '2026-09-23', submissionDeadline: '2026-09-25', itemNames: { r1: 'Weaner Diet R1', r2: 'Weaner Diet R2' },
       rows: [
         { ...base, siloId: 's1', siloCode: 'GRS/SILO-001' },
-        { ...base, siloId: 's2', siloCode: 'GRS/SILO-002', systemBalanceKg: 1000, currentDietItemId: null, alert: 'CRITICAL_FIRST_PRIORITY' },
+        { ...base, siloId: 's2', siloCode: 'GRS/SILO-002', systemBalanceKg: 1000, nonKgBalance: true, currentDietItemId: null, alert: 'CRITICAL_FIRST_PRIORITY' },
       ],
     } });
 
@@ -40,6 +40,7 @@ describe('FeedSiloDashboard', () => {
     expect(screen.getByRole('columnheader', { name: 'fsdColBalance' })).toBeTruthy();
     const second = document.querySelector('[data-silo-row="GRS/SILO-002"]') as HTMLElement;
     expect(within(second).getByText('fsdAlertCritical')).toBeTruthy();
+    expect(within(second).getByText('fsdNonKg')).toBeTruthy();
     expect(within(document.querySelector('[data-silo-row="GRS/SILO-001"]') as HTMLElement).queryByText('fsdAlertCritical')).toBeNull();
   });
 

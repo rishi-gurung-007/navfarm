@@ -51,6 +51,9 @@ const GONE_STATUSES = ['DEAD', 'SOLD', 'CULLED', 'SLAUGHTERED'];
  */
 const MAX_SEGMENTS = 60;
 
+/** Ledger transaction types that bring feed into a silo (Master Setup row 16); variances and reversals are not receipts. */
+const SILO_RECEIPT_TRANSACTION_TYPES = ['PURCHASE', 'TRANSFER_RECEIPT'] as const;
+
 export interface ForecastFarm {
   id: string;
   code: string;
@@ -1293,7 +1296,7 @@ export class FeedForecastService {
     return this.withFarmScope(farmId, companyId, async () => {
       const forecast = await this.computeForFarm(farmId, companyId, tenantId, { planningDate, from: planningDate, to }, clock);
       const silos = await this.loadSiloFacts(farmId, companyId, tenantId);
-      const requisitionStatusBySilo = await this.loadOpenRequisitionStatuses(farmId, tenantId, submissionDeadline);
+      const requisitionStatusBySilo = await this.loadLatestRequisitionStatuses(farmId, tenantId, submissionDeadline);
       const rows = buildSiloStatus({ silos, result: forecast, requisitionStatusBySilo, submissionDeadline, settings });
       // Names for the diet columns, which the rows carry as ids.
       const itemNames: Record<string, string> = {};
@@ -1313,20 +1316,10 @@ export class FeedForecastService {
    * the last approved count is the latest POSTED stock count line.
    */
   private async loadSiloFacts(farmId: string, companyId: string, tenantId: string): Promise<SiloFact[]> {
-    const planning = (await this.siloPlanningRows([farmId], tenantId)).get(farmId) ?? [];
+    // Engine §1 row 8: only ACTIVE silos are planned; location_master.status is ACTIVE or INACTIVE.
+    const planning = ((await this.siloPlanningRows([farmId], tenantId)).get(farmId) ?? []).filter((s) => s.status === 'ACTIVE');
     if (!planning.length) return [];
     const siloIds = planning.map((s) => s.locationId);
-    const Ledger = schema.inventoryLedger;
-    const inbound = await this.db
-      .select({ warehouse_id: Ledger.warehouse_id, item_id: Ledger.item_id, item_description: Ledger.item_description, posting_date: Ledger.posting_date })
-      .from(Ledger)
-      .where(and(
-        eq(Ledger.tenant_id, tenantId), eq(Ledger.company_id, companyId),
-        inArray(Ledger.warehouse_id, siloIds), eq(Ledger.entry_type, 'POSITIVE'), gt(Ledger.quantity, '0'),
-      ))
-      .orderBy(sql`${Ledger.posting_date} DESC`, sql`${Ledger.created_at} DESC`);
-    const lastInbound = new Map<string, (typeof inbound)[number]>();
-    for (const row of inbound) if (row.warehouse_id && !lastInbound.has(row.warehouse_id)) lastInbound.set(row.warehouse_id, row);
 
     const Count = schema.feedStockCount;
     const Line = schema.feedStockCountLine;
@@ -1337,12 +1330,28 @@ export class FeedForecastService {
       .where(and(eq(Count.tenant_id, tenantId), eq(Count.farm_id, farmId), eq(Count.status, 'POSTED'), inArray(Line.silo_id, siloIds)))
       .orderBy(sql`${Count.counted_at} DESC`);
 
+    const Ledger = schema.inventoryLedger;
+    const Reversal = alias(schema.inventoryLedger, 'feed_receipt_reversal');
     const facts: SiloFact[] = [];
     for (const silo of planning) {
-      const last = lastInbound.get(silo.locationId) ?? null;
-      const balances = await this.ledgerService.getStockBalance({ companyId, warehouseId: silo.locationId } as any, tenantId);
+      // Master Setup row 16: the last genuine receipt (purchase or transfer in), newest first, one row.
+      // Variances and reversals are not receipts, and neither is a receipt a REVERSAL row points back at.
+      const [last = null] = await this.db
+        .select({ item_id: Ledger.item_id, item_description: Ledger.item_description, posting_date: Ledger.posting_date })
+        .from(Ledger)
+        .where(and(
+          eq(Ledger.tenant_id, tenantId), eq(Ledger.company_id, companyId), eq(Ledger.warehouse_id, silo.locationId),
+          eq(Ledger.entry_type, 'POSITIVE'), inArray(Ledger.transaction_type, [...SILO_RECEIPT_TRANSACTION_TYPES]), gt(Ledger.quantity, '0'),
+          sql`NOT EXISTS (SELECT 1 FROM ${Reversal} WHERE ${Reversal.external_reference_no} = ${Ledger.ledger_id} AND ${Reversal.transaction_type} = 'REVERSAL')`,
+        ))
+        .orderBy(sql`${Ledger.posting_date} DESC`, sql`${Ledger.created_at} DESC`)
+        .limit(1);
       const itemId = last?.item_id ?? null;
-      const onHand = itemId ? balances.filter((b) => b.item_id === itemId).reduce((sum, b) => sum + Number(b.on_hand_qty), 0) : 0;
+      const balances = itemId
+        ? (await this.ledgerService.getStockBalance({ companyId, warehouseId: silo.locationId } as any, tenantId)).filter((b) => b.item_id === itemId)
+        : [];
+      // Bags are never added to kilograms (silo-feed.service.ts); the dashboard flags the silo instead of refusing.
+      const onHand = balances.filter((b) => b.uom === 'KG').reduce((sum, b) => sum + Number(b.on_hand_qty), 0);
       const count = counts.find((c) => c.silo_id === silo.locationId && (itemId === null || c.item_id === itemId)) ?? null;
       facts.push({
         siloId: silo.locationId,
@@ -1358,27 +1367,31 @@ export class FeedForecastService {
         lastApprovedCountKg: count ? Number(count.counted_qty_kg) : null,
         lastApprovedCountAt: count?.counted_at ?? null,
         lastFeedReceiptDate: last?.posting_date ?? null,
-        blocked: silo.status === 'BLOCKED',
+        nonKgBalance: balances.some((b) => b.uom !== 'KG' && Math.abs(Number(b.on_hand_qty)) > 0.0001),
       });
     }
     return facts;
   }
 
-  /** Status of the cycle's live feed requisition covering each silo (rejected and cancelled ones do not count). */
-  private async loadOpenRequisitionStatuses(farmId: string, tenantId: string, submissionDeadline: string): Promise<Map<string, string>> {
+  /** The cycle's feed requisition covering each silo: the latest created one, rejected and cancelled excluded. */
+  private async loadLatestRequisitionStatuses(farmId: string, tenantId: string, submissionDeadline: string): Promise<Map<string, string>> {
     const R = schema.requisition;
     const RL = schema.requisitionLine;
     const rows = await this.db
-      .select({ destination: RL.destination_location_id, status: R.status })
+      .select({ destination: RL.destination_location_id, status: R.status, created_at: R.created_at })
       .from(RL)
       .innerJoin(R, eq(R.requisition_id, RL.requisition_id))
       .where(and(
         eq(R.tenant_id, tenantId), eq(R.farm_id, farmId), eq(R.doc_type, 'FEED'),
         eq(R.submission_deadline, submissionDeadline), notInArray(R.status, ['REJECTED', 'CANCELLED']), isNull(R.deleted_at),
       ));
-    const byDestination = new Map<string, string>();
-    for (const row of rows) if (row.destination) byDestination.set(row.destination, row.status);
-    return byDestination;
+    const latest = new Map<string, { status: string; created_at: string }>();
+    for (const row of rows) {
+      if (!row.destination) continue;
+      const seen = latest.get(row.destination);
+      if (!seen || String(row.created_at) > String(seen.created_at)) latest.set(row.destination, { status: row.status, created_at: String(row.created_at) });
+    }
+    return new Map([...latest].map(([silo, v]) => [silo, v.status]));
   }
 
   /**

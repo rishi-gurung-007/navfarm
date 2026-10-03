@@ -24,7 +24,7 @@ const workedExample: ForecastInput = {
 const fact = (over: Partial<SiloFact>): SiloFact => ({
   siloId: 's1', siloCode: 'GRS/SILO-001', houseCodes: ['GRS/SHED-003'], capacityKg: 12000, belowFeedLevelKg: 1000, aboveThresholdKg: 10800,
   feedInSiloItemId: 'r1', feedInSiloItemName: 'Weaner Diet R1', feedType: 'BULK', systemBalanceKg: 1500,
-  lastApprovedCountKg: null, lastApprovedCountAt: null, lastFeedReceiptDate: null, blocked: false, ...over,
+  lastApprovedCountKg: null, lastApprovedCountAt: null, lastFeedReceiptDate: null, nonKgBalance: false, ...over,
 });
 
 describe('buildSiloStatus', () => {
@@ -70,5 +70,21 @@ describe('buildSiloStatus', () => {
   it('no thresholds set means no alert', () => {
     const [row] = buildSiloStatus({ silos: [fact({ belowFeedLevelKg: null, aboveThresholdKg: null, systemBalanceKg: 0 })], result, requisitionStatusBySilo: new Map(), submissionDeadline: null });
     expect(row.alert).toBeNull();
+  });
+
+  it('shows a next diet only on silos serving the shed that changes (fix round 1, finding 2)', () => {
+    const twoSheds = {
+      sources: [],
+      dietChanges: [{
+        batchId: 'b', batchNo: 'B1', shedCode: 'SHED-A', fromItemId: 'r1', fromItemName: 'R1', toItemId: 'r2', toItemName: 'R2',
+        changeDate: '2026-09-26', nextSourceType: 'SILO' as const, nextSourceCode: 'SILO-X',
+      }],
+    };
+    const [a, b] = buildSiloStatus({
+      silos: [fact({ siloId: 'sa', siloCode: 'SILO-A', houseCodes: ['SHED-A'] }), fact({ siloId: 'sb', siloCode: 'SILO-B', houseCodes: ['SHED-B'] })],
+      result: twoSheds, requisitionStatusBySilo: new Map(), submissionDeadline: null,
+    });
+    expect(a).toMatchObject({ nextDietItemId: 'r2', nextDietDate: '2026-09-26' });
+    expect(b).toMatchObject({ nextDietItemId: null, nextDietDate: null, siloAvailableForNextDiet: null });
   });
 });

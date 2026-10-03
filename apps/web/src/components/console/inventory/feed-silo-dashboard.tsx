@@ -36,7 +36,7 @@ export interface SiloStatusRow {
   lastApprovedCountKg: number | null;
   lastApprovedCountAt: string | null;
   lastFeedReceiptDate: string | null;
-  blocked: boolean;
+  nonKgBalance: boolean;
   currentDietItemId: string | null;
   dailyRequirementKg: number;
   daysRemaining: number | null;
@@ -96,8 +96,8 @@ export default function FeedSiloDashboard() {
       const params = new URLSearchParams({ farmId });
       if (planningDate) params.set("planningDate", planningDate);
       setData(unwrap<SiloStatusResponse>(await api.get(`/feed-forecast/silo-status?${params.toString()}`)));
-    } catch (err: any) {
-      setError(err?.message || t("fsdLoadFailed"));
+    } catch (err: unknown) {
+      setError((err instanceof Error && err.message) || t("fsdLoadFailed"));
     } finally {
       setLoading(false);
     }
@@ -113,7 +113,7 @@ export default function FeedSiloDashboard() {
       : null
     : undefined;
   const noFarms = !farm.isFixed && farm.loaded && farm.farms.length === 0;
-  const rows = Array.isArray(data?.rows) ? data!.rows : [];
+  const rows = data?.rows ?? [];
   const nameOf = (id: string | null) => (id ? data?.itemNames?.[id] ?? "—" : "—");
 
   return (
@@ -166,7 +166,6 @@ export default function FeedSiloDashboard() {
               <tr key={row.siloId} data-silo-row={row.siloCode}>
                 <td className={cn(TD, "font-medium")}>
                   {row.siloCode}
-                  {row.blocked && <Badge variant="danger" className="ml-2 px-1.5 py-0 text-[10px]">{t("fsdBlocked")}</Badge>}
                 </td>
                 <td className={TD}>{row.houseCodes.length ? row.houseCodes.join(", ") : "—"}</td>
                 <td className={TD}>{row.feedType === "BAGGED" ? t("fsdBagged") : t("fsdBulk")}</td>
@@ -174,7 +173,10 @@ export default function FeedSiloDashboard() {
                 <td className={cn(TD, NUM)}>{kg(row.capacityKg)}</td>
                 <td className={cn(TD, NUM)}>{kg(row.belowFeedLevelKg)}</td>
                 <td className={cn(TD, NUM)}>{kg(row.aboveThresholdKg)}</td>
-                <td className={cn(TD, NUM)}>{kg(row.systemBalanceKg)}</td>
+                <td className={cn(TD, NUM)}>
+                  {row.nonKgBalance && <Badge variant="warning" className="mr-2 px-1.5 py-0 text-[10px]">{t("fsdNonKg")}</Badge>}
+                  {kg(row.systemBalanceKg)}
+                </td>
                 <td className={cn(TD, NUM)} title={row.lastApprovedCountAt ?? undefined}>{kg(row.lastApprovedCountKg)}</td>
                 <td className={TD}>{day(row.lastFeedReceiptDate)}</td>
                 <td className={TD}>{nameOf(row.currentDietItemId)}</td>
