@@ -37,7 +37,7 @@ import type { ApprovalRequestRow } from '../../production/approval/approval.serv
 import { FeedSettingsService } from '../../inventory/feed-settings/feed-settings.service';
 import { toFarmFeedSettings } from '../../inventory/feed-settings/feed-settings.rules';
 import {
-  ApprovalLine, DestinationInfo, DraftLine, FarmFeedSettings, FeedType, approvalProblems, bagCountFor, diffDaysIso, feedTypeOf, lineKey, planDraftUpsert,
+  ApprovalLine, DestinationInfo, DraftLine, FarmFeedSettings, FeedType, approvalProblems, bagCountFor, diffDaysIso, exceedsCapacity, feedTypeOf, lineKey, planDraftUpsert,
   productionCycle, recommendLines, requisitionPriority, runKeyFor, serverToday, wasEdited,
 } from './feed-requisition.rules';
 import {
@@ -524,6 +524,7 @@ export class FeedRequisitionService implements OnModuleInit {
                 dest: schema.requisitionLine.destination_location_id, item: schema.requisitionLine.item_id,
                 quantity: schema.requisitionLine.quantity, recommended: schema.requisitionLine.recommended_qty_kg,
                 edited: schema.requisitionLine.quantity_edited,
+                recommended_date: schema.requisitionLine.recommended_delivery_date, proposed_date: schema.requisitionLine.proposed_delivery_date,
               })
               .from(schema.requisitionLine)
               .where(eq(schema.requisitionLine.requisition_id, draft.requisition_id))
@@ -533,6 +534,7 @@ export class FeedRequisitionService implements OnModuleInit {
             lineId: l.line_id, key: lineKey(l.dest!, l.item!), quantityKg: Number(l.quantity),
             recommendedQtyKg: l.recommended == null ? null : Number(l.recommended),
             quantityEdited: !!l.edited,
+            recommendedDeliveryDate: l.recommended_date ?? null, proposedDeliveryDate: l.proposed_date ?? null,
           })),
           covered,
           wanted,
@@ -551,7 +553,7 @@ export class FeedRequisitionService implements OnModuleInit {
           // priority and required date as they were rather than blanking them.
           ...(drafted.length ? {
             priority: requisitionPriority(forecast.planningDate, drafted),
-            required_date: drafted.map((l) => l.proposedDeliveryDate).sort()[0] ?? null,
+            required_date: [...plan.insert.map((l) => l.proposedDeliveryDate), ...plan.update.map((u) => (u.keepDeliveryDate ? u.priorProposedDeliveryDate! : u.line.proposedDeliveryDate))].sort()[0] ?? null,
           } : {}),
           forecast_run_key: runKey,
           feed_forecast_run_id: draftRun?.runId ?? null,
@@ -579,8 +581,9 @@ export class FeedRequisitionService implements OnModuleInit {
             ...header,
           });
           await this.db.insert(schema.requisitionLine).values(
-            plan.insert.map((line) => ({
-              requisition_id: requisitionId, line_seq: line.lineNo, quantity: String(line.recommendedQtyKg), quantity_edited: false, ...this.lineValues(line, runLinesFor(line)),
+            plan.insert.map((line, i) => ({
+              // By position in what is actually inserted: a line dropped as already covered must not leave 20000 as a first number.
+              requisition_id: requisitionId, line_seq: (i + 1) * 10000, quantity: String(line.recommendedQtyKg), quantity_edited: false, ...this.lineValues(line, runLinesFor(line)),
             })),
           );
           return { requisitionId, created: true, linesDrafted: plan.insert.length };
@@ -590,8 +593,11 @@ export class FeedRequisitionService implements OnModuleInit {
           await this.db.delete(schema.requisitionLine).where(inArray(schema.requisitionLine.line_id, plan.remove));
         }
         for (const u of plan.update) {
+          const { proposed_delivery_date: draftedDate, ...refreshed } = this.lineValues(u.line, runLinesFor(u.line));
           await this.db.update(schema.requisitionLine).set({
-            ...this.lineValues(u.line, runLinesFor(u.line)),
+            ...refreshed,
+            // Req. row 29: a date the farm moved is not written back; only the recommendation beside it is refreshed.
+            ...(u.keepDeliveryDate ? {} : { proposed_delivery_date: draftedDate }),
             // line_seq is deliberately NOT written here. It is user-visible (requisitions-panel.tsx,
             // requisition-approval-detail.tsx) and requisition_line carries no unique index on it, so
             // renumbering an already-drafted matched line to its current draft-order position on every
@@ -604,6 +610,8 @@ export class FeedRequisitionService implements OnModuleInit {
             ...(u.keepQuantity
               ? { bag_count: bagCountFor(u.priorQuantityKg, u.line.feedType, farm.settings) }
               : { quantity: String(u.line.recommendedQtyKg) }),
+            // Engine Step 8: the capacity warning follows the quantity that will actually be delivered.
+            exceeds_silo_capacity: exceedsCapacity(u.keepQuantity ? u.priorQuantityKg : u.line.recommendedQtyKg, u.line.deliveryDayOpeningKg, u.line.capacityKg),
           }).where(eq(schema.requisitionLine.line_id, u.lineId));
         }
         if (plan.insert.length) {

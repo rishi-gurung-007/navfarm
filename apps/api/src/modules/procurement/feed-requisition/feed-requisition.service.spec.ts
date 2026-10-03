@@ -487,6 +487,66 @@ describe('FeedRequisitionService.autoDraft', () => {
     expect(new Set(liveSeqs).size).toBe(liveSeqs.length);
   });
 
+  it('rerun keeps a delivery date the farm moved (Requisition row 29: "Farm Manager can edit with reason") and refreshes only the recommended date', async () => {
+    const queues = new Map<unknown, unknown[][]>([
+      [schema.locationMaster, [[FARM_ROW], [SILO_ROW], [{ location_id: 'farm-grs' }]]],
+      [schema.requisition, [[{ requisition_id: 'req-1', status: 'AUTO_DRAFT', requisition_type: 'FEED_FORECAST' }], [{ req: { requisition_id: 'req-1' }, farm_code: 'GRS', truck_target_kg: 30000 }]]],
+      [schema.requisitionLine, [[
+        // Drafted for the 20th; the farm moved it to the 25th.
+        { line_id: 'L1', line_seq: 10000, dest: 'silo-1', item: 'item-r1', quantity: '6000.0000', recommended: '6000.0000', edited: false,
+          recommended_date: '2026-09-20', proposed_date: '2026-09-25' },
+      ]]],
+    ]);
+    const { service, log } = setup([source({ shortageDate: serverToday() })], queues);
+    await service.autoDraft({}, 'tenant-1', { userId: 'u-1', userType: 'COMPANY_ADMIN' });
+    const lineUpdate = log.find((e) => e.op === 'update' && e.table === schema.requisitionLine)!;
+    expect(lineUpdate.set).toMatchObject({ recommended_delivery_date: serverToday() });
+    expect(lineUpdate.set).not.toHaveProperty('proposed_delivery_date');
+    // The header's Required On follows the date the farm actually asked for.
+    const header = log.find((e) => e.op === 'update' && e.table === schema.requisition)!;
+    expect(header.set).toMatchObject({ required_date: '2026-09-25' });
+  });
+
+  it('first draft numbers lines by position in the draft, not by the source order a covered line leaves a hole in (Requisition row 42)', async () => {
+    const year = serverToday().slice(0, 4);
+    const queues = new Map<unknown, unknown[][]>([
+      [schema.locationMaster, [[FARM_ROW], [SILO_ROW, { ...SILO_ROW, location_id: 'silo-2' }, { ...SILO_ROW, location_id: 'silo-3' }], [{ location_id: 'farm-grs' }]]],
+      [schema.requisition, [
+        [{ requisition_id: 'req-0', status: 'SUBMITTED', requisition_type: 'FEED_FORECAST' }],
+        [{ req_no: `REQ-GRS-${year}-00041` }],
+        [{ req: { requisition_id: 'new' }, farm_code: 'GRS', truck_target_kg: 30000 }],
+      ]],
+      // the cycle's other requisition already covers silo-1 / item-r1
+      [schema.requisitionLine, [[{ dest: 'silo-1', item: 'item-r1' }]]],
+    ]);
+    const sources = [
+      source(),
+      source({ sourceCode: 'GRS/SILO-002', locationId: 'silo-2', itemId: 'item-r2', itemName: 'Weaner Diet R2' }),
+      source({ sourceCode: 'GRS/SILO-003', locationId: 'silo-3', itemId: 'item-r3', itemName: 'Weaner Diet R3' }),
+    ];
+    const { service, log } = setup(sources, queues);
+    await service.autoDraft({}, 'tenant-1', { userId: 'u-1', userType: 'COMPANY_ADMIN' });
+    const lines = log.find((e) => e.op === 'insert' && e.table === schema.requisitionLine)!;
+    expect(lines.values.map((v: any) => [v.item_id, v.line_seq])).toEqual([['item-r2', 10000], ['item-r3', 20000]]);
+  });
+
+  it('a kept farm quantity gets its silo-capacity flag from the quantity stored, not from the recommendation (Engine Step 8)', async () => {
+    const queues = new Map<unknown, unknown[][]>([
+      // capacity 9,000 kg; opening on the delivery day 1,500 kg
+      [schema.locationMaster, [[FARM_ROW], [{ ...SILO_ROW, silo_capacity_kg: '9000.00' }], [{ location_id: 'farm-grs' }]]],
+      [schema.requisition, [[{ requisition_id: 'req-1', status: 'AUTO_DRAFT', requisition_type: 'FEED_FORECAST' }], [{ req: { requisition_id: 'req-1' }, farm_code: 'GRS', truck_target_kg: 30000 }]]],
+      [schema.requisitionLine, [[
+        // recommendation 6,000 (flag false: 7,500 <= 9,000) but the farm raised it to 9,000 (10,500 > 9,000)
+        { line_id: 'L1', line_seq: 10000, dest: 'silo-1', item: 'item-r1', quantity: '9000.0000', recommended: '6000.0000', edited: true },
+      ]]],
+    ]);
+    const { service, log } = setup([source()], queues);
+    await service.autoDraft({}, 'tenant-1', { userId: 'u-1', userType: 'COMPANY_ADMIN' });
+    const lineUpdate = log.find((e) => e.op === 'update' && e.table === schema.requisitionLine)!;
+    expect(lineUpdate.set).toMatchObject({ recommended_qty_kg: '6000', exceeds_silo_capacity: true });
+    expect(lineUpdate.set).not.toHaveProperty('quantity');
+  });
+
   it('skips a (silo, item) already on a manual requisition of the same cycle', async () => {
     const queues = new Map<unknown, unknown[][]>([
       [schema.locationMaster, [[FARM_ROW], [SILO_ROW], [{ location_id: 'farm-grs' }]]],

@@ -241,7 +241,7 @@ describe('planDraftUpsert — rerun without duplicate drafts (Engine Step 9, Rev
 
   it('refreshes an untouched line, quantity included', () => {
     const plan = planDraftUpsert([{ lineId: 'L1', key: 's1|r1', quantityKg: 6000, recommendedQtyKg: 6000 }], new Set(), [lineR1]);
-    expect(plan.update).toEqual([{ lineId: 'L1', line: lineR1, keepQuantity: false, priorQuantityKg: 6000 }]);
+    expect(plan.update).toEqual([{ lineId: 'L1', line: lineR1, keepQuantity: false, priorQuantityKg: 6000, keepDeliveryDate: false, priorProposedDeliveryDate: null }]);
   });
 
   it('keeps a quantity the farm edited', () => {
@@ -258,6 +258,14 @@ describe('planDraftUpsert — rerun without duplicate drafts (Engine Step 9, Rev
   it('removes a line no longer needed, unless the farm edited it', () => {
     expect(planDraftUpsert([{ lineId: 'L9', key: 's9|r9', quantityKg: 3000, recommendedQtyKg: 3000 }], new Set(), []).remove).toEqual(['L9']);
     expect(planDraftUpsert([{ lineId: 'L9', key: 's9|r9', quantityKg: 4000, recommendedQtyKg: 3000 }], new Set(), []).keep).toEqual(['L9']);
+  });
+
+  it('keeps a delivery date the farm moved off the drafted one, and refreshes the recommendation beside it (Req. row 29)', () => {
+    const moved = { lineId: 'L1', key: 's1|r1', quantityKg: 6000, recommendedQtyKg: 6000, recommendedDeliveryDate: '2026-09-22', proposedDeliveryDate: '2026-09-25' };
+    expect(planDraftUpsert([moved], new Set(), [lineR1]).update[0]).toMatchObject({ keepDeliveryDate: true, priorProposedDeliveryDate: '2026-09-25' });
+    // untouched (proposed still equals the old recommendation), or a line with no recommended date (legacy/manual): refreshed
+    expect(planDraftUpsert([{ ...moved, proposedDeliveryDate: '2026-09-22' }], new Set(), [lineR1]).update[0]).toMatchObject({ keepDeliveryDate: false });
+    expect(planDraftUpsert([{ ...moved, recommendedDeliveryDate: null }], new Set(), [lineR1]).update[0]).toMatchObject({ keepDeliveryDate: false });
   });
 
   it('skips lines already on another requisition of the cycle', () => {
@@ -295,7 +303,7 @@ describe('approvalProblems — checkpoints 18 and 22', () => {
     expect(approvalProblems({
       lines: [{ ...r1Line, quantityKg: 6000, recommendedDeliveryDate: '2026-09-23', proposedDeliveryDate: '2026-09-24' }],
       remarks: null, today: '2026-09-23', submissionDeadline: '2026-09-26',
-    })).toEqual(["Remarks are required when a delivery date differs from the forecast's (Requisition row 29)."]);
+    })).toEqual(["Line 1 (Weaner Diet R1): the delivery date differs from the forecast's. Remarks are required (Requisition row 29)."]);
   });
   it('never for a manual line, which has no recommended delivery date to differ from', () => {
     expect(approvalProblems({

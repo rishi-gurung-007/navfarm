@@ -99,6 +99,9 @@ export interface DraftLine {
   proposedDeliveryDate: string;
   /** Engine Step 8: the order plus the day's opening would exceed the silo's capacity. A warning, never a cap. */
   exceedsSiloCapacity: boolean;
+  /** What the capacity warning was computed from, kept so a rerun can re-test it against a quantity the farm kept. */
+  capacityKg: number | null;
+  deliveryDayOpeningKg: number;
   /** Requisition §1 row 42: NAV-style line numbering, 10000/20000/… in draft order. */
   lineNo: number;
   belowLowLevel: boolean;
@@ -151,6 +154,11 @@ export function productionCycle(planningDate: string, productionWeekday: number)
   return { productionDate, submissionDeadline: addDaysIso(productionDate, -1) };
 }
 
+/** Engine Step 8 free-capacity warning: a direct KG comparison — silo_capacity_kg is always canonical KG. */
+export function exceedsCapacity(quantityKg: number, deliveryDayOpeningKg: number, capacityKg: number | null): boolean {
+  return capacityKg !== null && quantityKg + deliveryDayOpeningKg > capacityKg + 1e-6;
+}
+
 export function recommendLines(args: {
   planningDate: string;
   to: string;
@@ -180,8 +188,8 @@ export function recommendLines(args: {
     const shortage = s.shortageDate ?? null;
     const recommendedDeliveryDate = shortage ? (shortage < planningDate ? planningDate : shortage) : to;
     // Engine Step 8 free-capacity warning: a direct KG comparison — silo_capacity_kg is always canonical KG.
-    const exceedsSiloCapacity = dest.locationType === 'SILO' && dest.capacityKg !== null
-      && recommendedQtyKg + s.deliveryDayOpeningKg > dest.capacityKg + 1e-6;
+    const capacityKg = dest.locationType === 'SILO' ? dest.capacityKg : null;
+    const exceedsSiloCapacity = exceedsCapacity(recommendedQtyKg, s.deliveryDayOpeningKg, capacityKg);
     lines.push({
       key,
       destinationLocationId: s.locationId,
@@ -204,6 +212,8 @@ export function recommendLines(args: {
       recommendedDeliveryDate,
       proposedDeliveryDate: recommendedDeliveryDate,
       exceedsSiloCapacity,
+      capacityKg,
+      deliveryDayOpeningKg: s.deliveryDayOpeningKg,
       lineNo: (lines.length + 1) * 10000,
       belowLowLevel: dest.locationType === 'SILO' && dest.lowLevelKg !== null && systemBalanceKg <= dest.lowLevelKg,
       needsSiloChangeover: s.noSiloHoldsItem,
@@ -234,11 +244,14 @@ export interface ExistingDraftLine {
   recommendedQtyKg: number | null;
   /** requisition_line.quantity_edited (Ruling M9): the farm changed this quantity by hand. */
   quantityEdited?: boolean;
+  /** requisition_line.recommended_delivery_date / proposed_delivery_date: a proposed date that differs from the drafted one was moved by the farm (Req. row 29). */
+  recommendedDeliveryDate?: string | null;
+  proposedDeliveryDate?: string | null;
 }
 
 export interface DraftUpsertPlan {
   insert: DraftLine[];
-  update: { lineId: string; line: DraftLine; keepQuantity: boolean; priorQuantityKg: number }[];
+  update: { lineId: string; line: DraftLine; keepQuantity: boolean; priorQuantityKg: number; keepDeliveryDate: boolean; priorProposedDeliveryDate: string | null }[];
   remove: string[];
   keep: string[];
 }
@@ -250,6 +263,17 @@ export interface DraftUpsertPlan {
  * drafted with (or a line drafted with none) counts as changed too, so a line
  * written before the flag existed is never overwritten either.
  */
+/**
+ * Req. row 29, "Farm Manager can edit with reason": a delivery date that no
+ * longer matches the recommendation it was drafted with was moved by the farm,
+ * and a rerun leaves it alone — the same rule wasEdited applies to a quantity.
+ * A line drafted with no recommended date (written before the column existed,
+ * or manual) has nothing to differ from.
+ */
+export function deliveryDateWasMoved(line: Pick<ExistingDraftLine, 'recommendedDeliveryDate' | 'proposedDeliveryDate'>): boolean {
+  return !!line.recommendedDeliveryDate && !!line.proposedDeliveryDate && line.proposedDeliveryDate !== line.recommendedDeliveryDate;
+}
+
 export function wasEdited(line: Pick<ExistingDraftLine, 'quantityKg' | 'recommendedQtyKg' | 'quantityEdited'>): boolean {
   return line.quantityEdited === true || line.recommendedQtyKg === null || Math.abs(line.quantityKg - line.recommendedQtyKg) > 1e-6;
 }
@@ -269,7 +293,10 @@ export function planDraftUpsert(existing: ExistingDraftLine[], covered: Set<stri
     wantedKeys.add(line.key);
     const prior = byKey.get(line.key);
     if (!prior) plan.insert.push(line);
-    else plan.update.push({ lineId: prior.lineId, line, keepQuantity: wasEdited(prior), priorQuantityKg: prior.quantityKg });
+    else plan.update.push({
+      lineId: prior.lineId, line, keepQuantity: wasEdited(prior), priorQuantityKg: prior.quantityKg,
+      keepDeliveryDate: deliveryDateWasMoved(prior), priorProposedDeliveryDate: prior.proposedDeliveryDate ?? null,
+    });
   }
   for (const prior of existing) {
     if (wantedKeys.has(prior.key)) continue;
@@ -316,7 +343,7 @@ export function approvalProblems(args: { lines: ApprovalLine[]; remarks: string 
       problems.push(`Line ${l.lineSeq} (${l.itemName}): ${kg(l.quantityKg)} kg is more than 20% off the recommended ${kg(l.recommendedQtyKg ?? 0)} kg. Add remarks to explain.`);
     }
     if (deliveryDateNeedsRemarks(l)) {
-      problems.push("Remarks are required when a delivery date differs from the forecast's (Requisition row 29).");
+      problems.push(`Line ${l.lineSeq} (${l.itemName}): the delivery date differs from the forecast's. Remarks are required (Requisition row 29).`);
     }
   }
   if (args.submissionDeadline && args.today > args.submissionDeadline) {
