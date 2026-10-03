@@ -20,7 +20,7 @@
  * requisition.rules.ts projects the states from it on read.
  */
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { and, desc, eq, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
@@ -31,7 +31,7 @@ import { userHasPermission } from '../../../common/permissions';
 import { ApprovalService } from '../../production/approval/approval.service';
 import * as schema from '../../../core/database/schema';
 import { CreateRequisitionDto, DecideRequisitionDto, UpdateRequisitionDto } from './dto/requisition.dto';
-import { assertDepartmentIdentity } from '../../../common/department-identity';
+import { assertDepartmentIdentity, DEPARTMENT_COST_CENTER_TYPE } from '../../../common/department-identity';
 import {
   COMMON_LIST_DOC_TYPES,
   assertDirectTransferEligible,
@@ -298,6 +298,43 @@ export class RequisitionService {
     });
   }
 
+  /** Location types a common requisition may move between — ours (no document lists them). */
+  private static readonly REQUISITION_LOCATION_TYPES = ['FARM', 'STORE', 'SHED', 'SILO'];
+
+  async options(query: { company_id: string; farm_id?: string }, tenantId: string) {
+    assertCompanyInScope(farmScope(this.cls), query.company_id);
+    const scopeFarm = farmScope(this.cls).farmId ?? query.farm_id ?? null;
+    const items = await this.db
+      .select({ item_id: schema.itemMaster.item_id, item_code: schema.itemMaster.item_code, item_name: schema.itemMaster.item_name, uom_primary: schema.itemMaster.uom_primary })
+      .from(schema.itemMaster)
+      .where(and(eq(schema.itemMaster.tenant_id, tenantId), eq(schema.itemMaster.company_id, query.company_id), eq(schema.itemMaster.is_active, true), isNull(schema.itemMaster.deleted_at)))
+      .orderBy(schema.itemMaster.item_code);
+    const resources = await this.db
+      .select({ resource_id: schema.resourceMaster.resource_id, resource_code: schema.resourceMaster.resource_code, resource_name: schema.resourceMaster.resource_name })
+      .from(schema.resourceMaster)
+      .where(and(eq(schema.resourceMaster.tenant_id, tenantId), eq(schema.resourceMaster.company_id, query.company_id), eq(schema.resourceMaster.is_active, true), isNull(schema.resourceMaster.deleted_at)))
+      .orderBy(schema.resourceMaster.resource_code);
+    const locationConditions: SQL[] = [
+      eq(schema.locationMaster.tenant_id, tenantId),
+      eq(schema.locationMaster.company_id, query.company_id),
+      eq(schema.locationMaster.is_active, true),
+      isNull(schema.locationMaster.deleted_at),
+      inArray(schema.locationMaster.location_type, RequisitionService.REQUISITION_LOCATION_TYPES),
+    ];
+    if (scopeFarm) locationConditions.push(or(eq(schema.locationMaster.farm_id, scopeFarm), eq(schema.locationMaster.location_id, scopeFarm))!);
+    const locations = await this.db
+      .select({ location_id: schema.locationMaster.location_id, location_code: schema.locationMaster.location_code, location_name: schema.locationMaster.location_name, location_type: schema.locationMaster.location_type, farm_id: schema.locationMaster.farm_id })
+      .from(schema.locationMaster)
+      .where(and(...locationConditions))
+      .orderBy(schema.locationMaster.location_code);
+    const departments = await this.db
+      .select({ cost_center_id: schema.costCenterMaster.cost_center_id, cost_center_code: schema.costCenterMaster.cost_center_code, cost_center_name: schema.costCenterMaster.cost_center_name })
+      .from(schema.costCenterMaster)
+      .where(and(eq(schema.costCenterMaster.tenant_id, tenantId), eq(schema.costCenterMaster.company_id, query.company_id), eq(schema.costCenterMaster.cost_center_type, DEPARTMENT_COST_CENTER_TYPE), eq(schema.costCenterMaster.is_active, true), isNull(schema.costCenterMaster.deleted_at)))
+      .orderBy(schema.costCenterMaster.cost_center_code);
+    return { items, resources, locations, departments };
+  }
+
   async findOne(requisitionId: string, tenantId: string) {
     const [row] = await this.db
       .select()
@@ -333,8 +370,41 @@ export class RequisitionService {
       .leftJoin(schema.itemMaster, eq(schema.requisitionLine.item_id, schema.itemMaster.item_id))
       .where(eq(schema.requisitionLine.requisition_id, requisitionId))
       .orderBy(schema.requisitionLine.line_seq);
+    const ids = (values: Array<string | null | undefined>) => [...new Set(values.filter((v): v is string => !!v))];
+    const locationIds = ids([row.main_location_id, row.from_location_id, row.to_location_id, ...lines.flatMap((l) => [l.from_location_id, l.to_location_id])]);
+    const locationCode = new Map((locationIds.length
+      ? await this.db.select({ location_id: schema.locationMaster.location_id, location_code: schema.locationMaster.location_code })
+        .from(schema.locationMaster).where(inArray(schema.locationMaster.location_id, locationIds))
+      : []).map((l) => [l.location_id, l.location_code]));
+    const departmentIds = ids([row.requester_department_id, row.sender_department_id]);
+    const departmentName = new Map((departmentIds.length
+      ? await this.db.select({ cost_center_id: schema.costCenterMaster.cost_center_id, cost_center_name: schema.costCenterMaster.cost_center_name })
+        .from(schema.costCenterMaster).where(inArray(schema.costCenterMaster.cost_center_id, departmentIds))
+      : []).map((d) => [d.cost_center_id, d.cost_center_name]));
+    const userIds = ids([row.approved_by, row.released_by]);
+    const userName = new Map((userIds.length
+      ? await this.db.select({ user_id: schema.userMaster.user_id, full_name: schema.userMaster.full_name })
+        .from(schema.userMaster).where(inArray(schema.userMaster.user_id, userIds))
+      : []).map((u) => [u.user_id, u.full_name]));
+    const [transfer] = row.linked_transfer_id
+      ? await this.db.select({ transfer_id: schema.stockTransfer.transfer_id, transfer_no: schema.stockTransfer.transfer_no })
+        .from(schema.stockTransfer).where(eq(schema.stockTransfer.transfer_id, row.linked_transfer_id)).limit(1)
+      : [];
+    const resourceIds = ids(lines.map((l) => l.resource_id));
+    const resource = new Map((resourceIds.length
+      ? await this.db.select({ resource_id: schema.resourceMaster.resource_id, resource_code: schema.resourceMaster.resource_code, resource_name: schema.resourceMaster.resource_name })
+        .from(schema.resourceMaster).where(inArray(schema.resourceMaster.resource_id, resourceIds))
+      : []).map((r) => [r.resource_id, r]));
     return {
       ...row,
+      main_location_code: locationCode.get(row.main_location_id ?? '') ?? null,
+      from_location_code: locationCode.get(row.from_location_id ?? '') ?? null,
+      to_location_code: locationCode.get(row.to_location_id ?? '') ?? null,
+      requester_department_name: departmentName.get(row.requester_department_id ?? '') ?? null,
+      sender_department_name: departmentName.get(row.sender_department_id ?? '') ?? null,
+      approved_by_name: userName.get(row.approved_by ?? '') ?? null,
+      released_by_name: userName.get(row.released_by ?? '') ?? null,
+      linked_transfer_no: transfer?.transfer_no ?? null,
       // Explicit columns win; nulls (legacy and FEED rows) project from
       // `status`. The stored status itself is returned untouched.
       ...projectRequisitionStates(row),
@@ -342,6 +412,10 @@ export class RequisitionService {
         const balances = lineBalances(line);
         return {
           ...line,
+          from_location_code: locationCode.get(line.from_location_id ?? '') ?? null,
+          to_location_code: locationCode.get(line.to_location_id ?? '') ?? null,
+          resource_code: resource.get(line.resource_id ?? '')?.resource_code ?? null,
+          resource_name: resource.get(line.resource_id ?? '')?.resource_name ?? null,
           // Counted quantities come back as numbers (null means none yet);
           // the stored targets stay exactly as written, and the two derived
           // balances are computed, never persisted.

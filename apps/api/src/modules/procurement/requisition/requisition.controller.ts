@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Param, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
@@ -22,6 +22,16 @@ export class RequisitionController {
     const tenantId = req.user?.tenantId || req['tenantId'];
     const data = await this.requisitions.findAll({ company_id: companyId, status, doc_type: docType }, tenantId);
     return { success: true, message: 'Requisitions retrieved successfully.', data };
+  }
+
+  @Get('options')
+  @RequirePermission('PROCUREMENT', 'REQUISITION', 'view')
+  @ApiOperation({ summary: 'What the common requisition form may offer: items, resources, locations, departments' })
+  async options(@Req() req: any, @Query('company_id') companyId: string, @Query('farm_id') farmId?: string) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    if (!companyId) throw new BadRequestException('company_id is required.');
+    const data = await this.requisitions.options({ company_id: companyId, farm_id: farmId }, tenantId);
+    return { success: true, message: 'Requisition options retrieved.', data };
   }
 
   @Get(':id')

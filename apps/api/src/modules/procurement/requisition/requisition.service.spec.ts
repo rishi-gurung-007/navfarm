@@ -509,3 +509,46 @@ describe('Part E Task 2 fix round 1 — update writes what it says', () => {
     expect(db.delete).not.toHaveBeenCalled();
   });
 });
+
+describe('Part E Task 3 — options and display names', () => {
+  it('offers the company items, resources, FARM/STORE/SHED/SILO locations and DEPARTMENT cost centres', async () => {
+    const { db, selectResults } = makeDb();
+    selectResults.push(
+      [{ item_id: 'i1', item_code: 'IT-1', item_name: 'Bolts', uom_primary: 'EA' }],
+      [{ resource_id: 'r1', resource_code: 'RES-1', resource_name: 'Electrician' }],
+      [{ location_id: 'st', location_code: 'F1/STORE', location_name: 'Store', location_type: 'STORE', farm_id: 'f1' }],
+      [{ cost_center_id: 'cc', cost_center_code: 'D-1', cost_center_name: 'Stores' }],
+    );
+    const service = new RequisitionService(transactionCls(db), approvalsMock() as any);
+    const out = await service.options({ company_id: 'co-1' }, TENANT);
+    expect(out.items.map((i) => i.item_code)).toEqual(['IT-1']);
+    expect(out.resources.map((r) => r.resource_code)).toEqual(['RES-1']);
+    expect(out.locations.map((l) => l.location_type)).toEqual(['STORE']);
+    expect(out.departments.map((d) => d.cost_center_code)).toEqual(['D-1']);
+  });
+
+  it('names the locations, departments, approver and transfer on the document', async () => {
+    const { db, selectResults } = makeDb();
+    selectResults.push(
+      [headerRow({ from_location_id: 'st', to_location_id: 'sh', sender_department_id: 'cc', approved_by: 'u2', linked_transfer_id: 'tr-1' })],
+      [lineRow({ from_location_id: 'st', to_location_id: 'sh', resource_id: null })],
+      [{ location_id: 'st', location_code: 'F1/STORE' }, { location_id: 'sh', location_code: 'F1/SHED-1' }, { location_id: 'farm-1', location_code: 'F1' }],
+      [{ cost_center_id: 'cc', cost_center_name: 'Stores' }],
+      [{ user_id: 'u2', full_name: 'Approver Two' }],
+      [{ transfer_id: 'tr-1', transfer_no: 'TR-000001' }],
+      [], // resources
+    );
+    const service = new RequisitionService(transactionCls(db), approvalsMock() as any);
+    const view = await service.findOne('req-1', TENANT);
+    expect(view).toMatchObject({ from_location_code: 'F1/STORE', to_location_code: 'F1/SHED-1', main_location_code: 'F1', sender_department_name: 'Stores', approved_by_name: 'Approver Two', linked_transfer_no: 'TR-000001' });
+    expect(view.lines[0]).toMatchObject({ from_location_code: 'F1/STORE', to_location_code: 'F1/SHED-1' });
+  });
+
+  it('declares GET options before GET :id so the static route is not captured as an id', () => {
+    const { RequisitionController } = require('./requisition.controller');
+    const methods = Object.getOwnPropertyNames(RequisitionController.prototype).filter((m) => m !== 'constructor');
+    const pathOf = (m: string) => Reflect.getMetadata('path', RequisitionController.prototype[m]);
+    expect(pathOf('options')).toBe('options');
+    expect(methods.indexOf('options')).toBeLessThan(methods.indexOf('findOne'));
+  });
+});
