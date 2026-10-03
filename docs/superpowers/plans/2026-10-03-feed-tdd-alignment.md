@@ -55,7 +55,7 @@ in its last task.
 | File | Responsibility | Change |
 |---|---|---|
 | `apps/api/src/drizzle/tenant/0141_feed_tdd_alignment.sql` | additive columns | create |
-| `apps/api/src/drizzle/tenant/0146_drop_feed_era_columns.sql` | drop feed-era columns — POST-MERGE follow-up, not this wave (re-sited from 0142; see I3) | deferred |
+| `apps/api/src/drizzle/tenant/0146_drop_feed_era_columns.sql` | drop feed-era columns — POST-MERGE follow-up, not this wave (re-sited from 0142; see I3). Part E's 0147 (`when: 1792000000016`) now exists journalled after 0145 with 0146 left open; drizzle applies by `when`, not idx, so **0146 MUST be journalled with a `when` greater than 0147's** (e.g. `1792000000017`) or any database that already ran 0147 will skip 0146 silently | deferred |
 | `apps/api/src/drizzle/tenant/meta/_journal.json` | journal 141 (0146 follow-up journals separately, post-merge) | modify |
 | `apps/api/src/drizzle/tenant/feed-tdd-migrations.spec.ts` | migration contract | create |
 | `apps/api/src/core/database/schema.ts` | Drizzle schema | modify |

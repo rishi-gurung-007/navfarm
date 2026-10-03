@@ -3985,7 +3985,12 @@ export const stockTransferLine = mysqlTable('stock_transfer_line', {
   lot_no: varchar('lot_no', { length: 50 }),
   serial_no: varchar('serial_no', { length: 100 }),
   remarks: varchar('remarks', { length: 500 }),
-});
+  // Part E (0147): the requisition line this transfer line fulfils — set when a Store
+  // requisition is released; NULL on every hand-made transfer.
+  requisition_line_id: varchar('requisition_line_id', { length: 36 }),
+}, (table) => ({
+  requisitionLineIdx: index('idx_stock_transfer_line_requisition_line').on(table.requisition_line_id),
+}));
 
 // ---------------------------------------------------------------------------
 // Staged transfer execution (plan Task 10). Append-only partial events against

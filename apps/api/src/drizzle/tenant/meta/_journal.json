@@ -1023,6 +1023,13 @@
       "when": 1792000000014,
       "tag": "0145_requisition_line_batch_stage",
       "breakpoints": true
+    },
+    {
+      "idx": 147,
+      "version": "5",
+      "when": 1792000000016,
+      "tag": "0147_stock_transfer_line_requisition_line",
+      "breakpoints": true
     }
   ]
 }
