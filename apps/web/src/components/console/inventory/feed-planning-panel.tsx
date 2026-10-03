@@ -21,7 +21,7 @@ const ITEM_CODE_PX = 95;
 const ITEM_NAME_PX = 105;
 const CAPACITY_PX = 55;
 const STATUS_PX = 55;
-const SILO_INPUTS_PX = [60, 60, 48];
+const SILO_INPUTS_PX = [60, 60];
 const SILO_PX = [CODE_PX, NAME_PX, SHEDS_PX, FEED_TYPE_PX, ITEM_CODE_PX, ITEM_NAME_PX, CAPACITY_PX, ...SILO_INPUTS_PX, STATUS_PX, SAVE_PX];
 
 export const FEED_PLANNING_LAYOUT = {
@@ -39,11 +39,18 @@ export interface FeedPlanningFarm {
   companyName: string | null;
   /** Retained for API response compatibility; these values are not edited here. */
   settings: Record<string, number | null>;
-  /** D41: the farm's silos, whose levels and reorder days are edited here too. */
+  /** D41: the farm's silos, whose levels are edited here too. */
   silos?: FeedPlanningSilo[];
 }
 
-/** D41: one silo under its farm. The feed it holds is read-only. */
+/**
+ * D41: one silo under its farm. The feed it holds is read-only.
+ *
+ * Task 4 (3 Oct ruling): silo_reorder_days left this screen for Location
+ * Master, which owns it exclusively now (spec R6) — editable there via
+ * master-data/configs.ts's "Refill Lead Time (days)" field. The forecast
+ * does not read the column either (engine.ts, Task 3).
+ */
 export interface FeedPlanningSilo {
   locationId: string;
   code: string;
@@ -55,23 +62,20 @@ export interface FeedPlanningSilo {
   capacityKg: number | null;
   lowLevelKg: number | null;
   highLevelKg: number | null;
-  reorderDays: number | null;
   status: string;
 }
 
-type SiloKey = "low_level_kg" | "high_level_kg" | "silo_reorder_days";
+type SiloKey = "low_level_kg" | "high_level_kg";
 type SiloDraft = Record<SiloKey, string>;
 
 const SILO_COLUMNS: { key: SiloKey; labelKey: string; from: (s: FeedPlanningSilo) => number | null; widthPx: number }[] = [
   { key: "low_level_kg", labelKey: "fpSiloLow", from: (s) => s.lowLevelKg, widthPx: SILO_INPUTS_PX[0] },
   { key: "high_level_kg", labelKey: "fpSiloHigh", from: (s) => s.highLevelKg, widthPx: SILO_INPUTS_PX[1] },
-  { key: "silo_reorder_days", labelKey: "fpSiloReorder", from: (s) => s.reorderDays, widthPx: SILO_INPUTS_PX[2] },
 ];
 
 const siloDraftOf = (silo: FeedPlanningSilo): SiloDraft => ({
   low_level_kg: silo.lowLevelKg?.toString() ?? "",
   high_level_kg: silo.highLevelKg?.toString() ?? "",
-  silo_reorder_days: silo.reorderDays?.toString() ?? "",
 });
 
 const siloPayloadOf = (draft: SiloDraft): Record<SiloKey, number | null> => {
@@ -79,7 +83,6 @@ const siloPayloadOf = (draft: SiloDraft): Record<SiloKey, number | null> => {
   return {
     low_level_kg: value(draft.low_level_kg),
     high_level_kg: value(draft.high_level_kg),
-    silo_reorder_days: value(draft.silo_reorder_days),
   };
 };
 
@@ -135,7 +138,7 @@ export function FeedPlanningPanel() {
   const setSiloCell = (siloId: string, key: SiloKey, raw: string) =>
     setSiloDrafts((cur) => ({ ...cur, [siloId]: { ...cur[siloId], [key]: raw } }));
 
-  /** D41: one silo's levels and reorder days, through the silo endpoint. */
+  /** D41: one silo's levels, through the silo endpoint. */
   const saveSilo = async (farm: FeedPlanningFarm, silo: FeedPlanningSilo) => {
     setSiloSaving(silo.locationId);
     setRowError(null);
@@ -149,7 +152,6 @@ export function FeedPlanningPanel() {
           ...x,
           lowLevelKg: settings.low_level_kg,
           highLevelKg: settings.high_level_kg,
-          reorderDays: settings.silo_reorder_days,
         })),
       })));
       setSiloSaved(silo.locationId);
@@ -234,7 +236,7 @@ export function FeedPlanningPanel() {
                                     <th key={column.key} scope="col" className={`${TH} text-right`} style={{ width: column.widthPx + CELL_PADDING_PX }}>
                                       {t(`${column.labelKey}Col` as any)}
                                       <span className="block font-normal normal-case tracking-normal">
-                                        {t(column.key === "silo_reorder_days" ? "fpUnitDays" : "fpUnitKg")}
+                                        {t("fpUnitKg")}
                                       </span>
                                     </th>
                                   ))}

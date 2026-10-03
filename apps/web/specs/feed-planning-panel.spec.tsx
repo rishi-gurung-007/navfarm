@@ -20,8 +20,8 @@ const get = api.get as jest.Mock;
 const put = api.put as jest.Mock;
 const FARMS = [
   { farmId: 'f-vil', code: 'VIL100', name: 'Villa Franca', companyId: 'co-1', companyName: 'Colcom', settings: { feed_lead_time_days: 1 }, silos: [
-    { locationId: 's-1', code: 'VIL100/SILO-001', name: 'Feed Silo 1', linkedSheds: [{ locationId: 'sh-1', code: 'VIL100/SHED-001', name: 'Dry Sow House' }], feedType: 'BULK', feedItemCode: 'FEED-1', feedItemName: 'Dry Sow Mash', capacityKg: 10000, lowLevelKg: 2000, highLevelKg: 9000, reorderDays: 3, status: 'ACTIVE' },
-    { locationId: 's-2', code: 'VIL100/SILO-002', name: 'Feed Silo 2', linkedSheds: [], feedType: 'BAGGED', feedItemCode: null, feedItemName: null, capacityKg: 20000, lowLevelKg: null, highLevelKg: null, reorderDays: null, status: 'INACTIVE' },
+    { locationId: 's-1', code: 'VIL100/SILO-001', name: 'Feed Silo 1', linkedSheds: [{ locationId: 'sh-1', code: 'VIL100/SHED-001', name: 'Dry Sow House' }], feedType: 'BULK', feedItemCode: 'FEED-1', feedItemName: 'Dry Sow Mash', capacityKg: 10000, lowLevelKg: 2000, highLevelKg: 9000, status: 'ACTIVE' },
+    { locationId: 's-2', code: 'VIL100/SILO-002', name: 'Feed Silo 2', linkedSheds: [], feedType: 'BAGGED', feedItemCode: null, feedItemName: null, capacityKg: 20000, lowLevelKg: null, highLevelKg: null, status: 'INACTIVE' },
   ] },
   { farmId: 'f-gra', code: 'GRA100', name: 'Grasmere', companyId: 'co-1', companyName: 'Colcom', settings: {}, silos: [] },
 ];
@@ -60,15 +60,18 @@ describe('Silo Feed Setup — silos grouped by farm', () => {
     expect(screen.queryByRole('table', { name: 'fpSiloTableLabel:{"farm":"VIL100"}' })).toBeNull();
   });
 
-  it('shows every Silo Feed Setup fact explicitly while only levels and reorder days are editable', async () => {
+  // Task 4 (3 Oct ruling): reorder days left this screen for Location Master
+  // (spec R6) — only the two levels are edited here now.
+  it('shows every Silo Feed Setup fact explicitly while only levels are editable', async () => {
     render(<FeedPlanningPanel />);
     await screen.findByRole('table', { name: 'Silo Feed Setup by farm and silo' });
     expand('VIL100');
     const silos = screen.getByRole('table', { name: 'fpSiloTableLabel:{"farm":"VIL100"}' });
-    expect(within(silos).getAllByRole('columnheader')).toHaveLength(12);
-    for (const key of ['fpSiloColCode', 'fpSiloColName', 'fpSiloColSheds', 'fpSiloColFeedType', 'fpSiloColFeedItemCode', 'fpSiloColFeedItemName', 'fpSiloColCapacity', 'fpSiloLowCol', 'fpSiloHighCol', 'fpSiloReorderCol', 'fpSiloColStatus']) {
+    expect(within(silos).getAllByRole('columnheader')).toHaveLength(11);
+    for (const key of ['fpSiloColCode', 'fpSiloColName', 'fpSiloColSheds', 'fpSiloColFeedType', 'fpSiloColFeedItemCode', 'fpSiloColFeedItemName', 'fpSiloColCapacity', 'fpSiloLowCol', 'fpSiloHighCol', 'fpSiloColStatus']) {
       expect(within(silos).getByText(key)).toBeTruthy();
     }
+    expect(within(silos).queryByText('fpSiloReorderCol')).toBeNull();
     expect(screen.getByText('VIL100/SILO-001')).toBeTruthy();
     expect(screen.getByText('Feed Silo 1')).toBeTruthy();
     expect(screen.getByText('VIL100/SHED-001 — Dry Sow House')).toBeTruthy();
@@ -77,14 +80,15 @@ describe('Silo Feed Setup — silos grouped by farm', () => {
     expect(screen.getByText('Dry Sow Mash')).toBeTruthy();
     expect(screen.getByText('ACTIVE')).toBeTruthy();
     expect(screen.getByText('10,000')).toBeTruthy();
-    expect(within(silos).getAllByRole('spinbutton')).toHaveLength(6);
-    expect((screen.getByLabelText('fpSiloLow:{"silo":"VIL100/SILO-001"}') as HTMLInputElement).value).toBe('2000');
+    expect(within(silos).getAllByRole('spinbutton')).toHaveLength(4);
+    expect(screen.queryByLabelText('fpSiloReorder:{"silo":"VIL100/SILO-001"}')).toBeNull();
+    const low = screen.getByLabelText('fpSiloLow:{"silo":"VIL100/SILO-001"}') as HTMLInputElement;
+    expect(low.value).toBe('2000');
     expect((screen.getByLabelText('fpSiloHigh:{"silo":"VIL100/SILO-001"}') as HTMLInputElement).value).toBe('9000');
-    const refill = screen.getByLabelText('fpSiloReorder:{"silo":"VIL100/SILO-001"}') as HTMLInputElement;
-    fireEvent.change(refill, { target: { value: '1' } });
+    fireEvent.change(low, { target: { value: '2500' } });
     fireEvent.click(screen.getByRole('button', { name: 'fpSiloSave:{"silo":"VIL100/SILO-001"}' }));
     await waitFor(() => expect(put).toHaveBeenCalledWith('/feed-forecast/farm-settings/f-vil/silos/s-1', {
-      low_level_kg: 2000, high_level_kg: 9000, silo_reorder_days: 1,
+      low_level_kg: 2500, high_level_kg: 9000,
     }));
   });
 
@@ -109,7 +113,7 @@ describe('Silo Feed Setup — silos grouped by farm', () => {
 
   it('keeps the silo row inside the 1024px content budget', () => {
     const { cellPaddingPx, siloPx, siloTotalPx } = FEED_PLANNING_LAYOUT;
-    expect(siloTotalPx).toBe(siloPx.reduce((a, b) => a + b, 0) + 12 * cellPaddingPx);
+    expect(siloTotalPx).toBe(siloPx.reduce((a, b) => a + b, 0) + 11 * cellPaddingPx);
     expect(siloTotalPx).toBeLessThanOrEqual(1024);
   });
 });
