@@ -9,7 +9,9 @@
  */
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { transactionCls } from '../../../test-utils/transaction-cls';
+import { MySqlDialect } from 'drizzle-orm/mysql-core';
 import { RequisitionService } from './requisition.service';
+import { useFarmScope } from '../../../test-utils/transaction-cls';
 
 const TENANT = 'tenant-1';
 
@@ -18,10 +20,12 @@ function makeDb() {
   const selectResults: unknown[][] = [];
   const setCalls: Array<Record<string, unknown>> = [];
   const insertValues: Array<{ table: unknown; values: any }> = [];
+  const whereCalls: unknown[] = [];
   const select = jest.fn(() => {
     const rows = (selectResults.shift() ?? []) as any[];
     const chain: any = {};
-    for (const m of ['from', 'where', 'leftJoin', 'innerJoin', 'orderBy', 'limit', 'for']) chain[m] = () => chain;
+    for (const m of ['from', 'leftJoin', 'innerJoin', 'orderBy', 'limit', 'for']) chain[m] = () => chain;
+    chain.where = (condition: unknown) => { whereCalls.push(condition); return chain; };
     chain.then = (resolve: any, reject: any) => Promise.resolve(rows).then(resolve, reject);
     return chain;
   });
@@ -36,7 +40,7 @@ function makeDb() {
   }));
   const db: any = { select, insert, update, delete: jest.fn() };
   db.transaction = async (work: (tx: any) => Promise<unknown>) => work(db);
-  return { db, selectResults, setCalls, insertValues, select, insert, update };
+  return { db, selectResults, setCalls, insertValues, select, insert, update, whereCalls };
 }
 
 const approvalsMock = () => ({ create: jest.fn(), approve: jest.fn(), reject: jest.fn(), submitFarmDocument: jest.fn() });
@@ -118,6 +122,7 @@ describe('RequisitionService.create — supplied header and line fields are stor
       [{ full_name: 'Ada Farm', department_id: 'cc-dept' }], // the requesting user
       [departmentRow('cc-dept')],                            // requester department identity
       [departmentRow('cc-snd')],                             // sender department identity
+      [{ item_id: 'item-1' }],                               // line items belong to the company
       [],                                                    // number series: no prior REQ this year
       [headerRow({ requester_department_id: 'cc-dept', sender_department_id: 'cc-snd' })],
       [lineRow({ qty_to_ship: '6', qty_to_receive: '6', from_location_id: 'loc-store', to_location_id: 'loc-farm' })],
@@ -172,6 +177,7 @@ describe('RequisitionService.create — supplied header and line fields are stor
     selectResults.push(
       [{ full_name: 'Rudo Moyo', department_id: 'cc-farm-ops' }],
       [departmentRow('cc-farm-ops')],
+      [{ item_id: 'item-1' }], // line items belong to the company
       [], // number series
       [headerRow({ requester_name: 'Rudo Moyo', requester_department_id: 'cc-farm-ops' })],
       [lineRow()],
@@ -355,6 +361,7 @@ describe('Part E Task 1 — list filter, manual source, approver stamp', () => {
     const { db, selectResults, insertValues } = makeDb();
     selectResults.push(
       [{ full_name: 'Ada Farm', department_id: null }], // requesting user
+      [{ item_id: 'item-1' }],                         // line items belong to the company
       [],                                              // number series
       [headerRow({ source: 'MANUAL_ENTRY' })],
       [lineRow()],
@@ -419,6 +426,7 @@ describe('Part E Task 2 — PUT /requisition/:id', () => {
     const { db, selectResults, setCalls, insertValues } = makeDb();
     selectResults.push(
       [headerRow()],          // the locked row
+      [{ item_id: 'item-1' }], // line items belong to the company
       [headerRow({ remarks: 'Changed' })], // findOne header
       [lineRow({ quantity: '4.0000' })],   // findOne lines
     );
@@ -457,7 +465,7 @@ describe('Part E Task 2 fix round 1 — update writes what it says', () => {
 
   it('a Store update writes from/to on the header and the to-ship/to-receive targets on the lines', async () => {
     const { db, selectResults, setCalls, insertValues } = makeDb();
-    selectResults.push([headerRow()], [headerRow()], [lineRow()]);
+    selectResults.push([headerRow()], [{ item_id: 'item-1' }], [headerRow()], [lineRow()]);
     del(db);
     const service = new RequisitionService(transactionCls(db), approvalsMock() as any);
     await service.update('req-1', {
@@ -477,6 +485,7 @@ describe('Part E Task 2 fix round 1 — update writes what it says', () => {
         purpose: 'STORE', main_location_id: 'farm-9', requester_department_id: 'dep-7', sender_department_id: 'dep-8',
         requisition_date: '2026-09-30', remarks: 'old remark', required_date: '2026-10-09', justification: 'old why', direct_transfer: true,
       })],
+      [{ item_id: 'item-1' }],
       [headerRow()], [lineRow()],
     );
     del(db);
@@ -530,18 +539,18 @@ describe('Part E Task 3 — options and display names', () => {
   it('names the locations, departments, approver and transfer on the document', async () => {
     const { db, selectResults } = makeDb();
     selectResults.push(
-      [headerRow({ from_location_id: 'st', to_location_id: 'sh', sender_department_id: 'cc', approved_by: 'u2', linked_transfer_id: 'tr-1' })],
-      [lineRow({ from_location_id: 'st', to_location_id: 'sh', resource_id: null })],
+      [headerRow({ from_location_id: 'st', to_location_id: 'sh', requester_department_id: 'cc-r', sender_department_id: 'cc', approved_by: 'u2', released_by: 'u3', linked_transfer_id: 'tr-1' })],
+      [lineRow({ from_location_id: 'st', to_location_id: 'sh', resource_id: 'r1' })],
       [{ location_id: 'st', location_code: 'F1/STORE' }, { location_id: 'sh', location_code: 'F1/SHED-1' }, { location_id: 'farm-1', location_code: 'F1' }],
-      [{ cost_center_id: 'cc', cost_center_name: 'Stores' }],
-      [{ user_id: 'u2', full_name: 'Approver Two' }],
+      [{ cost_center_id: 'cc', cost_center_name: 'Stores' }, { cost_center_id: 'cc-r', cost_center_name: 'Farm Ops' }],
+      [{ user_id: 'u2', full_name: 'Approver Two' }, { user_id: 'u3', full_name: 'Releaser Three' }],
       [{ transfer_id: 'tr-1', transfer_no: 'TR-000001' }],
-      [], // resources
+      [{ resource_id: 'r1', resource_code: 'RES-1', resource_name: 'Electrician' }],
     );
     const service = new RequisitionService(transactionCls(db), approvalsMock() as any);
     const view = await service.findOne('req-1', TENANT);
-    expect(view).toMatchObject({ from_location_code: 'F1/STORE', to_location_code: 'F1/SHED-1', main_location_code: 'F1', sender_department_name: 'Stores', approved_by_name: 'Approver Two', linked_transfer_no: 'TR-000001' });
-    expect(view.lines[0]).toMatchObject({ from_location_code: 'F1/STORE', to_location_code: 'F1/SHED-1' });
+    expect(view).toMatchObject({ from_location_code: 'F1/STORE', to_location_code: 'F1/SHED-1', main_location_code: 'F1', sender_department_name: 'Stores', approved_by_name: 'Approver Two', released_by_name: 'Releaser Three', requester_department_name: 'Farm Ops', linked_transfer_no: 'TR-000001' });
+    expect(view.lines[0]).toMatchObject({ from_location_code: 'F1/STORE', to_location_code: 'F1/SHED-1', resource_code: 'RES-1', resource_name: 'Electrician' });
   });
 
   it('declares GET options before GET :id so the static route is not captured as an id', () => {
@@ -550,5 +559,56 @@ describe('Part E Task 3 — options and display names', () => {
     const pathOf = (m: string) => Reflect.getMetadata('path', RequisitionController.prototype[m]);
     expect(pathOf('options')).toBe('options');
     expect(methods.indexOf('options')).toBeLessThan(methods.indexOf('findOne'));
+  });
+});
+
+describe('Part E Task 3 fix round 1 — company-scoped references and LOB scope', () => {
+  it('create refuses a resource that is not an active resource of the requisition company', async () => {
+    const { db, selectResults } = makeDb();
+    selectResults.push([]); // the resource belongs to another company
+    const service = new RequisitionService(transactionCls(db), approvalsMock() as any);
+    await expect(service.create(storeDto({
+      doc_type: 'SERVICE', purpose: 'PURCHASE', from_location_id: undefined, to_location_id: undefined,
+      lines: [{ resource_id: 'foreign-res', quantity: 1, uom: 'HR' }],
+    }) as any, TENANT, undefined)).rejects.toThrow('Line 1: resource is not an active resource of this company.');
+    expect(db.insert).not.toHaveBeenCalled();
+  });
+
+  it('create refuses an item that is not an active item of the company', async () => {
+    const { db, selectResults } = makeDb();
+    selectResults.push([]);
+    const service = new RequisitionService(transactionCls(db), approvalsMock() as any);
+    await expect(service.create(storeDto() as any, TENANT, undefined)).rejects.toThrow('Line 1: item is not an active item of this company.');
+    expect(db.insert).not.toHaveBeenCalled();
+  });
+
+  it('update refuses another company\'s resource and writes nothing', async () => {
+    const { db, selectResults, setCalls } = makeDb();
+    selectResults.push([headerRow({ doc_type: 'SERVICE' })], []);
+    const service = new RequisitionService(transactionCls(db), approvalsMock() as any);
+    await expect(service.update('req-1', {
+      purpose: 'PURCHASE', lines: [{ resource_id: 'foreign-res', quantity: 1, uom: 'HR' }],
+    } as any, TENANT, { userId: 'u1' })).rejects.toThrow(BadRequestException);
+    expect(setCalls).toHaveLength(0);
+  });
+
+  it('options for a restricted caller filters locations to their LOB or no LOB', async () => {
+    const { db, selectResults, whereCalls } = makeDb();
+    selectResults.push([], [], [], []);
+    const cls = transactionCls(db);
+    useFarmScope(cls, { farmId: null, restricted: true, companyId: 'co-1', lobId: 'lob-pig' } as any);
+    await new RequisitionService(cls, approvalsMock() as any).options({ company_id: 'co-1' }, TENANT);
+    const dialect = new MySqlDialect();
+    const q = dialect.sqlToQuery(whereCalls[2] as any);
+    expect(q.sql).toContain('`lob_id` = ?');
+    expect(q.sql).toContain('`lob_id` is null');
+    expect(q.params).toContain('lob-pig');
+  });
+
+  it('options for an unrestricted caller adds no LOB condition', async () => {
+    const { db, selectResults, whereCalls } = makeDb();
+    selectResults.push([], [], [], []);
+    await new RequisitionService(transactionCls(db), approvalsMock() as any).options({ company_id: 'co-1' }, TENANT);
+    expect(new MySqlDialect().sqlToQuery(whereCalls[2] as any).sql).not.toContain('lob_id');
   });
 });

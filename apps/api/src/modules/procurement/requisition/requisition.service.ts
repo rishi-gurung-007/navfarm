@@ -164,6 +164,8 @@ export class RequisitionService {
       await assertLocationOnActiveFarm(this.db, scope, dto.to_location_id, 'Requisition destination location');
     }
 
+    await this.assertLineReferences(tenantId, dto.company_id, dto.lines);
+
     return withTenantTransaction(this.cls, async () => {
       const reqNo = await this.nextReqNo(dto.company_id, tenantId);
       const requisitionId = randomUUID();
@@ -206,6 +208,45 @@ export class RequisitionService {
       await this.db.insert(schema.requisitionLine).values(this.lineValues(requisitionId, purpose, dto.lines, dto));
       return this.findOne(requisitionId, tenantId);
     });
+  }
+
+  /**
+   * A line may name only this company's active items and resources. The ids
+   * arrive from the client, so they are checked here rather than trusted - a
+   * same-tenant row from another company would otherwise leak its code/name
+   * through findOne.
+   */
+  private async assertLineReferences(
+    tenantId: string,
+    companyId: string,
+    lines: Array<{ item_id?: string | null; resource_id?: string | null }>,
+  ) {
+    const itemIds = [...new Set(lines.map((l) => l.item_id).filter((v): v is string => !!v))];
+    if (itemIds.length) {
+      const found = new Set((await this.db
+        .select({ item_id: schema.itemMaster.item_id })
+        .from(schema.itemMaster)
+        .where(and(
+          eq(schema.itemMaster.tenant_id, tenantId), eq(schema.itemMaster.company_id, companyId),
+          eq(schema.itemMaster.is_active, true), isNull(schema.itemMaster.deleted_at),
+          inArray(schema.itemMaster.item_id, itemIds),
+        ))).map((r) => r.item_id));
+      const at = lines.findIndex((l) => l.item_id && !found.has(l.item_id));
+      if (at >= 0) throw new BadRequestException(`Line ${at + 1}: item is not an active item of this company.`);
+    }
+    const resourceIds = [...new Set(lines.map((l) => l.resource_id).filter((v): v is string => !!v))];
+    if (resourceIds.length) {
+      const found = new Set((await this.db
+        .select({ resource_id: schema.resourceMaster.resource_id })
+        .from(schema.resourceMaster)
+        .where(and(
+          eq(schema.resourceMaster.tenant_id, tenantId), eq(schema.resourceMaster.company_id, companyId),
+          eq(schema.resourceMaster.is_active, true), isNull(schema.resourceMaster.deleted_at),
+          inArray(schema.resourceMaster.resource_id, resourceIds),
+        ))).map((r) => r.resource_id));
+      const at = lines.findIndex((l) => l.resource_id && !found.has(l.resource_id));
+      if (at >= 0) throw new BadRequestException(`Line ${at + 1}: resource is not an active resource of this company.`);
+    }
   }
 
   /** One insert row per supplied line — the mapping create() always used, shared with update(). */
@@ -272,6 +313,7 @@ export class RequisitionService {
       for (const [id, label] of [[dto.main_location_id, 'Requisition main location'], [fromLocationId, 'Requisition source location'], [toLocationId, 'Requisition destination location']] as const) {
         if (id) await assertLocationOnActiveFarm(this.db, scope, id, label);
       }
+      await this.assertLineReferences(tenantId, row.company_id, dto.lines);
       // Kept when omitted: purpose, requisition_date, main_location_id, requester_department_id. Cleared when omitted: sender_department_id, remarks, required_date, justification, direct_transfer.
       await this.db
         .update(schema.requisition)
@@ -321,6 +363,10 @@ export class RequisitionService {
       isNull(schema.locationMaster.deleted_at),
       inArray(schema.locationMaster.location_type, RequisitionService.REQUISITION_LOCATION_TYPES),
     ];
+    const lobScope = farmScope(this.cls);
+    if (lobScope.restricted && lobScope.lobId) {
+      locationConditions.push(or(eq(schema.locationMaster.lob_id, lobScope.lobId), isNull(schema.locationMaster.lob_id))!);
+    }
     if (scopeFarm) locationConditions.push(or(eq(schema.locationMaster.farm_id, scopeFarm), eq(schema.locationMaster.location_id, scopeFarm))!);
     const locations = await this.db
       .select({ location_id: schema.locationMaster.location_id, location_code: schema.locationMaster.location_code, location_name: schema.locationMaster.location_name, location_type: schema.locationMaster.location_type, farm_id: schema.locationMaster.farm_id })
@@ -374,17 +420,17 @@ export class RequisitionService {
     const locationIds = ids([row.main_location_id, row.from_location_id, row.to_location_id, ...lines.flatMap((l) => [l.from_location_id, l.to_location_id])]);
     const locationCode = new Map((locationIds.length
       ? await this.db.select({ location_id: schema.locationMaster.location_id, location_code: schema.locationMaster.location_code })
-        .from(schema.locationMaster).where(inArray(schema.locationMaster.location_id, locationIds))
+        .from(schema.locationMaster).where(and(eq(schema.locationMaster.tenant_id, tenantId), eq(schema.locationMaster.company_id, row.company_id), inArray(schema.locationMaster.location_id, locationIds)))
       : []).map((l) => [l.location_id, l.location_code]));
     const departmentIds = ids([row.requester_department_id, row.sender_department_id]);
     const departmentName = new Map((departmentIds.length
       ? await this.db.select({ cost_center_id: schema.costCenterMaster.cost_center_id, cost_center_name: schema.costCenterMaster.cost_center_name })
-        .from(schema.costCenterMaster).where(inArray(schema.costCenterMaster.cost_center_id, departmentIds))
+        .from(schema.costCenterMaster).where(and(eq(schema.costCenterMaster.tenant_id, tenantId), eq(schema.costCenterMaster.company_id, row.company_id), inArray(schema.costCenterMaster.cost_center_id, departmentIds)))
       : []).map((d) => [d.cost_center_id, d.cost_center_name]));
     const userIds = ids([row.approved_by, row.released_by]);
     const userName = new Map((userIds.length
       ? await this.db.select({ user_id: schema.userMaster.user_id, full_name: schema.userMaster.full_name })
-        .from(schema.userMaster).where(inArray(schema.userMaster.user_id, userIds))
+        .from(schema.userMaster).where(and(eq(schema.userMaster.tenant_id, tenantId), inArray(schema.userMaster.user_id, userIds)))
       : []).map((u) => [u.user_id, u.full_name]));
     const [transfer] = row.linked_transfer_id
       ? await this.db.select({ transfer_id: schema.stockTransfer.transfer_id, transfer_no: schema.stockTransfer.transfer_no })
@@ -393,7 +439,7 @@ export class RequisitionService {
     const resourceIds = ids(lines.map((l) => l.resource_id));
     const resource = new Map((resourceIds.length
       ? await this.db.select({ resource_id: schema.resourceMaster.resource_id, resource_code: schema.resourceMaster.resource_code, resource_name: schema.resourceMaster.resource_name })
-        .from(schema.resourceMaster).where(inArray(schema.resourceMaster.resource_id, resourceIds))
+        .from(schema.resourceMaster).where(and(eq(schema.resourceMaster.tenant_id, tenantId), eq(schema.resourceMaster.company_id, row.company_id), inArray(schema.resourceMaster.resource_id, resourceIds)))
       : []).map((r) => [r.resource_id, r]));
     return {
       ...row,
