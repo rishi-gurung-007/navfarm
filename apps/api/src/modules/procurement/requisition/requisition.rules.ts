@@ -393,3 +393,22 @@ export function releaseTransition(row: ReleaseState): {
 export function reopenTransition(): { status: string; approval_status: ApprovalStatus; document_status: DocumentStatus; approval_request_id: null } {
   return { status: 'DRAFT', approval_status: 'OPEN', document_status: 'OPEN', approval_request_id: null };
 }
+
+/** Every doc_type the common list may be filtered by — FEED included, it is one document (spec §6a). */
+export const COMMON_LIST_DOC_TYPES = ['FEED', 'ITEM', 'FA', 'SERVICE'] as const;
+
+/**
+ * decisions.md 2026-10-01: "A user must not approve a manually created
+ * requisition that they created. System-generated feed drafts may be reviewed
+ * and approved by the Farm Manager for that farm." Only AUTO_FORECAST is
+ * system-generated; anything else — MANUAL_ENTRY, and a legacy common row with
+ * no source at all — is manual.
+ */
+export function isSelfApproval(
+  row: { source: string | null; created_by: string | null; requester_user_id: string | null },
+  userId: string | undefined,
+): boolean {
+  if (!userId) return false;
+  if (row.source === 'AUTO_FORECAST') return false;
+  return row.created_by === userId || row.requester_user_id === userId;
+}

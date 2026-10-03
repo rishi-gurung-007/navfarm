@@ -33,10 +33,12 @@ import * as schema from '../../../core/database/schema';
 import { CreateRequisitionDto, DecideRequisitionDto } from './dto/requisition.dto';
 import { assertDepartmentIdentity } from '../../../common/department-identity';
 import {
+  COMMON_LIST_DOC_TYPES,
   assertDirectTransferEligible,
   assertPurpose,
   assertPurposeLocations,
   assertRequisitionLines,
+  isSelfApproval,
   lineBalances,
   normalizeCommonDocType,
   projectRequisitionStates,
@@ -182,6 +184,9 @@ export class RequisitionService {
         fulfilment_status: 'NOT_APPLICABLE',
         integration_status: 'NOT_APPLICABLE',
         purpose,
+        // decisions 1 Oct: a common draft is keyed by a person, so it is manual —
+        // the self-approval rule keys on this (isSelfApproval).
+        source: 'MANUAL_ENTRY',
         requisition_date: dto.requisition_date ?? today,
         main_location_id: mainLocationId,
         requester_user_id: userPayload?.userId ?? null,
@@ -279,7 +284,10 @@ export class RequisitionService {
     };
   }
 
-  async findAll(query: { company_id?: string; status?: string }, tenantId: string) {
+  async findAll(query: { company_id?: string; status?: string; doc_type?: string }, tenantId: string) {
+    if (query.doc_type && !(COMMON_LIST_DOC_TYPES as readonly string[]).includes(query.doc_type)) {
+      throw new BadRequestException(`doc_type must be one of ${COMMON_LIST_DOC_TYPES.join(', ')}.`);
+    }
     const conditions = [
       eq(schema.requisition.tenant_id, tenantId),
       isNull(schema.requisition.deleted_at),
@@ -287,11 +295,14 @@ export class RequisitionService {
     ];
     if (query.company_id) conditions.push(eq(schema.requisition.company_id, query.company_id));
     if (query.status) conditions.push(eq(schema.requisition.status, query.status));
+    if (query.doc_type) conditions.push(eq(schema.requisition.doc_type, query.doc_type));
     const rows = await this.db
       .select({
         requisition_id: schema.requisition.requisition_id,
         req_no: schema.requisition.req_no,
         doc_type: schema.requisition.doc_type,
+        purpose: schema.requisition.purpose,
+        source: schema.requisition.source,
         status: schema.requisition.status,
         farm_id: schema.requisition.farm_id,
         farm_code: schema.locationMaster.location_code,
@@ -392,12 +403,7 @@ export class RequisitionService {
       // created — the rule keys on how the document was raised and who raised
       // it, not on the user's type, so an admin is refused on their own manual
       // document exactly like anyone else.
-      if (
-        decision === 'APPROVED'
-        && userPayload?.userId
-        && row.source === 'MANUAL_ENTRY'
-        && (row.created_by === userPayload.userId || row.requester_user_id === userPayload.userId)
-      ) {
+      if (decision === 'APPROVED' && isSelfApproval(row, userPayload?.userId)) {
         throw new ForbiddenException('You may not approve a requisition you created. Another authorized approver must decide it.');
       }
       if (!row.approval_request_id) {
@@ -424,6 +430,9 @@ export class RequisitionService {
           approval_status: decision,
           document_status: decision === 'APPROVED' ? 'APPROVED' : 'OPEN',
           linked_po_no: decision === 'APPROVED' ? (dto.linked_po_no ?? row.linked_po_no) : row.linked_po_no,
+          // §6a header view "approved by/at" (Req. rows 37–38 on the feed side).
+          approved_by: decision === 'APPROVED' ? (userPayload?.userId ?? null) : null,
+          approved_at: decision === 'APPROVED' ? nowTs() : null,
           updated_by: userPayload?.userId ?? null,
         })
         .where(eq(schema.requisition.requisition_id, requisitionId));
@@ -574,12 +583,7 @@ export class RequisitionService {
     // D25 (Rishi, 1 Oct): a person may not approve a requisition they created.
     // Common drafts are manual by construction, so there is no system-source
     // exception here (the feed document's own handler has one).
-    if (
-      decision === 'APPROVED'
-      && userPayload?.userId
-      && row.source !== 'AUTO_FORECAST'
-      && (row.created_by === userPayload.userId || row.requester_user_id === userPayload.userId)
-    ) {
+    if (decision === 'APPROVED' && isSelfApproval(row, userPayload?.userId)) {
       throw new ForbiddenException('You may not approve a requisition you created. Another authorized approver must decide it.');
     }
     if (decision === 'REJECTED' && !remarks?.trim()) {
@@ -591,6 +595,9 @@ export class RequisitionService {
         status: decision,
         approval_status: decision,
         document_status: decision === 'APPROVED' ? 'APPROVED' : 'OPEN',
+        // §6a header view "approved by/at" (Req. rows 37–38 on the feed side).
+        approved_by: decision === 'APPROVED' ? (userPayload?.userId ?? null) : null,
+        approved_at: decision === 'APPROVED' ? nowTs() : null,
         updated_by: userPayload?.userId ?? null,
       })
       .where(eq(schema.requisition.requisition_id, row.requisition_id));

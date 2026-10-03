@@ -18,9 +18,9 @@ export class RequisitionController {
   @Get()
   @RequirePermission('PROCUREMENT', 'REQUISITION', 'view')
   @ApiOperation({ summary: 'Requisitions visible in the active scope, newest first' })
-  async findAll(@Req() req: any, @Query('company_id') companyId?: string, @Query('status') status?: string) {
+  async findAll(@Req() req: any, @Query('company_id') companyId?: string, @Query('status') status?: string, @Query('doc_type') docType?: string) {
     const tenantId = req.user?.tenantId || req['tenantId'];
-    const data = await this.requisitions.findAll({ company_id: companyId, status }, tenantId);
+    const data = await this.requisitions.findAll({ company_id: companyId, status, doc_type: docType }, tenantId);
     return { success: true, message: 'Requisitions retrieved successfully.', data };
   }
 

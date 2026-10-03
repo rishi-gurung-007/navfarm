@@ -349,3 +349,48 @@ describe('RequisitionService.submit and decide — the new states are written be
     expect(setCalls[0]).toMatchObject({ status: 'APPROVED', approval_status: 'APPROVED', document_status: 'APPROVED' });
   });
 });
+
+describe('Part E Task 1 — list filter, manual source, approver stamp', () => {
+  it('stamps a common draft MANUAL_ENTRY so the controller approve route sees it as manual', async () => {
+    const { db, selectResults, insertValues } = makeDb();
+    selectResults.push(
+      [{ full_name: 'Ada Farm', department_id: null }], // requesting user
+      [],                                              // number series
+      [headerRow({ source: 'MANUAL_ENTRY' })],
+      [lineRow()],
+    );
+    const service = new RequisitionService(transactionCls(db), approvalsMock() as any);
+    await service.create(storeDto() as any, TENANT, { userId: 'u1' });
+    expect(insertValues[0].values.source).toBe('MANUAL_ENTRY');
+  });
+
+  it('refuses the creator on POST /requisition/:id/approve even when source was never written', async () => {
+    const { db, selectResults } = makeDb();
+    selectResults.push([headerRow({ status: 'PENDING_APPROVAL', approval_status: 'PENDING_APPROVAL', approval_request_id: 'ar-1', source: null })]);
+    const approvals = approvalsMock();
+    const service = new RequisitionService(transactionCls(db), approvals as any);
+    await expect(service.decide('req-1', {}, 'APPROVED', TENANT, { userId: 'u1', userType: 'COMPANY_ADMIN' }))
+      .rejects.toThrow('You may not approve a requisition you created. Another authorized approver must decide it.');
+    expect(approvals.approve).not.toHaveBeenCalled();
+  });
+
+  it('writes approved_by and approved_at with the decision', async () => {
+    const { db, selectResults, setCalls } = makeDb();
+    selectResults.push(
+      [headerRow({ status: 'PENDING_APPROVAL', approval_status: 'PENDING_APPROVAL', approval_request_id: 'ar-1', source: 'MANUAL_ENTRY' })], // locked row
+      [headerRow({ status: 'APPROVED', approval_status: 'APPROVED', document_status: 'APPROVED' })],                                       // findOne header
+      [lineRow()],                                                                                                                           // findOne lines
+    );
+    const service = new RequisitionService(transactionCls(db), approvalsMock() as any);
+    await service.decide('req-1', {}, 'APPROVED', TENANT, { userId: 'u2', userType: 'COMPANY_ADMIN' });
+    expect(setCalls[0]).toMatchObject({ status: 'APPROVED', approved_by: 'u2' });
+    expect(String(setCalls[0].approved_at)).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
+  });
+
+  it('refuses an unknown doc_type filter before any query', async () => {
+    const { db } = makeDb();
+    const service = new RequisitionService(transactionCls(db), approvalsMock() as any);
+    await expect(service.findAll({ doc_type: 'PIGS' }, TENANT)).rejects.toThrow('doc_type must be one of FEED, ITEM, FA, SERVICE.');
+    expect(db.select).not.toHaveBeenCalled();
+  });
+});

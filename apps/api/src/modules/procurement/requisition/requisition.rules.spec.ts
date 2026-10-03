@@ -21,6 +21,7 @@ import {
   assertReceiptQty,
   assertRequisitionLines,
   assertShipmentQty,
+  isSelfApproval,
   legacyStatusFor,
   lineBalances,
   normalizeCommonDocType,
@@ -285,5 +286,29 @@ describe('department identity (Cost Center Master, type DEPARTMENT)', () => {
     expect(usableDepartment(row({ is_active: false }), 'tenant-1', 'co-1')).toBe(false);
     expect(usableDepartment(row({ deleted_at: '2026-09-01 00:00:00' }), 'tenant-1', 'co-1')).toBe(false);
     expect(usableDepartment(null, 'tenant-1', 'co-1')).toBe(false);
+  });
+});
+
+describe('isSelfApproval — decisions 1 Oct: nobody approves a manual requisition they created', () => {
+  const row = (over: Partial<{ source: string | null; created_by: string | null; requester_user_id: string | null }> = {}) => ({
+    source: 'MANUAL_ENTRY', created_by: 'u1', requester_user_id: 'u1', ...over,
+  });
+  it('flags the creator on a manual document', () => {
+    expect(isSelfApproval(row(), 'u1')).toBe(true);
+  });
+  it('flags the creator when source was never written (legacy common rows)', () => {
+    expect(isSelfApproval(row({ source: null }), 'u1')).toBe(true);
+  });
+  it('flags the recorded requester even if someone else keyed it', () => {
+    expect(isSelfApproval(row({ created_by: 'u9' }), 'u1')).toBe(true);
+  });
+  it('lets the farm manager approve a system forecast draft', () => {
+    expect(isSelfApproval(row({ source: 'AUTO_FORECAST' }), 'u1')).toBe(false);
+  });
+  it('lets a different user approve', () => {
+    expect(isSelfApproval(row(), 'u2')).toBe(false);
+  });
+  it('has nothing to compare without a user', () => {
+    expect(isSelfApproval(row(), undefined)).toBe(false);
   });
 });
