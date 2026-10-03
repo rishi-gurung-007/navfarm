@@ -2,7 +2,8 @@ import { transactionCls } from '../../../test-utils/transaction-cls';
 import { farmScope } from '../../../common/farm-scope';
 import { FeedForecastService } from './feed-forecast.service';
 import { buildFeedForecast } from './feed-forecast.engine';
-import { MySqlDialect } from 'drizzle-orm/mysql-core';
+import { drizzle } from 'drizzle-orm/mysql2';
+import * as schema from '../../../core/database/schema';
 
 const SETTINGS = { safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50, truckTargetKg: 30000, productionWeekday: 6 };
 const FEED_SETTINGS_STUB = { resolveForFeedPlanning: jest.fn(async () => SETTINGS) } as any;
@@ -62,14 +63,19 @@ describe('FeedForecastService.siloStatus', () => {
 
 /** Fix round 1: what loadSiloFacts and loadOpenRequisitionStatuses read, with a query double that answers in order and keeps each where(). */
 describe('FeedForecastService silo facts and requisition status (fix round 1)', () => {
+  // Real drizzle builders (no connection) so the FULL statement is compiled; only execution is answered from a queue.
+  const proto: any = Object.getPrototypeOf(drizzle.mock({ schema, mode: 'default' } as any).select().from(schema.locationMaster));
+  const originalThen = proto.then;
+  afterEach(() => { proto.then = originalThen; });
   function fakeDb(answers: unknown[][]) {
-    const wheres: any[] = [];
+    const real = drizzle.mock({ schema, mode: 'default' } as any);
+    const statements: Array<{ sql: string; params: unknown[] }> = [];
     const queue = [...answers];
-    const chain: any = {};
-    for (const m of ['select', 'from', 'innerJoin', 'orderBy', 'limit', 'groupBy']) chain[m] = () => chain;
-    chain.where = (cond: any) => { wheres.push(cond); return chain; };
-    chain.then = (resolve: any, reject: any) => Promise.resolve(queue.shift() ?? []).then(resolve, reject);
-    return { db: chain, wheres };
+    proto.then = function (this: any, resolve: any, reject: any) {
+      statements.push(this.toSQL());
+      return Promise.resolve(queue.shift() ?? []).then(resolve, reject);
+    };
+    return { db: real, statements };
   }
   const planningSilo = (over: object) => ({
     locationId: 's1', code: 'SILO-1', name: 'Silo 1', linkedSheds: [{ locationId: 'h', code: 'SHED-1', name: 'H' }], feedType: 'BULK',
@@ -80,7 +86,6 @@ describe('FeedForecastService silo facts and requisition status (fix round 1)', 
     const service = new FeedForecastService(cls, { getStockBalance: jest.fn(async () => balances) } as any, { log: jest.fn() } as any, {} as any, FEED_SETTINGS_STUB);
     return { cls, service };
   };
-  const sqlOf = (cond: any) => new MySqlDialect().sqlToQuery(cond);
 
   it('lists ACTIVE silos only; an INACTIVE silo is not returned (finding 1)', async () => {
     const { db } = fakeDb([[], [{ warehouse_id: 's1', item_id: 'r1', item_description: 'R1', posting_date: '2026-09-20' }]]);
@@ -92,15 +97,15 @@ describe('FeedForecastService silo facts and requisition status (fix round 1)', 
   });
 
   it('reads only genuine receipts for Feed in Silo / Last Feed Receipt, never variances or reversals (finding 3)', async () => {
-    const { db, wheres } = fakeDb([[], []]);
+    const { db, statements } = fakeDb([[], []]);
     const { cls, service } = make(db);
     jest.spyOn(service as any, 'siloPlanningRows').mockResolvedValue(new Map([['farm-b', [planningSilo({})]]]));
     await cls.run(() => (service as any).loadSiloFacts('farm-b', 'co-1', 'tenant-1'));
-    const text = wheres.map((w) => JSON.stringify(sqlOf(w))).join('\n');
-    expect(text).toContain('PURCHASE');
-    expect(text).toContain('TRANSFER_RECEIPT');
-    expect(text).not.toContain('VARIANCE_POSITIVE');
-    expect(text).toMatch(/REVERSAL/); // receipts that a REVERSAL row points at are skipped
+    const receipt = statements.find((st) => /inventory_ledger/.test(st.sql) && /limit/i.test(st.sql))!;
+    expect(receipt.params).toEqual(expect.arrayContaining(['PURCHASE', 'TRANSFER_RECEIPT']));
+    expect(receipt.params).not.toContain('VARIANCE_POSITIVE');
+    // The reversal sub-select must have a real source: FROM <table> AS <alias>, or MySQL answers ER_NO_SUCH_TABLE.
+    expect(receipt.sql).toMatch(/not exists \(select 1 from `inventory_ledger` as `?feed_receipt_reversal`?/i);
   });
 
   it('sums KG rows only and flags a silo that also holds bags (finding 4)', async () => {

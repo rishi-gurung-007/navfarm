@@ -1331,7 +1331,6 @@ export class FeedForecastService {
       .orderBy(sql`${Count.counted_at} DESC`);
 
     const Ledger = schema.inventoryLedger;
-    const Reversal = alias(schema.inventoryLedger, 'feed_receipt_reversal');
     const facts: SiloFact[] = [];
     for (const silo of planning) {
       // Master Setup row 16: the last genuine receipt (purchase or transfer in), newest first, one row.
@@ -1342,7 +1341,7 @@ export class FeedForecastService {
         .where(and(
           eq(Ledger.tenant_id, tenantId), eq(Ledger.company_id, companyId), eq(Ledger.warehouse_id, silo.locationId),
           eq(Ledger.entry_type, 'POSITIVE'), inArray(Ledger.transaction_type, [...SILO_RECEIPT_TRANSACTION_TYPES]), gt(Ledger.quantity, '0'),
-          sql`NOT EXISTS (SELECT 1 FROM ${Reversal} WHERE ${Reversal.external_reference_no} = ${Ledger.ledger_id} AND ${Reversal.transaction_type} = 'REVERSAL')`,
+          sql`NOT EXISTS (SELECT 1 FROM ${schema.inventoryLedger} AS feed_receipt_reversal WHERE feed_receipt_reversal.external_reference_no = ${Ledger.ledger_id} AND feed_receipt_reversal.transaction_type = 'REVERSAL')`,
         ))
         .orderBy(sql`${Ledger.posting_date} DESC`, sql`${Ledger.created_at} DESC`)
         .limit(1);
@@ -1385,11 +1384,12 @@ export class FeedForecastService {
         eq(R.tenant_id, tenantId), eq(R.farm_id, farmId), eq(R.doc_type, 'FEED'),
         eq(R.submission_deadline, submissionDeadline), notInArray(R.status, ['REJECTED', 'CANCELLED']), isNull(R.deleted_at),
       ));
-    const latest = new Map<string, { status: string; created_at: string }>();
+    const latest = new Map<string, { status: string; createdMs: number }>();
     for (const row of rows) {
       if (!row.destination) continue;
       const seen = latest.get(row.destination);
-      if (!seen || String(row.created_at) > String(seen.created_at)) latest.set(row.destination, { status: row.status, created_at: String(row.created_at) });
+      const createdMs = new Date(row.created_at as unknown as string | Date).getTime();
+      if (!seen || createdMs > seen.createdMs) latest.set(row.destination, { status: row.status, createdMs });
     }
     return new Map([...latest].map(([silo, v]) => [silo, v.status]));
   }
