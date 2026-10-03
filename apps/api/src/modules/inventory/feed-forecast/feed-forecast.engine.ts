@@ -180,6 +180,16 @@ export interface DailyForecastRow {
   stageCode: string;
   /** The real stage_master/breed_lifecycle stage id this row's segment is in on `date` — travels separately from `realBatchId` (D1). */
   stageId: string;
+  /**
+   * The stage GROUP's identity: the batch's starting segment stage — for an
+   * ANIMAL_WISE/REGISTERED group, the stage in its composite `batchId`. Fixed
+   * for every day of the group, unlike `stageId`, which follows a projected
+   * stage change. This is the stage writers persist beside `realBatchId`, so
+   * (realBatchId, groupStageId) is one-to-one with the grouping key `batchId`
+   * (Task 9b fix round 1: persisting the day's stage let a group projected
+   * into another group's stage collide with it on uq_requisition_line_batch).
+   */
+  groupStageId: string;
   itemId: string;
   itemNo: string; // item code, '' when unknown
   itemName: string;
@@ -529,6 +539,7 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
     heads: number;
     stageCode: string;
     stageId: string;
+    groupStageId: string;
     feedRow: FeedRow;
     key: string;
     sourceType: 'SILO' | 'STORE' | 'NONE';
@@ -609,7 +620,7 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
       if (date >= rowFrom && date <= input.to) {
         dailyEntries.push({
           date, batchId: batch.batchId, realBatchId: batch.realBatchId, batchNo: batch.batchNo, shedId: batch.shedId, heads: batch.heads,
-          stageCode: segment.stageCode, stageId: segment.stageId, feedRow, key: sk.key, sourceType: sk.sourceType, sourceCode: sk.sourceCode, demandMicrograms,
+          stageCode: segment.stageCode, stageId: segment.stageId, groupStageId: batch.segments[0].stageId, feedRow, key: sk.key, sourceType: sk.sourceType, sourceCode: sk.sourceCode, demandMicrograms,
           inChangeWindow,
         });
         const shareKey = `${sk.key}|${date}`;
@@ -831,6 +842,7 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
       shedCode: shedById.get(e.shedId)?.shedCode ?? '',
       stageCode: e.stageCode,
       stageId: e.stageId,
+      groupStageId: e.groupStageId,
       itemId,
       itemNo: input.itemCodes?.[itemId] ?? '',
       itemName: input.items[itemId] ?? itemId,

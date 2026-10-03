@@ -7,7 +7,7 @@ import { FARM_SCOPE_KEY, farmScope } from '../../../common/farm-scope';
 import * as schema from '../../../core/database/schema';
 import { todayInZone, type ForecastSource } from '../../inventory/feed-forecast/feed-forecast.engine';
 import { buildRunLineSnapshots, type ForecastRunLineSnapshot } from '../../inventory/feed-forecast/feed-forecast-run.rules';
-import { serverToday } from './feed-requisition.rules';
+import { addDaysIso, serverToday } from './feed-requisition.rules';
 import { FeedRequisitionService } from './feed-requisition.service';
 
 describe('FeedRequisitionService.createManual', () => {
@@ -98,7 +98,7 @@ const forecastDaily = (over: Record<string, unknown> = {}) => ({
   // ANIMAL_WISE/REGISTERED stage group); realBatchId is the genuine batch_header PK
   // every writer must persist. Equal here by default — a dedicated test below makes
   // them differ to prove the real id, not the composite, is what gets written.
-  date: serverToday(), batchId: 'batch-1', realBatchId: 'batch-1', stageId: null, batchNo: 'BATCH-1', shedId: 'shed-1', shedCode: 'SHED-1', stageCode: 'WEANER',
+  date: serverToday(), batchId: 'batch-1', realBatchId: 'batch-1', stageId: null, groupStageId: null, batchNo: 'BATCH-1', shedId: 'shed-1', shedCode: 'SHED-1', stageCode: 'WEANER',
   destinationLocationId: 'silo-1', itemId: 'item-r1', itemNo: 'R1', itemName: 'Weaner Diet R1', currentItemId: 'item-r1',
   heads: 1000, feedRateKg: 2, openingStockKg: 1500, confirmedReceiptKg: 0, demandKg: 2000,
   projectedClosingKg: 0, runDownDate: serverToday(), shortageDate: serverToday(), recommendedQtyKg: 4500,
@@ -798,11 +798,11 @@ describe('FeedRequisitionService.autoDraft — batch/house breakdown (B1) and on
     ]);
     const animalWiseDaily = [
       forecastDaily({
-        batchId: 'batch-9:stage-weaner', realBatchId: 'batch-9', stageId: 'stage-weaner',
+        batchId: 'batch-9:stage-weaner', realBatchId: 'batch-9', stageId: 'stage-weaner', groupStageId: 'stage-weaner',
         batchNo: 'BATCH-9 · WEANER', heads: 60, demandKg: 120,
       }),
       forecastDaily({
-        batchId: 'batch-9:stage-grower', realBatchId: 'batch-9', stageId: 'stage-grower',
+        batchId: 'batch-9:stage-grower', realBatchId: 'batch-9', stageId: 'stage-grower', groupStageId: 'stage-grower',
         batchNo: 'BATCH-9 · GROWER', heads: 40, demandKg: 80,
       }),
     ];
@@ -820,6 +820,44 @@ describe('FeedRequisitionService.autoDraft — batch/house breakdown (B1) and on
     expect(breakdown.values).toEqual([
       expect.objectContaining({ line_id: lineId, batch_id: 'batch-9', stage_id: 'stage-grower', shed_id: 'shed-1', heads: 40, demand_kg: '80' }),
       expect.objectContaining({ line_id: lineId, batch_id: 'batch-9', stage_id: 'stage-weaner', shed_id: 'shed-1', heads: 60, demand_kg: '120' }),
+    ]);
+  });
+
+  /**
+   * Task 9b fix round 1, finding 1: a stage group projected into ANOTHER
+   * group's stage inside the window must still be written under its own
+   * identity stage. Before the fix the writer stamped the first-demand day's
+   * stage, so group A (origin FLUSH, eating r1 only once in INSEM) and group B
+   * (origin INSEM) were both inserted as (batch-9, INSEM, shed-1) — a
+   * duplicate on uq_requisition_line_batch, so MySQL refused the insert and
+   * auto-draft 500'd.
+   */
+  it('a stage group projected into another group\'s stage writes two rows with distinct (batch_id, stage_id, shed_id)', async () => {
+    const queues = new Map<unknown, unknown[][]>([
+      [schema.locationMaster, [[FARM_ROW], [SILO_ROW], [{ location_id: 'farm-grs' }]]],
+      [schema.requisition, [[], [], [{ req: { requisition_id: 'new' }, farm_code: 'GRS' }]]],
+    ]);
+    const daily = [
+      forecastDaily({ batchId: 'batch-9:FLUSH', realBatchId: 'batch-9', stageId: 'FLUSH', groupStageId: 'FLUSH', batchNo: 'BATCH-9 · FLUSH',
+        itemId: 'item-flush', heads: 10, demandKg: 20 }),
+      forecastDaily({ date: addDaysIso(serverToday(), 1), batchId: 'batch-9:FLUSH', realBatchId: 'batch-9', stageId: 'INSEM', groupStageId: 'FLUSH',
+        batchNo: 'BATCH-9 · FLUSH', heads: 10, demandKg: 20 }),
+      forecastDaily({ batchId: 'batch-9:INSEM', realBatchId: 'batch-9', stageId: 'INSEM', groupStageId: 'INSEM', batchNo: 'BATCH-9 · INSEM',
+        heads: 12, demandKg: 24 }),
+    ];
+    const { service, log, forecast } = setup([source({ daysLeft: 2.5 })], queues, daily);
+    // The window must reach tomorrow, the day group A has moved into INSEM.
+    const computed = forecast.computeForFarm.getMockImplementation();
+    forecast.computeForFarm.mockImplementation(async (...args: unknown[]) => ({ ...(await computed(...args)), to: addDaysIso(serverToday(), 1) }));
+    await service.autoDraft({}, 'tenant-1', { userId: 'u-1', userType: 'COMPANY_ADMIN' });
+
+    const breakdown = log.find((e) => e.op === 'insert' && e.table === schema.requisitionLineBatch)!;
+    const keys = breakdown.values.map((v: any) => `${v.line_id}|${v.batch_id}|${v.stage_id}|${v.shed_id}`);
+    expect(breakdown.values).toHaveLength(2);
+    expect(new Set(keys).size).toBe(2);
+    expect(breakdown.values.map((v: any) => [v.batch_id, v.stage_id, v.heads]).sort()).toEqual([
+      ['batch-9', 'FLUSH', 10],
+      ['batch-9', 'INSEM', 12],
     ]);
   });
 

@@ -933,3 +933,47 @@ describe('dayShort — the field specification\'s DD/MM/YY for API messages (rev
     expect(dayShort('soon')).toBe('soon');
   });
 });
+
+/**
+ * Task 9b fix round 1, finding 1: a daily row carries its stage GROUP's
+ * identity (the batch's starting segment stage — the stage in the composite
+ * key buildInputBatches gives an ANIMAL_WISE/REGISTERED group) separately from
+ * the stage the group is in on that day. Writers persist the identity stage,
+ * so (batch, stage) stays one-to-one with the engine's grouping key even after
+ * a group is projected into a stage another group of the same batch is in.
+ */
+describe('buildFeedForecast — group identity stage survives a projected stage change', () => {
+  const row = (over: Partial<FeedRow>): FeedRow => ({
+    lifecycleId: 'x', breedId: 'l', stageId: 'flush', itemId: 'fr', itemName: 'Flushing', fromDay: 1, toDay: 30, kgPerHeadPerDay: 2, wastagePct: 0, ...over,
+  });
+  const input: ForecastInput = {
+    planningDate: '2026-09-21',
+    from: '2026-09-21',
+    to: '2026-09-24',
+    sheds: [{ shedId: 'h1', shedCode: 'GRS/SHED-001', siloIds: ['s1', 's2'] }],
+    silos: [
+      { siloId: 's1', siloCode: 'GRS/SILO-001', itemId: 'fr', balanceKg: 100000 },
+      { siloId: 's2', siloCode: 'GRS/SILO-002', itemId: 'ins', balanceKg: 100000 },
+    ],
+    store: null,
+    items: { fr: 'Flushing', ins: 'Insemination' },
+    batches: [{
+      batchId: 'b:flush', realBatchId: 'b' as any, batchNo: 'B · FLUSH', breedId: 'l', shedId: 'h1', heads: 10,
+      segments: [
+        { stageId: 'flush', stageCode: 'FLUSH', start: '2026-09-20', end: '2026-09-22', projected: false },
+        { stageId: 'insem', stageCode: 'INSEM', start: '2026-09-23', end: null, projected: true },
+      ],
+    }],
+    feedRows: [row({ lifecycleId: 'a' }), row({ lifecycleId: 'b', stageId: 'insem', itemId: 'ins', itemName: 'Insemination' })],
+  };
+
+  it('stamps every day with the starting segment stage as groupStageId, while stageId follows the day', () => {
+    const { daily } = buildFeedForecast(input);
+    expect(daily.map((d) => [d.date, d.stageId, d.groupStageId, d.realBatchId])).toEqual([
+      ['2026-09-21', 'flush', 'flush', 'b'],
+      ['2026-09-22', 'flush', 'flush', 'b'],
+      ['2026-09-23', 'insem', 'flush', 'b'],
+      ['2026-09-24', 'insem', 'flush', 'b'],
+    ]);
+  });
+});

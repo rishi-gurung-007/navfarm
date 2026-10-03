@@ -372,7 +372,7 @@ describe('lineChangeProblems — Req. row 13 and cp. 4', () => {
  */
 describe('buildLineBreakdown — per batch and house under each silo/item line (B1)', () => {
   const row = (over: Record<string, unknown>) => ({
-    date: '2026-09-23', batchId: 'b1', realBatchId: 'b1', stageId: null, batchNo: 'B-001', shedId: 'h3', shedCode: 'GRS/SHED-003', itemId: 'r1',
+    date: '2026-09-23', batchId: 'b1', realBatchId: 'b1', stageId: null, groupStageId: null, batchNo: 'B-001', shedId: 'h3', shedCode: 'GRS/SHED-003', itemId: 'r1',
     destinationLocationId: 's1', heads: 1000, feedRateKg: 0.5, demandKg: 500, lifecycleId: 'lc-r1', sourceType: 'SILO', ...over,
   });
   it('sums demand over the window per (batch, house), taking heads, rate and lifecycle row from the first day with demand', () => {
@@ -420,8 +420,8 @@ describe('buildLineBreakdown — per batch and house under each silo/item line (
    */
   it('an animal-wise composite batch id (two stages, one shed) persists the real batch id with two distinct rows', () => {
     const daily = [
-      row({ batchId: 'b1:stage-weaner', realBatchId: 'b1', stageId: 'stage-weaner', batchNo: 'B-001 · WEANER', heads: 60, demandKg: 48 }),
-      row({ batchId: 'b1:stage-grower', realBatchId: 'b1', stageId: 'stage-grower', batchNo: 'B-001 · GROWER', heads: 40, feedRateKg: 0.8, demandKg: 32 }),
+      row({ batchId: 'b1:stage-weaner', realBatchId: 'b1', stageId: 'stage-weaner', groupStageId: 'stage-weaner', batchNo: 'B-001 · WEANER', heads: 60, demandKg: 48 }),
+      row({ batchId: 'b1:stage-grower', realBatchId: 'b1', stageId: 'stage-grower', groupStageId: 'stage-grower', batchNo: 'B-001 · GROWER', heads: 40, feedRateKg: 0.8, demandKg: 32 }),
     ];
     const out = buildLineBreakdown(daily as any, '2026-09-23', '2026-09-29')!.get('s1|r1')!;
     expect(out).toHaveLength(2);
@@ -430,5 +430,32 @@ describe('buildLineBreakdown — per batch and house under each silo/item line (
     expect(out.map((r) => r.stageId).sort()).toEqual(['stage-grower', 'stage-weaner']);
     expect(out.find((r) => r.stageId === 'stage-weaner')).toMatchObject({ heads: 60, demandKg: 48 });
     expect(out.find((r) => r.stageId === 'stage-grower')).toMatchObject({ heads: 40, feedRateKg: 0.8, demandKg: 32 });
+  });
+
+  /**
+   * Task 9b fix round 1, finding 1: the persisted stage_id must be the stage
+   * GROUP's identity (the stage in the engine's composite key), not the stage
+   * of the group's first day with demand. A REGISTERED/ANIMAL_WISE group that
+   * starts in FLUSH (eating a flushing ration) and is projected into INSEM
+   * inside the window first eats the INSEM diet in INSEM — so "first-demand
+   * stage" stamped it INSEM, the same as the group that is already in INSEM,
+   * and two rows came out as (b, INSEM, h1): ER_DUP_ENTRY on
+   * uq_requisition_line_batch (line_id, batch_id, stage_id, shed_id).
+   */
+  it('a group projected into another group\'s stage keeps its own identity stage, so (batch, stage, shed) stays unique', () => {
+    const daily = [
+      // Group A: origin FLUSH. Day 1 eats the flushing ration (another line); day 2 it is in INSEM and eats r1.
+      row({ batchId: 'b:FLUSH', realBatchId: 'b', stageId: 'FLUSH', groupStageId: 'FLUSH', itemId: 'flushRation', heads: 10, demandKg: 20 }),
+      row({ date: '2026-09-24', batchId: 'b:FLUSH', realBatchId: 'b', stageId: 'INSEM', groupStageId: 'FLUSH', heads: 10, demandKg: 20 }),
+      // Group B: origin INSEM, eats r1 throughout.
+      row({ batchId: 'b:INSEM', realBatchId: 'b', stageId: 'INSEM', groupStageId: 'INSEM', heads: 12, demandKg: 24 }),
+    ];
+    const out = buildLineBreakdown(daily as any, '2026-09-23', '2026-09-29').get('s1|r1')!;
+    const keys = out.map((r) => `${r.batchId}|${r.stageId}|${r.shedId}`);
+    expect(new Set(keys).size).toBe(out.length);
+    expect(out.map((r) => [r.batchId, r.stageId, r.shedId, r.heads]).sort()).toEqual([
+      ['b', 'FLUSH', 'h3', 10],
+      ['b', 'INSEM', 'h3', 12],
+    ]);
   });
 });
