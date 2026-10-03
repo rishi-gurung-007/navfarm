@@ -160,11 +160,33 @@ describe('transferStatusFor — status follows the shipment and receipt events',
     expect(transferStatusFor([{ ordered: 10, shipped: 10, received: 10 }, { ordered: 5, shipped: 5, received: 0 }])).toBe('PARTIALLY_RECEIVED');
   });
 
+  // M5 (fix round 1): one line complete, the other never touched at all —
+  // distinct from the "only shipped" case above, since a line with shipped 0
+  // exercises the DRAFT short-circuit's interaction with a sibling line that
+  // already has a receipt.
+  it('one line complete and a sibling line completely untouched is still PARTIALLY_RECEIVED', () => {
+    expect(transferStatusFor([{ ordered: 10, shipped: 10, received: 10 }, { ordered: 5, shipped: 0, received: 0 }])).toBe('PARTIALLY_RECEIVED');
+  });
+
   it('every line fully shipped and fully received is POSTED', () => {
     expect(transferStatusFor([{ ordered: 10, shipped: 10, received: 10 }, { ordered: 5, shipped: 5, received: 5 }])).toBe('POSTED');
   });
 
   it('the open statuses are the three an event may still be posted against', () => {
     expect([...OPEN_TRANSFER_STATUSES]).toEqual(['DRAFT', 'IN_TRANSIT', 'PARTIALLY_RECEIVED']);
+  });
+
+  // Fix round 1, Important 1: shippedQuantities/receivedQuantities sum
+  // Number(qty) in JS float arithmetic. Ordered 1.3, shipped as two events
+  // 0.6 + 0.7, sums to 1.2999999999999998 in IEEE754 — short of 1.3 by 2e-16.
+  // The old >= comparison, with no tolerance, left the transfer stuck in
+  // PARTIALLY_RECEIVED forever: "fully shipped" never became true, so further
+  // shipment, edit and cancel were all refused. The fix uses the same 1e-9
+  // tolerance assertShipment already uses (stock-transfer.service.ts).
+  it('a float-summed partial shipment and receipt that lands fractionally short of the order still completes (ordered 1.3, shipped 0.6+0.7, received 0.6+0.7)', () => {
+    const shipped = 0.6 + 0.7; // 1.2999999999999998
+    const received = 0.6 + 0.7;
+    expect(shipped).toBeLessThan(1.3); // the trap: a plain >= comparison would never see this as "fully shipped"
+    expect(transferStatusFor([{ ordered: 1.3, shipped, received }])).toBe('POSTED');
   });
 });

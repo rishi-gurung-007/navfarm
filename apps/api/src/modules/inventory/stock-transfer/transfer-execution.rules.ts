@@ -100,11 +100,26 @@ export function cumulativeAfter(assignments: TrackingAssignment[]): TrackingAssi
   return assignments.map((a) => ({ ...a }));
 }
 
+/**
+ * The same 1e-9 tolerance assertShipment (stock-transfer.service.ts) already
+ * uses against the ordered quantity, re-applied here (Part E Task 4b, fix
+ * round 1, Important 1). shippedQuantities/receivedQuantities sum Number(qty)
+ * in JS float arithmetic — ordered 1.3 shipped as 0.6 + 0.7 sums to
+ * 1.2999999999999998, short of 1.3 by 2e-16. A bare >= never saw that as
+ * fully shipped, so the transfer sat in PARTIALLY_RECEIVED forever: further
+ * shipment, edit and cancel were all refused once "shipped" existed. The data
+ * script (recompute-transfer-status.ts) sums in SQL DECIMAL arithmetic, which
+ * is exact — it would have read 1.3 and disagreed with the service's
+ * 1.2999999999999998. Both read through this one function, so the tolerance
+ * fixes them together rather than needing two matching fixes.
+ */
+const FULLY_COVERED_TOLERANCE = 1e-9;
+
 export const transferIsFullyShipped = (lines: Array<{ ordered: number; shipped: number }>): boolean =>
-  lines.length > 0 && lines.every((l) => l.shipped >= l.ordered);
+  lines.length > 0 && lines.every((l) => l.shipped >= l.ordered - FULLY_COVERED_TOLERANCE);
 
 export const transferIsFullyReceived = (lines: Array<{ ordered: number; received: number }>): boolean =>
-  lines.length > 0 && lines.every((l) => l.received >= l.ordered);
+  lines.length > 0 && lines.every((l) => l.received >= l.ordered - FULLY_COVERED_TOLERANCE);
 
 /**
  * A transfer's status, derived from its events (Part E Task 4b). The column
