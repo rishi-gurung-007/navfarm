@@ -23,11 +23,12 @@ describe('FeedRequisitionService.createManual', () => {
     withFarmScope: jest.fn(async (_f: string, _c: string, work: () => Promise<unknown>) => work()),
     farmToday: jest.fn(async () => ({ today: serverToday(), timeZone: null })),
   };
-  const service = new FeedRequisitionService(transactionCls(db), forecast, {} as any, { evaluateFarmSafely: jest.fn() } as any, {} as any, {} as any);
+  const feedSettingsStub: any = { resolve: jest.fn(async () => ({ safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50, truckTargetKg: 30000, productionWeekday: 0 })) };
+  const service = new FeedRequisitionService(transactionCls(db), forecast, {} as any, { evaluateFarmSafely: jest.fn() } as any, {} as any, {} as any, feedSettingsStub);
 
   it('refuses a destination that is not an active silo or store of the farm', async () => {
     selectQueue.push(
-      [{ location_code: 'GRS', feed_bulk_multiple_kg: 3000, feed_bag_size_kg: 50, feed_truck_target_kg: 30000, feed_production_weekday: 0 }], // farm
+      [{ location_code: 'GRS' }], // farm — settings now come from FeedSettingsService, not location_master
       [{ location_id: 'shed-1', location_code: 'GRS/SHED-003', location_type: 'SHED', farm_id: 'farm-grs', is_active: true, feed_in_bags: null, low_level_kg: null }],
     );
     await expect(service.createManual({ lines: [{ destination_location_id: 'shed-1', item_id: 'r1', quantity_kg: 3000, proposed_delivery_date: '2026-09-26' }] } as any, 'tenant-1', { userId: 'u', userType: 'TENANT_ADMIN' }))
@@ -38,7 +39,7 @@ describe('FeedRequisitionService.createManual', () => {
   it('refuses the same silo and item twice on one requisition (Requisition §1 row 9)', async () => {
     const silo = { location_id: 'silo-1', location_code: 'GRS/SILO-001', location_type: 'SILO', farm_id: 'farm-grs', is_active: true, feed_in_bags: null, low_level_kg: null };
     selectQueue.push(
-      [{ location_code: 'GRS', feed_bulk_multiple_kg: 3000, feed_bag_size_kg: 50, feed_truck_target_kg: 30000, feed_production_weekday: 0 }],
+      [{ location_code: 'GRS' }],
       [silo],
     );
     const line = { destination_location_id: 'silo-1', item_id: 'r1', quantity_kg: 3000, proposed_delivery_date: '2026-09-26' };
@@ -87,7 +88,9 @@ const source = (over: Partial<ForecastSource> = {}): ForecastSource => ({
   daysLeft: 0, runDownDate: '2026-09-23', isNextDiet: false, noSiloHoldsItem: false, lifecycleIds: ['row-r1'],
   thresholdKg: 0, incomingKg: 0, shortfallKg: 4500, safetyStockKg: 0, deliveryDayOpeningKg: 1500, ...over,
 });
-const FARM_ROW = { location_code: 'GRS', feed_bulk_multiple_kg: 3000, feed_bag_size_kg: 50, feed_truck_target_kg: 30000, feed_production_weekday: 0 };
+// Settings (bulk multiple, bag size, truck target, production weekday) come from FeedSettingsService now
+// (Task 5) — location_master no longer supplies them, so the farm row carries only what loadFarm still reads.
+const FARM_ROW = { location_code: 'GRS' };
 const SILO_ROW = { location_id: 'silo-1', location_code: 'GRS/SILO-001', location_type: 'SILO', farm_id: 'farm-grs', is_active: true, feed_in_bags: null, low_level_kg: '1500.00' };
 
 const forecastDaily = (over: Record<string, unknown> = {}) => ({
@@ -163,8 +166,11 @@ function setup(sources: ForecastSource[], queues: Map<unknown, unknown[][]>, dai
     }))),
   };
   const ledger: any = { getStockBalance: jest.fn(async () => []) };
-  const service = new FeedRequisitionService(cls, forecast, {} as any, alerts, siloFeed, ledger);
-  return { service, log, forecast, alerts, evaluated, cls, db, siloFeed, ledger };
+  // Task 5: FeedSettingsService.resolve() is the farm's settings now (bulk multiple, bag size, truck
+  // target, production weekday, safety stock) — the fixture matches FARM_ROW's old feed_* defaults.
+  const feedSettings: any = { resolve: jest.fn(async () => ({ safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50, truckTargetKg: 30000, productionWeekday: 0 })) };
+  const service = new FeedRequisitionService(cls, forecast, {} as any, alerts, siloFeed, ledger, feedSettings);
+  return { service, log, forecast, alerts, evaluated, cls, db, siloFeed, ledger, feedSettings };
 }
 
 describe('FeedRequisitionService.autoDraft', () => {
@@ -200,7 +206,8 @@ describe('FeedRequisitionService.autoDraft', () => {
     expect(header.values.forecast_run_key).toMatch(/^RUN-GRS-\d{8}-\d{6}$/);
     const lines = log.find((e) => e.op === 'insert' && e.table === schema.requisitionLine)!;
     expect(lines.values).toEqual([expect.objectContaining({
-      line_seq: 1, item_id: 'item-r1', destination_location_id: 'silo-1', quantity: '6000', recommended_qty_kg: '6000',
+      // Requisition §1 row 42: NAV-style 10000-step line numbering (Task 5), not a plain 1, 2, 3...
+      line_seq: 10000, item_id: 'item-r1', destination_location_id: 'silo-1', quantity: '6000', recommended_qty_kg: '6000',
       unrounded_need_kg: '4500', feed_type: 'BULK', source_type: 'SILO', uom: 'KG', quantity_edited: false,
     })]);
 

@@ -1,10 +1,31 @@
-import type { ForecastSource } from '../../inventory/feed-forecast/feed-forecast.engine';
+import { buildFeedForecast, type ForecastInput, type ForecastSource } from '../../inventory/feed-forecast/feed-forecast.engine';
 import {
-  DEFAULT_FEED_SETTINGS, DestinationInfo, approvalProblems, bagCountFor, deviationNeedsRemarks, feedTypeOf, planDraftUpsert, productionCycle,
-  recommendLines, requisitionPriority, roundOrderKg, runKeyFor, serverToday,
+  DEFAULT_FEED_SETTINGS, DestinationInfo, approvalProblems, bagCountFor, deliveryDateNeedsRemarks, deviationNeedsRemarks, feedTypeOf, planDraftUpsert,
+  productionCycle, recommendLines, requisitionPriority, roundOrderKg, runKeyFor, serverToday,
 } from './feed-requisition.rules';
 
 const S = DEFAULT_FEED_SETTINGS;
+
+// The engine Worked Example fixture (feed-forecast.engine.sources.spec.ts), with the Master Setup 1,000 KG
+// Below Feed Level on both silos (3 Oct rulings 2/3) and no leadTimeDays — Task 3 removed the field.
+const workedExampleWithLevels: ForecastInput = {
+  planningDate: '2026-09-23', from: '2026-09-23', to: '2026-09-29',
+  sheds: [{ shedId: 'h3', shedCode: 'GRS/SHED-003', siloIds: ['s1', 's2'] }],
+  silos: [
+    { siloId: 's1', siloCode: 'GRS/SILO-001', itemId: 'r1', balanceKg: 1500, lowLevelKg: 1000 },
+    { siloId: 's2', siloCode: 'GRS/SILO-002', itemId: 'r2', balanceKg: 1000, lowLevelKg: 1000 },
+  ],
+  store: null,
+  items: { r1: 'Weaner Diet R1', r2: 'Weaner Diet R2' },
+  batches: [{
+    batchId: 'b', batchNo: 'WG-2026-38', breedId: 'l', shedId: 'h3', heads: 1000,
+    segments: [{ stageId: 'wean', stageCode: 'WEANER', start: '2026-08-30', end: null, projected: false }],
+  }],
+  feedRows: [
+    { lifecycleId: 'row-r1', breedId: 'l', stageId: 'wean', itemId: 'r1', itemName: 'Weaner Diet R1', fromDay: 25, toDay: 27, kgPerHeadPerDay: 2.0, wastagePct: 0 },
+    { lifecycleId: 'row-r2', breedId: 'l', stageId: 'wean', itemId: 'r2', itemName: 'Weaner Diet R2', fromDay: 28, toDay: 31, kgPerHeadPerDay: 2.5, wastagePct: 0 },
+  ],
+};
 
 // Task 2's sources for the Worked Example (23–29 Sep, SILO1 R1 1,500 kg, SILO2 R2 1,000 kg).
 const r1: ForecastSource = {
@@ -20,7 +41,7 @@ const r2: ForecastSource = {
   thresholdKg: 0, incomingKg: 0, shortfallKg: 9000, safetyStockKg: 0, deliveryDayOpeningKg: 1000,
 };
 const silo = (id: string, extra: Partial<DestinationInfo> = {}): [string, DestinationInfo] =>
-  [id, { locationId: id, locationType: 'SILO', feedInBags: null, lowLevelKg: null, ...extra }];
+  [id, { locationId: id, locationType: 'SILO', feedInBags: null, lowLevelKg: null, capacityKg: null, ...extra }];
 
 describe('roundOrderKg and bagCountFor', () => {
   it('rounds bulk up to 3,000 kg multiples — Worked Example H8/H9', () => {
@@ -92,7 +113,8 @@ describe('recommendLines — Worked Example', () => {
       expect.objectContaining({
         key: 's2|r2', destinationLocationId: 's2', itemId: 'r2', isNextDiet: true, daysBeforeDietChange: 3,
         dailyRequirementKg: 2500, daysRemaining: null, unroundedNeedKg: 9000, recommendedQtyKg: 9000,
-        proposedDeliveryDate: '2026-09-26', // TEMPORARY (Task 3): shortage date 26 Sep; Task 5 sets the delivery-date rule
+        // Req. row 29: delivered on the first shortage date, 26 Sep.
+        recommendedDeliveryDate: '2026-09-26', proposedDeliveryDate: '2026-09-26',
       }),
     ]);
   });
@@ -108,7 +130,7 @@ describe('recommendLines — Worked Example', () => {
     const [store] = recommendLines({
       planningDate: '2026-09-23', to: '2026-09-29',
       sources: [{ ...r2, sourceType: 'STORE', sourceCode: 'GRS/STORE-001', locationId: 'st', noSiloHoldsItem: true }],
-      destinations: new Map([['st', { locationId: 'st', locationType: 'STORE', feedInBags: null, lowLevelKg: null }]]), settings: S,
+      destinations: new Map([['st', { locationId: 'st', locationType: 'STORE', feedInBags: null, lowLevelKg: null, capacityKg: null }]]), settings: S,
     });
     expect(store).toMatchObject({ feedType: 'BAGGED', needsSiloChangeover: true, recommendedQtyKg: 9000, bagCount: 180 });
   });
@@ -123,18 +145,21 @@ describe('recommendLines — Plan R (D19, Q3, Q4)', () => {
     expect(line).toMatchObject({ unroundedNeedKg: 7000, recommendedQtyKg: 9000 });
   });
 
-  it('dates the line Required On, or the planning date when Required On has passed', () => {
-    // TEMPORARY (Task 3): Required On is gone; the stand-in is the shortage date, clamped to the planning date. Task 5 rewrites this.
-    expect(draft({ ...r1, shortageDate: '2026-09-25' })[0].proposedDeliveryDate).toBe('2026-09-25');
-    expect(draft({ ...r1, shortageDate: '2026-09-20' })[0].proposedDeliveryDate).toBe('2026-09-23'); // already past → planning date
+  it('dates the line on the first projected shortage (Req. row 29), or the planning date once that has passed', () => {
+    const [withShortage] = draft({ ...r1, shortageDate: '2026-09-25' });
+    expect(withShortage).toMatchObject({ recommendedDeliveryDate: '2026-09-25', proposedDeliveryDate: '2026-09-25' });
+    const [pastShortage] = draft({ ...r1, shortageDate: '2026-09-20' });
+    expect(pastShortage).toMatchObject({ recommendedDeliveryDate: '2026-09-23', proposedDeliveryDate: '2026-09-23' }); // already past → planning date
   });
 
-  it('a run-down inside the window always drafts a line — landing exactly on the level orders one compartment (Review Focus 2)', () => {
-    const [line] = draft({ ...r1, shortfallKg: 0, runDownDate: '2026-09-29', shortageDate: null });
-    expect(line).toMatchObject({ unroundedNeedKg: 0, recommendedQtyKg: 3000, firstShortageDate: null, proposedDeliveryDate: '2026-09-29' }); // TEMPORARY (Task 3): no shortage date → `to`
+  it('dates the line `to` when nothing in the window is short', () => {
+    const [line] = draft({ ...r1, shortageDate: null });
+    expect(line).toMatchObject({ recommendedDeliveryDate: '2026-09-29', proposedDeliveryDate: '2026-09-29' });
   });
 
-  it('a run-down found only past the window drafts nothing', () => {
+  // Engine Step 8 supersedes the old "lands exactly on its level still orders one compartment" minimum: with no
+  // shortfall there is nothing to order, whatever the run-down date says (Task 5 drops the runsDownInWindow branch).
+  it('nothing short in the window drafts nothing, even with a run-down date set', () => {
     expect(draft({ ...r1, shortfallKg: 0, runDownDate: '2026-10-05' })).toEqual([]);
   });
 
@@ -155,6 +180,40 @@ describe('recommendLines — Plan R (D19, Q3, Q4)', () => {
       currentBalanceKg: new Map(),
     });
     expect(line).toMatchObject({ systemBalanceKg: 0, belowLowLevel: true });
+  });
+});
+
+describe('recommendLines — workbook delivery date and capacity (Req. row 29, Engine Step 8)', () => {
+  const base = { planningDate: '2026-09-23', to: '2026-09-29', settings: { ...DEFAULT_FEED_SETTINGS } };
+  const dest = (capacityKg: number | null) => new Map([
+    ['s1', { locationId: 's1', locationType: 'SILO' as const, feedInBags: false, lowLevelKg: 1000, capacityKg }],
+    ['s2', { locationId: 's2', locationType: 'SILO' as const, feedInBags: false, lowLevelKg: 1000, capacityKg }],
+  ]);
+
+  it('delivers on the first shortage date and numbers lines 10000, 20000', () => {
+    const lines = recommendLines({ ...base, sources: buildFeedForecast(workedExampleWithLevels).sources, destinations: dest(12000) });
+    expect(lines.map((l) => [l.itemId, l.recommendedQtyKg, l.recommendedDeliveryDate, l.proposedDeliveryDate, l.lineNo, l.exceedsSiloCapacity]))
+      .toEqual([['r1', 6000, '2026-09-23', '2026-09-23', 10000, false], ['r2', 9000, '2026-09-26', '2026-09-26', 20000, false]]);
+  });
+
+  it('warns but keeps the quantity when the order would overfill the silo', () => {
+    const lines = recommendLines({ ...base, sources: buildFeedForecast(workedExampleWithLevels).sources, destinations: dest(9500) });
+    const r2 = lines.find((l) => l.itemId === 'r2')!;
+    expect([r2.recommendedQtyKg, r2.exceedsSiloCapacity]).toEqual([9000, true]); // 9,000 + 1,000 opening > 9,500
+  });
+
+  it('drafts nothing for a next-diet silo that never runs short in the window', () => {
+    const input = { ...workedExampleWithLevels, silos: workedExampleWithLevels.silos.map((s) => (s.siloId === 's2' ? { ...s, balanceKg: 11000 } : s)) };
+    const lines = recommendLines({ ...base, sources: buildFeedForecast(input).sources, destinations: dest(12000) });
+    expect(lines.map((l) => l.itemId)).toEqual(['r1']);
+  });
+});
+
+describe('deliveryDateNeedsRemarks', () => {
+  it('requires remarks only when the date moved from the drafted one', () => {
+    expect(deliveryDateNeedsRemarks({ recommendedDeliveryDate: '2026-09-23', proposedDeliveryDate: '2026-09-23' })).toBe(false);
+    expect(deliveryDateNeedsRemarks({ recommendedDeliveryDate: '2026-09-23', proposedDeliveryDate: '2026-09-24' })).toBe(true);
+    expect(deliveryDateNeedsRemarks({ recommendedDeliveryDate: null, proposedDeliveryDate: '2026-09-24' })).toBe(false); // manual line
   });
 });
 
@@ -216,7 +275,8 @@ describe('runKeyFor and serverToday', () => {
 });
 
 describe('approvalProblems — checkpoints 18 and 22', () => {
-  const r1Line = { lineSeq: 1, itemName: 'Weaner Diet R1', quantityKg: 9000, recommendedQtyKg: 6000 };
+  // recommendedDeliveryDate: null keeps these pre-existing cases clear of the new Req. row 29 check below.
+  const r1Line = { lineSeq: 1, itemName: 'Weaner Diet R1', quantityKg: 9000, recommendedQtyKg: 6000, recommendedDeliveryDate: null, proposedDeliveryDate: '2026-09-23' };
 
   it('names the line that deviates more than 20 % when there are no remarks — 6,000 → 9,000 kg', () => {
     expect(approvalProblems({ lines: [r1Line], remarks: '  ', today: '2026-09-23', submissionDeadline: '2026-09-26' }))
@@ -226,7 +286,22 @@ describe('approvalProblems — checkpoints 18 and 22', () => {
     expect(approvalProblems({ lines: [r1Line], remarks: 'Extra pigs arriving', today: '2026-09-23', submissionDeadline: '2026-09-26' })).toEqual([]);
   });
   it('accepts exactly 20 % and a manual line without remarks', () => {
-    expect(approvalProblems({ lines: [{ ...r1Line, quantityKg: 7200 }, { lineSeq: 2, itemName: 'X', quantityKg: 50000, recommendedQtyKg: null }], remarks: null, today: '2026-09-23', submissionDeadline: '2026-09-26' })).toEqual([]);
+    expect(approvalProblems({
+      lines: [{ ...r1Line, quantityKg: 7200 }, { lineSeq: 2, itemName: 'X', quantityKg: 50000, recommendedQtyKg: null, recommendedDeliveryDate: null, proposedDeliveryDate: '2026-09-23' }],
+      remarks: null, today: '2026-09-23', submissionDeadline: '2026-09-26',
+    })).toEqual([]);
+  });
+  it('requires remarks when a delivery date was moved off the drafted one (Req. row 29)', () => {
+    expect(approvalProblems({
+      lines: [{ ...r1Line, quantityKg: 6000, recommendedDeliveryDate: '2026-09-23', proposedDeliveryDate: '2026-09-24' }],
+      remarks: null, today: '2026-09-23', submissionDeadline: '2026-09-26',
+    })).toEqual(["Remarks are required when a delivery date differs from the forecast's (Requisition row 29)."]);
+  });
+  it('never for a manual line, which has no recommended delivery date to differ from', () => {
+    expect(approvalProblems({
+      lines: [{ lineSeq: 1, itemName: 'X', quantityKg: 50000, recommendedQtyKg: null, recommendedDeliveryDate: null, proposedDeliveryDate: '2026-09-30' }],
+      remarks: null, today: '2026-09-23', submissionDeadline: '2026-09-26',
+    })).toEqual([]);
   });
   it('accepts approval on the deadline day itself without remarks', () => {
     expect(approvalProblems({ lines: [{ ...r1Line, quantityKg: 6000 }], remarks: null, today: '2026-09-26', submissionDeadline: '2026-09-26' })).toEqual([]);

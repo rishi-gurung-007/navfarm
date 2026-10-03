@@ -18,7 +18,7 @@ import { MySql2Database } from 'drizzle-orm/mysql2';
 import { ClsService } from 'nestjs-cls';
 import { randomUUID } from 'node:crypto';
 import * as schema from '../../../core/database/schema';
-import { farmScope } from '../../../common/farm-scope';
+import { FARM_SCOPE_KEY, farmScope } from '../../../common/farm-scope';
 import { userHasPermission } from '../../../common/permissions';
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { isDuplicateEntry } from '../../../common/filters/http-exception.filter';
@@ -34,6 +34,8 @@ import { itemKindCondition } from '../../master-data/item/item-kind-filter';
 import { InventoryLedgerService } from '../../inventory/inventory-ledger/inventory-ledger.service';
 import { ApprovalService } from '../../production/approval/approval.service';
 import type { ApprovalRequestRow } from '../../production/approval/approval.service';
+import { FeedSettingsService } from '../../inventory/feed-settings/feed-settings.service';
+import { toFarmFeedSettings } from '../../inventory/feed-settings/feed-settings.rules';
 import {
   ApprovalLine, DestinationInfo, DraftLine, FarmFeedSettings, FeedType, approvalProblems, bagCountFor, diffDaysIso, feedTypeOf, lineKey, planDraftUpsert,
   productionCycle, recommendLines, requisitionPriority, runKeyFor, serverToday, wasEdited,
@@ -123,6 +125,9 @@ export class FeedRequisitionService implements OnModuleInit {
     // Ruling I4: the balance a line snapshots is the one FEED_BELOW_L1 alerts on — read the same way.
     private readonly siloFeed: SiloFeedService,
     private readonly ledger: InventoryLedgerService,
+    // Task 5: the farm's draft-rounding settings (bulk multiple, bag size, truck target, production weekday,
+    // safety stock) come from Feed Planning Settings now, not location_master's own feed_* columns.
+    private readonly feedSettings: FeedSettingsService,
   ) {}
 
   private get db(): MySql2Database<typeof schema> {
@@ -151,29 +156,36 @@ export class FeedRequisitionService implements OnModuleInit {
     return conditions;
   }
 
-  private async loadFarm(farmId: string, tenantId: string): Promise<FarmRow> {
+  private async loadFarm(farmId: string, companyId: string, tenantId: string): Promise<FarmRow> {
     const [row] = await this.db
-      .select({
-        location_code: schema.locationMaster.location_code,
-        feed_bulk_multiple_kg: schema.locationMaster.feed_bulk_multiple_kg,
-        feed_bag_size_kg: schema.locationMaster.feed_bag_size_kg,
-        feed_truck_target_kg: schema.locationMaster.feed_truck_target_kg,
-        feed_production_weekday: schema.locationMaster.feed_production_weekday,
-      })
+      .select({ location_code: schema.locationMaster.location_code })
       .from(schema.locationMaster)
       .where(and(eq(schema.locationMaster.location_id, farmId), eq(schema.locationMaster.tenant_id, tenantId)))
       .limit(1);
     if (!row) throw new NotFoundException('Farm not found.');
-    return {
-      code: row.location_code,
-      settings: {
-        bulkMultipleKg: row.feed_bulk_multiple_kg ?? 3000,
-        bagSizeKg: row.feed_bag_size_kg ?? 50,
-        truckTargetKg: row.feed_truck_target_kg ?? 30000,
-        productionWeekday: row.feed_production_weekday ?? 0,
-        safetyStockKg: 0, // Plan 2026-10-03 Task 5 reads all of these from Feed Planning Settings instead
-      },
-    };
+    return { code: row.location_code, settings: toFarmFeedSettings(await this.resolveFeedSettings(companyId, farmId)) };
+  }
+
+  /**
+   * Task 4's fix round 2 (Important 4, Rishi's ruling), re-applied here: feed
+   * settings are company/farm-level configuration, not LOB-scoped data, but
+   * FeedSettingsService.resolve() calls assertLobInScope(scope, farm.lob_id)
+   * unconditionally once a farmId is passed — strict `lobId !== scope.lobId`
+   * with no NULL-lob_id carve-out, unlike every LOB check this module's own
+   * destination/source reads apply. A restricted (OPERATIONAL_ADMIN) caller
+   * acting on a farm whose lob_id is NULL (location_master.lob_id is
+   * nullable, and NULL does occur) would get ForbiddenException for the
+   * whole draft before any computation. Reading outside that one assertion
+   * (restricted: false, lobId: null, just for this nested call) does not
+   * widen access: resolve() still enforces the company boundary and the
+   * farm-company match.
+   */
+  private async resolveFeedSettings(companyId: string, farmId: string) {
+    const scope = farmScope(this.cls);
+    return this.cls.run(async () => {
+      this.cls.set(FARM_SCOPE_KEY, { ...scope, restricted: false, lobId: null });
+      return this.feedSettings.resolve(companyId, farmId);
+    });
   }
 
   /**
@@ -204,6 +216,7 @@ export class FeedRequisitionService implements OnModuleInit {
         is_active: schema.locationMaster.is_active,
         feed_in_bags: schema.locationMaster.feed_in_bags,
         low_level_kg: schema.locationMaster.low_level_kg,
+        silo_capacity_kg: schema.locationMaster.silo_capacity_kg,
       })
       .from(schema.locationMaster)
       .where(and(eq(schema.locationMaster.tenant_id, tenantId), inArray(schema.locationMaster.location_id, [...new Set(ids)])));
@@ -214,6 +227,8 @@ export class FeedRequisitionService implements OnModuleInit {
         rawType: r.location_type,
         feedInBags: r.feed_in_bags,
         lowLevelKg: r.low_level_kg == null ? null : Number(r.low_level_kg),
+        // Always canonical KG (schema.ts): the service converts TON to KG on write, silo_capacity_uom is display only.
+        capacityKg: r.silo_capacity_kg == null ? null : Number(r.silo_capacity_kg),
         code: r.location_code,
         farmId: r.farm_id,
         isActive: r.is_active,
@@ -311,12 +326,16 @@ export class FeedRequisitionService implements OnModuleInit {
       lifecycle_ref_id: line.lifecycleRefId,
       system_balance_kg: dec(line.systemBalanceKg),
       daily_requirement_kg: dec(line.dailyRequirementKg),
-      days_remaining: line.daysRemaining,
+      // days_remaining is an INT column; daysRemaining is one decimal (Task 3) — rounded here, deliberately, not
+      // left to MySQL's own silent truncation. Whether the sub-form wants one decimal is still open with the client.
+      days_remaining: line.daysRemaining === null ? null : Math.round(line.daysRemaining),
       first_shortage_date: line.firstShortageDate,
       unrounded_need_kg: dec(line.unroundedNeedKg),
       recommended_qty_kg: dec(line.recommendedQtyKg),
       bag_count: line.bagCount,
+      recommended_delivery_date: line.recommendedDeliveryDate,
       proposed_delivery_date: line.proposedDeliveryDate,
+      exceeds_silo_capacity: line.exceedsSiloCapacity,
       needs_silo_changeover: line.needsSiloChangeover,
       feed_forecast_run_line_ids: forecastRunLineIds?.length ? forecastRunLineIds : null,
     };
@@ -484,7 +503,7 @@ export class FeedRequisitionService implements OnModuleInit {
     }
     const outcome = await this.forecast.withFarmScope(farmId, companyId, async () => {
       const forecast = await this.forecast.computeForFarm(farmId, companyId, tenantId, { to: dto.to }, clock);
-      const farm = await this.loadFarm(farmId, tenantId);
+      const farm = await this.loadFarm(farmId, companyId, tenantId);
       const destinations = await this.loadDestinations(forecast.sources.map((s) => s.locationId), tenantId);
       // Task 3 carry: recommendLines synthesizes a destination it is not
       // handed, with no low level — a silo at its low level would then draft
@@ -582,8 +601,8 @@ export class FeedRequisitionService implements OnModuleInit {
             ...header,
           });
           await this.db.insert(schema.requisitionLine).values(
-            plan.insert.map((line, i) => ({
-              requisition_id: requisitionId, line_seq: i + 1, quantity: String(line.recommendedQtyKg), quantity_edited: false, ...this.lineValues(line, runLinesFor(line)),
+            plan.insert.map((line) => ({
+              requisition_id: requisitionId, line_seq: line.lineNo, quantity: String(line.recommendedQtyKg), quantity_edited: false, ...this.lineValues(line, runLinesFor(line)),
             })),
           );
           return { requisitionId, created: true, linesDrafted: plan.insert.length };
@@ -595,6 +614,7 @@ export class FeedRequisitionService implements OnModuleInit {
         for (const u of plan.update) {
           await this.db.update(schema.requisitionLine).set({
             ...this.lineValues(u.line, runLinesFor(u.line)),
+            line_seq: u.line.lineNo,
             // M9: an edited line keeps the farm's quantity (and its flag); only
             // the snapshot and the recommendation beside it are refreshed.
             ...(u.keepQuantity
@@ -603,10 +623,16 @@ export class FeedRequisitionService implements OnModuleInit {
           }).where(eq(schema.requisitionLine.line_id, u.lineId));
         }
         if (plan.insert.length) {
-          const maxSeq = Math.max(0, ...existing.map((l) => l.line_seq));
+          // Three feed writers of line_seq (this one, the fresh draft above, and manual createManual) share the
+          // same 10000-step convention (Requisition §1 row 42). maxSeq also covers plan.update's own reassigned
+          // numbers (just written above, line.lineNo), not only the stale pre-run `existing` snapshot, so an
+          // appended line can never land on a number this run just gave to a renumbered matched line. Without the
+          // *10000 step a second append after a 10000/20000 first draft landed on 20001, 20002 — in sequence, but
+          // off the NAV-style convention every other line follows.
+          const maxSeq = Math.max(0, ...existing.map((l) => l.line_seq), ...plan.update.map((u) => u.line.lineNo));
           await this.db.insert(schema.requisitionLine).values(
             plan.insert.map((line, i) => ({
-              requisition_id: draft.requisition_id, line_seq: maxSeq + i + 1, quantity: String(line.recommendedQtyKg), quantity_edited: false, ...this.lineValues(line, runLinesFor(line)),
+              requisition_id: draft.requisition_id, line_seq: maxSeq + (i + 1) * 10000, quantity: String(line.recommendedQtyKg), quantity_edited: false, ...this.lineValues(line, runLinesFor(line)),
             })),
           );
         }
@@ -705,7 +731,7 @@ export class FeedRequisitionService implements OnModuleInit {
   async createManual(dto: CreateManualFeedRequisitionDto, tenantId: string, user: UserCtx) {
     const { farmId, companyId } = await this.forecast.resolveFarm(dto.farmId, tenantId, user?.userType);
     const requisitionId = await this.forecast.withFarmScope(farmId, companyId, async () => {
-      const farm = await this.loadFarm(farmId, tenantId);
+      const farm = await this.loadFarm(farmId, companyId, tenantId);
       const destinations = await this.loadDestinations(dto.lines.map((l) => l.destination_location_id), tenantId);
       const seen = new Set<string>();
       for (const line of dto.lines) {
@@ -762,7 +788,8 @@ export class FeedRequisitionService implements OnModuleInit {
           const feedType: FeedType = feedTypeOf(dest);
           return {
             requisition_id: id,
-            line_seq: i + 1,
+            // Requisition §1 row 42: the same NAV-style 10000-step convention the auto-drafted lines use.
+            line_seq: (i + 1) * 10000,
             item_id: line.item_id,
             description: (nameOf.get(line.item_id) ?? '').slice(0, 200),
             quantity: String(line.quantity_kg),
@@ -941,9 +968,9 @@ export class FeedRequisitionService implements OnModuleInit {
    * quantity (§2 row 54) and the header's required date follows the earliest
    * line (§1 row 29).
    */
-  private async applyLineEdits(requisitionId: string, edits: FeedLineEditInput[] | undefined, farmId: string, tenantId: string) {
+  private async applyLineEdits(requisitionId: string, edits: FeedLineEditInput[] | undefined, farmId: string, companyId: string, tenantId: string) {
     if (!edits?.length) return;
-    const settings = (await this.loadFarm(farmId, tenantId)).settings;
+    const settings = (await this.loadFarm(farmId, companyId, tenantId)).settings;
     let datesChanged = false;
     for (const edit of edits) {
       const [line] = await this.db
@@ -975,7 +1002,7 @@ export class FeedRequisitionService implements OnModuleInit {
     return this.forecast.withFarmScope(farmId, companyId, async () => {
       await withTenantTransaction(this.cls, async () => {
         await this.lockOpen(id, tenantId, farmId, companyId);
-        await this.applyLineEdits(id, dto.lines, farmId, tenantId);
+        await this.applyLineEdits(id, dto.lines, farmId, companyId, tenantId);
         await this.db.update(schema.requisition).set({
           ...(dto.remarks !== undefined ? { remarks: dto.remarks?.trim() || null } : {}),
           updated_by: user?.userId ?? null,
@@ -993,6 +1020,8 @@ export class FeedRequisitionService implements OnModuleInit {
         description: schema.requisitionLine.description,
         quantity: schema.requisitionLine.quantity,
         recommended: schema.requisitionLine.recommended_qty_kg,
+        recommended_delivery_date: schema.requisitionLine.recommended_delivery_date,
+        proposed_delivery_date: schema.requisitionLine.proposed_delivery_date,
       })
       .from(schema.requisitionLine)
       .where(eq(schema.requisitionLine.requisition_id, requisitionId))
@@ -1000,6 +1029,8 @@ export class FeedRequisitionService implements OnModuleInit {
     return lines.map((l) => ({
       lineSeq: l.line_seq, itemName: l.description ?? '', quantityKg: Number(l.quantity),
       recommendedQtyKg: l.recommended == null ? null : Number(l.recommended),
+      recommendedDeliveryDate: l.recommended_delivery_date ?? null,
+      proposedDeliveryDate: l.proposed_delivery_date ?? '',
     }));
   }
 
@@ -1016,7 +1047,7 @@ export class FeedRequisitionService implements OnModuleInit {
     const { farmId, companyId } = await this.resolveOwnFarm(id, tenantId, user);
     await this.forecast.withFarmScope(farmId, companyId, () => withTenantTransaction(this.cls, async () => {
       const row = await this.lockOpen(id, tenantId, farmId, companyId);
-      await this.applyLineEdits(id, dto.lines, farmId, tenantId);
+      await this.applyLineEdits(id, dto.lines, farmId, companyId, tenantId);
       const lines = await this.linesForCheck(id);
       const remarks = dto.remarks !== undefined ? dto.remarks?.trim() || null : row.remarks?.trim() || null;
       const { today } = await this.forecast.farmToday(companyId, tenantId);

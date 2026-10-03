@@ -70,7 +70,7 @@ function setup(queues: Map<unknown, unknown[][]>) {
   const alerts: any = {
     evaluateFarmSafely: jest.fn(async (...args: unknown[]) => { evaluated.push({ args, inTx: cls.get('tenantPostingTransaction') === true }); }),
   };
-  const service = new FeedRequisitionService(cls, forecast, approvals, alerts, {} as any, {} as any);
+  const service = new FeedRequisitionService(cls, forecast, approvals, alerts, {} as any, {} as any, FEED_SETTINGS_STUB);
   service.onModuleInit();
   const as = <T>(scope: FarmScope, work: () => Promise<T>) => cls.run(async () => { cls.set(FARM_SCOPE_KEY, scope); return work(); });
   const writes = () => log.filter((e) => e.op !== 'select');

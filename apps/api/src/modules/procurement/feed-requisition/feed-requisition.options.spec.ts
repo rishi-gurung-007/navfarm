@@ -26,7 +26,8 @@ describe('FeedRequisitionService.options (F3)', () => {
     withFarmScope: jest.fn(async (_f: string, _c: string, work: () => Promise<unknown>) => work()),
     farmToday: jest.fn(async () => ({ today: serverToday(), timeZone: null })),
   };
-  const service = new FeedRequisitionService(transactionCls(db), forecast, {} as any, { evaluateFarmSafely: jest.fn() } as any, {} as any, {} as any);
+  const feedSettingsStub: any = { resolve: jest.fn(async () => ({ safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50, truckTargetKg: 30000, productionWeekday: 0 })) };
+  const service = new FeedRequisitionService(transactionCls(db), forecast, {} as any, { evaluateFarmSafely: jest.fn() } as any, {} as any, {} as any, feedSettingsStub);
 
   beforeEach(() => {
     selectQueue.length = 0;
@@ -62,7 +63,8 @@ describe('FeedRequisitionService.createManual — the item must be the farm comp
     withFarmScope: jest.fn(async (_f: string, _c: string, work: () => Promise<unknown>) => work()),
     farmToday: jest.fn(async () => ({ today: serverToday(), timeZone: null })),
   };
-  const service = new FeedRequisitionService(transactionCls(db), forecast, {} as any, { evaluateFarmSafely: jest.fn() } as any, {} as any, {} as any);
+  const feedSettingsStub: any = { resolve: jest.fn(async () => ({ safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50, truckTargetKg: 30000, productionWeekday: 0 })) };
+  const service = new FeedRequisitionService(transactionCls(db), forecast, {} as any, { evaluateFarmSafely: jest.fn() } as any, {} as any, {} as any, feedSettingsStub);
   const silo = { location_id: 'silo-1', location_code: 'GRS/SILO-001', location_type: 'SILO', farm_id: 'farm-grs', is_active: true, feed_in_bags: null, low_level_kg: null };
   const line = { destination_location_id: 'silo-1', item_id: 'item-x', quantity_kg: 3000, proposed_delivery_date: '2026-09-26' };
 
@@ -74,7 +76,7 @@ describe('FeedRequisitionService.createManual — the item must be the farm comp
   /** The item read answers with nothing whenever the row fails any of the three rules. */
   const refuses = async () => {
     selectQueue.push(
-      [{ location_code: 'GRS', feed_bulk_multiple_kg: 3000, feed_bag_size_kg: 50, feed_truck_target_kg: 30000, feed_production_weekday: 0 }],
+      [{ location_code: 'GRS' }], // settings now come from FeedSettingsService, not location_master
       [silo],
       [],
     );
@@ -89,7 +91,7 @@ describe('FeedRequisitionService.createManual — the item must be the farm comp
 
   it('bounds the item read by company, type and state, not by tenant alone', async () => {
     selectQueue.push(
-      [{ location_code: 'GRS', feed_bulk_multiple_kg: 3000, feed_bag_size_kg: 50, feed_truck_target_kg: 30000, feed_production_weekday: 0 }],
+      [{ location_code: 'GRS' }], // settings now come from FeedSettingsService, not location_master
       [silo],
       [{ item_id: 'item-x', item_name: 'Weaner Mash' }],
     );

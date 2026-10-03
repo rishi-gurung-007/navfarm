@@ -10,9 +10,15 @@
  *   opening)` (columns G–H). Engine Step 8 "Bulk rounding defaults to 3000 KG
  *   per compartment … Bagged rounds to 50 KG". Silo free capacity is not
  *   applied (Q9 of Plan B).
- * - Delivery date: the field specification's Required On (Plan R, Q4) —
- *   run-down − refill buffer − lead time — or the planning date once that has
- *   passed; `to` when nothing runs down in the window.
+ * - Delivery date (Requisition §1 row 29): the first projected shortage date,
+ *   or the planning date once that has passed; `to` when nothing is short in
+ *   the window. A farm that edits it away from the drafted date must give
+ *   remarks (deliveryDateNeedsRemarks), the same checkpoint 18 treats a
+ *   quantity deviation.
+ * - Capacity warning (Engine Step 8): the order plus the day's opening
+ *   compared against the silo's own `silo_capacity_kg` — always canonical KG,
+ *   never converted here — flagged, never capped (checkpoint 17 is the truck
+ *   target's rule, not this one's).
  * - System Balance and the low-level test (Ruling I4): the ledger as it stands
  *   now, the figure FEED_BELOW_L1 alerts on, handed in by the service as
  *   `currentBalanceKg`. The forecast's own `balanceKg` is the start of the
@@ -66,6 +72,8 @@ export interface DestinationInfo {
   locationType: 'SILO' | 'STORE';
   feedInBags: boolean | null;
   lowLevelKg: number | null;
+  /** silo_capacity_kg — always canonical KG (the service converts TON on write); null when not set. Engine Step 8. */
+  capacityKg: number | null;
 }
 
 export interface DraftLine {
@@ -86,7 +94,13 @@ export interface DraftLine {
   unroundedNeedKg: number;
   recommendedQtyKg: number;
   bagCount: number | null;
+  /** Req. row 29: the first projected shortage date, clamped to the planning date; `to` when nothing is short. */
+  recommendedDeliveryDate: string;
   proposedDeliveryDate: string;
+  /** Engine Step 8: the order plus the day's opening would exceed the silo's capacity. A warning, never a cap. */
+  exceedsSiloCapacity: boolean;
+  /** Requisition §1 row 42: NAV-style line numbering, 10000/20000/… in draft order. */
+  lineNo: number;
   belowLowLevel: boolean;
   needsSiloChangeover: boolean;
 }
@@ -156,16 +170,18 @@ export function recommendLines(args: {
     // Q3 (Plan R): what an order must bring so the silo stays above its low level through `to`, incoming counted.
     // "Never offset next diet with stock of current diet" still holds because each source is one container and one item.
     const unroundedNeedKg = Math.max(0, round3(s.shortfallKg));
-    const runsDownInWindow = s.runDownDate !== null && s.runDownDate <= to;
-    if (unroundedNeedKg <= 0 && !runsDownInWindow) continue;
-    const dest = destinations.get(s.locationId) ?? { locationId: s.locationId, locationType: s.sourceType, feedInBags: null, lowLevelKg: null };
+    if (unroundedNeedKg <= 0) continue; // Engine Step 8: no shortage, no order (supersedes the "lands on its level" minimum)
+    const dest = destinations.get(s.locationId) ?? { locationId: s.locationId, locationType: s.sourceType, feedInBags: null, lowLevelKg: null, capacityKg: null };
     const feedType = feedTypeOf(dest);
-    // A silo that lands exactly on its level still needs the next delivery: the smallest order, one compartment or bag.
-    const recommendedQtyKg = unroundedNeedKg > 0
-      ? roundOrderKg(unroundedNeedKg, feedType, settings)
-      : feedType === 'BULK' ? settings.bulkMultipleKg : settings.bagSizeKg;
+    const recommendedQtyKg = roundOrderKg(unroundedNeedKg, feedType, settings);
     const key = lineKey(s.locationId, s.itemId);
     const systemBalanceKg = currentBalanceKg ? round3(currentBalanceKg.get(key) ?? 0) : s.balanceKg;
+    // Req. row 29: derived from the earliest projected shortage; nothing short in the window → the window's end.
+    const shortage = s.shortageDate ?? null;
+    const recommendedDeliveryDate = shortage ? (shortage < planningDate ? planningDate : shortage) : to;
+    // Engine Step 8 free-capacity warning: a direct KG comparison — silo_capacity_kg is always canonical KG.
+    const exceedsSiloCapacity = dest.locationType === 'SILO' && dest.capacityKg !== null
+      && recommendedQtyKg + s.deliveryDayOpeningKg > dest.capacityKg + 1e-6;
     lines.push({
       key,
       destinationLocationId: s.locationId,
@@ -185,15 +201,20 @@ export function recommendLines(args: {
       unroundedNeedKg,
       recommendedQtyKg,
       bagCount: bagCountFor(recommendedQtyKg, feedType, settings),
-      // Q4 (Plan R): the field specification's Required On "is the date used to populate the auto-drafted
-      // Requisition line"; one already past is due now. Nothing runs down in the window: `to`, as before.
-      // TEMPORARY (Task 3): requiredOn no longer exists; Task 5 replaces this with the shortage-date delivery rule.
-      proposedDeliveryDate: (s.shortageDate ?? to) < planningDate ? planningDate : (s.shortageDate ?? to),
+      recommendedDeliveryDate,
+      proposedDeliveryDate: recommendedDeliveryDate,
+      exceedsSiloCapacity,
+      lineNo: (lines.length + 1) * 10000,
       belowLowLevel: dest.locationType === 'SILO' && dest.lowLevelKg !== null && systemBalanceKg <= dest.lowLevelKg,
       needsSiloChangeover: s.noSiloHoldsItem,
     });
   }
   return lines;
+}
+
+/** Req. row 29: "Farm Manager can edit with reason" — remarks only when the farm moved the date off the forecast's. */
+export function deliveryDateNeedsRemarks(line: { recommendedDeliveryDate: string | null; proposedDeliveryDate: string }): boolean {
+  return line.recommendedDeliveryDate !== null && line.proposedDeliveryDate !== line.recommendedDeliveryDate;
 }
 
 export function requisitionPriority(planningDate: string, lines: Pick<DraftLine, 'belowLowLevel' | 'firstShortageDate'>[]): Priority {
@@ -273,6 +294,9 @@ export interface ApprovalLine {
   itemName: string;
   quantityKg: number;
   recommendedQtyKg: number | null;
+  /** null on a manual line (nothing to differ from) — deliveryDateNeedsRemarks, Req. row 29. */
+  recommendedDeliveryDate: string | null;
+  proposedDeliveryDate: string;
 }
 
 const kg = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 3 });
@@ -290,6 +314,9 @@ export function approvalProblems(args: { lines: ApprovalLine[]; remarks: string 
   for (const l of args.lines) {
     if (deviationNeedsRemarks(l.recommendedQtyKg, l.quantityKg)) {
       problems.push(`Line ${l.lineSeq} (${l.itemName}): ${kg(l.quantityKg)} kg is more than 20% off the recommended ${kg(l.recommendedQtyKg ?? 0)} kg. Add remarks to explain.`);
+    }
+    if (deliveryDateNeedsRemarks(l)) {
+      problems.push("Remarks are required when a delivery date differs from the forecast's (Requisition row 29).");
     }
   }
   if (args.submissionDeadline && args.today > args.submissionDeadline) {
