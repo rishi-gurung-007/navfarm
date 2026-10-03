@@ -4,7 +4,7 @@
 
 **Goal:** Make the feed forecast and feed requisition match the TDD workbook (separate safety stock, first-shortage dates, workbook fields, no feed-era extras) and bring the local data in line, as the first of five parts.
 
-**Architecture:** The pure engine (`feed-forecast.engine.ts`) stays the single calculation; the service feeds it settings from `FeedSettingsService.resolve`, which becomes the only home of the feed logistics values. The requisition rules (`feed-requisition.rules.ts`) turn engine sources into lines. Schema changes go through one additive migration (0141) and one drop migration (0142) with a `db-align-feed-tdd` data script between them.
+**Architecture:** The pure engine (`feed-forecast.engine.ts`) stays the single calculation; the service feeds it settings from `FeedSettingsService.resolve`, which becomes the only home of the feed logistics values. The requisition rules (`feed-requisition.rules.ts`) turn engine sources into lines. Schema changes go through one additive migration (0141) with a `db-align-feed-tdd` data script after it; the column drop deferred by the 3 Oct ruling is a POST-MERGE follow-up, re-sited to migration **0146** (the 0142 slot this plan originally named for it was taken by `0142_reconcile_feed_stock_count`, applied during Part A — see I3, final whole-branch review).
 
 **Tech Stack:** NestJS 11, Drizzle ORM, MySQL 8, Jest; Next.js 16 / React 19 web; Nx with pnpm.
 
@@ -37,7 +37,7 @@ in its last task.
 - Jest on this 8 GB machine: always `--maxWorkers=2` (memory `navfarm-8gb-memory-discipline`).
 - `nx serve api` does not rebuild: after API edits, rebuild and restart by PID (`lsof -ti :2877`). Never `pkill`.
 - Web lint gate: no new errors over the measured baseline (memory `web-lint-baseline-frozen`).
-- One migration owner: this plan owns 0141 and 0142 and `_journal.json`. Never edit `dist/drizzle`.
+- One migration owner: this plan owns 0141 and `_journal.json` for it; the deferred drop is a separate POST-MERGE migration at 0146 (0142 was taken by `0142_reconcile_feed_stock_count` during Part A — see I3). Never edit `dist/drizzle`.
 - Commit messages say what changed and why it was wrong before, quote the TDD sheet/row, end with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
 
 ## Review Focus
@@ -55,8 +55,8 @@ in its last task.
 | File | Responsibility | Change |
 |---|---|---|
 | `apps/api/src/drizzle/tenant/0141_feed_tdd_alignment.sql` | additive columns | create |
-| `apps/api/src/drizzle/tenant/0142_drop_feed_era_columns.sql` | drop feed-era columns | create |
-| `apps/api/src/drizzle/tenant/meta/_journal.json` | journal 141, 142 | modify |
+| `apps/api/src/drizzle/tenant/0146_drop_feed_era_columns.sql` | drop feed-era columns — POST-MERGE follow-up, not this wave (re-sited from 0142; see I3) | deferred |
+| `apps/api/src/drizzle/tenant/meta/_journal.json` | journal 141 (0146 follow-up journals separately, post-merge) | modify |
 | `apps/api/src/drizzle/tenant/feed-tdd-migrations.spec.ts` | migration contract | create |
 | `apps/api/src/core/database/schema.ts` | Drizzle schema | modify |
 | `apps/api/src/modules/inventory/feed-settings/feed-settings.rules.ts` / `.service.ts` / `dto/feed-settings.dto.ts` | logistics + safety stock, farm override | modify |
@@ -536,52 +536,82 @@ export interface SiloStatusRow extends SiloFact {
 
 ---
 
-### Task 8: Data script, drop migration 0142, forecast grid port
+### Task 8: Data script, forecast grid port (drop migration deferred post-merge) — DONE, see note below
+
+> **I3 correction (final whole-branch review, 4 Oct):** this task is complete (commits
+> `b7bfaa11`..`c4f74f77`, ledger "Task 8: complete"). The column-drop migration below
+> (Steps 1–3) was never run — the 3 Oct ruling deferred every column drop to merge
+> time, and by the time that merge-time work happens, slot **0142 has been taken by
+> `0142_reconcile_feed_stock_count`** (applied to `nf_devco`/`nf_system`; journal now
+> runs through idx 145, 146 rows). Steps 1–3 below are **struck as written** — do not
+> journal anything at idx 142. The deferred drop is re-sited as a **named POST-MERGE
+> follow-up at migration 0146**; whoever picks it up re-derives the journal entry
+> (`{ "idx": 146, "version": "5", "when": <next>, "tag": "0146_drop_feed_era_columns",
+> "breakpoints": true }`) against the journal as it stands then, not against this
+> stale text.
 
 **Files:**
 - Create: `apps/api/src/scripts/align-feed-tdd.ts`; Modify: `apps/api/package.json` (target `db-align-feed-tdd`, same shape as `db-align-stages-to-tdd` at line ~155 but with `--env-file-if-exists=.env`)
-- Create: `apps/api/src/drizzle/tenant/0142_drop_feed_era_columns.sql`; Modify: `_journal.json`, `feed-tdd-migrations.spec.ts`, `schema.ts` (delete the six `location_master` columns and `feed_forecast_run_line.required_on_date`)
+- POST-MERGE follow-up, not this task: `apps/api/src/drizzle/tenant/0146_drop_feed_era_columns.sql` (re-sited from 0142 — see note above); `_journal.json`, `feed-tdd-migrations.spec.ts`, `schema.ts` (delete the six `location_master` columns and `feed_forecast_run_line.required_on_date`)
 - Modify (web): `feed-forecast-grid.tsx`, `feed-forecast-panel.tsx` using `docs/superpowers/plans/assets/2026-10-02-forecast-grid-date-columns.patch`; `feed-planning-panel.tsx`
 
 **Interfaces:**
 - Consumes: Task 2 columns; Task 3–5 field removals.
 
-- [ ] **Step 1: Failing migration test** — extend `feed-tdd-migrations.spec.ts`:
+- [ ] **STRUCK — do not implement as written (I3).** The column-drop migration is a
+  POST-MERGE follow-up at **0146**, not a step of this plan. Kept here only as the
+  shape the follow-up should take; the journal numbers below are stale the moment
+  another migration lands before the follow-up runs — re-check `_journal.json` at
+  that time rather than trusting `idx: 146` literally.
 
-```ts
-describe('Tenant migration 0142 — drop feed-era columns (3 Oct ruling 6)', () => {
-  it('is journalled at idx 142', () => {
-    expect(journal().find((e) => e.idx === 142)).toEqual({ idx: 142, version: '5', when: 1792000000011, tag: '0142_drop_feed_era_columns', breakpoints: true });
+  <details><summary>Shape for the 0146 follow-up (re-derive the journal entry when it is actually run)</summary>
+
+  Failing migration test — extend `feed-tdd-migrations.spec.ts`:
+
+  ```ts
+  describe('Tenant migration 0146 — drop feed-era columns (3 Oct ruling 6; re-sited from 0142, I3)', () => {
+    it('is journalled at idx 146', () => {
+      expect(journal().find((e) => e.idx === 146)).toEqual({ idx: 146, version: '5', when: 1792000000015, tag: '0146_drop_feed_era_columns', breakpoints: true });
+    });
+    it('drops only the feed-era columns and keeps the pre-feed ones', () => {
+      const sql = statements('0146_drop_feed_era_columns');
+      expect(sql).toEqual([
+        'ALTER TABLE `location_master` DROP COLUMN `feed_refill_buffer_days`;',
+        'ALTER TABLE `location_master` DROP COLUMN `feed_lead_time_days`;',
+        'ALTER TABLE `location_master` DROP COLUMN `feed_bulk_multiple_kg`;',
+        'ALTER TABLE `location_master` DROP COLUMN `feed_bag_size_kg`;',
+        'ALTER TABLE `location_master` DROP COLUMN `feed_truck_target_kg`;',
+        'ALTER TABLE `location_master` DROP COLUMN `feed_production_weekday`;',
+        'ALTER TABLE `feed_forecast_run_line` DROP COLUMN `required_on_date`;',
+      ]);
+      expect(sql.join('\n')).not.toMatch(/silo_reorder_days|feed_wastage_pct/);
+    });
   });
-  it('drops only the feed-era columns and keeps the pre-feed ones', () => {
-    const sql = statements('0142_drop_feed_era_columns');
-    expect(sql).toEqual([
-      'ALTER TABLE `location_master` DROP COLUMN `feed_refill_buffer_days`;',
-      'ALTER TABLE `location_master` DROP COLUMN `feed_lead_time_days`;',
-      'ALTER TABLE `location_master` DROP COLUMN `feed_bulk_multiple_kg`;',
-      'ALTER TABLE `location_master` DROP COLUMN `feed_bag_size_kg`;',
-      'ALTER TABLE `location_master` DROP COLUMN `feed_truck_target_kg`;',
-      'ALTER TABLE `location_master` DROP COLUMN `feed_production_weekday`;',
-      'ALTER TABLE `feed_forecast_run_line` DROP COLUMN `required_on_date`;',
-    ]);
-    expect(sql.join('\n')).not.toMatch(/silo_reorder_days|feed_wastage_pct/);
-  });
-});
-```
+  ```
 
-- [ ] **Step 2: Run** → FAIL. **Step 3:** write the SQL (breakpoints between statements), journal entry `{ "idx": 142, "version": "5", "when": 1792000000011, "tag": "0142_drop_feed_era_columns", "breakpoints": true }`, delete the columns from `schema.ts`. Confirm nothing references them: `grep -rn -E "feed_refill_buffer_days|feed_lead_time_days|feed_bulk_multiple_kg|feed_bag_size_kg|feed_truck_target_kg|feed_production_weekday|required_on_date" apps/api/src apps/web/src --include=*.ts --include=*.tsx | grep -v drizzle/tenant` → no output. Seed scripts that write them (`scripts/lib/seed-demo-detail.ts`, `seed-four-farm-feed-demo.ts`) are changed to write the farm-override `feed_planning_setting` row instead.
+  Run → FAIL, then write the SQL (breakpoints between statements), journal entry
+  `{ "idx": 146, "version": "5", "when": 1792000000015, "tag": "0146_drop_feed_era_columns", "breakpoints": true }`,
+  delete the columns from `schema.ts`. Confirm nothing references them:
+  `grep -rn -E "feed_refill_buffer_days|feed_lead_time_days|feed_bulk_multiple_kg|feed_bag_size_kg|feed_truck_target_kg|feed_production_weekday|required_on_date" apps/api/src apps/web/src --include=*.ts --include=*.tsx | grep -v drizzle/tenant`
+  → no output. Seed scripts that write them (`scripts/lib/seed-demo-detail.ts`, `seed-four-farm-feed-demo.ts`)
+  are changed to write the farm-override `feed_planning_setting` row instead. Also fix,
+  before this runs, the carry-forward noted in the final review: `align-feed-tdd.ts:74`
+  skips inactive/soft-deleted farms, which becomes silent data loss the moment this
+  drop runs (NOT in this fix wave — Rishi's call before the follow-up ships).
 
-- [ ] **Step 4: The data script** `align-feed-tdd.ts`, shaped like `backfill-feed-forecast-requisition.ts` (no flag = plan, `--verify` = transaction + rollback, `--apply` = commit, `--tenant=`). It refuses to run if `location_master.feed_lead_time_days` no longer exists (0142 already applied) with the message `0142 already applied — nothing to copy`. Actions, each printed as a plan line with counts:
+  </details>
+
+- [x] **Step 4 (done): the data script** `align-feed-tdd.ts`, shaped like `backfill-feed-forecast-requisition.ts` (no flag = plan, `--verify` = transaction + rollback, `--apply` = commit, `--tenant=`). Actions, each printed as a plan line with counts:
   1. For every FARM whose `feed_bulk_multiple_kg`, `feed_bag_size_kg`, `feed_truck_target_kg` or `feed_production_weekday` differs from its company's active company-level `feed_planning_setting` value (or default 3000/50/30000/0 when none), insert or update that farm's active `feed_planning_setting` row with only the differing values; equal values are not copied.
   2. Set `safety_stock_kg = 0` on every active `feed_planning_setting` row (default already 0; prints 0 changes on a fresh 0141).
   3. Renumber `requisition_line.line_seq` of `doc_type = 'FEED'` requisitions to 10000-steps in existing order.
   4. Print open `AUTO_DRAFT` feed requisitions by farm: these are recalculated by re-running **Draft from forecast** in Task 9, not by SQL (the engine is the only calculation).
 
-Run order on `nf_devco`: `pnpm nx run api:db-align-feed-tdd` (read plan) → `-- --verify` (read the verified counts) → `-- --apply` → `pnpm nx run api:db-migrate-all-tenants` (applies 0142) → `mysql -u root nf_devco -e "show columns from location_master like 'feed_%'; select farm_id, bulk_multiple_kg, bag_size_kg, truck_target_kg, production_weekday, safety_stock_kg from feed_planning_setting where is_active;"`. Expected: only `feed_in_bags` among `feed_%` columns; farm override rows exactly where the plan said.
+  Run on `nf_devco`: `pnpm nx run api:db-align-feed-tdd` (read plan) → `-- --verify` (read the verified counts) → `-- --apply`. Result (ledger): 0 farm overrides (all farms at defaults), 4 FEED requisitions renumbered to 10000-steps. The `-- --apply` run does **not** apply 0142/0146 — that drop stays deferred; the script only touches `feed_planning_setting` and `requisition_line`.
 
-- [ ] **Step 5: Port the grid and remove dead UI** — `git apply -3 docs/superpowers/plans/assets/2026-10-02-forecast-grid-date-columns.patch`; resolve the conflict in `feed-forecast-grid.tsx` keeping the worktree's run-history and tab structure and the patch's date-pivot columns and no-dash formatting. Then remove the Refill Date, Required On, Overdue and Lead Time columns/inputs from the grid, panel and `feed-planning-panel.tsx`; rename "Run Down Date" to "First Shortage Date"; show days with one decimal; add Safety Stock KG and Bag Size KG inputs to the planning panel (company and farm override). Run `pnpm nx test web -- --maxWorkers=2` and `pnpm nx lint web` (no new errors).
+- [x] **Step 5 (done): port the grid and remove dead UI** — resolved the patch's date-pivot columns against the worktree's run-history and tab structure; removed the Refill Date, Required On, Overdue and Lead Time columns/inputs from the grid, panel and `feed-planning-panel.tsx`; renamed "Run Down Date" to "First Shortage Date"; days shown to one decimal; added Safety Stock KG and Bag Size KG inputs to the planning panel (company and farm override). Web test + lint confirmed no new errors (see Task 4's web-test baseline correction in the ledger — nx had fabricated 5 phantom failures; real run was 78/78 suites, 466/466 tests).
 
-- [ ] **Step 6: Commit** (two commits: `chore(data): db-align-feed-tdd and 0142 drop feed-era columns`; `feat(web): date-column grid, first shortage date, safety stock settings`).
+- [x] **Step 6 (done): commit** `b7bfaa11` `chore(data): db-align-feed-tdd; app stops reading the farm logistics columns on location_master` and the grid/panel port alongside it (see ledger "Task 8: complete", commits `b7bfaa11..c4f74f77`).
 
 ---
 

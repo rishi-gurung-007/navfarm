@@ -34,7 +34,7 @@ Read this first if you are picking up feed work. It supersedes the "next action"
 
 ## Database state (3 Oct)
 
-- Both local tenants at 143 journal rows (through `0142_reconcile_feed_stock_count`).
+- Both local tenants at 146 journal rows (through `0145_requisition_line_batch_stage`; I3 correction, final whole-branch review — this was stale at 143/through-0142).
 - `nf_devco` had 0135–0138 objects from an earlier schema push without constraints/journal; they
   were completed and journalled. Backups before that: the session scratchpad
   (`nf_devco-before-0135.sql`, `nf_system-before-0135.sql`) — temporary, not in the repo.
