@@ -15,7 +15,7 @@
 | Part | Plan | Spec | Depends on |
 |---|---|---|---|
 | A — forecast and requisition aligned | this file | §3, §7 | — |
-| E — one requisition document, two entry points, common requisition UI | `2026-10-xx-feed-part-e-requisition.md`, written when A is merged into the branch | §6a | A |
+| E — two entry points for feed, common requisition (Item/FA/Service) UI and Approvals detail; the feed document layout itself is Part A Task 9 | `2026-10-xx-feed-part-e-requisition.md`, written when A is merged into the branch | §6a | A |
 | B — in-house mill pipeline | `…-feed-part-b-mill.md` | §4 | A, E |
 | C — plan, scheduler, notifications | `…-feed-part-c-planning.md` | §5 | B |
 | D — stock take and period close | `…-feed-part-d-stock-take.md` | §6 | A |
@@ -585,7 +585,75 @@ Run order on `nf_devco`: `pnpm nx run api:db-align-feed-tdd` (read plan) → `--
 
 ---
 
-### Task 9: Verify Part A in the running app and MySQL
+### Task 9: Feed requisition document — header form and lines sub-form (Req. §1, §2)
+
+Rishi, 3 Oct: the requisition is a document with a **header** carrying the workbook's required
+fields and a **sub-form of lines** below it. Today the header is one sentence of text and only
+quantity and delivery date are editable.
+
+**Files:**
+- Create: `apps/web/src/components/console/inventory/feed-requisition-document.tsx` (header form + lines sub-form; used by `requisitions-panel.tsx` and later by the Approvals detail)
+- Modify: `apps/web/src/components/console/inventory/requisitions-panel.tsx` (render the document instead of the inline header/table), `requisition-labels.ts`, `apps/web/src/utils/translations.ts`
+- Modify: `apps/api/src/modules/procurement/feed-requisition/feed-requisition.service.ts` (`get` view adds header and line display fields), `dto/update-feed-requisition.dto.ts` (line `item_id`, `destination_location_id`, `exception_reason`), `feed-requisition.rules.ts` (`lineChangeProblems`)
+- Test: `feed-requisition.rules.spec.ts`, `feed-requisition.service.spec.ts`, `apps/web/src/components/console/inventory/__tests__/feed-requisition-document.test.tsx`
+
+**Interfaces:**
+- Consumes: Task 5 line fields (`recommended_delivery_date`, `exceeds_silo_capacity`, `line_seq` 10000-steps), Task 2 settings (`truckTargetKg`, `bulkMultipleKg`).
+- Produces: `GET /feed-requisition/:id` returns, besides today's fields, `header: { farm_code, farm_name, requisition_date, is_next_diet_requisition, farm_total_requested_kg, truck_target_kg, bulk_multiple_kg, trips, required_delivery_date, approved_by_name, linked_transfer_no, forecast_run_no }` and on each line `item_code`, `item_description`, `destination_code`, `lifecycle_ref_label` (e.g. `L-LINE WEANER days 25–27`), `exceeds_silo_capacity`, `recommended_delivery_date`.
+- Produces: `lineChangeProblems(line: { requiredItemId: string | null; itemId: string; exceptionReason: string | null; destination: { locationType: 'SILO' | 'STORE'; heldItemId: string | null; heldBalanceKg: number } }): string[]`.
+
+**Header form** (two-column `FieldGroup` of `ReadField`s; editable fields as `Field`), in workbook order:
+
+| Field | Source | Editable |
+|---|---|---|
+| Requisition No. | `req_no` (REQ-FarmCode-YYYY-NNNNN, row 5) | no |
+| Requisition Date | `requisition_date` (row 6) | no |
+| Requisition Type | FEED_FORECAST / MANUAL (row 7) | no |
+| Source | AUTO_FORECAST / MANUAL_ENTRY / STOCK_TAKE_TRIGGERED / DIET_CHANGE_UPCOMING (row 8) | no |
+| Farm Code, Farm Name | farm (rows 9–10) | no |
+| Is Next Diet Requisition | any line next diet (row 16) | no |
+| Status, Priority | rows 33–34 | no |
+| Submission Deadline | row 35 | no |
+| Required Delivery Date | earliest line delivery date (row 29) | via lines |
+| Supplier or Source | MILL (row 30) | no |
+| Requisition Purpose | Internal Feed Transfer (row 31) | no |
+| Farm Total Requested KG vs Bulk Truck Target KG, trips | rows 26–27 (target, never a block) | no |
+| Bulk Order Multiple | row 28 | no |
+| Remarks | row 36 — required over 20 % deviation, delivery-date change, or item exception | while open |
+| Approved By, Approval Date Time | rows 37–38 | no |
+| Linked Transfer Order No. | row 39 (empty until Part B) | no |
+| Forecast Run | run no. (Engine Step 9 "Preserve run ID") | no |
+
+**Lines sub-form** (one row per line, workbook §2 order): Line No. (row 42) · Silo Code / Destination Silo (rows 43, 55 — editable while open) · Feed Item No. to Order (row 45 — editable) · Feed Item Description · Feed Type (row 46) · Is Next Diet Line (row 47) · Days Before Diet Change (row 48) · Breed Lifecycle Row Reference (§1 row 17) · System Balance KG (row 49) · Daily Requirement KG (row 50) · Days Remaining / First Shortage Date (row 51) · Recommended Qty KG with unrounded need beneath (row 52) · Requested Qty KG (row 53 — editable) · Bag Count (row 54, bagged only) · Proposed Delivery Date (row 56 — editable) · capacity warning icon when `exceeds_silo_capacity`. "Current Silo Feed Item No." is not shown (rows 12, 44: REMOVED).
+
+- [ ] **Step 1: Failing rules test**
+
+```ts
+describe('lineChangeProblems — Req. row 13 and cp. 4', () => {
+  const silo = (heldItemId: string | null, heldBalanceKg: number) => ({ locationType: 'SILO' as const, heldItemId, heldBalanceKg });
+  it('accepts the lifecycle item into a silo holding it', () => {
+    expect(lineChangeProblems({ requiredItemId: 'r1', itemId: 'r1', exceptionReason: null, destination: silo('r1', 1500) })).toEqual([]);
+  });
+  it('needs an exception reason for an item the lifecycle does not require', () => {
+    expect(lineChangeProblems({ requiredItemId: 'r1', itemId: 'r2', exceptionReason: null, destination: silo('r2', 0) }))
+      .toEqual(['Feed item differs from the lifecycle requirement: record an exception reason (Requisition row 13).']);
+    expect(lineChangeProblems({ requiredItemId: 'r1', itemId: 'r2', exceptionReason: 'Vet instruction', destination: silo('r2', 0) })).toEqual([]);
+  });
+  it('refuses a silo that still holds another item', () => {
+    expect(lineChangeProblems({ requiredItemId: 'r2', itemId: 'r2', exceptionReason: null, destination: silo('r1', 1500) }))
+      .toEqual(['Silo holds another feed with stock: choose a silo holding this item or an empty one (checkpoint 4).']);
+  });
+});
+```
+
+- [ ] **Step 2: Run** `cd apps/api && npx jest src/modules/procurement/feed-requisition/feed-requisition.rules.spec.ts --maxWorkers=2` → FAIL.
+- [ ] **Step 3: Implement** `lineChangeProblems` with exactly those two messages; call it in the update path for any line whose `item_id` or `destination_location_id` changed (the destination's held item and balance come from the same ledger read `recommendLines` uses); store `exception_reason` in the line's existing `description` column prefixed `Exception: ` (no new column). Extend the `get` view with the header and line fields above (farm from `location_master`, approver name from `user_master`, run no. from `feed_forecast_run`, lifecycle label from `breed_lifecycle_stages` joined to breed and stage codes).
+- [ ] **Step 4: Failing then passing web test** — render `FeedRequisitionDocument` with the Worked Example view (REQ-GRS-2026-00041, lines 10000 R1 6,000 to SILO1 and 20000 R2 9,000 to SILO2) and assert: header shows "REQ-GRS-2026-00041", "Internal Feed Transfer", "15,000 KG of 30,000 KG target", "Is Next Diet Requisition: Yes"; lines show "10000" and "20000" in order, "L-LINE WEANER days 25–27", no "Current Silo Feed Item" text; with `status: 'APPROVED'` no input is editable. Implement the component with `FieldGroup`, `ReadField`, `Field` (apple.design.md §19) and `ScrollTable`; replace the inline header and table in `requisitions-panel.tsx` with it. Run `pnpm nx test web -- --maxWorkers=2` and `pnpm nx lint web` (no new errors).
+- [ ] **Step 5: Commit** — `feat(feed): requisition as a document — workbook header form and lines sub-form (Req. §1, §2)`.
+
+---
+
+### Task 10: Verify Part A in the running app and MySQL
 
 **Files:**
 - Create: `docs/VERIFICATION-<date>-feed-tdd-part-a.md`
@@ -599,5 +667,5 @@ Run order on `nf_devco`: `pnpm nx run api:db-align-feed-tdd` (read plan) → `--
   from requisition r join requisition_line l using (requisition_id) where r.doc_type='FEED' order by r.created_at desc, l.line_seq limit 10;
   ```
   Check each line by hand against the forecast grid: unrounded = demand + safety − opening − incoming; recommended = CEILING to 3000; delivery = first shortage date. Then set safety stock to 500 for that farm, re-draft, and confirm each unrounded need rose by exactly 500 and edited lines kept their quantity.
-- [ ] **Step 4: Edit a delivery date without remarks** (expect refusal message from Task 5) and with remarks (accepted; row shows the new date).
+- [ ] **Step 4: Edit a delivery date without remarks** (expect refusal message from Task 5) and with remarks (accepted; row shows the new date). Open the requisition document and check every header field and line column of Task 9 against MySQL; change a line's item to one the lifecycle does not require (refused without an exception reason) and to a silo holding another item with stock (refused).
 - [ ] **Step 5: Write the report** with the SQL output, screenshots of the grid and dashboard, the gate counts, and anything that did not match. Commit with AGENTS.md and the handoff note.
