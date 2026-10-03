@@ -1190,8 +1190,12 @@ export class FeedRequisitionService implements OnModuleInit {
       .where(eq(schema.requisitionLine.requisition_id, requisitionId))
       .orderBy(schema.requisitionLine.line_seq);
     return lines.map((l) => ({
-      // Task 9: description may carry an item exception reason ("Exception: …") rather than the item's name.
-      lineSeq: l.line_seq, itemName: l.item_name ?? (exceptionReasonOf(l.description) === null ? l.description ?? '' : ''), quantityKg: Number(l.quantity),
+      // Task 9: description may carry an item exception reason ("Exception: …") rather than the item's
+      // name — item_name is null only when item_master's join fails to resolve one (M7, final whole-branch
+      // review: this used to fall back to '' specifically for an exception line, so its approvalProblems
+      // message read "Line 10000 ()" — blank parens, naming nothing). description is always non-empty
+      // here, so falling back to it unconditionally gives at least the exception reason, never blank.
+      lineSeq: l.line_seq, itemName: l.item_name ?? l.description ?? '', quantityKg: Number(l.quantity),
       recommendedQtyKg: l.recommended == null ? null : Number(l.recommended),
       recommendedDeliveryDate: l.recommended_delivery_date ?? null,
       proposedDeliveryDate: l.proposed_delivery_date ?? '',

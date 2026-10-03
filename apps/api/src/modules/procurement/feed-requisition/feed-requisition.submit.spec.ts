@@ -207,6 +207,20 @@ describe('FeedRequisitionService.submit (D25)', () => {
     expect(ok.writes().find((e) => e.table === schema.requisition)!.set).toMatchObject({ remarks: 'Mill closed Friday' });
   });
 
+  it('names the exception reason, not blank parens, when an item-exception line has no joined item name (M7)', async () => {
+    // linesForCheck's item_master LEFT JOIN can fail to resolve a name (the item was later removed);
+    // before M7 that fell back to '' specifically for an exception line, so this read "Line 1 ()".
+    const exceptionLine = { line_seq: 1, description: 'Exception: Vet instruction', quantity: '6000.0000', recommended: '6000.0000' };
+    const { service, as, writes } = setup(new Map<unknown, unknown[][]>([
+      [schema.requisition, [[{ farm_id: 'farm-grs', company_id: 'co-1' }], [REQ_ROW]]],
+      [schema.locationMaster, [[{ location_id: 'farm-grs' }]]],
+      [schema.requisitionLine, [[exceptionLine]]],
+    ]));
+    await expect(as(COMPANY_ADMIN_SCOPE, () => service.submit('req-1', {}, 'tenant-1', ADMIN)))
+      .rejects.toThrow(new BadRequestException('Line 1 (Exception: Vet instruction): feed item differs from the lifecycle requirement (exception). Remarks are required (Requisition row 36).'));
+    expect(writes()).toEqual([]);
+  });
+
   it('answers not found to a farm user of another farm, before anything is written', async () => {
     const { service, as, writes } = setup(new Map<unknown, unknown[][]>([[schema.requisition, [[{ farm_id: 'farm-other', company_id: 'co-1' }]]]]));
     await expect(as(OWN_FARM_SCOPE, () => service.submit('req-1', {}, 'tenant-1', FARM_USER))).rejects.toBeInstanceOf(NotFoundException);
