@@ -11,6 +11,11 @@
  * to say so before the click; the API enforces both (checkpoints 18, 22) and
  * its message is shown as it comes. Fixed-height page: the list, or the open
  * requisition's lines, is the one scrolling table (review C).
+ *
+ * Task 9: an open requisition is shown as a document — the workbook's header
+ * form and its lines sub-form, with each line's batch/house breakdown
+ * (FeedRequisitionDocument). The farm may also change a line's silo and feed
+ * item; the API checks them (Req. row 13, checkpoint 4).
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowLeft, Inbox, Loader2 } from "lucide-react";
@@ -25,9 +30,11 @@ import { cn } from "@/lib/utils";
 import { formatDateShort } from "@/utils/date-short";
 import { todayIso, unwrap } from "./feed-format";
 import { FeedFarmSelect, feedFarmLabel } from "./feed-farm-select";
+import { PRIORITY_LABEL, REQ_STATUS_LABEL, REQ_TYPE_LABEL, labelOf, variantOf } from "./requisition-labels";
 import {
-  FEED_TYPE_LABEL, PRIORITY_LABEL, PURPOSE_LABEL, REQ_STATUS_LABEL, REQ_TYPE_LABEL, SUPPLY_LABEL, labelOf, requisitionOrigin, variantOf,
-} from "./requisition-labels";
+  FeedRequisitionDocument, requestedKgOf,
+  type FeedLineEdit, type FeedRequisitionDocumentView, type FeedRequisitionLine, type FeedRequisitionOptions,
+} from "./feed-requisition-document";
 import { RequisitionNewDialog } from "./requisition-new-dialog";
 import { useFeedFarm } from "./use-feed-farm";
 
@@ -44,47 +51,8 @@ interface ListRow {
   approval_request_id: string | null;
 }
 
-interface Line {
-  line_id: string;
-  line_seq: number;
-  destination_code: string | null;
-  item_code: string | null;
-  item_name: string | null;
-  feed_type: string | null;
-  is_next_diet: boolean;
-  days_before_diet_change: number | null;
-  system_balance_kg: string | null;
-  daily_requirement_kg: string | null;
-  days_remaining: number | null;
-  unrounded_need_kg: string | null;
-  recommended_qty_kg: string | null;
-  quantity: string;
-  bag_count: number | null;
-  proposed_delivery_date: string | null;
-  needs_silo_changeover: boolean;
-}
-
-export interface RequisitionView {
-  requisition_id: string;
-  req_no: string;
-  requisition_type: string | null;
-  source: string | null;
-  purpose: string | null;
-  supply_source: string | null;
-  status: string;
-  priority: string | null;
-  approval_request_id: string | null;
-  production_date: string | null;
-  submission_deadline: string | null;
-  remarks: string | null;
-  truck_target_kg: number;
-  lines: Line[];
-}
-
-interface LineEdit {
-  quantity?: string;
-  date?: string;
-}
+/** GET /feed-requisition/:id — the document view (Task 9). */
+export type RequisitionView = FeedRequisitionDocumentView & { production_date?: string | null };
 
 /** Checkpoint 18, as the API applies it (feed-requisition.rules.ts deviationNeedsRemarks). */
 export function needsRemarks(recommended: number | null, requested: number): boolean {
@@ -105,15 +73,8 @@ function approvalHref(v: { status: string; approval_request_id: string | null })
 }
 
 const STATUS_FILTER = ["AUTO_DRAFT", "DRAFT", "PENDING_APPROVAL", "APPROVED", "REJECTED"];
-const LINE_COLUMNS = [
-  "rqColLine", "rqColDestination", "rqColItem", "rqColFeedType", "rqColNextDiet", "rqColDaysBeforeChange", "rqColSystemBalance",
-  "rqColDailyRequirement", "rqColDaysRemaining", "rqColUnroundedNeed", "rqColRecommended", "rqColRequested", "rqColBagCount", "rqColDelivery",
-] as const;
 const LIST_COLUMNS = ["rqColReqNo", "rqColType", "rqColStatus", "rqColPriority", "rqColRequiredBy", "rqColDeadline", "rqColLines", "rqColKg"] as const;
-const RIGHT = new Set<string>([
-  "rqColLine", "rqColDaysBeforeChange", "rqColSystemBalance", "rqColDailyRequirement", "rqColDaysRemaining", "rqColUnroundedNeed",
-  "rqColRecommended", "rqColRequested", "rqColBagCount", "rqColLines", "rqColKg",
-]);
+const RIGHT = new Set<string>(["rqColLines", "rqColKg"]);
 
 const num = (v: string | number | null | undefined) => (v === null || v === undefined || v === "" ? null : Number(v));
 const kg = (v: string | number | null | undefined) => {
@@ -137,7 +98,8 @@ export function FeedRequisitionPanel() {
   const [status, setStatus] = useState("");
   const [rows, setRows] = useState<ListRow[]>([]);
   const [selected, setSelected] = useState<RequisitionView | null>(null);
-  const [edits, setEdits] = useState<Record<string, LineEdit>>({});
+  const [edits, setEdits] = useState<Record<string, FeedLineEdit>>({});
+  const [options, setOptions] = useState<FeedRequisitionOptions | null>(null);
   const [remarks, setRemarks] = useState("");
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -217,26 +179,44 @@ export function FeedRequisitionPanel() {
       await loadList();
     });
 
-  const requestedOf = (line: Line) => (edits[line.line_id]?.quantity !== undefined ? Number(edits[line.line_id].quantity) : Number(line.quantity));
-  const dateOf = (line: Line) => edits[line.line_id]?.date ?? line.proposed_delivery_date ?? "";
-  const setQuantity = (lineId: string, value: string) => setEdits((cur) => ({ ...cur, [lineId]: { ...cur[lineId], quantity: value } }));
-  const setDate = (lineId: string, value: string) => setEdits((cur) => ({ ...cur, [lineId]: { ...cur[lineId], date: value } }));
+  const editLine = (lineId: string, patch: FeedLineEdit) => setEdits((cur) => ({ ...cur, [lineId]: { ...cur[lineId], ...patch } }));
   const lineEdits = () =>
     Object.entries(edits).map(([line_id, edit]) => ({
       line_id,
       ...(edit.quantity !== undefined ? { quantity_kg: Number(edit.quantity) } : {}),
       ...(edit.date !== undefined ? { proposed_delivery_date: edit.date } : {}),
+      ...(edit.destinationId !== undefined ? { destination_location_id: edit.destinationId } : {}),
+      ...(edit.itemId !== undefined ? { item_id: edit.itemId } : {}),
+      ...(edit.exceptionReason !== undefined ? { exception_reason: edit.exceptionReason } : {}),
     }));
 
   const editable = !!selected && isEditable(selected);
-  const lines = Array.isArray(selected?.lines) ? selected!.lines : [];
-  const deviating = lines.filter((l) => needsRemarks(num(l.recommended_qty_kg), requestedOf(l)));
+  const lines: FeedRequisitionLine[] = Array.isArray(selected?.lines) ? selected!.lines : [];
+  const deviating = lines.filter((l) => needsRemarks(num(l.recommended_qty_kg), requestedKgOf(l, edits[l.line_id])));
+  // Req. row 29: a delivery date moved off the forecast's needs remarks too (the API checks it at submit).
+  const dateOf = (l: FeedRequisitionLine) => edits[l.line_id]?.date ?? l.proposed_delivery_date ?? "";
+  const moved = lines.filter((l) => !!l.recommended_delivery_date && dateOf(l) !== l.recommended_delivery_date);
   const late = !!selected?.submission_deadline && todayIso() > selected.submission_deadline;
-  const remarksMissing = editable && (deviating.length > 0 || late) && !remarks.trim();
-  // Requisition §1 rows 26–27: the requested bulk total against the truck target — trips, not a cap (checkpoint 17).
-  const bulkTotal = lines.filter((l) => l.feed_type === "BULK").reduce((sum, l) => sum + requestedOf(l), 0);
-  const trips = selected && bulkTotal > 0 ? Math.ceil(bulkTotal / selected.truck_target_kg) : 0;
+  const remarksMissing = editable && (deviating.length > 0 || moved.length > 0 || late) && !remarks.trim();
   const href = selected ? approvalHref(selected) : null;
+
+  // The silos and feed items a line may be moved to — only needed while the document is editable.
+  const selectedId = selected?.requisition_id ?? null;
+  useEffect(() => {
+    setOptions(null);
+    if (!selectedId || !editable || !farmId) return;
+    let live = true;
+    api
+      .get(`/feed-requisition/options?farmId=${encodeURIComponent(farmId)}`)
+      .then((res) => {
+        const opts = unwrap<FeedRequisitionOptions>(res);
+        if (live && opts && Array.isArray(opts.destinations) && Array.isArray(opts.items)) setOptions(opts);
+      })
+      .catch(() => undefined); // without options the silo and item stay read-only; quantity and date still edit
+    return () => {
+      live = false;
+    };
+  }, [selectedId, editable, farmId]);
 
   const save = () =>
     run(async () => {
@@ -296,68 +276,20 @@ export function FeedRequisitionPanel() {
           <div className="flex shrink-0 flex-wrap items-center gap-2">
             <Button size="sm" variant="ghost" onClick={() => show(null)}><ArrowLeft className="h-3.5 w-3.5" /> {t("rqBack")}</Button>
             <h2 className="text-base font-semibold" style={{ color: "var(--text-primary)" }}>{selected.req_no}</h2>
-            <Badge variant={variantOf(REQ_STATUS_LABEL, selected.status)}>{labelOf(REQ_STATUS_LABEL, selected.status, t)}</Badge>
-            {selected.priority && <Badge variant={variantOf(PRIORITY_LABEL, selected.priority)}>{labelOf(PRIORITY_LABEL, selected.priority, t)}</Badge>}
-            <span className="text-xs" style={{ color: "var(--text-secondary)" }}>
-              {t("rqHeaderLine", {
-                origin: requisitionOrigin(selected.requisition_type, selected.source, t),
-                purpose: labelOf(PURPOSE_LABEL, selected.purpose, t),
-                supply: labelOf(SUPPLY_LABEL, selected.supply_source, t),
-                deadline: formatDateShort(selected.submission_deadline),
-                production: formatDateShort(selected.production_date),
-              })}
-            </span>
           </div>
-          <p className="shrink-0 text-xs" style={{ color: "var(--text-secondary)" }}>
-            {t("rqFarmTotal", { total: bulkTotal.toLocaleString("en-US"), target: selected.truck_target_kg.toLocaleString("en-US"), trips })}
-          </p>
-          <ScrollTable label={t("rqLinesLabel")}>
-            <thead>
-              <tr>{LINE_COLUMNS.map((c) => <th key={c} scope="col" className={cn(TH, RIGHT.has(c) && "text-right")}>{t(c)}</th>)}</tr>
-            </thead>
-            <tbody>
-              {lines.map((line) => (
-                <tr key={line.line_id}>
-                  <td className={cn(TD, NUM)}>{line.line_seq}</td>
-                  <td className={TD}>
-                    {line.destination_code ?? "—"}
-                    {line.needs_silo_changeover && <Badge variant="warning" className={cn("ml-1.5", SMALL_BADGE)}>{t("rqChangeover")}</Badge>}
-                  </td>
-                  <td className={TD}>{line.item_code} — {line.item_name}</td>
-                  <td className={TD}>{labelOf(FEED_TYPE_LABEL, line.feed_type, t)}</td>
-                  <td className={TD}>{line.is_next_diet ? t("rqYes") : t("rqNo")}</td>
-                  <td className={cn(TD, NUM)}>{line.days_before_diet_change ?? "—"}</td>
-                  <td className={cn(TD, NUM)}>{kg(line.system_balance_kg)}</td>
-                  <td className={cn(TD, NUM)}>{kg(line.daily_requirement_kg)}</td>
-                  <td className={cn(TD, NUM)}>{line.days_remaining ?? "—"}</td>
-                  <td className={cn(TD, NUM)}>{kg(line.unrounded_need_kg)}</td>
-                  <td className={cn(TD, NUM)}>{kg(line.recommended_qty_kg)}</td>
-                  <td className={cn(TD, NUM)}>
-                    {editable ? (
-                      <input type="number" min={0} step="any" className="nf-input-sm w-28 px-2 text-right" style={inputStyle}
-                        aria-label={t("rqRequestedFor", { line: line.line_seq })}
-                        value={edits[line.line_id]?.quantity ?? String(Number(line.quantity))}
-                        onChange={(e) => setQuantity(line.line_id, e.target.value)} />
-                    ) : kg(line.quantity)}
-                  </td>
-                  <td className={cn(TD, NUM)}>{line.bag_count ?? "—"}</td>
-                  <td className={TD}>
-                    {editable ? (
-                      <input type="date" className="nf-input-sm w-36 px-2" style={inputStyle}
-                        aria-label={t("rqDeliveryFor", { line: line.line_seq })}
-                        value={dateOf(line)} onChange={(e) => setDate(line.line_id, e.target.value)} />
-                    ) : formatDateShort(line.proposed_delivery_date)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </ScrollTable>
+          <div className="min-h-0 flex-1 overflow-auto">
+            <FeedRequisitionDocument
+              view={selected}
+              editable={editable}
+              edits={edits}
+              onLineEdit={editLine}
+              remarks={remarks}
+              onRemarksChange={setRemarks}
+              remarksMissing={remarksMissing}
+              options={options}
+            />
+          </div>
           <div className="flex shrink-0 flex-col gap-2">
-            <Field label={t("rqRemarks")} htmlFor="rq-remarks">
-              <textarea id="rq-remarks" className="nf-input w-full px-2 py-1" style={inputStyle} rows={2}
-                value={remarks} onChange={(e) => setRemarks(e.target.value)} disabled={!editable} />
-            </Field>
-            {remarksMissing && <p className="text-xs" style={{ color: "var(--danger)" }}>{t("rqRemarksRequired")}</p>}
             {editable ? (
               <div className="flex flex-wrap gap-2">
                 <Button size="sm" variant="outline" onClick={save} disabled={busy}>{t("rqSave")}</Button>
