@@ -413,3 +413,41 @@ describe('Part E Task 1 follow-up — the Approvals-inbox path refuses self-appr
     expect(setCalls).toHaveLength(0);
   });
 });
+
+describe('Part E Task 2 — PUT /requisition/:id', () => {
+  it('replaces the header fields and every line of an Open draft', async () => {
+    const { db, selectResults, setCalls, insertValues } = makeDb();
+    selectResults.push(
+      [headerRow()],          // the locked row
+      [headerRow({ remarks: 'Changed' })], // findOne header
+      [lineRow({ quantity: '4.0000' })],   // findOne lines
+    );
+    db.delete = jest.fn(() => ({ where: jest.fn(async () => undefined) }));
+    const service = new RequisitionService(transactionCls(db), approvalsMock() as any);
+    const result = await service.update('req-1', {
+      doc_type: 'ITEM', purpose: 'PURCHASE', remarks: 'Changed',
+      lines: [{ item_id: 'item-1', quantity: 4, uom: 'KG' }],
+    } as any, TENANT, { userId: 'u1' });
+    expect(setCalls[0]).toMatchObject({ purpose: 'PURCHASE', remarks: 'Changed', from_location_id: null, to_location_id: null, updated_by: 'u1' });
+    expect(db.delete).toHaveBeenCalledTimes(1);
+    expect(insertValues[0].values[0]).toMatchObject({ line_seq: 1, quantity: '4', qty_to_ship: null, qty_to_receive: null });
+    expect(result.remarks).toBe('Changed');
+  });
+
+  it('refuses a submitted document before writing anything', async () => {
+    const { db, selectResults, setCalls } = makeDb();
+    selectResults.push([headerRow({ status: 'PENDING_APPROVAL', approval_status: 'PENDING_APPROVAL' })]);
+    const service = new RequisitionService(transactionCls(db), approvalsMock() as any);
+    await expect(service.update('req-1', { purpose: 'STORE', from_location_id: 'a', to_location_id: 'b', lines: [{ item_id: 'i', quantity: 1, uom: 'EA' }] } as any, TENANT, { userId: 'u1' }))
+      .rejects.toThrow('can no longer be edited');
+    expect(setCalls).toHaveLength(0);
+  });
+
+  it('refuses a change of document type', async () => {
+    const { db, selectResults } = makeDb();
+    selectResults.push([headerRow()]);
+    const service = new RequisitionService(transactionCls(db), approvalsMock() as any);
+    await expect(service.update('req-1', { doc_type: 'FA', purpose: 'PURCHASE', lines: [{ description: 'Pump', quantity: 1, uom: 'EA' }] } as any, TENANT, { userId: 'u1' }))
+      .rejects.toThrow('The document type cannot change; create a new requisition instead.');
+  });
+});

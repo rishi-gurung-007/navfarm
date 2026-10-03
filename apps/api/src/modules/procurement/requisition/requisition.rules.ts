@@ -412,3 +412,19 @@ export function isSelfApproval(
   if (row.source === 'AUTO_FORECAST') return false;
   return row.created_by === userId || row.requester_user_id === userId;
 }
+
+/**
+ * Spec §6a: the lines grid is "editable while the document is open". Open
+ * means approval OPEN and document OPEN; a REJECTED document is corrected only
+ * after Reopen (decisions 1 Oct: "Rejected documents return to Open for
+ * correction"), which is an explicit action, not an edit.
+ */
+export function assertEditable(row: { req_no: string; doc_type: string; status?: string | null; approval_status?: string | null; document_status?: string | null }): void {
+  if (row.doc_type === 'FEED') {
+    throw new BadRequestException('A feed requisition is edited from its own document (PUT /feed-requisition/:id).');
+  }
+  const states = projectRequisitionStates(row);
+  if (states.approval_status !== 'OPEN' || states.document_status !== 'OPEN') {
+    throw new BadRequestException(`Requisition ${row.req_no} can no longer be edited; only an Open requisition can change.`);
+  }
+}

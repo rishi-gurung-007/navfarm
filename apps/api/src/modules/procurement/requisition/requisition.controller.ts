@@ -1,11 +1,11 @@
-import { Body, Controller, Get, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
 import { FarmScoped } from '../../../common/farm-scope';
 import { RequisitionService } from './requisition.service';
-import { CreateRequisitionDto, DecideRequisitionDto } from './dto/requisition.dto';
+import { CreateRequisitionDto, DecideRequisitionDto, UpdateRequisitionDto } from './dto/requisition.dto';
 
 @ApiTags('Procurement Requisitions')
 @ApiBearerAuth()
@@ -40,6 +40,16 @@ export class RequisitionController {
     const tenantId = req.user?.tenantId || req['tenantId'];
     const data = await this.requisitions.create(dto, tenantId, req.user);
     return { success: true, message: 'Requisition drafted.', data };
+  }
+
+  @Put(':id')
+  @RequirePermission('PROCUREMENT', 'REQUISITION', 'create')
+  @ApiOperation({ summary: 'Edit an Open requisition — header fields and all lines (spec §6a)' })
+  @ApiParam({ name: 'id' })
+  async update(@Param('id') id: string, @Body() dto: UpdateRequisitionDto, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const data = await this.requisitions.update(id, dto, tenantId, req.user);
+    return { success: true, message: 'Requisition saved.', data };
   }
 
   @Post(':id/submit')

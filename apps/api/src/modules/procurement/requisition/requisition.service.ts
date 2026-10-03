@@ -30,11 +30,12 @@ import { farmScope, assertCompanyInScope, assertLocationOnActiveFarm } from '../
 import { userHasPermission } from '../../../common/permissions';
 import { ApprovalService } from '../../production/approval/approval.service';
 import * as schema from '../../../core/database/schema';
-import { CreateRequisitionDto, DecideRequisitionDto } from './dto/requisition.dto';
+import { CreateRequisitionDto, DecideRequisitionDto, UpdateRequisitionDto } from './dto/requisition.dto';
 import { assertDepartmentIdentity } from '../../../common/department-identity';
 import {
   COMMON_LIST_DOC_TYPES,
   assertDirectTransferEligible,
+  assertEditable,
   assertPurpose,
   assertPurposeLocations,
   assertRequisitionLines,
@@ -43,6 +44,7 @@ import {
   normalizeCommonDocType,
   projectRequisitionStates,
   releaseTransition,
+  type RequisitionPurpose,
   reopenTransition,
 } from './requisition.rules';
 
@@ -201,28 +203,95 @@ export class RequisitionService {
         justification: dto.justification ?? null,
         created_by: userPayload?.userId ?? null,
       });
+      await this.db.insert(schema.requisitionLine).values(this.lineValues(requisitionId, purpose, dto.lines, dto));
+      return this.findOne(requisitionId, tenantId);
+    });
+  }
+
+  /** One insert row per supplied line — the mapping create() always used, shared with update(). */
+  private lineValues(
+    requisitionId: string,
+    purpose: RequisitionPurpose,
+    lines: CreateRequisitionDto['lines'],
+    header: { from_location_id?: string | null; to_location_id?: string | null },
+  ) {
+    return lines.map((line, index) => {
+      const balances = lineBalances(line);
+      return {
+        requisition_id: requisitionId,
+        line_seq: index + 1,
+        item_id: line.item_id ?? null,
+        resource_id: line.resource_id ?? null,
+        description: line.description ?? null,
+        quantity: String(line.quantity),
+        uom: line.uom,
+        est_rate: line.est_rate !== undefined && line.est_rate !== null ? String(line.est_rate) : null,
+        from_location_id: line.from_location_id ?? header.from_location_id ?? null,
+        to_location_id: line.to_location_id ?? header.to_location_id ?? null,
+        // A Store line records its authorized targets up front; a Purchase
+        // line has no internal fulfilment, so its targets stay null.
+        qty_to_ship: purpose === 'STORE' ? String(balances.qty_to_ship) : null,
+        qty_to_receive: purpose === 'STORE' ? String(balances.qty_to_receive) : null,
+        qty_shipped: null,
+        qty_received: null,
+      };
+    });
+  }
+
+  /** Spec §6a: header and lines are editable while the document is Open. */
+  async update(requisitionId: string, dto: UpdateRequisitionDto, tenantId: string, userPayload?: { userId?: string }) {
+    return withTenantTransaction(this.cls, async () => {
+      const [row] = await this.db
+        .select()
+        .from(schema.requisition)
+        .where(and(
+          eq(schema.requisition.requisition_id, requisitionId),
+          eq(schema.requisition.tenant_id, tenantId),
+          isNull(schema.requisition.deleted_at),
+          ...this.scopeConditions(),
+        ))
+        .limit(1)
+        .for('update');
+      if (!row) throw new NotFoundException(`Requisition '${requisitionId}' not found.`);
+      assertEditable(row);
+      if (dto.doc_type && dto.doc_type !== row.doc_type) {
+        throw new BadRequestException('The document type cannot change; create a new requisition instead.');
+      }
+      const docType = normalizeCommonDocType(row.doc_type);
+      const purpose = assertPurpose(docType, dto.purpose ?? row.purpose);
+      assertRequisitionLines(docType, purpose, dto.lines);
+      const fromLocationId = purpose === 'STORE' ? (dto.from_location_id ?? null) : null;
+      const toLocationId = purpose === 'STORE' ? (dto.to_location_id ?? null) : null;
+      assertPurposeLocations(purpose, fromLocationId, toLocationId);
+      const directTransfer = Boolean(dto.direct_transfer);
+      if (directTransfer) assertDirectTransferEligible({ docType, purpose, fromLocationId, toLocationId });
+      for (const [id, label] of [[dto.requester_department_id, 'Requester department'], [dto.sender_department_id, 'Sender department']] as const) {
+        if (id) await assertDepartmentIdentity(this.db, { tenantId, companyId: row.company_id, departmentId: id, label });
+      }
+      const scope = farmScope(this.cls);
+      for (const [id, label] of [[dto.main_location_id, 'Requisition main location'], [fromLocationId, 'Requisition source location'], [toLocationId, 'Requisition destination location']] as const) {
+        if (id) await assertLocationOnActiveFarm(this.db, scope, id, label);
+      }
+      await this.db
+        .update(schema.requisition)
+        .set({
+          purpose,
+          requisition_date: dto.requisition_date ?? row.requisition_date,
+          main_location_id: dto.main_location_id ?? row.main_location_id,
+          requester_department_id: dto.requester_department_id ?? row.requester_department_id,
+          sender_department_id: dto.sender_department_id ?? null,
+          from_location_id: fromLocationId,
+          to_location_id: toLocationId,
+          direct_transfer: directTransfer,
+          remarks: dto.remarks ?? null,
+          required_date: dto.required_date ?? null,
+          justification: dto.justification ?? null,
+          updated_by: userPayload?.userId ?? null,
+        })
+        .where(eq(schema.requisition.requisition_id, requisitionId));
+      await this.db.delete(schema.requisitionLine).where(eq(schema.requisitionLine.requisition_id, requisitionId));
       await this.db.insert(schema.requisitionLine).values(
-        dto.lines.map((line, index) => {
-          const balances = lineBalances(line);
-          return {
-            requisition_id: requisitionId,
-            line_seq: index + 1,
-            item_id: line.item_id ?? null,
-            resource_id: line.resource_id ?? null,
-            description: line.description ?? null,
-            quantity: String(line.quantity),
-            uom: line.uom,
-            est_rate: line.est_rate !== undefined && line.est_rate !== null ? String(line.est_rate) : null,
-            from_location_id: line.from_location_id ?? dto.from_location_id ?? null,
-            to_location_id: line.to_location_id ?? dto.to_location_id ?? null,
-            // A Store line records its authorized targets up front; a Purchase
-            // line has no internal fulfilment, so its targets stay null.
-            qty_to_ship: purpose === 'STORE' ? String(balances.qty_to_ship) : null,
-            qty_to_receive: purpose === 'STORE' ? String(balances.qty_to_receive) : null,
-            qty_shipped: null,
-            qty_received: null,
-          };
-        }),
+        this.lineValues(requisitionId, purpose, dto.lines, { from_location_id: fromLocationId, to_location_id: toLocationId }),
       );
       return this.findOne(requisitionId, tenantId);
     });

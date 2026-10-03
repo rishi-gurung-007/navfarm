@@ -1,4 +1,4 @@
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional, OmitType } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
   ArrayMinSize,
@@ -195,3 +195,6 @@ export class LinkPoDto {
   @IsNotEmpty()
   linked_po_no: string;
 }
+
+/** PUT /requisition/:id — the whole document while it is Open; lines are replaced, not merged. */
+export class UpdateRequisitionDto extends OmitType(CreateRequisitionDto, ['company_id'] as const) {}

@@ -14,6 +14,7 @@ import { usableDepartment } from '../../../common/department-identity';
 import {
   assertDirectTransfer,
   assertDirectTransferEligible,
+  assertEditable,
   assertPurpose,
   assertPurposeLocations,
   assertQtyToReceive,
@@ -310,5 +311,23 @@ describe('isSelfApproval — decisions 1 Oct: nobody approves a manual requisiti
   });
   it('has nothing to compare without a user', () => {
     expect(isSelfApproval(row(), undefined)).toBe(false);
+  });
+});
+
+describe('assertEditable — "editable while the document is open" (spec §6a)', () => {
+  const row = (over: Record<string, string | null> = {}) => ({ req_no: 'REQ-2026-0001', doc_type: 'ITEM', status: 'DRAFT', approval_status: 'OPEN', document_status: 'OPEN', ...over });
+  it('accepts an Open draft', () => expect(() => assertEditable(row())).not.toThrow());
+  it('accepts a legacy DRAFT row with null states (projected Open)', () =>
+    expect(() => assertEditable(row({ approval_status: null, document_status: null }))).not.toThrow());
+  it.each([
+    ['pending', { status: 'PENDING_APPROVAL', approval_status: 'PENDING_APPROVAL' }],
+    ['approved', { status: 'APPROVED', approval_status: 'APPROVED', document_status: 'APPROVED' }],
+    ['rejected (reopen first)', { status: 'REJECTED', approval_status: 'REJECTED', document_status: 'OPEN' }],
+    ['released', { status: 'APPROVED', approval_status: 'APPROVED', document_status: 'RELEASED' }],
+  ])('refuses a %s document', (_n, over) => {
+    expect(() => assertEditable(row(over))).toThrow('Requisition REQ-2026-0001 can no longer be edited; only an Open requisition can change.');
+  });
+  it('sends a feed document to its own editor', () => {
+    expect(() => assertEditable(row({ doc_type: 'FEED' }))).toThrow('A feed requisition is edited from its own document (PUT /feed-requisition/:id).');
   });
 });
