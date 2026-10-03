@@ -523,7 +523,17 @@ export class FeedRequisitionService implements OnModuleInit {
       const cycle = productionCycle(forecast.planningDate, farm.settings.productionWeekday);
       // B1: per (silo, item) order line, which batches in which houses it is for.
       const breakdown = buildLineBreakdown(forecast.daily ?? [], forecast.planningDate, forecast.to);
-      const persistedRun = await this.matchingPersistedRun(forecast, farm.settings, wanted, farmId, companyId, tenantId);
+      let persistedRun = await this.matchingPersistedRun(forecast, farm.settings, wanted, farmId, companyId, tenantId);
+      // Engine Step 9 "Preserve run ID": a draft cites a saved run. With none that matches this window, save one
+      // (the run service's own transaction, so before ours: a failed save leaves no half-written draft) and look
+      // again; the same lookup then also reuses it on a rerun over unchanged inputs instead of piling up duplicates.
+      if (!persistedRun && wanted.length) {
+        await this.forecast.saveRun(
+          { farmId, planningDate: forecast.planningDate, view: 'CUSTOM', from: forecast.from ?? forecast.planningDate, to: forecast.to },
+          tenantId, user,
+        );
+        persistedRun = await this.matchingPersistedRun(forecast, farm.settings, wanted, farmId, companyId, tenantId);
+      }
 
       return this.numbered(() => withTenantTransaction(this.cls, async () => {
         await this.lockFarm(farmId, tenantId);

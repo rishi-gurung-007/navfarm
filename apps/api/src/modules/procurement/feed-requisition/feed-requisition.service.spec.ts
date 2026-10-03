@@ -149,6 +149,7 @@ function setup(sources: ForecastSource[], queues: Map<unknown, unknown[][]>, dai
   const { db, log } = recordingDb(queues, () => ref.cls);
   const cls = (ref.cls = transactionCls(db));
   const evaluated: Array<{ args: unknown[]; inTx: boolean }> = [];
+  const saved: Array<{ inTx: boolean }> = [];
   const forecast: any = {
     resolveFarm: jest.fn(async () => ({ farmId: 'farm-grs', companyId: 'co-1' })),
     withFarmScope: jest.fn((farmId: string, companyId: string, work: () => Promise<unknown>) =>
@@ -158,6 +159,11 @@ function setup(sources: ForecastSource[], queues: Map<unknown, unknown[][]>, dai
       sourceSnapshot: { version: 'sha256:fresh-source', hash: 'fresh-source', values: { engineInput: { sources: 'fresh' } } },
     })),
     farmToday: jest.fn(async () => ({ today: serverToday(), timeZone: null })),
+    // 9c F4: autoDraft saves the run it drafts from when none matches; recorded with whether it ran inside the draft transaction.
+    saveRun: jest.fn(async () => {
+      saved.push({ inTx: cls.get('tenantPostingTransaction') === true });
+      return { runId: 'run-new', runCode: `RUN-GRS-${serverToday().replace(/-/g, '')}-001`, version: 1 };
+    }),
   };
   const alerts: any = {
     evaluateFarmSafely: jest.fn(async (...args: unknown[]) => { evaluated.push({ args, inTx: cls.get('tenantPostingTransaction') === true }); }),
@@ -174,7 +180,7 @@ function setup(sources: ForecastSource[], queues: Map<unknown, unknown[][]>, dai
   // target, production weekday, safety stock) — the fixture matches FARM_ROW's old feed_* defaults.
   const feedSettings: any = { resolveForFeedPlanning: jest.fn(async () => ({ safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50, truckTargetKg: 30000, productionWeekday: 0 })) };
   const service = new FeedRequisitionService(cls, forecast, {} as any, alerts, siloFeed, ledger, feedSettings);
-  return { service, log, forecast, alerts, evaluated, cls, db, siloFeed, ledger, feedSettings };
+  return { service, log, forecast, alerts, evaluated, saved, cls, db, siloFeed, ledger, feedSettings };
 }
 
 describe('FeedRequisitionService.autoDraft', () => {
@@ -244,6 +250,74 @@ describe('FeedRequisitionService.autoDraft', () => {
     });
     expect(log.find((e) => e.op === 'insert' && e.table === schema.requisitionLine)?.values)
       .toEqual([expect.objectContaining({ feed_forecast_run_line_ids: ['run-line-5a', 'run-line-5b'] })]);
+  });
+
+  // Engine Step 9 "Preserve run ID"; Requisition §4 step 1 ("RUN-GRS-20260923-001 creates 2 draft lines"):
+  // a draft with no saved run to cite saves one for the same window, then links header and lines to it.
+  it('saves the forecast run for the drafted window when none matches, then links the header and every line to it (9c F4)', async () => {
+    const daily = [forecastDaily(), forecastDaily({ batchId: 'batch-2', realBatchId: 'batch-2', batchNo: 'BATCH-2', heads: 500, demandKg: 1000 })];
+    const materialLines = buildRunLineSnapshots({ daily });
+    const runCode = `RUN-GRS-${serverToday().replace(/-/g, '')}-001`;
+    const queues = new Map<unknown, unknown[][]>([
+      [schema.feedForecastRun, [
+        [], // first look: no run for this window yet
+        [{ // second look: the run saveRun just wrote
+          run_id: 'run-new', run_code: runCode, version: 1,
+          source_snapshot: { hash: 'fresh-source' }, output_snapshot: outputSnapshot(materialLines),
+          config_snapshot: { values: { requisitionDraftSettings: { bulkMultipleKg: 3000, bagSizeKg: 50, truckTargetKg: 30000, productionWeekday: 0 } } },
+        }],
+      ]],
+      [schema.feedForecastRunLine, [[storedRunLine(materialLines[0], 'run-line-new-a'), storedRunLine(materialLines[1], 'run-line-new-b')]]],
+      [schema.locationMaster, [[FARM_ROW], [SILO_ROW], [{ location_id: 'farm-grs' }]]],
+      [schema.requisition, [[], [], [{ req: { requisition_id: 'new' }, farm_code: 'GRS', truck_target_kg: 30000 }]]],
+    ]);
+    const { service, log, forecast, saved } = setup([source()], queues, daily);
+    const to = serverToday();
+
+    await service.autoDraft({ to }, 'tenant-1', { userId: 'u-1', userType: 'FARM_MANAGER' });
+
+    expect(forecast.saveRun).toHaveBeenCalledTimes(1);
+    expect(forecast.saveRun).toHaveBeenCalledWith(
+      { farmId: 'farm-grs', planningDate: serverToday(), view: 'CUSTOM', from: serverToday(), to },
+      'tenant-1', { userId: 'u-1', userType: 'FARM_MANAGER' },
+    );
+    // Before the draft transaction: saveRun owns its own transaction, and a failed save must not leave a half-written draft.
+    expect(saved).toEqual([{ inTx: false }]);
+    expect(log.find((e) => e.op === 'insert' && e.table === schema.requisition)?.values).toMatchObject({
+      feed_forecast_run_id: 'run-new', forecast_run_key: runCode,
+    });
+    expect(log.find((e) => e.op === 'insert' && e.table === schema.requisitionLine)?.values)
+      .toEqual([expect.objectContaining({ feed_forecast_run_line_ids: ['run-line-new-a', 'run-line-new-b'] })]);
+  });
+
+  it('reuses a run that already matches the window instead of saving a duplicate (rerun links the newest run, 9c F4)', async () => {
+    const daily = [forecastDaily()];
+    const materialLines = buildRunLineSnapshots({ daily });
+    const queues = new Map<unknown, unknown[][]>([
+      [schema.feedForecastRun, [[{
+        run_id: 'run-9', run_code: 'RUN-GRS-20260923-002', version: 9,
+        source_snapshot: { hash: 'fresh-source' }, output_snapshot: outputSnapshot(materialLines),
+        config_snapshot: { values: { requisitionDraftSettings: { bulkMultipleKg: 3000, bagSizeKg: 50, truckTargetKg: 30000, productionWeekday: 0 } } },
+      }]]],
+      [schema.feedForecastRunLine, [[storedRunLine(materialLines[0], 'run-line-9')]]],
+      [schema.locationMaster, [[FARM_ROW], [SILO_ROW], [{ location_id: 'farm-grs' }]]],
+      [schema.requisition, [[], [], [{ req: { requisition_id: 'new' }, farm_code: 'GRS', truck_target_kg: 30000 }]]],
+    ]);
+    const { service, log, forecast } = setup([source()], queues, daily);
+    await service.autoDraft({}, 'tenant-1', { userId: 'u-1', userType: 'FARM_MANAGER' });
+    expect(forecast.saveRun).not.toHaveBeenCalled();
+    expect(log.find((e) => e.op === 'insert' && e.table === schema.requisition)?.values).toMatchObject({ feed_forecast_run_id: 'run-9' });
+  });
+
+  it('saves no run when the forecast wants nothing drafted', async () => {
+    const queues = new Map<unknown, unknown[][]>([
+      [schema.locationMaster, [[FARM_ROW], [SILO_ROW], [{ location_id: 'farm-grs' }]]],
+      [schema.requisition, [[]]],
+    ]);
+    const { service, forecast } = setup([source({ shortfallKg: 0, walkDemandKg: 0, planningDayDemandKg: 0, balanceKg: 9000, daysLeft: 9 })], queues, []);
+    const out = await service.autoDraft({}, 'tenant-1', { userId: 'u-1', userType: 'COMPANY_ADMIN' });
+    expect(out).toMatchObject({ created: false, linesDrafted: 0 });
+    expect(forecast.saveRun).not.toHaveBeenCalled();
   });
 
   it('refuses to attach stale run evidence when freshly recalculated source content differs', async () => {
