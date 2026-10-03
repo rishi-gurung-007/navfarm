@@ -209,7 +209,7 @@ export class QueryStockTransferDto {
   @IsUUID()
   companyId?: string;
 
-  @ApiProperty({ description: 'Filter by status', required: false, enum: ['DRAFT', 'POSTED', 'CANCELLED'] })
+  @ApiProperty({ description: 'Filter by status', required: false, enum: ['DRAFT', 'IN_TRANSIT', 'PARTIALLY_RECEIVED', 'POSTED', 'CANCELLED'] })
   @IsOptional()
   @IsString()
   status?: string;
