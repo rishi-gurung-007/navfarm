@@ -1,5 +1,5 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
-import { and, desc, eq, isNull } from 'drizzle-orm';
+import { and, desc, eq, isNull, like } from 'drizzle-orm';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { randomUUID } from 'node:crypto';
 import { ClsService } from 'nestjs-cls';
@@ -10,7 +10,7 @@ import { FeedSettingsService } from '../feed-settings/feed-settings.service';
 import { toFarmFeedSettings } from '../feed-settings/feed-settings.rules';
 import type { FeedForecastResponse } from './feed-forecast.service';
 import type { ForecastView } from './feed-forecast.view';
-import { buildConfigSnapshot, buildOutputSnapshot, buildRunLineSnapshots, technicalRunCode } from './feed-forecast-run.rules';
+import { buildConfigSnapshot, buildOutputSnapshot, buildRunLineSnapshots, runCodeFor, runCodePrefix } from './feed-forecast-run.rules';
 
 export interface CreateFeedForecastRunInput {
   tenantId: string;
@@ -107,7 +107,16 @@ export class FeedForecastRunService {
         .for('update');
       const version = (latest?.version ?? 0) + 1;
       const runId = randomUUID();
-      const runCode = technicalRunCode(input.farmId, version);
+      // Engine §5 row 68: RUN-<FarmCode>-<YYYYMMDD>-<NNN per farm per day>. Read under the farm lock taken above,
+      // so two saves of one farm on one day cannot pick the same number; uq_feed_forecast_run_company_code backs it.
+      const sameDay = await this.db.select({ run_code: schema.feedForecastRun.run_code })
+        .from(schema.feedForecastRun)
+        .where(and(
+          eq(schema.feedForecastRun.tenant_id, input.tenantId),
+          eq(schema.feedForecastRun.company_id, input.companyId),
+          like(schema.feedForecastRun.run_code, `${runCodePrefix(output.farm.code, input.planningDate)}%`),
+        ));
+      const runCode = runCodeFor(output.farm.code, input.planningDate, sameDay.map((row) => row.run_code));
       const lines = buildRunLineSnapshots(output);
       const outputSnapshot = buildOutputSnapshot(lines);
 

@@ -1,6 +1,6 @@
 import {
   buildConfigSnapshot, buildOutputSnapshot, buildRunLineSnapshots, buildSourceSnapshot,
-  FORECAST_RUN_OUTPUT_HASH_VERSION, technicalRunCode,
+  FORECAST_RUN_OUTPUT_HASH_VERSION, runCodeFor, runCodePrefix, technicalRunCode,
 } from './feed-forecast-run.rules';
 
 describe('feed forecast run snapshot rules', () => {
@@ -85,6 +85,23 @@ describe('feed forecast run snapshot rules', () => {
 
   it('uses the documented technical run code fallback without inventing a client number series', () => {
     expect(technicalRunCode('farm-uuid', 12)).toBe('FFR-farm-uuid-000012');
+  });
+
+  // Engine §5 row 68: "RUN-GRS-20260923-001" — RUN-<FarmCode>-<YYYYMMDD>-<NNN per farm per day>.
+  describe('runCodeFor (Engine §5 row 68)', () => {
+    it('builds RUN-<FarmCode>-<YYYYMMDD>-<NNN>, starting at 001 for a farm and day with no run', () => {
+      expect(runCodePrefix('GRS', '2026-09-23')).toBe('RUN-GRS-20260923-');
+      expect(runCodeFor('GRS', '2026-09-23', [])).toBe('RUN-GRS-20260923-001');
+    });
+
+    it('continues the sequence within the same farm and day, three digits', () => {
+      expect(runCodeFor('GRS', '2026-09-23', ['RUN-GRS-20260923-001', 'RUN-GRS-20260923-002'])).toBe('RUN-GRS-20260923-003');
+      expect(runCodeFor('GRS', '2026-09-23', ['RUN-GRS-20260923-009'])).toBe('RUN-GRS-20260923-010');
+    });
+
+    it('ignores codes of another day, another farm, and legacy FFR- codes', () => {
+      expect(runCodeFor('GRS', '2026-09-23', ['RUN-GRS-20260922-004', 'RUN-GR-20260923-005', 'RUN-GRSX-20260923-006', 'FFR-farm-1-000007'])).toBe('RUN-GRS-20260923-001');
+    });
   });
 
   it('refuses to persist a dated row that is missing required audit fields', () => {

@@ -32,6 +32,28 @@ export function technicalRunCode(farmId: string, version: number): string {
   return `FFR-${farmId}-${String(version).padStart(6, '0')}`;
 }
 
+/** Engine §5 row 68: RUN-<FarmCode>-<YYYYMMDD>-<NNN>; this is the part up to the sequence. */
+export function runCodePrefix(farmCode: string, date: string): string {
+  return `RUN-${farmCode}-${date.slice(0, 10).replace(/-/g, '')}-`;
+}
+
+/**
+ * Engine §5 row 68 ("RUN-GRS-20260923-001"): the run code is the farm code,
+ * the date, and a three-digit number per farm per day. `existingCodes` are the
+ * codes already saved for that prefix; the next number follows the highest.
+ * Older FFR-<farm>-<version> codes never match a prefix and are left as they are.
+ */
+export function runCodeFor(farmCode: string, date: string, existingCodes: readonly string[]): string {
+  const prefix = runCodePrefix(farmCode, date);
+  let highest = 0;
+  for (const code of existingCodes) {
+    if (!code.startsWith(prefix)) continue;
+    const tail = code.slice(prefix.length);
+    if (/^\d{3,}$/.test(tail)) highest = Math.max(highest, Number(tail));
+  }
+  return `${prefix}${String(highest + 1).padStart(3, '0')}`;
+}
+
 export interface ForecastRunLineSnapshot {
   forecastDate: string;
   /** The genuine batch_header PK — never the engine's `<batch_id>:<stageId>` composite (D1, 3 Oct: ER_DATA_TOO_LONG). */

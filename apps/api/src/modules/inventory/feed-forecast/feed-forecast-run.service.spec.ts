@@ -44,6 +44,7 @@ function setup(queues: Map<unknown, unknown[][]>, scope: FarmScope = { farmId: n
 function concurrentSetup(transactionFarms: string[]) {
   const latestByFarm = new Map<string, number>();
   const persisted: Array<{ farmId: string; version: number }> = [];
+  const codes: string[] = [];
   const lockTails = new Map<string, Promise<void>>();
   let entered = 0;
   let transactionIndex = 0;
@@ -77,7 +78,7 @@ function concurrentSetup(transactionFarms: string[]) {
       };
 
       const tx: any = {
-        select: jest.fn(() => {
+        select: jest.fn((fields?: Record<string, unknown>) => {
           let table: unknown;
           let lock: string | undefined;
           const rows = async () => {
@@ -85,6 +86,7 @@ function concurrentSetup(transactionFarms: string[]) {
               if (lock === 'update') await acquireFarmLock();
               return [{ location_id: farmId, company_id: 'company-1', lob_id: 'lob-piggery' }];
             }
+            if (table === schema.feedForecastRun && fields && 'run_code' in fields) return codes.map((run_code) => ({ run_code }));
             if (table === schema.feedForecastRun) {
               const version = latestByFarm.get(farmId);
               return version === undefined ? [] : [{ version }];
@@ -106,6 +108,7 @@ function concurrentSetup(transactionFarms: string[]) {
             if (table !== schema.feedForecastRun) return;
             if (!firstInsertEnteredCount) firstInsertEnteredCount = entered;
             latestByFarm.set(farmId, values.version);
+            codes.push(values.run_code);
             persisted.push({ farmId, version: values.version });
           }),
         })),
@@ -176,7 +179,7 @@ describe('FeedForecastRunService', () => {
     const { service, log } = setup(queues);
 
     await expect(service.createRun(input, output as any, { userId: 'user-1', userType: 'FARM_MANAGER' }))
-      .resolves.toEqual({ runId: expect.any(String), runCode: 'FFR-farm-1-000005', version: 5 });
+      .resolves.toEqual({ runId: expect.any(String), runCode: 'RUN-FARM-1-20261001-001', version: 5 });
 
     const farmLock = log.findIndex((entry) => entry.table === schema.locationMaster && entry.lock === 'update');
     const versionRead = log.findIndex((entry) => entry.table === schema.feedForecastRun && entry.op === 'select');
@@ -213,6 +216,22 @@ describe('FeedForecastRunService', () => {
     expect(run.config_snapshot.values.requisitionDraftSettings).toEqual({ bulkMultipleKg: 6000, bagSizeKg: 25, truckTargetKg: 28000, productionWeekday: 3 });
   });
 
+  it('numbers a run per farm per day: the next free NNN after the codes already saved for that prefix (Engine §5 row 68)', async () => {
+    const queues = new Map<unknown, unknown[][]>([
+      [schema.locationMaster, [[{ location_id: 'farm-1', company_id: 'company-1', lob_id: 'lob-piggery' }]]],
+      [schema.feedForecastRun, [[{ version: 6 }], [{ run_code: 'RUN-FARM-1-20261001-001' }, { run_code: 'RUN-FARM-1-20261001-002' }]]],
+    ]);
+    const { service, log } = setup(queues);
+    await expect(service.createRun(input, output as any, { userId: 'user-1' }))
+      .resolves.toMatchObject({ runCode: 'RUN-FARM-1-20261001-003', version: 7 });
+    // The code read happens under the farm lock, before the insert.
+    const lock = log.findIndex((e) => e.table === schema.locationMaster && e.lock === 'update');
+    const codeRead = log.findIndex((e, i) => i > lock && e.op === 'select' && e.table === schema.feedForecastRun && e !== log.find((x) => x.op === 'select' && x.table === schema.feedForecastRun));
+    const insert = log.findIndex((e) => e.op === 'insert' && e.table === schema.feedForecastRun);
+    expect(lock).toBeLessThan(codeRead);
+    expect(codeRead).toBeLessThan(insert);
+  });
+
   it('starts an independent farm version stream at one', async () => {
     const queues = new Map<unknown, unknown[][]>([
       [schema.locationMaster, [[{ location_id: 'farm-2', company_id: 'company-1', lob_id: 'lob-piggery' }]]],
@@ -220,7 +239,7 @@ describe('FeedForecastRunService', () => {
     ]);
     const { service } = setup(queues, { farmId: null, companyId: 'company-1', lobId: null, restricted: false });
     await expect(service.createRun({ ...input, farmId: 'farm-2' }, { ...output, farm: { ...output.farm, id: 'farm-2' } } as any, { userId: 'user-1' }))
-      .resolves.toMatchObject({ runCode: 'FFR-farm-2-000001', version: 1 });
+      .resolves.toMatchObject({ runCode: 'RUN-FARM-1-20261001-001', version: 1 });
   });
 
   it('allocates distinct sequential versions when two saves overlap for the same farm', async () => {
