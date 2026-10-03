@@ -614,7 +614,13 @@ export class FeedRequisitionService implements OnModuleInit {
         for (const u of plan.update) {
           await this.db.update(schema.requisitionLine).set({
             ...this.lineValues(u.line, runLinesFor(u.line)),
-            line_seq: u.line.lineNo,
+            // line_seq is deliberately NOT written here. It is user-visible (requisitions-panel.tsx,
+            // requisition-approval-detail.tsx) and requisition_line carries no unique index on it, so
+            // renumbering an already-drafted matched line to its current draft-order position on every
+            // rerun would both move a number someone already saw and risk two live lines sharing one once
+            // an insert below picks a number a concurrent-looking update also claims. Sparse 10000-stepping
+            // exists precisely so an existing line's identity is stable and new lines slot in between
+            // (Requisition §1 row 42) — a matched line keeps the line_seq it already has.
             // M9: an edited line keeps the farm's quantity (and its flag); only
             // the snapshot and the recommendation beside it are refreshed.
             ...(u.keepQuantity
@@ -624,12 +630,12 @@ export class FeedRequisitionService implements OnModuleInit {
         }
         if (plan.insert.length) {
           // Three feed writers of line_seq (this one, the fresh draft above, and manual createManual) share the
-          // same 10000-step convention (Requisition §1 row 42). maxSeq also covers plan.update's own reassigned
-          // numbers (just written above, line.lineNo), not only the stale pre-run `existing` snapshot, so an
-          // appended line can never land on a number this run just gave to a renumbered matched line. Without the
-          // *10000 step a second append after a 10000/20000 first draft landed on 20001, 20002 — in sequence, but
-          // off the NAV-style convention every other line follows.
-          const maxSeq = Math.max(0, ...existing.map((l) => l.line_seq), ...plan.update.map((u) => u.line.lineNo));
+          // same 10000-step convention (Requisition §1 row 42). `existing` already carries every currently
+          // persisted line's real line_seq (matched, kept and about-to-be-removed alike — the update loop above
+          // never changes it), so a plain max over it is enough to place an appended line after everything
+          // already on the requisition. Without the *10000 step a second append after a 10000/20000 first draft
+          // landed on 20001, 20002 — in sequence, but off the NAV-style convention every other line follows.
+          const maxSeq = Math.max(0, ...existing.map((l) => l.line_seq));
           await this.db.insert(schema.requisitionLine).values(
             plan.insert.map((line, i) => ({
               requisition_id: draft.requisition_id, line_seq: maxSeq + (i + 1) * 10000, quantity: String(line.recommendedQtyKg), quantity_edited: false, ...this.lineValues(line, runLinesFor(line)),

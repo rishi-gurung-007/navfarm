@@ -433,6 +433,8 @@ describe('FeedRequisitionService.autoDraft', () => {
     // Recommendation refreshed to 9,000; the farm's 6,000 kept.
     expect(lineUpdate.set).toMatchObject({ recommended_qty_kg: '9000', feed_forecast_run_line_ids: null });
     expect(lineUpdate.set).not.toHaveProperty('quantity');
+    // line_seq is never written on an update — a matched line keeps the number it already has (see below).
+    expect(lineUpdate.set).not.toHaveProperty('line_seq');
     expect(render(lineUpdate.where).params).toEqual(['L1']);
     const removed = log.find((e) => e.op === 'delete' && e.table === schema.requisitionLine)!;
     expect(render(removed.where).params).toEqual(['L2']);
@@ -442,6 +444,47 @@ describe('FeedRequisitionService.autoDraft', () => {
     const header = log.find((e) => e.op === 'update' && e.table === schema.requisition)!;
     expect(header.set).toMatchObject({ updated_by: 'u-1', feed_forecast_run_id: null });
     expect(render(header.where).params).toEqual(['req-1']);
+  });
+
+  it('rerun with a reordered draft: a matched line keeps its persisted line_seq instead of renumbering to its new draft-order position, and a freshly inserted line never collides with a surviving one', async () => {
+    // Last run drafted item-r1 first (line_seq 10000) and item-r2 second (line_seq 20000). This run item-r1 is no
+    // longer short (it drops out of the forecast entirely) while item-r2 is still short and is now the forecast's
+    // FIRST source — so recommendLines would hand it lineNo 10000, the number item-r1 used to have. item-r3 is new.
+    const queues = new Map<unknown, unknown[][]>([
+      [schema.locationMaster, [
+        [FARM_ROW],
+        [{ ...SILO_ROW, location_id: 'silo-2', location_code: 'GRS/SILO-002' }, { ...SILO_ROW, location_id: 'silo-3', location_code: 'GRS/SILO-003' }],
+        [{ location_id: 'farm-grs' }],
+      ]],
+      [schema.requisition, [[{ requisition_id: 'req-1', status: 'AUTO_DRAFT', requisition_type: 'FEED_FORECAST' }], [{ req: { requisition_id: 'req-1' }, farm_code: 'GRS', truck_target_kg: 30000 }]]],
+      [schema.requisitionLine, [[
+        { line_id: 'L1', line_seq: 10000, dest: 'silo-1', item: 'item-r1', quantity: '6000.0000', recommended: '6000.0000', edited: false },
+        { line_id: 'L2', line_seq: 20000, dest: 'silo-2', item: 'item-r2', quantity: '9000.0000', recommended: '9000.0000', edited: false },
+      ]]],
+    ]);
+    const reordered = [
+      source({ sourceCode: 'GRS/SILO-002', locationId: 'silo-2', itemId: 'item-r2', itemName: 'Weaner Diet R2', shortfallKg: 9000 }),
+      source({ sourceCode: 'GRS/SILO-003', locationId: 'silo-3', itemId: 'item-r3', itemName: 'Weaner Diet R3', shortfallKg: 4500 }),
+    ];
+    const { service, log } = setup(reordered, queues);
+    const out = await service.autoDraft({}, 'tenant-1', { userId: 'u-1', userType: 'COMPANY_ADMIN' });
+    expect(out).toMatchObject({ requisitionId: 'req-1', created: false });
+
+    const lineUpdate = log.find((e) => e.op === 'update' && e.table === schema.requisitionLine)!;
+    expect(render(lineUpdate.where).params).toEqual(['L2']);
+    // The surviving line is NOT renumbered to 10000 even though item-r2 is now the forecast's first source.
+    expect(lineUpdate.set).not.toHaveProperty('line_seq');
+    const removed = log.find((e) => e.op === 'delete' && e.table === schema.requisitionLine)!;
+    expect(render(removed.where).params).toEqual(['L1']);
+    const insert = log.find((e) => e.op === 'insert' && e.table === schema.requisitionLine)!;
+    const insertedSeqs: number[] = insert.values.map((v: any) => v.line_seq);
+    // maxSeq comes from `existing` (10000, 20000) — L1's stale 10000 counts even though L1 is being removed — so the
+    // new line lands at 30000, clear of every line still (or about to be) in play.
+    expect(insertedSeqs).toEqual([30000]);
+    // The property that actually matters (the missing unique index makes a collision a real, not theoretical, risk):
+    // every line still live after this rerun — L2 untouched at 20000, the new insert — has a distinct line_seq.
+    const liveSeqs = [20000, ...insertedSeqs];
+    expect(new Set(liveSeqs).size).toBe(liveSeqs.length);
   });
 
   it('skips a (silo, item) already on a manual requisition of the same cycle', async () => {
