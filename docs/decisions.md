@@ -2475,3 +2475,19 @@ Rishi's rulings, given section by section on 2026-10-03 while reviewing
    fields that existed before 25 Sep (`silo_reorder_days`, `feed_wastage_pct`) stay but the
    forecast no longer uses them.
 7. 2026-10-02 rulings 1 (date columns) and 3 (no dashes) stand.
+
+## 2026-10-03 — Feed requisition lines per batch, house, silo and item; common requisition kept
+
+Rishi, 3 Oct, after reviewing what the client documents say about requisitions:
+
+1. **Feed requisition lines are per batch, house, destination silo and feed item** (and required
+   date), not one line per silo and item. Sources: TDD workbook Engine Step 9 "Create or update
+   linked draft lines per farm, batch, house, destination silo, item and required date"; MOM Feed
+   and Logistic 21 Aug 2026 "Feed requisition will be raised on the basis of Per Batch, Per House,
+   and Per Silo". The silo/item totals (recommended quantity rounded to the bulk multiple) are
+   shown on the requisition as a summary; ordering and rounding stay per silo and item (Engine
+   Step 8), so batch/house lines carry their share of demand.
+2. **The common requisition and approval flow stays as first developed** from Rishi's 1 Oct
+   specification (Item / Fixed Asset / Service; Store or Purchase; approval precedes release;
+   separate approval, document and fulfilment states). The feed TDD work does not replace it;
+   Part E adds its screens and the feed entry point beside it.
