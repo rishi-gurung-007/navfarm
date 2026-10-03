@@ -58,9 +58,11 @@ export class FeedForecastRunService {
       eq(schema.locationMaster.is_active, true),
       isNull(schema.locationMaster.deleted_at),
       // A farm with no lob_id belongs to every LOB (location_master.lob_id is
-      // nullable and assertLobInScope carves this out too) — same carve-out as
-      // assertLocationOnActiveFarm (farm-scope.ts), so a restricted caller is
-      // not 404'd off a farm the strict LOB match would otherwise exclude.
+      // nullable) — the same carve-out as assertLocationOnActiveFarm
+      // (farm-scope.ts), so a restricted caller is not 404'd off such a farm.
+      // assertLobInScope does NOT carve this out: it throws for a NULL lob_id
+      // under a LOB-restricted scope, which is why settings go through
+      // FeedSettingsService.resolveForFeedPlanning (see its comment).
       ...(scope.restricted && scope.lobId ? [or(eq(schema.locationMaster.lob_id, scope.lobId), isNull(schema.locationMaster.lob_id))!] : []),
     )).limit(1);
     const rows = lock ? await query.for('update') : await query;
