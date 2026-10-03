@@ -1,9 +1,9 @@
 "use client";
 
 /**
- * Inventory -> Feed Forecast is one page with three tabs (spec, UI structure):
- * Forecast, Feed Requisition and Physical Count — all three work on the same
- * selected farm.
+ * Inventory -> Feed Forecast is one page with four tabs (spec, UI structure):
+ * Dashboard (the silo workbook fields), Forecast, Feed Requisition and
+ * Physical Count — all of them work on the same selected farm.
  *
  * The chosen tab lives in `?tab=`, so a bookmark, a refresh and the redirect
  * from the old /inventory/feed-requisitions URL all land on the same tab. The
@@ -20,14 +20,16 @@ import { useEffect, useState, type ReactNode } from "react";
 import { Tabs } from "@/components/ui/tabs";
 import { useLanguage } from "@/hooks/useLanguage";
 import type { TranslationKeys } from "@/utils/translations";
+import FeedSiloDashboard from "./feed-silo-dashboard";
 import FeedForecastPanel from "./feed-forecast-panel";
 import { FeedRequisitionPanel } from "./requisitions-panel";
 import FeedStockCountPanel from "./feed-stock-count-panel";
 
-export const FEED_FORECAST_TABS = ["forecast", "feed-requisition", "physical-count"] as const;
+export const FEED_FORECAST_TABS = ["dashboard", "forecast", "feed-requisition", "physical-count"] as const;
 export type FeedForecastTab = (typeof FEED_FORECAST_TABS)[number];
 
 const TAB_LABEL: Record<FeedForecastTab, TranslationKeys> = {
+  dashboard: "fftTabDashboard",
   forecast: "fftTabForecast",
   "feed-requisition": "fftTabFeedRequisition",
   "physical-count": "fftTabPhysicalCount",
@@ -46,6 +48,7 @@ export function feedForecastTabQuery(tab: FeedForecastTab): string {
 }
 
 const PANELS: Record<FeedForecastTab, () => ReactNode> = {
+  dashboard: () => <FeedSiloDashboard />,
   forecast: () => <FeedForecastPanel />,
   "feed-requisition": () => <FeedRequisitionPanel />,
   "physical-count": () => <FeedStockCountPanel />,

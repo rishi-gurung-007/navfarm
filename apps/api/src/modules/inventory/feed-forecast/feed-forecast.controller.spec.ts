@@ -54,4 +54,15 @@ describe('FeedForecastController run persistence boundary', () => {
       moduleCode: 'INVENTORY', resource: 'LEDGER', action: 'create',
     });
   });
+
+  it('serves silo status under the forecast grant, through the scoped service', async () => {
+    const data = { planningDate: '2026-09-23', rows: [] };
+    const service = { siloStatus: jest.fn(async () => data) } as any;
+    const controller = new FeedForecastController(service);
+    await expect(controller.siloStatus({ farmId: 'farm-1', planningDate: '2026-09-23' }, req)).resolves.toMatchObject({ success: true, data });
+    expect(service.siloStatus).toHaveBeenCalledWith({ farmId: 'farm-1', planningDate: '2026-09-23' }, 'tenant-1', 'FARM_MANAGER');
+    expect(Reflect.getMetadata(REQUIRE_PERMISSION_KEY, FeedForecastController.prototype.siloStatus)).toEqual({
+      moduleCode: 'INVENTORY', resource: 'LEDGER', action: 'view',
+    });
+  });
 });

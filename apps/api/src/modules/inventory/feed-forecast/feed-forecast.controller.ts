@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { FeedForecastService } from './feed-forecast.service';
-import { QueryFeedForecastDto, QueryFeedForecastRunsDto, QueryFeedPeriodsDto, UpdateFeedFarmSettingsDto, UpdateSiloPlanningDto } from './dto/feed-forecast.dto';
+import { QueryFeedForecastDto, QueryFeedForecastRunsDto, QueryFeedPeriodsDto, QuerySiloStatusDto, UpdateFeedFarmSettingsDto, UpdateSiloPlanningDto } from './dto/feed-forecast.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
@@ -105,6 +105,16 @@ export class FeedForecastController {
     const tenantId = req.user?.tenantId || req['tenantId'];
     const data = await this.feedForecastService.updateSiloSettings(farmId, siloId, dto, tenantId, req.user);
     return { success: true, message: 'Silo feed planning updated.', data };
+  }
+
+  // Silo dashboard (TDD Engine §4, Master Setup §1): read under the forecast's own grant and farm scope.
+  @Get('silo-status')
+  @RequirePermission('INVENTORY', 'LEDGER', 'view')
+  @ApiOperation({ summary: "One row per silo with the workbook's dashboard fields, from a seven-day forecast" })
+  async siloStatus(@Query() query: QuerySiloStatusDto, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const data = await this.feedForecastService.siloStatus(query, tenantId, req.user?.userType);
+    return { success: true, message: 'Silo status retrieved successfully.', data };
   }
 
   @Get()

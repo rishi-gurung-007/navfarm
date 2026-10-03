@@ -20,6 +20,9 @@ import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { FeedForecastRunService } from './feed-forecast-run.service';
 import { buildSourceSnapshot } from './feed-forecast-run.rules';
 import { FeedSettingsService } from '../feed-settings/feed-settings.service';
+import { toFarmFeedSettings } from '../feed-settings/feed-settings.rules';
+import { productionCycle } from '../../procurement/feed-requisition/feed-requisition.rules';
+import { buildSiloStatus, SiloFact, SiloStatusRow } from './feed-silo-status';
 
 /**
  * The LOB bound on the forecast's location read for a restricted
@@ -1265,6 +1268,117 @@ export class FeedForecastService {
         stages: stageBlocks, sourceSnapshot,
       };
     });
+  }
+
+  /**
+   * Silo dashboard (TDD Engine §4 rows 47–64, Master Setup §1): one row per silo
+   * with the workbook's derived fields, from a seven-day forecast starting at
+   * the planning date. Same farm resolution and 45-day planning-date bound as
+   * the forecast itself; the engine is run once, through computeForFarm.
+   */
+  async siloStatus(
+    query: { farmId?: string; planningDate?: string },
+    tenantId: string,
+    userType?: string,
+  ): Promise<{ planningDate: string; farm: { id: string; code: string; name: string }; submissionDeadline: string; itemNames: Record<string, string>; rows: SiloStatusRow[] }> {
+    const { farmId, companyId } = await this.resolveFarm(query.farmId, tenantId, userType);
+    if (query.planningDate !== undefined && !isCalendarDay(query.planningDate)) {
+      throw new BadRequestException('planningDate must be a calendar date (YYYY-MM-DD).');
+    }
+    const clock = await this.farmToday(companyId, tenantId);
+    const planningDate = query.planningDate ?? clock.today;
+    const to = addDays(planningDate, DEFAULT_SPAN_DAYS);
+    const settings = toFarmFeedSettings(await this.feedSettings.resolveForFeedPlanning(companyId, farmId));
+    const { submissionDeadline } = productionCycle(planningDate, settings.productionWeekday);
+    return this.withFarmScope(farmId, companyId, async () => {
+      const forecast = await this.computeForFarm(farmId, companyId, tenantId, { planningDate, from: planningDate, to }, clock);
+      const silos = await this.loadSiloFacts(farmId, companyId, tenantId);
+      const requisitionStatusBySilo = await this.loadOpenRequisitionStatuses(farmId, tenantId, submissionDeadline);
+      const rows = buildSiloStatus({ silos, result: forecast, requisitionStatusBySilo, submissionDeadline, settings });
+      // Names for the diet columns, which the rows carry as ids.
+      const itemNames: Record<string, string> = {};
+      for (const source of forecast.sources) itemNames[source.itemId] = source.itemName;
+      for (const change of forecast.dietChanges) {
+        itemNames[change.fromItemId] ??= change.fromItemName;
+        itemNames[change.toItemId] ??= change.toItemName;
+      }
+      return { planningDate, farm: forecast.farm, submissionDeadline, itemNames, rows };
+    });
+  }
+
+  /**
+   * The silo facts the dashboard shows that the engine does not carry: Feed in
+   * Silo is the item of the last posted inbound ledger movement into the silo
+   * (Master Setup row 16); System Balance is that item's ledger balance now;
+   * the last approved count is the latest POSTED stock count line.
+   */
+  private async loadSiloFacts(farmId: string, companyId: string, tenantId: string): Promise<SiloFact[]> {
+    const planning = (await this.siloPlanningRows([farmId], tenantId)).get(farmId) ?? [];
+    if (!planning.length) return [];
+    const siloIds = planning.map((s) => s.locationId);
+    const Ledger = schema.inventoryLedger;
+    const inbound = await this.db
+      .select({ warehouse_id: Ledger.warehouse_id, item_id: Ledger.item_id, item_description: Ledger.item_description, posting_date: Ledger.posting_date })
+      .from(Ledger)
+      .where(and(
+        eq(Ledger.tenant_id, tenantId), eq(Ledger.company_id, companyId),
+        inArray(Ledger.warehouse_id, siloIds), eq(Ledger.entry_type, 'POSITIVE'), gt(Ledger.quantity, '0'),
+      ))
+      .orderBy(sql`${Ledger.posting_date} DESC`, sql`${Ledger.created_at} DESC`);
+    const lastInbound = new Map<string, (typeof inbound)[number]>();
+    for (const row of inbound) if (row.warehouse_id && !lastInbound.has(row.warehouse_id)) lastInbound.set(row.warehouse_id, row);
+
+    const Count = schema.feedStockCount;
+    const Line = schema.feedStockCountLine;
+    const counts = await this.db
+      .select({ silo_id: Line.silo_id, item_id: Line.item_id, counted_qty_kg: Line.counted_qty_kg, counted_at: Count.counted_at })
+      .from(Line)
+      .innerJoin(Count, eq(Count.count_id, Line.count_id))
+      .where(and(eq(Count.tenant_id, tenantId), eq(Count.farm_id, farmId), eq(Count.status, 'POSTED'), inArray(Line.silo_id, siloIds)))
+      .orderBy(sql`${Count.counted_at} DESC`);
+
+    const facts: SiloFact[] = [];
+    for (const silo of planning) {
+      const last = lastInbound.get(silo.locationId) ?? null;
+      const balances = await this.ledgerService.getStockBalance({ companyId, warehouseId: silo.locationId } as any, tenantId);
+      const itemId = last?.item_id ?? null;
+      const onHand = itemId ? balances.filter((b) => b.item_id === itemId).reduce((sum, b) => sum + Number(b.on_hand_qty), 0) : 0;
+      const count = counts.find((c) => c.silo_id === silo.locationId && (itemId === null || c.item_id === itemId)) ?? null;
+      facts.push({
+        siloId: silo.locationId,
+        siloCode: silo.code,
+        houseCodes: silo.linkedSheds.map((shed) => shed.code),
+        capacityKg: silo.capacityKg,
+        belowFeedLevelKg: silo.lowLevelKg,
+        aboveThresholdKg: silo.highLevelKg,
+        feedInSiloItemId: itemId,
+        feedInSiloItemName: last?.item_description ?? null,
+        feedType: silo.feedType,
+        systemBalanceKg: Math.round(onHand * 1000) / 1000,
+        lastApprovedCountKg: count ? Number(count.counted_qty_kg) : null,
+        lastApprovedCountAt: count?.counted_at ?? null,
+        lastFeedReceiptDate: last?.posting_date ?? null,
+        blocked: silo.status === 'BLOCKED',
+      });
+    }
+    return facts;
+  }
+
+  /** Status of the cycle's live feed requisition covering each silo (rejected and cancelled ones do not count). */
+  private async loadOpenRequisitionStatuses(farmId: string, tenantId: string, submissionDeadline: string): Promise<Map<string, string>> {
+    const R = schema.requisition;
+    const RL = schema.requisitionLine;
+    const rows = await this.db
+      .select({ destination: RL.destination_location_id, status: R.status })
+      .from(RL)
+      .innerJoin(R, eq(R.requisition_id, RL.requisition_id))
+      .where(and(
+        eq(R.tenant_id, tenantId), eq(R.farm_id, farmId), eq(R.doc_type, 'FEED'),
+        eq(R.submission_deadline, submissionDeadline), notInArray(R.status, ['REJECTED', 'CANCELLED']), isNull(R.deleted_at),
+      ));
+    const byDestination = new Map<string, string>();
+    for (const row of rows) if (row.destination) byDestination.set(row.destination, row.status);
+    return byDestination;
   }
 
   /**

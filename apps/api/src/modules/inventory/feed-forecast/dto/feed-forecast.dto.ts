@@ -40,6 +40,18 @@ export class QueryFeedForecastDto {
   periodId?: string;
 }
 
+export class QuerySiloStatusDto {
+  @ApiProperty({ description: 'Farm (top-level Location Master row); a farm-bound user already has exactly one', required: false })
+  @IsOptional()
+  @IsUUID()
+  farmId?: string;
+
+  @ApiProperty({ description: 'Planning date (YYYY-MM-DD); defaults to today in the farm time zone, within 45 days of it', required: false })
+  @IsOptional()
+  @IsDateString()
+  planningDate?: string;
+}
+
 export class QueryFeedPeriodsDto {
   @ApiProperty({ description: 'Farm whose company periods are listed', required: false })
   @IsOptional()
