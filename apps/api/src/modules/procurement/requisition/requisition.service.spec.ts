@@ -451,3 +451,55 @@ describe('Part E Task 2 — PUT /requisition/:id', () => {
       .rejects.toThrow('The document type cannot change; create a new requisition instead.');
   });
 });
+
+describe('Part E Task 2 fix round 1 — update writes what it says', () => {
+  const del = (db: any) => { db.delete = jest.fn(() => ({ where: jest.fn(async () => undefined) })); };
+
+  it('a Store update writes from/to on the header and the to-ship/to-receive targets on the lines', async () => {
+    const { db, selectResults, setCalls, insertValues } = makeDb();
+    selectResults.push([headerRow()], [headerRow()], [lineRow()]);
+    del(db);
+    const service = new RequisitionService(transactionCls(db), approvalsMock() as any);
+    await service.update('req-1', {
+      purpose: 'STORE', from_location_id: 'loc-store', to_location_id: 'loc-farm',
+      lines: [{ item_id: 'item-1', quantity: 7, uom: 'KG' }],
+    } as any, TENANT, { userId: 'u1' });
+    expect(setCalls[0]).toMatchObject({ purpose: 'STORE', from_location_id: 'loc-store', to_location_id: 'loc-farm' });
+    expect(insertValues[0].values[0]).toMatchObject({
+      from_location_id: 'loc-store', to_location_id: 'loc-farm', qty_to_ship: '7', qty_to_receive: '7',
+    });
+  });
+
+  it('keeps main location, requester department, date and purpose when omitted; clears the sender department', async () => {
+    const { db, selectResults, setCalls } = makeDb();
+    selectResults.push(
+      [headerRow({ main_location_id: 'farm-9', requester_department_id: 'dep-7', sender_department_id: 'dep-8', requisition_date: '2026-09-30' })],
+      [headerRow()], [lineRow()],
+    );
+    del(db);
+    const service = new RequisitionService(transactionCls(db), approvalsMock() as any);
+    await service.update('req-1', {
+      purpose: 'PURCHASE', lines: [{ item_id: 'item-1', quantity: 1, uom: 'KG' }],
+    } as any, TENANT, { userId: 'u1' });
+    expect(setCalls[0]).toMatchObject({
+      main_location_id: 'farm-9', requester_department_id: 'dep-7', requisition_date: '2026-09-30',
+      sender_department_id: null, remarks: null, required_date: null, justification: null, direct_transfer: false,
+    });
+  });
+
+  it.each([
+    ['a FEED row', { doc_type: 'FEED' }],
+    ['a released row', { status: 'APPROVED', approval_status: 'APPROVED', document_status: 'RELEASED' }],
+  ])('refuses %s and writes nothing', async (_n, over) => {
+    const { db, selectResults, setCalls, insertValues } = makeDb();
+    selectResults.push([headerRow(over)]);
+    del(db);
+    const service = new RequisitionService(transactionCls(db), approvalsMock() as any);
+    await expect(service.update('req-1', {
+      purpose: 'PURCHASE', lines: [{ item_id: 'item-1', quantity: 1, uom: 'KG' }],
+    } as any, TENANT, { userId: 'u1' })).rejects.toThrow(BadRequestException);
+    expect(setCalls).toHaveLength(0);
+    expect(insertValues).toHaveLength(0);
+    expect(db.delete).not.toHaveBeenCalled();
+  });
+});

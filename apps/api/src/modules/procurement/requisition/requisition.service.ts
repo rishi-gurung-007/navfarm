@@ -272,6 +272,7 @@ export class RequisitionService {
       for (const [id, label] of [[dto.main_location_id, 'Requisition main location'], [fromLocationId, 'Requisition source location'], [toLocationId, 'Requisition destination location']] as const) {
         if (id) await assertLocationOnActiveFarm(this.db, scope, id, label);
       }
+      // Kept when omitted: purpose, requisition_date, main_location_id, requester_department_id. Cleared when omitted: sender_department_id, remarks, required_date, justification, direct_transfer.
       await this.db
         .update(schema.requisition)
         .set({

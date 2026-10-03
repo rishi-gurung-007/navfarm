@@ -44,7 +44,7 @@ export class RequisitionController {
 
   @Put(':id')
   @RequirePermission('PROCUREMENT', 'REQUISITION', 'create')
-  @ApiOperation({ summary: 'Edit an Open requisition — header fields and all lines (spec §6a)' })
+  @ApiOperation({ summary: 'Edit an Open requisition — header fields and all lines (spec §6a)', description: 'Full replace of the header and every line. Omitted remarks, required_date, justification, sender_department_id become null and direct_transfer becomes false; omitted requisition_date, main_location_id, requester_department_id and purpose keep their stored values. farm_id is ignored.' })
   @ApiParam({ name: 'id' })
   async update(@Param('id') id: string, @Body() dto: UpdateRequisitionDto, @Req() req: any) {
     const tenantId = req.user?.tenantId || req['tenantId'];

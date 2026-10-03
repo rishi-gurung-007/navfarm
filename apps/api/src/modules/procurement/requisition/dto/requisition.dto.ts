@@ -97,7 +97,7 @@ export class CreateRequisitionDto {
   @IsNotEmpty()
   company_id: string;
 
-  @ApiPropertyOptional({ description: 'The farm the requisition is for — farm scope is enforced on it' })
+  @ApiPropertyOptional({ description: 'The farm the requisition is for — farm scope is enforced on it. Ignored on update (the farm of an existing document never changes).' })
   @IsOptional()
   @IsUUID()
   farm_id?: string;
@@ -196,5 +196,11 @@ export class LinkPoDto {
   linked_po_no: string;
 }
 
-/** PUT /requisition/:id — the whole document while it is Open; lines are replaced, not merged. */
+/**
+ * PUT /requisition/:id — the whole document while it is Open; full replace, not a patch.
+ * Lines are replaced, not merged. Omitted remarks, required_date, justification,
+ * sender_department_id become null and direct_transfer becomes false; omitted
+ * requisition_date, main_location_id, requester_department_id and purpose keep the
+ * stored value. farm_id is ignored.
+ */
 export class UpdateRequisitionDto extends OmitType(CreateRequisitionDto, ['company_id'] as const) {}
