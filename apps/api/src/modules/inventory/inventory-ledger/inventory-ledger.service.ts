@@ -1,5 +1,5 @@
 import { withTenantTransaction } from '../../../common/tenant-transaction';
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { Injectable, BadRequestException, ConflictException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { eq, and, or, isNull, gte, lte, lt, inArray, asc, desc, sql, isNotNull, ne, like, SQL } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
@@ -541,7 +541,20 @@ export class InventoryLedgerService {
       ));
     const [shipped] = await sumAmount([params.shipmentNo], 'TRANSFER_SHIPMENT');
     const received = params.receiptNos.length > 0 ? (await sumAmount(params.receiptNos, 'TRANSFER_RECEIPT'))[0] : undefined;
-    return roundAmount(Math.abs(Number(shipped?.amount ?? 0)) - Math.abs(Number(received?.amount ?? 0)));
+    const remaining = roundAmount(Math.abs(Number(shipped?.amount ?? 0)) - Math.abs(Number(received?.amount ?? 0)));
+    // The closing receipt writes this into a POSITIVE row, which must never
+    // carry a negative amount (Part E Task 4b). Within ±0.0005 of zero is
+    // four-place rounding and closes at 0; further below, the receipts have
+    // already taken more value than the shipment carried — a data
+    // inconsistency to stop on, not to write.
+    if (remaining < 0) {
+      if (remaining >= -0.0005) return 0;
+      throw new ConflictException(
+        `Shipment ${params.shipmentNo} has already been received for ${(-remaining).toFixed(4)} more than it carried on this line ` +
+        '(data inconsistency); the closing receipt was not posted.',
+      );
+    }
+    return remaining === 0 ? 0 : remaining; // never -0 into the amount column
   }
 
   /**

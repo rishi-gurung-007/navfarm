@@ -293,4 +293,32 @@ describe('InventoryLedgerService transfer legs', () => {
     expect(inserted.map((r) => r.amount)).toEqual(['3.3333', '3.3333', '3.3334']);
     expect(inserted.reduce((s, r) => s + Number(r.amount), 0).toFixed(4)).toBe('10.0000');
   });
+
+  /**
+   * Part E Task 4b, requirement 4: the closing receipt takes the remainder,
+   * and a POSITIVE row must never carry a negative amount. A remainder just
+   * below zero is rounding and is clamped to 0; anything further below means
+   * the receipts already took more than the shipment carried — a data
+   * inconsistency that must stop the receipt, not be written.
+   */
+  it('clamps a remainder within ±0.0005 of zero to 0 (rounding), never negative', async () => {
+    const { service, inserted } = ledgerDb('-10.0000');
+    inserted.push({ transaction_type: 'TRANSFER_RECEIPT', document_no: 'RC-2026-0001', amount: '10.0004' });
+    const remaining = await service.transferShipmentRemainingValue({ tenantId: 'tenant-1', shipmentNo: 'SH-2026-0001', lineId: 'line-1', receiptNos: ['RC-2026-0001'] });
+    expect(remaining).toBe(0);
+    expect(Object.is(remaining, -0)).toBe(false);
+  });
+
+  it('throws on a remainder below −0.0005: the receipts already exceed what the shipment carried', async () => {
+    const { service, inserted } = ledgerDb('-10.0000');
+    inserted.push({ transaction_type: 'TRANSFER_RECEIPT', document_no: 'RC-2026-0001', amount: '10.0100' });
+    await expect(service.transferShipmentRemainingValue({ tenantId: 'tenant-1', shipmentNo: 'SH-2026-0001', lineId: 'line-1', receiptNos: ['RC-2026-0001'] }))
+      .rejects.toThrow('Shipment SH-2026-0001 has already been received for 0.0100 more than it carried on this line');
+  });
+
+  it('a remainder of exactly 0 or above is returned as it is', async () => {
+    const { service, inserted } = ledgerDb('-10.0000');
+    inserted.push({ transaction_type: 'TRANSFER_RECEIPT', document_no: 'RC-2026-0001', amount: '6.0000' });
+    await expect(service.transferShipmentRemainingValue({ tenantId: 'tenant-1', shipmentNo: 'SH-2026-0001', lineId: 'line-1', receiptNos: ['RC-2026-0001'] })).resolves.toBe(4);
+  });
 });
