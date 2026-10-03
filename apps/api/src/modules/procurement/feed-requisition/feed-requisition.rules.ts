@@ -411,7 +411,10 @@ export function lifecycleRefLabel(r: { breed_code?: string | null; stage_code?: 
 }
 
 export interface LineBreakdownRow {
+  /** The genuine batch_header PK — never the engine's composite aggregation key (D1, 3 Oct). */
   batchId: string;
+  /** The real stage this row's first-demand day was in; travels separately from `batchId` so the two never need re-splitting. */
+  stageId: string | null;
   batchNo: string;
   shedId: string | null;
   shedCode: string;
@@ -433,7 +436,7 @@ export interface LineBreakdownRow {
  * (nothing feeds it), outside the window, or with no demand adds nothing.
  */
 export function buildLineBreakdown(daily: Pick<DailyForecastRow,
-  'date' | 'batchId' | 'batchNo' | 'shedId' | 'shedCode' | 'itemId' | 'destinationLocationId' | 'heads' | 'feedRateKg' | 'demandKg' | 'lifecycleId'>[],
+  'date' | 'batchId' | 'realBatchId' | 'stageId' | 'batchNo' | 'shedId' | 'shedCode' | 'itemId' | 'destinationLocationId' | 'heads' | 'feedRateKg' | 'demandKg' | 'lifecycleId'>[],
 from: string, to: string): Map<string, LineBreakdownRow[]> {
   const byLine = new Map<string, Map<string, LineBreakdownRow>>();
   const ordered = [...daily].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
@@ -443,6 +446,10 @@ from: string, to: string): Map<string, LineBreakdownRow[]> {
     const rows = byLine.get(key) ?? new Map<string, LineBreakdownRow>();
     byLine.set(key, rows);
     const shedId = d.shedId ?? null;
+    // Grouped on the engine's own composite key (d.batchId): it already keeps an ANIMAL_WISE/REGISTERED
+    // batch's stage groups apart (buildInputBatches), so two stages of the same batch in the same shed
+    // produce two breakdown rows here. What gets PERSISTED below is `d.realBatchId`/`d.stageId` — the
+    // genuine PK and the real stage — never this grouping key (D1, 3 Oct).
     const rowKey = `${d.batchId}|${shedId ?? ''}`;
     const prior = rows.get(rowKey);
     if (prior) {
@@ -450,7 +457,7 @@ from: string, to: string): Map<string, LineBreakdownRow[]> {
       continue;
     }
     rows.set(rowKey, {
-      batchId: d.batchId, batchNo: d.batchNo, shedId, shedCode: d.shedCode, heads: d.heads, feedRateKg: d.feedRateKg,
+      batchId: d.realBatchId, stageId: d.stageId || null, batchNo: d.batchNo, shedId, shedCode: d.shedCode, heads: d.heads, feedRateKg: d.feedRateKg,
       lifecycleRefId: d.lifecycleId || null, demandKg: round3(d.demandKg), firstDemandDate: d.date,
     });
   }

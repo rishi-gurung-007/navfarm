@@ -142,3 +142,35 @@ describe('Tenant migration 0144 — widen requisition_line.days_remaining range 
     expect(sql.join('\n')).not.toMatch(/\b(DROP|DELETE FROM|TRUNCATE)\b/i);
   });
 });
+
+/**
+ * Task 9b (D1, 3 Oct): auto-draft 500'd on 7 of 9 demo farms —
+ * buildInputBatches keys an ANIMAL_WISE/REGISTERED batch as
+ * `<batch_id>:<stage_id>` (73 chars), and that composite flowed straight
+ * into requisition_line_batch.batch_id, a varchar(36) NOT NULL FK to
+ * batch_header.batch_id: ER_DATA_TOO_LONG, whole transaction rolled back.
+ * Widening batch_id would not help — a composite is never a batch_header
+ * key. The fix carries the real batch_id and stage_id as two values; this
+ * migration adds stage_id (additive, nullable) and rebuilds the unique
+ * index to include it, since otherwise two stage groups of the same batch
+ * feeding the same shed collide on (line_id, batch_id, shed_id).
+ */
+describe('Tenant migration 0145 — requisition_line_batch carries the real batch id and its own stage (additive)', () => {
+  it('is journalled at idx 145 after 0144', () => {
+    expect(journal().find((e) => e.idx === 145)).toEqual({
+      idx: 145, version: '5', when: 1792000000014, tag: '0145_requisition_line_batch_stage', breakpoints: true,
+    });
+  });
+
+  it('adds stage_id and widens the unique index to include it via a safe add-then-swap (MySQL refuses to drop the sole index an existing FK depends on), nothing destructive', () => {
+    const sql = statements('0145_requisition_line_batch_stage');
+    expect(sql).toEqual([
+      'ALTER TABLE `requisition_line_batch` ADD COLUMN `stage_id` varchar(36);',
+      'ALTER TABLE `requisition_line_batch` ADD CONSTRAINT `requisition_line_batch_stage_id_fk` FOREIGN KEY (`stage_id`) REFERENCES `stage_master`(`stage_id`) ON DELETE set null ON UPDATE no action;',
+      'ALTER TABLE `requisition_line_batch` ADD CONSTRAINT `uq_requisition_line_batch_v2` UNIQUE(`line_id`,`batch_id`,`stage_id`,`shed_id`);',
+      'ALTER TABLE `requisition_line_batch` DROP INDEX `uq_requisition_line_batch`;',
+      'ALTER TABLE `requisition_line_batch` RENAME INDEX `uq_requisition_line_batch_v2` TO `uq_requisition_line_batch`;',
+    ]);
+    expect(sql.join('\n')).not.toMatch(/\b(DROP TABLE|DELETE FROM|TRUNCATE)\b/i);
+  });
+});

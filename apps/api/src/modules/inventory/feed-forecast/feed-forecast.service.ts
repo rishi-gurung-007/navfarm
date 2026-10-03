@@ -496,7 +496,12 @@ export function buildInputBatches(args: {
       if (!shedId) flags.push({ kind: 'BATCH_SHED_UNKNOWN', batchNo });
       batches.push({
         // ANIMAL_WISE groups need distinct ids: the engine keys its rows by (batchId, item).
+        // This composite is an aggregation/display key only — never a batch_header PK — so it must
+        // never be written to a database column (D1, 3 Oct: ER_DATA_TOO_LONG / FK rejection on
+        // requisition_line_batch.batch_id and feed_forecast_run_line.batch_id). `realBatchId` below
+        // is always the genuine PK and is what downstream writers must persist.
         batchId: animalWise ? `${b.batch_id}:${g.stageId}` : b.batch_id,
+        realBatchId: b.batch_id,
         batchNo,
         breedId: b.breed_id,
         shedId,

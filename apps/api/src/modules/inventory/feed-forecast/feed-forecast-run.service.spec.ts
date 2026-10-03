@@ -140,7 +140,10 @@ const input = {
 const output = {
   farm: { id: 'farm-1', code: 'FARM-1', name: 'Farm 1' }, planningDate: '2026-10-01', from: '2026-10-01', to: '2026-10-07',
   daily: [{
-    date: '2026-10-01', batchId: 'batch-1', shedId: 'shed-1', destinationLocationId: 'silo-1', itemId: 'item-1',
+    // D1 (3 Oct): batchId is the engine's display/grouping composite (`<batch_id>:<stageId>` for
+    // an ANIMAL_WISE/REGISTERED stage group); realBatchId is the genuine batch_header PK the writer
+    // must persist. Deliberately different here so the insert assertion below catches a regression.
+    date: '2026-10-01', batchId: 'batch-1:stage-1', realBatchId: 'batch-1', shedId: 'shed-1', destinationLocationId: 'silo-1', itemId: 'item-1',
     currentItemId: 'item-1', heads: 40, feedRateKg: 2.5, openingStockKg: 500, confirmedReceiptKg: 0,
     demandKg: 100, projectedClosingKg: 400, runDownDate: '2026-10-05', shortageDate: null, recommendedQtyKg: 700,
     provenance: { sourceType: 'SILO', lifecycleId: 'life-1' },

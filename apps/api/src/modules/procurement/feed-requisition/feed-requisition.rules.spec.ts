@@ -372,24 +372,24 @@ describe('lineChangeProblems — Req. row 13 and cp. 4', () => {
  */
 describe('buildLineBreakdown — per batch and house under each silo/item line (B1)', () => {
   const row = (over: Record<string, unknown>) => ({
-    date: '2026-09-23', batchId: 'b1', batchNo: 'B-001', shedId: 'h3', shedCode: 'GRS/SHED-003', itemId: 'r1',
+    date: '2026-09-23', batchId: 'b1', realBatchId: 'b1', stageId: null, batchNo: 'B-001', shedId: 'h3', shedCode: 'GRS/SHED-003', itemId: 'r1',
     destinationLocationId: 's1', heads: 1000, feedRateKg: 0.5, demandKg: 500, lifecycleId: 'lc-r1', sourceType: 'SILO', ...over,
   });
   it('sums demand over the window per (batch, house), taking heads, rate and lifecycle row from the first day with demand', () => {
     const daily = [
       row({}),
       row({ date: '2026-09-24', heads: 990, demandKg: 495 }),
-      row({ batchId: 'b2', batchNo: 'B-002', shedId: 'h4', shedCode: 'GRS/SHED-004', heads: 400, demandKg: 200 }),
-      row({ date: '2026-09-24', batchId: 'b2', batchNo: 'B-002', shedId: 'h4', shedCode: 'GRS/SHED-004', heads: 400, demandKg: 200 }),
+      row({ batchId: 'b2', realBatchId: 'b2', batchNo: 'B-002', shedId: 'h4', shedCode: 'GRS/SHED-004', heads: 400, demandKg: 200 }),
+      row({ date: '2026-09-24', batchId: 'b2', realBatchId: 'b2', batchNo: 'B-002', shedId: 'h4', shedCode: 'GRS/SHED-004', heads: 400, demandKg: 200 }),
       row({ itemId: 'r2', destinationLocationId: 's2', demandKg: 300, lifecycleId: 'lc-r2', feedRateKg: 0.3 }),
     ];
     const out = buildLineBreakdown(daily as any, '2026-09-23', '2026-09-29');
     expect(out.get('s1|r1')).toEqual([
-      { batchId: 'b1', batchNo: 'B-001', shedId: 'h3', shedCode: 'GRS/SHED-003', heads: 1000, feedRateKg: 0.5, lifecycleRefId: 'lc-r1', demandKg: 995, firstDemandDate: '2026-09-23' },
-      { batchId: 'b2', batchNo: 'B-002', shedId: 'h4', shedCode: 'GRS/SHED-004', heads: 400, feedRateKg: 0.5, lifecycleRefId: 'lc-r1', demandKg: 400, firstDemandDate: '2026-09-23' },
+      { batchId: 'b1', stageId: null, batchNo: 'B-001', shedId: 'h3', shedCode: 'GRS/SHED-003', heads: 1000, feedRateKg: 0.5, lifecycleRefId: 'lc-r1', demandKg: 995, firstDemandDate: '2026-09-23' },
+      { batchId: 'b2', stageId: null, batchNo: 'B-002', shedId: 'h4', shedCode: 'GRS/SHED-004', heads: 400, feedRateKg: 0.5, lifecycleRefId: 'lc-r1', demandKg: 400, firstDemandDate: '2026-09-23' },
     ]);
     expect(out.get('s2|r2')).toEqual([
-      { batchId: 'b1', batchNo: 'B-001', shedId: 'h3', shedCode: 'GRS/SHED-003', heads: 1000, feedRateKg: 0.3, lifecycleRefId: 'lc-r2', demandKg: 300, firstDemandDate: '2026-09-23' },
+      { batchId: 'b1', stageId: null, batchNo: 'B-001', shedId: 'h3', shedCode: 'GRS/SHED-003', heads: 1000, feedRateKg: 0.3, lifecycleRefId: 'lc-r2', demandKg: 300, firstDemandDate: '2026-09-23' },
     ]);
   });
   it('leaves out rows with no destination, outside the window, or with no demand', () => {
@@ -397,15 +397,38 @@ describe('buildLineBreakdown — per batch and house under each silo/item line (
       row({ destinationLocationId: null, sourceType: 'NONE' }),
       row({ date: '2026-09-22' }),
       row({ date: '2026-09-30' }),
-      row({ batchId: 'b9', demandKg: 0 }),
+      row({ batchId: 'b9', realBatchId: 'b9', demandKg: 0 }),
       row({ date: '2026-09-25', heads: 980, demandKg: 490 }),
     ];
     expect(buildLineBreakdown(daily as any, '2026-09-23', '2026-09-29').get('s1|r1')).toEqual([
-      { batchId: 'b1', batchNo: 'B-001', shedId: 'h3', shedCode: 'GRS/SHED-003', heads: 980, feedRateKg: 0.5, lifecycleRefId: 'lc-r1', demandKg: 490, firstDemandDate: '2026-09-25' },
+      { batchId: 'b1', stageId: null, batchNo: 'B-001', shedId: 'h3', shedCode: 'GRS/SHED-003', heads: 980, feedRateKg: 0.5, lifecycleRefId: 'lc-r1', demandKg: 490, firstDemandDate: '2026-09-25' },
     ]);
   });
   it('a batch with no house keeps a null shed', () => {
     const out = buildLineBreakdown([row({ shedId: undefined, shedCode: '' })] as any, '2026-09-23', '2026-09-29');
     expect(out.get('s1|r1')?.[0]).toMatchObject({ shedId: null, demandKg: 500 });
+  });
+
+  /**
+   * D1 (3 Oct, Task 9b): auto-draft 500'd on 7 of 9 demo farms because an
+   * ANIMAL_WISE/REGISTERED batch's engine id is `<batch_id>:<stageId>` — a
+   * 73-char composite, never a batch_header PK — and it flowed straight into
+   * requisition_line_batch.batch_id. This fixture carries exactly that shape
+   * (two stage groups of the SAME physical batch feeding the SAME shed) to
+   * prove: (1) the persisted batchId is always the real batch_header PK, and
+   * (2) the two stages produce two rows, not one silently merged/deduped.
+   */
+  it('an animal-wise composite batch id (two stages, one shed) persists the real batch id with two distinct rows', () => {
+    const daily = [
+      row({ batchId: 'b1:stage-weaner', realBatchId: 'b1', stageId: 'stage-weaner', batchNo: 'B-001 · WEANER', heads: 60, demandKg: 48 }),
+      row({ batchId: 'b1:stage-grower', realBatchId: 'b1', stageId: 'stage-grower', batchNo: 'B-001 · GROWER', heads: 40, feedRateKg: 0.8, demandKg: 32 }),
+    ];
+    const out = buildLineBreakdown(daily as any, '2026-09-23', '2026-09-29')!.get('s1|r1')!;
+    expect(out).toHaveLength(2);
+    // Neither row ever carries the composite — both batchId values are the genuine PK ('b1').
+    expect(out.every((r) => r.batchId === 'b1')).toBe(true);
+    expect(out.map((r) => r.stageId).sort()).toEqual(['stage-grower', 'stage-weaner']);
+    expect(out.find((r) => r.stageId === 'stage-weaner')).toMatchObject({ heads: 60, demandKg: 48 });
+    expect(out.find((r) => r.stageId === 'stage-grower')).toMatchObject({ heads: 40, feedRateKg: 0.8, demandKg: 32 });
   });
 });

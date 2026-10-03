@@ -94,7 +94,11 @@ const FARM_ROW = { location_code: 'GRS' };
 const SILO_ROW = { location_id: 'silo-1', location_code: 'GRS/SILO-001', location_type: 'SILO', farm_id: 'farm-grs', is_active: true, feed_in_bags: null, low_level_kg: '1500.00' };
 
 const forecastDaily = (over: Record<string, unknown> = {}) => ({
-  date: serverToday(), batchId: 'batch-1', batchNo: 'BATCH-1', shedId: 'shed-1', shedCode: 'SHED-1', stageCode: 'WEANER',
+  // D1 (3 Oct): batchId is the engine's display/grouping key (composite for an
+  // ANIMAL_WISE/REGISTERED stage group); realBatchId is the genuine batch_header PK
+  // every writer must persist. Equal here by default — a dedicated test below makes
+  // them differ to prove the real id, not the composite, is what gets written.
+  date: serverToday(), batchId: 'batch-1', realBatchId: 'batch-1', stageId: null, batchNo: 'BATCH-1', shedId: 'shed-1', shedCode: 'SHED-1', stageCode: 'WEANER',
   destinationLocationId: 'silo-1', itemId: 'item-r1', itemNo: 'R1', itemName: 'Weaner Diet R1', currentItemId: 'item-r1',
   heads: 1000, feedRateKg: 2, openingStockKg: 1500, confirmedReceiptKg: 0, demandKg: 2000,
   projectedClosingKg: 0, runDownDate: serverToday(), shortageDate: serverToday(), recommendedQtyKg: 4500,
@@ -216,7 +220,7 @@ describe('FeedRequisitionService.autoDraft', () => {
   });
 
   it('links a new editable draft only to exact source/config evidence and records every contributing run line', async () => {
-    const daily = [forecastDaily(), forecastDaily({ batchId: 'batch-2', batchNo: 'BATCH-2', heads: 500, demandKg: 1000 })];
+    const daily = [forecastDaily(), forecastDaily({ batchId: 'batch-2', realBatchId: 'batch-2', batchNo: 'BATCH-2', heads: 500, demandKg: 1000 })];
     const materialLines = buildRunLineSnapshots({ daily });
     const queues = new Map<unknown, unknown[][]>([
       [schema.feedForecastRun, [[{
@@ -287,7 +291,7 @@ describe('FeedRequisitionService.autoDraft', () => {
   });
 
   it('detaches when persisted run lines are only a partial multiset of the saved and freshly computed output', async () => {
-    const currentDaily = [forecastDaily(), forecastDaily({ date: serverToday(), batchId: 'batch-2', batchNo: 'BATCH-2', heads: 500, demandKg: 1000 })];
+    const currentDaily = [forecastDaily(), forecastDaily({ date: serverToday(), batchId: 'batch-2', realBatchId: 'batch-2', batchNo: 'BATCH-2', heads: 500, demandKg: 1000 })];
     const completeLines = buildRunLineSnapshots({ daily: currentDaily });
     const queues = new Map<unknown, unknown[][]>([
       [schema.feedForecastRun, [[{
@@ -754,7 +758,7 @@ describe('FeedRequisitionService.createManual — row 9 across the cycle, number
 describe('FeedRequisitionService.autoDraft — batch/house breakdown (B1) and one-decimal Days Remaining (B2)', () => {
   const twoBatches = () => [
     forecastDaily(),
-    forecastDaily({ batchId: 'batch-2', batchNo: 'BATCH-2', shedId: 'shed-2', shedCode: 'SHED-2', heads: 500, feedRateKg: 2, demandKg: 1000 }),
+    forecastDaily({ batchId: 'batch-2', realBatchId: 'batch-2', batchNo: 'BATCH-2', shedId: 'shed-2', shedCode: 'SHED-2', heads: 500, feedRateKg: 2, demandKg: 1000 }),
   ];
 
   it('first run: one breakdown row per (batch, house) of the line, written with the line it belongs to', async () => {
@@ -775,6 +779,47 @@ describe('FeedRequisitionService.autoDraft — batch/house breakdown (B1) and on
     expect(breakdown.values).toEqual([
       expect.objectContaining({ line_id: lineId, batch_id: 'batch-1', shed_id: 'shed-1', heads: 1000, feed_rate_kg: '2', lifecycle_ref_id: 'row-r1', demand_kg: '2000', first_demand_date: serverToday() }),
       expect.objectContaining({ line_id: lineId, batch_id: 'batch-2', shed_id: 'shed-2', heads: 500, feed_rate_kg: '2', lifecycle_ref_id: 'row-r1', demand_kg: '1000', first_demand_date: serverToday() }),
+    ]);
+  });
+
+  /**
+   * D1 (3 Oct, Task 9b): auto-draft 500'd on 7 of 9 demo farms —
+   * ER_DATA_TOO_LONG on requisition_line_batch.batch_id. An ANIMAL_WISE/
+   * REGISTERED batch's engine id is `<batch_id>:<stageId>` (73 chars), never
+   * a batch_header PK. This fixture carries that exact shape — two stage
+   * groups of the SAME physical batch feeding the SAME shed — and asserts
+   * the insert now writes the genuine (36-char) batch id with its own
+   * stage_id, and that the two stages are two rows, not one silently merged.
+   */
+  it('an animal-wise composite batch id (two stages, one shed) writes the real batch id and stage_id, never the composite, as two rows', async () => {
+    const queues = new Map<unknown, unknown[][]>([
+      [schema.locationMaster, [[FARM_ROW], [SILO_ROW], [{ location_id: 'farm-grs' }]]],
+      [schema.requisition, [[], [], [{ req: { requisition_id: 'new' }, farm_code: 'GRS' }]]],
+    ]);
+    const animalWiseDaily = [
+      forecastDaily({
+        batchId: 'batch-9:stage-weaner', realBatchId: 'batch-9', stageId: 'stage-weaner',
+        batchNo: 'BATCH-9 · WEANER', heads: 60, demandKg: 120,
+      }),
+      forecastDaily({
+        batchId: 'batch-9:stage-grower', realBatchId: 'batch-9', stageId: 'stage-grower',
+        batchNo: 'BATCH-9 · GROWER', heads: 40, demandKg: 80,
+      }),
+    ];
+    const { service, log } = setup([source({ daysLeft: 2.5 })], queues, animalWiseDaily);
+    await service.autoDraft({}, 'tenant-1', { userId: 'u-1', userType: 'COMPANY_ADMIN' });
+
+    const lineInsert = log.find((e) => e.op === 'insert' && e.table === schema.requisitionLine)!;
+    const lineId = lineInsert.values[0].line_id;
+    const breakdown = log.find((e) => e.op === 'insert' && e.table === schema.requisitionLineBatch)!;
+    expect(breakdown.values).toHaveLength(2);
+    // Never the 73-char composite the engine keys its own rows by — always the real 36-char PK.
+    expect(breakdown.values.every((v: any) => v.batch_id === 'batch-9')).toBe(true);
+    expect(breakdown.values.map((v: any) => v.stage_id).sort()).toEqual(['stage-grower', 'stage-weaner']);
+    // buildLineBreakdown sorts by batchNo, so "BATCH-9 · GROWER" sorts before "BATCH-9 · WEANER".
+    expect(breakdown.values).toEqual([
+      expect.objectContaining({ line_id: lineId, batch_id: 'batch-9', stage_id: 'stage-grower', shed_id: 'shed-1', heads: 40, demand_kg: '80' }),
+      expect.objectContaining({ line_id: lineId, batch_id: 'batch-9', stage_id: 'stage-weaner', shed_id: 'shed-1', heads: 60, demand_kg: '120' }),
     ]);
   });
 

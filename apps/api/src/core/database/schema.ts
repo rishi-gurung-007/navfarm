@@ -4504,6 +4504,13 @@ export const requisitionLineBatch = mysqlTable('requisition_line_batch', {
   line_batch_id: varchar('line_batch_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
   line_id: varchar('line_id', { length: 36 }).notNull(),
   batch_id: varchar('batch_id', { length: 36 }).notNull(),
+  // 0145 (3 Oct, D1 fix): an ANIMAL_WISE/REGISTERED batch's stage travels in
+  // its own column now — batch_id holds only the genuine batch_header PK
+  // (previously a `<batch_id>:<stage_id>` composite that was 73 chars wide
+  // and never a real FK target, so every write for such a batch failed with
+  // ER_DATA_TOO_LONG). Nullable: a BATCH_WISE breakdown row has no stage
+  // group of its own.
+  stage_id: varchar('stage_id', { length: 36 }),
   shed_id: varchar('shed_id', { length: 36 }),
   heads: int('heads'),
   feed_rate_kg: decimal('feed_rate_kg', { precision: 18, scale: 6 }),
@@ -4512,9 +4519,14 @@ export const requisitionLineBatch = mysqlTable('requisition_line_batch', {
   first_demand_date: date('first_demand_date', { mode: 'string' }),
   created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
 }, (table) => ({
-  uqLineBatchShed: uniqueIndex('uq_requisition_line_batch').on(table.line_id, table.batch_id, table.shed_id),
+  // 0145: widened from (line_id, batch_id, shed_id) — once batch_id is the
+  // real PK, two stage groups of the same batch feeding the same shed would
+  // otherwise collide on this index (or silently dedupe), which is why the
+  // index rebuild is required, not optional (3 Oct ruling).
+  uqLineBatchShed: uniqueIndex('uq_requisition_line_batch').on(table.line_id, table.batch_id, table.stage_id, table.shed_id),
   lineFk: foreignKey({ columns: [table.line_id], foreignColumns: [requisitionLine.line_id], name: 'requisition_line_batch_line_id_fk' }).onDelete('cascade'),
   batchFk: foreignKey({ columns: [table.batch_id], foreignColumns: [batchHeader.batch_id], name: 'requisition_line_batch_batch_id_fk' }),
+  stageFk: foreignKey({ columns: [table.stage_id], foreignColumns: [stageMaster.stage_id], name: 'requisition_line_batch_stage_id_fk' }).onDelete('set null'),
   shedFk: foreignKey({ columns: [table.shed_id], foreignColumns: [locationMaster.location_id], name: 'requisition_line_batch_shed_id_fk' }).onDelete('set null'),
 }));
 

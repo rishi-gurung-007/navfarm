@@ -93,7 +93,19 @@ export interface ForecastInput {
   items: Record<string, string>; // itemId -> item name
   itemCodes?: Record<string, string>; // itemId -> item code (Item No, D16)
   batches: {
+    /**
+     * This engine's own aggregation/display key: the genuine batch_header PK
+     * for a BATCH_WISE batch, or `<batch_id>:<stageId>` for an ANIMAL_WISE or
+     * REGISTERED batch split by stage (buildInputBatches) — distinct stage
+     * groups of the same physical batch must count as separate "batches" for
+     * sharedBatchCount, rowAggs and the web's row keys. Never write this
+     * field to a database column: it is not a batch_header PK and a
+     * varchar(36) FK will reject it (the 2 Oct D1 defect). Use `realBatchId`
+     * for that.
+     */
     batchId: string;
+    /** The genuine batch_header PK, always — even when `batchId` is composite. Safe to persist (FK-valid). */
+    realBatchId: string;
     batchNo: string;
     breedId: string;
     shedId: string;
@@ -158,11 +170,16 @@ export interface ForecastRow {
  */
 export interface DailyForecastRow {
   date: string;
+  /** The engine's own aggregation key — composite for an ANIMAL_WISE/REGISTERED stage group. Never persist; see `realBatchId`. */
   batchId: string;
+  /** The genuine batch_header PK for this row, always real — persist this, never `batchId` (D1, 3 Oct). */
+  realBatchId: string;
   batchNo: string;
   shedId?: string;
   shedCode: string;
   stageCode: string;
+  /** The real stage_master/breed_lifecycle stage id this row's segment is in on `date` — travels separately from `realBatchId` (D1). */
+  stageId: string;
   itemId: string;
   itemNo: string; // item code, '' when unknown
   itemName: string;
@@ -506,10 +523,12 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
   interface DailyEntry {
     date: string;
     batchId: string;
+    realBatchId: string;
     batchNo: string;
     shedId: string;
     heads: number;
     stageCode: string;
+    stageId: string;
     feedRow: FeedRow;
     key: string;
     sourceType: 'SILO' | 'STORE' | 'NONE';
@@ -589,8 +608,8 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
 
       if (date >= rowFrom && date <= input.to) {
         dailyEntries.push({
-          date, batchId: batch.batchId, batchNo: batch.batchNo, shedId: batch.shedId, heads: batch.heads,
-          stageCode: segment.stageCode, feedRow, key: sk.key, sourceType: sk.sourceType, sourceCode: sk.sourceCode, demandMicrograms,
+          date, batchId: batch.batchId, realBatchId: batch.realBatchId, batchNo: batch.batchNo, shedId: batch.shedId, heads: batch.heads,
+          stageCode: segment.stageCode, stageId: segment.stageId, feedRow, key: sk.key, sourceType: sk.sourceType, sourceCode: sk.sourceCode, demandMicrograms,
           inChangeWindow,
         });
         const shareKey = `${sk.key}|${date}`;
@@ -806,10 +825,12 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
     return {
       date: e.date,
       batchId: e.batchId,
+      realBatchId: e.realBatchId,
       batchNo: e.batchNo,
       shedId: e.shedId,
       shedCode: shedById.get(e.shedId)?.shedCode ?? '',
       stageCode: e.stageCode,
+      stageId: e.stageId,
       itemId,
       itemNo: input.itemCodes?.[itemId] ?? '',
       itemName: input.items[itemId] ?? itemId,

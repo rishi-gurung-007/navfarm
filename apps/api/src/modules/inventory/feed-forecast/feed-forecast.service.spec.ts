@@ -716,6 +716,10 @@ describe('buildInputBatches', () => {
       ['b1:GIL', 'BATCH-1 · GILT', 12, 'GIL'],
       ['b1:GES', 'BATCH-1 · GESTATION', 30, 'GES'],
     ]);
+    // D1 (3 Oct, Task 9b): `batchId` is the 73-char-capable composite this engine keys its own
+    // rows by (never a batch_header PK); `realBatchId` must always be the genuine PK ('b1'), the
+    // same for every stage group of this physical batch — this is what every writer must persist.
+    expect(batches.every((b) => b.realBatchId === 'b1')).toBe(true);
   });
 
   // Ruling (final review, I2 + follow-up): a BATCH_WISE batch whose animals

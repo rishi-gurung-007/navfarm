@@ -33,6 +33,7 @@ export function technicalRunCode(farmId: string, version: number): string {
 
 export interface ForecastRunLineSnapshot {
   forecastDate: string;
+  /** The genuine batch_header PK — never the engine's `<batch_id>:<stageId>` composite (D1, 3 Oct: ER_DATA_TOO_LONG). */
   batchId: string;
   shedId: string | null;
   destinationLocationId: string | null;
@@ -90,7 +91,10 @@ export function buildOutputSnapshot(lines: ForecastRunLineSnapshot[]): ForecastR
 
 interface ForecastRunLineInput {
   date?: string;
+  /** The engine's own composite aggregation key for an ANIMAL_WISE/REGISTERED batch — display/grouping only, never persisted. */
   batchId?: string;
+  /** The genuine batch_header PK — this is what gets written to feed_forecast_run_line.batch_id (D1, 3 Oct). */
+  realBatchId?: string;
   batchNo?: string;
   shedId?: string;
   shedCode?: string;
@@ -120,12 +124,15 @@ interface ForecastRunLineInput {
 }
 
 type ValidatedForecastRunLineInput = ForecastRunLineInput & Required<Pick<ForecastRunLineInput,
-  | 'date' | 'batchId' | 'itemId' | 'heads' | 'feedRateKg' | 'openingStockKg'
+  | 'date' | 'realBatchId' | 'itemId' | 'heads' | 'feedRateKg' | 'openingStockKg'
   | 'confirmedReceiptKg' | 'demandKg' | 'projectedClosingKg' | 'recommendedQtyKg'
 >>;
 
 export function buildRunLineSnapshots(output: { daily: ForecastRunLineInput[] }): ForecastRunLineSnapshot[] {
-  const requiredText = ['date', 'batchId', 'itemId'] as const;
+  // D1 (3 Oct): validate realBatchId, the genuine batch_header PK — never the engine's composite `batchId`
+  // (display/grouping key only), which is a `<batch_id>:<stageId>` string for an ANIMAL_WISE/REGISTERED batch
+  // and is never a valid batch_header PK at any column width.
+  const requiredText = ['date', 'realBatchId', 'itemId'] as const;
   const requiredNumbers = [
     'heads', 'feedRateKg', 'openingStockKg', 'confirmedReceiptKg', 'demandKg',
     'projectedClosingKg', 'recommendedQtyKg',
@@ -149,7 +156,7 @@ export function buildRunLineSnapshots(output: { daily: ForecastRunLineInput[] })
 
     return {
       forecastDate: validated.date,
-      batchId: validated.batchId,
+      batchId: validated.realBatchId,
       shedId: line.shedId ?? null,
       destinationLocationId: line.destinationLocationId ?? null,
       requiredItemId: validated.itemId,

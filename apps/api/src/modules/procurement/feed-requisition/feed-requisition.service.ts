@@ -330,6 +330,7 @@ export class FeedRequisitionService implements OnModuleInit {
       line_batch_id: randomUUID(),
       line_id: lineId,
       batch_id: r.batchId,
+      stage_id: r.stageId,
       shed_id: r.shedId,
       heads: r.heads,
       feed_rate_kg: dec(r.feedRateKg),

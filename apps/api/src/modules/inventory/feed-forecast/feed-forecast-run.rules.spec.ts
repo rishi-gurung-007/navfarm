@@ -28,7 +28,7 @@ describe('feed forecast run snapshot rules', () => {
     const provenance = { flags: ['HEADS_ASSUMED_FLAT'], source: { lifecycleIds: ['life-1'] } };
     const output = {
       daily: [{
-        date: '2026-10-01', batchId: 'batch-1', shedId: 'shed-1', destinationLocationId: 'silo-1',
+        date: '2026-10-01', batchId: 'batch-1:stage-1', realBatchId: 'batch-1', shedId: 'shed-1', destinationLocationId: 'silo-1',
         itemId: 'item-required', currentItemId: 'item-current', heads: 42, feedRateKg: 2.5,
         openingStockKg: 600, confirmedReceiptKg: 100, demandKg: 105, projectedClosingKg: 595,
         runDownDate: '2026-10-04', shortageDate: '2026-10-06', recommendedQtyKg: 900, provenance,
@@ -40,6 +40,9 @@ describe('feed forecast run snapshot rules', () => {
     output.daily[0].heads = 999;
 
     expect(line).toEqual({
+      // D1 (3 Oct): batchId must be the genuine batch_header PK (realBatchId), never the
+      // engine's display/grouping composite `<batchId>:<stageId>` — that composite is what
+      // caused ER_DATA_TOO_LONG / an FK rejection when written to feed_forecast_run_line.
       forecastDate: '2026-10-01', batchId: 'batch-1', shedId: 'shed-1', destinationLocationId: 'silo-1',
       requiredItemId: 'item-required', currentItemId: 'item-current', headCount: 42, feedRateKg: 2.5,
       openingStockKg: 600, confirmedReceiptKg: 100, dailyDemandKg: 105, projectedClosingKg: 595,
@@ -60,7 +63,7 @@ describe('feed forecast run snapshot rules', () => {
 
   it('hashes the material run-line multiset with a stable version and no volatile row identity', () => {
     const lines = buildRunLineSnapshots({ daily: [{
-      date: '2026-10-01', batchId: 'batch-1', destinationLocationId: 'silo-1', itemId: 'item-1',
+      date: '2026-10-01', batchId: 'batch-1', realBatchId: 'batch-1', destinationLocationId: 'silo-1', itemId: 'item-1',
       heads: 40, feedRateKg: 2.5, openingStockKg: 500, confirmedReceiptKg: 0, demandKg: 100,
       projectedClosingKg: 400, shortageDate: null, recommendedQtyKg: 700,
     }] });
@@ -87,10 +90,23 @@ describe('feed forecast run snapshot rules', () => {
   it('refuses to persist a dated row that is missing required audit fields', () => {
     expect(() => buildRunLineSnapshots({
       daily: [{
-        date: '2026-10-01', batchId: 'batch-1', itemId: 'item-1', heads: 40,
+        date: '2026-10-01', batchId: 'batch-1', realBatchId: 'batch-1', itemId: 'item-1', heads: 40,
         feedRateKg: 2.5, openingStockKg: 500, demandKg: 100,
         projectedClosingKg: 400,
       }],
     } as any)).toThrow('confirmedReceiptKg');
+  });
+
+  it('refuses to persist a dated row missing the genuine batch id (D1, 3 Oct)', () => {
+    // The engine's own `batchId` is a display/grouping key — a `<batch_id>:<stageId>` composite
+    // for an ANIMAL_WISE/REGISTERED batch's stage group. A row that carries only that must be
+    // refused rather than silently writing the composite to a batch_header FK column.
+    expect(() => buildRunLineSnapshots({
+      daily: [{
+        date: '2026-10-01', batchId: 'batch-1:stage-1', itemId: 'item-1', heads: 40,
+        feedRateKg: 2.5, openingStockKg: 500, confirmedReceiptKg: 0, demandKg: 100,
+        projectedClosingKg: 400, recommendedQtyKg: 700,
+      }],
+    } as any)).toThrow('realBatchId');
   });
 });
