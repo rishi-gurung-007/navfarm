@@ -138,7 +138,12 @@ const location: MasterDataConfig = {
     // live references for a cosmetic gain, and the stored value is still KG.
     { key: "silo_capacity_kg", label: "Silo Capacity", type: "number", min: 0, max: 999999.99, step: "0.01", visibleWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, requiredWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, helpText: "Required when Storage Location is SILO.", section: "Identification" },
     { key: "silo_capacity_uom", label: "Silo Capacity UOM", type: "select", options: ["KG", "TON"].map((v) => ({ value: v, label: v })), defaultValue: "KG", visibleWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, requiredWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, helpText: "The unit the capacity above is entered in. The capacity is stored in kilograms whichever unit is chosen — a tonne figure is converted on save.", section: "Identification" },
-    { key: "silo_reorder_days", label: "Refill Lead Time (days)", type: "number", min: 0, max: 365, step: "1", visibleWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, requiredWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, helpText: "How many days before this silo reaches its low stock level it must be refilled. The Feed Forecast's refill date is this many days before the run-down date. Standard 2.", section: "Identification" },
+    // I4 (final whole-branch review, 4 Oct): this field used to drive a Feed
+    // Forecast refill date; that calculation is gone from the forecast (TDD
+    // alignment), but the column and the field stay — required on a silo —
+    // per the "keep silo_reorder_days, the forecast must not read it" ruling.
+    // The help text must not claim a behaviour that no longer exists.
+    { key: "silo_reorder_days", label: "Refill Lead Time (days)", type: "number", min: 0, max: 365, step: "1", visibleWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, requiredWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, helpText: "How many days before this silo reaches its low stock level it must be refilled. A Location Master record only — the Feed Forecast does not read it. Standard 2.", section: "Identification" },
     // Master Setup §1 rows 10 and 12 (spec D10) — alongside Silo Reorder
     // Days, not replacing it. Required on a silo since D22 (Rishi, 27 Sep):
     // the forecast's run-down and the feed alerts read them.
