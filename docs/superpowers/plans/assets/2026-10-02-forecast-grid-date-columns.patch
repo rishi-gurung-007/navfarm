@@ -1,0 +1,435 @@
+diff --git a/apps/api/src/modules/inventory/feed-forecast/feed-forecast.service.ts b/apps/api/src/modules/inventory/feed-forecast/feed-forecast.service.ts
+index 8f1c6175..077ce81b 100644
+--- a/apps/api/src/modules/inventory/feed-forecast/feed-forecast.service.ts
++++ b/apps/api/src/modules/inventory/feed-forecast/feed-forecast.service.ts
+@@ -599,7 +599,7 @@ export class FeedForecastService {
+     // A CUSTOM view whose `to` was never sent passes none, so the refusal can say the default ran past the reach;
+     // computeForFarm defaults it to the same from + 7 resolveViewRange did.
+     const reach = addDays(planningDate, MAX_SPAN_DAYS);
+-    const sentTo = view === 'CUSTOM' && query.to === undefined ? undefined : to;
++    const sentTo = query.to ?? (view === 'WEEKLY' || view === 'CUSTOM' ? reach : to);
+     const result = await this.computeForFarm(farmId, companyId, tenantId, { from, to: sentTo, planningDate, horizonTo: reach }, clock);
+     // Q7: an "as of" forecast has no projection for days already behind the planning date.
+     const forecastFrom = to < planningDate ? null : from > planningDate ? from : planningDate;
+@@ -614,7 +614,7 @@ export class FeedForecastService {
+       timeZone: result.timeZone,
+       view,
+       from,
+-      to,
++      to: sentTo ?? to,
+       forecastFrom,
+       forecastNote,
+       horizonTo: result.horizonTo,
+diff --git a/apps/web/src/components/console/inventory/feed-forecast-grid.tsx b/apps/web/src/components/console/inventory/feed-forecast-grid.tsx
+index a5dd8827..a2e4d457 100644
+--- a/apps/web/src/components/console/inventory/feed-forecast-grid.tsx
++++ b/apps/web/src/components/console/inventory/feed-forecast-grid.tsx
+@@ -99,6 +99,144 @@ export function fmtKg(n: number | null | undefined): string {
+   return n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+ }
+ 
++export function fmtRound(n: number | null | undefined): string {
++  if (n === null || n === undefined) return "—";
++  return Math.round(n).toLocaleString("en-US");
++}
++
++export interface PivotedFeedRow {
++  key: string;
++  batchId: string;
++  batchNo: string;
++  shedCode: string;
++  stageCode: string;
++  itemId: string;
++  itemNo: string;
++  itemName: string;
++  heads: number;
++  perDayIntakeKg: number;
++  openingInventoryKg: number;
++  dateMap: Record<string, { currentInventoryKg: number; intakeKg: number }>;
++  daysOfStock: number | null;
++  runDownDate: string | null;
++  refillDate: string | null;
++  requiredOn: string | null;
++  indicative: boolean;
++  overdue: boolean;
++}
++
++export interface ColumnSlot {
++  key: string;
++  label: string;
++  dateStart: string;
++  dateEnd: string;
++}
++
++export function diffDaysIso(a: string, b: string): number {
++  const [ya, ma, da] = a.split("-").map(Number);
++  const [yb, mb, db] = b.split("-").map(Number);
++  const utca = Date.UTC(ya, ma - 1, da);
++  const utcb = Date.UTC(yb, mb - 1, db);
++  return Math.round((utcb - utca) / 86400000);
++}
++
++export function pivotForecastRows(
++  rows: ReportRow[],
++  view?: string,
++  from?: string
++): { pivoted: PivotedFeedRow[]; columns: ColumnSlot[] } {
++  const map = new Map<string, PivotedFeedRow>();
++  const slotsMap = new Map<string, ColumnSlot>();
++
++  // Determine latest run-down date across all rows to cap the horizon
++  let maxRunDown: string | null = null;
++  for (const r of rows) {
++    if (r.runDownDate && (!maxRunDown || r.runDownDate > maxRunDown)) {
++      maxRunDown = r.runDownDate;
++    }
++  }
++
++  const baseFrom = from || (rows.length > 0 ? rows[0].date : "");
++
++  for (const r of rows) {
++    const groupKey = `${r.batchId}|${r.itemId}|${r.shedCode || ""}`;
++    let p = map.get(groupKey);
++    if (!p) {
++      p = {
++        key: groupKey,
++        batchId: r.batchId,
++        batchNo: r.batchNo,
++        shedCode: r.shedCode,
++        stageCode: r.stageCode,
++        itemId: r.itemId,
++        itemNo: r.itemNo,
++        itemName: r.itemName,
++        heads: r.heads,
++        perDayIntakeKg: r.perDayIntakeKg,
++        openingInventoryKg: r.currentInventoryKg,
++        dateMap: {},
++        daysOfStock: r.daysOfStock,
++        runDownDate: r.runDownDate,
++        refillDate: r.refillDate,
++        requiredOn: r.requiredOn,
++        indicative: r.indicative,
++        overdue: r.overdue,
++      };
++      map.set(groupKey, p);
++    }
++
++    let slotKey = r.date;
++    let slotStart = r.date;
++    let slotEnd = r.dateTo || r.date;
++    let label = formatDateShort(r.date);
++
++    if (view === "WEEKLY" && baseFrom) {
++      const diff = diffDaysIso(baseFrom, r.date);
++      const weekIdx = Math.max(0, Math.floor(diff / 7));
++      slotStart = addDaysIso(baseFrom, weekIdx * 7);
++      slotEnd = addDaysIso(slotStart, 6);
++      slotKey = slotStart;
++      label = `${formatDateShort(slotStart)} – ${formatDateShort(slotEnd)}`;
++    }
++
++    if (!slotsMap.has(slotKey)) {
++      slotsMap.set(slotKey, {
++        key: slotKey,
++        label,
++        dateStart: slotStart,
++        dateEnd: slotEnd,
++      });
++    }
++
++    if (!p.dateMap[slotKey]) {
++      p.dateMap[slotKey] = {
++        currentInventoryKg: r.currentInventoryKg,
++        intakeKg: r.intakeKg,
++      };
++    } else {
++      p.dateMap[slotKey].intakeKg += r.intakeKg;
++    }
++
++    if (r.runDownDate && !p.runDownDate) p.runDownDate = r.runDownDate;
++    if (r.refillDate && !p.refillDate) p.refillDate = r.refillDate;
++    if (r.requiredOn && !p.requiredOn) p.requiredOn = r.requiredOn;
++    if (r.daysOfStock !== null && (p.daysOfStock === null || r.daysOfStock < p.daysOfStock)) {
++      p.daysOfStock = r.daysOfStock;
++    }
++    if (r.overdue) p.overdue = true;
++  }
++
++  let sortedSlots = Array.from(slotsMap.values()).sort((a, b) => (a.dateStart < b.dateStart ? -1 : 1));
++  if (maxRunDown) {
++    const capped = sortedSlots.filter((s) => s.dateStart <= maxRunDown);
++    if (capped.length > 0) {
++      sortedSlots = capped;
++    }
++  }
++
++  return { pivoted: Array.from(map.values()), columns: sortedSlots };
++}
++
+ /** Consecutive rows of one batch + item + source + stage form a group. */
+ export function groupRows(rows: ReportRow[]): Array<{ row: ReportRow; start: boolean; alt: boolean }> {
+   let group = -1;
+@@ -130,59 +268,122 @@ function StateRow({ colSpan, children }: { colSpan: number; children: ReactNode
+   );
+ }
+ 
+-export function FeedForecastGrid({ rows, loading, t }: { rows: ReportRow[]; loading: boolean; horizonTo: string | null; t: Translate }) {
++export function FeedForecastGrid({
++  rows,
++  view,
++  from,
++  loading,
++  t,
++}: {
++  rows: ReportRow[];
++  view?: string;
++  from?: string;
++  loading: boolean;
++  horizonTo: string | null;
++  t: Translate;
++}) {
++  const { pivoted, columns } = pivotForecastRows(rows, view, from);
++  const totalCols = 7 + columns.length + 3;
++
+   return (
+     <ScrollTable label={t("ffGridLabel")}>
+       <thead>
+         <tr>
+-          {GRID_COLUMNS.map((c, i) => (
+-            <th
+-              key={c}
+-              scope="col"
+-              title={HEADER_HINT[c] ? t(HEADER_HINT[c]) : undefined}
+-              data-sticky-col={i === 0 ? "true" : i === 1 ? "last" : undefined}
+-              style={i === 0 ? BATCH_COL : i === 1 ? ITEM_COL : undefined}
+-              className={cn(TH, i === 0 && "w-[12.5rem] min-w-[12.5rem] max-w-[12.5rem]", i === 1 && "min-w-[13rem]", RIGHT_ALIGNED.has(c) && "text-right")}
+-            >
+-              {t(c)}
++          <th scope="col" data-sticky-col="true" style={BATCH_COL} className={cn(TH, "w-[12.5rem] min-w-[12.5rem] max-w-[12.5rem]")}>
++            {t("ffColBatchNo")}
++          </th>
++          <th scope="col" data-sticky-col="last" style={ITEM_COL} className={cn(TH, "min-w-[13rem]")}>
++            {t("ffColItemName")}
++          </th>
++          <th scope="col" className={TH}>{t("ffColItemNo")}</th>
++          <th scope="col" className={TH}>{t("ffColShedNo")}</th>
++          <th scope="col" className={cn(TH, "text-right")}>{t("ffColCurrentInventoryKg")}</th>
++          <th scope="col" className={cn(TH, "text-right")}>{t("ffColCurrentPigs")}</th>
++          <th scope="col" className={cn(TH, "text-right")}>{t("ffColPerDayIntakeKg")}</th>
++
++          {/* Dynamic Columns: Weekly or Daily */}
++          {columns.map((c) => (
++            <th key={c.key} scope="col" className={cn(TH, "text-right min-w-[7.5rem] bg-[var(--table-header-alt)]")}>
++              {c.label}
+             </th>
+           ))}
++
++          <th scope="col" title={t("ffDaysOfStockHint")} className={cn(TH, "text-right")}>
++            {t("ffColDaysOfStock")}
++          </th>
++          <th scope="col" title={t("ffRunDownHint")} className={TH}>
++            {t("ffColRunDown")}
++          </th>
++          <th scope="col" className={TH}>
++            {t("ffColRequiredOn")}
++          </th>
+         </tr>
+       </thead>
+       <tbody>
+         {loading ? (
+-          <StateRow colSpan={GRID_COLUMNS.length}>
++          <StateRow colSpan={totalCols}>
+             <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" style={{ color: "var(--accent)" }} /> {t("ffLoading")}
+           </StateRow>
+-        ) : rows.length === 0 ? (
+-          <StateRow colSpan={GRID_COLUMNS.length}>
++        ) : pivoted.length === 0 ? (
++          <StateRow colSpan={totalCols}>
+             <Inbox className="mx-auto mb-2 h-6 w-6" style={{ color: "var(--text-muted)" }} /> {t("ffNoRows")}
+           </StateRow>
+         ) : (
+-          groupRows(rows).map(({ row, start, alt }) => (
+-            <tr key={row.key} data-group-start={start ? "true" : undefined} data-group-alt={alt ? "true" : undefined}>
+-              <td data-sticky-col="true" style={BATCH_COL} title={row.batchNo} className={cn(TD, "w-[12.5rem] min-w-[12.5rem] max-w-[12.5rem] truncate font-medium", !start && MUTED)}>{row.batchNo}</td>
+-              <td data-sticky-col="last" style={ITEM_COL} title={row.itemName} className={cn(TD, "min-w-[13rem] max-w-[14rem] truncate", !start && MUTED)}>{row.itemName}</td>
+-              <td className={cn(TD, MUTED)}>{row.itemNo || "—"}</td>
+-              <td className={cn(TD, MUTED)}>{row.shedCode || "—"}</td>
+-              <td className={TD}>{row.days > 1 ? `${formatDateShort(row.date)} – ${formatDateShort(row.dateTo)}` : formatDateShort(row.date)}</td>
+-              <td className={cn(TD, NUM)}>{fmtKg(row.currentInventoryKg)}</td>
+-              <td className={cn(TD, NUM)}>{row.heads.toLocaleString("en-US")}</td>
+-              <td className={cn(TD, NUM)}>{fmtKg(row.perDayIntakeKg)}</td>
+-              <td className={cn(TD, NUM)}>
+-                <span className="inline-flex items-center justify-end gap-1.5">
+-                  {row.indicative && <Badge variant="warning" className={SMALL_BADGE}>{t("ffIndicative")}</Badge>}
+-                  <span>{row.daysOfStock ?? "—"}</span>
+-                </span>
+-              </td>
+-              <td className={cn(TD, !row.runDownDate && MUTED)}>{formatDateShort(row.runDownDate)}</td>
+-              <td className={cn(TD, !row.refillDate && MUTED)}>{formatDateShort(row.refillDate)}</td>
+-              <td className={TD}>
+-                <span className={cn(!row.requiredOn && MUTED)}>{formatDateShort(row.requiredOn)}</span>
+-                {row.overdue && <Badge variant="danger" className={cn("ml-1.5", SMALL_BADGE)}>{t("ffOverdue")}</Badge>}
+-              </td>
+-            </tr>
+-          ))
++          pivoted.map((p, idx) => {
++            const isAlt = idx % 2 === 1;
++            return (
++              <tr key={p.key} data-group-alt={isAlt ? "true" : undefined} className={isAlt ? "bg-[var(--table-row-alt)]" : undefined}>
++                <td data-sticky-col="true" style={BATCH_COL} title={p.batchNo} className={cn(TD, "w-[12.5rem] min-w-[12.5rem] max-w-[12.5rem] truncate font-medium")}>
++                  {p.batchNo}
++                </td>
++                <td data-sticky-col="last" style={ITEM_COL} title={p.itemName} className={cn(TD, "min-w-[13rem] max-w-[14rem] truncate font-medium")}>
++                  {p.itemName}
++                </td>
++                <td className={cn(TD, MUTED)}>{p.itemNo || "—"}</td>
++                <td className={cn(TD, MUTED)}>{p.shedCode || "—"}</td>
++                <td className={cn(TD, NUM, "font-medium")}>{fmtRound(p.openingInventoryKg)}</td>
++                <td className={cn(TD, NUM)}>{p.heads.toLocaleString("en-US")}</td>
++                <td className={cn(TD, NUM)}>{fmtRound(p.perDayIntakeKg)}</td>
++
++                {/* Day-by-Day or Week-by-Week Run-down columns */}
++                {columns.map((c) => {
++                  const entry = p.dateMap[c.key];
++                  const isDepleted = p.runDownDate && c.dateStart >= p.runDownDate;
++                  if (!entry) {
++                    if (isDepleted) {
++                      return (
++                        <td key={c.key} className={cn(TD, NUM, "text-[var(--danger)] font-medium")}>
++                          0
++                        </td>
++                      );
++                    }
++                    return <td key={c.key} className={cn(TD, NUM, MUTED)}>—</td>;
++                  }
++                  const stock = entry.currentInventoryKg;
++                  const isEmpty = stock <= 0 || isDepleted;
++                  return (
++                    <td key={c.key} className={cn(TD, NUM, isEmpty && "text-[var(--danger)] font-medium")}>
++                      {fmtRound(isEmpty && stock <= 0 ? 0 : stock)}
++                    </td>
++                  );
++                })}
++
++                <td className={cn(TD, NUM)}>
++                  <span className="inline-flex items-center justify-end gap-1.5">
++                    {p.indicative && <Badge variant="warning" className={SMALL_BADGE}>{t("ffIndicative")}</Badge>}
++                    <span>{p.daysOfStock ?? "—"}</span>
++                  </span>
++                </td>
++                <td className={cn(TD, !p.runDownDate ? MUTED : "font-semibold text-[var(--danger)]")}>
++                  {formatDateShort(p.runDownDate)}
++                </td>
++                <td className={TD}>
++                  <span className={cn(!p.requiredOn && MUTED)}>{formatDateShort(p.requiredOn)}</span>
++                  {p.overdue && <Badge variant="danger" className={cn("ml-1.5", SMALL_BADGE)}>{t("ffOverdue")}</Badge>}
++                </td>
++              </tr>
++            );
++          })
+         )}
+       </tbody>
+     </ScrollTable>
+diff --git a/apps/web/src/components/console/inventory/feed-forecast-panel.tsx b/apps/web/src/components/console/inventory/feed-forecast-panel.tsx
+index 40ad2369..e99f600f 100644
+--- a/apps/web/src/components/console/inventory/feed-forecast-panel.tsx
++++ b/apps/web/src/components/console/inventory/feed-forecast-panel.tsx
+@@ -16,7 +16,7 @@ import { InlineAlert } from "@/components/ui/alert";
+ import { Button } from "@/components/ui/button";
+ import { EmptyState, LoadingState } from "@/components/ui/states";
+ import { Tabs } from "@/components/ui/tabs";
+-import { getActiveWorkspaceScope } from "@/hooks/useAuth";
++import { getActiveWorkspaceScope, getStoredUser, hasPermission } from "@/hooks/useAuth";
+ import { useLanguage } from "@/hooks/useLanguage";
+ import type { TranslationKeys } from "@/utils/translations";
+ import { addDaysIso, formatDateShort, todayIso, unwrap } from "./feed-format";
+@@ -25,6 +25,7 @@ import { FeedForecastNotes, type ForecastFlag } from "./feed-forecast-notes";
+ import { businessYearStartOf, forecastQueryString, FORECAST_VIEWS, ForecastView } from "./feed-forecast-query";
+ import { FeedFarmSelect, feedFarmLabel } from "./feed-farm-select";
+ import { useFeedFarm } from "./use-feed-farm";
++import { FeedForecastRunHistory } from "./feed-forecast-run-history";
+ 
+ interface PeriodOption {
+   periodId: string;
+@@ -78,6 +79,10 @@ export default function FeedForecastPanel() {
+   const [loading, setLoading] = useState(false);
+   const [error, setError] = useState("");
+   const [tab, setTab] = useState<"forecast" | "stages">("forecast");
++  const [savingRun, setSavingRun] = useState(false);
++  const [runMessage, setRunMessage] = useState("");
++  const [runError, setRunError] = useState("");
++  const [runHistoryReload, setRunHistoryReload] = useState(0);
+ 
+   useEffect(() => {
+     if (view !== "PERIOD" || !farmId) {
+@@ -154,6 +159,30 @@ export default function FeedForecastPanel() {
+     }
+   }
+ 
++  async function saveRun() {
++    if (!farmId || !data) return;
++    setSavingRun(true);
++    setRunMessage("");
++    setRunError("");
++    try {
++      const response = await api.post("/feed-forecast/runs", {
++        farmId,
++        planningDate: planningDate || data.planningDate,
++        view,
++        from: dateFrom || data.from,
++        to: dateTo || data.to,
++        ...(view === "PERIOD" && (periodId || data.period?.periodId) ? { periodId: periodId || data.period!.periodId } : {}),
++      });
++      const saved = unwrap<{ runCode: string; version: number }>(response);
++      setRunMessage(tRef.current("ffRunSaved", { code: saved.runCode, version: saved.version }));
++      setRunHistoryReload((value) => value + 1);
++    } catch (err: any) {
++      setRunError(err?.message || tRef.current("ffSaveRunFailed"));
++    } finally {
++      setSavingRun(false);
++    }
++  }
++
+   const rows = Array.isArray(data?.rows) ? data!.rows : [];
+   const stages = Array.isArray(data?.stages) ? data!.stages : [];
+   const flags = Array.isArray(data?.flags) ? data!.flags : [];
+@@ -166,6 +195,7 @@ export default function FeedForecastPanel() {
+   const shownTo = dateTo || data?.to || addDaysIso(shownFrom, 7);
+   const businessYear = businessYearStartOf(shownPlanning);
+   const isTenantWorkspace = getActiveWorkspaceScope() === "TENANT";
++  const canSaveRun = hasPermission(getStoredUser(), "INVENTORY", "LEDGER", "can_create");
+   const fixedLabel = farm.isFixed
+     ? farm.fixedFarm?.location_code
+       ? feedFarmLabel({ code: farm.fixedFarm.location_code, name: farm.fixedFarm.location_name ?? "" })
+@@ -224,7 +254,7 @@ export default function FeedForecastPanel() {
+         <InlineAlert variant="info">
+           <span className="mr-3">{t("ffNoPeriods")}</span>
+           <Button size="sm" variant="outline" onClick={generatePeriods} disabled={generating || isTenantWorkspace}>
+-            {t("ffGeneratePeriods", { year: businessYear })}
++            {t("ffGenerateDraftPeriods", { year: businessYear })}
+           </Button>
+           {isTenantWorkspace && <span className="ml-3 text-xs" style={{ color: "var(--text-secondary)" }}>{t("ffGenerateNeedsCompany")}</span>}
+           {generateError && <span className="ml-3 text-xs" style={{ color: "var(--danger)" }}>{generateError}</span>}
+@@ -256,11 +286,21 @@ export default function FeedForecastPanel() {
+               value={tab}
+               onChange={(v) => setTab(v as "forecast" | "stages")}
+             />
++            <div className="flex items-center gap-2">
++              {runMessage && <span className="text-xs text-[var(--success)]">{runMessage}</span>}
++              {runError && <span className="text-xs text-[var(--danger)]">{runError}</span>}
++              {canSaveRun && (
++                <Button size="sm" onClick={saveRun} disabled={!data || loading || savingRun}>
++                  {savingRun ? t("ffSavingRun") : t("ffSaveRun")}
++                </Button>
++              )}
++            </div>
+           </div>
+           {tab === "forecast"
+-            ? <FeedForecastGrid rows={rows} loading={loading} horizonTo={data?.horizonTo ?? null} t={t} />
++            ? <FeedForecastGrid rows={rows} view={view} from={shownFrom} loading={loading} horizonTo={data?.horizonTo ?? null} t={t} />
+             : <FeedForecastStages stages={stages} t={t} />}
+           <FeedForecastNotes flags={flags} t={t} />
++          {!!farmId && <FeedForecastRunHistory farmId={farmId} reloadToken={runHistoryReload} />}
+         </>
+       )}
+     </div>

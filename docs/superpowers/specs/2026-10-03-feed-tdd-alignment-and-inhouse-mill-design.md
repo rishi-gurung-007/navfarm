@@ -48,7 +48,7 @@ These go into `docs/decisions.md` under 2026-10-03 and supersede conflicting ear
 | Shortfall | max over window of (cumulative demand + safety stock − opening − cumulative confirmed incoming), floored at 0. Next diet is never offset with the current diet's stock. | Dashboard 60 |
 | Recommended order | Bulk: CEILING(shortfall, bulk multiple, default 3000). Bagged: CEILING(shortfall, bag size, default 50). Unrounded need shown beside it. | Step 8, cp. 16 |
 | Free capacity | Warning (not a cap) if recommended order + projected balance on the delivery date exceeds silo capacity. | Step 8 |
-| Required delivery date | Shortage date, moved no later than the configured production cutoff before it. Editable with a reason. | Req. §1 row 29 |
+| Required delivery date | First shortage date (planning date if already short; end of window if never short). Editable with a reason. The production cutoff governs the submission deadline, not this date. | Req. §1 row 29, row 35 |
 | Days remaining | Balance ÷ current daily demand, one decimal, labelled indicative. | Silo Balance row 9 |
 | Horizon | Default 7 days, max 45, From ≤ To. | cp. 15 |
 
@@ -95,7 +95,7 @@ PART_RECEIVED, RECEIVED, CLOSED, EXCEPTION. PLAN_APPROVED replaces the workbook'
 (ours, R4). Add `linked_transfer_id`. Remarks mandatory over 20 % deviation (cp. 18), own-farm
 approval only (cp. 19), both diet lines from one run (cp. 23).
 
-**Requisition line (Req. §2):** add `line_no`, `mill_approved_qty_kg`. Shipped/received use the
+**Requisition line (Req. §2):** Line No. uses the existing `line_seq` in steps of 10000; add `mill_approved_qty_kg`, `recommended_delivery_date`, `exceeds_silo_capacity`. Shipped/received use the
 existing `qty_shipped` / `qty_received`. "Current Silo Feed Item No." is not shown (workbook:
 REMOVED).
 
