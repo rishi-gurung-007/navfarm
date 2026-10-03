@@ -370,6 +370,78 @@ describe('FeedRequisitionService.autoDraft', () => {
       .toMatchObject({ feed_forecast_run_line_ids: ['run-line-1'] });
   });
 
+  /**
+   * 9d D1, fix round 1 — the half the suite was missing. Two halves existed and never met:
+   * "saves the forecast run for the drafted window when none matches" (9c F4) starts from NO run at
+   * all, and "refuses to attach stale run evidence when freshly recalculated source content differs"
+   * proves a stale run is rejected but never wires the run saveRun then writes back into the lookup's
+   * answers, so it only ever shows the detachment. Neither shows the full cycle: a stale run IS present,
+   * the inputs have genuinely changed, the stale run is rejected, a FRESH run is saved, and the
+   * requisition links to THAT one.
+   *
+   * The change here is the realistic one: the farm raised safety stock from 0 to 500 kg after the old
+   * run was saved. safetyStockKg is part of the engine input, so the source hash moves — and it is NOT
+   * one of the four rounding settings matchingPersistedRun compares, so nothing else can reject the
+   * stale run. Its config_snapshot and output_snapshot are deliberately made to still match, leaving
+   * the source hash the single reason it is refused. The point of the test is that a too-loose match
+   * key would link the requisition to a run that no longer describes it, which is exactly the class of
+   * defect D1 was.
+   */
+  it('rejects a stale run, saves a fresh one for the changed inputs, and links the requisition to the fresh run (9d D1)', async () => {
+    const daily = [forecastDaily()];
+    const materialLines = buildRunLineSnapshots({ daily });
+    const draftSettings = { bulkMultipleKg: 3000, bagSizeKg: 50, truckTargetKg: 30000, productionWeekday: 0 };
+    const freshCode = `RUN-GRS-${serverToday().replace(/-/g, '')}-006`;
+    // The run on file, saved when safety stock was still 0: same window, same rounding settings, same
+    // engine output — only its source hash is from the old input.
+    const staleRun = {
+      run_id: 'run-stale', run_code: 'RUN-GRS-20260923-005', version: 5,
+      source_snapshot: { hash: 'source-at-safety-0' }, output_snapshot: outputSnapshot(materialLines),
+      config_snapshot: { values: { requisitionDraftSettings: { ...draftSettings } } },
+    };
+    // What saveRun actually wrote, read back by the second lookup — so the link asserted below is the
+    // run that was saved, not merely the fact that saveRun was called.
+    const stored: { run?: Record<string, unknown> } = {};
+    let looks = 0;
+    const runLookups = { shift: () => { looks += 1; return looks === 1 ? [staleRun] : (stored.run ? [stored.run] : []); } };
+    const queues = new Map<unknown, unknown[][]>([
+      [schema.feedForecastRun, runLookups as unknown as unknown[][]],
+      [schema.feedForecastRunLine, [[storedRunLine(materialLines[0], 'run-line-fresh')]]],
+      [schema.locationMaster, [[FARM_ROW], [SILO_ROW], [{ location_id: 'farm-grs' }]]],
+      [schema.requisition, [[], [], [{ req: { requisition_id: 'new' }, farm_code: 'GRS', truck_target_kg: 30000 }]]],
+    ]);
+    const { service, log, forecast, feedSettings } = setup([source()], queues, daily);
+    feedSettings.resolveForFeedPlanning.mockResolvedValue({ safetyStockKg: 500, ...draftSettings });
+    forecast.computeForFarm.mockImplementation(async () => ({
+      planningDate: serverToday(), from: serverToday(), to: serverToday(), sources: [source()], daily, farm: { id: 'farm-grs', code: 'GRS' },
+      sourceSnapshot: { version: 'sha256:source-at-safety-500', hash: 'source-at-safety-500', values: { engineInput: { safetyStockKg: 500 } } },
+    }));
+    forecast.saveRun.mockImplementation(async () => {
+      stored.run = {
+        run_id: 'run-fresh', run_code: freshCode, version: 6,
+        source_snapshot: { hash: 'source-at-safety-500' }, output_snapshot: outputSnapshot(materialLines),
+        config_snapshot: { values: { requisitionDraftSettings: { ...draftSettings } } },
+      };
+      return { runId: 'run-fresh', runCode: freshCode, version: 6 };
+    });
+
+    await service.autoDraft({ to: serverToday() }, 'tenant-1', { userId: 'u-1', userType: 'FARM_MANAGER' });
+
+    // Exactly once: the stale run is refused, and one fresh run is saved for the window — not one per lookup.
+    expect(forecast.saveRun).toHaveBeenCalledTimes(1);
+    expect(forecast.saveRun).toHaveBeenCalledWith(
+      { farmId: 'farm-grs', planningDate: serverToday(), view: 'CUSTOM', from: serverToday(), to: serverToday() },
+      'tenant-1', { userId: 'u-1', userType: 'FARM_MANAGER' },
+    );
+    const header = log.find((e) => e.op === 'insert' && e.table === schema.requisition)!.values;
+    expect(header).toMatchObject({ feed_forecast_run_id: 'run-fresh', forecast_run_key: freshCode });
+    // Said explicitly: the run that no longer describes this draft must not be what the requisition cites.
+    expect(header.feed_forecast_run_id).not.toBe('run-stale');
+    expect(header.forecast_run_key).not.toBe('RUN-GRS-20260923-005');
+    expect(log.find((e) => e.op === 'insert' && e.table === schema.requisitionLine)?.values)
+      .toEqual([expect.objectContaining({ feed_forecast_run_line_ids: ['run-line-fresh'] })]);
+  });
+
   it('saves no run when the forecast wants nothing drafted', async () => {
     const queues = new Map<unknown, unknown[][]>([
       [schema.locationMaster, [[FARM_ROW], [SILO_ROW], [{ location_id: 'farm-grs' }]]],
