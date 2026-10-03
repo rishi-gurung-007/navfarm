@@ -17,7 +17,14 @@
  * deleted). POSTED and CANCELLED rows are never touched. A row moved to
  * POSTED is stamped with its last receipt's created_at / created_by — the
  * moment it actually completed — not with the time this script ran, and in
- * UTC like the service's own stamp.
+ * UTC like the service's own stamp. Every changed row's updated_at is also
+ * written in UTC (toMysqlTimestamp, fix round 1 M3) rather than SQL NOW(),
+ * which would write the session's own time zone.
+ *
+ * Refuses a non-local DATABASE_HOST (fix round 1, Important 3) — the same
+ * guard align-feed-tdd.ts:58 has, shared from lib/host-guard.ts. This script
+ * rewrites document statuses, so pointing it at the wrong database is exactly
+ * the accident the guard exists to prevent.
  *
  * Modes (AGENTS.md §4):
  * - Default: read-only plan
@@ -27,6 +34,7 @@
  */
 import mysql, { RowDataPacket } from 'mysql2/promise';
 import { OPEN_TRANSFER_STATUSES, transferStatusFor } from '../modules/inventory/stock-transfer/transfer-execution.rules';
+import { assertLocalHost } from './lib/host-guard';
 
 const host = process.env.DATABASE_HOST || '127.0.0.1';
 const port = Number(process.env.DATABASE_PORT || 3306);
@@ -34,6 +42,12 @@ const user = process.env.DATABASE_USERNAME || 'root';
 const password = process.env.DATABASE_PASSWORD || '';
 const tenantArg = process.argv.find((a) => a.startsWith('--tenant='))?.split('=')[1];
 const database = tenantArg || process.env.TENANT_DB || 'nf_devco';
+
+// M3 (fix round 1): the same UTC stamp stock-transfer.service.ts's
+// toMysqlTimestamp writes, not SQL NOW() — NOW() writes the session's local
+// time zone, which created_at/posted_at comparisons elsewhere in this script
+// (see the epoch conversion in plan() below) already have to correct for.
+const toMysqlTimestamp = (date: Date = new Date()): string => date.toISOString().slice(0, 19).replace('T', ' ');
 
 interface Change {
   transfer_id: string;
@@ -101,6 +115,10 @@ async function run() {
   if (extra.length || (apply && verify)) {
     throw new Error('Use no flags (read-only plan), --verify (rolled-back transaction), or --apply (commit). Optional: --tenant=<db>');
   }
+  // Important 3 (fix round 1): this script rewrites document statuses, so
+  // pointing it at the wrong database is exactly the accident this refuses —
+  // the same guard align-feed-tdd.ts:58 already has.
+  assertLocalHost(host, process.env.RECOMPUTE_TRANSFER_STATUS_ALLOW_REMOTE);
   const mode = apply ? 'APPLY' : verify ? 'VERIFY' : 'PLAN';
   console.log(`\n=== Recompute stock transfer status from events [${mode}] ===`);
   console.log(`Database: ${database} on ${host}:${port}\n`);
@@ -125,13 +143,14 @@ async function run() {
     }
 
     await db.beginTransaction();
+    const updatedAt = toMysqlTimestamp();
     let updated = 0;
     for (const c of changes) {
       const [res] = await db.query(
         c.to === 'POSTED'
-          ? `UPDATE stock_transfer SET status = ?, posted_at = ?, posted_by = ?, updated_at = NOW() WHERE transfer_id = ? AND status = ?`
-          : `UPDATE stock_transfer SET status = ?, updated_at = NOW() WHERE transfer_id = ? AND status = ?`,
-        c.to === 'POSTED' ? [c.to, c.posted_at, c.posted_by, c.transfer_id, c.from] : [c.to, c.transfer_id, c.from],
+          ? `UPDATE stock_transfer SET status = ?, posted_at = ?, posted_by = ?, updated_at = ? WHERE transfer_id = ? AND status = ?`
+          : `UPDATE stock_transfer SET status = ?, updated_at = ? WHERE transfer_id = ? AND status = ?`,
+        c.to === 'POSTED' ? [c.to, c.posted_at, c.posted_by, updatedAt, c.transfer_id, c.from] : [c.to, updatedAt, c.transfer_id, c.from],
       );
       updated += (res as any).affectedRows;
     }
