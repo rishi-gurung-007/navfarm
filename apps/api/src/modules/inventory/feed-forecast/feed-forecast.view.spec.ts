@@ -3,7 +3,7 @@ import { buildFeedForecast, ForecastInput } from './feed-forecast.engine';
 import { groupRows, MAX_SPAN_DAYS, resolveViewRange, spanProblem } from './feed-forecast.view';
 
 const workedExample: ForecastInput = {
-  planningDate: '2026-09-23', from: '2026-09-23', to: '2026-09-29', leadTimeDays: 0,
+  planningDate: '2026-09-23', from: '2026-09-23', to: '2026-09-29',
   sheds: [{ shedId: 'h3', shedCode: 'GRS/SHED-003', siloIds: ['s1', 's2'] }],
   silos: [
     { siloId: 's1', siloCode: 'GRS/SILO-001', itemId: 'r1', balanceKg: 1500 },

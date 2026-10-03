@@ -6,6 +6,7 @@ import { buildInputBatches, FeedForecastService, locationLobConditions, projectS
 import { InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { SiloFeedService } from '../silo-feed/silo-feed.service';
+import { FeedSettingsService } from '../feed-settings/feed-settings.service';
 import { buildFeedForecast, ForecastInput, todayLocal } from './feed-forecast.engine';
 import { activeFarmOfCompany, FARM_SCOPE_KEY, farmScope } from '../../../common/farm-scope';
 import * as schema from '../../../core/database/schema';
@@ -42,18 +43,24 @@ function dbWithFarmLob(lobId: string | null): object {
   };
 }
 
-const FARM = { id: 'farm-A', code: 'VIL100', name: 'Village 100', companyId: 'comp-1', leadTimeDays: 0 };
+const FARM = { id: 'farm-A', code: 'VIL100', name: 'Village 100', companyId: 'comp-1' };
 
 describe('FeedForecastService', () => {
   let service: FeedForecastService;
   let cls: ClsService;
   let loadFarm: jest.SpyInstance;
   let loadInput: jest.SpyInstance;
+  let feedSettings: { resolve: jest.Mock };
 
   beforeEach(async () => {
     (buildFeedForecast as jest.Mock).mockClear();
     (activeFarmOfCompany as jest.Mock).mockReset().mockResolvedValue(true);
     cls = transactionCls({});
+    // Task 4: safety stock, bulk multiple and bag size come from
+    // FeedSettingsService (Task 2) now; this default stub matches the
+    // documented defaults (safety stock 0, bulk multiple 3000 KG, bag size
+    // 50 KG) unless a test overrides it.
+    feedSettings = { resolve: jest.fn(async () => ({ safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50 })) };
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         FeedForecastService,
@@ -63,6 +70,7 @@ describe('FeedForecastService', () => {
         { provide: AuditLogService, useValue: { log: jest.fn() } },
         // D41: the silos on Feed Planning; the report never asks it anything.
         { provide: SiloFeedService, useValue: { currentItems: jest.fn(async () => new Map()) } },
+        { provide: FeedSettingsService, useValue: feedSettings },
       ],
     }).compile();
     service = module.get(FeedForecastService);
@@ -118,9 +126,12 @@ describe('FeedForecastService', () => {
     expect(loadFarm).not.toHaveBeenCalled();
   });
 
-  it('happy path: planning date is the farm day, from/to default to it..+7, stock is read as of it, the loaded input goes to the engine as-is, loader flags are appended', async () => {
+  it('happy path: planning date is the farm day, from/to default to it..+7, stock is read as of it, the loaded input goes to the engine as-is plus configured safety stock, loader flags are appended', async () => {
     jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate'] }).setSystemTime(new Date(2026, 8, 25, 10, 30));
     useFarmScope(cls, { farmId: 'farm-A', restricted: true, companyId: 'comp-1', lobId: 'lob-1' });
+    // Task 4 Step 1: the settings stub answers a configured safety stock; it
+    // must reach the engine, and the farm's old leadTimeDays key must not.
+    feedSettings.resolve.mockResolvedValueOnce({ safetyStockKg: 500, bulkMultipleKg: 3000, bagSizeKg: 50 });
     const input = { planningDate: '2026-09-25', marker: 'loaded' } as unknown as ForecastInput;
     loadInput.mockResolvedValueOnce({ input, flags: [{ kind: 'BATCH_SHED_UNKNOWN', batchNo: 'B2' }], stageBlocks: [] });
     (buildFeedForecast as jest.Mock).mockReturnValueOnce({
@@ -132,10 +143,13 @@ describe('FeedForecastService', () => {
     expect(loadInput).toHaveBeenCalledWith(FARM, '2026-09-25', '2026-09-25', '2026-10-02', 'tenant-1', {
       stockDate: '2026-09-25', horizonTo: '2026-10-02', headerCutoff: '2026-09-25',
     });
-    expect(buildFeedForecast).toHaveBeenCalledWith(input);
+    expect(feedSettings.resolve).toHaveBeenCalledWith('comp-1', 'farm-A');
+    expect(buildFeedForecast).toHaveBeenCalledWith(expect.objectContaining({ planningDate: '2026-09-25', marker: 'loaded', safetyStockKg: 500 }));
+    expect((buildFeedForecast as jest.Mock).mock.calls[0][0]).not.toHaveProperty('leadTimeDays');
     expect(result).toEqual({
       planningDate: '2026-09-25', today: '2026-09-25', timeZone: null, from: '2026-09-25', to: '2026-10-02', horizonTo: '2026-10-02',
-      farm: { id: 'farm-A', code: 'VIL100', name: 'Village 100' }, leadTimeDays: 0,
+      farm: { id: 'farm-A', code: 'VIL100', name: 'Village 100' },
+      settings: { safetyStockKg: 500, bulkMultipleKg: 3000, bagSizeKg: 50 },
       rows: [{ batchNo: 'B1' }], daily: [],
       // The engine's flags, then the loader's own (a batch placed on no known shed).
       flags: [{ kind: 'HEADS_ASSUMED_FLAT', batchNo: 'B1' }, { kind: 'BATCH_SHED_UNKNOWN', batchNo: 'B2' }],
@@ -143,9 +157,10 @@ describe('FeedForecastService', () => {
       stages: [],
       sourceSnapshot: expect.objectContaining({
         hash: expect.stringMatching(/^[a-f0-9]{64}$/),
-        values: { engineInput: { planningDate: '2026-09-25', marker: 'loaded' } },
+        values: { engineInput: { planningDate: '2026-09-25', marker: 'loaded', safetyStockKg: 500 } },
       }),
     });
+    expect(result).not.toHaveProperty('leadTimeDays');
   });
 
   it('the stage blocks loadInput built reach the computed result unchanged', async () => {
@@ -798,11 +813,12 @@ describe('FeedForecastService.getForecast — views, periods and the report (Pla
     itemId: 'r1', itemNo: 'FEED-R1', itemName: 'Weaner Diet R1', lifecycleId: 'row-r1', sourceType: 'SILO', sourceCode: 'GRS/SILO-001',
     currentInventoryKg: 1500, heads: 1000, feedRateKg: 2, perDayIntakeKg: 2000,
     daysOfStock: 0, sharedBatchCount: 1, indicative: true,
-    runDownDate: '2026-09-23', refillDate: '2026-09-21', requiredOn: '2026-09-19', overdue: true, ...over,
+    runDownDate: '2026-09-23', ...over,
   });
   const computed = {
     planningDate: '2026-09-23', today: '2026-09-23', timeZone: 'Africa/Harare', from: '2026-09-23', to: '2026-09-29', horizonTo: '2026-11-07',
-    farm: { id: 'farm-A', code: 'GRS', name: 'Grasmere' }, leadTimeDays: 2, rows: [],
+    farm: { id: 'farm-A', code: 'GRS', name: 'Grasmere' },
+    settings: { safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50 }, rows: [],
     daily: [daily(), daily({ date: '2026-09-24', currentInventoryKg: 0 }), daily({ date: '2026-09-25', currentInventoryKg: 0 })],
     flags: [], sources: [], dietChanges: [], stages: [],
   };
@@ -827,7 +843,10 @@ describe('FeedForecastService.getForecast — views, periods and the report (Pla
     );
     expect(report.rows).toHaveLength(1);
     expect(report.rows[0]).toMatchObject({ date: '2026-09-23', dateTo: '2026-09-25', days: 3, intakeKg: 6000, currentInventoryKg: 1500, itemNo: 'FEED-R1' });
-    expect(report).toMatchObject({ view: 'WEEKLY', forecastFrom: '2026-09-23', forecastNote: null, period: null, timeZone: 'Africa/Harare', leadTimeDays: 2 });
+    expect(report).toMatchObject({
+      view: 'WEEKLY', forecastFrom: '2026-09-23', forecastNote: null, period: null, timeZone: 'Africa/Harare',
+      settings: { safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50 },
+    });
   });
 
   it('keeps true shortage evidence internal to save/draft calculations so ordinary GET source fields stay compatible', async () => {
@@ -838,7 +857,7 @@ describe('FeedForecastService.getForecast — views, periods and the report (Pla
         balanceKg: 500, planningDayDemandKg: 100, firstDemandDate: '2026-09-23', firstDayDemandKg: 100,
         walkDemandKg: 700, daysLeft: 5, runDownDate: '2026-09-27', shortageDate: '2026-09-29',
         isNextDiet: false, noSiloHoldsItem: false, lifecycleIds: ['life-1'], thresholdKg: 100,
-        incomingKg: 0, shortfallKg: 200, refillDate: '2026-09-25', requiredOn: '2026-09-23', overdue: false,
+        incomingKg: 0, shortfallKg: 200, safetyStockKg: 0, deliveryDayOpeningKg: 100,
       }],
     } as any);
 

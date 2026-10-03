@@ -19,6 +19,16 @@ import { isFarmBoundUserType } from '../../../common/user-type-hierarchy';
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { FeedForecastRunService } from './feed-forecast-run.service';
 import { buildSourceSnapshot } from './feed-forecast-run.rules';
+import { FeedSettingsService } from '../feed-settings/feed-settings.service';
+
+/**
+ * Task 4 (3 Oct ruling): safety stock, bulk multiple and bag size come from
+ * FeedSettingsService (Task 2) now, not from the farm's own columns. This is
+ * the fallback used only when no FeedSettingsService was injected (a unit
+ * test exercising computeForFarm without one) — production always has one,
+ * since FeedForecastModule imports FeedSettingsModule.
+ */
+const DEFAULT_FARM_FEED_SETTINGS = { safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50 };
 
 /**
  * The LOB bound on the forecast's location read for a restricted
@@ -52,9 +62,6 @@ export interface ForecastFarm {
   code: string;
   name: string;
   companyId: string;
-  // D38: the refill buffer is the SILO's own reorder days now; the farm's
-  // feed_refill_buffer_days column is kept but never read.
-  leadTimeDays: number;
 }
 
 /** One farm a feed screen may offer (review A2). companyName labels it in the tenant-wide workspace. */
@@ -68,7 +75,6 @@ export interface FeedFarmOption {
 
 /** D32: legacy farm-level settings retained in this response for API compatibility. */
 export interface FeedFarmSettings {
-  feed_lead_time_days: number | null;
   feed_bulk_multiple_kg: number | null;
   feed_bag_size_kg: number | null;
   feed_truck_target_kg: number | null;
@@ -108,7 +114,8 @@ export interface FeedForecastResponse {
   /** How far the run-down was looked for (Q12): at least `to`, at most 45 days past the planning date. */
   horizonTo: string;
   farm: { id: string; code: string; name: string };
-  leadTimeDays: number;
+  /** TDD Engine Step 8 / Dashboard row 60: the configured planning settings the engine used for this run. */
+  settings: { safetyStockKg: number; bulkMultipleKg: number; bagSizeKg: number };
   rows: ForecastRow[];
   daily: DailyForecastRow[];
   flags: ForecastFlag[];
@@ -233,7 +240,8 @@ export interface FeedForecastReport {
   horizonTo: string;
   period: PeriodRange | null;
   farm: { id: string; code: string; name: string };
-  leadTimeDays: number;
+  /** TDD Engine Step 8 / Dashboard row 60: the configured planning settings the engine used for this run. */
+  settings: { safetyStockKg: number; bulkMultipleKg: number; bagSizeKg: number };
   rows: ReportRow[];
   stages: StageBlock[];
   flags: ForecastFlag[];
@@ -556,6 +564,12 @@ export class FeedForecastService {
     private readonly auditService: AuditLogService,
     // D41: what each silo is holding now, for Silo Feed Setup's read-only columns.
     private readonly siloFeedService: SiloFeedService,
+    // Task 4: safety stock, bulk multiple and bag size (Task 2's planning
+    // settings) — optional like runService below, so a unit test exercising
+    // computeForFarm without one falls back to DEFAULT_FARM_FEED_SETTINGS
+    // rather than throwing; production always has one (FeedForecastModule
+    // imports FeedSettingsModule).
+    @Optional() private readonly feedSettings?: FeedSettingsService,
     @Optional() private readonly runService?: FeedForecastRunService,
   ) {}
 
@@ -642,7 +656,7 @@ export class FeedForecastService {
       horizonTo: result.horizonTo,
       period,
       farm: result.farm,
-      leadTimeDays: result.leadTimeDays,
+      settings: result.settings,
       rows: groupRows(result.daily, view, from),
       stages: result.stages,
       flags: result.flags,
@@ -756,7 +770,9 @@ export class FeedForecastService {
   private static readonly FARM_SETTINGS = [
     // D38: the refill buffer is no longer one of these — it is the silo's own
     // Silo Reorder Days. The column stays on location_master, unread.
-    { key: 'feed_lead_time_days', column: schema.locationMaster.feed_lead_time_days, min: 0, max: 30 },
+    // Task 4 (3 Oct ruling): feed_lead_time_days is no longer one of these
+    // either — safety stock now comes from FeedSettingsService (Task 2). The
+    // column stays on location_master, unread (and unwritten here).
     { key: 'feed_bulk_multiple_kg', column: schema.locationMaster.feed_bulk_multiple_kg, min: 1, max: null },
     { key: 'feed_bag_size_kg', column: schema.locationMaster.feed_bag_size_kg, min: 1, max: null },
     { key: 'feed_truck_target_kg', column: schema.locationMaster.feed_truck_target_kg, min: 1, max: null },
@@ -775,7 +791,6 @@ export class FeedForecastService {
         name: L.location_name,
         company_id: L.company_id,
         company_name: schema.companyMaster.company_name,
-        feed_lead_time_days: L.feed_lead_time_days,
         feed_bulk_multiple_kg: L.feed_bulk_multiple_kg,
         feed_bag_size_kg: L.feed_bag_size_kg,
         feed_truck_target_kg: L.feed_truck_target_kg,
@@ -795,7 +810,6 @@ export class FeedForecastService {
       companyName: r.company_name ?? null,
       silos: silosByFarm.get(r.farm_id) ?? [],
       settings: {
-        feed_lead_time_days: r.feed_lead_time_days ?? null,
         feed_bulk_multiple_kg: r.feed_bulk_multiple_kg ?? null,
         feed_bag_size_kg: r.feed_bag_size_kg ?? null,
         feed_truck_target_kg: r.feed_truck_target_kg ?? null,
@@ -900,10 +914,15 @@ export class FeedForecastService {
   }
 
   /**
-   * D41: a silo's feed levels and reorder days, edited from Silo Feed Setup. It
-   * writes only those three columns, and it applies the SAME rules the silo
-   * form applies (silo-feed/silo-levels.ts) — a value sent alone is judged
-   * against the one already stored, so the pair is never checked by halves.
+   * D41: a silo's feed levels, edited from Silo Feed Setup. It writes only
+   * those two columns, and it applies the SAME rules the silo form applies
+   * (silo-feed/silo-levels.ts) — a value sent alone is judged against the one
+   * already stored, so the pair is never checked by halves.
+   *
+   * Task 4 (3 Oct ruling): this endpoint no longer writes silo_reorder_days —
+   * the forecast does not read it (engine.ts, Task 3). The column stays on
+   * location_master, and Location Master's own generic form still edits it
+   * (spec R6).
    */
   async updateSiloSettings(
     farmIdIn: string,
@@ -924,7 +943,6 @@ export class FeedForecastService {
         silo_capacity_kg: L.silo_capacity_kg,
         low_level_kg: L.low_level_kg,
         high_level_kg: L.high_level_kg,
-        silo_reorder_days: L.silo_reorder_days,
       })
       .from(L)
       .where(and(eq(L.location_id, siloId), eq(L.tenant_id, tenantId), isNull(L.deleted_at)))
@@ -939,7 +957,6 @@ export class FeedForecastService {
     const updates: Record<string, number | null> = {};
     if (dto.low_level_kg !== undefined) updates.low_level_kg = dto.low_level_kg;
     if (dto.high_level_kg !== undefined) updates.high_level_kg = dto.high_level_kg;
-    if (dto.silo_reorder_days !== undefined) updates.silo_reorder_days = dto.silo_reorder_days;
     if (!Object.keys(updates).length) throw new BadRequestException('Send at least one silo setting to change.');
 
     // The pair as it would stand after this change, against the silo's capacity.
@@ -958,7 +975,6 @@ export class FeedForecastService {
       oldValues: {
         low_level_kg: num(silo.low_level_kg),
         high_level_kg: num(silo.high_level_kg),
-        silo_reorder_days: num(silo.silo_reorder_days),
       },
       newValues: updates,
     });
@@ -989,7 +1005,6 @@ export class FeedForecastService {
     if (!Object.keys(updates).length) throw new BadRequestException('Send at least one feed setting to change.');
     const [before] = await this.db
       .select({
-        feed_lead_time_days: schema.locationMaster.feed_lead_time_days,
         feed_bulk_multiple_kg: schema.locationMaster.feed_bulk_multiple_kg,
         feed_bag_size_kg: schema.locationMaster.feed_bag_size_kg,
         feed_truck_target_kg: schema.locationMaster.feed_truck_target_kg,
@@ -1230,14 +1245,23 @@ export class FeedForecastService {
     const headerCutoff = planningDate > today ? planningDate : today;
     return this.withFarmScope(farmId, companyId, async () => {
       const farm = await this.loadFarm(farmId, tenantId);
-      const { input, flags: loadFlags, stageBlocks } = await this.loadInput(farm, planningDate, from, to, tenantId, { stockDate, horizonTo, headerCutoff });
+      // Task 4 / Task 2: safety stock (and the two other draft-rounding
+      // settings the report carries) come from the company/farm's configured
+      // planning settings now, never from the farm's own lead-time column.
+      const resolvedSettings = this.feedSettings ? await this.feedSettings.resolve(companyId, farmId) : DEFAULT_FARM_FEED_SETTINGS;
+      const { input: loadedInput, flags: loadFlags, stageBlocks } = await this.loadInput(farm, planningDate, from, to, tenantId, { stockDate, horizonTo, headerCutoff });
+      const input: ForecastInput = { ...loadedInput, safetyStockKg: resolvedSettings.safetyStockKg };
       const { rows, flags, sources, dietChanges, daily } = buildFeedForecast(input);
       const sourceSnapshot = buildSourceSnapshot({ engineInput: input });
       const asOf: ForecastFlag[] = planningDate < today ? [{ kind: 'AS_OF_PAST', planningDate, today, note: asOfPastNote(planningDate, today) }] : [];
       return {
         planningDate, today, timeZone, from, to, horizonTo,
         farm: { id: farm.id, code: farm.code, name: farm.name },
-        leadTimeDays: farm.leadTimeDays,
+        settings: {
+          safetyStockKg: resolvedSettings.safetyStockKg,
+          bulkMultipleKg: resolvedSettings.bulkMultipleKg,
+          bagSizeKg: resolvedSettings.bagSizeKg,
+        },
         rows, daily, flags: [...flags, ...loadFlags, ...asOf], sources, dietChanges,
         stages: stageBlocks, sourceSnapshot,
       };
@@ -1304,7 +1328,6 @@ export class FeedForecastService {
         location_code: schema.locationMaster.location_code,
         location_name: schema.locationMaster.location_name,
         company_id: schema.locationMaster.company_id,
-        feed_lead_time_days: schema.locationMaster.feed_lead_time_days,
       })
       .from(schema.locationMaster)
       .where(
@@ -1325,8 +1348,6 @@ export class FeedForecastService {
       code: row.location_code,
       name: row.location_name,
       companyId: row.company_id,
-      // D19: the column default moved from 0 to 2 (migration 0120); the same fallback applies to any row still null.
-      leadTimeDays: row.feed_lead_time_days ?? 2,
     };
   }
 

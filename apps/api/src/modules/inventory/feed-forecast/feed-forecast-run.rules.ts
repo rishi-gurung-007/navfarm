@@ -46,19 +46,27 @@ export interface ForecastRunLineSnapshot {
   projectedClosingKg: number;
   shortageDate: string | null;
   recommendedQtyKg: number;
-  requiredOnDate: string | null;
   provenanceSnapshot: unknown;
 }
 
 /**
  * Stable material-output contract for forecast run evidence.
  *
- * v1 hashes the canonical, order-independent multiset of every
+ * v1 hashed the canonical, order-independent multiset of every
  * ForecastRunLineSnapshot field. Database row IDs, creation timestamps and
  * run header identity are deliberately outside the material line type and
  * therefore outside the hash.
+ *
+ * v2 (Task 4, 3 Oct ruling): ForecastRunLineSnapshot dropped requiredOnDate —
+ * refill buffer, lead time, required-on and overdue are superseded by the
+ * 3 Oct rulings (engine.ts, Task 3). That changes the hashed contract's
+ * shape, so the version bumps with it: a v1 saved run and a v2 one must never
+ * compare equal just because their hashes happen to collide on a changed
+ * field set. A pre-existing v1 run's staleness check (feed-requisition's
+ * matchingRun) now answers null for it — detaching its provenance, correctly,
+ * rather than silently matching a line shape it no longer produces.
  */
-export const FORECAST_RUN_OUTPUT_HASH_VERSION = 'forecast-run-lines:v1';
+export const FORECAST_RUN_OUTPUT_HASH_VERSION = 'forecast-run-lines:v2';
 
 export interface ForecastRunOutputSnapshot {
   version: typeof FORECAST_RUN_OUTPUT_HASH_VERSION;
@@ -101,7 +109,6 @@ interface ForecastRunLineInput {
   runDownDate?: string | null;
   shortageDate?: string | null;
   recommendedQtyKg?: number;
-  requiredOn?: string | null;
   provenance?: unknown;
   lifecycleId?: string;
   sourceType?: string;
@@ -110,8 +117,6 @@ interface ForecastRunLineInput {
   daysOfStock?: number | null;
   sharedBatchCount?: number;
   indicative?: boolean;
-  refillDate?: string | null;
-  overdue?: boolean;
 }
 
 type ValidatedForecastRunLineInput = ForecastRunLineInput & Required<Pick<ForecastRunLineInput,
@@ -157,7 +162,6 @@ export function buildRunLineSnapshots(output: { daily: ForecastRunLineInput[] })
       projectedClosingKg: validated.projectedClosingKg,
       shortageDate: line.shortageDate ?? null,
       recommendedQtyKg: validated.recommendedQtyKg,
-      requiredOnDate: line.requiredOn ?? null,
       provenanceSnapshot: {
         ...(line.provenance && typeof line.provenance === 'object' && !Array.isArray(line.provenance)
           ? detached(line.provenance) as Record<string, unknown>
@@ -174,8 +178,6 @@ export function buildRunLineSnapshots(output: { daily: ForecastRunLineInput[] })
         daysOfStock: line.daysOfStock,
         sharedBatchCount: line.sharedBatchCount,
         indicative: line.indicative,
-        refillDate: line.refillDate,
-        overdue: line.overdue,
           })),
         runDownDate: line.runDownDate ?? null,
       },

@@ -31,7 +31,7 @@ describe('feed forecast run snapshot rules', () => {
         date: '2026-10-01', batchId: 'batch-1', shedId: 'shed-1', destinationLocationId: 'silo-1',
         itemId: 'item-required', currentItemId: 'item-current', heads: 42, feedRateKg: 2.5,
         openingStockKg: 600, confirmedReceiptKg: 100, demandKg: 105, projectedClosingKg: 595,
-        runDownDate: '2026-10-04', shortageDate: '2026-10-06', recommendedQtyKg: 900, requiredOn: '2026-10-02', provenance,
+        runDownDate: '2026-10-04', shortageDate: '2026-10-06', recommendedQtyKg: 900, provenance,
       }],
     };
 
@@ -43,7 +43,7 @@ describe('feed forecast run snapshot rules', () => {
       forecastDate: '2026-10-01', batchId: 'batch-1', shedId: 'shed-1', destinationLocationId: 'silo-1',
       requiredItemId: 'item-required', currentItemId: 'item-current', headCount: 42, feedRateKg: 2.5,
       openingStockKg: 600, confirmedReceiptKg: 100, dailyDemandKg: 105, projectedClosingKg: 595,
-      shortageDate: '2026-10-06', recommendedQtyKg: 900, requiredOnDate: '2026-10-02',
+      shortageDate: '2026-10-06', recommendedQtyKg: 900,
       provenanceSnapshot: { flags: ['HEADS_ASSUMED_FLAT'], source: { lifecycleIds: ['life-1'] }, runDownDate: '2026-10-04' },
     });
   });

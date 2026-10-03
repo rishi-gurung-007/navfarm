@@ -125,7 +125,11 @@ export class FeedForecastRunService {
           head_count: line.headCount, feed_rate_kg: String(line.feedRateKg), opening_stock_kg: String(line.openingStockKg),
           confirmed_receipt_kg: String(line.confirmedReceiptKg), daily_demand_kg: String(line.dailyDemandKg),
           projected_closing_kg: String(line.projectedClosingKg), shortage_date: line.shortageDate,
-          recommended_qty_kg: String(line.recommendedQtyKg), required_on_date: line.requiredOnDate,
+          recommended_qty_kg: String(line.recommendedQtyKg),
+          // Task 4 (3 Oct ruling): refill buffer, lead time, required-on and
+          // overdue are superseded (engine.ts). The column stays (deferred to
+          // the branch merge) but is never written.
+          required_on_date: null,
           provenance_snapshot: line.provenanceSnapshot as Record<string, unknown>,
         })));
       }

@@ -396,7 +396,6 @@ export class FeedRequisitionService implements OnModuleInit {
       projected_closing_kg: schema.feedForecastRunLine.projected_closing_kg,
       shortage_date: schema.feedForecastRunLine.shortage_date,
       recommended_qty_kg: schema.feedForecastRunLine.recommended_qty_kg,
-      required_on_date: schema.feedForecastRunLine.required_on_date,
       provenance_snapshot: schema.feedForecastRunLine.provenance_snapshot,
     }).from(schema.feedForecastRunLine).where(eq(schema.feedForecastRunLine.run_id, run.run_id))
       .orderBy(schema.feedForecastRunLine.forecast_date, schema.feedForecastRunLine.run_line_id);
@@ -415,7 +414,6 @@ export class FeedRequisitionService implements OnModuleInit {
       projectedClosingKg: Number(line.projected_closing_kg),
       shortageDate: line.shortage_date,
       recommendedQtyKg: Number(line.recommended_qty_kg),
-      requiredOnDate: line.required_on_date,
       provenanceSnapshot: line.provenance_snapshot,
     }));
     const freshOutput = buildOutputSnapshot(buildRunLineSnapshots(forecast));

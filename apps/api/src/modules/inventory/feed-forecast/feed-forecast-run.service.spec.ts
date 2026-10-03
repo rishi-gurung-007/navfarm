@@ -143,7 +143,7 @@ const output = {
     date: '2026-10-01', batchId: 'batch-1', shedId: 'shed-1', destinationLocationId: 'silo-1', itemId: 'item-1',
     currentItemId: 'item-1', heads: 40, feedRateKg: 2.5, openingStockKg: 500, confirmedReceiptKg: 0,
     demandKg: 100, projectedClosingKg: 400, runDownDate: '2026-10-05', shortageDate: null, recommendedQtyKg: 700,
-    requiredOn: '2026-10-03', provenance: { sourceType: 'SILO', lifecycleId: 'life-1' },
+    provenance: { sourceType: 'SILO', lifecycleId: 'life-1' },
   }],
   sourceSnapshot: { version: 'sha256:source', hash: 'source', values: { engineInput: { batches: ['batch-1'] } } },
 };
@@ -187,7 +187,7 @@ describe('FeedForecastRunService', () => {
       config_snapshot: expect.objectContaining({ hash: expect.stringMatching(/^[a-f0-9]{64}$/) }),
       source_snapshot: output.sourceSnapshot,
       output_snapshot: {
-        version: 'forecast-run-lines:v1', hash: expect.stringMatching(/^[a-f0-9]{64}$/), lineCount: 1,
+        version: 'forecast-run-lines:v2', hash: expect.stringMatching(/^[a-f0-9]{64}$/), lineCount: 1,
       },
     });
     expect(log.find((entry) => entry.op === 'insert' && entry.table === schema.feedForecastRunLine)?.values)

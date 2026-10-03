@@ -95,12 +95,12 @@ const forecastDaily = (over: Record<string, unknown> = {}) => ({
   destinationLocationId: 'silo-1', itemId: 'item-r1', itemNo: 'R1', itemName: 'Weaner Diet R1', currentItemId: 'item-r1',
   heads: 1000, feedRateKg: 2, openingStockKg: 1500, confirmedReceiptKg: 0, demandKg: 2000,
   projectedClosingKg: 0, runDownDate: serverToday(), shortageDate: serverToday(), recommendedQtyKg: 4500,
-  requiredOn: serverToday(), lifecycleId: 'row-r1', sourceType: 'SILO', sourceCode: 'GRS/SILO-001',
-  perDayIntakeKg: 2000, daysOfStock: 0, sharedBatchCount: 1, indicative: false, refillDate: serverToday(), overdue: true,
+  lifecycleId: 'row-r1', sourceType: 'SILO', sourceCode: 'GRS/SILO-001',
+  perDayIntakeKg: 2000, daysOfStock: 0, sharedBatchCount: 1, indicative: false,
   ...over,
 });
 
-const OUTPUT_HASH_VERSION = 'forecast-run-lines:v1';
+const OUTPUT_HASH_VERSION = 'forecast-run-lines:v2';
 const canonical = (value: unknown): unknown => Array.isArray(value)
   ? value.map(canonical)
   : value && typeof value === 'object'
@@ -133,7 +133,6 @@ const storedRunLine = (line: ForecastRunLineSnapshot, runLineId: string) => ({
   projected_closing_kg: String(line.projectedClosingKg),
   shortage_date: line.shortageDate,
   recommended_qty_kg: String(line.recommendedQtyKg),
-  required_on_date: line.requiredOnDate,
   provenance_snapshot: line.provenanceSnapshot,
 });
 

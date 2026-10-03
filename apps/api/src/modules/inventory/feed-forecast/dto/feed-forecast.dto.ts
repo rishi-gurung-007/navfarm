@@ -50,8 +50,10 @@ export class QueryFeedPeriodsDto {
 export class QueryFeedForecastRunsDto extends QueryFeedPeriodsDto {}
 
 /**
- * D32, narrowed by D38 to five: the refill buffer left this screen for the
- * silo's own Silo Reorder Days. The per-farm settings, edited on Settings → Inventory Setup →
+ * D32, narrowed by D38 to five and by Task 4 (3 Oct ruling) to four: the
+ * refill buffer left this screen for the silo's own Silo Reorder Days, and
+ * feed_lead_time_days left it for FeedSettingsService's safety stock (Task
+ * 2). The per-farm settings, edited on Settings → Inventory Setup →
  * Feed Planning. Same bounds the Location form used before they moved. Every
  * one is optional and every one accepts null, which clears it back to the
  * client default (@IsOptional skips validation for null as well as for a
@@ -60,10 +62,6 @@ export class QueryFeedForecastRunsDto extends QueryFeedPeriodsDto {}
  * holds whether or not a caller came through the validation pipe.
  */
 export class UpdateFeedFarmSettingsDto {
-  @ApiProperty({ description: 'Required On is this many days before the Date to Refill (D19, default 2). 0-30, null clears.', required: false, nullable: true })
-  @IsOptional() @IsInt() @Min(0) @Max(30)
-  feed_lead_time_days?: number | null;
-
   @ApiProperty({ description: 'Bulk feed orders round up to this many kilograms (default 3000). 1 or more, null clears.', required: false, nullable: true })
   @IsOptional() @IsInt() @Min(1)
   feed_bulk_multiple_kg?: number | null;
@@ -82,10 +80,13 @@ export class UpdateFeedFarmSettingsDto {
 }
 
 /**
- * D41: a silo's own feed planning values, edited from Settings → Inventory
- * Setup → Feed Planning. Only these three; the same bounds the Location form
- * uses, and feed-forecast.service.ts re-checks the level pair against the
- * silo's capacity with the silo form's own rule.
+ * D41, narrowed by Task 4 (3 Oct ruling): a silo's own feed levels, edited
+ * from Settings → Inventory Setup → Feed Planning. Only these two now — the
+ * forecast does not read silo_reorder_days (engine.ts, Task 3); the column
+ * stays on location_master, and Location Master's own generic form still
+ * edits it (spec R6). The same bounds the Location form uses, and
+ * feed-forecast.service.ts re-checks the level pair against the silo's
+ * capacity with the silo form's own rule.
  */
 export class UpdateSiloPlanningDto {
   @ApiProperty({ description: 'Low feed level in KG — the level a low-feed alert fires at.', required: false, nullable: true })
@@ -95,8 +96,4 @@ export class UpdateSiloPlanningDto {
   @ApiProperty({ description: 'High feed level in KG — the over-stock notice level.', required: false, nullable: true })
   @IsOptional() @IsNumber() @Min(0)
   high_level_kg?: number | null;
-
-  @ApiProperty({ description: 'Days before run-down this silo must be refilled (D38). 0-365.', required: false, nullable: true })
-  @IsOptional() @IsInt() @Min(0) @Max(365)
-  silo_reorder_days?: number | null;
 }
