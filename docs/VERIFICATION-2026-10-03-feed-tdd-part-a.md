@@ -879,3 +879,68 @@ rows sharing one silo show 66.8, 116.8 and 11.7 days.
 | REQ-POR100-2026-00002 | left as evidence, AUTO_DRAFT |
 | REQ-LEX100-2026-00002 | soft-deleted by the app itself on a rerun after the stock was restored ("Nothing to order") |
 | Saved runs RUN-RIC100-…-001…005, RUN-POR100-…-001/002, RUN-LEX100-…-001/002, RUN-GRA100-…-001 | left as evidence |
+
+# Part A closure — 2026-10-03 night
+
+Part A's task list is complete: Tasks 1–10 plus the follow-ons 7b, 8b, 9b, 9c, 9d,
+each with a task review and, where a review found something, a fix round and a
+scoped re-review.
+
+## What the live evidence actually covers
+
+Read this before treating Part A as proven, because the coverage is uneven by
+accident of what was broken when.
+
+- **Pass 1** (Task 10) reached **one farm and one line**. It could not do better:
+  auto-draft returned 500 on 7 of 9 demo farms, and no farm had a 7-day shortage,
+  so a stock adjustment had to be posted to produce any live write at all.
+- **Pass 2** (Task 10b) reached **four farms** — RIC100, POR100, LEX100 (batch-wise)
+  and GRA100 — once Task 9b fixed the 500s. Checks 2–8 passed with MySQL evidence;
+  check 1 failed on run linking, which became defect D1.
+- **Task 9d** closed D1, D2, F1 and F2, and **D1 is live-proven**:
+  - the running bundle was proven to be the branch's own code — a fresh webpack
+    build reproduced `dist/main.js` byte-for-byte and the bundle carries both of
+    D1's guards (this matters: nx replays the main checkout in this worktree, and
+    an earlier session chased a false failure from a stale bundle);
+  - on LEX100, auto-draft returned `201 created:true` then `201 created:false`;
+  - `REQ-LEX100-2026-00003.feed_forecast_run_id` resolves to
+    `RUN-LEX100-20261003-003`, all 23 of its line's run-line ids belong to that run
+    and none to any other, and LEX100's run count went 2 → 3 → 3, so the second
+    draft saved no run. `REQ-GRA100-2026-00002` corroborates the link.
+  - The three pass-2 requisitions (LEX100-00002, POR100-00002, RIC100-00002) remain
+    `NULL`, so the before and after of D1 sit side by side in the data.
+  - Stock: ADJ-000016 −4000 (5856 → 1856), reversed by ADJ-000017 +4000, **read back
+    5856.0000**.
+
+The requisition writer, the batch/house breakdown, `requisition_date`, the PUT
+refusals, the document header, silo-status SQL (whose query had never once run
+against MySQL before Task 10), and the one-decimal `days_remaining` are all proven
+by writes made through the running application and read back from `nf_devco` — not
+by seeded rows and not by a green suite. Part A's own history is the reason that
+distinction is spelled out: a 73-character composite batch key reached a
+`varchar(36)` column with a foreign key, and **all 2,011 API tests passed over it**
+until a farm was driven in a browser.
+
+## What is NOT proven, and what changed beyond the defects
+
+- No farm in the demo data naturally carries a 7-day shortage, so every live draft
+  rests on a stock adjustment made and then reversed. A farm with a genuine
+  in-window shortage has never been drafted from.
+- **F1 is a deliberate behaviour change wider than the defect it fixed:** every
+  farm's silo dashboard now shows a First Shortage Date for shortages 8–45 days out,
+  not only the case that was blank. This matches what the forecast grid already did
+  and the workbook sets no window limit (Dashboard row 55 / Master Setup row 15).
+- `siloStatus` now walks up to 45 days in memory per request instead of 7. Confirmed
+  not a per-silo database round-trip, so bounded today — worth remembering for a
+  farm with dozens of silos.
+- The fix for **Save Run**'s identical composite-key 500 is on this branch but the
+  defect is **pre-existing** (`b06441ee`, before this branch), so Save Run is broken
+  for animal-wise farms on `main` today. It is separable into its own PR.
+- A throwaway database `nf_replay_feed_tdd` was left in place from a migration
+  replay; it is Rishi's to drop.
+
+## Not yet done
+
+The final whole-branch review has not run, and a list of deferred Minor findings
+from the task reviews is waiting on it for triage. Part A should not be merged
+until that review has triaged them.
