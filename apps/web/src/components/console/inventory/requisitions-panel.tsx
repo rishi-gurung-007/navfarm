@@ -29,7 +29,7 @@ import { useLanguage } from "@/hooks/useLanguage";
 import type { TranslationKeys } from "@/utils/translations";
 import { cn } from "@/lib/utils";
 import { formatDateShort } from "@/utils/date-short";
-import { defaultWindowEnd, todayIso, unwrap } from "./feed-format";
+import { addDaysIso, defaultWindowEnd, todayIso, unwrap } from "./feed-format";
 import { getForecastWindow } from "./feed-forecast-window";
 import { FeedFarmSelect, feedFarmLabel } from "./feed-farm-select";
 import { PRIORITY_LABEL, REQ_STATUS_LABEL, REQ_TYPE_LABEL, labelOf, variantOf } from "./requisition-labels";
@@ -210,10 +210,14 @@ export function FeedRequisitionPanel() {
   // Feed Forecast row 8 / Step 9: draft for the window the Forecast tab is showing, else the 7-day default.
   const draftFromForecast = () =>
     run(async () => {
-      // The draft always starts at the farm's today, and the API refuses a `to` before it: a window that has
-      // already ended on the Forecast tab falls back to the default rather than posting a date that 400s.
+      // The draft always starts at the farm's today, and the API refuses a `to` before it — or more than 45
+      // days after it (autoDraft's own MAX_SPAN_DAYS bound): a window that has already ended on the Forecast
+      // tab falls back to the default, and one forward-dated past the bound clamps to it (M3), rather than
+      // posting a date that 400s either way.
+      const today = todayIso();
       const shared = getForecastWindow(farmId)?.to;
-      const to = shared && shared >= todayIso() ? shared : defaultWindowEnd(todayIso());
+      const maxTo = addDaysIso(today, 45);
+      const to = shared && shared >= today ? (shared > maxTo ? maxTo : shared) : defaultWindowEnd(today);
       const result = unwrap<{ requisition: RequisitionView | null }>(await api.post("/feed-requisition/auto-draft", { farmId, to }));
       const through = formatDateShort(to);
       if (result.requisition) {

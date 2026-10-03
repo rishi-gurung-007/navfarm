@@ -3,7 +3,8 @@ import { render, screen, fireEvent, waitFor, within } from '@testing-library/rea
 import RequisitionsPanel, { needsRemarks, remarksRequiredMessage } from '../src/components/console/inventory/requisitions-panel';
 import { api } from '../src/services/api-client';
 import { resetForecastWindow, setForecastWindow } from '../src/components/console/inventory/feed-forecast-window';
-import { defaultWindowEnd, todayIso } from '../src/components/console/inventory/feed-format';
+import { addDaysIso, defaultWindowEnd, todayIso } from '../src/components/console/inventory/feed-format';
+import { formatDateShort } from '../src/utils/date-short';
 
 jest.mock('../src/services/api-client', () => ({ api: { get: jest.fn(), post: jest.fn(), put: jest.fn() } }));
 jest.mock('../src/hooks/useLanguage', () => {
@@ -110,12 +111,13 @@ describe('needsRemarks — checkpoint 18', () => {
 
 describe('RequisitionsPanel (D26)', () => {
   it("drafts for the Forecast tab's selected window and names it in the notice (Feed Forecast row 8, Step 9)", async () => {
-    setForecastWindow({ farmId: 'farm-vil', from: '2099-09-20', to: '2099-10-18' });
+    const to = addDaysIso(todayIso(), 20);
+    setForecastWindow({ farmId: 'farm-vil', from: todayIso(), to });
     post.mockImplementation(async () => ({ data: { requisitionId: null, requisition: null } }));
     render(<RequisitionsPanel />);
     fireEvent.click(await screen.findByRole('button', { name: 'rqDraftFromForecast' }));
-    await waitFor(() => expect(post).toHaveBeenCalledWith('/feed-requisition/auto-draft', { farmId: 'farm-vil', to: '2099-10-18' }));
-    expect(await screen.findByText('rqNothingToOrder:{"to":"18/10/99"}')).toBeTruthy();
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/feed-requisition/auto-draft', { farmId: 'farm-vil', to }));
+    expect(await screen.findByText(`rqNothingToOrder:{"to":"${formatDateShort(to)}"}`)).toBeTruthy();
   });
 
   it("falls back to the default window when the shared `to` is already past, rather than posting a date the API refuses", async () => {
@@ -123,6 +125,13 @@ describe('RequisitionsPanel (D26)', () => {
     render(<RequisitionsPanel />);
     fireEvent.click(await screen.findByRole('button', { name: 'rqDraftFromForecast' }));
     await waitFor(() => expect(post).toHaveBeenCalledWith('/feed-requisition/auto-draft', { farmId: 'farm-vil', to: defaultWindowEnd(todayIso()) }));
+  });
+
+  it("clamps a forward-dated shared `to` to 45 days ahead, rather than posting a date autoDraft's own bound refuses (M3)", async () => {
+    setForecastWindow({ farmId: 'farm-vil', from: todayIso(), to: addDaysIso(todayIso(), 60) });
+    render(<RequisitionsPanel />);
+    fireEvent.click(await screen.findByRole('button', { name: 'rqDraftFromForecast' }));
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/feed-requisition/auto-draft', { farmId: 'farm-vil', to: addDaysIso(todayIso(), 45) }));
   });
 
   it("ignores another farm's window", async () => {
