@@ -22,6 +22,8 @@ interface WritePositiveEntryParams {
   quantity: number;
   uom: string;
   rate?: number;
+  /** Overrides quantity × rate (a transfer receipt closing its shipment line). */
+  amount?: number;
   lotNo?: string;
   serialNo?: string;
   expiryDate?: string;
@@ -29,6 +31,11 @@ interface WritePositiveEntryParams {
   warehouseId?: string;
   locationId?: string;
   userId?: string;
+}
+
+/** inventory_ledger.amount is decimal(18,4): round where the arithmetic must match what is stored. */
+function roundAmount(value: number): number {
+  return Math.round((value + Number.EPSILON) * 10000) / 10000;
 }
 
 interface WriteNegativeEntryParams {
@@ -199,7 +206,7 @@ export class InventoryLedgerService {
       uom: params.uom,
       uom_conversion_factor: item.uom_conversion_factor,
       rate: rate.toString(),
-      amount: (params.quantity * rate).toString(),
+      amount: (params.amount ?? params.quantity * rate).toString(),
       lot_no: params.lotNo || null,
       serial_no: params.serialNo || null,
       expiry_date: params.expiryDate || null,
@@ -514,17 +521,45 @@ export class InventoryLedgerService {
     return Math.abs(Number(row?.amount ?? 0)) / qty;
   }
 
-  /** The receipt event's one ledger leg: into the destination, at the shipment's rate. */
+  /**
+   * What a shipment line still holds in In Transit: |Σ its TRANSFER_SHIPMENT
+   * amount| less the TRANSFER_RECEIPT amounts of the receipts already posted
+   * against it. The receipt that closes the line takes exactly this, so
+   * 10.0000 shipped as 3 units and received 1+1+1 lands 3.3333 + 3.3333 +
+   * 3.3334 and 1040 nets to zero (Part E Task 4, fix round 1).
+   */
+  async transferShipmentRemainingValue(params: { tenantId: string; shipmentNo: string; lineId: string; receiptNos: string[] }): Promise<number> {
+    const sumAmount = (documentNos: string[], transactionType: string) => this.db
+      .select({ amount: sql<string>`COALESCE(SUM(${schema.inventoryLedger.amount}), 0)` })
+      .from(schema.inventoryLedger)
+      .where(and(
+        eq(schema.inventoryLedger.tenant_id, params.tenantId),
+        eq(schema.inventoryLedger.document_type, 'STOCK_TRANSFER'),
+        inArray(schema.inventoryLedger.document_no, documentNos),
+        eq(schema.inventoryLedger.document_line_id, params.lineId),
+        eq(schema.inventoryLedger.transaction_type, transactionType),
+      ));
+    const [shipped] = await sumAmount([params.shipmentNo], 'TRANSFER_SHIPMENT');
+    const received = params.receiptNos.length > 0 ? (await sumAmount(params.receiptNos, 'TRANSFER_RECEIPT'))[0] : undefined;
+    return roundAmount(Math.abs(Number(shipped?.amount ?? 0)) - Math.abs(Number(received?.amount ?? 0)));
+  }
+
+  /**
+   * The receipt event's one ledger leg: into the destination, at the
+   * shipment's rate. The amount is quantity × rate rounded to the column's
+   * four places, unless the caller passes the closing amount.
+   */
   async writeTransferReceipt(params: {
     tenantId: string; companyId: string; itemId: string; documentNo: string; documentLineId: string;
-    postingDate: string; quantity: number; uom: string; toWarehouseId: string; rate: number;
+    postingDate: string; quantity: number; uom: string; toWarehouseId: string; rate: number; amount?: number;
     lotNo?: string; serialNo?: string; userId?: string;
   }) {
     return this.writePositiveEntry({
       tenantId: params.tenantId, companyId: params.companyId, itemId: params.itemId,
       documentType: 'STOCK_TRANSFER', documentNo: params.documentNo, documentLineId: params.documentLineId,
       postingDate: params.postingDate, transactionType: 'TRANSFER_RECEIPT', quantity: params.quantity, uom: params.uom,
-      rate: params.rate, lotNo: params.lotNo, serialNo: params.serialNo, warehouseId: params.toWarehouseId, userId: params.userId,
+      rate: params.rate, amount: params.amount ?? roundAmount(params.quantity * params.rate),
+      lotNo: params.lotNo, serialNo: params.serialNo, warehouseId: params.toWarehouseId, userId: params.userId,
     });
   }
 

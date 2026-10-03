@@ -227,3 +227,70 @@ describe('InventoryLedgerService transferShipmentRate', () => {
       .rejects.toThrow('Shipment SH-2026-0001 has no posted ledger entry for this line.');
   });
 });
+
+/**
+ * Part E Task 4, fix round 1: each transfer event writes exactly one leg, and
+ * the receipt that closes a shipment line takes its remaining value so
+ * Inventory in Transit (1040) nets to zero.
+ */
+describe('InventoryLedgerService transfer legs', () => {
+  const dialect = new MySqlDialect();
+  const ITEM = { item_id: 'item-1', item_code: 'ITM-1', item_name: 'Item', is_lot_tracked: 0, is_serial_tracked: 0 };
+
+  /** A db that records ledger inserts and answers SUM(amount) from them, stored at decimal(18,4) like MySQL. */
+  function ledgerDb(shippedAmount: string) {
+    const inserted: any[] = [];
+    const db: any = {
+      select: jest.fn(() => ({ from: () => ({ where: (cond: any) => {
+        const params = dialect.sqlToQuery(cond).params as unknown[];
+        const sum = () => {
+          if (params.includes('TRANSFER_SHIPMENT')) return [{ amount: shippedAmount }];
+          const nos = params.filter((p) => typeof p === 'string' && p.startsWith('RC-'));
+          const total = inserted.filter((r) => r.transaction_type === 'TRANSFER_RECEIPT' && nos.includes(r.document_no))
+            .reduce((s, r) => s + Number(r.amount), 0);
+          return [{ amount: total.toFixed(4) }];
+        };
+        return {
+          limit: async () => [ITEM],
+          then: (ok: any, err: any) => Promise.resolve(sum()).then(ok, err),
+        };
+      } }) })),
+      transaction: async (work: any) => work(db),
+      insert: jest.fn(() => ({ values: async (v: any) => { inserted.push({ ...v, amount: v.amount === undefined ? undefined : Number(v.amount).toFixed(4) }); } })),
+      update: () => ({ set: () => ({ where: async () => undefined }) }),
+    };
+    return { db, inserted, service: new InventoryLedgerService(transactionCls(db)) };
+  }
+  const base = { tenantId: 'tenant-1', companyId: 'co-1', itemId: 'item-1', documentLineId: 'line-1', postingDate: '2026-10-04', uom: 'PCS' };
+
+  it('a shipment inserts exactly one NEGATIVE TRANSFER_SHIPMENT row, at the source', async () => {
+    const { service, inserted } = ledgerDb('0');
+    jest.spyOn(service, 'applyFifo').mockResolvedValue({ totalCost: 10, averageRate: 10 / 3 });
+    await service.writeTransferShipment({ ...base, documentNo: 'SH-2026-0001', quantity: 3, fromWarehouseId: 'wh-src' });
+    expect(inserted).toHaveLength(1);
+    expect(inserted[0]).toMatchObject({ entry_type: 'NEGATIVE', transaction_type: 'TRANSFER_SHIPMENT', warehouse_id: 'wh-src', quantity: '-3' });
+  });
+
+  it('a receipt inserts exactly one POSITIVE TRANSFER_RECEIPT row, at the destination, amount = qty × rate', async () => {
+    const { service, inserted } = ledgerDb('0');
+    await service.writeTransferReceipt({ ...base, documentNo: 'RC-2026-0001', quantity: 4, toWarehouseId: 'wh-dst', rate: 2.5 });
+    expect(inserted).toHaveLength(1);
+    expect(inserted[0]).toMatchObject({ entry_type: 'POSITIVE', transaction_type: 'TRANSFER_RECEIPT', warehouse_id: 'wh-dst', quantity: '4', amount: '10.0000' });
+  });
+
+  it('10.0000 shipped as 3 units and received 1+1+1 lands exactly 10.0000 — no residue in In Transit', async () => {
+    const { service, inserted } = ledgerDb('-10.0000');
+    const rate = 10 / 3;
+    const receiptNos: string[] = [];
+    for (const [i, closing] of [[1, false], [2, false], [3, true]] as const) {
+      const documentNo = `RC-2026-000${i}`;
+      const amount = closing
+        ? await service.transferShipmentRemainingValue({ tenantId: 'tenant-1', shipmentNo: 'SH-2026-0001', lineId: 'line-1', receiptNos })
+        : undefined;
+      await service.writeTransferReceipt({ ...base, documentNo, quantity: 1, toWarehouseId: 'wh-dst', rate, amount });
+      receiptNos.push(documentNo);
+    }
+    expect(inserted.map((r) => r.amount)).toEqual(['3.3333', '3.3333', '3.3334']);
+    expect(inserted.reduce((s, r) => s + Number(r.amount), 0).toFixed(4)).toBe('10.0000');
+  });
+});

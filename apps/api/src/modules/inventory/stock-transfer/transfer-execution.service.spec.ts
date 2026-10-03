@@ -130,6 +130,7 @@ function setup(queues: Map<unknown, unknown[][]>) {
     writeTransferShipment: jest.fn().mockResolvedValue({ ledger_id: 'led-sh' }),
     writeTransferReceipt: jest.fn().mockResolvedValue({ ledger_id: 'led-rc' }),
     transferShipmentRate: jest.fn().mockResolvedValue(2.5),
+    transferShipmentRemainingValue: jest.fn().mockResolvedValue(15),
   };
   const service = new StockTransferService(
     cls,
@@ -318,6 +319,79 @@ describe('Part E Task 4 — one ledger leg per event (cp. 46: received KG posted
     expect(ledger.writeTransferEntries).not.toHaveBeenCalled();
     expect(ledger.writeTransferShipment).not.toHaveBeenCalled();
     expect(ledger.transferShipmentRate).toHaveBeenCalledWith({ tenantId: 'tenant-1', shipmentNo: 'SH-2026-0001', lineId: 'line-1' });
-    expect(ledger.writeTransferReceipt).toHaveBeenCalledWith(expect.objectContaining({ toWarehouseId: 'wh-farm', quantity: 4, rate: 2.5, lotNo: 'LOT-9' }));
+    expect(ledger.writeTransferReceipt).toHaveBeenCalledWith(expect.objectContaining({ toWarehouseId: 'wh-farm', quantity: 4, rate: 2.5, lotNo: 'LOT-9', amount: undefined }));
+    // 4 of the shipment's 6: not the closing receipt, so no remaining-value read.
+    expect(ledger.transferShipmentRemainingValue).not.toHaveBeenCalled();
+  });
+});
+
+describe('Part E Task 4 fix round 1 — a receipt is bounded by its own shipment', () => {
+  /** Two shipments on line-1: SH-1 carried 4 (this one), SH-2 carried 6. */
+  function twoShipmentQueues(priorOnSh1: Array<{ shipment_line_id: string; qty: string; receipt_no: string }> = []) {
+    const queues = baseQueues();
+    queues.set(schema.transferShipment, [[{ ...SHIPMENT }]]);
+    queues.set(schema.transferShipmentLine, [
+      [{ line_id: 'line-1', qty: '4' }, { line_id: 'line-1', qty: '6' }], // shippedQuantities: 10 on the line
+      [{ ...SHIPMENT_LINE, quantity: '4' }],                               // SH-1's own lines
+    ]);
+    const priorOnLine = priorOnSh1.map((r) => ({ line_id: 'line-1', qty: r.qty }));
+    queues.set(schema.transferReceiptLine, [priorOnLine, priorOnSh1]); // receivedQuantities, receivedAgainstShipment
+    return queues;
+  }
+
+  it('refuses 10 against SH-1 although the line has shipped 10 in all', async () => {
+    const { service, as, ledger, inserts } = setup(twoShipmentQueues());
+    await expect(as(() => service.postReceipt('tr-1', {
+      posting_date: '2026-10-03', shipment_id: 'sh-1', lines: [{ line_id: 'line-1', quantity: 10 }],
+    }, 'tenant-1', ADMIN))).rejects.toThrow('Receipt quantity exceeds what shipment SH-2026-0001 has left to receive on this line (4).');
+    expect(ledger.writeTransferReceipt).not.toHaveBeenCalled();
+    expect(inserts(schema.transferReceiptLine)).toHaveLength(0);
+  });
+
+  it('accepts 4 against SH-1, and as the closing receipt values it at the line\'s remaining value', async () => {
+    const { service, as, ledger } = setup(twoShipmentQueues());
+    await as(() => service.postReceipt('tr-1', {
+      posting_date: '2026-10-03', shipment_id: 'sh-1', lines: [{ line_id: 'line-1', quantity: 4 }],
+    }, 'tenant-1', ADMIN));
+    expect(ledger.transferShipmentRemainingValue).toHaveBeenCalledWith({ tenantId: 'tenant-1', shipmentNo: 'SH-2026-0001', lineId: 'line-1', receiptNos: [] });
+    expect(ledger.writeTransferReceipt).toHaveBeenCalledWith(expect.objectContaining({ quantity: 4, amount: 15 }));
+  });
+
+  it('counts receipts already posted against the same shipment line', async () => {
+    const prior = [{ shipment_line_id: 'sl-1', qty: '3', receipt_no: 'RC-2026-0001' }];
+    const refused = setup(twoShipmentQueues(prior));
+    await expect(refused.as(() => refused.service.postReceipt('tr-1', {
+      posting_date: '2026-10-03', shipment_id: 'sh-1', lines: [{ line_id: 'line-1', quantity: 2 }],
+    }, 'tenant-1', ADMIN))).rejects.toThrow('has left to receive on this line (1).');
+
+    const closing = setup(twoShipmentQueues(prior));
+    await closing.as(() => closing.service.postReceipt('tr-1', {
+      posting_date: '2026-10-03', shipment_id: 'sh-1', lines: [{ line_id: 'line-1', quantity: 1 }],
+    }, 'tenant-1', ADMIN));
+    expect(closing.ledger.transferShipmentRemainingValue).toHaveBeenCalledWith(expect.objectContaining({ receiptNos: ['RC-2026-0001'] }));
+  });
+});
+
+describe('Part E Task 4 fix round 1 — one event names a line once', () => {
+  it('refuses a shipment that repeats a line id, before writing anything', async () => {
+    const { service, as, inserts, ledger } = setup(baseQueues());
+    await expect(as(() => service.postShipment('tr-1', {
+      posting_date: '2026-10-02', lines: [{ line_id: 'line-1', quantity: 6 }, { line_id: 'line-1', quantity: 4 }],
+    }, 'tenant-1', ADMIN))).rejects.toThrow('Line line-1 appears more than once in this shipment');
+    expect(inserts(schema.transferShipment)).toHaveLength(0);
+    expect(ledger.writeTransferShipment).not.toHaveBeenCalled();
+  });
+
+  it('refuses a receipt that repeats a line id, before writing anything', async () => {
+    const queues = baseQueues();
+    queues.set(schema.transferShipment, [[{ ...SHIPMENT }]]);
+    queues.set(schema.transferShipmentLine, [[{ line_id: 'line-1', qty: '6' }], [{ ...SHIPMENT_LINE }]]);
+    queues.set(schema.transferReceiptLine, [[], []]);
+    const { service, as, inserts, ledger } = setup(queues);
+    await expect(as(() => service.postReceipt('tr-1', {
+      posting_date: '2026-10-03', shipment_id: 'sh-1', lines: [{ line_id: 'line-1', quantity: 4 }, { line_id: 'line-1', quantity: 2 }],
+    }, 'tenant-1', ADMIN))).rejects.toThrow('Line line-1 appears more than once in this receipt');
+    expect(inserts(schema.transferReceipt)).toHaveLength(0);
+    expect(ledger.writeTransferReceipt).not.toHaveBeenCalled();
   });
 });

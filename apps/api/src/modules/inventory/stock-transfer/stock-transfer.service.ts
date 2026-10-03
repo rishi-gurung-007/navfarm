@@ -463,6 +463,7 @@ export class StockTransferService {
       await this.assertWarehouses(transfer.from_warehouse_id, transfer.to_warehouse_id);
       await this.assertSiloDestination(transfer, transfer.lines, tenantId);
 
+      this.assertDistinctLines(dto.lines, 'shipment');
       // Cumulative shipped quantities per line, from the events so far.
       const shippedByLine = await this.shippedQuantities(id, tenantId);
       const eventLines: Array<{ line: typeof schema.stockTransferLine.$inferSelect; qty: number; lotNo?: string; serialNo?: string }> = [];
@@ -521,9 +522,12 @@ export class StockTransferService {
 
   /**
    * Receive against a shipment (Task 10). The receipt is bound to its shipment,
-   * so a receipt cannot precede shipment structurally; quantities are bounded
-   * by what that shipment delivered per line; lot/serial identity is copied
-   * from the shipment event, never re-typed.
+   * so a receipt cannot precede shipment structurally. Each line is bounded
+   * twice: by what THIS shipment carried on that line less the receipts
+   * already posted against the same shipment line, and by the whole line's
+   * shipped-minus-received. Lot/serial identity is copied from the shipment
+   * event, never re-typed. The receipt that closes a shipment line takes the
+   * line's remaining shipped value, so Inventory in Transit nets to zero.
    */
   async postReceipt(id: string, dto: PostReceiptDto, tenantId: string, userPayload?: any) {
     return withTenantTransaction(this.cls, async () => {
@@ -541,10 +545,12 @@ export class StockTransferService {
         .limit(1);
       if (!shipment) throw new NotFoundException(`Shipment '${dto.shipment_id}' does not belong to ${transfer.transfer_no}.`);
 
+      this.assertDistinctLines(dto.lines, 'receipt');
       const shippedByLine = await this.shippedQuantities(id, tenantId);
       const receivedByLine = await this.receivedQuantities(id, tenantId);
       const shipmentLines = await this.db.select().from(schema.transferShipmentLine)
         .where(eq(schema.transferShipmentLine.shipment_id, dto.shipment_id));
+      const receivedOnShipment = await this.receivedAgainstShipment(dto.shipment_id, tenantId);
 
       const receiptId = randomUUID();
       const receiptNo = await this.nextEventNo(transfer.company_id, tenantId, 'RC');
@@ -573,11 +579,26 @@ export class StockTransferService {
         if (input.quantity > alreadyShipped - alreadyReceived) {
           throw new BadRequestException('Receipt quantity exceeds the remaining quantity to receive.');
         }
+        // ...and against THIS shipment: a receipt cannot draw on what another
+        // shipment carried (Part E Task 4, fix round 1).
+        const prior = receivedOnShipment.get(shipmentLine.shipment_line_id) ?? { qty: 0, receiptNos: [] };
+        const leftOnShipment = Number(shipmentLine.quantity) - prior.qty;
+        if (input.quantity > leftOnShipment + 1e-9) {
+          throw new BadRequestException(`Receipt quantity exceeds what shipment ${shipment.shipment_no} has left to receive on this line (${leftOnShipment}).`);
+        }
         // Into the destination only, at the rate the shipment carried out (Part E Task 4).
+        // The receipt that closes the shipment line takes its remaining value
+        // instead, so per-unit rounding never strands a residue in In Transit.
         const rate = await this.ledgerService.transferShipmentRate({ tenantId, shipmentNo: shipment.shipment_no, lineId: line.line_id });
+        const closesShipmentLine = input.quantity >= leftOnShipment - 1e-9;
+        const amount = closesShipmentLine
+          ? await this.ledgerService.transferShipmentRemainingValue({
+            tenantId, shipmentNo: shipment.shipment_no, lineId: line.line_id, receiptNos: prior.receiptNos,
+          })
+          : undefined;
         const receiptEntry = await this.ledgerService.writeTransferReceipt({
           tenantId, companyId: transfer.company_id, itemId: line.item_id, documentNo: receiptNo, documentLineId: line.line_id,
-          postingDate: dto.posting_date, quantity: input.quantity, uom: line.uom, toWarehouseId: transfer.to_warehouse_id, rate,
+          postingDate: dto.posting_date, quantity: input.quantity, uom: line.uom, toWarehouseId: transfer.to_warehouse_id, rate, amount,
           lotNo: shipmentLine.lot_no ?? undefined, serialNo: shipmentLine.serial_no ?? undefined, userId: userPayload?.userId,
         });
         await this.glPostingService.postInventoryLedgerEntry(receiptEntry, userPayload?.userId);
@@ -712,6 +733,51 @@ export class StockTransferService {
     const map = new Map<string, number>();
     for (const r of rows) map.set(r.line_id, (map.get(r.line_id) ?? 0) + Number(r.qty));
     return map;
+  }
+
+  /**
+   * Receipts already posted against one shipment, per shipment line: the
+   * received quantity and the receipt numbers (their ledger rows carry the
+   * value already taken out of In Transit).
+   */
+  private async receivedAgainstShipment(shipmentId: string, tenantId: string): Promise<Map<string, { qty: number; receiptNos: string[] }>> {
+    const rows = await this.db
+      .select({
+        shipment_line_id: schema.transferReceiptLine.shipment_line_id,
+        qty: schema.transferReceiptLine.quantity,
+        receipt_no: schema.transferReceipt.receipt_no,
+      })
+      .from(schema.transferReceiptLine)
+      .innerJoin(schema.transferReceipt, eq(schema.transferReceiptLine.receipt_id, schema.transferReceipt.receipt_id))
+      .where(and(
+        eq(schema.transferReceipt.shipment_id, shipmentId),
+        eq(schema.transferReceipt.tenant_id, tenantId),
+        isNull(schema.transferReceipt.deleted_at),
+      ));
+    const map = new Map<string, { qty: number; receiptNos: string[] }>();
+    for (const r of rows) {
+      if (!r.shipment_line_id) continue;
+      const entry = map.get(r.shipment_line_id) ?? { qty: 0, receiptNos: [] };
+      entry.qty += Number(r.qty);
+      if (r.receipt_no) entry.receiptNos.push(r.receipt_no);
+      map.set(r.shipment_line_id, entry);
+    }
+    return map;
+  }
+
+  /**
+   * One event names a line once. The bounds read the cumulative quantities
+   * once, before the loop, so a repeated line id would pass each check on its
+   * own and together exceed them (Part E Task 4, fix round 1).
+   */
+  private assertDistinctLines(lines: Array<{ line_id: string }>, event: 'shipment' | 'receipt'): void {
+    const seen = new Set<string>();
+    for (const l of lines) {
+      if (seen.has(l.line_id)) {
+        throw new BadRequestException(`Line ${l.line_id} appears more than once in this ${event}; enter each line once with its total quantity.`);
+      }
+      seen.add(l.line_id);
+    }
   }
 
   /** Cumulative received quantity per transfer line, from the event rows. */
