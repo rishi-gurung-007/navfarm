@@ -4508,8 +4508,11 @@ export const requisitionLineBatch = mysqlTable('requisition_line_batch', {
   // its own column now — batch_id holds only the genuine batch_header PK
   // (previously a `<batch_id>:<stage_id>` composite that was 73 chars wide
   // and never a real FK target, so every write for such a batch failed with
-  // ER_DATA_TOO_LONG). Nullable: a BATCH_WISE breakdown row has no stage
-  // group of its own.
+  // ER_DATA_TOO_LONG). Every row written since 0145 carries its stage group's
+  // identity stage (the batch's starting stage in the window — for a
+  // BATCH_WISE batch, its own stage); NULL only on rows written before 0145.
+  // (The 0145 SQL comment says "NULL for a BATCH_WISE row" — wrong, but that
+  // file is applied and is not edited.)
   stage_id: varchar('stage_id', { length: 36 }),
   shed_id: varchar('shed_id', { length: 36 }),
   heads: int('heads'),
