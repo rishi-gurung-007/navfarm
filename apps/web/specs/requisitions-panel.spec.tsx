@@ -201,7 +201,10 @@ describe('RequisitionsPanel (D26)', () => {
   });
 
   it('asks for remarks when a line carries an item exception, even with no deviation or date change (Requisition row 36)', async () => {
-    const exceptionedView = { ...view, lines: [{ ...view.lines[0], exception_reason: 'Vet instruction' }, view.lines[1]] };
+    // M2: the API only ever sets exception_reason when item_id differs from required_item_id
+    // (feed-requisition.service.ts ~1105-1119) — item_id must actually differ here too, or this
+    // fixture asserts a state the real producer can never emit.
+    const exceptionedView = { ...view, lines: [{ ...view.lines[0], item_id: 'r3', item_code: 'FEED-R3', exception_reason: 'Vet instruction' }, view.lines[1]] };
     get.mockImplementation(async (url: string) => (url.startsWith('/feed-requisition/') ? { data: exceptionedView } : { data: [listRow] }));
     post.mockImplementation(async (url: string) =>
       url === '/feed-requisition/auto-draft' ? { data: { requisitionId: 'req-1', requisition: exceptionedView } } : { data: { ...exceptionedView, status: 'PENDING_APPROVAL', approval_request_id: 'ar-1' } });
@@ -242,6 +245,27 @@ describe('RequisitionsPanel (D26)', () => {
     await waitFor(() => expect(put).toHaveBeenCalledWith('/feed-requisition/req-1', {
       remarks: '', lines: [{ line_id: 'L1', destination_location_id: 'silo-3', item_id: 'r2', exception_reason: 'Vet instruction' }],
     }));
+  });
+
+  it('warns before Submit that remarks are needed as soon as an unsaved edit turns a line into an item exception, not only after a prior Save (M2)', async () => {
+    const options = {
+      destinations: [{ location_id: 'silo-1', location_code: 'VIL100/SILO-001', location_type: 'SILO' }],
+      items: [{ item_id: 'r1', item_code: 'FEED-R1', item_name: 'Weaner Diet R1' }, { item_id: 'r3', item_code: 'FEED-R3', item_name: 'Weaner Diet R3' }],
+    };
+    get.mockImplementation(async (url: string) =>
+      url.startsWith('/feed-requisition/options') ? { data: options } : url.startsWith('/feed-requisition/') ? { data: view } : { data: [listRow] });
+    render(<RequisitionsPanel />);
+    fireEvent.click(await screen.findByRole('button', { name: 'rqDraftFromForecast' }));
+    await screen.findByText('REQ-VIL100-2026-00004', { selector: 'h2' });
+    // Before the edit: line 10000's item_id ('r1') matches its required_item_id, no exception.
+    expect((screen.getByRole('button', { name: 'rqSubmit' }) as HTMLButtonElement).disabled).toBe(false);
+    // The API decides itemException AFTER applying edits (feed-requisition.service.ts ~1105-1119),
+    // so the pre-click warning must react to this unsaved edit, not wait for a Save round-trip.
+    fireEvent.change(await screen.findByLabelText('rqdItemFor:{"line":10000}'), { target: { value: 'r3' } });
+    expect(screen.getByText(/rqRemarksWhyException/)).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'rqSubmit' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText('rqdRemarks'), { target: { value: 'Vet instruction on record' } });
+    expect((screen.getByRole('button', { name: 'rqSubmit' }) as HTMLButtonElement).disabled).toBe(false);
   });
 
   it('shows an error with a retry when the farm list could not be read (Plan S follow-up)', async () => {

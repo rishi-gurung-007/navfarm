@@ -158,6 +158,23 @@ export function requestedKgOf(line: FeedRequisitionLine, edit: FeedLineEdit | un
   return edit?.quantity !== undefined ? Number(edit.quantity) : Number(line.quantity);
 }
 
+/**
+ * M2 (final whole-branch review): Requisition row 13 — an item the lifecycle row
+ * does not require is an exception and needs a reason. The item as the farm
+ * currently has it — its edit if any, else the stored item — because the API
+ * decides this AFTER applying edits (feed-requisition.service.ts ~1105-1119,
+ * same requiredItemId/itemId comparison). The persisted `line.exception_reason`
+ * reflects only the last SAVE, not an edit still open in the browser, so
+ * callers that need to know whether submitting NOW will require remarks must
+ * use this — not `!!line.exception_reason` — or a farm that changes an item,
+ * types a reason and submits without header remarks gets a 400 the pre-click
+ * warning never mentioned.
+ */
+export function isLineExceptioned(line: FeedRequisitionLine, edit: FeedLineEdit | undefined): boolean {
+  const itemId = edit?.itemId ?? line.item_id ?? "";
+  return !!line.required_item_id && !!itemId && itemId !== line.required_item_id;
+}
+
 export function FeedRequisitionDocument({
   view,
   editable,
@@ -264,7 +281,7 @@ export function FeedRequisitionDocument({
                 const itemCode = chosenItem?.item_code ?? line.item_code;
                 const itemDescription = chosenItem?.item_name ?? line.item_description;
                 // Requisition row 13: an item the lifecycle row does not require is an exception and needs a reason.
-                const isException = !!line.required_item_id && !!itemId && itemId !== line.required_item_id;
+                const isException = isLineExceptioned(line, edit);
                 // Review finding (Important 3, Task 9): a silo/item change blanks the forecast-derived
                 // columns rather than carrying the old silo's figures (system_balance_kg is the tell).
                 // exceeds_silo_capacity can't itself be null (NOT NULL), so without this check a stale

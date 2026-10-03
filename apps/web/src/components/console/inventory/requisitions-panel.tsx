@@ -34,7 +34,7 @@ import { getForecastWindow } from "./feed-forecast-window";
 import { FeedFarmSelect, feedFarmLabel } from "./feed-farm-select";
 import { PRIORITY_LABEL, REQ_STATUS_LABEL, REQ_TYPE_LABEL, labelOf, variantOf } from "./requisition-labels";
 import {
-  FeedRequisitionDocument, requestedKgOf,
+  FeedRequisitionDocument, isLineExceptioned, requestedKgOf,
   type FeedLineEdit, type FeedRequisitionDocumentView, type FeedRequisitionLine, type FeedRequisitionOptions,
 } from "./feed-requisition-document";
 import { RequisitionNewDialog } from "./requisition-new-dialog";
@@ -241,7 +241,10 @@ export function FeedRequisitionPanel() {
   const dateOf = (l: FeedRequisitionLine) => edits[l.line_id]?.date ?? l.proposed_delivery_date ?? "";
   const moved = lines.filter((l) => !!l.recommended_delivery_date && dateOf(l) !== l.recommended_delivery_date);
   // Requisition row 36: Remarks are also required on an item exception (the API checks it at submit, approvalProblems).
-  const exceptioned = lines.filter((l) => !!l.exception_reason);
+  // M2: derived the way the document does (edited item vs required_item_id), not from the
+  // PERSISTED exception_reason — the API decides this AFTER applying edits, so a farm that
+  // changes an item and submits in the same action must see the warning before it submits.
+  const exceptioned = lines.filter((l) => isLineExceptioned(l, edits[l.line_id]));
   const late = !!selected?.submission_deadline && todayIso() > selected.submission_deadline;
   // 9d F2: which causes, on which lines — so the error can say so rather than naming a fixed two.
   const remarksError = editable && !remarks.trim()
