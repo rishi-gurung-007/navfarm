@@ -571,7 +571,7 @@ export interface SiloStatusRow extends SiloFact {
   ```ts
   describe('Tenant migration 0146 — drop feed-era columns (3 Oct ruling 6; re-sited from 0142, I3)', () => {
     it('is journalled at idx 146', () => {
-      expect(journal().find((e) => e.idx === 146)).toEqual({ idx: 146, version: '5', when: 1792000000015, tag: '0146_drop_feed_era_columns', breakpoints: true });
+      expect(journal().find((e) => e.idx === 146)).toEqual({ idx: 146, version: '5', when: <RE-DERIVE: must exceed the newest applied when — 0147 is 1792000000016, so e.g. 1792000000017>, tag: '0146_drop_feed_era_columns', breakpoints: true });
     });
     it('drops only the feed-era columns and keeps the pre-feed ones', () => {
       const sql = statements('0146_drop_feed_era_columns');
@@ -590,7 +590,7 @@ export interface SiloStatusRow extends SiloFact {
   ```
 
   Run → FAIL, then write the SQL (breakpoints between statements), journal entry
-  `{ "idx": 146, "version": "5", "when": 1792000000015, "tag": "0146_drop_feed_era_columns", "breakpoints": true }`,
+  `{ "idx": 146, "version": "5", "when": <RE-DERIVE: must exceed the newest applied when — 0147 is 1792000000016, so e.g. 1792000000017>, "tag": "0146_drop_feed_era_columns", "breakpoints": true }`,
   delete the columns from `schema.ts`. Confirm nothing references them:
   `grep -rn -E "feed_refill_buffer_days|feed_lead_time_days|feed_bulk_multiple_kg|feed_bag_size_kg|feed_truck_target_kg|feed_production_weekday|required_on_date" apps/api/src apps/web/src --include=*.ts --include=*.tsx | grep -v drizzle/tenant`
   → no output. Seed scripts that write them (`scripts/lib/seed-demo-detail.ts`, `seed-four-farm-feed-demo.ts`)
