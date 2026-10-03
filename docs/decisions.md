@@ -2443,3 +2443,35 @@ the visual run-down date just does not appear.
 All engine tests, service tests and web grid tests were re-pinned to the new
 semantics in commit `22b9bede` on `feat/feed-forecast-requisition-integration`.
 
+## 2026-10-02 — Feed Forecast grid date columns, run-down date formula, clean data (no dashes), and internal BC fulfilment
+
+Rishi's rulings, confirmed 2026-10-02:
+
+1. **Feed Forecast Grid Layout:** Dates must not appear in different rows. Dates must be in the same row as horizontal columns (dynamic date pivot columns across the top). Each (batch, item, shed) is a single unified row.
+2. **Run Down Date Formula:** Run-down date is calculated from `Total Stock / Total Daily Consumption` (Days of Feed = Total Stock / Total Daily Consumption; Run Down Date = Planning Date + Days of Feed).
+3. **Clean Data (No dashes):** Eliminate all placeholder dashes (`-`, `—`) from the Feed Forecast grid and related UI. Always display real, proper data (e.g. `0.00`, `0`, valid dates, or clean text).
+4. **Internal Fulfilment for Business Central Requirements:** Build everything internally for the Business Central (BC) scope within NAVFarm. Do not leave out Mill Consolidation, Transfer Orders (TO), Vehicle Loading/Dispatch, and TO Receipts merely because external BC is not yet connected. Build the full internal pipeline in NAVFarm, structured with an integration toggle (`INTERNAL` vs `BC`) so that when BC is connected in the future, the user has the choice to use either Internal or BC fulfilment.
+
+
+## 2026-10-03 — Feed TDD workbook governs feed; in-house mill pipeline
+
+Rishi's rulings, given section by section on 2026-10-03 while reviewing
+`NAVFarm_Feed forecast TDD with examples (1).xlsx`. Design:
+`docs/superpowers/specs/2026-10-03-feed-tdd-alignment-and-inhouse-mill-design.md`.
+
+1. **The feed TDD workbook governs feed.** Where it conflicts with an earlier feed ruling, the
+   workbook wins; behaviour it does not describe is dropped.
+2. **Safety stock is separate, default 0.** Shortfall = demand + safety stock − opening −
+   confirmed incoming. Supersedes Q3 (low level inside the shortfall). Reason: the Worked Example
+   has Below Feed Level 1,000 KG and still orders R2 9,000 KG ("Buffer zero").
+3. **Run-down date = first shortage date** (Engine Step 7, Dashboard row 55). Supersedes
+   2026-10-02 ruling 2 (stock ÷ daily use), which the workbook calls indicative only.
+4. **In-house only, no In-house/BC selector.** Amends 2026-10-02 ruling 4: the mill pipeline is
+   built in NAVFarm; documents keep stable IDs and `integration_status = NOT_APPLICABLE` for a
+   later connector. No outbox, no simulated BC state.
+5. **Mill stock in-house comes from a Production Output Entry** (diet, KG, bin, date), without
+   raw-material consumption.
+6. **Removal stops at pre-feed fields.** Feed-era fields absent from the workbook are removed;
+   fields that existed before 25 Sep (`silo_reorder_days`, `feed_wastage_pct`) stay but the
+   forecast no longer uses them.
+7. 2026-10-02 rulings 1 (date columns) and 3 (no dashes) stand.
