@@ -98,18 +98,21 @@ function setup(queues: Map<unknown, unknown[][]>) {
   const { db, log } = recordingDb(queues, () => ref.cls);
   const cls = (ref.cls = transactionCls(db));
   const approvals = new ApprovalService(cls, new AuditLogService(cls), {} as any);
-  const service = new RequisitionService(cls, approvals);
+  // Part E: a Store release asks the (required) transfer service to create the
+  // transfer; a Purchase release never calls it (asserted per-test below).
+  const stockTransfers = { create: jest.fn().mockResolvedValue({ transfer_id: 'tr-1', transfer_no: 'TR-000001' }) };
+  const service = new RequisitionService(cls, approvals, stockTransfers as any);
   service.onModuleInit();
   const as = <T>(scope: FarmScope, work: () => Promise<T>) => cls.run(async () => { cls.set(FARM_SCOPE_KEY, scope); return work(); });
   const writes = () => log.filter((e) => e.op !== 'select');
-  return { service, approvals, as, writes, log };
+  return { service, approvals, as, writes, log, stockTransfers };
 }
 
 describe('common requisition release — approval never implies release', () => {
   it('releases an approved Store requisition to TRANSFER_OPEN and records who released it', async () => {
     const { service, as, writes } = setup(new Map<unknown, unknown[][]>([
       [schema.requisition, [[STORE_ROW], [RELEASED_STORE_VIEW]]],
-      [schema.requisitionLine, [[LINES]]],
+      [schema.requisitionLine, [LINES, LINES]],
       [schema.locationMaster, [[{ location_id: 'loc-store', location_code: 'STR-01', location_name: 'Main Store' }]]],
       [schema.userRoleAssignment, [[{ moduleCode: 'PROCUREMENT', resource: 'REQUISITION', canApprove: true }]]],
     ]));
@@ -133,7 +136,7 @@ describe('common requisition release — approval never implies release', () => 
   it('refuses to release a document that is not approved — including an open or rejected one', async () => {
     const { service, as, writes } = setup(new Map<unknown, unknown[][]>([
       [schema.requisition, [[{ ...STORE_ROW, status: 'DRAFT', approval_status: 'OPEN', document_status: 'OPEN' }]]],
-      [schema.requisitionLine, [[LINES]]],
+      [schema.requisitionLine, [LINES]],
     ]));
     await expect(as(STORE_SCOPE, () => service.release('req-1', 'tenant-1', PROCUREMENT)))
       .rejects.toThrow('must be approved before it can be released');
@@ -143,7 +146,7 @@ describe('common requisition release — approval never implies release', () => 
   it('refuses a second release of an already released document', async () => {
     const { service, as, writes } = setup(new Map<unknown, unknown[][]>([
       [schema.requisition, [[{ ...STORE_ROW, document_status: 'RELEASED', released_by: 'u-proc' }]]],
-      [schema.requisitionLine, [[LINES]]],
+      [schema.requisitionLine, [LINES]],
     ]));
     await expect(as(STORE_SCOPE, () => service.release('req-1', 'tenant-1', PROCUREMENT)))
       .rejects.toThrow('already released');
@@ -153,7 +156,7 @@ describe('common requisition release — approval never implies release', () => 
   it('refuses to release a cancelled document', async () => {
     const { service, as, writes } = setup(new Map<unknown, unknown[][]>([
       [schema.requisition, [[{ ...STORE_ROW, status: 'CANCELLED', document_status: 'CANCELLED' }]]],
-      [schema.requisitionLine, [[LINES]]],
+      [schema.requisitionLine, [LINES]],
     ]));
     await expect(as(STORE_SCOPE, () => service.release('req-1', 'tenant-1', PROCUREMENT)))
       .rejects.toThrow(BadRequestException);
@@ -165,7 +168,7 @@ describe('common requisition release — authorization (decisions, 1 Oct)', () =
   it('a Purchase release is Procurement business: another user is refused', async () => {
     const { service, as, writes } = setup(new Map<unknown, unknown[][]>([
       [schema.requisition, [[PURCHASE_ROW]]],
-      [schema.requisitionLine, [[LINES]]],
+      [schema.requisitionLine, [LINES]],
     ]));
     await expect(as(STORE_SCOPE, () => service.release('req-po', 'tenant-1', REQUESTER)))
       .rejects.toThrow(ForbiddenException);
@@ -175,7 +178,7 @@ describe('common requisition release — authorization (decisions, 1 Oct)', () =
   it('a Purchase release records BC_PENDING and never claims a sync', async () => {
     const { service, as, writes } = setup(new Map<unknown, unknown[][]>([
       [schema.requisition, [[PURCHASE_ROW], [{ ...PURCHASE_ROW, document_status: 'RELEASED', integration_status: 'BC_PENDING', released_by: 'u-proc' }]]],
-      [schema.requisitionLine, [[LINES]]],
+      [schema.requisitionLine, [LINES]],
       [schema.userRoleAssignment, [[{ moduleCode: 'PROCUREMENT', resource: 'REQUISITION', canApprove: true }]]],
     ]));
     const result = await as(STORE_SCOPE, () => service.release('req-po', 'tenant-1', PROCUREMENT));
@@ -188,7 +191,7 @@ describe('common requisition release — authorization (decisions, 1 Oct)', () =
   it('a Store release is refused to a user from another department (decisions: the sender department releases)', async () => {
     const { service, as, writes } = setup(new Map<unknown, unknown[][]>([
       [schema.requisition, [[STORE_ROW]]],
-      [schema.requisitionLine, [[LINES]]],
+      [schema.requisitionLine, [LINES]],
       [schema.userMaster, [[{ user_id: 'u-other', department_id: 'cc-2' }]]],
     ]));
     await expect(as(STORE_SCOPE, () => service.release('req-1', 'tenant-1', { ...REQUESTER, userId: 'u-other' })))
@@ -199,7 +202,7 @@ describe('common requisition release — authorization (decisions, 1 Oct)', () =
   it('a Store release passes for a user of the sender department', async () => {
     const { service, as } = setup(new Map<unknown, unknown[][]>([
       [schema.requisition, [[STORE_ROW], [RELEASED_STORE_VIEW]]],
-      [schema.requisitionLine, [[LINES]]],
+      [schema.requisitionLine, [LINES, LINES]],
       [schema.locationMaster, [[{ location_id: 'loc-store', location_code: 'STR-01', location_name: 'Main Store' }]]],
       [schema.userMaster, [[{ user_id: 'u-req', department_id: 'cc-1' }]]],
     ]));
@@ -210,7 +213,7 @@ describe('common requisition release — authorization (decisions, 1 Oct)', () =
   it('a Store release without a sender department falls back to the requisition create permission', async () => {
     const { service, as } = setup(new Map<unknown, unknown[][]>([
       [schema.requisition, [[{ ...STORE_ROW, sender_department_id: null }], [RELEASED_STORE_VIEW]]],
-      [schema.requisitionLine, [[LINES]]],
+      [schema.requisitionLine, [LINES, LINES]],
       [schema.locationMaster, [[{ location_id: 'loc-store', location_code: 'STR-01', location_name: 'Main Store' }]]],
       [schema.userRoleAssignment, [[{ moduleCode: 'PROCUREMENT', resource: 'REQUISITION', canCreate: true }]]],
     ]));
@@ -219,11 +222,43 @@ describe('common requisition release — authorization (decisions, 1 Oct)', () =
   });
 });
 
+describe('common requisition release — Part E: Store release creates its stock transfer (decisions 1 Oct)', () => {
+  it('a Store release creates the linked transfer with one line per requisition line and records it', async () => {
+    const { service, as, writes, stockTransfers } = setup(new Map<unknown, unknown[][]>([
+      // queue: locked row (APPROVED Store, from 'loc-store' to 'loc-farm'), its
+      // lines (consumed once for the transfer plan, once by findOne's read-back).
+      [schema.requisition, [[STORE_ROW], [RELEASED_STORE_VIEW]]],
+      [schema.requisitionLine, [LINES, LINES]],
+      [schema.locationMaster, [[{ location_id: 'loc-store', location_code: 'STR-01', location_name: 'Main Store' }]]],
+      [schema.userRoleAssignment, [[{ moduleCode: 'PROCUREMENT', resource: 'REQUISITION', canApprove: true }]]],
+    ]));
+    await as(STORE_SCOPE, () => service.release('req-1', 'tenant-1', PROCUREMENT));
+    expect(stockTransfers.create).toHaveBeenCalledWith(expect.objectContaining({
+      company_id: 'co-1', from_warehouse_id: 'loc-store', to_warehouse_id: 'loc-farm',
+      lines: [expect.objectContaining({ item_id: 'i1', quantity: 10, uom: 'EA', requisition_line_id: 'l1' })],
+    }), 'tenant-1', expect.anything());
+    const set = writes().find((e) => e.op === 'update')!.set;
+    expect(set).toMatchObject({ document_status: 'RELEASED', fulfilment_status: 'TRANSFER_OPEN', linked_transfer_id: 'tr-1' });
+  });
+
+  it('a Purchase release creates no transfer', async () => {
+    const { service, as, writes, stockTransfers } = setup(new Map<unknown, unknown[][]>([
+      [schema.requisition, [[PURCHASE_ROW], [{ ...PURCHASE_ROW, document_status: 'RELEASED', integration_status: 'BC_PENDING', released_by: 'u-proc' }]]],
+      [schema.requisitionLine, [[LINES]]],
+      [schema.userRoleAssignment, [[{ moduleCode: 'PROCUREMENT', resource: 'REQUISITION', canApprove: true }]]],
+    ]));
+    await as(STORE_SCOPE, () => service.release('req-po', 'tenant-1', PROCUREMENT));
+    expect(stockTransfers.create).not.toHaveBeenCalled();
+    const set = writes().find((e) => e.op === 'update')!.set;
+    expect(set).toMatchObject({ integration_status: 'BC_PENDING' });
+  });
+});
+
 describe('common requisition reopen — a rejected document returns to Open for correction', () => {
   it('moves REJECTED back to OPEN without touching the decided approval request', async () => {
     const { service, as, writes } = setup(new Map<unknown, unknown[][]>([
       [schema.requisition, [[{ ...STORE_ROW, status: 'REJECTED', approval_status: 'REJECTED', document_status: 'OPEN' }], [{ ...STORE_ROW, status: 'DRAFT', approval_status: 'OPEN', document_status: 'OPEN', approval_request_id: null }]]],
-      [schema.requisitionLine, [[LINES]]],
+      [schema.requisitionLine, [LINES]],
     ]));
     const result = await as(STORE_SCOPE, () => service.reopen('req-1', 'tenant-1', REQUESTER));
     expect(result.status).toBe('DRAFT');
@@ -235,7 +270,7 @@ describe('common requisition reopen — a rejected document returns to Open for 
   it('refuses to reopen anything that is not rejected', async () => {
     const { service, as, writes } = setup(new Map<unknown, unknown[][]>([
       [schema.requisition, [[STORE_ROW]]],
-      [schema.requisitionLine, [[LINES]]],
+      [schema.requisitionLine, [LINES]],
     ]));
     await expect(as(STORE_SCOPE, () => service.reopen('req-1', 'tenant-1', REQUESTER)))
       .rejects.toThrow('Only a rejected requisition can be reopened.');
@@ -249,7 +284,7 @@ describe('common requisition submit and decide — the Task 8 state dimensions m
     const legacyDraft = { ...LEGACY_PENDING_ROW, status: 'DRAFT', approval_request_id: null, source: 'MANUAL_ENTRY' };
     const { service, as, log } = setup(new Map<unknown, unknown[][]>([
       [schema.requisition, [[legacyDraft], [{ ...legacyDraft, status: 'PENDING_APPROVAL', approval_status: 'PENDING_APPROVAL', approval_request_id: 'ar-1' }]]],
-      [schema.requisitionLine, [[LINES]]],
+      [schema.requisitionLine, [LINES]],
       [schema.locationMaster, [[{ location_id: 'farm-1', location_code: 'FRM-1', location_name: 'Farm' }]]],
       [schema.approvalRequest, [[]]],
       [schema.operationalAreaMaster, [[{ area_id: 'area-1' }, { area_id: 'area-2' }]]],
@@ -265,7 +300,7 @@ describe('common requisition submit and decide — the Task 8 state dimensions m
     // COMPANY_ADMIN: an admin user type, still refused on their own manual document.
     const { service, as, writes } = setup(new Map<unknown, unknown[][]>([
       [schema.requisition, [[PENDING_ROW], [{ ...PENDING_ROW, status: 'APPROVED', approval_status: 'APPROVED', document_status: 'APPROVED' }]]],
-      [schema.requisitionLine, [[LINES]]],
+      [schema.requisitionLine, [LINES]],
       [schema.userRoleAssignment, [[{ moduleCode: 'PROCUREMENT', resource: 'REQUISITION', canApprove: true }]]],
     ]));
     await expect(as(STORE_SCOPE, () => service.decide('req-1', {}, 'APPROVED', 'tenant-1', REQUESTER)))
@@ -283,7 +318,7 @@ describe('common requisition submit and decide — the Task 8 state dimensions m
         [{ ...PENDING_ROW, created_by: 'u-other' }],
         [{ ...PENDING_ROW, status: 'APPROVED', approval_status: 'APPROVED', document_status: 'APPROVED', updated_by: 'u-approver' }],
       ]],
-      [schema.requisitionLine, [[LINES]]],
+      [schema.requisitionLine, [LINES]],
       [schema.approvalRequest, [[PENDING_REQUEST], [{ ...PENDING_REQUEST, status: 'APPROVED' }]]],
       [schema.userRoleAssignment, [[{ moduleCode: 'PROCUREMENT', resource: 'REQUISITION', canApprove: true }]]],
     ]));
@@ -295,7 +330,7 @@ describe('common requisition submit and decide — the Task 8 state dimensions m
   it('keeps refusing decisions on a non-pending document', async () => {
     const { service, as, writes } = setup(new Map<unknown, unknown[][]>([
       [schema.requisition, [[STORE_ROW]]],
-      [schema.requisitionLine, [[LINES]]],
+      [schema.requisitionLine, [LINES]],
     ]));
     await expect(as(STORE_SCOPE, () => service.decide('req-1', {}, 'APPROVED', 'tenant-1', PROCUREMENT)))
       .rejects.toThrow('not awaiting approval');

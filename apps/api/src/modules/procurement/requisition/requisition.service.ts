@@ -29,6 +29,7 @@ import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { farmScope, assertCompanyInScope, assertLocationOnActiveFarm } from '../../../common/farm-scope';
 import { userHasPermission } from '../../../common/permissions';
 import { ApprovalService } from '../../production/approval/approval.service';
+import { StockTransferService } from '../../inventory/stock-transfer/stock-transfer.service';
 import * as schema from '../../../core/database/schema';
 import { CreateRequisitionDto, DecideRequisitionDto, UpdateRequisitionDto } from './dto/requisition.dto';
 import { assertDepartmentIdentity, DEPARTMENT_COST_CENTER_TYPE } from '../../../common/department-identity';
@@ -46,6 +47,7 @@ import {
   releaseTransition,
   type RequisitionPurpose,
   reopenTransition,
+  transferPlanFor,
 } from './requisition.rules';
 
 const REQUISITION_MODULE = { moduleCode: 'PROCUREMENT', resource: 'REQUISITION' } as const;
@@ -61,6 +63,12 @@ export class RequisitionService {
   constructor(
     private readonly cls: ClsService,
     private readonly approvals: ApprovalService,
+    // Part E: a Store release creates its transfer through the transfer
+    // service, not a second writer. Required — not @Optional() — so a
+    // mis-wired module fails loudly at boot instead of releasing Store
+    // requisitions with no transfer created (ruling, 4 Oct: see Part A
+    // Task 4 for the identical call on an @Optional() settings service).
+    private readonly stockTransfers: StockTransferService,
   ) {}
 
   private get db(): MySql2Database<typeof schema> {
@@ -665,10 +673,42 @@ export class RequisitionService {
         await this.assertReleaseStore(row, userPayload);
       }
       const transition = releaseTransition({ ...row, purpose: row.purpose });
+      // Part E (decisions 1 Oct: "Store release starts an internal transfer"):
+      // a released Store requisition has nothing to ship against unless its
+      // transfer exists too, so the transfer is created here, inside this same
+      // withTenantTransaction block. StockTransferService.create() wraps its
+      // own work in withTenantTransaction, which (common/tenant-transaction.ts)
+      // detects the already-open 'tenantPostingTransaction' CLS flag and joins
+      // this transaction instead of opening a second one — so a failure in
+      // either write rolls back both; there is no window where one commits
+      // without the other.
+      let linkedTransferId: string | null = row.linked_transfer_id ?? null;
+      if (row.purpose !== 'PURCHASE') {
+        const lines = await this.db
+          .select({
+            line_id: schema.requisitionLine.line_id, line_seq: schema.requisitionLine.line_seq, item_id: schema.requisitionLine.item_id,
+            quantity: schema.requisitionLine.quantity, uom: schema.requisitionLine.uom, qty_to_ship: schema.requisitionLine.qty_to_ship,
+            from_location_id: schema.requisitionLine.from_location_id, to_location_id: schema.requisitionLine.to_location_id,
+          })
+          .from(schema.requisitionLine)
+          .where(eq(schema.requisitionLine.requisition_id, requisitionId))
+          .orderBy(schema.requisitionLine.line_seq);
+        const plan = transferPlanFor(row, lines);
+        const transfer = await this.stockTransfers.create({
+          company_id: row.company_id,
+          posting_date: nowTs().slice(0, 10),
+          from_warehouse_id: plan.fromLocationId,
+          to_warehouse_id: plan.toLocationId,
+          remarks: `Requisition ${row.req_no}`,
+          lines: plan.lines,
+        } as any, tenantId, userPayload);
+        linkedTransferId = transfer.transfer_id;
+      }
       await this.db
         .update(schema.requisition)
         .set({
           ...transition,
+          linked_transfer_id: linkedTransferId,
           released_by: userPayload?.userId ?? null,
           released_at: nowTs(),
           updated_by: userPayload?.userId ?? null,

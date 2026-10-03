@@ -122,6 +122,7 @@ export class StockTransferService {
         lot_no: line.lot_no || null,
         serial_no: line.serial_no || null,
         remarks: line.remarks || null,
+        requisition_line_id: line.requisition_line_id ?? null,
       }))
     );
   }

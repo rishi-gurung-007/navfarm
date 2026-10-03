@@ -414,6 +414,35 @@ export function isSelfApproval(
 }
 
 /**
+ * decisions 1 Oct: "Store release starts an internal transfer." One transfer
+ * per requisition: stock_transfer has one source and one destination, so a
+ * line routed elsewhere is refused rather than silently moved between the
+ * header's locations (Review Focus 5). Quantity is the authorized to-ship
+ * target (lineBalances), never more — over-shipment stays impossible.
+ */
+export function transferPlanFor(
+  header: { from_location_id: string | null; to_location_id: string | null },
+  lines: Array<{ line_id: string; line_seq: number; item_id: string | null; quantity: unknown; uom: string; qty_to_ship?: unknown; from_location_id?: string | null; to_location_id?: string | null }>,
+) {
+  if (!header.from_location_id || !header.to_location_id) {
+    throw new BadRequestException('A Store requisition needs a source and a destination before release.');
+  }
+  const fromLocationId = header.from_location_id;
+  const toLocationId = header.to_location_id;
+  return {
+    fromLocationId,
+    toLocationId,
+    lines: lines.map((l) => {
+      if (!l.item_id) throw new BadRequestException(`Line ${l.line_seq} has no item; a Store transfer moves Item Master items only.`);
+      if ((l.from_location_id && l.from_location_id !== fromLocationId) || (l.to_location_id && l.to_location_id !== toLocationId)) {
+        throw new BadRequestException(`Line ${l.line_seq} moves between other locations than the header; one transfer has one source and one destination.`);
+      }
+      return { requisition_line_id: l.line_id, item_id: l.item_id, quantity: lineBalances(l).qty_to_ship, uom: l.uom };
+    }),
+  };
+}
+
+/**
  * Spec §6a: the lines grid is "editable while the document is open". Open
  * means approval OPEN and document OPEN; a REJECTED document is corrected only
  * after Reopen (decisions 1 Oct: "Rejected documents return to Open for

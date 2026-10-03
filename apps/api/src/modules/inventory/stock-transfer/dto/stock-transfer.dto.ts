@@ -46,6 +46,11 @@ export class StockTransferLineInput {
   @IsString()
   @IsOptional()
   remarks?: string;
+
+  @ApiProperty({ description: 'Part E: the requisition line this transfer line fulfils (set by Store release)', required: false })
+  @IsUUID()
+  @IsOptional()
+  requisition_line_id?: string;
 }
 
 export class CreateStockTransferDto {

@@ -27,6 +27,7 @@ import {
   lineBalances,
   normalizeCommonDocType,
   projectRequisitionStates,
+  transferPlanFor,
 } from './requisition.rules';
 
 const itemLine = (over: Record<string, unknown> = {}) => ({ item_id: 'item-1', quantity: 10, uom: 'KG', ...over });
@@ -329,5 +330,26 @@ describe('assertEditable — "editable while the document is open" (spec §6a)',
   });
   it('sends a feed document to its own editor', () => {
     expect(() => assertEditable(row({ doc_type: 'FEED' }))).toThrow('A feed requisition is edited from its own document (PUT /feed-requisition/:id).');
+  });
+});
+
+describe('transferPlanFor — Store release starts one internal transfer (decisions 1 Oct)', () => {
+  const header = { from_location_id: 'st', to_location_id: 'sh' };
+  const line = (over: Record<string, unknown> = {}) => ({ line_id: 'l1', line_seq: 1, item_id: 'i1', quantity: '10', uom: 'EA', qty_to_ship: '6', from_location_id: 'st', to_location_id: 'sh', ...over });
+  it('ships each line its to-ship quantity between the header locations', () => {
+    expect(transferPlanFor(header, [line()])).toEqual({ fromLocationId: 'st', toLocationId: 'sh', lines: [{ requisition_line_id: 'l1', item_id: 'i1', quantity: 6, uom: 'EA' }] });
+  });
+  it('falls back to the requested quantity on a line with no to-ship target', () => {
+    expect(transferPlanFor(header, [line({ qty_to_ship: null })]).lines[0].quantity).toBe(10);
+  });
+  it('refuses a line routed between other locations than the header', () => {
+    expect(() => transferPlanFor(header, [line({ line_seq: 2, to_location_id: 'other' })]))
+      .toThrow('Line 2 moves between other locations than the header; one transfer has one source and one destination.');
+  });
+  it('refuses a header with no source or destination', () => {
+    expect(() => transferPlanFor({ from_location_id: null, to_location_id: 'sh' }, [line()])).toThrow('A Store requisition needs a source and a destination before release.');
+  });
+  it('refuses a line without an item', () => {
+    expect(() => transferPlanFor(header, [line({ item_id: null })])).toThrow('Line 1 has no item; a Store transfer moves Item Master items only.');
   });
 });
