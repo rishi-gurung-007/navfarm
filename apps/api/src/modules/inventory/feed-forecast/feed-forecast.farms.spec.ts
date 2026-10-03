@@ -2,7 +2,7 @@ import { MySqlDialect } from 'drizzle-orm/mysql-core';
 import { transactionCls, useFarmScope } from '../../../test-utils/transaction-cls';
 import { FeedForecastService } from './feed-forecast.service';
 
-const FEED_SETTINGS_STUB = { resolve: jest.fn(async () => ({ safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50 })) } as any;
+const FEED_SETTINGS_STUB = { resolveForFeedPlanning: jest.fn(async () => ({ safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50 })) } as any;
 
 /**
  * Review A2 (27 Sep): a tenant admin in the tenant-wide workspace got an empty

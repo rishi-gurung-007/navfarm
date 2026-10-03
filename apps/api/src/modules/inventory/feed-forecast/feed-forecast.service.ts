@@ -1238,9 +1238,9 @@ export class FeedForecastService {
       // Task 4 / Task 2: safety stock (and the two other draft-rounding
       // settings the report carries) come from the company/farm's configured
       // planning settings now, never from the farm's own lead-time column.
-      // Important 4 (fix round 2): resolved through resolveFeedSettings, not
-      // directly — see that method for why.
-      const resolvedSettings = await this.resolveFeedSettings(companyId, farmId);
+      // Important 4 (fix round 2): resolved through resolveForFeedPlanning, not
+      // directly — see FeedSettingsService.resolveForFeedPlanning for why.
+      const resolvedSettings = await this.feedSettings.resolveForFeedPlanning(companyId, farmId);
       const { input: loadedInput, flags: loadFlags, stageBlocks } = await this.loadInput(farm, planningDate, from, to, tenantId, { stockDate, horizonTo, headerCutoff });
       const input: ForecastInput = { ...loadedInput, safetyStockKg: resolvedSettings.safetyStockKg };
       const { rows, flags, sources, dietChanges, daily } = buildFeedForecast(input);
@@ -1288,36 +1288,6 @@ export class FeedForecastService {
     return this.cls.run(async () => {
       this.cls.set(FARM_SCOPE_KEY, effectiveScope);
       return work();
-    });
-  }
-
-  /**
-   * Task 4 fix round 2 (Important 4, Rishi's ruling): feed settings
-   * (safety stock, bulk multiple, bag size) are company/farm-level
-   * configuration, not LOB-scoped data — unlike a batch, a shed's stock, or
-   * a requisition line, no row here carries a lob_id of its own. But
-   * FeedSettingsService.resolve() calls assertLobInScope(scope, farm.lob_id)
-   * unconditionally once a farmId is passed, and — unlike every LOB check in
-   * THIS file (locationLobConditions, just above) — that assertion has no
-   * NULL-lob_id carve-out: strict `lobId !== scope.lobId` fails closed even
-   * when the farm's lob_id is NULL, which locationLobConditions's own
-   * comment says belongs to every LOB (a farm STORE is often created
-   * without one). A restricted OPERATIONAL_ADMIN computing a forecast for
-   * such a farm would get ForbiddenException for the entire report, before
-   * any computation — a stricter rule than this file documents for itself,
-   * and one no spec caught because feedSettings is mocked everywhere.
-   *
-   * Reading outside that assertion (restricted: false, lobId: null, just
-   * for this nested call) does not meaningfully widen access: resolve()
-   * still enforces the company boundary (scope.companyId !== companyId) and
-   * the farm-company match: this only skips the one assertion that has no
-   * business being LOB-strict for configuration that isn't LOB data.
-   */
-  private async resolveFeedSettings(companyId: string, farmId: string) {
-    const scope = farmScope(this.cls);
-    return this.cls.run(async () => {
-      this.cls.set(FARM_SCOPE_KEY, { ...scope, restricted: false, lobId: null });
-      return this.feedSettings.resolve(companyId, farmId);
     });
   }
 

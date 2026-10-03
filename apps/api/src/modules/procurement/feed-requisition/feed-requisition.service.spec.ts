@@ -23,7 +23,7 @@ describe('FeedRequisitionService.createManual', () => {
     withFarmScope: jest.fn(async (_f: string, _c: string, work: () => Promise<unknown>) => work()),
     farmToday: jest.fn(async () => ({ today: serverToday(), timeZone: null })),
   };
-  const feedSettingsStub: any = { resolve: jest.fn(async () => ({ safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50, truckTargetKg: 30000, productionWeekday: 0 })) };
+  const feedSettingsStub: any = { resolveForFeedPlanning: jest.fn(async () => ({ safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50, truckTargetKg: 30000, productionWeekday: 0 })) };
   const service = new FeedRequisitionService(transactionCls(db), forecast, {} as any, { evaluateFarmSafely: jest.fn() } as any, {} as any, {} as any, feedSettingsStub);
 
   it('refuses a destination that is not an active silo or store of the farm', async () => {
@@ -168,7 +168,7 @@ function setup(sources: ForecastSource[], queues: Map<unknown, unknown[][]>, dai
   const ledger: any = { getStockBalance: jest.fn(async () => []) };
   // Task 5: FeedSettingsService.resolve() is the farm's settings now (bulk multiple, bag size, truck
   // target, production weekday, safety stock) — the fixture matches FARM_ROW's old feed_* defaults.
-  const feedSettings: any = { resolve: jest.fn(async () => ({ safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50, truckTargetKg: 30000, productionWeekday: 0 })) };
+  const feedSettings: any = { resolveForFeedPlanning: jest.fn(async () => ({ safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50, truckTargetKg: 30000, productionWeekday: 0 })) };
   const service = new FeedRequisitionService(cls, forecast, {} as any, alerts, siloFeed, ledger, feedSettings);
   return { service, log, forecast, alerts, evaluated, cls, db, siloFeed, ledger, feedSettings };
 }

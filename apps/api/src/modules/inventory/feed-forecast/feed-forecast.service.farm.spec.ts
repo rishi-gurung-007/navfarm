@@ -5,7 +5,7 @@ import * as schema from '../../../core/database/schema';
 import { FeedForecastService } from './feed-forecast.service';
 import { todayLocal } from './feed-forecast.engine';
 
-const FEED_SETTINGS_STUB = { resolve: jest.fn(async () => ({ safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50 })) } as any;
+const FEED_SETTINGS_STUB = { resolveForFeedPlanning: jest.fn(async () => ({ safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50 })) } as any;
 
 /**
  * Plan B callers (alerts, requisition auto-draft, posting hooks) reach the

@@ -26,7 +26,7 @@ describe('FeedRequisitionService.options (F3)', () => {
     withFarmScope: jest.fn(async (_f: string, _c: string, work: () => Promise<unknown>) => work()),
     farmToday: jest.fn(async () => ({ today: serverToday(), timeZone: null })),
   };
-  const feedSettingsStub: any = { resolve: jest.fn(async () => ({ safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50, truckTargetKg: 30000, productionWeekday: 0 })) };
+  const feedSettingsStub: any = { resolveForFeedPlanning: jest.fn(async () => ({ safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50, truckTargetKg: 30000, productionWeekday: 0 })) };
   const service = new FeedRequisitionService(transactionCls(db), forecast, {} as any, { evaluateFarmSafely: jest.fn() } as any, {} as any, {} as any, feedSettingsStub);
 
   beforeEach(() => {
@@ -63,7 +63,7 @@ describe('FeedRequisitionService.createManual — the item must be the farm comp
     withFarmScope: jest.fn(async (_f: string, _c: string, work: () => Promise<unknown>) => work()),
     farmToday: jest.fn(async () => ({ today: serverToday(), timeZone: null })),
   };
-  const feedSettingsStub: any = { resolve: jest.fn(async () => ({ safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50, truckTargetKg: 30000, productionWeekday: 0 })) };
+  const feedSettingsStub: any = { resolveForFeedPlanning: jest.fn(async () => ({ safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50, truckTargetKg: 30000, productionWeekday: 0 })) };
   const service = new FeedRequisitionService(transactionCls(db), forecast, {} as any, { evaluateFarmSafely: jest.fn() } as any, {} as any, {} as any, feedSettingsStub);
   const silo = { location_id: 'silo-1', location_code: 'GRS/SILO-001', location_type: 'SILO', farm_id: 'farm-grs', is_active: true, feed_in_bags: null, low_level_kg: null };
   const line = { destination_location_id: 'silo-1', item_id: 'item-x', quantity_kg: 3000, proposed_delivery_date: '2026-09-26' };

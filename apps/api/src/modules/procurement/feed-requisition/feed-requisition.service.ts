@@ -18,7 +18,7 @@ import { MySql2Database } from 'drizzle-orm/mysql2';
 import { ClsService } from 'nestjs-cls';
 import { randomUUID } from 'node:crypto';
 import * as schema from '../../../core/database/schema';
-import { FARM_SCOPE_KEY, farmScope } from '../../../common/farm-scope';
+import { farmScope } from '../../../common/farm-scope';
 import { userHasPermission } from '../../../common/permissions';
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { isDuplicateEntry } from '../../../common/filters/http-exception.filter';
@@ -163,29 +163,7 @@ export class FeedRequisitionService implements OnModuleInit {
       .where(and(eq(schema.locationMaster.location_id, farmId), eq(schema.locationMaster.tenant_id, tenantId)))
       .limit(1);
     if (!row) throw new NotFoundException('Farm not found.');
-    return { code: row.location_code, settings: toFarmFeedSettings(await this.resolveFeedSettings(companyId, farmId)) };
-  }
-
-  /**
-   * Task 4's fix round 2 (Important 4, Rishi's ruling), re-applied here: feed
-   * settings are company/farm-level configuration, not LOB-scoped data, but
-   * FeedSettingsService.resolve() calls assertLobInScope(scope, farm.lob_id)
-   * unconditionally once a farmId is passed — strict `lobId !== scope.lobId`
-   * with no NULL-lob_id carve-out, unlike every LOB check this module's own
-   * destination/source reads apply. A restricted (OPERATIONAL_ADMIN) caller
-   * acting on a farm whose lob_id is NULL (location_master.lob_id is
-   * nullable, and NULL does occur) would get ForbiddenException for the
-   * whole draft before any computation. Reading outside that one assertion
-   * (restricted: false, lobId: null, just for this nested call) does not
-   * widen access: resolve() still enforces the company boundary and the
-   * farm-company match.
-   */
-  private async resolveFeedSettings(companyId: string, farmId: string) {
-    const scope = farmScope(this.cls);
-    return this.cls.run(async () => {
-      this.cls.set(FARM_SCOPE_KEY, { ...scope, restricted: false, lobId: null });
-      return this.feedSettings.resolve(companyId, farmId);
-    });
+    return { code: row.location_code, settings: toFarmFeedSettings(await this.feedSettings.resolveForFeedPlanning(companyId, farmId)) };
   }
 
   /**

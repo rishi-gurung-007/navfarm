@@ -4,7 +4,7 @@ import { MySql2Database } from 'drizzle-orm/mysql2';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
-import { assertLobInScope, farmScope } from '../../../common/farm-scope';
+import { assertLobInScope, farmScope, FARM_SCOPE_KEY } from '../../../common/farm-scope';
 import { UpdateCompanyFeedSettingsDto, UpdateFarmFeedSettingsDto } from './dto/feed-settings.dto';
 import { resolvePlanningRules } from './feed-settings.rules';
 
@@ -16,6 +16,27 @@ export class FeedSettingsService {
     const db = this.cls.get<MySql2Database<typeof schema>>('tenantDb');
     if (!db) throw new Error('Tenant database connection context not established.');
     return db;
+  }
+
+  /**
+   * Feed settings (safety stock, bulk multiple, bag size) are company/farm-level
+   * configuration, not LOB-scoped data: no row here carries a lob_id of its own.
+   * But resolve() calls assertLobInScope(scope, farm.lob_id) unconditionally once
+   * a farmId is passed, with no NULL-lob_id carve-out (location_master.lob_id is
+   * nullable and a farm STORE is often created without one), so a restricted
+   * OPERATIONAL_ADMIN planning feed for such a farm would get a 403 for the whole
+   * forecast or draft. Planning therefore resolves with the LOB restriction
+   * neutralised for this one nested call only. This does not widen access:
+   * resolve() still enforces the company boundary (scope.companyId) and the
+   * farm-company match, and the caller's own scope is restored afterwards
+   * because cls.run gives the nested call its own context.
+   */
+  async resolveForFeedPlanning(companyId: string, farmId: string) {
+    const scope = farmScope(this.cls);
+    return this.cls.run(async () => {
+      this.cls.set(FARM_SCOPE_KEY, { ...scope, restricted: false, lobId: null });
+      return this.resolve(companyId, farmId);
+    });
   }
 
   async resolve(companyId: string, farmId?: string) {

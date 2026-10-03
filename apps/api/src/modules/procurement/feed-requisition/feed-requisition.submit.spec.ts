@@ -9,7 +9,7 @@ import { FeedForecastService } from '../../inventory/feed-forecast/feed-forecast
 import { addDaysIso, serverToday } from './feed-requisition.rules';
 import { FeedRequisitionService, isEditableFeedRequisition } from './feed-requisition.service';
 
-const FEED_SETTINGS_STUB = { resolve: jest.fn(async () => ({ safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50 })) } as any;
+const FEED_SETTINGS_STUB = { resolveForFeedPlanning: jest.fn(async () => ({ safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50 })) } as any;
 
 /**
  * D25 (Rishi, 27 Sep): the farm drafts, edits and submits a feed requisition;

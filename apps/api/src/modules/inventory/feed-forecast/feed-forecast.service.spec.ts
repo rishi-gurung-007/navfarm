@@ -16,7 +16,7 @@ import { MySqlDialect } from 'drizzle-orm/mysql-core';
 // never reach computeForFarm's real body (resolveFarm throws first, or the
 // private method under test bypasses it); FeedForecastService.feedSettings
 // is a required constructor parameter now (Important 3, fix round 2).
-const FEED_SETTINGS_STUB = { resolve: jest.fn(async () => ({ safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50 })) } as any;
+const FEED_SETTINGS_STUB = { resolveForFeedPlanning: jest.fn(async () => ({ safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50 })) } as any;
 
 // The engine has its own spec (feed-forecast.engine.spec.ts) against the
 // workbook's worked example; here it is a spy, so these tests pin only what the
@@ -56,7 +56,7 @@ describe('FeedForecastService', () => {
   let cls: ClsService;
   let loadFarm: jest.SpyInstance;
   let loadInput: jest.SpyInstance;
-  let feedSettings: { resolve: jest.Mock };
+  let feedSettings: { resolveForFeedPlanning: jest.Mock };
 
   beforeEach(async () => {
     (buildFeedForecast as jest.Mock).mockClear();
@@ -66,7 +66,7 @@ describe('FeedForecastService', () => {
     // FeedSettingsService (Task 2) now; this default stub matches the
     // documented defaults (safety stock 0, bulk multiple 3000 KG, bag size
     // 50 KG) unless a test overrides it.
-    feedSettings = { resolve: jest.fn(async () => ({ safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50 })) };
+    feedSettings = { resolveForFeedPlanning: jest.fn(async () => ({ safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50 })) };
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         FeedForecastService,
@@ -137,7 +137,7 @@ describe('FeedForecastService', () => {
     useFarmScope(cls, { farmId: 'farm-A', restricted: true, companyId: 'comp-1', lobId: 'lob-1' });
     // Task 4 Step 1: the settings stub answers a configured safety stock; it
     // must reach the engine, and the farm's old leadTimeDays key must not.
-    feedSettings.resolve.mockResolvedValueOnce({ safetyStockKg: 500, bulkMultipleKg: 3000, bagSizeKg: 50 });
+    feedSettings.resolveForFeedPlanning.mockResolvedValueOnce({ safetyStockKg: 500, bulkMultipleKg: 3000, bagSizeKg: 50 });
     const input = { planningDate: '2026-09-25', marker: 'loaded' } as unknown as ForecastInput;
     loadInput.mockResolvedValueOnce({ input, flags: [{ kind: 'BATCH_SHED_UNKNOWN', batchNo: 'B2' }], stageBlocks: [] });
     (buildFeedForecast as jest.Mock).mockReturnValueOnce({
@@ -149,7 +149,7 @@ describe('FeedForecastService', () => {
     expect(loadInput).toHaveBeenCalledWith(FARM, '2026-09-25', '2026-09-25', '2026-10-02', 'tenant-1', {
       stockDate: '2026-09-25', horizonTo: '2026-10-02', headerCutoff: '2026-09-25',
     });
-    expect(feedSettings.resolve).toHaveBeenCalledWith('comp-1', 'farm-A');
+    expect(feedSettings.resolveForFeedPlanning).toHaveBeenCalledWith('comp-1', 'farm-A');
     expect(buildFeedForecast).toHaveBeenCalledWith(expect.objectContaining({ planningDate: '2026-09-25', marker: 'loaded', safetyStockKg: 500 }));
     expect((buildFeedForecast as jest.Mock).mock.calls[0][0]).not.toHaveProperty('leadTimeDays');
     expect(result).toEqual({
@@ -206,7 +206,7 @@ describe('FeedForecastService', () => {
           { provide: AuditLogService, useValue: { log: jest.fn() } },
         // D41: the silos on Feed Planning; the report never asks it anything.
         { provide: SiloFeedService, useValue: { currentItems: jest.fn(async () => new Map()) } },
-        { provide: FeedSettingsService, useValue: { resolve: jest.fn(async () => ({ safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50 })) } },
+        { provide: FeedSettingsService, useValue: { resolveForFeedPlanning: jest.fn(async () => ({ safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50 })) } },
         ],
       }).compile();
       const lobService = module.get(FeedForecastService);
@@ -273,7 +273,7 @@ describe('FeedForecastService', () => {
             { provide: AuditLogService, useValue: { log: jest.fn() } },
         // D41: the silos on Feed Planning; the report never asks it anything.
         { provide: SiloFeedService, useValue: { currentItems: jest.fn(async () => new Map()) } },
-        { provide: FeedSettingsService, useValue: { resolve: jest.fn(async () => ({ safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50 })) } },
+        { provide: FeedSettingsService, useValue: { resolveForFeedPlanning: jest.fn(async () => ({ safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50 })) } },
           ],
         }).compile();
         const tenantService = module.get(FeedForecastService);
@@ -308,7 +308,7 @@ describe('FeedForecastService', () => {
           { provide: AuditLogService, useValue: { log: jest.fn() } },
         // D41: the silos on Feed Planning; the report never asks it anything.
         { provide: SiloFeedService, useValue: { currentItems: jest.fn(async () => new Map()) } },
-        { provide: FeedSettingsService, useValue: { resolve: jest.fn(async () => ({ safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50 })) } },
+        { provide: FeedSettingsService, useValue: { resolveForFeedPlanning: jest.fn(async () => ({ safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50 })) } },
         ],
       }).compile();
       const tenantService = module.get(FeedForecastService);
@@ -436,7 +436,7 @@ describe('FeedForecastService', () => {
             { provide: AuditLogService, useValue: { log: jest.fn() } },
         // D41: the silos on Feed Planning; the report never asks it anything.
         { provide: SiloFeedService, useValue: { currentItems: jest.fn(async () => new Map()) } },
-        { provide: FeedSettingsService, useValue: { resolve: jest.fn(async () => ({ safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50 })) } },
+        { provide: FeedSettingsService, useValue: { resolveForFeedPlanning: jest.fn(async () => ({ safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50 })) } },
           ],
         }).compile();
         const localService = module.get(FeedForecastService);
@@ -471,18 +471,18 @@ describe('FeedForecastService', () => {
 /**
  * Task 4 fix round 2, Important 4 (Rishi's ruling): feed settings are
  * company/farm-level configuration, not LOB-scoped data, so
- * computeForFarm's resolveFeedSettings reads them outside the restricted
+ * computeForFarm reads (via resolveForFeedPlanning) them outside the restricted
  * LOB assertion FeedSettingsService.resolve() otherwise applies. Unlike
  * every other spec touching this path, this one uses the REAL
  * FeedSettingsService (not a mock) over a real, non-stubbed ClsService
  * (transactionCls + cls.run/.set — useFarmScope would hide the mutation
- * resolveFeedSettings makes, the same reasoning as the 'effective farm
+ * resolveForFeedPlanning makes, the same reasoning as the 'effective farm
  * scope' spec above) so the actual assertLobInScope rule is exercised, not
  * assumed. The DB check behind this ruling: nf_devco.location_master has
  * SILO rows with lob_id NULL today and the column is nullable — one
  * data-entry away for a FARM row too.
  */
-describe('computeForFarm / resolveFeedSettings — feed settings are read outside the restricted LOB assertion (Important 4)', () => {
+describe('FeedSettingsService.resolveForFeedPlanning — feed settings are read outside the restricted LOB assertion (Important 4)', () => {
   function databaseAnswering(...answers: unknown[][]) {
     const queue = [...answers];
     const select = jest.fn(() => {
@@ -515,7 +515,7 @@ describe('computeForFarm / resolveFeedSettings — feed settings are read outsid
     });
   });
 
-  it('resolveFeedSettings reads the same farm\'s settings without the 403, and restores the caller\'s own scope afterward', async () => {
+  it('resolveForFeedPlanning reads the same farm\'s settings without the 403, and restores the caller\'s own scope afterward', async () => {
     const cls = transactionCls(dbAnswers());
     await cls.run(async () => {
       cls.set(FARM_SCOPE_KEY, RESTRICTED_SCOPE);
@@ -524,7 +524,7 @@ describe('computeForFarm / resolveFeedSettings — feed settings are read outsid
         cls, {} as any, { log: jest.fn() } as any, { currentItems: jest.fn(async () => new Map()) } as any, feedSettings,
       );
 
-      const result = await (service as any).resolveFeedSettings('co-1', 'farm-null-lob');
+      const result = await feedSettings.resolveForFeedPlanning('co-1', 'farm-null-lob');
 
       expect(result).toEqual(expect.objectContaining({ safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50 }));
       // The neutralized scope used for the nested read must not leak back out to the caller.
