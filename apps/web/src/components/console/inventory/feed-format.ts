@@ -26,3 +26,11 @@ export function addDaysIso(iso: string, days: number): string {
   date.setUTCDate(date.getUTCDate() + days);
   return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
 }
+
+/** Mirrors the API's DEFAULT_WINDOW_DAYS: the default forecast window is 7 calendar days inclusive. */
+export const DEFAULT_WINDOW_DAYS = 7;
+
+/** Last day of the default window: from + 6, since `from` is day one (Engine §5 row 67). */
+export function defaultWindowEnd(from: string): string {
+  return addDaysIso(from, DEFAULT_WINDOW_DAYS - 1);
+}

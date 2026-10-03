@@ -19,7 +19,7 @@ import { Tabs } from "@/components/ui/tabs";
 import { getActiveWorkspaceScope, getStoredUser, hasPermission } from "@/hooks/useAuth";
 import { useLanguage } from "@/hooks/useLanguage";
 import type { TranslationKeys } from "@/utils/translations";
-import { addDaysIso, formatDateShort, todayIso, unwrap } from "./feed-format";
+import { defaultWindowEnd, formatDateShort, todayIso, unwrap } from "./feed-format";
 import { FeedForecastGrid, FeedForecastStages, ReportRow, StageBlock } from "./feed-forecast-grid";
 import { FeedForecastNotes, type ForecastFlag } from "./feed-forecast-notes";
 import { businessYearStartOf, forecastQueryString, FORECAST_VIEWS, ForecastView } from "./feed-forecast-query";
@@ -192,7 +192,7 @@ export default function FeedForecastPanel() {
   // A11: what the inputs show before (and between) answers — displayed, not sent.
   const shownPlanning = planningDate || data?.planningDate || todayIso();
   const shownFrom = dateFrom || data?.from || shownPlanning;
-  const shownTo = dateTo || data?.to || addDaysIso(shownFrom, 7);
+  const shownTo = dateTo || data?.to || defaultWindowEnd(shownFrom);
   const businessYear = businessYearStartOf(shownPlanning);
   const isTenantWorkspace = getActiveWorkspaceScope() === "TENANT";
   const canSaveRun = hasPermission(getStoredUser(), "INVENTORY", "LEDGER", "can_create");
