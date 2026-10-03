@@ -1523,7 +1523,17 @@ export const translations = {
     rqYes: "Yes",
     rqNo: "No",
     rqRemarks: "Remarks",
-    rqRemarksRequired: "Add remarks: a quantity is more than 20% off the recommendation, or the deadline has passed.",
+    // 9d F2: the error names the causes actually present and the lines they are
+    // on. It used to name only the 20 % deviation and the deadline, so a moved
+    // delivery date (Req. row 29) or an item exception (row 13) was misreported.
+    rqRemarksRequired: "Add remarks: {{reasons}}.",
+    rqRemarksRequiredGeneric: "Add remarks before submitting.",
+    rqRemarksLine: "line {{lines}}",
+    rqRemarksLines: "lines {{lines}}",
+    rqRemarksWhyQuantity: "a quantity on {{lines}} is more than 20% off the recommendation",
+    rqRemarksWhyDate: "the delivery date on {{lines}} was moved off the forecast's",
+    rqRemarksWhyException: "the feed item on {{lines}} is an exception",
+    rqRemarksWhyLate: "the submission deadline has passed",
     rqSave: "Save",
     rqSubmit: "Submit for approval",
     rqSaved: "Saved.",

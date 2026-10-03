@@ -1,6 +1,6 @@
 import React from 'react';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
-import RequisitionsPanel, { needsRemarks } from '../src/components/console/inventory/requisitions-panel';
+import RequisitionsPanel, { needsRemarks, remarksRequiredMessage } from '../src/components/console/inventory/requisitions-panel';
 import { api } from '../src/services/api-client';
 import { resetForecastWindow, setForecastWindow } from '../src/components/console/inventory/feed-forecast-window';
 import { defaultWindowEnd, todayIso } from '../src/components/console/inventory/feed-format';
@@ -56,6 +56,48 @@ beforeEach(() => {
   post.mockImplementation(async (url: string) =>
     url === '/feed-requisition/auto-draft' ? { data: { requisitionId: 'req-1', requisition: view } } : { data: { ...view, status: 'PENDING_APPROVAL', approval_request_id: 'ar-1' } });
   put.mockResolvedValue({ data: view });
+});
+
+/**
+ * 9d F2 (Part A verification pass 2): the red error above Submit read "Add
+ * remarks: a quantity is more than 20% off the recommendation, or the deadline
+ * has passed" whatever the real cause, so a farm that had only moved a
+ * delivery date (Req. row 29) or set an item exception (row 13) was told the
+ * wrong reason. The text is asserted against the English dictionary itself.
+ */
+describe('remarksRequiredMessage — the error names the real causes and their lines (9d F2)', () => {
+  const dict = (jest.requireActual('../src/utils/translations') as { translations: { en: Record<string, string> } }).translations.en;
+  const t = ((key: string, vars?: Record<string, string | number>) =>
+    String(dict[key] ?? key).replace(/\{\{(\w+)\}\}/g, (m: string, n: string) => (vars && n in vars ? String(vars[n]) : m))
+  ) as Parameters<typeof remarksRequiredMessage>[0];
+  const causes = (over: Partial<{ deviating: number[]; moved: number[]; exceptioned: number[]; late: boolean }> = {}) =>
+    ({ deviating: [], moved: [], exceptioned: [], late: false, ...over });
+
+  it('names nothing when nothing requires remarks', () => {
+    expect(remarksRequiredMessage(t, causes())).toBeNull();
+  });
+
+  it('names a moved delivery date and its line (Req. row 29)', () => {
+    expect(remarksRequiredMessage(t, causes({ moved: [10000] })))
+      .toBe("Add remarks: the delivery date on line 10000 was moved off the forecast's.");
+  });
+
+  it('names an item exception and its line (Req. row 13)', () => {
+    expect(remarksRequiredMessage(t, causes({ exceptioned: [20000] })))
+      .toBe('Add remarks: the feed item on line 20000 is an exception.');
+  });
+
+  it('names a quantity deviation, the passed deadline, and several lines at once', () => {
+    expect(remarksRequiredMessage(t, causes({ deviating: [10000, 20000], late: true })))
+      .toBe('Add remarks: a quantity on lines 10000, 20000 is more than 20% off the recommendation; the submission deadline has passed.');
+  });
+
+  it('names every cause present, in the order the hint lists them', () => {
+    expect(remarksRequiredMessage(t, causes({ deviating: [10000], moved: [20000], exceptioned: [30000], late: true })))
+      .toBe("Add remarks: a quantity on line 10000 is more than 20% off the recommendation; "
+        + "the delivery date on line 20000 was moved off the forecast's; "
+        + 'the feed item on line 30000 is an exception; the submission deadline has passed.');
+  });
 });
 
 describe('needsRemarks — checkpoint 18', () => {
@@ -128,7 +170,9 @@ describe('RequisitionsPanel (D26)', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'rqDraftFromForecast' }));
     await screen.findByText('REQ-VIL100-2026-00004', { selector: 'h2' });
     fireEvent.change(screen.getByLabelText('rqdRequestedFor:{"line":10000}'), { target: { value: '9000' } });
-    expect(screen.getByText('rqRemarksRequired')).toBeTruthy();
+    // 9d F2: the error names the cause and the line it is on, not a fixed list of two causes.
+    expect(screen.getByText(/rqRemarksWhyQuantity/)).toBeTruthy();
+    expect(screen.getByText(/10000/, { selector: 'p' })).toBeTruthy();
     expect((screen.getByRole('button', { name: 'rqSubmit' }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.change(screen.getByLabelText('rqdRemarks'), { target: { value: 'Extra pigs arriving' } });
     fireEvent.click(screen.getByRole('button', { name: 'rqSubmit' }));
@@ -146,9 +190,11 @@ describe('RequisitionsPanel (D26)', () => {
     render(<RequisitionsPanel />);
     fireEvent.click(await screen.findByRole('button', { name: 'rqDraftFromForecast' }));
     await screen.findByText('REQ-VIL100-2026-00004', { selector: 'h2' });
-    expect(screen.queryByText('rqRemarksRequired')).toBeNull();
+    expect(screen.queryByText(/rqRemarksRequired/)).toBeNull();
     fireEvent.change(screen.getByLabelText('rqdDeliveryFor:{"line":10000}'), { target: { value: '2099-09-30' } });
-    expect(screen.getByText('rqRemarksRequired')).toBeTruthy();
+    // 9d F2: the moved date is named — pass 2 found this case told the farm about the 20 % rule instead.
+    expect(screen.getByText(/rqRemarksWhyDate/)).toBeTruthy();
+    expect(screen.queryByText(/rqRemarksWhyQuantity/)).toBeNull();
     expect((screen.getByRole('button', { name: 'rqSubmit' }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.change(screen.getByLabelText('rqdRemarks'), { target: { value: 'Mill asked for a later slot' } });
     expect((screen.getByRole('button', { name: 'rqSubmit' }) as HTMLButtonElement).disabled).toBe(false);
@@ -162,7 +208,8 @@ describe('RequisitionsPanel (D26)', () => {
     render(<RequisitionsPanel />);
     fireEvent.click(await screen.findByRole('button', { name: 'rqDraftFromForecast' }));
     await screen.findByText('REQ-VIL100-2026-00004', { selector: 'h2' });
-    expect(screen.getByText('rqRemarksRequired')).toBeTruthy();
+    // 9d F2: the item exception is named (Req. row 13).
+    expect(screen.getByText(/rqRemarksWhyException/)).toBeTruthy();
     expect((screen.getByRole('button', { name: 'rqSubmit' }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.change(screen.getByLabelText('rqdRemarks'), { target: { value: 'Vet instruction on record' } });
     expect((screen.getByRole('button', { name: 'rqSubmit' }) as HTMLButtonElement).disabled).toBe(false);

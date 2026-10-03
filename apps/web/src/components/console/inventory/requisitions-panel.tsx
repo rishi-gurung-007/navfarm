@@ -26,6 +26,7 @@ import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
 import { ScrollTable } from "@/components/ui/scroll-table";
 import { useLanguage } from "@/hooks/useLanguage";
+import type { TranslationKeys } from "@/utils/translations";
 import { cn } from "@/lib/utils";
 import { formatDateShort } from "@/utils/date-short";
 import { defaultWindowEnd, todayIso, unwrap } from "./feed-format";
@@ -60,6 +61,40 @@ export function needsRemarks(recommended: number | null, requested: number): boo
   if (recommended === null) return false;
   if (recommended <= 0) return requested > 0;
   return Math.abs(requested - recommended) / recommended > 0.2 + 1e-9;
+}
+
+/**
+ * The error shown above Submit (9d F2). It used to be one fixed sentence
+ * naming the 20 % deviation and the deadline, so a farm whose only trigger was
+ * a moved delivery date (Req. row 29) or an item exception (row 13) was told
+ * the wrong reason — Part A verification pass 2. Every cause actually present
+ * is named, with the lines it is on, in the order rqdRemarksHint lists them.
+ * The API refuses the submit with its own per-line message (approvalProblems);
+ * this says so before the click.
+ */
+export interface RemarksCauses {
+  /** line_seq of each line whose quantity is more than 20 % off the recommendation. */
+  deviating: number[];
+  /** line_seq of each line whose delivery date was moved off the forecast's. */
+  moved: number[];
+  /** line_seq of each line carrying an item exception. */
+  exceptioned: number[];
+  /** The submission deadline has passed. */
+  late: boolean;
+}
+
+export function remarksRequiredMessage(
+  t: (key: TranslationKeys, vars?: Record<string, string | number>) => string,
+  causes: RemarksCauses,
+): string | null {
+  const lines = (seqs: number[]) => t(seqs.length > 1 ? "rqRemarksLines" : "rqRemarksLine", { lines: seqs.join(", ") });
+  const reasons: string[] = [];
+  if (causes.deviating.length) reasons.push(t("rqRemarksWhyQuantity", { lines: lines(causes.deviating) }));
+  if (causes.moved.length) reasons.push(t("rqRemarksWhyDate", { lines: lines(causes.moved) }));
+  if (causes.exceptioned.length) reasons.push(t("rqRemarksWhyException", { lines: lines(causes.exceptioned) }));
+  if (causes.late) reasons.push(t("rqRemarksWhyLate"));
+  if (!reasons.length) return null;
+  return t("rqRemarksRequired", { reasons: reasons.join("; ") });
 }
 
 /** D25: what the farm may still change — mirrors isEditableFeedRequisition in the API. */
@@ -208,7 +243,14 @@ export function FeedRequisitionPanel() {
   // Requisition row 36: Remarks are also required on an item exception (the API checks it at submit, approvalProblems).
   const exceptioned = lines.filter((l) => !!l.exception_reason);
   const late = !!selected?.submission_deadline && todayIso() > selected.submission_deadline;
-  const remarksMissing = editable && (deviating.length > 0 || moved.length > 0 || exceptioned.length > 0 || late) && !remarks.trim();
+  // 9d F2: which causes, on which lines — so the error can say so rather than naming a fixed two.
+  const remarksError = editable && !remarks.trim()
+    ? remarksRequiredMessage(t, {
+      deviating: deviating.map((l) => l.line_seq), moved: moved.map((l) => l.line_seq),
+      exceptioned: exceptioned.map((l) => l.line_seq), late,
+    })
+    : null;
+  const remarksMissing = remarksError !== null;
   const href = selected ? approvalHref(selected) : null;
 
   // The silos and feed items a line may be moved to — only needed while the document is editable.
@@ -297,6 +339,7 @@ export function FeedRequisitionPanel() {
               remarks={remarks}
               onRemarksChange={setRemarks}
               remarksMissing={remarksMissing}
+              remarksError={remarksError}
               options={options}
             />
           </div>

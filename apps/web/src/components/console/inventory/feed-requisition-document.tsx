@@ -166,6 +166,7 @@ export function FeedRequisitionDocument({
   remarks,
   onRemarksChange,
   remarksMissing = false,
+  remarksError = null,
   options,
 }: {
   view: FeedRequisitionDocumentView;
@@ -175,6 +176,13 @@ export function FeedRequisitionDocument({
   remarks?: string;
   onRemarksChange?: (value: string) => void;
   remarksMissing?: boolean;
+  /**
+   * 9d F2: the caller's own sentence naming the causes present and their lines
+   * (requisitions-panel remarksRequiredMessage). Without one the generic
+   * wording stands, so a caller that only knows "remarks are missing" still
+   * shows an error.
+   */
+  remarksError?: string | null;
   options?: FeedRequisitionOptions | null;
 }) {
   const { t } = useLanguage();
@@ -232,7 +240,7 @@ export function FeedRequisitionDocument({
         <ReadField className={HALF} label={t("rqdForecastRun")} value={header?.forecast_run_no} mono />
         {editable && onRemarksChange ? (
           <Field className="sm:col-span-12" label={t("rqdRemarks")} htmlFor="rqd-remarks" hint={t("rqdRemarksHint")}
-            error={remarksMissing ? t("rqRemarksRequired") : undefined}>
+            error={remarksMissing ? (remarksError ?? t("rqRemarksRequiredGeneric")) : undefined}>
             <textarea id="rqd-remarks" className="nf-input w-full px-2 py-1" style={inputStyle} rows={2}
               value={remarks ?? ""} onChange={(e) => onRemarksChange(e.target.value)} />
           </Field>
