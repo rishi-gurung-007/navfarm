@@ -1,5 +1,5 @@
 import { ConflictException } from '@nestjs/common';
-import { stockAsOf } from './feed-forecast.stock';
+import { outstandingTransferQty, stockAsOf } from './feed-forecast.stock';
 
 const silos = [
   { siloId: 's1', siloCode: 'GRS/SILO-001', lowLevelKg: 1000 },
@@ -75,5 +75,23 @@ describe('stockAsOf — silo and store stock for the forecast (Q2, Q6)', () => {
       .toThrow(new ConflictException("Silo 'GRS/SILO-001' holds its feed in BAG, not KG — the forecast cannot add bags to kilograms."));
     expect(() => stockAsOf({ ...base, opening: [{ warehouse_id: 'st', item_id: 'r2', item_code: 'FEED-R2', uom: 'BAG', qty: 10 }] }))
       .toThrow(new ConflictException("Store 'GRS/STORE-001' holds 'FEED-R2' in BAG, not KG — the forecast cannot add bags to kilograms."));
+  });
+});
+
+describe('outstandingTransferQty — what a transfer line still owes the ledger (Part E Task 4b)', () => {
+  it('ordered 10, shipped 6, received 4: 4 still to leave the source, 6 still to reach the destination', () => {
+    expect(outstandingTransferQty(10, 6, 4)).toEqual({ pendingOut: 4, pendingIn: 6 });
+  });
+
+  it('with the ledger legs, each end totals the ordered quantity exactly once', () => {
+    const [ordered, shipped, received] = [10, 6, 4];
+    const { pendingOut, pendingIn } = outstandingTransferQty(ordered, shipped, received);
+    expect(shipped + pendingOut).toBe(ordered);   // source: −6 posted, −4 pending
+    expect(received + pendingIn).toBe(ordered);   // destination: +4 posted, +6 pending
+  });
+
+  it('an unshipped DRAFT is pending in full; a complete line owes nothing', () => {
+    expect(outstandingTransferQty(10, 0, 0)).toEqual({ pendingOut: 10, pendingIn: 10 });
+    expect(outstandingTransferQty(10, 10, 10)).toEqual({ pendingOut: 0, pendingIn: 0 });
   });
 });

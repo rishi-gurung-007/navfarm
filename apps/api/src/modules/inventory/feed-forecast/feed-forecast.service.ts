@@ -10,7 +10,8 @@ import { FeedStockMovement, InventoryLedgerService } from '../inventory-ledger/i
 import { FeedRow, stageDayRange } from '../../production/lifecycle/feed-row-days';
 import { asBatchPk, buildFeedForecast, DailyForecastRow, dayShort, DietChange, ForecastFlag, ForecastInput, ForecastRow, ForecastSource, isTimeZone, todayInZone } from './feed-forecast.engine';
 import { defaultWindowEnd, ForecastView, groupRows, MAX_SPAN_DAYS, PeriodRange, ReportRow, resolveViewRange, spanProblem } from './feed-forecast.view';
-import { stockAsOf } from './feed-forecast.stock';
+import { outstandingTransferQty, stockAsOf } from './feed-forecast.stock';
+import { OPEN_TRANSFER_STATUSES } from '../stock-transfer/transfer-execution.rules';
 import { QueryFeedForecastDto, UpdateSiloPlanningDto } from './dto/feed-forecast.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { SiloFeedService } from '../silo-feed/silo-feed.service';
@@ -1529,7 +1530,8 @@ export class FeedForecastService {
     const storeRow = activeOfType('STORE')[0];
     const stockIds = [...linkedSiloIds, ...(storeRow ? [storeRow.location_id] : [])];
     // Q6 / D19: the opening is the ledger strictly before the stock date; posted
-    // non-feeding movements from it on, and DRAFT transfers inside the walk,
+    // non-feeding movements from it on, and the outstanding part of open
+    // transfers inside the walk (loadDraftTransfers, Part E Task 4b),
     // are incoming (Ruling on Task 6's carry). Feeding is left to the engine.
     const ledger = stockIds.length
       ? await this.ledgerService.getFeedStockAsOf({ companyId, warehouseIds: stockIds, stockDate: opts.stockDate, horizonTo: opts.horizonTo }, tenantId)
@@ -1590,13 +1592,24 @@ export class FeedForecastService {
 
   /**
    * D19 "confirmed incoming", part (b) of open question Q2: stock transfers
-   * saved but not yet posted, dated inside the walk. Nothing in NAVFarm is in
-   * transit — a transfer posts both sides at once (stock-transfer.service
-   * post()) — so a dated DRAFT is the only booked-but-not-arrived feed until
-   * Plan C's Transfer Orders. Into one of the farm's silos or its store it is
-   * incoming; out of one it is negative, so a store-to-silo transfer is not
-   * counted in both places. A POSTED transfer is already among the ledger
-   * movements, so it is never counted here as well.
+   * booked but not yet complete, dated inside the walk. Into one of the
+   * farm's silos or its store it is incoming; out of one it is negative, so a
+   * store-to-silo transfer is not counted in both places.
+   *
+   * A transfer moves in events (Part E Task 4/4b): each shipment writes its
+   * TRANSFER_SHIPMENT out of the source and each receipt its TRANSFER_RECEIPT
+   * into the destination, and those ledger rows already reach the forecast
+   * through getFeedStockAsOf. So only the OUTSTANDING part of an open line
+   * (DRAFT, IN_TRANSIT, PARTIALLY_RECEIVED) is counted here:
+   *   source side, pending out  = ordered − shipped
+   *   destination, pending in   = (shipped − received)   [in transit]
+   *                             + (ordered − shipped)    [not yet shipped]
+   *                             = ordered − received
+   * e.g. ordered 10, shipped 6, received 4: the ledger already has −6 at the
+   * source and +4 at the destination; this adds −4 at the source and +6 at
+   * the destination, so each end totals exactly 10. Counting the line in full
+   * (the old DRAFT-only read) double-counted 6 out and 4 in. A POSTED
+   * transfer is wholly in the ledger and never read here.
    *
    * Bounded like the ledger read it sits beside (Ruling M2): the locations are
    * already the effective farm's (and, for a restricted caller, its LOB's or
@@ -1615,31 +1628,63 @@ export class FeedForecastService {
     const common = [
       eq(T.tenant_id, tenantId),
       eq(T.company_id, companyId),
-      eq(T.status, 'DRAFT'),
+      inArray(T.status, [...OPEN_TRANSFER_STATUSES]),
       isNull(T.deleted_at),
       gte(T.posting_date, stockDate),
       lte(T.posting_date, horizonTo),
       ...restrictedScopeConditions(farmScope(this.cls), { companyId: T.company_id, lobId: schema.itemMaster.lob_id }),
     ];
-    const qty = sql<string>`COALESCE(SUM(${TL.quantity}), 0)`;
+    const lineColumns = { line_id: TL.line_id, item_id: TL.item_id, item_code: schema.itemMaster.item_code, uom: TL.uom, posting_date: T.posting_date, qty: TL.quantity };
     const into = await this.db
-      .select({ warehouse_id: T.to_warehouse_id, item_id: TL.item_id, item_code: schema.itemMaster.item_code, uom: TL.uom, posting_date: T.posting_date, qty })
+      .select({ ...lineColumns, warehouse_id: T.to_warehouse_id })
       .from(T)
       .innerJoin(TL, eq(TL.transfer_id, T.transfer_id))
       .innerJoin(schema.itemMaster, eq(schema.itemMaster.item_id, TL.item_id))
-      .where(and(...common, inArray(T.to_warehouse_id, locationIds)))
-      .groupBy(T.to_warehouse_id, TL.item_id, schema.itemMaster.item_code, TL.uom, T.posting_date);
+      .where(and(...common, inArray(T.to_warehouse_id, locationIds)));
     const out = await this.db
-      .select({ warehouse_id: T.from_warehouse_id, item_id: TL.item_id, item_code: schema.itemMaster.item_code, uom: TL.uom, posting_date: T.posting_date, qty })
+      .select({ ...lineColumns, warehouse_id: T.from_warehouse_id })
       .from(T)
       .innerJoin(TL, eq(TL.transfer_id, T.transfer_id))
       .innerJoin(schema.itemMaster, eq(schema.itemMaster.item_id, TL.item_id))
-      .where(and(...common, inArray(T.from_warehouse_id, locationIds)))
-      .groupBy(T.from_warehouse_id, TL.item_id, schema.itemMaster.item_code, TL.uom, T.posting_date);
-    return [
-      ...into.map((r) => ({ warehouse_id: r.warehouse_id, item_id: r.item_id, item_code: r.item_code, uom: r.uom, posting_date: r.posting_date, qty: Number(r.qty) })),
-      ...out.map((r) => ({ warehouse_id: r.warehouse_id, item_id: r.item_id, item_code: r.item_code, uom: r.uom, posting_date: r.posting_date, qty: -Number(r.qty) })),
-    ];
+      .where(and(...common, inArray(T.from_warehouse_id, locationIds)));
+
+    const lineIds = [...new Set([...into, ...out].map((r) => r.line_id))];
+    const shipped = new Map<string, number>();
+    const received = new Map<string, number>();
+    if (lineIds.length) {
+      const SH = schema.transferShipment;
+      const SL = schema.transferShipmentLine;
+      const RC = schema.transferReceipt;
+      const RL = schema.transferReceiptLine;
+      const shippedRows = await this.db
+        .select({ line_id: SL.line_id, qty: sql<string>`COALESCE(SUM(${SL.quantity}), 0)` })
+        .from(SL)
+        .innerJoin(SH, eq(SH.shipment_id, SL.shipment_id))
+        .where(and(inArray(SL.line_id, lineIds), eq(SH.tenant_id, tenantId), isNull(SH.deleted_at)))
+        .groupBy(SL.line_id);
+      const receivedRows = await this.db
+        .select({ line_id: RL.line_id, qty: sql<string>`COALESCE(SUM(${RL.quantity}), 0)` })
+        .from(RL)
+        .innerJoin(RC, eq(RC.receipt_id, RL.receipt_id))
+        .where(and(inArray(RL.line_id, lineIds), eq(RC.tenant_id, tenantId), isNull(RC.deleted_at)))
+        .groupBy(RL.line_id);
+      for (const r of shippedRows) shipped.set(r.line_id, Number(r.qty));
+      for (const r of receivedRows) received.set(r.line_id, Number(r.qty));
+    }
+
+    // Sum the outstanding quantity per warehouse + item + uom + date, as the
+    // old grouped read did; a line with nothing outstanding adds nothing.
+    const totals = new Map<string, FeedStockMovement>();
+    const add = (r: (typeof into)[number], qty: number) => {
+      if (!(Math.abs(qty) > 0)) return;
+      const key = [r.warehouse_id, r.item_id, r.uom, r.posting_date].join('|');
+      const row = totals.get(key) ?? { warehouse_id: r.warehouse_id, item_id: r.item_id, item_code: r.item_code, uom: r.uom, posting_date: r.posting_date, qty: 0 };
+      row.qty += qty;
+      totals.set(key, row);
+    };
+    for (const r of into) add(r, outstandingTransferQty(Number(r.qty), shipped.get(r.line_id) ?? 0, received.get(r.line_id) ?? 0).pendingIn);
+    for (const r of out) add(r, -outstandingTransferQty(Number(r.qty), shipped.get(r.line_id) ?? 0, received.get(r.line_id) ?? 0).pendingOut);
+    return [...totals.values()];
   }
 
   /** Reads the ACTIVE batches of the farm and everything buildInputBatches needs to place them. */

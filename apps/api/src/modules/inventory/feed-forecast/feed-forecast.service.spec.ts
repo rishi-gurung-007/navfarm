@@ -817,10 +817,11 @@ describe('buildInputBatches', () => {
   });
 });
 
-describe('loadDraftTransfers — D19 booked transfers (Q2, Ruling M2)', () => {
-  function draftDb(into: unknown[], out: unknown[]) {
+describe('loadDraftTransfers — D19 booked transfers (Q2, Ruling M2; Part E Task 4b)', () => {
+  /** Answers the selects in call order: into, out, then shipped and received per line. */
+  function draftDb(into: unknown[], out: unknown[], shipped: unknown[] = [], received: unknown[] = []) {
     const wheres: unknown[] = [];
-    const results = [into, out];
+    const results = [into, out, shipped, received];
     const chain = () => {
       const rows = results.shift() ?? [];
       const self: any = {
@@ -835,35 +836,86 @@ describe('loadDraftTransfers — D19 booked transfers (Q2, Ruling M2)', () => {
     return { db: { select: () => chain() }, wheres };
   }
   const render = (w: unknown) => new MySqlDialect().sqlToQuery(w as any);
-
-  it('reads DRAFT transfers dated from the stock date to the horizon, into (+) and out of (−) the farm\'s locations', async () => {
-    const { db, wheres } = draftDb(
-      [{ warehouse_id: 's1', item_id: 'r1', item_code: 'FEED-R1', uom: 'KG', posting_date: '2026-09-28', qty: '6000.0000' }],
-      [{ warehouse_id: 'st', item_id: 'r1', item_code: 'FEED-R1', uom: 'KG', posting_date: '2026-09-28', qty: '6000.0000' }],
-    );
+  const load = async (db: unknown, ids: string[], lobId: string | null = null, restricted = false) => {
     const cls = transactionCls(db);
-    useFarmScope(cls, { farmId: 'farm-A', restricted: false, companyId: 'comp-1', lobId: null });
-    const out = await (new FeedForecastService(cls, {} as any, { log: jest.fn() } as any, { currentItems: jest.fn(async () => new Map()) } as any, FEED_SETTINGS_STUB) as any).loadDraftTransfers(['s1', 'st'], 'comp-1', 'tenant-1', '2026-09-26', '2026-10-10');
+    useFarmScope(cls, { farmId: 'farm-A', restricted, companyId: 'comp-1', lobId });
+    return (new FeedForecastService(cls, {} as any, { log: jest.fn() } as any, { currentItems: jest.fn(async () => new Map()) } as any, FEED_SETTINGS_STUB) as any)
+      .loadDraftTransfers(ids, 'comp-1', 'tenant-1', '2026-09-26', '2026-10-10');
+  };
+  const R1 = { item_id: 'r1', item_code: 'FEED-R1', uom: 'KG', posting_date: '2026-09-28' };
+
+  it('reads open transfers dated from the stock date to the horizon, into (+) and out of (−) the farm\'s locations', async () => {
+    const { db, wheres } = draftDb(
+      [{ line_id: 'L1', warehouse_id: 's1', ...R1, qty: '6000.0000' }],
+      [{ line_id: 'L1', warehouse_id: 'st', ...R1, qty: '6000.0000' }],
+    );
+    const out = await load(db, ['s1', 'st']);
+    // Nothing shipped yet: the whole line is pending at both ends.
     expect(out).toEqual([
-      { warehouse_id: 's1', item_id: 'r1', item_code: 'FEED-R1', uom: 'KG', posting_date: '2026-09-28', qty: 6000 },
-      { warehouse_id: 'st', item_id: 'r1', item_code: 'FEED-R1', uom: 'KG', posting_date: '2026-09-28', qty: -6000 },
+      { warehouse_id: 's1', ...R1, qty: 6000 },
+      { warehouse_id: 'st', ...R1, qty: -6000 },
     ]);
     const [into, from] = wheres.map(render);
     for (const q of [into, from]) {
       expect(q.sql).toMatch(/`posting_date` >= \?/);
       expect(q.sql).toMatch(/`posting_date` <= \?/);
-      expect(q.params).toEqual(expect.arrayContaining(['tenant-1', 'comp-1', 'DRAFT', '2026-09-26', '2026-10-10']));
+      expect(q.sql).toMatch(/`status` in \(\?, \?, \?\)/);
+      expect(q.params).toEqual(expect.arrayContaining(['tenant-1', 'comp-1', 'DRAFT', 'IN_TRANSIT', 'PARTIALLY_RECEIVED', '2026-09-26', '2026-10-10']));
+      expect(q.params).not.toContain('POSTED');
       expect(q.sql).not.toMatch(/`lob_id`/);
     }
     expect(into.sql).toMatch(/`to_warehouse_id` in/);
     expect(from.sql).toMatch(/`from_warehouse_id` in/);
   });
 
+  it('counts only what is outstanding: ordered 10, shipped 6, received 4 → source −4, destination +6', async () => {
+    // The shipment already took 6 out of the source in the ledger and the
+    // receipt already put 4 into the destination; counting the line in full
+    // as well was the double count at both ends.
+    const { db, wheres } = draftDb(
+      [{ line_id: 'L1', warehouse_id: 's1', ...R1, qty: '10.0000' }],
+      [{ line_id: 'L1', warehouse_id: 'st', ...R1, qty: '10.0000' }],
+      [{ line_id: 'L1', qty: '6.0000' }],
+      [{ line_id: 'L1', qty: '4.0000' }],
+    );
+    const out = await load(db, ['s1', 'st']);
+    expect(out).toEqual([
+      { warehouse_id: 's1', ...R1, qty: 6 },   // 2 in transit + 4 not yet shipped
+      { warehouse_id: 'st', ...R1, qty: -4 },  // 4 not yet shipped
+    ]);
+    // The event sums are read for exactly the lines found, cancelled/deleted events excluded.
+    const [, , shipped, received] = wheres.map(render);
+    for (const q of [shipped, received]) {
+      expect(q.params).toEqual(expect.arrayContaining(['L1', 'tenant-1']));
+      expect(q.sql).toMatch(/`deleted_at` is null/);
+    }
+  });
+
+  it('a line fully shipped and received contributes nothing; lines on one key are summed', async () => {
+    const { db } = draftDb(
+      [
+        { line_id: 'L1', warehouse_id: 's1', ...R1, qty: '10' },
+        { line_id: 'L2', warehouse_id: 's1', ...R1, qty: '5' },
+        { line_id: 'L3', warehouse_id: 's1', ...R1, qty: '3' },
+      ],
+      [],
+      [{ line_id: 'L1', qty: '10' }, { line_id: 'L2', qty: '2' }],
+      [{ line_id: 'L1', qty: '10' }],
+    );
+    const out = await load(db, ['s1']);
+    // L1 done (0), L2 5 − 0 received = 5, L3 untouched 3.
+    expect(out).toEqual([{ warehouse_id: 's1', ...R1, qty: 8 }]);
+  });
+
+  it('no open line means no event reads', async () => {
+    const { db, wheres } = draftDb([], []);
+    expect(await load(db, ['s1'])).toEqual([]);
+    expect(wheres).toHaveLength(2);
+  });
+
   it('a restricted caller only sees drafts of its own LOB\'s items, as the ledger read does', async () => {
     const { db, wheres } = draftDb([], []);
-    const cls = transactionCls(db);
-    useFarmScope(cls, { farmId: 'farm-A', restricted: true, companyId: 'comp-1', lobId: 'lob-1' });
-    await (new FeedForecastService(cls, {} as any, { log: jest.fn() } as any, { currentItems: jest.fn(async () => new Map()) } as any, FEED_SETTINGS_STUB) as any).loadDraftTransfers(['s1'], 'comp-1', 'tenant-1', '2026-09-26', '2026-10-10');
+    await load(db, ['s1'], 'lob-1', true);
     for (const q of wheres.map(render)) {
       expect(q.sql).toMatch(/`item_master`\.`lob_id` = \?/);
       expect(q.params).toContain('lob-1');
