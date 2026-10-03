@@ -11,7 +11,7 @@ import { FeedRow, stageDayRange } from '../../production/lifecycle/feed-row-days
 import { buildFeedForecast, DailyForecastRow, dayShort, DietChange, ForecastFlag, ForecastInput, ForecastRow, ForecastSource, isTimeZone, todayInZone } from './feed-forecast.engine';
 import { defaultWindowEnd, ForecastView, groupRows, MAX_SPAN_DAYS, PeriodRange, ReportRow, resolveViewRange, spanProblem } from './feed-forecast.view';
 import { stockAsOf } from './feed-forecast.stock';
-import { QueryFeedForecastDto, UpdateFeedFarmSettingsDto, UpdateSiloPlanningDto } from './dto/feed-forecast.dto';
+import { QueryFeedForecastDto, UpdateSiloPlanningDto } from './dto/feed-forecast.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { SiloFeedService } from '../silo-feed/silo-feed.service';
 import { assertSiloLevels } from '../silo-feed/silo-levels';
@@ -70,12 +70,17 @@ export interface FeedFarmOption {
   companyName: string | null;
 }
 
-/** D32: legacy farm-level settings retained in this response for API compatibility. */
+/**
+ * A farm's override of the feed-planning logistics values, read from its active
+ * feed_planning_setting row (Task 8, spec 2026-10-03 §3.2). null = the farm sets
+ * nothing and inherits the company value. Edited through PUT /feed-settings/farm.
+ */
 export interface FeedFarmSettings {
-  feed_bulk_multiple_kg: number | null;
-  feed_bag_size_kg: number | null;
-  feed_truck_target_kg: number | null;
-  feed_production_weekday: number | null;
+  safetyStockKg: number | null;
+  bagSizeKg: number | null;
+  bulkMultipleKg: number | null;
+  truckTargetKg: number | null;
+  productionWeekday: number | null;
 }
 
 /** D41: one silo of a farm, as Silo Feed Setup lists it. */
@@ -756,28 +761,7 @@ export class FeedForecastService {
    * activeFarmOfTenant already allowed; the location list the screens used
    * before answered [] there. Sorted by code, the order the farms are known by.
    */
-  /**
-   * D32: the six per-farm feed settings, their columns and their bounds in one
-   * place. They stay on the FARM's location_master row — no migration — and
-   * were moved off the Add/Edit Location form into their own endpoint; the generic
-   * form had exposed them only because it showed every column. Nothing else may
-   * be written through here, which
-   * is why this is not the generic PUT /location (that one also demands Max
-   * Capacity and the rest of a farm's form).
-   */
-  private static readonly FARM_SETTINGS = [
-    // D38: the refill buffer is no longer one of these — it is the silo's own
-    // Silo Reorder Days. The column stays on location_master, unread.
-    // Task 4 (3 Oct ruling): feed_lead_time_days is no longer one of these
-    // either — safety stock now comes from FeedSettingsService (Task 2). The
-    // column stays on location_master, unread (and unwritten here).
-    { key: 'feed_bulk_multiple_kg', column: schema.locationMaster.feed_bulk_multiple_kg, min: 1, max: null },
-    { key: 'feed_bag_size_kg', column: schema.locationMaster.feed_bag_size_kg, min: 1, max: null },
-    { key: 'feed_truck_target_kg', column: schema.locationMaster.feed_truck_target_kg, min: 1, max: null },
-    { key: 'feed_production_weekday', column: schema.locationMaster.feed_production_weekday, min: 0, max: 6 },
-  ] as const;
-
-  /** The same farms GET /feed-forecast/farms offers, each with its six settings (null = not set). */
+  /** The same farms GET /feed-forecast/farms offers, each with its farm override row's values (null = inherits the company). */
   async listFarmSettings(tenantId: string, userType: string | undefined): Promise<FeedFarmSettingsRow[]> {
     const L = schema.locationMaster;
     const conditions = this.farmListConditions(tenantId, userType);
@@ -789,10 +773,6 @@ export class FeedForecastService {
         name: L.location_name,
         company_id: L.company_id,
         company_name: schema.companyMaster.company_name,
-        feed_bulk_multiple_kg: L.feed_bulk_multiple_kg,
-        feed_bag_size_kg: L.feed_bag_size_kg,
-        feed_truck_target_kg: L.feed_truck_target_kg,
-        feed_production_weekday: L.feed_production_weekday,
       })
       .from(L)
       .leftJoin(schema.companyMaster, eq(schema.companyMaster.company_id, L.company_id))
@@ -800,6 +780,7 @@ export class FeedForecastService {
       .orderBy(L.location_code);
     // D41: every silo of these farms, in one read, then grouped per farm.
     const silosByFarm = await this.siloPlanningRows(rows.map((r) => r.farm_id), tenantId);
+    const overrides = await this.farmOverrideRows(rows.map((r) => r.farm_id));
     return rows.map((r) => ({
       farmId: r.farm_id,
       code: r.code,
@@ -807,13 +788,32 @@ export class FeedForecastService {
       companyId: r.company_id as string,
       companyName: r.company_name ?? null,
       silos: silosByFarm.get(r.farm_id) ?? [],
-      settings: {
-        feed_bulk_multiple_kg: r.feed_bulk_multiple_kg ?? null,
-        feed_bag_size_kg: r.feed_bag_size_kg ?? null,
-        feed_truck_target_kg: r.feed_truck_target_kg ?? null,
-        feed_production_weekday: r.feed_production_weekday ?? null,
-      },
+      settings: overrides.get(r.farm_id) ?? { safetyStockKg: null, bagSizeKg: null, bulkMultipleKg: null, truckTargetKg: null, productionWeekday: null },
     }));
+  }
+
+  /** The active farm-scope feed_planning_setting rows of these farms, as override values (null = inherit). */
+  private async farmOverrideRows(farmIds: string[]): Promise<Map<string, FeedFarmSettings>> {
+    const byFarm = new Map<string, FeedFarmSettings>();
+    if (!farmIds.length) return byFarm;
+    const S = schema.feedPlanningSetting;
+    const rows = await this.db.select({
+      farm_id: S.farm_id,
+      safety_stock_kg: S.safety_stock_kg,
+      bag_size_kg: S.bag_size_kg,
+      bulk_multiple_kg: S.bulk_multiple_kg,
+      truck_target_kg: S.truck_target_kg,
+      production_weekday: S.production_weekday,
+    }).from(S).where(and(inArray(S.farm_id, farmIds), eq(S.is_active, true)));
+    const num = (v: string | number | null) => (v === null || v === undefined ? null : Number(v));
+    for (const r of rows) {
+      if (!r.farm_id) continue;
+      byFarm.set(r.farm_id, {
+        safetyStockKg: num(r.safety_stock_kg), bagSizeKg: num(r.bag_size_kg), bulkMultipleKg: num(r.bulk_multiple_kg),
+        truckTargetKg: num(r.truck_target_kg), productionWeekday: r.production_weekday ?? null,
+      });
+    }
+    return byFarm;
   }
 
   /**
@@ -982,59 +982,6 @@ export class FeedForecastService {
       newValues: { ...updates, ...(dto.feedType !== undefined ? { feedType: dto.feedType } : {}) },
     });
     return { farmId, siloId, code: silo.location_code, settings: updates };
-  }
-
-  /**
-   * D32: writes only the six columns, on a farm resolveFarm says this caller
-   * may open. A value of null clears the setting back to the client default; a
-   * key left out of the body is not touched.
-   */
-  async updateFarmSettings(farmIdIn: string, dto: UpdateFeedFarmSettingsDto, tenantId: string, user: { userId?: string; userType?: string } | undefined) {
-    const { farmId, companyId } = await this.resolveFarm(farmIdIn, tenantId, user?.userType);
-    const updates: Record<string, number | null> = {};
-    for (const setting of FeedForecastService.FARM_SETTINGS) {
-      const value = (dto as Record<string, unknown>)[setting.key];
-      if (value === undefined) continue;
-      if (value === null) {
-        updates[setting.key] = null;
-        continue;
-      }
-      if (typeof value !== 'number' || !Number.isInteger(value) || value < setting.min || (setting.max !== null && value > setting.max)) {
-        const range = setting.max === null ? `${setting.min} or more` : `between ${setting.min} and ${setting.max}`;
-        throw new BadRequestException(`${setting.key} must be a whole number ${range}, or empty.`);
-      }
-      updates[setting.key] = value;
-    }
-    if (!Object.keys(updates).length) throw new BadRequestException('Send at least one feed setting to change.');
-    const [before] = await this.db
-      .select({
-        feed_bulk_multiple_kg: schema.locationMaster.feed_bulk_multiple_kg,
-        feed_bag_size_kg: schema.locationMaster.feed_bag_size_kg,
-        feed_truck_target_kg: schema.locationMaster.feed_truck_target_kg,
-        feed_production_weekday: schema.locationMaster.feed_production_weekday,
-      })
-      .from(schema.locationMaster)
-      .where(eq(schema.locationMaster.location_id, farmId))
-      .limit(1);
-    await this.db
-      .update(schema.locationMaster)
-      .set({ ...updates, updated_by: user?.userId ?? null })
-      .where(and(
-        eq(schema.locationMaster.location_id, farmId),
-        eq(schema.locationMaster.tenant_id, tenantId),
-        eq(schema.locationMaster.location_type, 'FARM'),
-      ));
-    await this.auditService.log({
-      tenantId,
-      companyId,
-      userId: user?.userId,
-      action: 'UPDATE',
-      entityName: 'location_master',
-      entityId: farmId,
-      oldValues: before ?? undefined,
-      newValues: updates,
-    });
-    return { farmId, settings: updates };
   }
 
   /**

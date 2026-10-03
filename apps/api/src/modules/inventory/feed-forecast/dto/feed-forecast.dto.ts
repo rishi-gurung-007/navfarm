@@ -62,36 +62,6 @@ export class QueryFeedPeriodsDto {
 export class QueryFeedForecastRunsDto extends QueryFeedPeriodsDto {}
 
 /**
- * D32, narrowed by D38 to five and by Task 4 (3 Oct ruling) to four: the
- * refill buffer left this screen for the silo's own Silo Reorder Days, and
- * feed_lead_time_days left it for FeedSettingsService's safety stock (Task
- * 2). The per-farm settings, edited on Settings → Inventory Setup →
- * Feed Planning. Same bounds the Location form used before they moved. Every
- * one is optional and every one accepts null, which clears it back to the
- * client default (@IsOptional skips validation for null as well as for a
- * missing key, so a clear is not bounds-checked); a key left out is not
- * touched. feed-forecast.service.ts checks the same bounds again, so the rule
- * holds whether or not a caller came through the validation pipe.
- */
-export class UpdateFeedFarmSettingsDto {
-  @ApiProperty({ description: 'Bulk feed orders round up to this many kilograms (default 3000). 1 or more, null clears.', required: false, nullable: true })
-  @IsOptional() @IsInt() @Min(1)
-  feed_bulk_multiple_kg?: number | null;
-
-  @ApiProperty({ description: 'Bagged feed rounds to whole bags of this many kilograms (default 50). 1 or more, null clears.', required: false, nullable: true })
-  @IsOptional() @IsInt() @Min(1)
-  feed_bag_size_kg?: number | null;
-
-  @ApiProperty({ description: 'Normal bulk truck load in KG — a planning target, not a cap (default 30000). 1 or more, null clears.', required: false, nullable: true })
-  @IsOptional() @IsInt() @Min(1)
-  feed_truck_target_kg?: number | null;
-
-  @ApiProperty({ description: 'Weekday the mill produces this farm\'s feed, 0 = Sunday to 6 = Saturday (default 0). null clears.', required: false, nullable: true })
-  @IsOptional() @IsInt() @Min(0) @Max(6)
-  feed_production_weekday?: number | null;
-}
-
-/**
  * D41, narrowed by Task 4 (3 Oct ruling): a silo's own feed levels, edited
  * from Settings → Inventory Setup → Feed Planning. Only these two now — the
  * forecast does not read silo_reorder_days (engine.ts, Task 3); the column

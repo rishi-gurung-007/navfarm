@@ -37,7 +37,7 @@ import type { ApprovalRequestRow } from '../../production/approval/approval.serv
 import { FeedSettingsService } from '../../inventory/feed-settings/feed-settings.service';
 import { toFarmFeedSettings } from '../../inventory/feed-settings/feed-settings.rules';
 import {
-  ApprovalLine, DestinationInfo, DraftLine, FarmFeedSettings, FeedType, approvalProblems, bagCountFor, diffDaysIso, exceedsCapacity, feedTypeOf, lineKey, planDraftUpsert,
+  ApprovalLine, DEFAULT_FEED_SETTINGS, DestinationInfo, DraftLine, FarmFeedSettings, FeedType, approvalProblems, bagCountFor, diffDaysIso, exceedsCapacity, feedTypeOf, lineKey, planDraftUpsert,
   productionCycle, recommendLines, requisitionPriority, runKeyFor, serverToday, wasEdited,
 } from './feed-requisition.rules';
 import {
@@ -1162,7 +1162,7 @@ export class FeedRequisitionService implements OnModuleInit {
   /** The requisition view, read under the farm scope the caller already set (withFarmScope). */
   private async readView(requisitionId: string, tenantId: string) {
     const [row] = await this.db
-      .select({ req: schema.requisition, farm_code: schema.locationMaster.location_code, truck_target_kg: schema.locationMaster.feed_truck_target_kg })
+      .select({ req: schema.requisition, farm_code: schema.locationMaster.location_code })
       .from(schema.requisition)
       .leftJoin(schema.locationMaster, eq(schema.locationMaster.location_id, schema.requisition.farm_id))
       .where(and(
@@ -1189,7 +1189,10 @@ export class FeedRequisitionService implements OnModuleInit {
       .orderBy(schema.requisitionLine.line_seq);
     // Requisition §1 row 26: "Sum of requested bulk quantities this cycle", shown against the 30,000 kg truck target (row 27) — trips, not a cap (checkpoint 17).
     const farmTotal = lines.filter((l) => l.line.feed_type === 'BULK').reduce((sum, l) => sum + Number(l.line.quantity), 0);
-    const truckTarget = row.truck_target_kg ?? 30000;
+    // Task 8: the truck target is a feed_planning_setting (farm override, company, 30,000), not a location_master column.
+    const truckTarget = row.req.company_id && row.req.farm_id
+      ? toFarmFeedSettings(await this.feedSettings.resolveForFeedPlanning(row.req.company_id, row.req.farm_id)).truckTargetKg
+      : DEFAULT_FEED_SETTINGS.truckTargetKg;
     return {
       ...row.req,
       farm_code: row.farm_code,

@@ -7,6 +7,7 @@ import { farmScope } from '../../../common/farm-scope';
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import * as schema from '../../../core/database/schema';
 import { FeedSettingsService } from '../feed-settings/feed-settings.service';
+import { toFarmFeedSettings } from '../feed-settings/feed-settings.rules';
 import type { FeedForecastResponse } from './feed-forecast.service';
 import type { ForecastView } from './feed-forecast.view';
 import { buildConfigSnapshot, buildOutputSnapshot, buildRunLineSnapshots, technicalRunCode } from './feed-forecast-run.rules';
@@ -48,10 +49,6 @@ export class FeedForecastRunService {
       location_id: schema.locationMaster.location_id,
       company_id: schema.locationMaster.company_id,
       lob_id: schema.locationMaster.lob_id,
-      feed_bulk_multiple_kg: schema.locationMaster.feed_bulk_multiple_kg,
-      feed_bag_size_kg: schema.locationMaster.feed_bag_size_kg,
-      feed_truck_target_kg: schema.locationMaster.feed_truck_target_kg,
-      feed_production_weekday: schema.locationMaster.feed_production_weekday,
     }).from(schema.locationMaster).where(and(
       eq(schema.locationMaster.location_id, farmId),
       eq(schema.locationMaster.company_id, companyId),
@@ -83,15 +80,19 @@ export class FeedForecastRunService {
     return withTenantTransaction(this.cls, async () => {
       // The stable farm row owns its version stream. This lock must precede
       // the version read, including when there is no earlier run row to lock.
-      const farm = await this.loadFarm(input.farmId, input.companyId, input.tenantId, true);
+      await this.loadFarm(input.farmId, input.companyId, input.tenantId, true);
       if (!output.sourceSnapshot) throw new BadRequestException('The forecast source snapshot is required.');
+      // Task 8: the logistics values come from feed_planning_setting (farm
+      // override over company over defaults), not from location_master.
+      const resolved = await this.feedSettings.resolve(input.companyId, input.farmId);
+      const logistics = toFarmFeedSettings(resolved);
       const configSnapshot = buildConfigSnapshot({
-        ...(await this.feedSettings.resolve(input.companyId, input.farmId)),
+        ...resolved,
         requisitionDraftSettings: {
-          bulkMultipleKg: farm.feed_bulk_multiple_kg ?? 3000,
-          bagSizeKg: farm.feed_bag_size_kg ?? 50,
-          truckTargetKg: farm.feed_truck_target_kg ?? 30000,
-          productionWeekday: farm.feed_production_weekday ?? 0,
+          bulkMultipleKg: logistics.bulkMultipleKg,
+          bagSizeKg: logistics.bagSizeKg,
+          truckTargetKg: logistics.truckTargetKg,
+          productionWeekday: logistics.productionWeekday,
         },
       });
       const [latest] = await this.db.select({ version: schema.feedForecastRun.version })
@@ -126,10 +127,8 @@ export class FeedForecastRunService {
           confirmed_receipt_kg: String(line.confirmedReceiptKg), daily_demand_kg: String(line.dailyDemandKg),
           projected_closing_kg: String(line.projectedClosingKg), shortage_date: line.shortageDate,
           recommended_qty_kg: String(line.recommendedQtyKg),
-          // Task 4 (3 Oct ruling): refill buffer, lead time, required-on and
-          // overdue are superseded (engine.ts). The column stays (deferred to
-          // the branch merge) but is never written.
-          required_on_date: null,
+          // Task 4 (3 Oct ruling): required-on is superseded (engine.ts); the
+          // column stays until the branch merge drops it and is never written.
           provenance_snapshot: line.provenanceSnapshot as Record<string, unknown>,
         })));
       }

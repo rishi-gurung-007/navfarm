@@ -194,6 +194,22 @@ describe('FeedForecastRunService', () => {
       .toEqual([expect.objectContaining({ forecast_date: '2026-10-01', batch_id: 'batch-1', shed_id: 'shed-1', destination_location_id: 'silo-1' })]);
   });
 
+  it('snapshots the requisition draft logistics from the resolved feed_planning_setting, not from location_master (Task 8)', async () => {
+    const queues = new Map<unknown, unknown[][]>([
+      // The farm row carries NO logistics columns any more; a read of them would give the 3000/50/30000/0 defaults.
+      [schema.locationMaster, [[{ location_id: 'farm-1', company_id: 'company-1', lob_id: 'lob-piggery' }]]],
+      [schema.feedForecastRun, [[]]],
+    ]);
+    const { service, log, settings } = setup(queues);
+    settings.resolve.mockResolvedValueOnce({
+      companyId: 'company-1', farmId: 'farm-1', maxForecastDays: 45, safetyStockKg: 500, bulkMultipleKg: 6000, bagSizeKg: 25,
+      truckTargetKg: 28000, productionWeekday: 3,
+    } as any);
+    await service.createRun(input, output as any, { userId: 'user-1' });
+    const run = log.find((entry) => entry.op === 'insert' && entry.table === schema.feedForecastRun)?.values;
+    expect(run.config_snapshot.values.requisitionDraftSettings).toEqual({ bulkMultipleKg: 6000, bagSizeKg: 25, truckTargetKg: 28000, productionWeekday: 3 });
+  });
+
   it('starts an independent farm version stream at one', async () => {
     const queues = new Map<unknown, unknown[][]>([
       [schema.locationMaster, [[{ location_id: 'farm-2', company_id: 'company-1', lob_id: 'lob-piggery' }]]],

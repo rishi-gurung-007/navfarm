@@ -160,6 +160,14 @@
           "command": "node --import tsx src/scripts/align-stages-to-tdd.ts"
         }
       },
+      "db-align-feed-tdd": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --env-file-if-exists=.env --import tsx src/scripts/align-feed-tdd.ts"
+        }
+      },
       "db-fix-batch-000001-vitamin-line": {
         "executor": "nx:run-commands",
         "cache": false,
