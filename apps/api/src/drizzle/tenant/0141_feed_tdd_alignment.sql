@@ -1,5 +1,5 @@
 -- Feed TDD alignment (spec 2026-10-03 §3.2): safety stock, bag size, diet no, feed form, mill/TO links on requisition.
-ALTER TABLE `feed_planning_setting` ADD `safety_stock_kg` decimal(14,2) NOT NULL DEFAULT '0.00';--> statement-breakpoint
+ALTER TABLE `feed_planning_setting` ADD `safety_stock_kg` decimal(14,2);--> statement-breakpoint
 ALTER TABLE `feed_planning_setting` ADD `bag_size_kg` decimal(14,2);--> statement-breakpoint
 ALTER TABLE `item_master` ADD `diet_no` int;--> statement-breakpoint
 ALTER TABLE `breed_lifecycle_stages` ADD `feed_form` varchar(10);--> statement-breakpoint

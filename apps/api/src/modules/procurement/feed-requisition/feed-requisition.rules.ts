@@ -52,9 +52,11 @@ export interface FarmFeedSettings {
   bagSizeKg: number;
   truckTargetKg: number;
   productionWeekday: number;
+  /** TDD Engine Step 8 / Dashboard row 60: added to every silo-item shortfall. */
+  safetyStockKg: number;
 }
 
-export const DEFAULT_FEED_SETTINGS: FarmFeedSettings = { bulkMultipleKg: 3000, bagSizeKg: 50, truckTargetKg: 30000, productionWeekday: 0 };
+export const DEFAULT_FEED_SETTINGS: FarmFeedSettings = { bulkMultipleKg: 3000, bagSizeKg: 50, truckTargetKg: 30000, productionWeekday: 0, safetyStockKg: 0 };
 
 /** Checkpoint 18: "deviates more than 20 percent from Recommended Qty". */
 export const DEVIATION_LIMIT = 0.2;

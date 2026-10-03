@@ -3,6 +3,7 @@ import {
   capacityBand,
   financeEscalation,
   resolvePlanningRules,
+  toFarmFeedSettings,
 } from './feed-settings.rules';
 
 describe('feed settings rules', () => {
@@ -71,5 +72,27 @@ describe('feed settings rules', () => {
     expect(financeEscalation({ variancePct: -5, varianceAmount: 999, percentageThreshold: 5, amountThreshold: null })).toEqual({ required: true, percentage: true, amount: false });
     expect(financeEscalation({ variancePct: 4.999, varianceAmount: 999, percentageThreshold: 5, amountThreshold: null })).toEqual({ required: false, percentage: false, amount: false });
     expect(financeEscalation({ variancePct: 1, varianceAmount: -100, percentageThreshold: 5, amountThreshold: 100 })).toEqual({ required: true, percentage: false, amount: true });
+  });
+});
+
+describe('resolvePlanningRules — logistics and safety stock (TDD Engine Step 8)', () => {
+  it('defaults to the workbook defaults with zero safety stock', () => {
+    expect(resolvePlanningRules(null)).toMatchObject({ safetyStockKg: 0, bagSizeKg: 50, bulkMultipleKg: 3000, truckTargetKg: 30000 });
+  });
+
+  it('reads stored decimals as numbers', () => {
+    expect(resolvePlanningRules({ safety_stock_kg: '500.00', bag_size_kg: '25.00', bulk_multiple_kg: '6000.00' }))
+      .toMatchObject({ safetyStockKg: 500, bagSizeKg: 25, bulkMultipleKg: 6000 });
+  });
+
+  it('refuses negative safety stock and non-positive multiples', () => {
+    expect(() => resolvePlanningRules({ safety_stock_kg: -1 })).toThrow('Safety stock cannot be negative.');
+    expect(() => resolvePlanningRules({ bag_size_kg: 0 })).toThrow('Bag size must be greater than zero.');
+    expect(() => resolvePlanningRules({ bulk_multiple_kg: 0 })).toThrow('Bulk multiple must be greater than zero.');
+  });
+
+  it('gives the requisition its settings, an unset production day being Sunday', () => {
+    expect(toFarmFeedSettings(resolvePlanningRules({ safety_stock_kg: '250.00' })))
+      .toEqual({ bulkMultipleKg: 3000, bagSizeKg: 50, truckTargetKg: 30000, productionWeekday: 0, safetyStockKg: 250 });
   });
 });

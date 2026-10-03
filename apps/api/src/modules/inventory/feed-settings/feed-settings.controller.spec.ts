@@ -55,4 +55,13 @@ describe('FeedSettingsController company-settings access', () => {
       headers: { 'x-active-company-id': 'co-1' }, body: {}, params: {}, query: {},
     }))).resolves.toBe(true);
   });
+
+  it('marks the farm-override write admin-only and passes the farm to the service', async () => {
+    expect(Reflect.getMetadata(WIZARD_ACCESS_KEY, proto.putFarm)).toEqual({ admin: true, target: 'company', workspaceFallback: true });
+    const saveFarm = jest.fn(async () => ({ farmId: 'farm-1' }));
+    const controller = new FeedSettingsController({ saveFarm } as any);
+    await controller.putFarm({ farmId: 'farm-1', bulkMultipleKg: 6000 } as any, { headers: { 'x-active-company-id': 'co-1' }, user: { tenantId: 't-1', userId: 'u-1' } });
+    expect(saveFarm).toHaveBeenCalledWith('co-1', 'farm-1', { bulkMultipleKg: 6000 }, 't-1', 'u-1');
+  });
 });
+

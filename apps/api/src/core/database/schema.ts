@@ -297,8 +297,9 @@ export const feedPlanningSetting = mysqlTable('feed_planning_setting', {
   physical_count_time: varchar('physical_count_time', { length: 5 }),
   truck_target_kg: decimal('truck_target_kg', { precision: 14, scale: 2 }),
   bulk_multiple_kg: decimal('bulk_multiple_kg', { precision: 14, scale: 2 }),
-  // TDD Engine Step 8 / Dashboard row 60: configured safety stock; the Worked Example's buffer is zero.
-  safety_stock_kg: decimal('safety_stock_kg', { precision: 14, scale: 2 }).default('0.00').notNull(),
+  // TDD Engine Step 8 / Dashboard row 60: configured safety stock. Null on a company row means 0 (the Worked
+  // Example's buffer); null on a farm row means "inherit the company's".
+  safety_stock_kg: decimal('safety_stock_kg', { precision: 14, scale: 2 }),
   bag_size_kg: decimal('bag_size_kg', { precision: 14, scale: 2 }),
   capacity_warning_pct: decimal('capacity_warning_pct', { precision: 5, scale: 2 }).default('90.00').notNull(),
   bag_tolerance_pct: decimal('bag_tolerance_pct', { precision: 5, scale: 2 }),

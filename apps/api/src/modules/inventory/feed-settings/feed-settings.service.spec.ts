@@ -22,7 +22,7 @@ function databaseWithAnswers(...answers: unknown[][]) {
 }
 
 describe('FeedSettingsService.resolve', () => {
-  it('resolves company values and only the approved farm lead-time/submission overrides', async () => {
+  it('resolves company values with the farm\'s submission and logistics overrides', async () => {
     const db = databaseWithAnswers(
       [{ company_id: 'co-1', default_timezone_id: 'Africa/Harare' }],
       [{
@@ -39,23 +39,25 @@ describe('FeedSettingsService.resolve', () => {
         setting_id: 'farm-setting', farm_id: 'farm-1',
         submission_weekday: 5, submission_time: '16:00',
         production_weekday: 4, reminder_time: '10:00',
+        bulk_multiple_kg: '6000.00', safety_stock_kg: null,
       }],
-      [{ location_id: 'farm-1', company_id: 'co-1', lob_id: 'lob-pig', feed_lead_time_days: 3 }],
+      [{ location_id: 'farm-1', company_id: 'co-1', lob_id: 'lob-pig' }],
     );
     const result = await new FeedSettingsService(transactionCls(db)).resolve('co-1', 'farm-1');
 
     expect(result).toEqual(expect.objectContaining({
       companyId: 'co-1', farmId: 'farm-1', timezoneId: 'Africa/Harare',
       defaultForecastDays: 7, maxForecastDays: 45,
-      productionWeekday: 0, productionShift: 'AM',
+      productionWeekday: 4, productionShift: 'AM',
       submissionWeekday: 5, submissionTime: '16:00',
       reminderWeekday: 5, reminderTime: '18:00',
       physicalCountWeekday: 0, physicalCountTime: '08:00',
-      leadTimeDays: 3,
+      bulkMultipleKg: 6000, safetyStockKg: 0, bagSizeKg: 50, truckTargetKg: 30000,
       capacityWarningPct: 90, capacityCriticalPct: 100,
       financeVariancePct: 5, financeVarianceAmount: null,
     }));
-    expect(result.sources).toEqual({ leadTime: 'FARM', submissionSchedule: 'FARM', companySetting: 'COMPANY' });
+    expect(result).not.toHaveProperty('leadTimeDays'); // 3 Oct ruling 6: no lead time for internal feed (Req. row 29)
+    expect(result.sources).toEqual({ logistics: 'FARM', submissionSchedule: 'FARM', companySetting: 'COMPANY' });
   });
 
   it('returns typed documented fallbacks and nullable schedules when no settings row exists', async () => {
@@ -117,7 +119,9 @@ describe('FeedSettingsService company-row persistence', () => {
     let pendingValues: Record<string, unknown> = {};
     const rowsFor = (table: unknown) => table === schema.companyMaster
       ? [{ company_id: 'co-1', default_timezone_id: 'UTC' }]
-      : table === schema.feedPlanningSetting && stored ? [stored] : [];
+      : table === schema.locationMaster
+        ? [{ location_id: 'farm-1', company_id: 'co-1', lob_id: null }]
+        : table === schema.feedPlanningSetting && stored ? [stored] : [];
     const select = jest.fn(() => {
       let table: unknown;
       const chain: any = {
@@ -159,5 +163,27 @@ describe('FeedSettingsService company-row persistence', () => {
     expect(upsert).toHaveBeenCalledTimes(2);
     expect(rows()).toHaveLength(1);
     expect(rows()[0]).toEqual(expect.objectContaining({ company_id: 'co-1', farm_id: null, submission_time: '13:00' }));
+  });
+
+  it('stores safety stock and bag size on the company row (TDD Engine Step 8)', async () => {
+    const { db, rows } = databaseWithAtomicStore();
+    await new FeedSettingsService(transactionCls(db)).saveCompany('co-1', { safetyStockKg: 250, bagSizeKg: 25 }, 'tenant-1', 'user-1');
+    expect(rows()[0]).toEqual(expect.objectContaining({ farm_id: null, safety_stock_kg: '250', bag_size_kg: '25' }));
+  });
+
+  it('saves a farm override holding only the values the farm sets; the rest inherit', async () => {
+    const { db, rows } = databaseWithAtomicStore();
+    const result = await new FeedSettingsService(transactionCls(db)).saveFarm('co-1', 'farm-1', { bulkMultipleKg: 6000 }, 'tenant-1', 'user-1');
+    expect(rows()[0]).toEqual(expect.objectContaining({
+      company_id: 'co-1', farm_id: 'farm-1', bulk_multiple_kg: '6000',
+      safety_stock_kg: null, bag_size_kg: null, truck_target_kg: null, production_weekday: null,
+    }));
+    expect(result).toEqual(expect.objectContaining({ farmId: 'farm-1', bulkMultipleKg: 6000, safetyStockKg: 0 }));
+  });
+
+  it('does not let a farm-bound caller change a farm override', async () => {
+    const cls = transactionCls(databaseWithAtomicStore().db);
+    useFarmScope(cls, { farmId: 'farm-1', restricted: true, companyId: 'co-1', lobId: 'pig' });
+    await expect(new FeedSettingsService(cls).saveFarm('co-1', 'farm-1', {}, 'tenant-1')).rejects.toThrow(ForbiddenException);
   });
 });

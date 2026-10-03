@@ -171,6 +171,7 @@ export class FeedRequisitionService implements OnModuleInit {
         bagSizeKg: row.feed_bag_size_kg ?? 50,
         truckTargetKg: row.feed_truck_target_kg ?? 30000,
         productionWeekday: row.feed_production_weekday ?? 0,
+        safetyStockKg: 0, // Plan 2026-10-03 Task 5 reads all of these from Feed Planning Settings instead
       },
     };
   }

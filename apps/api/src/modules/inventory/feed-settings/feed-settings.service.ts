@@ -5,7 +5,7 @@ import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
 import { assertLobInScope, farmScope } from '../../../common/farm-scope';
-import { UpdateCompanyFeedSettingsDto } from './dto/feed-settings.dto';
+import { UpdateCompanyFeedSettingsDto, UpdateFarmFeedSettingsDto } from './dto/feed-settings.dto';
 import { resolvePlanningRules } from './feed-settings.rules';
 
 @Injectable()
@@ -36,13 +36,12 @@ export class FeedSettingsService {
     const companySetting = settings.find((row) => row.farm_id === null) ?? null;
     const farmSetting = effectiveFarmId ? settings.find((row) => row.farm_id === effectiveFarmId) ?? null : null;
 
-    let farm: { location_id: string; company_id: string | null; lob_id: string | null; feed_lead_time_days: number | null } | undefined;
+    let farm: { location_id: string; company_id: string | null; lob_id: string | null } | undefined;
     if (effectiveFarmId) {
       [farm] = await this.db.select({
         location_id: schema.locationMaster.location_id,
         company_id: schema.locationMaster.company_id,
         lob_id: schema.locationMaster.lob_id,
-        feed_lead_time_days: schema.locationMaster.feed_lead_time_days,
       }).from(schema.locationMaster).where(and(
         eq(schema.locationMaster.location_id, effectiveFarmId),
         eq(schema.locationMaster.location_type, 'FARM'),
@@ -61,14 +60,28 @@ export class FeedSettingsService {
       effective.submissionTime = resolvePlanningRules({ submission_time: farmSetting.submission_time }).submissionTime;
     }
 
+    // A farm row may override the logistics values (spec 2026-10-03 §3.2); a null field inherits the company's.
+    const LOGISTICS = ['safety_stock_kg', 'bag_size_kg', 'bulk_multiple_kg', 'truck_target_kg', 'production_weekday'] as const;
+    const farmLogistics = farmSetting
+      ? Object.fromEntries(LOGISTICS.filter((k) => farmSetting[k] !== null && farmSetting[k] !== undefined).map((k) => [k, farmSetting[k]]))
+      : {};
+    const hasFarmLogistics = Object.keys(farmLogistics).length > 0;
+    if (hasFarmLogistics) {
+      const merged = resolvePlanningRules({ ...(companySetting ?? {}), ...farmLogistics });
+      effective.safetyStockKg = merged.safetyStockKg;
+      effective.bagSizeKg = merged.bagSizeKg;
+      effective.bulkMultipleKg = merged.bulkMultipleKg;
+      effective.truckTargetKg = merged.truckTargetKg;
+      effective.productionWeekday = merged.productionWeekday;
+    }
+
     return {
       companyId,
       farmId: effectiveFarmId ?? null,
       timezoneId: company.default_timezone_id,
       ...effective,
-      leadTimeDays: farm?.feed_lead_time_days ?? null,
       sources: {
-        leadTime: farm?.feed_lead_time_days !== null && farm?.feed_lead_time_days !== undefined ? 'FARM' as const : 'SYSTEM' as const,
+        logistics: hasFarmLogistics ? 'FARM' as const : companySetting ? 'COMPANY' as const : 'SYSTEM' as const,
         submissionSchedule: hasFarmSubmission ? 'FARM' as const : companySetting ? 'COMPANY' as const : 'SYSTEM' as const,
         companySetting: companySetting ? 'COMPANY' as const : 'SYSTEM' as const,
       },
@@ -92,6 +105,8 @@ export class FeedSettingsService {
       physical_count_time: dto.physicalCountTime === undefined ? current.physicalCountTime : dto.physicalCountTime,
       truck_target_kg: dto.truckTargetKg === undefined ? current.truckTargetKg : dto.truckTargetKg,
       bulk_multiple_kg: dto.bulkMultipleKg === undefined ? current.bulkMultipleKg : dto.bulkMultipleKg,
+      safety_stock_kg: dto.safetyStockKg ?? current.safetyStockKg,
+      bag_size_kg: dto.bagSizeKg === undefined ? current.bagSizeKg : dto.bagSizeKg,
       capacity_warning_pct: dto.capacityWarningPct ?? current.capacityWarningPct,
       bag_tolerance_pct: dto.bagTolerancePct === undefined ? current.bagTolerancePct : dto.bagTolerancePct,
       finance_variance_pct: dto.financeVariancePct ?? current.financeVariancePct,
@@ -104,6 +119,8 @@ export class FeedSettingsService {
       ...candidate,
       truck_target_kg: candidate.truck_target_kg === null ? null : String(candidate.truck_target_kg),
       bulk_multiple_kg: candidate.bulk_multiple_kg === null ? null : String(candidate.bulk_multiple_kg),
+      safety_stock_kg: String(candidate.safety_stock_kg),
+      bag_size_kg: candidate.bag_size_kg === null ? null : String(candidate.bag_size_kg),
       capacity_warning_pct: String(candidate.capacity_warning_pct),
       bag_tolerance_pct: candidate.bag_tolerance_pct === null ? null : String(candidate.bag_tolerance_pct),
       finance_variance_pct: String(candidate.finance_variance_pct),
@@ -116,5 +133,46 @@ export class FeedSettingsService {
       ...databaseValues, created_by: actorId ?? null,
     }).onDuplicateKeyUpdate({ set: databaseValues });
     return this.resolve(companyId);
+  }
+
+  /** A farm's override row: only what the farm sets is stored; null fields inherit the company row. */
+  async saveFarm(companyId: string, farmId: string, dto: Omit<UpdateFarmFeedSettingsDto, 'farmId' | 'companyId'>, tenantId: string, actorId?: string) {
+    const scope = farmScope(this.cls);
+    if (scope.restricted || scope.farmId) throw new ForbiddenException('Operationally scoped users cannot change farm feed settings.');
+    if (!tenantId) throw new BadRequestException('Tenant context is required to save feed settings.');
+    await this.resolve(companyId, farmId); // the farm must belong to the company
+    const [existing] = await this.db.select().from(schema.feedPlanningSetting).where(and(
+      eq(schema.feedPlanningSetting.company_id, companyId),
+      eq(schema.feedPlanningSetting.farm_id, farmId),
+      eq(schema.feedPlanningSetting.is_active, true),
+    )).limit(1);
+    // undefined keeps the farm's current override; null clears it (the farm inherits the company value).
+    const num = (value: number | null | undefined, current: string | number | null | undefined): number | null =>
+      value !== undefined ? value : current === null || current === undefined ? null : Number(current);
+    const candidate = {
+      safety_stock_kg: num(dto.safetyStockKg, existing?.safety_stock_kg),
+      bag_size_kg: num(dto.bagSizeKg, existing?.bag_size_kg),
+      bulk_multiple_kg: num(dto.bulkMultipleKg, existing?.bulk_multiple_kg),
+      truck_target_kg: num(dto.truckTargetKg, existing?.truck_target_kg),
+      production_weekday: num(dto.productionWeekday, existing?.production_weekday),
+      submission_weekday: num(dto.submissionWeekday, existing?.submission_weekday),
+      submission_time: dto.submissionTime !== undefined ? dto.submissionTime : existing?.submission_time ?? null,
+    };
+    resolvePlanningRules(candidate);
+    const decimal = (v: number | null) => (v === null ? null : String(v));
+    const databaseValues = {
+      ...candidate,
+      safety_stock_kg: decimal(candidate.safety_stock_kg),
+      bag_size_kg: decimal(candidate.bag_size_kg),
+      bulk_multiple_kg: decimal(candidate.bulk_multiple_kg),
+      truck_target_kg: decimal(candidate.truck_target_kg),
+      updated_at: new Date().toISOString().replace('T', ' ').substring(0, 19),
+      updated_by: actorId ?? null,
+    };
+    await this.db.insert(schema.feedPlanningSetting).values({
+      setting_id: randomUUID(), tenant_id: tenantId, company_id: companyId, farm_id: farmId,
+      ...databaseValues, created_by: actorId ?? null,
+    }).onDuplicateKeyUpdate({ set: databaseValues });
+    return this.resolve(companyId, farmId);
   }
 }

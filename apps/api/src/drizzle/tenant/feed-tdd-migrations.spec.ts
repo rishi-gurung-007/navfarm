@@ -31,7 +31,7 @@ describe('Tenant migration 0141 — feed TDD alignment (additive)', () => {
   it('adds exactly the workbook columns and nothing destructive', () => {
     const sql = statements('0141_feed_tdd_alignment');
     expect(sql).toEqual([
-      "ALTER TABLE `feed_planning_setting` ADD `safety_stock_kg` decimal(14,2) NOT NULL DEFAULT '0.00';",
+      'ALTER TABLE `feed_planning_setting` ADD `safety_stock_kg` decimal(14,2);',
       'ALTER TABLE `feed_planning_setting` ADD `bag_size_kg` decimal(14,2);',
       'ALTER TABLE `item_master` ADD `diet_no` int;',
       'ALTER TABLE `breed_lifecycle_stages` ADD `feed_form` varchar(10);',

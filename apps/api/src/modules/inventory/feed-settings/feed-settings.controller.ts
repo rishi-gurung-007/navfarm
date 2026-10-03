@@ -5,7 +5,7 @@ import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { FarmScoped } from '../../../common/farm-scope';
 import { SetupWizardAccessGuard, WizardAccess } from '../../system/setup-wizard/setup-wizard-access.guard';
-import { QueryFeedSettingsDto, UpdateCompanyFeedSettingsDto } from './dto/feed-settings.dto';
+import { QueryFeedSettingsDto, UpdateCompanyFeedSettingsDto, UpdateFarmFeedSettingsDto } from './dto/feed-settings.dto';
 import { FeedSettingsService } from './feed-settings.service';
 
 @ApiTags('Feed Settings')
@@ -35,5 +35,17 @@ export class FeedSettingsController {
     const tenantId = req.user?.tenantId || req.tenantId;
     if (!companyId) throw new BadRequestException('Active company ID is required.');
     return { success: true, data: await this.service.saveCompany(companyId, dto, tenantId, req.user?.userId) };
+  }
+
+  @Put('farm')
+  @WizardAccess({ admin: true, target: 'company', workspaceFallback: true })
+  @RequirePermission('MASTER_DATA', 'LOCATION', 'edit')
+  @ApiOperation({ summary: 'Save a farm override of the feed-planning settings (null clears a value back to the company default)' })
+  async putFarm(@Body() dto: UpdateFarmFeedSettingsDto, @Req() req: any) {
+    const companyId = dto.companyId || req.headers?.['x-active-company-id'] || req.user?.companyId;
+    const tenantId = req.user?.tenantId || req.tenantId;
+    if (!companyId) throw new BadRequestException('Active company ID is required.');
+    const { companyId: _company, farmId, ...values } = dto;
+    return { success: true, data: await this.service.saveFarm(companyId, farmId, values, tenantId, req.user?.userId) };
   }
 }
