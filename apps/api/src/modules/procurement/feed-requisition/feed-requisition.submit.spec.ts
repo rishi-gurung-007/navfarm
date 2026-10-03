@@ -9,6 +9,8 @@ import { FeedForecastService } from '../../inventory/feed-forecast/feed-forecast
 import { addDaysIso, serverToday } from './feed-requisition.rules';
 import { FeedRequisitionService, isEditableFeedRequisition } from './feed-requisition.service';
 
+const FEED_SETTINGS_STUB = { resolve: jest.fn(async () => ({ safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50 })) } as any;
+
 /**
  * D25 (Rishi, 27 Sep): the farm drafts, edits and submits a feed requisition;
  * the farm's own approvers approve or reject it in the Approvals inbox. Run
@@ -62,7 +64,7 @@ function setup(queues: Map<unknown, unknown[][]>) {
   const ref = {} as { cls: ClsService };
   const { db, log } = recordingDb(queues, () => ref.cls);
   const cls = (ref.cls = transactionCls(db));
-  const forecast = new FeedForecastService(cls, {} as any, { log: jest.fn() } as any, { currentItems: jest.fn(async () => new Map()) } as any);
+  const forecast = new FeedForecastService(cls, {} as any, { log: jest.fn() } as any, { currentItems: jest.fn(async () => new Map()) } as any, FEED_SETTINGS_STUB);
   const approvals = new ApprovalService(cls, new AuditLogService(cls), {} as any);
   const evaluated: Array<{ args: unknown[]; inTx: boolean }> = [];
   const alerts: any = {

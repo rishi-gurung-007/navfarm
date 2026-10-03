@@ -4,6 +4,8 @@ import { transactionCls, useFarmScope } from '../../../test-utils/transaction-cl
 import * as schema from '../../../core/database/schema';
 import { FeedForecastService } from './feed-forecast.service';
 
+const FEED_SETTINGS_STUB = { resolve: jest.fn(async () => ({ safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50 })) } as any;
+
 /**
  * D32 (Rishi, 28 Sep). The six per-farm feed settings leave the Location form
  * and were originally edited on Settings → Inventory Setup. They stay
@@ -45,7 +47,7 @@ describe('FeedForecastService.listFarmSettings (D32)', () => {
     const cls = transactionCls(db);
     useFarmScope(cls, { farmId: null, restricted: false, companyId: null, lobId: null });
     answers.push(rows, []); // the farms, then no silos
-    const list = await new FeedForecastService(cls, {} as any, { log: jest.fn() } as any, { currentItems: jest.fn(async () => new Map()) } as any).listFarmSettings('tenant-1', 'TENANT_ADMIN');
+    const list = await new FeedForecastService(cls, {} as any, { log: jest.fn() } as any, { currentItems: jest.fn(async () => new Map()) } as any, FEED_SETTINGS_STUB).listFarmSettings('tenant-1', 'TENANT_ADMIN');
     expect(list).toEqual([{
       farmId: 'f-vil', code: 'VIL100', name: 'Villa Franca', companyId: 'co-1', companyName: 'Colcom Piggery',
       silos: [],
@@ -64,12 +66,12 @@ describe('FeedForecastService.listFarmSettings (D32)', () => {
     const bound = transactionCls(db);
     useFarmScope(bound, { farmId: 'f-vil', restricted: true, companyId: 'co-1', lobId: 'lob-pig' });
     answers.push(rows, []);
-    expect(await new FeedForecastService(bound, {} as any, { log: jest.fn() } as any, { currentItems: jest.fn(async () => new Map()) } as any).listFarmSettings('tenant-1', 'STANDARD_USER')).toHaveLength(1);
+    expect(await new FeedForecastService(bound, {} as any, { log: jest.fn() } as any, { currentItems: jest.fn(async () => new Map()) } as any, FEED_SETTINGS_STUB).listFarmSettings('tenant-1', 'STANDARD_USER')).toHaveLength(1);
     expect(dialect.sqlToQuery(wheres[0] as any).params).toEqual(expect.arrayContaining(['f-vil']));
 
     const loose = transactionCls(db);
     useFarmScope(loose, { farmId: null, restricted: true, companyId: null, lobId: null });
-    expect(await new FeedForecastService(loose, {} as any, { log: jest.fn() } as any, { currentItems: jest.fn(async () => new Map()) } as any).listFarmSettings('tenant-1', 'STANDARD_USER')).toEqual([]);
+    expect(await new FeedForecastService(loose, {} as any, { log: jest.fn() } as any, { currentItems: jest.fn(async () => new Map()) } as any, FEED_SETTINGS_STUB).listFarmSettings('tenant-1', 'STANDARD_USER')).toEqual([]);
   });
 });
 
@@ -102,7 +104,7 @@ describe('FeedForecastService.updateFarmSettings (D32)', () => {
     const { db, state } = recording(farmRow);
     const cls = transactionCls(db);
     useFarmScope(cls, scope);
-    return { service: new FeedForecastService(cls, {} as any, auditService as any, { currentItems: jest.fn(async () => new Map()) } as any), state, auditService };
+    return { service: new FeedForecastService(cls, {} as any, auditService as any, { currentItems: jest.fn(async () => new Map()) } as any, FEED_SETTINGS_STUB), state, auditService };
   };
 
   const OWN = { farmId: 'f-vil', restricted: true, companyId: 'co-1', lobId: 'lob-pig' };
@@ -199,7 +201,7 @@ describe('FeedForecastService silos on Silo Feed Setup (D41)', () => {
   const FARM = { farm_id: 'f-vil', code: 'VIL100', name: 'Villa Franca', company_id: 'co-1', company_name: 'T',
     feed_bulk_multiple_kg: null, feed_bag_size_kg: null, feed_truck_target_kg: null, feed_production_weekday: null };
   const SILO = { location_id: 's-1', farm_id: 'f-vil', company_id: 'co-1', location_code: 'VIL100/SILO-001', location_name: 'Feed Silo 1',
-    feed_in_bags: false, silo_capacity_kg: '10000', low_level_kg: '2000', high_level_kg: '9000', silo_reorder_days: 3, status: 'ACTIVE' };
+    feed_in_bags: false, silo_capacity_kg: '10000', low_level_kg: '2000', high_level_kg: '9000', status: 'ACTIVE' };
   const SHED_LINKS = [
     { silo_id: 's-1', shed_id: 'sh-1', shed_code: 'VIL100/SHED-001', shed_name: 'Dry Sow House' },
     { silo_id: 's-1', shed_id: 'sh-2', shed_code: 'VIL100/SHED-002', shed_name: 'Farrowing House' },
@@ -207,7 +209,7 @@ describe('FeedForecastService silos on Silo Feed Setup (D41)', () => {
 
   beforeEach(() => { selectQueue.length = 0; jest.clearAllMocks(); });
 
-  const service = (cls: any, siloFeed: any = forecast) => new FeedForecastService(cls, {} as any, audit as any, siloFeed as any);
+  const service = (cls: any, siloFeed: any = forecast) => new FeedForecastService(cls, {} as any, audit as any, siloFeed as any, FEED_SETTINGS_STUB);
 
   it('returns the complete read-only Silo Feed Setup identity, allocation, handling, feed and status fields', async () => {
     const cls = transactionCls(db);
@@ -231,7 +233,6 @@ describe('FeedForecastService silos on Silo Feed Setup (D41)', () => {
       capacityKg: 10000,
       lowLevelKg: 2000,
       highLevelKg: 9000,
-      reorderDays: 3,
       status: 'ACTIVE',
     }]);
   });
@@ -265,7 +266,7 @@ describe('FeedForecastService.updateSiloSettings (D41)', () => {
   const service = (scope: any) => {
     const cls = transactionCls(db);
     useFarmScope(cls, scope);
-    return new FeedForecastService(cls, {} as any, audit as any, { currentItems: jest.fn() } as any);
+    return new FeedForecastService(cls, {} as any, audit as any, { currentItems: jest.fn() } as any, FEED_SETTINGS_STUB);
   };
   const ADMIN = { farmId: null, restricted: false, companyId: 'co-1', lobId: null };
   const USER = { userId: 'u-1', userType: 'COMPANY_ADMIN' } as any;

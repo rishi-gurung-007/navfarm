@@ -22,15 +22,6 @@ import { buildSourceSnapshot } from './feed-forecast-run.rules';
 import { FeedSettingsService } from '../feed-settings/feed-settings.service';
 
 /**
- * Task 4 (3 Oct ruling): safety stock, bulk multiple and bag size come from
- * FeedSettingsService (Task 2) now, not from the farm's own columns. This is
- * the fallback used only when no FeedSettingsService was injected (a unit
- * test exercising computeForFarm without one) — production always has one,
- * since FeedForecastModule imports FeedSettingsModule.
- */
-const DEFAULT_FARM_FEED_SETTINGS = { safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50 };
-
-/**
  * The LOB bound on the forecast's location read for a restricted
  * (OPERATIONAL_ADMIN) caller. A location with no lob_id belongs to every LOB —
  * a farm STORE is often created without one — so it is admitted alongside the
@@ -94,7 +85,6 @@ export interface FeedPlanningSilo {
   capacityKg: number | null;
   lowLevelKg: number | null;
   highLevelKg: number | null;
-  reorderDays: number | null;
   status: string;
 }
 
@@ -564,12 +554,14 @@ export class FeedForecastService {
     private readonly auditService: AuditLogService,
     // D41: what each silo is holding now, for Silo Feed Setup's read-only columns.
     private readonly siloFeedService: SiloFeedService,
-    // Task 4: safety stock, bulk multiple and bag size (Task 2's planning
-    // settings) — optional like runService below, so a unit test exercising
-    // computeForFarm without one falls back to DEFAULT_FARM_FEED_SETTINGS
-    // rather than throwing; production always has one (FeedForecastModule
-    // imports FeedSettingsModule).
-    @Optional() private readonly feedSettings?: FeedSettingsService,
+    // Task 4 fix round 2 (Important 3, Rishi's ruling): required, not
+    // optional. A module-wiring mistake that silently dropped this
+    // dependency must fail loudly (Nest throws at boot), not degrade every
+    // forecast to safety stock 0 — the exact production defect this task
+    // exists to repair. FeedForecastModule always provides a real one
+    // (imports FeedSettingsModule); every unit test that constructs this
+    // service directly now passes a stub too.
+    private readonly feedSettings: FeedSettingsService,
     @Optional() private readonly runService?: FeedForecastRunService,
   ) {}
 
@@ -838,7 +830,6 @@ export class FeedForecastService {
         silo_capacity_kg: L.silo_capacity_kg,
         low_level_kg: L.low_level_kg,
         high_level_kg: L.high_level_kg,
-        silo_reorder_days: L.silo_reorder_days,
         status: L.status,
       })
       .from(L)
@@ -904,7 +895,6 @@ export class FeedForecastService {
         capacityKg: num(row.silo_capacity_kg),
         lowLevelKg: num(row.low_level_kg),
         highLevelKg: num(row.high_level_kg),
-        reorderDays: num(row.silo_reorder_days),
         status: row.status,
       };
       const key = row.farm_id as string;
@@ -1248,7 +1238,9 @@ export class FeedForecastService {
       // Task 4 / Task 2: safety stock (and the two other draft-rounding
       // settings the report carries) come from the company/farm's configured
       // planning settings now, never from the farm's own lead-time column.
-      const resolvedSettings = this.feedSettings ? await this.feedSettings.resolve(companyId, farmId) : DEFAULT_FARM_FEED_SETTINGS;
+      // Important 4 (fix round 2): resolved through resolveFeedSettings, not
+      // directly — see that method for why.
+      const resolvedSettings = await this.resolveFeedSettings(companyId, farmId);
       const { input: loadedInput, flags: loadFlags, stageBlocks } = await this.loadInput(farm, planningDate, from, to, tenantId, { stockDate, horizonTo, headerCutoff });
       const input: ForecastInput = { ...loadedInput, safetyStockKg: resolvedSettings.safetyStockKg };
       const { rows, flags, sources, dietChanges, daily } = buildFeedForecast(input);
@@ -1296,6 +1288,36 @@ export class FeedForecastService {
     return this.cls.run(async () => {
       this.cls.set(FARM_SCOPE_KEY, effectiveScope);
       return work();
+    });
+  }
+
+  /**
+   * Task 4 fix round 2 (Important 4, Rishi's ruling): feed settings
+   * (safety stock, bulk multiple, bag size) are company/farm-level
+   * configuration, not LOB-scoped data — unlike a batch, a shed's stock, or
+   * a requisition line, no row here carries a lob_id of its own. But
+   * FeedSettingsService.resolve() calls assertLobInScope(scope, farm.lob_id)
+   * unconditionally once a farmId is passed, and — unlike every LOB check in
+   * THIS file (locationLobConditions, just above) — that assertion has no
+   * NULL-lob_id carve-out: strict `lobId !== scope.lobId` fails closed even
+   * when the farm's lob_id is NULL, which locationLobConditions's own
+   * comment says belongs to every LOB (a farm STORE is often created
+   * without one). A restricted OPERATIONAL_ADMIN computing a forecast for
+   * such a farm would get ForbiddenException for the entire report, before
+   * any computation — a stricter rule than this file documents for itself,
+   * and one no spec caught because feedSettings is mocked everywhere.
+   *
+   * Reading outside that assertion (restricted: false, lobId: null, just
+   * for this nested call) does not meaningfully widen access: resolve()
+   * still enforces the company boundary (scope.companyId !== companyId) and
+   * the farm-company match: this only skips the one assertion that has no
+   * business being LOB-strict for configuration that isn't LOB data.
+   */
+  private async resolveFeedSettings(companyId: string, farmId: string) {
+    const scope = farmScope(this.cls);
+    return this.cls.run(async () => {
+      this.cls.set(FARM_SCOPE_KEY, { ...scope, restricted: false, lobId: null });
+      return this.feedSettings.resolve(companyId, farmId);
     });
   }
 
@@ -1376,8 +1398,6 @@ export class FeedForecastService {
         parent_location_id: schema.locationMaster.parent_location_id,
         is_active: schema.locationMaster.is_active,
         low_level_kg: schema.locationMaster.low_level_kg,
-        // D38: the refill buffer is this silo's own, not the farm's.
-        silo_reorder_days: schema.locationMaster.silo_reorder_days,
       })
       .from(schema.locationMaster)
       .where(
@@ -1437,8 +1457,6 @@ export class FeedForecastService {
           siloId: s.location_id,
           siloCode: s.location_code,
           lowLevelKg: s.low_level_kg == null ? null : Number(s.low_level_kg),
-          // D38: null here means the engine's standard 2.
-          reorderDays: s.silo_reorder_days == null ? null : Number(s.silo_reorder_days),
         })),
       store: storeRow ? { storeId: storeRow.location_id, storeCode: storeRow.location_code } : null,
       feedItemIds: new Set(feedRows.map((r) => r.itemId)),
