@@ -102,8 +102,6 @@ export interface DraftLine {
   /** What the capacity warning was computed from, kept so a rerun can re-test it against a quantity the farm kept. */
   capacityKg: number | null;
   deliveryDayOpeningKg: number;
-  /** Requisition §1 row 42: NAV-style line numbering, 10000/20000/… in draft order. */
-  lineNo: number;
   belowLowLevel: boolean;
   needsSiloChangeover: boolean;
 }
@@ -216,7 +214,6 @@ export function recommendLines(args: {
       exceedsSiloCapacity,
       capacityKg,
       deliveryDayOpeningKg: s.deliveryDayOpeningKg,
-      lineNo: (lines.length + 1) * 10000,
       belowLowLevel: dest.locationType === 'SILO' && dest.lowLevelKg !== null && systemBalanceKg <= dest.lowLevelKg,
       needsSiloChangeover: s.noSiloHoldsItem,
     });
@@ -259,13 +256,6 @@ export interface DraftUpsertPlan {
 }
 
 /**
- * A line the farm changed. Ruling M9's flag is the record of it — a farm that
- * edits 6,000 kg to 9,000 and back to 6,000 has still made the quantity its
- * own — and a quantity that no longer matches the recommendation it was
- * drafted with (or a line drafted with none) counts as changed too, so a line
- * written before the flag existed is never overwritten either.
- */
-/**
  * Req. row 29, "Farm Manager can edit with reason": a delivery date that no
  * longer matches the recommendation it was drafted with was moved by the farm,
  * and a rerun leaves it alone — the same rule wasEdited applies to a quantity.
@@ -276,6 +266,13 @@ export function deliveryDateWasMoved(line: Pick<ExistingDraftLine, 'recommendedD
   return !!line.recommendedDeliveryDate && !!line.proposedDeliveryDate && line.proposedDeliveryDate !== line.recommendedDeliveryDate;
 }
 
+/**
+ * A line the farm changed. Ruling M9's flag is the record of it — a farm that
+ * edits 6,000 kg to 9,000 and back to 6,000 has still made the quantity its
+ * own — and a quantity that no longer matches the recommendation it was
+ * drafted with (or a line drafted with none) counts as changed too, so a line
+ * written before the flag existed is never overwritten either.
+ */
 export function wasEdited(line: Pick<ExistingDraftLine, 'quantityKg' | 'recommendedQtyKg' | 'quantityEdited'>): boolean {
   return line.quantityEdited === true || line.recommendedQtyKg === null || Math.abs(line.quantityKg - line.recommendedQtyKg) > 1e-6;
 }

@@ -198,10 +198,10 @@ describe('recommendLines — workbook delivery date and capacity (Req. row 29, E
     ['s2', { locationId: 's2', locationType: 'SILO' as const, feedInBags: false, lowLevelKg: 1000, capacityKg }],
   ]);
 
-  it('delivers on the first shortage date and numbers lines 10000, 20000', () => {
+  it('delivers on the first shortage date', () => {
     const lines = recommendLines({ ...base, sources: buildFeedForecast(workedExampleWithLevels).sources, destinations: dest(12000) });
-    expect(lines.map((l) => [l.itemId, l.recommendedQtyKg, l.recommendedDeliveryDate, l.proposedDeliveryDate, l.lineNo, l.exceedsSiloCapacity]))
-      .toEqual([['r1', 6000, '2026-09-23', '2026-09-23', 10000, false], ['r2', 9000, '2026-09-26', '2026-09-26', 20000, false]]);
+    expect(lines.map((l) => [l.itemId, l.recommendedQtyKg, l.recommendedDeliveryDate, l.proposedDeliveryDate, l.exceedsSiloCapacity]))
+      .toEqual([['r1', 6000, '2026-09-23', '2026-09-23', false], ['r2', 9000, '2026-09-26', '2026-09-26', false]]);
   });
 
   it('warns but keeps the quantity when the order would overfill the silo', () => {

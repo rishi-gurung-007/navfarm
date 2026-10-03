@@ -76,14 +76,16 @@ export class FeedForecastController {
   }
 
   /**
-   * D41: a silo's levels and reorder days, from Feed Planning. Written under the
+   * D41: a silo's levels and feed type, from Feed Planning
+   * (low_level_kg, high_level_kg, feedType — UpdateSiloPlanningDto rejects
+   * silo_reorder_days; M1, final whole-branch review). Written under the
    * location master's own edit right, like the farm settings above — the row
    * being changed is a silo's master row — and never through the generic
    * PUT /location, which demands the whole silo form.
    */
   @Put('farm-settings/:farmId/silos/:siloId')
   @RequirePermission('MASTER_DATA', 'LOCATION', 'edit')
-  @ApiOperation({ summary: "One silo's feed levels and reorder days; only those three columns are written (D41)" })
+  @ApiOperation({ summary: "One silo's feed levels and feed type; only those three columns are written (D41)" })
   async updateSiloSettings(
     @Param('farmId', ParseUUIDPipe) farmId: string,
     @Param('siloId', ParseUUIDPipe) siloId: string,
