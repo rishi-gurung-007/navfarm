@@ -11,6 +11,7 @@ import { Pagination } from "@/components/ui/pagination";
 import { getActiveCompanyId } from "@/hooks/useAuth";
 import { TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { StatusBadge } from "@/components/ui/status-badge";
+import { isDraftTransfer, TRANSFER_STATUS_OPTIONS, transferStatusLabelKey } from "./stock-transfer-status";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { LotSerialPicker } from "@/components/ui/lot-serial-picker";
 
@@ -45,10 +46,9 @@ const emptyLine = () => ({
 
 export default function StockTransferPanel() {
   const { t } = useLanguage();
-  const STATUS_LABEL: Record<string, string> = {
-    DRAFT: t("stpStatusDraft"),
-    POSTED: t("stpStatusPosted"),
-    CANCELLED: t("stpStatusCancelled"),
+  const statusLabel = (status: string) => {
+    const key = transferStatusLabelKey(status);
+    return key ? t(key) : status;
   };
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(false);
@@ -232,9 +232,9 @@ export default function StockTransferPanel() {
         <div className="flex items-center gap-2">
           <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="nf-input-sm px-2" style={S.input}>
             <option value="">{t("stpAllStatuses")}</option>
-            <option value="DRAFT">{t("stpStatusDraft")}</option>
-            <option value="POSTED">{t("stpStatusPosted")}</option>
-            <option value="CANCELLED">{t("stpStatusCancelled")}</option>
+            {TRANSFER_STATUS_OPTIONS.map((status) => (
+              <option key={status} value={status}>{statusLabel(status)}</option>
+            ))}
           </select>
           <div className="relative">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2" style={S.muted} />
@@ -276,7 +276,7 @@ export default function StockTransferPanel() {
                       <span className="inline-flex items-center gap-1.5">{warehouseLabel(row.from_warehouse_id)} <ArrowRight className="h-3 w-3" style={S.muted} /> {warehouseLabel(row.to_warehouse_id)}</span>
                     </TableCell>
                     <TableCell className="text-right">
-                      <StatusBadge status={row.status} label={STATUS_LABEL[row.status] || row.status} />
+                      <StatusBadge status={row.status} label={statusLabel(row.status)} />
                     </TableCell>
                     <TableCell className="text-right">
                       <button onClick={() => openView(row)} title={t("stpView")} className="rounded-lg p-1.5 transition hover:bg-(--surface-raised)" style={S.sub}>
@@ -460,7 +460,7 @@ export default function StockTransferPanel() {
         title={viewing ? t("stpTransferTitle", { transferNo: viewing.transfer_no }) : ""}
         maxWidth="xl"
         footer={
-          viewing?.status === "DRAFT" ? (
+          isDraftTransfer(viewing) ? (
             <Button size="sm" onClick={handlePost} disabled={posting} className="flex items-center gap-1.5 nf-btn-primary">
               <CheckCircle2 className="h-4 w-4" /> {posting ? t("stpPosting") : t("stpPost")}
             </Button>
@@ -470,7 +470,7 @@ export default function StockTransferPanel() {
         {viewing && (
           <div className="flex flex-col gap-4">
             <div className="grid grid-cols-2 gap-3 text-xs sm:grid-cols-3">
-              <div><p className="font-semibold uppercase tracking-wider" style={S.muted}>{t("stpStatus")}</p><StatusBadge status={viewing.status} label={STATUS_LABEL[viewing.status] || viewing.status} className="mt-1" /></div>
+              <div><p className="font-semibold uppercase tracking-wider" style={S.muted}>{t("stpStatus")}</p><StatusBadge status={viewing.status} label={statusLabel(viewing.status)} className="mt-1" /></div>
               <div><p className="font-semibold uppercase tracking-wider" style={S.muted}>{t("stpPostingDate")}</p><p style={S.primary}>{viewing.posting_date}</p></div>
               <div><p className="font-semibold uppercase tracking-wider" style={S.muted}>{t("stpRoute")}</p><p style={S.primary}>{warehouseLabel(viewing.from_warehouse_id)} → {warehouseLabel(viewing.to_warehouse_id)}</p></div>
               {viewing.posted_at && <div><p className="font-semibold uppercase tracking-wider" style={S.muted}>{t("stpPostedAt")}</p><p style={S.primary}>{viewing.posted_at}</p></div>}

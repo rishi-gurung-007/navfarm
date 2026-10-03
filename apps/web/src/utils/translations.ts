@@ -2884,6 +2884,8 @@ export const translations = {
     stpSubtitle: "Move stock between warehouses. Cost carries forward from FIFO layers at the source.",
     stpAllStatuses: "All statuses",
     stpStatusDraft: "Draft",
+    stpStatusInTransit: "In Transit",
+    stpStatusPartiallyReceived: "Partially Received",
     stpStatusPosted: "Posted",
     stpStatusCancelled: "Cancelled",
     stpSearchPlaceholder: "Search…",
