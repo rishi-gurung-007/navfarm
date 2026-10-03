@@ -199,6 +199,39 @@ seed plan is `docs/superpowers/plans/2026-09-30-four-farm-feed-seed-and-migratio
   represented by lines. Feed is an internal transfer, displayed as “Internal
   Feed Transfer”.
 
+### Feed planning settings — what the forecast actually reads (3 Oct 2026)
+
+- The shortfall is **demand + safety stock − opening − confirmed incoming**.
+  There is **no lead time and no refill buffer** in it. `silo_reorder_days` and
+  `feed_wastage_pct` still exist as columns and master fields and the forecast
+  must not read them; do not reintroduce either into the calculation.
+- **Planning settings own the logistics values**, not `location_master`:
+  `FeedSettingsService.resolve(companyId, farmId?)` returns `safetyStockKg`,
+  `bagSizeKg`, `bulkMultipleKg`, `truckTargetKg` and `productionWeekday`, and
+  there is deliberately **no `leadTimeDays`**. Defaults: safety stock **0**,
+  bulk multiple **3000 KG**, bag size **50 KG**, truck target **30000 KG** (a
+  target, never a block), horizon 7 days by default and 45 maximum.
+- They are edited in the app at **Settings → Inventory Setup → Silo Feed
+  Setup**: a company row (safety stock, bag size) and a per-farm row (safety
+  stock, bag size, bulk multiple, truck target, production weekday), stored in
+  `feed_planning_setting` keyed by `active_scope_key` (`F:<farmId>` for a farm).
+  Only **Feed Type**, **Below Feed Level** and **Above Threshold** are per silo
+  on `location_master`. Verified by changing a farm's safety stock 0 → 500 in the
+  browser and watching every unrounded need rise by exactly 500.
+- The silo's Below Feed Level never enters the shortfall; it drives alerts only.
+  The silo balance is always labelled **“System Balance”** (cp. 37).
+- A requisition line carries a per batch + house breakdown
+  (`requisition_line_batch`); rounding and ordering stay per silo + item. Line
+  numbers are 10000-step and displayed as such; Days Remaining is displayed to
+  one decimal and stored `decimal(10,1)`.
+- **Known defect, open as of 3 Oct:** the engine keys a stage-split
+  (`animal_tracking = 'REGISTERED'`) batch as the composite `"<batchId>:<stageId>"`
+  (`feed-forecast.service.ts:499`), which does not fit `varchar(36)` —
+  `requisition_line_batch.batch_id` (which also has an FK to `batch_header`) or
+  `feed_forecast_run_line.batch_id`. Auto-draft and Save Run therefore return 500
+  on seven of the nine demo farms. Evidence:
+  `docs/VERIFICATION-2026-10-03-feed-tdd-part-a.md`.
+
 ### Silo topology
 
 - FARM, SHED, PEN and SILO are rows in `location_master`.
@@ -259,3 +292,14 @@ seed plan is `docs/superpowers/plans/2026-09-30-four-farm-feed-seed-and-migratio
 6. Update the relevant implementation plan and this section when scope or
    architecture changes, so another agent does not reconstruct history from
    stale workbook examples.
+7. **In a git worktree, nx builds and serves the wrong tree.** `nx run
+   api:build`, `nx run web:dev`, `nx test web` and `nx lint web` all replayed the
+   main checkout on 3 Oct, even with `--skip-nx-cache`, `NX_DAEMON=false` and the
+   worktree's own nx binary. Build the API with
+   `cd apps/api && NODE_ENV=production NX_WORKSPACE_ROOT_PATH=<worktree>
+   NX_TASK_TARGET_PROJECT=api NX_TASK_TARGET_TARGET=build
+   ../../node_modules/.bin/webpack-cli build`, serve the web with
+   `cd apps/web && ../../node_modules/.bin/next dev --port 3002`, and run jest
+   with `../../node_modules/.bin/jest --maxWorkers=2`. Then **grep the bundle for
+   a string from your newest commit** before believing anything the API tells
+   you — a stale `dist/main.js` reports a fixed defect as still broken.
