@@ -1,12 +1,12 @@
 import { ForbiddenException, NotFoundException, UnauthorizedException } from '@nestjs/common';
-import { getTableConfig } from 'drizzle-orm/mysql-core';
+import { getTableConfig, MySqlDialect } from 'drizzle-orm/mysql-core';
 import { FARM_SCOPE_KEY, type FarmScope } from '../../../common/farm-scope';
 import * as schema from '../../../core/database/schema';
 import { transactionCls } from '../../../test-utils/transaction-cls';
 import { buildSourceSnapshot } from './feed-forecast-run.rules';
 import { FeedForecastRunService } from './feed-forecast-run.service';
 
-type Entry = { op: string; table?: unknown; lock?: string; values?: any; inTx: boolean };
+type Entry = { op: string; table?: unknown; lock?: string; values?: any; where?: unknown; inTx: boolean };
 
 function setup(queues: Map<unknown, unknown[][]>, scope: FarmScope = { farmId: null, companyId: 'company-1', lobId: null, restricted: false }) {
   const log: Entry[] = [];
@@ -16,7 +16,7 @@ function setup(queues: Map<unknown, unknown[][]>, scope: FarmScope = { farmId: n
       log.push(entry);
       const chain: any = {
         from: (table: unknown) => { entry.table = table; return chain; },
-        where: () => chain,
+        where: (condition: unknown) => { entry.where = condition; return chain; },
         orderBy: () => chain,
         limit: () => chain,
         for: (lock: string) => { entry.lock = lock; return chain; },
@@ -31,7 +31,10 @@ function setup(queues: Map<unknown, unknown[][]>, scope: FarmScope = { farmId: n
   const cls = transactionCls(db);
   const get = cls.get.bind(cls);
   cls.get = ((key?: string) => key === FARM_SCOPE_KEY ? scope : get(key as any)) as typeof cls.get;
-  const settings = { resolve: jest.fn(async () => ({ companyId: 'company-1', farmId: 'farm-1', maxForecastDays: 45, sources: { companySetting: 'COMPANY' } })) };
+  const settings = {
+    resolve: jest.fn(async () => ({ companyId: 'company-1', farmId: 'farm-1', maxForecastDays: 45, sources: { companySetting: 'COMPANY' } })),
+    resolveForFeedPlanning: jest.fn(async () => ({ companyId: 'company-1', farmId: 'farm-1', maxForecastDays: 45, sources: { companySetting: 'COMPANY' } })),
+  };
   return { service: new FeedForecastRunService(cls, settings as any), log, settings, cls };
 }
 
@@ -127,7 +130,10 @@ function concurrentSetup(transactionFarms: string[]) {
   cls.get = ((key?: string) => key === FARM_SCOPE_KEY
     ? { farmId: null, companyId: 'company-1', lobId: null, restricted: false }
     : get(key as any)) as typeof cls.get;
-  const settings = { resolve: jest.fn(async (_companyId: string, farmId: string) => ({ companyId: 'company-1', farmId, maxForecastDays: 45 })) };
+  const settings = {
+    resolve: jest.fn(async (_companyId: string, farmId: string) => ({ companyId: 'company-1', farmId, maxForecastDays: 45 })),
+    resolveForFeedPlanning: jest.fn(async (_companyId: string, farmId: string) => ({ companyId: 'company-1', farmId, maxForecastDays: 45 })),
+  };
   return {
     service: new FeedForecastRunService(cls, settings as any),
     persisted,
@@ -207,7 +213,7 @@ describe('FeedForecastRunService', () => {
       [schema.feedForecastRun, [[]]],
     ]);
     const { service, log, settings } = setup(queues);
-    settings.resolve.mockResolvedValueOnce({
+    settings.resolveForFeedPlanning.mockResolvedValueOnce({
       companyId: 'company-1', farmId: 'farm-1', maxForecastDays: 45, safetyStockKg: 500, bulkMultipleKg: 6000, bagSizeKg: 25,
       truckTargetKg: 28000, productionWeekday: 3,
     } as any);
@@ -304,6 +310,43 @@ describe('FeedForecastRunService', () => {
     await expect(service.createRun({ ...input, farmId: 'farm-2' }, output as any, { userId: 'worker' }))
       .rejects.toBeInstanceOf(ForbiddenException);
     expect(log.some((entry) => entry.op === 'insert')).toBe(false);
+  });
+
+  it('gives loadFarm the same NULL-lob_id carve-out as assertLocationOnActiveFarm, so a restricted scope does not exclude a NULL-lob_id farm from its own WHERE (I1)', async () => {
+    const queues = new Map<unknown, unknown[][]>([
+      [schema.locationMaster, [[{ location_id: 'farm-1', company_id: 'company-1', lob_id: null }]]],
+      [schema.feedForecastRun, [[]]],
+    ]);
+    const scope: FarmScope = { farmId: null, companyId: 'company-1', lobId: 'lob-piggery', restricted: true };
+    const { service, log } = setup(queues, scope);
+
+    await expect(service.createRun(input, output as any, { userId: 'user-1' })).resolves.toMatchObject({ version: 1 });
+
+    const farmQuery = log.find((entry) => entry.table === schema.locationMaster);
+    expect(farmQuery?.where).toBeDefined();
+    const dialect = new MySqlDialect();
+    const rendered = dialect.sqlToQuery(farmQuery!.where as any);
+    // Before the fix this condition was a bare eq(lob_id, scope.lobId), which never
+    // mentions "is null" and excludes a NULL-lob_id row outright under a restricted scope.
+    expect(rendered.sql).toContain('`lob_id` is null');
+  });
+
+  it('resolves logistics settings through resolveForFeedPlanning, not resolve, so a restricted caller on a NULL-lob_id farm is not 403d out of drafting from a forecast they can already see (I1)', async () => {
+    const queues = new Map<unknown, unknown[][]>([
+      [schema.locationMaster, [[{ location_id: 'farm-1', company_id: 'company-1', lob_id: null }]]],
+      [schema.feedForecastRun, [[]]],
+    ]);
+    const scope: FarmScope = { farmId: null, companyId: 'company-1', lobId: 'lob-piggery', restricted: true };
+    const { service, settings } = setup(queues, scope);
+    // resolve() has no NULL-lob_id carve-out (assertLobInScope): a NULL farm.lob_id
+    // under a restricted scope would 403 there. resolveForFeedPlanning neutralises
+    // the scope for this one nested call, so it must be what createRun calls.
+    settings.resolve.mockRejectedValue(new ForbiddenException('Not authorized for this line of business.'));
+
+    await expect(service.createRun(input, output as any, { userId: 'user-1' })).resolves.toMatchObject({ version: 1 });
+
+    expect(settings.resolveForFeedPlanning).toHaveBeenCalledWith('company-1', 'farm-1');
+    expect(settings.resolve).not.toHaveBeenCalled();
   });
 
   it('requires an authenticated creator before locking or inserting', async () => {

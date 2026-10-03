@@ -1,5 +1,5 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
-import { and, desc, eq, isNull, like } from 'drizzle-orm';
+import { and, desc, eq, isNull, like, or } from 'drizzle-orm';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { randomUUID } from 'node:crypto';
 import { ClsService } from 'nestjs-cls';
@@ -57,7 +57,11 @@ export class FeedForecastRunService {
       isNull(schema.locationMaster.parent_location_id),
       eq(schema.locationMaster.is_active, true),
       isNull(schema.locationMaster.deleted_at),
-      ...(scope.restricted && scope.lobId ? [eq(schema.locationMaster.lob_id, scope.lobId)] : []),
+      // A farm with no lob_id belongs to every LOB (location_master.lob_id is
+      // nullable and assertLobInScope carves this out too) — same carve-out as
+      // assertLocationOnActiveFarm (farm-scope.ts), so a restricted caller is
+      // not 404'd off a farm the strict LOB match would otherwise exclude.
+      ...(scope.restricted && scope.lobId ? [or(eq(schema.locationMaster.lob_id, scope.lobId), isNull(schema.locationMaster.lob_id))!] : []),
     )).limit(1);
     const rows = lock ? await query.for('update') : await query;
     const [farm] = rows;
@@ -84,7 +88,11 @@ export class FeedForecastRunService {
       if (!output.sourceSnapshot) throw new BadRequestException('The forecast source snapshot is required.');
       // Task 8: the logistics values come from feed_planning_setting (farm
       // override over company over defaults), not from location_master.
-      const resolved = await this.feedSettings.resolve(input.companyId, input.farmId);
+      // I1 (final review): resolveForFeedPlanning, not resolve() directly —
+      // settings are not LOB-scoped data, and resolve() has no NULL-lob_id
+      // carve-out, so a restricted caller on a NULL-lob_id farm would 403
+      // here even though loadFarm (above) just let them see this farm.
+      const resolved = await this.feedSettings.resolveForFeedPlanning(input.companyId, input.farmId);
       const logistics = toFarmFeedSettings(resolved);
       const configSnapshot = buildConfigSnapshot({
         ...resolved,
