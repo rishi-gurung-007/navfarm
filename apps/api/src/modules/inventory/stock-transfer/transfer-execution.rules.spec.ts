@@ -18,6 +18,8 @@ import {
   nextReceiptState,
   transferIsFullyReceived,
   transferIsFullyShipped,
+  transferStatusFor,
+  OPEN_TRANSFER_STATUSES,
 } from './transfer-execution.rules';
 
 const line = (over: Record<string, unknown> = {}) => ({
@@ -129,5 +131,40 @@ describe('event guards and completion', () => {
 
   it('defaults line() to an untracked item so the tracking tests stay explicit', () => {
     expect(line()).toMatchObject({ lot_no: null, serial_no: null });
+  });
+});
+
+/**
+ * Part E Task 4b: a staged transfer's status follows its events. The brief:
+ * first shipment -> IN_TRANSIT; any receipt while some shipped/ordered
+ * quantity is still unreceived -> PARTIALLY_RECEIVED; every line fully shipped
+ * AND fully received -> POSTED.
+ */
+describe('transferStatusFor — status follows the shipment and receipt events', () => {
+  it('no shipment on any line is still DRAFT', () => {
+    expect(transferStatusFor([{ ordered: 10, shipped: 0, received: 0 }])).toBe('DRAFT');
+  });
+
+  it('a first shipment, nothing received, is IN_TRANSIT — partial or full', () => {
+    expect(transferStatusFor([{ ordered: 10, shipped: 6, received: 0 }])).toBe('IN_TRANSIT');
+    expect(transferStatusFor([{ ordered: 10, shipped: 10, received: 0 }])).toBe('IN_TRANSIT');
+    expect(transferStatusFor([{ ordered: 10, shipped: 4, received: 0 }, { ordered: 5, shipped: 0, received: 0 }])).toBe('IN_TRANSIT');
+  });
+
+  it('any receipt while something ordered is unreceived is PARTIALLY_RECEIVED', () => {
+    // ordered 10, shipped 6, received 4: 2 still in transit, 4 not yet shipped.
+    expect(transferStatusFor([{ ordered: 10, shipped: 6, received: 4 }])).toBe('PARTIALLY_RECEIVED');
+    // everything shipped so far has arrived, but the order is not all shipped.
+    expect(transferStatusFor([{ ordered: 10, shipped: 6, received: 6 }])).toBe('PARTIALLY_RECEIVED');
+    // one line complete, the other only shipped.
+    expect(transferStatusFor([{ ordered: 10, shipped: 10, received: 10 }, { ordered: 5, shipped: 5, received: 0 }])).toBe('PARTIALLY_RECEIVED');
+  });
+
+  it('every line fully shipped and fully received is POSTED', () => {
+    expect(transferStatusFor([{ ordered: 10, shipped: 10, received: 10 }, { ordered: 5, shipped: 5, received: 5 }])).toBe('POSTED');
+  });
+
+  it('the open statuses are the three an event may still be posted against', () => {
+    expect([...OPEN_TRANSFER_STATUSES]).toEqual(['DRAFT', 'IN_TRANSIT', 'PARTIALLY_RECEIVED']);
   });
 });

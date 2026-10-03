@@ -1,7 +1,7 @@
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { Injectable, NotFoundException, BadRequestException, Optional } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, or, like, isNull, count, sql, desc } from 'drizzle-orm';
+import { eq, and, or, like, isNull, count, sql, desc, inArray } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
@@ -13,7 +13,7 @@ import { GlPostingService } from '../../finance/journal/gl-posting.service';
 import { UomService } from '../../master-data/uom/uom.service';
 import { SiloFeedService } from '../silo-feed/silo-feed.service';
 import { FeedAlertService } from '../feed-alert/feed-alert.service';
-import { transferIsFullyReceived, transferIsFullyShipped } from './transfer-execution.rules';
+import { OPEN_TRANSFER_STATUSES, transferStatusFor } from './transfer-execution.rules';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   return date.toISOString().slice(0, 19).replace('T', ' ');
@@ -369,6 +369,56 @@ export class StockTransferService {
     }
   }
 
+  /**
+   * A further shipment or receipt may be posted while the transfer is open:
+   * DRAFT, IN_TRANSIT or PARTIALLY_RECEIVED (Part E Task 4b). assertDraft
+   * stays for the edits that must stop once stock has moved.
+   */
+  private assertOpen(transfer: { status: string; transfer_no?: string }) {
+    if (!(OPEN_TRANSFER_STATUSES as readonly string[]).includes(transfer.status)) {
+      const name = transfer.transfer_no ? `Stock Transfer ${transfer.transfer_no}` : 'Stock Transfer';
+      throw new BadRequestException(`${name} cannot take a further shipment or receipt — it is already ${transfer.status}.`);
+    }
+  }
+
+  /**
+   * Write the status the events now imply (transferStatusFor), inside the
+   * event's own transaction. POSTED carries the same posted_at / posted_by
+   * stamping postDirectTransfer has always used. The row is already locked
+   * by loadForMutation; the open-status guard on the UPDATE is the same
+   * claim discipline as the old DRAFT -> POSTED claim.
+   */
+  private async writeEventStatus(
+    id: string,
+    lines: Array<{ line_id: string; quantity: unknown }>,
+    shipped: Map<string, number>,
+    received: Map<string, number>,
+    userPayload?: any,
+  ) {
+    const status = transferStatusFor(lines.map((l) => ({
+      ordered: Number(l.quantity),
+      shipped: shipped.get(l.line_id) ?? 0,
+      received: received.get(l.line_id) ?? 0,
+    })));
+    const set: Record<string, unknown> = {
+      status,
+      updated_by: userPayload?.userId || null,
+      updated_at: toMysqlTimestamp(),
+    };
+    if (status === 'POSTED') {
+      set.posted_at = toMysqlTimestamp();
+      set.posted_by = userPayload?.userId || null;
+    }
+    const [claim] = await this.db
+      .update(schema.stockTransfer)
+      .set(set as any)
+      .where(and(eq(schema.stockTransfer.transfer_id, id), inArray(schema.stockTransfer.status, [...OPEN_TRANSFER_STATUSES])));
+    if (claim.affectedRows === 0) {
+      throw new BadRequestException('Stock Transfer cannot take this event — it was already posted or cancelled by another request.');
+    }
+    return status;
+  }
+
   async update(id: string, dto: UpdateStockTransferDto, tenantId: string, userPayload?: any) {
     return withTenantTransaction(this.cls, async () => {
       const transfer = await this.loadForMutation(id, tenantId);
@@ -456,7 +506,7 @@ export class StockTransferService {
   async postShipment(id: string, dto: PostShipmentDto, tenantId: string, userPayload?: any) {
     const result = await withTenantTransaction(this.cls, async () => {
       const transfer = await this.loadForMutation(id, tenantId);
-      this.assertDraft(transfer);
+      this.assertOpen(transfer);
       if (transfer.from_warehouse_id === transfer.to_warehouse_id) {
         throw new BadRequestException('A transfer needs two different warehouses.');
       }
@@ -506,6 +556,12 @@ export class StockTransferService {
         await this.glPostingService.postInventoryLedgerEntry(shipmentEntry, userPayload?.userId);
       }
 
+      // Status follows the event (Part E Task 4b): shipped so far plus this
+      // shipment, against what has been received.
+      const shippedAfter = new Map(shippedByLine);
+      for (const { line, qty } of eventLines) shippedAfter.set(line.line_id, (shippedAfter.get(line.line_id) ?? 0) + qty);
+      const status = await this.writeEventStatus(id, transfer.lines, shippedAfter, await this.receivedQuantities(id, tenantId), userPayload);
+
       await this.auditService.log({
         tenantId,
         companyId: transfer.company_id,
@@ -513,7 +569,7 @@ export class StockTransferService {
         action: 'POST',
         entityName: 'transfer_shipment',
         entityId: shipmentId,
-        newValues: { shipment_no: shipmentNo, transfer_no: transfer.transfer_no, lines: eventLines.length },
+        newValues: { shipment_no: shipmentNo, transfer_no: transfer.transfer_no, lines: eventLines.length, status },
       });
       return { shipment_id: shipmentId, shipment_no: shipmentNo, transfer_id: id, lines: eventLines.map((e) => ({ line_id: e.line.line_id, qty_shipped: e.qty })) };
     });
@@ -532,7 +588,7 @@ export class StockTransferService {
   async postReceipt(id: string, dto: PostReceiptDto, tenantId: string, userPayload?: any) {
     return withTenantTransaction(this.cls, async () => {
       const transfer = await this.loadForMutation(id, tenantId);
-      this.assertDraft(transfer);
+      this.assertOpen(transfer);
       await this.assertWarehouses(transfer.from_warehouse_id, transfer.to_warehouse_id);
 
       const [shipment] = await this.db.select().from(schema.transferShipment)
@@ -614,6 +670,12 @@ export class StockTransferService {
         });
       }
 
+      // Status follows the event (Part E Task 4b): received so far plus this
+      // receipt, against everything shipped.
+      const receivedAfter = new Map(receivedByLine);
+      for (const l of dto.lines) receivedAfter.set(l.line_id, (receivedAfter.get(l.line_id) ?? 0) + l.quantity);
+      const status = await this.writeEventStatus(id, transfer.lines, shippedByLine, receivedAfter, userPayload);
+
       await this.auditService.log({
         tenantId,
         companyId: transfer.company_id,
@@ -621,7 +683,7 @@ export class StockTransferService {
         action: 'POST',
         entityName: 'transfer_receipt',
         entityId: receiptId,
-        newValues: { receipt_no: receiptNo, shipment_no: shipment.shipment_no, lines: dto.lines.length },
+        newValues: { receipt_no: receiptNo, shipment_no: shipment.shipment_no, lines: dto.lines.length, status },
       });
       return { receipt_id: receiptId, receipt_no: receiptNo, transfer_id: id, lines: dto.lines.map((l) => ({ line_id: l.line_id, qty_received: l.quantity })) };
     });
@@ -636,7 +698,7 @@ export class StockTransferService {
   async postDirectTransfer(id: string, dto: PostDirectTransferDto, tenantId: string, userPayload?: any) {
     const transfer = await withTenantTransaction(this.cls, async () => {
       const row = await this.loadForMutation(id, tenantId);
-      this.assertDraft(row);
+      this.assertOpen(row);
       if (row.from_warehouse_id === row.to_warehouse_id) {
         throw new BadRequestException('A transfer needs two different warehouses.');
       }
@@ -676,33 +738,11 @@ export class StockTransferService {
         remarks: dto.remarks,
       }, tenantId, userPayload);
 
-      // The DRAFT -> POSTED claim on the order, last so a refusal above leaves
-      // the transfer a correctable draft. A partial direct transfer leaves the
-      // order open for further events; only full coverage claims it. Coverage
-      // is recounted AFTER the events this call just wrote — the maps above
-      // were read before shipping, so a first-time full direct transfer would
-      // otherwise never claim POSTED.
-      const shippedAfter = await this.shippedQuantities(id, tenantId);
-      const receivedAfter = await this.receivedQuantities(id, tenantId);
-      const coverage = row.lines.map((l) => ({
-        ordered: Number(l.quantity),
-        shipped: shippedAfter.get(l.line_id) ?? 0,
-        received: receivedAfter.get(l.line_id) ?? 0,
-      }));
-      if (transferIsFullyShipped(coverage) && transferIsFullyReceived(coverage)) {
-        const [claim] = await this.db
-          .update(schema.stockTransfer)
-          .set({
-            status: 'POSTED',
-            posted_at: toMysqlTimestamp() as any,
-            posted_by: userPayload?.userId || null,
-            updated_by: userPayload?.userId || null,
-          })
-          .where(and(eq(schema.stockTransfer.transfer_id, id), eq(schema.stockTransfer.status, 'DRAFT')));
-        if (claim.affectedRows === 0) {
-          throw new BadRequestException('Stock Transfer cannot be posted — it was already posted by another request.');
-        }
-      }
+      // No claim of its own any more (Part E Task 4b): postShipment and
+      // postReceipt each write the status their event implies, so a full
+      // direct transfer ends POSTED (stamped) through postReceipt, and a
+      // partial one ends PARTIALLY_RECEIVED, open for further events.
+      const after = await this.findOne(id);
 
       await this.auditService.log({
         tenantId,
@@ -711,9 +751,9 @@ export class StockTransferService {
         action: 'POST',
         entityName: 'stock_transfer',
         entityId: id,
-        newValues: { status: 'POSTED', shipment_no: shipment.shipment_no, receipt_no: receipt.receipt_no },
+        newValues: { status: after.status, shipment_no: shipment.shipment_no, receipt_no: receipt.receipt_no },
       });
-      return this.findOne(id);
+      return after;
     });
     await this.feedAlerts?.evaluateLevelsSafely([transfer.from_warehouse_id, transfer.to_warehouse_id], tenantId);
     return transfer;

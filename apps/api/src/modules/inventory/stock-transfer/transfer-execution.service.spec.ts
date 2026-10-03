@@ -143,7 +143,8 @@ function setup(queues: Map<unknown, unknown[][]>) {
   const as = <T>(work: () => Promise<T>) => cls.run(async () => { cls.set(FARM_SCOPE_KEY, SCOPE); return work(); });
   const inserts = (table: unknown) => log.filter((e) => e.op === 'insert' && e.table === table).map((e) => e.values);
   const updateOf = (table: unknown) => log.find((e) => e.op === 'update' && e.table === table)?.set;
-  return { service, as, log, inserts, updateOf, ledger };
+  const updatesOf = (table: unknown) => log.filter((e) => e.op === 'update' && e.table === table).map((e) => e.set);
+  return { service, as, log, inserts, updateOf, updatesOf, ledger };
 }
 
 describe('postShipment — partial events against a DRAFT order', () => {
@@ -270,7 +271,7 @@ describe('postDirectTransfer — one shipment plus its matching receipt', () => 
   }
 
   it('writes both events and leaves the order open when coverage is partial', async () => {
-    const { service, as, inserts, updateOf, ledger } = setup(directQueues('4'));
+    const { service, as, inserts, updatesOf, ledger } = setup(directQueues('4'));
     const result = await as(() => service.postDirectTransfer('tr-1', {
       posting_date: '2026-10-02', lines: [{ line_id: 'line-1', quantity: 4 }],
     }, 'tenant-1', ADMIN));
@@ -278,9 +279,11 @@ describe('postDirectTransfer — one shipment plus its matching receipt', () => 
     expect(inserts(schema.transferShipment)).toHaveLength(1);
     expect(inserts(schema.transferReceipt)).toHaveLength(1);
     expect(inserts(schema.transferReceiptLine)[0]).toMatchObject({ quantity: '4', lot_no: 'LOT-9' });
-    // 4 of 10 shipped and received: the order stays a correctable draft for
-    // further events — the coverage gate decides, not the event count.
-    expect(updateOf(schema.stockTransfer)).toBeUndefined();
+    // 4 of 10 shipped and received: the order stays open for further events
+    // (Part E Task 4b) — IN_TRANSIT after the shipment, PARTIALLY_RECEIVED
+    // after the receipt, never POSTED and never stamped.
+    expect(updatesOf(schema.stockTransfer).map((u) => u.status)).toEqual(['IN_TRANSIT', 'PARTIALLY_RECEIVED']);
+    expect(updatesOf(schema.stockTransfer).some((u) => 'posted_at' in u)).toBe(false);
     // One leg per event: 4 out of the source at the shipment, 4 into the
     // destination at the receipt — never both legs twice.
     expect(ledger.writeTransferEntries).not.toHaveBeenCalled();
@@ -291,11 +294,13 @@ describe('postDirectTransfer — one shipment plus its matching receipt', () => 
   });
 
   it('posts the legacy empty-lines payload as every line at full quantity and claims POSTED', async () => {
-    const { service, as, updateOf } = setup(directQueues('10'));
+    const { service, as, updatesOf } = setup(directQueues('10'));
     await as(() => service.postDirectTransfer('tr-1', {
       posting_date: '2026-10-02', lines: [],
     }, 'tenant-1', ADMIN));
-    expect(updateOf(schema.stockTransfer)).toMatchObject({ status: 'POSTED' });
+    const updates = updatesOf(schema.stockTransfer);
+    expect(updates.map((u) => u.status)).toEqual(['IN_TRANSIT', 'POSTED']);
+    expect(updates[1]).toMatchObject({ posted_by: 'u-admin', posted_at: expect.any(String) });
   });
 });
 
@@ -392,6 +397,85 @@ describe('Part E Task 4 fix round 1 — one event names a line once', () => {
       posting_date: '2026-10-03', shipment_id: 'sh-1', lines: [{ line_id: 'line-1', quantity: 4 }, { line_id: 'line-1', quantity: 2 }],
     }, 'tenant-1', ADMIN))).rejects.toThrow('Line line-1 appears more than once in this receipt');
     expect(inserts(schema.transferReceipt)).toHaveLength(0);
+    expect(ledger.writeTransferReceipt).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Part E Task 4b, requirement 1: the transfer's status follows its events,
+ * written in the same transaction as each event. Before this only
+ * postDirectTransfer set POSTED, and a transfer moved through /shipment and
+ * /receipt stayed DRAFT (TR-000010, TR-000014 on nf_devco).
+ */
+describe('Part E Task 4b — status follows the events', () => {
+  it('the first shipment moves a DRAFT to IN_TRANSIT, unstamped', async () => {
+    const { service, as, updatesOf } = setup(baseQueues());
+    await as(() => service.postShipment('tr-1', { posting_date: '2026-10-02', lines: [{ line_id: 'line-1', quantity: 6 }] }, 'tenant-1', ADMIN));
+    const updates = updatesOf(schema.stockTransfer);
+    expect(updates).toHaveLength(1);
+    expect(updates[0]).toMatchObject({ status: 'IN_TRANSIT', updated_by: 'u-admin' });
+    expect(updates[0].posted_at).toBeUndefined();
+  });
+
+  it('a further shipment on an IN_TRANSIT transfer is accepted, not refused as "already IN_TRANSIT"', async () => {
+    const queues = baseQueues();
+    queues.set(schema.stockTransfer, [[{ ...TRANSFER, status: 'IN_TRANSIT' }]]);
+    queues.set(schema.transferShipmentLine, [[{ line_id: 'line-1', qty: '6' }]]);
+    const { service, as, updatesOf, ledger } = setup(queues);
+    await as(() => service.postShipment('tr-1', { posting_date: '2026-10-03', lines: [{ line_id: 'line-1', quantity: 4 }] }, 'tenant-1', ADMIN));
+    expect(ledger.writeTransferShipment).toHaveBeenCalledTimes(1);
+    expect(updatesOf(schema.stockTransfer).map((u) => u.status)).toEqual(['IN_TRANSIT']);
+  });
+
+  it('a shipment after a receipt keeps the transfer PARTIALLY_RECEIVED', async () => {
+    const queues = baseQueues();
+    queues.set(schema.stockTransfer, [[{ ...TRANSFER, status: 'PARTIALLY_RECEIVED' }]]);
+    queues.set(schema.transferShipmentLine, [[{ line_id: 'line-1', qty: '6' }]]);
+    queues.set(schema.transferReceiptLine, [[{ line_id: 'line-1', qty: '4' }]]);
+    const { service, as, updatesOf } = setup(queues);
+    await as(() => service.postShipment('tr-1', { posting_date: '2026-10-03', lines: [{ line_id: 'line-1', quantity: 2 }] }, 'tenant-1', ADMIN));
+    expect(updatesOf(schema.stockTransfer).map((u) => u.status)).toEqual(['PARTIALLY_RECEIVED']);
+  });
+
+  it('a receipt of part of what shipped moves IN_TRANSIT to PARTIALLY_RECEIVED (ordered 10, shipped 6, received 4)', async () => {
+    const queues = baseQueues();
+    queues.set(schema.stockTransfer, [[{ ...TRANSFER, status: 'IN_TRANSIT' }]]);
+    queues.set(schema.transferShipment, [[{ ...SHIPMENT }]]);
+    queues.set(schema.transferShipmentLine, [[{ line_id: 'line-1', qty: '6' }], [{ ...SHIPMENT_LINE }]]);
+    queues.set(schema.transferReceiptLine, [[], []]);
+    const { service, as, updatesOf } = setup(queues);
+    await as(() => service.postReceipt('tr-1', { posting_date: '2026-10-03', shipment_id: 'sh-1', lines: [{ line_id: 'line-1', quantity: 4 }] }, 'tenant-1', ADMIN));
+    const updates = updatesOf(schema.stockTransfer);
+    expect(updates.map((u) => u.status)).toEqual(['PARTIALLY_RECEIVED']);
+    expect(updates[0].posted_at).toBeUndefined();
+  });
+
+  it('the receipt that completes every line claims POSTED with the direct-transfer stamping', async () => {
+    const queues = baseQueues();
+    queues.set(schema.stockTransfer, [[{ ...TRANSFER, status: 'PARTIALLY_RECEIVED' }]]);
+    queues.set(schema.transferShipment, [[{ ...SHIPMENT }]]);
+    queues.set(schema.transferShipmentLine, [[{ line_id: 'line-1', qty: '10' }], [{ ...SHIPMENT_LINE, quantity: '10' }]]);
+    queues.set(schema.transferReceiptLine, [
+      [{ line_id: 'line-1', qty: '6' }],                                       // receivedQuantities
+      [{ shipment_line_id: 'sl-1', qty: '6', receipt_no: 'RC-2026-0001' }],    // receivedAgainstShipment
+    ]);
+    const { service, as, updatesOf } = setup(queues);
+    await as(() => service.postReceipt('tr-1', { posting_date: '2026-10-04', shipment_id: 'sh-1', lines: [{ line_id: 'line-1', quantity: 4 }] }, 'tenant-1', ADMIN));
+    const updates = updatesOf(schema.stockTransfer);
+    expect(updates).toHaveLength(1);
+    expect(updates[0]).toMatchObject({ status: 'POSTED', posted_by: 'u-admin', posted_at: expect.stringMatching(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/) });
+  });
+
+  it('refuses a shipment or a receipt against a POSTED transfer', async () => {
+    const queues = baseQueues();
+    queues.set(schema.stockTransfer, [[{ ...TRANSFER, status: 'POSTED' }], [{ ...TRANSFER, status: 'POSTED' }]]);
+    queues.set(schema.stockTransferLine, [[{ ...LINE }], [{ ...LINE }]]);
+    const { service, as, ledger } = setup(queues);
+    await expect(as(() => service.postShipment('tr-1', { posting_date: '2026-10-03', lines: [{ line_id: 'line-1', quantity: 1 }] }, 'tenant-1', ADMIN)))
+      .rejects.toThrow('already POSTED');
+    await expect(as(() => service.postReceipt('tr-1', { posting_date: '2026-10-03', shipment_id: 'sh-1', lines: [{ line_id: 'line-1', quantity: 1 }] }, 'tenant-1', ADMIN)))
+      .rejects.toThrow('already POSTED');
+    expect(ledger.writeTransferShipment).not.toHaveBeenCalled();
     expect(ledger.writeTransferReceipt).not.toHaveBeenCalled();
   });
 });

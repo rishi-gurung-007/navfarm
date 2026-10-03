@@ -105,3 +105,26 @@ export const transferIsFullyShipped = (lines: Array<{ ordered: number; shipped: 
 
 export const transferIsFullyReceived = (lines: Array<{ ordered: number; received: number }>): boolean =>
   lines.length > 0 && lines.every((l) => l.received >= l.ordered);
+
+/**
+ * A transfer's status, derived from its events (Part E Task 4b). The column
+ * is stock_transfer.status varchar(20) with no CHECK or enum, so the two new
+ * values are plain strings:
+ *   no line shipped                               -> DRAFT
+ *   every line shipped AND received in full       -> POSTED
+ *   any receipt, something ordered not received   -> PARTIALLY_RECEIVED
+ *   shipped, nothing received                     -> IN_TRANSIT
+ * CANCELLED is not derived: only remove() sets it, and only on a transfer
+ * with no events.
+ */
+export type TransferStatus = 'DRAFT' | 'IN_TRANSIT' | 'PARTIALLY_RECEIVED' | 'POSTED';
+
+/** Statuses a further shipment or receipt may still be posted against. */
+export const OPEN_TRANSFER_STATUSES: readonly TransferStatus[] = ['DRAFT', 'IN_TRANSIT', 'PARTIALLY_RECEIVED'];
+
+export function transferStatusFor(lines: Array<{ ordered: number; shipped: number; received: number }>): TransferStatus {
+  if (!lines.some((l) => l.shipped > 0)) return 'DRAFT';
+  if (transferIsFullyShipped(lines) && transferIsFullyReceived(lines)) return 'POSTED';
+  if (lines.some((l) => l.received > 0)) return 'PARTIALLY_RECEIVED';
+  return 'IN_TRANSIT';
+}
