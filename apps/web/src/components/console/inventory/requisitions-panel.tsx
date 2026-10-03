@@ -196,8 +196,10 @@ export function FeedRequisitionPanel() {
   // Req. row 29: a delivery date moved off the forecast's needs remarks too (the API checks it at submit).
   const dateOf = (l: FeedRequisitionLine) => edits[l.line_id]?.date ?? l.proposed_delivery_date ?? "";
   const moved = lines.filter((l) => !!l.recommended_delivery_date && dateOf(l) !== l.recommended_delivery_date);
+  // Requisition row 36: Remarks are also required on an item exception (the API checks it at submit, approvalProblems).
+  const exceptioned = lines.filter((l) => !!l.exception_reason);
   const late = !!selected?.submission_deadline && todayIso() > selected.submission_deadline;
-  const remarksMissing = editable && (deviating.length > 0 || moved.length > 0 || late) && !remarks.trim();
+  const remarksMissing = editable && (deviating.length > 0 || moved.length > 0 || exceptioned.length > 0 || late) && !remarks.trim();
   const href = selected ? approvalHref(selected) : null;
 
   // The silos and feed items a line may be moved to — only needed while the document is editable.

@@ -92,6 +92,24 @@ describe("FeedRequisitionDocument — lines sub-form (Requisition §2)", () => {
     expect(within(table).getAllByLabelText(en.rqdCapacityWarning)).toHaveLength(1);
   });
 
+  it("review finding (Important 3): a line whose destination/item changed and whose forecast columns were blanked shows — rather than a stale (falsely absent) capacity warning", () => {
+    const staleLine = {
+      ...view.lines[1],
+      line_id: "L3", line_seq: 30000, destination_code: "GRS/SILO-003",
+      system_balance_kg: null, daily_requirement_kg: null, days_remaining: null, first_shortage_date: null,
+      unrounded_need_kg: null, recommended_qty_kg: null,
+      // The old silo's warning carried over as false by the writer: must not render as "no warning".
+      exceeds_silo_capacity: false,
+    };
+    render(<FeedRequisitionDocument view={{ ...view, lines: [...view.lines, staleLine] }} editable={false} />);
+    const table = screen.getByRole("table", { name: en.rqLinesLabel });
+    const row = within(table).getByText("30000").closest("tr")!;
+    expect(within(row).getByTestId("rqd-capacity-unknown")).toBeTruthy();
+    expect(within(row).queryByLabelText(en.rqdCapacityWarning)).toBeNull();
+    // Still exactly one real warning (line 20000) — the stale row never counts as either a warning or its absence.
+    expect(within(table).getAllByLabelText(en.rqdCapacityWarning)).toHaveLength(1);
+  });
+
   it("nests each line's batch/house breakdown beneath it, read-only (B1)", () => {
     render(<FeedRequisitionDocument view={view} editable />);
     const breakdown = screen.getByRole("table", { name: "Batches and houses for line 20000" });

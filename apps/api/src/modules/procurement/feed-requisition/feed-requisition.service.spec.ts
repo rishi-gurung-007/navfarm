@@ -835,12 +835,35 @@ describe('FeedRequisitionService.update — item and destination changes (Req. r
     });
   });
 
+  it('a destination-only change blanks the old silo\'s forecast-derived columns rather than carrying them over (review finding: stale exceeds_silo_capacity hid a real warning)', async () => {
+    const { service, log, siloFeed } = setup([], queuesFor());
+    siloFeed.currentItems.mockResolvedValueOnce(new Map([['silo-2', null]]));
+    await service.update('req-1', { lines: [{ line_id: 'L1', destination_location_id: 'silo-2' }] } as any, 'tenant-1', { userId: 'u-1', userType: 'COMPANY_ADMIN' });
+    const lineUpdate = log.find((e) => e.op === 'update' && e.table === schema.requisitionLine)!;
+    expect(lineUpdate.set).toMatchObject({
+      destination_location_id: 'silo-2',
+      system_balance_kg: null, daily_requirement_kg: null, days_remaining: null,
+      first_shortage_date: null, recommended_qty_kg: null, unrounded_need_kg: null,
+      exceeds_silo_capacity: false,
+    });
+  });
+
   it('refuses a silo that still holds another feed with stock (checkpoint 4)', async () => {
     const queues = queuesFor();
     const { service, log, siloFeed } = setup([], queues);
     siloFeed.currentItems.mockResolvedValueOnce(new Map([['silo-2', { item_id: 'item-r9', on_hand_qty: 1500 }]]));
     await expect(service.update('req-1', { lines: [{ line_id: 'L1', destination_location_id: 'silo-2' }] } as any, 'tenant-1', { userId: 'u-1', userType: 'COMPANY_ADMIN' }))
       .rejects.toThrow(new BadRequestException('Line 10000: Silo holds another feed with stock: choose a silo holding this item or an empty one (checkpoint 4).'));
+    expect(log.filter((e) => e.op !== 'select')).toEqual([]);
+  });
+
+  it('refuses a move into a silo another line of this requisition already targets with a different item (two feeds in one silo, checkpoint 4)', async () => {
+    const queues = queuesFor();
+    queues.set(schema.requisitionLine, [[LINE], [{ line_seq: 20000, item_id: 'item-r9' }]]);
+    const { service, log, siloFeed } = setup([], queues);
+    siloFeed.currentItems.mockResolvedValueOnce(new Map([['silo-2', null]]));
+    await expect(service.update('req-1', { lines: [{ line_id: 'L1', destination_location_id: 'silo-2' }] } as any, 'tenant-1', { userId: 'u-1', userType: 'COMPANY_ADMIN' }))
+      .rejects.toThrow(new BadRequestException('Line 10000: GRS/SILO-002 already receives a different feed on line 20000; a silo cannot hold two feeds at once (checkpoint 4).'));
     expect(log.filter((e) => e.op !== 'select')).toEqual([]);
   });
 

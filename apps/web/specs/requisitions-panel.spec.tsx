@@ -112,6 +112,36 @@ describe('RequisitionsPanel (D26)', () => {
     expect(screen.queryByRole('button', { name: 'rqSubmit' })).toBeNull();
   });
 
+  it("asks for remarks when a line's delivery date is moved off the forecast's (Req. row 29), covering the `moved` trigger", async () => {
+    const movedView = { ...view, lines: [{ ...view.lines[0], recommended_delivery_date: '2099-09-23' }, view.lines[1]] };
+    get.mockImplementation(async (url: string) => (url.startsWith('/feed-requisition/') ? { data: movedView } : { data: [listRow] }));
+    post.mockImplementation(async (url: string) =>
+      url === '/feed-requisition/auto-draft' ? { data: { requisitionId: 'req-1', requisition: movedView } } : { data: { ...movedView, status: 'PENDING_APPROVAL', approval_request_id: 'ar-1' } });
+    render(<RequisitionsPanel />);
+    fireEvent.click(await screen.findByRole('button', { name: 'rqDraftFromForecast' }));
+    await screen.findByText('REQ-VIL100-2026-00004', { selector: 'h2' });
+    expect(screen.queryByText('rqRemarksRequired')).toBeNull();
+    fireEvent.change(screen.getByLabelText('rqdDeliveryFor:{"line":10000}'), { target: { value: '2099-09-30' } });
+    expect(screen.getByText('rqRemarksRequired')).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'rqSubmit' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText('rqdRemarks'), { target: { value: 'Mill asked for a later slot' } });
+    expect((screen.getByRole('button', { name: 'rqSubmit' }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('asks for remarks when a line carries an item exception, even with no deviation or date change (Requisition row 36)', async () => {
+    const exceptionedView = { ...view, lines: [{ ...view.lines[0], exception_reason: 'Vet instruction' }, view.lines[1]] };
+    get.mockImplementation(async (url: string) => (url.startsWith('/feed-requisition/') ? { data: exceptionedView } : { data: [listRow] }));
+    post.mockImplementation(async (url: string) =>
+      url === '/feed-requisition/auto-draft' ? { data: { requisitionId: 'req-1', requisition: exceptionedView } } : { data: { ...exceptionedView, status: 'PENDING_APPROVAL', approval_request_id: 'ar-1' } });
+    render(<RequisitionsPanel />);
+    fireEvent.click(await screen.findByRole('button', { name: 'rqDraftFromForecast' }));
+    await screen.findByText('REQ-VIL100-2026-00004', { selector: 'h2' });
+    expect(screen.getByText('rqRemarksRequired')).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'rqSubmit' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText('rqdRemarks'), { target: { value: 'Vet instruction on record' } });
+    expect((screen.getByRole('button', { name: 'rqSubmit' }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it('saves an edited delivery date', async () => {
     render(<RequisitionsPanel />);
     fireEvent.click(await screen.findByRole('button', { name: 'rqDraftFromForecast' }));

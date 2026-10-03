@@ -324,6 +324,15 @@ export interface ApprovalLine {
   /** null on a manual line (nothing to differ from) — deliveryDateNeedsRemarks, Req. row 29. */
   recommendedDeliveryDate: string | null;
   proposedDeliveryDate: string;
+  /**
+   * Review finding (Important 4, Task 9): the header table (row 36) requires
+   * Remarks on an item exception too, not only a 20% deviation or a moved
+   * delivery date. True when the line's own exception reason (row 13,
+   * description = "Exception: …") is on record — the per-line reason itself
+   * is already enforced at PUT (lineChangeProblems); this is the separate
+   * header-level rule the brief asks for.
+   */
+  itemException?: boolean;
 }
 
 const kg = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 3 });
@@ -344,6 +353,9 @@ export function approvalProblems(args: { lines: ApprovalLine[]; remarks: string 
     }
     if (deliveryDateNeedsRemarks(l)) {
       problems.push(`Line ${l.lineSeq} (${l.itemName}): the delivery date differs from the forecast's. Remarks are required (Requisition row 29).`);
+    }
+    if (l.itemException) {
+      problems.push(`Line ${l.lineSeq} (${l.itemName}): feed item differs from the lifecycle requirement (exception). Remarks are required (Requisition row 36).`);
     }
   }
   if (args.submissionDeadline && args.today > args.submissionDeadline) {

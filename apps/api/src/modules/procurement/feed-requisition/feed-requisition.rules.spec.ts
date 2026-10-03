@@ -321,6 +321,21 @@ describe('approvalProblems — checkpoints 18 and 22', () => {
   it('lists both the deviation and the late approval when neither has remarks', () => {
     expect(approvalProblems({ lines: [r1Line], remarks: undefined, today: '2026-09-27', submissionDeadline: '2026-09-26' })).toHaveLength(2);
   });
+  it('requires remarks on an item exception line, even with no deviation or date change (Requisition row 36)', () => {
+    expect(approvalProblems({
+      lines: [{ ...r1Line, quantityKg: 6000, itemException: true }],
+      remarks: null, today: '2026-09-23', submissionDeadline: '2026-09-26',
+    })).toEqual(['Line 1 (Weaner Diet R1): feed item differs from the lifecycle requirement (exception). Remarks are required (Requisition row 36).']);
+  });
+  it('accepts an item exception line with remarks', () => {
+    expect(approvalProblems({
+      lines: [{ ...r1Line, quantityKg: 6000, itemException: true }],
+      remarks: 'Vet instruction', today: '2026-09-23', submissionDeadline: '2026-09-26',
+    })).toEqual([]);
+  });
+  it('never for a line with no exception', () => {
+    expect(approvalProblems({ lines: [{ ...r1Line, quantityKg: 6000, itemException: false }], remarks: null, today: '2026-09-23', submissionDeadline: '2026-09-26' })).toEqual([]);
+  });
   it('refuses a requisition with no lines', () => {
     expect(approvalProblems({ lines: [], remarks: 'x', today: '2026-09-23', submissionDeadline: null })).toEqual(['A requisition needs at least one line to be approved.']);
   });

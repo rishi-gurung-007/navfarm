@@ -1069,17 +1069,25 @@ export class FeedRequisitionService implements OnModuleInit {
       .limit(1);
     if (!item) throw new BadRequestException(`Line ${line.line_seq}: feed item ${itemId} is not an active feed item of this company.`);
     if (itemChanged || destinationChanged) {
-      const [twin] = await this.db
-        .select({ line_seq: schema.requisitionLine.line_seq })
+      // Review finding (Important 2, Task 9): the old query only looked for the same (destination,
+      // item) pair (row 9); a second line pointed at the same SILO with a DIFFERENT item passed both
+      // this and lineChangeProblems (the silo is empty today, no twin matches) and left the silo
+      // holding two feeds after delivery — exactly what checkpoint 4 exists to prevent. Same query,
+      // widened to any other line of this requisition at this destination; the item comparison then
+      // decides which of the two rules was broken.
+      const others = await this.db
+        .select({ line_seq: schema.requisitionLine.line_seq, item_id: schema.requisitionLine.item_id })
         .from(schema.requisitionLine)
         .where(and(
           eq(schema.requisitionLine.requisition_id, requisitionId),
           sql`${schema.requisitionLine.line_id} <> ${line.line_id}`,
           eq(schema.requisitionLine.destination_location_id, destinationId),
-          eq(schema.requisitionLine.item_id, itemId),
-        ))
-        .limit(1);
+        ));
+      const twin = others.find((o) => o.item_id === itemId);
       if (twin) throw new BadRequestException(`Line ${line.line_seq}: ${dest.code} already has ${item.item_name} on line ${twin.line_seq} (Requisition row 9).`);
+      if (dest.locationType === 'SILO' && others.length) {
+        throw new BadRequestException(`Line ${line.line_seq}: ${dest.code} already receives a different feed on line ${others[0].line_seq}; a silo cannot hold two feeds at once (checkpoint 4).`);
+      }
     }
     let held: { item_id: string; on_hand_qty: number } | null = null;
     if (dest.locationType === 'SILO') held = (await this.siloFeed.currentItems([destinationId], companyId, tenantId)).get(destinationId) ?? null;
@@ -1098,7 +1106,28 @@ export class FeedRequisitionService implements OnModuleInit {
       source_type: dest.locationType,
       feed_type: feedTypeOf(dest),
       description: (exception ? `${EXCEPTION_PREFIX}${exception}` : item.item_name).slice(0, 200),
-      ...(itemChanged || destinationChanged ? { quantity_edited: true } : {}),
+      ...(itemChanged || destinationChanged ? {
+        quantity_edited: true,
+        // Review finding (Important 3, Task 9): these columns were computed by recommendLines for
+        // the OLD (destination, item) pair. Recomputing them here would mean re-running the forecast
+        // engine for the new pair inside an edit/submit request — not cleanly possible in this code
+        // path — so blank them instead: a visibly absent value (web renders "—") is honest, where the
+        // old silo's exceeds_silo_capacity carried over would silently miss a real capacity warning on
+        // the new silo. exceeds_silo_capacity itself is NOT NULL; it is set false here and the web
+        // (feed-requisition-document.tsx) treats a null system_balance_kg on the row as "unknown" and
+        // shows "—" in the warning cell rather than rendering false as a confident "no warning".
+        // quantity_edited makes the line the farm's own (Ruling M9): planDraftUpsert's wasEdited keeps
+        // it untouched on every later auto-draft rerun (the same treatment the breakdown already gets,
+        // Task 9 Concern 3), so these stay blank for the life of this line rather than being silently
+        // refreshed — a visible "—" the farm can act on, not a number nobody recomputed.
+        system_balance_kg: null,
+        daily_requirement_kg: null,
+        days_remaining: null,
+        first_shortage_date: null,
+        recommended_qty_kg: null,
+        unrounded_need_kg: null,
+        exceeds_silo_capacity: false,
+      } : {}),
     };
   }
 
@@ -1140,6 +1169,8 @@ export class FeedRequisitionService implements OnModuleInit {
       recommendedQtyKg: l.recommended == null ? null : Number(l.recommended),
       recommendedDeliveryDate: l.recommended_delivery_date ?? null,
       proposedDeliveryDate: l.proposed_delivery_date ?? '',
+      // Review finding (Important 4, Task 9): header Remarks are also required on an item exception (row 36).
+      itemException: exceptionReasonOf(l.description) !== null,
     }));
   }
 

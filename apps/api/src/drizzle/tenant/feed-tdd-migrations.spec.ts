@@ -117,3 +117,28 @@ describe('Tenant migration 0143 — requisition line batch breakdown (additive)'
     expect(sql.join('\n')).not.toMatch(/\b(DROP|DELETE FROM|TRUNCATE)\b/i);
   });
 });
+
+/**
+ * Review finding (Important 1, Task 9): decimal(6,1) caps at 99,999.9 where the
+ * old INT held up to 2,147,483,647 — a range regression, not just a precision
+ * gain. dec() (feed-requisition.service.ts) stringifies without clamping, so an
+ * out-of-range value raises under MySQL strict mode and rolls back the whole
+ * auto-draft transaction. 0143 is already applied to nf_devco and nf_system, so
+ * this amends forward rather than editing it. Widening only — no clamp in the
+ * writer, which would silently distort a number the workbook displays.
+ */
+describe('Tenant migration 0144 — widen requisition_line.days_remaining range (additive)', () => {
+  it('is journalled at idx 144 after 0143', () => {
+    expect(journal().find((e) => e.idx === 144)).toEqual({
+      idx: 144, version: '5', when: 1792000000013, tag: '0144_widen_requisition_line_days_remaining', breakpoints: true,
+    });
+  });
+
+  it('widens days_remaining to decimal(10,1), nothing destructive', () => {
+    const sql = statements('0144_widen_requisition_line_days_remaining');
+    expect(sql).toEqual([
+      'ALTER TABLE `requisition_line` MODIFY COLUMN `days_remaining` decimal(10,1);',
+    ]);
+    expect(sql.join('\n')).not.toMatch(/\b(DROP|DELETE FROM|TRUNCATE)\b/i);
+  });
+});

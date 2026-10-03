@@ -4459,7 +4459,7 @@ export const requisitionLine = mysqlTable('requisition_line', {
   lifecycle_ref_id: varchar('lifecycle_ref_id', { length: 36 }),
   system_balance_kg: decimal('system_balance_kg', { precision: 18, scale: 4 }),
   daily_requirement_kg: decimal('daily_requirement_kg', { precision: 18, scale: 4 }),
-  days_remaining: decimal('days_remaining', { precision: 6, scale: 1 }), // Silo Balance row 9: "Displayed to 1 decimal" (0143 widened INT)
+  days_remaining: decimal('days_remaining', { precision: 10, scale: 1 }), // Silo Balance row 9: "Displayed to 1 decimal" (0143 widened INT; 0144 widened 6,1 -> 10,1, range regression)
   first_shortage_date: date('first_shortage_date', { mode: 'string' }),
   unrounded_need_kg: decimal('unrounded_need_kg', { precision: 18, scale: 4 }),
   recommended_qty_kg: decimal('recommended_qty_kg', { precision: 18, scale: 4 }),

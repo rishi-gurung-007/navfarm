@@ -1587,6 +1587,7 @@ export const translations = {
     rqdColDelivery: "Proposed Delivery Date",
     rqdUnrounded: "need {{kg}}",
     rqdCapacityWarning: "Order plus opening stock exceeds the silo capacity",
+    rqdCapacityUnknown: "Not yet calculated for this silo — rerun the forecast or re-check after changing the destination or item",
     rqdSiloFor: "Silo Code, line {{line}}",
     rqdItemFor: "Feed Item No., line {{line}}",
     rqdRequestedFor: "Requested Qty KG, line {{line}}",

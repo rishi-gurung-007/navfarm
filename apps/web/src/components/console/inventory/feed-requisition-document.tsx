@@ -233,6 +233,12 @@ export function FeedRequisitionDocument({
                 const itemDescription = chosenItem?.item_name ?? line.item_description;
                 // Requisition row 13: an item the lifecycle row does not require is an exception and needs a reason.
                 const isException = !!line.required_item_id && !!itemId && itemId !== line.required_item_id;
+                // Review finding (Important 3, Task 9): a silo/item change blanks the forecast-derived
+                // columns rather than carrying the old silo's figures (system_balance_kg is the tell).
+                // exceeds_silo_capacity can't itself be null (NOT NULL), so without this check a stale
+                // row's false would render as a confident "no warning" — indistinguishable from a
+                // freshly drafted line that really has none.
+                const siloDataStale = line.system_balance_kg === null;
                 const breakdown = Array.isArray(line.breakdown) ? line.breakdown : [];
                 const seq = line.line_seq;
                 return [
@@ -282,7 +288,9 @@ export function FeedRequisitionDocument({
                     </td>
                     <td className={cn(TD, NUM)}>
                       <div className="inline-flex items-center gap-1.5">
-                        {line.exceeds_silo_capacity && (
+                        {siloDataStale ? (
+                          <span className={MUTED} data-testid="rqd-capacity-unknown" title={t("rqdCapacityUnknown")}>—</span>
+                        ) : line.exceeds_silo_capacity && (
                           // Engine Step 8: a warning, never a cap.
                           <span role="img" aria-label={t("rqdCapacityWarning")} title={t("rqdCapacityWarning")} style={{ color: "var(--warning)" }}>
                             <AlertTriangle className="h-3.5 w-3.5" />
