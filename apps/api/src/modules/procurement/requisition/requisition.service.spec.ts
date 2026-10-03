@@ -7,7 +7,7 @@
  * Rule failures must fail before a single query; read compatibility is checked
  * against rows exactly as the legacy writer left them (new columns null).
  */
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { transactionCls } from '../../../test-utils/transaction-cls';
 import { RequisitionService } from './requisition.service';
 
@@ -392,5 +392,24 @@ describe('Part E Task 1 — list filter, manual source, approver stamp', () => {
     const service = new RequisitionService(transactionCls(db), approvalsMock() as any);
     await expect(service.findAll({ doc_type: 'PIGS' }, TENANT)).rejects.toThrow('doc_type must be one of FEED, ITEM, FA, SERVICE.');
     expect(db.select).not.toHaveBeenCalled();
+  });
+});
+
+describe('Part E Task 1 follow-up — the Approvals-inbox path refuses self-approval', () => {
+  it('decideFromApproval refuses the creator of a manual common requisition and never calls the engine', async () => {
+    const { db, selectResults, setCalls } = makeDb();
+    selectResults.push([headerRow({
+      status: 'PENDING_APPROVAL', approval_status: 'PENDING_APPROVAL', approval_request_id: 'ar-1', source: 'MANUAL_ENTRY',
+    })]);
+    const approvals: any = { ...approvalsMock(), registerDocumentHandler: jest.fn() };
+    const service = new RequisitionService(transactionCls(db), approvals);
+    service.onModuleInit();
+    const handler = approvals.registerDocumentHandler.mock.calls[0][1];
+    const request = { request_id: 'ar-1', document_id: 'req-1', company_id: 'co-1', requested_by: 'u1' };
+
+    await expect(handler.decide(request, 'APPROVED', null, TENANT, { userId: 'u1' })).rejects.toBeInstanceOf(ForbiddenException);
+    expect(approvals.approve).not.toHaveBeenCalled();
+    expect(approvals.reject).not.toHaveBeenCalled();
+    expect(setCalls).toHaveLength(0);
   });
 });

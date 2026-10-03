@@ -581,8 +581,8 @@ export class RequisitionService {
   ): Promise<void> {
     const row = await this.lockForApproval(request, tenantId);
     // D25 (Rishi, 1 Oct): a person may not approve a requisition they created.
-    // Common drafts are manual by construction, so there is no system-source
-    // exception here (the feed document's own handler has one).
+    // The shared isSelfApproval rule applies: a manual or legacy-sourceless
+    // draft is refused to its creator; only an AUTO_FORECAST draft is exempt.
     if (decision === 'APPROVED' && isSelfApproval(row, userPayload?.userId)) {
       throw new ForbiddenException('You may not approve a requisition you created. Another authorized approver must decide it.');
     }
