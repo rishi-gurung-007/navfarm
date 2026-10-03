@@ -470,34 +470,40 @@ describe('Part E Task 2 fix round 1 — update writes what it says', () => {
     });
   });
 
-  it('keeps main location, requester department, date and purpose when omitted; clears the sender department', async () => {
+  it('keeps main location, requester department, date and purpose when omitted; clears the rest', async () => {
     const { db, selectResults, setCalls } = makeDb();
     selectResults.push(
-      [headerRow({ main_location_id: 'farm-9', requester_department_id: 'dep-7', sender_department_id: 'dep-8', requisition_date: '2026-09-30' })],
+      [headerRow({
+        purpose: 'STORE', main_location_id: 'farm-9', requester_department_id: 'dep-7', sender_department_id: 'dep-8',
+        requisition_date: '2026-09-30', remarks: 'old remark', required_date: '2026-10-09', justification: 'old why', direct_transfer: true,
+      })],
       [headerRow()], [lineRow()],
     );
     del(db);
     const service = new RequisitionService(transactionCls(db), approvalsMock() as any);
+    // purpose, main_location_id, requester_department_id, requisition_date and the
+    // cleared fields are all omitted; a Store row still needs its locations.
     await service.update('req-1', {
-      purpose: 'PURCHASE', lines: [{ item_id: 'item-1', quantity: 1, uom: 'KG' }],
+      from_location_id: 'loc-store', to_location_id: 'loc-farm',
+      lines: [{ item_id: 'item-1', quantity: 1, uom: 'KG' }],
     } as any, TENANT, { userId: 'u1' });
     expect(setCalls[0]).toMatchObject({
-      main_location_id: 'farm-9', requester_department_id: 'dep-7', requisition_date: '2026-09-30',
+      purpose: 'STORE', main_location_id: 'farm-9', requester_department_id: 'dep-7', requisition_date: '2026-09-30',
       sender_department_id: null, remarks: null, required_date: null, justification: null, direct_transfer: false,
     });
   });
 
   it.each([
-    ['a FEED row', { doc_type: 'FEED' }],
-    ['a released row', { status: 'APPROVED', approval_status: 'APPROVED', document_status: 'RELEASED' }],
-  ])('refuses %s and writes nothing', async (_n, over) => {
+    ['a FEED row', { doc_type: 'FEED' }, 'A feed requisition is edited from its own document (PUT /feed-requisition/:id).'],
+    ['a released row', { status: 'APPROVED', approval_status: 'APPROVED', document_status: 'RELEASED' }, 'Requisition REQ-2026-0001 can no longer be edited; only an Open requisition can change.'],
+  ])('refuses %s and writes nothing', async (_n, over, message) => {
     const { db, selectResults, setCalls, insertValues } = makeDb();
     selectResults.push([headerRow(over)]);
     del(db);
     const service = new RequisitionService(transactionCls(db), approvalsMock() as any);
     await expect(service.update('req-1', {
       purpose: 'PURCHASE', lines: [{ item_id: 'item-1', quantity: 1, uom: 'KG' }],
-    } as any, TENANT, { userId: 'u1' })).rejects.toThrow(BadRequestException);
+    } as any, TENANT, { userId: 'u1' })).rejects.toThrow(message);
     expect(setCalls).toHaveLength(0);
     expect(insertValues).toHaveLength(0);
     expect(db.delete).not.toHaveBeenCalled();
