@@ -68,6 +68,7 @@ import { ResourceLedgerModule } from './modules/production/resource-ledger/resou
 import { AlertModule } from './modules/production/alert/alert.module';
 import { ApprovalModule } from './modules/production/approval/approval.module';
 import { FeedRequisitionModule } from './modules/procurement/feed-requisition/feed-requisition.module';
+import { RequisitionModule } from './modules/procurement/requisition/requisition.module';
 import { MilkModule } from './modules/production/milk/milk.module';
 import { QcParameterModule } from './modules/production/qc-parameter/qc-parameter.module';
 import { QcModule } from './modules/production/qc/qc.module';
@@ -162,8 +163,16 @@ import { SystemController } from './system/system.controller';
     ResourceLedgerModule,
     AlertModule,
     ApprovalModule,
-    // Feed requisitions (Plan B). The generic RequisitionModule stays unregistered (Ruling C2).
+    // Feed requisitions (Plan B) on /feed-requisition.
     FeedRequisitionModule,
+    // Common requisitions (Item / Fixed Asset / Service) on /requisition.
+    // Ruling C2 (26 Sep) kept this unregistered so a FEED row could not be
+    // approved or changed through the generic routes. Part E Task 13 lifts C2:
+    // every generic mutation now refuses doc_type FEED with a 400 pointing to
+    // /feed-requisition (assertNotFeedRequisition / assertEditable), and the
+    // inbox handler it registers answers REQUISITION requests only — the feed's
+    // are FEED_REQUISITION. GET /requisition may list FEED rows, read-only.
+    RequisitionModule,
     MilkModule,
     QcParameterModule,
     QcModule,

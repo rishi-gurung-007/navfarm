@@ -37,6 +37,7 @@ import {
   COMMON_LIST_DOC_TYPES,
   assertDirectTransferEligible,
   assertEditable,
+  assertNotFeedRequisition,
   assertPurpose,
   assertPurposeLocations,
   assertRequisitionLines,
@@ -116,6 +117,7 @@ export class RequisitionService {
   }
 
   async create(dto: CreateRequisitionDto, tenantId: string, userPayload?: { userId?: string }) {
+    assertNotFeedRequisition(dto.doc_type, 'created');
     assertCompanyInScope(farmScope(this.cls), dto.company_id);
     // Rule failures come first: a refused document must not touch the database
     // at all, and every message below is a pure one from requisition.rules.ts.
@@ -303,6 +305,7 @@ export class RequisitionService {
         .limit(1)
         .for('update');
       if (!row) throw new NotFoundException(`Requisition '${requisitionId}' not found.`);
+      // assertEditable refuses FEED first (→ PUT /feed-requisition/:id).
       assertEditable(row);
       if (dto.doc_type && dto.doc_type !== row.doc_type) {
         throw new BadRequestException('The document type cannot change; create a new requisition instead.');
@@ -578,9 +581,7 @@ export class RequisitionService {
         .limit(1)
         .for('update');
       if (!row) throw new NotFoundException(`Requisition '${requisitionId}' not found.`);
-      if (row.doc_type === 'FEED') {
-        throw new BadRequestException('A feed requisition is submitted from the Feed Forecast page, not here.');
-      }
+      assertNotFeedRequisition(row.doc_type, 'submitted');
       if (row.status !== 'DRAFT') throw new BadRequestException(`Requisition ${row.req_no} is ${row.status} and cannot be submitted.`);
 
       const requestId = await this.approvals.submitFarmDocument(
@@ -628,6 +629,7 @@ export class RequisitionService {
         .limit(1)
         .for('update');
       if (!row) throw new NotFoundException(`Requisition '${requisitionId}' not found.`);
+      assertNotFeedRequisition(row.doc_type, decision === 'APPROVED' ? 'approved' : 'rejected');
       if (row.status !== 'PENDING_APPROVAL') {
         throw new BadRequestException(`Requisition ${row.req_no} is ${row.status}, not awaiting approval.`);
       }
@@ -698,9 +700,9 @@ export class RequisitionService {
         .limit(1)
         .for('update');
       if (!row) throw new NotFoundException(`Requisition '${requisitionId}' not found.`);
-      if (row.doc_type === 'FEED') {
-        throw new BadRequestException('A feed requisition is released by the Feed Mill Manager after mill consolidation; feed stops at Approved for now.');
-      }
+      // Feed is released by the Feed Mill Manager after mill consolidation and
+      // stops at Approved for now — never through this route.
+      assertNotFeedRequisition(row.doc_type, 'released');
       if (row.purpose === 'PURCHASE') {
         await this.assertReleasePurchase(userPayload);
       } else {
@@ -801,6 +803,7 @@ export class RequisitionService {
       .where(and(eq(schema.requisition.requisition_id, requisitionId), eq(schema.requisition.tenant_id, tenantId), isNull(schema.requisition.deleted_at), ...this.scopeConditions()))
       .limit(1);
     if (!row) throw new NotFoundException(`Requisition '${requisitionId}' not found.`);
+    assertNotFeedRequisition(row.doc_type, 'shipped or received');
     const states = projectRequisitionStates(row);
     if (row.purpose !== 'STORE' || states.document_status !== 'RELEASED' || !row.linked_transfer_id) {
       throw new BadRequestException('Only a released Store requisition ships and receives; release it first.');
@@ -843,6 +846,7 @@ export class RequisitionService {
         .limit(1)
         .for('update');
       if (!row) throw new NotFoundException(`Requisition '${requisitionId}' not found.`);
+      assertNotFeedRequisition(row.doc_type, 'reopened');
       if (row.status !== 'REJECTED' && row.approval_status !== 'REJECTED') {
         throw new BadRequestException('Only a rejected requisition can be reopened.');
       }
@@ -875,6 +879,10 @@ export class RequisitionService {
     if (!row || row.approval_request_id !== request.request_id) {
       throw new NotFoundException('Requisition not found.');
     }
+    // Defence in depth: this handler is registered for REQUISITION requests
+    // only (the feed's are FEED_REQUISITION), but a feed row is never moved
+    // from here even if a request were mis-linked to one.
+    assertNotFeedRequisition(row.doc_type, 'decided');
     if (row.status !== 'PENDING_APPROVAL') {
       throw new BadRequestException(`Requisition ${row.req_no} is not waiting for this approval.`);
     }
@@ -934,7 +942,7 @@ export class RequisitionService {
   /** §7.2 step 7: the D365BC PO number lands on the approved requisition. */
   async linkPo(requisitionId: string, linkedPoNo: string, tenantId: string, userPayload?: { userId?: string }) {
     const [row] = await this.db
-      .select({ status: schema.requisition.status })
+      .select({ status: schema.requisition.status, doc_type: schema.requisition.doc_type })
       .from(schema.requisition)
       .where(and(
         eq(schema.requisition.requisition_id, requisitionId),
@@ -944,6 +952,7 @@ export class RequisitionService {
       ))
       .limit(1);
     if (!row) throw new NotFoundException(`Requisition '${requisitionId}' not found.`);
+    assertNotFeedRequisition(row.doc_type, 'given a PO number');
     if (row.status !== 'APPROVED') throw new BadRequestException('Only an approved requisition can receive a PO number.');
     await this.db
       .update(schema.requisition)

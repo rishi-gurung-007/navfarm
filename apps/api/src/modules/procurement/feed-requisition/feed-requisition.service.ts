@@ -8,8 +8,8 @@
  * own farm first (Ruling H3), so an id is never a way round the farm check.
  *
  * Ruling C2: this is its own module and controller. The generic
- * RequisitionModule stays unregistered (its /requisition controller would
- * mount with it), so nothing here imports it.
+ * RequisitionModule is mounted since Part E Task 13 (C2 lifted) but refuses
+ * every mutation on a FEED row; nothing here imports it.
  */
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, InternalServerErrorException, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { and, desc, eq, inArray, isNull, like, notInArray, sql } from 'drizzle-orm';

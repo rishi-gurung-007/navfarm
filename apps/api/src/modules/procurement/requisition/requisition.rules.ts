@@ -399,6 +399,19 @@ export function reopenTransition(): { status: string; approval_status: ApprovalS
 export const COMMON_LIST_DOC_TYPES = ['FEED', 'ITEM', 'FA', 'SERVICE'] as const;
 
 /**
+ * Task 13 (lifts Ruling C2): the generic /requisition routes may LIST and READ
+ * a FEED requisition for the all-types hub, but never change it — a feed
+ * document is created, edited, submitted, decided and fulfilled only through
+ * /feed-requisition, where the feed rules live. Every generic mutation calls
+ * this before it writes; the name of the action goes in the message.
+ */
+export function assertNotFeedRequisition(docType: string | null | undefined, action: string): void {
+  if (docType === 'FEED') {
+    throw new BadRequestException(`A feed requisition cannot be ${action} through /requisition; use /feed-requisition.`);
+  }
+}
+
+/**
  * decisions.md 2026-10-01: "A user must not approve a manually created
  * requisition that they created. System-generated feed drafts may be reviewed
  * and approved by the Farm Manager for that farm." Only AUTO_FORECAST is
