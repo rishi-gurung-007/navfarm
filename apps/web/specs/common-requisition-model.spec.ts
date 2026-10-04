@@ -38,6 +38,36 @@ describe("common requisition model", () => {
     expect(commonActions(v, { ...all, transfer: false })).toEqual([]);
   });
 
+  // Pins the .some() over v.lines: a lines[0]-only check would miss the
+  // second line's balance and wrongly omit "ship".
+  it("offers ship only when the second of two lines carries a balance to ship", () => {
+    const v = { ...base(), approval_status: "APPROVED", document_status: "RELEASED", purpose: "STORE" as const,
+      lines: [
+        { ...base().lines[0], line_id: "l1", balance_to_ship: 0 },
+        { ...base().lines[0], line_id: "l2", balance_to_ship: 4 },
+      ] };
+    expect(commonActions(v, all)).toEqual(["ship"]);
+  });
+
+  // Pins both levels of .some(): shipments.some(sh => sh.lines.some(...)).
+  // A check of shipments[0] only, or of lines[0] within a shipment only,
+  // would both miss the one unreceived line and wrongly omit "receive".
+  it("offers receive only when the second line of the second shipment still has something unreceived", () => {
+    const v = { ...base(), approval_status: "APPROVED", document_status: "RELEASED", purpose: "STORE" as const,
+      lines: [{ ...base().lines[0], line_id: "l1", balance_to_ship: 0 }],
+      shipments: [
+        { shipment_id: "s1", shipment_no: "SH-2026-0001", shipment_date: "2026-10-04", lines: [
+          { requisition_line_id: "l1", shipped: 4, received: 4, remaining: 0 },
+          { requisition_line_id: "l1", shipped: 2, received: 2, remaining: 0 },
+        ] },
+        { shipment_id: "s2", shipment_no: "SH-2026-0002", shipment_date: "2026-10-05", lines: [
+          { requisition_line_id: "l1", shipped: 3, received: 3, remaining: 0 },
+          { requisition_line_id: "l1", shipped: 6, received: 2, remaining: 4 },
+        ] },
+      ] };
+    expect(commonActions(v, all)).toEqual(["receive"]);
+  });
+
   it("offers nothing to a user without the grants", () => {
     expect(commonActions(base(), { create: false, approve: false, transfer: false })).toEqual([]);
   });
