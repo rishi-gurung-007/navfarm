@@ -213,21 +213,27 @@ describe('ApprovalService farm scope', () => {
       expect(where).toContain('batch_header bf');
     });
 
-    it('does not show a non-restricted user who has an active farm selected any farmless, batchless request', async () => {
-      // Isolates the `!scope.farmId` half of the guard from `!scope.restricted`:
-      // a COMPANY_ADMIN or TENANT_ADMIN who has selected an active farm (via
+    it('shows a non-restricted user who has an active farm selected the company\'s farmless, batchless requests too (Rishi, 4 Oct, Option A)', async () => {
+      // A COMPANY_ADMIN or TENANT_ADMIN who has selected an active farm (via
       // x-active-farm-id) gets exactly this scope shape per resolveFarmScope's
-      // else-branch — restricted: false, farmId set. The farm-bound test above
-      // only ever sets restricted: true alongside farmId, so it cannot catch a
-      // guard that dropped the farmId check and kept only `!scope.restricted`.
-      // Today's behaviour, pinned deliberately: this subset stays excluded,
-      // same as a farm-bound user. Whether it *should* stay excluded is a
-      // product question for Rishi, not decided here — see task-17-report.md.
+      // else-branch — restricted: false, farmId set. Rishi ruled (4 Oct,
+      // Option A) that this user must still see company-wide requisitions
+      // belonging to no farm, so the guard no longer gates on farmId at all —
+      // only `restricted` decides this branch. The farm-bound test below
+      // (restricted: true, same farmId) is what makes that one remaining
+      // condition load-bearing: the two cases differ only in `restricted`,
+      // so a guard that lost that check would fail one of them.
       useFarmScope(cls, { farmId: 'farm-g', restricted: false, companyId: 'co-1', lobId: null });
 
       await service.findAll({} as any, 'tenant-1');
 
-      expect(renderedWhere()).not.toContain('`approval_request`.`farm_id` is null');
+      const where = renderedWhere();
+      expect(where).toContain('`approval_request`.`batch_id` is null');
+      expect(where).toContain('`approval_request`.`farm_id` is null');
+      expect(where).toContain('`approval_request`.`company_id` = ?');
+      // Their farm-bound branch (D25) is still in the OR too — this scope can
+      // see both a farm's documents and the company's farmless ones.
+      expect(where).toContain('`approval_request`.`farm_id` IN (SELECT ls.location_id FROM location_master ls WHERE ls.company_id = ?)');
     });
 
     it('still requires the row\'s company to equal the scope\'s, so one company admin cannot read another company\'s row', async () => {

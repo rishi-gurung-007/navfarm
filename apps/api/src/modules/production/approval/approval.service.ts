@@ -211,17 +211,27 @@ export class ApprovalService {
    * D1 (Part E live verification): a common requisition (Item/FA/Service) can
    * have neither a batch nor a farm, so it fell through both branches above.
    * This third branch is for exactly that row, and it is reachable by any
-   * caller who is not farm-bound and not LOB-restricted — a company admin
-   * (companyId set) as much as a tenant-wide admin (companyId null) —
-   * because approval_request carries no lob_id of its own to check a
-   * restricted user's LOB against: there is nothing on this row for
-   * `assertLobInScope`'s or `locationReferenceScopeConditions`'s LOB
-   * conditions to compare, so a restricted caller (OPERATIONAL_ADMIN,
-   * FARM_MANAGER, STANDARD_USER) is kept out of this branch rather than
-   * guessed into or out of an LOB it cannot state. The farm/batch branches
-   * above are untouched; the `company_id = scope.companyId` condition
-   * appended below still bounds every branch including this one, so a
-   * company admin never reads another company's row.
+   * caller who is not LOB-restricted — a company admin (companyId set) as
+   * much as a tenant-wide admin (companyId null) — because approval_request
+   * carries no lob_id of its own to check a restricted user's LOB against:
+   * there is nothing on this row for `assertLobInScope`'s or
+   * `locationReferenceScopeConditions`'s LOB conditions to compare, so a
+   * restricted caller (OPERATIONAL_ADMIN, FARM_MANAGER, STANDARD_USER) is
+   * kept out of this branch rather than guessed into or out of an LOB it
+   * cannot state. The farm/batch branches above are untouched; the
+   * `company_id = scope.companyId` condition appended below still bounds
+   * every branch including this one, so a company admin never reads another
+   * company's row.
+   *
+   * Rishi, 4 Oct (Option A): a non-restricted user who also has an active
+   * farm selected (a company/tenant admin who picked a farm via
+   * x-active-farm-id, not a farm-bound persona) still sees the company's
+   * farm-less requests alongside that farm's own. So this branch no longer
+   * gates on `scope.farmId` at all — only `scope.restricted` decides it.
+   * A farm-bound user (FARM_MANAGER, STANDARD_USER) is always `restricted`
+   * (RESTRICTED_USER_TYPES), so they stay excluded exactly as before; the
+   * farmId check that used to also exclude a merely-farm-selecting admin is
+   * gone because that exclusion was never the rule Rishi wanted.
    */
   private farmConditions(): SQL[] {
     const scope = farmScope(this.cls);
@@ -230,7 +240,7 @@ export class ApprovalService {
       and(sql`${R.batch_id} IS NOT NULL`, ...batchReferenceScopeConditions(scope, R.batch_id))!,
       and(isNull(R.batch_id), sql`${R.farm_id} IS NOT NULL`, ...locationReferenceScopeConditions(scope, R.farm_id))!,
     ];
-    if (!scope.restricted && !scope.farmId) {
+    if (!scope.restricted) {
       paths.push(and(isNull(R.batch_id), isNull(R.farm_id))!);
     }
     return [or(...paths)!, ...restrictedScopeConditions(scope, { companyId: R.company_id })];
