@@ -128,6 +128,14 @@
           "command": "node --env-file-if-exists=.env --import tsx src/scripts/align-production-permissions.ts"
         }
       },
+      "db-align-requisition-permissions": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --env-file-if-exists=.env --import tsx src/scripts/align-requisition-permissions.ts"
+        }
+      },
       "db-assign-operator-operational-area": {
         "executor": "nx:run-commands",
         "cache": false,
