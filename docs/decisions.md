@@ -2595,3 +2595,12 @@ Rishi, 4 Oct:
 2. Merge GitHub `origin/main` (Arun's PR #13 lot/serial work, after a fresh fetch) into the feed branch **locally**,
    as its own step, before building Item Tracking (WP1c). Nothing is pushed. Conflicts are resolved keeping the feed
    work on the files this branch owns, followed by the full gates and a live check.
+
+## 2026-10-05 — Demo roles get requisition permissions
+
+Rishi, 5 Oct. The seeded MANAGER and OPERATOR roles had no PROCUREMENT permission rows, so a realistic restricted
+user was refused on every requisition route. A data script (AGENTS.md §4 shape: plan / `--verify` / `--apply`, local
+only) grants requisition permissions (PROCUREMENT / REQUISITION):
+- Farm Manager and Head of Farms (OPERATIONAL_ADMIN) roles: view, create, edit, submit, approve.
+- Standard User / Operator roles: view, create, edit, submit, but **not** approve.
+Release, shipment, receipt and Direct Transfer stay as configured; they are not part of this grant.

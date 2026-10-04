@@ -190,6 +190,16 @@ Decision: decisions.md "2026-10-04 — … one Requisitions page".
 - **Live:** as company.admin, the pending count shown on Requisitions equals the old inbox's requisition count.
   Approve one from the hub and read MySQL. The inbox shows only non-requisition items.
 
+### WP1f — Seed requisition permissions for the demo roles (S) — Rishi 5 Oct
+Decision: decisions.md "2026-10-05 — Demo roles get requisition permissions". Add a `db-seed-requisition-role-permissions`
+script (plan / `--verify` / `--apply`, refuses non-local hosts, idempotent). It grants PROCUREMENT / REQUISITION actions:
+MANAGER (Farm Manager) and the Head of Farms role get view, create, edit, submit and approve; OPERATOR / Standard User
+roles get view, create, edit and submit, without approve. Find the real role codes and the action vocabulary in the
+permission tables first (do not guess). Also add the grants to the seed that new tenants get, so a fresh tenant matches.
+**Live:** log in as a seeded farm manager (no temporary grants) and open Approvals → Requisitions and the Feed
+Requisition tab, then create, submit and approve another user's requisition. As a standard user, create and submit, and
+check that Approve is refused. Read the permission rows in MySQL.
+
 ### WP1c — Common requisition to Rishi's field and button list (≈5–7 h) — Rishi 4 Oct
 Spec (verbatim): `feed-completion/common-requisition-spec.md`. The decision that frames it is in decisions.md
 ("2026-10-04 — Common requisition field and button list"). Code: API `modules/procurement/requisition/`,
@@ -477,6 +487,7 @@ unchanged; screenshot each screen.
 | WP1 admins approve all requisitions | 45 min | done 411ecdf6 (review pending) |
 | WP1e requisition LOB filter fix | 30–45 min | — |
 | WP1b one Requisitions page | 1–1½ h | — |
+| WP1f seed requisition permissions for demo roles | 30–45 min | — |
 | WP1c common requisition to Rishi's list (incl. merging origin/main lot/serial) | 5–7 h | — |
 | WP1d page/tab/section names per workbook | 1–1½ h | — |
 | WP2 grid until run-out | 1 h | — |

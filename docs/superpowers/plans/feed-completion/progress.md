@@ -334,3 +334,11 @@ columns are interpolated drizzle columns, so tsc sees them. A repo-wide grep con
   requisition routes before any scope logic runs. The live check needed SUPER_ADMIN grants purely to exercise
   the LOB path with a restricted userType. If Triple C's demo users are expected to see Approvals →
   Requisitions, the role permission matrix needs a seeded fix (a data script decision for Rishi, not mine).
+
+### 5 Oct (desktop controller)
+- WP1 fix round + WP1e committed by navfarm-49 (cab1919b, 56adac6c, 2e405f22). VS Code Claude then hit its limit.
+- Freebuff (GLM, VS Code terminal) took over and is **mid-WP1b** — uncommitted changes in requisition/approval
+  services, controllers, `requisitions-hub.spec.tsx`, new `approvals-page-shell.spec.tsx`. The next agent must check
+  `git status` and finish or review these before starting anything new.
+- Rishi answered the roles observation → **WP1f** (seed requisition permissions for demo roles), after WP1b.
+- Order now: WP1b (in flight) → WP1f → WP1c → WP1d → WP2 …
