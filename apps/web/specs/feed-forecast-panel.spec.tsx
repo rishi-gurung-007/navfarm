@@ -42,14 +42,14 @@ const forecastResponse = {
     rows: [
       {
         key: 'b10|item-1|VIL100/STORE-001|2026-09-25', batchId: 'b10', batchNo: 'BATCH-000010', shedCode: '', stageCode: 'WEANER',
-        itemId: 'item-1', itemNo: 'FEED-WG', itemName: 'Weaner Grower Mash (18% CP)', sourceType: 'STORE', sourceCode: 'VIL100/STORE-001',
+        itemId: 'item-1', itemNo: 'FEED-WG', itemName: 'Weaner Grower Mash (18% CP)', sourceType: 'STORE', sourceCode: 'VIL100/STORE-001', sourceName: 'Main store',
         date: '2026-09-25', dateTo: '2026-09-25', days: 1, currentInventoryKg: 35525.6, heads: 58, perDayIntakeKg: 127,
         intakeKg: 127, daysOfStock: 108, sharedBatchCount: 3, indicative: false,
         runDownDate: null,
       },
       {
         key: 'b20|item-2|VIL100/SILO-002|2026-09-25', batchId: 'b20', batchNo: 'BATCH-000020', shedCode: 'SHED-1', stageCode: 'DRY_SOW',
-        itemId: 'item-2', itemNo: 'FEED-DS', itemName: 'Dry Sow Gestation Mash (14% CP)', sourceType: 'SILO', sourceCode: 'VIL100/SILO-002',
+        itemId: 'item-2', itemNo: 'FEED-DS', itemName: 'Dry Sow Gestation Mash (14% CP)', sourceType: 'SILO', sourceCode: 'VIL100/SILO-002', sourceName: 'Dry sow silo',
         date: '2026-09-25', dateTo: '2026-09-25', days: 1, currentInventoryKg: 200, heads: 40, perDayIntakeKg: 100,
         intakeKg: 100, daysOfStock: 2, sharedBatchCount: 1, indicative: true,
         runDownDate: '2026-09-26',
@@ -81,11 +81,11 @@ describe('FeedForecastPanel — admin', () => {
     mockFarm = adminFarm();
   });
 
-  it("renders the seven static columns, one column per forecast date, Days of Stock and First Shortage Date", async () => {
+  it("renders the nine static columns (silo number and name included), one column per forecast date, Days of Stock and First Shortage Date", async () => {
     render(<FeedForecastPanel />);
     const table = await screen.findByRole('table', { name: 'ffGridLabel' });
     // Both fixture rows fall on 25/09/26, so there is one date column.
-    expect(within(table).getAllByRole('columnheader')).toHaveLength(7 + 1 + 2);
+    expect(within(table).getAllByRole('columnheader')).toHaveLength(9 + 1 + 2);
   });
 
   it("shares the window on screen with the Feed Requisition tab's Draft from forecast (Feed Forecast row 8)", async () => {

@@ -32,14 +32,14 @@ import { ScrollTable } from "@/components/ui/scroll-table";
 import { cn } from "@/lib/utils";
 import { formatDateShort } from "@/utils/date-short";
 import { useLanguage } from "@/hooks/useLanguage";
-import { todayIso, unwrap } from "./feed-format";
+import { locationLabel, todayIso, unwrap } from "./feed-format";
 import { FeedRequisitionHeaderFields, bulkTotalAndTrips, feedTypeOfDestination, type FeedType } from "./feed-requisition-header";
 import { useFeedFarm } from "./use-feed-farm";
 import { FeedFarmSelect } from "./feed-farm-select";
 import { FEED_TYPE_LABEL, PURPOSE_LABEL, REQ_STATUS_LABEL, REQ_TYPE_LABEL, SOURCE_LABEL, SUPPLY_LABEL, labelOf, variantOf } from "./requisition-labels";
 import type { RequisitionView } from "./requisitions-panel";
 
-interface Destination { location_id: string; location_code: string; location_type: string; feed_in_bags?: boolean | null }
+interface Destination { location_id: string; location_code: string; location_name?: string | null; location_type: string; feed_in_bags?: boolean | null }
 interface FeedItem { item_id: string; item_code: string; item_name: string }
 interface Options { destinations: Destination[]; items: FeedItem[] }
 interface Draft { dest: string; item: string; kg: string; date: string; reason: string }
@@ -322,7 +322,7 @@ export function RequisitionNewDialog({
                       <td className={TD}>
                         <select aria-label={t("rqNewDestination", { line: i + 1 })} className="nf-input-sm nf-select w-36" style={inputStyle} value={line.dest} onChange={(e) => setLine(i, { dest: e.target.value })}>
                           <option value="">{t("rqNewChoose")}</option>
-                          {destinations.map((d) => <option key={d.location_id} value={d.location_id}>{d.location_code}</option>)}
+                          {destinations.map((d) => <option key={d.location_id} value={d.location_id}>{locationLabel(d.location_code, d.location_name)}</option>)}
                         </select>
                       </td>
                       <td className={TD}>

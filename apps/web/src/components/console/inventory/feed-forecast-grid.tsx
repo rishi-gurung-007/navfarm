@@ -32,6 +32,8 @@ export interface ReportRow {
   itemName: string;
   sourceType: "SILO" | "STORE" | "NONE";
   sourceCode: string | null;
+  /** location_name of the silo or store (Engine §5 row 70). */
+  sourceName?: string | null;
   date: string;
   dateTo: string;
   days: number;
@@ -76,7 +78,7 @@ type Translate = (key: any, vars?: any) => string;
 // order. "Source" and "Feed incl. Wastage (Kg)" were ours, not the client's, and
 // "Shared by N" went with Source — it was a badge inside that cell.
 export const GRID_COLUMNS = [
-  "ffColBatchNo", "ffColItemName", "ffColItemNo", "ffColShedNo",
+  "ffColBatchNo", "ffColItemName", "ffColItemNo", "ffColShedNo", "ffColSiloNo", "ffColSiloName",
   "ffColCurrentInventoryKg", "ffColCurrentPigs", "ffColPerDayIntakeKg",
   // Dynamic date columns are inserted here at render time (one per day or week)
   "ffColDaysOfStock", "ffColFirstShortage",
@@ -106,6 +108,8 @@ export interface PivotedFeedRow {
   batchId: string;
   batchNo: string;
   shedCode: string;
+  sourceCode: string | null;
+  sourceName: string | null;
   stageCode: string;
   itemId: string;
   itemNo: string;
@@ -160,7 +164,7 @@ export function pivotForecastRows(
   const baseFrom = from || (rows.length > 0 ? rows[0].date : "");
 
   for (const r of rows) {
-    const groupKey = `${r.batchId}|${r.itemId}|${r.shedCode || ""}`;
+    const groupKey = `${r.batchId}|${r.itemId}|${r.shedCode || ""}|${r.sourceCode ?? ""}`;
     let p = map.get(groupKey);
     if (!p) {
       p = {
@@ -168,6 +172,8 @@ export function pivotForecastRows(
         batchId: r.batchId,
         batchNo: r.batchNo,
         shedCode: r.shedCode,
+        sourceCode: r.sourceCode,
+        sourceName: r.sourceName ?? null,
         stageCode: r.stageCode,
         itemId: r.itemId,
         itemNo: r.itemNo,
@@ -278,7 +284,7 @@ export function FeedForecastGrid({
   t: Translate;
 }) {
   const { pivoted, columns } = pivotForecastRows(rows, view, from);
-  const totalCols = 7 + columns.length + 2;
+  const totalCols = 9 + columns.length + 2;
 
   return (
     <ScrollTable label={t("ffGridLabel")} className="w-full">
@@ -292,6 +298,8 @@ export function FeedForecastGrid({
           </th>
           <th scope="col" className={TH}>{t("ffColItemNo")}</th>
           <th scope="col" className={TH}>{t("ffColShedNo")}</th>
+          <th scope="col" className={TH}>{t("ffColSiloNo")}</th>
+          <th scope="col" className={TH}>{t("ffColSiloName")}</th>
           <th scope="col" className={cn(TH, "text-right")}>{t("ffColCurrentInventoryKg")}</th>
           <th scope="col" className={cn(TH, "text-right")}>{t("ffColCurrentPigs")}</th>
           <th scope="col" className={cn(TH, "text-right")}>{t("ffColPerDayIntakeKg")}</th>
@@ -333,6 +341,8 @@ export function FeedForecastGrid({
                 </td>
                 <td className={cn(TD, MUTED)}>{p.itemNo}</td>
                 <td className={cn(TD, MUTED)}>{p.shedCode}</td>
+                <td className={cn(TD, MUTED)}>{p.sourceCode}</td>
+                <td className={cn(TD, MUTED)}>{p.sourceName}</td>
                 <td className={cn(TD, NUM, "font-medium")}>{fmtRound(p.openingInventoryKg)}</td>
                 <td className={cn(TD, NUM)}>{p.heads.toLocaleString("en-US")}</td>
                 <td className={cn(TD, NUM)}>{fmtRound(p.perDayIntakeKg)}</td>

@@ -33,8 +33,8 @@ beforeEach(() => {
       farmId: 'farm-vil',
       companyId: 'co-1',
       destinations: [
-        { location_id: 's1', location_code: 'VIL100/SILO-001', location_type: 'SILO' },
-        { location_id: 'st', location_code: 'VIL100/STORE-001', location_type: 'STORE' },
+        { location_id: 's1', location_code: 'VIL100/SILO-001', location_name: 'Weaner silo', location_type: 'SILO' },
+        { location_id: 'st', location_code: 'VIL100/STORE-001', location_name: 'Main store', location_type: 'STORE' },
       ],
       items: [{ item_id: 'i1', item_code: 'FEED-R1', item_name: 'Weaner Diet R1' }],
     },
@@ -59,7 +59,7 @@ describe('RequisitionNewDialog (D26)', () => {
     expect(get.mock.calls.map((c) => String(c[0])).filter((u) => u.startsWith('/location') || u.startsWith('/item'))).toEqual([]);
     const dest = await screen.findByLabelText('rqNewDestination:{"line":1}') as HTMLSelectElement;
     await waitFor(() => expect(dest.options.length).toBe(3));
-    expect([...dest.options].map((o) => o.textContent)).toEqual(['rqNewChoose', 'VIL100/SILO-001', 'VIL100/STORE-001']);
+    expect([...dest.options].map((o) => o.textContent)).toEqual(['rqNewChoose', 'VIL100/SILO-001 — Weaner silo', 'VIL100/STORE-001 — Main store']);
     fireEvent.change(dest, { target: { value: 's1' } });
     fireEvent.change(screen.getByLabelText('rqNewItem:{"line":1}'), { target: { value: 'i1' } });
     fireEvent.change(screen.getByLabelText('rqNewKg:{"line":1}'), { target: { value: '3000' } });

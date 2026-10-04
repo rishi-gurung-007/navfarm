@@ -25,6 +25,7 @@ import { useFeedFarm } from "./use-feed-farm";
 export interface SiloStatusRow {
   siloId: string;
   siloCode: string;
+  siloName?: string;
   houseCodes: string[];
   capacityKg: number | null;
   belowFeedLevelKg: number | null;
@@ -166,6 +167,7 @@ export default function FeedSiloDashboard() {
               <tr key={row.siloId} data-silo-row={row.siloCode}>
                 <td className={cn(TD, "font-medium")}>
                   {row.siloCode}
+                  {row.siloName && <div className="text-[var(--text-muted)] font-normal">{row.siloName}</div>}
                 </td>
                 <td className={TD}>{row.houseCodes.length ? row.houseCodes.join(", ") : "—"}</td>
                 <td className={TD}>{row.feedType === "BAGGED" ? t("fsdBagged") : t("fsdBulk")}</td>

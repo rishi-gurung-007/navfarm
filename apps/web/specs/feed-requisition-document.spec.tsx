@@ -29,7 +29,7 @@ const view: FeedRequisitionDocumentView = {
   },
   lines: [
     {
-      line_id: "L1", line_seq: 10000, destination_location_id: "s1", destination_code: "GRS/SILO-001", item_id: "r1", item_code: "R1",
+      line_id: "L1", line_seq: 10000, destination_location_id: "s1", destination_code: "GRS/SILO-001", destination_name: "Weaner silo", item_id: "r1", item_code: "R1",
       item_description: "Weaner Diet R1", required_item_id: "r1", feed_type: "BULK", is_next_diet: false, days_before_diet_change: null,
       lifecycle_ref_label: "L-LINE WEANER days 21–24", system_balance_kg: "1500.0000", daily_requirement_kg: "2000.0000",
       days_remaining: "0.8", first_shortage_date: "2026-09-23", unrounded_need_kg: "4500.0000", recommended_qty_kg: "6000.0000",
@@ -37,7 +37,7 @@ const view: FeedRequisitionDocumentView = {
       breakdown: [],
     },
     {
-      line_id: "L2", line_seq: 20000, destination_location_id: "s2", destination_code: "GRS/SILO-002", item_id: "r2", item_code: "R2",
+      line_id: "L2", line_seq: 20000, destination_location_id: "s2", destination_code: "GRS/SILO-002", destination_name: "Grower silo", item_id: "r2", item_code: "R2",
       item_description: "Weaner Diet R2", required_item_id: "r2", feed_type: "BULK", is_next_diet: true, days_before_diet_change: 3,
       lifecycle_ref_label: "L-LINE WEANER days 25–27", system_balance_kg: "1000.0000", daily_requirement_kg: "2500.0000",
       days_remaining: null, first_shortage_date: "2026-09-26", unrounded_need_kg: "9000.0000", recommended_qty_kg: "9000.0000",
@@ -52,8 +52,8 @@ const view: FeedRequisitionDocumentView = {
 
 const options = {
   destinations: [
-    { location_id: "s1", location_code: "GRS/SILO-001", location_type: "SILO" },
-    { location_id: "s2", location_code: "GRS/SILO-002", location_type: "SILO" },
+    { location_id: "s1", location_code: "GRS/SILO-001", location_name: "Weaner silo", location_type: "SILO" },
+    { location_id: "s2", location_code: "GRS/SILO-002", location_name: "Grower silo", location_type: "SILO" },
   ],
   items: [
     { item_id: "r1", item_code: "R1", item_name: "Weaner Diet R1" },
@@ -101,6 +101,21 @@ describe("FeedRequisitionDocument — header form (Requisition §1)", () => {
     const indices = order.map((label) => labels.indexOf(label));
     expect(indices.every((i) => i >= 0)).toBe(true);
     expect(indices).toEqual([...indices].sort((a, b) => a - b));
+  });
+});
+
+describe("FeedRequisitionDocument — silo number and name (Rishi 4 Oct)", () => {
+  it("a read-only line shows the silo code and the silo name", () => {
+    render(<FeedRequisitionDocument view={view} editable={false} />);
+    expect(screen.getByText("GRS/SILO-001")).toBeTruthy();
+    expect(screen.getByText("Weaner silo")).toBeTruthy();
+    expect(screen.getByText("Grower silo")).toBeTruthy();
+  });
+
+  it("an editable line offers each silo as code and name", () => {
+    render(<FeedRequisitionDocument view={view} editable options={options} edits={{}} onLineEdit={jest.fn()} remarks="" onRemarksChange={jest.fn()} />);
+    const select = screen.getByLabelText("Silo Code, line 10000") as HTMLSelectElement;
+    expect([...select.options].map((o) => o.textContent)).toEqual(["GRS/SILO-001 — Weaner silo", "GRS/SILO-002 — Grower silo"]);
   });
 });
 

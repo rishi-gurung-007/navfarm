@@ -27,8 +27,8 @@ describe('FeedSiloDashboard', () => {
     (api.get as jest.Mock).mockResolvedValue({ success: true, data: {
       planningDate: '2026-09-23', submissionDeadline: '2026-09-25', itemNames: { r1: 'Weaner Diet R1', r2: 'Weaner Diet R2' },
       rows: [
-        { ...base, siloId: 's1', siloCode: 'GRS/SILO-001' },
-        { ...base, siloId: 's2', siloCode: 'GRS/SILO-002', systemBalanceKg: 1000, nonKgBalance: true, currentDietItemId: null, alert: 'CRITICAL_FIRST_PRIORITY' },
+        { ...base, siloId: 's1', siloCode: 'GRS/SILO-001', siloName: 'Weaner silo' },
+        { ...base, siloId: 's2', siloCode: 'GRS/SILO-002', siloName: 'Grower silo', systemBalanceKg: 1000, nonKgBalance: true, currentDietItemId: null, alert: 'CRITICAL_FIRST_PRIORITY' },
       ],
     } });
 
@@ -38,6 +38,9 @@ describe('FeedSiloDashboard', () => {
     expect(api.get).toHaveBeenCalledWith('/feed-forecast/silo-status?farmId=farm-1');
     expect(document.querySelectorAll('tbody tr')).toHaveLength(2);
     expect(screen.getByRole('columnheader', { name: 'fsdColBalance' })).toBeTruthy();
+    // Code AND name beside it (Engine §4 row 49, §1 row 9; Rishi 4 Oct).
+    expect(screen.getByText('Weaner silo')).toBeTruthy();
+    expect(screen.getByText('Grower silo')).toBeTruthy();
     const second = document.querySelector('[data-silo-row="GRS/SILO-002"]') as HTMLElement;
     expect(within(second).getByText('fsdAlertCritical')).toBeTruthy();
     expect(within(second).getByText('fsdNonKg')).toBeTruthy();

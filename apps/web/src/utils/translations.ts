@@ -1813,6 +1813,8 @@ export const translations = {
     ffColItemName: "Item Name",
     ffColItemNo: "Item No",
     ffColShedNo: "Shed No",
+    ffColSiloNo: "Silo No",
+    ffColSiloName: "Silo Name",
     ffColPlanningDate: "Planning Date",
     ffColCurrentInventoryKg: "System Balance (Kg)",
     ffColCurrentPigs: "Current No. of Pigs",

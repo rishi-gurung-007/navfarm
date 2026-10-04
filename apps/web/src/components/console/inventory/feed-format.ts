@@ -13,6 +13,11 @@ export function unwrap<T = any>(res: any): T {
   return (res?.data ?? res) as T;
 }
 
+/** A silo or store as the screens name it: its code as issued, then its name (Rishi 4 Oct). */
+export function locationLabel(code: string, name?: string | null): string {
+  return name ? `${code} — ${name}` : code;
+}
+
 /** Today, in the farm-local calendar day the API also works in ("YYYY-MM-DD"). */
 export function todayIso(): string {
   const d = new Date();

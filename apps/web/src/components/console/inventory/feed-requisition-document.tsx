@@ -22,6 +22,7 @@ import { useLanguage } from "@/hooks/useLanguage";
 import type { TranslationKeys } from "@/utils/translations";
 import { cn } from "@/lib/utils";
 import { formatDateShort } from "@/utils/date-short";
+import { locationLabel } from "./feed-format";
 import {
   FEED_TYPE_LABEL, PRIORITY_LABEL, PURPOSE_LABEL, REQ_STATUS_LABEL, REQ_TYPE_LABEL, SOURCE_LABEL, SUPPLY_LABEL, labelOf, variantOf,
 } from "./requisition-labels";
@@ -50,6 +51,7 @@ export interface FeedRequisitionLine {
   line_seq: number;
   destination_location_id: string | null;
   destination_code: string | null;
+  destination_name?: string | null;
   item_id: string | null;
   item_code: string | null;
   item_description: string | null;
@@ -119,7 +121,7 @@ export interface FeedLineEdit {
 
 /** GET /feed-requisition/options: the farm's silos and stores, and its company's feed items. */
 export interface FeedRequisitionOptions {
-  destinations: { location_id: string; location_code: string; location_type: string }[];
+  destinations: { location_id: string; location_code: string; location_name?: string | null; location_type: string }[];
   items: { item_id: string; item_code: string; item_name: string }[];
 }
 
@@ -347,9 +349,14 @@ export function FeedRequisitionDocument({
                       {canEdit && destinations.length ? (
                         <select className="nf-input-sm nf-select w-36" style={inputStyle} aria-label={t("rqdSiloFor", { line: seq })}
                           value={destinationId} onChange={(e) => onLineEdit?.(line.line_id, { destinationId: e.target.value })}>
-                          {destinations.map((d) => <option key={d.location_id} value={d.location_id}>{d.location_code}</option>)}
+                          {destinations.map((d) => <option key={d.location_id} value={d.location_id}>{locationLabel(d.location_code, d.location_name)}</option>)}
                         </select>
-                      ) : (line.destination_code ?? "—")}
+                      ) : (
+                        <>
+                          {line.destination_code ?? "—"}
+                          {line.destination_name && <div className={MUTED}>{line.destination_name}</div>}
+                        </>
+                      )}
                       {line.needs_silo_changeover && <div className={MUTED}>{t("rqChangeover")}</div>}
                     </td>
                     <td className={TD}>
