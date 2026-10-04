@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getStoredUser, hasPermission, NavUser, getActiveWorkspaceScope, getActiveLob } from "@/hooks/useAuth";
-import { useContextNav, type ContextNavModel } from "@/components/shell/ContextNav";
 import { useLanguage } from "@/hooks/useLanguage";
+import { Tabs } from "@/components/ui/tabs";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { ConsolePage } from "@/components/ui/console-page";
 import { ShieldAlert } from "lucide-react";
@@ -68,21 +68,6 @@ export function InventoryPageShell({ activeKey, fill = false, children }: { acti
   const router = useRouter();
   const { ready, scope, activeLob, mayView } = useInventoryPageState();
 
-  const contextNav = useMemo<ContextNavModel | null>(() => {
-    if (!ready || !mayView) return null;
-    return {
-      label: t("moduleSections", { module: t("inventory") }),
-      groups: [{ items: INVENTORY_SECTIONS.map((s) => ({ key: s.key, label: t(s.labelKey as any) })) }],
-      activeKey,
-      onSelect: (key) => {
-        const target = INVENTORY_SECTIONS.find((s) => s.key === key);
-        if (target) router.push(target.href);
-      },
-    };
-  }, [ready, mayView, activeKey, t, router]);
-
-  useContextNav(contextNav);
-
   if (!ready) return null;
 
   if (!mayView) {
@@ -113,10 +98,26 @@ export function InventoryPageShell({ activeKey, fill = false, children }: { acti
     activeKey === "feed-forecast" ? t("invFeedForecastDesc") :
     scope === "OPERATIONAL" ? t("invOperationalDesc", { lob: tLob(activeLob) }) : t("invCompanyDesc");
 
+  const tabsNode = (
+    <Tabs
+      items={INVENTORY_SECTIONS.map((s) => ({
+        value: s.key,
+        label: t(s.labelKey as any),
+      }))}
+      value={activeKey}
+      onChange={(key) => {
+        const target = INVENTORY_SECTIONS.find((s) => s.key === key);
+        if (target) router.push(target.href);
+      }}
+      className="mb-4"
+    />
+  );
+
   return (
     // Plan S: a feed screen holds its header and filters still; only its table scrolls.
     <ConsolePage fill={fill}>
       <PageHeader title={title} description={description} sticky={!fill} />
+      {tabsNode}
       {children}
     </ConsolePage>
   );

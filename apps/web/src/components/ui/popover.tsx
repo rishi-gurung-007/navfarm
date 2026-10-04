@@ -290,13 +290,26 @@ export function Popover({
       if (!anchor || !panel) return;
       const a = anchor.getBoundingClientRect();
 
-      // A full-width field's panel must be at least as wide as the field; the
-      // stylesheet floor wins where it is larger, so a menu stays a menu.
-      panel.style.minWidth = `${Math.max(a.width, baseMinWidth)}px`;
-
-      const p = panel.getBoundingClientRect();
       const viewportWidth = document.documentElement.clientWidth || window.innerWidth;
       const viewportHeight = document.documentElement.clientHeight || window.innerHeight;
+
+      // Constrain panel maxWidth so it never overflows the viewport
+      const maxPanelWidth = Math.max(200, viewportWidth - 2 * FLOATING_MARGIN);
+      panel.style.maxWidth = `${maxPanelWidth}px`;
+
+      // Clear insets explicitly before measuring: `.nf-combobox-panel` and logical
+      // styles pin insets for the anchored case, so an inline declaration is essential.
+      panel.style.position = "fixed";
+      panel.style.right = "auto";
+      panel.style.bottom = "auto";
+      (panel.style as any).insetInlineStart = "auto";
+      (panel.style as any).insetInlineEnd = "auto";
+
+      // A full-width field's panel must be at least as wide as the field; the
+      // stylesheet floor wins where it is larger, so a menu stays a menu.
+      panel.style.minWidth = `${Math.min(maxPanelWidth, Math.max(a.width, baseMinWidth))}px`;
+
+      const p = panel.getBoundingClientRect();
 
       const roomBelow = viewportHeight - a.bottom - FLOATING_GAP;
       const roomAbove = a.top - FLOATING_GAP;
@@ -313,14 +326,8 @@ export function Popover({
       const maxLeft = Math.max(FLOATING_MARGIN, viewportWidth - p.width - FLOATING_MARGIN);
       const left = Math.min(Math.max(rawLeft, FLOATING_MARGIN), maxLeft);
 
-      // `right`/`bottom` are cleared explicitly: `.nf-combobox-panel` pins both
-      // inline insets to 0 for the anchored case, and an inline declaration is
-      // the only thing that reliably outranks it.
-      panel.style.position = "fixed";
       panel.style.top = `${Math.max(FLOATING_MARGIN, top)}px`;
       panel.style.left = `${left}px`;
-      panel.style.right = "auto";
-      panel.style.bottom = "auto";
 
       setPlacedSide((current) => (current === nextSide ? current : nextSide));
     }

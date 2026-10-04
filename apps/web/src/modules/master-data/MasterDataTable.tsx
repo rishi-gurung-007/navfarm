@@ -5,7 +5,7 @@ import {
   Plus, Pencil, Trash2, Search, Loader2, Inbox, Eye, SlidersHorizontal,
   ArrowUpDown, X, FileText, Info, Users, Boxes, Activity, Layers, MapPin,
   Scale, QrCode, Landmark, Clock, ArrowRight, Edit3, Building2, Coins, MoreHorizontal,
-  CheckCircle2, Power
+  CheckCircle2, Power, Wrench
 } from "lucide-react";
 import { api } from "@/services/api-client";
 import { API_ORIGIN } from "@/lib/api-client";
@@ -23,7 +23,7 @@ import { useLanguage } from "@/hooks/useLanguage";
 import { singularLabel } from "./labels";
 import { formatColumnValue } from "./column-format";
 import { cn } from "@/lib/utils";
-import type { MasterDataConfig, MasterDataField } from "./types";
+import type { MasterDataConfig, MasterDataField, RequiredCondition } from "./types";
 import AnimalDetailPanel from "./AnimalDetailPanel";
 import { MASTER_DATA_CONFIGS } from "./configs";
 import { codeFieldOf } from "./useCodeSeries";
@@ -53,6 +53,7 @@ type RelatedPicker = {
 type RelatedCreator = {
   field: MasterDataField;
   config: MasterDataConfig;
+  initialValues?: Record<string, unknown>;
   // See RelatedPicker.onApply — same reason, same jsonRow case.
   onApply?: (value: string) => void;
 };
@@ -124,22 +125,49 @@ export function rowOpenAction(row: Row, readOnly: boolean, editableDraft = false
   return "edit";
 }
 
+function matchesCondition(cond: RequiredCondition, form: Row): boolean {
+  const raw = form[cond.key];
+  const depValue = raw === undefined || raw === null ? "" : raw;
+  if (cond.equals !== undefined) {
+    const list = Array.isArray(cond.equals) ? cond.equals : [cond.equals];
+    return list.some((item: any) => {
+      const target = item === undefined || item === null ? "" : item;
+      return target === depValue;
+    });
+  }
+  if (cond.notEquals !== undefined) {
+    const list = Array.isArray(cond.notEquals) ? cond.notEquals : [cond.notEquals];
+    return !list.some((item: any) => {
+      const target = item === undefined || item === null ? "" : item;
+      return target === depValue;
+    });
+  }
+  return depValue !== "" && depValue !== false;
+}
+
 /** Whether `f` is required right now — statically, or via `requiredWhen` against the live form values. */
 function isFieldRequired(f: MasterDataField, form: Row): boolean {
   if (f.required) return true;
   if (!f.requiredWhen) return false;
-  return f.requiredWhen.anyOf.some((cond) => {
-    const depValue = form[cond.key];
-    if (cond.equals !== undefined) {
-      const list = Array.isArray(cond.equals) ? cond.equals : [cond.equals];
-      return list.includes(depValue);
-    }
-    if (cond.notEquals !== undefined) {
-      const list = Array.isArray(cond.notEquals) ? cond.notEquals : [cond.notEquals];
-      return !list.includes(depValue);
-    }
-    return depValue !== undefined && depValue !== "" && depValue !== false && depValue !== null;
-  });
+  if (f.requiredWhen.anyOf && f.requiredWhen.anyOf.some((cond) => matchesCondition(cond, form))) {
+    return true;
+  }
+  if (f.requiredWhen.allOf && f.requiredWhen.allOf.every((cond) => matchesCondition(cond, form))) {
+    return true;
+  }
+  return false;
+}
+
+/** Whether `f` is visible right now via `visibleWhen` against the live form values. */
+function isFieldVisible(f: MasterDataField, form: Row): boolean {
+  if (!f.visibleWhen) return true;
+  if (f.visibleWhen.anyOf && !f.visibleWhen.anyOf.some((cond) => matchesCondition(cond, form))) {
+    return false;
+  }
+  if (f.visibleWhen.allOf && !f.visibleWhen.allOf.every((cond) => matchesCondition(cond, form))) {
+    return false;
+  }
+  return true;
 }
 
 /**
@@ -455,6 +483,7 @@ export function MasterDataTable({
   createOnly = false,
   showHeader = !createOnly,
   tabs,
+  initialValues,
   onCreated,
   onCreateCancelled,
 }: {
@@ -462,6 +491,7 @@ export function MasterDataTable({
   createOnly?: boolean;
   showHeader?: boolean;
   tabs?: ReactNode;
+  initialValues?: Record<string, unknown>;
   onCreated?: (row: Row) => void;
   onCreateCancelled?: () => void;
 }) {
@@ -504,6 +534,10 @@ export function MasterDataTable({
   const [imageUploading, setImageUploading] = useState<Record<string, boolean>>({});
   const [saving, setSaving] = useState(false);
   const [activeFormTab, setActiveFormTab] = useState<string>("");
+  // Drives the API query param for filterTabs (e.g. resource_type: MANPOWER | EQUIPMENT).
+  const [activeFilterTab, setActiveFilterTab] = useState<string>(
+    config.filterTabs?.defaultTab ?? ""
+  );
   const [entityReloadKey, setEntityReloadKey] = useState(0);
   const [lookupManager, setLookupManager] = useState<MasterDataConfig | null>(null);
   const [relatedPicker, setRelatedPicker] = useState<RelatedPicker | null>(null);
@@ -602,7 +636,7 @@ export function MasterDataTable({
             setInventorySetupNumbering(data.numbering_config);
           }
         })
-        .catch(() => {});
+        .catch(() => { /* ignore */ });
     }
   }, [config.key, companyId, modalOpen, inventorySetupNumbering]);
 
@@ -631,25 +665,17 @@ export function MasterDataTable({
     return Array.isArray(loaded) && loaded.length === 0;
   })();
 
-  // An edit is also the record's complete review card. Creation-only fields
-  // remain visible there for context, but render disabled and are omitted from
-  // the update payload below. Conditional gates continue to shape creation;
-  // they must not make already-stored values disappear when a record is edited.
-  const visibleFields = editing
-    // Some create forms define conditional variants for one stored key. Edit
-    // mode ignores those conditions so every stored field remains visible,
-    // but it must still render that key only once.
-    ? formFields.filter((field, index, fields) => fields.findIndex((candidate) => candidate.key === field.key) === index)
-    : formFields
-        .filter((f) => !f.editOnly)
-        // Stage transition fields stay visible so create and edit have the same
-        // shape. Their visibleWhen rule controls whether they are enabled below;
-        // changing the trigger never destroys a value already entered/stored.
-        .filter((f) => config.key === "stage" || !f.visibleWhen || isFieldRequired({ ...f, required: false, requiredWhen: f.visibleWhen }, form))
-        .filter((f) => !entityRestrictionState(f, form, entityOptions)?.hidden)
-        // Only the "no parent chosen yet" half hides the field; an empty filtered
-        // list keeps it, disabled, so the form can say why it has nothing to offer.
-        .filter((f) => !parentFilterState(f, form, entityOptions).hidden);
+  const visibleFields = (
+    editing
+      ? formFields.filter((field, index, fields) => fields.findIndex((candidate) => candidate.key === field.key) === index)
+      : formFields
+          .filter((f) => !f.editOnly)
+          .filter((f) => config.key === "stage" || isFieldVisible(f, form))
+  )
+    .filter((f) => !entityRestrictionState(f, form, entityOptions)?.hidden)
+    // Only the "no parent chosen yet" half hides the field; an empty filtered
+    // list keeps it, disabled, so the form can say why it has nothing to offer.
+    .filter((f) => !parentFilterState(f, form, entityOptions).hidden);
   const columns = config.columns || config.fields.filter((f) => !f.hideInTable).slice(0, 5);
   // Status and Active are different facts — Status is the master's domain
   // state, Active is whether the record is live at all — but a master that
@@ -700,6 +726,10 @@ export function MasterDataTable({
       if (search) params.set("search", search);
       if (config.supportsNobLobFilter && nobFilter) params.set("nobId", nobFilter);
       if (config.supportsNobLobFilter && lobFilter) params.set("lobId", lobFilter);
+      // Send the active filter-tab value as its configured query param.
+      if (config.filterTabs && activeFilterTab) {
+        params.set(config.filterTabs.queryParam ?? config.filterTabs.key, activeFilterTab);
+      }
       // Ask for exactly the page being shown. The previous request was always
       // limit=200 with no offset, sliced in the browser — which silently capped
       // every master at 200 rows. MULTIPLIER's locations alone are 508.
@@ -734,7 +764,10 @@ export function MasterDataTable({
   useEffect(() => {
     if (createOnly) return;
     load();
-  }, [config.key, search, nobFilter, lobFilter, page, pageSize, sortKey, sortDir, colFilters, createOnly]);
+  }, [config.key, search, nobFilter, lobFilter, page, pageSize, sortKey, sortDir, colFilters, activeFilterTab, createOnly]);
+
+  // Reset to page 1 whenever the filter tab changes.
+  useEffect(() => { setPage(1); }, [activeFilterTab]);
 
   // Some of this form's pickers list this master's own rows — Location's
   // Parent Location and Attached Sheds are both /location — and every picker's
@@ -1284,6 +1317,14 @@ export function MasterDataTable({
       const currentPreview = numbering.preview || (numbering.value(numbering.codeKey, undefined) as string);
       if (currentPreview) initial[numbering.codeKey] = currentPreview;
     }
+    // Pre-fill the active filter tab's defaultFormValues (e.g. resource_type: "MANPOWER").
+    if (config.filterTabs && activeFilterTab) {
+      const tabOpt = config.filterTabs.options.find((o) => o.value === activeFilterTab);
+      if (tabOpt?.defaultFormValues) Object.assign(initial, tabOpt.defaultFormValues);
+    }
+    if (initialValues) {
+      Object.assign(initial, initialValues);
+    }
     setForm(initial);
     setActiveFormTab("");
     setChipDrafts({});
@@ -1473,6 +1514,16 @@ export function MasterDataTable({
         next.silo_reorder_days = "";
       }
     }
+    if (config.key === "resource" && key === "resource_type") {
+      const allowed = value === "MANPOWER"
+        ? ["PERMANENT", "CONTRACT", "DAILY"]
+        : value === "EQUIPMENT"
+        ? ["OWNED", "LEASED", "RENTED"]
+        : [];
+      if (next.resource_sub_type && !allowed.includes(next.resource_sub_type)) {
+        next.resource_sub_type = "";
+      }
+    }
     config.fields.forEach((f) => {
       if (parentKeys(f).includes(key) && next[f.key]) next[f.key] = "";
     });
@@ -1509,7 +1560,7 @@ export function MasterDataTable({
     // just became visible as a side effect of this change.
     config.fields.forEach((f) => {
       if (f.defaultValue === undefined || f.key === key) return;
-      const shown = !f.visibleWhen || isFieldRequired({ ...f, required: false, requiredWhen: f.visibleWhen }, next);
+      const shown = isFieldVisible(f, next);
       if (shown && (next[f.key] === "" || next[f.key] === undefined)) next[f.key] = f.defaultValue;
     });
     return next;
@@ -2223,6 +2274,71 @@ export function MasterDataTable({
         />
       );
     }
+    if (f.type === "select" && f.control === "toggle") {
+      const options = f.options || [
+        { value: "LOT", label: "Lot" },
+        { value: "SERIAL", label: "Serial" },
+      ];
+      const optLeft = options[0];
+      const optRight = options[1] || options[0];
+      const isRight = String(value) === optRight.value;
+      const isLeft = !isRight;
+
+      return (
+        <div className="flex h-11 items-center gap-3 select-none">
+          <button
+            type="button"
+            disabled={f.readOnly || isLockedByTemplate}
+            onClick={() => setField(f.key, optLeft.value)}
+            className="text-sm font-semibold tracking-wide transition-colors duration-150 cursor-pointer disabled:cursor-not-allowed"
+            style={{
+              color: isLeft ? "var(--accent)" : "var(--text-muted)",
+              opacity: isLeft ? 1 : 0.65,
+            }}
+          >
+            {optLeft.label}
+          </button>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={isRight}
+            aria-label={tLabel(currentLabel(f, form))}
+            disabled={f.readOnly || isLockedByTemplate}
+            onClick={() => {
+              setField(f.key, isRight ? optLeft.value : optRight.value);
+            }}
+            onKeyDown={(e) => {
+              if (f.readOnly || isLockedByTemplate) return;
+              if (e.key === "ArrowLeft") { e.preventDefault(); setField(f.key, optLeft.value); }
+              if (e.key === "ArrowRight") { e.preventDefault(); setField(f.key, optRight.value); }
+            }}
+            className="relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors duration-200 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] disabled:cursor-not-allowed disabled:opacity-50"
+            style={{
+              backgroundColor: isRight ? "var(--accent)" : "var(--border)",
+            }}
+          >
+            <span
+              className="pointer-events-none inline-block h-4.5 w-4.5 rounded-full bg-white shadow-md transform transition-transform duration-200 ease-in-out"
+              style={{
+                transform: isRight ? "translateX(1.375rem)" : "translateX(0.15rem)",
+              }}
+            />
+          </button>
+          <button
+            type="button"
+            disabled={f.readOnly || isLockedByTemplate}
+            onClick={() => setField(f.key, optRight.value)}
+            className="text-sm font-semibold tracking-wide transition-colors duration-150 cursor-pointer disabled:cursor-not-allowed"
+            style={{
+              color: isRight ? "var(--accent)" : "var(--text-muted)",
+              opacity: isRight ? 1 : 0.65,
+            }}
+          >
+            {optRight.label}
+          </button>
+        </div>
+      );
+    }
     if (f.type === "select" && f.control === "checkbox") {
       const options = f.options || [];
       return (
@@ -2328,6 +2444,14 @@ export function MasterDataTable({
           return cfg !== undefined ? cfg.enabled === true : true;
         });
       }
+      if (config.key === "resource" && f.key === "resource_sub_type") {
+        const resType = form.resource_type;
+        if (resType === "MANPOWER") {
+          options = options.filter((opt) => ["PERMANENT", "CONTRACT", "DAILY"].includes(opt.value));
+        } else if (resType === "EQUIPMENT") {
+          options = options.filter((opt) => ["OWNED", "LEASED", "RENTED"].includes(opt.value));
+        }
+      }
       return (
         <SearchableEntitySelect
           id={accessibility.id}
@@ -2356,12 +2480,31 @@ export function MasterDataTable({
       let disabled = f.dependsOnMode !== "query" && parents.length > 0 && !resolvedEp;
       const parentLabel = parents.map((k) => tLabel(config.fields.find((pf) => pf.key === k)?.label || k)).join(" & ");
       let restrictedReason = "";
+      const relatedConfig = relatedConfigFor(f, resolvedEp);
+
+      const openRelatedCreator = () => {
+        if (!relatedConfig) return;
+        const initVals: Record<string, unknown> = {};
+        const firstParent = typeof f.dependsOn === "string" ? f.dependsOn : Array.isArray(f.dependsOn) ? f.dependsOn[0] : undefined;
+        if (firstParent && form[firstParent]) {
+          const parentVal = form[firstParent];
+          if (f.key === "category_id" && relatedConfig.key === "item-category") {
+            initVals.item_type = parentVal;
+          } else if (f.key === "sub_category" && relatedConfig.key === "item-category") {
+            initVals.parent_category_id = parentVal;
+          } else if (relatedConfig.fields.some((rf) => rf.key === firstParent)) {
+            initVals[firstParent] = parentVal;
+          }
+        }
+        setRelatedCreator({ field: f, config: relatedConfig, initialValues: initVals });
+      };
+
       // The parent is chosen but nothing in the referenced master matches it.
-      // The field stays, disabled, naming the parent whose choice emptied it —
-      // every master that filters a picker this way is also offered as a lookup
-      // card in the same dialog, so this is a step the person can act on.
+      // If a relatedConfig is present, keep the field interactable so the user can open it and click "+ New".
       if (parentFilterState(f, form, entityOptions).empty) {
-        disabled = true;
+        if (!relatedConfig) {
+          disabled = true;
+        }
         restrictedReason = t("mdNoOptionsForParent", { name: parentLabel });
         options = [];
       }
@@ -2370,7 +2513,9 @@ export function MasterDataTable({
         const restriction = entityRestrictionState(f, form, entityOptions);
         const allowList = restriction?.allowedCodes || [];
         if (restriction?.resolved && !allowList.length) {
-          disabled = true;
+          if (!relatedConfig) {
+            disabled = true;
+          }
           restrictedReason = t("mdNoParentForType");
           options = [];
         } else if (allowList.length) {
@@ -2385,7 +2530,6 @@ export function MasterDataTable({
         const taken = f.excludeValuesOf.map((k) => String(form[k] ?? "")).filter(Boolean);
         if (taken.length) options = options.filter((o) => !taken.includes(String(o[f.entityValueKey || "id"])));
       }
-      const relatedConfig = relatedConfigFor(f, resolvedEp);
       if (f.multiple) {
         if (f.allOption) options = [f.allOption, ...options];
         const selected = parseStringList(form[f.key]);
@@ -2402,7 +2546,7 @@ export function MasterDataTable({
             disabled={disabled || fieldDisabled}
             loading={!!resolvedEp && loadedOptions === undefined}
             placeholder={restrictedReason || (disabled ? t("selectXFirst", { name: parentLabel }) : t("selectPlaceholder"))}
-            onCreate={relatedConfig ? () => setRelatedCreator({ field: f, config: relatedConfig }) : undefined}
+            onCreate={relatedConfig ? openRelatedCreator : undefined}
           />
         );
       }
@@ -2423,9 +2567,9 @@ export function MasterDataTable({
           loading={!!resolvedEp && loadedOptions === undefined}
           placeholder={placeholderText}
           searchPlaceholder={t("searchPlaceholder")}
-          noMatchesLabel={t("mdNoMatches")}
+          noMatchesLabel={restrictedReason || t("mdNoMatches")}
           onClear={!isFieldRequired(f, form) && value && !fieldDisabled ? () => setField(f.key, "") : undefined}
-          onCreate={relatedConfig ? () => setRelatedCreator({ field: f, config: relatedConfig }) : undefined}
+          onCreate={relatedConfig ? openRelatedCreator : undefined}
           onViewAll={relatedConfig ? () => setRelatedPicker({ field: f, config: relatedConfig, options }) : undefined}
         />
       );
@@ -2584,6 +2728,46 @@ export function MasterDataTable({
               {tabs}
             </div>
           )}
+
+          {/* Filter tabs — pill-style in-page type switcher (e.g. Manpower / Equipment) */}
+          {config.filterTabs && (() => {
+            // Map well-known values to icons; anything unrecognised falls back to FileText.
+            const iconMap: Record<string, React.ElementType> = {
+              MANPOWER: Users, LABOR: Users,
+              EQUIPMENT: Wrench,
+            };
+            return (
+              <div className="flex items-center gap-2 py-2.5">
+                {config.filterTabs.options.map((opt) => {
+                  const isActive = activeFilterTab === opt.value;
+                  const Icon = iconMap[opt.value] ?? FileText;
+                  return (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      role="tab"
+                      aria-selected={isActive}
+                      aria-controls="master-data-filter-tab-panel"
+                      onClick={() => { setActiveFilterTab(opt.value); setPage(1); }}
+                      className={cn(
+                        "inline-flex items-center gap-1.5 rounded-full px-4 py-1.5 text-[13px] font-medium transition-all cursor-pointer select-none",
+                        isActive
+                          ? "text-white shadow-sm"
+                          : "hover:text-[var(--text-primary)]"
+                      )}
+                      style={isActive
+                        ? { backgroundColor: "var(--accent)", color: "#fff" }
+                        : { backgroundColor: "var(--surface-2)", color: "var(--text-secondary)" }
+                      }
+                    >
+                      <Icon className="h-3.5 w-3.5 shrink-0" />
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
+            );
+          })()}
 
           {/* Controls toolbar: Search, Filters, NOB/LOB */}
           <div className="flex flex-wrap items-center justify-between gap-2.5 pt-1.5 border-t border-[var(--border)]/60">
@@ -3061,7 +3245,7 @@ export function MasterDataTable({
         onClose={() => {
           if (saving) return;
           if (editing?.status === "DRAFT" && (!form.item_name || !String(form.item_name).trim())) {
-            api.delete(`${config.apiBase}/${editing[config.idKey]}`).catch(() => {});
+            api.delete(`${config.apiBase}/${editing[config.idKey]}`).catch(() => { /* ignore */ });
           }
           setModalOpen(false);
           setActiveFormTab("");
@@ -3254,11 +3438,20 @@ export function MasterDataTable({
           config={relatedCreator.config}
           createOnly
           showHeader={false}
+          initialValues={relatedCreator.initialValues}
           onCreateCancelled={() => setRelatedCreator(null)}
           onCreated={(created) => {
             const valueKey = relatedCreator.field.entityValueKey || relatedCreator.config.idKey;
             const id = created?.[valueKey] ?? created?.[relatedCreator.config.idKey];
             setEntityReloadKey((key) => key + 1);
+            const ep = resolveEndpoint(relatedCreator.field, form);
+            if (ep) {
+              setEntityOptions((prev) => {
+                const current = prev[ep] || [];
+                const exists = current.some((r) => String(r[valueKey]) === String(id));
+                return exists ? prev : { ...prev, [ep]: [created, ...current] };
+              });
+            }
             if (id !== undefined && id !== null) {
               if (relatedCreator.onApply) relatedCreator.onApply(String(id));
               else setField(relatedCreator.field.key, String(id));

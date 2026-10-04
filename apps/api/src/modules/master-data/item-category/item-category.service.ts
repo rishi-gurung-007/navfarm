@@ -226,7 +226,7 @@ export class ItemCategoryService {
     const [category] = await this.db
       .select()
       .from(schema.itemCategoryMaster)
-      .where(and(eq(schema.itemCategoryMaster.category_id, id), isNull(schema.itemCategoryMaster.deleted_at)))
+      .where(eq(schema.itemCategoryMaster.category_id, id))
       .limit(1);
 
     if (!category) {
@@ -253,7 +253,12 @@ export class ItemCategoryService {
       conditions.push(isNull(schema.itemCategoryMaster.parent_category_id));
     }
     if (query.itemType) {
-      conditions.push(eq(schema.itemCategoryMaster.item_type, query.itemType));
+      conditions.push(
+        or(
+          eq(schema.itemCategoryMaster.item_type, query.itemType),
+          isNull(schema.itemCategoryMaster.item_type),
+        )!,
+      );
     }
     if (query.isActive !== undefined) {
       conditions.push(eq(schema.itemCategoryMaster.is_active, query.isActive));

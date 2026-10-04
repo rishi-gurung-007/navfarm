@@ -47,15 +47,41 @@ export function MasterRecordView({ config, id, onClose }: { config: MasterDataCo
   const conditionValues = { ...record, ...gates };
   const labelOf = (field: { label: string; labelWhen?: { key: string; labels: Record<string, string> } }) =>
     (field.labelWhen && field.labelWhen.labels[String(conditionValues[field.labelWhen.key] ?? "")]) || field.label;
+  const matchesViewCondition = (condition: { key: string; equals?: any; notEquals?: any }) => {
+    const rawValue = conditionValues?.[condition.key];
+    const value = rawValue === 1 || rawValue === "1" ? true : rawValue === 0 || rawValue === "0" ? false : (rawValue ?? "");
+    if (condition.equals !== undefined) {
+      const equalsList = Array.isArray(condition.equals) ? condition.equals : [condition.equals];
+      return equalsList.some((target) => {
+        if (typeof target === "boolean") {
+          return target === (value === true || value === "true" || value === 1 || value === "1");
+        }
+        const normalizedTarget = target === undefined || target === null ? "" : target;
+        return String(normalizedTarget) === String(value);
+      });
+    }
+    if (condition.notEquals !== undefined) {
+      const notEqualsList = Array.isArray(condition.notEquals) ? condition.notEquals : [condition.notEquals];
+      return !notEqualsList.some((target) => {
+        if (typeof target === "boolean") {
+          return target === (value === true || value === "true" || value === 1 || value === "1");
+        }
+        const normalizedTarget = target === undefined || target === null ? "" : target;
+        return String(normalizedTarget) === String(value);
+      });
+    }
+    return !!value;
+  };
+
   const fields = config.fields.filter((field) => !field.filterOnly && field.key !== "company_id" &&
     !(getActiveWorkspaceScope() === "OPERATIONAL" && ["nob_id", "lob_id"].includes(field.key)) &&
     !config.bcFields?.some((bcField) => bcField.key === field.key) &&
     (!field.hideInForm || field.readOnly) &&
     !(config.key === "location" && field.key === "parent_location_id" && record?.location_type === "FARM") &&
-    (!field.visibleWhen || field.visibleWhen.anyOf.some((condition) => {
-      const value = conditionValues?.[condition.key];
-      return condition.equals === undefined ? !!value : (Array.isArray(condition.equals) ? condition.equals : [condition.equals]).includes(value as string | boolean);
-    })));
+    (!field.visibleWhen || (
+      (field.visibleWhen.anyOf ? field.visibleWhen.anyOf.some(matchesViewCondition) : true) &&
+      (field.visibleWhen.allOf ? field.visibleWhen.allOf.every(matchesViewCondition) : true)
+    )));
 
   const sections: { title: string; fields: typeof fields }[] = [];
   const hasSections = fields.some((f) => f.section);

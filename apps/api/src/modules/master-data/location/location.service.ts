@@ -1008,7 +1008,6 @@ export class LocationService {
       .where(and(
         eq(schema.locationMaster.location_id, id),
         eq(schema.locationMaster.tenant_id, tenantId),
-        isNull(schema.locationMaster.deleted_at),
       ))
       .limit(1);
 

@@ -213,7 +213,7 @@ export class GlMappingService {
     const [mapping] = await this.db
       .select()
       .from(schema.glMappingMaster)
-      .where(and(eq(schema.glMappingMaster.mapping_id, id), isNull(schema.glMappingMaster.deleted_at)))
+      .where(eq(schema.glMappingMaster.mapping_id, id))
       .limit(1);
 
     if (!mapping) {

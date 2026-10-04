@@ -58,6 +58,8 @@ export interface ExistingFormLine {
   suggested_value: number | null;
   allow_qty_edit: boolean;
   lot_required: boolean;
+  is_lot_tracked?: boolean;
+  is_serial_tracked?: boolean;
   kpi_metric: string | null;
   lower_alert_limit: number | null;
   upper_alert_limit: number | null;

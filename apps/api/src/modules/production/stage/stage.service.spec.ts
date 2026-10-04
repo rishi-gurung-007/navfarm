@@ -245,5 +245,31 @@ describe('StageService', () => {
         'tenant-123',
       )).rejects.toThrow(BadRequestException);
     });
+
+    it('rejects when stage_sequence already belongs to another stage in the same LOB on create', async () => {
+      mockDbSelect
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ nob_id: 'nob-1' }]) }) }) })
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ lob_id: 'lob-1' }]) }) }) })
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ stage_id: 'other-stage', stage_name: 'Existing Stage', stage_sequence: 1 }]) }) }) });
+
+      await expect(service.create(
+        { nob_id: 'nob-1', lob_id: 'lob-1', stage_code: 'NEW_STAGE', stage_name: 'New Stage', stage_category: 'PRE_PRODUCTIVE', stage_sequence: 1, transition_trigger: 'MANUAL' },
+        'tenant-123',
+      )).rejects.toThrow(ConflictException);
+    });
+  });
+
+  describe('update', () => {
+    it('rejects updating stage_sequence if another stage in the same LOB already has it', async () => {
+      mockDbSelect
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ stage_id: 'stage-1', stage_sequence: 1, lob_id: 'lob-1' }]) }) }) }) // findOne
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ id: 'stage-2', name: 'Stage Two' }]) }) }) }); // duplicate seq check
+
+      await expect(service.update(
+        'stage-1',
+        { stage_sequence: 2 },
+        'tenant-123',
+      )).rejects.toThrow(ConflictException);
+    });
   });
 });

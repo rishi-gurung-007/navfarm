@@ -1,7 +1,7 @@
 import { masterScopeConditions } from '../../../common/master-data-scope';
 import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, like, or, isNull } from 'drizzle-orm';
+import { eq, and, like, or, isNull, ne } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
@@ -130,7 +130,10 @@ export class StageService {
     const duplicateConditions = [
       eq(schema.stageMaster.tenant_id, tenantId),
       eq(schema.stageMaster.lob_id, lobId),
-      eq(schema.stageMaster.stage_code, stageCode),
+      or(
+        eq(schema.stageMaster.stage_code, stageCode),
+        eq(schema.stageMaster.stage_sequence, dto.stage_sequence),
+      )!,
       isNull(schema.stageMaster.deleted_at),
     ];
     if (dto.company_id) {
@@ -140,12 +143,23 @@ export class StageService {
     }
 
     const existing = await this.db
-      .select()
+      .select({
+        stage_id: schema.stageMaster.stage_id,
+        stage_code: schema.stageMaster.stage_code,
+        stage_name: schema.stageMaster.stage_name,
+        stage_sequence: schema.stageMaster.stage_sequence,
+      })
       .from(schema.stageMaster)
       .where(and(...duplicateConditions))
       .limit(1);
 
     if (existing.length > 0) {
+      const match = existing[0];
+      if (match.stage_sequence === dto.stage_sequence) {
+        throw new ConflictException(
+          `Display Order (sequence) '${dto.stage_sequence}' already belongs to stage '${match.stage_name}'. Stage display order must be unique per Line of Business.`
+        );
+      }
       throw new ConflictException(`Stage code '${stageCode}' already exists for this LOB.`);
     }
 
@@ -199,7 +213,7 @@ export class StageService {
     const [stage] = await this.db
       .select()
       .from(schema.stageMaster)
-      .where(and(eq(schema.stageMaster.stage_id, id), isNull(schema.stageMaster.deleted_at)))
+      .where(eq(schema.stageMaster.stage_id, id))
       .limit(1);
 
     if (!stage) {
@@ -274,6 +288,32 @@ export class StageService {
         tenantId,
         stage.company_id,
       );
+    }
+    if (dto.stage_sequence !== undefined && dto.stage_sequence !== stage.stage_sequence) {
+      const seqDuplicateConditions = [
+        eq(schema.stageMaster.tenant_id, tenantId),
+        eq(schema.stageMaster.lob_id, stage.lob_id),
+        eq(schema.stageMaster.stage_sequence, dto.stage_sequence),
+        ne(schema.stageMaster.stage_id, id),
+        isNull(schema.stageMaster.deleted_at),
+      ];
+      if (stage.company_id) {
+        seqDuplicateConditions.push(eq(schema.stageMaster.company_id, stage.company_id));
+      } else {
+        seqDuplicateConditions.push(isNull(schema.stageMaster.company_id));
+      }
+
+      const [existingSeq] = await this.db
+        .select({ id: schema.stageMaster.stage_id, name: schema.stageMaster.stage_name })
+        .from(schema.stageMaster)
+        .where(and(...seqDuplicateConditions))
+        .limit(1);
+
+      if (existingSeq) {
+        throw new ConflictException(
+          `Display Order (sequence) '${dto.stage_sequence}' already belongs to stage '${existingSeq.name}'. Stage display order must be unique per Line of Business.`
+        );
+      }
     }
     if (dto.stage_name !== undefined) updates.stage_name = dto.stage_name;
     if (dto.stage_category !== undefined) updates.stage_category = dto.stage_category;

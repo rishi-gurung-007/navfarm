@@ -253,7 +253,7 @@ export class InventoryLedgerService {
       warehouseId?: string;
     },
     executor: MySql2Database<typeof schema> = this.db
-  ): Promise<{ totalCost: number; averageRate: number }> {
+  ): Promise<{ totalCost: number; averageRate: number; appliedWarehouseId?: string }> {
     // A zero/negative quantity would make the loop below no-op immediately
     // (remainingToConsume <= 0 on the first check) and the insufficient-stock
     // guard after it never fires either (0/negative is never > 0) — silently
@@ -280,19 +280,52 @@ export class InventoryLedgerService {
     // A serial identifies one physical unit, so it narrows the layer search the
     // same way a lot narrows it to one batch — FIFO order among matches is
     // moot for a serial since exactly one layer can carry it.
-    if (params.serialNo) {
-      layerConditions.push(eq(schema.inventoryLedger.serial_no, params.serialNo));
+    const serials = params.serialNo
+      ? params.serialNo.split(',').map((s) => s.trim()).filter(Boolean)
+      : [];
+    if (serials.length === 1) {
+      layerConditions.push(eq(schema.inventoryLedger.serial_no, serials[0]));
+    } else if (serials.length > 1) {
+      layerConditions.push(inArray(schema.inventoryLedger.serial_no, serials));
     }
 
     // Row-locked so two concurrent consumptions against the same layers can't
     // both read the same remaining_quantity and each compute an independent
     // decrement — the second call blocks until the first transaction commits.
-    const availableLayers = await executor
+    let availableLayers = await executor
       .select()
       .from(schema.inventoryLedger)
       .where(and(...layerConditions))
       .orderBy(asc(schema.inventoryLedger.posting_date), asc(schema.inventoryLedger.created_at))
       .for('update');
+
+    // If specific serial numbers are requested but were not found in params.warehouseId
+    // (e.g. if the caller passed a farm store warehouse but serials are held in central medicine store),
+    // fall back to company-wide for those exact serials so that valid physical serials can be consumed.
+    if (
+      serials.length > 0 &&
+      params.warehouseId &&
+      availableLayers.reduce((sum, l) => sum + Number(l.remaining_quantity || 0), 0) < remainingToConsume
+    ) {
+      const companySerialConditions = [
+        eq(schema.inventoryLedger.tenant_id, params.tenantId),
+        eq(schema.inventoryLedger.company_id, params.companyId),
+        eq(schema.inventoryLedger.item_id, params.itemId),
+        eq(schema.inventoryLedger.entry_type, 'POSITIVE'),
+        serials.length === 1
+          ? eq(schema.inventoryLedger.serial_no, serials[0])
+          : inArray(schema.inventoryLedger.serial_no, serials),
+      ];
+      if (params.lotNo) {
+        companySerialConditions.push(eq(schema.inventoryLedger.lot_no, params.lotNo));
+      }
+      availableLayers = await executor
+        .select()
+        .from(schema.inventoryLedger)
+        .where(and(...companySerialConditions))
+        .orderBy(asc(schema.inventoryLedger.posting_date), asc(schema.inventoryLedger.created_at))
+        .for('update');
+    }
 
     for (const layer of availableLayers) {
       if (remainingToConsume <= 0) break;
@@ -331,7 +364,11 @@ export class InventoryLedgerService {
       );
     }
 
-    return { totalCost, averageRate: params.quantity > 0 ? totalCost / params.quantity : 0 };
+    return {
+      totalCost,
+      averageRate: params.quantity > 0 ? totalCost / params.quantity : 0,
+      appliedWarehouseId: availableLayers[0]?.warehouse_id || undefined,
+    };
   }
 
   /**
@@ -394,7 +431,7 @@ export class InventoryLedgerService {
         created_by: params.userId || null,
       });
 
-      const { totalCost, averageRate } = await this.applyFifo(
+      const { totalCost, averageRate, appliedWarehouseId } = await this.applyFifo(
         {
           tenantId: params.tenantId,
           companyId: params.companyId,
@@ -410,9 +447,14 @@ export class InventoryLedgerService {
         tx
       );
 
+      const finalWarehouseId = appliedWarehouseId || params.warehouseId || null;
       await tx
         .update(schema.inventoryLedger)
-        .set({ rate: averageRate.toString(), amount: (-totalCost).toString() })
+        .set({
+          rate: averageRate.toString(),
+          amount: (-totalCost).toString(),
+          ...(finalWarehouseId ? { warehouse_id: finalWarehouseId } : {}),
+        })
         .where(eq(schema.inventoryLedger.ledger_id, ledgerId));
     });
 
@@ -615,6 +657,80 @@ export class InventoryLedgerService {
     return entry;
   }
 
+  async findOneWithDetails(ledgerId: string, tenantId?: string) {
+    const conditions: any[] = [eq(schema.inventoryLedger.ledger_id, ledgerId), ...this.farmConditions()];
+    if (tenantId) conditions.push(eq(schema.inventoryLedger.tenant_id, tenantId));
+
+    const [entry] = await this.db
+      .select()
+      .from(schema.inventoryLedger)
+      .where(and(...conditions))
+      .limit(1);
+
+    if (!entry) return null;
+
+    let warehouse: any = null;
+    if (entry.warehouse_id) {
+      const [wh] = await this.db
+        .select()
+        .from(schema.locationMaster)
+        .where(eq(schema.locationMaster.location_id, entry.warehouse_id))
+        .limit(1);
+      warehouse = wh || null;
+    }
+
+    let applications: any[] = [];
+    if (entry.entry_type === 'POSITIVE') {
+      applications = await this.db
+        .select({
+          application_id: schema.inventoryApplication.application_id,
+          applied_qty: schema.inventoryApplication.applied_qty,
+          applied_cost_amount: schema.inventoryApplication.applied_cost_amount,
+          application_date: schema.inventoryApplication.application_date,
+          created_at: schema.inventoryApplication.created_at,
+          outbound_ledger_id: schema.inventoryApplication.outbound_ledger_id,
+          document_no: schema.inventoryLedger.document_no,
+          document_type: schema.inventoryLedger.document_type,
+          transaction_type: schema.inventoryLedger.transaction_type,
+        })
+        .from(schema.inventoryApplication)
+        .leftJoin(
+          schema.inventoryLedger,
+          eq(schema.inventoryApplication.outbound_ledger_id, schema.inventoryLedger.ledger_id),
+        )
+        .where(eq(schema.inventoryApplication.inbound_ledger_id, ledgerId))
+        .orderBy(asc(schema.inventoryApplication.application_date));
+    } else {
+      applications = await this.db
+        .select({
+          application_id: schema.inventoryApplication.application_id,
+          applied_qty: schema.inventoryApplication.applied_qty,
+          applied_cost_amount: schema.inventoryApplication.applied_cost_amount,
+          application_date: schema.inventoryApplication.application_date,
+          created_at: schema.inventoryApplication.created_at,
+          inbound_ledger_id: schema.inventoryApplication.inbound_ledger_id,
+          document_no: schema.inventoryLedger.document_no,
+          document_type: schema.inventoryLedger.document_type,
+          transaction_type: schema.inventoryLedger.transaction_type,
+          lot_no: schema.inventoryLedger.lot_no,
+          rate: schema.inventoryLedger.rate,
+        })
+        .from(schema.inventoryApplication)
+        .leftJoin(
+          schema.inventoryLedger,
+          eq(schema.inventoryApplication.inbound_ledger_id, schema.inventoryLedger.ledger_id),
+        )
+        .where(eq(schema.inventoryApplication.outbound_ledger_id, ledgerId))
+        .orderBy(asc(schema.inventoryApplication.application_date));
+    }
+
+    return {
+      ...entry,
+      warehouse,
+      applications,
+    };
+  }
+
   async findAll(query: QueryInventoryLedgerDto, tenantId: string) {
     const conditions: any[] = [eq(schema.inventoryLedger.tenant_id, tenantId), ...this.farmConditions()];
 
@@ -622,6 +738,7 @@ export class InventoryLedgerService {
     if (query.itemId) conditions.push(eq(schema.inventoryLedger.item_id, query.itemId));
     if (query.locationId) conditions.push(eq(schema.inventoryLedger.location_id, query.locationId));
     if (query.warehouseId) conditions.push(eq(schema.inventoryLedger.warehouse_id, query.warehouseId));
+    if (query.entryType) conditions.push(eq(schema.inventoryLedger.entry_type, query.entryType));
     if (query.transactionType) {
       if (query.transactionType === 'CONSUMPTION') {
         conditions.push(

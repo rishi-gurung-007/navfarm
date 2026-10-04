@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Plus, Trash2, Search, Loader2, Inbox, Eye, CheckCircle2, Pencil } from "lucide-react";
+import { useEffect, useState, useMemo } from "react";
+import { Plus, Trash2, Search, Loader2, Inbox, Eye, CheckCircle2, Pencil, ChevronDown, Sparkles } from "lucide-react";
 import { api } from "@/services/api-client";
 import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -11,6 +11,8 @@ import { getActiveCompanyId } from "@/hooks/useAuth";
 import { TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { useLanguage } from "@/hooks/useLanguage";
+import { SearchableSelect } from "@/components/ui/searchable-select";
+import { Popover, usePopoverSurface } from "@/components/ui/popover";
 
 const PAGE_SIZE = 25;
 
@@ -42,6 +44,349 @@ const emptyLine = () => ({
   expiry_date: "",
 });
 
+function LotDropdownPanel({
+  itemId,
+  warehouseId,
+  hasSeries,
+  currentLot,
+  onSelectLot,
+  onGenerate,
+  isGenerating,
+}: {
+  itemId: string;
+  warehouseId?: string;
+  hasSeries: boolean;
+  currentLot: string;
+  onSelectLot: (lotNo: string, expiryDate?: string) => void;
+  onGenerate: () => void;
+  isGenerating?: boolean;
+}) {
+  const { close } = usePopoverSurface();
+  const [existingLots, setExistingLots] = useState<
+    Array<{
+      lot_no: string;
+      remaining_quantity: number;
+      expiry_date: string | null;
+    }>
+  >([]);
+  const [loading, setLoading] = useState(false);
+  const [query, setQuery] = useState("");
+
+  useEffect(() => {
+    if (!itemId) return;
+    let active = true;
+    setLoading(true);
+    const params = new URLSearchParams();
+    params.set("item_id", itemId);
+    if (warehouseId) params.set("warehouse_id", warehouseId);
+
+    api
+      .get(`/inventory-ledger/available-lots?${params.toString()}`)
+      .then((res) => {
+        if (!active) return;
+        const list = unwrap<any[]>(res) || [];
+        setExistingLots(list);
+      })
+      .catch(() => {
+        if (active) setExistingLots([]);
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [itemId, warehouseId]);
+
+  const filteredLots = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return existingLots;
+    return existingLots.filter(
+      (l) =>
+        (l.lot_no || "").toLowerCase().includes(q) ||
+        (l.expiry_date || "").includes(q)
+    );
+  }, [existingLots, query]);
+
+  return (
+    <div
+      className="w-80 rounded-lg border shadow-2xl p-3"
+      style={{
+        backgroundColor: "var(--surface-raised)",
+        borderColor: "var(--border)",
+      }}
+    >
+      <div
+        className="flex items-center justify-between pb-2 mb-2 border-b"
+        style={{ borderColor: "var(--border)" }}
+      >
+        <div className="flex items-center gap-1.5">
+          <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase bg-emerald-500/20 text-emerald-300">
+            LOT
+          </span>
+          <span className="text-xs font-semibold" style={S.primary}>
+            Select or Assign Lot
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={() => close()}
+          className="text-xs px-1.5 py-0.5 rounded hover:bg-white/10"
+          style={S.sub}
+        >
+          ✕
+        </button>
+      </div>
+
+      {hasSeries && (
+        <button
+          type="button"
+          disabled={isGenerating}
+          onClick={onGenerate}
+          className="w-full flex items-center justify-between px-2.5 py-1.5 rounded border text-xs font-medium transition-all mb-2.5 hover:bg-emerald-500/10 border-emerald-500/30 text-emerald-400"
+          style={{ backgroundColor: "rgba(16, 185, 129, 0.05)" }}
+        >
+          <span className="flex items-center gap-1.5">
+            <Sparkles className="h-3.5 w-3.5 text-emerald-400" />
+            Generate Next Lot No.
+          </span>
+          <span className="text-[10px] font-mono opacity-80">
+            {isGenerating ? "…" : "Preview (Series)"}
+          </span>
+        </button>
+      )}
+
+      <div>
+        <div className="flex items-center justify-between text-[11px] font-medium mb-1" style={S.sub}>
+          <span>Existing Lots in Stock ({existingLots.length})</span>
+          {existingLots.length > 2 && (
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search lots…"
+              className="text-[10px] px-1.5 py-0.5 rounded border w-24 font-mono"
+              style={S.input}
+            />
+          )}
+        </div>
+
+        <div className="max-h-36 overflow-y-auto border rounded text-xs" style={{ borderColor: "var(--border-subtle)" }}>
+          {loading ? (
+            <div className="p-3 text-center text-xs" style={S.muted}>
+              Loading lots…
+            </div>
+          ) : filteredLots.length === 0 ? (
+            <div className="p-3 text-center text-[11px]" style={S.muted}>
+              {existingLots.length === 0
+                ? "No existing lots found. Enter or generate a new lot."
+                : "No matching lots found."}
+            </div>
+          ) : (
+            <table className="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr className="border-b text-[10px] uppercase font-semibold" style={{ borderColor: "var(--border-subtle)", color: "var(--text-muted)" }}>
+                  <th className="px-2 py-1">Lot No.</th>
+                  <th className="px-2 py-1 text-right">In Stock</th>
+                  <th className="px-2 py-1 text-right">Expiry</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredLots.map((lot) => {
+                  const isSelected = lot.lot_no === currentLot;
+                  return (
+                    <tr
+                      key={lot.lot_no}
+                      onClick={() => {
+                        onSelectLot(lot.lot_no, lot.expiry_date || undefined);
+                        close();
+                      }}
+                      className={`cursor-pointer transition-colors border-b ${
+                        isSelected ? "bg-emerald-500/20 text-emerald-300" : "hover:bg-white/5"
+                      }`}
+                      style={{ borderColor: "var(--border-subtle)" }}
+                    >
+                      <td className="px-2 py-1.5 font-mono text-xs font-medium">
+                        {lot.lot_no}
+                      </td>
+                      <td className="px-2 py-1.5 text-right font-mono text-[11px]">
+                        {lot.remaining_quantity}
+                      </td>
+                      <td className="px-2 py-1.5 text-right text-[11px]" style={S.muted}>
+                        {lot.expiry_date ? String(lot.expiry_date).slice(0, 10) : "—"}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+
+      <div className="mt-2.5 pt-2 border-t flex items-center justify-between" style={{ borderColor: "var(--border)" }}>
+        {currentLot ? (
+          <button
+            type="button"
+            onClick={() => {
+              onSelectLot("");
+              close();
+            }}
+            className="text-[11px] text-zinc-400 hover:text-zinc-200"
+          >
+            Clear Lot
+          </button>
+        ) : <div />}
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => close()}
+          className="h-6 text-[11px] px-2.5"
+        >
+          Done
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function SerialDropdownPanel({
+  targetQty,
+  serialValue,
+  hasSeries,
+  isGenerating,
+  onGenerate,
+  onChange,
+}: {
+  targetQty: number;
+  serialValue: string;
+  hasSeries: boolean;
+  isGenerating?: boolean;
+  onGenerate?: () => void;
+  onChange: (serials: string) => void;
+}) {
+  const { close } = usePopoverSurface();
+  const serials = useMemo(() => {
+    return serialValue
+      ? serialValue.split(/[\n,]+/).map((s: string) => s.trim()).filter(Boolean)
+      : [];
+  }, [serialValue]);
+
+  const [items, setItems] = useState<string[]>(() => {
+    const arr = [...serials];
+    while (arr.length < targetQty) arr.push("");
+    return arr;
+  });
+
+  useEffect(() => {
+    const parsed = serialValue
+      ? serialValue.split(/[\n,]+/).map((s: string) => s.trim()).filter(Boolean)
+      : [];
+    const arr = [...parsed];
+    while (arr.length < targetQty) arr.push("");
+    setItems(arr);
+  }, [serialValue, targetQty]);
+
+  const updateItem = (index: number, val: string) => {
+    const next = [...items];
+    next[index] = val;
+    setItems(next);
+    onChange(next.map((s) => s.trim()).filter(Boolean).join(", "));
+  };
+
+  return (
+    <div
+      className="w-80 rounded-lg border shadow-2xl p-3"
+      style={{
+        backgroundColor: "var(--surface-raised)",
+        borderColor: "var(--border)",
+      }}
+    >
+      <div
+        className="flex items-center justify-between pb-2 mb-2 border-b"
+        style={{ borderColor: "var(--border)" }}
+      >
+        <div className="flex items-center gap-1.5">
+          <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase bg-blue-500/20 text-blue-300">
+            SERIAL NS
+          </span>
+          <span className="text-xs font-semibold" style={S.primary}>
+            Serials ({serials.length}/{targetQty})
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={() => close()}
+          className="text-xs px-1.5 py-0.5 rounded hover:bg-white/10"
+          style={S.sub}
+        >
+          ✕
+        </button>
+      </div>
+
+      {hasSeries && (
+        <button
+          type="button"
+          disabled={isGenerating}
+          onClick={onGenerate}
+          className="w-full flex items-center justify-between px-2.5 py-1.5 rounded border text-xs font-medium transition-all mb-2.5 hover:bg-blue-500/10 border-blue-500/30 text-blue-400"
+          style={{ backgroundColor: "rgba(59, 130, 246, 0.05)" }}
+        >
+          <span className="flex items-center gap-1.5">
+            <Sparkles className="h-3.5 w-3.5 text-blue-400" />
+            {serials.length >= targetQty ? "Regenerate All Serials" : `Generate All ${targetQty} Serials`}
+          </span>
+          <span className="text-[10px] font-mono opacity-80">
+            {isGenerating ? "…" : "Preview (Series)"}
+          </span>
+        </button>
+      )}
+
+      <div className="max-h-56 overflow-y-auto space-y-1.5 pr-1">
+        {items.map((s, sIdx) => (
+          <div key={sIdx} className="flex items-center gap-1.5">
+            <span className="text-[10px] font-mono px-1 py-0.5 rounded bg-black/30 text-zinc-400 w-7 text-center shrink-0 border border-white/5">
+              #{sIdx + 1}
+            </span>
+            <input
+              type="text"
+              value={s}
+              placeholder={`Serial #${sIdx + 1}`}
+              onChange={(e) => updateItem(sIdx, e.target.value)}
+              className="w-full text-xs h-7 px-2 font-mono rounded border"
+              style={S.input}
+            />
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-2.5 pt-2 border-t flex items-center justify-between" style={{ borderColor: "var(--border)" }}>
+        {serials.length > 0 ? (
+          <button
+            type="button"
+            onClick={() => {
+              setItems(Array.from({ length: targetQty }, () => ""));
+              onChange("");
+            }}
+            className="text-[11px] text-zinc-400 hover:text-zinc-200"
+          >
+            Clear Serials
+          </button>
+        ) : <div />}
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => close()}
+          className="h-6 text-[11px] px-2.5"
+        >
+          Done
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 export default function GoodsReceiptPanel() {
   const { t } = useLanguage();
   const [rows, setRows] = useState<Row[]>([]);
@@ -68,6 +413,8 @@ export default function GoodsReceiptPanel() {
   // only, and the Edit action itself never appears for it (see the table).
   const [editingId, setEditingId] = useState<string | null>(null);
   const [generatingIdx, setGeneratingIdx] = useState<number | null>(null);
+  const [openSerialIdx, setOpenSerialIdx] = useState<number | null>(null);
+  const [openLotIdx, setOpenLotIdx] = useState<number | null>(null);
 
   const [viewing, setViewing] = useState<Row | null>(null);
   const [posting, setPosting] = useState(false);
@@ -152,7 +499,22 @@ export default function GoodsReceiptPanel() {
   };
 
   const setLineField = (idx: number, key: string, value: any) => {
-    setLines((prev) => prev.map((l, i) => (i === idx ? { ...l, [key]: value } : l)));
+    setLines((prev) =>
+      prev.map((l, i) => {
+        if (i !== idx) return l;
+        if (key === "item_id") {
+          const selectedItem = items.find((it) => it.item_id === value);
+          return {
+            ...l,
+            item_id: value,
+            lot_no: "",
+            serial_no: "",
+            uom: selectedItem?.base_uom || l.uom || "",
+          };
+        }
+        return { ...l, [key]: value };
+      }),
+    );
   };
 
   const handleGenerateTracking = async (idx: number, type: 'LOT' | 'SERIAL') => {
@@ -163,7 +525,7 @@ export default function GoodsReceiptPanel() {
     setFormError("");
     try {
       const count = type === 'SERIAL' ? Math.max(1, parseInt(line.quantity || '1', 10) || 1) : 1;
-      const res = await api.get(`/no-series/${it.tracking_series_id}/next-number?count=${count}`);
+      const res = await api.get(`/no-series/${it.tracking_series_id}/preview-numbers?count=${count}`);
       const data = unwrap<any>(res);
       if (type === 'LOT') {
         const nextNum = data.next_number || (data.numbers && data.numbers[0]);
@@ -172,10 +534,13 @@ export default function GoodsReceiptPanel() {
         const nums = data.numbers || [data.next_number];
         if (nums && nums.length > 0) {
           setLineField(idx, 'serial_no', nums.join(', '));
+          if (nums.length > 1) {
+            setOpenSerialIdx(idx);
+          }
         }
       }
     } catch (err: any) {
-      setFormError(err?.message || 'Failed to generate number series');
+      setFormError(err?.message || 'Failed to preview number series');
     } finally {
       setGeneratingIdx(null);
     }
@@ -197,7 +562,8 @@ export default function GoodsReceiptPanel() {
           quantity: Number(l.quantity),
           uom: l.uom,
           rate: l.rate ? Number(l.rate) : undefined,
-          lot_no: l.lot_no || undefined,
+          lot_no: l.lot_no ? String(l.lot_no).trim() || undefined : undefined,
+          serial_no: l.serial_no ? String(l.serial_no).trim() || undefined : undefined,
           expiry_date: l.expiry_date || undefined,
         }));
       if (cleanLines.length === 0) throw new Error(t("grpAddAtLeastOneLine"));
@@ -351,6 +717,7 @@ export default function GoodsReceiptPanel() {
         onClose={() => { if (!saving) { setModalOpen(false); setEditingId(null); } }}
         title={editingId ? t("grpEditGoodsReceiptTitle") : t("grpNewGoodsReceiptTitle")}
         maxWidth="xl"
+        className="max-w-5xl lg:max-w-6xl"
         footer={
           <Button size="sm" onClick={handleSave} disabled={saving} className="nf-btn-primary">
             {saving ? t("grpSaving") : editingId ? t("grpSaveChanges") : t("grpSaveDraft")}
@@ -365,29 +732,46 @@ export default function GoodsReceiptPanel() {
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="flex flex-col gap-1.5">
               <label className="nf-text-label" style={S.sub}>{t("grpWarehouse")} <span className="text-(--danger)">*</span></label>
-              <select value={header.warehouse_id} onChange={(e) => setHeader((h) => ({ ...h, warehouse_id: e.target.value }))} className={`${inputCls} nf-select`} style={S.input}>
-                <option value="">{t("grpSelectEllipsis")}</option>
-                {warehouses.map((w) => <option key={w.warehouse_id} value={w.warehouse_id}>{w.warehouse_code} — {w.warehouse_name}</option>)}
-              </select>
+              <SearchableSelect
+                options={warehouses}
+                value={header.warehouse_id}
+                valueKey="warehouse_id"
+                onChange={(val) => setHeader((h) => ({ ...h, warehouse_id: val }))}
+                placeholder={t("grpSelectEllipsis")}
+                searchPlaceholder="Search warehouse…"
+                columnHeaders={["Code", "Warehouse Name"]}
+                getLabelParts={(w: any) => [w.warehouse_code || "", w.warehouse_name || ""]}
+                getLabel={(w: any) => (w ? `${w.warehouse_code} — ${w.warehouse_name}` : "")}
+                triggerClassName="w-full text-xs h-9"
+              />
             </div>
             <div className="flex flex-col gap-1.5">
               <label className="nf-text-label" style={S.sub}>{t("grpPostingDate")} <span className="text-(--danger)">*</span></label>
-              <input type="date" value={header.posting_date} onChange={(e) => setHeader((h) => ({ ...h, posting_date: e.target.value }))} className={inputCls} style={S.input} />
+              <input type="date" value={header.posting_date} onChange={(e) => setHeader((h) => ({ ...h, posting_date: e.target.value }))} className={`${inputCls} nf-input-sm text-xs h-9 min-h-[36px] max-h-[36px] box-border`} style={S.input} />
             </div>
             <div className="flex flex-col gap-1.5">
               <label className="nf-text-label" style={S.sub}>{t("grpSupplier")}</label>
-              <select value={header.supplier_id} onChange={(e) => setHeader((h) => ({ ...h, supplier_id: e.target.value }))} className={`${inputCls} nf-select`} style={S.input}>
-                <option value="">{t("grpSelectEllipsis")}</option>
-                {suppliers.map((s) => <option key={s.supplier_id} value={s.supplier_id}>{s.supplier_code} — {s.supplier_name}</option>)}
-              </select>
+              <SearchableSelect
+                options={suppliers}
+                value={header.supplier_id}
+                valueKey="supplier_id"
+                onChange={(val) => setHeader((h) => ({ ...h, supplier_id: val }))}
+                placeholder={t("grpSelectEllipsis")}
+                searchPlaceholder="Search supplier…"
+                columnHeaders={["Code", "Supplier Name"]}
+                getLabelParts={(s: any) => [s.supplier_code || "", s.supplier_name || ""]}
+                getLabel={(s: any) => (s ? `${s.supplier_code} — ${s.supplier_name}` : "")}
+                triggerClassName="w-full text-xs h-9 min-h-[36px] max-h-[36px] box-border"
+                onClear={() => setHeader((h) => ({ ...h, supplier_id: "" }))}
+              />
             </div>
             <div className="flex flex-col gap-1.5">
               <label className="nf-text-label" style={S.sub}>{t("grpExternalReference")}</label>
-              <input value={header.external_reference_no} onChange={(e) => setHeader((h) => ({ ...h, external_reference_no: e.target.value }))} placeholder={t("grpSupplierDcInvoiceNo")} className={inputCls} style={S.input} />
+              <input value={header.external_reference_no} onChange={(e) => setHeader((h) => ({ ...h, external_reference_no: e.target.value }))} placeholder={t("grpSupplierDcInvoiceNo")} className={`${inputCls} nf-input-sm text-xs h-9 min-h-[36px] max-h-[36px] box-border`} style={S.input} />
             </div>
             <div className="flex flex-col gap-1.5 sm:col-span-2">
               <label className="nf-text-label" style={S.sub}>{t("grpRemarks")}</label>
-              <textarea value={header.remarks} onChange={(e) => setHeader((h) => ({ ...h, remarks: e.target.value }))} rows={2} className={inputCls} style={S.input} />
+              <textarea value={header.remarks} onChange={(e) => setHeader((h) => ({ ...h, remarks: e.target.value }))} rows={2} className={`${inputCls} text-xs`} style={S.input} />
             </div>
           </div>
 
@@ -399,17 +783,16 @@ export default function GoodsReceiptPanel() {
           </div>
 
           <div className="overflow-x-auto rounded-[var(--radius-sm)] border" style={S.surface}>
-            <table className="w-full border-collapse text-left text-xs">
+            <table className="w-full border-collapse text-left text-xs min-w-[960px]">
               <TableHeader>
                 <tr className="border-b border-(--row-border)">
-                  <TableHead className="h-auto px-3 py-2">{t("grpColItem")}</TableHead>
-                  <TableHead className="h-auto px-3 py-2">{t("grpColQty")}</TableHead>
-                  <TableHead className="h-auto px-3 py-2">{t("grpColUom")}</TableHead>
-                  <TableHead className="h-auto px-3 py-2">{t("grpColRate")}</TableHead>
-                  <TableHead className="h-auto px-3 py-2">Lot No.</TableHead>
-                  <TableHead className="h-auto px-3 py-2">Serial No.</TableHead>
-                  <TableHead className="h-auto px-3 py-2">{t("grpColExpiry")}</TableHead>
-                  <TableHead className="h-auto px-3 py-2"></TableHead>
+                  <TableHead className="h-auto px-3 py-2 min-w-[260px]">{t("grpColItem")}</TableHead>
+                  <TableHead className="h-auto px-3 py-2 w-28 min-w-[105px]">{t("grpColQty")}</TableHead>
+                  <TableHead className="h-auto px-3 py-2 w-24 min-w-[85px]">{t("grpColUom")}</TableHead>
+                  <TableHead className="h-auto px-3 py-2 w-24 min-w-[85px]">{t("grpColRate")}</TableHead>
+                  <TableHead className="h-auto px-3 py-2 min-w-[280px]">Tracking (Lot / Serial)</TableHead>
+                  <TableHead className="h-auto px-3 py-2 w-36 min-w-[140px]">{t("grpColExpiry")}</TableHead>
+                  <TableHead className="h-auto px-3 py-2 w-10 min-w-[40px] text-center"></TableHead>
                 </tr>
               </TableHeader>
               <TableBody>
@@ -419,39 +802,49 @@ export default function GoodsReceiptPanel() {
                   const isSerial = Boolean(it?.is_serial_tracked);
                   const hasSeries = Boolean(it?.tracking_series_id);
                   const isGenerating = generatingIdx === idx;
+                  const lineInputCls = "w-full h-9 min-h-[36px] max-h-[36px] px-2.5 py-1 text-xs rounded-[var(--radius-sm)] border outline-none transition-colors box-border";
 
                   return (
                     <TableRow key={idx}>
-                      <TableCell className="px-2 py-1.5 min-w-[180px]">
-                        <select
+                      <TableCell className="px-2 py-1.5 min-w-[260px]">
+                        <SearchableSelect
+                          options={items}
                           value={line.item_id}
-                          onChange={(e) => setLineField(idx, "item_id", e.target.value)}
-                          className={`${inputCls} nf-select`}
-                          style={S.input}
-                        >
-                          <option value="">{t("grpSelectItemOptions", { count: items.length })}</option>
-                          {items.map((it, i) => (
-                            <option key={it.item_id} value={it.item_id}>
-                              {i + 1}. {it.item_code} — {it.item_name}
-                              {it.is_lot_tracked ? " [LOT]" : it.is_serial_tracked ? " [SERIAL]" : ""}
-                            </option>
-                          ))}
-                        </select>
+                          valueKey="item_id"
+                          onChange={(val) => setLineField(idx, "item_id", val)}
+                          placeholder={t("grpSelectItemOptions", { count: items.length })}
+                          searchPlaceholder="Search item code or name…"
+                          columnHeaders={["Item Code", "Item Name", "Tracking"]}
+                          getLabelParts={(itemRow: any) => [
+                            itemRow.item_code || "",
+                            itemRow.item_name || "",
+                            itemRow.is_lot_tracked ? "LOT" : itemRow.is_serial_tracked ? "SERIAL NS" : "—",
+                          ]}
+                          getLabel={(itemRow: any) =>
+                            itemRow
+                              ? `${itemRow.item_code} — ${itemRow.item_name}${itemRow.is_lot_tracked ? " [LOT]" : itemRow.is_serial_tracked ? " [SERIAL NS]" : ""}`
+                              : ""
+                          }
+                          triggerClassName="w-full text-xs h-9 min-h-[36px] max-h-[36px] box-border"
+                        />
                       </TableCell>
-                      <TableCell className="px-2 py-1.5 w-20">
+                      <TableCell className="px-2 py-1.5 w-28 min-w-[105px]">
                         <input
                           type="number"
+                          min="0"
+                          step="any"
+                          placeholder="0"
                           value={line.quantity}
                           onChange={(e) => setLineField(idx, "quantity", e.target.value)}
-                          className={inputCls}
+                          className={`${lineInputCls} text-left font-mono [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none`}
                           style={S.input}
                         />
                       </TableCell>
-                      <TableCell className="px-2 py-1.5 w-24">
+                      <TableCell className="px-2 py-1.5 w-24 min-w-[85px]">
                         <select
                           value={line.uom}
                           onChange={(e) => setLineField(idx, "uom", e.target.value)}
-                          className={`${inputCls} nf-select`}
+                          className={`${lineInputCls} nf-select appearance-none pr-7`}
                           style={S.input}
                         >
                           <option value="">{t("grpSelectEllipsis")}</option>
@@ -462,82 +855,194 @@ export default function GoodsReceiptPanel() {
                           ))}
                         </select>
                       </TableCell>
-                      <TableCell className="px-2 py-1.5 w-20">
+                      <TableCell className="px-2 py-1.5 w-24 min-w-[85px]">
                         <input
                           type="number"
+                          min="0"
+                          step="any"
+                          placeholder="0.00"
                           value={line.rate}
                           onChange={(e) => setLineField(idx, "rate", e.target.value)}
-                          className={inputCls}
+                          className={`${lineInputCls} text-left font-mono [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none`}
                           style={S.input}
                         />
                       </TableCell>
-                      <TableCell className="px-2 py-1.5 w-36">
-                        <div className="flex items-center gap-1">
-                          <input
-                            value={line.lot_no}
-                            disabled={!isLot && isSerial}
-                            onChange={(e) => setLineField(idx, "lot_no", e.target.value)}
-                            placeholder={isLot ? (hasSeries ? "Auto / Enter" : "Lot No.") : "—"}
-                            className={inputCls}
-                            style={S.input}
-                          />
-                          {isLot && hasSeries && (
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="ghost"
-                              disabled={isGenerating}
-                              onClick={() => handleGenerateTracking(idx, 'LOT')}
-                              className="px-1.5 py-0.5 text-[10px] h-7 font-mono shrink-0"
-                              title="Generate next Lot No."
-                            >
-                              {isGenerating ? "…" : "Gen"}
-                            </Button>
-                          )}
-                        </div>
+                      <TableCell className="px-2 py-1.5 min-w-[280px]">
+                        {isLot ? (
+                          <div className="flex items-center gap-1.5 w-full">
+                            <span className="h-9 px-2 text-[10px] font-bold tracking-wider uppercase bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 shrink-0 flex items-center justify-center rounded-[var(--radius-sm)]">
+                              LOT
+                            </span>
+                            <div className="relative flex-1 flex items-center min-w-0">
+                              <input
+                                value={line.lot_no}
+                                onChange={(e) => setLineField(idx, "lot_no", e.target.value)}
+                                placeholder={hasSeries ? "Auto / Enter or pick Lot…" : "Enter or pick Lot…"}
+                                className={`${lineInputCls} font-mono text-xs pr-7`}
+                                style={S.input}
+                              />
+                              <Popover
+                                open={openLotIdx === idx}
+                                onOpenChange={(open) => setOpenLotIdx(open ? idx : null)}
+                                floating
+                                align="end"
+                                side="bottom"
+                                haspopup="dialog"
+                                className="absolute right-1 top-1/2 -translate-y-1/2"
+                                panelClassName="nf-tracking-popover-panel"
+                                trigger={(triggerProps) => (
+                                  <button
+                                    {...triggerProps}
+                                    className="text-zinc-400 hover:text-zinc-200 p-1 rounded flex items-center justify-center"
+                                    title="Pick from existing lots or manage lot"
+                                  >
+                                    <ChevronDown
+                                      className={`h-3.5 w-3.5 transition-transform ${openLotIdx === idx ? "rotate-180" : ""}`}
+                                    />
+                                  </button>
+                                )}
+                              >
+                                <LotDropdownPanel
+                                  itemId={line.item_id}
+                                  warehouseId={header.warehouse_id}
+                                  hasSeries={Boolean(hasSeries)}
+                                  currentLot={line.lot_no}
+                                  onSelectLot={(lotNo, expiryDate) => {
+                                    setLineField(idx, "lot_no", lotNo);
+                                    if (expiryDate) {
+                                      setLineField(idx, "expiry_date", expiryDate.slice(0, 10));
+                                    }
+                                  }}
+                                  onGenerate={() => handleGenerateTracking(idx, 'LOT')}
+                                  isGenerating={isGenerating}
+                                />
+                              </Popover>
+                            </div>
+                            {hasSeries && (
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="ghost"
+                                disabled={isGenerating}
+                                onClick={() => handleGenerateTracking(idx, 'LOT')}
+                                className="px-2.5 text-[11px] h-9 min-h-[36px] font-mono shrink-0 nf-btn-secondary"
+                                title="Preview next Lot No. from series"
+                              >
+                                {isGenerating ? "…" : "Gen"}
+                              </Button>
+                            )}
+                          </div>
+                        ) : isSerial ? (
+                          <div className="flex items-center gap-1.5 w-full">
+                            <span className="h-9 px-2 text-[10px] font-bold tracking-wider uppercase bg-blue-500/15 text-blue-400 border border-blue-500/30 shrink-0 flex items-center justify-center rounded-[var(--radius-sm)]">
+                              SERIAL NS
+                            </span>
+                            {Math.round(Number(line.quantity || 1)) > 1 ? (
+                              <div className="flex-1 min-w-0">
+                                <Popover
+                                  open={openSerialIdx === idx}
+                                  onOpenChange={(open) => setOpenSerialIdx(open ? idx : null)}
+                                  floating
+                                  align="start"
+                                  side="bottom"
+                                  haspopup="dialog"
+                                  className="w-full !block"
+                                  panelClassName="nf-tracking-popover-panel"
+                                  trigger={(triggerProps) => {
+                                    const serials = line.serial_no
+                                      ? line.serial_no.split(/[\n,]+/).map((s: string) => s.trim()).filter(Boolean)
+                                      : [];
+                                    const targetQty = Math.round(Number(line.quantity || 1));
+                                    return (
+                                      <button
+                                        {...triggerProps}
+                                        className={`flex items-center justify-between ${lineInputCls}`}
+                                        style={{
+                                          backgroundColor: "var(--input-bg)",
+                                          borderColor: openSerialIdx === idx ? "var(--accent)" : "var(--input-border)",
+                                          color: line.serial_no ? "var(--text-primary)" : "var(--text-muted)",
+                                        }}
+                                      >
+                                        <span className="truncate font-mono text-xs">
+                                          {serials.length === 0
+                                            ? "Click Gen / Serials…"
+                                            : `${serials.length} Serials: ${serials[0]}${serials.length > 1 ? ", …" : ""}`}
+                                        </span>
+                                        <div className="flex items-center gap-1 shrink-0 ml-1.5">
+                                          {serials.length > 0 && (
+                                            <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-blue-500/20 text-blue-300">
+                                              {serials.length}/{targetQty}
+                                            </span>
+                                          )}
+                                          <ChevronDown
+                                            className={`h-3.5 w-3.5 transition-transform ${openSerialIdx === idx ? "rotate-180" : ""}`}
+                                          />
+                                        </div>
+                                      </button>
+                                    );
+                                  }}
+                                >
+                                  <SerialDropdownPanel
+                                    targetQty={Math.max(1, Math.round(Number(line.quantity || 1)))}
+                                    serialValue={line.serial_no}
+                                    hasSeries={Boolean(hasSeries)}
+                                    isGenerating={isGenerating}
+                                    onGenerate={() => handleGenerateTracking(idx, 'SERIAL')}
+                                    onChange={(val) => setLineField(idx, "serial_no", val)}
+                                  />
+                                </Popover>
+                              </div>
+                            ) : (
+                              <div className="flex-1 min-w-0">
+                                <input
+                                  value={line.serial_no}
+                                  onChange={(e) => setLineField(idx, "serial_no", e.target.value)}
+                                  placeholder={hasSeries ? "Auto / Enter Serial No." : "Serial No."}
+                                  className={`${lineInputCls} font-mono text-xs`}
+                                  style={S.input}
+                                />
+                              </div>
+                            )}
+                            {hasSeries && (
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="ghost"
+                                disabled={isGenerating}
+                                onClick={() => handleGenerateTracking(idx, 'SERIAL')}
+                                className="px-2.5 text-[11px] h-9 min-h-[36px] font-mono shrink-0 nf-btn-secondary"
+                                title="Preview / Generate Serial No.(s) for quantity"
+                              >
+                                {isGenerating ? "…" : "Gen"}
+                              </Button>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="h-9 flex items-center pl-2">
+                            <span className="text-xs italic" style={S.muted}>
+                              — Not Tracked —
+                            </span>
+                          </div>
+                        )}
                       </TableCell>
                       <TableCell className="px-2 py-1.5 w-36">
-                        <div className="flex items-center gap-1">
-                          <input
-                            value={line.serial_no}
-                            disabled={!isSerial && isLot}
-                            onChange={(e) => setLineField(idx, "serial_no", e.target.value)}
-                            placeholder={isSerial ? (hasSeries ? "Auto / Enter" : "Serial No.") : "—"}
-                            className={inputCls}
-                            style={S.input}
-                          />
-                          {isSerial && hasSeries && (
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="ghost"
-                              disabled={isGenerating}
-                              onClick={() => handleGenerateTracking(idx, 'SERIAL')}
-                              className="px-1.5 py-0.5 text-[10px] h-7 font-mono shrink-0"
-                              title="Generate Serial No.(s) for quantity"
-                            >
-                              {isGenerating ? "…" : "Gen"}
-                            </Button>
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell className="px-2 py-1.5 w-32">
                         <input
                           type="date"
                           value={line.expiry_date}
                           onChange={(e) => setLineField(idx, "expiry_date", e.target.value)}
-                          className={inputCls}
+                          className={lineInputCls}
                           style={S.input}
                         />
                       </TableCell>
-                      <TableCell className="px-2 py-1.5">
+                      <TableCell className="px-2 py-1.5 w-12 text-center">
                         <button
                           onClick={() => removeLine(idx)}
                           type="button"
-                          className="rounded-[var(--radius-xs)] p-1 transition hover:bg-(--danger-muted)"
+                          className="h-9 w-9 flex items-center justify-center rounded-[var(--radius-sm)] transition hover:bg-(--danger-muted) mx-auto"
                           style={{ color: "var(--danger)" }}
+                          title="Remove line"
                         >
-                          <Trash2 className="h-3.5 w-3.5" />
+                          <Trash2 className="h-4 w-4" />
                         </button>
                       </TableCell>
                     </TableRow>
@@ -574,15 +1079,14 @@ export default function GoodsReceiptPanel() {
             </div>
 
             <div className="overflow-x-auto rounded-[var(--radius-sm)] border" style={S.surface}>
-              <table className="w-full border-collapse text-left text-xs">
+              <table className="w-full border-collapse text-left text-xs min-w-[720px]">
                 <TableHeader>
                   <tr className="border-b border-(--row-border)">
-                    <TableHead className="h-auto px-3 py-2">{t("grpColItem")}</TableHead>
-                    <TableHead className="h-auto px-3 py-2">{t("grpColQty")}</TableHead>
-                    <TableHead className="h-auto px-3 py-2">{t("grpColUom")}</TableHead>
-                    <TableHead className="h-auto px-3 py-2">{t("grpColRate")}</TableHead>
-                    <TableHead className="h-auto px-3 py-2">{t("grpColLotNo")}</TableHead>
-                    <TableHead className="h-auto px-3 py-2">Serial No.</TableHead>
+                    <TableHead className="h-auto px-3 py-2 min-w-[240px]">{t("grpColItem")}</TableHead>
+                    <TableHead className="h-auto px-3 py-2 w-28 min-w-[90px]">{t("grpColQty")}</TableHead>
+                    <TableHead className="h-auto px-3 py-2 w-24 min-w-[80px]">{t("grpColUom")}</TableHead>
+                    <TableHead className="h-auto px-3 py-2 w-24 min-w-[80px]">{t("grpColRate")}</TableHead>
+                    <TableHead className="h-auto px-3 py-2 min-w-[220px]">Tracking (Lot / Serial)</TableHead>
                   </tr>
                 </TableHeader>
                 <TableBody>
@@ -592,8 +1096,21 @@ export default function GoodsReceiptPanel() {
                       <TableCell className="px-3 py-2" style={S.primary}>{l.quantity}</TableCell>
                       <TableCell className="px-3 py-2" style={S.primary}>{l.uom}</TableCell>
                       <TableCell className="px-3 py-2" style={S.primary}>{l.rate ?? "—"}</TableCell>
-                      <TableCell className="px-3 py-2" style={S.primary}>{l.lot_no || "—"}</TableCell>
-                      <TableCell className="px-3 py-2 font-mono" style={S.primary}>{l.serial_no || "—"}</TableCell>
+                      <TableCell className="px-3 py-2 font-mono text-xs" style={S.primary}>
+                        {l.lot_no ? (
+                          <span className="inline-flex items-center gap-1 text-emerald-400">
+                            <span className="px-1.5 py-0.2 rounded text-[9px] font-semibold bg-emerald-500/20 border border-emerald-500/30">LOT</span>
+                            {l.lot_no}
+                          </span>
+                        ) : l.serial_no ? (
+                          <span className="inline-flex items-center gap-1 text-blue-400">
+                            <span className="px-1.5 py-0.2 rounded text-[9px] font-semibold bg-blue-500/20 border border-blue-500/30">SERIAL NS</span>
+                            {l.serial_no}
+                          </span>
+                        ) : (
+                          <span style={S.muted}>—</span>
+                        )}
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>

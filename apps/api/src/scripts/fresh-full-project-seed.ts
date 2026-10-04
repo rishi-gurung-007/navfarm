@@ -113,17 +113,19 @@ async function seedOperationalDataAndBatches() {
       throw new Error(`One or more required farms missing: MUL100=${!!mulFarm}, GRA100=${!!graFarm}, POR100=${!!porFarm}`);
     }
 
-    // 3. Ensure all sheds under all farms have their attached feed_silo_id linked
+    // 3. Ensure all sheds under all farms have their attached silo_shed_link entries
     await conn.query(`
-      UPDATE location_master shed
-      JOIN location_master silo ON (silo.parent_location_id = shed.parent_location_id OR silo.parent_location_id = shed.location_id) AND silo.location_type = 'SILO'
-      SET shed.feed_silo_id = silo.location_id
-      WHERE shed.location_type = 'SHED' AND shed.feed_silo_id IS NULL;
+      INSERT INTO silo_shed_link (link_id, tenant_id, company_id, silo_id, shed_id)
+      SELECT UUID(), shed.tenant_id, shed.company_id, silo.location_id, shed.location_id
+      FROM location_master shed
+      JOIN location_master silo ON (silo.farm_id = shed.farm_id OR silo.parent_location_id = shed.farm_id) AND silo.location_type = 'SILO'
+      WHERE shed.location_type = 'SHED'
+      ON DUPLICATE KEY UPDATE silo_id = silo_id;
     `);
 
     // Fetch all sheds, pens, silos, and stores grouped by farm
     const [allSheds] = await conn.query<mysql.RowDataPacket[]>(
-      "SELECT location_id, location_code, location_name, farm_id, feed_silo_id FROM location_master WHERE location_type = 'SHED' ORDER BY location_code"
+      "SELECT location_id, location_code, location_name, farm_id FROM location_master WHERE location_type = 'SHED' ORDER BY location_code"
     );
     const shedsByFarm = new Map<string, mysql.RowDataPacket[]>();
     for (const shed of allSheds) {
@@ -209,7 +211,90 @@ async function seedOperationalDataAndBatches() {
     const finisherStageId = getStageId('FINISHER');
     const boarAiStageId = getStageId('BOAR_AI');
 
-    // 5. Item Catalog
+    // 5. Item Catalog & Tracking Series
+    // Ensure LOT and SERIAL series exist
+    const [lotSeriesRows] = await conn.query<mysql.RowDataPacket[]>(
+      "SELECT id FROM no_series WHERE document_type = 'LOT' AND tenant_id = ? LIMIT 1",
+      [tenantId]
+    );
+    let lotSeriesId = lotSeriesRows[0]?.id;
+    if (!lotSeriesId) {
+      lotSeriesId = randomUUID();
+      await conn.query(
+        `INSERT INTO no_series (id, tenant_id, company_id, code, description, document_type, prefix, seq_length, increment_by, is_default, manual_nos, current_seq)
+         VALUES (?, ?, ?, 'ITEM_LOT', 'Item Lot Number Series', 'LOT', 'LOT', 5, 1, 1, 1, 0)`,
+        [lotSeriesId, tenantId, companyId]
+      );
+    }
+
+    const [serialSeriesRows] = await conn.query<mysql.RowDataPacket[]>(
+      "SELECT id FROM no_series WHERE document_type = 'SERIAL' AND tenant_id = ? LIMIT 1",
+      [tenantId]
+    );
+    let serialSeriesId = serialSeriesRows[0]?.id;
+    if (!serialSeriesId) {
+      serialSeriesId = randomUUID();
+      await conn.query(
+        `INSERT INTO no_series (id, tenant_id, company_id, code, description, document_type, prefix, seq_length, increment_by, is_default, manual_nos, current_seq)
+         VALUES (?, ?, ?, 'ITEM_SERIAL', 'Item Serial Number Series', 'SERIAL', 'SN', 5, 1, 1, 1, 0)`,
+        [serialSeriesId, tenantId, companyId]
+      );
+    }
+
+    // Explicitly upsert ITM-LOT-VACCINE (is_lot_tracked: true, is_serial_tracked: false)
+    const [existingLotVac] = await conn.query<mysql.RowDataPacket[]>(
+      "SELECT item_id FROM item_master WHERE item_code = 'ITM-LOT-VACCINE' AND company_id = ? LIMIT 1",
+      [companyId]
+    );
+    let vacItemId = existingLotVac[0]?.item_id;
+    if (!vacItemId) {
+      vacItemId = randomUUID();
+      await conn.query(
+        `INSERT INTO item_master (
+          item_id, tenant_id, company_id, nob_id, lob_id, item_code, item_name, item_type, uom_primary,
+          valuation_method, standard_cost, is_biological_asset, is_lot_tracked, is_serial_tracked,
+          tracking_series_id, is_active, is_inventoriable, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, 'ITM-LOT-VACCINE', 'Parvo-Shield Swine Vaccine (Lot Tracked)', 'VACCINE', 'DOSE',
+          'FIFO', 85.0000, 0, 1, 0, ?, 1, 1, NOW(), NOW())`,
+        [vacItemId, tenantId, companyId, nobId, lobId, lotSeriesId]
+      );
+    } else {
+      await conn.query(
+        `UPDATE item_master SET is_lot_tracked = 1, is_serial_tracked = 0, tracking_series_id = ?, uom_primary = 'DOSE' WHERE item_id = ?`,
+        [lotSeriesId, vacItemId]
+      );
+    }
+
+    // Explicitly upsert ITM-SER-TAG (is_lot_tracked: false, is_serial_tracked: true)
+    const [existingSerTag] = await conn.query<mysql.RowDataPacket[]>(
+      "SELECT item_id FROM item_master WHERE item_code = 'ITM-SER-TAG' AND company_id = ? LIMIT 1",
+      [companyId]
+    );
+    let tagItemId = existingSerTag[0]?.item_id;
+    if (!tagItemId) {
+      tagItemId = randomUUID();
+      await conn.query(
+        `INSERT INTO item_master (
+          item_id, tenant_id, company_id, nob_id, lob_id, item_code, item_name, item_type, uom_primary,
+          valuation_method, standard_cost, is_biological_asset, is_lot_tracked, is_serial_tracked,
+          tracking_series_id, is_active, is_inventoriable, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, 'ITM-SER-TAG', 'RFID Swine Ear Tag (Serial Tracked)', 'CONSUMABLE', 'PCS',
+          'FIFO', 2.5000, 0, 0, 1, ?, 1, 1, NOW(), NOW())`,
+        [tagItemId, tenantId, companyId, nobId, lobId, serialSeriesId]
+      );
+    } else {
+      await conn.query(
+        `UPDATE item_master SET is_lot_tracked = 0, is_serial_tracked = 1, tracking_series_id = ?, uom_primary = 'PCS' WHERE item_id = ?`,
+        [serialSeriesId, tagItemId]
+      );
+    }
+
+    // Update any standard vaccine items to be lot-tracked as well
+    await conn.query(
+      `UPDATE item_master SET is_lot_tracked = 1, tracking_series_id = ? WHERE (item_type = 'VACCINE' OR item_name LIKE '%Vaccine%') AND is_serial_tracked = 0`,
+      [lotSeriesId]
+    );
+
     const [items] = await conn.query<mysql.RowDataPacket[]>('SELECT * FROM item_master WHERE is_active = 1');
     const findItem = (code: string, fallbackName: string) =>
       items.find((i) => i.item_code === code || i.item_name.toLowerCase().includes(fallbackName.toLowerCase()));
@@ -340,16 +425,16 @@ async function seedOperationalDataAndBatches() {
     await conn.query(
       `INSERT INTO batch_header (
         batch_id, tenant_id, company_id, batch_no, lob_id, nob_id,
-        costing_method, breed_id, farm_id, shed_id, start_date, status,
+        costing_method, breed_id, farm_id, shed_id, location_id, start_date, status,
         opening_quantity, uom, remarks, current_stage_code,
         stage_id, operational_area_id, animal_tracking, tracking_mode, created_at, updated_at
       ) VALUES (
         ?, ?, ?, 'BATCH-000001', ?, ?,
-        'STANDARD', ?, ?, ?, ?, 'ACTIVE',
+        'STANDARD', ?, ?, ?, ?, ?, 'ACTIVE',
         '6', 'HEAD', 'MUL100 Elite TN-70 Breeding GGP Sow Batch 1', 'DRY_SOW',
         ?, ?, 'REGISTERED', 'ANIMAL_WISE', NOW(), NOW()
       )`,
-      [b1Id, tenantId, companyId, lobId, nobId, tn70.breed_id, mulFarm.location_id, mulShed2?.location_id, startDate, drySowStageId, operationalAreaId]
+      [b1Id, tenantId, companyId, lobId, nobId, tn70.breed_id, mulFarm.location_id, mulShed2?.location_id, mulShed2?.location_id, startDate, drySowStageId, operationalAreaId]
     );
     for (const code of b1Animals) {
       const aId = animalIdMap.get(code);
@@ -363,16 +448,16 @@ async function seedOperationalDataAndBatches() {
     await conn.query(
       `INSERT INTO batch_header (
         batch_id, tenant_id, company_id, batch_no, lob_id, nob_id,
-        costing_method, breed_id, farm_id, shed_id, start_date, status,
+        costing_method, breed_id, farm_id, shed_id, location_id, start_date, status,
         opening_quantity, uom, remarks, current_stage_code,
         stage_id, operational_area_id, animal_tracking, tracking_mode, created_at, updated_at
       ) VALUES (
         ?, ?, ?, 'BATCH-000002', ?, ?,
-        'STANDARD', ?, ?, ?, ?, 'ACTIVE',
+        'STANDARD', ?, ?, ?, ?, ?, 'ACTIVE',
         '6', 'HEAD', 'MUL100 Z-Line Replacement Gilt Batch 2', 'GILT_GROWER',
         ?, ?, 'REGISTERED', 'ANIMAL_WISE', NOW(), NOW()
       )`,
-      [b2Id, tenantId, companyId, lobId, nobId, zLine.breed_id, mulFarm.location_id, mulShed1?.location_id, startDate, giltGrowerStageId, operationalAreaId]
+      [b2Id, tenantId, companyId, lobId, nobId, zLine.breed_id, mulFarm.location_id, mulShed1?.location_id, mulShed1?.location_id, startDate, giltGrowerStageId, operationalAreaId]
     );
     for (const code of b2Animals) {
       const aId = animalIdMap.get(code);
@@ -385,16 +470,16 @@ async function seedOperationalDataAndBatches() {
     await conn.query(
       `INSERT INTO batch_header (
         batch_id, tenant_id, company_id, batch_no, lob_id, nob_id,
-        costing_method, breed_id, farm_id, shed_id, start_date, status,
+        costing_method, breed_id, farm_id, shed_id, location_id, start_date, status,
         opening_quantity, uom, remarks, current_stage_code,
         stage_id, operational_area_id, animal_tracking, tracking_mode, created_at, updated_at
       ) VALUES (
         ?, ?, ?, 'BATCH-000003', ?, ?,
-        'STANDARD', ?, ?, ?, ?, 'ACTIVE',
+        'STANDARD', ?, ?, ?, ?, ?, 'ACTIVE',
         '150', 'HEAD', 'GRA100 Commercial Weaner Grower Group Batch A', 'WEANER',
         ?, ?, 'COUNT_ONLY', 'BATCH_WISE', NOW(), NOW()
       )`,
-      [b3Id, tenantId, companyId, lobId, nobId, tn70.breed_id, graFarm.location_id, graShed4?.location_id, startDate, weanerStageId, operationalAreaId]
+      [b3Id, tenantId, companyId, lobId, nobId, tn70.breed_id, graFarm.location_id, graShed4?.location_id, graShed4?.location_id, startDate, weanerStageId, operationalAreaId]
     );
     console.log('   ✔ Seeded BATCH-000003: BATCH_WISE on GRA100 (150 Head, Weaner -> Grower -> Finisher)');
 
@@ -403,16 +488,16 @@ async function seedOperationalDataAndBatches() {
     await conn.query(
       `INSERT INTO batch_header (
         batch_id, tenant_id, company_id, batch_no, lob_id, nob_id,
-        costing_method, breed_id, farm_id, shed_id, start_date, status,
+        costing_method, breed_id, farm_id, shed_id, location_id, start_date, status,
         opening_quantity, uom, remarks, current_stage_code,
         stage_id, operational_area_id, animal_tracking, tracking_mode, created_at, updated_at
       ) VALUES (
         ?, ?, ?, 'BATCH-000004', ?, ?,
-        'STANDARD', ?, ?, ?, ?, 'ACTIVE',
+        'STANDARD', ?, ?, ?, ?, ?, 'ACTIVE',
         '120', 'HEAD', 'GRA100 Commercial Finisher Group Batch B', 'FINISHER',
         ?, ?, 'COUNT_ONLY', 'BATCH_WISE', NOW(), NOW()
       )`,
-      [b4Id, tenantId, companyId, lobId, nobId, tn70.breed_id, graFarm.location_id, graShed6?.location_id, startDate, finisherStageId, operationalAreaId]
+      [b4Id, tenantId, companyId, lobId, nobId, tn70.breed_id, graFarm.location_id, graShed6?.location_id, graShed6?.location_id, startDate, finisherStageId, operationalAreaId]
     );
     console.log('   ✔ Seeded BATCH-000004: BATCH_WISE on GRA100 (120 Head, Grower -> Finisher)');
 
@@ -422,16 +507,16 @@ async function seedOperationalDataAndBatches() {
     await conn.query(
       `INSERT INTO batch_header (
         batch_id, tenant_id, company_id, batch_no, lob_id, nob_id,
-        costing_method, breed_id, farm_id, shed_id, start_date, status,
+        costing_method, breed_id, farm_id, shed_id, location_id, start_date, status,
         opening_quantity, uom, remarks, current_stage_code,
         stage_id, operational_area_id, animal_tracking, tracking_mode, created_at, updated_at
       ) VALUES (
         ?, ?, ?, 'BATCH-000005', ?, ?,
-        'STANDARD', ?, ?, ?, ?, 'ACTIVE',
+        'STANDARD', ?, ?, ?, ?, ?, 'ACTIVE',
         '4', 'HEAD', 'POR100 Commercial Breeding Sow Batch 1', 'DRY_SOW',
         ?, ?, 'REGISTERED', 'ANIMAL_WISE', NOW(), NOW()
       )`,
-      [b5Id, tenantId, companyId, lobId, nobId, tn70.breed_id, porFarm.location_id, porShed2?.location_id, startDate, drySowStageId, operationalAreaId]
+      [b5Id, tenantId, companyId, lobId, nobId, tn70.breed_id, porFarm.location_id, porShed2?.location_id, porShed2?.location_id, startDate, drySowStageId, operationalAreaId]
     );
     for (const code of b5Animals) {
       const aId = animalIdMap.get(code);
@@ -453,7 +538,7 @@ async function seedOperationalDataAndBatches() {
     // 9. SEED MULTI-STAGE SCHEDULERS FOR ALL BATCHES
     console.log('\n📅 Seeding Multi-Stage Batch Schedulers (scheduler_header & scheduler_line)...');
 
-    // Ensure labor resources exist
+    // Ensure labor resources exist with 'MANPOWER' type to match UI
     const laborWorkerId = randomUUID();
     const laborVetId = randomUUID();
     const laborSanId = randomUUID();
@@ -465,10 +550,10 @@ async function seedOperationalDataAndBatches() {
         resource_name, resource_type, unit, cost_rate, department, designation,
         is_active, status, created_at, updated_at
       ) VALUES 
-      (?, ?, ?, ?, ?, 'RES-WORKER-01', 'General Farm Worker', 'LABOR', 'HRS', 5.0000, 'Farm Operations', 'Attendant', 1, 'ACTIVE', NOW(), NOW()),
-      (?, ?, ?, ?, ?, 'RES-VET-01', 'Farm Veterinarian', 'LABOR', 'HRS', 25.0000, 'Veterinary Services', 'Veterinary Officer', 1, 'ACTIVE', NOW(), NOW()),
-      (?, ?, ?, ?, ?, 'RES-DISINFECT-01', 'Sanitation Crew', 'LABOR', 'HRS', 8.0000, 'Biosecurity', 'Crew Member', 1, 'ACTIVE', NOW(), NOW()),
-      (?, ?, ?, ?, ?, 'RES-MIDWIFE-01', 'Farrowing Technician', 'LABOR', 'HRS', 10.0000, 'Breeding', 'Midwife', 1, 'ACTIVE', NOW(), NOW())
+      (?, ?, ?, ?, ?, 'RES-WORKER-01', 'General Farm Worker', 'MANPOWER', 'HRS', 5.0000, 'Farm Operations', 'Attendant', 1, 'ACTIVE', NOW(), NOW()),
+      (?, ?, ?, ?, ?, 'RES-VET-01', 'Farm Veterinarian', 'MANPOWER', 'HRS', 25.0000, 'Veterinary Services', 'Veterinary Officer', 1, 'ACTIVE', NOW(), NOW()),
+      (?, ?, ?, ?, ?, 'RES-DISINFECT-01', 'Sanitation Crew', 'MANPOWER', 'HRS', 8.0000, 'Biosecurity', 'Crew Member', 1, 'ACTIVE', NOW(), NOW()),
+      (?, ?, ?, ?, ?, 'RES-MIDWIFE-01', 'Farrowing Technician', 'MANPOWER', 'HRS', 10.0000, 'Breeding', 'Midwife', 1, 'ACTIVE', NOW(), NOW())
       ON DUPLICATE KEY UPDATE updated_at = NOW()`,
       [
         laborWorkerId, tenantId, companyId, nobId, lobId,
@@ -493,7 +578,7 @@ async function seedOperationalDataAndBatches() {
     await conn.query("UPDATE activity_master SET default_resource_id = ? WHERE activity_code = 'FARROW_ATTEND'", [resMidId]);
 
     const [actRows] = await conn.query<mysql.RowDataPacket[]>(
-      'SELECT activity_id, activity_code, activity_name, line_type, default_occurrence, default_is_mandatory, default_resource_id FROM activity_master WHERE is_active = 1'
+      'SELECT activity_id, activity_code, activity_name, line_type, default_occurrence, default_is_mandatory, default_lot_required, default_resource_id FROM activity_master WHERE is_active = 1'
     );
     const actByCode = new Map(actRows.map((a) => [a.activity_code, a]));
 
@@ -507,6 +592,7 @@ async function seedOperationalDataAndBatches() {
         basis?: string | null;
         occurrence?: string;
         mandatory?: number;
+        lotRequired?: number;
         startDay?: number;
         endDay?: number | null;
       }
@@ -514,6 +600,7 @@ async function seedOperationalDataAndBatches() {
       const act = actByCode.get(code);
       if (!act) throw new Error(`Activity '${code}' not found in activity_master.`);
       return {
+        code,
         seq,
         type: act.line_type,
         name: act.activity_name,
@@ -521,12 +608,16 @@ async function seedOperationalDataAndBatches() {
         startDay: overrides?.startDay || 1,
         endDay: overrides?.endDay ?? null,
         mandatory: overrides?.mandatory ?? (act.default_is_mandatory ? 1 : 0),
+        lotRequired: overrides?.lotRequired ?? (act.default_lot_required ? 1 : 0),
         itemId: overrides?.itemId ?? null,
         resourceId: overrides?.resourceId ?? act.default_resource_id ?? null,
         qty: overrides?.qty ?? null,
         basis: overrides?.basis ?? (act.line_type === 'CONSUMPTION' ? 'PER_HEAD' : null),
       };
     };
+
+    // Tracks line_id by `${batchId}:${stageId}:${activityCode}` for daily data entry linkage
+    const batchLinesMap = new Map<string, string>();
 
     const seedBatchScheduler = async (
       batchNo: string,
@@ -536,19 +627,7 @@ async function seedOperationalDataAndBatches() {
       breedId: string,
       headcount: number,
       locationId: string | null | undefined,
-      activities: Array<{
-        seq: number;
-        type: string;
-        name: string;
-        occurrence: string;
-        startDay: number;
-        endDay: number | null;
-        mandatory: number;
-        itemId?: string | null;
-        resourceId?: string | null;
-        qty?: number | null;
-        basis?: string | null;
-      }>
+      activities: Array<ReturnType<typeof buildLine>>
     ) => {
       const schedulerId = randomUUID();
       await conn.query(
@@ -566,20 +645,23 @@ async function seedOperationalDataAndBatches() {
       );
 
       for (const act of activities) {
+        const lineId = randomUUID();
+        batchLinesMap.set(`${batchId}:${stageId}:${act.code}`, lineId);
         await conn.query(
           `INSERT INTO scheduler_line (
             line_id, scheduler_id, line_seq, line_type, activity_name,
             stage_id, occurrence, start_day, end_day, is_mandatory, source,
-            item_id, resource_id, standard_qty, qty_basis, allow_qty_edit, is_active
+            item_id, resource_id, standard_qty, qty_basis, allow_qty_edit, lot_required, is_active
           ) VALUES (
             ?, ?, ?, ?, ?,
             ?, ?, ?, ?, ?, 'AUTO',
-            ?, ?, ?, ?, 1, 1
+            ?, ?, ?, ?, 1, ?, 1
           )`,
           [
-            randomUUID(), schedulerId, act.seq, act.type, act.name,
+            lineId, schedulerId, act.seq, act.type, act.name,
             stageId, act.occurrence, act.startDay || 1, act.endDay ?? null, act.mandatory,
-            act.itemId || null, act.resourceId || null, act.qty || null, act.basis || null
+            act.itemId || null, act.resourceId || null, act.qty || null, act.basis || null,
+            act.lotRequired || 0
           ]
         );
       }
@@ -594,11 +676,12 @@ async function seedOperationalDataAndBatches() {
       buildLine('HEAT_CHECK', 3, { mandatory: 1 }),
       buildLine('DAILY_MORTALITY_CHECK', 4, { mandatory: 1 }),
       buildLine('TEMP_HUMID_LOG', 5, { mandatory: 0 }),
-      buildLine('PREG_CHECK', 6, { occurrence: 'ONCE', startDay: 28, endDay: 28, mandatory: 1 }),
-      buildLine('VET_VISIT', 7, { occurrence: 'WEEKLY', mandatory: 0 }),
-      buildLine('WEEKLY_BODY_WEIGHT', 8, { occurrence: 'WEEKLY', mandatory: 0 }),
-      buildLine('VIT_SUPPL', 9, { occurrence: 'WEEKLY', itemId: premixItem.item_id, qty: 0.05, basis: 'PER_HEAD', mandatory: 0 }),
-      buildLine('FARM_WORKER_ROUND', 10, { mandatory: 0 }),
+      buildLine('BOOSTER_VAC', 6, { itemId: vacItem.item_id, qty: 1.0, basis: 'PER_HEAD', lotRequired: 1, mandatory: 1 }),
+      buildLine('PREG_CHECK', 7, { occurrence: 'ONCE', startDay: 28, endDay: 28, mandatory: 1 }),
+      buildLine('VET_VISIT', 8, { occurrence: 'WEEKLY', mandatory: 0 }),
+      buildLine('WEEKLY_BODY_WEIGHT', 9, { occurrence: 'WEEKLY', mandatory: 0 }),
+      buildLine('VIT_SUPPL', 10, { occurrence: 'WEEKLY', itemId: premixItem.item_id, qty: 0.05, basis: 'PER_HEAD', mandatory: 0 }),
+      buildLine('FARM_WORKER_ROUND', 11, { mandatory: 0 }),
     ]);
 
     // 2. Insemination Stage
@@ -623,9 +706,10 @@ async function seedOperationalDataAndBatches() {
       buildLine('IRON_INJ', 5, { occurrence: 'ONCE', startDay: 3, endDay: 3, itemId: ironItem.item_id, qty: 1.0, basis: 'PER_HEAD', mandatory: 1 }),
       buildLine('DAILY_MORTALITY_CHECK', 6, { mandatory: 1 }),
       buildLine('TEMP_HUMID_LOG', 7, { mandatory: 0 }),
-      buildLine('VET_VISIT', 8, { occurrence: 'WEEKLY', mandatory: 0 }),
-      buildLine('WEAN_OUTPUT', 9, { occurrence: 'ONCE', startDay: 28, endDay: 28, mandatory: 1 }),
-      buildLine('FARM_WORKER_ROUND', 10, { mandatory: 0 }),
+      buildLine('EAR_TAG', 8, { itemId: tagItem.item_id, qty: 1.0, basis: 'PER_HEAD', lotRequired: 1, mandatory: 0 }),
+      buildLine('VET_VISIT', 9, { occurrence: 'WEEKLY', mandatory: 0 }),
+      buildLine('WEAN_OUTPUT', 10, { occurrence: 'ONCE', startDay: 28, endDay: 28, mandatory: 1 }),
+      buildLine('FARM_WORKER_ROUND', 11, { mandatory: 0 }),
     ]);
 
     // ── BATCH-000002 (MUL100 Gilts: Gilt Grower, Insemination) ──
@@ -636,11 +720,12 @@ async function seedOperationalDataAndBatches() {
       buildLine('HEAT_CHECK', 3, { mandatory: 1 }),
       buildLine('DAILY_MORTALITY_CHECK', 4, { mandatory: 1 }),
       buildLine('TEMP_HUMID_LOG', 5, { mandatory: 0 }),
-      buildLine('WEEKLY_BODY_WEIGHT', 6, { occurrence: 'WEEKLY', mandatory: 0 }),
-      buildLine('VET_VISIT', 7, { occurrence: 'WEEKLY', mandatory: 0 }),
-      buildLine('VIT_SUPPL', 8, { occurrence: 'WEEKLY', itemId: premixItem.item_id, qty: 0.05, basis: 'PER_HEAD', mandatory: 0 }),
-      buildLine('DEWORM_DOSE', 9, { occurrence: 'MONTHLY', itemId: dewormItem.item_id, qty: 1.0, basis: 'PER_HEAD', mandatory: 0 }),
-      buildLine('FARM_WORKER_ROUND', 10, { mandatory: 0 }),
+      buildLine('BOOSTER_VAC', 6, { itemId: vacItem.item_id, qty: 1.0, basis: 'PER_HEAD', lotRequired: 1, mandatory: 1 }),
+      buildLine('WEEKLY_BODY_WEIGHT', 7, { occurrence: 'WEEKLY', mandatory: 0 }),
+      buildLine('VET_VISIT', 8, { occurrence: 'WEEKLY', mandatory: 0 }),
+      buildLine('VIT_SUPPL', 9, { occurrence: 'WEEKLY', itemId: premixItem.item_id, qty: 0.05, basis: 'PER_HEAD', mandatory: 0 }),
+      buildLine('DEWORM_DOSE', 10, { occurrence: 'MONTHLY', itemId: dewormItem.item_id, qty: 1.0, basis: 'PER_HEAD', mandatory: 0 }),
+      buildLine('FARM_WORKER_ROUND', 11, { mandatory: 0 }),
     ]);
 
     // 2. Insemination Stage
@@ -663,12 +748,13 @@ async function seedOperationalDataAndBatches() {
       buildLine('EVE_FEED', 2, { itemId: weanerFeed.item_id, qty: 0.8, basis: 'PER_HEAD', mandatory: 1 }),
       buildLine('DAILY_MORTALITY_CHECK', 3, { mandatory: 1 }),
       buildLine('TEMP_HUMID_LOG', 4, { mandatory: 0 }),
-      buildLine('IRON_INJ', 5, { occurrence: 'ONCE', startDay: 3, endDay: 3, itemId: ironItem.item_id, qty: 1.0, basis: 'PER_HEAD', mandatory: 1 }),
-      buildLine('WEEKLY_BODY_WEIGHT', 6, { occurrence: 'WEEKLY', mandatory: 0 }),
-      buildLine('VET_VISIT', 7, { occurrence: 'WEEKLY', mandatory: 0 }),
-      buildLine('VIT_SUPPL', 8, { occurrence: 'WEEKLY', itemId: premixItem.item_id, qty: 0.02, basis: 'PER_HEAD', mandatory: 0 }),
-      buildLine('FARM_WORKER_ROUND', 9, { mandatory: 0 }),
-      buildLine('GROW_TRANSFER', 10, { occurrence: 'ONCE', startDay: 42, endDay: 42, mandatory: 1 }),
+      buildLine('BOOSTER_VAC', 5, { itemId: vacItem.item_id, qty: 1.0, basis: 'PER_HEAD', lotRequired: 1, mandatory: 1 }),
+      buildLine('IRON_INJ', 6, { occurrence: 'ONCE', startDay: 3, endDay: 3, itemId: ironItem.item_id, qty: 1.0, basis: 'PER_HEAD', mandatory: 1 }),
+      buildLine('WEEKLY_BODY_WEIGHT', 7, { occurrence: 'WEEKLY', mandatory: 0 }),
+      buildLine('VET_VISIT', 8, { occurrence: 'WEEKLY', mandatory: 0 }),
+      buildLine('VIT_SUPPL', 9, { occurrence: 'WEEKLY', itemId: premixItem.item_id, qty: 0.02, basis: 'PER_HEAD', mandatory: 0 }),
+      buildLine('FARM_WORKER_ROUND', 10, { mandatory: 0 }),
+      buildLine('GROW_TRANSFER', 11, { occurrence: 'ONCE', startDay: 42, endDay: 42, mandatory: 1 }),
     ]);
 
     // 2. Grower Stage
@@ -734,11 +820,12 @@ async function seedOperationalDataAndBatches() {
       buildLine('HEAT_CHECK', 3, { mandatory: 1 }),
       buildLine('DAILY_MORTALITY_CHECK', 4, { mandatory: 1 }),
       buildLine('TEMP_HUMID_LOG', 5, { mandatory: 0 }),
-      buildLine('PREG_CHECK', 6, { occurrence: 'ONCE', startDay: 28, endDay: 28, mandatory: 1 }),
-      buildLine('VET_VISIT', 7, { occurrence: 'WEEKLY', mandatory: 0 }),
-      buildLine('WEEKLY_BODY_WEIGHT', 8, { occurrence: 'WEEKLY', mandatory: 0 }),
-      buildLine('VIT_SUPPL', 9, { occurrence: 'WEEKLY', itemId: premixItem.item_id, qty: 0.05, basis: 'PER_HEAD', mandatory: 0 }),
-      buildLine('FARM_WORKER_ROUND', 10, { mandatory: 0 }),
+      buildLine('BOOSTER_VAC', 6, { itemId: vacItem.item_id, qty: 1.0, basis: 'PER_HEAD', lotRequired: 1, mandatory: 1 }),
+      buildLine('PREG_CHECK', 7, { occurrence: 'ONCE', startDay: 28, endDay: 28, mandatory: 1 }),
+      buildLine('VET_VISIT', 8, { occurrence: 'WEEKLY', mandatory: 0 }),
+      buildLine('WEEKLY_BODY_WEIGHT', 9, { occurrence: 'WEEKLY', mandatory: 0 }),
+      buildLine('VIT_SUPPL', 10, { occurrence: 'WEEKLY', itemId: premixItem.item_id, qty: 0.05, basis: 'PER_HEAD', mandatory: 0 }),
+      buildLine('FARM_WORKER_ROUND', 11, { mandatory: 0 }),
     ]);
 
     // 2. Farrowing Stage
@@ -750,9 +837,10 @@ async function seedOperationalDataAndBatches() {
       buildLine('IRON_INJ', 5, { occurrence: 'ONCE', startDay: 3, endDay: 3, itemId: ironItem.item_id, qty: 1.0, basis: 'PER_HEAD', mandatory: 1 }),
       buildLine('DAILY_MORTALITY_CHECK', 6, { mandatory: 1 }),
       buildLine('TEMP_HUMID_LOG', 7, { mandatory: 0 }),
-      buildLine('VET_VISIT', 8, { occurrence: 'WEEKLY', mandatory: 0 }),
-      buildLine('WEAN_OUTPUT', 9, { occurrence: 'ONCE', startDay: 28, endDay: 28, mandatory: 1 }),
-      buildLine('FARM_WORKER_ROUND', 10, { mandatory: 0 }),
+      buildLine('EAR_TAG', 8, { itemId: tagItem.item_id, qty: 1.0, basis: 'PER_HEAD', lotRequired: 1, mandatory: 0 }),
+      buildLine('VET_VISIT', 9, { occurrence: 'WEEKLY', mandatory: 0 }),
+      buildLine('WEAN_OUTPUT', 10, { occurrence: 'ONCE', startDay: 28, endDay: 28, mandatory: 1 }),
+      buildLine('FARM_WORKER_ROUND', 11, { mandatory: 0 }),
     ]);
 
     // 10. SEED INVENTORY GOODS RECEIPTS (GRN) & STOCK ACROSS ALL 3 FARMS
@@ -772,7 +860,11 @@ async function seedOperationalDataAndBatches() {
     };
 
     let grCounter = 1;
-    const storeFeedLedgerLayerMap = new Map<string, string>(); // key: `${storeId}:${itemId}` -> ledgerId
+    // Map positive layers to draw against during transfers and daily consumption
+    const siloFeedLayerMap = new Map<string, { ledgerId: string; item: any }>(); // siloLocationId -> layer
+    const storeFeedLedgerLayerMap = new Map<string, { ledgerId: string; item: any }>(); // `${storeId}:${itemId}` -> layer
+    const storeVacLayerMap = new Map<string, { ledgerId: string; item: any; lotNo: string }>(); // storeId -> vacLayer
+    const storeTagLayerMap = new Map<string, { ledgerId: string; item: any; serialNo: string }>(); // `${storeId}:${serialNo}` -> tagLayer
 
     const activeFarms = [mulFarm, graFarm, porFarm];
     for (const farm of activeFarms) {
@@ -815,6 +907,7 @@ async function seedOperationalDataAndBatches() {
             grNo, lineId, postingDate, silo.location_id, targetFeed.nob_id, targetFeed.lob_id, targetFeed.category_id, now
           ]
         );
+        siloFeedLayerMap.set(silo.location_id, { ledgerId, item: targetFeed });
       }
       console.log(`   ✔ Seeded Feed into ${farmSilos.length} Silos on ${farm.location_code}`);
 
@@ -859,10 +952,10 @@ async function seedOperationalDataAndBatches() {
               rate, amt, farmStore.location_id, item.nob_id, item.lob_id, item.category_id, now
             ]
           );
-          storeFeedLedgerLayerMap.set(`${farmStore.location_id}:${item.item_id}`, ledgerId);
+          storeFeedLedgerLayerMap.set(`${farmStore.location_id}:${item.item_id}`, { ledgerId, item });
         }
 
-        // Seed Vaccine into Store
+        // Seed Vaccine into Store with LOT tracking
         if (vacItem) {
           const grVacId = randomUUID();
           const lineId = randomUUID();
@@ -896,9 +989,10 @@ async function seedOperationalDataAndBatches() {
               grNo, lineId, postingDate, farmStore.location_id, vacItem.nob_id, vacItem.lob_id, vacItem.category_id, now
             ]
           );
+          storeVacLayerMap.set(farmStore.location_id, { ledgerId, item: vacItem, lotNo: 'LOT-2026-X1' });
         }
 
-        // Seed RFID Ear Tags into Store
+        // Seed RFID Ear Tags into Store with SERIAL tracking
         if (tagItem) {
           const grTagId = randomUUID();
           const grNo = `GR-${String(grCounter++).padStart(6, '0')}`;
@@ -934,6 +1028,7 @@ async function seedOperationalDataAndBatches() {
                 grNo, lineId, postingDate, serialNo, farmStore.location_id, tagItem.nob_id, tagItem.lob_id, tagItem.category_id, now
               ]
             );
+            storeTagLayerMap.set(`${farmStore.location_id}:${serialNo}`, { ledgerId, item: tagItem, serialNo });
           }
         }
         console.log(`   ✔ Seeded Feeds, Premix, Vaccines & RFID Tags into Store on ${farm.location_code}`);
@@ -1005,9 +1100,9 @@ async function seedOperationalDataAndBatches() {
         ]
       );
 
-      const srcLayerId = storeFeedLedgerLayerMap.get(`${mulStore.location_id}:${giltGrowerFeed.item_id}`);
-      if (srcLayerId) {
-        await conn.query(`UPDATE inventory_ledger SET remaining_quantity = remaining_quantity - 1000.0000 WHERE ledger_id = ?`, [srcLayerId]);
+      const srcLayer = storeFeedLedgerLayerMap.get(`${mulStore.location_id}:${giltGrowerFeed.item_id}`);
+      if (srcLayer) {
+        await conn.query(`UPDATE inventory_ledger SET remaining_quantity = remaining_quantity - 1000.0000 WHERE ledger_id = ?`, [srcLayer.ledgerId]);
       }
       console.log(`   ✔ Seeded POSTED Stock Transfer TR-000001: 1,000 KG from ${mulStore.location_code} -> ${mulGiltSilo.location_code}`);
     }
@@ -1074,9 +1169,9 @@ async function seedOperationalDataAndBatches() {
         ]
       );
 
-      const srcLayerId = storeFeedLedgerLayerMap.get(`${graStore.location_id}:${weanerFeed.item_id}`);
-      if (srcLayerId) {
-        await conn.query(`UPDATE inventory_ledger SET remaining_quantity = remaining_quantity - 1000.0000 WHERE ledger_id = ?`, [srcLayerId]);
+      const srcLayer = storeFeedLedgerLayerMap.get(`${graStore.location_id}:${weanerFeed.item_id}`);
+      if (srcLayer) {
+        await conn.query(`UPDATE inventory_ledger SET remaining_quantity = remaining_quantity - 1000.0000 WHERE ledger_id = ?`, [srcLayer.ledgerId]);
       }
       console.log(`   ✔ Seeded POSTED Stock Transfer TR-000002: 1,000 KG from ${graStore.location_code} -> ${graWeanerSilo.location_code}`);
     }
@@ -1158,6 +1253,471 @@ async function seedOperationalDataAndBatches() {
     }
     console.log(`   ✔ Assigned MANAGER & OPERATOR roles and operational areas to ${users.length} farm users.`);
 
+    // 13. SEED BATCH DAILY DATA ENTRIES, TRANSACTIONS, LEDGER CONSUMPTION & STAGE LOCKS
+    console.log('\n📝 Seeding Batch Daily Data Entries across Dates, Batches & Tracking Items...');
+
+    // Helper functions for daily data entry creation
+    const recordLedgerConsumption = async (params: {
+      batchNo: string;
+      lineId: string;
+      date: string;
+      warehouseId: string;
+      itemId: string;
+      itemCode: string;
+      itemName: string;
+      quantity: number;
+      uom: string;
+      rate: number;
+      amount: number;
+      lotNo?: string;
+      serialNo?: string;
+      nobId?: string;
+      lobId?: string;
+      categoryId?: string;
+      sourceLedgerId?: string;
+    }) => {
+      const ledgerId = randomUUID();
+      await conn.query(
+        `INSERT INTO inventory_ledger (
+          ledger_id, tenant_id, company_id, item_id, item_code, item_description,
+          document_type, document_no, document_line_id, posting_date,
+          entry_type, transaction_type, quantity, remaining_quantity, uom,
+          rate, amount, lot_no, serial_no, warehouse_id, nob_id, lob_id, category_id, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 'DAILY_ENTRY', ?, ?, ?,
+          'NEGATIVE', 'CONSUMPTION', ?, NULL, ?,
+          ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+        [
+          ledgerId, tenantId, companyId, params.itemId, params.itemCode, params.itemName,
+          params.batchNo, params.lineId, params.date,
+          `-${params.quantity.toFixed(4)}`, params.uom,
+          params.rate.toFixed(6), `-${params.amount.toFixed(4)}`,
+          params.lotNo || null, params.serialNo || null,
+          params.warehouseId, params.nobId || null, params.lobId || null, params.categoryId || null
+        ]
+      );
+      if (params.sourceLedgerId) {
+        await conn.query(
+          `UPDATE inventory_ledger SET remaining_quantity = GREATEST(0, remaining_quantity - ?) WHERE ledger_id = ?`,
+          [params.quantity, params.sourceLedgerId]
+        );
+      }
+      return ledgerId;
+    };
+
+    const recordBatchTx = async (params: {
+      batchId: string;
+      date: string;
+      txType: string;
+      itemId?: string;
+      quantity?: number;
+      uom?: string;
+      rate?: number;
+      amount?: number;
+      animalId?: string;
+      ledgerId?: string;
+      remarks?: string;
+    }) => {
+      const txId = randomUUID();
+      await conn.query(
+        `INSERT INTO batch_transaction (
+          transaction_id, batch_id, transaction_date, transaction_type,
+          item_id, quantity, uom, rate, amount, animal_id, ledger_id, remarks, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+        [
+          txId, params.batchId, params.date, params.txType,
+          params.itemId || null,
+          params.quantity != null ? params.quantity.toFixed(4) : null,
+          params.uom || null,
+          params.rate != null ? params.rate.toFixed(6) : null,
+          params.amount != null ? params.amount.toFixed(4) : null,
+          params.animalId || null,
+          params.ledgerId || null,
+          params.remarks || null
+        ]
+      );
+      return txId;
+    };
+
+    const recordDailyData = async (params: {
+      lineId: string;
+      batchId: string;
+      animalId?: string;
+      date: string;
+      enteredValue?: number;
+      enteredText?: string;
+      lotNo?: string;
+      serialNo?: string;
+      posted: boolean;
+      postingRef?: string;
+      remarks?: string;
+    }) => {
+      const entryId = randomUUID();
+      await conn.query(
+        `INSERT INTO batch_daily_data (
+          entry_id, tenant_id, company_id, line_id, batch_id, animal_id,
+          entry_date, entered_value, entered_text, lot_no, serial_no,
+          posted, posting_reference, alert_triggered, remarks, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, NOW(), NOW())
+        ON DUPLICATE KEY UPDATE
+          entered_value = VALUES(entered_value),
+          entered_text = VALUES(entered_text),
+          lot_no = VALUES(lot_no),
+          serial_no = VALUES(serial_no),
+          posted = VALUES(posted),
+          posting_reference = VALUES(posting_reference),
+          updated_at = NOW()`,
+        [
+          entryId, tenantId, companyId, params.lineId, params.batchId,
+          params.animalId || null, params.date,
+          params.enteredValue != null ? params.enteredValue.toFixed(6) : null,
+          params.enteredText || null,
+          params.lotNo || null,
+          params.serialNo || null,
+          params.posted ? 1 : 0,
+          params.postingRef || null,
+          params.remarks || null
+        ]
+      );
+      return entryId;
+    };
+
+    const lockStageDate = async (batchId: string, stageId: string, date: string) => {
+      const lockId = randomUUID();
+      await conn.query(
+        `INSERT INTO batch_data_entry_lock (
+          lock_id, tenant_id, company_id, batch_id, stage_id, entry_date, status, locked_by, locked_at, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 'LOCKED', 'SYSTEM', NOW(), NOW(), NOW())
+        ON DUPLICATE KEY UPDATE status = 'LOCKED', locked_at = NOW(), updated_at = NOW()`,
+        [lockId, tenantId, companyId, batchId, stageId, date]
+      );
+    };
+
+    // Resolved farm warehouses
+    const mulSilo2 = mulSilos.find((s) => s.location_code.includes('SILO-002')) || mulSilos[0];
+    const mulSilo3 = mulSilos.find((s) => s.location_code.includes('SILO-003')) || mulSilos[1] || mulSilo2;
+    const mulStoreWarehouse = mulStore?.location_id;
+    const graStoreWarehouse = graStore?.location_id;
+    const graWeanerSiloRef = graWeanerSilo?.location_id;
+
+    const mulSilo2Layer = mulSilo2 ? siloFeedLayerMap.get(mulSilo2.location_id) : null;
+    const mulSilo3Layer = mulSilo3 ? siloFeedLayerMap.get(mulSilo3.location_id) : null;
+    const graWeanerSiloLayer = graWeanerSilo ? siloFeedLayerMap.get(graWeanerSilo.location_id) : null;
+    const mulVacLayer = mulStoreWarehouse ? storeVacLayerMap.get(mulStoreWarehouse) : null;
+    const graVacLayer = graStoreWarehouse ? storeVacLayerMap.get(graStoreWarehouse) : null;
+
+    // Animal allocations for BATCH-000001
+    const b1DrySowAnimals = ['PIG-2026-0001', 'PIG-2026-0002'].map((c) => animalIdMap.get(c)!);
+    const b1InsemAnimals = ['PIG-2026-0003', 'PIG-2026-0004'].map((c) => animalIdMap.get(c)!);
+    const b1FarrowAnimals = ['PIG-2026-0005', 'PIG-2026-0006'].map((c) => animalIdMap.get(c)!);
+
+    // Lines for BATCH-000001 stages
+    const b1DryMornLine = batchLinesMap.get(`${b1Id}:${drySowStageId}:MORN_FEED`);
+    const b1DryEveLine = batchLinesMap.get(`${b1Id}:${drySowStageId}:EVE_FEED`);
+    const b1DryHeatLine = batchLinesMap.get(`${b1Id}:${drySowStageId}:HEAT_CHECK`);
+    const b1DryMortLine = batchLinesMap.get(`${b1Id}:${drySowStageId}:DAILY_MORTALITY_CHECK`);
+    const b1DryTempLine = batchLinesMap.get(`${b1Id}:${drySowStageId}:TEMP_HUMID_LOG`);
+    const b1DryVacLine = batchLinesMap.get(`${b1Id}:${drySowStageId}:BOOSTER_VAC`);
+
+    const b1InsemMornLine = batchLinesMap.get(`${b1Id}:${inseminationStageId}:MORN_FEED`);
+    const b1InsemEveLine = batchLinesMap.get(`${b1Id}:${inseminationStageId}:EVE_FEED`);
+    const b1InsemHeatLine = batchLinesMap.get(`${b1Id}:${inseminationStageId}:HEAT_CHECK`);
+    const b1InsemMortLine = batchLinesMap.get(`${b1Id}:${inseminationStageId}:DAILY_MORTALITY_CHECK`);
+    const b1InsemTempLine = batchLinesMap.get(`${b1Id}:${inseminationStageId}:TEMP_HUMID_LOG`);
+
+    const b1FarrowMornLine = batchLinesMap.get(`${b1Id}:${farrowingStageId}:MORN_FEED`);
+    const b1FarrowEveLine = batchLinesMap.get(`${b1Id}:${farrowingStageId}:EVE_FEED`);
+    const b1FarrowAttendLine = batchLinesMap.get(`${b1Id}:${farrowingStageId}:FARROW_ATTEND`);
+    const b1FarrowMortLine = batchLinesMap.get(`${b1Id}:${farrowingStageId}:DAILY_MORTALITY_CHECK`);
+    const b1FarrowTempLine = batchLinesMap.get(`${b1Id}:${farrowingStageId}:TEMP_HUMID_LOG`);
+    const b1FarrowTagLine = batchLinesMap.get(`${b1Id}:${farrowingStageId}:EAR_TAG`);
+
+    // Lines for BATCH-000003 (GRA100 Commercial Growout - Weaner Stage)
+    const b3CreepLine = batchLinesMap.get(`${b3Id}:${weanerStageId}:CREEP_FEED`);
+    const b3EveLine = batchLinesMap.get(`${b3Id}:${weanerStageId}:EVE_FEED`);
+    const b3MortLine = batchLinesMap.get(`${b3Id}:${weanerStageId}:DAILY_MORTALITY_CHECK`);
+    const b3TempLine = batchLinesMap.get(`${b3Id}:${weanerStageId}:TEMP_HUMID_LOG`);
+    const b3VacLine = batchLinesMap.get(`${b3Id}:${weanerStageId}:BOOSTER_VAC`);
+
+    // Loop through posted historical dates (2026-09-01, 2026-09-02, 2026-09-03)
+    const postedDates = ['2026-09-01', '2026-09-02', '2026-09-03'];
+
+    for (const d of postedDates) {
+      // ── BATCH-000001 (ANIMAL_WISE on MUL100) ──
+      // 1. Dry Sow Stage Animals
+      for (const aId of b1DrySowAnimals) {
+        // Morning Feed (2.5 KG)
+        if (b1DryMornLine && mulSilo2 && mulSilo2Layer) {
+          const lId = await recordLedgerConsumption({
+            batchNo: 'BATCH-000001', lineId: b1DryMornLine, date: d,
+            warehouseId: mulSilo2.location_id, itemId: drySowFeed.item_id, itemCode: drySowFeed.item_code,
+            itemName: drySowFeed.item_name, quantity: 2.5, uom: 'KG', rate: 35.0, amount: 87.5,
+            nobId: drySowFeed.nob_id, lobId: drySowFeed.lob_id, categoryId: drySowFeed.category_id,
+            sourceLedgerId: mulSilo2Layer.ledgerId,
+          });
+          const txId = await recordBatchTx({
+            batchId: b1Id, date: d, txType: 'CONSUMPTION', itemId: drySowFeed.item_id,
+            quantity: 2.5, uom: 'KG', rate: 35.0, amount: 87.5, animalId: aId, ledgerId: lId,
+            remarks: 'Morning Feed — Dry Sow Gestation Mash',
+          });
+          await recordDailyData({ lineId: b1DryMornLine, batchId: b1Id, animalId: aId, date: d, enteredValue: 2.5, posted: true, postingRef: txId });
+        }
+
+        // Evening Feed (1.5 KG)
+        if (b1DryEveLine && mulSilo2 && mulSilo2Layer) {
+          const lId = await recordLedgerConsumption({
+            batchNo: 'BATCH-000001', lineId: b1DryEveLine, date: d,
+            warehouseId: mulSilo2.location_id, itemId: drySowFeed.item_id, itemCode: drySowFeed.item_code,
+            itemName: drySowFeed.item_name, quantity: 1.5, uom: 'KG', rate: 35.0, amount: 52.5,
+            nobId: drySowFeed.nob_id, lobId: drySowFeed.lob_id, categoryId: drySowFeed.category_id,
+            sourceLedgerId: mulSilo2Layer.ledgerId,
+          });
+          const txId = await recordBatchTx({
+            batchId: b1Id, date: d, txType: 'CONSUMPTION', itemId: drySowFeed.item_id,
+            quantity: 1.5, uom: 'KG', rate: 35.0, amount: 52.5, animalId: aId, ledgerId: lId,
+            remarks: 'Evening Feed — Dry Sow Gestation Mash',
+          });
+          await recordDailyData({ lineId: b1DryEveLine, batchId: b1Id, animalId: aId, date: d, enteredValue: 1.5, posted: true, postingRef: txId });
+        }
+
+        // Health & Observation lines
+        if (b1DryHeatLine) {
+          await recordDailyData({ lineId: b1DryHeatLine, batchId: b1Id, animalId: aId, date: d, enteredValue: 1, enteredText: 'Normal — no oestrus activity', posted: true });
+        }
+        if (b1DryMortLine) {
+          await recordDailyData({ lineId: b1DryMortLine, batchId: b1Id, animalId: aId, date: d, enteredValue: 0, enteredText: '0', posted: true });
+        }
+        if (b1DryTempLine) {
+          await recordDailyData({ lineId: b1DryTempLine, batchId: b1Id, animalId: aId, date: d, enteredValue: 21.5, enteredText: '21.5°C / 62% RH', posted: true });
+        }
+
+        // Vaccine Lot Tracking Administration on 2026-09-03
+        if (d === '2026-09-03' && b1DryVacLine && mulStoreWarehouse && mulVacLayer) {
+          const lId = await recordLedgerConsumption({
+            batchNo: 'BATCH-000001', lineId: b1DryVacLine, date: d,
+            warehouseId: mulStoreWarehouse, itemId: vacItem.item_id, itemCode: vacItem.item_code,
+            itemName: vacItem.item_name, quantity: 1.0, uom: 'DOSE', rate: 85.0, amount: 85.0,
+            lotNo: 'LOT-2026-X1', nobId: vacItem.nob_id, lobId: vacItem.lob_id, categoryId: vacItem.category_id,
+            sourceLedgerId: mulVacLayer.ledgerId,
+          });
+          const txId = await recordBatchTx({
+            batchId: b1Id, date: d, txType: 'CONSUMPTION', itemId: vacItem.item_id,
+            quantity: 1.0, uom: 'DOSE', rate: 85.0, amount: 85.0, animalId: aId, ledgerId: lId,
+            remarks: 'Booster Vaccine Parvo-Shield (Lot: LOT-2026-X1)',
+          });
+          await recordDailyData({
+            lineId: b1DryVacLine, batchId: b1Id, animalId: aId, date: d,
+            enteredValue: 1.0, lotNo: 'LOT-2026-X1', posted: true, postingRef: txId,
+            remarks: 'Scheduled booster vaccine administration',
+          });
+        }
+      }
+
+      // 2. Insemination Stage Animals
+      for (const aId of b1InsemAnimals) {
+        if (b1InsemMornLine && mulSilo2 && mulSilo2Layer) {
+          const lId = await recordLedgerConsumption({
+            batchNo: 'BATCH-000001', lineId: b1InsemMornLine, date: d,
+            warehouseId: mulSilo2.location_id, itemId: drySowFeed.item_id, itemCode: drySowFeed.item_code,
+            itemName: drySowFeed.item_name, quantity: 2.2, uom: 'KG', rate: 35.0, amount: 77.0,
+            nobId: drySowFeed.nob_id, lobId: drySowFeed.lob_id, categoryId: drySowFeed.category_id,
+            sourceLedgerId: mulSilo2Layer.ledgerId,
+          });
+          const txId = await recordBatchTx({
+            batchId: b1Id, date: d, txType: 'CONSUMPTION', itemId: drySowFeed.item_id,
+            quantity: 2.2, uom: 'KG', rate: 35.0, amount: 77.0, animalId: aId, ledgerId: lId,
+            remarks: 'Morning Feed Insemination',
+          });
+          await recordDailyData({ lineId: b1InsemMornLine, batchId: b1Id, animalId: aId, date: d, enteredValue: 2.2, posted: true, postingRef: txId });
+        }
+        if (b1InsemEveLine && mulSilo2 && mulSilo2Layer) {
+          const lId = await recordLedgerConsumption({
+            batchNo: 'BATCH-000001', lineId: b1InsemEveLine, date: d,
+            warehouseId: mulSilo2.location_id, itemId: drySowFeed.item_id, itemCode: drySowFeed.item_code,
+            itemName: drySowFeed.item_name, quantity: 1.4, uom: 'KG', rate: 35.0, amount: 49.0,
+            nobId: drySowFeed.nob_id, lobId: drySowFeed.lob_id, categoryId: drySowFeed.category_id,
+            sourceLedgerId: mulSilo2Layer.ledgerId,
+          });
+          const txId = await recordBatchTx({
+            batchId: b1Id, date: d, txType: 'CONSUMPTION', itemId: drySowFeed.item_id,
+            quantity: 1.4, uom: 'KG', rate: 35.0, amount: 49.0, animalId: aId, ledgerId: lId,
+            remarks: 'Evening Feed Insemination',
+          });
+          await recordDailyData({ lineId: b1InsemEveLine, batchId: b1Id, animalId: aId, date: d, enteredValue: 1.4, posted: true, postingRef: txId });
+        }
+        if (b1InsemHeatLine) {
+          await recordDailyData({ lineId: b1InsemHeatLine, batchId: b1Id, animalId: aId, date: d, enteredValue: 1, enteredText: 'Standing heat confirmed, inseminated with sire boar', posted: true });
+        }
+        if (b1InsemMortLine) {
+          await recordDailyData({ lineId: b1InsemMortLine, batchId: b1Id, animalId: aId, date: d, enteredValue: 0, enteredText: '0', posted: true });
+        }
+        if (b1InsemTempLine) {
+          await recordDailyData({ lineId: b1InsemTempLine, batchId: b1Id, animalId: aId, date: d, enteredValue: 21.0, enteredText: '21.0°C / 60% RH', posted: true });
+        }
+      }
+
+      // 3. Farrowing Stage Animals
+      for (const aId of b1FarrowAnimals) {
+        if (b1FarrowMornLine && mulSilo3 && mulSilo3Layer) {
+          const lId = await recordLedgerConsumption({
+            batchNo: 'BATCH-000001', lineId: b1FarrowMornLine, date: d,
+            warehouseId: mulSilo3.location_id, itemId: drySowFeed.item_id, itemCode: drySowFeed.item_code,
+            itemName: drySowFeed.item_name, quantity: 3.5, uom: 'KG', rate: 35.0, amount: 122.5,
+            nobId: drySowFeed.nob_id, lobId: drySowFeed.lob_id, categoryId: drySowFeed.category_id,
+            sourceLedgerId: mulSilo3Layer.ledgerId,
+          });
+          const txId = await recordBatchTx({
+            batchId: b1Id, date: d, txType: 'CONSUMPTION', itemId: drySowFeed.item_id,
+            quantity: 3.5, uom: 'KG', rate: 35.0, amount: 122.5, animalId: aId, ledgerId: lId,
+            remarks: 'Morning Feed Farrowing / Lactation',
+          });
+          await recordDailyData({ lineId: b1FarrowMornLine, batchId: b1Id, animalId: aId, date: d, enteredValue: 3.5, posted: true, postingRef: txId });
+        }
+        if (b1FarrowEveLine && mulSilo3 && mulSilo3Layer) {
+          const lId = await recordLedgerConsumption({
+            batchNo: 'BATCH-000001', lineId: b1FarrowEveLine, date: d,
+            warehouseId: mulSilo3.location_id, itemId: drySowFeed.item_id, itemCode: drySowFeed.item_code,
+            itemName: drySowFeed.item_name, quantity: 2.5, uom: 'KG', rate: 35.0, amount: 87.5,
+            nobId: drySowFeed.nob_id, lobId: drySowFeed.lob_id, categoryId: drySowFeed.category_id,
+            sourceLedgerId: mulSilo3Layer.ledgerId,
+          });
+          const txId = await recordBatchTx({
+            batchId: b1Id, date: d, txType: 'CONSUMPTION', itemId: drySowFeed.item_id,
+            quantity: 2.5, uom: 'KG', rate: 35.0, amount: 87.5, animalId: aId, ledgerId: lId,
+            remarks: 'Evening Feed Farrowing / Lactation',
+          });
+          await recordDailyData({ lineId: b1FarrowEveLine, batchId: b1Id, animalId: aId, date: d, enteredValue: 2.5, posted: true, postingRef: txId });
+        }
+        if (b1FarrowAttendLine) {
+          await recordDailyData({ lineId: b1FarrowAttendLine, batchId: b1Id, animalId: aId, date: d, enteredValue: 1, enteredText: 'Sow settled, active lactation, creep lamp warm', posted: true });
+        }
+        if (b1FarrowMortLine) {
+          await recordDailyData({ lineId: b1FarrowMortLine, batchId: b1Id, animalId: aId, date: d, enteredValue: 0, enteredText: '0', posted: true });
+        }
+        if (b1FarrowTempLine) {
+          await recordDailyData({ lineId: b1FarrowTempLine, batchId: b1Id, animalId: aId, date: d, enteredValue: 24.5, enteredText: '24.5°C / 55% RH (creep warmers active)', posted: true });
+        }
+
+        // Ear Tag Serial Assignment on 2026-09-03 for sow PIG-2026-0005
+        if (d === '2026-09-03' && aId === animalIdMap.get('PIG-2026-0005') && b1FarrowTagLine && mulStoreWarehouse) {
+          const serialNo = 'SER-MUL100-0001';
+          const tagLayer = storeTagLayerMap.get(`${mulStoreWarehouse}:${serialNo}`);
+          const lId = await recordLedgerConsumption({
+            batchNo: 'BATCH-000001', lineId: b1FarrowTagLine, date: d,
+            warehouseId: mulStoreWarehouse, itemId: tagItem.item_id, itemCode: tagItem.item_code,
+            itemName: tagItem.item_name, quantity: 1.0, uom: 'PCS', rate: 2.5, amount: 2.5,
+            serialNo, nobId: tagItem.nob_id, lobId: tagItem.lob_id, categoryId: tagItem.category_id,
+            sourceLedgerId: tagLayer?.ledgerId,
+          });
+          const txId = await recordBatchTx({
+            batchId: b1Id, date: d, txType: 'CONSUMPTION', itemId: tagItem.item_id,
+            quantity: 1.0, uom: 'PCS', rate: 2.5, amount: 2.5, animalId: aId, ledgerId: lId,
+            remarks: `RFID Ear Tag Attached: ${serialNo}`,
+          });
+          await recordDailyData({
+            lineId: b1FarrowTagLine, batchId: b1Id, animalId: aId, date: d,
+            enteredValue: 1.0, serialNo, posted: true, postingRef: txId,
+            remarks: 'Serial tracked RFID ear tag attached',
+          });
+        }
+      }
+
+      // Lock stages for BATCH-000001 on this date
+      await lockStageDate(b1Id, drySowStageId, d);
+      await lockStageDate(b1Id, inseminationStageId, d);
+      await lockStageDate(b1Id, farrowingStageId, d);
+
+      // ── BATCH-000003 (BATCH_WISE on GRA100 - 150 Head Commercial Growout) ──
+      if (b3CreepLine && graWeanerSilo && graWeanerSiloLayer) {
+        const lId = await recordLedgerConsumption({
+          batchNo: 'BATCH-000003', lineId: b3CreepLine, date: d,
+          warehouseId: graWeanerSilo.location_id, itemId: weanerFeed.item_id, itemCode: weanerFeed.item_code,
+          itemName: weanerFeed.item_name, quantity: 150.0, uom: 'KG', rate: 35.0, amount: 5250.0,
+          nobId: weanerFeed.nob_id, lobId: weanerFeed.lob_id, categoryId: weanerFeed.category_id,
+          sourceLedgerId: graWeanerSiloLayer.ledgerId,
+        });
+        const txId = await recordBatchTx({
+          batchId: b3Id, date: d, txType: 'CONSUMPTION', itemId: weanerFeed.item_id,
+          quantity: 150.0, uom: 'KG', rate: 35.0, amount: 5250.0, ledgerId: lId,
+          remarks: 'Morning Creep Feed (150 Head x 1.0 KG)',
+        });
+        await recordDailyData({ lineId: b3CreepLine, batchId: b3Id, date: d, enteredValue: 150.0, posted: true, postingRef: txId });
+      }
+
+      if (b3EveLine && graWeanerSilo && graWeanerSiloLayer) {
+        const lId = await recordLedgerConsumption({
+          batchNo: 'BATCH-000003', lineId: b3EveLine, date: d,
+          warehouseId: graWeanerSilo.location_id, itemId: weanerFeed.item_id, itemCode: weanerFeed.item_code,
+          itemName: weanerFeed.item_name, quantity: 120.0, uom: 'KG', rate: 35.0, amount: 4200.0,
+          nobId: weanerFeed.nob_id, lobId: weanerFeed.lob_id, categoryId: weanerFeed.category_id,
+          sourceLedgerId: graWeanerSiloLayer.ledgerId,
+        });
+        const txId = await recordBatchTx({
+          batchId: b3Id, date: d, txType: 'CONSUMPTION', itemId: weanerFeed.item_id,
+          quantity: 120.0, uom: 'KG', rate: 35.0, amount: 4200.0, ledgerId: lId,
+          remarks: 'Evening Creep Feed (150 Head x 0.8 KG)',
+        });
+        await recordDailyData({ lineId: b3EveLine, batchId: b3Id, date: d, enteredValue: 120.0, posted: true, postingRef: txId });
+      }
+
+      if (b3MortLine) {
+        await recordDailyData({ lineId: b3MortLine, batchId: b3Id, date: d, enteredValue: 0, enteredText: '0', posted: true });
+      }
+      if (b3TempLine) {
+        await recordDailyData({ lineId: b3TempLine, batchId: b3Id, date: d, enteredValue: 23.0, enteredText: '23.0°C / 58% RH', posted: true });
+      }
+
+      // Vaccine Lot Tracking for BATCH-000003 on 2026-09-02 (150 Doses)
+      if (d === '2026-09-02' && b3VacLine && graStoreWarehouse && graVacLayer) {
+        const lId = await recordLedgerConsumption({
+          batchNo: 'BATCH-000003', lineId: b3VacLine, date: d,
+          warehouseId: graStoreWarehouse, itemId: vacItem.item_id, itemCode: vacItem.item_code,
+          itemName: vacItem.item_name, quantity: 150.0, uom: 'DOSE', rate: 85.0, amount: 12750.0,
+          lotNo: 'LOT-2026-X1', nobId: vacItem.nob_id, lobId: vacItem.lob_id, categoryId: vacItem.category_id,
+          sourceLedgerId: graVacLayer.ledgerId,
+        });
+        const txId = await recordBatchTx({
+          batchId: b3Id, date: d, txType: 'CONSUMPTION', itemId: vacItem.item_id,
+          quantity: 150.0, uom: 'DOSE', rate: 85.0, amount: 12750.0, ledgerId: lId,
+          remarks: 'Herd Vaccination — Parvo-Shield 150 Doses (Lot: LOT-2026-X1)',
+        });
+        await recordDailyData({
+          lineId: b3VacLine, batchId: b3Id, date: d,
+          enteredValue: 150.0, lotNo: 'LOT-2026-X1', posted: true, postingRef: txId,
+          remarks: 'Batch-wide booster vaccination administered',
+        });
+      }
+    }
+
+    // ── Seed Pending Draft Day (2026-09-04) ──
+    const pendingDate = '2026-09-04';
+    // BATCH-000001 (MUL100 Sows) Drafts
+    for (const aId of b1DrySowAnimals) {
+      if (b1DryMornLine) await recordDailyData({ lineId: b1DryMornLine, batchId: b1Id, animalId: aId, date: pendingDate, enteredValue: 2.5, posted: false });
+      if (b1DryEveLine) await recordDailyData({ lineId: b1DryEveLine, batchId: b1Id, animalId: aId, date: pendingDate, enteredValue: 1.5, posted: false });
+      if (b1DryHeatLine) await recordDailyData({ lineId: b1DryHeatLine, batchId: b1Id, animalId: aId, date: pendingDate, enteredValue: 1, posted: false });
+      if (b1DryMortLine) await recordDailyData({ lineId: b1DryMortLine, batchId: b1Id, animalId: aId, date: pendingDate, enteredValue: 0, posted: false });
+    }
+    for (const aId of b1InsemAnimals) {
+      if (b1InsemMornLine) await recordDailyData({ lineId: b1InsemMornLine, batchId: b1Id, animalId: aId, date: pendingDate, enteredValue: 2.2, posted: false });
+      if (b1InsemEveLine) await recordDailyData({ lineId: b1InsemEveLine, batchId: b1Id, animalId: aId, date: pendingDate, enteredValue: 1.4, posted: false });
+      if (b1InsemHeatLine) await recordDailyData({ lineId: b1InsemHeatLine, batchId: b1Id, animalId: aId, date: pendingDate, enteredValue: 1, posted: false });
+      if (b1InsemMortLine) await recordDailyData({ lineId: b1InsemMortLine, batchId: b1Id, animalId: aId, date: pendingDate, enteredValue: 0, posted: false });
+    }
+    for (const aId of b1FarrowAnimals) {
+      if (b1FarrowMornLine) await recordDailyData({ lineId: b1FarrowMornLine, batchId: b1Id, animalId: aId, date: pendingDate, enteredValue: 3.5, posted: false });
+      if (b1FarrowEveLine) await recordDailyData({ lineId: b1FarrowEveLine, batchId: b1Id, animalId: aId, date: pendingDate, enteredValue: 2.5, posted: false });
+      if (b1FarrowAttendLine) await recordDailyData({ lineId: b1FarrowAttendLine, batchId: b1Id, animalId: aId, date: pendingDate, enteredValue: 1, posted: false });
+      if (b1FarrowMortLine) await recordDailyData({ lineId: b1FarrowMortLine, batchId: b1Id, animalId: aId, date: pendingDate, enteredValue: 0, posted: false });
+    }
+
+    // BATCH-000003 (GRA100 Commercial) Drafts
+    if (b3CreepLine) await recordDailyData({ lineId: b3CreepLine, batchId: b3Id, date: pendingDate, enteredValue: 150.0, posted: false });
+    if (b3EveLine) await recordDailyData({ lineId: b3EveLine, batchId: b3Id, date: pendingDate, enteredValue: 120.0, posted: false });
+    if (b3MortLine) await recordDailyData({ lineId: b3MortLine, batchId: b3Id, date: pendingDate, enteredValue: 0, posted: false });
+
+    console.log('   ✔ Seeded Batch Daily Data Entries for Sep 01-03 (Posted + Lot/Serial Tracked) and Sep 04 (Pending Drafts).');
+    console.log('   ✔ Synchronized inventory ledger consumption and stage locks.');
+
   } finally {
     await conn.end();
   }
@@ -1195,7 +1755,7 @@ export async function runFullFreshSetup() {
   runStep('Step 14: Stamping NOB & LOB Taxonomy on Masters', 'stamp-master-nob-lob.ts --apply');
   runStep('Step 15: Aligning Production Role Permissions', 'align-production-permissions.ts --apply');
 
-  // 5. Seed Multi-Farm & Multi-Stage Batches, Schedulers, GRN & Transfers
+  // 5. Seed Multi-Farm & Multi-Stage Batches, Schedulers, GRN, Transfers & Daily Data Entries
   await seedOperationalDataAndBatches();
 
   console.log('\n================================================================');
@@ -1212,12 +1772,21 @@ export async function runFullFreshSetup() {
   console.log('                       • BATCH-000004: BATCH_WISE on GRA100  [Grower, Finisher]');
   console.log('                       • BATCH-000005: ANIMAL_WISE on POR100 [Dry Sow, Farrowing]');
   console.log('  5. Schedulers (12):  Full auto-scheduled headers & lines for every batch stage.');
+  console.log('                       Including Booster Vaccine (Lot Tracked) and RFID Ear Tag (Serial Tracked).');
   console.log('  6. Stock (GRN):      5,000 KG Feed in ALL shed silos; Feeds, Premix, Vaccines & Tags in Stores.');
+  console.log('                       Vaccines: 200 DOSE (LOT-2026-X1); RFID Ear Tags: 20 PCS (Individual Serials).');
   console.log('  7. Transfers (3):    • TR-000001 (POSTED): MUL100 Store -> Silo 1 (1,000 KG Feed)');
   console.log('                       • TR-000002 (POSTED): GRA100 Store -> Silo 4 (1,000 KG Feed)');
   console.log('                       • TR-000003 (DRAFT):  POR100 Store -> Silo 2 (800 KG Feed)');
-  console.log('  8. Security/Roles:   MANAGER & OPERATOR roles assigned to all farm staff logins.');
-  console.log('  9. Login:            http://localhost:3002/login?tenant=devco');
+  console.log('  8. Daily Entries:    Multi-day batch daily data entries (batch_daily_data):');
+  console.log('                       • Posted feeds, health checks, temp/humidity logs (Sep 01 - Sep 03).');
+  console.log('                       • Vaccine Lot Administration (LOT-2026-X1) on Sep 03 (BATCH-000001 & BATCH-000003).');
+  console.log('                       • Ear Tag Serial Assignment (SER-MUL100-0001) on Sep 03 for Sow PIG-2026-0005.');
+  console.log('                       • Negative FIFO inventory consumption synchronized for all posted lines.');
+  console.log('                       • Batch data entry locks applied for posted stages (Sep 01 - Sep 03).');
+  console.log('                       • Pre-filled draft entries for Sep 04 ready to review or post.');
+  console.log('  9. Security/Roles:   MANAGER & OPERATOR roles assigned to all farm staff logins.');
+  console.log(' 10. Login:            http://localhost:3002/login?tenant=devco');
   console.log('     Tenant Admin:     tenant.admin@triplec.local / 12345678');
   console.log('     Farm Managers:    mul100.manager@triplec.local / gra100.manager@triplec.local');
   console.log('================================================================\n');
@@ -1229,3 +1798,4 @@ if (require.main === module) {
     process.exitCode = 1;
   });
 }
+

@@ -28,7 +28,7 @@ const tenantCode = (process.env.DEV_TENANT_CODE || 'devco').toLowerCase();
 const tenantDatabase = process.env.DEV_TENANT_DATABASE || `tenant_${tenantCode}`;
 
 const ITEM_CODE = 'ITM-LOT-VACCINE';
-const ITEM_NAME = 'Parvo-Shield Swine Vaccine (Lot Tracked)';
+const ITEM_NAME = 'Parvo-Shield Swine Vaccine';
 const RECEIPT_NO = 'GR-LOT-DEMO-001';
 const LOT_NO = 'LOT-DEMO-0001';
 

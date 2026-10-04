@@ -3483,6 +3483,7 @@ export class BatchService {
                 row.entered_value != null ? Number(row.entered_value) : undefined,
               entered_text: row.entered_text || undefined,
               lot_no: row.lot_no || undefined,
+              serial_no: row.serial_no || undefined,
               remarks: row.remarks || undefined,
             } as any,
             tenantId,
@@ -3853,17 +3854,17 @@ export class BatchService {
       const lock = lockRows.find((l) => l.stage_id === stageId);
       const isStageLocked = lock?.status === 'LOCKED';
 
-      const postedEntries = animals.length
+      const stageAnimalEntries = animals.length
         ? await this.db
             .select({
               animal_id: schema.batchDailyData.animal_id,
+              posted: schema.batchDailyData.posted,
             })
             .from(schema.batchDailyData)
             .where(
               and(
                 eq(schema.batchDailyData.batch_id, batch.batch_id),
                 eq(schema.batchDailyData.entry_date, dateStr),
-                eq(schema.batchDailyData.posted, true),
                 inArray(
                   schema.batchDailyData.animal_id,
                   animals.map((a) => a.animal_id),
@@ -3871,10 +3872,20 @@ export class BatchService {
               ),
             )
         : [];
-      const postedAnimalSet = new Set(
-        postedEntries
+      const animalHasDrafts = new Set(
+        stageAnimalEntries
+          .filter((e) => !e.posted)
           .map((e) => e.animal_id)
           .filter((id): id is string => Boolean(id)),
+      );
+      const animalHasPosted = new Set(
+        stageAnimalEntries
+          .filter((e) => Boolean(e.posted))
+          .map((e) => e.animal_id)
+          .filter((id): id is string => Boolean(id)),
+      );
+      const fullyPostedAnimalSet = new Set(
+        Array.from(animalHasPosted).filter((id) => !animalHasDrafts.has(id)),
       );
 
       if (!header) {
@@ -3891,7 +3902,7 @@ export class BatchService {
           animals: animals.map((a) => ({
             animal_id: a.animal_id,
             animal_code: a.animal_code,
-            is_posted: isStageLocked || postedAnimalSet.has(a.animal_id),
+            is_posted: isStageLocked || fullyPostedAnimalSet.has(a.animal_id),
             lines: [],
           })),
         });
@@ -3917,7 +3928,7 @@ export class BatchService {
         animalLines.push({
           animal_id: animal.animal_id,
           animal_code: animal.animal_code,
-          is_posted: isStageLocked || postedAnimalSet.has(animal.animal_id),
+          is_posted: isStageLocked || fullyPostedAnimalSet.has(animal.animal_id),
           lines: built.lines,
         });
       }
@@ -4009,23 +4020,34 @@ export class BatchService {
     const alreadyPostedEntries = await this.db
       .select({
         animal_id: schema.batchDailyData.animal_id,
+        posted: schema.batchDailyData.posted,
       })
       .from(schema.batchDailyData)
       .where(
         and(
           eq(schema.batchDailyData.batch_id, batchId),
           eq(schema.batchDailyData.entry_date, dateStr),
-          eq(schema.batchDailyData.posted, true),
           inArray(
             schema.batchDailyData.animal_id,
             allStageAnimals.map((a) => a.animal_id),
           ),
         ),
       );
-    const alreadyPostedAnimalIds = new Set(
+    const animalsWithDrafts = new Set(
       alreadyPostedEntries
+        .filter((e) => e.posted === false || (e.posted as any) === 0)
         .map((e) => e.animal_id)
         .filter((id): id is string => Boolean(id)),
+    );
+    const animalsWithPosted = new Set(
+      alreadyPostedEntries
+        .filter((e) => e.posted === true || (e.posted as any) === 1 || e.posted == null)
+        .map((e) => e.animal_id)
+        .filter((id): id is string => Boolean(id)),
+    );
+    // An animal is considered already fully posted if it has posted entries AND has no pending draft rows
+    const alreadyPostedAnimalIds = new Set(
+      Array.from(animalsWithPosted).filter((id) => !animalsWithDrafts.has(id)),
     );
 
     if (animalId) {
@@ -4147,6 +4169,7 @@ export class BatchService {
                     : undefined,
                 entered_text: row.entered_text || undefined,
                 lot_no: row.lot_no || undefined,
+                serial_no: row.serial_no || undefined,
                 remarks: row.remarks || undefined,
               } as any,
               tenantId,
@@ -4534,6 +4557,11 @@ export class BatchService {
       const uom = line.item_id ? itemUom(line.item_id) : line.kpi_uom;
       const stdRate = standardRate(line, uom);
 
+      const it = itemRows.find((x) => x.item_id === line.item_id);
+      const isLot = Boolean(it?.is_lot_tracked);
+      const isSerial = Boolean(it?.is_serial_tracked);
+      const isTracked = isLot || isSerial || Boolean(line.lot_required);
+
       return {
         line_id: line.line_id,
         line_type: line.line_type,
@@ -4545,22 +4573,14 @@ export class BatchService {
         item_code: itemCode(line.item_id),
         // Medicine/vaccine withdrawal period — auto-flows from item_master,
         // shown only where it's actually relevant (lot-tracked CONSUMPTION).
-        withdrawal_days: line.lot_required
-          ? (itemRows.find((x) => x.item_id === line.item_id)
-              ?.withdrawal_days ?? null)
-          : null,
-        is_lot_tracked: line.lot_required
-          ? !!itemRows.find((x) => x.item_id === line.item_id)?.is_lot_tracked
-          : false,
-        is_serial_tracked: line.lot_required
-          ? !!itemRows.find((x) => x.item_id === line.item_id)
-              ?.is_serial_tracked
-          : false,
+        withdrawal_days: isTracked ? (it?.withdrawal_days ?? null) : null,
+        is_lot_tracked: isLot,
+        is_serial_tracked: isSerial,
         resource_id: line.resource_id,
         uom,
         occurrence: line.occurrence,
         is_mandatory: line.is_mandatory,
-        lot_required: line.lot_required,
+        lot_required: isTracked,
         allow_qty_edit: line.allow_qty_edit ?? true,
         qty_basis: line.qty_basis ?? 'PER_HEAD',
         expected_qty: this.computeExpectedQty(
@@ -4569,6 +4589,8 @@ export class BatchService {
           stageAnimalCount,
         ),
         already_entered_qty: alreadyEntered,
+        already_entered_lot: enteredEntry?.lot_no || enteredEntry?.serial_no || null,
+        already_entered_serial: enteredEntry?.serial_no || null,
         std_rate: stdRate,
       };
     });
