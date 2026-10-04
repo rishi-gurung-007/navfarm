@@ -293,4 +293,23 @@ describe('RequisitionsPanel (D26)', () => {
     await screen.findByText('REQ-VIL100-2026-00004', { selector: 'h2' });
     expect(get).toHaveBeenCalledWith('/feed-requisition/req-1');
   });
+
+  // Task 18 (decisions 2026-10-04 "a requisition ... is created and edited
+  // in a dialog"): opening a requisition — drafted here or loaded by `?id=`
+  // — must show it in an actual dialog (role="dialog"), not inline in place
+  // of the list; closing it (the dialog's own close control) returns to the
+  // list without a page navigation.
+  it('opens an existing requisition in a dialog, and closing it returns to the list (Task 18)', async () => {
+    render(<RequisitionsPanel />);
+    fireEvent.click(await screen.findByRole('button', { name: 'rqDraftFromForecast' }));
+    await screen.findByText('REQ-VIL100-2026-00004', { selector: 'h2' });
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByText('REQ-VIL100-2026-00004', { selector: 'h2' })).toBeTruthy();
+    expect(within(dialog).getByRole('button', { name: 'rqSubmit' })).toBeTruthy();
+    // The dialog wrap supplies its own Back/title strip; the detail's own must not double up.
+    expect(screen.queryByRole('button', { name: 'rqBack' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'close' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(await screen.findByRole('table', { name: 'rqListLabel' })).toBeTruthy();
+  });
 });

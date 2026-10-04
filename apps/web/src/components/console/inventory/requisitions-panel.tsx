@@ -23,6 +23,7 @@ import { api } from "@/services/api-client";
 import { InlineAlert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Dialog } from "@/components/ui/dialog";
 import { Field } from "@/components/ui/field";
 import { ScrollTable } from "@/components/ui/scroll-table";
 import { useLanguage } from "@/hooks/useLanguage";
@@ -214,11 +215,18 @@ export function FeedRequisitionPanel() {
           <Button size="sm" variant="outline" onClick={farm.retry}>{t("rqRetry")}</Button>
         </InlineAlert>
       ) : selected ? (
-        <FeedRequisitionDetail
-          view={selected}
-          onView={(v, n) => { setSelected(v); if (n) setNotice(n); loadList(); }}
-          onBack={() => setSelected(null)}
-        />
+        // Task 18 (decisions 2026-10-04): created and edited in a dialog, not
+        // in place of the list. The dialog supplies the title and close
+        // control that FeedRequisitionDetail's own strip would otherwise
+        // duplicate — `embedded` suppresses that strip (piece 1).
+        <Dialog open onClose={() => setSelected(null)} title={selected.req_no}>
+          <FeedRequisitionDetail
+            embedded
+            view={selected}
+            onView={(v, n) => { setSelected(v); if (n) setNotice(n); loadList(); }}
+            onBack={() => setSelected(null)}
+          />
+        </Dialog>
       ) : loading ? (
         <div className="p-10 text-center text-xs" style={{ color: "var(--text-secondary)" }}><Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" /> {t("rqLoading")}</div>
       ) : rows.length === 0 ? (
