@@ -371,3 +371,25 @@ The Approvals inbox no longer lists requisitions; **Approvals → Requisitions i
 - Not done here, deliberately: row-level Approve/Reject buttons in the list rows (they are in the dialog, which
   is where editing happens per the 4 Oct dialog ruling) and the Feed tab's reuse check (it already mounts the
   same detail components; verified unchanged).
+
+## WP1f: complete — e91cbc87 (navfarm-49/GLM Freebuff, 5 Oct)
+
+The 5 Oct decision (demo roles get requisition permissions) as the data script
+`db-align-requisition-permissions` (`src/scripts/align-requisition-permissions.ts`,
+§4 shape: read-only plan / --verify rollback / --apply, GET_LOCK, non-local hosts
+refused): MANAGER → view/create/edit/submit/approve; OPERATOR → view/create/edit/
+submit, no approve. "Submit" rides on can_create (no can_submit column; the
+submit route guards on 'create'). ACCOUNTANT/SUPER_ADMIN untouched; no duplicates.
+
+- 7 tests, written first; --verify left 0 rows; --apply committed and read back in
+  MySQL (MANAGER 1/1/1/1, OPERATOR 1/1/1/0).
+- **Live:** vil100.entry@triplec.local (OPERATOR, standing area): view 200, feed
+  view 200, drafted RQ-00017, submitted, approve → 403 (row stayed
+  PENDING_APPROVAL). area.admin@triplec.local (MANAGER) with a **temporary** area
+  assignment (0 standing rows read first; deleted and re-queried after): approved
+  RQ-00017 → APPROVED in MySQL, approved_by stamped.
+- **Flagged for WP4:** the demo personas' standing wiring is incomplete — no
+  MANAGER-role user holds a standing operational-area assignment (area.admin@ has
+  none; the per-farm `*.manager@` users hold NO role at all — NULL
+  user_role_assignment rows). The permission grant is correct; the persona wiring
+  is demo-data work.
