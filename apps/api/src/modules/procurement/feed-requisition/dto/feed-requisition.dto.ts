@@ -19,6 +19,8 @@ export class ManualFeedLineInput {
   @ApiProperty() @IsUUID() item_id: string;
   @ApiProperty() @Type(() => Number) @IsNumber() @Min(0.001) quantity_kg: number;
   @ApiProperty() @IsDateString() proposed_delivery_date: string;
+  @ApiPropertyOptional({ description: 'Requisition row 13: why the line orders an item the lifecycle does not require' })
+  @IsOptional() @IsString() @MaxLength(180) exception_reason?: string;
 }
 
 export class CreateManualFeedRequisitionDto {

@@ -400,6 +400,21 @@ export function exceptionReasonOf(description: string | null | undefined): strin
   return description?.startsWith(EXCEPTION_PREFIX) ? description.slice(EXCEPTION_PREFIX.length) : null;
 }
 
+/**
+ * Spec §6a (Rishi, 3 Oct): "A manual feed line's item is checked against the
+ * lifecycle-required item for that silo's sheds; a different item needs a
+ * recorded exception reason (Req. row 13)." The required items at a
+ * destination are those the forecast demands there in the draft window (the
+ * engine's sources). Returns the line's own item when it is one of them, a
+ * demanded item when it is not (so lineChangeProblems reports the exception),
+ * and null when nothing is demanded there.
+ */
+export function requiredItemForManualLine(sources: Array<{ locationId: string; itemId: string }>, destinationId: string, itemId: string): string | null {
+  const here = [...new Set(sources.filter((s) => s.locationId === destinationId).map((s) => s.itemId))].sort();
+  if (!here.length) return null;
+  return here.includes(itemId) ? itemId : here[0];
+}
+
 /** Requisition §1 row 17 "Breed Lifecycle Row Reference": e.g. `L-LINE WEANER days 25–27`. */
 const CALC_UNIT_WORD: Record<string, string> = { DAY: 'days', WEEK: 'weeks', MONTH: 'months' };
 export function lifecycleRefLabel(r: { breed_code?: string | null; stage_code?: string | null; period_from?: number | null; period_to?: number | null; calc_unit?: string | null }): string | null {

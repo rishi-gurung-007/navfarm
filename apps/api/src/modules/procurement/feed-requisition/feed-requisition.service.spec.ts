@@ -47,6 +47,18 @@ describe('FeedRequisitionService.createManual', () => {
       .rejects.toThrow(BadRequestException);
     expect(db.insert).not.toHaveBeenCalled();
   });
+
+  it('refuses a manual line ordering an item the lifecycle does not require, without an exception reason (Req. row 13)', async () => {
+    const silo = { location_id: 'silo-1', location_code: 'GRS/SILO-001', location_type: 'SILO', farm_id: 'farm-grs', is_active: true, feed_in_bags: null, low_level_kg: null };
+    selectQueue.push([{ location_code: 'GRS' }], [silo], [{ item_id: 'r2', item_name: 'Grower R2' }]);
+    const fc = { ...forecast, computeForFarm: jest.fn(async () => ({ sources: [{ locationId: 'silo-1', itemId: 'r1' }] })) };
+    const siloFeed = { currentItems: jest.fn(async () => new Map()) };
+    const svc = new FeedRequisitionService(transactionCls(db), fc, {} as any, { evaluateFarmSafely: jest.fn() } as any, siloFeed as any, {} as any, feedSettingsStub);
+    const line = { destination_location_id: 'silo-1', item_id: 'r2', quantity_kg: 3000, proposed_delivery_date: '2026-09-26' };
+    await expect(svc.createManual({ lines: [line] } as any, 'tenant-1', { userId: 'u', userType: 'TENANT_ADMIN' }))
+      .rejects.toThrow('Line 1: Feed item differs from the lifecycle requirement: record an exception reason (Requisition row 13).');
+    expect(db.insert).not.toHaveBeenCalled();
+  });
 });
 
 // ---------------------------------------------------------------------------

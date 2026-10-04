@@ -39,7 +39,7 @@ import { toFarmFeedSettings } from '../../inventory/feed-settings/feed-settings.
 import {
   ApprovalLine, DEFAULT_FEED_SETTINGS, DestinationInfo, DraftLine, EXCEPTION_PREFIX, FarmFeedSettings, FeedType, LineBreakdownRow, approvalProblems, bagCountFor,
   buildLineBreakdown, diffDaysIso, exceedsCapacity, exceptionReasonOf, feedTypeOf, lifecycleRefLabel, lineChangeProblems, lineKey, planDraftUpsert,
-  productionCycle, recommendLines, requisitionPriority, runKeyFor, serverToday, wasEdited,
+  productionCycle, recommendLines, requiredItemForManualLine, requisitionPriority, runKeyFor, serverToday, wasEdited,
 } from './feed-requisition.rules';
 import {
   AutoDraftFeedRequisitionDto, CreateManualFeedRequisitionDto, FeedLineEditInput, QueryFeedRequisitionDto,
@@ -795,7 +795,30 @@ export class FeedRequisitionService implements OnModuleInit {
       if (missing) throw new BadRequestException(`Feed item ${missing} is not an active feed item of this company.`);
 
       // D16: the requisition cycle is dated by the farm's day, the same one the forecast plans from.
-      const { today: manualToday } = await this.forecast.farmToday(companyId, tenantId);
+      const clock = await this.forecast.farmToday(companyId, tenantId);
+      const manualToday = clock.today;
+      // §6a / Req. row 13 and checkpoint 4 for a manual line — the same two rules an edited line meets
+      // (lineChangeProblems), with the requirement read from the forecast's demand at that destination.
+      // Task 9 had explicitly exempted a manual line ("nothing to differ from"): either entry point
+      // could order any feed into any silo unchallenged. The forecast is the only source of the
+      // requirement here (no second calculation of it).
+      const demand = await this.forecast.computeForFarm(farmId, companyId, tenantId, draftForecastRange(clock.today, undefined), clock);
+      const siloIds = dto.lines.map((l) => l.destination_location_id).filter((id) => destinations.get(id)?.locationType === 'SILO');
+      const held = siloIds.length ? await this.siloFeed.currentItems(siloIds, companyId, tenantId) : new Map();
+      const exceptionOf = new Map<number, string>();
+      dto.lines.forEach((line, i) => {
+        const dest = destinations.get(line.destination_location_id)!;
+        const resident = held.get(line.destination_location_id) ?? null;
+        const requiredItemId = requiredItemForManualLine(demand.sources, line.destination_location_id, line.item_id);
+        const problems = lineChangeProblems({
+          requiredItemId,
+          itemId: line.item_id,
+          exceptionReason: line.exception_reason?.trim() || null,
+          destination: { locationType: dest.locationType, heldItemId: resident?.item_id ?? null, heldBalanceKg: resident?.on_hand_qty ?? 0 },
+        });
+        if (problems.length) throw new BadRequestException(problems.map((p) => `Line ${i + 1}: ${p}`).join(' '));
+        if (requiredItemId !== null && requiredItemId !== line.item_id) exceptionOf.set(i, line.exception_reason!.trim());
+      });
       const cycle = productionCycle(manualToday, farm.settings.productionWeekday);
       return this.numbered(() => withTenantTransaction(this.cls, async () => {
         await this.lockFarm(farmId, tenantId);
@@ -829,7 +852,10 @@ export class FeedRequisitionService implements OnModuleInit {
             // Requisition §1 row 42: the same NAV-style 10000-step convention the auto-drafted lines use.
             line_seq: (i + 1) * 10000,
             item_id: line.item_id,
-            description: (nameOf.get(line.item_id) ?? '').slice(0, 200),
+            // Stored exactly as the edit path stores it (changeLineTarget): an exception reason
+            // (exception_reason is non-empty here — lineChangeProblems already refused the line
+            // otherwise), or the item's own name.
+            description: (exceptionOf.has(i) ? `${EXCEPTION_PREFIX}${exceptionOf.get(i)}` : (nameOf.get(line.item_id) ?? '')).slice(0, 200),
             quantity: String(line.quantity_kg),
             uom: 'KG',
             destination_location_id: line.destination_location_id,

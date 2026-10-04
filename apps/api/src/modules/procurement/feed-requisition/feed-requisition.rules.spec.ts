@@ -1,7 +1,7 @@
 import { buildFeedForecast, type ForecastInput, type ForecastSource } from '../../inventory/feed-forecast/feed-forecast.engine';
 import {
   DEFAULT_FEED_SETTINGS, DestinationInfo, approvalProblems, bagCountFor, buildLineBreakdown, deliveryDateNeedsRemarks, lineChangeProblems, deviationNeedsRemarks, feedTypeOf, planDraftUpsert,
-  productionCycle, recommendLines, requisitionPriority, roundOrderKg, runKeyFor, serverToday,
+  productionCycle, recommendLines, requiredItemForManualLine, requisitionPriority, roundOrderKg, runKeyFor, serverToday,
 } from './feed-requisition.rules';
 
 const S = DEFAULT_FEED_SETTINGS;
@@ -370,6 +370,19 @@ describe('lineChangeProblems — Req. row 13 and cp. 4', () => {
   });
   it('a line with no lifecycle requirement (manual) needs no exception', () => {
     expect(lineChangeProblems({ requiredItemId: null, itemId: 'r2', exceptionReason: null, destination: silo(null, 0) })).toEqual([]);
+  });
+});
+
+describe('requiredItemForManualLine — §6a: a manual line is checked against the lifecycle-required item', () => {
+  const sources = [{ locationId: 'silo-1', itemId: 'r1' }, { locationId: 'silo-1', itemId: 'r2' }, { locationId: 'silo-2', itemId: 'r3' }];
+  it('is the item itself when the forecast demands it there (current or next diet)', () => {
+    expect(requiredItemForManualLine(sources, 'silo-1', 'r2')).toBe('r2');
+  });
+  it('is a demanded item when the line names another', () => {
+    expect(requiredItemForManualLine(sources, 'silo-1', 'r9')).toBe('r1');
+  });
+  it('is null where nothing is demanded, so there is nothing to differ from', () => {
+    expect(requiredItemForManualLine(sources, 'store-1', 'r9')).toBeNull();
   });
 });
 
