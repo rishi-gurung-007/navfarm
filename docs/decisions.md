@@ -2519,3 +2519,15 @@ Rishi, 4 Oct:
    date/range or reporting period, house, silo, feed item, bulk/bagged), then sees the figures as
    charts and graphs (with the detail table beneath), not only a table.
 4. **The Feed Forecast shows the silo number (code) and the silo name** on its rows.
+
+## 2026-10-04 — The forecast grid shows the stock every day until it runs out
+
+Rishi, 4 Oct (from two screenshots of VIL100's forecast): a row went blank while its silo still held
+stock, and the red 0 appeared only from the shortage date with nothing on the days before.
+Ruling: every date cell of a forecast row shows that row's silo/feed-item projected balance for that
+date — whether or not that batch eats on that day — until the balance reaches 0; the date it reaches
+0 shows a red 0. **Daily** view: one column per day from the start until the stock is 0 (default end
+= the latest first-shortage date of the shown rows, never beyond the 45-day maximum; a user-typed
+To still wins). **Weekly** view: 7-day columns over the same span, each showing the balance at the
+end of that week, until 0. Workbook basis: Engine Step 6 "Compute each day separately" and Step 7
+"Projected closing KG and shortage date"; Engine §5 row 70 "projected closing … shortage date".
