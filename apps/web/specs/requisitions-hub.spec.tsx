@@ -230,3 +230,74 @@ describe("RequisitionsHub — Approvals → Requisitions lists and creates every
     expect((screen.getByLabelText("crqRemarks") as HTMLTextAreaElement).value).toBe("typed, not saved");
   });
 });
+
+/**
+ * WP1b (decisions.md 2026-10-04, "one Requisitions page"): the hub gains a
+ * "Waiting for my approval" filter, and Approve / Reject on pending rows —
+ * calling the EXISTING /approval/:id/approve|reject endpoints so the checks
+ * (remarks, deadline, reasons) stay in one place, exactly as the inbox's do.
+ */
+describe("RequisitionsHub — Waiting for my approval filter and Approve/Reject (WP1b)", () => {
+  const pendingRow = (id: string, doc_type: string, extra: Record<string, unknown> = {}) =>
+    row(id, doc_type, doc_type === "FEED" ? "INTERNAL_TRANSFER" : "STORE", {
+      status: "PENDING_APPROVAL", approval_status: "PENDING_APPROVAL", approval_request_id: `ar-${id}`, ...extra,
+    });
+
+  beforeEach(() => {
+    window.history.replaceState({}, "", "/approvals/requisitions");
+    get.mockImplementation(async (url: string) => {
+      if (url.startsWith("/requisition/options")) return { data: options };
+      if (url.startsWith("/feed-requisition/options")) return { data: { destinations: [], items: [] } };
+      if (url.includes("waiting_for_me=1") && url.startsWith("/requisition?")) {
+        return { data: [pendingRow("req-wait-feed", "FEED"), pendingRow("req-wait-item", "ITEM")] };
+      }
+      if (url.startsWith("/requisition?")) return { data: ROWS };
+      if (url === "/feed-requisition/req-wait-feed") return { data: { ...feedView, requisition_id: "req-wait-feed", approval_request_id: "ar-req-wait-feed" } };
+      if (url === "/requisition/req-wait-feed") return { data: { ...ROWS[0], requisition_id: "req-wait-feed", approval_request_id: "ar-req-wait-feed", lines: [] } };
+      if (url === "/requisition/req-wait-item") return { data: { ...itemView, requisition_id: "req-wait-item", approval_request_id: "ar-req-wait-item" } };
+      throw new Error(`unexpected GET ${url}`);
+    });
+  });
+
+  it("ticking the filter requests the list with waiting_for_me=1 and shows only those rows", async () => {
+    render(<RequisitionsHub />);
+    await screen.findByRole("table");
+    fireEvent.click(screen.getByLabelText("rhWaitingForMe"));
+    const waiting = await screen.findByText("NO-req-wait-feed");
+    expect(within(screen.getByRole("table")).getByText("NO-req-wait-item")).toBeTruthy();
+    expect(within(screen.getByRole("table")).queryByText("NO-req-fa")).toBeNull();
+    expect(listUrls().some((u) => u.includes("waiting_for_me=1"))).toBe(true);
+    expect(waiting).toBeTruthy();
+  });
+
+  it("a pending FEED row shows Approve/Reject, and Approve posts to /approval/:id/approve then reloads", async () => {
+    render(<RequisitionsHub />);
+    fireEvent.click(await screen.findByLabelText("rhWaitingForMe"));
+    fireEvent.click(await screen.findByText("NO-req-wait-feed"));
+    await screen.findByRole("dialog");
+    fireEvent.click(screen.getByRole("button", { name: "rhApprove" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/approval/ar-req-wait-feed/approve", {}));
+    expect(await screen.findByRole("table")).toBeTruthy();
+  });
+
+  it("Reject asks for a reason and posts it to /approval/:id/reject", async () => {
+    render(<RequisitionsHub />);
+    fireEvent.click(await screen.findByLabelText("rhWaitingForMe"));
+    fireEvent.click(await screen.findByText("NO-req-wait-item"));
+    await screen.findByRole("dialog");
+    fireEvent.click(screen.getByRole("button", { name: "rhReject" }));
+    fireEvent.change(await screen.findByLabelText("rhRejectionReason"), { target: { value: "Not this cycle" } });
+    fireEvent.click(screen.getByRole("button", { name: "rhRejectConfirm" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/approval/ar-req-wait-item/reject", { rejection_reason: "Not this cycle" }));
+  });
+
+  it("the pending FEED row passes the approver remarks to the same endpoint", async () => {
+    render(<RequisitionsHub />);
+    fireEvent.click(await screen.findByLabelText("rhWaitingForMe"));
+    fireEvent.click(await screen.findByText("NO-req-wait-feed"));
+    await screen.findByRole("dialog");
+    fireEvent.change(screen.getByLabelText("rhApproverRemarks"), { target: { value: "Capacity confirmed" } });
+    fireEvent.click(screen.getByRole("button", { name: "rhApprove" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/approval/ar-req-wait-feed/approve", { remarks: "Capacity confirmed" }));
+  });
+});

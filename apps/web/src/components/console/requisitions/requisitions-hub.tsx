@@ -56,6 +56,7 @@ interface HubRow {
   approval_status: string | null;
   document_status: string | null;
   fulfilment_status: string | null;
+  approval_request_id: string | null;
   line_count: number;
 }
 
@@ -68,6 +69,8 @@ function newCommonTitleKey(view: { doc_type: string; purpose?: string | null }) 
 }
 
 type Open = { kind: "feed"; view: FeedRequisitionView } | { kind: "common"; view: CommonRequisitionView } | null;
+/** The open row's decision surface, carried from the list row (WP1b). */
+type Decision = { requestId: string; docNo: string } | null;
 
 const TYPES = ["FEED", "ITEM", "FA", "SERVICE"] as const;
 const STATUSES = ["DRAFT", "AUTO_DRAFT", "PENDING_APPROVAL", "APPROVED", "REJECTED"];
@@ -89,6 +92,7 @@ export function RequisitionsHub() {
   const companyId = getActiveCompanyId();
   const [type, setType] = useState("");
   const [status, setStatus] = useState("");
+  const [waiting, setWaiting] = useState(false);
   const [rows, setRows] = useState<HubRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -96,6 +100,13 @@ export function RequisitionsHub() {
   const [needsCompany, setNeedsCompany] = useState(false);
   const [creating, setCreating] = useState(false);
   const [open, setOpen] = useState<Open>(null);
+  // WP1b: deciding happens in the dialog, through the SAME /approval endpoints
+  // the inbox uses — one decide path, one set of checks.
+  const [decision, setDecision] = useState<Decision>(null);
+  const [deciding, setDeciding] = useState(false);
+  const [remarks, setRemarks] = useState("");
+  const [rejecting, setRejecting] = useState(false);
+  const [rejectReason, setRejectReason] = useState("");
 
   const loadList = useCallback(async () => {
     setLoading(true);
@@ -104,6 +115,7 @@ export function RequisitionsHub() {
       const params = new URLSearchParams();
       if (type) params.set("doc_type", type);
       if (status) params.set("status", status);
+      if (waiting) params.set("waiting_for_me", "1");
       if (companyId) params.set("company_id", companyId);
       const list = unwrap<HubRow[]>(await api.get(`/requisition?${params.toString()}`));
       setRows(Array.isArray(list) ? list : []);
@@ -112,7 +124,7 @@ export function RequisitionsHub() {
     } finally {
       setLoading(false);
     }
-  }, [type, status, companyId]);
+  }, [type, status, waiting, companyId]);
 
   useEffect(() => {
     loadList();
@@ -126,7 +138,14 @@ export function RequisitionsHub() {
     setError("");
     setNotice("");
     setNeedsCompany(false);
+    setRemarks("");
+    setRejecting(false);
+    setRejectReason("");
     try {
+      const source = rows.find((r) => r.requisition_id === id);
+      setDecision(source?.approval_request_id && source.status === "PENDING_APPROVAL"
+        ? { requestId: source.approval_request_id, docNo: source.req_no }
+        : null);
       if (docType === "FEED") return await openFeed(id);
       // GET /requisition/:id answers for every kind, FEED included (read-only).
       const view = unwrap<CommonRequisitionView | { doc_type: "FEED" }>(await api.get(`/requisition/${id}`));
@@ -156,6 +175,49 @@ export function RequisitionsHub() {
     loadList();
   };
 
+  // WP1b: the same decide endpoints the Approvals inbox calls, so the
+  // document's own checks (remarks on deviation, rejection reasons) run in
+  // one place server-side. Approve closes the dialog and reloads; Reject asks
+  // for a reason first.
+  const decide = async () => {
+    if (!decision || deciding) return;
+    setDeciding(true);
+    setError("");
+    try {
+      await api.post(`/approval/${decision.requestId}/reject`, { rejection_reason: rejectReason.trim() || undefined });
+      const docNo = decision.docNo;
+      setOpen(null);
+      setDecision(null);
+      setRejecting(false);
+      setRejectReason("");
+      await loadList();
+      setNotice(tRef.current("rhRejectedMsg", { docNo }));
+    } catch (err: any) {
+      setError(err?.message || tRef.current("rqActionFailed"));
+    } finally {
+      setDeciding(false);
+    }
+  };
+
+  const approve = async () => {
+    if (!decision || deciding) return;
+    setDeciding(true);
+    setError("");
+    try {
+      await api.post(`/approval/${decision.requestId}/approve`, remarks.trim() ? { remarks: remarks.trim() } : {});
+      const docNo = decision.docNo;
+      setOpen(null);
+      setDecision(null);
+      setRemarks("");
+      await loadList();
+      setNotice(tRef.current("rhApprovedMsg", { docNo }));
+    } catch (err: any) {
+      setError(err?.message || tRef.current("rqActionFailed"));
+    } finally {
+      setDeciding(false);
+    }
+  };
+
   return (
     <div data-fill-body>
       <div className="flex shrink-0 flex-wrap items-end justify-between gap-3">
@@ -174,6 +236,14 @@ export function RequisitionsHub() {
               {STATUSES.map((s) => <option key={s} value={s}>{labelOf(REQ_STATUS_LABEL, s, t)}</option>)}
             </select>
           </Field>
+          {/* WP1b (decisions.md "one Requisitions page"): rows whose open
+              approval request the current user may decide — the same predicate
+              the Approvals inbox applies, via the API's waiting_for_me filter. */}
+          <label htmlFor="rh-waiting" className="flex cursor-pointer items-center gap-2 pb-1 text-xs font-medium text-[var(--text-primary)]">
+            <input id="rh-waiting" type="checkbox" className="nf-checkbox" checked={waiting}
+              onChange={(e) => { setWaiting(e.target.checked); setOpen(null); }} />
+            {t("rhWaitingForMe")}
+          </label>
         </div>
         <Button size="sm" onClick={() => { setNeedsCompany(false); setCreating(true); }}>{t("rhNew")}</Button>
       </div>
@@ -207,6 +277,36 @@ export function RequisitionsHub() {
               onView={(v, n) => { setOpen({ kind: "common", view: v }); afterView(n); }}
               onBack={() => setOpen(null)}
             />
+          )}
+          {decision && !rejecting && (
+            <div className="space-y-2 border-t pt-3" style={{ borderColor: "var(--border)" }}>
+              <Field label={t("rhApproverRemarks")} htmlFor="rh-remarks">
+                <textarea id="rh-remarks" rows={2} className="nf-input w-full" style={inputStyle} value={remarks}
+                  onChange={(e) => setRemarks(e.target.value)} />
+              </Field>
+              <div className="flex justify-end gap-2">
+                <Button variant="destructive" size="sm" disabled={deciding} onClick={() => { setRejecting(true); setRejectReason(""); }}>
+                  {t("rhReject")}
+                </Button>
+                <Button size="sm" className="nf-btn-primary" disabled={deciding} onClick={approve}>
+                  {t("rhApprove")}
+                </Button>
+              </div>
+            </div>
+          )}
+          {decision && rejecting && (
+            <div className="space-y-2 border-t pt-3" style={{ borderColor: "var(--border)" }}>
+              <Field label={t("rhRejectionReason")} htmlFor="rh-reject-reason">
+                <textarea id="rh-reject-reason" rows={2} className="nf-input w-full" style={inputStyle} value={rejectReason}
+                  onChange={(e) => setRejectReason(e.target.value)} />
+              </Field>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" size="sm" disabled={deciding} onClick={() => setRejecting(false)}>{t("rhRejectCancel")}</Button>
+                <Button variant="destructive" size="sm" disabled={deciding} onClick={decide}>
+                  {t("rhRejectConfirm")}
+                </Button>
+              </div>
+            </div>
           )}
         </Dialog>
       ) : loading ? (

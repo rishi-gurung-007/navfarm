@@ -8,6 +8,7 @@
  * against rows exactly as the legacy writer left them (new columns null).
  */
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import { eq, inArray } from 'drizzle-orm';
 import { transactionCls } from '../../../test-utils/transaction-cls';
 import { MySqlDialect } from 'drizzle-orm/mysql-core';
 import { RequisitionService } from './requisition.service';
@@ -887,5 +888,67 @@ describe('WP1e — the restricted-LOB filter follows the requisition\'s farm (de
     const service = new RequisitionService(cls, approvalsMock() as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
     await service.findAll({ company_id: 'co-1' }, TENANT);
     expect(new MySqlDialect().sqlToQuery(whereCalls[0] as any).sql).not.toContain('lob_id');
+  });
+});
+
+/**
+ * WP1b (decisions.md 2026-10-04, "one Requisitions page"): the hub's
+ * "Waiting for my approval" filter lists the requisitions whose open approval
+ * request the current user may decide — through an EXISTS on approval_request
+ * carrying the inbox's own predicate (ApprovalService.requisitionRequestConditions,
+ * which is farmConditions + the requisition kinds), never a second copy.
+ * An admin's waiting list spans every farm in scope (the same bypassFarm the
+ * decide lock uses — the review's carried-forward item); other user types keep
+ * the active-farm narrowing; the company boundary never moves.
+ */
+describe('WP1b — the hub waiting-for-my-approval filter', () => {
+  it.each(['COMPANY_ADMIN', 'TENANT_ADMIN'] as const)(
+    "an %s's waiting list drops the active-farm filter and carries the inbox predicate's EXISTS",
+    async (userType) => {
+      const { db, whereCalls } = makeDb();
+      const cls = transactionCls(db);
+      useFarmScope(cls, { farmId: 'farm-active', restricted: false, companyId: 'co-1', lobId: null } as any);
+      const approvals = approvalsMock();
+      approvals.requisitionRequestConditions = jest.fn(() => {
+        const R = (require('../../../core/database/schema') as typeof schema).approvalRequest;
+        return [eq(R.status, 'PENDING'), inArray(R.doc_type, ['REQUISITION', 'FEED_REQUISITION'])];
+      });
+      const service = new RequisitionService(cls, approvals as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
+      await service.findAll({} as any, TENANT, { waitingForMe: true, userType });
+      const q = new MySqlDialect().sqlToQuery(whereCalls[0] as any);
+      expect(q.sql).toContain('EXISTS');
+      expect(q.sql).toContain('approval_request');
+      expect(q.sql).not.toContain('`requisition`.`farm_id` = ?');
+      expect(q.sql).toContain('`requisition`.`company_id` = ?');
+      expect(q.params).toContain('co-1');
+      expect(approvals.requisitionRequestConditions).toHaveBeenCalledWith(userType);
+    },
+  );
+
+  it("a FARM_MANAGER's waiting list keeps the active-farm filter", async () => {
+    const { db, whereCalls } = makeDb();
+    const cls = transactionCls(db);
+    useFarmScope(cls, { farmId: 'farm-active', restricted: true, companyId: 'co-1', lobId: 'lob-pig' } as any);
+    const approvals = approvalsMock();
+    approvals.requisitionRequestConditions = jest.fn(() => {
+      const R = (require('../../../core/database/schema') as typeof schema).approvalRequest;
+      return [eq(R.status, 'PENDING'), inArray(R.doc_type, ['REQUISITION', 'FEED_REQUISITION'])];
+    });
+    const service = new RequisitionService(cls, approvals as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
+    await service.findAll({} as any, TENANT, { waitingForMe: true, userType: 'FARM_MANAGER' });
+    const q = new MySqlDialect().sqlToQuery(whereCalls[0] as any);
+    expect(q.sql).toContain('`requisition`.`farm_id` = ?');
+    expect(q.params).toContain('farm-active');
+  });
+
+  it('the hub list without the filter adds no EXISTS and an admin sees every farm in scope', async () => {
+    const { db, whereCalls } = makeDb();
+    const cls = transactionCls(db);
+    useFarmScope(cls, { farmId: 'farm-active', restricted: false, companyId: 'co-1', lobId: null } as any);
+    const service = new RequisitionService(cls, approvalsMock() as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
+    await service.findAll({} as any, TENANT, { userType: 'COMPANY_ADMIN' });
+    const q = new MySqlDialect().sqlToQuery(whereCalls[0] as any);
+    expect(q.sql).not.toContain('EXISTS');
+    expect(q.sql).not.toContain('`requisition`.`farm_id` = ?');
   });
 });

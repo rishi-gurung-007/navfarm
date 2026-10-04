@@ -586,16 +586,36 @@ export class RequisitionService {
     };
   }
 
-  async findAll(query: { company_id?: string; status?: string; doc_type?: string }, tenantId: string) {
+  async findAll(
+    query: { company_id?: string; status?: string; doc_type?: string; waiting_for_me?: boolean },
+    tenantId: string,
+    opts: { waitingForMe?: boolean; userType?: string } = {},
+  ) {
     if (query.doc_type && !(COMMON_LIST_DOC_TYPES as readonly string[]).includes(query.doc_type)) {
       throw new BadRequestException(`doc_type must be one of ${COMMON_LIST_DOC_TYPES.join(', ')}.`);
     }
     if (query.company_id) assertCompanyInScope(farmScope(this.cls), query.company_id);
+    // WP1b (decisions.md 2026-10-04, "one Requisitions page"): the hub is the
+    // one requisition list, and an admin's list spans every farm in their
+    // scope — the same reach their decide() lock has (the review's
+    // carried-forward item). Other types keep the active-farm narrowing.
+    const bypassFarm = mayDecideAnyRequisition(opts.userType);
     const conditions = [
       eq(schema.requisition.tenant_id, tenantId),
       isNull(schema.requisition.deleted_at),
-      ...this.scopeConditions(),
+      ...this.scopeConditions({ bypassFarm }),
     ];
+    // "Waiting for my approval": the row's open approval request is one the
+    // current user may decide — through an EXISTS carrying the INBOX's own
+    // predicate (farmConditions + the requisition kinds, via
+    // requisitionRequestConditions), never a second copy of that rule.
+    if (opts.waitingForMe) {
+      const A = schema.approvalRequest;
+      conditions.push(sql`EXISTS (SELECT 1 FROM approval_request WHERE approval_request.request_id = ${schema.requisition.approval_request_id}
+        AND approval_request.deleted_at IS NULL
+        AND approval_request.status = 'PENDING'
+        AND ${and(...this.approvals.requisitionRequestConditions(opts.userType))})`);
+    }
     if (query.company_id) conditions.push(eq(schema.requisition.company_id, query.company_id));
     if (query.status) conditions.push(eq(schema.requisition.status, query.status));
     if (query.doc_type) conditions.push(eq(schema.requisition.doc_type, query.doc_type));

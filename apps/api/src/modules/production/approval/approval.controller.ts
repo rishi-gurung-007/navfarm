@@ -33,6 +33,15 @@ export class ApprovalController {
     return { success: true, message: 'Approval counts retrieved successfully.', data };
   }
 
+  @Get('counts-requisitions')
+  @RequirePermission('PRODUCTION', 'APPROVAL', 'view')
+  @ApiOperation({ summary: 'Pending requisition approvals — the inbox card that links to the Requisitions hub (WP1b)' })
+  async countsRequisitions(@Query() query: QueryApprovalDto, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const data = await this.approvalService.countsRequisitions(query, tenantId, req.user?.userType);
+    return { success: true, message: 'Pending requisition approvals retrieved.', data };
+  }
+
   @Get(':id')
   @RequirePermission('PRODUCTION', 'APPROVAL', 'view')
   async findOne(@Param('id') id: string, @Req() req: any) {

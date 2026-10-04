@@ -182,6 +182,9 @@ export function ApprovalsPageShell({ activeTab }: { activeTab: ApprovalStatus })
   const [counts, setCounts] = useState<Record<ApprovalStatus, number>>({
     PENDING: 0, APPROVED: 0, REJECTED: 0,
   });
+  // WP1b (decisions.md "one Requisitions page"): the inbox no longer lists
+  // requisitions; it shows how many wait, and links to the one list.
+  const [reqPending, setReqPending] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -190,9 +193,10 @@ export function ApprovalsPageShell({ activeTab }: { activeTab: ApprovalStatus })
       const params = new URLSearchParams();
       if (companyId) params.set("company_id", companyId);
       if (areaId) params.set("operational_area_id", areaId);
-      const [res, countRes] = await Promise.all([
+      const [res, countRes, reqCountRes] = await Promise.all([
         api.get(`/approval?${params.toString()}`),
         api.get(`/approval/counts?${params.toString()}`).catch(() => null),
+        api.get(`/approval/counts-requisitions?${params.toString()}`).catch(() => null),
       ]);
       setApprovals((unwrap<ApiRow[]>(res) || []).map((r) => fromApi(r, currency)));
       const fetched = countRes ? unwrap<Partial<Record<ApprovalStatus, number>>>(countRes) : null;
@@ -203,6 +207,8 @@ export function ApprovalsPageShell({ activeTab }: { activeTab: ApprovalStatus })
           REJECTED: Number(fetched.REJECTED ?? 0),
         });
       }
+      const reqFetched = reqCountRes ? unwrap<{ PENDING?: number } | null>(reqCountRes) : null;
+      setReqPending(reqFetched ? Number(reqFetched.PENDING ?? 0) : null);
     } catch (err: any) {
       setLoadError(err?.message || t("apFailedToLoad"));
     } finally {
@@ -386,6 +392,17 @@ export function ApprovalsPageShell({ activeTab }: { activeTab: ApprovalStatus })
           <CheckCircle2 className="h-4 w-4 shrink-0" />
           <span>{actionMsg}</span>
         </div>
+      )}
+
+      {/* WP1b: requisitions moved to the one list — show what waits there. */}
+      {activeTab === "PENDING" && reqPending !== null && (
+        <button
+          onClick={() => router.push("/approvals/requisitions")}
+          className="nf-press flex items-center justify-between gap-2 rounded-[var(--radius-md)] border border-sky-500/30 bg-sky-500/10 px-4 py-2.5 text-xs font-semibold text-sky-700 hover:bg-sky-500/20 dark:text-sky-400"
+        >
+          <span>{t("apRequisitionsCard", { count: reqPending })}</span>
+          <span className="shrink-0 underline">{t("apRequisitionsOpen")}</span>
+        </button>
       )}
 
       {/* ── Filter Tabs ── */}

@@ -4,6 +4,7 @@ import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
 import { FarmScoped } from '../../../common/farm-scope';
+import { mayDecideAnyRequisition } from './requisition.rules';
 import { RequisitionService } from './requisition.service';
 import { CreateRequisitionDto, DecideRequisitionDto, RequisitionReceiptDto, RequisitionShipmentDto, UpdateRequisitionDto } from './dto/requisition.dto';
 
@@ -18,9 +19,15 @@ export class RequisitionController {
   @Get()
   @RequirePermission('PROCUREMENT', 'REQUISITION', 'view')
   @ApiOperation({ summary: 'Requisitions visible in the active scope, newest first' })
-  async findAll(@Req() req: any, @Query('company_id') companyId?: string, @Query('status') status?: string, @Query('doc_type') docType?: string) {
+  async findAll(@Req() req: any, @Query('company_id') companyId?: string, @Query('status') status?: string, @Query('doc_type') docType?: string, @Query('waiting_for_me') waitingForMe?: string) {
     const tenantId = req.user?.tenantId || req['tenantId'];
-    const data = await this.requisitions.findAll({ company_id: companyId, status, doc_type: docType }, tenantId);
+    const data = await this.requisitions.findAll(
+      { company_id: companyId, status, doc_type: docType, waiting_for_me: waitingForMe === '1' || waitingForMe === 'true' },
+      tenantId,
+      // WP1b: the hub's waiting filter and the admin's farm-wide list need the
+      // caller's type; the predicate itself lives in ApprovalService.
+      { waitingForMe: waitingForMe === '1' || waitingForMe === 'true', userType: req.user?.userType },
+    );
     return { success: true, message: 'Requisitions retrieved successfully.', data };
   }
 
@@ -39,7 +46,10 @@ export class RequisitionController {
   @ApiParam({ name: 'id' })
   async findOne(@Param('id') id: string, @Req() req: any) {
     const tenantId = req.user?.tenantId || req['tenantId'];
-    const data = await this.requisitions.findOne(id, tenantId);
+    // WP1b: the hub's document dialog opens precisely the cross-farm rows an
+    // admin may decide — the read the dialog runs must span farms the way
+    // decide()'s lock does (the review's carried-forward item).
+    const data = await this.requisitions.findOne(id, tenantId, { bypassFarm: mayDecideAnyRequisition(req.user?.userType) });
     return { success: true, message: 'Requisition retrieved successfully.', data };
   }
 

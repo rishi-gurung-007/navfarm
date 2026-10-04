@@ -1697,6 +1697,17 @@ export const translations = {
     rhLoading: "Loading requisitions…",
     rhNeedsCompany: "Choose a company in the workspace switcher to raise an Item, Fixed Asset or Service requisition.",
     rhNew: "New",
+    // WP1b (decisions.md 2026-10-04 "one Requisitions page"): the hub decides
+    // through the same /approval endpoints the inbox uses.
+    rhWaitingForMe: "Waiting for my approval",
+    rhApprove: "Approve",
+    rhReject: "Reject",
+    rhApproverRemarks: "Approval remarks",
+    rhRejectionReason: "Rejection reason",
+    rhRejectConfirm: "Reject requisition",
+    rhRejectCancel: "Back",
+    rhApprovedMsg: "{{docNo}} approved.",
+    rhRejectedMsg: "{{docNo}} rejected.",
     rhDesc: "Every requisition — Feed, Item, Fixed Asset and Service. Open one to work on it, or raise a new one.",
     // Task 18: a brand-new, unsaved common requisition has no req_no yet — the
     // dialog's title falls back to this rather than rendering blank.
@@ -2044,6 +2055,9 @@ export const translations = {
     apSearchPlaceholder: "Search approvals…",
     apNewRequest: "New Request",
     apTabPending: "Action Required (Pending)",
+    // WP1b: the inbox links to the one requisition list with its pending count.
+    apRequisitionsCard: "Requisitions waiting for approval: {{count}}",
+    apRequisitionsOpen: "Open Requisitions",
     apTabApproved: "Approved History",
     apTabRejected: "Rejected / Returned",
     apColDocNo: "Document No",

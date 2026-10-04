@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException, ConflictException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, or, isNull, gte, lte, desc, like, sql, SQL, inArray } from 'drizzle-orm';
+import { eq, and, or, isNull, gte, lte, desc, like, sql, SQL, inArray, notInArray } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
@@ -20,7 +20,8 @@ import { mayDecideAnyRequisition } from '../../procurement/requisition/requisiti
  * it serves (they import it), and importing requisition.service.ts here
  * would also be circular — it imports ApprovalService.
  */
-const REQUISITION_APPROVAL_DOC_TYPES = ['REQUISITION', 'FEED_REQUISITION'] as const;
+/** The approval-engine document types that ARE requisitions (common and feed). */
+export const REQUISITION_APPROVAL_DOC_TYPES = ['REQUISITION', 'FEED_REQUISITION'] as const;
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   const pad = (n: number) => String(n).padStart(2, '0');
@@ -254,7 +255,13 @@ export class ApprovalService {
    * `userType` defaults to undefined (not exempt) so every pre-existing
    * caller that has not threaded it through is unaffected.
    */
-  private farmConditions(userType?: string): SQL[] {
+  /**
+   * Public since WP1b (decisions.md 2026-10-04, "one Requisitions page"): the
+   * hub's waiting-for-approval filter and pending count reuse THIS predicate —
+   * the inbox's own visibility rule plus the WP1 admin rule — so the two
+   * surfaces can never disagree about what the current user may decide.
+   */
+  farmConditions(userType?: string): SQL[] {
     const scope = farmScope(this.cls);
     const R = schema.approvalRequest;
     const paths: SQL[] = [
@@ -270,8 +277,30 @@ export class ApprovalService {
     return [or(...paths)!, ...restrictedScopeConditions(scope, { companyId: R.company_id })];
   }
 
+  /**
+   * WP1b: the visibility predicate for the requisition kinds' approval
+   * requests — farmConditions (above, one copy) narrowed to those kinds. The
+   * hub's waiting filter and pending count build on this; findOne and decide
+   * keep plain farmConditions so deciding from the hub reaches the same
+   * handlers.
+   */
+  requisitionRequestConditions(userType?: string): SQL[] {
+    // farmConditions first, so its rendered SQL (and its parameter order) is a
+    // prefix of the hub predicate's — the equivalence test asserts exactly that.
+    return [...this.farmConditions(userType), inArray(schema.approvalRequest.doc_type, [...REQUISITION_APPROVAL_DOC_TYPES])];
+  }
+
   async findAll(query: QueryApprovalDto, tenantId: string, userType?: string) {
-    const conditions: SQL[] = [eq(schema.approvalRequest.tenant_id, tenantId), isNull(schema.approvalRequest.deleted_at), ...this.farmConditions(userType)];
+    const conditions: SQL[] = [
+      eq(schema.approvalRequest.tenant_id, tenantId),
+      isNull(schema.approvalRequest.deleted_at),
+      ...this.farmConditions(userType),
+      // WP1b (decisions.md 2026-10-04, "one Requisitions page"): the inbox no
+      // longer lists requisitions — Approvals → Requisitions is the one
+      // requisition list. findOne and decide still reach them, so the hub's
+      // Approve/Reject call the same endpoints.
+      notInArray(schema.approvalRequest.doc_type, [...REQUISITION_APPROVAL_DOC_TYPES]),
+    ];
     if (query.company_id) conditions.push(eq(schema.approvalRequest.company_id, query.company_id));
     // An area filter keeps rows of that area AND rows that carry no area yet:
     // every approval_request row written before Plan S has a NULL area, so a
@@ -318,7 +347,14 @@ export class ApprovalService {
 
   /** Pending/approved/rejected counts in one query, so the tab badges don't need three round trips. */
   async counts(query: QueryApprovalDto, tenantId: string, userType?: string) {
-    const conditions: SQL[] = [eq(schema.approvalRequest.tenant_id, tenantId), isNull(schema.approvalRequest.deleted_at), ...this.farmConditions(userType)];
+    const conditions: SQL[] = [
+      eq(schema.approvalRequest.tenant_id, tenantId),
+      isNull(schema.approvalRequest.deleted_at),
+      ...this.farmConditions(userType),
+      // WP1b: the badges count only what the inbox shows — requisitions moved
+      // to the hub, whose pending count is countsRequisitions() below.
+      notInArray(schema.approvalRequest.doc_type, [...REQUISITION_APPROVAL_DOC_TYPES]),
+    ];
     if (query.company_id) conditions.push(eq(schema.approvalRequest.company_id, query.company_id));
     // An area filter keeps rows of that area AND rows that carry no area yet:
     // every approval_request row written before Plan S has a NULL area, so a
@@ -339,6 +375,33 @@ export class ApprovalService {
 
     const map = Object.fromEntries(rows.map((r) => [r.status, Number(r.n)]));
     return { PENDING: map.PENDING || 0, APPROVED: map.APPROVED || 0, REJECTED: map.REJECTED || 0 };
+  }
+
+  /**
+   * WP1b (decisions.md 2026-10-04, "one Requisitions page"): the inbox's card
+   * — "Requisitions waiting for approval: N → open Requisitions" — reads this
+   * count: the requisition kinds the inbox no longer lists, under the same
+   * waiting predicate the hub's filter uses (requisitionRequestConditions).
+   */
+  async countsRequisitions(query: QueryApprovalDto, tenantId: string, userType?: string) {
+    const conditions: SQL[] = [
+      eq(schema.approvalRequest.tenant_id, tenantId),
+      isNull(schema.approvalRequest.deleted_at),
+      eq(schema.approvalRequest.status, 'PENDING'),
+      ...this.requisitionRequestConditions(userType),
+    ];
+    if (query.company_id) conditions.push(eq(schema.approvalRequest.company_id, query.company_id));
+    if (query.operational_area_id) {
+      conditions.push(or(
+        eq(schema.approvalRequest.operational_area_id, query.operational_area_id),
+        isNull(schema.approvalRequest.operational_area_id),
+      )!);
+    }
+    const [row] = await this.db
+      .select({ n: sql<number>`COUNT(*)` })
+      .from(schema.approvalRequest)
+      .where(and(...conditions));
+    return { PENDING: Number(row?.n ?? 0) };
   }
 
   async findOne(requestId: string, tenantId: string, userType?: string) {

@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
+import { and } from 'drizzle-orm';
 import { MySqlDialect } from 'drizzle-orm/mysql-core';
 import { ApprovalService } from './approval.service';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
@@ -300,7 +301,12 @@ describe('ApprovalService farm scope', () => {
       await service.findAll({} as any, 'tenant-1', 'FARM_MANAGER');
 
       const q = dialect.sqlToQuery(capturedWhere as any);
-      expect(q.params).not.toContain('FEED_REQUISITION');
+      // WP1b: the inbox now excludes requisitions for every caller, so the
+      // distinguishing assertion is the ABSENCE of the admin-exemption OR
+      // branch — the kinds appear only inside the exclusion's NOT IN, never
+      // as a standalone `or …doc_type in` widening path.
+      expect(q.sql).not.toMatch(/or `approval_request`\.`doc_type` in/);
+      expect(q.sql).toContain('`approval_request`.`doc_type` not in');
     });
 
     it('adds nothing when no user type is given at all (existing callers that have not threaded it through)', async () => {
@@ -309,7 +315,7 @@ describe('ApprovalService farm scope', () => {
       await service.findAll({} as any, 'tenant-1');
 
       const q = dialect.sqlToQuery(capturedWhere as any);
-      expect(q.params).not.toContain('FEED_REQUISITION');
+      expect(q.sql).not.toMatch(/or `approval_request`\.`doc_type` in/);
     });
 
     it('still refuses a SYSTEM_ADMIN the bypass — not decided; follows the old (farm-bound) rule', async () => {
@@ -318,7 +324,7 @@ describe('ApprovalService farm scope', () => {
       await service.findAll({} as any, 'tenant-1', 'SYSTEM_ADMIN');
 
       const q = dialect.sqlToQuery(capturedWhere as any);
-      expect(q.params).not.toContain('FEED_REQUISITION');
+      expect(q.sql).not.toMatch(/or `approval_request`\.`doc_type` in/);
     });
   });
 
@@ -592,5 +598,136 @@ describe('ApprovalService farm documents (D25)', () => {
     await service.approve('ar-1', 'tenant-1', { userId: 'u-admin', userType: 'COMPANY_ADMIN' });
     expect(farmConditionsSpy.mock.calls.map((c) => c[0])).toEqual(['COMPANY_ADMIN', 'COMPANY_ADMIN']);
     expect(log.filter((e) => e.table === schema.approvalRequest && e.op === 'update')).toHaveLength(1);
+  });
+});
+
+/**
+ * WP1b (decisions.md 2026-10-04, "one Requisitions page"): the Approvals inbox
+ * stops listing requisitions — the hub (Approvals → Requisitions) is the one
+ * requisition list. Three properties, tested at the SQL level:
+ *
+ * 1. EQUIVALENCE (written before the removal, per Rishi's sequencing rule):
+ *    the predicate the hub's waiting-for-approval filter uses is the INBOX's
+ *    own farmConditions(userType) plus the requisition doc kinds — one copy,
+ *    not a second implementation.
+ * 2. The inbox's list and counts EXCLUDE the requisition kinds; findOne and
+ *    decide do NOT (the hub's Approve/Reject call the same decide endpoints).
+ * 3. The hub's pending-requisition count comes from the same predicate.
+ */
+describe('WP1b — one Requisitions page: inbox exclusion and the shared waiting predicate', () => {
+  let service: ApprovalService;
+  let cls: ReturnType<typeof transactionCls>;
+  const dialect = new MySqlDialect();
+  let capturedWhere: unknown;
+  const renderedWhere = () => dialect.sqlToQuery(capturedWhere as any).sql;
+
+  const chain: any = {
+    from: () => chain,
+    leftJoin: () => chain,
+    where: (cond: unknown) => { capturedWhere = cond; return chain; },
+    orderBy: () => chain,
+    groupBy: () => chain,
+    limit: () => chain,
+    offset: () => chain,
+  };
+  // findOne awaits the chain directly (no offset), and counts* destructures
+  // its single-row result — a thenable chain answers both with one row-less list.
+  chain.then = (resolve: (v: unknown[]) => unknown, reject?: (e: unknown) => unknown) => Promise.resolve([]).then(resolve, reject);
+  const mockDb = { select: jest.fn(() => chain) };
+
+  beforeEach(async () => {
+    capturedWhere = undefined;
+    cls = transactionCls(mockDb);
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        ApprovalService,
+        { provide: ClsService, useValue: cls },
+        { provide: AuditLogService, useValue: { log: jest.fn().mockResolvedValue({}) } },
+        { provide: BatchService, useValue: { addTransaction: jest.fn() } },
+      ],
+    }).compile();
+    service = module.get<ApprovalService>(ApprovalService);
+  });
+
+  it.each(['COMPANY_ADMIN', 'FARM_MANAGER', undefined] as const)(
+    'EQUIVALENCE: the hub waiting predicate carries farmConditions(%s) verbatim plus the requisition kinds',
+    async (userType) => {
+      useFarmScope(cls, { farmId: 'farm-g', restricted: userType === 'FARM_MANAGER', companyId: 'co-1', lobId: userType === 'FARM_MANAGER' ? 'lob-pig' : null });
+      // One copy, literally: requisitionRequestConditions must SPREAD the
+      // inbox predicate's own conditions (the same objects the inbox call
+      // returns), extended with the kinds narrowing — not a re-implementation.
+      const farmConditionsSpy = jest.spyOn(service as any, 'farmConditions');
+      const conditions = service.requisitionRequestConditions(userType);
+      expect(farmConditionsSpy).toHaveBeenCalledWith(userType);
+      const inboxConditions = farmConditionsSpy.mock.results[0].value as unknown[];
+      expect(conditions.length).toBe(inboxConditions.length + 1);
+      for (let i = 0; i < inboxConditions.length; i++) expect(conditions[i]).toBe(inboxConditions[i]);
+      // …and the narrowing is the requisition kinds.
+      const hub = dialect.sqlToQuery(and(...conditions)!);
+      expect(hub.sql).toContain('`approval_request`.`doc_type` in');
+      expect(hub.params).toContain('REQUISITION');
+      expect(hub.params).toContain('FEED_REQUISITION');
+    },
+  );
+
+  it('the inbox list excludes the requisition kinds', async () => {
+    useFarmScope(cls, { farmId: null, restricted: false, companyId: 'co-1', lobId: null });
+    await service.findAll({} as any, 'tenant-1', 'COMPANY_ADMIN');
+    const sql = renderedWhere();
+    expect(sql).toContain('`approval_request`.`doc_type` not in');
+    expect(sql).toMatch(/not in \(\?, \?\)/);
+    expect(dialect.sqlToQuery(capturedWhere as any).params).toEqual(expect.arrayContaining(['REQUISITION', 'FEED_REQUISITION']));
+  });
+
+  it('the inbox counts exclude the requisition kinds too — the badges count only what the inbox shows', async () => {
+    useFarmScope(cls, { farmId: null, restricted: false, companyId: 'co-1', lobId: null });
+    await service.counts({} as any, 'tenant-1', 'COMPANY_ADMIN');
+    expect(renderedWhere()).toContain('`approval_request`.`doc_type` not in');
+  });
+
+  // A per-table queue double (same shape as the D25 suite's setup) for the
+  // two calls below, whose result shape the chain mock above cannot answer.
+  const queueDb = (rows: unknown[][]) => {
+    const db: any = {
+      select: jest.fn(() => {
+        let table: unknown;
+        const self: any = {
+          from: (t: unknown) => { table = t; return self; },
+          leftJoin: () => self, where: () => self, orderBy: () => self, limit: () => self,
+          then: (ok: any, err: any) => Promise.resolve().then(() => rows.shift() ?? []).then(ok, err),
+        };
+        void table;
+        return self;
+      }),
+    };
+    return db;
+  };
+
+  it('findOne still reaches requisition kinds — the hub decides through /approval/:id/approve', async () => {
+    useFarmScope(cls, { farmId: null, restricted: false, companyId: 'co-1', lobId: null });
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        ApprovalService,
+        { provide: ClsService, useValue: transactionCls(queueDb([[{ request_id: 'ar-1', doc_type: 'REQUISITION' }]])) },
+        { provide: AuditLogService, useValue: { log: jest.fn().mockResolvedValue({}) } },
+        { provide: BatchService, useValue: { addTransaction: jest.fn() } },
+      ],
+    }).compile();
+    const row = await module.get<ApprovalService>(ApprovalService).findOne('ar-1', 'tenant-1', 'COMPANY_ADMIN');
+    expect(row.doc_type).toBe('REQUISITION');
+  });
+
+  it("the hub's pending-requisition count renders the same waiting predicate with PENDING and the company boundary", async () => {
+    useFarmScope(cls, { farmId: null, restricted: false, companyId: 'co-1', lobId: null });
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        ApprovalService,
+        { provide: ClsService, useValue: transactionCls(queueDb([[{ n: 7 }]])) },
+        { provide: AuditLogService, useValue: { log: jest.fn().mockResolvedValue({}) } },
+        { provide: BatchService, useValue: { addTransaction: jest.fn() } },
+      ],
+    }).compile();
+    const result = await module.get<ApprovalService>(ApprovalService).countsRequisitions({} as any, 'tenant-1', 'COMPANY_ADMIN');
+    expect(result).toEqual({ PENDING: 7 });
   });
 });
