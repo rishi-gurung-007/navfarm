@@ -19,11 +19,14 @@ jest.mock("@/utils/date-short", () => ({ formatDateShort: (v: string | null) => 
 const { api } = jest.requireMock("@/services/api-client") as { api: { get: jest.Mock } };
 
 const view = {
+  company_id: "co-1",
   req_no: "REQ-2026-0001",
   doc_type: "ITEM",
   purpose: "STORE",
   status: "PENDING_APPROVAL",
   requisition_date: "2026-10-01",
+  required_date: null, main_location_id: null, requester_department_id: null, sender_department_id: null,
+  from_location_id: null, to_location_id: null, direct_transfer: false,
   requester_name: "Ada Farm",
   remarks: "Weekly store pull",
   justification: null,
@@ -40,17 +43,17 @@ const view = {
   ],
 };
 
-test("renders the requisition's lines, purpose and state dimensions", async () => {
-  api.get.mockResolvedValue({ data: view });
+test("renders the requisition as its read-only document", async () => {
+  const second = { ...view.lines[0], line_id: "l2", line_seq: 2, item_code: "IT-2", item_name: "Nuts", quantity: "4.0000", qty_to_ship: "4.0000", qty_to_receive: "4.0000" };
+  api.get.mockResolvedValue({ data: { ...view, lines: [view.lines[0], second] } });
   render(<RequisitionApprovalDetail documentId="req-1" />);
   await waitFor(() => expect(api.get).toHaveBeenCalledWith("/requisition/req-1"));
-  await waitFor(() => expect(screen.getByText(/ITEM · Store/)).toBeTruthy());
-  expect(screen.getByText(/PENDING_APPROVAL · OPEN/)).toBeTruthy();
-  expect(screen.getByText("IT-1 — Bolts")).toBeTruthy();
-  // Requested 10, and both targets 6 (to-ship and to-receive).
-  expect(screen.getByText("10 EA")).toBeTruthy();
-  expect(screen.getAllByText("6")).toHaveLength(2);
-  expect(screen.getByText(/apCreqRemarks:Weekly store pull/)).toBeTruthy();
+  expect(await screen.findByText("crqHeaderTitle")).toBeTruthy();
+  expect(screen.getByText("REQ-2026-0001")).toBeTruthy();
+  expect(screen.getByText(/IT-1/)).toBeTruthy();
+  expect(screen.getByText(/IT-2/)).toBeTruthy();
+  expect(screen.queryAllByRole("combobox")).toHaveLength(0);
+  expect(screen.queryAllByRole("textbox")).toHaveLength(0);
 });
 
 test("shows the unavailable note when the requisition cannot be read", async () => {
@@ -65,5 +68,5 @@ test("renders nothing before the requisition arrives", async () => {
   const { container } = render(<RequisitionApprovalDetail documentId="req-1" />);
   expect(container.textContent).toBe("");
   resolve({ data: view });
-  await waitFor(() => expect(screen.getByText("IT-1 — Bolts")).toBeTruthy());
+  await waitFor(() => expect(screen.getByText(/IT-1/)).toBeTruthy());
 });
