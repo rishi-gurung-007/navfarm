@@ -558,6 +558,38 @@ describe('Part E Task 3 — options and display names', () => {
     expect(view.lines[0]).toMatchObject({ from_location_code: 'F1/STORE', to_location_code: 'F1/SHED-1', resource_code: 'RES-1', resource_name: 'Electrician' });
   });
 
+  /**
+   * Fix round 1, Important 2: findOne's shipments block (group by
+   * shipment_id, match receipts by shipment_line_id, remaining = shipped -
+   * received) had no test exercising real rows — the two new select() calls
+   * fell through makeDb()'s `?? []` unexercised by the test above. This
+   * supplies one shipment with one line and a partial receipt against it.
+   */
+  it('reports shipped/received/remaining per shipment line from real shipment and receipt events', async () => {
+    const { db, selectResults } = makeDb();
+    selectResults.push(
+      [headerRow({ from_location_id: 'st', to_location_id: 'sh', requester_department_id: 'cc-r', sender_department_id: 'cc', approved_by: 'u2', released_by: 'u3', linked_transfer_id: 'tr-1' })],
+      [lineRow({ from_location_id: 'st', to_location_id: 'sh', resource_id: 'r1' })],
+      [{ location_id: 'st', location_code: 'F1/STORE' }, { location_id: 'sh', location_code: 'F1/SHED-1' }, { location_id: 'farm-1', location_code: 'F1' }],
+      [{ cost_center_id: 'cc', cost_center_name: 'Stores' }, { cost_center_id: 'cc-r', cost_center_name: 'Farm Ops' }],
+      [{ user_id: 'u2', full_name: 'Approver Two' }, { user_id: 'u3', full_name: 'Releaser Three' }],
+      [{ transfer_id: 'tr-1', transfer_no: 'TR-000001' }],
+      [{ resource_id: 'r1', resource_code: 'RES-1', resource_name: 'Electrician' }],
+      // shipped: one shipment, one line, shipped 6
+      [{ shipment_id: 'sh-1', shipment_no: 'SH-2026-0001', shipment_date: '2026-10-02', shipment_line_id: 'sl-1', requisition_line_id: 'line-1', qty: '6' }],
+      // receivedRows: 4 received so far against that shipment line
+      [{ shipment_line_id: 'sl-1', qty: '4' }],
+    );
+    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any);
+    const view = await service.findOne('req-1', TENANT);
+    expect(view.shipments).toEqual([
+      {
+        shipment_id: 'sh-1', shipment_no: 'SH-2026-0001', shipment_date: '2026-10-02',
+        lines: [{ requisition_line_id: 'line-1', shipped: 6, received: 4, remaining: 2 }],
+      },
+    ]);
+  });
+
   it('declares GET options before GET :id so the static route is not captured as an id', () => {
     const { RequisitionController } = require('./requisition.controller');
     const methods = Object.getOwnPropertyNames(RequisitionController.prototype).filter((m) => m !== 'constructor');

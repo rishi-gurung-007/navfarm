@@ -7,16 +7,29 @@
  * already uses for requisition.rules.ts.
  */
 import { BadRequestException } from '@nestjs/common';
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, isNull, sql } from 'drizzle-orm';
 import type { MySql2Database } from 'drizzle-orm/mysql2';
 import * as schema from '../../../core/database/schema';
 import { fulfilmentStatusOf } from './requisition.rules';
 
 export async function syncRequisitionFulfilment(db: MySql2Database<typeof schema>, transferId: string): Promise<void> {
+  // Fix round 1, Minor: the brief's sample had no tenant_id/deleted_at guard
+  // on this lookup. syncRequisitionFulfilment takes no tenantId (the brief's
+  // exact signature), so tenant scoping is enforced by joining the transfer
+  // itself rather than adding a parameter: a match requires the requisition's
+  // own tenant_id to equal the SAME transfer row's tenant_id, not merely that
+  // some requisition somewhere carries this transfer id. Also excludes a
+  // soft-deleted requisition, consistent with every other query in this
+  // module.
   const [linked] = await db
     .select({ requisition_id: schema.requisition.requisition_id })
     .from(schema.requisition)
-    .where(eq(schema.requisition.linked_transfer_id, transferId));
+    .innerJoin(schema.stockTransfer, eq(schema.stockTransfer.transfer_id, schema.requisition.linked_transfer_id))
+    .where(and(
+      eq(schema.stockTransfer.transfer_id, transferId),
+      eq(schema.requisition.tenant_id, schema.stockTransfer.tenant_id),
+      isNull(schema.requisition.deleted_at),
+    ));
   if (!linked) return;
   const shipped = await db
     .select({ requisition_line_id: schema.stockTransferLine.requisition_line_id, qty: sql<string>`SUM(${schema.transferShipmentLine.quantity})` })

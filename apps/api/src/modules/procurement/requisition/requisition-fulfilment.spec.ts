@@ -73,4 +73,26 @@ describe('syncRequisitionFulfilment', () => {
       "requisition_line_id 'line-of-another-requisition' does not belong to requisition req-1",
     );
   });
+
+  /**
+   * Fix round 1, Minor (the mixed NULL/linked regression risk named in
+   * review): an ordinary hand-made transfer line with no requisition link at
+   * all (requisition_line_id NULL — true for every transfer that didn't come
+   * from a Store release) sits in the same grouped result set as a linked
+   * line, once any one line of the transfer is linked. The ownership guard's
+   * `row.requisition_line_id &&` must skip the NULL row rather than treat it
+   * as a foreign link, and the NULL row's quantity must not get summed onto
+   * the one real requisition line either.
+   */
+  it('ignores an unlinked (NULL requisition_line_id) line alongside a linked one', async () => {
+    const { db: d, sets } = db([
+      [{ requisition_id: 'req-1' }],                                                          // linked requisition
+      [{ requisition_line_id: null, qty: '3' }, { requisition_line_id: 'l1', qty: '6' }],      // shipped sums — one unlinked, one linked
+      [{ requisition_line_id: 'l1', qty: '4' }],                                               // received sums
+      [{ line_id: 'l1', quantity: '10', qty_to_ship: '10', qty_to_receive: '10' }],             // requisition lines (req-1's own)
+    ]);
+    await syncRequisitionFulfilment(d, 'tr-1');
+    expect(sets.filter((s) => s.table === schema.requisitionLine).map((s) => s.values)).toEqual([{ qty_shipped: '6', qty_received: '4' }]);
+    expect(sets.find((s) => s.table === schema.requisition)!.values).toEqual({ fulfilment_status: 'PARTIALLY_RECEIVED' });
+  });
 });
