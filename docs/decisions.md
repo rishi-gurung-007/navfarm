@@ -2573,3 +2573,14 @@ only; it does not exempt admins from the department checks on Transfer Shipment 
 Rishi, 4 Oct: "the proper naming of the tabs and the pages according to the shared file". Page titles, tabs, section
 headings and dialog titles use the workbook's sheet and SECTION names (mapping table in the master plan, WP1d).
 Routes and URL tab keys are unchanged. Screens the workbook does not have keep our names.
+
+## 2026-10-04 — Feed Forecast tab names; Stages removed; admins keep department checks
+
+Rishi, 4 Oct:
+1. The Feed Forecast tabs are **Dashboard · Calculation · Requisition · Physical Stock Count**.
+2. "if not in the file then remove it properly". The forecast's "Stages (n)" sub-tab is removed with its component,
+   strings, response field and specs. The engine's stage-chain projection, which picks the next diet, stays because the
+   file has it. Other feed-page features that are not in the file and did not exist before 25 Sep go the same way.
+3. "the checks should still work and they can only approve the requisition created by anyone". Tenant and Company
+   admins get no bypass of the department checks on Transfer Shipment and Receipt. Their only extra power is
+   approving any requisition, whoever created it, their own included.

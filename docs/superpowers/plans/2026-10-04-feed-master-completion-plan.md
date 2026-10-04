@@ -206,8 +206,7 @@ line rejects item fields.
 **Live:** two users in different departments. A sender-department user ships, the requester-department user
 receives, and each is refused at the other's step. A tracked item end to end with its lot/serial on both ledger
 sides in MySQL. A Purchase release shows BC_PENDING. Put any moved stock back.
-**Open question for Rishi:** should Tenant and Company admins bypass the department checks on Shipment and
-Receipt (as they do for approval)? Until he answers, they do not.
+**Rishi 4 Oct:** admins do **not** bypass the department checks; their extra power is approval only (any requisition, by anyone).
 
 ### WP1d — Page, tab and section names follow the workbook (S–M, ≈1–1½ h) — Rishi 4 Oct
 "the proper naming of the tabs and the pages according to the shared file". Use the workbook's own names (sheet titles
@@ -219,11 +218,11 @@ that assert the old labels.
 | Where in the app | Current label | Workbook name (use this) | Workbook source |
 |---|---|---|---|
 | Inventory → Feed Forecast (page) | Feed Forecast | **Feed Forecast** | sheet "Feed Forecast" |
-| Feed Forecast tab `dashboard` | Dashboard | **Feed Forecast Dashboard** | Engine SECTION 4 |
-| Feed Forecast tab `forecast` | Forecast | **Feed Forecast Calculation** | Engine SECTION 2 |
+| Feed Forecast tab `dashboard` | Dashboard | **Dashboard** (Rishi 4 Oct; workbook "Feed Forecast Dashboard") | Engine SECTION 4 |
+| Feed Forecast tab `forecast` | Forecast | **Calculation** (Rishi 4 Oct; workbook "Feed Forecast Calculation") | Engine SECTION 2 |
 | …its filter bar / run history | (filters, run history) | **Forecast Filters** / **Run Audit** | Engine SECTION 5 "Flexible Forecast Filters and Run Audit" |
-| …its "Stages (n)" sub-tab | Stages (n) | **Expected Stage Changes** (not a workbook page; the name the notes already use; keep it) | — (ours) |
-| Feed Forecast tab `feed-requisition` | Internal Feed Transfer | **Feed Requisition** | sheet "Requisition and Loading Sheet" title "Feed Requisition" |
+| …its "Stages (n)" sub-tab | Stages (n) | **REMOVE** (Rishi 4 Oct: not in the file → remove it properly; see below) | — |
+| Feed Forecast tab `feed-requisition` | Internal Feed Transfer | **Requisition** (Rishi 4 Oct) | sheet "Requisition and Loading Sheet" |
 | Feed requisition document: header block / lines block | (various) | **Requisition Header** / **Requisition Sub-Form** | Req. SECTION 1 / SECTION 2 |
 | Feed requisition approval panel | (Approval) | **Approval Workflow** | Req. SECTION 4 |
 | Feed Forecast tab `physical-count` | Physical Count | **Physical Stock Count** | Engine SECTION 1 |
@@ -235,6 +234,18 @@ that assert the old labels.
 | Feed Planning Settings | Feed Planning Settings | keep (ours; workbook "Design principles" settings) | — |
 | New pages (Part B–D) | — | **Mill Capacity Master**, **Loading Instruction Sheet**, **Feed Mill Manager Consolidation Sheet**, **TO Receipt**, **Feed Plan – Tentative vs Actual**, **Compare Report**, **Silo Balance**, **Monthly Stock Take** | Feed Forecast r11; Req. §3, §5, §6; Engine §3; Silo Balance §1, §3 |
 | Approvals → Requisitions dialogs | New … requisition | "New Feed Requisition"; common: "New Purchase Requisition – Item / Fixed Asset / Service" (Rishi's list calls the number "Purchase Requisition No.") | Req. title; common-requisition-spec.md |
+
+Rishi's tab names (4 Oct, final): **Dashboard · Calculation · Requisition · Physical Stock Count**, in that order.
+
+**Remove the "Stages (n)" sub-tab properly** (Rishi 4 Oct: "if not in the file then remove it properly"). It is a
+display aggregate (`stages: StageBlock[]` in the forecast response, rendered by `FeedForecastStages` in
+`feed-forecast-panel.tsx`). Remove the sub-tab and its toggle state, the `FeedForecastStages` component, the
+`ffTabStages` and other strings used only by it, the `stages` field and its builder in `feed-forecast.service.ts` if
+nothing else reads it (grep first, including `feed-forecast-grid.tsx`), and the specs that assert it. **Keep** the engine's
+stage-chain projection (`nextStageId`, used to pick the next diet; workbook Engine Step 3–5), because that is in the file.
+Expected stage changes that matter stay visible where the workbook puts them: next diet / diet change dates in the
+Calculation output and on the Dashboard. Same rule for anything else found on the feed pages that the workbook does not
+have and that did not exist before the feed work began (25 Sep, the 3 Oct ruling): list it here, then remove it the same way.
 
 Before building it, re-read every current label in the running app and record any extra mismatch in this table.
 Live check: screenshot each renamed page and tab.
@@ -473,5 +484,4 @@ unchanged; screenshot each screen.
 1. Should **System Admin** also be allowed to approve their own requisitions (4 Oct names only Tenant and Company admins)?
 2. Silo–house mapping **effective dates** (Master Setup r8) — needed for the piggery MVP?
 3. Monetary Finance threshold for stock variances, and the reporting/local currency (still open from 1 Oct).
-4. Do Tenant/Company admins bypass the department checks on Transfer Shipment / Receipt?
-5. Bulk compartment capacity, production cutoff and lead time (workbook "Customer validation" row) — confirm before Part B goes to testers.
+4. Bulk compartment capacity, production cutoff and lead time (workbook "Customer validation" row) — confirm before Part B goes to testers.
