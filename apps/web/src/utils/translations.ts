@@ -1550,10 +1550,13 @@ export const translations = {
     rqNewPurposeServiceHint: "Request a service to be bought.",
     rqNewItemStore: "Store — transfer from a store",
     rqNewItemPurchase: "Purchase — buy it",
-    rqNewDestination: "Silo or store, line {{line}}",
-    rqNewItem: "Feed, line {{line}}",
-    rqNewKg: "Kg, line {{line}}",
-    rqNewDate: "Deliver by, line {{line}}",
+    // Gap #16 (audit, Req r43-r56): the workbook's own words for the manual
+    // line's silo, feed item, quantity and date — this screen used to use
+    // its own shorter words ("Silo or store", "Feed", "Kg", "Deliver by").
+    rqNewDestination: "Silo Code, line {{line}}",
+    rqNewItem: "Feed Item No. to Order, line {{line}}",
+    rqNewKg: "Requested Qty KG, line {{line}}",
+    rqNewDate: "Proposed Delivery Date, line {{line}}",
     rqNewException: "Exception reason, line {{line}}",
     rqNewExceptionHint: "Required when the item differs from the lifecycle requirement (Requisition row 13).",
     rqNewChoose: "Choose…",

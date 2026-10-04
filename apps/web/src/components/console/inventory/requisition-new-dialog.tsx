@@ -121,9 +121,15 @@ export function RequisitionNewDialog({
     };
   }, [open, effectiveFarmId, step]);
 
+  // Task 19: the Feed Forecast tab's instance is given only `["FEED"]` (the
+  // default) — the "what is this for?" choice is pointless when there is
+  // only one answer, so it opens the feed form at once. Approvals ->
+  // Requisitions passes every kind and is unaffected: the ladder below only
+  // short-circuits when exactly one type is on offer.
   useEffect(() => {
-    if (open) setStep("choose");
-  }, [open]);
+    if (!open) return;
+    setStep(types.length === 1 ? (types[0] === "FEED" ? "FEED" : "item") : "choose");
+  }, [open, types]);
 
   const setLine = (i: number, patch: Partial<Draft>) => setLines((cur) => cur.map((l, j) => (j === i ? { ...l, ...patch } : l)));
   const complete = lines.every((l) => l.dest && l.item && Number(l.kg) > 0 && l.date);
