@@ -21,4 +21,13 @@ describe('common requisitions navigation', () => {
     expect(page).toContain('params.set("tab", "feed-requisition")');
     expect(page).toContain('redirect(`/inventory/feed-forecast?${params.toString()}`)');
   });
+
+  it('Approvals -> Requisitions is the all-types hub, not the feed-only panel (spec §6a)', () => {
+    const page = read('src/app/(app)/approvals/requisitions/page.tsx');
+    expect(page).toContain('RequisitionsHub');
+    expect(page).not.toContain('requisitions-panel');
+    // The feed-only description ("Feed orders to the mill…") no longer describes this page.
+    expect(page).toContain('t("rhDesc")');
+    expect(page).not.toContain('invRequisitionsDesc');
+  });
 });

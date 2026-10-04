@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
-import RequisitionsPanel from "@/components/console/inventory/requisitions-panel";
+import RequisitionsHub from "@/components/console/requisitions/requisitions-hub";
 import { Button } from "@/components/ui/button";
 import { ConsolePage } from "@/components/ui/console-page";
 import { PageHeader } from "@/components/ui/PageHeader";
@@ -18,9 +18,9 @@ export default function ApprovalsRequisitionsPage() {
         <Button variant="ghost" size="sm" onClick={() => router.push("/approvals/pending")} aria-label={t("approvals")}>
           <ArrowLeft className="h-4 w-4" />
         </Button>
-        <PageHeader title={t("invRequisitionsTitle")} description={t("invRequisitionsDesc")} sticky={false} />
+        <PageHeader title={t("invRequisitionsTitle")} description={t("rhDesc")} sticky={false} />
       </div>
-      <RequisitionsPanel />
+      <RequisitionsHub />
     </ConsolePage>
   );
 }
