@@ -26,6 +26,7 @@ import { api } from "@/services/api-client";
 import { InlineAlert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Dialog } from "@/components/ui/dialog";
 import { Field } from "@/components/ui/field";
 import { ScrollTable } from "@/components/ui/scroll-table";
 import { getActiveCompanyId } from "@/hooks/useAuth";
@@ -173,18 +174,33 @@ export function RequisitionsHub() {
       {notice && <InlineAlert variant="success">{notice}</InlineAlert>}
       {needsCompany && <InlineAlert variant="warning">{t("rhNeedsCompany")}</InlineAlert>}
 
-      {open?.kind === "feed" ? (
-        <FeedRequisitionDetail
-          view={open.view}
-          onView={(v, n) => { setOpen({ kind: "feed", view: v }); afterView(n); }}
-          onBack={() => setOpen(null)}
-        />
-      ) : open?.kind === "common" ? (
-        <CommonRequisitionDetail
-          initial={open.view}
-          onView={(v, n) => { setOpen({ kind: "common", view: v }); afterView(n); }}
-          onBack={() => setOpen(null)}
-        />
+      {open ? (
+        // Task 18 (decisions 2026-10-04): both kinds open in one dialog
+        // shell — the dialog supplies the title and close control that each
+        // detail's own strip would otherwise duplicate (`embedded`, piece 1).
+        // A brand-new common requisition (New -> Item/FA/Service) has no
+        // req_no yet, so the title falls back rather than rendering blank.
+        <Dialog
+          open
+          onClose={() => setOpen(null)}
+          title={open.kind === "feed" ? open.view.req_no : (open.view.req_no || t("crqNewTitle"))}
+        >
+          {open.kind === "feed" ? (
+            <FeedRequisitionDetail
+              embedded
+              view={open.view}
+              onView={(v, n) => { setOpen({ kind: "feed", view: v }); afterView(n); }}
+              onBack={() => setOpen(null)}
+            />
+          ) : (
+            <CommonRequisitionDetail
+              embedded
+              initial={open.view}
+              onView={(v, n) => { setOpen({ kind: "common", view: v }); afterView(n); }}
+              onBack={() => setOpen(null)}
+            />
+          )}
+        </Dialog>
       ) : loading ? (
         <div className="p-10 text-center text-xs" style={{ color: "var(--text-secondary)" }}><Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" /> {t("rhLoading")}</div>
       ) : rows.length === 0 ? (

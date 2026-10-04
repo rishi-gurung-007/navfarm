@@ -116,6 +116,33 @@ describe("RequisitionsHub — Approvals → Requisitions lists and creates every
     expect(get).not.toHaveBeenCalledWith("/feed-requisition/req-item");
   });
 
+  // Task 18 (decisions 2026-10-04 "a requisition ... is created and edited
+  // in a dialog"): both kinds open in one actual dialog (role="dialog"),
+  // not in place of the list; closing it (the dialog's own close control)
+  // returns to the list.
+  it("opens a FEED row in a dialog, and closing it returns to the list (Task 18)", async () => {
+    render(<RequisitionsHub />);
+    fireEvent.click(await screen.findByText("NO-req-feed"));
+    await screen.findByText("REQ-VIL100-2026-00002", { selector: "h2" });
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByText("REQ-VIL100-2026-00002", { selector: "h2" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "rqBack" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "close" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(await screen.findByRole("table")).toBeTruthy();
+  });
+
+  it("opens an ITEM row in the same dialog shell, and closing it returns to the list (Task 18)", async () => {
+    render(<RequisitionsHub />);
+    fireEvent.click(await screen.findByText("NO-req-item"));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("crqHeaderTitle")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "crqBack" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "close" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(await screen.findByRole("table")).toBeTruthy();
+  });
+
   it("?id= on load reads /requisition/:id for its type, then opens the feed document", async () => {
     window.history.replaceState({}, "", "/approvals/requisitions?id=req-feed");
     render(<RequisitionsHub />);
@@ -135,6 +162,9 @@ describe("RequisitionsHub — Approvals → Requisitions lists and creates every
     }
     fireEvent.click(screen.getByRole("button", { name: "rqNewPurposeFa" }));
     expect(await screen.findByText("crqHeaderTitle")).toBeTruthy();
+    // Task 18: a brand-new, unsaved common requisition has no req_no yet; the
+    // dialog falls back to a "new requisition" title rather than a blank one.
+    expect(within(screen.getByRole("dialog")).getByText("crqNewTitle")).toBeTruthy();
     // The Type filter also offers reqDocFa as an <option>; the document's read-only field is the one that counts.
     const shown = (text: string) => screen.getAllByText(text).filter((el) => el.tagName !== "OPTION");
     expect(shown("reqDocFa")).toHaveLength(1);

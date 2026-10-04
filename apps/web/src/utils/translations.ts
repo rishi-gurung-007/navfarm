@@ -1685,6 +1685,9 @@ export const translations = {
     rhNeedsCompany: "Choose a company in the workspace switcher to raise an Item, Fixed Asset or Service requisition.",
     rhNew: "New",
     rhDesc: "Every requisition — Feed, Item, Fixed Asset and Service. Open one to work on it, or raise a new one.",
+    // Task 18: a brand-new, unsaved common requisition has no req_no yet — the
+    // dialog's title falls back to this rather than rendering blank.
+    crqNewTitle: "New requisition",
     crqHeaderTitle: "Requisition",
     crqLinesTitle: "Lines",
     crqLinesLabel: "Requisition lines",
