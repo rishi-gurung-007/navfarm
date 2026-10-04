@@ -18,7 +18,7 @@ import { MySql2Database } from 'drizzle-orm/mysql2';
 import { ClsService } from 'nestjs-cls';
 import { randomUUID } from 'node:crypto';
 import * as schema from '../../../core/database/schema';
-import { farmScope } from '../../../common/farm-scope';
+import { farmScope, requisitionFarmLobCondition } from '../../../common/farm-scope';
 import { userHasPermission } from '../../../common/permissions';
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { isDuplicateEntry } from '../../../common/filters/http-exception.filter';
@@ -152,9 +152,10 @@ export class FeedRequisitionService implements OnModuleInit {
     const scope = farmScope(this.cls);
     const conditions: SQL[] = [];
     if (scope.farmId) conditions.push(eq(schema.requisition.farm_id, scope.farmId));
-    if (scope.restricted && scope.lobId) {
-      conditions.push(sql`${schema.requisition.company_id} IN (SELECT company_id FROM company_master WHERE lob_id IS NULL OR lob_id = ${scope.lobId})`);
-    }
+    // WP1e: the shared farm-LOB helper — the old raw-SQL filter read
+    // company_master.lob_id, a column in no database, 500ing restricted users.
+    const lob = requisitionFarmLobCondition(scope, schema.requisition.farm_id);
+    if (lob) conditions.push(lob);
     return conditions;
   }
 

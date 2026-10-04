@@ -2,7 +2,7 @@ import { BadRequestException, ConflictException, NotFoundException } from '@nest
 import { MySqlDialect } from 'drizzle-orm/mysql-core';
 import type { ClsService } from 'nestjs-cls';
 import { createHash } from 'node:crypto';
-import { transactionCls } from '../../../test-utils/transaction-cls';
+import { transactionCls, useFarmScope } from '../../../test-utils/transaction-cls';
 import { FARM_SCOPE_KEY, farmScope } from '../../../common/farm-scope';
 import * as schema from '../../../core/database/schema';
 import { todayInZone, type ForecastSource } from '../../inventory/feed-forecast/feed-forecast.engine';
@@ -874,6 +874,49 @@ describe('FeedRequisitionService.autoDraft', () => {
     // 9d D1: planned from that farm day, over the standard horizon (planning date + 45), ordering to `to`.
     expect(forecast.computeForFarm).toHaveBeenCalledWith('farm-grs', 'co-1', 'tenant-1',
       { planningDate: '2026-09-26', from: '2026-09-26', to: '2026-10-03', horizonTo: '2026-11-10' }, { today: '2026-09-26', timeZone: 'Africa/Harare' });
+  });
+});
+
+describe('WP1e — the feed requisition list scopes restricted users by the farm\'s LOB (decisions.md 2026-10-04, last entry)', () => {
+  const chain = (rows: unknown[]) => {
+    const self: any = { from: () => self, where: () => self, leftJoin: () => self, orderBy: () => self, limit: async () => rows,
+      then: (res: (v: unknown[]) => unknown, rej: (e: unknown) => unknown) => Promise.resolve(rows).then(res, rej) };
+    return self;
+  };
+
+  it("a restricted user's list query scopes by the farm's LOB and never reads company_master", async () => {
+    const whereCalls: unknown[] = [];
+    const db: any = { select: jest.fn(() => { const c = chain([]); const innerWhere = c.where; c.where = (cond: unknown) => { whereCalls.push(cond); return innerWhere(cond); }; return c; }) };
+    const forecast: any = {
+      resolveFarm: jest.fn(async () => ({ farmId: 'farm-grs', companyId: 'co-1' })),
+      withFarmScope: jest.fn(async (_f: string, _c: string, work: () => Promise<unknown>) => work()),
+    };
+    const cls = transactionCls(db);
+    useFarmScope(cls, { farmId: 'farm-grs', restricted: true, companyId: 'co-1', lobId: 'lob-pig' } as any);
+    const feedSettingsStub: any = { resolveForFeedPlanning: jest.fn() };
+    const service = new FeedRequisitionService(cls, forecast, {} as any, { evaluateFarmSafely: jest.fn() } as any, {} as any, {} as any, feedSettingsStub);
+    await service.findAll({} as any, 'tenant-1', { userId: 'u', userType: 'FARM_MANAGER' });
+    const q = new MySqlDialect().sqlToQuery(whereCalls[0] as any);
+    expect(q.sql).toContain('`farm_id` IS NULL');
+    expect(q.sql).toContain('location_master');
+    expect(q.sql).toContain('rf.lob_id = ?');
+    expect(q.params).toContain('lob-pig');
+    expect(q.sql).not.toContain('company_master');
+  });
+
+  it("an unrestricted caller's list query adds no LOB condition", async () => {
+    const whereCalls: unknown[] = [];
+    const db: any = { select: jest.fn(() => { const c = chain([]); const innerWhere = c.where; c.where = (cond: unknown) => { whereCalls.push(cond); return innerWhere(cond); }; return c; }) };
+    const forecast: any = {
+      resolveFarm: jest.fn(async () => ({ farmId: 'farm-grs', companyId: 'co-1' })),
+      withFarmScope: jest.fn(async (_f: string, _c: string, work: () => Promise<unknown>) => work()),
+    };
+    const cls = transactionCls(db);
+    useFarmScope(cls, { farmId: 'farm-grs', restricted: false, companyId: 'co-1', lobId: null } as any);
+    const feedSettingsStub: any = { resolveForFeedPlanning: jest.fn() };
+    const service = new FeedRequisitionService(cls, forecast, {} as any, { evaluateFarmSafely: jest.fn() } as any, {} as any, {} as any, feedSettingsStub);
+    await service.findAll({} as any, 'tenant-1', { userId: 'u', userType: 'TENANT_ADMIN' });
+    expect(new MySqlDialect().sqlToQuery(whereCalls[0] as any).sql).not.toContain('lob_id');
   });
 });
 

@@ -861,3 +861,31 @@ describe('Part E Task 7 — ship/receive from the requisition; the lines follow 
     expect(stockTransfers.postShipment).not.toHaveBeenCalled();
   });
 });
+
+describe('WP1e — the restricted-LOB filter follows the requisition\'s farm (decisions.md 2026-10-04, last entry)', () => {
+  it.each(['FARM_MANAGER', 'OPERATIONAL_ADMIN', 'STANDARD_USER'] as const)(
+    "a %s's list query scopes by the farm's LOB (farm-less and NULL-LOB farms visible) and never reads company_master",
+    async (userType) => {
+      const { db, whereCalls } = makeDb();
+      const cls = transactionCls(db);
+      useFarmScope(cls, { farmId: null, restricted: true, companyId: 'co-1', lobId: 'lob-pig' } as any);
+      const service = new RequisitionService(cls, approvalsMock() as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
+      await service.findAll({ company_id: 'co-1' }, TENANT);
+      const q = new MySqlDialect().sqlToQuery(whereCalls[0] as any);
+      expect(q.sql).toContain('`farm_id` IS NULL');
+      expect(q.sql).toContain('location_master');
+      expect(q.sql).toContain('rf.lob_id = ?');
+      expect(q.params).toContain('lob-pig');
+      expect(q.sql).not.toContain('company_master');
+    },
+  );
+
+  it("an unrestricted caller's list query adds no LOB condition at all", async () => {
+    const { db, whereCalls } = makeDb();
+    const cls = transactionCls(db);
+    useFarmScope(cls, { farmId: null, restricted: false, companyId: 'co-1', lobId: null } as any);
+    const service = new RequisitionService(cls, approvalsMock() as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
+    await service.findAll({ company_id: 'co-1' }, TENANT);
+    expect(new MySqlDialect().sqlToQuery(whereCalls[0] as any).sql).not.toContain('lob_id');
+  });
+});

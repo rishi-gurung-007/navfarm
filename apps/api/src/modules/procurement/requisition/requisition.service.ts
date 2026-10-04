@@ -26,7 +26,7 @@ import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import type { MySql2Database } from 'drizzle-orm/mysql2';
 import { withTenantTransaction } from '../../../common/tenant-transaction';
-import { farmScope, assertCompanyInScope, assertLocationOnActiveFarm } from '../../../common/farm-scope';
+import { farmScope, assertCompanyInScope, assertLocationOnActiveFarm, requisitionFarmLobCondition } from '../../../common/farm-scope';
 import { userHasPermission } from '../../../common/permissions';
 import { ApprovalService } from '../../production/approval/approval.service';
 import { StockTransferService } from '../../inventory/stock-transfer/stock-transfer.service';
@@ -120,9 +120,12 @@ export class RequisitionService {
     // /requisition made this reachable. Unaffected by bypassFarm: an admin's
     // extra reach is "any farm", never "any company".
     if (scope.companyId) conditions.push(eq(schema.requisition.company_id, scope.companyId));
-    if (scope.restricted && scope.lobId) {
-      conditions.push(sql`${schema.requisition.company_id} IN (SELECT company_id FROM company_master WHERE lob_id IS NULL OR lob_id = ${scope.lobId})`);
-    }
+    // WP1e (decisions.md 2026-10-04, last entry): the LOB boundary is the
+    // requisition's farm's (location_master.lob_id), via the one shared helper
+    // — the old raw-SQL filter read company_master.lob_id, a column that
+    // exists in no database, which 500d every restricted user's read.
+    const lob = requisitionFarmLobCondition(scope, schema.requisition.farm_id);
+    if (lob) conditions.push(lob);
     return conditions;
   }
 

@@ -1,7 +1,7 @@
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { MySqlDialect } from 'drizzle-orm/mysql-core';
 import { and } from 'drizzle-orm';
-import { animalScopeConditions, batchReferenceScopeConditions, batchScopeConditions, farmScope, resolveFarmScope, restrictedScopeConditions, UNRESTRICTED_FARM_SCOPE } from './farm-scope';
+import { animalScopeConditions, batchReferenceScopeConditions, batchScopeConditions, farmScope, resolveFarmScope, restrictedScopeConditions, requisitionFarmLobCondition, UNRESTRICTED_FARM_SCOPE, type FarmScope } from './farm-scope';
 import * as schema from '../core/database/schema';
 
 const dialect = new MySqlDialect();
@@ -199,5 +199,28 @@ describe('batchReferenceScopeConditions', () => {
 
   it('adds nothing for an unrestricted caller with no selected farm', () => {
     expect(batchReferenceScopeConditions(UNRESTRICTED_FARM_SCOPE, schema.qrCodeMaster.batch_id)).toEqual([]);
+  });
+});
+
+describe('requisitionFarmLobCondition (WP1e — decisions.md 2026-10-04, last entry)', () => {
+  const restricted: FarmScope = { farmId: null, restricted: true, companyId: 'co-1', lobId: 'lob-pig' };
+
+  it("scopes a requisition by its FARM's LOB — a farm-less row, or a farm with no LOB, stays visible to every LOB", () => {
+    const { sql, params } = { sql: dialect.sqlToQuery(requisitionFarmLobCondition(restricted, schema.requisition.farm_id)!).sql, params: dialect.sqlToQuery(requisitionFarmLobCondition(restricted, schema.requisition.farm_id)!).params };
+    expect(sql).toContain('`requisition`.`farm_id` IS NULL');
+    expect(sql).toContain('FROM location_master');
+    expect(sql).toContain('rf.lob_id IS NULL');
+    expect(sql).toContain('rf.lob_id = ?');
+    expect(params).toEqual(['lob-pig']);
+  });
+
+  it('never mentions company_master — the column exists in no database and the old filter 500d every restricted read', () => {
+    const { sql } = dialect.sqlToQuery(requisitionFarmLobCondition(restricted, schema.requisition.farm_id)!);
+    expect(sql).not.toContain('company_master');
+  });
+
+  it('adds nothing for an unrestricted scope, or a restricted user whose area carries no LOB', () => {
+    expect(requisitionFarmLobCondition({ farmId: null, restricted: false, companyId: 'co-1', lobId: null }, schema.requisition.farm_id)).toBeNull();
+    expect(requisitionFarmLobCondition({ farmId: null, restricted: true, companyId: 'co-1', lobId: null }, schema.requisition.farm_id)).toBeNull();
   });
 });

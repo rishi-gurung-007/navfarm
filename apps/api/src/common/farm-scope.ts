@@ -168,6 +168,24 @@ export function restrictedScopeConditions(
   return conditions;
 }
 
+/**
+ * The restricted-LOB boundary of a requisition (WP1e — decisions.md 2026-10-04,
+ * last entry): a requisition's line of business is **its farm's**
+ * (`location_master.lob_id`), not its company's — `company_master` has no
+ * `lob_id` column in any database, and the old raw-SQL subquery against it
+ * (requisition.service.ts / feed-requisition.service.ts) 500'd every restricted
+ * user's requisition read with ER_BAD_FIELD_ERROR before any check could run.
+ * A requisition with no farm, and a farm with no LOB, is visible to every LOB —
+ * the same carve-out assertLocationOnActiveFarm applies to a NULL location lob.
+ * The columns are interpolated drizzle columns, so tsc sees them.
+ */
+export function requisitionFarmLobCondition(scope: FarmScope, farmIdColumn: AnyMySqlColumn): SQL | null {
+  if (!scope.restricted || !scope.lobId) return null;
+  return sql`(${farmIdColumn} IS NULL OR ${farmIdColumn} IN (
+    SELECT rf.location_id FROM location_master rf WHERE rf.lob_id IS NULL OR rf.lob_id = ${scope.lobId}
+  ))`;
+}
+
 export function assertCompanyInScope(scope: FarmScope, companyId: string): void {
   if (scope.companyId && companyId !== scope.companyId) {
     throw new ForbiddenException('Not authorized for this company.');
