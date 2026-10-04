@@ -2507,3 +2507,15 @@ edited in a **dialog** that carries its header fields and its lines, the same wa
 Until now the common requisition opened its header form and lines on the page in place of the list
 (built to "match the feed document"; no one had decided a dialog). A requisition that can no longer
 be edited (submitted, approved, released) still opens read-only.
+
+## 2026-10-04 — Feed screens follow the workbook field for field; a real dashboard
+
+Rishi, 4 Oct:
+1. **New from the Feed Forecast is Feed, automatically.** The Feed Requisition tab's New skips the
+   "what is this requisition for?" choice and opens the feed requisition straight away.
+2. **Every page shows the fields the TDD workbook lists for it** — field names, order and content —
+   checked page by page against `NAVFarm_Feed forecast TDD with examples (1).xlsx`.
+3. **The Feed Forecast Dashboard is a dashboard:** the user first selects what to look at (farm,
+   date/range or reporting period, house, silo, feed item, bulk/bagged), then sees the figures as
+   charts and graphs (with the detail table beneath), not only a table.
+4. **The Feed Forecast shows the silo number (code) and the silo name** on its rows.
