@@ -1,4 +1,11 @@
-# Resume prompt — feed TDD alignment (paste into any Claude Code session)
+# Resume prompt — feed TDD alignment (paste into any coding agent)
+
+> **START HERE (4 Oct, supersedes everything below):** the single plan for all remaining feed work is
+> **`docs/superpowers/plans/2026-10-04-feed-master-completion-plan.md`**. It is standalone — any coding agent
+> (Claude or not) can follow it. Read its section 0, then do the work packages in order (WP1 → WP11), with
+> the workbook fields from `docs/superpowers/plans/feed-completion/workbook-fields.md`. Record progress in
+> `docs/superpowers/plans/feed-completion/progress.md` (committed) as `WPn: complete — <commit>` lines, and
+> stop lines `Controller: <agent> stopped at WPn — <state>`. The text below is history.
 
 You are taking over as the controller of an in-progress implementation plan for NAVFarm.
 
