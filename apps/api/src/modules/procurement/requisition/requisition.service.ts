@@ -447,7 +447,17 @@ export class RequisitionService {
     return { items, resources, locations, departments };
   }
 
-  async findOne(requisitionId: string, tenantId: string) {
+  /**
+   * `opts.bypassFarm` (decisions.md 2026-10-04, second entry): decide()'s own
+   * post-commit read-back of the row it just decided needs the same reach as
+   * the lock that found it — otherwise an admin's cross-farm decision commits
+   * then rolls itself back when this read-back 404s on the farm-only view.
+   * Every other caller (create, submit, update, release, the controller's
+   * own GET) omits it and keeps the ordinary active-farm narrowing; this is
+   * not a general widening of findOne's visibility (that is WP1b's, for the
+   * hub's document dialog).
+   */
+  async findOne(requisitionId: string, tenantId: string, opts: { bypassFarm?: boolean } = {}) {
     const [row] = await this.db
       .select()
       .from(schema.requisition)
@@ -455,7 +465,7 @@ export class RequisitionService {
         eq(schema.requisition.requisition_id, requisitionId),
         eq(schema.requisition.tenant_id, tenantId),
         isNull(schema.requisition.deleted_at),
-        ...this.scopeConditions(),
+        ...this.scopeConditions(opts),
       ))
       .limit(1);
     if (!row) throw new NotFoundException(`Requisition '${requisitionId}' not found.`);
@@ -729,7 +739,12 @@ export class RequisitionService {
           updated_by: userPayload?.userId ?? null,
         })
         .where(eq(schema.requisition.requisition_id, requisitionId));
-      return this.findOne(requisitionId, tenantId);
+      // decisions.md 2026-10-04 (second entry): the read-back carries the
+      // same bypassFarm as the lock above — the sibling of the bug found live
+      // in approval.service.ts's decide(): without it, an admin's cross-farm
+      // decision committed the update and then rolled itself back because
+      // this read-back 404'd on the farm-only view.
+      return this.findOne(requisitionId, tenantId, { bypassFarm: mayDecideAnyRequisition(userPayload?.userType) });
     });
   }
 

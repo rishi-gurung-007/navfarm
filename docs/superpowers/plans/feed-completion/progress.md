@@ -200,3 +200,105 @@ the check. **Controller-verified, and it is real:**
 - Merge → **yes**: fetch, merge `origin/main` locally as its own step before Item Tracking (WP1c). Never push.
 - Next order: WP1 review → WP1e → WP1b → WP1c (merge first for tracking) → WP1d → WP2 …
 - Controller: navfarm-48 (VS Code) stopped by usage limit after WP1 (411ecdf6).
+
+### Rishi answered both open questions (decisions.md:2588-2597, commit e55ef0ca) — controller-verified in the repo, not taken from the relay
+
+1. **The LOB bug → WP1e.** A requisition's line of business is **its farm's** (`location_master.lob_id`), not its
+   company's. Requisitions with no farm, and farms with no LOB, are visible to every LOB. **No schema change.**
+   One shared helper for both services. This is a good answer for a reason worth recording: it scopes by a column
+   that actually exists, and its "no farm / no LOB is visible to every LOB" carve-out is the same principle Part A
+   Task 4 established (`assertLocationOnActiveFarm` treats a NULL `lob_id` as belonging to every LOB) — so WP1e
+   makes three LOB implementations consistent rather than adding a fourth.
+2. **The local merge is APPROVED**, and now by a committed decision rather than a relay — which is the standard I
+   held out for when I declined it earlier. At the **start of WP1c**: fetch, then merge `origin/main` locally **as
+   its own step**, conflicts resolved keeping the feed work on the files this branch owns, then the full gates and
+   a live check. Nothing pushed.
+
+**Order of work (Rishi's):** WP1 review (411ecdf6) → WP1e → then finish WP1's blocked negative live check →
+WP1b → WP1c (merge first) → WP1d → WP2 …
+
+Controller note on the merge, for whoever performs it: the facts I established before declining still apply and
+should shape it. Local `main` is stale (`6831e6d0`, already an ancestor of HEAD) so merging *it* is a no-op; the
+work wanted is `origin/main` = `ef17b3f9` or newer after the fetch; the last fetch was 2 Oct 13:32, so fetch
+first; and the conflict surface is the worst possible here, because Arun's commit is literally about *inventory
+panels* and this branch has rewritten those more than anything else. Do it as its own commit with nothing else in
+it, so a revert is one command.
+
+### WP1 review dispatched (opus) — package review-ff08200b..411ecdf6.diff, 120KB, 5 commits
+
+Eight named checks, the first three being where a permission relaxation goes wrong: whether the `farmConditions`
+OR branch is genuinely bounded to requisition doc types (an over-wide branch would hand admins sign-off authority
+over physical counts, stage moves and GRNs that Rishi never granted); whether `scopeConditions({ bypassFarm })`
+relaxes **only** the farm and leaves the **company boundary** intact (Critical if not — "in their scope", not
+anywhere); and whether `SYSTEM_ADMIN` is refused on **both** surfaces by distinct tests. Also: whether the three
+self-approval points provably agree; whether Rishi's bound (department checks, document-level checks untouched)
+holds in the code rather than in the report; whether the `userType` read-back fix has a regression test rather
+than being live-only; whether the **negative** evidence is real-engine or a mock, since the negative half of a
+permission change is the half that matters and it currently rests on the suite alone; and whether the audit trail
+survives. Told it to grade any over-permissive path on its merits, not by likelihood.
+
+### WP1 review (opus) — no Critical, 1 Important, 4 Minor; fix round 1 dispatched
+
+It hunted specifically for an over-permissive path and found NONE: the farm bypass cannot reach another company
+(company equality at `requisition.service.ts:119` and `approval.service.ts:269`), another tenant, a
+non-requisition approval kind (`inArray` at `:268`; the other kinds use distinct strings — FEED_RATION,
+GRN_RECEIPT, STOCK_TRANSFER, MEDICINE_REQUISITION, UNSCHEDULED_HEALTH), or `SYSTEM_ADMIN`. And
+`RESTRICTED_USER_TYPES` and the exempt list are **disjoint**, both deriving from the same JWT `userType`, so no
+restricted scope can coexist with an exempt type.
+
+Two findings that resolve open questions rather than raising new ones:
+- **There is no tier/step approver resolution in this codebase at all** (`grep` for tier/approval_step/
+  approver_user_id finds only a comment and no column). So the plan's "whatever the approval tier or step would
+  otherwise require" is satisfied by widening visibility — that IS the complete mechanism, not a partial one.
+- **`assertMayDecide` passes for admins through a PRE-EXISTING `ADMIN_USER_TYPES` bypass** (`common/permissions.ts:40,100`)
+  which the diff never touched. So the permission half of the rule was already in place; WP1 only had to widen visibility.
+
+Credited, and none of it claimed by the implementer: `remove()` (withdraw) deliberately left un-widened, which is
+exactly Rishi's bound; FOUR distinct SYSTEM_ADMIN refusals each failing for its own reason; the live-found
+read-back fix carrying a real regression test; and the audit trail unconditional with no self-approval special case.
+
+**Important (fix dispatched): `requisition.service.ts:732` has the SAME read-back defect the live check already
+found and fixed on the sibling route.** `decide()` locks with `scopeConditions({ bypassFarm })` at :686 then, inside
+the same transaction, returns `this.findOne(...)` at :732 — and `findOne` applies `scopeConditions()` with NO
+bypass (:458). So an admin with an active farm deciding a cross-farm or farm-less **common** requisition succeeds
+through the lock, the gate, the approve and the status write, then 404s on the read-back and **the whole
+transaction rolls back**: the caller sees 404 and the database is unchanged. Byte-for-byte the defect fixed at
+`approval.service.ts:436`, left on the other call site. The suite is STRUCTURALLY blind to it (the cross-farm spec
+asserts only `whereCalls[0]`, and `makeDb()` never evaluates a WHERE), and the live run proved cross-farm only
+through the feed/engine route. This is the "second call site of the same gate" class that has bitten this branch
+more than any other.
+
+### CARRIED FORWARD — two items from this review that belong to later packages
+
+- **→ WP1b:** an admin can now *decide* a cross-farm requisition, but `findOne` (`:458`) and `findAll` (`:584`)
+  still narrow by active farm. So **the hub's document dialog will 404 on precisely the cross-farm rows WP1b must
+  show Approve on.** Concrete and actionable; handing it over rather than letting WP1b rediscover it.
+- **→ WP1c:** Rishi's "admins do NOT bypass the department checks on Transfer Shipment/Receipt" bound is currently
+  **vacuously satisfied** — those checks DO NOT EXIST yet (they are WP1c's own gap). "Untouched" is true but
+  meaningless today; the bound must be **re-verified when WP1c builds them**, or the first implementation could
+  quietly include an admin exemption Rishi explicitly refused.
+- Noted, pre-existing, not actioned: a `COMPANY_ADMIN` whose `user.companyId` is NULL resolves to tenant-wide, and
+  `bypassFarm` removes the last incidental guard on the decide path for that user. A data defect rather than a code
+  one, bounded by tenant.
+
+## WP1 fix round 1: complete — (see commit) (navfarm-49, 4 Oct)
+
+The review's Important finding, fixed: `decide()`'s post-commit read-back (`findOne`, called inside the same
+transaction) now carries the same `bypassFarm: mayDecideAnyRequisition(userPayload?.userType)` as its lock.
+`findOne` grew an **opt-in** `opts.bypassFarm` — every other caller (create, submit, update, release, the
+controller's GET) omits it, so this is not a general widening of the document view (that is WP1b's).
+
+- **RED verified before trusting GREEN:** reverted `requisition.service.ts` to HEAD, ran
+  `npx jest src/modules/procurement/requisition/requisition.service.spec.ts --maxWorkers=2` — the new regression
+  assertion failed with the read-back SQL still carrying `farm_id` (`Tests: 2 failed, 56 passed`); restored the
+  fix (`git apply` of the saved patch), same file `Tests: 58 passed`. The suite is no longer structurally blind
+  to the second call site.
+- Gates: `jest src/modules/procurement src/modules/production/approval` 388/388, 15 suites; tsc 0; eslint 0 new
+  errors on the two touched files.
+- **Live check (this round's target: the path the review said live evidence never covered — the DIRECT
+  `POST /requisition/:id/approve` route, cross-farm, common):** rebuilt the API with the documented worktree
+  incantation, grep-confirmed the bundle carries the new `opts.bypassFarm` comment marker, restarted by PID, then
+  as company.admin (active farm VIL100) approved a cross-farm common requisition on LIO100 through the direct
+  route: 200, and MySQL shows `status='APPROVED'`, `approved_by`=the admin, `approved_at` stamped — no rollback,
+  the read-back returned the row. (The pre-fix symptom was a 404 + rolled-back transaction; reproduced by the
+  suite's RED, not deliberately re-broken live.)

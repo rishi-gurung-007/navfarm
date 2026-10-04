@@ -471,10 +471,20 @@ describe('Part E Task 1 — list filter, manual source, approver stamp', () => {
       const approvals = approvalsMock();
       const service = new RequisitionService(cls, approvals as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
       await service.decide('req-1', {}, 'APPROVED', TENANT, { userId: 'u2', userType });
-      const q = new MySqlDialect().sqlToQuery(whereCalls[0] as any);
-      expect(q.sql).not.toContain('farm_id');
-      expect(q.sql).toContain('`company_id` = ?');
-      expect(q.params).toContain('co-1');
+      const lockQuery = new MySqlDialect().sqlToQuery(whereCalls[0] as any);
+      expect(lockQuery.sql).not.toContain('farm_id');
+      expect(lockQuery.sql).toContain('`company_id` = ?');
+      expect(lockQuery.params).toContain('co-1');
+      // Fix round 1: decide()'s own post-commit read-back (findOne, called at
+      // the end of decide() without the bypass) is the sibling of the bug
+      // found live in approval.service.ts's decide() — it must carry the same
+      // bypassFarm as the lock above, or an admin's cross-farm decision
+      // commits and then rolls itself back when this read-back 404s on the
+      // farm-only view. whereCalls[1] is findOne's header select.
+      const readBackQuery = new MySqlDialect().sqlToQuery(whereCalls[1] as any);
+      expect(readBackQuery.sql).not.toContain('farm_id');
+      expect(readBackQuery.sql).toContain('`company_id` = ?');
+      expect(readBackQuery.params).toContain('co-1');
     },
   );
 
