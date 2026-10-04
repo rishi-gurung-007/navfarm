@@ -209,6 +209,36 @@ sides in MySQL. A Purchase release shows BC_PENDING. Put any moved stock back.
 **Open question for Rishi:** should Tenant and Company admins bypass the department checks on Shipment and
 Receipt (as they do for approval)? Until he answers, they do not.
 
+### WP1d — Page, tab and section names follow the workbook (S–M, ≈1–1½ h) — Rishi 4 Oct
+"the proper naming of the tabs and the pages according to the shared file". Use the workbook's own names (sheet titles
+and SECTION headings, see `feed-completion/workbook-fields.md`) for page titles, tabs, section headings, menu entries,
+breadcrumbs and the document dialog titles. Change labels in the `en` dictionary (`apps/web/src/utils/translations.ts`)
+and page headers only; **do not rename routes** (bookmarks: `/inventory/feed-forecast?tab=…` keys stay). Update the specs
+that assert the old labels.
+
+| Where in the app | Current label | Workbook name (use this) | Workbook source |
+|---|---|---|---|
+| Inventory → Feed Forecast (page) | Feed Forecast | **Feed Forecast** | sheet "Feed Forecast" |
+| Feed Forecast tab `dashboard` | Dashboard | **Feed Forecast Dashboard** | Engine SECTION 4 |
+| Feed Forecast tab `forecast` | Forecast | **Feed Forecast Calculation** | Engine SECTION 2 |
+| …its filter bar / run history | (filters, run history) | **Forecast Filters** / **Run Audit** | Engine SECTION 5 "Flexible Forecast Filters and Run Audit" |
+| …its "Stages (n)" sub-tab | Stages (n) | **Expected Stage Changes** (not a workbook page; the name the notes already use; keep it) | — (ours) |
+| Feed Forecast tab `feed-requisition` | Internal Feed Transfer | **Feed Requisition** | sheet "Requisition and Loading Sheet" title "Feed Requisition" |
+| Feed requisition document: header block / lines block | (various) | **Requisition Header** / **Requisition Sub-Form** | Req. SECTION 1 / SECTION 2 |
+| Feed requisition approval panel | (Approval) | **Approval Workflow** | Req. SECTION 4 |
+| Feed Forecast tab `physical-count` | Physical Count | **Physical Stock Count** | Engine SECTION 1 |
+| Location Master, silo section | (Silo fields) | **Location Master – Silo Level** | Master Setup §1 |
+| Item Master, feed section | (Feed fields) | **Feed Item Setup** | Master Setup §2 |
+| Breed lifecycle master | (current name) | **Breed Lifecycle Stage Config** | Master Setup §3 |
+| Alert rules master | Alert Rules | **Alerts and Notifications Master** | Master Setup §4 |
+| Reporting periods master | Reporting Periods | **Reporting Period Master** | Feed Forecast sheet r18 |
+| Feed Planning Settings | Feed Planning Settings | keep (ours; workbook "Design principles" settings) | — |
+| New pages (Part B–D) | — | **Mill Capacity Master**, **Loading Instruction Sheet**, **Feed Mill Manager Consolidation Sheet**, **TO Receipt**, **Feed Plan – Tentative vs Actual**, **Compare Report**, **Silo Balance**, **Monthly Stock Take** | Feed Forecast r11; Req. §3, §5, §6; Engine §3; Silo Balance §1, §3 |
+| Approvals → Requisitions dialogs | New … requisition | "New Feed Requisition"; common: "New Purchase Requisition – Item / Fixed Asset / Service" (Rishi's list calls the number "Purchase Requisition No.") | Req. title; common-requisition-spec.md |
+
+Before building it, re-read every current label in the running app and record any extra mismatch in this table.
+Live check: screenshot each renamed page and tab.
+
 ### WP2 — Forecast grid shows stock every day/week until it runs out (M) — Rishi 4 Oct
 Brief: `feed-completion/task-21a-brief.md`. Defect at `feed-forecast-grid.tsx` ~349–368 (cells render only on
 days the batch eats). Expose the engine's per-source by-date balance (no second calculation); Daily = one column
@@ -268,7 +298,7 @@ evidence: **`feed-completion/task-22-audit.md`**. Summary:
 | 24 | Forecast | Output columns: current silo item, rate per head, opening, receipts, daily use, projected closing, shortage date, recommended qty, delivery date | Engine r70, r11, Step 8 | M |
 | 25 | Forecast | Run history shows stored audit fields (as-of, cutoff, filters, lifecycle version, author, version) | Engine r68 | S |
 | 26 | Cross-page | Replace dash placeholders with real values or blanks (2 Oct ruling 3) | — | S |
-| 27 | Feed Requisition tab | Rename "Internal Feed Transfer" → "Feed Requisition" | Req. sheet title | S |
+| 27 | Feed Requisition tab | Superseded by WP1d (all names) | Req. sheet title | — |
 | 28 | Physical Count | Resolve raw IDs (silo, item, reason) in count lines | Engine r8–11 | S |
 | 29 | Physical Count | Missing entry columns (Silo Name, House(s) linked, Silo Feed Item, Current Diet, Capacity, Current Balance, Projected Shortfall, Next Diet change, Next Feed Item) + one label | Engine r6–18 | M |
 | 30 | Feed requisition document | Header order/labels (r26–35), Destination Silo column, Priority editable (with WP5) | Req. r26–35, r55, r34 | M |
@@ -390,6 +420,7 @@ unchanged; screenshot each screen.
 | Tenant/Company admin may approve every requisition, theirs and others' | Approvals / requisitions | WP1 |
 | One page for requisition requests | Approvals → Requisitions | WP1b |
 | Common requisition header/lines/buttons/item tracking per his list | Approvals → Requisitions | WP1c |
+| Page and tab names as in the workbook | all feed pages | WP1d |
 | Proper demo data for the forecast | `nf_devco` | WP4 |
 | Common requisition numbering from the company Number Series | Requisitions | done |
 
@@ -423,6 +454,7 @@ unchanged; screenshot each screen.
 | WP1 admins approve all requisitions | 45 min | — |
 | WP1b one Requisitions page | 1–1½ h | — |
 | WP1c common requisition to Rishi's list (incl. merging origin/main lot/serial) | 5–7 h | — |
+| WP1d page/tab/section names per workbook | 1–1½ h | — |
 | WP2 grid until run-out | 1 h | — |
 | WP3 dashboard | 3–4½ h | — |
 | WP4 demo data | 1–1½ h | — |
@@ -433,7 +465,7 @@ unchanged; screenshot each screen.
 | WP9 Part D | 5–6 h | — |
 | WP10 shared primitives | 1 h | — |
 | WP11 review, drop prerequisites | 3–4 h | — |
-| **Remaining total** | **≈50–66 h** | |
+| **Remaining total** | **≈51–67 h** | |
 
 ---
 

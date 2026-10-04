@@ -2567,3 +2567,9 @@ document. Read with the 1 Oct rulings: approval still precedes Release. "PR sync
 as `BC_PENDING` with Link PO (3 Oct in-house rule). "Item Ledger + Value Entry" is the existing inventory ledger
 plus cost/journal posting; no duplicate ledger is created (1 Oct). The 4 Oct admin approval rule covers approval
 only; it does not exempt admins from the department checks on Transfer Shipment and Receipt unless Rishi says so.
+
+## 2026-10-04 — Page and tab names follow the workbook
+
+Rishi, 4 Oct: "the proper naming of the tabs and the pages according to the shared file". Page titles, tabs, section
+headings and dialog titles use the workbook's sheet and SECTION names (mapping table in the master plan, WP1d).
+Routes and URL tab keys are unchanged. Screens the workbook does not have keep our names.
