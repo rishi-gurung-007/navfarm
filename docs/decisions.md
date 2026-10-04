@@ -2491,3 +2491,11 @@ Rishi, 3 Oct, after reviewing what the client documents say about requisitions:
    specification (Item / Fixed Asset / Service; Store or Purchase; approval precedes release;
    separate approval, document and fulfilment states). The feed TDD work does not replace it;
    Part E adds its screens and the feed entry point beside it.
+
+## 2026-10-04 — Where each requisition kind is created
+
+Rishi, 4 Oct: **from the Feed Forecast (its Feed Requisition tab) only feed requisitions are
+created; from the common Requisition / Approvals area (Approvals → Requisitions) requisitions of
+every kind are created** — Feed, Item, Fixed Asset and Service. Both feed entry points use the same
+feed document and API; the Feed Forecast tab never offers the common kinds. This confirms the Part E
+plan (`docs/superpowers/plans/2026-10-04-feed-part-e-requisition.md`, Tasks 10 and 13).
