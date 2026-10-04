@@ -2531,3 +2531,13 @@ date — whether or not that batch eats on that day — until the balance reache
 To still wins). **Weekly** view: 7-day columns over the same span, each showing the balance at the
 end of that week, until 0. Workbook basis: Engine Step 6 "Compute each day separately" and Step 7
 "Projected closing KG and shortage date"; Engine §5 row 70 "projected closing … shortage date".
+
+## 2026-10-04 — Tenant and Company admins may approve their own requisitions
+
+Rishi, 4 Oct: when a **Tenant Admin** or a **Company Admin** creates a requisition, they may also
+approve it themselves. This applies to common requisitions (Item / Fixed Asset / Service) and feed
+requisitions alike. It **supersedes** the 2026-10-01 rule "manual self-approval is forbidden" for
+those two user types only. Every other user type (Farm Manager, Head of Farms / OPERATIONAL_ADMIN,
+Standard User) still cannot approve a requisition they created. The approval is still recorded with
+the approver's name and time, so a self-approval is visible on the document. (System Admin is not
+named by Rishi; treat it like Tenant Admin only if Rishi confirms — until then it follows the old rule.)
