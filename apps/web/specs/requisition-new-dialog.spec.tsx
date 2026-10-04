@@ -151,6 +151,42 @@ describe('RequisitionNewDialog — every requisition type (spec §6a)', () => {
     expect(body.lines[0]).not.toHaveProperty('exception_reason');
     expect(body.lines[1].exception_reason).toBe('Vet instruction');
   });
+
+  // Fix round 1 (Important, inherited from the design's own §5 code): no
+  // caller gives `types` a stable reference — requisitions-hub.tsx passes
+  // `types={[...TYPES]}`, a fresh array literal every render. The dialog's
+  // own step-selection effect used to depend on `types` by reference, so
+  // ANY re-render of the parent while the dialog stays open — for a reason
+  // having nothing to do with this dialog — re-ran that effect and
+  // recomputed `step` from `types.length`, which for this four-type case is
+  // always "choose": it silently snapped back to the picker and discarded
+  // whatever the farm had already filled in, with no error and no trace.
+  it("keeps the chosen step through a parent re-render, even though `types` is a fresh array every time (fix round 1)", async () => {
+    const FOUR_TYPES = ['FEED', 'ITEM', 'FA', 'SERVICE'] as const;
+    function Harness() {
+      const [tick, setTick] = React.useState(0);
+      return (
+        <div>
+          <button type="button" onClick={() => setTick((n) => n + 1)}>rerender {tick}</button>
+          {/* A fresh array literal every render of Harness — requisitions-hub.tsx:234's own `types={[...TYPES]}` pattern, not a stable reference. */}
+          <RequisitionNewDialog open farmId="farm-vil" types={[...FOUR_TYPES]} onClose={jest.fn()} onCreated={jest.fn()} onCommon={jest.fn()} />
+        </div>
+      );
+    }
+    render(<Harness />);
+    fireEvent.click(screen.getByRole('button', { name: 'rqNewPurposeFeed' }));
+    expect(screen.getByText('rqNewTitle')).toBeTruthy();
+    expect(screen.queryByText('rqNewPurposePrompt')).toBeNull();
+    // Let the FEED step's options fetch settle before re-rendering, so its
+    // state update lands inside this act(), not as a dangling one after.
+    await waitFor(() => expect(get).toHaveBeenCalledWith('/feed-requisition/options?farmId=farm-vil'));
+    // The parent re-renders for a reason unrelated to this dialog, more than once.
+    fireEvent.click(screen.getByText(/^rerender/));
+    fireEvent.click(screen.getByText(/^rerender/));
+    // Still on the feed form: the chosen step must not snap back to the picker.
+    expect(screen.queryByText('rqNewPurposePrompt')).toBeNull();
+    expect(screen.getByText('rqNewTitle')).toBeTruthy();
+  });
 });
 
 describe('RequisitionNewDialog — farm chosen on the header when the caller has none (Task 10 review, fix round 1)', () => {

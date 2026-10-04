@@ -126,10 +126,27 @@ export function RequisitionNewDialog({
   // only one answer, so it opens the feed form at once. Approvals ->
   // Requisitions passes every kind and is unaffected: the ladder below only
   // short-circuits when exactly one type is on offer.
+  //
+  // Fix round 1 (Important): `types` must NOT sit in this effect's
+  // dependency array by reference. Neither caller gives it a stable
+  // identity — requisitions-hub.tsx passes `types={[...TYPES]}`, a fresh
+  // array literal every render, and requisitions-panel.tsx omits the prop
+  // entirely, so the default parameter `types = ["FEED"]` above is a fresh
+  // literal every render too (the "same shape" the default parameter was
+  // left half-fixed in). Depending on `types` itself means ANY re-render of
+  // the parent while this dialog is open and a kind already chosen re-runs
+  // this effect and recomputes `step` from `types.length` — for the
+  // four-type Approvals case that is always "choose", snapping back to the
+  // picker and silently discarding whatever the farm had filled in, with no
+  // error and no trace. `typesKey` is a primitive derived from the array's
+  // CONTENT, not its identity, so the effect only reconsiders `step` when
+  // the actual set of offered kinds changes — immune to how any caller
+  // constructs the array (spread, default parameter, or otherwise).
+  const typesKey = types.join(",");
   useEffect(() => {
     if (!open) return;
     setStep(types.length === 1 ? (types[0] === "FEED" ? "FEED" : "item") : "choose");
-  }, [open, types]);
+  }, [open, typesKey]);
 
   const setLine = (i: number, patch: Partial<Draft>) => setLines((cur) => cur.map((l, j) => (j === i ? { ...l, ...patch } : l)));
   const complete = lines.every((l) => l.dest && l.item && Number(l.kg) > 0 && l.date);
