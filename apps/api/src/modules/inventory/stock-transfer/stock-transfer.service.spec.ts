@@ -436,22 +436,25 @@ describe('StockTransferService', () => {
   });
 
   /**
-   * Fix round 1, Important (coordinator, 4 Oct): a PUT that replaces lines
-   * on a transfer the Store release path created must not null out the
-   * requisition_line_id FK Task 6 populates — that link is what lets a
-   * shipment/receipt write quantities back onto requisition_line. Part E's
-   * own ruling (Tasks 9/12) has the web editor PUT the whole header and
-   * lines (full-replace), and a client built to that contract will not know
-   * to echo requisition_line_id back, so this is not a corner case — it is
-   * the normal edit path for a release-created transfer while it is still
-   * DRAFT. Preserve (not refuse): position (line_no) carries the existing
-   * link forward unless the caller explicitly supplies its own.
+   * Fix round 2, Important (coordinator, 4 Oct): round 1's position (line_no)
+   * inference was unsound. insertLines always assigns line_no = idx + 1 with
+   * no item cross-check, so a reorder swaps two lines' links, a removal from
+   * the front/middle hands the survivor a stranger's FK, and a
+   * front-insertion misattributes two links while silently dropping a third
+   * — a silent WRONG FK, worse than round 1's silent NULL (a NULL fails
+   * loudly downstream; a wrong FK posts shipped/received quantities onto the
+   * wrong requisition line and nothing ever complains). There is no sound
+   * inference here — only the caller knows which incoming line is which — so
+   * update() now refuses: if the transfer carries ANY requisition_line_id
+   * today, every replacement line must supply its own, or the request is
+   * rejected with a message naming the problem. An ordinary hand-made
+   * transfer (no links anywhere) is unaffected.
    */
-  describe('fix round 1, Important — update() preserves requisition_line_id on a line-replace', () => {
+  describe('fix round 2, Important — update() refuses a line-replace that would misattribute or drop a requisition link', () => {
     const openScope = { farmId: null, companyId: 'co-1', restricted: false, lobId: null };
+    const REFUSAL = "Stock Transfer TR-000001 came from a requisition release; every replacement line must supply its requisition_line_id.";
 
-    it('carries the existing requisition_line_id forward by position when the replacement line omits it', async () => {
-      useFarmScope(cls, openScope);
+    function primeMutation(existingLines: any[]) {
       jest.spyOn(service as any, 'loadForMutation').mockResolvedValue({
         transfer_id: 'tr-1', transfer_no: 'TR-000001', company_id: 'co-1', status: 'DRAFT',
         from_warehouse_id: 'wh-1', to_warehouse_id: 'wh-2', lines: [],
@@ -462,76 +465,121 @@ describe('StockTransferService', () => {
         transfer_id: 'tr-1', transfer_no: 'TR-000001', tenant_id: 'tenant-1', status: 'DRAFT', deleted_at: null,
         from_warehouse_id: 'wh-1', to_warehouse_id: 'wh-2',
       }]);
-      // The transfer's current line — written by a Store release (Task 6),
-      // so it carries the FK back to the requisition line it fulfils.
-      rows.set(schema.stockTransferLine, [
-        { line_id: 'ln-old-1', transfer_id: 'tr-1', line_no: 1, item_id: 'item-1', quantity: '10.0000', uom: 'KG', requisition_line_id: 'rl-1' },
-      ]);
-      let insertedLines: any;
+      rows.set(schema.stockTransferLine, existingLines);
+    }
+
+    let insertedLines: any;
+    beforeEach(() => {
+      insertedLines = undefined;
       (mockDb as any).delete = jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue(undefined) });
       mockDbInsert.mockImplementation((table: unknown) => ({
         values: jest.fn(async (v: any) => { if (table === schema.stockTransferLine) insertedLines = v; }),
       }));
-
-      // A full-replace PUT body (Tasks 9/12's contract) that does not know
-      // about requisition_line_id — exactly what a web editor built to the
-      // documented contract would send.
-      await service.update('tr-1', { lines: [{ item_id: 'item-1', quantity: 10, uom: 'KG' }] } as any, 'tenant-1', { userId: 'u-1' } as any);
-
-      expect(insertedLines).toHaveLength(1);
-      expect(insertedLines[0]).toMatchObject({ item_id: 'item-1', requisition_line_id: 'rl-1' });
     });
 
-    it('still respects an explicit requisition_line_id the caller supplies, over the preserved one', async () => {
+    // The two lines a Store release would have created, in order: A then B.
+    const TWO_LINKED_LINES = [
+      { line_id: 'ln-A', transfer_id: 'tr-1', line_no: 1, item_id: 'item-A', quantity: '10.0000', uom: 'KG', requisition_line_id: 'rl-A' },
+      { line_id: 'ln-B', transfer_id: 'tr-1', line_no: 2, item_id: 'item-B', quantity: '5.0000', uom: 'KG', requisition_line_id: 'rl-B' },
+    ];
+    const ONE_LINKED_LINE = [
+      { line_id: 'ln-A', transfer_id: 'tr-1', line_no: 1, item_id: 'item-A', quantity: '10.0000', uom: 'KG', requisition_line_id: 'rl-A' },
+    ];
+
+    // Case 1: Reordered [A,B] -> [B,A], neither line supplies its id.
+    // Round 1 would have handed B the id that belongs to A and vice versa
+    // (both wrong) — now refused.
+    it('refuses a reorder with no supplied ids (round 1 would have swapped A and B\'s links)', async () => {
       useFarmScope(cls, openScope);
-      jest.spyOn(service as any, 'loadForMutation').mockResolvedValue({
-        transfer_id: 'tr-1', transfer_no: 'TR-000001', company_id: 'co-1', status: 'DRAFT',
-        from_warehouse_id: 'wh-1', to_warehouse_id: 'wh-2', lines: [],
-      } as any);
-      jest.spyOn(service as any, 'assertWarehouses').mockResolvedValue(undefined);
-      rows.set(schema.transferShipment, []);
-      rows.set(schema.stockTransfer, [{
-        transfer_id: 'tr-1', transfer_no: 'TR-000001', tenant_id: 'tenant-1', status: 'DRAFT', deleted_at: null,
-        from_warehouse_id: 'wh-1', to_warehouse_id: 'wh-2',
-      }]);
-      rows.set(schema.stockTransferLine, [
-        { line_id: 'ln-old-1', transfer_id: 'tr-1', line_no: 1, item_id: 'item-1', quantity: '10.0000', uom: 'KG', requisition_line_id: 'rl-1' },
-      ]);
-      let insertedLines: any;
-      (mockDb as any).delete = jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue(undefined) });
-      mockDbInsert.mockImplementation((table: unknown) => ({
-        values: jest.fn(async (v: any) => { if (table === schema.stockTransferLine) insertedLines = v; }),
-      }));
+      primeMutation(TWO_LINKED_LINES);
 
-      await service.update('tr-1', { lines: [{ item_id: 'item-1', quantity: 10, uom: 'KG', requisition_line_id: 'rl-explicit' }] } as any, 'tenant-1', { userId: 'u-1' } as any);
-
-      expect(insertedLines[0]).toMatchObject({ requisition_line_id: 'rl-explicit' });
+      await expect(service.update('tr-1', {
+        lines: [{ item_id: 'item-B', quantity: 5, uom: 'KG' }, { item_id: 'item-A', quantity: 10, uom: 'KG' }],
+      } as any, 'tenant-1', { userId: 'u-1' } as any)).rejects.toThrow(REFUSAL);
+      expect(insertedLines).toBeUndefined();
     });
 
-    it('drops the link for a position with no corresponding existing line (a new line added at the end)', async () => {
+    // Case 2: Removed from the front — only B survives, with no supplied id.
+    // Round 1 would have handed the survivor (B, now at position 1) A's old
+    // link — a stranger's FK, not "no link".
+    it('refuses a removal from the front with no supplied id (round 1 would have handed the survivor a stranger\'s link)', async () => {
       useFarmScope(cls, openScope);
-      jest.spyOn(service as any, 'loadForMutation').mockResolvedValue({
-        transfer_id: 'tr-1', transfer_no: 'TR-000001', company_id: 'co-1', status: 'DRAFT',
-        from_warehouse_id: 'wh-1', to_warehouse_id: 'wh-2', lines: [],
-      } as any);
-      jest.spyOn(service as any, 'assertWarehouses').mockResolvedValue(undefined);
-      rows.set(schema.transferShipment, []);
-      rows.set(schema.stockTransfer, [{
-        transfer_id: 'tr-1', transfer_no: 'TR-000001', tenant_id: 'tenant-1', status: 'DRAFT', deleted_at: null,
-        from_warehouse_id: 'wh-1', to_warehouse_id: 'wh-2',
-      }]);
-      rows.set(schema.stockTransferLine, [
-        { line_id: 'ln-old-1', transfer_id: 'tr-1', line_no: 1, item_id: 'item-1', quantity: '10.0000', uom: 'KG', requisition_line_id: 'rl-1' },
+      primeMutation(TWO_LINKED_LINES);
+
+      await expect(service.update('tr-1', {
+        lines: [{ item_id: 'item-B', quantity: 5, uom: 'KG' }],
+      } as any, 'tenant-1', { userId: 'u-1' } as any)).rejects.toThrow(REFUSAL);
+      expect(insertedLines).toBeUndefined();
+    });
+
+    // Case 3: Front insertion [C, A] — a brand-new line C prepended ahead of
+    // the existing A, neither supplying an id. Round 1 would have misattributed
+    // both (C inheriting A's link, A getting nothing) — now refused.
+    it('refuses a front-insertion with no supplied ids (round 1 would have misattributed both lines)', async () => {
+      useFarmScope(cls, openScope);
+      primeMutation(ONE_LINKED_LINE);
+
+      await expect(service.update('tr-1', {
+        lines: [{ item_id: 'item-C', quantity: 2, uom: 'KG' }, { item_id: 'item-A', quantity: 10, uom: 'KG' }],
+      } as any, 'tenant-1', { userId: 'u-1' } as any)).rejects.toThrow(REFUSAL);
+      expect(insertedLines).toBeUndefined();
+    });
+
+    // Case 4: Added-at-end — growing the line count is fine on its own; the
+    // rule is "does every line carry an id", not "does the count match".
+    // Every line, old and new, supplies its own id.
+    it('accepts a line added at the end when every line (old and new) supplies its own id', async () => {
+      useFarmScope(cls, openScope);
+      primeMutation(ONE_LINKED_LINE);
+
+      await service.update('tr-1', {
+        lines: [
+          { item_id: 'item-A', quantity: 10, uom: 'KG', requisition_line_id: 'rl-A' },
+          { item_id: 'item-C', quantity: 2, uom: 'KG', requisition_line_id: 'rl-C' },
+        ],
+      } as any, 'tenant-1', { userId: 'u-1' } as any);
+
+      expect(insertedLines).toHaveLength(2);
+      expect(insertedLines[0]).toMatchObject({ requisition_line_id: 'rl-A' });
+      expect(insertedLines[1]).toMatchObject({ requisition_line_id: 'rl-C' });
+    });
+
+    // Case 5: caller-supplied — the straightforward case the mechanism exists
+    // for: every existing line's id is echoed back exactly, unreordered.
+    it('accepts a straight replace when the caller echoes every existing id back', async () => {
+      useFarmScope(cls, openScope);
+      primeMutation(TWO_LINKED_LINES);
+
+      await service.update('tr-1', {
+        lines: [
+          { item_id: 'item-A', quantity: 10, uom: 'KG', requisition_line_id: 'rl-A' },
+          { item_id: 'item-B', quantity: 5, uom: 'KG', requisition_line_id: 'rl-B' },
+        ],
+      } as any, 'tenant-1', { userId: 'u-1' } as any);
+
+      expect(insertedLines).toHaveLength(2);
+      expect(insertedLines[0]).toMatchObject({ requisition_line_id: 'rl-A' });
+      expect(insertedLines[1]).toMatchObject({ requisition_line_id: 'rl-B' });
+    });
+
+    // Regression guard: an ordinary hand-made transfer (no requisition links
+    // anywhere) must keep working exactly as before this fix round — no id
+    // required from anyone, reorder/remove/insert all unaffected.
+    it('leaves an ordinary transfer with no requisition links unaffected — no id required, reorder included', async () => {
+      useFarmScope(cls, openScope);
+      primeMutation([
+        { line_id: 'ln-X', transfer_id: 'tr-1', line_no: 1, item_id: 'item-X', quantity: '1.0000', uom: 'KG', requisition_line_id: null },
+        { line_id: 'ln-Y', transfer_id: 'tr-1', line_no: 2, item_id: 'item-Y', quantity: '2.0000', uom: 'KG', requisition_line_id: null },
       ]);
-      let insertedLines: any;
-      (mockDb as any).delete = jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue(undefined) });
-      mockDbInsert.mockImplementation((table: unknown) => ({
-        values: jest.fn(async (v: any) => { if (table === schema.stockTransferLine) insertedLines = v; }),
-      }));
 
-      await service.update('tr-1', { lines: [{ item_id: 'item-1', quantity: 10, uom: 'KG' }, { item_id: 'item-2', quantity: 3, uom: 'KG' }] } as any, 'tenant-1', { userId: 'u-1' } as any);
+      // Reordered, and neither line supplies an id — would be refused on a
+      // release-linked transfer, but this one carries no links at all.
+      await service.update('tr-1', {
+        lines: [{ item_id: 'item-Y', quantity: 2, uom: 'KG' }, { item_id: 'item-X', quantity: 1, uom: 'KG' }],
+      } as any, 'tenant-1', { userId: 'u-1' } as any);
 
-      expect(insertedLines[0]).toMatchObject({ requisition_line_id: 'rl-1' });
+      expect(insertedLines).toHaveLength(2);
+      expect(insertedLines[0].requisition_line_id).toBeFalsy();
       expect(insertedLines[1].requisition_line_id).toBeFalsy();
     });
   });

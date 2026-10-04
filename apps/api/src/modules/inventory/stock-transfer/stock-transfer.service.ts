@@ -482,27 +482,30 @@ export class StockTransferService {
         .where(and(eq(schema.stockTransfer.transfer_id, id), eq(schema.stockTransfer.status, 'DRAFT')));
 
       if (dto.lines) {
-        // Fix round 1, Important (coordinator, 4 Oct): a full line-replace
-        // must not silently null the requisition_line_id a Store release
-        // wrote (Task 6) — that FK is what a later shipment/receipt writes
-        // quantities back onto. Part E's web editor PUTs the whole header
-        // and lines (Tasks 9/12's full-replace contract), and a client built
-        // to that contract will not know to echo requisition_line_id back,
-        // so "preserve" rather than "refuse": carry the existing link
-        // forward by position (line_no) unless the caller explicitly
-        // supplies its own. A position with no corresponding existing line
-        // (a line added at the end) gets no link, same as a brand-new line.
+        // Fix round 2, Important (coordinator, 4 Oct): round 1's position
+        // (line_no) inference was unsound — insertLines always assigns
+        // line_no = idx + 1 with no item cross-check, so a reorder swaps two
+        // lines' links, a removal from the front/middle hands the survivor a
+        // stranger's FK, and a front-insertion misattributes two links while
+        // silently dropping a third. That trades a loud NULL for a silent
+        // wrong FK (shipped/received quantities posted to the wrong
+        // requisition line) — worse, not better. There is no sound inference
+        // here: only the caller knows which incoming line is which. So this
+        // refuses instead: if the transfer carries ANY requisition_line_id
+        // today, every replacement line must supply its own; an ordinary
+        // hand-made transfer (no links anywhere) is unaffected.
         const existingLinks = await this.db
-          .select({ line_no: schema.stockTransferLine.line_no, requisition_line_id: schema.stockTransferLine.requisition_line_id })
+          .select({ requisition_line_id: schema.stockTransferLine.requisition_line_id })
           .from(schema.stockTransferLine)
-          .where(eq(schema.stockTransferLine.transfer_id, id))
-          .orderBy(schema.stockTransferLine.line_no);
-        const existingLinkByPosition = new Map(existingLinks.map((l) => [l.line_no, l.requisition_line_id]));
+          .where(eq(schema.stockTransferLine.transfer_id, id));
+        const hasExistingLinks = existingLinks.some((l) => l.requisition_line_id);
+        if (hasExistingLinks && dto.lines.some((line) => !line.requisition_line_id)) {
+          throw new BadRequestException(
+            `Stock Transfer ${transfer.transfer_no} came from a requisition release; every replacement line must supply its requisition_line_id.`,
+          );
+        }
         await this.db.delete(schema.stockTransferLine).where(eq(schema.stockTransferLine.transfer_id, id));
-        await this.insertLines(id, dto.lines.map((line, idx) => ({
-          ...line,
-          requisition_line_id: line.requisition_line_id ?? existingLinkByPosition.get(idx + 1) ?? undefined,
-        })));
+        await this.insertLines(id, dto.lines);
       }
 
       await this.auditService.log({
