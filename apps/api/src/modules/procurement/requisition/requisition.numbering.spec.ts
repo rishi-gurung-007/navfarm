@@ -6,6 +6,7 @@
  * seeded for the client. Feed numbering belongs to feed-requisition.service.
  */
 import { BadRequestException } from '@nestjs/common';
+import { MASTER_CODE_COLUMNS } from '../../system/number-series/master-code-columns';
 import { transactionCls } from '../../../test-utils/transaction-cls';
 import { RequisitionService } from './requisition.service';
 
@@ -40,12 +41,14 @@ const header = (req_no: string) => ({
 });
 
 /** Selects in create(): requester, line items, [fallback max req_no], header, lines. */
-function build(series: 'configured' | 'none', issued: string[] = ['NUM-0001']) {
+function build(series: 'configured' | 'none', issued: string[] = ['NUM-0001'], taken: string[] = []) {
   const queue: unknown[][] = [
     [{ full_name: 'Ada', department_id: null }],
     [{ item_id: 'item-1' }],
   ];
   if (series === 'none') queue.push([{ req_no: `REQ-${YEAR}-0007` }]);
+  // req_no is globally unique: one lookup per issued number on the series path.
+  if (series === 'configured') for (const n of [...taken, null]) queue.push(n ? [{ req_no: n }] : []);
   queue.push([header('x')], []);
   const { db, insertValues, select } = makeDb(queue);
   const numbers = {
@@ -87,5 +90,16 @@ describe('RequisitionService.create — number from the company REQUISITION seri
     await expect(service.create({ ...storeDto(), doc_type: 'FEED' } as any, TENANT, { userId: 'u1' })).rejects.toThrow(BadRequestException);
     expect(numbers.resolveSeriesFor).not.toHaveBeenCalled();
     expect(numbers.generateNext).not.toHaveBeenCalled();
+  });
+
+  it('skips a number already held by another requisition (req_no is unique across the tenant)', async () => {
+    const { service, numbers, insertValues } = build('configured', ['REQ-2026-0001', 'REQ-2026-0002'], ['REQ-2026-0001']);
+    await service.create(storeDto() as any, TENANT, { userId: 'u1' });
+    expect(numbers.generateNext).toHaveBeenCalledTimes(2);
+    expect(insertValues[0].values.req_no).toBe('REQ-2026-0002');
+  });
+
+  it('offers REQUISITION on the Number Series screen, its code living in requisition.req_no', () => {
+    expect(MASTER_CODE_COLUMNS.REQUISITION).toBe('req_no');
   });
 });

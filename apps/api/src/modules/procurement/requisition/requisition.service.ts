@@ -127,7 +127,22 @@ export class RequisitionService {
    */
   private async nextReqNo(companyId: string, tenantId: string): Promise<string> {
     const series = await this.numberSeries.resolveSeriesFor(REQUISITION_SERIES, null, tenantId, companyId, this.db);
-    if (series) return this.numberSeries.generateNext(series, tenantId, companyId, this.db);
+    if (series) {
+      // req_no is unique across the tenant and the series cannot see this
+      // table, so a configured prefix that meets an existing number (REQ-2026-
+      // 0001) skips past it; the counter has already advanced, so no number
+      // is issued twice and none is renumbered.
+      for (let attempt = 0; attempt < 50; attempt++) {
+        const candidate = await this.numberSeries.generateNext(series, tenantId, companyId, this.db);
+        const [clash] = await this.db
+          .select({ requisition_id: schema.requisition.requisition_id })
+          .from(schema.requisition)
+          .where(and(eq(schema.requisition.tenant_id, tenantId), eq(schema.requisition.req_no, candidate)))
+          .limit(1);
+        if (!clash) return candidate;
+      }
+      throw new BadRequestException('The requisition number series keeps issuing numbers that are already in use. Check its prefix and next number.');
+    }
     const year = new Date().getFullYear();
     const prefix = `REQ-${year}-`;
     const [last] = await this.db
