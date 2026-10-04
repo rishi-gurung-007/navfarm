@@ -206,9 +206,22 @@ export class ApprovalService {
    * always has. D25: a farm-level document (no batch, farm_id set) reaches it
    * through that farm — a farm user sees their own farm's, a company admin the
    * company's, a restricted user their LOB's — which is what lets a farm's own
-   * approvers decide a feed requisition here. A row with neither stays visible
-   * only to a caller with no farm, company or restriction, exactly as before:
-   * the old batch_id IN (…) condition was never true for a NULL batch.
+   * approvers decide a feed requisition here.
+   *
+   * D1 (Part E live verification): a common requisition (Item/FA/Service) can
+   * have neither a batch nor a farm, so it fell through both branches above.
+   * This third branch is for exactly that row, and it is reachable by any
+   * caller who is not farm-bound and not LOB-restricted — a company admin
+   * (companyId set) as much as a tenant-wide admin (companyId null) —
+   * because approval_request carries no lob_id of its own to check a
+   * restricted user's LOB against: there is nothing on this row for
+   * `assertLobInScope`'s or `locationReferenceScopeConditions`'s LOB
+   * conditions to compare, so a restricted caller (OPERATIONAL_ADMIN,
+   * FARM_MANAGER, STANDARD_USER) is kept out of this branch rather than
+   * guessed into or out of an LOB it cannot state. The farm/batch branches
+   * above are untouched; the `company_id = scope.companyId` condition
+   * appended below still bounds every branch including this one, so a
+   * company admin never reads another company's row.
    */
   private farmConditions(): SQL[] {
     const scope = farmScope(this.cls);
@@ -217,7 +230,7 @@ export class ApprovalService {
       and(sql`${R.batch_id} IS NOT NULL`, ...batchReferenceScopeConditions(scope, R.batch_id))!,
       and(isNull(R.batch_id), sql`${R.farm_id} IS NOT NULL`, ...locationReferenceScopeConditions(scope, R.farm_id))!,
     ];
-    if (!scope.restricted && !scope.farmId && !scope.companyId) {
+    if (!scope.restricted && !scope.farmId) {
       paths.push(and(isNull(R.batch_id), isNull(R.farm_id))!);
     }
     return [or(...paths)!, ...restrictedScopeConditions(scope, { companyId: R.company_id })];

@@ -155,14 +155,13 @@ describe('ApprovalService farm scope', () => {
     expect(where.sql).toContain('batch_header bf');
   });
 
-  it('shows a company admin the company\'s farm documents, but still not batchless farmless rows', async () => {
+  it('shows a company admin the company\'s farm documents', async () => {
     useFarmScope(cls, { farmId: null, restricted: false, companyId: 'co-1', lobId: null });
 
     await service.findAll({} as any, 'tenant-1');
 
     const where = renderedWhere();
     expect(where).toContain('`approval_request`.`farm_id` IN (SELECT ls.location_id FROM location_master ls WHERE ls.company_id = ?)');
-    expect(where).not.toContain('`approval_request`.`farm_id` is null');
   });
 
   it('shows a tenant admin with nothing selected every row, farmless ones included', async () => {
@@ -171,6 +170,62 @@ describe('ApprovalService farm scope', () => {
     await service.findAll({} as any, 'tenant-1');
 
     expect(renderedWhere()).toContain('`approval_request`.`farm_id` is null');
+  });
+
+  /**
+   * D1 (Part E live verification): a common requisition (Item/FA/Service) can
+   * have neither a batch nor a farm. Before this fix the batchless-and-farmless
+   * OR branch only ever matched for a tenant-wide caller (no company, not
+   * restricted), so a company-scoped admin — not restricted, no farm, but with
+   * a selected/assigned company — got 0 rows and a 404 on open, even for a
+   * request raised in their own company. GET /approval?doc_type=REQUISITION
+   * returned 5 rows for the tenant admin and 0 for the company admin on the
+   * same data (RQ-00009).
+   */
+  describe('D1: common requisitions with no farm and no batch', () => {
+    it('shows a company admin their own company\'s farmless, batchless request', async () => {
+      useFarmScope(cls, { farmId: null, restricted: false, companyId: 'co-1', lobId: null });
+
+      await service.findAll({} as any, 'tenant-1');
+
+      const where = renderedWhere();
+      // The OR now has a branch for batchless+farmless rows reachable by this
+      // scope, AND (outside the OR) the row's company must equal the scope's —
+      // together these are what let the company admin see their own
+      // company's rows and nothing of another company's.
+      expect(where).toContain('`approval_request`.`batch_id` is null');
+      expect(where).toContain('`approval_request`.`farm_id` is null');
+      expect(where).toContain('`approval_request`.`company_id` = ?');
+    });
+
+    it('does not show a farm-bound user any farmless, batchless request', async () => {
+      // FARM_MANAGER / STANDARD_USER: restricted and farm-bound. They must
+      // keep seeing only their farm's documents (the existing D25 branch) —
+      // the batchless+farmless branch must not be in the OR at all for them.
+      useFarmScope(cls, { farmId: 'farm-g', restricted: true, companyId: 'co-1', lobId: 'lob-pig' });
+
+      await service.findAll({} as any, 'tenant-1');
+
+      const where = renderedWhere();
+      expect(where).not.toContain('`approval_request`.`farm_id` is null');
+      // Their farm-bound branches are untouched by this fix.
+      expect(where).toContain('`approval_request`.`farm_id` IN (SELECT lf.location_id FROM location_master lf WHERE lf.location_id = ? OR lf.farm_id = ?)');
+      expect(where).toContain('batch_header bf');
+    });
+
+    it('still requires the row\'s company to equal the scope\'s, so one company admin cannot read another company\'s row', async () => {
+      useFarmScope(cls, { farmId: null, restricted: false, companyId: 'co-1', lobId: null });
+
+      await service.findAll({} as any, 'tenant-1');
+
+      const q = dialect.sqlToQuery(capturedWhere as any);
+      // The company equality sits outside the OR (AND'd with it), so it bounds
+      // every branch including the new batchless+farmless one — a row whose
+      // company_id is 'co-2' can never satisfy `company_id = 'co-1'`.
+      expect(q.sql).toContain('`approval_request`.`company_id` = ?');
+      expect(q.params).toContain('co-1');
+      expect(q.params).not.toContain('co-2');
+    });
   });
 
   it('lists rows of the active area AND rows that carry no area yet (Plan S follow-up)', async () => {
