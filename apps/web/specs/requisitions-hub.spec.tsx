@@ -164,13 +164,50 @@ describe("RequisitionsHub — Approvals → Requisitions lists and creates every
     expect(await screen.findByText("crqHeaderTitle")).toBeTruthy();
     // Task 18: a brand-new, unsaved common requisition has no req_no yet; the
     // dialog falls back to a "new requisition" title rather than a blank one.
-    expect(within(screen.getByRole("dialog")).getByText("crqNewTitle")).toBeTruthy();
+    expect(within(screen.getByRole("dialog")).getByText("crqNewTitleFa")).toBeTruthy();
     // The Type filter also offers reqDocFa as an <option>; the document's read-only field is the one that counts.
     const shown = (text: string) => screen.getAllByText(text).filter((el) => el.tagName !== "OPTION");
     expect(shown("reqDocFa")).toHaveLength(1);
     expect(shown("reqPurposePurchase")).toHaveLength(1);
     expect(api.post).not.toHaveBeenCalled();
     await waitFor(() => expect(get).toHaveBeenCalledWith("/requisition/options?company_id=co-1"));
+  });
+
+  // Rishi 4 Oct: the common New dialog's title names the kind.
+  it.each([
+    ["rqNewPurposeService", "crqNewTitleService"],
+    ["rqNewPurposeFa", "crqNewTitleFa"],
+  ])("New → %s titles the dialog %s", async (choice, title) => {
+    render(<RequisitionsHub />);
+    await screen.findByRole("table");
+    fireEvent.click(screen.getByRole("button", { name: "rhNew" }));
+    fireEvent.click(screen.getByRole("button", { name: choice }));
+    expect(await within(screen.getByRole("dialog")).findByText(title)).toBeTruthy();
+  });
+
+  it.each([
+    ["rqNewItemStore", "crqNewTitleItemStore"],
+    ["rqNewItemPurchase", "crqNewTitleItemPurchase"],
+  ])("New → Item → %s titles the dialog %s", async (choice, title) => {
+    render(<RequisitionsHub />);
+    await screen.findByRole("table");
+    fireEvent.click(screen.getByRole("button", { name: "rhNew" }));
+    fireEvent.click(screen.getByRole("button", { name: "rqNewPurposeItem" }));
+    fireEvent.click(screen.getByRole("button", { name: choice }));
+    expect(await within(screen.getByRole("dialog")).findByText(title)).toBeTruthy();
+  });
+
+  it("New → Feed shows the requisition header first, with the farm chosen there, then the lines (Task 18b)", async () => {
+    render(<RequisitionsHub />);
+    await screen.findByRole("table");
+    fireEvent.click(screen.getByRole("button", { name: "rhNew" }));
+    fireEvent.click(screen.getByRole("button", { name: "rqNewPurposeFeed" }));
+    const dialog = screen.getByRole("dialog");
+    const header = within(dialog).getByText("rqdHeaderTitle");
+    expect(header.compareDocumentPosition(within(dialog).getByLabelText("rqFarm")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(dialog).getByText("reqTypeManual")).toBeTruthy();
+    expect(within(dialog).getByText("rqdLinesTitle")).toBeTruthy();
+    expect(within(dialog).getByRole("table")).toBeTruthy();
   });
 
   it("without an active company, Item / Fixed Asset / Service explain the company switcher instead of opening", async () => {

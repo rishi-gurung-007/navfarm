@@ -59,6 +59,14 @@ interface HubRow {
   line_count: number;
 }
 
+/** Rishi 4 Oct: a brand-new common requisition's dialog title names its kind (and, for Item, Store or Purchase). */
+function newCommonTitleKey(view: { doc_type: string; purpose?: string | null }) {
+  if (view.doc_type === "FA") return "crqNewTitleFa" as const;
+  if (view.doc_type === "SERVICE") return "crqNewTitleService" as const;
+  if (view.doc_type === "ITEM") return view.purpose === "STORE" ? ("crqNewTitleItemStore" as const) : ("crqNewTitleItemPurchase" as const);
+  return "crqNewTitle" as const;
+}
+
 type Open = { kind: "feed"; view: FeedRequisitionView } | { kind: "common"; view: CommonRequisitionView } | null;
 
 const TYPES = ["FEED", "ITEM", "FA", "SERVICE"] as const;
@@ -183,7 +191,7 @@ export function RequisitionsHub() {
         <Dialog
           open
           onClose={() => setOpen(null)}
-          title={open.kind === "feed" ? open.view.req_no : (open.view.req_no || t("crqNewTitle"))}
+          title={open.kind === "feed" ? open.view.req_no : (open.view.req_no || t(newCommonTitleKey(open.view)))}
         >
           {open.kind === "feed" ? (
             <FeedRequisitionDetail

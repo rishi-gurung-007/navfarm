@@ -1,10 +1,11 @@
 import React from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { RequisitionNewDialog } from '../src/components/console/inventory/requisition-new-dialog';
 import { api } from '../src/services/api-client';
 import { translations } from '../src/utils/translations';
 
 jest.mock('../src/services/api-client', () => ({ api: { get: jest.fn(), post: jest.fn() } }));
+jest.mock('../src/utils/date-short', () => ({ formatDateShort: (v: string | null) => v ?? '' }));
 jest.mock('../src/hooks/useLanguage', () => {
   const stableT = (key: string, vars?: Record<string, any>) => (vars ? `${key}:${JSON.stringify(vars)}` : key);
   return { useLanguage: () => ({ t: stableT }) };
@@ -25,7 +26,9 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockFarm = { farmId: null, setFarmId: jest.fn(), farms: [], loaded: true, failed: false, isFixed: false, fixedFarm: null };
   // F3: one feed-scoped read, not the two Master Data ones.
-  get.mockImplementation(async (_url: string) => ({
+  get.mockImplementation(async (url: string) => {
+    if (String(url).startsWith('/feed-settings')) return { data: { truckTargetKg: 30000, bulkMultipleKg: 3000 } };
+    return {
     data: {
       farmId: 'farm-vil',
       companyId: 'co-1',
@@ -35,7 +38,8 @@ beforeEach(() => {
       ],
       items: [{ item_id: 'i1', item_code: 'FEED-R1', item_name: 'Weaner Diet R1' }],
     },
-  }));
+    };
+  });
   post.mockResolvedValue({ data: { requisition_id: 'req-9', req_no: 'REQ-VIL100-2026-00009', lines: [] } });
 });
 
@@ -230,5 +234,114 @@ describe('RequisitionNewDialog — manual line labels match the workbook (gap #1
     expect(en.rqNewItem).toBe('Feed Item No. to Order, line {{line}}');
     expect(en.rqNewKg).toBe('Requested Qty KG, line {{line}}');
     expect(en.rqNewDate).toBe('Proposed Delivery Date, line {{line}}');
+  });
+});
+
+// Task 18b (Rishi 4 Oct: "I can't see the header fields for the feed
+// requisition, only lines"): the New feed dialog is laid out like the
+// document — the workbook's §1 header first, then the §2 lines as a table.
+describe('RequisitionNewDialog — header first, then lines (Task 18b)', () => {
+  const VIL = { farmId: 'farm-vil', code: 'VIL100', name: 'Villa Franca', companyId: 'co-1', companyName: 'Triple C' };
+  beforeEach(() => {
+    mockFarm = { ...mockFarm, farms: [VIL] };
+  });
+
+  const fillLine = async (n: number, dest: string, kg: string, date: string) => {
+    fireEvent.change(await screen.findByLabelText(`rqNewDestination:{"line":${n}}`), { target: { value: dest } });
+    fireEvent.change(screen.getByLabelText(`rqNewItem:{"line":${n}}`), { target: { value: 'i1' } });
+    fireEvent.change(screen.getByLabelText(`rqNewKg:{"line":${n}}`), { target: { value: kg } });
+    fireEvent.change(screen.getByLabelText(`rqNewDate:{"line":${n}}`), { target: { value: date } });
+  };
+
+  it('shows the workbook header values for a manual requisition, before the lines', async () => {
+    render(<RequisitionNewDialog open farmId="farm-vil" onClose={jest.fn()} onCreated={jest.fn()} />);
+    const dialog = screen.getByRole('dialog');
+    const header = within(dialog).getByText('rqdHeaderTitle');
+    const lines = within(dialog).getByText('rqdLinesTitle');
+    expect(header.compareDocumentPosition(lines) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const valueOf = (label: string) => within(dialog).getByText(label).parentElement!.textContent;
+    expect(valueOf('rqdReqNo')).toContain('rqnAssignedOnSave');
+    expect(valueOf('rqdReqType')).toContain('reqTypeManual');
+    expect(valueOf('rqdSource')).toContain('reqSourceManual');
+    expect(valueOf('rqdFarmCode')).toContain('VIL100');
+    expect(valueOf('rqdFarmName')).toContain('Villa Franca');
+    expect(valueOf('rqdSupply')).toContain('reqSupplyMill');
+    expect(valueOf('rqdPurpose')).toContain('reqPurposeTransfer');
+    expect(valueOf('rqdStatus')).toContain('reqStatusDraft');
+    expect(valueOf('rqdPriority')).toContain('rqnDerivedOnSave');
+    expect(valueOf('rqdDeadline')).toContain('rqnSetOnSave');
+    // Required Delivery Date is derived from the lines (Rishi 4 Oct): read-only, nothing to type.
+    expect(valueOf('rqdRequiredDate')).toContain('rqnFromLines');
+    expect(within(dialog).queryByLabelText('rqdRequiredDate')).toBeNull();
+    // Remarks stay editable and sit in the header.
+    expect(within(dialog).getByLabelText('rqRemarks')).toBeTruthy();
+    await waitFor(() => expect(get).toHaveBeenCalledWith('/feed-requisition/options?farmId=farm-vil'));
+  });
+
+  it('lists the lines as a table in workbook columns, one row per line, with a 10000-step line number', async () => {
+    render(<RequisitionNewDialog open farmId="farm-vil" onClose={jest.fn()} onCreated={jest.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'rqNewAddLine' }));
+    const table = screen.getByRole('table');
+    const headers = within(table).getAllByRole('columnheader').map((h) => h.textContent);
+    expect(headers).toEqual(['rqdColLineNo', 'rqdColSilo', 'rqdColItemNo', 'rqdColItemDesc', 'rqdColFeedType', 'rqdColRequested', 'rqdColDelivery', 'rqnColException', '']);
+    const rows = within(table).getAllByRole('row').slice(1);
+    expect(rows).toHaveLength(2);
+    expect(within(rows[0]).getByText('10000')).toBeTruthy();
+    expect(within(rows[1]).getByText('20000')).toBeTruthy();
+    await waitFor(() => expect((screen.getByLabelText('rqNewDestination:{"line":1}') as HTMLSelectElement).options.length).toBe(3));
+    // Choosing a feed item fills its description and a silo makes the line Bulk.
+    await fillLine(1, 's1', '3000', '2099-10-05');
+    expect(within(rows[0]).getByText('Weaner Diet R1')).toBeTruthy();
+    expect(within(rows[0]).getByText('reqFeedBulk')).toBeTruthy();
+    await fillLine(2, 'st', '500', '2099-10-02');
+    expect(within(rows[1]).getByText('reqFeedBagged')).toBeTruthy();
+  });
+
+  it('keeps the bulk total, truck target, bulk multiple and the earliest line date live from the lines', async () => {
+    render(<RequisitionNewDialog open farmId="farm-vil" onClose={jest.fn()} onCreated={jest.fn()} />);
+    await waitFor(() => expect(get).toHaveBeenCalledWith('/feed-settings?companyId=co-1&farmId=farm-vil'));
+    fireEvent.click(screen.getByRole('button', { name: 'rqNewAddLine' }));
+    await waitFor(() => expect((screen.getByLabelText('rqNewDestination:{"line":1}') as HTMLSelectElement).options.length).toBe(3));
+    await fillLine(1, 's1', '3000', '2099-10-05');
+    await fillLine(2, 'st', '500', '2099-10-02');
+    const dialog = screen.getByRole('dialog');
+    const valueOf = (label: string) => within(dialog).getByText(label).parentElement!.textContent;
+    // The bagged line is not part of the bulk total (Req. r26 counts bulk only).
+    await waitFor(() => expect(valueOf('rqdFarmTotal')).toContain('rqdFarmTotalValue:{"total":"3,000"}'));
+    expect(valueOf('rqdTruckTarget')).toContain('rqdTruckTargetValue:{"target":"30,000","trips":1}');
+    expect(valueOf('rqdBulkMultiple')).toContain('rqdKgValue:{"kg":"3,000"}');
+    expect(valueOf('rqdRequiredDate')).toContain('2099-10-02');
+    fireEvent.change(screen.getByLabelText('rqNewKg:{"line":1}'), { target: { value: '45000' } });
+    expect(valueOf('rqdFarmTotal')).toContain('rqdFarmTotalValue:{"total":"45,000"}');
+    expect(valueOf('rqdTruckTarget')).toContain('"trips":2');
+    fireEvent.change(screen.getByLabelText('rqNewDate:{"line":2}'), { target: { value: '2099-10-09' } });
+    expect(valueOf('rqdRequiredDate')).toContain('2099-10-05');
+  });
+
+  it('without a fixed farm (hub), the farm is chosen in the header and its code and name follow', async () => {
+    render(<RequisitionNewDialog open onClose={jest.fn()} onCreated={jest.fn()} />);
+    const dialog = screen.getByRole('dialog');
+    const header = within(dialog).getByText('rqdHeaderTitle');
+    expect(header.compareDocumentPosition(within(dialog).getByLabelText('rqFarm')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(dialog).getByText('rqdFarmCode').parentElement!.textContent).not.toContain('VIL100');
+  });
+
+  it('still posts the same body when created from the new layout', async () => {
+    const onCreated = jest.fn();
+    render(<RequisitionNewDialog open farmId="farm-vil" onClose={jest.fn()} onCreated={onCreated} />);
+    fireEvent.click(screen.getByRole('button', { name: 'rqNewAddLine' }));
+    await waitFor(() => expect((screen.getByLabelText('rqNewDestination:{"line":1}') as HTMLSelectElement).options.length).toBe(3));
+    await fillLine(1, 's1', '3000', '2099-10-05');
+    await fillLine(2, 'st', '500', '2099-10-02');
+    fireEvent.change(screen.getByLabelText('rqRemarks'), { target: { value: 'Urgent' } });
+    fireEvent.click(screen.getByRole('button', { name: 'rqNewCreate' }));
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/feed-requisition', {
+      farmId: 'farm-vil',
+      remarks: 'Urgent',
+      lines: [
+        { destination_location_id: 's1', item_id: 'i1', quantity_kg: 3000, proposed_delivery_date: '2099-10-05' },
+        { destination_location_id: 'st', item_id: 'i1', quantity_kg: 500, proposed_delivery_date: '2099-10-02' },
+      ],
+    }));
   });
 });

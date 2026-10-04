@@ -26,11 +26,16 @@ import { Building2, Package, Plus, Trash2, Wheat, Wrench } from "lucide-react";
 import { api } from "@/services/api-client";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
-import { Field } from "@/components/ui/field";
+import { Badge } from "@/components/ui/badge";
+import { Field, FieldGroup, ReadField } from "@/components/ui/field";
+import { ScrollTable } from "@/components/ui/scroll-table";
+import { cn } from "@/lib/utils";
+import { formatDateShort } from "@/utils/date-short";
 import { useLanguage } from "@/hooks/useLanguage";
 import { unwrap } from "./feed-format";
 import { useFeedFarm } from "./use-feed-farm";
 import { FeedFarmSelect } from "./feed-farm-select";
+import { FEED_TYPE_LABEL, PURPOSE_LABEL, REQ_STATUS_LABEL, REQ_TYPE_LABEL, SOURCE_LABEL, SUPPLY_LABEL, labelOf, variantOf } from "./requisition-labels";
 import type { RequisitionView } from "./requisitions-panel";
 
 interface Destination { location_id: string; location_code: string; location_type: string }
@@ -40,6 +45,29 @@ interface Draft { dest: string; item: string; kg: string; date: string; reason: 
 
 const EMPTY: Draft = { dest: "", item: "", kg: "", date: "", reason: "" };
 const inputStyle = { backgroundColor: "var(--input-bg)", color: "var(--input-text)", borderColor: "var(--input-border)" };
+
+const TH = "h-9 whitespace-nowrap px-3 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]";
+const TD = "whitespace-nowrap px-3 py-1.5 align-top text-xs text-[var(--text-primary)]";
+const HALF = "sm:col-span-6";
+/** Requisition §2 line numbers step by 10000; the number shown is a preview, the API assigns the real one. */
+const LINE_STEP = 10000;
+// §2 columns that apply to a manual line (the forecast columns have no value until the engine runs); "" is the remove button.
+const COLUMNS = ["rqdColLineNo", "rqdColSilo", "rqdColItemNo", "rqdColItemDesc", "rqdColFeedType", "rqdColRequested", "rqdColDelivery", "rqnColException", ""] as const;
+
+/** The settings the header needs (GET /feed-settings, resolved for the farm). */
+interface HeaderSettings { truckTargetKg: number; bulkMultipleKg: number }
+
+const todayIso = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+
+/** A silo is bulk and a store is bagged — the API's default (feedTypeOf); a destination not chosen yet has no type. */
+function feedTypeOfDraft(line: Draft, destinations: Destination[]): "BULK" | "BAGGED" | null {
+  const dest = destinations.find((d) => d.location_id === line.dest);
+  if (!dest) return null;
+  return dest.location_type === "STORE" ? "BAGGED" : "BULK";
+}
 
 export type RequisitionKind = "FEED" | "ITEM" | "FA" | "SERVICE";
 
@@ -97,6 +125,7 @@ export function RequisitionNewDialog({
   const [remarks, setRemarks] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [settings, setSettings] = useState<HeaderSettings | null>(null);
   const [step, setStep] = useState<"choose" | "item" | "FEED">("choose");
 
   useEffect(() => {
@@ -120,6 +149,32 @@ export function RequisitionNewDialog({
       alive = false;
     };
   }, [open, effectiveFarmId, step]);
+
+  // Header: Bulk Truck Target and Bulk Order Multiple come from the feed
+  // planning settings resolved for the farm (GET /feed-settings). A farm login
+  // without the permission, or a failed read, leaves them blank — the API
+  // applies them on save either way.
+  const chosenFarm = farm.farms.find((f) => f.farmId === effectiveFarmId) ?? null;
+  const companyId = chosenFarm?.companyId ?? "";
+  useEffect(() => {
+    setSettings(null);
+    if (!open || step !== "FEED" || !effectiveFarmId || !companyId) return;
+    let alive = true;
+    api
+      .get(`/feed-settings?${new URLSearchParams({ companyId, farmId: effectiveFarmId }).toString()}`)
+      .then((res: any) => {
+        const raw = unwrap<Partial<HeaderSettings>>(res);
+        if (alive && typeof raw?.truckTargetKg === "number" && typeof raw?.bulkMultipleKg === "number") {
+          setSettings({ truckTargetKg: raw.truckTargetKg, bulkMultipleKg: raw.bulkMultipleKg });
+        }
+      })
+      .catch(() => {
+        /* header settings are informational; the API applies them on save */
+      });
+    return () => {
+      alive = false;
+    };
+  }, [open, effectiveFarmId, companyId, step]);
 
   // Task 19: the Feed Forecast tab's instance is given only `["FEED"]` (the
   // default) — the "what is this for?" choice is pointless when there is
@@ -149,6 +204,10 @@ export function RequisitionNewDialog({
   }, [open, typesKey]);
 
   const setLine = (i: number, patch: Partial<Draft>) => setLines((cur) => cur.map((l, j) => (j === i ? { ...l, ...patch } : l)));
+  // Req. r26 counts bulk only; r27 is a target, never a block (cp. 17).
+  const bulkTotal = lines.reduce((sum, l) => (feedTypeOfDraft(l, destinations) === "BULK" ? sum + (Number(l.kg) > 0 ? Number(l.kg) : 0) : sum), 0);
+  const trips = settings && settings.truckTargetKg > 0 && bulkTotal > 0 ? Math.ceil(bulkTotal / settings.truckTargetKg) : 0;
+  const earliest = lines.map((l) => l.date).filter(Boolean).sort()[0] ?? null;
   const complete = lines.every((l) => l.dest && l.item && Number(l.kg) > 0 && l.date);
 
   const create = async () => {
@@ -205,45 +264,98 @@ export function RequisitionNewDialog({
           <ChoiceCard label={t("rqNewItemPurchase")} hint="" icon={Package} onClick={() => onCommon?.({ docType: "ITEM", purpose: "PURCHASE" })} />
         </div>
       ) : (
-      <div className="flex flex-col gap-3 text-xs">
-        {farmId === undefined && (
-          <FeedFarmSelect id="rqn-farm" label={t("rqFarm")} farms={farm.farms} farmId={farm.farmId} onChange={farm.setFarmId} />
-        )}
-        {lines.map((line, i) => (
-          <div key={i} className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1fr_7rem_9rem_1fr_auto] sm:items-end">
-            <Field label={t("rqNewDestination", { line: i + 1 })} htmlFor={`rqn-dest-${i}`}>
-              <select id={`rqn-dest-${i}`} className="nf-input-sm nf-select" style={inputStyle} value={line.dest} onChange={(e) => setLine(i, { dest: e.target.value })}>
-                <option value="">{t("rqNewChoose")}</option>
-                {destinations.map((d) => <option key={d.location_id} value={d.location_id}>{d.location_code}</option>)}
-              </select>
-            </Field>
-            <Field label={t("rqNewItem", { line: i + 1 })} htmlFor={`rqn-item-${i}`}>
-              <select id={`rqn-item-${i}`} className="nf-input-sm nf-select" style={inputStyle} value={line.item} onChange={(e) => setLine(i, { item: e.target.value })}>
-                <option value="">{t("rqNewChoose")}</option>
-                {items.map((it) => <option key={it.item_id} value={it.item_id}>{it.item_code} — {it.item_name}</option>)}
-              </select>
-            </Field>
-            <Field label={t("rqNewKg", { line: i + 1 })} htmlFor={`rqn-kg-${i}`}>
-              <input id={`rqn-kg-${i}`} type="number" min={0} step="any" className="nf-input-sm text-right" style={inputStyle} value={line.kg} onChange={(e) => setLine(i, { kg: e.target.value })} />
-            </Field>
-            <Field label={t("rqNewDate", { line: i + 1 })} htmlFor={`rqn-date-${i}`}>
-              <input id={`rqn-date-${i}`} type="date" className="nf-input-sm" style={inputStyle} value={line.date} onChange={(e) => setLine(i, { date: e.target.value })} />
-            </Field>
-            <Field label={t("rqNewException", { line: i + 1 })} htmlFor={`rqn-exc-${i}`} hint={t("rqNewExceptionHint")}>
-              <input id={`rqn-exc-${i}`} className="nf-input-sm" style={inputStyle} maxLength={180} value={line.reason} onChange={(e) => setLine(i, { reason: e.target.value })} />
-            </Field>
-            <Button variant="ghost" size="sm" aria-label={t("rqNewRemoveLine", { line: i + 1 })} disabled={lines.length === 1}
-              onClick={() => setLines((cur) => cur.filter((_, j) => j !== i))}>
-              <Trash2 className="h-3.5 w-3.5" />
-            </Button>
+      <div className="flex flex-col gap-4 text-xs">
+        {/*
+          * Task 18b (Rishi 4 Oct: "I can't see the header fields ... only
+          * lines"): laid out like FeedRequisitionDocument — the workbook's
+          * Requisition §1 header first, then the §2 lines as a table. What
+          * the API assigns on save (number, priority, deadline) is said so;
+          * nothing here is a field the farm can set except the farm itself
+          * (hub only), the lines and the remarks. Required Delivery Date is
+          * derived from the lines, read-only (Rishi 4 Oct).
+          */}
+        <FieldGroup title={t("rqdHeaderTitle")}>
+          {farmId === undefined && (
+            <div className="sm:col-span-12">
+              <FeedFarmSelect id="rqn-farm" label={t("rqFarm")} farms={farm.farms} farmId={farm.farmId} onChange={farm.setFarmId} />
+            </div>
+          )}
+          <ReadField className={HALF} label={t("rqdReqNo")} value={t("rqnAssignedOnSave")} />
+          <ReadField className={HALF} label={t("rqdReqDate")} value={formatDateShort(todayIso())} />
+          <ReadField className={HALF} label={t("rqdReqType")} value={labelOf(REQ_TYPE_LABEL, "MANUAL", t)} />
+          <ReadField className={HALF} label={t("rqdSource")} value={labelOf(SOURCE_LABEL, "MANUAL_ENTRY", t)} />
+          <ReadField className={HALF} label={t("rqdFarmCode")} value={chosenFarm?.code} mono />
+          <ReadField className={HALF} label={t("rqdFarmName")} value={chosenFarm?.name} />
+          <ReadField className={HALF} label={t("rqdFarmTotal")} value={t("rqdFarmTotalValue", { total: bulkTotal.toLocaleString("en-US") })} />
+          <ReadField className={HALF} label={t("rqdTruckTarget")}
+            value={settings ? t("rqdTruckTargetValue", { target: settings.truckTargetKg.toLocaleString("en-US"), trips }) : null} />
+          <ReadField className={HALF} label={t("rqdBulkMultiple")}
+            value={settings ? t("rqdKgValue", { kg: settings.bulkMultipleKg.toLocaleString("en-US") }) : null} />
+          <ReadField className={HALF} label={t("rqdRequiredDate")} value={earliest ? formatDateShort(earliest) : t("rqnFromLines")} />
+          <ReadField className={HALF} label={t("rqdSupply")} value={labelOf(SUPPLY_LABEL, "MILL", t)} />
+          <ReadField className={HALF} label={t("rqdPurpose")} value={labelOf(PURPOSE_LABEL, "INTERNAL_TRANSFER", t)} />
+          <ReadField className={HALF} label={t("rqdStatus")} value={<Badge variant={variantOf(REQ_STATUS_LABEL, "DRAFT")}>{labelOf(REQ_STATUS_LABEL, "DRAFT", t)}</Badge>} />
+          <ReadField className={HALF} label={t("rqdPriority")} value={t("rqnDerivedOnSave")} />
+          <ReadField className={HALF} label={t("rqdDeadline")} value={t("rqnSetOnSave")} />
+          <Field className="sm:col-span-12" label={t("rqRemarks")} htmlFor="rqn-remarks">
+            <textarea id="rqn-remarks" className="nf-input w-full px-2 py-1" style={inputStyle} rows={2} value={remarks} onChange={(e) => setRemarks(e.target.value)} />
+          </Field>
+        </FieldGroup>
+
+        <FieldGroup title={t("rqdLinesTitle")}>
+          <div className="flex flex-col gap-2 sm:col-span-12">
+            <ScrollTable label={t("rqLinesLabel")}>
+              <thead>
+                <tr>
+                  {COLUMNS.map((c) => <th key={c} scope="col" className={cn(TH, c === "rqdColRequested" && "text-right")}>{c ? t(c) : ""}</th>)}
+                </tr>
+              </thead>
+              <tbody>
+                {lines.map((line, i) => {
+                  const item = items.find((it) => it.item_id === line.item);
+                  const type = feedTypeOfDraft(line, destinations);
+                  return (
+                    <tr key={i}>
+                      <td className={cn(TD, "text-right tabular-nums")}>{(i + 1) * LINE_STEP}</td>
+                      <td className={TD}>
+                        <select aria-label={t("rqNewDestination", { line: i + 1 })} className="nf-input-sm nf-select w-36" style={inputStyle} value={line.dest} onChange={(e) => setLine(i, { dest: e.target.value })}>
+                          <option value="">{t("rqNewChoose")}</option>
+                          {destinations.map((d) => <option key={d.location_id} value={d.location_id}>{d.location_code}</option>)}
+                        </select>
+                      </td>
+                      <td className={TD}>
+                        <select aria-label={t("rqNewItem", { line: i + 1 })} className="nf-input-sm nf-select w-28" style={inputStyle} value={line.item} onChange={(e) => setLine(i, { item: e.target.value })}>
+                          <option value="">{t("rqNewChoose")}</option>
+                          {items.map((it) => <option key={it.item_id} value={it.item_id}>{it.item_code} — {it.item_name}</option>)}
+                        </select>
+                      </td>
+                      <td className={TD}>{item?.item_name ?? "—"}</td>
+                      <td className={TD}>{type ? labelOf(FEED_TYPE_LABEL, type, t) : "—"}</td>
+                      <td className={cn(TD, "text-right")}>
+                        <input aria-label={t("rqNewKg", { line: i + 1 })} type="number" min={0} step="any" className="nf-input-sm w-28 text-right" style={inputStyle} value={line.kg} onChange={(e) => setLine(i, { kg: e.target.value })} />
+                      </td>
+                      <td className={TD}>
+                        <input aria-label={t("rqNewDate", { line: i + 1 })} type="date" className="nf-input-sm" style={inputStyle} value={line.date} onChange={(e) => setLine(i, { date: e.target.value })} />
+                      </td>
+                      <td className={TD}>
+                        <input aria-label={t("rqNewException", { line: i + 1 })} title={t("rqNewExceptionHint")} className="nf-input-sm w-48" style={inputStyle} maxLength={180} value={line.reason} onChange={(e) => setLine(i, { reason: e.target.value })} />
+                      </td>
+                      <td className={TD}>
+                        <Button variant="ghost" size="sm" aria-label={t("rqNewRemoveLine", { line: i + 1 })} disabled={lines.length === 1}
+                          onClick={() => setLines((cur) => cur.filter((_, j) => j !== i))}>
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </ScrollTable>
+            <div>
+              <Button variant="outline" size="sm" onClick={() => setLines((cur) => [...cur, { ...EMPTY }])}><Plus className="h-3.5 w-3.5" /> {t("rqNewAddLine")}</Button>
+            </div>
           </div>
-        ))}
-        <div>
-          <Button variant="outline" size="sm" onClick={() => setLines((cur) => [...cur, { ...EMPTY }])}><Plus className="h-3.5 w-3.5" /> {t("rqNewAddLine")}</Button>
-        </div>
-        <Field label={t("rqRemarks")} htmlFor="rqn-remarks">
-          <textarea id="rqn-remarks" className="nf-input w-full px-2 py-1" style={inputStyle} rows={2} value={remarks} onChange={(e) => setRemarks(e.target.value)} />
-        </Field>
+        </FieldGroup>
         {error && <p style={{ color: "var(--danger)" }}>{error}</p>}
       </div>
       )}

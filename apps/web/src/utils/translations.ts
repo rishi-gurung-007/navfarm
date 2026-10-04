@@ -1563,6 +1563,13 @@ export const translations = {
     rqNewAddLine: "Add line",
     rqNewRemoveLine: "Remove line {{line}}",
     rqNewCancel: "Cancel",
+    // Task 18b: the New feed dialog shows the document's header before the
+    // lines; these are the header values that do not exist until it is saved.
+    rqnAssignedOnSave: "Assigned on save",
+    rqnDerivedOnSave: "Derived on save",
+    rqnSetOnSave: "Set on save",
+    rqnFromLines: "Earliest line date — set from the lines below",
+    rqnColException: "Exception reason",
     rqNewCreate: "Create",
     rqCreated: "Requisition created.",
     // Task 9 — the feed requisition document: §1 header in workbook order, §2 lines, and each line's batch/house breakdown.
@@ -1694,6 +1701,10 @@ export const translations = {
     // Task 18: a brand-new, unsaved common requisition has no req_no yet — the
     // dialog's title falls back to this rather than rendering blank.
     crqNewTitle: "New requisition",
+    crqNewTitleItemStore: "New Item requisition (Store)",
+    crqNewTitleItemPurchase: "New Item requisition (Purchase)",
+    crqNewTitleFa: "New Fixed Asset requisition",
+    crqNewTitleService: "New Service requisition",
     crqHeaderTitle: "Requisition",
     crqLinesTitle: "Lines",
     crqLinesLabel: "Requisition lines",
