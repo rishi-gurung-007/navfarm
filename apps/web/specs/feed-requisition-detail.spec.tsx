@@ -80,4 +80,15 @@ describe('FeedRequisitionDetail (D26, Task 11: one feed document for both entry 
     fireEvent.click(await screen.findByRole('button', { name: 'rqBack' }));
     expect(onBack).toHaveBeenCalled();
   });
+
+  // Task 18: the dialog wrap supplies its own title and its own close control
+  // (the Dialog component's), so the document's internal Back + title strip
+  // would be a second one stacked above it. `embedded` suppresses only that
+  // strip — everything else (Save/Submit, the document itself) is unchanged.
+  it('suppresses its own Back + title strip when embedded, for the Task 18 dialog wrap', async () => {
+    render(<FeedRequisitionDetail view={view} onView={jest.fn()} onBack={jest.fn()} embedded />);
+    await screen.findByRole('button', { name: 'rqSave' });
+    expect(screen.queryByRole('button', { name: 'rqBack' })).toBeNull();
+    expect(screen.queryByText('REQ-VIL100-2026-00004', { selector: 'h2' })).toBeNull();
+  });
 });

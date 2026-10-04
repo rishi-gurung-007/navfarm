@@ -44,10 +44,20 @@ export function FeedRequisitionDetail({
   view,
   onView,
   onBack,
+  embedded = false,
 }: {
   view: RequisitionView;
   onView: (next: RequisitionView, notice?: string) => void;
   onBack: () => void;
+  /**
+   * Task 18: true when a `<Dialog>` wraps this detail — the dialog already
+   * shows the req_no as its own title and offers its own close control, so
+   * the Back button + h2 strip this component otherwise renders on top
+   * would be a second one. `onBack` still drives the dialog's close (the
+   * caller wires it to the same handler as `onClose`); only the strip itself
+   * is suppressed.
+   */
+  embedded?: boolean;
 }) {
   const { t } = useLanguage();
   const tRef = useRef(t);
@@ -139,10 +149,12 @@ export function FeedRequisitionDetail({
 
   return (
     <>
-      <div className="flex shrink-0 flex-wrap items-center gap-2">
-        <Button size="sm" variant="ghost" onClick={onBack}><ArrowLeft className="h-3.5 w-3.5" /> {t("rqBack")}</Button>
-        <h2 className="text-base font-semibold" style={{ color: "var(--text-primary)" }}>{view.req_no}</h2>
-      </div>
+      {!embedded && (
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          <Button size="sm" variant="ghost" onClick={onBack}><ArrowLeft className="h-3.5 w-3.5" /> {t("rqBack")}</Button>
+          <h2 className="text-base font-semibold" style={{ color: "var(--text-primary)" }}>{view.req_no}</h2>
+        </div>
+      )}
       {error && <InlineAlert>{error}</InlineAlert>}
       <div className="min-h-0 flex-1 overflow-auto">
         <FeedRequisitionDocument

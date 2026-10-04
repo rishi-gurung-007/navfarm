@@ -46,10 +46,16 @@ const withinCap = (raw: string | undefined, cap: number) => {
   return v === null || (Number.isFinite(v) && v > 0 && v <= cap + 1e-9);
 };
 
-export function CommonRequisitionDetail({ initial, onView, onBack }: {
+export function CommonRequisitionDetail({ initial, onView, onBack, embedded = false }: {
   initial: CommonRequisitionView;
   onView: (next: CommonRequisitionView, notice?: string) => void;
   onBack: () => void;
+  /**
+   * Task 18: true when a `<Dialog>` wraps this detail — see the identical
+   * prop on FeedRequisitionDetail for why. `onBack` is unchanged; only the
+   * internal Back + title strip is suppressed.
+   */
+  embedded?: boolean;
 }) {
   const { t } = useLanguage();
   const tRef = useRef(t);
@@ -161,10 +167,12 @@ export function CommonRequisitionDetail({ initial, onView, onBack }: {
 
   return (
     <>
-      <div className="flex shrink-0 flex-wrap items-center gap-2">
-        <Button size="sm" variant="ghost" onClick={onBack}><ArrowLeft className="h-3.5 w-3.5" /> {t("crqBack")}</Button>
-        <h2 className="text-base font-semibold" style={{ color: "var(--text-primary)" }}>{draft.req_no}</h2>
-      </div>
+      {!embedded && (
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          <Button size="sm" variant="ghost" onClick={onBack}><ArrowLeft className="h-3.5 w-3.5" /> {t("crqBack")}</Button>
+          <h2 className="text-base font-semibold" style={{ color: "var(--text-primary)" }}>{draft.req_no}</h2>
+        </div>
+      )}
       {error && <InlineAlert>{error}</InlineAlert>}
       <div className="min-h-0 flex-1 overflow-auto">
         <CommonRequisitionDocument view={draft} editable={editable} options={options} onChange={setDraft} />

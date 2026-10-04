@@ -272,4 +272,14 @@ describe("CommonRequisitionDetail", () => {
     render(<CommonRequisitionDetail initial={base({ farm_id: "f1" })} onView={jest.fn()} onBack={jest.fn()} />);
     await waitFor(() => expect(get).toHaveBeenCalledWith("/requisition/options?company_id=co-1&farm_id=f1"));
   });
+
+  // Task 18: the dialog wrap supplies its own title and its own close control
+  // (the Dialog component's); `embedded` suppresses only the internal Back +
+  // title strip this detail otherwise renders, same as the feed side.
+  it("suppresses its own Back + title strip when embedded, for the Task 18 dialog wrap", () => {
+    render(<CommonRequisitionDetail initial={open()} onView={jest.fn()} onBack={jest.fn()} embedded />);
+    expect(screen.queryByRole("button", { name: "crqBack" })).toBeNull();
+    expect(screen.queryByText("REQ-2026-0001", { selector: "h2" })).toBeNull();
+    expect(screen.getByText("crqSave")).toBeTruthy();
+  });
 });
