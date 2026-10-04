@@ -17,6 +17,10 @@ import { transactionCls } from '../../../test-utils/transaction-cls';
 import { RequisitionService, COMMON_REQUISITION_DOC_TYPE } from './requisition.service';
 import { FEED_APPROVAL_DOC_TYPE } from '../feed-requisition/feed-requisition.service';
 
+/** No requisition series configured: numbering falls back to REQ-YYYY-NNNN. */
+const NUMBER_SERIES_STUB = { resolveSeriesFor: async () => null, generateNext: async () => { throw new Error('no series configured'); } };
+
+
 const TENANT = 'tenant-1';
 const FEED_ROUTE = /\/feed-requisition/;
 
@@ -60,7 +64,7 @@ function build() {
     approve: jest.fn(), reject: jest.fn(), submitFarmDocument: jest.fn(), registerDocumentHandler: jest.fn(),
   };
   const transfers: any = { create: jest.fn(), postShipment: jest.fn(), postReceipt: jest.fn() };
-  const service = new RequisitionService(transactionCls(harness.db), approvals, transfers);
+  const service = new RequisitionService(transactionCls(harness.db), approvals, transfers, NUMBER_SERIES_STUB as any);
   return { ...harness, approvals, transfers, service };
 }
 

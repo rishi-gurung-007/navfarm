@@ -14,6 +14,10 @@ import { MySqlDialect } from 'drizzle-orm/mysql-core';
 import { transactionCls, useFarmScope } from '../../../test-utils/transaction-cls';
 import { RequisitionService } from './requisition.service';
 
+/** No requisition series configured: numbering falls back to REQ-YYYY-NNNN. */
+const NUMBER_SERIES_STUB = { resolveSeriesFor: async () => null, generateNext: async () => { throw new Error('no series configured'); } };
+
+
 const TENANT = 'tenant-1';
 const dialect = new MySqlDialect();
 
@@ -62,7 +66,7 @@ function serviceForCompanyB() {
   useFarmScope(cls, { farmId: null, restricted: false, companyId: 'co-B', lobId: null } as any);
   const approvals: any = { approve: jest.fn(), reject: jest.fn(), submitFarmDocument: jest.fn(), registerDocumentHandler: jest.fn() };
   const transfers: any = { create: jest.fn(), postShipment: jest.fn(), postReceipt: jest.fn() };
-  return { ...h, approvals, transfers, service: new RequisitionService(cls, approvals, transfers) };
+  return { ...h, approvals, transfers, service: new RequisitionService(cls, approvals, transfers, NUMBER_SERIES_STUB as any) };
 }
 
 const ADMIN_B = { userId: 'u-b', userType: 'COMPANY_ADMIN' };

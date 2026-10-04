@@ -15,6 +15,10 @@ import { useFarmScope } from '../../../test-utils/transaction-cls';
 
 const TENANT = 'tenant-1';
 
+/** No requisition series configured: numbering falls back to REQ-YYYY-NNNN. */
+const NUMBER_SERIES_STUB = { resolveSeriesFor: async () => null, generateNext: async () => { throw new Error('no series configured'); } };
+
+
 /** A per-call select queue: every db.select() consumes the next row set. */
 function makeDb() {
   const selectResults: unknown[][] = [];
@@ -111,7 +115,7 @@ describe('RequisitionService.create — the specification refuses the document b
 
   it.each(cases)('refuses %s with no database work at all', async (_name, dto, message) => {
     const { db, selectResults, insertValues } = makeDb();
-    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any);
+    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
     await expect(service.create(dto as any, TENANT, { userId: 'u1' })).rejects.toThrow(BadRequestException);
     await expect(service.create(dto as any, TENANT, { userId: 'u1' })).rejects.toThrow(message);
     expect(db.select).not.toHaveBeenCalled();
@@ -132,7 +136,7 @@ describe('RequisitionService.create — supplied header and line fields are stor
       [headerRow({ requester_department_id: 'cc-dept', sender_department_id: 'cc-snd' })],
       [lineRow({ qty_to_ship: '6', qty_to_receive: '6', from_location_id: 'loc-store', to_location_id: 'loc-farm' })],
     );
-    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any);
+    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
 
     const result = await service.create(storeDto({
       requisition_date: '2026-10-01',
@@ -187,7 +191,7 @@ describe('RequisitionService.create — supplied header and line fields are stor
       [headerRow({ requester_name: 'Rudo Moyo', requester_department_id: 'cc-farm-ops' })],
       [lineRow()],
     );
-    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any);
+    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
     await service.create(storeDto() as any, TENANT, { userId: 'u1' });
     expect(insertValues[0].values).toMatchObject({
       requester_user_id: 'u1',
@@ -205,7 +209,7 @@ describe('RequisitionService.create — department identities are Cost Center ro
       [{ full_name: 'Ada Farm', department_id: null }],
       [departmentRow('cc-x', { cost_center_type: 'WAREHOUSE' })],
     );
-    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any);
+    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
     await expect(service.create(storeDto({ sender_department_id: 'cc-x' }) as any, TENANT, { userId: 'u1' }))
       .rejects.toThrow('Sender department must be an active DEPARTMENT cost center of this company.');
     expect(insertValues).toHaveLength(0);
@@ -217,7 +221,7 @@ describe('RequisitionService.create — department identities are Cost Center ro
       [{ full_name: 'Ada Farm', department_id: 'cc-gone' }],
       [departmentRow('cc-gone', { is_active: false })],
     );
-    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any);
+    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
     await expect(service.create(storeDto() as any, TENANT, { userId: 'u1' }))
       .rejects.toThrow('Requester department must be an active DEPARTMENT cost center of this company.');
     expect(insertValues).toHaveLength(0);
@@ -229,7 +233,7 @@ describe('RequisitionService.create — department identities are Cost Center ro
       [{ full_name: 'Ada Farm', department_id: null }],
       [departmentRow('cc-other', { company_id: 'co-2' })],
     );
-    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any);
+    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
     await expect(service.create(storeDto({ sender_department_id: 'cc-other' }) as any, TENANT, { userId: 'u1' }))
       .rejects.toThrow(BadRequestException);
   });
@@ -248,7 +252,7 @@ describe('RequisitionService read compatibility — existing FEED rows and old s
       })],
       [lineRow({ quantity: '3000.0000', qty_to_ship: null, qty_to_receive: null })],
     );
-    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any);
+    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
     const result = await service.findOne('req-feed', TENANT);
 
     expect(result.status).toBe('AUTO_DRAFT');
@@ -279,7 +283,7 @@ describe('RequisitionService read compatibility — existing FEED rows and old s
       [headerRow({ status, approval_status: null, document_status: null })],
       [lineRow()],
     );
-    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any);
+    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
     const result = await service.findOne('req-1', TENANT);
     expect(result.status).toBe(status);
     expect(result.approval_status).toBe(approval);
@@ -297,7 +301,7 @@ describe('RequisitionService read compatibility — existing FEED rows and old s
         approval_status: null, document_status: null, fulfilment_status: null, integration_status: null,
       },
     ]);
-    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any);
+    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
     const [row] = await service.findAll({}, TENANT);
     expect(row.status).toBe('APPROVED');
     expect(row.approval_status).toBe('APPROVED');
@@ -317,7 +321,7 @@ describe('RequisitionService.submit and decide — the new states are written be
       [headerRow({ status: 'PENDING_APPROVAL', approval_status: 'PENDING_APPROVAL', approval_request_id: 'ar-1' })], // read back
       [lineRow()],
     );
-    const service = new RequisitionService(transactionCls(db), approval as any, STOCK_TRANSFERS_STUB as any);
+    const service = new RequisitionService(transactionCls(db), approval as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
     const result = await service.submit('req-1', 'weekly pull', TENANT, { userId: 'u1', email: 'a@example.test', userType: 'STANDARD_USER' });
 
     expect(approval.submitFarmDocument).toHaveBeenCalledWith(
@@ -336,7 +340,7 @@ describe('RequisitionService.submit and decide — the new states are written be
       [headerRow({ status: 'REJECTED', approval_status: 'REJECTED', document_status: 'OPEN' })],
       [lineRow()],
     );
-    const service = new RequisitionService(transactionCls(db), approval as any, STOCK_TRANSFERS_STUB as any);
+    const service = new RequisitionService(transactionCls(db), approval as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
     const result = await service.decide('req-1', { rejection_reason: 'Not needed this cycle' }, 'REJECTED', TENANT, { userId: 'u2', userType: 'COMPANY_ADMIN' });
 
     expect(approval.reject).toHaveBeenCalledWith('ar-1', { rejection_reason: 'Not needed this cycle' }, TENANT, expect.anything());
@@ -354,7 +358,7 @@ describe('RequisitionService.submit and decide — the new states are written be
       [headerRow({ status: 'APPROVED', approval_status: 'APPROVED', document_status: 'APPROVED' })],
       [lineRow()],
     );
-    const service = new RequisitionService(transactionCls(db), approval as any, STOCK_TRANSFERS_STUB as any);
+    const service = new RequisitionService(transactionCls(db), approval as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
     await service.decide('req-1', {}, 'APPROVED', TENANT, { userId: 'u2', userType: 'COMPANY_ADMIN' });
     expect(approval.approve).toHaveBeenCalledWith('ar-1', TENANT, expect.anything());
     expect(setCalls[0]).toMatchObject({ status: 'APPROVED', approval_status: 'APPROVED', document_status: 'APPROVED' });
@@ -371,7 +375,7 @@ describe('Part E Task 1 — list filter, manual source, approver stamp', () => {
       [headerRow({ source: 'MANUAL_ENTRY' })],
       [lineRow()],
     );
-    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any);
+    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
     await service.create(storeDto() as any, TENANT, { userId: 'u1' });
     expect(insertValues[0].values.source).toBe('MANUAL_ENTRY');
   });
@@ -380,7 +384,7 @@ describe('Part E Task 1 — list filter, manual source, approver stamp', () => {
     const { db, selectResults } = makeDb();
     selectResults.push([headerRow({ status: 'PENDING_APPROVAL', approval_status: 'PENDING_APPROVAL', approval_request_id: 'ar-1', source: null })]);
     const approvals = approvalsMock();
-    const service = new RequisitionService(transactionCls(db), approvals as any, STOCK_TRANSFERS_STUB as any);
+    const service = new RequisitionService(transactionCls(db), approvals as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
     await expect(service.decide('req-1', {}, 'APPROVED', TENANT, { userId: 'u1', userType: 'COMPANY_ADMIN' }))
       .rejects.toThrow('You may not approve a requisition you created. Another authorized approver must decide it.');
     expect(approvals.approve).not.toHaveBeenCalled();
@@ -393,7 +397,7 @@ describe('Part E Task 1 — list filter, manual source, approver stamp', () => {
       [headerRow({ status: 'APPROVED', approval_status: 'APPROVED', document_status: 'APPROVED' })],                                       // findOne header
       [lineRow()],                                                                                                                           // findOne lines
     );
-    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any);
+    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
     await service.decide('req-1', {}, 'APPROVED', TENANT, { userId: 'u2', userType: 'COMPANY_ADMIN' });
     expect(setCalls[0]).toMatchObject({ status: 'APPROVED', approved_by: 'u2' });
     expect(String(setCalls[0].approved_at)).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
@@ -401,7 +405,7 @@ describe('Part E Task 1 — list filter, manual source, approver stamp', () => {
 
   it('refuses an unknown doc_type filter before any query', async () => {
     const { db } = makeDb();
-    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any);
+    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
     await expect(service.findAll({ doc_type: 'PIGS' }, TENANT)).rejects.toThrow('doc_type must be one of FEED, ITEM, FA, SERVICE.');
     expect(db.select).not.toHaveBeenCalled();
   });
@@ -414,7 +418,7 @@ describe('Part E Task 1 follow-up — the Approvals-inbox path refuses self-appr
       status: 'PENDING_APPROVAL', approval_status: 'PENDING_APPROVAL', approval_request_id: 'ar-1', source: 'MANUAL_ENTRY',
     })]);
     const approvals: any = { ...approvalsMock(), registerDocumentHandler: jest.fn() };
-    const service = new RequisitionService(transactionCls(db), approvals, STOCK_TRANSFERS_STUB as any);
+    const service = new RequisitionService(transactionCls(db), approvals, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
     service.onModuleInit();
     const handler = approvals.registerDocumentHandler.mock.calls[0][1];
     const request = { request_id: 'ar-1', document_id: 'req-1', company_id: 'co-1', requested_by: 'u1' };
@@ -436,7 +440,7 @@ describe('Part E Task 2 — PUT /requisition/:id', () => {
       [lineRow({ quantity: '4.0000' })],   // findOne lines
     );
     db.delete = jest.fn(() => ({ where: jest.fn(async () => undefined) }));
-    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any);
+    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
     const result = await service.update('req-1', {
       doc_type: 'ITEM', purpose: 'PURCHASE', remarks: 'Changed',
       lines: [{ item_id: 'item-1', quantity: 4, uom: 'KG' }],
@@ -450,7 +454,7 @@ describe('Part E Task 2 — PUT /requisition/:id', () => {
   it('refuses a submitted document before writing anything', async () => {
     const { db, selectResults, setCalls } = makeDb();
     selectResults.push([headerRow({ status: 'PENDING_APPROVAL', approval_status: 'PENDING_APPROVAL' })]);
-    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any);
+    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
     await expect(service.update('req-1', { purpose: 'STORE', from_location_id: 'a', to_location_id: 'b', lines: [{ item_id: 'i', quantity: 1, uom: 'EA' }] } as any, TENANT, { userId: 'u1' }))
       .rejects.toThrow('can no longer be edited');
     expect(setCalls).toHaveLength(0);
@@ -459,7 +463,7 @@ describe('Part E Task 2 — PUT /requisition/:id', () => {
   it('refuses a change of document type', async () => {
     const { db, selectResults } = makeDb();
     selectResults.push([headerRow()]);
-    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any);
+    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
     await expect(service.update('req-1', { doc_type: 'FA', purpose: 'PURCHASE', lines: [{ description: 'Pump', quantity: 1, uom: 'EA' }] } as any, TENANT, { userId: 'u1' }))
       .rejects.toThrow('The document type cannot change; create a new requisition instead.');
   });
@@ -472,7 +476,7 @@ describe('Part E Task 2 fix round 1 — update writes what it says', () => {
     const { db, selectResults, setCalls, insertValues } = makeDb();
     selectResults.push([headerRow()], [{ item_id: 'item-1' }], [headerRow()], [lineRow()]);
     del(db);
-    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any);
+    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
     await service.update('req-1', {
       purpose: 'STORE', from_location_id: 'loc-store', to_location_id: 'loc-farm',
       lines: [{ item_id: 'item-1', quantity: 7, uom: 'KG' }],
@@ -494,7 +498,7 @@ describe('Part E Task 2 fix round 1 — update writes what it says', () => {
       [headerRow()], [lineRow()],
     );
     del(db);
-    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any);
+    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
     // purpose, main_location_id, requester_department_id, requisition_date and the
     // cleared fields are all omitted; a Store row still needs its locations.
     await service.update('req-1', {
@@ -514,7 +518,7 @@ describe('Part E Task 2 fix round 1 — update writes what it says', () => {
     const { db, selectResults, setCalls, insertValues } = makeDb();
     selectResults.push([headerRow(over)]);
     del(db);
-    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any);
+    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
     await expect(service.update('req-1', {
       purpose: 'PURCHASE', lines: [{ item_id: 'item-1', quantity: 1, uom: 'KG' }],
     } as any, TENANT, { userId: 'u1' })).rejects.toThrow(message);
@@ -533,7 +537,7 @@ describe('Part E Task 3 — options and display names', () => {
       [{ location_id: 'st', location_code: 'F1/STORE', location_name: 'Store', location_type: 'STORE', farm_id: 'f1' }],
       [{ cost_center_id: 'cc', cost_center_code: 'D-1', cost_center_name: 'Stores' }],
     );
-    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any);
+    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
     const out = await service.options({ company_id: 'co-1' }, TENANT);
     expect(out.items.map((i) => i.item_code)).toEqual(['IT-1']);
     expect(out.resources.map((r) => r.resource_code)).toEqual(['RES-1']);
@@ -552,7 +556,7 @@ describe('Part E Task 3 — options and display names', () => {
       [{ transfer_id: 'tr-1', transfer_no: 'TR-000001' }],
       [{ resource_id: 'r1', resource_code: 'RES-1', resource_name: 'Electrician' }],
     );
-    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any);
+    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
     const view = await service.findOne('req-1', TENANT);
     expect(view).toMatchObject({ from_location_code: 'F1/STORE', to_location_code: 'F1/SHED-1', main_location_code: 'F1', sender_department_name: 'Stores', approved_by_name: 'Approver Two', released_by_name: 'Releaser Three', requester_department_name: 'Farm Ops', linked_transfer_no: 'TR-000001' });
     expect(view.lines[0]).toMatchObject({ from_location_code: 'F1/STORE', to_location_code: 'F1/SHED-1', resource_code: 'RES-1', resource_name: 'Electrician' });
@@ -580,7 +584,7 @@ describe('Part E Task 3 — options and display names', () => {
       // receivedRows: 4 received so far against that shipment line
       [{ shipment_line_id: 'sl-1', qty: '4' }],
     );
-    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any);
+    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
     const view = await service.findOne('req-1', TENANT);
     expect(view.shipments).toEqual([
       {
@@ -603,7 +607,7 @@ describe('Part E Task 3 fix round 1 — company-scoped references and LOB scope'
   it('create refuses a resource that is not an active resource of the requisition company', async () => {
     const { db, selectResults } = makeDb();
     selectResults.push([]); // the resource belongs to another company
-    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any);
+    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
     await expect(service.create(storeDto({
       doc_type: 'SERVICE', purpose: 'PURCHASE', from_location_id: undefined, to_location_id: undefined,
       lines: [{ resource_id: 'foreign-res', quantity: 1, uom: 'HR' }],
@@ -614,7 +618,7 @@ describe('Part E Task 3 fix round 1 — company-scoped references and LOB scope'
   it('create refuses an item that is not an active item of the company', async () => {
     const { db, selectResults } = makeDb();
     selectResults.push([]);
-    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any);
+    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
     await expect(service.create(storeDto() as any, TENANT, undefined)).rejects.toThrow('Line 1: item is not an active item of this company.');
     expect(db.insert).not.toHaveBeenCalled();
   });
@@ -622,7 +626,7 @@ describe('Part E Task 3 fix round 1 — company-scoped references and LOB scope'
   it('update refuses another company\'s resource and writes nothing', async () => {
     const { db, selectResults, setCalls } = makeDb();
     selectResults.push([headerRow({ doc_type: 'SERVICE' })], []);
-    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any);
+    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
     await expect(service.update('req-1', {
       purpose: 'PURCHASE', lines: [{ resource_id: 'foreign-res', quantity: 1, uom: 'HR' }],
     } as any, TENANT, { userId: 'u1' })).rejects.toThrow(BadRequestException);
@@ -634,7 +638,7 @@ describe('Part E Task 3 fix round 1 — company-scoped references and LOB scope'
     selectResults.push([], [], [], []);
     const cls = transactionCls(db);
     useFarmScope(cls, { farmId: null, restricted: true, companyId: 'co-1', lobId: 'lob-pig' } as any);
-    await new RequisitionService(cls, approvalsMock() as any, STOCK_TRANSFERS_STUB as any).options({ company_id: 'co-1' }, TENANT);
+    await new RequisitionService(cls, approvalsMock() as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any).options({ company_id: 'co-1' }, TENANT);
     const dialect = new MySqlDialect();
     const q = dialect.sqlToQuery(whereCalls[2] as any);
     expect(q.sql).toContain('`lob_id` = ?');
@@ -645,7 +649,7 @@ describe('Part E Task 3 fix round 1 — company-scoped references and LOB scope'
   it('options for an unrestricted caller adds no LOB condition', async () => {
     const { db, selectResults, whereCalls } = makeDb();
     selectResults.push([], [], [], []);
-    await new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any).options({ company_id: 'co-1' }, TENANT);
+    await new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any).options({ company_id: 'co-1' }, TENANT);
     expect(new MySqlDialect().sqlToQuery(whereCalls[2] as any).sql).not.toContain('lob_id');
   });
 });
@@ -655,7 +659,7 @@ describe('Part E Task 7 — ship/receive from the requisition; the lines follow 
     const { db, selectResults } = makeDb();
     selectResults.push([headerRow({ purpose: 'STORE', status: 'APPROVED', approval_status: 'APPROVED', document_status: 'APPROVED' })]);
     const stockTransfers = { postShipment: jest.fn(), postReceipt: jest.fn() };
-    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, stockTransfers as any);
+    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, stockTransfers as any, NUMBER_SERIES_STUB as any);
     await expect(service.ship('req-1', { posting_date: '2026-10-04', lines: [{ line_id: 'line-1', quantity: 1 }] } as any, TENANT))
       .rejects.toThrow('Only a released Store requisition ships and receives; release it first.');
     expect(stockTransfers.postShipment).not.toHaveBeenCalled();
@@ -665,7 +669,7 @@ describe('Part E Task 7 — ship/receive from the requisition; the lines follow 
     const { db, selectResults } = makeDb();
     selectResults.push([headerRow({ purpose: 'PURCHASE', status: 'APPROVED', approval_status: 'APPROVED', document_status: 'RELEASED', linked_transfer_id: 'tr-1' })]);
     const stockTransfers = { postShipment: jest.fn(), postReceipt: jest.fn() };
-    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, stockTransfers as any);
+    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, stockTransfers as any, NUMBER_SERIES_STUB as any);
     await expect(service.receive('req-1', { posting_date: '2026-10-04', shipment_id: 'sh-1', lines: [{ line_id: 'line-1', quantity: 1 }] } as any, TENANT))
       .rejects.toThrow('Only a released Store requisition ships and receives; release it first.');
     expect(stockTransfers.postReceipt).not.toHaveBeenCalled();
@@ -678,7 +682,7 @@ describe('Part E Task 7 — ship/receive from the requisition; the lines follow 
       [{ line_id: 't1', requisition_line_id: 'line-1' }, { line_id: 't2', requisition_line_id: 'line-2' }],
     );
     const stockTransfers = { postShipment: jest.fn().mockResolvedValue({ shipment_id: 'sh-1' }), postReceipt: jest.fn() };
-    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, stockTransfers as any);
+    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, stockTransfers as any, NUMBER_SERIES_STUB as any);
     jest.spyOn(service, 'findOne').mockResolvedValue({ requisition_id: 'req-1' } as any);
     const result = await service.ship('req-1', { posting_date: '2026-10-04', lines: [{ line_id: 'line-2', quantity: 4 }] } as any, TENANT);
     expect(stockTransfers.postShipment).toHaveBeenCalledWith(
@@ -694,7 +698,7 @@ describe('Part E Task 7 — ship/receive from the requisition; the lines follow 
       [{ line_id: 't1', requisition_line_id: 'line-1' }],
     );
     const stockTransfers = { postShipment: jest.fn(), postReceipt: jest.fn() };
-    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, stockTransfers as any);
+    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, stockTransfers as any, NUMBER_SERIES_STUB as any);
     await expect(service.ship('req-1', { posting_date: '2026-10-04', lines: [{ line_id: 'line-9', quantity: 1 }] } as any, TENANT))
       .rejects.toThrow('Requisition line line-9 is not on the linked transfer.');
     expect(stockTransfers.postShipment).not.toHaveBeenCalled();

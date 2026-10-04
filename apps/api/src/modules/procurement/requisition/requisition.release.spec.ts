@@ -25,6 +25,10 @@ import { RequisitionController } from './requisition.controller';
 import { REQUIRE_PERMISSION_KEY } from '../../../common/decorators/require-permission.decorator';
 import { RequisitionService } from './requisition.service';
 
+/** No requisition series configured: numbering falls back to REQ-YYYY-NNNN. */
+const NUMBER_SERIES_STUB = { resolveSeriesFor: async () => null, generateNext: async () => { throw new Error('no series configured'); } };
+
+
 interface Entry { op: string; table: unknown; values?: any; set?: any; inTx?: boolean }
 
 function recordingDb(queues: Map<unknown, unknown[][]>, cls: () => ClsService) {
@@ -101,7 +105,7 @@ function setup(queues: Map<unknown, unknown[][]>) {
   // Part E: a Store release asks the (required) transfer service to create the
   // transfer; a Purchase release never calls it (asserted per-test below).
   const stockTransfers = { create: jest.fn().mockResolvedValue({ transfer_id: 'tr-1', transfer_no: 'TR-000001' }) };
-  const service = new RequisitionService(cls, approvals, stockTransfers as any);
+  const service = new RequisitionService(cls, approvals, stockTransfers as any, NUMBER_SERIES_STUB as any);
   service.onModuleInit();
   const as = <T>(scope: FarmScope, work: () => Promise<T>) => cls.run(async () => { cls.set(FARM_SCOPE_KEY, scope); return work(); });
   const writes = () => log.filter((e) => e.op !== 'select');

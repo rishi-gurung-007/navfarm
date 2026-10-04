@@ -30,6 +30,7 @@ import { farmScope, assertCompanyInScope, assertLocationOnActiveFarm } from '../
 import { userHasPermission } from '../../../common/permissions';
 import { ApprovalService } from '../../production/approval/approval.service';
 import { StockTransferService } from '../../inventory/stock-transfer/stock-transfer.service';
+import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import * as schema from '../../../core/database/schema';
 import { CreateRequisitionDto, DecideRequisitionDto, RequisitionReceiptDto, RequisitionShipmentDto, UpdateRequisitionDto } from './dto/requisition.dto';
 import { assertDepartmentIdentity, DEPARTMENT_COST_CENTER_TYPE } from '../../../common/department-identity';
@@ -54,6 +55,9 @@ import {
 
 const REQUISITION_MODULE = { moduleCode: 'PROCUREMENT', resource: 'REQUISITION' } as const;
 
+/** The Number Series master key of a common requisition (series code and document type). */
+export const REQUISITION_SERIES = 'REQUISITION';
+
 /** The approval-engine document type for a common requisition. */
 export const COMMON_REQUISITION_DOC_TYPE = 'REQUISITION';
 
@@ -71,6 +75,9 @@ export class RequisitionService {
     // requisitions with no transfer created (ruling, 4 Oct: see Part A
     // Task 4 for the identical call on an @Optional() settings service).
     private readonly stockTransfers: StockTransferService,
+    // Task 16: a common requisition's number is issued by the company's
+    // REQUISITION Number Series. Required for the same reason as above.
+    private readonly numberSeries: NumberSeriesService,
   ) {}
 
   private get db(): MySql2Database<typeof schema> {
@@ -107,8 +114,20 @@ export class RequisitionService {
     return conditions;
   }
 
-  /** REQ-YYYY-NNNN per company — ours (BBP names no requisition number series). */
+  /**
+   * The number of a new common requisition. It comes from the company's own
+   * REQUISITION Number Series (decision 2026-10-01: Common Purchase and Feed
+   * Requisitions use separate company-owned series), issued on the create
+   * transaction so generateNext's row lock holds until the insert commits and
+   * two creates never share a number.
+   *
+   * A company with no requisition series keeps REQ-YYYY-NNNN, as masters do
+   * until a series is configured; nothing is seeded for it. Feed requisitions
+   * are numbered by feed-requisition.service (REQ-<FarmCode>-YYYY-NNNNN).
+   */
   private async nextReqNo(companyId: string, tenantId: string): Promise<string> {
+    const series = await this.numberSeries.resolveSeriesFor(REQUISITION_SERIES, null, tenantId, companyId, this.db);
+    if (series) return this.numberSeries.generateNext(series, tenantId, companyId, this.db);
     const year = new Date().getFullYear();
     const prefix = `REQ-${year}-`;
     const [last] = await this.db
