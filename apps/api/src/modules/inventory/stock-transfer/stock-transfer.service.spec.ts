@@ -436,6 +436,107 @@ describe('StockTransferService', () => {
   });
 
   /**
+   * Fix round 1, Important (coordinator, 4 Oct): a PUT that replaces lines
+   * on a transfer the Store release path created must not null out the
+   * requisition_line_id FK Task 6 populates — that link is what lets a
+   * shipment/receipt write quantities back onto requisition_line. Part E's
+   * own ruling (Tasks 9/12) has the web editor PUT the whole header and
+   * lines (full-replace), and a client built to that contract will not know
+   * to echo requisition_line_id back, so this is not a corner case — it is
+   * the normal edit path for a release-created transfer while it is still
+   * DRAFT. Preserve (not refuse): position (line_no) carries the existing
+   * link forward unless the caller explicitly supplies its own.
+   */
+  describe('fix round 1, Important — update() preserves requisition_line_id on a line-replace', () => {
+    const openScope = { farmId: null, companyId: 'co-1', restricted: false, lobId: null };
+
+    it('carries the existing requisition_line_id forward by position when the replacement line omits it', async () => {
+      useFarmScope(cls, openScope);
+      jest.spyOn(service as any, 'loadForMutation').mockResolvedValue({
+        transfer_id: 'tr-1', transfer_no: 'TR-000001', company_id: 'co-1', status: 'DRAFT',
+        from_warehouse_id: 'wh-1', to_warehouse_id: 'wh-2', lines: [],
+      } as any);
+      jest.spyOn(service as any, 'assertWarehouses').mockResolvedValue(undefined);
+      rows.set(schema.transferShipment, []); // assertNotShipped: no shipment
+      rows.set(schema.stockTransfer, [{
+        transfer_id: 'tr-1', transfer_no: 'TR-000001', tenant_id: 'tenant-1', status: 'DRAFT', deleted_at: null,
+        from_warehouse_id: 'wh-1', to_warehouse_id: 'wh-2',
+      }]);
+      // The transfer's current line — written by a Store release (Task 6),
+      // so it carries the FK back to the requisition line it fulfils.
+      rows.set(schema.stockTransferLine, [
+        { line_id: 'ln-old-1', transfer_id: 'tr-1', line_no: 1, item_id: 'item-1', quantity: '10.0000', uom: 'KG', requisition_line_id: 'rl-1' },
+      ]);
+      let insertedLines: any;
+      (mockDb as any).delete = jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue(undefined) });
+      mockDbInsert.mockImplementation((table: unknown) => ({
+        values: jest.fn(async (v: any) => { if (table === schema.stockTransferLine) insertedLines = v; }),
+      }));
+
+      // A full-replace PUT body (Tasks 9/12's contract) that does not know
+      // about requisition_line_id — exactly what a web editor built to the
+      // documented contract would send.
+      await service.update('tr-1', { lines: [{ item_id: 'item-1', quantity: 10, uom: 'KG' }] } as any, 'tenant-1', { userId: 'u-1' } as any);
+
+      expect(insertedLines).toHaveLength(1);
+      expect(insertedLines[0]).toMatchObject({ item_id: 'item-1', requisition_line_id: 'rl-1' });
+    });
+
+    it('still respects an explicit requisition_line_id the caller supplies, over the preserved one', async () => {
+      useFarmScope(cls, openScope);
+      jest.spyOn(service as any, 'loadForMutation').mockResolvedValue({
+        transfer_id: 'tr-1', transfer_no: 'TR-000001', company_id: 'co-1', status: 'DRAFT',
+        from_warehouse_id: 'wh-1', to_warehouse_id: 'wh-2', lines: [],
+      } as any);
+      jest.spyOn(service as any, 'assertWarehouses').mockResolvedValue(undefined);
+      rows.set(schema.transferShipment, []);
+      rows.set(schema.stockTransfer, [{
+        transfer_id: 'tr-1', transfer_no: 'TR-000001', tenant_id: 'tenant-1', status: 'DRAFT', deleted_at: null,
+        from_warehouse_id: 'wh-1', to_warehouse_id: 'wh-2',
+      }]);
+      rows.set(schema.stockTransferLine, [
+        { line_id: 'ln-old-1', transfer_id: 'tr-1', line_no: 1, item_id: 'item-1', quantity: '10.0000', uom: 'KG', requisition_line_id: 'rl-1' },
+      ]);
+      let insertedLines: any;
+      (mockDb as any).delete = jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue(undefined) });
+      mockDbInsert.mockImplementation((table: unknown) => ({
+        values: jest.fn(async (v: any) => { if (table === schema.stockTransferLine) insertedLines = v; }),
+      }));
+
+      await service.update('tr-1', { lines: [{ item_id: 'item-1', quantity: 10, uom: 'KG', requisition_line_id: 'rl-explicit' }] } as any, 'tenant-1', { userId: 'u-1' } as any);
+
+      expect(insertedLines[0]).toMatchObject({ requisition_line_id: 'rl-explicit' });
+    });
+
+    it('drops the link for a position with no corresponding existing line (a new line added at the end)', async () => {
+      useFarmScope(cls, openScope);
+      jest.spyOn(service as any, 'loadForMutation').mockResolvedValue({
+        transfer_id: 'tr-1', transfer_no: 'TR-000001', company_id: 'co-1', status: 'DRAFT',
+        from_warehouse_id: 'wh-1', to_warehouse_id: 'wh-2', lines: [],
+      } as any);
+      jest.spyOn(service as any, 'assertWarehouses').mockResolvedValue(undefined);
+      rows.set(schema.transferShipment, []);
+      rows.set(schema.stockTransfer, [{
+        transfer_id: 'tr-1', transfer_no: 'TR-000001', tenant_id: 'tenant-1', status: 'DRAFT', deleted_at: null,
+        from_warehouse_id: 'wh-1', to_warehouse_id: 'wh-2',
+      }]);
+      rows.set(schema.stockTransferLine, [
+        { line_id: 'ln-old-1', transfer_id: 'tr-1', line_no: 1, item_id: 'item-1', quantity: '10.0000', uom: 'KG', requisition_line_id: 'rl-1' },
+      ]);
+      let insertedLines: any;
+      (mockDb as any).delete = jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue(undefined) });
+      mockDbInsert.mockImplementation((table: unknown) => ({
+        values: jest.fn(async (v: any) => { if (table === schema.stockTransferLine) insertedLines = v; }),
+      }));
+
+      await service.update('tr-1', { lines: [{ item_id: 'item-1', quantity: 10, uom: 'KG' }, { item_id: 'item-2', quantity: 3, uom: 'KG' }] } as any, 'tenant-1', { userId: 'u-1' } as any);
+
+      expect(insertedLines[0]).toMatchObject({ requisition_line_id: 'rl-1' });
+      expect(insertedLines[1].requisition_line_id).toBeFalsy();
+    });
+  });
+
+  /**
    * Client rules of 2026-09-24: feed reaches a silo only through a stock
    * transfer (farm STORE -> SILO) and leaves it only through a daily feed
    * entry, so posting the transfer is the one moment a silo can be overfilled

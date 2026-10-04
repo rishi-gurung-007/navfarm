@@ -482,8 +482,27 @@ export class StockTransferService {
         .where(and(eq(schema.stockTransfer.transfer_id, id), eq(schema.stockTransfer.status, 'DRAFT')));
 
       if (dto.lines) {
+        // Fix round 1, Important (coordinator, 4 Oct): a full line-replace
+        // must not silently null the requisition_line_id a Store release
+        // wrote (Task 6) — that FK is what a later shipment/receipt writes
+        // quantities back onto. Part E's web editor PUTs the whole header
+        // and lines (Tasks 9/12's full-replace contract), and a client built
+        // to that contract will not know to echo requisition_line_id back,
+        // so "preserve" rather than "refuse": carry the existing link
+        // forward by position (line_no) unless the caller explicitly
+        // supplies its own. A position with no corresponding existing line
+        // (a line added at the end) gets no link, same as a brand-new line.
+        const existingLinks = await this.db
+          .select({ line_no: schema.stockTransferLine.line_no, requisition_line_id: schema.stockTransferLine.requisition_line_id })
+          .from(schema.stockTransferLine)
+          .where(eq(schema.stockTransferLine.transfer_id, id))
+          .orderBy(schema.stockTransferLine.line_no);
+        const existingLinkByPosition = new Map(existingLinks.map((l) => [l.line_no, l.requisition_line_id]));
         await this.db.delete(schema.stockTransferLine).where(eq(schema.stockTransferLine.transfer_id, id));
-        await this.insertLines(id, dto.lines);
+        await this.insertLines(id, dto.lines.map((line, idx) => ({
+          ...line,
+          requisition_line_id: line.requisition_line_id ?? existingLinkByPosition.get(idx + 1) ?? undefined,
+        })));
       }
 
       await this.auditService.log({

@@ -682,28 +682,34 @@ export class RequisitionService {
       // this transaction instead of opening a second one — so a failure in
       // either write rolls back both; there is no window where one commits
       // without the other.
-      let linkedTransferId: string | null = row.linked_transfer_id ?? null;
-      if (row.purpose !== 'PURCHASE') {
-        const lines = await this.db
-          .select({
-            line_id: schema.requisitionLine.line_id, line_seq: schema.requisitionLine.line_seq, item_id: schema.requisitionLine.item_id,
-            quantity: schema.requisitionLine.quantity, uom: schema.requisitionLine.uom, qty_to_ship: schema.requisitionLine.qty_to_ship,
-            from_location_id: schema.requisitionLine.from_location_id, to_location_id: schema.requisitionLine.to_location_id,
-          })
-          .from(schema.requisitionLine)
-          .where(eq(schema.requisitionLine.requisition_id, requisitionId))
-          .orderBy(schema.requisitionLine.line_seq);
-        const plan = transferPlanFor(row, lines);
-        const transfer = await this.stockTransfers.create({
-          company_id: row.company_id,
-          posting_date: nowTs().slice(0, 10),
-          from_warehouse_id: plan.fromLocationId,
-          to_warehouse_id: plan.toLocationId,
-          remarks: `Requisition ${row.req_no}`,
-          lines: plan.lines,
-        } as any, tenantId, userPayload);
-        linkedTransferId = transfer.transfer_id;
-      }
+      // Fix round 1 (coordinator, 4 Oct): a Purchase document never gets a
+      // transfer, so this is a `const` with a ternary rather than a `let`
+      // initialized to the old link and then unconditionally overwritten on
+      // the only reachable Store path — there is no "preserve the existing
+      // link" case to imply.
+      const linkedTransferId: string | null = row.purpose === 'PURCHASE'
+        ? (row.linked_transfer_id ?? null)
+        : await (async () => {
+          const lines = await this.db
+            .select({
+              line_id: schema.requisitionLine.line_id, line_seq: schema.requisitionLine.line_seq, item_id: schema.requisitionLine.item_id,
+              quantity: schema.requisitionLine.quantity, uom: schema.requisitionLine.uom, qty_to_ship: schema.requisitionLine.qty_to_ship,
+              from_location_id: schema.requisitionLine.from_location_id, to_location_id: schema.requisitionLine.to_location_id,
+            })
+            .from(schema.requisitionLine)
+            .where(eq(schema.requisitionLine.requisition_id, requisitionId))
+            .orderBy(schema.requisitionLine.line_seq);
+          const plan = transferPlanFor(row, lines);
+          const transfer = await this.stockTransfers.create({
+            company_id: row.company_id,
+            posting_date: nowTs().slice(0, 10),
+            from_warehouse_id: plan.fromLocationId,
+            to_warehouse_id: plan.toLocationId,
+            remarks: `Requisition ${row.req_no}`,
+            lines: plan.lines,
+          } as any, tenantId, userPayload);
+          return transfer.transfer_id;
+        })();
       await this.db
         .update(schema.requisition)
         .set({

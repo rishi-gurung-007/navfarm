@@ -244,7 +244,7 @@ describe('common requisition release — Part E: Store release creates its stock
   it('a Purchase release creates no transfer', async () => {
     const { service, as, writes, stockTransfers } = setup(new Map<unknown, unknown[][]>([
       [schema.requisition, [[PURCHASE_ROW], [{ ...PURCHASE_ROW, document_status: 'RELEASED', integration_status: 'BC_PENDING', released_by: 'u-proc' }]]],
-      [schema.requisitionLine, [[LINES]]],
+      [schema.requisitionLine, [LINES]],
       [schema.userRoleAssignment, [[{ moduleCode: 'PROCUREMENT', resource: 'REQUISITION', canApprove: true }]]],
     ]));
     await as(STORE_SCOPE, () => service.release('req-po', 'tenant-1', PROCUREMENT));
