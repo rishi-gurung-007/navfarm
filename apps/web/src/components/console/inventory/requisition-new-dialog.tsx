@@ -320,7 +320,7 @@ export function RequisitionNewDialog({
                     <tr key={i}>
                       <td className={cn(TD, "text-right tabular-nums")}>{(i + 1) * LINE_STEP}</td>
                       <td className={TD}>
-                        <select aria-label={t("rqNewDestination", { line: i + 1 })} className="nf-input-sm nf-select w-36" style={inputStyle} value={line.dest} onChange={(e) => setLine(i, { dest: e.target.value })}>
+                        <select aria-label={t("rqNewDestination", { line: i + 1 })} className="nf-input-sm nf-select w-72" style={inputStyle} value={line.dest} onChange={(e) => setLine(i, { dest: e.target.value })}>
                           <option value="">{t("rqNewChoose")}</option>
                           {destinations.map((d) => <option key={d.location_id} value={d.location_id}>{locationLabel(d.location_code, d.location_name)}</option>)}
                         </select>

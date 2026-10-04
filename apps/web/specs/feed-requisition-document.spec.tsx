@@ -107,9 +107,8 @@ describe("FeedRequisitionDocument — header form (Requisition §1)", () => {
 describe("FeedRequisitionDocument — silo number and name (Rishi 4 Oct)", () => {
   it("a read-only line shows the silo code and the silo name", () => {
     render(<FeedRequisitionDocument view={view} editable={false} />);
-    expect(screen.getByText("GRS/SILO-001")).toBeTruthy();
-    expect(screen.getByText("Weaner silo")).toBeTruthy();
-    expect(screen.getByText("Grower silo")).toBeTruthy();
+    expect(screen.getByText("GRS/SILO-001 — Weaner silo")).toBeTruthy();
+    expect(screen.getByText("GRS/SILO-002 — Grower silo")).toBeTruthy();
   });
 
   it("an editable line offers each silo as code and name", () => {

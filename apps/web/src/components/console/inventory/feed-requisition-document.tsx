@@ -347,15 +347,12 @@ export function FeedRequisitionDocument({
                     <td className={cn(TD, NUM)} data-testid="rqd-line-no">{seq}</td>
                     <td className={TD}>
                       {canEdit && destinations.length ? (
-                        <select className="nf-input-sm nf-select w-36" style={inputStyle} aria-label={t("rqdSiloFor", { line: seq })}
+                        <select className="nf-input-sm nf-select w-72" style={inputStyle} aria-label={t("rqdSiloFor", { line: seq })}
                           value={destinationId} onChange={(e) => onLineEdit?.(line.line_id, { destinationId: e.target.value })}>
                           {destinations.map((d) => <option key={d.location_id} value={d.location_id}>{locationLabel(d.location_code, d.location_name)}</option>)}
                         </select>
                       ) : (
-                        <>
-                          {line.destination_code ?? "—"}
-                          {line.destination_name && <div className={MUTED}>{line.destination_name}</div>}
-                        </>
+                        line.destination_code ? locationLabel(line.destination_code, line.destination_name) : "—"
                       )}
                       {line.needs_silo_changeover && <div className={MUTED}>{t("rqChangeover")}</div>}
                     </td>

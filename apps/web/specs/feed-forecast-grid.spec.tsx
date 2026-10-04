@@ -48,6 +48,7 @@ describe('FeedForecastGrid', () => {
     expect(GRID_COLUMNS as readonly string[]).not.toContain('ffColPlanningDate');
   });
 
+  // D33 (28 Sep) cut Source; Rishi 4 Oct restored it as silo code + silo name only. Wastage and Shared-by stay gone.
   it('carries no wastage column any more (D34); Source is back only as the silo number and name (Rishi 4 Oct)', () => {
     render(<FeedForecastGrid rows={[row({ sourceType: 'STORE', sourceCode: 'VIL100/STORE-001', sourceName: 'Main store', sharedBatchCount: 3 })]} loading={false} horizonTo="2026-11-07" t={t} />);
     expect(GRID_COLUMNS as readonly string[]).not.toContain('ffColSource');
@@ -63,6 +64,19 @@ describe('FeedForecastGrid', () => {
     const cells = within(screen.getByRole('table')).getAllByRole('row')[1].querySelectorAll('td');
     expect(cells[4].textContent).toBe('GRS/SILO-001');
     expect(cells[5].textContent).toBe('Weaner silo');
+  });
+
+  it('two silos feeding one batch and item are two rows, each with its own code, name and figures (no summing)', () => {
+    const rows = [
+      row({ key: 'a', sourceCode: 'GRS/SILO-001', sourceName: 'Weaner silo', currentInventoryKg: 1500, perDayIntakeKg: 700 }),
+      row({ key: 'b', sourceCode: 'GRS/SILO-002', sourceName: 'Grower silo', currentInventoryKg: 400, perDayIntakeKg: 300 }),
+    ];
+    render(<FeedForecastGrid rows={rows} loading={false} horizonTo={null} t={t} />);
+    const body = screen.getAllByRole('row').slice(1);
+    expect(body).toHaveLength(2);
+    const cell = (i: number) => within(body[i]).getAllByRole('cell').map((c) => c.textContent);
+    expect(cell(0).slice(4, 9)).toEqual(['GRS/SILO-001', 'Weaner silo', '1,500', '1,000', '700']);
+    expect(cell(1).slice(4, 9)).toEqual(['GRS/SILO-002', 'Grower silo', '400', '1,000', '300']);
   });
 
   it('leaves the silo cells empty when a row has no source', () => {

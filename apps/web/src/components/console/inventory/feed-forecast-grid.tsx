@@ -70,13 +70,12 @@ export interface StageBlock {
 type Translate = (key: any, vars?: any) => string;
 
 /**
- * The field specification's Report Grid in its order, with two of ours: Source
- * after Planning Date (D6) and the feed that leaves the silo, wastage
- * included, last (D17).
+ * The field specification's Report Grid in its order. D33 (Rishi, 28 Sep) cut
+ * "Source", "Feed incl. Wastage (Kg)" and "Shared by N". Rishi 4 Oct brought the
+ * silo back as two columns, Silo No (the code as the Number Series issued it)
+ * and Silo Name, after Shed No (Engine §5 row 70; Engine §1 rows 8-9). Wastage
+ * stays gone (D34).
  */
-// D33 (Rishi, 28 Sep): exactly the field specification's twelve columns, in its
-// order. "Source" and "Feed incl. Wastage (Kg)" were ours, not the client's, and
-// "Shared by N" went with Source — it was a badge inside that cell.
 export const GRID_COLUMNS = [
   "ffColBatchNo", "ffColItemName", "ffColItemNo", "ffColShedNo", "ffColSiloNo", "ffColSiloName",
   "ffColCurrentInventoryKg", "ffColCurrentPigs", "ffColPerDayIntakeKg",
