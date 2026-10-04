@@ -302,3 +302,35 @@ controller's GET) omits it, so this is not a general widening of the document vi
   route: 200, and MySQL shows `status='APPROVED'`, `approved_by`=the admin, `approved_at` stamped — no rollback,
   the read-back returned the row. (The pre-fix symptom was a 404 + rolled-back transaction; reproduced by the
   suite's RED, not deliberately re-broken live.)
+
+## WP1e: complete — 56adac6c (navfarm-49, 4 Oct)
+
+The `company_master.lob_id` filter (a column in **no** database, so every restricted user's requisition read
+500'd with ER_BAD_FIELD_ERROR) is replaced by the decision's shape: **one shared helper**,
+`requisitionFarmLobCondition()` in `common/farm-scope.ts`, scoping by **the requisition farm's**
+`location_master.lob_id`, with farm-less requisitions and NULL-LOB farms visible to every LOB — the same
+carve-out `assertLocationOnActiveFarm` already applies. Both services' `scopeConditions()` now call it; the
+columns are interpolated drizzle columns, so tsc sees them. A repo-wide grep confirms no other
+`company_master`/`lob_id` raw-SQL use.
+
+- Gates: RED first (8 failed across the three specs with the old code), then `jest src/common + procurement +
+  approval` 566/566, the **full API suite 2,266/2,266 (174 suites)**, tsc 0, eslint 0 new.
+- **Live (as a restricted user, the case that could not even be attempted before):** with temporary area
+  assignments (and, for the permission grant only, temporary SUPER_ADMIN role assignments — see the note
+  below) for `area.admin@triplec.local` (OPERATIONAL_ADMIN) and `user@triplec.local` (STANDARD_USER):
+  `GET /requisition`, `GET /feed-requisition?farmId=…`, `GET /approval` all **200** for both users — they were
+  a guaranteed 500 before this change. STANDARD_USER's feed list works farm-pinned; OPERATIONAL_ADMIN's with
+  an explicit farm (the endpoint's own "Select a farm." rule, unchanged).
+- **WP1's blocked negative live check finished here** (Rishi's order: WP1e → then finish it): the same two
+  restricted users each created and submitted a common FA requisition (RQ-00014 for OPERATIONAL_ADMIN, and one
+  more for STANDARD_USER) — creation itself exercises the fixed scope — then attempted self-approval:
+  **403 "You may not approve a requisition you created. Another authorized approver must decide it."** The
+  refusal is reached and enforced; WP1's negative half no longer rests on the suite alone.
+- All temporary grants read back as absent first, then deleted; re-queried after: 0 role-assignment rows,
+  0 area-assignment rows, STANDARD_USER's `farm_id` back to NULL. The proof requisitions (RQ-00013/00014 etc.)
+  stay, as WP1's did.
+- **Observation, not actioned (data, not code):** the seeded MANAGER and OPERATOR roles carry **no**
+  PROCUREMENT permission rows at all, so a realistic restricted user gets the permission guard's 403 on
+  requisition routes before any scope logic runs. The live check needed SUPER_ADMIN grants purely to exercise
+  the LOB path with a restricted userType. If Triple C's demo users are expected to see Approvals →
+  Requisitions, the role permission matrix needs a seeded fix (a data script decision for Rishi, not mine).
