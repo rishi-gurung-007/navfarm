@@ -1581,11 +1581,17 @@ export const translations = {
     rqdRequiredDate: "Required Delivery Date",
     rqdSupply: "Supplier or Source",
     rqdPurpose: "Requisition Purpose",
-    rqdFarmTotal: "Bulk total requested (vs truck target)",
+    // Req r26: the farm total alone — the truck target and trip count moved
+    // to their own field (r27, rqdTruckTarget) rather than folded into this
+    // one string (audit gap #13: mislabelled, and r27 missing as its own field).
+    rqdFarmTotal: "Farm Total Requested KG",
+    rqdFarmTotalValue: "{{total}} KG",
+    // Req r27: Bulk Truck Target KG, its own field — a target, never a block (cp. 17).
+    rqdTruckTarget: "Bulk Truck Target KG",
+    rqdTruckTargetValue: "{{target}} KG · {{trips}} truck trip(s)",
     rqdBaggedTotal: "Bagged total requested",
     rqdBaggedTotalValue: "{{kg}} KG · {{bags}} bags ({{size}} KG each)",
     rqdBaggedTotalNoSize: "{{kg}} KG · {{bags}} bags",
-    rqdFarmTotalValue: "{{total}} KG of {{target}} KG target · {{trips}} truck trip(s)",
     rqdBulkMultiple: "Bulk Order Multiple",
     rqdKgValue: "{{kg}} KG",
     rqdRemarks: "Remarks",

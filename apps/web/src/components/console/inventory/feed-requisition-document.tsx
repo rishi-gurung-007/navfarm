@@ -290,16 +290,28 @@ export function FeedRequisitionDocument({
         <ReadField className={HALF} label={t("rqdFarmCode")} value={header?.farm_code} mono />
         <ReadField className={HALF} label={t("rqdFarmName")} value={header?.farm_name} />
         <ReadField className={HALF} label={t("rqdNextDiet")} value={header?.is_next_diet_requisition ? t("rqYes") : t("rqNo")} />
-        <ReadField className={HALF} label={t("rqdStatus")}
-          value={<Badge variant={variantOf(REQ_STATUS_LABEL, view.status)}>{labelOf(REQ_STATUS_LABEL, view.status, t)}</Badge>} />
-        <ReadField className={HALF} label={t("rqdPriority")}
-          value={view.priority ? <Badge variant={variantOf(PRIORITY_LABEL, view.priority)}>{labelOf(PRIORITY_LABEL, view.priority, t)}</Badge> : null} />
-        <ReadField className={HALF} label={t("rqdDeadline")} value={view.submission_deadline ? formatDateShort(view.submission_deadline) : null} />
-        <ReadField className={HALF} label={t("rqdRequiredDate")} value={header?.required_delivery_date ? formatDateShort(header.required_delivery_date) : null} />
-        <ReadField className={HALF} label={t("rqdSupply")} value={labelOf(SUPPLY_LABEL, view.supply_source, t)} />
-        <ReadField className={HALF} label={t("rqdPurpose")} value={labelOf(PURPOSE_LABEL, view.purpose, t)} />
-        <ReadField className={HALF} label={t("rqdFarmTotal")}
-          value={t("rqdFarmTotalValue", { total: bulkTotal.toLocaleString("en-US"), target: target.toLocaleString("en-US"), trips })} />
+        {/*
+         * Req r26-r35, in the workbook's own order (audit gap #13): Farm
+         * Total -> Bulk Truck Target -> (Bagged Total, extra, kept beside
+         * its bulk counterpart) -> Bulk Order Multiple -> Required Delivery
+         * Date -> Supplier -> Purpose -> Status -> Priority -> Deadline.
+         * r26 used to fold the truck target and trip count into its own
+         * value string, mislabelled "Bulk total requested (vs truck
+         * target)"; r27 did not exist as its own field. r32 (Mill Loading
+         * Bin No.) stays out of scope (Part B). r34 Priority stays
+         * read-only here: the workbook wants the Farm Manager able to
+         * escalate it, but UpdateFeedRequisitionDto (feed-requisition.dto.ts)
+         * has no priority field and the API only ever sets it by
+         * recomputing requisitionPriority() on an auto-draft rerun
+         * (feed-requisition.service.ts ~596) — making this editable without
+         * a server-side change would silently discard the farm's escalation
+         * on the next rerun, so it is left read-only and flagged rather than
+         * half-built. r29 (header-level editable Required Delivery Date with
+         * a reason) is explicitly out of scope — Rishi has not yet said what
+         * a header override should mean when lines carry their own dates.
+         */}
+        <ReadField className={HALF} label={t("rqdFarmTotal")} value={t("rqdFarmTotalValue", { total: bulkTotal.toLocaleString("en-US") })} />
+        <ReadField className={HALF} label={t("rqdTruckTarget")} value={t("rqdTruckTargetValue", { target: target.toLocaleString("en-US"), trips })} />
         {baggedLines.length > 0 && (
           <ReadField className={HALF} label={t("rqdBaggedTotal")}
             value={bagSize > 0
@@ -308,6 +320,14 @@ export function FeedRequisitionDocument({
         )}
         <ReadField className={HALF} label={t("rqdBulkMultiple")}
           value={header ? t("rqdKgValue", { kg: header.bulk_multiple_kg.toLocaleString("en-US") }) : null} />
+        <ReadField className={HALF} label={t("rqdRequiredDate")} value={header?.required_delivery_date ? formatDateShort(header.required_delivery_date) : null} />
+        <ReadField className={HALF} label={t("rqdSupply")} value={labelOf(SUPPLY_LABEL, view.supply_source, t)} />
+        <ReadField className={HALF} label={t("rqdPurpose")} value={labelOf(PURPOSE_LABEL, view.purpose, t)} />
+        <ReadField className={HALF} label={t("rqdStatus")}
+          value={<Badge variant={variantOf(REQ_STATUS_LABEL, view.status)}>{labelOf(REQ_STATUS_LABEL, view.status, t)}</Badge>} />
+        <ReadField className={HALF} label={t("rqdPriority")}
+          value={view.priority ? <Badge variant={variantOf(PRIORITY_LABEL, view.priority)}>{labelOf(PRIORITY_LABEL, view.priority, t)}</Badge> : null} />
+        <ReadField className={HALF} label={t("rqdDeadline")} value={view.submission_deadline ? formatDateShort(view.submission_deadline) : null} />
         <ReadField className={HALF} label={t("rqdApprovedBy")} value={header?.approved_by_name} />
         <ReadField className={HALF} label={t("rqdApprovedAt")} value={dateTime(view.approved_at)} />
         <ReadField className={HALF} label={t("rqdLinkedTransfer")} value={header?.linked_transfer_no} mono />

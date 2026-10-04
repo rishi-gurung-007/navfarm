@@ -73,17 +73,38 @@ describe("FeedRequisitionDocument — header form (Requisition §1)", () => {
     expect(valueOf(en.rqdFarmCode)).toBe("GRS");
     expect(valueOf(en.rqdFarmName)).toBe("Green Ridge");
     expect(valueOf(en.rqdNextDiet)).toBe("Yes");
-    expect(valueOf(en.rqdFarmTotal)).toMatch(/^15,000 KG of 30,000 KG target/);
-    expect(en.rqdFarmTotal).toBe("Bulk total requested (vs truck target)");
+    // Req r26: the Farm Total is the bulk total alone — the truck target and
+    // trip count moved to their own field (r27), not folded into this value.
+    expect(valueOf(en.rqdFarmTotal)).toBe("15,000 KG");
+    expect(en.rqdFarmTotal).toBe("Farm Total Requested KG");
+    // Req r27: Bulk Truck Target KG, as its own field, with the trip count.
+    expect(valueOf(en.rqdTruckTarget)).toBe("30,000 KG · 1 truck trip(s)");
     // No bagged line: no bagged total.
     expect(screen.queryByText(en.rqdBaggedTotal, { selector: "span" })).toBeNull();
     expect(valueOf(en.rqdBulkMultiple)).toBe("3,000 KG");
     expect(valueOf(en.rqdForecastRun)).toBe("FFR-farm-grs-000001");
     expect(screen.queryByText(/Current Silo Feed Item/i)).toBeNull();
   });
+
+  // Req r26-r35: the header block was Status -> Priority -> Deadline ->
+  // Required Date -> Supplier -> Purpose -> Farm Total -> Bulk Multiple, out
+  // of the workbook's own order. Checked as relative order (not exact
+  // adjacency) so an unrelated field between two of these is not a false
+  // failure; every label must still be found (indexOf >= 0).
+  it("shows the header fields in the workbook's own order (Req r26-r35)", () => {
+    const { container } = render(<FeedRequisitionDocument view={view} editable={false} />);
+    const labels = Array.from(container.querySelectorAll(".nf-text-label")).map((el) => el.textContent);
+    const order = [
+      en.rqdFarmTotal, en.rqdTruckTarget, en.rqdBulkMultiple, en.rqdRequiredDate,
+      en.rqdSupply, en.rqdPurpose, en.rqdStatus, en.rqdPriority, en.rqdDeadline,
+    ];
+    const indices = order.map((label) => labels.indexOf(label));
+    expect(indices.every((i) => i >= 0)).toBe(true);
+    expect(indices).toEqual([...indices].sort((a, b) => a - b));
+  });
 });
 
-describe("FeedRequisitionDocument — bulk and bagged totals (Requisition row 26)", () => {
+describe("FeedRequisitionDocument — bulk and bagged totals (Requisition rows 26-27)", () => {
   it("keeps the bulk total against the truck target and shows the bagged total separately, in KG and bags", () => {
     const bagged = { ...view.lines[0], line_id: "L3", line_seq: 30000, feed_type: "BAGGED", quantity: "6000.0000", bag_count: 120 };
     const mixed = {
@@ -93,14 +114,16 @@ describe("FeedRequisitionDocument — bulk and bagged totals (Requisition row 26
     };
     render(<FeedRequisitionDocument view={mixed} editable={false} />);
     // One bulk line (9,000) — the bagged 6,000 is not folded into it, and not lost.
-    expect(valueOf(en.rqdFarmTotal)).toMatch(/^9,000 KG of 30,000 KG target/);
+    expect(valueOf(en.rqdFarmTotal)).toBe("9,000 KG");
+    expect(valueOf(en.rqdTruckTarget)).toBe("30,000 KG · 1 truck trip(s)");
     expect(valueOf(en.rqdBaggedTotal)).toBe("6,000 KG · 120 bags (50 KG each)");
   });
 
   it("a bagged-only requisition no longer reads 0 KG", () => {
     const bagged = { ...view.lines[0], feed_type: "BAGGED", quantity: "6000.0000", bag_count: 120 };
     render(<FeedRequisitionDocument view={{ ...view, header: { ...view.header, bag_size_kg: 50 }, lines: [bagged] }} editable={false} />);
-    expect(valueOf(en.rqdFarmTotal)).toMatch(/^0 KG of/);
+    expect(valueOf(en.rqdFarmTotal)).toBe("0 KG");
+    expect(valueOf(en.rqdTruckTarget)).toBe("30,000 KG · 0 truck trip(s)");
     expect(valueOf(en.rqdBaggedTotal)).toContain("6,000 KG");
   });
 });
