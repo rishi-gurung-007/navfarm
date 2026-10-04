@@ -342,3 +342,32 @@ columns are interpolated drizzle columns, so tsc sees them. A repo-wide grep con
   `git status` and finish or review these before starting anything new.
 - Rishi answered the roles observation → **WP1f** (seed requisition permissions for demo roles), after WP1b.
 - Order now: WP1b (in flight) → WP1f → WP1c → WP1d → WP2 …
+
+## WP1b: complete — 223e2485 (navfarm-49/GLM Freebuff, 5 Oct)
+
+The Approvals inbox no longer lists requisitions; **Approvals → Requisitions is the one list**, with the
+"Waiting for my approval" filter and Approve/Reject in the document dialog. Decisions.md 2026-10-04
+"one Requisitions page" governs.
+
+- **One predicate, not two.** `ApprovalService.farmConditions` (which already carries the WP1 admin rule) is
+  public; `requisitionRequestConditions()` = farmConditions + the two kinds; the hub's waiting filter
+  (`GET /requisition?waiting_for_me=1`, an EXISTS on the requisition list), the inbox card's count
+  (`GET /approval/counts-requisitions`), and the inbox's own remaining surfaces all build on it. The
+  equivalence test pins the hub predicate to the inbox's own condition objects (`toBe` per element) — the
+  "write the equivalence test before removing them from the inbox" sequencing rule, honoured.
+- **Inbox excludes the kinds** in `findAll` AND `counts` (the badges count only what it shows);
+  `findOne`/`decide` deliberately do not — the hub decides through the same endpoints.
+- **Carried-forward item from the WP1 review resolved:** the hub's list and `GET /requisition/:id` span farms
+  for admins (same `mayDecideAnyRequisition` opt-in as the decide lock), so the dialog opens exactly the
+  cross-farm rows an admin may approve. Company boundary untouched.
+- Gates: RED first (10 API + 6 web), then web 592/592 (89 suites), API procurement+approval 405/405,
+  tsc 0 both, eslint 0 new.
+- **Live:** as company.admin with VIL pinned, `?waiting_for_me=1` returned 9 pending rows across five farms
+  (LIO cross-farm FA included — the old farm-narrowed list hid five of them); `counts-requisitions` = 9;
+  `GET /approval` rows were only FEED_STOCK_VARIANCE / MEDICINE_REQUISITION / STOCK_TRANSFER / FEED_RATION and
+  its PENDING count dropped to 3; approving RQ-00016 through the hub's endpoint (with remarks) wrote
+  `status=APPROVED`, `approved_by`, `decided_by` in MySQL. Web pages compile and serve on :3002 (auth redirect
+  for an unauthenticated fetch, as before).
+- Not done here, deliberately: row-level Approve/Reject buttons in the list rows (they are in the dialog, which
+  is where editing happens per the 4 Oct dialog ruling) and the Feed tab's reuse check (it already mounts the
+  same detail components; verified unchanged).
