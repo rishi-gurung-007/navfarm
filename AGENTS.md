@@ -199,6 +199,47 @@ seed plan is `docs/superpowers/plans/2026-09-30-four-farm-feed-seed-and-migratio
   represented by lines. Feed is an internal transfer, displayed as “Internal
   Feed Transfer”.
 
+### Requisitions — Part E, verified live 4 Oct 2026
+
+Evidence: `docs/VERIFICATION-2026-10-04-feed-part-e.md`.
+
+- **The common requisition is mounted**: `/api/v1/requisition` (RequisitionModule)
+  handles the kinds **ITEM** (purpose STORE or PURCHASE), **FA** and **SERVICE**
+  (line by resource or description). Its routes are create, PUT (only while
+  Open), submit, approve, reject, release, shipment, receipt, reopen and
+  link-po.
+- **FEED never goes through it.** One shared guard makes every generic mutation
+  refuse a FEED row with a 400, and the row stays unchanged. The DTO refuses
+  `doc_type: FEED` on create. Feed keeps `/feed-requisition` and its own
+  approval handler. A feed requisition stops at **Approved** and has no Release.
+- **Company boundary:** `/requisition` reads and writes only inside the selected
+  company. A foreign company returns 403.
+- **Approvals:** a creator cannot approve their own manual requisition (403).
+  `approved_by` is stamped from the deciding user. **Open defect D1 (4 Oct):**
+  the Approvals inbox (`ApprovalService.farmConditions`) hides approval rows
+  that have no farm and no batch from any company- or farm-scoped user. So
+  common requisitions are visible and approvable only by a tenant-scoped user.
+- **Store release creates a staged stock transfer.** Each line carries
+  `stock_transfer_line.requisition_line_id`. Ship and receive go through the
+  requisition and post one ledger row per event. Transfer status runs DRAFT →
+  IN_TRANSIT → PARTIALLY_RECEIVED → POSTED. The requisition's fulfilment runs
+  NOT_APPLICABLE / PARTIALLY_SHIPPED / SHIPPED / PARTIALLY_RECEIVED / RECEIVED,
+  from the line's qty_shipped and qty_received. Purchase, FA and Service release
+  set `integration_status = BC_PENDING`. A PO number is linked by hand
+  (link-po), because BC is not connected.
+- **Numbering:** common requisitions take the company Number Series with code
+  REQUISITION (on nf_devco this is the illustrative `RQ` series, 5 digits:
+  RQ-00001…), and skip numbers already in use. Without a series they fall back
+  to `REQ-YYYY-NNNN`. Feed requisitions keep `REQ-<FarmCode>-YYYY-NNNNN`.
+- **Where each kind is created:** **Approvals → Requisitions**
+  (`/approvals/requisitions`) lists every kind, and its New offers Feed, Item,
+  Fixed Asset and Service. **Inventory → Feed Forecast → "Internal Feed
+  Transfer" tab** (`?tab=feed-requisition`) offers **Feed only** (Rishi, 4 Oct).
+  Both open the same feed dialog and create the same document through
+  `/feed-requisition`. A manual feed line whose item differs from the
+  destination's forecast demand needs an exception reason (Requisition row 13).
+  The Approvals inbox shows both kinds as the full document, read-only.
+
 ### Feed planning settings — what the forecast actually reads (3 Oct 2026)
 
 - The shortfall is **demand + safety stock − opening − confirmed incoming**.
