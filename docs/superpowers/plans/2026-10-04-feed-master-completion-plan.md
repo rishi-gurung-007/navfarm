@@ -160,6 +160,18 @@ Estimates are agent wall-clock including review and the live check, at the pace 
 - **Live:** log in as company.admin and as the tenant admin. Approve one of your own and one raised by a farm
   manager, both common and feed. Read `requisition.status` and `approved_by` (and the approval request rows) in MySQL.
 
+### WP1e — Fix the requisition LOB filter (S, do it before WP1b) — Rishi 4 Oct
+`requisition.service.ts` (~line 124) and `feed-requisition.service.ts` (~line 156) filter with raw SQL on
+`company_master.lob_id`, which exists in **no** database. As a result Farm Manager, Head of Farms and Standard User
+get a 500 on requisition lists and actions (found during WP1; see progress.md). Decision: scope by **the requisition's
+farm's LOB**, `location_master.lob_id` (a farm with a NULL LOB, or a requisition with no farm, is visible to every LOB).
+Use one shared helper for both services. Prefer drizzle columns over raw SQL so `tsc` sees the column; grep for any other
+`company_master`/`lob_id` raw-SQL use and fix it the same way.
+**Tests:** a restricted user with a LOB lists, opens and decides requisitions of their LOB; refused or hidden for another
+LOB's farm; farm-less visible. **Live:** log in as a farm manager and as a standard user and open Approvals → Requisitions
+and the Feed Requisition tab; no 500. Then finish WP1's negative live check: restricted users are still refused
+self-approval.
+
 ### WP1b — One Requisitions page (M) — Rishi 4 Oct
 Decision: decisions.md "2026-10-04 — … one Requisitions page".
 - **Approvals → Requisitions** (`requisitions-hub.tsx`) is the only requisition list. Add a "Waiting for my
@@ -196,7 +208,7 @@ Gap table, checked against the code on 4 Oct. Re-verify each row in the running 
 | Transfer Shipment by the sender department user; **user dept must match the From Sub-Location's department** | **Missing** (no department check on shipment) | Before posting a shipment: the user's `user_master.department_id` must equal the From location's `location_master.department_id` (Cost Center identity, never text). A clear refusal otherwise. Same rule in the Direct Transfer path. |
 | Transfer Receipt by the requester at the To Sub-Location; **user dept must match the To Sub-Location's department** | **Missing** | Same check against the To location. |
 | Direct Transfer checkbox — the user needs the right **in User Setup** | Enforced via an explicit permission; not visible in User Setup | Add a "Direct Transfer allowed" toggle to the user record (Team Management → user). Make it the **one** source the rule reads (migrate the existing permission into it, or have the toggle grant/revoke that permission; never two checks). The dialog checkbox is disabled for users without it. Direct Transfer posts shipment + receipt together (exists). |
-| Item Tracking button on the line: Lot/Serial assignment; mandatory before shipment if the item is Lot or Serial tracked; receipt auto-fills from shipment | **Missing** in the feed branch. Lot/serial tracking is on `origin/main` (Arun, PR #13: 13 commits, 52 files) | **First** merge `origin/main` into this branch (local merge only, no push). Resolve conflicts, chiefly `translations.ts`, `schema.ts`, migrations and journal numbering (renumber the branch's migrations after main's if the indexes clash, and re-run the contract tests). Run the full API and web suites. Then add a per-line Item Tracking dialog reusing main's lot/serial pickers. Block shipment while a tracked line's lot/serial quantity ≠ Qty to Ship. The receipt copies the shipment's lot/serial rows. The ledger rows carry `lot_no` / `serial_no`. |
+| Item Tracking button on the line: Lot/Serial assignment; mandatory before shipment if the item is Lot or Serial tracked; receipt auto-fills from shipment | **Missing** in the feed branch. Lot/serial tracking is on `origin/main` (Arun, PR #13: 13 commits, 52 files) | **First** (Rishi approved 4 Oct) `git fetch`, then merge `origin/main` into this branch (local merge only, no push) as its own commit and step. Resolve conflicts, chiefly `translations.ts`, `schema.ts`, migrations and journal numbering (renumber the branch's migrations after main's if the indexes clash, and re-run the contract tests). Run the full API and web suites. Then add a per-line Item Tracking dialog reusing main's lot/serial pickers. Block shipment while a tracked line's lot/serial quantity ≠ Qty to Ship. The receipt copies the shipment's lot/serial rows. The ledger rows carry `lot_no` / `serial_no`. |
 | Location department ("dimension") and user department in User Setup | Columns exist (`location_master.department_id`, `user_master.department_id`) | Make sure both are visible and editable in Location Master and Team Management. Demo data: every sub-location used by Store requisitions has a department, and the demo users have departments. |
 | Item Ledger + Value Entry on shipment and receipt | Inventory ledger and the In Transit journal exist (Part E) | Live-verify that shipment and receipt each write ledger rows with cost (and lot/serial once tracked). No new ledger. |
 
@@ -462,7 +474,8 @@ unchanged; screenshot each screen.
 | Spec + Part A plan | ½ day | ~2 h |
 | Part A | 2 days | ~12½ h clock (3 Oct 12:13 → 4 Oct 00:49) |
 | Part E + 4 Oct changes (Tasks 1–20, 18b, 4b, 9b–9d) | ½–1 day | ~16 h clock (4 Oct 01:08 → ~17:30, incl. limit pauses) |
-| WP1 admins approve all requisitions | 45 min | — |
+| WP1 admins approve all requisitions | 45 min | done 411ecdf6 (review pending) |
+| WP1e requisition LOB filter fix | 30–45 min | — |
 | WP1b one Requisitions page | 1–1½ h | — |
 | WP1c common requisition to Rishi's list (incl. merging origin/main lot/serial) | 5–7 h | — |
 | WP1d page/tab/section names per workbook | 1–1½ h | — |

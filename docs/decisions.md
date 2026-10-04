@@ -2584,3 +2584,14 @@ Rishi, 4 Oct:
 3. "the checks should still work and they can only approve the requisition created by anyone". Tenant and Company
    admins get no bypass of the department checks on Transfer Shipment and Receipt. Their only extra power is
    approving any requisition, whoever created it, their own included.
+
+## 2026-10-04 — Requisition LOB scope uses the farm's LOB; merge GitHub main locally for lot/serial
+
+Rishi, 4 Oct:
+1. The requisition services filtered on `company_master.lob_id`, a column that exists in no database, so restricted
+   users (Farm Manager, Head of Farms, Standard User) got a 500. A requisition's line of business is **its farm's**
+   (`location_master.lob_id`). Requisitions with no farm, and farms with no LOB, are visible to every LOB. No schema
+   change.
+2. Merge GitHub `origin/main` (Arun's PR #13 lot/serial work, after a fresh fetch) into the feed branch **locally**,
+   as its own step, before building Item Tracking (WP1c). Nothing is pushed. Conflicts are resolved keeping the feed
+   work on the files this branch owns, followed by the full gates and a live check.
