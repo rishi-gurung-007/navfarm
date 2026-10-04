@@ -22,9 +22,11 @@ import {
   assertReceiptQty,
   assertRequisitionLines,
   assertShipmentQty,
+  fulfilmentStatusOf,
   isSelfApproval,
   legacyStatusFor,
   lineBalances,
+  mapToTransferLines,
   normalizeCommonDocType,
   projectRequisitionStates,
   transferPlanFor,
@@ -351,5 +353,28 @@ describe('transferPlanFor — Store release starts one internal transfer (decisi
   });
   it('refuses a line without an item', () => {
     expect(() => transferPlanFor(header, [line({ item_id: null })])).toThrow('Line 1 has no item; a Store transfer moves Item Master items only.');
+  });
+});
+
+describe('fulfilmentStatusOf — partial shipment and receipt are allowed (decisions 1 Oct)', () => {
+  const l = (shipped: number, received: number, toShip = 10) => ({ quantity: '10', qty_to_ship: String(toShip), qty_shipped: shipped, qty_to_receive: String(toShip), qty_received: received });
+  it.each([
+    [[l(0, 0)], 'TRANSFER_OPEN'],
+    [[l(6, 0)], 'PARTIALLY_SHIPPED'],
+    [[l(10, 0)], 'SHIPPED'],
+    [[l(6, 4)], 'PARTIALLY_RECEIVED'],
+    [[l(10, 10)], 'RECEIVED'],
+    [[l(10, 10), l(0, 0)], 'PARTIALLY_RECEIVED'],
+    [[l(10, 0), l(4, 0)], 'PARTIALLY_SHIPPED'],
+  ])('%j → %s', (lines, status) => expect(fulfilmentStatusOf(lines)).toBe(status));
+});
+
+describe('mapToTransferLines', () => {
+  const tl = [{ line_id: 't1', requisition_line_id: 'r1' }, { line_id: 't2', requisition_line_id: 'r2' }];
+  it('maps requisition lines to their transfer lines', () => {
+    expect(mapToTransferLines([{ line_id: 'r2', quantity: 3 }], tl)).toEqual([{ line_id: 't2', quantity: 3 }]);
+  });
+  it('refuses a line the linked transfer does not carry', () => {
+    expect(() => mapToTransferLines([{ line_id: 'r9', quantity: 1 }], tl)).toThrow('Requisition line r9 is not on the linked transfer.');
   });
 });

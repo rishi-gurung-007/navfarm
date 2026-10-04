@@ -31,7 +31,7 @@ import { userHasPermission } from '../../../common/permissions';
 import { ApprovalService } from '../../production/approval/approval.service';
 import { StockTransferService } from '../../inventory/stock-transfer/stock-transfer.service';
 import * as schema from '../../../core/database/schema';
-import { CreateRequisitionDto, DecideRequisitionDto, UpdateRequisitionDto } from './dto/requisition.dto';
+import { CreateRequisitionDto, DecideRequisitionDto, RequisitionReceiptDto, RequisitionShipmentDto, UpdateRequisitionDto } from './dto/requisition.dto';
 import { assertDepartmentIdentity, DEPARTMENT_COST_CENTER_TYPE } from '../../../common/department-identity';
 import {
   COMMON_LIST_DOC_TYPES,
@@ -42,6 +42,7 @@ import {
   assertRequisitionLines,
   isSelfApproval,
   lineBalances,
+  mapToTransferLines,
   normalizeCommonDocType,
   projectRequisitionStates,
   releaseTransition,
@@ -449,6 +450,38 @@ export class RequisitionService {
       ? await this.db.select({ resource_id: schema.resourceMaster.resource_id, resource_code: schema.resourceMaster.resource_code, resource_name: schema.resourceMaster.resource_name })
         .from(schema.resourceMaster).where(and(eq(schema.resourceMaster.tenant_id, tenantId), eq(schema.resourceMaster.company_id, row.company_id), inArray(schema.resourceMaster.resource_id, resourceIds)))
       : []).map((r) => [r.resource_id, r]));
+    // Task 7: the linked transfer's shipments, each with its lines' requisition
+    // line id and shipped/received/remaining — empty for a requisition with no
+    // linked transfer, or one not yet shipped against.
+    let shipments: Array<{ shipment_id: string; shipment_no: string; shipment_date: string; lines: Array<{ requisition_line_id: string; shipped: number; received: number; remaining: number }> }> = [];
+    if (row.linked_transfer_id) {
+      const shipped = await this.db
+        .select({
+          shipment_id: schema.transferShipment.shipment_id, shipment_no: schema.transferShipment.shipment_no, shipment_date: schema.transferShipment.shipment_date,
+          shipment_line_id: schema.transferShipmentLine.shipment_line_id, requisition_line_id: schema.stockTransferLine.requisition_line_id, qty: schema.transferShipmentLine.quantity,
+        })
+        .from(schema.transferShipment)
+        .innerJoin(schema.transferShipmentLine, eq(schema.transferShipmentLine.shipment_id, schema.transferShipment.shipment_id))
+        .innerJoin(schema.stockTransferLine, eq(schema.stockTransferLine.line_id, schema.transferShipmentLine.line_id))
+        .where(and(eq(schema.transferShipment.transfer_id, row.linked_transfer_id), isNull(schema.transferShipment.deleted_at)))
+        .orderBy(schema.transferShipment.shipment_no);
+      const receivedRows = await this.db
+        .select({ shipment_line_id: schema.transferReceiptLine.shipment_line_id, qty: sql<string>`SUM(${schema.transferReceiptLine.quantity})` })
+        .from(schema.transferReceiptLine)
+        .innerJoin(schema.transferReceipt, eq(schema.transferReceipt.receipt_id, schema.transferReceiptLine.receipt_id))
+        .where(and(eq(schema.transferReceipt.transfer_id, row.linked_transfer_id), isNull(schema.transferReceipt.deleted_at)))
+        .groupBy(schema.transferReceiptLine.shipment_line_id);
+      const receivedOf = new Map(receivedRows.map((r) => [r.shipment_line_id, Number(r.qty)]));
+      const byShipment = new Map<string, (typeof shipments)[number]>();
+      for (const s of shipped) {
+        const entry = byShipment.get(s.shipment_id) ?? { shipment_id: s.shipment_id, shipment_no: s.shipment_no, shipment_date: s.shipment_date, lines: [] };
+        const shippedQty = Number(s.qty);
+        const receivedQty = receivedOf.get(s.shipment_line_id) ?? 0;
+        entry.lines.push({ requisition_line_id: s.requisition_line_id ?? '', shipped: shippedQty, received: receivedQty, remaining: shippedQty - receivedQty });
+        byShipment.set(s.shipment_id, entry);
+      }
+      shipments = [...byShipment.values()];
+    }
     return {
       ...row,
       main_location_code: locationCode.get(row.main_location_id ?? '') ?? null,
@@ -459,6 +492,7 @@ export class RequisitionService {
       approved_by_name: userName.get(row.approved_by ?? '') ?? null,
       released_by_name: userName.get(row.released_by ?? '') ?? null,
       linked_transfer_no: transfer?.transfer_no ?? null,
+      shipments,
       // Explicit columns win; nulls (legacy and FEED rows) project from
       // `status`. The stored status itself is returned untouched.
       ...projectRequisitionStates(row),
@@ -749,6 +783,45 @@ export class RequisitionService {
     }
     const may = await userHasPermission(this.db, userPayload, { moduleCode: 'PROCUREMENT', resource: 'REQUISITION', action: 'create' });
     if (!may) throw new ForbiddenException('Only the sender department may release a Store requisition.');
+  }
+
+  // ---------------------------------------------------------------------------
+  // Shipping and receiving from the requisition (Task 7): the requisition
+  // lines follow its linked transfer's events. The endpoints reuse the
+  // transfer's own permission pair (INVENTORY/STOCK_TRANSFER/edit, bound in
+  // the controller) — no new permission pair, so role-permissions-coverage
+  // holds. StockTransferService does the actual posting (ledger, GL, status);
+  // syncRequisitionFulfilment, called from inside that same transaction, is
+  // what writes qty_shipped/qty_received back here.
+  // ---------------------------------------------------------------------------
+
+  /** A released Store requisition's linked transfer and its lines, locked through the transfer service's own load. */
+  private async releasedStore(requisitionId: string, tenantId: string) {
+    const [row] = await this.db.select().from(schema.requisition)
+      .where(and(eq(schema.requisition.requisition_id, requisitionId), eq(schema.requisition.tenant_id, tenantId), isNull(schema.requisition.deleted_at), ...this.scopeConditions()))
+      .limit(1);
+    if (!row) throw new NotFoundException(`Requisition '${requisitionId}' not found.`);
+    const states = projectRequisitionStates(row);
+    if (row.purpose !== 'STORE' || states.document_status !== 'RELEASED' || !row.linked_transfer_id) {
+      throw new BadRequestException('Only a released Store requisition ships and receives; release it first.');
+    }
+    const transferLines = await this.db
+      .select({ line_id: schema.stockTransferLine.line_id, requisition_line_id: schema.stockTransferLine.requisition_line_id })
+      .from(schema.stockTransferLine)
+      .where(eq(schema.stockTransferLine.transfer_id, row.linked_transfer_id));
+    return { row, transferId: row.linked_transfer_id, transferLines };
+  }
+
+  async ship(requisitionId: string, dto: RequisitionShipmentDto, tenantId: string, userPayload?: { userId?: string }) {
+    const { transferId, transferLines } = await this.releasedStore(requisitionId, tenantId);
+    await this.stockTransfers.postShipment(transferId, { posting_date: dto.posting_date, lines: mapToTransferLines(dto.lines, transferLines) }, tenantId, userPayload);
+    return this.findOne(requisitionId, tenantId);
+  }
+
+  async receive(requisitionId: string, dto: RequisitionReceiptDto, tenantId: string, userPayload?: { userId?: string }) {
+    const { transferId, transferLines } = await this.releasedStore(requisitionId, tenantId);
+    await this.stockTransfers.postReceipt(transferId, { posting_date: dto.posting_date, shipment_id: dto.shipment_id, lines: mapToTransferLines(dto.lines, transferLines) }, tenantId, userPayload);
+    return this.findOne(requisitionId, tenantId);
   }
 
   /**

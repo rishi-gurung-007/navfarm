@@ -204,3 +204,39 @@ export class LinkPoDto {
  * stored value. farm_id is ignored.
  */
 export class UpdateRequisitionDto extends OmitType(CreateRequisitionDto, ['company_id'] as const) {}
+
+/**
+ * POST /requisition/:id/shipment and /receipt (Task 7) — the requisition's own
+ * line ids, translated to the linked transfer's lines by
+ * requisition.rules.ts's mapToTransferLines before reaching StockTransferService.
+ */
+export class RequisitionEventLineInput {
+  @ApiProperty({ description: 'Requisition line UUID' })
+  @IsUUID()
+  line_id: string;
+
+  @ApiProperty()
+  @IsNumber()
+  @Min(0.0001)
+  @Type(() => Number)
+  quantity: number;
+}
+
+export class RequisitionShipmentDto {
+  @ApiProperty()
+  @IsDateString()
+  posting_date: string;
+
+  @ApiProperty({ type: [RequisitionEventLineInput] })
+  @IsArray()
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type(() => RequisitionEventLineInput)
+  lines: RequisitionEventLineInput[];
+}
+
+export class RequisitionReceiptDto extends RequisitionShipmentDto {
+  @ApiProperty({ description: 'The shipment this receipt receives against' })
+  @IsUUID()
+  shipment_id: string;
+}

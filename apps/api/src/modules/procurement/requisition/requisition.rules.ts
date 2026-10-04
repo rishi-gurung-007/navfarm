@@ -22,6 +22,7 @@
  * Remaining to Receive are computed, never stored.
  */
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import { FLOAT_SUM_TOLERANCE as EPS } from '../../../common/numeric-tolerance';
 
 export const COMMON_DOC_TYPES = ['ITEM', 'FA', 'SERVICE'] as const;
 export type CommonDocType = (typeof COMMON_DOC_TYPES)[number];
@@ -456,4 +457,42 @@ export function assertEditable(row: { req_no: string; doc_type: string; status?:
   if (states.approval_status !== 'OPEN' || states.document_status !== 'OPEN') {
     throw new BadRequestException(`Requisition ${row.req_no} can no longer be edited; only an Open requisition can change.`);
   }
+}
+
+// --------------------------------------------------------------------------------
+// Shipping and receiving from the requisition (plan Task 7) — the requisition
+// lines follow the linked transfer's events.
+// --------------------------------------------------------------------------------
+
+/** The fulfilment dimension from the line quantities (1 Oct spec "Common requisition"). Received outranks shipped. */
+export function fulfilmentStatusOf(lines: Array<{ quantity: unknown; qty_to_ship?: unknown; qty_shipped?: unknown; qty_to_receive?: unknown; qty_received?: unknown }>): FulfilmentStatus {
+  const b = lines.map((l) => lineBalances(l));
+  const anyReceived = b.some((l) => l.qty_received > EPS);
+  const allReceived = b.every((l) => l.remaining_to_receive <= EPS);
+  const anyShipped = b.some((l) => l.qty_shipped > EPS);
+  const allShipped = b.every((l) => l.balance_to_ship <= EPS);
+  if (anyReceived && allReceived) return 'RECEIVED';
+  if (anyReceived) return 'PARTIALLY_RECEIVED';
+  if (anyShipped && allShipped) return 'SHIPPED';
+  if (anyShipped) return 'PARTIALLY_SHIPPED';
+  return 'TRANSFER_OPEN';
+}
+
+/**
+ * The requisition's ship()/receive() endpoints take requisition line ids;
+ * StockTransferService.postShipment/postReceipt take transfer line ids. This
+ * is the one translation between them, re-raising the linked transfer's own
+ * refusal (a requisition line the linked transfer does not carry) rather than
+ * letting the transfer service's own "not part of" message name a transfer
+ * line id the caller never supplied.
+ */
+export function mapToTransferLines(
+  inputs: Array<{ line_id: string; quantity: number }>,
+  transferLines: Array<{ line_id: string; requisition_line_id: string | null }>,
+): Array<{ line_id: string; quantity: number }> {
+  return inputs.map((input) => {
+    const target = transferLines.find((t) => t.requisition_line_id === input.line_id);
+    if (!target) throw new BadRequestException(`Requisition line ${input.line_id} is not on the linked transfer.`);
+    return { line_id: target.line_id, quantity: input.quantity };
+  });
 }

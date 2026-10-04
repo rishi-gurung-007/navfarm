@@ -5,7 +5,7 @@ import { RolesGuard } from '../../../common/guards/roles.guard';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
 import { FarmScoped } from '../../../common/farm-scope';
 import { RequisitionService } from './requisition.service';
-import { CreateRequisitionDto, DecideRequisitionDto, UpdateRequisitionDto } from './dto/requisition.dto';
+import { CreateRequisitionDto, DecideRequisitionDto, RequisitionReceiptDto, RequisitionShipmentDto, UpdateRequisitionDto } from './dto/requisition.dto';
 
 @ApiTags('Procurement Requisitions')
 @ApiBearerAuth()
@@ -100,6 +100,24 @@ export class RequisitionController {
     const tenantId = req.user?.tenantId || req['tenantId'];
     const data = await this.requisitions.release(id, tenantId, req.user);
     return { success: true, message: 'Requisition released.', data };
+  }
+
+  @Post(':id/shipment')
+  @RequirePermission('INVENTORY', 'STOCK_TRANSFER', 'edit')
+  @ApiOperation({ summary: 'Post a partial shipment against a released Store requisition (its linked transfer)' })
+  @ApiParam({ name: 'id' })
+  async ship(@Param('id') id: string, @Body() dto: RequisitionShipmentDto, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    return { success: true, message: 'Shipment posted.', data: await this.requisitions.ship(id, dto, tenantId, req.user) };
+  }
+
+  @Post(':id/receipt')
+  @RequirePermission('INVENTORY', 'STOCK_TRANSFER', 'edit')
+  @ApiOperation({ summary: 'Post a partial receipt against one shipment of a released Store requisition' })
+  @ApiParam({ name: 'id' })
+  async receive(@Param('id') id: string, @Body() dto: RequisitionReceiptDto, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    return { success: true, message: 'Receipt posted.', data: await this.requisitions.receive(id, dto, tenantId, req.user) };
   }
 
   @Post(':id/reopen')

@@ -14,6 +14,7 @@
  */
 import { BadRequestException } from '@nestjs/common';
 import { assertReceiptQty, assertShipmentQty } from '../../procurement/requisition/requisition.rules';
+import { FLOAT_SUM_TOLERANCE } from '../../../common/numeric-tolerance';
 
 export interface TrackingAssignment {
   lot_no: string | null;
@@ -112,8 +113,13 @@ export function cumulativeAfter(assignments: TrackingAssignment[]): TrackingAssi
  * is exact — it would have read 1.3 and disagreed with the service's
  * 1.2999999999999998. Both read through this one function, so the tolerance
  * fixes them together rather than needing two matching fixes.
+ *
+ * Part E Task 7: this is now the shared `FLOAT_SUM_TOLERANCE` (imported from
+ * common/numeric-tolerance.ts) under its original local name — moved there
+ * so requisition.rules.ts's own float-sum comparison (fulfilmentStatusOf)
+ * could reuse it instead of hand-rolling a seventh instance.
  */
-const FULLY_COVERED_TOLERANCE = 1e-9;
+const FULLY_COVERED_TOLERANCE = FLOAT_SUM_TOLERANCE;
 
 export const transferIsFullyShipped = (lines: Array<{ ordered: number; shipped: number }>): boolean =>
   lines.length > 0 && lines.every((l) => l.shipped >= l.ordered - FULLY_COVERED_TOLERANCE);

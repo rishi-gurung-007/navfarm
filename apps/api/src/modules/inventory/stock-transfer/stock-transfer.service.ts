@@ -14,6 +14,7 @@ import { UomService } from '../../master-data/uom/uom.service';
 import { SiloFeedService } from '../silo-feed/silo-feed.service';
 import { FeedAlertService } from '../feed-alert/feed-alert.service';
 import { OPEN_TRANSFER_STATUSES, transferStatusFor } from './transfer-execution.rules';
+import { syncRequisitionFulfilment } from '../../procurement/requisition/requisition-fulfilment';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   return date.toISOString().slice(0, 19).replace('T', ' ');
@@ -632,6 +633,8 @@ export class StockTransferService {
         entityId: shipmentId,
         newValues: { shipment_no: shipmentNo, transfer_no: transfer.transfer_no, lines: eventLines.length, status },
       });
+      // Part E Task 7: a requisition linked to this transfer follows its events.
+      await syncRequisitionFulfilment(this.db, id);
       return { shipment_id: shipmentId, shipment_no: shipmentNo, transfer_id: id, lines: eventLines.map((e) => ({ line_id: e.line.line_id, qty_shipped: e.qty })) };
     });
     return result;
@@ -750,6 +753,8 @@ export class StockTransferService {
         entityId: receiptId,
         newValues: { receipt_no: receiptNo, shipment_no: shipment.shipment_no, lines: dto.lines.length, status },
       });
+      // Part E Task 7: a requisition linked to this transfer follows its events.
+      await syncRequisitionFulfilment(this.db, id);
       return { receipt_id: receiptId, receipt_no: receiptNo, transfer_id: id, lines: dto.lines.map((l) => ({ line_id: l.line_id, qty_received: l.quantity })) };
     });
   }

@@ -77,7 +77,7 @@ function recordingDb(queues: Map<unknown, unknown[][]>) {
       const self: any = {
         from: (t: unknown) => { entry.table = t; return self; },
         innerJoin: () => self, leftJoin: () => self, where: () => self, orderBy: () => self,
-        limit: () => self, offset: () => self, for: () => self,
+        limit: () => self, offset: () => self, for: () => self, groupBy: () => self,
         then: (ok: any, err: any) => Promise.resolve().then(() => queues.get(entry.table)?.shift() ?? []).then(ok, err),
       };
       return self;
@@ -117,6 +117,10 @@ function baseQueues(): Map<unknown, unknown[][]> {
     [schema.transferShipmentLine, []],
     [schema.transferReceipt, []],
     [schema.transferReceiptLine, []],
+    // Part E Task 7: syncRequisitionFulfilment's first read — no row means no
+    // requisition links this transfer, so the sync no-ops and every existing
+    // test above stays exactly as it was.
+    [schema.requisition, [[]]],
   ]);
 }
 
@@ -577,5 +581,73 @@ describe('Part E Task 4b — no edit, cancel or one-step post once stock has shi
     await as(() => service.postDirectTransfer('tr-1', { posting_date: '2026-10-04', lines: [{ line_id: 'line-1', quantity: 4 }] }, 'tenant-1', ADMIN));
     expect(ledger.writeTransferShipment).toHaveBeenCalledTimes(1);
     expect(ledger.writeTransferReceipt).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('Part E Task 7 — a linked requisition follows the transfer events', () => {
+  /** Read order after the usual shipment reads: linked requisition, shipped-
+   *  by-requisition-line, received-by-requisition-line, the requisition's own
+   *  lines. The first transferShipmentLine/transferReceiptLine entry in each
+   *  queue is still postShipment's own shippedQuantities/receivedQuantities
+   *  call; the second is syncRequisitionFulfilment's own query on the same
+   *  table. */
+  function withRequisitionQueues(): Map<unknown, unknown[][]> {
+    const queues = baseQueues();
+    queues.set(schema.requisition, [[{ requisition_id: 'req-1' }]]);
+    queues.set(schema.transferShipmentLine, [[], [{ requisition_line_id: 'r1', qty: '6' }]]);
+    queues.set(schema.transferReceiptLine, [[], [{ requisition_line_id: 'r1', qty: '4' }]]);
+    queues.set(schema.requisitionLine, [[{ line_id: 'r1', quantity: '10', qty_to_ship: '10', qty_to_receive: '10' }]]);
+    return queues;
+  }
+
+  it('writes the linked requisition line and header after a shipment posts', async () => {
+    const { service, as, updateOf, updatesOf } = setup(withRequisitionQueues());
+    await as(() => service.postShipment('tr-1', {
+      posting_date: '2026-10-02', lines: [{ line_id: 'line-1', quantity: 4 }],
+    }, 'tenant-1', ADMIN));
+    expect(updatesOf(schema.requisitionLine)).toEqual([{ qty_shipped: '6', qty_received: '4' }]);
+    expect(updateOf(schema.requisition)).toEqual({ fulfilment_status: 'PARTIALLY_RECEIVED' });
+  });
+
+  it('writes the linked requisition line and header after a receipt posts too', async () => {
+    const queues = withRequisitionQueues();
+    queues.set(schema.transferShipment, [[{ ...SHIPMENT }]]);
+    queues.set(schema.transferShipmentLine, [
+      [{ line_id: 'line-1', qty: '6' }],                  // shippedQuantities join
+      [{ ...SHIPMENT_LINE }],                              // the shipment's own lines
+      [{ requisition_line_id: 'r1', qty: '6' }],           // sync's own shipped-by-requisition-line query
+    ]);
+    queues.set(schema.transferReceiptLine, [
+      [],                                                  // receivedQuantities join: nothing received yet
+      [],                                                  // receivedAgainstShipment: nothing against this shipment yet
+      [{ requisition_line_id: 'r1', qty: '4' }],            // sync's own received-by-requisition-line query
+    ]);
+    const { service, as, updateOf, updatesOf } = setup(queues);
+    await as(() => service.postReceipt('tr-1', {
+      posting_date: '2026-10-03', shipment_id: 'sh-1', lines: [{ line_id: 'line-1', quantity: 4 }],
+    }, 'tenant-1', ADMIN));
+    expect(updatesOf(schema.requisitionLine)).toEqual([{ qty_shipped: '6', qty_received: '4' }]);
+    expect(updateOf(schema.requisition)).toEqual({ fulfilment_status: 'PARTIALLY_RECEIVED' });
+  });
+
+  /**
+   * Ownership guard: a stock_transfer_line.requisition_line_id that does not
+   * belong to the requisition linked to this transfer must refuse rather than
+   * silently drop. The throw happens inside postShipment's own
+   * withTenantTransaction callback (this.db is the open tx, confirmed by
+   * reading drizzle-orm's mysql2 session.js: `transaction()` wraps the
+   * callback in BEGIN/COMMIT and issues ROLLBACK from its catch block before
+   * rethrowing — node_modules/drizzle-orm/mysql2/session.js, the version
+   * pinned by this repo's lockfile), so the whole shipment (its ledger
+   * entries and status update included) rolls back with it rather than the
+   * event posting while the requisition's own bookkeeping silently misses it.
+   */
+  it('refuses a shipment whose transfer line carries another requisition\'s line id', async () => {
+    const queues = withRequisitionQueues();
+    queues.set(schema.transferShipmentLine, [[], [{ requisition_line_id: 'line-of-another-requisition', qty: '6' }]]);
+    const { service, as } = setup(queues);
+    await expect(as(() => service.postShipment('tr-1', {
+      posting_date: '2026-10-02', lines: [{ line_id: 'line-1', quantity: 4 }],
+    }, 'tenant-1', ADMIN))).rejects.toThrow('does not belong to requisition req-1');
   });
 });

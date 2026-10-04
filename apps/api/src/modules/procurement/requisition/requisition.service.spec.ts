@@ -24,7 +24,7 @@ function makeDb() {
   const select = jest.fn(() => {
     const rows = (selectResults.shift() ?? []) as any[];
     const chain: any = {};
-    for (const m of ['from', 'leftJoin', 'innerJoin', 'orderBy', 'limit', 'for']) chain[m] = () => chain;
+    for (const m of ['from', 'leftJoin', 'innerJoin', 'orderBy', 'limit', 'for', 'groupBy']) chain[m] = () => chain;
     chain.where = (condition: unknown) => { whereCalls.push(condition); return chain; };
     chain.then = (resolve: any, reject: any) => Promise.resolve(rows).then(resolve, reject);
     return chain;
@@ -615,5 +615,56 @@ describe('Part E Task 3 fix round 1 — company-scoped references and LOB scope'
     selectResults.push([], [], [], []);
     await new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any).options({ company_id: 'co-1' }, TENANT);
     expect(new MySqlDialect().sqlToQuery(whereCalls[2] as any).sql).not.toContain('lob_id');
+  });
+});
+
+describe('Part E Task 7 — ship/receive from the requisition; the lines follow the transfer events', () => {
+  it('ship() rejects a requisition that is approved but not released, before touching the transfer service', async () => {
+    const { db, selectResults } = makeDb();
+    selectResults.push([headerRow({ purpose: 'STORE', status: 'APPROVED', approval_status: 'APPROVED', document_status: 'APPROVED' })]);
+    const stockTransfers = { postShipment: jest.fn(), postReceipt: jest.fn() };
+    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, stockTransfers as any);
+    await expect(service.ship('req-1', { posting_date: '2026-10-04', lines: [{ line_id: 'line-1', quantity: 1 }] } as any, TENANT))
+      .rejects.toThrow('Only a released Store requisition ships and receives; release it first.');
+    expect(stockTransfers.postShipment).not.toHaveBeenCalled();
+  });
+
+  it('receive() rejects a Purchase requisition the same way, before touching the transfer service', async () => {
+    const { db, selectResults } = makeDb();
+    selectResults.push([headerRow({ purpose: 'PURCHASE', status: 'APPROVED', approval_status: 'APPROVED', document_status: 'RELEASED', linked_transfer_id: 'tr-1' })]);
+    const stockTransfers = { postShipment: jest.fn(), postReceipt: jest.fn() };
+    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, stockTransfers as any);
+    await expect(service.receive('req-1', { posting_date: '2026-10-04', shipment_id: 'sh-1', lines: [{ line_id: 'line-1', quantity: 1 }] } as any, TENANT))
+      .rejects.toThrow('Only a released Store requisition ships and receives; release it first.');
+    expect(stockTransfers.postReceipt).not.toHaveBeenCalled();
+  });
+
+  it('ship() translates the requisition line id to its transfer line id before posting the shipment', async () => {
+    const { db, selectResults } = makeDb();
+    selectResults.push(
+      [headerRow({ purpose: 'STORE', status: 'APPROVED', approval_status: 'APPROVED', document_status: 'RELEASED', linked_transfer_id: 'tr-1' })],
+      [{ line_id: 't1', requisition_line_id: 'line-1' }, { line_id: 't2', requisition_line_id: 'line-2' }],
+    );
+    const stockTransfers = { postShipment: jest.fn().mockResolvedValue({ shipment_id: 'sh-1' }), postReceipt: jest.fn() };
+    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, stockTransfers as any);
+    jest.spyOn(service, 'findOne').mockResolvedValue({ requisition_id: 'req-1' } as any);
+    const result = await service.ship('req-1', { posting_date: '2026-10-04', lines: [{ line_id: 'line-2', quantity: 4 }] } as any, TENANT);
+    expect(stockTransfers.postShipment).toHaveBeenCalledWith(
+      'tr-1', { posting_date: '2026-10-04', lines: [{ line_id: 't2', quantity: 4 }] }, TENANT, undefined,
+    );
+    expect(result).toEqual({ requisition_id: 'req-1' });
+  });
+
+  it('ship() refuses a requisition line the linked transfer does not carry, before calling the transfer service', async () => {
+    const { db, selectResults } = makeDb();
+    selectResults.push(
+      [headerRow({ purpose: 'STORE', status: 'APPROVED', approval_status: 'APPROVED', document_status: 'RELEASED', linked_transfer_id: 'tr-1' })],
+      [{ line_id: 't1', requisition_line_id: 'line-1' }],
+    );
+    const stockTransfers = { postShipment: jest.fn(), postReceipt: jest.fn() };
+    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, stockTransfers as any);
+    await expect(service.ship('req-1', { posting_date: '2026-10-04', lines: [{ line_id: 'line-9', quantity: 1 }] } as any, TENANT))
+      .rejects.toThrow('Requisition line line-9 is not on the linked transfer.');
+    expect(stockTransfers.postShipment).not.toHaveBeenCalled();
   });
 });
