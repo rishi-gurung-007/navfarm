@@ -89,7 +89,8 @@ review** (a fresh reviewer reads the diff against this plan + the workbook rows)
 | 4 Oct | Feed header **Required Delivery Date is derived** from the lines (earliest), read-only; dates are edited on the lines (reason when moved). |
 | 4 Oct | New common requisition dialog **title names the kind** ("New Fixed Asset requisition" …). |
 | 4 Oct | A company admin with an active farm selected **still sees company-wide (farm-less) requisitions** in the Approvals inbox. |
-| 4 Oct | **Tenant Admin and Company Admin may approve their own requisitions** (supersedes 1 Oct "self-approval forbidden" for those two types only). |
+| 4 Oct | **Tenant Admin and Company Admin may approve every requisition, their own and others'** (supersedes 1 Oct "self-approval forbidden" for those two types only). |
+| 4 Oct | **One requisition list: Approvals → Requisitions** (with "Waiting for my approval" + Approve/Reject). The Approvals inbox no longer lists requisitions. The Feed Forecast tab stays a feed-only view on the same components. |
 | 4 Oct | Shared table/number/timestamp display primitives: do it as a small task **after** Parts B–D. |
 | 4 Oct | The Save Run fix ships with the whole branch (no separate PR). |
 | 1 Oct (still valid) | FARM_MANAGER distinct from STANDARD_USER; "Head of Farms" = OPERATIONAL_ADMIN; base/local currency are company settings; Finance escalation at ≥5% variance; monetary threshold null until Triple C supplies it; Friday 18:00 reminder / Saturday 12:00 cutoff / Sunday 08:00 count / `Africa/Harare` are configuration, not hard-coded; Purchase release records `BC_PENDING`. |
@@ -141,16 +142,41 @@ Evidence of what is done: `docs/VERIFICATION-2026-10-03-feed-tdd-part-a.md`, `do
 Estimates are agent wall-clock including review and the live check, at the pace observed on this branch
 (S ≈ 20–30 min, M ≈ 35–60 min, L ≈ 1–2 h).
 
-### WP1 — Tenant / Company admins may approve their own requisitions (S) — Rishi 4 Oct
-- **Rule:** if the approver's user type is `TENANT_ADMIN` or `COMPANY_ADMIN`, self-approval is allowed; every
-  other type is still refused (`isSelfApproval` in `apps/api/src/modules/procurement/requisition/requisition.rules.ts`,
-  and the feed path — find the feed requisition's self-approval check in `modules/procurement/feed-requisition/`
-  and the approval engine `modules/production/approval/approval.service.ts`). Same for common and feed.
-  SYSTEM_ADMIN: not decided — leave as before and note it.
-- **Tests:** tenant admin approves own common + feed requisition → APPROVED with approved_by = self; company admin
-  same; farm manager / operational admin / standard user creator → still refused.
-- **UI:** the Approvals inbox and documents must not hide Approve for an admin's own requisition.
-- **Live:** log in as company.admin, create a common requisition, submit, approve it yourself; read MySQL.
+### WP1 — Tenant / Company admins approve every requisition, their own included (M) — Rishi 4 Oct (twice)
+- **Rule (decisions.md, both 4 Oct admin entries):** a `TENANT_ADMIN` or `COMPANY_ADMIN` may approve or reject
+  **any** requisition in their scope, of every kind, **their own and anyone else's**, whatever the approval tier
+  or step would otherwise require. Every other type keeps the existing rules (no self-approval; tier/step approvers).
+  SYSTEM_ADMIN is undecided: leave it as before.
+- **Where the rule lives (one helper, every caller):** `SELF_APPROVAL_EXEMPT_USER_TYPES` / `isSelfApproval` in
+  `apps/api/src/modules/procurement/requisition/requisition.rules.ts`. Call sites are the common requisition
+  service, the feed requisition service's `decideFromApproval` (the D25 MANUAL_ENTRY check), and the approval
+  engine `modules/production/approval/approval.service.ts`. Also check the engine's per-step approver resolution
+  (role/tier) so an admin who is not the step's named approver can still decide, and the permission
+  `PROCUREMENT/REQUISITION/approve` that `assertMayDecide` requires.
+- **Tests:** for each of tenant admin and company admin × common and feed: approving their **own** → APPROVED;
+  approving **another user's** at a step where they are not the named approver → APPROVED; reject likewise.
+  Farm manager, operational admin and standard user: own → still refused; not the step approver → still refused.
+- **UI:** Approve/Reject is shown to admins on every pending requisition, theirs included.
+- **Live:** log in as company.admin and as the tenant admin. Approve one of your own and one raised by a farm
+  manager, both common and feed. Read `requisition.status` and `approved_by` (and the approval request rows) in MySQL.
+
+### WP1b — One Requisitions page (M) — Rishi 4 Oct
+Decision: decisions.md "2026-10-04 — … one Requisitions page".
+- **Approvals → Requisitions** (`requisitions-hub.tsx`) is the only requisition list. Add a "Waiting for my
+  approval" filter. It needs an API filter returning requisitions whose open approval request the current user
+  may decide, using the same predicate as the inbox (`ApprovalService.farmConditions` plus the WP1 admin rule;
+  no second copy). Add Approve / Reject on pending rows and in the document dialog, calling the **existing**
+  approval decide endpoints, so the checks (remarks, deadline, capacity, reasons) stay in one place.
+- **Approvals inbox** (`/approvals/pending`, history, rejected): exclude requisition request types (feed and
+  common) from the list and the counts. Add a card or link: "Requisitions waiting for approval: N → open
+  Requisitions". The other sign-offs are unchanged.
+- **Feed Forecast → Feed Requisition tab:** unchanged in role (feed-only, farm-scoped, draft from forecast). Make
+  sure it reuses the same row and document components and actions as the hub.
+- **Tests:** the inbox no longer returns requisition types. The hub filter returns exactly what the inbox used to
+  return for the same user (write that equivalence test **before** removing them from the inbox). Approve from
+  the hub reaches the same handler.
+- **Live:** as company.admin, the pending count shown on Requisitions equals the old inbox's requisition count.
+  Approve one from the hub and read MySQL. The inbox shows only non-requisition items.
 
 ### WP2 — Forecast grid shows stock every day/week until it runs out (M) — Rishi 4 Oct
 Brief: `feed-completion/task-21a-brief.md`. Defect at `feed-forecast-grid.tsx` ~349–368 (cells render only on
@@ -330,7 +356,8 @@ unchanged; screenshot each screen.
 | Dashboard with filters, tiles and charts | Feed Forecast → Dashboard | WP3 |
 | Stock shown every day/week until it runs out | Forecast grid | WP2 |
 | Company admin with a farm selected still sees company-wide requisitions | Approvals inbox | done |
-| Tenant/Company admin may approve their own requisition | Approvals / requisitions | WP1 |
+| Tenant/Company admin may approve every requisition, theirs and others' | Approvals / requisitions | WP1 |
+| One page for requisition requests | Approvals → Requisitions | WP1b |
 | Proper demo data for the forecast | `nf_devco` | WP4 |
 | Common requisition numbering from the company Number Series | Requisitions | done |
 
@@ -345,7 +372,7 @@ unchanged; screenshot each screen.
 | Physical Count (weekly) | … → Physical Count | built · WP6 (28–29) |
 | Feed Requisition | … → Feed Requisition tab; Approvals → Requisitions | built · WP5, WP6 (27, 30, 31) |
 | Common Requisition (Item/FA/Service) | Approvals → Requisitions | built and live-verified |
-| Approvals inbox | Approvals | built · WP1 |
+| Approvals inbox | Approvals | built · WP1, WP1b (stops listing requisitions) |
 | Location (silo), Item, Breed Lifecycle, Alert Rules masters | Farm Master / Master data | built · WP6 (32–36) |
 | Reporting Periods, Feed Planning Settings, Number Series | Farm Master / Feed Forecast / Settings | built |
 | Mill Capacity Master, Production Output, Loading Instruction Sheet, Consolidation Sheet, Transfer Orders from plan, Dispatch, Feed TO Receipt | new | WP7 (Part B) |
@@ -361,7 +388,8 @@ unchanged; screenshot each screen.
 | Spec + Part A plan | ½ day | ~2 h |
 | Part A | 2 days | ~12½ h clock (3 Oct 12:13 → 4 Oct 00:49) |
 | Part E + 4 Oct changes (Tasks 1–20, 18b, 4b, 9b–9d) | ½–1 day | ~16 h clock (4 Oct 01:08 → ~17:30, incl. limit pauses) |
-| WP1 self-approval | 30 min | — |
+| WP1 admins approve all requisitions | 45 min | — |
+| WP1b one Requisitions page | 1–1½ h | — |
 | WP2 grid until run-out | 1 h | — |
 | WP3 dashboard | 3–4½ h | — |
 | WP4 demo data | 1–1½ h | — |
@@ -372,7 +400,7 @@ unchanged; screenshot each screen.
 | WP9 Part D | 5–6 h | — |
 | WP10 shared primitives | 1 h | — |
 | WP11 review, drop prerequisites | 3–4 h | — |
-| **Remaining total** | **≈44–57 h** | |
+| **Remaining total** | **≈45–59 h** | |
 
 ---
 

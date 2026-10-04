@@ -2541,3 +2541,20 @@ those two user types only. Every other user type (Farm Manager, Head of Farms / 
 Standard User) still cannot approve a requisition they created. The approval is still recorded with
 the approver's name and time, so a self-approval is visible on the document. (System Admin is not
 named by Rishi; treat it like Tenant Admin only if Rishi confirms — until then it follows the old rule.)
+
+## 2026-10-04 — Tenant and Company admins approve every requisition; one Requisitions page
+
+Rishi, 4 Oct (with screenshots of `/approvals/pending` and `/approvals/requisitions` listing the same requisitions):
+
+1. "the tenant and company admin should be able to approve all requisitions, theirs and others". A Tenant Admin or
+   Company Admin may approve or reject **any** requisition in their scope, of every kind (Feed, Item, Fixed Asset,
+   Service): their own (the self-approval exemption above) and anyone else's, whatever the approval tier or step
+   would otherwise require. Other user types keep the existing rules.
+2. "why 2 pages for showing the current requisition requests? there should be 1 only". **Approvals → Requisitions
+   is the one requisition list.** It shows every kind and status, has a "Waiting for my approval" filter, and
+   offers Approve / Reject (with the document's checks and reasons) on pending rows. The Approvals inbox
+   (`/approvals/pending`, Approved History, Rejected/Returned) **no longer lists requisitions**. It keeps the other
+   sign-offs (physical counts, stage moves, GRNs, …) and shows a link to Requisitions with the pending count.
+3. The Feed Forecast → Feed Requisition tab stays as a feed-only view for the farm, where feed requisitions are
+   drafted from the forecast. It uses the same rows, documents and actions as the Requisitions page; it is not a
+   second implementation.
