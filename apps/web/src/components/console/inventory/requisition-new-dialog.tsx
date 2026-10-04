@@ -27,18 +27,19 @@ import { api } from "@/services/api-client";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { Field, FieldGroup, ReadField } from "@/components/ui/field";
+import { Field, FieldGroup } from "@/components/ui/field";
 import { ScrollTable } from "@/components/ui/scroll-table";
 import { cn } from "@/lib/utils";
 import { formatDateShort } from "@/utils/date-short";
 import { useLanguage } from "@/hooks/useLanguage";
-import { unwrap } from "./feed-format";
+import { todayIso, unwrap } from "./feed-format";
+import { FeedRequisitionHeaderFields, bulkTotalAndTrips, feedTypeOfDestination, type FeedType } from "./feed-requisition-header";
 import { useFeedFarm } from "./use-feed-farm";
 import { FeedFarmSelect } from "./feed-farm-select";
 import { FEED_TYPE_LABEL, PURPOSE_LABEL, REQ_STATUS_LABEL, REQ_TYPE_LABEL, SOURCE_LABEL, SUPPLY_LABEL, labelOf, variantOf } from "./requisition-labels";
 import type { RequisitionView } from "./requisitions-panel";
 
-interface Destination { location_id: string; location_code: string; location_type: string }
+interface Destination { location_id: string; location_code: string; location_type: string; feed_in_bags?: boolean | null }
 interface FeedItem { item_id: string; item_code: string; item_name: string }
 interface Options { destinations: Destination[]; items: FeedItem[] }
 interface Draft { dest: string; item: string; kg: string; date: string; reason: string }
@@ -48,25 +49,18 @@ const inputStyle = { backgroundColor: "var(--input-bg)", color: "var(--input-tex
 
 const TH = "h-9 whitespace-nowrap px-3 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]";
 const TD = "whitespace-nowrap px-3 py-1.5 align-top text-xs text-[var(--text-primary)]";
-const HALF = "sm:col-span-6";
 /** Requisition §2 line numbers step by 10000; the number shown is a preview, the API assigns the real one. */
 const LINE_STEP = 10000;
 // §2 columns that apply to a manual line (the forecast columns have no value until the engine runs); "" is the remove button.
 const COLUMNS = ["rqdColLineNo", "rqdColSilo", "rqdColItemNo", "rqdColItemDesc", "rqdColFeedType", "rqdColRequested", "rqdColDelivery", "rqnColException", ""] as const;
 
 /** The settings the header needs (GET /feed-settings, resolved for the farm). */
-interface HeaderSettings { truckTargetKg: number; bulkMultipleKg: number }
+interface HeaderSettings { truckTargetKg: number; bulkMultipleKg: number; bagSizeKg: number }
 
-const todayIso = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-};
-
-/** A silo is bulk and a store is bagged — the API's default (feedTypeOf); a destination not chosen yet has no type. */
-function feedTypeOfDraft(line: Draft, destinations: Destination[]): "BULK" | "BAGGED" | null {
+/** The Feed Type of a line's destination — the server's own rule (feed-requisition-header.tsx); none until a destination is chosen. */
+function feedTypeOfDraft(line: Draft, destinations: Destination[]): FeedType | null {
   const dest = destinations.find((d) => d.location_id === line.dest);
-  if (!dest) return null;
-  return dest.location_type === "STORE" ? "BAGGED" : "BULK";
+  return dest ? feedTypeOfDestination(dest) : null;
 }
 
 export type RequisitionKind = "FEED" | "ITEM" | "FA" | "SERVICE";
@@ -165,7 +159,7 @@ export function RequisitionNewDialog({
       .then((res: any) => {
         const raw = unwrap<Partial<HeaderSettings>>(res);
         if (alive && typeof raw?.truckTargetKg === "number" && typeof raw?.bulkMultipleKg === "number") {
-          setSettings({ truckTargetKg: raw.truckTargetKg, bulkMultipleKg: raw.bulkMultipleKg });
+          setSettings({ truckTargetKg: raw.truckTargetKg, bulkMultipleKg: raw.bulkMultipleKg, bagSizeKg: typeof raw.bagSizeKg === "number" ? raw.bagSizeKg : 0 });
         }
       })
       .catch(() => {
@@ -204,9 +198,12 @@ export function RequisitionNewDialog({
   }, [open, typesKey]);
 
   const setLine = (i: number, patch: Partial<Draft>) => setLines((cur) => cur.map((l, j) => (j === i ? { ...l, ...patch } : l)));
-  // Req. r26 counts bulk only; r27 is a target, never a block (cp. 17).
-  const bulkTotal = lines.reduce((sum, l) => (feedTypeOfDraft(l, destinations) === "BULK" ? sum + (Number(l.kg) > 0 ? Number(l.kg) : 0) : sum), 0);
-  const trips = settings && settings.truckTargetKg > 0 && bulkTotal > 0 ? Math.ceil(bulkTotal / settings.truckTargetKg) : 0;
+  // Req. r26 counts bulk only; r27 is a target, never a block (cp. 17). The same helper as the document's.
+  const { bulkTotal, trips, baggedCount, baggedKg, baggedBags } = bulkTotalAndTrips(
+    lines.map((l) => ({ feedType: feedTypeOfDraft(l, destinations), kg: Number(l.kg) > 0 ? Number(l.kg) : 0 })),
+    settings?.truckTargetKg ?? 0,
+    settings?.bagSizeKg ?? 0,
+  );
   const earliest = lines.map((l) => l.date).filter(Boolean).sort()[0] ?? null;
   const complete = lines.every((l) => l.dest && l.item && Number(l.kg) > 0 && l.date);
 
@@ -280,23 +277,28 @@ export function RequisitionNewDialog({
               <FeedFarmSelect id="rqn-farm" label={t("rqFarm")} farms={farm.farms} farmId={farm.farmId} onChange={farm.setFarmId} />
             </div>
           )}
-          <ReadField className={HALF} label={t("rqdReqNo")} value={t("rqnAssignedOnSave")} />
-          <ReadField className={HALF} label={t("rqdReqDate")} value={formatDateShort(todayIso())} />
-          <ReadField className={HALF} label={t("rqdReqType")} value={labelOf(REQ_TYPE_LABEL, "MANUAL", t)} />
-          <ReadField className={HALF} label={t("rqdSource")} value={labelOf(SOURCE_LABEL, "MANUAL_ENTRY", t)} />
-          <ReadField className={HALF} label={t("rqdFarmCode")} value={chosenFarm?.code} mono />
-          <ReadField className={HALF} label={t("rqdFarmName")} value={chosenFarm?.name} />
-          <ReadField className={HALF} label={t("rqdFarmTotal")} value={t("rqdFarmTotalValue", { total: bulkTotal.toLocaleString("en-US") })} />
-          <ReadField className={HALF} label={t("rqdTruckTarget")}
-            value={settings ? t("rqdTruckTargetValue", { target: settings.truckTargetKg.toLocaleString("en-US"), trips }) : null} />
-          <ReadField className={HALF} label={t("rqdBulkMultiple")}
-            value={settings ? t("rqdKgValue", { kg: settings.bulkMultipleKg.toLocaleString("en-US") }) : null} />
-          <ReadField className={HALF} label={t("rqdRequiredDate")} value={earliest ? formatDateShort(earliest) : t("rqnFromLines")} />
-          <ReadField className={HALF} label={t("rqdSupply")} value={labelOf(SUPPLY_LABEL, "MILL", t)} />
-          <ReadField className={HALF} label={t("rqdPurpose")} value={labelOf(PURPOSE_LABEL, "INTERNAL_TRANSFER", t)} />
-          <ReadField className={HALF} label={t("rqdStatus")} value={<Badge variant={variantOf(REQ_STATUS_LABEL, "DRAFT")}>{labelOf(REQ_STATUS_LABEL, "DRAFT", t)}</Badge>} />
-          <ReadField className={HALF} label={t("rqdPriority")} value={t("rqnDerivedOnSave")} />
-          <ReadField className={HALF} label={t("rqdDeadline")} value={t("rqnSetOnSave")} />
+          <FeedRequisitionHeaderFields values={{
+            reqNo: t("rqnAssignedOnSave"),
+            reqDate: formatDateShort(todayIso()),
+            reqType: labelOf(REQ_TYPE_LABEL, "MANUAL", t),
+            source: labelOf(SOURCE_LABEL, "MANUAL_ENTRY", t),
+            farmCode: chosenFarm?.code,
+            farmName: chosenFarm?.name,
+            nextDiet: t("rqNo"),
+            farmTotal: t("rqdFarmTotalValue", { total: bulkTotal.toLocaleString("en-US") }),
+            truckTarget: settings ? t("rqdTruckTargetValue", { target: settings.truckTargetKg.toLocaleString("en-US"), trips }) : null,
+            baggedTotal: baggedCount === 0 ? null
+              : settings && settings.bagSizeKg > 0
+                ? t("rqdBaggedTotalValue", { kg: baggedKg.toLocaleString("en-US"), bags: baggedBags.toLocaleString("en-US"), size: settings.bagSizeKg.toLocaleString("en-US") })
+                : t("rqdBaggedTotalNoSize", { kg: baggedKg.toLocaleString("en-US"), bags: baggedBags.toLocaleString("en-US") }),
+            bulkMultiple: settings ? t("rqdKgValue", { kg: settings.bulkMultipleKg.toLocaleString("en-US") }) : null,
+            requiredDate: earliest ? formatDateShort(earliest) : t("rqnFromLines"),
+            supply: labelOf(SUPPLY_LABEL, "MILL", t),
+            purpose: labelOf(PURPOSE_LABEL, "INTERNAL_TRANSFER", t),
+            status: <Badge variant={variantOf(REQ_STATUS_LABEL, "DRAFT")}>{labelOf(REQ_STATUS_LABEL, "DRAFT", t)}</Badge>,
+            priority: t("rqnDerivedOnSave"),
+            deadline: t("rqnSetOnSave"),
+          }} />
           <Field className="sm:col-span-12" label={t("rqRemarks")} htmlFor="rqn-remarks">
             <textarea id="rqn-remarks" className="nf-input w-full px-2 py-1" style={inputStyle} rows={2} value={remarks} onChange={(e) => setRemarks(e.target.value)} />
           </Field>

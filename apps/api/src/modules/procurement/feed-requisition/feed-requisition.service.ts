@@ -720,6 +720,7 @@ export class FeedRequisitionService implements OnModuleInit {
           location_id: schema.locationMaster.location_id,
           location_code: schema.locationMaster.location_code,
           location_type: schema.locationMaster.location_type,
+          feed_in_bags: schema.locationMaster.feed_in_bags,
         })
         .from(schema.locationMaster)
         .where(and(
@@ -743,7 +744,8 @@ export class FeedRequisitionService implements OnModuleInit {
       return {
         farmId,
         companyId,
-        destinations: [...destinations].sort(byCode),
+        // feed_in_bags (null = not set) lets the New dialog apply feedTypeOf's rule exactly.
+        destinations: destinations.map((d) => ({ ...d, feed_in_bags: d.feed_in_bags ?? null })).sort(byCode),
         items: [...items].sort((a, b) => a.item_code.localeCompare(b.item_code)),
       };
     });

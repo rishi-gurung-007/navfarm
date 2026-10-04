@@ -50,6 +50,36 @@ describe('FeedRequisitionService.options (F3)', () => {
   });
 });
 
+describe('FeedRequisitionService.options — feed_in_bags (Task 18b fix round 1)', () => {
+  const chain = (rows: unknown[]) => {
+    const self: any = { from: () => self, where: () => self, leftJoin: () => self, orderBy: () => self, limit: async () => rows,
+      then: (res: (v: unknown[]) => unknown, rej: (e: unknown) => unknown) => Promise.resolve(rows).then(res, rej) };
+    return self;
+  };
+  const selectQueue: unknown[][] = [];
+  const db: any = { select: jest.fn(() => chain(selectQueue.shift() ?? [])), insert: jest.fn() };
+  const forecast: any = {
+    resolveFarm: jest.fn(async () => ({ farmId: 'farm-grs', companyId: 'co-1' })),
+    withFarmScope: jest.fn(async (_f: string, _c: string, work: () => Promise<unknown>) => work()),
+  };
+  const service = new FeedRequisitionService(transactionCls(db), forecast, {} as any, { evaluateFarmSafely: jest.fn() } as any, {} as any, {} as any, {} as any);
+
+  it('reads and returns each destination\'s feed_in_bags (true, false or null) so the New dialog applies the same Feed Type rule as feedTypeOf', async () => {
+    selectQueue.push(
+      [
+        { location_id: 'a', location_code: 'GRS/SILO-001', location_type: 'SILO', feed_in_bags: true },
+        { location_id: 'b', location_code: 'GRS/SILO-002', location_type: 'SILO', feed_in_bags: false },
+        { location_id: 'c', location_code: 'GRS/STORE-001', location_type: 'STORE', feed_in_bags: null },
+        { location_id: 'd', location_code: 'GRS/STORE-002', location_type: 'STORE' },
+      ],
+      [],
+    );
+    const out = await service.options('farm-grs', 'tenant-1', { userId: 'u', userType: 'TENANT_ADMIN' } as any);
+    expect(db.select.mock.calls[0][0]).toHaveProperty('feed_in_bags');
+    expect(out.destinations.map((d: any) => d.feed_in_bags)).toEqual([true, false, null, null]);
+  });
+});
+
 describe('FeedRequisitionService.createManual — the item must be the farm company\'s active feed item (F3)', () => {
   const chain = (rows: unknown[]) => {
     const self: any = { from: () => self, where: () => self, leftJoin: () => self, orderBy: () => self, limit: async () => rows,

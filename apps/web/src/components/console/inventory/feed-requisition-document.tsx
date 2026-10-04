@@ -13,6 +13,7 @@
  * false nothing here is an input. "Current Silo Feed Item No." is not shown —
  * the workbook removed it (rows 12, 44).
  */
+import { FeedRequisitionHeaderFields, bulkTotalAndTrips } from "./feed-requisition-header";
 import { AlertTriangle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Field, FieldGroup, ReadField } from "@/components/ui/field";
@@ -196,7 +197,6 @@ const TH = "h-9 whitespace-nowrap px-3 text-[10px] font-semibold uppercase track
 const TD = "whitespace-nowrap px-3 py-1.5 align-top text-xs text-[var(--text-primary)]";
 const NUM = "text-right tabular-nums";
 const MUTED = "text-[10px] text-[var(--text-muted)]";
-const HALF = "sm:col-span-6";
 
 const LINE_COLUMNS = [
   "rqdColLineNo", "rqdColSilo", "rqdColItemNo", "rqdColItemDesc", "rqdColFeedType", "rqdColNextDiet", "rqdColDaysBefore", "rqdColLifecycle",
@@ -266,72 +266,45 @@ export function FeedRequisitionDocument({
   const items = options && Array.isArray(options.items) ? options.items : [];
   const canEdit = editable && !!onLineEdit;
 
-  // Requisition §1 rows 26–27: the requested bulk total against the truck target — trips, a target never a block (cp. 17).
-  const bulkTotal = lines.filter((l) => l.feed_type === "BULK").reduce((sum, l) => sum + requestedKgOf(l, edits[l.line_id]), 0);
+  // Requisition §1 rows 26–27, bagged beside them: the shared helper (feed-requisition-header.tsx).
   const target = header?.truck_target_kg ?? 0;
-  const trips = target > 0 && bulkTotal > 0 ? Math.ceil(bulkTotal / target) : 0;
-  // Requisition row 26 counts bulk only; a bagged line is shown on its own so it is neither folded into the truck target nor invisible.
-  const baggedLines = lines.filter((l) => l.feed_type === "BAGGED");
-  const baggedKg = baggedLines.reduce((sum, l) => sum + requestedKgOf(l, edits[l.line_id]), 0);
   const bagSize = header?.bag_size_kg ?? 0;
-  const baggedBags = baggedLines.reduce((sum, l) => {
-    const kgOf = requestedKgOf(l, edits[l.line_id]);
-    if (bagSize > 0) return sum + Math.ceil(kgOf / bagSize);
-    return sum + (edits[l.line_id]?.quantity === undefined ? (l.bag_count ?? 0) : 0);
-  }, 0);
+  const { bulkTotal, trips, baggedCount, baggedKg, baggedBags } = bulkTotalAndTrips(
+    lines.map((l) => ({
+      feedType: l.feed_type,
+      kg: requestedKgOf(l, edits[l.line_id]),
+      fallbackBags: edits[l.line_id]?.quantity === undefined ? (l.bag_count ?? 0) : 0,
+    })),
+    target,
+    bagSize,
+  );
 
   return (
     <div className="flex flex-col gap-4">
       <FieldGroup title={t("rqdHeaderTitle")}>
-        <ReadField className={HALF} label={t("rqdReqNo")} value={view.req_no} mono />
-        <ReadField className={HALF} label={t("rqdReqDate")} value={header?.requisition_date ? formatDateShort(header.requisition_date) : null} />
-        <ReadField className={HALF} label={t("rqdReqType")} value={labelOf(REQ_TYPE_LABEL, view.requisition_type, t)} />
-        <ReadField className={HALF} label={t("rqdSource")} value={labelOf(SOURCE_LABEL, view.source, t)} />
-        <ReadField className={HALF} label={t("rqdFarmCode")} value={header?.farm_code} mono />
-        <ReadField className={HALF} label={t("rqdFarmName")} value={header?.farm_name} />
-        <ReadField className={HALF} label={t("rqdNextDiet")} value={header?.is_next_diet_requisition ? t("rqYes") : t("rqNo")} />
-        {/*
-         * Req r26-r35, in the workbook's own order (audit gap #13): Farm
-         * Total -> Bulk Truck Target -> (Bagged Total, extra, kept beside
-         * its bulk counterpart) -> Bulk Order Multiple -> Required Delivery
-         * Date -> Supplier -> Purpose -> Status -> Priority -> Deadline.
-         * r26 used to fold the truck target and trip count into its own
-         * value string, mislabelled "Bulk total requested (vs truck
-         * target)"; r27 did not exist as its own field. r32 (Mill Loading
-         * Bin No.) stays out of scope (Part B). r34 Priority stays
-         * read-only here: the workbook wants the Farm Manager able to
-         * escalate it, but UpdateFeedRequisitionDto (feed-requisition.dto.ts)
-         * has no priority field and the API only ever sets it by
-         * recomputing requisitionPriority() on an auto-draft rerun
-         * (feed-requisition.service.ts ~596) — making this editable without
-         * a server-side change would silently discard the farm's escalation
-         * on the next rerun, so it is left read-only and flagged rather than
-         * half-built. r29 (header-level editable Required Delivery Date with
-         * a reason) is explicitly out of scope — Rishi has not yet said what
-         * a header override should mean when lines carry their own dates.
-         */}
-        <ReadField className={HALF} label={t("rqdFarmTotal")} value={t("rqdFarmTotalValue", { total: bulkTotal.toLocaleString("en-US") })} />
-        <ReadField className={HALF} label={t("rqdTruckTarget")} value={t("rqdTruckTargetValue", { target: target.toLocaleString("en-US"), trips })} />
-        {baggedLines.length > 0 && (
-          <ReadField className={HALF} label={t("rqdBaggedTotal")}
-            value={bagSize > 0
+        <FeedRequisitionHeaderFields values={{
+          reqNo: view.req_no,
+          reqDate: header?.requisition_date ? formatDateShort(header.requisition_date) : null,
+          reqType: labelOf(REQ_TYPE_LABEL, view.requisition_type, t),
+          source: labelOf(SOURCE_LABEL, view.source, t),
+          farmCode: header?.farm_code,
+          farmName: header?.farm_name,
+          nextDiet: header?.is_next_diet_requisition ? t("rqYes") : t("rqNo"),
+          farmTotal: t("rqdFarmTotalValue", { total: bulkTotal.toLocaleString("en-US") }),
+          truckTarget: t("rqdTruckTargetValue", { target: target.toLocaleString("en-US"), trips }),
+          baggedTotal: baggedCount === 0 ? null
+            : bagSize > 0
               ? t("rqdBaggedTotalValue", { kg: baggedKg.toLocaleString("en-US"), bags: baggedBags.toLocaleString("en-US"), size: bagSize.toLocaleString("en-US") })
-              : t("rqdBaggedTotalNoSize", { kg: baggedKg.toLocaleString("en-US"), bags: baggedBags.toLocaleString("en-US") })} />
-        )}
-        <ReadField className={HALF} label={t("rqdBulkMultiple")}
-          value={header ? t("rqdKgValue", { kg: header.bulk_multiple_kg.toLocaleString("en-US") }) : null} />
-        <ReadField className={HALF} label={t("rqdRequiredDate")} value={header?.required_delivery_date ? formatDateShort(header.required_delivery_date) : null} />
-        <ReadField className={HALF} label={t("rqdSupply")} value={labelOf(SUPPLY_LABEL, view.supply_source, t)} />
-        <ReadField className={HALF} label={t("rqdPurpose")} value={labelOf(PURPOSE_LABEL, view.purpose, t)} />
-        <ReadField className={HALF} label={t("rqdStatus")}
-          value={<Badge variant={variantOf(REQ_STATUS_LABEL, view.status)}>{labelOf(REQ_STATUS_LABEL, view.status, t)}</Badge>} />
-        <ReadField className={HALF} label={t("rqdPriority")}
-          value={view.priority ? <Badge variant={variantOf(PRIORITY_LABEL, view.priority)}>{labelOf(PRIORITY_LABEL, view.priority, t)}</Badge> : null} />
-        <ReadField className={HALF} label={t("rqdDeadline")} value={view.submission_deadline ? formatDateShort(view.submission_deadline) : null} />
-        <ReadField className={HALF} label={t("rqdApprovedBy")} value={header?.approved_by_name} />
-        <ReadField className={HALF} label={t("rqdApprovedAt")} value={dateTime(view.approved_at)} />
-        <ReadField className={HALF} label={t("rqdLinkedTransfer")} value={header?.linked_transfer_no} mono />
-        <ReadField className={HALF} label={t("rqdForecastRun")} value={header?.forecast_run_no} mono />
+              : t("rqdBaggedTotalNoSize", { kg: baggedKg.toLocaleString("en-US"), bags: baggedBags.toLocaleString("en-US") }),
+          bulkMultiple: header ? t("rqdKgValue", { kg: header.bulk_multiple_kg.toLocaleString("en-US") }) : null,
+          requiredDate: header?.required_delivery_date ? formatDateShort(header.required_delivery_date) : null,
+          supply: labelOf(SUPPLY_LABEL, view.supply_source, t),
+          purpose: labelOf(PURPOSE_LABEL, view.purpose, t),
+          status: <Badge variant={variantOf(REQ_STATUS_LABEL, view.status)}>{labelOf(REQ_STATUS_LABEL, view.status, t)}</Badge>,
+          priority: view.priority ? <Badge variant={variantOf(PRIORITY_LABEL, view.priority)}>{labelOf(PRIORITY_LABEL, view.priority, t)}</Badge> : null,
+          deadline: view.submission_deadline ? formatDateShort(view.submission_deadline) : null,
+          saved: { approvedBy: header?.approved_by_name, approvedAt: dateTime(view.approved_at), linkedTransfer: header?.linked_transfer_no, forecastRun: header?.forecast_run_no },
+        }} />
         {editable && onRemarksChange ? (
           <Field className="sm:col-span-12" label={t("rqdRemarks")} htmlFor="rqd-remarks" hint={t("rqdRemarksHint")}
             error={remarksMissing ? (remarksError ?? t("rqRemarksRequiredGeneric")) : undefined}>

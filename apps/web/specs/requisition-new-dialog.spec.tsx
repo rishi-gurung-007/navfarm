@@ -27,7 +27,7 @@ beforeEach(() => {
   mockFarm = { farmId: null, setFarmId: jest.fn(), farms: [], loaded: true, failed: false, isFixed: false, fixedFarm: null };
   // F3: one feed-scoped read, not the two Master Data ones.
   get.mockImplementation(async (url: string) => {
-    if (String(url).startsWith('/feed-settings')) return { data: { truckTargetKg: 30000, bulkMultipleKg: 3000 } };
+    if (String(url).startsWith('/feed-settings')) return { data: { truckTargetKg: 30000, bulkMultipleKg: 3000, bagSizeKg: 50 } };
     return {
     data: {
       farmId: 'farm-vil',
@@ -343,5 +343,45 @@ describe('RequisitionNewDialog — header first, then lines (Task 18b)', () => {
         { destination_location_id: 'st', item_id: 'i1', quantity_kg: 500, proposed_delivery_date: '2099-10-02' },
       ],
     }));
+  });
+  // Fix round 1: Feed Type follows the server's feedTypeOf — location_master.feed_in_bags
+  // first (true = BAGGED, false = BULK), the location type only when it is null.
+  it('applies feed_in_bags before the location type: a bagged silo is Bagged, outside the bulk total and the trips, and its bags are shown', async () => {
+    get.mockImplementation(async (url: string) => {
+      if (String(url).startsWith('/feed-settings')) return { data: { truckTargetKg: 30000, bulkMultipleKg: 3000, bagSizeKg: 50 } };
+      return { data: { farmId: 'farm-vil', companyId: 'co-1', items: [{ item_id: 'i1', item_code: 'FEED-R1', item_name: 'Weaner Diet R1' }],
+        destinations: [
+          { location_id: 's1', location_code: 'VIL100/SILO-001', location_type: 'SILO', feed_in_bags: null },
+          { location_id: 'sb', location_code: 'VIL100/SILO-002', location_type: 'SILO', feed_in_bags: true },
+          { location_id: 'st', location_code: 'VIL100/STORE-001', location_type: 'STORE', feed_in_bags: null },
+          { location_id: 'sx', location_code: 'VIL100/STORE-002', location_type: 'STORE', feed_in_bags: false },
+        ] } };
+    });
+    render(<RequisitionNewDialog open farmId="farm-vil" onClose={jest.fn()} onCreated={jest.fn()} />);
+    await waitFor(() => expect((screen.getByLabelText('rqNewDestination:{"line":1}') as HTMLSelectElement).options.length).toBe(5));
+    for (const n of [2, 3, 4]) fireEvent.click(screen.getByRole('button', { name: 'rqNewAddLine' }));
+    await fillLine(1, 's1', '3000', '2099-10-05'); // silo, null -> Bulk
+    await fillLine(2, 'sb', '120', '2099-10-05'); // silo, feed_in_bags -> Bagged
+    await fillLine(3, 'st', '500', '2099-10-05'); // store, null -> Bagged
+    await fillLine(4, 'sx', '2000', '2099-10-05'); // store, feed_in_bags false -> Bulk
+    const rows = within(screen.getByRole('table')).getAllByRole('row').slice(1);
+    expect(within(rows[0]).getByText('reqFeedBulk')).toBeTruthy();
+    expect(within(rows[1]).getByText('reqFeedBagged')).toBeTruthy();
+    expect(within(rows[2]).getByText('reqFeedBagged')).toBeTruthy();
+    expect(within(rows[3]).getByText('reqFeedBulk')).toBeTruthy();
+    const dialog = screen.getByRole('dialog');
+    const valueOf = (label: string) => within(dialog).getByText(label).parentElement!.textContent;
+    // Bulk = 3000 + 2000 only; 5000 kg on a 30,000 target is one trip.
+    await waitFor(() => expect(valueOf('rqdFarmTotal')).toContain('rqdFarmTotalValue:{"total":"5,000"}'));
+    expect(valueOf('rqdTruckTarget')).toContain('"trips":1');
+    // Bagged = 120 + 500 kg -> 3 + 10 bags of 50 kg.
+    expect(valueOf('rqdBaggedTotal')).toContain('rqdBaggedTotalValue:{"kg":"620","bags":"13","size":"50"}');
+  });
+
+  it('shows no Bagged total while no line is bagged', async () => {
+    render(<RequisitionNewDialog open farmId="farm-vil" onClose={jest.fn()} onCreated={jest.fn()} />);
+    await waitFor(() => expect((screen.getByLabelText('rqNewDestination:{"line":1}') as HTMLSelectElement).options.length).toBe(3));
+    await fillLine(1, 's1', '3000', '2099-10-05');
+    expect(within(screen.getByRole('dialog')).queryByText('rqdBaggedTotal')).toBeNull();
   });
 });
