@@ -18,7 +18,7 @@
  * item; the API checks them (Req. row 13, checkpoint 4).
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, Inbox, Loader2 } from "lucide-react";
+import { Inbox, Loader2 } from "lucide-react";
 import { api } from "@/services/api-client";
 import { InlineAlert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -33,10 +33,8 @@ import { addDaysIso, defaultWindowEnd, todayIso, unwrap } from "./feed-format";
 import { getForecastWindow } from "./feed-forecast-window";
 import { FeedFarmSelect, feedFarmLabel } from "./feed-farm-select";
 import { PRIORITY_LABEL, REQ_STATUS_LABEL, REQ_TYPE_LABEL, labelOf, variantOf } from "./requisition-labels";
-import {
-  FeedRequisitionDocument, isLineExceptioned, requestedKgOf,
-  type FeedLineEdit, type FeedRequisitionDocumentView, type FeedRequisitionLine, type FeedRequisitionOptions,
-} from "./feed-requisition-document";
+import type { FeedRequisitionDocumentView } from "./feed-requisition-document";
+import { FeedRequisitionDetail } from "./feed-requisition-detail";
 import { RequisitionNewDialog } from "./requisition-new-dialog";
 import { useFeedFarm } from "./use-feed-farm";
 
@@ -53,8 +51,14 @@ interface ListRow {
   approval_request_id: string | null;
 }
 
-/** GET /feed-requisition/:id — the document view (Task 9). */
-export type RequisitionView = FeedRequisitionDocumentView & { production_date?: string | null };
+/**
+ * GET /feed-requisition/:id — the document view (Task 9). `farm_id` (Task
+ * 11): the API's readView already spreads `...row.req`, which carries it;
+ * FeedRequisitionDetail uses it to fetch /feed-requisition/options without
+ * depending on the caller's own farm-selector state — the Approvals entry
+ * point (Task 13) has none.
+ */
+export type RequisitionView = FeedRequisitionDocumentView & { production_date?: string | null; farm_id?: string | null };
 
 /** Checkpoint 18, as the API applies it (feed-requisition.rules.ts deviationNeedsRemarks). */
 export function needsRemarks(recommended: number | null, requested: number): boolean {
@@ -97,17 +101,6 @@ export function remarksRequiredMessage(
   return t("rqRemarksRequired", { reasons: reasons.join("; ") });
 }
 
-/** D25: what the farm may still change — mirrors isEditableFeedRequisition in the API. */
-const isEditable = (v: { status: string; approval_request_id: string | null }) =>
-  v.status === "AUTO_DRAFT" || v.status === "DRAFT" || (v.status === "PENDING_APPROVAL" && !v.approval_request_id);
-
-/** The inbox tab a submitted requisition's approval sits in. */
-function approvalHref(v: { status: string; approval_request_id: string | null }): string | null {
-  if (!v.approval_request_id) return null;
-  const tab = v.status === "APPROVED" ? "approved" : v.status === "REJECTED" ? "rejected" : "pending";
-  return `/approvals/${tab}?request=${v.approval_request_id}`;
-}
-
 const STATUS_FILTER = ["AUTO_DRAFT", "DRAFT", "PENDING_APPROVAL", "APPROVED", "REJECTED"];
 const LIST_COLUMNS = ["rqColReqNo", "rqColType", "rqColStatus", "rqColPriority", "rqColRequiredBy", "rqColDeadline", "rqColLines", "rqColKg"] as const;
 const RIGHT = new Set<string>(["rqColLines", "rqColKg"]);
@@ -134,20 +127,17 @@ export function FeedRequisitionPanel() {
   const [status, setStatus] = useState("");
   const [rows, setRows] = useState<ListRow[]>([]);
   const [selected, setSelected] = useState<RequisitionView | null>(null);
-  const [edits, setEdits] = useState<Record<string, FeedLineEdit>>({});
-  const [options, setOptions] = useState<FeedRequisitionOptions | null>(null);
-  const [remarks, setRemarks] = useState("");
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [creating, setCreating] = useState(false);
 
-  const show = (view: RequisitionView | null) => {
-    setSelected(view);
-    setEdits({});
-    setRemarks(view?.remarks ?? "");
-  };
+  // The API's response always carries farm_id (readView spreads ...row.req); the
+  // farm selector's current farm is only a fallback for a response that somehow
+  // doesn't, so FeedRequisitionDetail's options fetch (keyed on view.farm_id) is
+  // never left without one while this panel has a farm selected.
+  const show = (view: RequisitionView | null) => setSelected(view ? { ...view, farm_id: view.farm_id ?? farmId } : null);
 
   const loadList = useCallback(async () => {
     if (!farmId) {
@@ -183,12 +173,7 @@ export function FeedRequisitionPanel() {
     if (!id) return;
     api
       .get(`/feed-requisition/${id}`)
-      .then((res) => {
-        const view = unwrap<RequisitionView>(res);
-        setSelected(view);
-        setEdits({});
-        setRemarks(view?.remarks ?? "");
-      })
+      .then((res) => show(unwrap<RequisitionView>(res)))
       .catch((err: any) => setError(err?.message || tRef.current("rqLoadFailed")));
   }, []);
 
@@ -224,70 +209,6 @@ export function FeedRequisitionPanel() {
         show(result.requisition);
         setNotice(tRef.current("rqDraftedThrough", { to: through }));
       } else setNotice(tRef.current("rqNothingToOrder", { to: through }));
-      await loadList();
-    });
-
-  const editLine = (lineId: string, patch: FeedLineEdit) => setEdits((cur) => ({ ...cur, [lineId]: { ...cur[lineId], ...patch } }));
-  const lineEdits = () =>
-    Object.entries(edits).map(([line_id, edit]) => ({
-      line_id,
-      ...(edit.quantity !== undefined ? { quantity_kg: Number(edit.quantity) } : {}),
-      ...(edit.date !== undefined ? { proposed_delivery_date: edit.date } : {}),
-      ...(edit.destinationId !== undefined ? { destination_location_id: edit.destinationId } : {}),
-      ...(edit.itemId !== undefined ? { item_id: edit.itemId } : {}),
-      ...(edit.exceptionReason !== undefined ? { exception_reason: edit.exceptionReason } : {}),
-    }));
-
-  const editable = !!selected && isEditable(selected);
-  const lines: FeedRequisitionLine[] = Array.isArray(selected?.lines) ? selected!.lines : [];
-  const deviating = lines.filter((l) => needsRemarks(num(l.recommended_qty_kg), requestedKgOf(l, edits[l.line_id])));
-  // Req. row 29: a delivery date moved off the forecast's needs remarks too (the API checks it at submit).
-  const dateOf = (l: FeedRequisitionLine) => edits[l.line_id]?.date ?? l.proposed_delivery_date ?? "";
-  const moved = lines.filter((l) => !!l.recommended_delivery_date && dateOf(l) !== l.recommended_delivery_date);
-  // Requisition row 36: Remarks are also required on an item exception (the API checks it at submit, approvalProblems).
-  // M2: derived the way the document does (edited item vs required_item_id), not from the
-  // PERSISTED exception_reason — the API decides this AFTER applying edits, so a farm that
-  // changes an item and submits in the same action must see the warning before it submits.
-  const exceptioned = lines.filter((l) => isLineExceptioned(l, edits[l.line_id]));
-  const late = !!selected?.submission_deadline && todayIso() > selected.submission_deadline;
-  // 9d F2: which causes, on which lines — so the error can say so rather than naming a fixed two.
-  const remarksError = editable && !remarks.trim()
-    ? remarksRequiredMessage(t, {
-      deviating: deviating.map((l) => l.line_seq), moved: moved.map((l) => l.line_seq),
-      exceptioned: exceptioned.map((l) => l.line_seq), late,
-    })
-    : null;
-  const remarksMissing = remarksError !== null;
-  const href = selected ? approvalHref(selected) : null;
-
-  // The silos and feed items a line may be moved to — only needed while the document is editable.
-  const selectedId = selected?.requisition_id ?? null;
-  useEffect(() => {
-    setOptions(null);
-    if (!selectedId || !editable || !farmId) return;
-    let live = true;
-    api
-      .get(`/feed-requisition/options?farmId=${encodeURIComponent(farmId)}`)
-      .then((res) => {
-        const opts = unwrap<FeedRequisitionOptions>(res);
-        if (live && opts && Array.isArray(opts.destinations) && Array.isArray(opts.items)) setOptions(opts);
-      })
-      .catch(() => undefined); // without options the silo and item stay read-only; quantity and date still edit
-    return () => {
-      live = false;
-    };
-  }, [selectedId, editable, farmId]);
-
-  const save = () =>
-    run(async () => {
-      show(unwrap<RequisitionView>(await api.put(`/feed-requisition/${selected!.requisition_id}`, { remarks, lines: lineEdits() })));
-      setNotice(tRef.current("rqSaved"));
-    });
-
-  const submit = () =>
-    run(async () => {
-      show(unwrap<RequisitionView>(await api.post(`/feed-requisition/${selected!.requisition_id}/submit`, { remarks, lines: lineEdits() })));
-      setNotice(tRef.current("rqSubmitted"));
       await loadList();
     });
 
@@ -332,38 +253,11 @@ export function FeedRequisitionPanel() {
           <Button size="sm" variant="outline" onClick={farm.retry}>{t("rqRetry")}</Button>
         </InlineAlert>
       ) : selected ? (
-        <>
-          <div className="flex shrink-0 flex-wrap items-center gap-2">
-            <Button size="sm" variant="ghost" onClick={() => show(null)}><ArrowLeft className="h-3.5 w-3.5" /> {t("rqBack")}</Button>
-            <h2 className="text-base font-semibold" style={{ color: "var(--text-primary)" }}>{selected.req_no}</h2>
-          </div>
-          <div className="min-h-0 flex-1 overflow-auto">
-            <FeedRequisitionDocument
-              view={selected}
-              editable={editable}
-              edits={edits}
-              onLineEdit={editLine}
-              remarks={remarks}
-              onRemarksChange={setRemarks}
-              remarksMissing={remarksMissing}
-              remarksError={remarksError}
-              options={options}
-            />
-          </div>
-          <div className="flex shrink-0 flex-col gap-2">
-            {editable ? (
-              <div className="flex flex-wrap gap-2">
-                <Button size="sm" variant="outline" onClick={save} disabled={busy}>{t("rqSave")}</Button>
-                <Button size="sm" onClick={submit} disabled={busy || remarksMissing}>{t("rqSubmit")}</Button>
-              </div>
-            ) : href ? (
-              <p className="text-xs" style={{ color: "var(--text-secondary)" }}>
-                {selected.status === "PENDING_APPROVAL" && <span className="mr-2">{t("rqWaiting")}</span>}
-                <a href={href} className="font-semibold underline underline-offset-2" style={{ color: "var(--accent)" }}>{t("rqOpenApproval")}</a>
-              </p>
-            ) : null}
-          </div>
-        </>
+        <FeedRequisitionDetail
+          view={selected}
+          onView={(v, n) => { setSelected(v); if (n) setNotice(n); loadList(); }}
+          onBack={() => setSelected(null)}
+        />
       ) : loading ? (
         <div className="p-10 text-center text-xs" style={{ color: "var(--text-secondary)" }}><Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" /> {t("rqLoading")}</div>
       ) : rows.length === 0 ? (
