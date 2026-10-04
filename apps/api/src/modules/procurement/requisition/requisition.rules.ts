@@ -428,6 +428,45 @@ export function isSelfApproval(
 }
 
 /**
+ * decisions.md 2026-10-04: "Tenant and Company admins may approve their own
+ * requisitions" — supersedes the 2026-10-01 self-approval rule above for
+ * exactly these two user types, common and feed requisitions alike. Every
+ * other type, including SYSTEM_ADMIN (not named by Rishi; it follows the old
+ * rule until he confirms otherwise — decisions.md, 2026-10-04), still cannot.
+ *
+ * Deliberately an exact two-item allow-list rather than an "is this an admin"
+ * test: SYSTEM_ADMIN ranks above both named types on the user-type ladder
+ * (common/user-type-hierarchy.ts) and a hierarchy-based check would silently
+ * widen the exemption to it.
+ *
+ * Exported so the feed requisition service's own self-approval check
+ * (feed-requisition.service.ts — a different row shape: it also keys on the
+ * approval request's requested_by, which the common row does not carry) can
+ * gate on the same two-type allow-list without sharing the row-shape-specific
+ * match in isSelfApproval above.
+ */
+export const SELF_APPROVAL_EXEMPT_USER_TYPES = ['TENANT_ADMIN', 'COMPANY_ADMIN'] as const;
+
+export function maySelfApprove(userType: string | null | undefined): boolean {
+  return typeof userType === 'string' && (SELF_APPROVAL_EXEMPT_USER_TYPES as readonly string[]).includes(userType);
+}
+
+/**
+ * decisions.md 2026-10-04 (second entry, "Tenant and Company admins approve
+ * every requisition; one Requisitions page"): the same two types may decide
+ * ANY requisition in their scope — not only their own — bypassing whatever
+ * farm-active narrowing or step/tier the ordinary rule would apply. Same
+ * allow-list as maySelfApprove (one source of truth,
+ * SELF_APPROVAL_EXEMPT_USER_TYPES); exported under its own name because the
+ * call sites ask different questions ("is this my own document" vs "am I
+ * restricted to one farm's / one step's documents"), even though today both
+ * resolve against the same two types.
+ */
+export function mayDecideAnyRequisition(userType: string | null | undefined): boolean {
+  return maySelfApprove(userType);
+}
+
+/**
  * decisions 1 Oct: "Store release starts an internal transfer." One transfer
  * per requisition: stock_transfer has one source and one destination, so a
  * line routed elsewhere is refused rather than silently moved between the

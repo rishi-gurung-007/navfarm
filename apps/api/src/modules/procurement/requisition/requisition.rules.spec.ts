@@ -27,6 +27,8 @@ import {
   legacyStatusFor,
   lineBalances,
   mapToTransferLines,
+  mayDecideAnyRequisition,
+  maySelfApprove,
   normalizeCommonDocType,
   projectRequisitionStates,
   transferPlanFor,
@@ -314,6 +316,34 @@ describe('isSelfApproval — decisions 1 Oct: nobody approves a manual requisiti
   });
   it('has nothing to compare without a user', () => {
     expect(isSelfApproval(row(), undefined)).toBe(false);
+  });
+});
+
+describe('maySelfApprove — decisions.md 2026-10-04: Tenant/Company admins may approve their own requisitions', () => {
+  it('exempts exactly TENANT_ADMIN and COMPANY_ADMIN', () => {
+    expect(maySelfApprove('TENANT_ADMIN')).toBe(true);
+    expect(maySelfApprove('COMPANY_ADMIN')).toBe(true);
+  });
+  it('still refuses SYSTEM_ADMIN — the 4 Oct decision names only Tenant and Company admins, and until Rishi ' +
+    'confirms System Admin it follows the pre-existing rule', () => {
+    expect(maySelfApprove('SYSTEM_ADMIN')).toBe(false);
+  });
+  it('still refuses every other user type', () => {
+    expect(maySelfApprove('OPERATIONAL_ADMIN')).toBe(false);
+    expect(maySelfApprove('FARM_MANAGER')).toBe(false);
+    expect(maySelfApprove('STANDARD_USER')).toBe(false);
+  });
+  it('has nothing to exempt without a user type', () => {
+    expect(maySelfApprove(null)).toBe(false);
+    expect(maySelfApprove(undefined)).toBe(false);
+  });
+});
+
+describe('mayDecideAnyRequisition — decisions.md 2026-10-04 (second entry): the same two types decide every requisition, not just their own', () => {
+  it('agrees with maySelfApprove on exactly the same allow-list', () => {
+    for (const t of ['TENANT_ADMIN', 'COMPANY_ADMIN', 'SYSTEM_ADMIN', 'OPERATIONAL_ADMIN', 'FARM_MANAGER', 'STANDARD_USER', null, undefined]) {
+      expect(mayDecideAnyRequisition(t)).toBe(maySelfApprove(t));
+    }
   });
 });
 

@@ -36,6 +36,7 @@ import { ApprovalService } from '../../production/approval/approval.service';
 import type { ApprovalRequestRow } from '../../production/approval/approval.service';
 import { FeedSettingsService } from '../../inventory/feed-settings/feed-settings.service';
 import { toFarmFeedSettings } from '../../inventory/feed-settings/feed-settings.rules';
+import { maySelfApprove } from '../requisition/requisition.rules';
 import {
   ApprovalLine, DEFAULT_FEED_SETTINGS, DestinationInfo, DraftLine, EXCEPTION_PREFIX, FarmFeedSettings, FeedType, LineBreakdownRow, approvalProblems, bagCountFor,
   buildLineBreakdown, diffDaysIso, exceedsCapacity, exceptionReasonOf, feedTypeOf, lifecycleRefLabel, lineChangeProblems, lineKey, planDraftUpsert,
@@ -1319,10 +1320,19 @@ export class FeedRequisitionService implements OnModuleInit {
     // D25 (Rishi, 1 Oct): a person may not approve a requisition they created;
     // a Farm Manager *may* approve a system-generated forecast draft for their
     // farm, which is the path an auto-drafted cycle takes. So the refusal keys
-    // on how the document was raised, not on the user type.
+    // on how the document was raised, not on the user type. decisions.md
+    // 2026-10-04 supersedes this for exactly TENANT_ADMIN and COMPANY_ADMIN
+    // (maySelfApprove, shared with the common requisition's two enforcement
+    // points) — every other type, including SYSTEM_ADMIN (not yet decided),
+    // is still refused. This check stays its own inline test rather than
+    // calling the common requisition's isSelfApproval: that helper keys on
+    // row.created_by / row.requester_user_id only, while this one is
+    // deliberately broader — it also refuses on the approval request's own
+    // requested_by, which the common row does not carry.
     if (
       decision === 'APPROVED'
       && user?.userId
+      && !maySelfApprove(user.userType)
       && row.source === 'MANUAL_ENTRY'
       && (request.requested_by === user.userId || row.created_by === user.userId)
     ) {

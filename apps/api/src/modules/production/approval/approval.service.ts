@@ -9,6 +9,18 @@ import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { BatchService } from '../batch/batch.service';
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { assertCompanyInScope, batchReferenceScopeConditions, batchScopeConditions, farmScope, locationReferenceScopeConditions, restrictedScopeConditions } from '../../../common/farm-scope';
+import { mayDecideAnyRequisition } from '../../procurement/requisition/requisition.rules';
+
+/**
+ * The approval_request.doc_type values a requisition writes (REQUISITION for
+ * common, FEED_REQUISITION for feed — requisition.service.ts's
+ * COMMON_REQUISITION_DOC_TYPE and feed-requisition.service.ts's
+ * FEED_APPROVAL_DOC_TYPE respectively). Duplicated here as literals rather
+ * than imported: this engine deliberately never imports the document modules
+ * it serves (they import it), and importing requisition.service.ts here
+ * would also be circular — it imports ApprovalService.
+ */
+const REQUISITION_APPROVAL_DOC_TYPES = ['REQUISITION', 'FEED_REQUISITION'] as const;
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   const pad = (n: number) => String(n).padStart(2, '0');
@@ -232,8 +244,17 @@ export class ApprovalService {
    * (RESTRICTED_USER_TYPES), so they stay excluded exactly as before; the
    * farmId check that used to also exclude a merely-farm-selecting admin is
    * gone because that exclusion was never the rule Rishi wanted.
+   *
+   * decisions.md 2026-10-04 (second entry): a TENANT_ADMIN or COMPANY_ADMIN
+   * (mayDecideAnyRequisition) may see/decide ANY requisition in their scope
+   * regardless of which farm is active — an extra OR branch bounded by
+   * doc_type (REQUISITION/FEED_REQUISITION only; every other approval kind
+   * keeps the ordinary active-farm narrowing). The trailing company-boundary
+   * condition below still bounds this branch like every other, and
+   * `userType` defaults to undefined (not exempt) so every pre-existing
+   * caller that has not threaded it through is unaffected.
    */
-  private farmConditions(): SQL[] {
+  private farmConditions(userType?: string): SQL[] {
     const scope = farmScope(this.cls);
     const R = schema.approvalRequest;
     const paths: SQL[] = [
@@ -243,11 +264,14 @@ export class ApprovalService {
     if (!scope.restricted) {
       paths.push(and(isNull(R.batch_id), isNull(R.farm_id))!);
     }
+    if (mayDecideAnyRequisition(userType)) {
+      paths.push(inArray(R.doc_type, [...REQUISITION_APPROVAL_DOC_TYPES]));
+    }
     return [or(...paths)!, ...restrictedScopeConditions(scope, { companyId: R.company_id })];
   }
 
-  async findAll(query: QueryApprovalDto, tenantId: string) {
-    const conditions: SQL[] = [eq(schema.approvalRequest.tenant_id, tenantId), isNull(schema.approvalRequest.deleted_at), ...this.farmConditions()];
+  async findAll(query: QueryApprovalDto, tenantId: string, userType?: string) {
+    const conditions: SQL[] = [eq(schema.approvalRequest.tenant_id, tenantId), isNull(schema.approvalRequest.deleted_at), ...this.farmConditions(userType)];
     if (query.company_id) conditions.push(eq(schema.approvalRequest.company_id, query.company_id));
     // An area filter keeps rows of that area AND rows that carry no area yet:
     // every approval_request row written before Plan S has a NULL area, so a
@@ -293,8 +317,8 @@ export class ApprovalService {
   }
 
   /** Pending/approved/rejected counts in one query, so the tab badges don't need three round trips. */
-  async counts(query: QueryApprovalDto, tenantId: string) {
-    const conditions: SQL[] = [eq(schema.approvalRequest.tenant_id, tenantId), isNull(schema.approvalRequest.deleted_at), ...this.farmConditions()];
+  async counts(query: QueryApprovalDto, tenantId: string, userType?: string) {
+    const conditions: SQL[] = [eq(schema.approvalRequest.tenant_id, tenantId), isNull(schema.approvalRequest.deleted_at), ...this.farmConditions(userType)];
     if (query.company_id) conditions.push(eq(schema.approvalRequest.company_id, query.company_id));
     // An area filter keeps rows of that area AND rows that carry no area yet:
     // every approval_request row written before Plan S has a NULL area, so a
@@ -317,12 +341,12 @@ export class ApprovalService {
     return { PENDING: map.PENDING || 0, APPROVED: map.APPROVED || 0, REJECTED: map.REJECTED || 0 };
   }
 
-  async findOne(requestId: string, tenantId: string) {
+  async findOne(requestId: string, tenantId: string, userType?: string) {
     const [row] = await this.db
       .select(this.listShape())
       .from(schema.approvalRequest)
       .leftJoin(schema.batchHeader, eq(schema.batchHeader.batch_id, schema.approvalRequest.batch_id))
-      .where(and(eq(schema.approvalRequest.request_id, requestId), eq(schema.approvalRequest.tenant_id, tenantId), isNull(schema.approvalRequest.deleted_at), ...this.farmConditions()))
+      .where(and(eq(schema.approvalRequest.request_id, requestId), eq(schema.approvalRequest.tenant_id, tenantId), isNull(schema.approvalRequest.deleted_at), ...this.farmConditions(userType)))
       .limit(1);
     if (!row) throw new NotFoundException('Approval request not found.');
     return row;
@@ -352,7 +376,7 @@ export class ApprovalService {
         eq(schema.approvalRequest.request_id, requestId),
         eq(schema.approvalRequest.tenant_id, tenantId),
         isNull(schema.approvalRequest.deleted_at),
-        ...this.farmConditions(),
+        ...this.farmConditions(userPayload?.userType),
       ))
       .for('update');
     if (!current) throw new NotFoundException('Approval request not found.');
@@ -404,7 +428,12 @@ export class ApprovalService {
       newValues: status === 'REJECTED' ? { status, rejection_reason: reason || null } : { status, remarks: reason || null },
     });
 
-    return this.findOne(requestId, tenantId);
+    // Bug found live (WP1 check, 4 Oct): without userType here, the
+    // just-decided row's own read-back used the farm-only visibility — the
+    // very fix above that let an admin reach another farm's request would
+    // then throw "Approval request not found." on its own read-back and roll
+    // the whole decision back. Thread it through like every other call.
+    return this.findOne(requestId, tenantId, userPayload?.userType);
     });
     await after.run?.();
     return result;

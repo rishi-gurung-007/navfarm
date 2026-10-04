@@ -383,14 +383,134 @@ describe('Part E Task 1 — list filter, manual source, approver stamp', () => {
     expect(insertValues[0].values.source).toBe('MANUAL_ENTRY');
   });
 
-  it('refuses the creator on POST /requisition/:id/approve even when source was never written', async () => {
+  const GRANT_APPROVE = {
+    moduleCode: 'PROCUREMENT', resource: 'REQUISITION',
+    canView: true, canCreate: true, canEdit: true, canDelete: false, canApprove: true, canExport: false, canPrint: false,
+  };
+
+  it('refuses the creator on POST /requisition/:id/approve even when source was never written (STANDARD_USER — not exempt)', async () => {
     const { db, selectResults } = makeDb();
+    selectResults.push(
+      [GRANT_APPROVE], // userHasPermission's DB-backed grant lookup (non-admin types query it)
+      [headerRow({ status: 'PENDING_APPROVAL', approval_status: 'PENDING_APPROVAL', approval_request_id: 'ar-1', source: null })],
+    );
+    const approvals = approvalsMock();
+    const service = new RequisitionService(transactionCls(db), approvals as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
+    await expect(service.decide('req-1', {}, 'APPROVED', TENANT, { userId: 'u1', userType: 'STANDARD_USER' }))
+      .rejects.toThrow('You may not approve a requisition you created. Another authorized approver must decide it.');
+    expect(approvals.approve).not.toHaveBeenCalled();
+  });
+
+  it.each(['FARM_MANAGER', 'OPERATIONAL_ADMIN'] as const)(
+    'refuses the creator on POST /requisition/:id/approve for %s — the 4 Oct exemption names only Tenant/Company admins',
+    async (userType) => {
+      const { db, selectResults } = makeDb();
+      // Neither type is in ADMIN_USER_TYPES, so userHasPermission queries the grant table.
+      selectResults.push(
+        [GRANT_APPROVE],
+        [headerRow({ status: 'PENDING_APPROVAL', approval_status: 'PENDING_APPROVAL', approval_request_id: 'ar-1', source: null })],
+      );
+      const approvals = approvalsMock();
+      const service = new RequisitionService(transactionCls(db), approvals as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
+      await expect(service.decide('req-1', {}, 'APPROVED', TENANT, { userId: 'u1', userType }))
+        .rejects.toThrow('You may not approve a requisition you created. Another authorized approver must decide it.');
+      expect(approvals.approve).not.toHaveBeenCalled();
+    },
+  );
+
+  it('refuses the creator on POST /requisition/:id/approve for SYSTEM_ADMIN — not decided; follows the old rule until Rishi confirms it', async () => {
+    const { db, selectResults } = makeDb();
+    // SYSTEM_ADMIN is in ADMIN_USER_TYPES, so userHasPermission bypasses the grant table
+    // entirely — the lock read is the only select this call makes.
     selectResults.push([headerRow({ status: 'PENDING_APPROVAL', approval_status: 'PENDING_APPROVAL', approval_request_id: 'ar-1', source: null })]);
     const approvals = approvalsMock();
     const service = new RequisitionService(transactionCls(db), approvals as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
-    await expect(service.decide('req-1', {}, 'APPROVED', TENANT, { userId: 'u1', userType: 'COMPANY_ADMIN' }))
+    await expect(service.decide('req-1', {}, 'APPROVED', TENANT, { userId: 'u1', userType: 'SYSTEM_ADMIN' }))
       .rejects.toThrow('You may not approve a requisition you created. Another authorized approver must decide it.');
     expect(approvals.approve).not.toHaveBeenCalled();
+  });
+
+  it.each(['TENANT_ADMIN', 'COMPANY_ADMIN'] as const)(
+    'decisions.md 2026-10-04: lets a %s approve a requisition they created themselves, and still records them as the approver',
+    async (userType) => {
+      const { db, selectResults, setCalls } = makeDb();
+      selectResults.push(
+        [headerRow({ status: 'PENDING_APPROVAL', approval_status: 'PENDING_APPROVAL', approval_request_id: 'ar-1', source: null, created_by: 'u1', requester_user_id: 'u1' })], // locked row
+        [headerRow({ status: 'APPROVED', approval_status: 'APPROVED', document_status: 'APPROVED', approved_by: 'u1' })], // findOne header
+        [lineRow()],
+      );
+      const approvals = approvalsMock();
+      const service = new RequisitionService(transactionCls(db), approvals as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
+      const result = await service.decide('req-1', {}, 'APPROVED', TENANT, { userId: 'u1', userType });
+      expect(approvals.approve).toHaveBeenCalledWith('ar-1', TENANT, expect.anything());
+      // approved_by/approved_at still record the approver — a self-approval stays visible on the document.
+      expect(setCalls[0]).toMatchObject({ status: 'APPROVED', approved_by: 'u1' });
+      expect(String(setCalls[0].approved_at)).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
+      expect(result.status).toBe('APPROVED');
+    },
+  );
+
+  /**
+   * decisions.md 2026-10-04 (second entry): decide()'s own row lookup must not
+   * filter out another farm's requisition for the two exempt admin types, but
+   * must keep filtering out another COMPANY's — proven on the generated SQL
+   * (whereCalls[0] is the lock query), not on a hand-fed empty result set, so
+   * a regression in scopeConditions()'s bypassFarm wiring actually fails this.
+   */
+  it.each(['TENANT_ADMIN', 'COMPANY_ADMIN'] as const)(
+    "decisions.md 2026-10-04 (second entry): a %s's decide() lock query carries no farm_id filter, but still carries the company_id boundary",
+    async (userType) => {
+      const { db, whereCalls, selectResults } = makeDb();
+      const cls = transactionCls(db);
+      useFarmScope(cls, { farmId: 'farm-active', restricted: false, companyId: 'co-1', lobId: null } as any);
+      selectResults.push(
+        [headerRow({ status: 'PENDING_APPROVAL', approval_status: 'PENDING_APPROVAL', approval_request_id: 'ar-1' })], // decide's lock
+        [headerRow({ status: 'APPROVED', approval_status: 'APPROVED', document_status: 'APPROVED' })], // findOne header
+        [lineRow()], // findOne lines
+      );
+      const approvals = approvalsMock();
+      const service = new RequisitionService(cls, approvals as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
+      await service.decide('req-1', {}, 'APPROVED', TENANT, { userId: 'u2', userType });
+      const q = new MySqlDialect().sqlToQuery(whereCalls[0] as any);
+      expect(q.sql).not.toContain('farm_id');
+      expect(q.sql).toContain('`company_id` = ?');
+      expect(q.params).toContain('co-1');
+    },
+  );
+
+  it.each(['FARM_MANAGER', 'STANDARD_USER'] as const)(
+    "a %s's decide() lock query still carries the active-farm filter — the admin exemption does not reach non-exempt types",
+    async (userType) => {
+      const { db, whereCalls, selectResults } = makeDb();
+      const cls = transactionCls(db);
+      useFarmScope(cls, { farmId: 'farm-active', restricted: true, companyId: 'co-1', lobId: 'lob-pig' } as any);
+      selectResults.push(
+        [{ moduleCode: 'PROCUREMENT', resource: 'REQUISITION', canApprove: true }], // userHasPermission's grant lookup (non-admin types query it)
+        [], // not found: the farm filter excludes it, as it did before this change
+      );
+      const approvals = approvalsMock();
+      const service = new RequisitionService(cls, approvals as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
+      await expect(service.decide('req-1', {}, 'APPROVED', TENANT, { userId: 'u-manager', userType }))
+        .rejects.toThrow(`Requisition 'req-1' not found.`);
+      const q = new MySqlDialect().sqlToQuery(whereCalls[1] as any); // [0] is the permission grant lookup
+      expect(q.sql).toContain('`farm_id` = ?');
+      expect(q.params).toContain('farm-active');
+    },
+  );
+
+  it("a COMPANY_ADMIN's decide() lock query keeps the company_id boundary — the exemption widens farm, never company", async () => {
+    const { db, whereCalls, selectResults } = makeDb();
+    const cls = transactionCls(db);
+    useFarmScope(cls, { farmId: 'farm-active', restricted: false, companyId: 'co-1', lobId: null } as any);
+    selectResults.push([]); // the row is co-2's: the company condition excludes it even though farm is bypassed (COMPANY_ADMIN bypasses the permission grant lookup too)
+    const approvals = approvalsMock();
+    const service = new RequisitionService(cls, approvals as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
+    await expect(service.decide('req-1', {}, 'APPROVED', TENANT, { userId: 'u-admin', userType: 'COMPANY_ADMIN' }))
+      .rejects.toThrow(`Requisition 'req-1' not found.`);
+    const q = new MySqlDialect().sqlToQuery(whereCalls[0] as any);
+    expect(q.sql).toContain('`company_id` = ?');
+    expect(q.params).toContain('co-1');
+    expect(q.sql).not.toContain('farm_id');
   });
 
   it('writes approved_by and approved_at with the decision', async () => {
@@ -415,7 +535,7 @@ describe('Part E Task 1 — list filter, manual source, approver stamp', () => {
 });
 
 describe('Part E Task 1 follow-up — the Approvals-inbox path refuses self-approval', () => {
-  it('decideFromApproval refuses the creator of a manual common requisition and never calls the engine', async () => {
+  it('decideFromApproval refuses the creator of a manual common requisition and never calls the engine (no admin exemption)', async () => {
     const { db, selectResults, setCalls } = makeDb();
     selectResults.push([headerRow({
       status: 'PENDING_APPROVAL', approval_status: 'PENDING_APPROVAL', approval_request_id: 'ar-1', source: 'MANUAL_ENTRY',
@@ -426,11 +546,35 @@ describe('Part E Task 1 follow-up — the Approvals-inbox path refuses self-appr
     const handler = approvals.registerDocumentHandler.mock.calls[0][1];
     const request = { request_id: 'ar-1', document_id: 'req-1', company_id: 'co-1', requested_by: 'u1' };
 
-    await expect(handler.decide(request, 'APPROVED', null, TENANT, { userId: 'u1' })).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(handler.decide(request, 'APPROVED', null, TENANT, { userId: 'u1', userType: 'STANDARD_USER' })).rejects.toBeInstanceOf(ForbiddenException);
     expect(approvals.approve).not.toHaveBeenCalled();
     expect(approvals.reject).not.toHaveBeenCalled();
     expect(setCalls).toHaveLength(0);
   });
+
+  it.each(['TENANT_ADMIN', 'COMPANY_ADMIN'] as const)(
+    'decisions.md 2026-10-04: decideFromApproval lets a %s decide (from the Approvals inbox) a manual requisition they created themselves',
+    async (userType) => {
+      const { db, selectResults, setCalls } = makeDb();
+      selectResults.push([headerRow({
+        status: 'PENDING_APPROVAL', approval_status: 'PENDING_APPROVAL', approval_request_id: 'ar-1', source: 'MANUAL_ENTRY',
+        created_by: 'u1', requester_user_id: 'u1',
+      })]);
+      const approvals: any = { ...approvalsMock(), registerDocumentHandler: jest.fn() };
+      const service = new RequisitionService(transactionCls(db), approvals, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
+      service.onModuleInit();
+      const handler = approvals.registerDocumentHandler.mock.calls[0][1];
+      const request = { request_id: 'ar-1', document_id: 'req-1', company_id: 'co-1', requested_by: 'u1' };
+
+      await handler.decide(request, 'APPROVED', null, TENANT, { userId: 'u1', userType });
+      // decideFromApproval is itself the handler the engine calls — it never calls approvals.approve
+      // (that would be circular); the DB write is the proof the decision went through.
+      expect(setCalls).toHaveLength(1);
+      // The decision still records the approver — a self-approval is visible on the document (decisions.md).
+      expect(setCalls[0]).toMatchObject({ status: 'APPROVED', approved_by: 'u1' });
+      expect(String(setCalls[0].approved_at)).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
+    },
+  );
 });
 
 describe('Part E Task 2 — PUT /requisition/:id', () => {

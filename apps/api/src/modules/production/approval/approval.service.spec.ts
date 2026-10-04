@@ -251,6 +251,77 @@ describe('ApprovalService farm scope', () => {
     });
   });
 
+  /**
+   * decisions.md 2026-10-04 (second entry): "the tenant and company admin
+   * should be able to approve all requisitions, theirs and others" — a
+   * TENANT_ADMIN or COMPANY_ADMIN must see (and, in decide(), reach) a
+   * requisition raised by/for a farm other than whichever farm happens to be
+   * active in their session. Before this, an active farm narrowed the
+   * farm-bound OR branch to exactly that farm for every doc type, including
+   * REQUISITION/FEED_REQUISITION — a company admin with farm-g active could
+   * not even see farm-h's pending requisition, let alone decide it. The fix
+   * is scoped to requisition doc types only (an extra OR branch bounded by
+   * doc_type, company boundary still enforced outside the OR) — every other
+   * approval kind (health, stage, GRN, stock count…) keeps the existing
+   * active-farm narrowing untouched.
+   */
+  describe('decisions.md 2026-10-04: admins decide every requisition in scope, not just their own', () => {
+    it('drops the active-farm narrowing for requisition doc types when the caller is a COMPANY_ADMIN', async () => {
+      useFarmScope(cls, { farmId: 'farm-g', restricted: false, companyId: 'co-1', lobId: null });
+
+      await service.findAll({} as any, 'tenant-1', 'COMPANY_ADMIN');
+
+      const q = dialect.sqlToQuery(capturedWhere as any);
+      expect(q.sql).toContain('`approval_request`.`doc_type`');
+      expect(q.params).toContain('REQUISITION');
+      expect(q.params).toContain('FEED_REQUISITION');
+      // The company boundary (outside the OR) still applies to every branch, this one included.
+      expect(q.sql).toContain('`approval_request`.`company_id` = ?');
+      expect(q.params).toContain('co-1');
+      // The ordinary farm-bound branch (D25) is still present too — this scope can decide both.
+      expect(q.sql).toContain('`approval_request`.`farm_id` IN (SELECT lf.location_id FROM location_master lf WHERE lf.location_id = ? OR lf.farm_id = ?)');
+    });
+
+    it('does the same for a TENANT_ADMIN, tenant-wide when no company is selected', async () => {
+      useFarmScope(cls, { farmId: 'farm-g', restricted: false, companyId: null, lobId: null });
+
+      await service.findAll({} as any, 'tenant-1', 'TENANT_ADMIN');
+
+      const q = dialect.sqlToQuery(capturedWhere as any);
+      expect(q.sql).toContain('`approval_request`.`doc_type`');
+      expect(q.params).toContain('REQUISITION');
+      // No company filter at all — unbounded, same as the pre-existing tenant-admin rule.
+      expect(q.sql).not.toContain('`approval_request`.`company_id` = ?');
+    });
+
+    it('adds nothing for a non-exempt type (FARM_MANAGER) — the active-farm narrowing stays exactly as before', async () => {
+      useFarmScope(cls, { farmId: 'farm-g', restricted: true, companyId: 'co-1', lobId: 'lob-pig' });
+
+      await service.findAll({} as any, 'tenant-1', 'FARM_MANAGER');
+
+      const q = dialect.sqlToQuery(capturedWhere as any);
+      expect(q.params).not.toContain('FEED_REQUISITION');
+    });
+
+    it('adds nothing when no user type is given at all (existing callers that have not threaded it through)', async () => {
+      useFarmScope(cls, { farmId: 'farm-g', restricted: false, companyId: 'co-1', lobId: null });
+
+      await service.findAll({} as any, 'tenant-1');
+
+      const q = dialect.sqlToQuery(capturedWhere as any);
+      expect(q.params).not.toContain('FEED_REQUISITION');
+    });
+
+    it('still refuses a SYSTEM_ADMIN the bypass — not decided; follows the old (farm-bound) rule', async () => {
+      useFarmScope(cls, { farmId: 'farm-g', restricted: false, companyId: 'co-1', lobId: null });
+
+      await service.findAll({} as any, 'tenant-1', 'SYSTEM_ADMIN');
+
+      const q = dialect.sqlToQuery(capturedWhere as any);
+      expect(q.params).not.toContain('FEED_REQUISITION');
+    });
+  });
+
   it('lists rows of the active area AND rows that carry no area yet (Plan S follow-up)', async () => {
     useFarmScope(cls, { farmId: null, restricted: false, companyId: 'co-1', lobId: null });
 
@@ -496,5 +567,30 @@ describe('ApprovalService farm documents (D25)', () => {
     const { service, log } = setup(new Map<unknown, unknown[][]>([[schema.approvalRequest, [[PENDING]]]]));
     await expect(service.approve('ar-1', 'tenant-1')).rejects.toThrow('No handler is registered for FEED_REQUISITION documents.');
     expect(log).toEqual([]);
+  });
+
+  /**
+   * Bug found live (WP1 check, 4 Oct): decide()'s own read-back of the row it
+   * just decided (`return this.findOne(requestId, tenantId)`, no third
+   * argument) did not carry the caller's userType — so a COMPANY_ADMIN who
+   * reached another farm's request through the new admin-exemption branch in
+   * farmConditions() had their *decision* committed-then-rolled-back,
+   * because the read-back right after used the farm-only visibility and threw
+   * "Approval request not found.", aborting the whole transaction. Proven
+   * here by asserting farmConditions() receives the same userType on both of
+   * decide()'s calls — the lock and the read-back — not by SQL filtering
+   * (this suite's db double doesn't evaluate WHERE clauses; the live check,
+   * recorded in wp1-report.md, is what caught this against a real database).
+   */
+  it("decide()'s read-back after committing passes the same userType as its lock — the admin-exemption fix must survive it", async () => {
+    const { service, log } = setup(new Map<unknown, unknown[][]>([[schema.approvalRequest, [[PENDING], [{ ...PENDING, status: 'APPROVED' }]]]]));
+    service.registerDocumentHandler('FEED_REQUISITION', {
+      decide: async () => undefined,
+      withdraw: async () => undefined,
+    });
+    const farmConditionsSpy = jest.spyOn(service as any, 'farmConditions');
+    await service.approve('ar-1', 'tenant-1', { userId: 'u-admin', userType: 'COMPANY_ADMIN' });
+    expect(farmConditionsSpy.mock.calls.map((c) => c[0])).toEqual(['COMPANY_ADMIN', 'COMPANY_ADMIN']);
+    expect(log.filter((e) => e.table === schema.approvalRequest && e.op === 'update')).toHaveLength(1);
   });
 });

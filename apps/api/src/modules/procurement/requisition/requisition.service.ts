@@ -45,6 +45,8 @@ import {
   isSelfApproval,
   lineBalances,
   mapToTransferLines,
+  mayDecideAnyRequisition,
+  maySelfApprove,
   normalizeCommonDocType,
   projectRequisitionStates,
   releaseTransition,
@@ -99,14 +101,24 @@ export class RequisitionService {
     });
   }
 
-  private scopeConditions() {
+  /**
+   * `bypassFarm` (decisions.md 2026-10-04, second entry): a TENANT_ADMIN or
+   * COMPANY_ADMIN deciding a requisition is not limited to whichever farm
+   * happens to be active in their session — every other read/write of a
+   * requisition (create, list, update, release, …) keeps the ordinary
+   * active-farm narrowing, which is why this is an explicit opt-in at the one
+   * call site (decide()) that needs it, not a change to the default. The
+   * company boundary below is unconditional either way.
+   */
+  private scopeConditions(opts: { bypassFarm?: boolean } = {}) {
     const scope = farmScope(this.cls);
     const conditions: SQL[] = [];
-    if (scope.farmId) conditions.push(eq(schema.requisition.farm_id, scope.farmId));
+    if (scope.farmId && !opts.bypassFarm) conditions.push(eq(schema.requisition.farm_id, scope.farmId));
     // A selected company is a boundary for company admins as well as restricted
     // users (farm-scope.ts batchReferenceScopeConditions): every list, read and
     // change of a requisition stays inside it. Task 13 fix round 1 — mounting
-    // /requisition made this reachable.
+    // /requisition made this reachable. Unaffected by bypassFarm: an admin's
+    // extra reach is "any farm", never "any company".
     if (scope.companyId) conditions.push(eq(schema.requisition.company_id, scope.companyId));
     if (scope.restricted && scope.lobId) {
       conditions.push(sql`${schema.requisition.company_id} IN (SELECT company_id FROM company_master WHERE lob_id IS NULL OR lob_id = ${scope.lobId})`);
@@ -667,7 +679,11 @@ export class RequisitionService {
           eq(schema.requisition.requisition_id, requisitionId),
           eq(schema.requisition.tenant_id, tenantId),
           isNull(schema.requisition.deleted_at),
-          ...this.scopeConditions(),
+          // decisions.md 2026-10-04 (second entry): a Tenant/Company admin
+          // decides any requisition in their company, not just the farm
+          // active in their session — the company boundary inside
+          // scopeConditions still applies either way.
+          ...this.scopeConditions({ bypassFarm: mayDecideAnyRequisition(userPayload?.userType) }),
         ))
         .limit(1)
         .for('update');
@@ -677,10 +693,10 @@ export class RequisitionService {
         throw new BadRequestException(`Requisition ${row.req_no} is ${row.status}, not awaiting approval.`);
       }
       // D25 (Rishi, 1 Oct): a person may not approve a requisition they
-      // created — the rule keys on how the document was raised and who raised
-      // it, not on the user's type, so an admin is refused on their own manual
-      // document exactly like anyone else.
-      if (decision === 'APPROVED' && isSelfApproval(row, userPayload?.userId)) {
+      // created. decisions.md 2026-10-04 supersedes this for exactly
+      // TENANT_ADMIN and COMPANY_ADMIN (maySelfApprove) — every other type,
+      // including SYSTEM_ADMIN (not yet decided), is still refused.
+      if (decision === 'APPROVED' && !maySelfApprove(userPayload?.userType) && isSelfApproval(row, userPayload?.userId)) {
         throw new ForbiddenException('You may not approve a requisition you created. Another authorized approver must decide it.');
       }
       if (!row.approval_request_id) {
@@ -937,13 +953,18 @@ export class RequisitionService {
     decision: 'APPROVED' | 'REJECTED',
     remarks: string | null,
     tenantId: string,
-    userPayload?: { userId?: string },
+    userPayload?: { userId?: string; userType?: string },
   ): Promise<void> {
     const row = await this.lockForApproval(request, tenantId);
     // D25 (Rishi, 1 Oct): a person may not approve a requisition they created.
     // The shared isSelfApproval rule applies: a manual or legacy-sourceless
     // draft is refused to its creator; only an AUTO_FORECAST draft is exempt.
-    if (decision === 'APPROVED' && isSelfApproval(row, userPayload?.userId)) {
+    // decisions.md 2026-10-04 supersedes this for exactly TENANT_ADMIN and
+    // COMPANY_ADMIN (maySelfApprove) — every other type, including
+    // SYSTEM_ADMIN (not yet decided), is still refused. Same gate as the
+    // direct decide() above, so the Approvals-inbox path and the direct
+    // /requisition/:id/approve path agree.
+    if (decision === 'APPROVED' && !maySelfApprove(userPayload?.userType) && isSelfApproval(row, userPayload?.userId)) {
       throw new ForbiddenException('You may not approve a requisition you created. Another authorized approver must decide it.');
     }
     if (decision === 'REJECTED' && !remarks?.trim()) {

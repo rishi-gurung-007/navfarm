@@ -112,6 +112,60 @@ describe('Feed requisition approval authority (Task 7)', () => {
     expect(writes()).toEqual([]);
   });
 
+  /**
+   * decisions.md 2026-10-04: "Tenant and Company admins may approve their own
+   * requisitions" supersedes the refusal above for exactly these two types,
+   * common and feed requisitions alike. The point under test is
+   * feed-requisition.service.ts's own inline check (enforcement point 3 of
+   * three — it is not the shared requisition.rules.ts isSelfApproval, because
+   * it also keys on the approval request's requested_by, which the common
+   * row does not carry) — this proves it agrees with the common path's rule
+   * on exactly which user types are exempt.
+   */
+  it.each(['TENANT_ADMIN', 'COMPANY_ADMIN'] as const)(
+    'lets a %s approve the manual feed requisition they submitted themselves, and still records them as the approver',
+    async (userType) => {
+      const admin = { userId: 'u-manager', userType };
+      const { approvals, as, writes } = setup(new Map<unknown, unknown[][]>([
+        [schema.approvalRequest, [[REQUESTED_BY_MANAGER], [{ ...REQUESTED_BY_MANAGER, status: 'APPROVED' }]]],
+        [schema.requisition, [[{ ...PENDING_ROW, source: 'MANUAL_ENTRY', created_by: 'u-manager' }]]],
+        [schema.requisitionLine, [[LINE_6000]]],
+      ]));
+      await expect(as(COMPANY_ADMIN_SCOPE, () => approvals.approve('ar-1', 'tenant-1', admin)))
+        .resolves.toMatchObject({ status: 'APPROVED' });
+      const requisitionWrite = writes().find((e) => e.table === schema.requisition)!;
+      expect(requisitionWrite.set).toMatchObject({ status: 'APPROVED', approved_by: 'u-manager' });
+    },
+  );
+
+  it.each(['OPERATIONAL_ADMIN', 'STANDARD_USER'] as const)(
+    'still refuses a %s approving the manual feed requisition they submitted — the 4 Oct exemption names only Tenant/Company admins',
+    async (userType) => {
+      const nonExempt = { userId: 'u-manager', userType };
+      const { approvals, as, writes } = setup(new Map<unknown, unknown[][]>([
+        [schema.approvalRequest, [[REQUESTED_BY_MANAGER], [{ ...REQUESTED_BY_MANAGER, status: 'APPROVED' }]]],
+        [schema.requisition, [[{ ...PENDING_ROW, source: 'MANUAL_ENTRY', created_by: 'u-manager' }]]],
+        [schema.requisitionLine, [[LINE_6000]]],
+        [schema.userRoleAssignment, [[MANAGER_GRANT]]],
+      ]));
+      await expect(as(COMPANY_ADMIN_SCOPE, () => approvals.approve('ar-1', 'tenant-1', nonExempt)))
+        .rejects.toBeInstanceOf(ForbiddenException);
+      expect(writes()).toEqual([]);
+    },
+  );
+
+  it('still refuses a SYSTEM_ADMIN approving their own manual feed requisition — not decided; follows the old rule until Rishi confirms it', async () => {
+    const systemAdmin = { userId: 'u-manager', userType: 'SYSTEM_ADMIN' };
+    const { approvals, as, writes } = setup(new Map<unknown, unknown[][]>([
+      [schema.approvalRequest, [[REQUESTED_BY_MANAGER], [{ ...REQUESTED_BY_MANAGER, status: 'APPROVED' }]]],
+      [schema.requisition, [[{ ...PENDING_ROW, source: 'MANUAL_ENTRY', created_by: 'u-manager' }]]],
+      [schema.requisitionLine, [[LINE_6000]]],
+    ]));
+    await expect(as(COMPANY_ADMIN_SCOPE, () => approvals.approve('ar-1', 'tenant-1', systemAdmin)))
+      .rejects.toBeInstanceOf(ForbiddenException);
+    expect(writes()).toEqual([]);
+  });
+
   it('lets a Farm Manager approve their own farm system forecast draft (D25)', async () => {
     const { approvals, as, writes } = setup(new Map<unknown, unknown[][]>([
       [schema.approvalRequest, [[REQUESTED_BY_MANAGER], [{ ...REQUESTED_BY_MANAGER, status: 'APPROVED' }]]],

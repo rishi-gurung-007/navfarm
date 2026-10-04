@@ -300,8 +300,9 @@ describe('common requisition submit and decide — the Task 8 state dimensions m
     expect(set).toMatchObject({ status: 'PENDING_APPROVAL', approval_status: 'PENDING_APPROVAL' });
   });
 
-  it('approve through the requisition API records APPROVED on both dimensions and refuses self-approval for every user type', async () => {
-    // COMPANY_ADMIN: an admin user type, still refused on their own manual document.
+  it('approve through the requisition API refuses self-approval for a non-exempt user type (STANDARD_USER)', async () => {
+    // REQUESTER is STANDARD_USER (not TENANT_ADMIN/COMPANY_ADMIN — decisions.md 2026-10-04's
+    // exemption is exactly those two types) — still refused on their own manual document.
     const { service, as, writes } = setup(new Map<unknown, unknown[][]>([
       [schema.requisition, [[PENDING_ROW], [{ ...PENDING_ROW, status: 'APPROVED', approval_status: 'APPROVED', document_status: 'APPROVED' }]]],
       [schema.requisitionLine, [LINES]],
@@ -310,6 +311,31 @@ describe('common requisition submit and decide — the Task 8 state dimensions m
     await expect(as(STORE_SCOPE, () => service.decide('req-1', {}, 'APPROVED', 'tenant-1', REQUESTER)))
       .rejects.toThrow('You may not approve a requisition you created. Another authorized approver must decide it.');
     expect(writes()).toEqual([]);
+  });
+
+  it('decisions.md 2026-10-04: a COMPANY_ADMIN approves the requisition they created themselves, and the approver is still recorded', async () => {
+    // Both self-approval checks are live in this spec (the real ApprovalService
+    // is wired, unlike requisition.service.spec.ts's mocked approvals): decide()'s
+    // own check (point 1) and decideFromApproval's, reached through
+    // approvals.approve() -> the registered handler (point 2). PROCUREMENT is
+    // both the creator and the approver, proving the admin exemption holds at
+    // both enforcement points together, not just the one a unit test isolates.
+    const { service, as, writes } = setup(new Map<unknown, unknown[][]>([
+      [schema.requisition, [
+        [{ ...PENDING_ROW, created_by: 'u-proc', requester_user_id: 'u-proc' }],
+        [{ ...PENDING_ROW, created_by: 'u-proc', requester_user_id: 'u-proc' }],
+        [{ ...PENDING_ROW, status: 'APPROVED', approval_status: 'APPROVED', document_status: 'APPROVED', approved_by: 'u-proc' }],
+      ]],
+      [schema.requisitionLine, [LINES]],
+      [schema.approvalRequest, [[{ ...PENDING_REQUEST, requested_by: 'u-proc' }], [{ ...PENDING_REQUEST, status: 'APPROVED' }]]],
+      [schema.userRoleAssignment, [[{ moduleCode: 'PROCUREMENT', resource: 'REQUISITION', canApprove: true }]]],
+    ]));
+    const result = await as(STORE_SCOPE, () => service.decide('req-1', {}, 'APPROVED', 'tenant-1', PROCUREMENT));
+    expect(result.approval_status).toBe('APPROVED');
+    expect(result.document_status).toBe('APPROVED');
+    // approved_by still records the approver — self-approval stays visible on the document.
+    const requisitionWrites = writes().filter((e) => e.table === schema.requisition && e.op === 'update');
+    expect(requisitionWrites.some((e) => e.set?.approved_by === 'u-proc')).toBe(true);
   });
 
   it('another authorized approver decides the same document', async () => {
