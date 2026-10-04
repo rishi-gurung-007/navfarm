@@ -78,6 +78,8 @@ export interface ReportRow {
   itemName: string;
   sourceType: 'SILO' | 'STORE' | 'NONE';
   sourceCode: string | null;
+  /** location_name of the silo or store (Engine §5 row 70); null for NONE or when the name is unknown. */
+  sourceName: string | null;
   date: string; // first date of the line (field spec: "the period start date when grouped")
   dateTo: string; // last date of the line
   days: number;
@@ -98,7 +100,7 @@ export function bucketStart(view: ForecastView, from: string, date: string): str
   return date;
 }
 
-export function groupRows(daily: DailyForecastRow[], view: ForecastView, from: string): ReportRow[] {
+export function groupRows(daily: DailyForecastRow[], view: ForecastView, from: string, sourceNames: Record<string, string> = {}): ReportRow[] {
   const byDate = [...daily].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
   // Sums in integer micrograms, like the engine, so 7 × 17.9375 kg is exactly 125.5625 kg.
   const groups = new Map<string, { row: ReportRow; intake: number }>();
@@ -116,6 +118,7 @@ export function groupRows(daily: DailyForecastRow[], view: ForecastView, from: s
         row: {
           key, batchId: d.batchId, batchNo: d.batchNo, shedCode: d.shedCode, stageCode: d.stageCode,
           itemId: d.itemId, itemNo: d.itemNo, itemName: d.itemName, sourceType: d.sourceType, sourceCode: d.sourceCode,
+          sourceName: d.sourceCode ? sourceNames[d.sourceCode] ?? null : null,
           // Ruling M4: the line's date is the GROUP'S start date (field spec: "the period start date when
           // grouped") — the earliest date this batch+item+source actually has in the bucket, not the view's
           // own `from` (a diet starting mid-week reports on its own first day, not the week's start; a

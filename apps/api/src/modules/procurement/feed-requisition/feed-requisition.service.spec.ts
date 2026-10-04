@@ -1251,7 +1251,7 @@ describe('FeedRequisitionService view — the document header and line display f
       }]]],
       [schema.requisitionLine, [[
         { line: { line_id: 'L1', line_seq: 10000, quantity: '6000.0000', feed_type: 'BULK', is_next_diet: false, description: 'Weaner Diet R1', days_remaining: '0.8' },
-          item_code: 'R1', item_name: 'Weaner Diet R1', destination_code: 'GRS/SILO-001', required_item_id: 'item-r1',
+          item_code: 'R1', item_name: 'Weaner Diet R1', destination_code: 'GRS/SILO-001', destination_name: 'Weaner silo', required_item_id: 'item-r1',
           breed_code: 'L-LINE', stage_code: 'WEANER', period_from: 21, period_to: 24, calc_unit: 'DAY' },
         { line: { line_id: 'L2', line_seq: 20000, quantity: '9000.0000', feed_type: 'BULK', is_next_diet: true, description: 'Exception: Vet instruction', days_remaining: null },
           item_code: 'R2', item_name: 'Weaner Diet R2', destination_code: 'GRS/SILO-002', required_item_id: 'item-r2',
@@ -1270,7 +1270,7 @@ describe('FeedRequisitionService view — the document header and line display f
       approved_by_name: 'Mill Manager', linked_transfer_no: null, forecast_run_no: 'FFR-farm-grs-000001',
     });
     expect(view.lines[0]).toMatchObject({
-      item_code: 'R1', item_description: 'Weaner Diet R1', destination_code: 'GRS/SILO-001', lifecycle_ref_label: 'L-LINE WEANER days 21–24',
+      item_code: 'R1', item_description: 'Weaner Diet R1', destination_code: 'GRS/SILO-001', destination_name: 'Weaner silo', lifecycle_ref_label: 'L-LINE WEANER days 21–24',
       required_item_id: 'item-r1', exception_reason: null, breakdown: [],
     });
     expect(view.lines[1]).toMatchObject({

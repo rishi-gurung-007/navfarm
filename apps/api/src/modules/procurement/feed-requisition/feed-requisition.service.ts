@@ -719,6 +719,7 @@ export class FeedRequisitionService implements OnModuleInit {
         .select({
           location_id: schema.locationMaster.location_id,
           location_code: schema.locationMaster.location_code,
+          location_name: schema.locationMaster.location_name,
           location_type: schema.locationMaster.location_type,
           feed_in_bags: schema.locationMaster.feed_in_bags,
         })
@@ -1412,6 +1413,7 @@ export class FeedRequisitionService implements OnModuleInit {
         item_code: schema.itemMaster.item_code,
         item_name: schema.itemMaster.item_name,
         destination_code: destination.location_code,
+        destination_name: destination.location_name,
         required_item_id: lifecycle.feed_item_id,
         ...lifecycleFields,
       })
@@ -1498,6 +1500,7 @@ export class FeedRequisitionService implements OnModuleInit {
         item_name: l.item_name,
         item_description: l.item_name ?? null,
         destination_code: l.destination_code,
+        destination_name: l.destination_name,
         required_item_id: l.required_item_id ?? null,
         lifecycle_ref_label: lifecycleRefLabel(l),
         exception_reason: exceptionReasonOf(l.line.description),

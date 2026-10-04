@@ -10,6 +10,8 @@ import type { FarmFeedSettings } from '../../procurement/feed-requisition/feed-r
 export interface SiloFact {
   siloId: string;
   siloCode: string;
+  /** location_name (Engine §1 row 9 Silo Name) — shown beside the code. */
+  siloName: string;
   houseCodes: string[];
   capacityKg: number | null;
   belowFeedLevelKg: number | null;

@@ -104,6 +104,25 @@ describe('FeedForecastService', () => {
     expect(loadFarm).toHaveBeenCalledWith('farm-A', 'tenant-1');
   });
 
+  it('report rows and sources carry the silo / store NAME beside the code (Engine r70, rows 8-9; Rishi 4 Oct)', async () => {
+    useFarmScope(cls, { farmId: 'farm-A', restricted: true, companyId: 'comp-1', lobId: 'lob-1' });
+    loadInput.mockResolvedValueOnce({ input: {}, flags: [], stageBlocks: [], sourceNames: { 'GRA100/SILO-001': 'Weaner silo', 'GRA100/STORE-01': 'Main store' } });
+    const day = (sourceType: 'SILO' | 'STORE' | 'NONE', sourceCode: string | null, itemId: string) => ({
+      batchId: 'b1', batchNo: 'B1', shedCode: 'S1', stageCode: 'WEANER', itemId, itemNo: itemId, itemName: itemId, sourceType, sourceCode,
+      date: todayLocal(), currentInventoryKg: 100, heads: 10, perDayIntakeKg: 5, daysOfStock: 20, sharedBatchCount: 1, indicative: false, runDownDate: null,
+    });
+    (buildFeedForecast as jest.Mock).mockReturnValueOnce({
+      rows: [], flags: [], dietChanges: [],
+      daily: [day('SILO', 'GRA100/SILO-001', 'i1'), day('STORE', 'GRA100/STORE-01', 'i2'), day('NONE', null, 'i3')],
+      sources: [{ sourceType: 'SILO', sourceCode: 'GRA100/SILO-001', locationId: 's1', itemId: 'i1' }],
+    });
+    const report = await service.getForecast({ view: 'DAILY' }, 'tenant-1', 'STANDARD_USER');
+    expect(report.rows.map((r) => [r.sourceCode, r.sourceName])).toEqual([
+      ['GRA100/SILO-001', 'Weaner silo'], ['GRA100/STORE-01', 'Main store'], [null, null],
+    ]);
+    expect(report.sources[0]).toMatchObject({ sourceCode: 'GRA100/SILO-001', sourceName: 'Weaner silo' });
+  });
+
   it('an unrestricted caller must name a farm', async () => {
     await expect(service.getForecast({}, 'tenant-1', 'TENANT_ADMIN')).rejects.toThrow(BadRequestException);
   });
@@ -160,6 +179,7 @@ describe('FeedForecastService', () => {
       // The engine's flags, then the loader's own (a batch placed on no known shed).
       flags: [{ kind: 'HEADS_ASSUMED_FLAT', batchNo: 'B1' }, { kind: 'BATCH_SHED_UNKNOWN', batchNo: 'B2' }],
       sources: [], dietChanges: [],
+      sourceNames: {},
       stages: [],
       sourceSnapshot: expect.objectContaining({
         hash: expect.stringMatching(/^[a-f0-9]{64}$/),
@@ -988,7 +1008,7 @@ describe('FeedForecastService.getForecast — views, periods and the report (Pla
     farm: { id: 'farm-A', code: 'GRS', name: 'Grasmere' },
     settings: { safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50 }, rows: [],
     daily: [daily(), daily({ date: '2026-09-24', currentInventoryKg: 0 }), daily({ date: '2026-09-25', currentInventoryKg: 0 })],
-    flags: [], sources: [], dietChanges: [], stages: [],
+    flags: [], sources: [], dietChanges: [], stages: [], sourceNames: { 'GRS/SILO-001': 'Weaner silo' },
   };
   const september = { periodId: 'p9', periodCode: '2026-09', startDate: '2026-08-30', endDate: '2026-09-26', stockTakeDate: '2026-09-26', productionStartDate: '2026-09-27' };
 
@@ -1047,7 +1067,7 @@ describe('FeedForecastService.getForecast — views, periods and the report (Pla
 
     const report = await service.getForecast({ view: 'DAILY' }, 'tenant-1', 'STANDARD_USER');
 
-    expect(report.sources[0]).toMatchObject({ runDownDate: '2026-09-27' });
+    expect(report.sources[0]).toMatchObject({ runDownDate: '2026-09-27', sourceName: 'Weaner silo' });
     expect(report.sources[0]).not.toHaveProperty('shortageDate');
     expect(report).not.toHaveProperty('sourceSnapshot');
   });

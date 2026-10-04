@@ -20,7 +20,7 @@ describe('FeedForecastService.siloStatus', () => {
     feedRows: [{ lifecycleId: 'row-r1', breedId: 'l', stageId: 'wean', itemId: 'r1', itemName: 'Weaner Diet R1', fromDay: 25, toDay: 40, kgPerHeadPerDay: 2.0, wastagePct: 0 }],
   };
   const siloFact = {
-    siloId: 's1', siloCode: 'GRS/SILO-001', houseCodes: ['GRS/SHED-003'], capacityKg: 12000, belowFeedLevelKg: 1000, aboveThresholdKg: 10800,
+    siloId: 's1', siloCode: 'GRS/SILO-001', siloName: 'Weaner silo', houseCodes: ['GRS/SHED-003'], capacityKg: 12000, belowFeedLevelKg: 1000, aboveThresholdKg: 10800,
     feedInSiloItemId: 'r1', feedInSiloItemName: 'Weaner Diet R1', feedType: 'BULK', systemBalanceKg: 1500,
     lastApprovedCountKg: null, lastApprovedCountAt: null, lastFeedReceiptDate: '2026-09-20', nonKgBalance: false,
   };
@@ -52,7 +52,7 @@ describe('FeedForecastService.siloStatus', () => {
     // Production day 6 (Saturday) after Wed 23 Sep is 26 Sep; the deadline is the day before.
     expect(out.submissionDeadline).toBe('2026-09-25');
     expect(out.rows).toHaveLength(1);
-    expect(out.rows[0]).toMatchObject({ siloId: 's1', currentDietItemId: 'r1', dailyRequirementKg: 2000, requisitionStatus: 'AUTO_DRAFT', submissionDeadline: '2026-09-25' });
+    expect(out.rows[0]).toMatchObject({ siloId: 's1', siloCode: 'GRS/SILO-001', siloName: 'Weaner silo', currentDietItemId: 'r1', dailyRequirementKg: 2000, requisitionStatus: 'AUTO_DRAFT', submissionDeadline: '2026-09-25' });
     expect(buildFeedForecast(input).sources[0].shortfallKg).toBeGreaterThan(0);
     expect(out.rows[0].recommendedOrderKg).toBeGreaterThan(0);
   });

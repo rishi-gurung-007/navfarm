@@ -126,6 +126,8 @@ export interface FeedForecastResponse {
   dietChanges: DietChange[];
   /** Plan R: each batch's current / next stage block (field specification, supporting block). */
   stages: StageBlock[];
+  /** location_code -> location_name of the farm's silos and store, so the report shows the name beside the code (Engine r70). The engine stays name-free. */
+  sourceNames: Record<string, string>;
   /** Detached, canonical pure-engine inputs. Saved runs use this as their deterministic source evidence. */
   sourceSnapshot: { version: string; hash: string; values: { engineInput: ForecastInput } };
 }
@@ -247,7 +249,7 @@ export interface FeedForecastReport {
   rows: ReportRow[];
   stages: StageBlock[];
   flags: ForecastFlag[];
-  sources: ForecastSource[];
+  sources: Array<ForecastSource & { sourceName: string | null }>;
   dietChanges: DietChange[];
 }
 
@@ -671,7 +673,7 @@ export class FeedForecastService {
     // response compatible by exposing the same source shape it had before
     // persisted runs; the explicit save path receives it on `daily` instead.
     const reportSources = result.sources.map((source) => {
-      const compatible = { ...source };
+      const compatible = { ...source, sourceName: result.sourceNames[source.sourceCode] ?? null };
       delete compatible.shortageDate;
       return compatible;
     });
@@ -688,7 +690,7 @@ export class FeedForecastService {
       period,
       farm: result.farm,
       settings: result.settings,
-      rows: groupRows(result.daily, view, from),
+      rows: groupRows(result.daily, view, from, result.sourceNames),
       stages: result.stages,
       flags: result.flags,
       sources: reportSources,
@@ -1229,7 +1231,7 @@ export class FeedForecastService {
       // Important 4 (fix round 2): resolved through resolveForFeedPlanning, not
       // directly — see FeedSettingsService.resolveForFeedPlanning for why.
       const resolvedSettings = await this.feedSettings.resolveForFeedPlanning(companyId, farmId);
-      const { input: loadedInput, flags: loadFlags, stageBlocks } = await this.loadInput(farm, planningDate, from, to, tenantId, { stockDate, horizonTo, headerCutoff });
+      const { input: loadedInput, flags: loadFlags, stageBlocks, sourceNames } = await this.loadInput(farm, planningDate, from, to, tenantId, { stockDate, horizonTo, headerCutoff });
       const input: ForecastInput = { ...loadedInput, safetyStockKg: resolvedSettings.safetyStockKg };
       const { rows, flags, sources, dietChanges, daily } = buildFeedForecast(input);
       const sourceSnapshot = buildSourceSnapshot({ engineInput: input });
@@ -1243,7 +1245,7 @@ export class FeedForecastService {
           bagSizeKg: resolvedSettings.bagSizeKg,
         },
         rows, daily, flags: [...flags, ...loadFlags, ...asOf], sources, dietChanges,
-        stages: stageBlocks, sourceSnapshot,
+        stages: stageBlocks, sourceNames: sourceNames ?? {}, sourceSnapshot,
       };
     });
   }
@@ -1337,6 +1339,7 @@ export class FeedForecastService {
       facts.push({
         siloId: silo.locationId,
         siloCode: silo.code,
+        siloName: silo.name,
         houseCodes: silo.linkedSheds.map((shed) => shed.code),
         capacityKg: silo.capacityKg,
         belowFeedLevelKg: silo.lowLevelKg,
@@ -1466,7 +1469,7 @@ export class FeedForecastService {
     to: string,
     tenantId: string,
     opts: { stockDate: string; horizonTo: string; headerCutoff: string },
-  ): Promise<{ input: ForecastInput; flags: ForecastFlag[]; stageBlocks: StageBlock[] }> {
+  ): Promise<{ input: ForecastInput; flags: ForecastFlag[]; stageBlocks: StageBlock[]; sourceNames?: Record<string, string> }> {
     const companyId = farm.companyId;
     // computeForFarm has already replaced the CLS scope with the effective one
     // (fix round 2, finding 1) — every read below, direct or through the
@@ -1480,6 +1483,7 @@ export class FeedForecastService {
       .select({
         location_id: schema.locationMaster.location_id,
         location_code: schema.locationMaster.location_code,
+        location_name: schema.locationMaster.location_name,
         location_type: schema.locationMaster.location_type,
         parent_location_id: schema.locationMaster.parent_location_id,
         is_active: schema.locationMaster.is_active,
@@ -1569,7 +1573,12 @@ export class FeedForecastService {
 
     const stageBlocks = stageBlocksFor(batches, stages, new Map(shedRows.map((s) => [s.location_id, s.location_code])), planningDate);
 
+    // Code -> name for the silos and the store the engine can name as a source; the engine itself stays a pure calculation.
+    const sourceNames: Record<string, string> = {};
+    for (const l of [...siloRows, ...(storeRow ? [storeRow] : [])]) sourceNames[l.location_code] = l.location_name;
+
     return {
+      sourceNames,
       input: {
         planningDate,
         from,

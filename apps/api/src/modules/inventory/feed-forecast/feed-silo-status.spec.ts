@@ -22,7 +22,7 @@ const workedExample: ForecastInput = {
 };
 
 const fact = (over: Partial<SiloFact>): SiloFact => ({
-  siloId: 's1', siloCode: 'GRS/SILO-001', houseCodes: ['GRS/SHED-003'], capacityKg: 12000, belowFeedLevelKg: 1000, aboveThresholdKg: 10800,
+  siloId: 's1', siloCode: 'GRS/SILO-001', siloName: 'Weaner silo', houseCodes: ['GRS/SHED-003'], capacityKg: 12000, belowFeedLevelKg: 1000, aboveThresholdKg: 10800,
   feedInSiloItemId: 'r1', feedInSiloItemName: 'Weaner Diet R1', feedType: 'BULK', systemBalanceKg: 1500,
   lastApprovedCountKg: null, lastApprovedCountAt: null, lastFeedReceiptDate: null, nonKgBalance: false, ...over,
 });

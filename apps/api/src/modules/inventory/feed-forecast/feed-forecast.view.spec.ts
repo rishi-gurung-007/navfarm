@@ -36,6 +36,12 @@ describe('groupRows — Step 6 "Build dated forecast"', () => {
     expect(rows[1]).toMatchObject({ itemNo: 'FEED-R2', date: '2026-09-26', dateTo: '2026-09-29', days: 4, intakeKg: 10000 });
   });
 
+  it('each row carries the source NAME beside its code, from the names map; none when unknown (Engine r70)', () => {
+    const rows = groupRows(daily, 'WEEKLY', '2026-09-23', { 'GRS/SILO-001': 'Weaner silo' });
+    expect(rows[0]).toMatchObject({ sourceCode: 'GRS/SILO-001', sourceName: 'Weaner silo' });
+    expect(rows[1]).toMatchObject({ sourceCode: 'GRS/SILO-002', sourceName: null });
+  });
+
   it('a stage change on the same feed inside a week starts a new line, so no row keeps a stage it has left', () => {
     const staged = daily.map((d) => (d.date >= '2026-09-26' ? { ...d, stageCode: 'GROWER', itemId: 'r1', itemNo: 'FEED-R1' } : d));
     const rows = groupRows(staged, 'WEEKLY', '2026-09-23');

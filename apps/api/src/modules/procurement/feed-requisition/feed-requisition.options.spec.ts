@@ -38,7 +38,7 @@ describe('FeedRequisitionService.options (F3)', () => {
     selectQueue.push(
       [
         { location_id: 'store-1', location_code: 'GRS/STORE-001', location_type: 'STORE' },
-        { location_id: 'silo-1', location_code: 'GRS/SILO-001', location_type: 'SILO' },
+        { location_id: 'silo-1', location_code: 'GRS/SILO-001', location_name: 'Weaner silo', location_type: 'SILO' },
       ],
       [{ item_id: 'feed-1', item_code: 'ICAT-004-ITM-0001', item_name: 'Weaner Mash', uom_primary: 'KG' }],
     );
@@ -46,6 +46,8 @@ describe('FeedRequisitionService.options (F3)', () => {
     expect(forecast.resolveFarm).toHaveBeenCalledWith('farm-grs', 'tenant-1', 'TENANT_ADMIN');
     expect(out.farmId).toBe('farm-grs');
     expect(out.destinations.map((d: any) => d.location_code)).toEqual(['GRS/SILO-001', 'GRS/STORE-001']);
+    expect(db.select.mock.calls[0][0]).toHaveProperty('location_name');
+    expect(out.destinations[0]).toMatchObject({ location_code: 'GRS/SILO-001', location_name: 'Weaner silo' });
     expect(out.items).toEqual([{ item_id: 'feed-1', item_code: 'ICAT-004-ITM-0001', item_name: 'Weaner Mash', uom_primary: 'KG' }]);
   });
 });
