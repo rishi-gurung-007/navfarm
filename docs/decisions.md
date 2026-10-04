@@ -2558,3 +2558,12 @@ Rishi, 4 Oct (with screenshots of `/approvals/pending` and `/approvals/requisiti
 3. The Feed Forecast → Feed Requisition tab stays as a feed-only view for the farm, where feed requisitions are
    drafted from the forecast. It uses the same rows, documents and actions as the Requisitions page; it is not a
    second implementation.
+
+## 2026-10-04 — Common requisition field and button list
+
+Rishi gave the common requisition's header, line, buttons, item tracking and validations in chat on 4 Oct. The
+list is kept verbatim in `docs/superpowers/plans/feed-completion/common-requisition-spec.md` and governs that
+document. Read with the 1 Oct rulings: approval still precedes Release. "PR synced to BC" stays in-house, recorded
+as `BC_PENDING` with Link PO (3 Oct in-house rule). "Item Ledger + Value Entry" is the existing inventory ledger
+plus cost/journal posting; no duplicate ledger is created (1 Oct). The 4 Oct admin approval rule covers approval
+only; it does not exempt admins from the department checks on Transfer Shipment and Receipt unless Rishi says so.

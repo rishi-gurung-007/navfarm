@@ -178,6 +178,37 @@ Decision: decisions.md "2026-10-04 — … one Requisitions page".
 - **Live:** as company.admin, the pending count shown on Requisitions equals the old inbox's requisition count.
   Approve one from the hub and read MySQL. The inbox shows only non-requisition items.
 
+### WP1c — Common requisition to Rishi's field and button list (≈5–7 h) — Rishi 4 Oct
+Spec (verbatim): `feed-completion/common-requisition-spec.md`. The decision that frames it is in decisions.md
+("2026-10-04 — Common requisition field and button list"). Code: API `modules/procurement/requisition/`,
+`modules/inventory/stock-transfer/`; web `components/console/requisitions/common-requisition-*.tsx`,
+`requisition-new-dialog.tsx`.
+
+Gap table, checked against the code on 4 Oct. Re-verify each row in the running app before building it.
+
+| Spec item | State on 4 Oct | Work |
+|---|---|---|
+| Header fields: No. (series), Date, Main/Farm Location, Requester User ID, Name, Requester Dept (auto from User Setup), Sender Dept (select), Type, Purpose, From/To Sub-Location (Store only), Direct Transfer, Remarks | All columns exist on `requisition`; dialog shows most | Show them **in this order and with these labels** in the dialog and the document. Requester User ID shown. From/To Sub-Location shown only when Purpose = Store. Requester Department read-only from the user. |
+| Type FA / Service = Description + Qty only; Item chosen on the line | Partly | FA/Service lines show only Description and Qty (no item, UOM or rate). Item lines show Item No. + Item Description. |
+| Status: Open / Released | The document shows Open / Approved / Released, with approval as a separate state | The **Status** field shows Open / Released. Approval stays a separate "Approval" field (1 Oct: approval precedes release). Hub columns: Status + Approval. |
+| Line: Line No., Item No., Item Description, FA/Service Description, Qty, From/To Location (auto from header), Qty to Ship, Qty Shipped, Qty to Receive, Qty Received, Remaining to Receive = Shipped − Received, Balance to Ship = Qty − Shipped | Columns exist (`line_seq`, `from/to_location_id`, `qty_*`). The two balances are computed. | Show every column in this order. From/To come from the header and are read-only. The two balances are computed, never stored. |
+| Release: Purchase → PR to "BC" creates PO; Store → internal transfer only | Done (BC_PENDING + Link PO; Store creates a staged transfer) | Keep. Live re-check only. |
+| Transfer Shipment by the sender department user; **user dept must match the From Sub-Location's department** | **Missing** (no department check on shipment) | Before posting a shipment: the user's `user_master.department_id` must equal the From location's `location_master.department_id` (Cost Center identity, never text). A clear refusal otherwise. Same rule in the Direct Transfer path. |
+| Transfer Receipt by the requester at the To Sub-Location; **user dept must match the To Sub-Location's department** | **Missing** | Same check against the To location. |
+| Direct Transfer checkbox — the user needs the right **in User Setup** | Enforced via an explicit permission; not visible in User Setup | Add a "Direct Transfer allowed" toggle to the user record (Team Management → user). Make it the **one** source the rule reads (migrate the existing permission into it, or have the toggle grant/revoke that permission; never two checks). The dialog checkbox is disabled for users without it. Direct Transfer posts shipment + receipt together (exists). |
+| Item Tracking button on the line: Lot/Serial assignment; mandatory before shipment if the item is Lot or Serial tracked; receipt auto-fills from shipment | **Missing** in the feed branch. Lot/serial tracking is on `origin/main` (Arun, PR #13: 13 commits, 52 files) | **First** merge `origin/main` into this branch (local merge only, no push). Resolve conflicts, chiefly `translations.ts`, `schema.ts`, migrations and journal numbering (renumber the branch's migrations after main's if the indexes clash, and re-run the contract tests). Run the full API and web suites. Then add a per-line Item Tracking dialog reusing main's lot/serial pickers. Block shipment while a tracked line's lot/serial quantity ≠ Qty to Ship. The receipt copies the shipment's lot/serial rows. The ledger rows carry `lot_no` / `serial_no`. |
+| Location department ("dimension") and user department in User Setup | Columns exist (`location_master.department_id`, `user_master.department_id`) | Make sure both are visible and editable in Location Master and Team Management. Demo data: every sub-location used by Store requisitions has a department, and the demo users have departments. |
+| Item Ledger + Value Entry on shipment and receipt | Inventory ledger and the In Transit journal exist (Part E) | Live-verify that shipment and receipt each write ledger rows with cost (and lot/serial once tracked). No new ledger. |
+
+Tests first for each gap: department mismatch refused (shipment, receipt, direct); right-less user cannot tick
+Direct Transfer (API and UI); tracked item blocks shipment without lot/serial; receipt inherits them; FA/Service
+line rejects item fields.
+**Live:** two users in different departments. A sender-department user ships, the requester-department user
+receives, and each is refused at the other's step. A tracked item end to end with its lot/serial on both ledger
+sides in MySQL. A Purchase release shows BC_PENDING. Put any moved stock back.
+**Open question for Rishi:** should Tenant and Company admins bypass the department checks on Shipment and
+Receipt (as they do for approval)? Until he answers, they do not.
+
 ### WP2 — Forecast grid shows stock every day/week until it runs out (M) — Rishi 4 Oct
 Brief: `feed-completion/task-21a-brief.md`. Defect at `feed-forecast-grid.tsx` ~349–368 (cells render only on
 days the batch eats). Expose the engine's per-source by-date balance (no second calculation); Daily = one column
@@ -358,6 +389,7 @@ unchanged; screenshot each screen.
 | Company admin with a farm selected still sees company-wide requisitions | Approvals inbox | done |
 | Tenant/Company admin may approve every requisition, theirs and others' | Approvals / requisitions | WP1 |
 | One page for requisition requests | Approvals → Requisitions | WP1b |
+| Common requisition header/lines/buttons/item tracking per his list | Approvals → Requisitions | WP1c |
 | Proper demo data for the forecast | `nf_devco` | WP4 |
 | Common requisition numbering from the company Number Series | Requisitions | done |
 
@@ -371,7 +403,7 @@ unchanged; screenshot each screen.
 | Feed Forecast Dashboard | … → Dashboard | table only · WP3 |
 | Physical Count (weekly) | … → Physical Count | built · WP6 (28–29) |
 | Feed Requisition | … → Feed Requisition tab; Approvals → Requisitions | built · WP5, WP6 (27, 30, 31) |
-| Common Requisition (Item/FA/Service) | Approvals → Requisitions | built and live-verified |
+| Common Requisition (Item/FA/Service) | Approvals → Requisitions | built · WP1c (Rishi's 4 Oct field list: dept checks, Direct Transfer right, Item Tracking) |
 | Approvals inbox | Approvals | built · WP1, WP1b (stops listing requisitions) |
 | Location (silo), Item, Breed Lifecycle, Alert Rules masters | Farm Master / Master data | built · WP6 (32–36) |
 | Reporting Periods, Feed Planning Settings, Number Series | Farm Master / Feed Forecast / Settings | built |
@@ -390,6 +422,7 @@ unchanged; screenshot each screen.
 | Part E + 4 Oct changes (Tasks 1–20, 18b, 4b, 9b–9d) | ½–1 day | ~16 h clock (4 Oct 01:08 → ~17:30, incl. limit pauses) |
 | WP1 admins approve all requisitions | 45 min | — |
 | WP1b one Requisitions page | 1–1½ h | — |
+| WP1c common requisition to Rishi's list (incl. merging origin/main lot/serial) | 5–7 h | — |
 | WP2 grid until run-out | 1 h | — |
 | WP3 dashboard | 3–4½ h | — |
 | WP4 demo data | 1–1½ h | — |
@@ -400,7 +433,7 @@ unchanged; screenshot each screen.
 | WP9 Part D | 5–6 h | — |
 | WP10 shared primitives | 1 h | — |
 | WP11 review, drop prerequisites | 3–4 h | — |
-| **Remaining total** | **≈45–59 h** | |
+| **Remaining total** | **≈50–66 h** | |
 
 ---
 
@@ -408,4 +441,5 @@ unchanged; screenshot each screen.
 1. Should **System Admin** also be allowed to approve their own requisitions (4 Oct names only Tenant and Company admins)?
 2. Silo–house mapping **effective dates** (Master Setup r8) — needed for the piggery MVP?
 3. Monetary Finance threshold for stock variances, and the reporting/local currency (still open from 1 Oct).
-4. Bulk compartment capacity, production cutoff and lead time (workbook "Customer validation" row) — confirm before Part B goes to testers.
+4. Do Tenant/Company admins bypass the department checks on Transfer Shipment / Receipt?
+5. Bulk compartment capacity, production cutoff and lead time (workbook "Customer validation" row) — confirm before Part B goes to testers.
