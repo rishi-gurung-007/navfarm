@@ -2499,3 +2499,11 @@ created; from the common Requisition / Approvals area (Approvals → Requisition
 every kind are created** — Feed, Item, Fixed Asset and Service. Both feed entry points use the same
 feed document and API; the Feed Forecast tab never offers the common kinds. This confirms the Part E
 plan (`docs/superpowers/plans/2026-10-04-feed-part-e-requisition.md`, Tasks 10 and 13).
+
+## 2026-10-04 — Requisitions are created and edited in a dialog
+
+Rishi, 4 Oct: a requisition — common (Item / Fixed Asset / Service) and feed alike — is created and
+edited in a **dialog** that carries its header fields and its lines, the same way for both kinds.
+Until now the common requisition opened its header form and lines on the page in place of the list
+(built to "match the feed document"; no one had decided a dialog). A requisition that can no longer
+be edited (submitted, approved, released) still opens read-only.
