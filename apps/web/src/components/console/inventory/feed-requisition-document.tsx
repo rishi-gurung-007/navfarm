@@ -18,6 +18,7 @@ import { Badge } from "@/components/ui/badge";
 import { Field, FieldGroup, ReadField } from "@/components/ui/field";
 import { ScrollTable } from "@/components/ui/scroll-table";
 import { useLanguage } from "@/hooks/useLanguage";
+import type { TranslationKeys } from "@/utils/translations";
 import { cn } from "@/lib/utils";
 import { formatDateShort } from "@/utils/date-short";
 import {
@@ -119,6 +120,62 @@ export interface FeedLineEdit {
 export interface FeedRequisitionOptions {
   destinations: { location_id: string; location_code: string; location_type: string }[];
   items: { item_id: string; item_code: string; item_name: string }[];
+}
+
+/**
+ * GET /feed-requisition/:id — the document view (Task 9). `farm_id` (Task
+ * 11): the API's readView already spreads `...row.req`, which carries it;
+ * FeedRequisitionDetail uses it to fetch /feed-requisition/options without
+ * depending on the caller's own farm-selector state — the Approvals entry
+ * point (Task 13) has none.
+ *
+ * Lives here, not in requisitions-panel.tsx (Task 11 review): both
+ * requisitions-panel.tsx and feed-requisition-detail.tsx need it, and putting
+ * it in the panel made feed-requisition-detail.tsx import back from the
+ * panel — a cycle that would have pulled the panel's list/filter UI into any
+ * future standalone consumer (Approvals → Requisitions, Task 13).
+ */
+export type RequisitionView = FeedRequisitionDocumentView & { production_date?: string | null; farm_id?: string | null };
+
+/** Checkpoint 18, as the API applies it (feed-requisition.rules.ts deviationNeedsRemarks). */
+export function needsRemarks(recommended: number | null, requested: number): boolean {
+  if (recommended === null) return false;
+  if (recommended <= 0) return requested > 0;
+  return Math.abs(requested - recommended) / recommended > 0.2 + 1e-9;
+}
+
+/**
+ * The error shown above Submit (9d F2). It used to be one fixed sentence
+ * naming the 20 % deviation and the deadline, so a farm whose only trigger was
+ * a moved delivery date (Req. row 29) or an item exception (row 13) was told
+ * the wrong reason — Part A verification pass 2. Every cause actually present
+ * is named, with the lines it is on, in the order rqdRemarksHint lists them.
+ * The API refuses the submit with its own per-line message (approvalProblems);
+ * this says so before the click.
+ */
+export interface RemarksCauses {
+  /** line_seq of each line whose quantity is more than 20 % off the recommendation. */
+  deviating: number[];
+  /** line_seq of each line whose delivery date was moved off the forecast's. */
+  moved: number[];
+  /** line_seq of each line carrying an item exception. */
+  exceptioned: number[];
+  /** The submission deadline has passed. */
+  late: boolean;
+}
+
+export function remarksRequiredMessage(
+  t: (key: TranslationKeys, vars?: Record<string, string | number>) => string,
+  causes: RemarksCauses,
+): string | null {
+  const lines = (seqs: number[]) => t(seqs.length > 1 ? "rqRemarksLines" : "rqRemarksLine", { lines: seqs.join(", ") });
+  const reasons: string[] = [];
+  if (causes.deviating.length) reasons.push(t("rqRemarksWhyQuantity", { lines: lines(causes.deviating) }));
+  if (causes.moved.length) reasons.push(t("rqRemarksWhyDate", { lines: lines(causes.moved) }));
+  if (causes.exceptioned.length) reasons.push(t("rqRemarksWhyException", { lines: lines(causes.exceptioned) }));
+  if (causes.late) reasons.push(t("rqRemarksWhyLate"));
+  if (!reasons.length) return null;
+  return t("rqRemarksRequired", { reasons: reasons.join("; ") });
 }
 
 const num = (v: string | number | null | undefined) => (v === null || v === undefined || v === "" ? null : Number(v));

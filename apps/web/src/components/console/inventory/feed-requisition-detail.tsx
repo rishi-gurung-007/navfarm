@@ -23,10 +23,9 @@ import { Button } from "@/components/ui/button";
 import { useLanguage } from "@/hooks/useLanguage";
 import { todayIso, unwrap } from "./feed-format";
 import {
-  FeedRequisitionDocument, isLineExceptioned, requestedKgOf,
-  type FeedLineEdit, type FeedRequisitionLine, type FeedRequisitionOptions,
+  FeedRequisitionDocument, isLineExceptioned, needsRemarks, remarksRequiredMessage, requestedKgOf,
+  type FeedLineEdit, type FeedRequisitionLine, type FeedRequisitionOptions, type RequisitionView,
 } from "./feed-requisition-document";
-import { needsRemarks, remarksRequiredMessage, type RequisitionView } from "./requisitions-panel";
 
 /** D25: what the farm may still change — mirrors isEditableFeedRequisition in the API. */
 export const isEditable = (v: { status: string; approval_request_id: string | null }) =>

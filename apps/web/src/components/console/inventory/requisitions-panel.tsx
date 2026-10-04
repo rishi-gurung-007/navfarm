@@ -26,17 +26,28 @@ import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
 import { ScrollTable } from "@/components/ui/scroll-table";
 import { useLanguage } from "@/hooks/useLanguage";
-import type { TranslationKeys } from "@/utils/translations";
 import { cn } from "@/lib/utils";
 import { formatDateShort } from "@/utils/date-short";
 import { addDaysIso, defaultWindowEnd, todayIso, unwrap } from "./feed-format";
 import { getForecastWindow } from "./feed-forecast-window";
 import { FeedFarmSelect, feedFarmLabel } from "./feed-farm-select";
 import { PRIORITY_LABEL, REQ_STATUS_LABEL, REQ_TYPE_LABEL, labelOf, variantOf } from "./requisition-labels";
-import type { FeedRequisitionDocumentView } from "./feed-requisition-document";
 import { FeedRequisitionDetail } from "./feed-requisition-detail";
 import { RequisitionNewDialog } from "./requisition-new-dialog";
 import { useFeedFarm } from "./use-feed-farm";
+import type { RequisitionView } from "./feed-requisition-document";
+
+/**
+ * `RequisitionView`, `needsRemarks` and `remarksRequiredMessage` live in
+ * feed-requisition-document.tsx (Task 11 review): this panel and
+ * feed-requisition-detail.tsx both need them, and defining them here made
+ * feed-requisition-detail.tsx import back from this file — a cycle that
+ * would have pulled the panel's list/filter UI into any future standalone
+ * consumer of the detail component (Approvals → Requisitions, Task 13).
+ * Re-exported so requisitions-panel.spec.tsx and requisition-new-dialog.tsx
+ * keep importing from here unchanged.
+ */
+export { needsRemarks, remarksRequiredMessage, type RemarksCauses, type RequisitionView } from "./feed-requisition-document";
 
 interface ListRow {
   requisition_id: string;
@@ -49,56 +60,6 @@ interface ListRow {
   line_count: number;
   requested_kg: string | number;
   approval_request_id: string | null;
-}
-
-/**
- * GET /feed-requisition/:id — the document view (Task 9). `farm_id` (Task
- * 11): the API's readView already spreads `...row.req`, which carries it;
- * FeedRequisitionDetail uses it to fetch /feed-requisition/options without
- * depending on the caller's own farm-selector state — the Approvals entry
- * point (Task 13) has none.
- */
-export type RequisitionView = FeedRequisitionDocumentView & { production_date?: string | null; farm_id?: string | null };
-
-/** Checkpoint 18, as the API applies it (feed-requisition.rules.ts deviationNeedsRemarks). */
-export function needsRemarks(recommended: number | null, requested: number): boolean {
-  if (recommended === null) return false;
-  if (recommended <= 0) return requested > 0;
-  return Math.abs(requested - recommended) / recommended > 0.2 + 1e-9;
-}
-
-/**
- * The error shown above Submit (9d F2). It used to be one fixed sentence
- * naming the 20 % deviation and the deadline, so a farm whose only trigger was
- * a moved delivery date (Req. row 29) or an item exception (row 13) was told
- * the wrong reason — Part A verification pass 2. Every cause actually present
- * is named, with the lines it is on, in the order rqdRemarksHint lists them.
- * The API refuses the submit with its own per-line message (approvalProblems);
- * this says so before the click.
- */
-export interface RemarksCauses {
-  /** line_seq of each line whose quantity is more than 20 % off the recommendation. */
-  deviating: number[];
-  /** line_seq of each line whose delivery date was moved off the forecast's. */
-  moved: number[];
-  /** line_seq of each line carrying an item exception. */
-  exceptioned: number[];
-  /** The submission deadline has passed. */
-  late: boolean;
-}
-
-export function remarksRequiredMessage(
-  t: (key: TranslationKeys, vars?: Record<string, string | number>) => string,
-  causes: RemarksCauses,
-): string | null {
-  const lines = (seqs: number[]) => t(seqs.length > 1 ? "rqRemarksLines" : "rqRemarksLine", { lines: seqs.join(", ") });
-  const reasons: string[] = [];
-  if (causes.deviating.length) reasons.push(t("rqRemarksWhyQuantity", { lines: lines(causes.deviating) }));
-  if (causes.moved.length) reasons.push(t("rqRemarksWhyDate", { lines: lines(causes.moved) }));
-  if (causes.exceptioned.length) reasons.push(t("rqRemarksWhyException", { lines: lines(causes.exceptioned) }));
-  if (causes.late) reasons.push(t("rqRemarksWhyLate"));
-  if (!reasons.length) return null;
-  return t("rqRemarksRequired", { reasons: reasons.join("; ") });
 }
 
 const STATUS_FILTER = ["AUTO_DRAFT", "DRAFT", "PENDING_APPROVAL", "APPROVED", "REJECTED"];
