@@ -133,6 +133,7 @@ describe('RequisitionService.create — supplied header and line fields are stor
       [departmentRow('cc-snd')],                             // sender department identity
       [{ item_id: 'item-1' }],                               // line items belong to the company
       [],                                                    // number series: no prior REQ this year
+      [],                                                    // number clash lookup: 0001 is free
       [headerRow({ requester_department_id: 'cc-dept', sender_department_id: 'cc-snd' })],
       [lineRow({ qty_to_ship: '6', qty_to_receive: '6', from_location_id: 'loc-store', to_location_id: 'loc-farm' })],
     );
@@ -188,6 +189,7 @@ describe('RequisitionService.create — supplied header and line fields are stor
       [departmentRow('cc-farm-ops')],
       [{ item_id: 'item-1' }], // line items belong to the company
       [], // number series
+      [], // number clash lookup
       [headerRow({ requester_name: 'Rudo Moyo', requester_department_id: 'cc-farm-ops' })],
       [lineRow()],
     );
@@ -372,6 +374,7 @@ describe('Part E Task 1 — list filter, manual source, approver stamp', () => {
       [{ full_name: 'Ada Farm', department_id: null }], // requesting user
       [{ item_id: 'item-1' }],                         // line items belong to the company
       [],                                              // number series
+      [],                                              // number clash lookup
       [headerRow({ source: 'MANUAL_ENTRY' })],
       [lineRow()],
     );

@@ -41,12 +41,16 @@ const header = (req_no: string) => ({
 });
 
 /** Selects in create(): requester, line items, [fallback max req_no], header, lines. */
-function build(series: 'configured' | 'none', issued: string[] = ['NUM-0001'], taken: string[] = []) {
+function build(series: 'configured' | 'none', issued: string[] = ['NUM-0001'], taken: string[] = [], lastOfCompany: string | null = `REQ-${YEAR}-0007`, fallbackClashes: string[] = []) {
   const queue: unknown[][] = [
     [{ full_name: 'Ada', department_id: null }],
     [{ item_id: 'item-1' }],
   ];
-  if (series === 'none') queue.push([{ req_no: `REQ-${YEAR}-0007` }]);
+  if (series === 'none') {
+    queue.push(lastOfCompany ? [{ req_no: lastOfCompany }] : []);
+    // tenant-wide clash lookup per candidate (req_no is globally unique)
+    for (const n of [...fallbackClashes, null]) queue.push(n ? [{ req_no: n }] : []);
+  }
   // req_no is globally unique: one lookup per issued number on the series path.
   if (series === 'configured') for (const n of [...taken, null]) queue.push(n ? [{ req_no: n }] : []);
   queue.push([header('x')], []);
@@ -101,5 +105,12 @@ describe('RequisitionService.create — number from the company REQUISITION seri
 
   it('offers REQUISITION on the Number Series screen, its code living in requisition.req_no', () => {
     expect(MASTER_CODE_COLUMNS.REQUISITION).toBe('req_no');
+  });
+
+  it('fallback never returns a number another company already holds (req_no is unique tenant-wide)', async () => {
+    // Company B has no requisition yet; company A holds REQ-<yr>-0001.
+    const { service, insertValues } = build('none', [], [], null, [`REQ-${YEAR}-0001`]);
+    await service.create(storeDto() as any, TENANT, { userId: 'u1' });
+    expect(insertValues[0].values.req_no).toBe(`REQ-${YEAR}-0002`);
   });
 });

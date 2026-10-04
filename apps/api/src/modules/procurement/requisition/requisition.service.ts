@@ -127,32 +127,35 @@ export class RequisitionService {
    */
   private async nextReqNo(companyId: string, tenantId: string): Promise<string> {
     const series = await this.numberSeries.resolveSeriesFor(REQUISITION_SERIES, null, tenantId, companyId, this.db);
-    if (series) {
-      // req_no is unique across the tenant and the series cannot see this
-      // table, so a configured prefix that meets an existing number (REQ-2026-
-      // 0001) skips past it; the counter has already advanced, so no number
-      // is issued twice and none is renumbered.
-      for (let attempt = 0; attempt < 50; attempt++) {
-        const candidate = await this.numberSeries.generateNext(series, tenantId, companyId, this.db);
-        const [clash] = await this.db
-          .select({ requisition_id: schema.requisition.requisition_id })
-          .from(schema.requisition)
-          .where(and(eq(schema.requisition.tenant_id, tenantId), eq(schema.requisition.req_no, candidate)))
-          .limit(1);
-        if (!clash) return candidate;
-      }
-      throw new BadRequestException('The requisition number series keeps issuing numbers that are already in use. Check its prefix and next number.');
-    }
     const year = new Date().getFullYear();
     const prefix = `REQ-${year}-`;
-    const [last] = await this.db
-      .select({ req_no: schema.requisition.req_no })
-      .from(schema.requisition)
-      .where(and(eq(schema.requisition.tenant_id, tenantId), eq(schema.requisition.company_id, companyId), sql`${schema.requisition.req_no} LIKE ${prefix + '%'}`))
-      .orderBy(desc(schema.requisition.req_no))
-      .limit(1);
-    const lastSeq = last?.req_no ? Number(last.req_no.slice(prefix.length)) : 0;
-    return `${prefix}${String((Number.isFinite(lastSeq) ? lastSeq : 0) + 1).padStart(4, '0')}`;
+    let fallbackSeq = 0;
+    if (!series) {
+      const [last] = await this.db
+        .select({ req_no: schema.requisition.req_no })
+        .from(schema.requisition)
+        .where(and(eq(schema.requisition.tenant_id, tenantId), eq(schema.requisition.company_id, companyId), sql`${schema.requisition.req_no} LIKE ${prefix + '%'}`))
+        .orderBy(desc(schema.requisition.req_no))
+        .limit(1);
+      const lastSeq = last?.req_no ? Number(last.req_no.slice(prefix.length)) : 0;
+      fallbackSeq = Number.isFinite(lastSeq) ? lastSeq : 0;
+    }
+    // req_no is unique across the tenant, but neither the series service nor
+    // the per-company fallback can see another company's numbers, so every
+    // candidate is checked and a taken one is skipped. (A series' counter has
+    // already advanced, so no number is issued twice and none is renumbered.)
+    for (let attempt = 0; attempt < 50; attempt++) {
+      const candidate = series
+        ? await this.numberSeries.generateNext(series, tenantId, companyId, this.db)
+        : `${prefix}${String(++fallbackSeq).padStart(4, '0')}`;
+      const [clash] = await this.db
+        .select({ requisition_id: schema.requisition.requisition_id })
+        .from(schema.requisition)
+        .where(and(eq(schema.requisition.tenant_id, tenantId), eq(schema.requisition.req_no, candidate)))
+        .limit(1);
+      if (!clash) return candidate;
+    }
+    throw new BadRequestException('Could not find an unused requisition number. Check the requisition number series prefix and next number.');
   }
 
   async create(dto: CreateRequisitionDto, tenantId: string, userPayload?: { userId?: string }) {
