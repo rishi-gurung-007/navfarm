@@ -104,7 +104,12 @@ describe('RequisitionNewDialog — every requisition type (spec §6a)', () => {
     expect(screen.queryByRole('button', { name: 'rqNewPurposeItem' })).toBeNull();
   });
 
-  it('sends a line exception reason (Req. row 13)', async () => {
+  // Fix round 1: a single-line fixture could not catch setLine(0, ...) being
+  // hardcoded in place of setLine(i, ...) for the reason field specifically —
+  // the same class of gap Task 9 was sent back to fix. Two lines, reason on
+  // the second only, and the first line's body is checked to have NO
+  // exception_reason key at all (not merely a falsy one).
+  it('sends a line exception reason (Req. row 13), scoped to the line it was set on', async () => {
     render(<RequisitionNewDialog open farmId="farm-vil" onClose={jest.fn()} onCreated={jest.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: 'rqNewPurposeFeed' }));
     await waitFor(() => expect((screen.getByLabelText('rqNewDestination:{"line":1}') as HTMLSelectElement).options.length).toBe(3));
@@ -112,10 +117,47 @@ describe('RequisitionNewDialog — every requisition type (spec §6a)', () => {
     fireEvent.change(screen.getByLabelText('rqNewItem:{"line":1}'), { target: { value: 'i1' } });
     fireEvent.change(screen.getByLabelText('rqNewKg:{"line":1}'), { target: { value: '3000' } });
     fireEvent.change(screen.getByLabelText('rqNewDate:{"line":1}'), { target: { value: '2099-10-01' } });
-    fireEvent.change(screen.getByLabelText('rqNewException:{"line":1}'), { target: { value: 'Vet instruction' } });
+    fireEvent.click(screen.getByRole('button', { name: 'rqNewAddLine' }));
+    fireEvent.change(screen.getByLabelText('rqNewDestination:{"line":2}'), { target: { value: 'st' } });
+    fireEvent.change(screen.getByLabelText('rqNewItem:{"line":2}'), { target: { value: 'i1' } });
+    fireEvent.change(screen.getByLabelText('rqNewKg:{"line":2}'), { target: { value: '500' } });
+    fireEvent.change(screen.getByLabelText('rqNewDate:{"line":2}'), { target: { value: '2099-10-02' } });
+    fireEvent.change(screen.getByLabelText('rqNewException:{"line":2}'), { target: { value: 'Vet instruction' } });
     fireEvent.click(screen.getByRole('button', { name: 'rqNewCreate' }));
-    await waitFor(() => expect(post).toHaveBeenCalledWith('/feed-requisition', expect.objectContaining({
-      lines: [expect.objectContaining({ exception_reason: 'Vet instruction' })],
-    })));
+    await waitFor(() => expect(post).toHaveBeenCalled());
+    const body = post.mock.calls[0][1];
+    expect(body.lines).toHaveLength(2);
+    expect(body.lines[0]).not.toHaveProperty('exception_reason');
+    expect(body.lines[1].exception_reason).toBe('Vet instruction');
+  });
+});
+
+describe('RequisitionNewDialog — farm chosen on the header when the caller has none (Task 10 review, fix round 1)', () => {
+  it('shows a farm select when farmId is absent, and the chosen farm — not undefined — drives the options fetch', async () => {
+    mockFarm = {
+      farmId: null,
+      setFarmId: jest.fn((id: string | null) => { mockFarm = { ...mockFarm, farmId: id }; }),
+      farms: [{ farmId: 'farm-vil', code: 'VIL100', name: 'Villa Franca', companyId: 'co-1', companyName: 'Triple C' }],
+      loaded: true,
+      failed: false,
+      isFixed: false,
+      fixedFarm: null,
+    };
+    const { rerender } = render(<RequisitionNewDialog open types={['FEED']} onClose={jest.fn()} onCreated={jest.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'rqNewPurposeFeed' }));
+    const select = screen.getByLabelText('rqFarm') as HTMLSelectElement;
+    expect(select).toBeTruthy();
+    // No farm chosen yet: effectiveFarmId is empty, so the options endpoint
+    // must not be read with an undefined/empty farmId — the bug a select
+    // that merely *renders* would not catch.
+    expect(get).not.toHaveBeenCalled();
+    fireEvent.change(select, { target: { value: 'farm-vil' } });
+    expect(mockFarm.setFarmId).toHaveBeenCalledWith('farm-vil');
+    // setFarmId is a prop handed to the mocked hook, not component state, so
+    // the dialog only sees the new farmId once it re-renders against the
+    // hook's updated return value — exactly what a real selection does when
+    // the shared hook's own state changes.
+    rerender(<RequisitionNewDialog open types={['FEED']} onClose={jest.fn()} onCreated={jest.fn()} />);
+    await waitFor(() => expect(get).toHaveBeenCalledWith('/feed-requisition/options?farmId=farm-vil'));
   });
 });
