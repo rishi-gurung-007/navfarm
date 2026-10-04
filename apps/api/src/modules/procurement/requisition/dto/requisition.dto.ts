@@ -102,9 +102,16 @@ export class CreateRequisitionDto {
   @IsUUID()
   farm_id?: string;
 
+  // Task 13 fix round 1: only the common kinds. A lowercase or unknown value
+  // used to fall through normalizeCommonDocType to ITEM; FEED gets the message
+  // that sends it to /feed-requisition (the service guard says the same).
   @ApiPropertyOptional({ enum: ['ITEM', 'FA', 'SERVICE'] })
   @IsOptional()
-  @IsString()
+  @IsIn(['ITEM', 'FA', 'SERVICE'], {
+    message: (args) => args.value === 'FEED'
+      ? 'A feed requisition cannot be created or edited through /requisition; use /feed-requisition.'
+      : 'doc_type must be one of ITEM, FA, SERVICE.',
+  })
   doc_type?: string;
 
   @ApiPropertyOptional({ enum: REQUISITION_PURPOSES, description: 'STORE (Item only) or PURCHASE — required by the service for common requisitions' })

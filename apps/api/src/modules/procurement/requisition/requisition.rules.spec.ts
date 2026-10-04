@@ -331,7 +331,7 @@ describe('assertEditable — "editable while the document is open" (spec §6a)',
     expect(() => assertEditable(row(over))).toThrow('Requisition REQ-2026-0001 can no longer be edited; only an Open requisition can change.');
   });
   it('sends a feed document to its own editor', () => {
-    expect(() => assertEditable(row({ doc_type: 'FEED' }))).toThrow('A feed requisition is edited from its own document (PUT /feed-requisition/:id).');
+    expect(() => assertEditable(row({ doc_type: 'FEED' }))).toThrow('A feed requisition cannot be edited through /requisition; use /feed-requisition.');
   });
 });
 

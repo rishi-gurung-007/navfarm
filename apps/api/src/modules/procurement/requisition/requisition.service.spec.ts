@@ -508,7 +508,7 @@ describe('Part E Task 2 fix round 1 — update writes what it says', () => {
   });
 
   it.each([
-    ['a FEED row', { doc_type: 'FEED' }, 'A feed requisition is edited from its own document (PUT /feed-requisition/:id).'],
+    ['a FEED row', { doc_type: 'FEED' }, 'A feed requisition cannot be edited through /requisition; use /feed-requisition.'],
     ['a released row', { status: 'APPROVED', approval_status: 'APPROVED', document_status: 'RELEASED' }, 'Requisition REQ-2026-0001 can no longer be edited; only an Open requisition can change.'],
   ])('refuses %s and writes nothing', async (_n, over, message) => {
     const { db, selectResults, setCalls, insertValues } = makeDb();

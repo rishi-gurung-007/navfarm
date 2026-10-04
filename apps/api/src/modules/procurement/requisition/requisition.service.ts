@@ -96,6 +96,11 @@ export class RequisitionService {
     const scope = farmScope(this.cls);
     const conditions: SQL[] = [];
     if (scope.farmId) conditions.push(eq(schema.requisition.farm_id, scope.farmId));
+    // A selected company is a boundary for company admins as well as restricted
+    // users (farm-scope.ts batchReferenceScopeConditions): every list, read and
+    // change of a requisition stays inside it. Task 13 fix round 1 — mounting
+    // /requisition made this reachable.
+    if (scope.companyId) conditions.push(eq(schema.requisition.company_id, scope.companyId));
     if (scope.restricted && scope.lobId) {
       conditions.push(sql`${schema.requisition.company_id} IN (SELECT company_id FROM company_master WHERE lob_id IS NULL OR lob_id = ${scope.lobId})`);
     }
@@ -305,7 +310,7 @@ export class RequisitionService {
         .limit(1)
         .for('update');
       if (!row) throw new NotFoundException(`Requisition '${requisitionId}' not found.`);
-      // assertEditable refuses FEED first (→ PUT /feed-requisition/:id).
+      // assertEditable refuses FEED first, through the shared assertNotFeedRequisition.
       assertEditable(row);
       if (dto.doc_type && dto.doc_type !== row.doc_type) {
         throw new BadRequestException('The document type cannot change; create a new requisition instead.');
@@ -523,6 +528,7 @@ export class RequisitionService {
     if (query.doc_type && !(COMMON_LIST_DOC_TYPES as readonly string[]).includes(query.doc_type)) {
       throw new BadRequestException(`doc_type must be one of ${COMMON_LIST_DOC_TYPES.join(', ')}.`);
     }
+    if (query.company_id) assertCompanyInScope(farmScope(this.cls), query.company_id);
     const conditions = [
       eq(schema.requisition.tenant_id, tenantId),
       isNull(schema.requisition.deleted_at),
