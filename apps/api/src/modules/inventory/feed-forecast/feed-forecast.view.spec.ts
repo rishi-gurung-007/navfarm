@@ -36,7 +36,7 @@ describe('groupRows — Step 6 "Build dated forecast"', () => {
       currentItemId: 'r1', currentItemNo: 'FEED-R1', currentItemName: 'Weaner Diet R1',
       heads: 1000, feedRateKg: 2, openingSystemBalanceKg: 1500, confirmedReceiptsKg: 0,
       dailyUseKg: 2000, projectedClosingBalanceKg: 0, recommendedQtyKg: 4500,
-      firstShortageDate: '2026-09-23', deliveryDate: '2026-09-23',
+      firstShortageDate: '2026-09-23', deliveryDate: '2026-09-21',
     });
   });
 

@@ -8,7 +8,7 @@ import * as schema from '../../../core/database/schema';
 import { activeFarmOfCompany, batchScopeConditions, farmScope, FARM_SCOPE_KEY, FarmScope, restrictedScopeConditions } from '../../../common/farm-scope';
 import { FeedStockMovement, InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
 import { FeedRow, stageDayRange } from '../../production/lifecycle/feed-row-days';
-import { asBatchPk, buildFeedForecast, DailyForecastRow, dayShort, DietChange, ForecastFlag, ForecastInput, ForecastRow, ForecastSource, isTimeZone, todayInZone } from './feed-forecast.engine';
+import { asBatchPk, buildFeedForecast, DailyForecastRow, dayShort, DietChange, ForecastFlag, forecastDemandHorizon, ForecastInput, ForecastRow, ForecastSource, isTimeZone, todayInZone } from './feed-forecast.engine';
 import { defaultWindowEnd, displayDaily, ForecastView, groupRows, MAX_SPAN_DAYS, PeriodRange, ReportRow, resolveViewRange, spanProblem } from './feed-forecast.view';
 import { outstandingTransferQty, stockAsOf } from './feed-forecast.stock';
 import { OPEN_TRANSFER_STATUSES } from '../stock-transfer/transfer-execution.rules';
@@ -113,7 +113,7 @@ export interface FeedForecastResponse {
   timeZone: string | null;
   from: string;
   to: string;
-  /** How far the run-down was looked for (Q12): at least `to`, at most 45 days past the planning date. */
+  /** Last date emitted to the balance grid: at least `to`, at most 45 days past the planning date. */
   horizonTo: string;
   farm: { id: string; code: string; name: string };
   /** TDD Engine Step 8 / Dashboard row 60: the configured planning settings the engine used for this run. */
@@ -315,9 +315,9 @@ function addDays(iso: string, n: number): string {
 }
 
 /**
- * The forecast's standard horizon: the run-down and the shortage date are
- * looked for up to MAX_SPAN_DAYS past the planning date (Q12), whatever window
- * is shown. getForecast (and so Save Run) and the requisition draft both use it.
+ * The forecast's standard visible horizon. Balance columns are emitted up to
+ * MAX_SPAN_DAYS past the planning date, whatever shorter window is selected.
+ * The engine may continue beyond it to determine First Shortage Date.
  */
 export function forecastHorizon(planningDate: string): string {
   return addDays(planningDate, MAX_SPAN_DAYS);
@@ -350,9 +350,9 @@ function planningDateProblem(today: string, planningDate: string): string | null
 }
 
 /**
- * Q12: nothing is forecast past 45 days after the planning date, and the walk
- * runs from the stock date to at least `to`, so a later `to` is refused rather
- * than walked. When the caller sent no `to` the date refused is one it never
+ * Q12: no report range or balance grid extends past 45 days after the planning
+ * date, so a later `to` is refused. The internal shortage search may continue
+ * through known lifecycle demand. When the caller sent no `to` the date refused is one it never
  * typed — the default from + 6 (7 days inclusive) — so the message names that instead of
  * pointing at a value the caller cannot see.
  */
@@ -400,7 +400,7 @@ export function projectSegments(
   stageId: string,
   start: string,
   planningDate: string,
-  to: string,
+  _to: string,
   stages: Map<string, StageInfo>,
 ): Segment[] {
   // The initial segment carries the stage's change window (D36):
@@ -424,7 +424,7 @@ export function projectSegments(
     const stage = stages.get(current.stageId);
     if (!stage?.durationDays || stage.durationDays < 1 || !stage.nextStageId) break;
     const end = addDays(current.start, stage.durationDays - 1);
-    if (end >= to || end < planningDate) break;
+    if (end < planningDate) break;
     const next = stages.get(stage.nextStageId);
     if (!next || !next.isActive) break;
     current.end = end;
@@ -619,7 +619,8 @@ export class FeedForecastService {
   /**
    * GET /feed-forecast (Plan R). The view only chooses the range and how the
    * engine's per-date rows are grouped (feed-forecast.view.ts); whatever the
-   * view, the run-down is looked for 45 days past the planning date (Q12).
+   * view, balances are displayed through the 45-day horizon and First
+   * Shortage Date is searched through the known lifecycle demand plan.
    *
    * Every date the caller sends is checked here, before anything is read, even
    * one the chosen view does not use (`from` under PERIOD, `to` under DAILY or
@@ -658,8 +659,8 @@ export class FeedForecastService {
     const { from, to } = resolveViewRange({ view, planningDate, from: query.from, to: query.to, period });
     const span = spanProblem(from, to, period);
     if (span) throw new BadRequestException(span);
-    // `reach` is the last forecast day (45 days after the planning date). computeForFarm refuses a `to` past it
-    // (reachProblem) and looks for the run-down up to `horizonTo` (Q12), so the horizon keeps the full reach.
+    // `reach` is the last displayed forecast day (45 days after the planning date). computeForFarm refuses a
+    // `to` past it (reachProblem); the engine can search past it for First Shortage Date without adding columns.
     // The computed and returned range is the one resolveViewRange chose: an omitted `to` means the 7-day default
     // window (from + 6, Engine §5 row 67), never the reach. An explicit `to` is sent as typed and stays bound by it.
     const reach = forecastHorizon(planningDate);
@@ -1198,9 +1199,10 @@ export class FeedForecastService {
    *
    * Plan R: the planning date may be chosen (±45 days of the farm's today, Q8);
    * stock is read as of the stock date — the planning date, or today when
-   * planning ahead, the days in between being walked (D19); the run-down may be
-   * looked for up to `horizonTo`, capped at 45 days past the planning date and
-   * never before `to` (Q12). A caller that has already read the farm's day
+   * planning ahead, the days in between being walked (D19); visible balances
+   * end at `horizonTo`, capped at 45 days past the planning date and never
+   * before `to` (Q12), while First Shortage Date may be calculated later from
+   * known lifecycle demand. A caller that has already read the farm's day
    * passes it as `clock`, so one evaluation never reads the zone twice.
    */
   async computeForFarm(
@@ -1623,6 +1625,7 @@ export class FeedForecastService {
     // Stages are projected to the run-down horizon, so a stage change just past `to` still moves the run-down (Q12).
     const { batches, flags, stages } = await this.loadBatches(farm, planningDate, opts.horizonTo, opts.headerCutoff, tenantId, locationById, new Set(shedIds));
     const feedRows = await this.loadFeedRows([...new Set(batches.map((b) => b.breedId))], companyId, tenantId);
+    const calculationHorizon = forecastDemandHorizon({ batches, feedRows }, opts.horizonTo);
 
     // The farm's STORE (D6 fallback). One per farm in every template; if a farm
     // somehow has two, the first by code is used — the forecast needs one pool.
@@ -1633,9 +1636,9 @@ export class FeedForecastService {
     // transfers inside the walk (loadDraftTransfers, Part E Task 4b),
     // are incoming (Ruling on Task 6's carry). Feeding is left to the engine.
     const ledger = stockIds.length
-      ? await this.ledgerService.getFeedStockAsOf({ companyId, warehouseIds: stockIds, stockDate: opts.stockDate, horizonTo: opts.horizonTo }, tenantId)
+      ? await this.ledgerService.getFeedStockAsOf({ companyId, warehouseIds: stockIds, stockDate: opts.stockDate, horizonTo: calculationHorizon }, tenantId)
       : { opening: [], movements: [] };
-    const drafts = stockIds.length ? await this.loadDraftTransfers(stockIds, companyId, tenantId, opts.stockDate, opts.horizonTo) : [];
+    const drafts = stockIds.length ? await this.loadDraftTransfers(stockIds, companyId, tenantId, opts.stockDate, calculationHorizon) : [];
     const stock = stockAsOf({
       silos: siloRows
         .filter((s) => linkedSiloIds.includes(s.location_id))

@@ -62,12 +62,12 @@ describe('buildFeedForecast — D19 run-down to the low level', () => {
 });
 
 describe('buildFeedForecast — confirmed incoming (D19, Q2)', () => {
-  it('a delivery that keeps stock above zero throughout the window: runDownDate is null', () => {
-    // 525→425→325→525(+300)→425→325→225→125. Demand never exceeds open in the Sep23-Sep29 window.
-    // No animals go hungry → runDownDate null, and nothing is short either.
+  it('a delivery that keeps stock above zero throughout the visible window still gets its later shortage date', () => {
+    // 525→425→325→525(+300)→425→325→225→125. Nothing is short inside
+    // Sep23-Sep29, but the background lifecycle projection reaches Oct01.
     const input = oneSilo({ incoming: [{ locationId: 's1', itemId: 'r1', date: '2026-09-25', kg: 300 }] }, { lowLevelKg: 200 });
     const { sources } = buildFeedForecast(input);
-    expect(sources[0]).toMatchObject({ runDownDate: null, incomingKg: 300, balanceKg: 525 });
+    expect(sources[0]).toMatchObject({ runDownDate: '2026-10-01', incomingKg: 300, balanceKg: 525 });
     // 700 demand − 525 opening − 300 incoming = −125 → 0; the 200 kg low level is not part of it (3 Oct ruling 2).
     expect(sources[0].shortfallKg).toBe(0);
   });
@@ -114,6 +114,39 @@ describe('buildFeedForecast — forward planning date walks today\'s stock (Revi
 });
 
 describe('buildFeedForecast — run-down horizon past the range (Q12)', () => {
+  it('finds First Shortage beyond the 45 displayed days and dates delivery two calendar days earlier', () => {
+    const input = oneSilo({
+      to: '2026-09-23',
+      horizonTo: '2026-11-07',
+    }, { balanceKg: 10000 });
+
+    const { sources, sourceBalances } = buildFeedForecast(input);
+
+    expect(sources[0].shortageDate).toBe('2027-01-01');
+    expect(sourceBalances[0]).toMatchObject({
+      firstShortageDate: '2027-01-01',
+      deliveryDate: '2026-12-30',
+    });
+    expect(sourceBalances.at(-1)?.date).toBe('2026-11-07');
+  });
+
+  it('carries zero through later visible dates after First Shortage', () => {
+    const input = oneSilo({
+      to: '2026-09-23',
+      horizonTo: '2026-09-27',
+    }, { balanceKg: 100 });
+
+    const { sourceBalances } = buildFeedForecast(input);
+
+    expect(sourceBalances.map((point) => [point.date, point.projectedClosingBalanceKg])).toEqual([
+      ['2026-09-23', 0],
+      ['2026-09-24', 0],
+      ['2026-09-25', 0],
+      ['2026-09-26', 0],
+      ['2026-09-27', 0],
+    ]);
+  });
+
   it('finds a run-down after `to` while walk demand, rows and shortfall stay on the range', () => {
     // 1000 kg at 100/day. Oct02 closes to 0, Oct03: open=0, demand=100 → runDownDate=Oct03.
     const input = oneSilo({ to: '2026-09-25', horizonTo: '2026-10-10' }, { balanceKg: 1000 });
@@ -243,12 +276,12 @@ describe('buildFeedForecast — D19 walk edge cases (Plan R review of Task 2)', 
     expect(daily.find((d) => d.date === '2026-09-24')).toMatchObject({ currentInventoryKg: 35800 });
   });
 
-  it('a silo that outlasts the horizon has no run-down', () => {
+  it('a silo that outlasts the displayed horizon still reports its later run-down', () => {
     const { sources, rows, daily } = buildFeedForecast(oneSilo({ horizonTo: '2026-10-10' }, { balanceKg: 10000, lowLevelKg: 200 }));
-    const none = { runDownDate: null };
-    expect(sources[0]).toMatchObject({ ...none, shortfallKg: 0 });
-    expect(rows[0]).toMatchObject(none);
-    expect(daily.every((d) => d.runDownDate === null)).toBe(true);
+    const later = { runDownDate: '2027-01-01' };
+    expect(sources[0]).toMatchObject({ ...later, shortfallKg: 0 });
+    expect(rows[0]).toMatchObject(later);
+    expect(daily.every((d) => d.runDownDate === '2027-01-01')).toBe(true);
   });
 
   it('adds up several incoming rows on one date', () => {

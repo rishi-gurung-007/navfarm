@@ -580,9 +580,11 @@ describe('projectSegments', () => {
     ]);
   });
 
-  it('leaves the current segment open when it outlasts the range', () => {
+  it('projects the known lifecycle beyond the displayed range for First Shortage calculation', () => {
     expect(projectSegments('S1', '2026-09-20', '2026-09-20', '2026-09-29', stages)).toEqual([
-      { stageId: 'S1', stageCode: 'WEANER', start: '2026-09-20', end: null, projected: false },
+      { stageId: 'S1', stageCode: 'WEANER', start: '2026-09-20', end: '2026-09-29', projected: false },
+      { stageId: 'S2', stageCode: 'GROWER', start: '2026-09-30', end: '2026-10-04', projected: true },
+      { stageId: 'S3', stageCode: 'FINISHER', start: '2026-10-05', end: null, projected: true },
     ]);
   });
 

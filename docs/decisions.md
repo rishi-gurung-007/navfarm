@@ -2812,3 +2812,23 @@ Rishi, 5 Oct, answering the Phase 1 end-to-end findings:
    separate receive permission. Direct Transfer remains the sender's single action that posts both.
 4. **Release** may be pressed by **any user who may approve** the requisition. This replaces the 1 Oct
    sender-department rule for Release only; Transfer Shipment stays with the sender department.
+
+## 2026-10-06 — Feed Forecast display horizon, shortage date and delivery lead time
+
+Rishi confirmed that the Calculation grid displays no more than 45 calendar
+days, but the engine must continue its background projection beyond the
+displayed range when necessary to determine **First Shortage Date**. Run-down
+Date and First Shortage Date are the same business date, so the Calculation
+grid shows only **First Shortage Date** rather than introducing a separate
+Run-down Date column.
+
+The background calculation continues with the applicable future lifecycle feed
+plan, headcount, feed rate, confirmed receipts and diet changes until shortage
+is found. If no future consumption exists, First Shortage Date remains empty.
+Delivery Date is exactly two calendar days before First Shortage Date. Within
+the displayed 45-day grid, a source that has reached shortage carries `0.00`
+through every later visible date instead of showing blank cells.
+
+This refines the 5 Oct 45-day rule: 45 days limits displayed date columns and
+user-selected ranges; it does not limit the background search for First
+Shortage Date.

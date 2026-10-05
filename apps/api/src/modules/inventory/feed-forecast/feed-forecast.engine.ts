@@ -45,9 +45,9 @@
  *    low-level shortfall (Q3) are superseded by the 3 Oct rulings: the
  *    shortfall is demand + safety stock − opening − confirmed incoming
  *    (TDD Dashboard row 60, Engine Step 7–8); the silo's Below Feed Level is an
- *    alert threshold only. The run-down may be looked for past `to`
- *    (`horizonTo`) so a one-day view still shows it; everything else keeps
- *    its window.
+ *    alert threshold only. The visible balance series ends at `horizonTo`,
+ *    while the shortage search may continue through the known lifecycle feed
+ *    plan so a one-day view can still show the eventual shortage.
  * 7. Plan R (D16–D18): `daily` is one row per batch, item and date, read off
  *    the same walk. Its Current Inventory is the container's opening that day
  *    (Ruling M7): what the day before left, plus that day's `incoming` —
@@ -95,7 +95,7 @@ export interface ForecastInput {
   to: string;
   /** Balances below are opening balances of this day (D19). Defaults to planningDate; a later date is ignored. */
   stockDate?: string;
-  /** Run-down and the shortage date are searched up to here (Q12). Defaults to `to`; an earlier date is ignored. */
+  /** Last date emitted to the report grid. The shortage search may continue through the known lifecycle plan. */
   horizonTo?: string;
   /** TDD Engine Step 8 / Dashboard row 60: configured safety stock per silo and item. Worked Example: 0. */
   safetyStockKg?: number;
@@ -174,7 +174,7 @@ export interface ForecastRow {
   perDayIntakeKg: number | null; // this row, first day it has demand in range
   sourceDailyDemandKg: number | null; // all rows on the same source+item, planning day
   daysLeft: number | null; // D1: one decimal (Silo Balance row 9)
-  runDownDate: string | null; // D19; null = lasts to the horizon
+  runDownDate: string | null; // D19; null = no shortage in the known demand plan
   rangeDemandKg: number;
 }
 
@@ -338,6 +338,24 @@ export function diffDays(a: string, b: string): number {
   return Math.round((parseIsoUtc(b) - parseIsoUtc(a)) / 86_400_000);
 }
 
+/** Last date on which the supplied lifecycle can create feed demand. */
+export function forecastDemandHorizon(
+  input: Pick<ForecastInput, 'batches' | 'feedRows'>,
+  minimum: string,
+): string {
+  let latest = minimum;
+  for (const batch of input.batches) {
+    for (const segment of batch.segments) {
+      const rows = input.feedRows.filter((row) => row.breedId === batch.breedId && row.stageId === segment.stageId);
+      if (!rows.length) continue;
+      const feedEnd = addDays(segment.start, Math.max(...rows.map((row) => row.toDay)) - 1);
+      const segmentFeedEnd = segment.end && segment.end < feedEnd ? segment.end : feedEnd;
+      if (segmentFeedEnd > latest) latest = segmentFeedEnd;
+    }
+  }
+  return latest;
+}
+
 /**
  * The server's own calendar day, not the UTC one: `toISOString()` would hand a
  * farm east of Greenwich yesterday's date for the first hours of every
@@ -456,6 +474,7 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
   // demand or diet changes cover (see #2 and #6 above).
   const stockDate = input.stockDate && input.stockDate < input.planningDate ? input.stockDate : input.planningDate;
   const horizonTo = input.horizonTo && input.horizonTo > input.to ? input.horizonTo : input.to;
+  const calculationTo = forecastDemandHorizon(input, horizonTo);
 
   // The visible/reporting window (rangeDemandKg, perDayIntakeKg, NO_FEED_ROW/OVERLAP flags).
   const rangeDates = dateRange(input.from, input.to);
@@ -464,8 +483,10 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
   // Planning window: planningDate..to — Plan B's requisition window (walk demand, lifecycle ids, diet changes).
   const planDates = input.planningDate <= input.to ? dateRange(input.planningDate, input.to) : [];
 
-  // Balance walk: stockDate..horizonTo, and nothing at all when `to` precedes the planning date.
-  const walkDates = planDates.length ? dateRange(stockDate, horizonTo) : [];
+  // Balance calculation continues through the known lifecycle plan, while
+  // report rows remain capped at horizonTo below.
+  const walkDates = planDates.length ? dateRange(stockDate, calculationTo) : [];
+  const displayedWalkDates = walkDates.filter((date) => date <= horizonTo);
 
   const demandDates = Array.from(new Set([...rangeDates, ...walkDates, input.planningDate])).sort();
 
@@ -582,13 +603,11 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
   // container on a day give its shared count (D18); an ANIMAL_WISE batch's stage groups count as separate batches,
   // because each is fed its own stage's diet.
   //
-  // FF1 (Rishi, 5 Oct): the display rows run past `to` up to `horizonTo` — the
-  // balance walk already projects that far, and DAILY showed only the selected
-  // date although the walk knew the 21 Oct run-down. The per-row map below
-  // stops each row at its own run-down past `to` (no 0/0 tail through the
-  // horizon); dates inside the window are always shown, so in-window demand
-  // (the worked example's R1 23–25 Sep against a day-one run-down) is never
-  // hidden. Every planning-window aggregate (planDates, rowAggs, sources,
+  // FF1 (Rishi, 5–6 Oct): display rows run past `to` up to the 45-day
+  // `horizonTo`, even when the source has already reached shortage; the grid
+  // must carry 0.00 through the remaining visible dates. The balance walk may
+  // continue beyond that display horizon solely to find First Shortage Date.
+  // Every planning-window aggregate (planDates, rowAggs, sources,
   // lifecycleIds, flags) stays on planningDate..to, so requisition quantities
   // never change with the display range. CUSTOM and PERIOD are trimmed back
   // to `to` in getForecast — explicit ranges do not silently expand.
@@ -887,9 +906,8 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
     const locationId = (sk.siloId ?? sk.storeId)!;
     const inflow = incomingByLocation.get(`${locationId}|${sk.itemId}`) ?? new Map<string, number>();
     const currentSiloItemId = sk.sourceType === 'SILO' && sk.siloId ? (siloById.get(sk.siloId)?.itemId ?? null) : null;
-    for (const date of walkDates) {
+    for (const date of displayedWalkDates) {
       if (date < rowFrom) continue;
-      if (date > input.to && p.runDownDate !== null && date > p.runDownDate) break;
       const currentInventory = openingByKey.get(key)?.get(date) ?? 0;
       const receipt = inflow.get(date) ?? 0;
       const demand = byDate.get(date) ?? 0;
@@ -910,7 +928,7 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
         projectedClosingBalanceKg: toKg(Math.max(0, currentInventory - demand)),
         recommendedQtyKg: p.shortfallKg,
         firstShortageDate: p.shortageDate,
-        deliveryDate: p.shortageDate,
+        deliveryDate: p.shortageDate ? addDays(p.shortageDate, -2) : null,
         runDownDate: p.runDownDate,
       });
     }

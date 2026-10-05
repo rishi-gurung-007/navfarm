@@ -180,7 +180,7 @@ export function groupRows(
           projectedClosingBalanceKg: d.projectedClosingKg ?? Math.max(0, d.currentInventoryKg - d.perDayIntakeKg),
           recommendedQtyKg: d.recommendedQtyKg ?? 0,
           firstShortageDate: d.shortageDate ?? null,
-          deliveryDate: d.shortageDate ?? null,
+          deliveryDate: d.shortageDate ? addDays(d.shortageDate, -2) : null,
           daysOfStock: d.daysOfStock, sharedBatchCount: d.sharedBatchCount, indicative: d.indicative,
           runDownDate: d.runDownDate,
         },
