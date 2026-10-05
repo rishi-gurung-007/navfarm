@@ -124,7 +124,7 @@ export function CommonRequisitionDocument({ view, editable, options, onChange, o
   // names an item. Balance to Ship is last of his, after Remaining to Receive.
   const rishiColumns = [
     "crqColLine",
-    ...(isItem ? ["crqColItem", "crqColItemDescription"] : ["crqColDescription"]),
+    ...(isItem ? ["crqColItem", "crqColItemDescription"] : ["crqColFaServiceDescription"]),
     "crqColQty",
     ...(store ? ["crqColFrom", "crqColTo", "crqColToShip", "crqColShipped", "crqColToReceive", "crqColReceived", "crqColRemaining", "crqColBalance"] : []),
   ];

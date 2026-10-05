@@ -227,8 +227,9 @@ describe("CommonRequisitionDocument — Rishi's line column list", () => {
   it("gives a Fixed Asset document only its description and quantity of Rishi's columns", () => {
     const { container } = render(<CommonRequisitionDocument view={emptyCommonRequisition("co-1", "FA", "PURCHASE", "2026-10-05")} editable options={options} onChange={jest.fn()} />);
     const h = headers(container);
-    expect(h).toContain("crqColDescription");
-    expect(h).toContain("crqColQty");
+    // Rishi's own column name for it, not the Item line's free "Description" (P1 e2e).
+    expect(h.slice(0, 3)).toEqual(["crqColLine", "crqColFaServiceDescription", "crqColQty"]);
+    expect(h).not.toContain("crqColDescription");
     expect(h).not.toContain("crqColItem");
     expect(h).not.toContain("crqColItemDescription");
     expect(h).not.toContain("crqColTracking");
@@ -243,7 +244,7 @@ describe("CommonRequisitionDocument — FA/Service is Description + Qty only", (
     const h = headers(container);
     expect(h).not.toContain("crqColUom");
     expect(h).not.toContain("crqColRate");
-    expect(h).toContain("crqColDescription");
+    expect(h).toContain("crqColFaServiceDescription");
     expect(h).toContain("crqColQty");
   });
 
