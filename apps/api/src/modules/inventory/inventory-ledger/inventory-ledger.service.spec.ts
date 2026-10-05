@@ -322,3 +322,62 @@ describe('InventoryLedgerService transfer legs', () => {
     await expect(service.transferShipmentRemainingValue({ tenantId: 'tenant-1', shipmentNo: 'SH-2026-0001', lineId: 'line-1', receiptNos: ['RC-2026-0001'] })).resolves.toBe(4);
   });
 });
+
+/**
+ * WP4a fix round 1, Important 4 (coordinator's ruling on the review's ⚠️):
+ * origin/main's applyFifo (f776836f) falls back COMPANY-WIDE for serials not
+ * found in the requested warehouse, and writeNegativeEntry then re-stamps the
+ * outbound row's warehouse with wherever it found them. For a stock-transfer
+ * shipment that consumed stock outside the From sub-location and slipped past
+ * the From-department check. A transfer shipment now draws only from its From
+ * location and refuses instead; every other caller keeps the fallback.
+ */
+describe('applyFifo — a transfer shipment never falls back outside its From location', () => {
+  function serialDb() {
+    const queries: any[] = [];
+    const db: any = {
+      select: () => ({ from: () => ({ where: (condition: any) => {
+        queries.push(new MySqlDialect().sqlToQuery(condition));
+        // The serial sits elsewhere: nothing at the requested warehouse; the company-wide read would find it.
+        const rows = queries.length === 1 ? [] : [{ ledger_id: 'l-elsewhere', remaining_quantity: '1', rate: '5', warehouse_id: 'wh-other' }];
+        return { orderBy: () => ({ for: async () => rows }) };
+      } }) }),
+      insert: jest.fn(() => ({ values: async () => undefined })),
+      update: jest.fn(() => ({ set: () => ({ where: async () => undefined }) })),
+    };
+    return { db, queries };
+  }
+  const args = { tenantId: 'tenant', companyId: 'company', itemId: 'item', outboundLedgerId: 'out', quantity: 1, applicationDate: '2026-10-05', serialNo: 'SN1', warehouseId: 'wh-store' };
+
+  it('refuses a transfer whose serial sits in another location, reading only the From location', async () => {
+    const { db, queries } = serialDb();
+    const service = new InventoryLedgerService({ get: () => db } as any);
+    await expect(service.applyFifo({ ...args, strictWarehouse: true }, db))
+      .rejects.toThrow("Item 'item' is not in stock at the From sub-location for the requested lot/serial (short by 1); a transfer ships only from its From sub-location.");
+    expect(queries).toHaveLength(1);
+    expect(db.insert).not.toHaveBeenCalled();
+  });
+
+  it('leaves the company-wide serial fallback of every other caller unchanged', async () => {
+    const { db, queries } = serialDb();
+    const service = new InventoryLedgerService({ get: () => db } as any);
+    const out = await service.applyFifo(args, db);
+    expect(queries).toHaveLength(2);
+    expect(out.appliedWarehouseId).toBe('wh-other');
+  });
+
+  it('writeTransferShipment asks FIFO for the strict From-location draw', async () => {
+    const insert = jest.fn(async () => undefined);
+    const db: any = {
+      select: () => ({ from: () => ({ where: () => ({ limit: async () => [{ item_id: 'item', item_code: 'item', item_name: 'Item', is_serial_tracked: 1 }] }) }) }),
+      transaction: async (work: any) => work(db),
+      insert: () => ({ values: insert }),
+      update: () => ({ set: () => ({ where: async () => undefined }) }),
+    };
+    const service = new InventoryLedgerService(transactionCls(db));
+    const fifo = jest.spyOn(service, 'applyFifo').mockResolvedValue({ totalCost: 5, averageRate: 5, appliedWarehouseId: 'wh-store' });
+    await service.writeTransferShipment({ tenantId: 'tenant', companyId: 'company', itemId: 'item', documentNo: 'SH-1', documentLineId: 'line-1',
+      postingDate: '2026-10-05', quantity: 1, uom: 'PCS', fromWarehouseId: 'wh-store', serialNo: 'SN1' });
+    expect(fifo).toHaveBeenCalledWith(expect.objectContaining({ warehouseId: 'wh-store', serialNo: 'SN1', strictWarehouse: true }), db);
+  });
+});

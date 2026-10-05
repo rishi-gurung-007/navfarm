@@ -56,6 +56,8 @@ interface WriteNegativeEntryParams {
   warehouseId?: string;
   locationId?: string;
   userId?: string;
+  /** WP4a: draw only from warehouseId, never the company-wide serial fallback (stock-transfer shipments). */
+  strictWarehouse?: boolean;
 }
 
 /** A silo or store's signed stock of one item and unit, summed (Feed Forecast Plan R). */
@@ -251,6 +253,11 @@ export class InventoryLedgerService {
       // layers actually received into that warehouse instead of drawing down
       // whichever warehouse happens to hold the oldest layer tenant-wide.
       warehouseId?: string;
+      // WP4a fix round 1 (coordinator's ruling): a stock-transfer shipment
+      // draws ONLY from its From location. The company-wide serial fallback
+      // below let a transfer consume stock held elsewhere — past the
+      // From-department check — so with this set a shortage is refused.
+      strictWarehouse?: boolean;
     },
     executor: MySql2Database<typeof schema> = this.db
   ): Promise<{ totalCost: number; averageRate: number; appliedWarehouseId?: string }> {
@@ -303,6 +310,7 @@ export class InventoryLedgerService {
     // (e.g. if the caller passed a farm store warehouse but serials are held in central medicine store),
     // fall back to company-wide for those exact serials so that valid physical serials can be consumed.
     if (
+      !params.strictWarehouse &&
       serials.length > 0 &&
       params.warehouseId &&
       availableLayers.reduce((sum, l) => sum + Number(l.remaining_quantity || 0), 0) < remainingToConsume
@@ -358,6 +366,11 @@ export class InventoryLedgerService {
       totalCost += drawCost;
     }
 
+    if (remainingToConsume > 0 && params.strictWarehouse) {
+      throw new BadRequestException(
+        `Item '${params.itemId}' is not in stock at the From sub-location for the requested lot/serial (short by ${remainingToConsume}); a transfer ships only from its From sub-location.`,
+      );
+    }
     if (remainingToConsume > 0) {
       throw new BadRequestException(
         `Insufficient stock for item '${params.itemId}': requested ${params.quantity}, short by ${remainingToConsume}. Post a receipt before issuing stock.`
@@ -443,6 +456,7 @@ export class InventoryLedgerService {
           applicationDate: params.postingDate,
           userId: params.userId,
           warehouseId: params.warehouseId,
+          strictWarehouse: params.strictWarehouse,
         },
         tx
       );
@@ -540,6 +554,7 @@ export class InventoryLedgerService {
       documentType: 'STOCK_TRANSFER', documentNo: params.documentNo, documentLineId: params.documentLineId,
       postingDate: params.postingDate, transactionType: 'TRANSFER_SHIPMENT', quantity: params.quantity, uom: params.uom,
       lotNo: params.lotNo, serialNo: params.serialNo, warehouseId: params.fromWarehouseId, userId: params.userId,
+      strictWarehouse: true,
     });
   }
 
