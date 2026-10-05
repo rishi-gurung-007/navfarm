@@ -217,6 +217,8 @@ export interface DailyForecastRow {
   sourceCode: string | null;
   destinationLocationId?: string | null;
   currentItemId?: string | null;
+  currentItemNo?: string | null;
+  currentItemName?: string | null;
   openingStockKg?: number;
   confirmedReceiptKg?: number;
   currentInventoryKg: number; // projected System Balance at the start of `date` (Q6)
@@ -233,6 +235,33 @@ export interface DailyForecastRow {
   runDownDate: string | null;
   /** First date total demand exceeds available opening stock; distinct from low-level run-down. */
   shortageDate?: string | null;
+}
+
+/**
+ * A container/item balance is emitted once per date, independently of batch
+ * rows. This is the calculation grid's canonical stock series: it includes
+ * zero-use dates before a future diet starts and cannot be duplicated when
+ * several batches draw from the same silo.
+ */
+export interface SourceBalancePoint {
+  date: string;
+  sourceType: 'SILO' | 'STORE';
+  sourceCode: string;
+  locationId: string;
+  itemId: string;
+  itemNo: string;
+  itemName: string;
+  currentItemId: string | null;
+  currentItemNo: string | null;
+  currentItemName: string | null;
+  openingSystemBalanceKg: number;
+  confirmedReceiptKg: number;
+  dailyUseKg: number;
+  projectedClosingBalanceKg: number;
+  recommendedQtyKg: number;
+  firstShortageDate: string | null;
+  deliveryDate: string | null;
+  runDownDate: string | null;
 }
 
 export interface ForecastSource {
@@ -282,6 +311,7 @@ export interface ForecastResult {
   sources: ForecastSource[];
   dietChanges: DietChange[];
   daily: DailyForecastRow[]; // sorted by shedCode, batchNo, date, itemName
+  sourceBalances: SourceBalancePoint[]; // sorted by sourceCode, itemId, date
 }
 
 /** Date arithmetic on UTC midnights — see context.md: farm-local calendar days in, UTC midnight math internally. */
@@ -849,6 +879,50 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
   }
   sources.sort((a, b) => (a.sourceCode !== b.sourceCode ? (a.sourceCode < b.sourceCode ? -1 : 1) : a.itemId < b.itemId ? -1 : a.itemId > b.itemId ? 1 : 0));
 
+  const sourceBalances: SourceBalancePoint[] = [];
+  for (const [key, sk] of keyMeta) {
+    if (sk.sourceType === 'NONE') continue;
+    const p = projectionByKey.get(key)!;
+    const byDate = demandMicrogramsByKeyByDate.get(key) ?? new Map<string, number>();
+    const locationId = (sk.siloId ?? sk.storeId)!;
+    const inflow = incomingByLocation.get(`${locationId}|${sk.itemId}`) ?? new Map<string, number>();
+    const currentSiloItemId = sk.sourceType === 'SILO' && sk.siloId ? (siloById.get(sk.siloId)?.itemId ?? null) : null;
+    for (const date of walkDates) {
+      if (date < rowFrom) continue;
+      if (date > input.to && p.runDownDate !== null && date > p.runDownDate) break;
+      const currentInventory = openingByKey.get(key)?.get(date) ?? 0;
+      const receipt = inflow.get(date) ?? 0;
+      const demand = byDate.get(date) ?? 0;
+      sourceBalances.push({
+        date,
+        sourceType: sk.sourceType,
+        sourceCode: sk.sourceCode!,
+        locationId,
+        itemId: sk.itemId,
+        itemNo: input.itemCodes?.[sk.itemId] ?? '',
+        itemName: input.items[sk.itemId] ?? sk.itemId,
+        currentItemId: currentSiloItemId,
+        currentItemNo: currentSiloItemId ? input.itemCodes?.[currentSiloItemId] ?? '' : null,
+        currentItemName: currentSiloItemId ? input.items[currentSiloItemId] ?? currentSiloItemId : null,
+        openingSystemBalanceKg: toKg(currentInventory - receipt),
+        confirmedReceiptKg: toKg(receipt),
+        dailyUseKg: toKg(demand),
+        projectedClosingBalanceKg: toKg(Math.max(0, currentInventory - demand)),
+        recommendedQtyKg: p.shortfallKg,
+        firstShortageDate: p.shortageDate,
+        deliveryDate: p.shortageDate,
+        runDownDate: p.runDownDate,
+      });
+    }
+  }
+  sourceBalances.sort((a, b) =>
+    a.sourceCode !== b.sourceCode
+      ? a.sourceCode.localeCompare(b.sourceCode)
+      : a.itemId !== b.itemId
+        ? a.itemId.localeCompare(b.itemId)
+        : a.date.localeCompare(b.date),
+  );
+
   const daily: DailyForecastRow[] = dailyEntries.flatMap((e) => {
     const p = projectionByKey.get(e.key)!;
     // FF1: a row stops at zero past the window — no date past both `to` and its
@@ -874,6 +948,7 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
     }
     const itemId = e.feedRow.itemId;
     const source = keyMeta.get(e.key)!;
+    const currentSiloItemId = source.sourceType === 'SILO' && source.siloId ? (siloById.get(source.siloId)?.itemId ?? null) : null;
     const confirmedReceiptMicrograms = incomingByLocation.get(`${source.siloId ?? source.storeId}|${itemId}`)?.get(e.date) ?? 0;
     const totalDemandMicrograms = byDate.get(e.date) ?? 0;
     return {
@@ -893,7 +968,9 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
       sourceType: e.sourceType,
       sourceCode: e.sourceCode,
       destinationLocationId: source.siloId ?? source.storeId,
-      currentItemId: e.sourceType === 'NONE' ? null : itemId,
+      currentItemId: currentSiloItemId,
+      currentItemNo: currentSiloItemId ? input.itemCodes?.[currentSiloItemId] ?? '' : null,
+      currentItemName: currentSiloItemId ? input.items[currentSiloItemId] ?? currentSiloItemId : null,
       openingStockKg: toKg(opening - confirmedReceiptMicrograms),
       confirmedReceiptKg: toKg(confirmedReceiptMicrograms),
       currentInventoryKg: toKg(opening),
@@ -956,5 +1033,5 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
     return a.firstDemandDate < b.firstDemandDate ? -1 : a.firstDemandDate > b.firstDemandDate ? 1 : 0;
   });
 
-  return { rows: entries.map((e) => e.row), flags, sources, dietChanges, daily };
+  return { rows: entries.map((e) => e.row), flags, sources, dietChanges, daily, sourceBalances };
 }

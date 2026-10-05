@@ -69,8 +69,13 @@ export function spanProblem(from: string, to: string, period?: PeriodRange | nul
 /** One line of the report grid: a single date (Daily, Custom) or a batch + item's days in a week or period. */
 export interface ReportRow {
   key: string;
+  farmId: string;
+  /** Genuine batch_header id. */
   batchId: string;
+  /** Engine aggregation identity; composite for registered/animal-wise stage groups. */
+  batchGroupId: string;
   batchNo: string;
+  shedId: string | null;
   shedCode: string;
   stageCode: string;
   itemId: string;
@@ -78,15 +83,27 @@ export interface ReportRow {
   itemName: string;
   sourceType: 'SILO' | 'STORE' | 'NONE';
   sourceCode: string | null;
+  sourceLocationId: string | null;
   /** location_name of the silo or store (Engine §5 row 70); null for NONE or when the name is unknown. */
   sourceName: string | null;
+  currentItemId: string | null;
+  currentItemNo: string | null;
+  currentItemName: string | null;
   date: string; // first date of the line (field spec: "the period start date when grouped")
   dateTo: string; // last date of the line
   days: number;
   currentInventoryKg: number; // as of `date`
+  openingSystemBalanceKg: number;
+  confirmedReceiptsKg: number;
   heads: number; // as of `date`
+  feedRateKg: number;
   perDayIntakeKg: number; // as of `date`, no wastage (D17)
   intakeKg: number; // sum of per-day intake over the line — D34: the line's demand, wastage is gone
+  dailyUseKg: number;
+  projectedClosingBalanceKg: number;
+  recommendedQtyKg: number;
+  firstShortageDate: string | null;
+  deliveryDate: string | null;
   daysOfStock: number | null; // as of `date` (D35: the row's own inventory ÷ its intake)
   sharedBatchCount: number; // the most batches sharing the container on any day of the line
   indicative: boolean; // any day of the line
@@ -108,14 +125,14 @@ export function bucketStart(view: ForecastView, from: string, date: string): str
  * covers. An explicit `to` (typed CUSTOM dates, Reporting Period dates) is
  * never widened: those rows are trimmed back to exactly what was asked for.
  */
-export function displayDaily(daily: DailyForecastRow[], view: ForecastView, explicitTo: boolean, to: string): DailyForecastRow[] {
+export function displayDaily<T extends { date: string }>(daily: T[], view: ForecastView, explicitTo: boolean, to: string): T[] {
   if (explicitTo || (view !== 'DAILY' && view !== 'WEEKLY')) {
     return daily.filter((d) => d.date <= to);
   }
   return daily;
 }
 
-export function groupRows(daily: DailyForecastRow[], view: ForecastView, from: string, sourceNames: Record<string, string> = {}): ReportRow[] {
+export function groupRows(daily: DailyForecastRow[], view: ForecastView, from: string, sourceNames: Record<string, string> = {}, farmId = ''): ReportRow[] {
   const byDate = [...daily].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
   // Sums in integer micrograms, like the engine, so 7 × 17.9375 kg is exactly 125.5625 kg.
   const groups = new Map<string, { row: ReportRow; intake: number }>();
@@ -131,17 +148,30 @@ export function groupRows(daily: DailyForecastRow[], view: ForecastView, from: s
       groups.set(key, {
         intake,
         row: {
-          key, batchId: d.batchId, batchNo: d.batchNo, shedCode: d.shedCode, stageCode: d.stageCode,
+          key, farmId, batchId: d.realBatchId ?? d.batchId, batchGroupId: d.batchId, batchNo: d.batchNo,
+          shedId: d.shedId ?? null, shedCode: d.shedCode, stageCode: d.stageCode,
           itemId: d.itemId, itemNo: d.itemNo, itemName: d.itemName, sourceType: d.sourceType, sourceCode: d.sourceCode,
+          sourceLocationId: d.destinationLocationId ?? null,
           sourceName: d.sourceCode ? sourceNames[d.sourceCode] ?? null : null,
+          currentItemId: d.currentItemId ?? null,
+          currentItemNo: d.currentItemNo ?? null,
+          currentItemName: d.currentItemName ?? null,
           // Ruling M4: the line's date is the GROUP'S start date (field spec: "the period start date when
           // grouped") — the earliest date this batch+item+source actually has in the bucket, not the view's
           // own `from` (a diet starting mid-week reports on its own first day, not the week's start; a
           // Reporting Period's `bucketStart` is `from` for every day, so a diet starting mid-period still gets
           // its own start here because rows are visited in date order and this is the first one seen for the key).
           date: d.date, dateTo: d.date, days: 1,
-          currentInventoryKg: d.currentInventoryKg, heads: d.heads, perDayIntakeKg: d.perDayIntakeKg,
+          currentInventoryKg: d.currentInventoryKg,
+          openingSystemBalanceKg: d.openingStockKg ?? d.currentInventoryKg,
+          confirmedReceiptsKg: d.confirmedReceiptKg ?? 0,
+          heads: d.heads, feedRateKg: d.feedRateKg, perDayIntakeKg: d.perDayIntakeKg,
           intakeKg: d.perDayIntakeKg,
+          dailyUseKg: d.demandKg ?? d.perDayIntakeKg,
+          projectedClosingBalanceKg: d.projectedClosingKg ?? Math.max(0, d.currentInventoryKg - d.perDayIntakeKg),
+          recommendedQtyKg: d.recommendedQtyKg ?? 0,
+          firstShortageDate: d.shortageDate ?? null,
+          deliveryDate: d.shortageDate ?? null,
           daysOfStock: d.daysOfStock, sharedBatchCount: d.sharedBatchCount, indicative: d.indicative,
           runDownDate: d.runDownDate,
         },
@@ -152,6 +182,10 @@ export function groupRows(daily: DailyForecastRow[], view: ForecastView, from: s
     group.row.dateTo = d.date;
     group.row.days += 1;
     group.row.intakeKg = group.intake / 1e6;
+    group.row.confirmedReceiptsKg += d.confirmedReceiptKg ?? 0;
+    group.row.dailyUseKg += d.demandKg ?? d.perDayIntakeKg;
+    group.row.projectedClosingBalanceKg = d.projectedClosingKg ?? Math.max(0, d.currentInventoryKg - d.perDayIntakeKg);
+    group.row.recommendedQtyKg = Math.max(group.row.recommendedQtyKg, d.recommendedQtyKg ?? 0);
     group.row.indicative = group.row.indicative || d.indicative;
     group.row.sharedBatchCount = Math.max(group.row.sharedBatchCount, d.sharedBatchCount);
   }

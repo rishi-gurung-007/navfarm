@@ -120,6 +120,7 @@ export interface FeedForecastResponse {
   settings: { safetyStockKg: number; bulkMultipleKg: number; bagSizeKg: number };
   rows: ForecastRow[];
   daily: DailyForecastRow[];
+  sourceBalances: import('./feed-forecast.engine').SourceBalancePoint[];
   flags: ForecastFlag[];
   // Plan B: the requisition's lines and the DIET_CHANGE alert read these (engine Task 2).
   sources: ForecastSource[];
@@ -247,7 +248,7 @@ export interface FeedForecastReport {
   /** TDD Engine Step 8 / Dashboard row 60: the configured planning settings the engine used for this run. */
   settings: { safetyStockKg: number; bulkMultipleKg: number; bagSizeKg: number };
   rows: ReportRow[];
-  stages: StageBlock[];
+  sourceBalances: Array<import('./feed-forecast.engine').SourceBalancePoint & { sourceName: string | null }>;
   flags: ForecastFlag[];
   sources: Array<ForecastSource & { sourceName: string | null }>;
   dietChanges: DietChange[];
@@ -690,8 +691,11 @@ export class FeedForecastService {
       period,
       farm: result.farm,
       settings: result.settings,
-      rows: groupRows(displayDaily(result.daily, view, query.to !== undefined, sentTo), view, from, result.sourceNames),
-      stages: result.stages,
+      rows: groupRows(displayDaily(result.daily, view, query.to !== undefined, sentTo), view, from, result.sourceNames, result.farm.id),
+      sourceBalances: displayDaily(result.sourceBalances ?? [], view, query.to !== undefined, sentTo).map((point) => ({
+        ...point,
+        sourceName: result.sourceNames[point.sourceCode] ?? null,
+      })),
       flags: result.flags,
       sources: reportSources,
       dietChanges: result.dietChanges,
@@ -1233,7 +1237,7 @@ export class FeedForecastService {
       const resolvedSettings = await this.feedSettings.resolveForFeedPlanning(companyId, farmId);
       const { input: loadedInput, flags: loadFlags, stageBlocks, sourceNames } = await this.loadInput(farm, planningDate, from, to, tenantId, { stockDate, horizonTo, headerCutoff });
       const input: ForecastInput = { ...loadedInput, safetyStockKg: resolvedSettings.safetyStockKg };
-      const { rows, flags, sources, dietChanges, daily } = buildFeedForecast(input);
+      const { rows, flags, sources, dietChanges, daily, sourceBalances = [] } = buildFeedForecast(input);
       const sourceSnapshot = buildSourceSnapshot({ engineInput: input });
       const asOf: ForecastFlag[] = planningDate < today ? [{ kind: 'AS_OF_PAST', planningDate, today, note: asOfPastNote(planningDate, today) }] : [];
       return {
@@ -1244,7 +1248,7 @@ export class FeedForecastService {
           bulkMultipleKg: resolvedSettings.bulkMultipleKg,
           bagSizeKg: resolvedSettings.bagSizeKg,
         },
-        rows, daily, flags: [...flags, ...loadFlags, ...asOf], sources, dietChanges,
+        rows, daily, sourceBalances, flags: [...flags, ...loadFlags, ...asOf], sources, dietChanges,
         stages: stageBlocks, sourceNames: sourceNames ?? {}, sourceSnapshot,
       };
     });

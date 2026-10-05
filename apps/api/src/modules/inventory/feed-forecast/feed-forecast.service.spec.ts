@@ -175,7 +175,7 @@ describe('FeedForecastService', () => {
       planningDate: '2026-09-25', today: '2026-09-25', timeZone: null, from: '2026-09-25', to: '2026-10-01', horizonTo: '2026-10-01',
       farm: { id: 'farm-A', code: 'VIL100', name: 'Village 100' },
       settings: { safetyStockKg: 500, bulkMultipleKg: 3000, bagSizeKg: 50 },
-      rows: [{ batchNo: 'B1' }], daily: [],
+      rows: [{ batchNo: 'B1' }], daily: [], sourceBalances: [],
       // The engine's flags, then the loader's own (a batch placed on no known shed).
       flags: [{ kind: 'HEADS_ASSUMED_FLAT', batchNo: 'B1' }, { kind: 'BATCH_SHED_UNKNOWN', batchNo: 'B2' }],
       sources: [], dietChanges: [],
@@ -1198,11 +1198,29 @@ describe('FeedForecastService.getForecast — views, periods and the report (Pla
     );
   });
 
-  it('passes the stage block through from the computed forecast', async () => {
+  it('keeps stage projection internal and omits the old public stages block', async () => {
     const block = { batchId: 'b', batchNo: 'WG-2026-38', shedCode: 'GRS/SHED-003', currentStageCode: 'WEANER', currentFrom: '2026-09-01' };
     compute.mockResolvedValueOnce({ ...computed, stages: [block] } as any);
     const report = await service.getForecast({ view: 'DAILY' }, 'tenant-1', 'STANDARD_USER');
-    expect(report.stages).toEqual([block]);
+    expect(report).not.toHaveProperty('stages');
+  });
+
+  it('returns deduplicated source balance points with the configured source name', async () => {
+    compute.mockResolvedValueOnce({
+      ...computed,
+      sourceBalances: [{
+        date: '2026-09-23', sourceType: 'SILO', sourceCode: 'GRS/SILO-001', locationId: 'silo-1',
+        itemId: 'r1', itemNo: 'FEED-R1', itemName: 'R1', currentItemId: 'r1', currentItemNo: 'FEED-R1', currentItemName: 'R1',
+        openingSystemBalanceKg: 1500, confirmedReceiptKg: 0, dailyUseKg: 2000, projectedClosingBalanceKg: 0,
+        recommendedQtyKg: 4500, firstShortageDate: '2026-09-23', deliveryDate: '2026-09-23', runDownDate: '2026-09-23',
+      }],
+    } as any);
+
+    const report = await service.getForecast({ view: 'DAILY' }, 'tenant-1', 'STANDARD_USER');
+
+    expect(report.sourceBalances).toEqual([
+      expect.objectContaining({ locationId: 'silo-1', sourceCode: 'GRS/SILO-001', sourceName: 'Weaner silo', dailyUseKg: 2000 }),
+    ]);
   });
 
   it('listPeriods answers the farm company\'s periods after resolving the farm', async () => {

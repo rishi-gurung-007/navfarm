@@ -28,6 +28,34 @@ const workedExample: ForecastInput = {
 };
 
 describe('buildFeedForecast — sources and diet changes (Plan B)', () => {
+  it('emits one source balance point per silo/item/date, including days before a future diet starts', () => {
+    const { sourceBalances } = buildFeedForecast(workedExample);
+    const r2 = sourceBalances.filter((point) => point.itemId === 'r2' && point.date <= '2026-09-26');
+
+    expect(r2).toEqual([
+      expect.objectContaining({ date: '2026-09-23', locationId: 's2', itemId: 'r2', openingSystemBalanceKg: 1000, confirmedReceiptKg: 0, dailyUseKg: 0, projectedClosingBalanceKg: 1000 }),
+      expect.objectContaining({ date: '2026-09-24', locationId: 's2', itemId: 'r2', openingSystemBalanceKg: 1000, confirmedReceiptKg: 0, dailyUseKg: 0, projectedClosingBalanceKg: 1000 }),
+      expect.objectContaining({ date: '2026-09-25', locationId: 's2', itemId: 'r2', openingSystemBalanceKg: 1000, confirmedReceiptKg: 0, dailyUseKg: 0, projectedClosingBalanceKg: 1000 }),
+      expect.objectContaining({ date: '2026-09-26', locationId: 's2', itemId: 'r2', openingSystemBalanceKg: 1000, confirmedReceiptKg: 0, dailyUseKg: 2500, projectedClosingBalanceKg: 0 }),
+    ]);
+  });
+
+  it('does not duplicate a source balance point when two batches draw from the same silo and item', () => {
+    const shared: ForecastInput = {
+      ...workedExample,
+      batches: [
+        { ...workedExample.batches[0], batchId: 'b1', realBatchId: 'b1' as any, heads: 600 },
+        { ...workedExample.batches[0], batchId: 'b2', realBatchId: 'b2' as any, batchNo: 'WG-2026-39', heads: 400 },
+      ],
+    };
+
+    const { sourceBalances } = buildFeedForecast(shared);
+    const first = sourceBalances.filter((point) => point.locationId === 's1' && point.itemId === 'r1' && point.date === '2026-09-23');
+
+    expect(first).toHaveLength(1);
+    expect(first[0]).toMatchObject({ dailyUseKg: 2000, projectedClosingBalanceKg: 0 });
+  });
+
   it('summarises each silo and item over the planning window, as the Worked Example tabulates it', () => {
     const { sources } = buildFeedForecast(workedExample);
     expect(sources).toEqual([

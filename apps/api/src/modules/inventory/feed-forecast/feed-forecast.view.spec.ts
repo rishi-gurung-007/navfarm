@@ -25,6 +25,31 @@ const { daily } = buildFeedForecast(workedExample);
 const sum = (xs: number[]) => Math.round(xs.reduce((a, b) => a + b, 0) * 1e6) / 1e6;
 
 describe('groupRows — Step 6 "Build dated forecast"', () => {
+  it('exposes every Engine row 70 field with stable ids and source evidence', () => {
+    const rows = groupRows(daily, 'DAILY', '2026-09-23', { 'GRS/SILO-001': 'Weaner silo' }, 'farm-grs');
+    const first = rows[0];
+
+    expect(first).toMatchObject({
+      farmId: 'farm-grs', batchId: 'b', batchGroupId: 'b', shedId: 'h3', shedCode: 'GRS/SHED-003',
+      sourceLocationId: 's1', sourceCode: 'GRS/SILO-001', sourceName: 'Weaner silo',
+      itemId: 'r1', itemNo: 'FEED-R1', itemName: 'Weaner Diet R1',
+      currentItemId: 'r1', currentItemNo: 'FEED-R1', currentItemName: 'Weaner Diet R1',
+      heads: 1000, feedRateKg: 2, openingSystemBalanceKg: 1500, confirmedReceiptsKg: 0,
+      dailyUseKg: 2000, projectedClosingBalanceKg: 0, recommendedQtyKg: 4500,
+      firstShortageDate: '2026-09-23', deliveryDate: '2026-09-23',
+    });
+  });
+
+  it('keeps shared source evidence as a balance, not a sum across grouped dates', () => {
+    const rows = groupRows(daily, 'WEEKLY', '2026-09-23');
+    expect(rows[0]).toMatchObject({
+      openingSystemBalanceKg: 1500,
+      confirmedReceiptsKg: 0,
+      dailyUseKg: 6000,
+      projectedClosingBalanceKg: 0,
+    });
+  });
+
   it('WEEKLY: R1 3 days × 2,000 = 6,000 kg and R2 4 days × 2,500 = 10,000 kg, as two rows', () => {
     const rows = groupRows(daily, 'WEEKLY', '2026-09-23');
     expect(rows).toHaveLength(2);
