@@ -609,3 +609,10 @@ Planning artifacts awaiting Rishi review before product-code execution:
 - `docs/superpowers/plans/2026-10-05-unified-requisition-and-feed-forecast.md`
 
 Next remains the Phase 1 every-kind common-requisition live pass, followed by the approved correction plan.
+- Phase 1 end-to-end (browser): complete — 34447865..297e2ea6, review clean (2 minors folded into the follow-up). All 7 flows PASS
+  (RQ-00029..33). Defects found by driving the screens and fixed: D1 user@ had no area; D2 farm-pinned new requisition
+  404; D3 PUT sent company_id (no saved requisition could be edited/submitted); D4 Store lines kept stale From/To;
+  D5 waiting filter showed a standard user their own; D6 dead "Open the approval" link; D7 labels to Rishi's list.
+- Rishi answered the e2e concerns (decisions.md 5 Oct): requester login shown; Service = Description + Qty; requester
+  receives; any approver releases. → Phase 1 follow-up (p1f) dispatched next, with farm-from-location, the malformed
+  serial layer repair, and success messages inside the dialog.
