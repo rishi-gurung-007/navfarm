@@ -573,3 +573,7 @@ the blocked half.
 - Controller: navfarm-30 (VS Code) stopped by weekly limit after WP1c (de62d078) with WP1d labels uncommitted.
 - WP1d labels committed by desktop: 2d37aa62 (tabs Dashboard · Calculation · Requisition · Physical Stock Count; persona spec updated).
 - Phase 1 step 2 (WP1g) dispatched to an implementer subagent; base 2d37aa62. SDD workspace: `.superpowers/sdd/2026-10-04-feed-master-completion-plan/`.
+- WP1g: complete — 3754d79e, 8658cac5, 23d46f6c, fix round 1 b2ffa356 (review clean after 1 round). Live: /requisitions top-level, common kinds only (FEED excluded server-side), old URLs 307 with query, feed approved from the Feed Forecast tab (REQ-VIL100-2026-00002 now APPROVED in nf_devco); controller screenshot of sidebar + renamed tabs 5 Oct.
+  Ruling: Approve/Reject visibility hint uses PRODUCTION/APPROVAL/can_approve (the grant the /approval decide endpoints enforce).
+  Phase 2 carry-overs: remove the "Type: Feed" select on the feed tab; feed approve path never writes requisition.approval_status (pre-existing).
+- Next: WP4a (common-requisition demo data + WP1c's blocked live checks).
