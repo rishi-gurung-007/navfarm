@@ -481,6 +481,42 @@ asked for the column. Both tracking defects were invisible to row assertions
 and only showed up once the test asserted `Object.keys(projection)`. Any future
 "the service returns X" test over this harness should assert the projection.
 
+### LIVE CHECK — Item Tracking survives release (5 Oct, navfarm-30) — **PASS**
+
+API rebuilt and restarted by PID (73474) after the bundle was grepped for
+strings from the newest commits. Driven through the app's own endpoints with
+`company.admin@triplec.local`; MySQL read directly.
+
+1. `POST /requisition` — ITEM/STORE, MUL100/STORE-001 → PGH2P1, 5 KG, with
+   `lot_no: "LIVECHK-LOT-1"` → **RQ-00018** (`275626b3`).
+2. MySQL `requisition_line` → `lot_no = LIVECHK-LOT-1`. Stored.
+3. `GET /requisition/:id` → `lot_no: 'LIVECHK-LOT-1'`. **Proves `c9bacdd9`** —
+   before it, this read came back null and the editor lost the assignment.
+4. submit → approve → release, all 201.
+5. MySQL `stock_transfer_line` of the linked transfer (`92f329b9`) →
+   `lot_no = LIVECHK-LOT-1`. **Proves `0483df28`** — before it, release did not
+   select the column and every transfer line was created untracked.
+
+**RQ-00018 and its transfer were left in `nf_devco`** — no stock was moved (no
+shipment posted), and deleting across requisition / approval / transfer / audit
+by hand risks orphans. Remove it with the others when the demo data is rebuilt.
+
+### Two WP1c rows are blocked on demo data, not on code
+
+Verified in `nf_devco` on 5 Oct:
+
+- `cost_center_master` is **entirely empty** — 0 rows of any type, so 0
+  DEPARTMENT cost centres, 0 locations with `department_id`, 0 users with
+  `department_id`. The department checks on Transfer Shipment/Receipt
+  therefore cannot be exercised. They are **inert, not broken**:
+  `assertPostingDepartment` returns early when the location has no department.
+- **0 items are lot- or serial-tracked** (`is_lot_tracked` / `is_serial_tracked`
+  are 0 everywhere) although 127 `inventory_ledger` rows carry a `lot_no`. So
+  the Item Tracking column shows "—" on every line in the running app, and the
+  "tracked item end to end" live check cannot be run.
+
+Both are WP4 (demo data). Neither is a defect in the WP1c code.
+
 ### Open question for Rishi (do not decide it here)
 
 Rishi's list says **"FA and Service: Description + Qty only"**, and the WP1c gap
@@ -500,8 +536,8 @@ the blocked half.
 | Header fields in Rishi's order and labels | **done** `015b0d20` |
 | FA/Service = Description + Qty only (UI) | **blocked** — see the UOM question above |
 | Status shows Open / Released, Approval separate | **done** `015b0d20` |
-| Line columns in Rishi's order | not started (same UOM question) |
-| **Item Tracking dialog on the line (web)** | **done** `6d4317b1` + `c9bacdd9` |
-| Location dept + user dept visible in Location Master / Team Management | not started |
-| Item Ledger + Value Entry on shipment/receipt | live verify owed |
-| Live check: two users, two departments, tracked item end to end | **owed** |
+| Line columns in Rishi's order | **done** `f1f0fcf4` (UOM stays; see the question) |
+| **Item Tracking dialog on the line (web)** | **done** `6d4317b1` + `c9bacdd9`, **live PASS** |
+| Location dept + user dept visible in Location Master / Team Management | **done** — Location Master already had it; Team Management got the picker in `34aab843` |
+| Item Ledger + Value Entry on shipment/receipt | live verify owed (needs a posted shipment) |
+| Live check: two users, two departments, tracked item end to end | **blocked on demo data** (WP4) — see above |
