@@ -32,6 +32,8 @@ function serviceWith(linkedRows: unknown[]) {
     postShipment: jest.spyOn(service, 'postShipment').mockResolvedValue({ ok: true } as any),
     postReceipt: jest.spyOn(service, 'postReceipt').mockResolvedValue({ ok: true } as any),
     postDirectTransfer: jest.spyOn(service, 'postDirectTransfer').mockResolvedValue({ ok: true } as any),
+    update: jest.spyOn(service, 'update').mockResolvedValue({ ok: true } as any),
+    remove: jest.spyOn(service, 'remove').mockResolvedValue({ ok: true } as any),
   };
   return { controller: new StockTransferController(service), posted };
 }
@@ -43,9 +45,13 @@ const ROUTES: Array<[string, keyof ReturnType<typeof serviceWith>['posted'], (c:
   ['POST /stock-transfer/:id/shipment', 'postShipment', (c) => c.shipment('tr-1', { lines: [] } as any, REQ)],
   ['POST /stock-transfer/:id/receipt', 'postReceipt', (c) => c.receipt('tr-1', { lines: [] } as any, REQ)],
   ['POST /stock-transfer/:id/direct-transfer', 'postDirectTransfer', (c) => c.directTransfer('tr-1', { lines: [] } as any, REQ)],
+  // Phase 1 close: editing or cancelling a requisition's transfer would change
+  // what the requisition ships and receives behind its back.
+  ['PUT /stock-transfer/:id', 'update', (c) => c.update('tr-1', { remarks: 'x' } as any, REQ)],
+  ['DELETE /stock-transfer/:id', 'remove', (c) => c.remove('tr-1', REQ)],
 ];
 
-describe('generic stock-transfer posting routes refuse a requisition\'s transfer', () => {
+describe('generic stock-transfer posting, edit and cancel routes refuse a requisition\'s transfer', () => {
   it.each(ROUTES)('%s refuses a transfer linked to a requisition, and posts nothing', async (_route, method, call) => {
     const { controller, posted } = serviceWith(LINKED);
     await expect(call(controller)).rejects.toThrow(new BadRequestException(

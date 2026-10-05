@@ -48,6 +48,8 @@ export class StockTransferController {
   @ApiParam({ name: 'id', description: 'Stock Transfer UUID' })
   async update(@Param('id') id: string, @Body() dto: UpdateStockTransferDto, @Req() req: any) {
     const tenantId = req.user?.tenantId || req['tenantId'];
+    // A requisition's transfer is changed only through its requisition (Phase 1 close).
+    await this.stockTransferService.assertNotRequisitionTransfer(id, tenantId);
     const result = await this.stockTransferService.update(id, dto, tenantId, req.user);
     return { success: true, message: 'Stock Transfer updated successfully.', data: result };
   }
@@ -58,6 +60,8 @@ export class StockTransferController {
   @ApiParam({ name: 'id', description: 'Stock Transfer UUID' })
   async remove(@Param('id') id: string, @Req() req: any) {
     const tenantId = req.user?.tenantId || req['tenantId'];
+    // A requisition's transfer is changed only through its requisition (Phase 1 close).
+    await this.stockTransferService.assertNotRequisitionTransfer(id, tenantId);
     return this.stockTransferService.remove(id, tenantId, req.user);
   }
 

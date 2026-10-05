@@ -555,7 +555,9 @@ export class StockTransferService {
    * P1 follow-up I1 (Rishi, 4 and 5 Oct): a transfer created by a requisition's
    * Release is posted from the requisition only. There the From department
    * ships and the requester receives. The generic stock-transfer posting
-   * routes call this first. postShipment and postReceipt do not, because
+   * routes call this first, and so do PUT and DELETE, because editing or
+   * cancelling the transfer would change what the requisition ships and
+   * receives behind its back. postShipment and postReceipt do not, because
    * RequisitionService.ship and receive call them after their own checks. A
    * transfer is linked when any line carries a requisition_line_id, the same
    * test update() applies to replacement lines.
