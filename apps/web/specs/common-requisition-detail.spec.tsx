@@ -87,6 +87,29 @@ describe("CommonRequisitionDetail", () => {
     expect(await screen.findByText("crqSaved")).toBeTruthy();
   });
 
+  // P1 follow-up item 7, live check: the dialog scrolls as one, and the user
+  // is at the action buttons when they press one — a notice at the top of the
+  // document was inside the dialog but scrolled out of sight. It sits by the
+  // buttons, after the lines, and is scrolled into view.
+  it("shows the success notice next to the action buttons, after the lines, and scrolls it into view", async () => {
+    const scrolled = jest.fn();
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = scrolled;
+    try {
+      put.mockResolvedValue({ data: open() });
+      render(<CommonRequisitionDetail initial={open()} onView={jest.fn()} onBack={jest.fn()} />);
+      fireEvent.click(screen.getByText("crqSave"));
+      const notice = await screen.findByText("crqSaved");
+      const table = screen.getAllByRole("table")[0];
+      expect(table.compareDocumentPosition(notice) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      const saveButton = screen.getByText("crqSave").closest("button") as HTMLElement;
+      expect(notice.compareDocumentPosition(saveButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      await waitFor(() => expect(scrolled).toHaveBeenCalled());
+    } finally {
+      Element.prototype.scrollIntoView = original;
+    }
+  });
+
   it("saves an existing draft with a full-replace PUT: the whole header and every line, not a partial body", async () => {
     const draft = open();
     const onView = jest.fn();

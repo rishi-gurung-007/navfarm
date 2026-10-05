@@ -65,6 +65,10 @@ export function CommonRequisitionDetail({ initial, onView, onBack, embedded = fa
   // it. A new action clears it; a new server view does not (the view an
   // action returns is what triggers that reset below).
   const [notice, setNotice] = useState("");
+  const noticeRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (notice) noticeRef.current?.scrollIntoView?.({ block: "nearest" });
+  }, [notice]);
   const [poNo, setPoNo] = useState("");
   const [panel, setPanel] = useState<"ship" | "receive" | null>(null);
   const [postingDate, setPostingDate] = useState(todayIso());
@@ -193,12 +197,15 @@ export function CommonRequisitionDetail({ initial, onView, onBack, embedded = fa
         </div>
       )}
       {error && <InlineAlert>{error}</InlineAlert>}
-      {notice && <InlineAlert variant="success">{notice}</InlineAlert>}
       <div className="min-h-0 flex-1 overflow-auto">
         <CommonRequisitionDocument view={draft} editable={editable} options={options} onChange={setDraft}
           onAssignTracking={releasedStore && can.transfer ? assignTracking : undefined} />
       </div>
       <div className="flex shrink-0 flex-col gap-3">
+        {/* The dialog scrolls as one, and whoever pressed an action is at
+            these buttons — so the success notice is shown here, and scrolled
+            into view, not at the top of the document out of sight. */}
+        {notice && <div ref={noticeRef}><InlineAlert variant="success">{notice}</InlineAlert></div>}
         <div className="flex flex-wrap items-end gap-2">
           {actions.includes("save") && <Button size="sm" variant="outline" onClick={save} disabled={busy}>{t("crqSave")}</Button>}
           {actions.includes("submit") && <Button size="sm" onClick={submit} disabled={busy}>{t("crqSubmit")}</Button>}
