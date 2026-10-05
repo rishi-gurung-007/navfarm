@@ -16,8 +16,8 @@
  *
  * What is ours (no field specification exists for these — flagged the same
  * way the Phase 9 MVP fields were): the line-level field shape per type (an
- * Item line is an Item Master row, an FA line carries its description, a
- * Service line is a Resource or a description), the quantity bounds, the
+ * Item line is an Item Master row; FA and Service lines carry a description
+ * only — Rishi's list, confirmed 5 Oct), the quantity bounds, the
  * legacy-status projections, and the statement that Balance to Ship and
  * Remaining to Receive are computed, never stored.
  */
@@ -159,10 +159,16 @@ export function assertLineFields(docType: CommonDocType, line: RequisitionLineRu
       if (!present(line.description)) throw new BadRequestException(`${at} needs a Fixed Asset description.`);
       break;
     case 'SERVICE':
+      // Rishi, 5 Oct (decisions.md "Common requisition: requester, Service
+      // lines, receipt and release", point 2): "Service lines follow his list:
+      // Description + Qty only. The optional Resource picker is removed." A
+      // Resource id stored on an older line is still read back harmlessly by
+      // findOne; it is never accepted again.
       if (present(line.item_id)) throw new BadRequestException(`${at}: a Service line cannot reference an inventory item.`);
-      if (!present(line.resource_id) && !present(line.description)) {
-        throw new BadRequestException(`${at} needs a Resource or a description.`);
+      if (present(line.resource_id)) {
+        throw new BadRequestException(`${at}: a Service line is Description + Qty only; it cannot reference a Resource.`);
       }
+      if (!present(line.description)) throw new BadRequestException(`${at} needs a Service description.`);
       break;
   }
 }

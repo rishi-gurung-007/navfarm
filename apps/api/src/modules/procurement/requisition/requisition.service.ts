@@ -304,7 +304,7 @@ export class RequisitionService {
   private async assertLineReferences(
     tenantId: string,
     companyId: string,
-    lines: Array<{ item_id?: string | null; resource_id?: string | null; lot_no?: string | null; serial_no?: string | null }>,
+    lines: Array<{ item_id?: string | null; lot_no?: string | null; serial_no?: string | null }>,
   ) {
     const itemIds = [...new Set(lines.map((l) => l.item_id).filter((v): v is string => !!v))];
     if (itemIds.length) {
@@ -332,19 +332,9 @@ export class RequisitionService {
         }
       });
     }
-    const resourceIds = [...new Set(lines.map((l) => l.resource_id).filter((v): v is string => !!v))];
-    if (resourceIds.length) {
-      const found = new Set((await this.db
-        .select({ resource_id: schema.resourceMaster.resource_id })
-        .from(schema.resourceMaster)
-        .where(and(
-          eq(schema.resourceMaster.tenant_id, tenantId), eq(schema.resourceMaster.company_id, companyId),
-          eq(schema.resourceMaster.is_active, true), isNull(schema.resourceMaster.deleted_at),
-          inArray(schema.resourceMaster.resource_id, resourceIds),
-        ))).map((r) => r.resource_id));
-      const at = lines.findIndex((l) => l.resource_id && !found.has(l.resource_id));
-      if (at >= 0) throw new BadRequestException(`Line ${at + 1}: resource is not an active resource of this company.`);
-    }
+    // No line names a Resource any more (Rishi, 5 Oct: Service lines are
+    // Description + Qty only) — assertLineFields refuses one on every kind
+    // before this runs, so there is nothing left to look up.
   }
 
   /** One insert row per supplied line — the mapping create() always used, shared with update(). */
@@ -480,11 +470,6 @@ export class RequisitionService {
     // MySQL hands these back as tinyint 1/0; the editor branches on them, so
     // they cross the wire as real booleans rather than truthy numbers.
     const items = itemRows.map((i) => ({ ...i, is_lot_tracked: Boolean(i.is_lot_tracked), is_serial_tracked: Boolean(i.is_serial_tracked) }));
-    const resources = await this.db
-      .select({ resource_id: schema.resourceMaster.resource_id, resource_code: schema.resourceMaster.resource_code, resource_name: schema.resourceMaster.resource_name })
-      .from(schema.resourceMaster)
-      .where(and(eq(schema.resourceMaster.tenant_id, tenantId), eq(schema.resourceMaster.company_id, query.company_id), eq(schema.resourceMaster.is_active, true), isNull(schema.resourceMaster.deleted_at)))
-      .orderBy(schema.resourceMaster.resource_code);
     const locationConditions: SQL[] = [
       eq(schema.locationMaster.tenant_id, tenantId),
       eq(schema.locationMaster.company_id, query.company_id),
@@ -518,7 +503,8 @@ export class RequisitionService {
         .limit(1);
       mayDirectTransfer = Boolean(caller?.direct_transfer_allowed);
     }
-    return { items, resources, locations, departments, may_direct_transfer: mayDirectTransfer };
+    // No resources: no line may name one (Rishi, 5 Oct — Service lines are Description + Qty only).
+    return { items, locations, departments, may_direct_transfer: mayDirectTransfer };
   }
 
   /**

@@ -33,7 +33,7 @@ export class RequisitionController {
 
   @Get('options')
   @RequirePermission('PROCUREMENT', 'REQUISITION', 'view')
-  @ApiOperation({ summary: 'What the common requisition form may offer: items, resources, locations, departments, the caller Direct Transfer right' })
+  @ApiOperation({ summary: 'What the common requisition form may offer: items, locations, departments, the caller Direct Transfer right' })
   async options(@Req() req: any, @Query('company_id') companyId: string, @Query('farm_id') farmId?: string) {
     const tenantId = req.user?.tenantId || req['tenantId'];
     if (!companyId) throw new BadRequestException('company_id is required.');

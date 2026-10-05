@@ -98,13 +98,18 @@ describe('Item / Fixed Asset / Service line fields', () => {
       .toThrow('Requisition line 1: a Fixed Asset line cannot reference a Resource.');
   });
 
-  it('accepts a Service line through a Resource or a description, never an item', () => {
-    expect(() => assertRequisitionLines('SERVICE', 'PURCHASE', [{ resource_id: 'res-1', quantity: 2, uom: 'HOUR' }]))
+  // Rishi, 5 Oct (decisions.md "Common requisition: requester, Service lines,
+  // receipt and release", point 2): "Service lines follow his list:
+  // Description + Qty only. The optional Resource picker is removed."
+  it('accepts a Service line as Description + Qty only: a description is required and a Resource is refused', () => {
+    expect(() => assertRequisitionLines('SERVICE', 'PURCHASE', [{ description: 'Vet call-out', quantity: 1 }]))
       .not.toThrow();
-    expect(() => assertRequisitionLines('SERVICE', 'PURCHASE', [{ description: 'Vet call-out', quantity: 1, uom: 'EA' }]))
-      .not.toThrow();
-    expect(() => assertRequisitionLines('SERVICE', 'PURCHASE', [{ quantity: 1, uom: 'EA' }]))
-      .toThrow('Requisition line 1 needs a Resource or a description.');
+    expect(() => assertRequisitionLines('SERVICE', 'PURCHASE', [{ quantity: 1 }]))
+      .toThrow('Requisition line 1 needs a Service description.');
+    expect(() => assertRequisitionLines('SERVICE', 'PURCHASE', [{ resource_id: 'res-1', quantity: 2 }]))
+      .toThrow('Requisition line 1: a Service line is Description + Qty only; it cannot reference a Resource.');
+    expect(() => assertRequisitionLines('SERVICE', 'PURCHASE', [{ resource_id: 'res-1', description: 'Electrician', quantity: 2 }]))
+      .toThrow('Requisition line 1: a Service line is Description + Qty only; it cannot reference a Resource.');
     expect(() => assertRequisitionLines('SERVICE', 'PURCHASE', [itemLine({ description: 'Consult' })]))
       .toThrow('Requisition line 1: a Service line cannot reference an inventory item.');
   });

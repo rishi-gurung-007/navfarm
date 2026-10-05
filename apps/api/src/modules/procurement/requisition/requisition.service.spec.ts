@@ -773,18 +773,19 @@ describe('Part E Task 2 fix round 1 — update writes what it says', () => {
 });
 
 describe('Part E Task 3 — options and display names', () => {
-  it('offers the company items, resources, FARM/STORE/SHED/SILO locations and DEPARTMENT cost centres', async () => {
+  // Rishi, 5 Oct: no line names a Resource any more (Service lines are
+  // Description + Qty only), so the form is no longer offered any.
+  it('offers the company items, FARM/STORE/SHED/SILO locations and DEPARTMENT cost centres, and no resources', async () => {
     const { db, selectResults } = makeDb();
     selectResults.push(
       [{ item_id: 'i1', item_code: 'IT-1', item_name: 'Bolts', uom_primary: 'EA' }],
-      [{ resource_id: 'r1', resource_code: 'RES-1', resource_name: 'Electrician' }],
       [{ location_id: 'st', location_code: 'F1/STORE', location_name: 'Store', location_type: 'STORE', farm_id: 'f1' }],
       [{ cost_center_id: 'cc', cost_center_code: 'D-1', cost_center_name: 'Stores' }],
     );
     const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
     const out = await service.options({ company_id: 'co-1' }, TENANT);
     expect(out.items.map((i) => i.item_code)).toEqual(['IT-1']);
-    expect(out.resources.map((r) => r.resource_code)).toEqual(['RES-1']);
+    expect(out).not.toHaveProperty('resources');
     expect(out.locations.map((l) => l.location_type)).toEqual(['STORE']);
     expect(out.departments.map((d) => d.cost_center_code)).toEqual(['D-1']);
   });
@@ -900,14 +901,16 @@ describe('Part E Task 3 — options and display names', () => {
 });
 
 describe('Part E Task 3 fix round 1 — company-scoped references and LOB scope', () => {
-  it('create refuses a resource that is not an active resource of the requisition company', async () => {
-    const { db, selectResults } = makeDb();
-    selectResults.push([]); // the resource belongs to another company
+  // Rishi, 5 Oct: a Service line is Description + Qty only, so a Resource is
+  // refused by the rule itself, before any query — not looked up and checked.
+  it('create refuses a Resource on a Service line before any query', async () => {
+    const { db } = makeDb();
     const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
     await expect(service.create(storeDto({
       doc_type: 'SERVICE', purpose: 'PURCHASE', from_location_id: undefined, to_location_id: undefined,
-      lines: [{ resource_id: 'foreign-res', quantity: 1, uom: 'HR' }],
-    }) as any, TENANT, undefined)).rejects.toThrow('Line 1: resource is not an active resource of this company.');
+      lines: [{ resource_id: 'res-1', description: 'Electrician', quantity: 1 }],
+    }) as any, TENANT, undefined)).rejects.toThrow('Requisition line 1: a Service line is Description + Qty only; it cannot reference a Resource.');
+    expect(db.select).not.toHaveBeenCalled();
     expect(db.insert).not.toHaveBeenCalled();
   });
 
@@ -919,24 +922,24 @@ describe('Part E Task 3 fix round 1 — company-scoped references and LOB scope'
     expect(db.insert).not.toHaveBeenCalled();
   });
 
-  it('update refuses another company\'s resource and writes nothing', async () => {
+  it('update refuses a Resource on a Service line and writes nothing', async () => {
     const { db, selectResults, setCalls } = makeDb();
     selectResults.push([headerRow({ doc_type: 'SERVICE' })], []);
     const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
     await expect(service.update('req-1', {
-      purpose: 'PURCHASE', lines: [{ resource_id: 'foreign-res', quantity: 1, uom: 'HR' }],
-    } as any, TENANT, { userId: 'u1' })).rejects.toThrow(BadRequestException);
+      purpose: 'PURCHASE', lines: [{ resource_id: 'res-1', description: 'Electrician', quantity: 1 }],
+    } as any, TENANT, { userId: 'u1' })).rejects.toThrow('a Service line is Description + Qty only; it cannot reference a Resource.');
     expect(setCalls).toHaveLength(0);
   });
 
   it('options for a restricted caller filters locations to their LOB or no LOB', async () => {
     const { db, selectResults, whereCalls } = makeDb();
-    selectResults.push([], [], [], []);
+    selectResults.push([], [], []);
     const cls = transactionCls(db);
     useFarmScope(cls, { farmId: null, restricted: true, companyId: 'co-1', lobId: 'lob-pig' } as any);
     await new RequisitionService(cls, approvalsMock() as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any).options({ company_id: 'co-1' }, TENANT);
     const dialect = new MySqlDialect();
-    const q = dialect.sqlToQuery(whereCalls[2] as any);
+    const q = dialect.sqlToQuery(whereCalls[1] as any); // items, then locations
     expect(q.sql).toContain('`lob_id` = ?');
     expect(q.sql).toContain('`lob_id` is null');
     expect(q.params).toContain('lob-pig');

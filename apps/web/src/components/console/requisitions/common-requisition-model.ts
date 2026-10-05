@@ -10,7 +10,7 @@
  * actually persists from the body (requisition.service.ts:292-350): purpose,
  * requisition_date, main_location_id, requester_department_id,
  * sender_department_id, from/to_location_id, direct_transfer, required_date,
- * justification, remarks, and per line: item_id, resource_id, description,
+ * justification, remarks, and per line: item_id, description,
  * quantity, uom, est_rate, from/to_location_id, qty_to_ship, qty_to_receive.
  * Everything else `GET /requisition/:id` (findOne) returns is either a
  * display-only derivation (codes/names resolved from ids, the three
@@ -104,7 +104,6 @@ export interface CommonRequisitionView {
 
 export interface CommonRequisitionOptions {
   items: { item_id: string; item_code: string; item_name: string; uom_primary: string | null; is_lot_tracked?: boolean; is_serial_tracked?: boolean }[];
-  resources: { resource_id: string; resource_code: string; resource_name: string }[];
   locations: { location_id: string; location_code: string; location_name: string; location_type: string; farm_id: string | null }[];
   departments: { cost_center_id: string; cost_center_code: string; cost_center_name: string }[];
   /** WP1c: the signed-in user's own Direct Transfer right (User Setup). */
@@ -154,7 +153,8 @@ export function toRequisitionPayload(v: CommonRequisitionView): Record<string, u
     remarks: s(v.remarks),
     lines: v.lines.map((l) => ({
       item_id: v.doc_type === "ITEM" ? s(l.item_id) : undefined,
-      resource_id: v.doc_type === "SERVICE" ? s(l.resource_id) : undefined,
+      // No resource_id: no line names a Resource (Rishi, 5 Oct — Service lines
+      // are Description + Qty only), and the API refuses one on every kind.
       description: s(l.description),
       quantity: Number(l.quantity),
       // WP1c addendum (Rishi, 5 Oct): an FA/Service line is "Description + Qty

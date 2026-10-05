@@ -97,7 +97,6 @@ export function CommonRequisitionDocument({ view, editable, options, onChange, o
   const locations = options?.locations ?? [];
   const departments = options?.departments ?? [];
   const items = options?.items ?? [];
-  const resources = options?.resources ?? [];
   const locCode = (id: string | null, code?: string | null) => code ?? locations.find((l) => l.location_id === id)?.location_code ?? null;
   const deptName = (id: string | null, name?: string | null) => name ?? departments.find((d) => d.cost_center_id === id)?.cost_center_name ?? null;
 
@@ -129,13 +128,13 @@ export function CommonRequisitionDocument({ view, editable, options, onChange, o
     ...(store ? ["crqColFrom", "crqColTo", "crqColToShip", "crqColShipped", "crqColToReceive", "crqColReceived", "crqColRemaining", "crqColBalance"] : []),
   ];
   // Ours: the unit, our estimated rate, our free line description on an Item
-  // line (an FA/Service line already shows it as Rishi's own column), the
-  // Resource picker a Service line needs, and the Item Tracking button.
+  // line (an FA/Service line already shows it as Rishi's own column), and the
+  // Item Tracking button.
   const ourColumns = [
     // WP1c addendum (Rishi, 5 Oct): an FA/Service line is Description + Qty
-    // only, so it shows neither the unit nor our estimated rate.
+    // only, so it shows neither the unit nor our estimated rate — and, for a
+    // Service line, no Resource picker (Rishi, 5 Oct, second ruling).
     ...(isItem ? ["crqColUom", "crqColRate", "crqColDescription"] : []),
-    ...(view.doc_type === "SERVICE" ? ["crqColResource"] : []),
     ...(store && isItem ? ["crqColTracking"] : []),
   ];
   const columns = [...rishiColumns, ...ourColumns].filter(Boolean) as string[];
@@ -263,15 +262,6 @@ export function CommonRequisitionDocument({ view, editable, options, onChange, o
                       <td className={cn(TD, NUM)}>{cell("crqRateFor", line.est_rate, (v) => setLine(i, { est_rate: v }), "number")}</td>
                       <td className={TD}>{cell("crqDescriptionFor", line.description, (v) => setLine(i, { description: v }), "text", "w-48")}</td>
                     </>)}
-                    {view.doc_type === "SERVICE" && (
-                      <td className={TD}>{can ? (
-                        <select aria-label={t("crqResourceFor", { line: i + 1 })} className="nf-input-sm nf-select w-48" style={inputStyle} value={line.resource_id ?? ""}
-                          onChange={(e) => setLine(i, { resource_id: e.target.value || null })}>
-                          <option value="">{t("crqChoose")}</option>
-                          {resources.map((r) => <option key={r.resource_id} value={r.resource_id}>{r.resource_code} — {r.resource_name}</option>)}
-                        </select>
-                      ) : line.resource_code ? `${line.resource_code} — ${line.resource_name ?? ""}` : ""}</td>
-                    )}
                     {store && isItem && (() => {
                       const tracking = trackingOf(line);
                       const assigned = (tracking === "SERIAL" ? line.serial_no : line.lot_no) ?? "";

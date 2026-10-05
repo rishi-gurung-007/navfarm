@@ -256,6 +256,23 @@ describe("CommonRequisitionDocument — FA/Service is Description + Qty only", (
     expect(h).toContain("crqColQty");
   });
 
+  // Rishi, 5 Oct: "Service lines follow his list: Description + Qty only.
+  // The optional Resource picker is removed from Service lines."
+  it("gives a Service document exactly Line No., its description and Qty — no Resource picker or column", () => {
+    const { container } = render(<CommonRequisitionDocument view={emptyCommonRequisition("co-1", "SERVICE", "PURCHASE", "2026-10-05")} editable options={options} onChange={jest.fn()} />);
+    expect(headers(container)).toEqual(["crqColLine", "crqColFaServiceDescription", "crqColQty"]);
+    expect(screen.queryByLabelText('crqResourceFor:{"line":1}')).toBeNull();
+  });
+
+  it("does not show a Resource stored on an older Service line", () => {
+    const view = { ...emptyCommonRequisition("co-1", "SERVICE", "PURCHASE", "2026-10-05"), requisition_id: "r", req_no: "RQ-00032",
+      approval_status: "APPROVED", document_status: "RELEASED",
+      lines: [{ ...emptyLine(), line_id: "l1", line_seq: 1, description: "Electrician call-out", quantity: "2", resource_id: "r1", resource_code: "RES-1", resource_name: "Electrician" }] };
+    const { container } = render(<CommonRequisitionDocument view={view as any} editable={false} options={options} />);
+    expect(headers(container)).toEqual(["crqColLine", "crqColFaServiceDescription", "crqColQty"]);
+    expect(screen.queryByText(/RES-1/)).toBeNull();
+  });
+
   it("keeps the unit on an Item document, where the API still requires one", () => {
     const { container } = render(<CommonRequisitionDocument view={emptyCommonRequisition("co-1", "ITEM", "STORE", "2026-10-05")} editable options={options} onChange={jest.fn()} />);
     expect(headers(container)).toContain("crqColUom");

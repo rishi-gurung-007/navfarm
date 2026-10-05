@@ -38,7 +38,9 @@ export class RequisitionLineInput {
   @IsUUID()
   item_id?: string;
 
-  @ApiPropertyOptional({ description: 'Resource — for SERVICE/FA requisitions' })
+  // Kept in the DTO only so the rule (assertLineFields) can refuse it with
+  // its own message rather than the whitelist's "should not exist".
+  @ApiPropertyOptional({ description: 'Not accepted: no line names a Resource (Rishi, 5 Oct — Service lines are Description + Qty only). Refused on every kind.' })
   @IsOptional()
   @IsUUID()
   resource_id?: string;

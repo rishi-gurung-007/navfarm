@@ -124,7 +124,6 @@ describe('WP1c — the Direct Transfer checkbox needs the User Setup right', () 
 describe('WP1c — options carries the caller\'s Direct Transfer right', () => {
   const queuesFor = (flag: boolean) => [
     [{ item_id: 'i1', item_code: 'IT-1', item_name: 'Item', uom_primary: 'KG' }],
-    [],
     [{ location_id: 'loc-1', location_code: 'STR', location_name: 'Store', location_type: 'STORE', farm_id: null }],
     [{ cost_center_id: 'cc-1', cost_center_code: 'DEP', cost_center_name: 'Dep' }],
     [{ user_id: 'u1', direct_transfer_allowed: flag }],
