@@ -2622,7 +2622,7 @@ Rishi, 5 Oct: "first finish the common requisition then the feed requisition and
 The work packages are regrouped into three phases (master plan, "Build order (5 Oct)"). A phase is finished before the
 next begins, except work already in flight when this was decided.
 
-## 2026-10-05 — Item Tracking after release, and two readings of Rishi's list (ours, to confirm with Rishi)
+## 2026-10-05 — Item Tracking after release, and four readings of Rishi's list (ours, to confirm with Rishi)
 
 These are interpretations of the 4 Oct list (`common-requisition-spec.md`) made in WP4a. They are **ours, not Rishi's
 rulings**. The coordinator asked for them to be recorded.
@@ -2638,7 +2638,8 @@ rulings**. The coordinator asked for them to be recorded.
 3. **Serial-tracked lines ship their whole balance in one shipment, one serial per unit** (WP4a fix round 1). A partial
    shipment would leave FIFO, not the document, to choose which serials leave, and the receipt could not know which
    to copy. Partial serial shipments stay refused until each event records the serials it consumed. Lot lines may
-   still ship partially, and the unshipped balance can be given another lot.
+   still ship partially, and the unshipped balance can be given another lot. This applies to every shipment of a
+   serial line: the requisition's Transfer Shipment, a standalone Stock Transfer, and Direct Transfer.
 4. **A transfer shipment draws only from its From location** (coordinator's ruling, 5 Oct). origin/main's company-wide
    serial fallback in `applyFifo` stays for other callers. A stock transfer refuses instead of consuming stock held
    elsewhere, which would bypass the From-department check.
