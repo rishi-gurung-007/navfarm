@@ -13,6 +13,7 @@ import { transactionCls } from '../../../test-utils/transaction-cls';
 import { MySqlDialect } from 'drizzle-orm/mysql-core';
 import { RequisitionService } from './requisition.service';
 import { useFarmScope } from '../../../test-utils/transaction-cls';
+import * as schema from '../../../core/database/schema';
 
 const TENANT = 'tenant-1';
 
@@ -87,6 +88,12 @@ const lineRow = (over: Record<string, unknown> = {}) => ({
   qty_to_ship: null, qty_shipped: null, qty_to_receive: null, qty_received: null,
   ...over,
 });
+
+/** A Fixed Asset line that (wrongly) carries a lot, refused by the WP1c rule. */
+const faWithLot = () => ({ item_id: null, resource_id: null, description: 'Tractor', quantity: '10', uom: 'EA', est_rate: null, lot_no: 'L-1', serial_no: null, from_location_id: null, to_location_id: null, qty_to_ship: null, qty_shipped: null, qty_to_receive: null, qty_received: null });
+
+/** An Item line whose item is lot-tracked with its assignment, ready for release/transfer checks. */
+const itemLineTracked = () => ({ item_id: 'item-1', description: null, quantity: '10', uom: 'KG', lot_no: 'L-1', serial_no: null, from_location_id: null, to_location_id: null, qty_to_ship: '10', qty_shipped: null, qty_to_receive: '10', qty_received: null });
 
 const storeDto = (over: Record<string, unknown> = {}) => ({
   company_id: 'co-1',
@@ -586,6 +593,45 @@ describe('Part E Task 1 follow-up — the Approvals-inbox path refuses self-appr
       expect(String(setCalls[0].approved_at)).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
     },
   );
+});
+
+
+describe('WP1c — the requisition line carries its Item Tracking assignment', () => {
+  let service: RequisitionService;
+  let db: any;
+  let selectResults: unknown[][];
+  let insertValues: Array<{ table: unknown; values: any }>;
+  let approvals: any;
+
+  beforeEach(() => {
+    ({ db, selectResults, insertValues } = makeDb());
+    approvals = approvalsMock();
+    service = new RequisitionService(transactionCls(db), approvals, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
+  });
+
+  it('refuses a Fixed Asset line that carries a lot or serial', async () => {
+    selectResults.push([{ item_id: 'item-1' }]);
+    await expect(service.create(storeDto({ doc_type: 'FA', purpose: 'PURCHASE', lines: [faWithLot()] }) as any, TENANT, { userId: 'u1' }))
+      .rejects.toThrow('Fixed Asset line cannot reference an inventory item');
+    expect(insertValues).toHaveLength(0);
+  });
+
+  it('stores lot_no and serial_no on the ITEM line it created', async () => {
+    // storeDto carries no departments, so the two department-identity reads
+    // of the fuller create test above are not made here.
+    selectResults.push(
+      [{ full_name: 'Ada Farm', department_id: null }],      // the requesting user
+      [{ item_id: 'item-1' }],                               // line items belong to the company
+      [],                                                    // number series: no prior REQ this year
+      [],                                                    // number clash lookup
+      [headerRow()],                                         // findOne read-back: header
+      [lineRow({ lot_no: 'L-1', serial_no: null })],         //                    lines
+    );
+    await service.create(storeDto({ lines: [itemLineTracked()] }) as any, TENANT, { userId: 'u1' });
+    const lineInsert = insertValues.find((i) => i.table === schema.requisitionLine);
+    expect(lineInsert?.values[0]).toMatchObject({ item_id: 'item-1', lot_no: 'L-1', serial_no: null });
+  });
+
 });
 
 describe('Part E Task 2 — PUT /requisition/:id', () => {

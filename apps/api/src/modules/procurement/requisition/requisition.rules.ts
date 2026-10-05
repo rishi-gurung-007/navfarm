@@ -93,6 +93,12 @@ export interface RequisitionLineRule {
   uom?: unknown;
   qty_to_ship?: unknown;
   qty_to_receive?: unknown;
+  /** WP1c Item Tracking (Rishi's 4 Oct list): the line's lot/serial assignment.
+   *  Item Master carries is_lot_tracked / is_serial_tracked; FA and Service
+   *  lines must not carry either field.
+   */
+  lot_no?: unknown;
+  serial_no?: unknown;
 }
 
 const present = (value: unknown): boolean => value !== undefined && value !== null && value !== '';
@@ -119,10 +125,19 @@ export function assertReceiptQty(remainingToReceive: number, qty: number): void 
   if (qty > remainingToReceive) throw new BadRequestException('Receipt quantity exceeds the remaining quantity to receive.');
 }
 
-function assertLineFields(docType: CommonDocType, line: RequisitionLineRule, lineNo: number): void {
+export function assertLineFields(docType: CommonDocType, line: RequisitionLineRule, lineNo: number): void {
   const at = `Requisition line ${lineNo}`;
   if (!(Number(line.quantity) > 0)) {
     throw new BadRequestException(`${at} needs a quantity greater than zero.`);
+  }
+  // WP1c Item Tracking (Rishi's 4 Oct list): a lot or serial identifies an
+  // inventory item, and FA / Service lines are Description + Qty only — so
+  // carrying either field is the same error as naming an item outright.
+  if (docType !== 'ITEM' && (present(line.lot_no) || present(line.serial_no))) {
+    if (docType === 'FA') {
+      throw new BadRequestException(`${at}: a Fixed Asset line cannot reference an inventory item.`);
+    }
+    throw new BadRequestException(`${at}: a Service line cannot reference an inventory item.`);
   }
   switch (docType) {
     case 'ITEM':
@@ -474,9 +489,19 @@ export function mayDecideAnyRequisition(userType: string | null | undefined): bo
  * header's locations (Review Focus 5). Quantity is the authorized to-ship
  * target (lineBalances), never more — over-shipment stays impossible.
  */
+export interface TransferPlanLine {
+  requisition_line_id: string;
+  item_id: string;
+  quantity: number;
+  uom: string;
+  /** WP1c: the item's lot/serial assignment, flowed onto the transfer line at release. */
+  lot_no: string | null;
+  serial_no: string | null;
+}
+
 export function transferPlanFor(
   header: { from_location_id: string | null; to_location_id: string | null },
-  lines: Array<{ line_id: string; line_seq: number; item_id: string | null; quantity: unknown; uom: string; qty_to_ship?: unknown; from_location_id?: string | null; to_location_id?: string | null }>,
+  lines: Array<{ line_id: string; line_seq: number; item_id: string | null; quantity: unknown; uom: string; qty_to_ship?: unknown; from_location_id?: string | null; to_location_id?: string | null; lot_no?: unknown; serial_no?: unknown }>,
 ) {
   if (!header.from_location_id || !header.to_location_id) {
     throw new BadRequestException('A Store requisition needs a source and a destination before release.');
@@ -491,7 +516,7 @@ export function transferPlanFor(
       if ((l.from_location_id && l.from_location_id !== fromLocationId) || (l.to_location_id && l.to_location_id !== toLocationId)) {
         throw new BadRequestException(`Line ${l.line_seq} moves between other locations than the header; one transfer has one source and one destination.`);
       }
-      return { requisition_line_id: l.line_id, item_id: l.item_id, quantity: lineBalances(l).qty_to_ship, uom: l.uom };
+      return { requisition_line_id: l.line_id, item_id: l.item_id, quantity: lineBalances(l).qty_to_ship, uom: l.uom, lot_no: l.lot_no ?? null, serial_no: l.serial_no ?? null };
     }),
   };
 }

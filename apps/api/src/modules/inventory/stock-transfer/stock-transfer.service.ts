@@ -13,7 +13,7 @@ import { GlPostingService } from '../../finance/journal/gl-posting.service';
 import { UomService } from '../../master-data/uom/uom.service';
 import { SiloFeedService } from '../silo-feed/silo-feed.service';
 import { FeedAlertService } from '../feed-alert/feed-alert.service';
-import { OPEN_TRANSFER_STATUSES, transferStatusFor } from './transfer-execution.rules';
+import { OPEN_TRANSFER_STATUSES, transferStatusFor, assignmentsFromLine, assertTrackingAssignments } from './transfer-execution.rules';
 import { syncRequisitionFulfilment } from '../../procurement/requisition/requisition-fulfilment';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
@@ -589,6 +589,20 @@ export class StockTransferService {
         eventLines.push({ line, qty: input.quantity, lotNo: line.lot_no ?? undefined, serialNo: line.serial_no ?? undefined });
       }
 
+      // WP1c: a tracked item (is_lot_tracked / is_serial_tracked on the
+      // Item Master) refuses shipment without its lot/serial assignment. Load
+      // the flags once, per distinct item, so a line's assignment and qty
+      // cannot disagree (the hole the WP1c ruled was closed).
+      const itemFlags = new Map<string, { isLotTracked: boolean; isSerialTracked: boolean }>();
+      if (eventLines.some((e) => e.line.item_id)) {
+        const itemIds = [...new Set(eventLines.map((e) => e.line.item_id).filter((v): v is string => Boolean(v)))];
+        const flags = await this.db
+          .select({ item_id: schema.itemMaster.item_id, is_lot_tracked: schema.itemMaster.is_lot_tracked, is_serial_tracked: schema.itemMaster.is_serial_tracked })
+          .from(schema.itemMaster)
+          .where(and(eq(schema.itemMaster.tenant_id, tenantId), inArray(schema.itemMaster.item_id, itemIds)));
+        for (const f of flags) itemFlags.set(f.item_id, { isLotTracked: Boolean(f.is_lot_tracked), isSerialTracked: Boolean(f.is_serial_tracked) });
+      }
+
       const shipmentId = randomUUID();
       const shipmentNo = await this.nextEventNo(transfer.company_id, tenantId, 'SH');
       await this.db.insert(schema.transferShipment).values({
@@ -600,6 +614,15 @@ export class StockTransferService {
         status: 'POSTED',
         created_by: userPayload?.userId || null,
       });
+      // Enforce before anything is written: a tracked item's lot/serial
+      // assignment must exist and cover the shipped quantity exactly.
+      for (const { line, qty, lotNo, serialNo } of eventLines) {
+        const flags = itemFlags.get(line.item_id ?? '');
+        if (flags?.isLotTracked || flags?.isSerialTracked) {
+          assertTrackingAssignments(flags, assignmentsFromLine({ lot_no: lotNo ?? null, serial_no: serialNo ?? null, qty }), qty);
+        }
+      }
+
       for (const { line, qty, lotNo, serialNo } of eventLines) {
         await this.db.insert(schema.transferShipmentLine).values({
           shipment_id: shipmentId,

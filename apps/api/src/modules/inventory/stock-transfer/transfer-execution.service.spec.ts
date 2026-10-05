@@ -190,6 +190,50 @@ describe('postShipment — partial events against a DRAFT order', () => {
   });
 });
 
+describe('postShipment — WP1c: a tracked item refuses shipment without its lot/serial', () => {
+  const untrackedLine = { ...LINE, lot_no: null, serial_no: null };
+
+  it('refuses a lot-tracked line carrying no lot', async () => {
+    const queues = baseQueues();
+    queues.set(schema.stockTransferLine, [[{ ...untrackedLine }]]);
+    queues.set(schema.itemMaster, [[{ item_id: 'item-1', is_lot_tracked: true, is_serial_tracked: false }]]);
+    const { service, as } = setup(queues);
+    await expect(as(() => service.postShipment('tr-1', {
+      posting_date: '2026-10-02', lines: [{ line_id: 'line-1', quantity: 4 }],
+    }, 'tenant-1', ADMIN))).rejects.toThrow('Item is lot-tracked; assign a lot before shipment.');
+  });
+
+  it('refuses a serial-tracked line whose serials do not cover the quantity', async () => {
+    const queues = baseQueues();
+    queues.set(schema.stockTransferLine, [[{ ...untrackedLine, serial_no: 'S-1, S-2' }]]);
+    queues.set(schema.itemMaster, [[{ item_id: 'item-1', is_lot_tracked: false, is_serial_tracked: true }]]);
+    const { service, as } = setup(queues);
+    await expect(as(() => service.postShipment('tr-1', {
+      posting_date: '2026-10-02', lines: [{ line_id: 'line-1', quantity: 3 }],
+    }, 'tenant-1', ADMIN))).rejects.toThrow('do not cover the shipped quantity (3)');
+  });
+
+  it('posts a tracked line whose lot covers the quantity', async () => {
+    const queues = baseQueues();
+    queues.set(schema.itemMaster, [[{ item_id: 'item-1', is_lot_tracked: true, is_serial_tracked: false }]]);
+    const { service, as, inserts } = setup(queues);
+    await as(() => service.postShipment('tr-1', {
+      posting_date: '2026-10-02', lines: [{ line_id: 'line-1', quantity: 4 }],
+    }, 'tenant-1', ADMIN));
+    expect(inserts(schema.transferShipmentLine)[0]).toMatchObject({ lot_no: 'LOT-9' });
+  });
+
+  it('asks nothing of an untracked item', async () => {
+    const queues = baseQueues();
+    queues.set(schema.stockTransferLine, [[{ ...untrackedLine }]]);
+    queues.set(schema.itemMaster, [[{ item_id: 'item-1', is_lot_tracked: false, is_serial_tracked: false }]]);
+    const { service, as } = setup(queues);
+    await as(() => service.postShipment('tr-1', {
+      posting_date: '2026-10-02', lines: [{ line_id: 'line-1', quantity: 4 }],
+    }, 'tenant-1', ADMIN));
+  });
+});
+
 describe('postReceipt — bound to its shipment', () => {
   /** Read order: loadForMutation, warehouses ×2, shipment header, shipped-join,
    *  received-join, shipment's own lines. */

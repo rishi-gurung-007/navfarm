@@ -345,6 +345,11 @@ export class RequisitionService {
         quantity: String(line.quantity),
         uom: line.uom,
         est_rate: line.est_rate !== undefined && line.est_rate !== null ? String(line.est_rate) : null,
+        // WP1c Item Tracking: the assignment written through the document's
+        // Item Tracking button travels onto the common line (it will flow onto
+        // the linked transfer's line at release).
+        lot_no: line.lot_no ?? null,
+        serial_no: line.serial_no ?? null,
         from_location_id: line.from_location_id ?? header.from_location_id ?? null,
         to_location_id: line.to_location_id ?? header.to_location_id ?? null,
         // A Store line records its authorized targets up front; a Purchase
@@ -861,6 +866,19 @@ export class RequisitionService {
               line_id: schema.requisitionLine.line_id, line_seq: schema.requisitionLine.line_seq, item_id: schema.requisitionLine.item_id,
               quantity: schema.requisitionLine.quantity, uom: schema.requisitionLine.uom, qty_to_ship: schema.requisitionLine.qty_to_ship,
               from_location_id: schema.requisitionLine.from_location_id, to_location_id: schema.requisitionLine.to_location_id,
+              // WP1c Item Tracking: the line's lot/serial assignment travels onto
+              // the transfer this release creates. Without these two columns the
+              // plan always read undefined and every transfer line posted
+              // untracked, however the requisition was assigned.
+              lot_no: schema.requisitionLine.lot_no, serial_no: schema.requisitionLine.serial_no,
+              // WP1c Item Tracking: the line's lot/serial assignment travels onto
+              // the transfer this release creates. Without these two columns the
+              // plan always read undefined and every transfer line posted
+              // untracked, however the requisition was assigned.
+              // WP1c Item Tracking: the line's lot/serial assignment travels onto
+              // the transfer this release creates. Without these two columns the
+              // plan always read undefined and every transfer line posted
+              // untracked, however the requisition was assigned.
             })
             .from(schema.requisitionLine)
             .where(eq(schema.requisitionLine.requisition_id, requisitionId))

@@ -22,6 +22,36 @@ export interface TrackingAssignment {
   qty: number;
 }
 
+export interface ItemTrackingFlags {
+  isLotTracked: boolean;
+  isSerialTracked: boolean;
+}
+
+/**
+ * One transfer line carries its assignment as the document stores it: a single
+ * `lot_no` and a comma-separated `serial_no` list (Rishi's 4 Oct list, "Item
+ * Tracking Button … Lot/Serial assignment page"). Expand that into the ledger's
+ * row-per-identity shape: serials are one unit each, a bare lot carries the
+ * whole line quantity.
+ */
+export function assignmentsFromLine(line: { lot_no: string | null; serial_no: string | null; qty: number }): TrackingAssignment[] {
+  const qtyAbs = Math.abs(line.qty);
+  const serials = String(line.serial_no ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+  if (line.lot_no) {
+    // One lot with one or more serials: the lot carries the serials, one row
+    // per serial, qty 1, and the remainder (if any) stays on the lot.
+    if (serials.length) {
+      return serials.map((s) => ({ lot_no: line.lot_no, serial_no: s, qty: 1 }));
+    }
+    return [{ lot_no: line.lot_no, serial_no: null, qty: qtyAbs }];
+  }
+  if (serials.length) {
+    return serials.map((s) => ({ lot_no: null, serial_no: s, qty: 1 }));
+  }
+  return [{ lot_no: null, serial_no: null, qty: qtyAbs }];
+}
+
+
 export interface ShipmentLineState {
   ordered: number;
   previouslyShipped: number;
@@ -75,6 +105,7 @@ export function nextReceiptState(
 export function assertTrackingAssignments(
   item: { isLotTracked: boolean; isSerialTracked: boolean },
   assignments: TrackingAssignment[],
+  qty: number,
 ): void {
   if (item.isLotTracked && !assignments.some((a) => a.lot_no)) {
     throw new BadRequestException('Item is lot-tracked; assign a lot before shipment.');
@@ -92,6 +123,9 @@ export function assertTrackingAssignments(
     const covered = assignments.reduce((sum, a) => sum + a.qty, 0);
     if (assignments.length === 0 || covered <= 0) {
       throw new BadRequestException('Assigned quantities must cover the shipped quantity.');
+    }
+    if (covered + FLOAT_SUM_TOLERANCE < qty) {
+      throw new BadRequestException(`Assigned lot/serial quantities (${covered}) do not cover the shipped quantity (${qty}).`);
     }
   }
 }

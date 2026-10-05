@@ -89,6 +89,18 @@ export class RequisitionLineInput {
   @Min(0.0001)
   @Type(() => Number)
   qty_to_receive?: number;
+
+  // WP1c Item Tracking (Rishi's 4 Oct list, "ITEM TRACKING BUTTON"): ITEM lines
+  // only. assertLineFields refuses either field on an FA or SERVICE line.
+  @ApiPropertyOptional({ description: 'Lot number being transferred (WP1c); mandatory for a lot-tracked item before shipment; one lot per line' })
+  @IsOptional()
+  @IsString()
+  lot_no?: string;
+
+  @ApiPropertyOptional({ description: 'Comma-separated serial numbers, one per unit, for a serial-tracked item (WP1c)' })
+  @IsOptional()
+  @IsString()
+  serial_no?: string;
 }
 
 export class CreateRequisitionDto {

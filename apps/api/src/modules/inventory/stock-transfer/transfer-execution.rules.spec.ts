@@ -13,6 +13,7 @@ import {
   assertReceiptEvent,
   assertShipmentEvent,
   assertTrackingAssignments,
+  assignmentsFromLine,
   cumulativeAfter,
   nextShipmentState,
   nextReceiptState,
@@ -86,22 +87,43 @@ describe('receipt events', () => {
 
 describe('lot/serial tracking (decisions: mandatory before shipment for tracked items)', () => {
   it('demands assignments for a lot-tracked line before any shipment', () => {
-    expect(() => assertTrackingAssignments({ isLotTracked: true, isSerialTracked: false }, []))
+    expect(() => assertTrackingAssignments({ isLotTracked: true, isSerialTracked: false }, [], 4))
       .toThrow('Item is lot-tracked; assign a lot before shipment.');
-    expect(() => assertTrackingAssignments({ isLotTracked: false, isSerialTracked: true }, []))
+    expect(() => assertTrackingAssignments({ isLotTracked: false, isSerialTracked: true }, [], 4))
       .toThrow('Item is serial-tracked; assign a serial number before shipment.');
-    expect(() => assertTrackingAssignments({ isLotTracked: true, isSerialTracked: false }, [{ lot_no: 'L-1', serial_no: null, qty: 4 }]))
+    expect(() => assertTrackingAssignments({ isLotTracked: true, isSerialTracked: false }, [{ lot_no: 'L-1', serial_no: null, qty: 4 }], 4))
       .not.toThrow();
   });
 
   it('demands every assigned quantity be covered and serials be unique', () => {
     expect(() => assertTrackingAssignments({ isLotTracked: false, isSerialTracked: true }, [
       { lot_no: null, serial_no: 'S-1', qty: 2 }, { lot_no: null, serial_no: 'S-1', qty: 2 },
-    ])).toThrow('Serial numbers must be unique on one transfer line.');
+    ], 4)).toThrow('Serial numbers must be unique on one transfer line.');
     // Unique serials but zero total: nothing is actually assigned.
     expect(() => assertTrackingAssignments({ isLotTracked: false, isSerialTracked: true }, [
       { lot_no: null, serial_no: 'S-1', qty: 0 }, { lot_no: null, serial_no: 'S-2', qty: 0 },
-    ])).toThrow('Assigned quantities must cover the shipped quantity.');
+    ], 0)).toThrow('Assigned quantities must cover the shipped quantity.');
+  });
+
+  it('refuses assignments that under-cover the shipped quantity (WP1c: lot/serial quantity = Qty to Ship)', () => {
+    // Two serials assigned, three units shipping: one unit would post untracked.
+    expect(() => assertTrackingAssignments({ isLotTracked: false, isSerialTracked: true }, [
+      { lot_no: null, serial_no: 'S-1', qty: 1 }, { lot_no: null, serial_no: 'S-2', qty: 1 },
+    ], 3)).toThrow('do not cover the shipped quantity');
+    expect(() => assertTrackingAssignments({ isLotTracked: true, isSerialTracked: false }, [
+      { lot_no: 'L-1', serial_no: null, qty: 4 },
+    ], 4)).not.toThrow();
+  });
+
+  it('splits a line assignment into one row per serial, qty 1 each', () => {
+    expect(assignmentsFromLine({ lot_no: null, serial_no: 'S-1, S-2', qty: 2 }))
+      .toEqual([{ lot_no: null, serial_no: 'S-1', qty: 1 }, { lot_no: null, serial_no: 'S-2', qty: 1 }]);
+    expect(assignmentsFromLine({ lot_no: 'L-1', serial_no: null, qty: 4 }))
+      .toEqual([{ lot_no: 'L-1', serial_no: null, qty: 4 }]);
+    expect(assignmentsFromLine({ lot_no: 'L-1', serial_no: 'S-1,S-2', qty: 2 }))
+      .toEqual([{ lot_no: 'L-1', serial_no: 'S-1', qty: 1 }, { lot_no: 'L-1', serial_no: 'S-2', qty: 1 }]);
+    expect(assignmentsFromLine({ lot_no: null, serial_no: null, qty: 3 }))
+      .toEqual([{ lot_no: null, serial_no: null, qty: 3 }]);
   });
 
   it('copies assignments from shipment to receipt (spec: copied automatically)', () => {

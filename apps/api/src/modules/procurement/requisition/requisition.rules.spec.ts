@@ -11,6 +11,7 @@
  */
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { usableDepartment } from '../../../common/department-identity';
+import { assertLineFields } from './requisition.rules';
 import {
   assertDirectTransfer,
   assertDirectTransferEligible,
@@ -113,6 +114,17 @@ describe('Item / Fixed Asset / Service line fields', () => {
       .toThrow('Requisition line 1 needs a quantity greater than zero.');
     expect(() => assertRequisitionLines('ITEM', 'STORE', [itemLine(), { ...itemLine(), quantity: -1 }]))
       .toThrow('Requisition line 2 needs a quantity greater than zero.');
+  });
+
+  it('refuses Fixed Asset / Service lines that carry item tracking assignment', () => {
+    expect(() => assertLineFields('FA', { item_id: null, resource_id: null, description: 'Tractor', quantity: '1', lot_no: 'L-1', serial_no: null }, 1))
+      .toThrow('Fixed Asset line cannot reference an inventory item');
+    expect(() => assertLineFields('SERVICE', { item_id: null, resource_id: null, description: 'Injection service', quantity: '1', lot_no: 'L-1', serial_no: null }, 1))
+      .toThrow('Service line cannot reference an inventory item');
+    expect(() => assertLineFields('ITEM', { item_id: 'item-1', resource_id: null, description: null, quantity: '1', lot_no: 'L-1', serial_no: null }, 1))
+      .not.toThrow();
+    expect(() => assertLineFields('ITEM', { item_id: 'item-1', resource_id: null, description: null, quantity: '1', lot_no: null, serial_no: 'S-1, S-2' }, 1))
+      .not.toThrow();
   });
 
   it('keeps shipment quantities off a Purchase line', () => {
@@ -369,7 +381,8 @@ describe('transferPlanFor — Store release starts one internal transfer (decisi
   const header = { from_location_id: 'st', to_location_id: 'sh' };
   const line = (over: Record<string, unknown> = {}) => ({ line_id: 'l1', line_seq: 1, item_id: 'i1', quantity: '10', uom: 'EA', qty_to_ship: '6', from_location_id: 'st', to_location_id: 'sh', ...over });
   it('ships each line its to-ship quantity between the header locations', () => {
-    expect(transferPlanFor(header, [line()])).toEqual({ fromLocationId: 'st', toLocationId: 'sh', lines: [{ requisition_line_id: 'l1', item_id: 'i1', quantity: 6, uom: 'EA' }] });
+    // WP1c: the plan now also carries the line's Item Tracking assignment, null when unassigned.
+    expect(transferPlanFor(header, [line()])).toEqual({ fromLocationId: 'st', toLocationId: 'sh', lines: [{ requisition_line_id: 'l1', item_id: 'i1', quantity: 6, uom: 'EA', lot_no: null, serial_no: null }] });
   });
   it('falls back to the requested quantity on a line with no to-ship target', () => {
     expect(transferPlanFor(header, [line({ qty_to_ship: null })]).lines[0].quantity).toBe(10);

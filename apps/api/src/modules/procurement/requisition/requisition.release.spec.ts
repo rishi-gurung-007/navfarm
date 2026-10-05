@@ -29,14 +29,17 @@ import { RequisitionService } from './requisition.service';
 const NUMBER_SERIES_STUB = { resolveSeriesFor: async () => null, generateNext: async () => { throw new Error('no series configured'); } };
 
 
-interface Entry { op: string; table: unknown; values?: any; set?: any; inTx?: boolean }
+interface Entry { op: string; table: unknown; values?: any; set?: any; inTx?: boolean; projection?: any }
 
 function recordingDb(queues: Map<unknown, unknown[][]>, cls: () => ClsService) {
   const log: Entry[] = [];
   const inTx = () => cls().get('tenantPostingTransaction') === true;
   const db: any = {
-    select: jest.fn(() => {
-      const entry: Entry = { op: 'select', table: undefined, inTx: inTx() };
+    select: jest.fn((projection?: any) => {
+      // The projection is recorded because these queued rows are returned
+      // whole: a column the service forgets to select is still present on the
+      // mock row, so only the projection itself can prove it was asked for.
+      const entry: Entry = { op: 'select', table: undefined, inTx: inTx(), projection };
       log.push(entry);
       const self: any = {
         from: (t: unknown) => { entry.table = t; return self; },
@@ -109,7 +112,8 @@ function setup(queues: Map<unknown, unknown[][]>) {
   service.onModuleInit();
   const as = <T>(scope: FarmScope, work: () => Promise<T>) => cls.run(async () => { cls.set(FARM_SCOPE_KEY, scope); return work(); });
   const writes = () => log.filter((e) => e.op !== 'select');
-  return { service, approvals, as, writes, log, stockTransfers };
+  const selectsOn = (table: unknown) => log.filter((e) => e.op === 'select' && e.table === table);
+  return { service, approvals, as, writes, log, stockTransfers, selectsOn };
 }
 
 describe('common requisition release — approval never implies release', () => {
@@ -135,6 +139,32 @@ describe('common requisition release — approval never implies release', () => 
     });
     expect(set.released_at).toBeTruthy();
     expect(writes().every((e) => e.inTx)).toBe(true);
+  });
+
+  // WP1c (Rishi's 4 Oct list, "ITEM TRACKING BUTTON"): the assignment made on
+  // the requisition line is what the transfer must ship, so it has to survive
+  // the hand-off. Before this, release selected neither column and every
+  // transfer line was created untracked however the requisition was assigned.
+  it('carries each line Item Tracking assignment onto the transfer it creates', async () => {
+    const trackedLines = [
+      { ...LINES[0], line_id: 'l1', line_seq: 1, item_id: 'i1', lot_no: 'L-1', serial_no: null },
+      { ...LINES[0], line_id: 'l2', line_seq: 2, item_id: 'i2', lot_no: null, serial_no: 'S-1, S-2' },
+    ];
+    const { service, as, stockTransfers, selectsOn } = setup(new Map<unknown, unknown[][]>([
+      [schema.requisition, [[STORE_ROW], [RELEASED_STORE_VIEW]]],
+      [schema.requisitionLine, [trackedLines, trackedLines]],
+      [schema.locationMaster, [[{ location_id: 'loc-store', location_code: 'STR-01', location_name: 'Main Store' }]]],
+      [schema.userRoleAssignment, [[{ moduleCode: 'PROCUREMENT', resource: 'REQUISITION', canApprove: true }]]],
+    ]));
+    await as(STORE_SCOPE, () => service.release('req-1', 'tenant-1', PROCUREMENT));
+    // The queued rows are returned whole, so the plan would carry the
+    // assignment even if release never selected it. Assert the projection.
+    const lineSelect = selectsOn(schema.requisitionLine).find((e) => e.projection?.qty_to_ship);
+    expect(Object.keys(lineSelect!.projection)).toEqual(expect.arrayContaining(['lot_no', 'serial_no']));
+    expect(stockTransfers.create.mock.calls[0][0].lines).toEqual([
+      { requisition_line_id: 'l1', item_id: 'i1', quantity: 10, uom: 'EA', lot_no: 'L-1', serial_no: null },
+      { requisition_line_id: 'l2', item_id: 'i2', quantity: 10, uom: 'EA', lot_no: null, serial_no: 'S-1, S-2' },
+    ]);
   });
 
   it('refuses to release a document that is not approved — including an open or rejected one', async () => {
