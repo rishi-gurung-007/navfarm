@@ -9,6 +9,7 @@ import {
   boolean,
   timestamp,
   date,
+  time,
   decimal,
   char,
   json,
@@ -1207,6 +1208,16 @@ export const locationMaster = mysqlTable('location_master', {
   // the high (over-stock) level of a SILO, in KG. Null = not checked.
   low_level_kg: decimal('low_level_kg', { precision: 12, scale: 2 }),
   high_level_kg: decimal('high_level_kg', { precision: 12, scale: 2 }),
+  // MILL capacities are entered/displayed in TON but stored canonically in KG.
+  // Nullable because these facts apply only when location_type = MILL.
+  mill_daily_capacity_kg: decimal('mill_daily_capacity_kg', { precision: 14, scale: 2 }),
+  mill_hourly_capacity_kg: decimal('mill_hourly_capacity_kg', { precision: 14, scale: 2 }),
+  mill_bulk_daily_allocation_kg: decimal('mill_bulk_daily_allocation_kg', { precision: 14, scale: 2 }),
+  mill_bagged_daily_allocation_kg: decimal('mill_bagged_daily_allocation_kg', { precision: 14, scale: 2 }),
+  // BIN is the inventory-bearing child of a MILL. Capacity is canonical KG;
+  // bin_feed_type is BULK or BAGGED and controls assignment compatibility.
+  bin_capacity_kg: decimal('bin_capacity_kg', { precision: 14, scale: 2 }),
+  bin_feed_type: varchar('bin_feed_type', { length: 10 }),
   // FARM rows only — feed requisition rounding and cycle (Requisition §1 rows
   // 27–28, checkpoints 22 and 27); defaults are the workbook's.
   feed_bulk_multiple_kg: int('feed_bulk_multiple_kg').default(3000),
@@ -1266,6 +1277,48 @@ export const siloShedLink = mysqlTable('silo_shed_link', {
 }, (table) => ({
   uqSiloShed: uniqueIndex('uq_silo_shed_link').on(table.silo_id, table.shed_id),
   shedIdx: index('idx_silo_shed_link_shed').on(table.shed_id),
+}));
+
+export const productionSlotMaster = mysqlTable('production_slot_master', {
+  slot_id: varchar('slot_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+  company_id: varchar('company_id', { length: 36 }).notNull().references(() => companyMaster.company_id, { onDelete: 'cascade' }),
+  slot_code: varchar('slot_code', { length: 50 }).notNull(),
+  slot_name: varchar('slot_name', { length: 100 }).notNull(),
+  start_time: time('start_time').notNull(),
+  end_time: time('end_time').notNull(),
+  is_active: boolean('is_active').default(true).notNull(),
+  status: varchar('status', { length: 20 }).default('ACTIVE').notNull(),
+  created_by: varchar('created_by', { length: 36 }),
+  updated_by: varchar('updated_by', { length: 36 }),
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+  updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().notNull(),
+  deleted_at: timestamp('deleted_at', { mode: 'string' }),
+}, (table) => ({
+  uqScopedCode: uniqueIndex('uq_prod_slot_scope_code').on(table.tenant_id, table.company_id, table.slot_code),
+  companyIndex: index('idx_prod_slot_company').on(table.company_id),
+}));
+
+export const binDietAssignment = mysqlTable('bin_diet_assignment', {
+  assignment_id: varchar('assignment_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+  company_id: varchar('company_id', { length: 36 }).notNull().references(() => companyMaster.company_id, { onDelete: 'cascade' }),
+  bin_location_id: varchar('bin_location_id', { length: 36 }).notNull().references(() => locationMaster.location_id, { onDelete: 'restrict' }),
+  feed_item_id: varchar('feed_item_id', { length: 36 }).notNull().references(() => itemMaster.item_id, { onDelete: 'restrict' }),
+  production_date: date('production_date', { mode: 'string' }).notNull(),
+  production_slot_id: varchar('production_slot_id', { length: 36 }).notNull().references(() => productionSlotMaster.slot_id, { onDelete: 'restrict' }),
+  diet_priority: int('diet_priority').notNull(),
+  is_active: boolean('is_active').default(true).notNull(),
+  status: varchar('status', { length: 20 }).default('ACTIVE').notNull(),
+  created_by: varchar('created_by', { length: 36 }),
+  updated_by: varchar('updated_by', { length: 36 }),
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+  updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().notNull(),
+  deleted_at: timestamp('deleted_at', { mode: 'string' }),
+}, (table) => ({
+  uqBinDateSlot: uniqueIndex('uq_bin_diet_date_slot').on(table.bin_location_id, table.production_date, table.production_slot_id),
+  companyDateIndex: index('idx_bin_diet_company_date').on(table.company_id, table.production_date),
+  itemDateIndex: index('idx_bin_diet_item_date').on(table.feed_item_id, table.production_date),
 }));
 
 // ==========================================
