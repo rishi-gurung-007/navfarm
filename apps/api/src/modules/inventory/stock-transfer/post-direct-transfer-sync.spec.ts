@@ -112,7 +112,6 @@ function setup(queues: Map<unknown, unknown[][]>) {
   const { db } = recordingDb(queues);
   const cls = (ref.cls = transactionCls(db));
   const ledger = {
-    writeTransferEntries: jest.fn().mockResolvedValue({ shipment: {}, receipt: {} }),
     writeTransferShipment: jest.fn().mockResolvedValue({ ledger_id: 'led-sh' }),
     writeTransferReceipt: jest.fn().mockResolvedValue({ ledger_id: 'led-rc' }),
     transferShipmentRate: jest.fn().mockResolvedValue(2.5),

@@ -130,7 +130,6 @@ function setup(queues: Map<unknown, unknown[][]>) {
   const cls = (ref.cls = transactionCls(db));
   const ledger = {
     // Resolves like the real one, so a regression fails on the call assertion below, not a TypeError.
-    writeTransferEntries: jest.fn().mockResolvedValue({ shipment: {}, receipt: {} }),
     writeTransferShipment: jest.fn().mockResolvedValue({ ledger_id: 'led-sh' }),
     writeTransferReceipt: jest.fn().mockResolvedValue({ ledger_id: 'led-rc' }),
     transferShipmentRate: jest.fn().mockResolvedValue(2.5),
@@ -365,7 +364,6 @@ describe('postDirectTransfer — one shipment plus its matching receipt', () => 
     expect(updatesOf(schema.stockTransfer).some((u) => 'posted_at' in u)).toBe(false);
     // One leg per event: 4 out of the source at the shipment, 4 into the
     // destination at the receipt — never both legs twice.
-    expect(ledger.writeTransferEntries).not.toHaveBeenCalled();
     expect(ledger.writeTransferShipment).toHaveBeenCalledTimes(1);
     expect(ledger.writeTransferShipment).toHaveBeenCalledWith(expect.objectContaining({ fromWarehouseId: 'wh-store', quantity: 4 }));
     expect(ledger.writeTransferReceipt).toHaveBeenCalledTimes(1);
@@ -387,7 +385,6 @@ describe('Part E Task 4 — one ledger leg per event (cp. 46: received KG posted
   it('a shipment takes the quantity out of the source only', async () => {
     const { service, as, ledger } = setup(baseQueues());
     await as(() => service.postShipment('tr-1', { posting_date: '2026-10-02', lines: [{ line_id: 'line-1', quantity: 6 }] }, 'tenant-1', ADMIN));
-    expect(ledger.writeTransferEntries).not.toHaveBeenCalled();
     expect(ledger.writeTransferReceipt).not.toHaveBeenCalled();
     expect(ledger.writeTransferShipment).toHaveBeenCalledTimes(1);
     expect(ledger.writeTransferShipment).toHaveBeenCalledWith(expect.objectContaining({ fromWarehouseId: 'wh-store', quantity: 6, documentLineId: 'line-1', lotNo: 'LOT-9' }));
@@ -400,7 +397,6 @@ describe('Part E Task 4 — one ledger leg per event (cp. 46: received KG posted
     queues.set(schema.transferReceiptLine, [[]]);
     const { service, as, ledger } = setup(queues);
     await as(() => service.postReceipt('tr-1', { posting_date: '2026-10-03', shipment_id: 'sh-1', lines: [{ line_id: 'line-1', quantity: 4 }] }, 'tenant-1', ADMIN));
-    expect(ledger.writeTransferEntries).not.toHaveBeenCalled();
     expect(ledger.writeTransferShipment).not.toHaveBeenCalled();
     expect(ledger.transferShipmentRate).toHaveBeenCalledWith({ tenantId: 'tenant-1', shipmentNo: 'SH-2026-0001', lineId: 'line-1' });
     expect(ledger.writeTransferReceipt).toHaveBeenCalledWith(expect.objectContaining({ toWarehouseId: 'wh-farm', quantity: 4, rate: 2.5, lotNo: 'LOT-9', amount: undefined }));

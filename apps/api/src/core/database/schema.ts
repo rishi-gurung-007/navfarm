@@ -3984,7 +3984,7 @@ export const stockTransferLine = mysqlTable('stock_transfer_line', {
   quantity: decimal('quantity', { precision: 18, scale: 4 }).notNull(),
   uom: varchar('uom', { length: 20 }).notNull(),
   // Same tracking contract as goods_issue_line — carried from the shipment leg
-  // onto the receipt leg by writeTransferEntries() so a lot/serial doesn't lose
+  // onto the receipt leg (the receipt copies what the shipment consumed) so a lot/serial doesn't lose
   // its identity crossing warehouses.
   lot_no: varchar('lot_no', { length: 50 }),
   serial_no: varchar('serial_no', { length: 100 }),
