@@ -9,8 +9,9 @@
  *
  * The API's PUT /requisition/:id is a FULL REPLACE (omitted remarks,
  * required_date, justification, sender_department_id and direct_transfer
- * become null/false), so Save and Submit always send `toRequisitionPayload`
- * of the whole draft — the header and every line — never a partial body.
+ * become null/false), so Save and Submit always send the whole draft — the
+ * header and every line — never a partial body: `toRequisitionPayload` on
+ * create, `toRequisitionUpdatePayload` (no company_id) on update.
  *
  * The draft is local state; the caller owns the last server view and is told
  * about each new one (`onView`), which also resets the draft to it.
@@ -26,7 +27,7 @@ import { useLanguage } from "@/hooks/useLanguage";
 import { todayIso, unwrap } from "../inventory/feed-format";
 import { CommonRequisitionDocument, type TrackingAssignment } from "./common-requisition-document";
 import {
-  commonActions, isCommonEditable, toRequisitionPayload, type CommonRequisitionOptions, type CommonRequisitionView,
+  commonActions, isCommonEditable, toRequisitionPayload, toRequisitionUpdatePayload, type CommonRequisitionOptions, type CommonRequisitionView,
 } from "./common-requisition-model";
 
 const inputStyle = { backgroundColor: "var(--input-bg)", color: "var(--input-text)", borderColor: "var(--input-border)" };
@@ -123,11 +124,10 @@ export function CommonRequisitionDetail({ initial, onView, onBack, embedded = fa
   const emit = (res: unknown, notice: string) => onView(unwrap<CommonRequisitionView>(res), notice);
 
   const save = () => run(async () => {
-    const body = toRequisitionPayload(draft);
-    emit(id ? await api.put(`/requisition/${id}`, body) : await api.post("/requisition", body), tRef.current("crqSaved"));
+    emit(id ? await api.put(`/requisition/${id}`, toRequisitionUpdatePayload(draft)) : await api.post("/requisition", toRequisitionPayload(draft)), tRef.current("crqSaved"));
   });
   const submit = () => run(async () => {
-    await api.put(`/requisition/${id}`, toRequisitionPayload(draft));
+    await api.put(`/requisition/${id}`, toRequisitionUpdatePayload(draft));
     emit(await api.post(`/requisition/${id}/submit`, {}), tRef.current("crqSubmitted"));
   });
   const reopen = () => run(async () => emit(await api.post(`/requisition/${id}/reopen`, {}), tRef.current("crqReopened")));

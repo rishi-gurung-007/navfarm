@@ -1,7 +1,7 @@
 import React from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { CommonRequisitionDetail } from "../src/components/console/requisitions/common-requisition-detail";
-import { emptyCommonRequisition, toRequisitionPayload, type CommonRequisitionView } from "../src/components/console/requisitions/common-requisition-model";
+import { emptyCommonRequisition, toRequisitionPayload, toRequisitionUpdatePayload, type CommonRequisitionView } from "../src/components/console/requisitions/common-requisition-model";
 import { todayIso } from "../src/components/console/inventory/feed-format";
 import { api } from "../src/services/api-client";
 
@@ -90,7 +90,10 @@ describe("CommonRequisitionDetail", () => {
     await waitFor(() => expect(put).toHaveBeenCalledTimes(1));
     const [url, body] = put.mock.calls[0];
     expect(url).toBe("/requisition/req-1");
-    expect(body).toEqual(toRequisitionPayload(draft));
+    expect(body).toEqual(toRequisitionUpdatePayload(draft));
+    // P1 e2e: the API's UpdateRequisitionDto omits company_id and refuses it
+    // ("property company_id should not exist"), so Save and Submit always failed.
+    expect(body).not.toHaveProperty("company_id");
     expect(body).toMatchObject({
       remarks: "Mind the gate", required_date: "2026-10-20", justification: "Because", sender_department_id: "d1", direct_transfer: true,
     });
@@ -119,6 +122,7 @@ describe("CommonRequisitionDetail", () => {
     await waitFor(() => expect(post).toHaveBeenCalledWith("/requisition/req-1/submit", {}));
     expect(put.mock.invocationCallOrder[0]).toBeLessThan(post.mock.invocationCallOrder[0]);
     expect(put.mock.calls[0][1].lines[1].quantity).toBe(8);
+    expect(put.mock.calls[0][1]).not.toHaveProperty("company_id");
     await waitFor(() => expect(onView).toHaveBeenCalledWith(submitted, "crqSubmitted"));
   });
 

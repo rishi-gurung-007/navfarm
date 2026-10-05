@@ -1,4 +1,4 @@
-import { commonActions, emptyCommonRequisition, emptyLine, isCommonEditable, toRequisitionPayload } from "../src/components/console/requisitions/common-requisition-model";
+import { commonActions, emptyCommonRequisition, emptyLine, isCommonEditable, toRequisitionPayload, toRequisitionUpdatePayload } from "../src/components/console/requisitions/common-requisition-model";
 
 const base = () => ({ ...emptyCommonRequisition("co-1", "ITEM", "STORE", "2026-10-04"), requisition_id: "req-1", approval_status: "OPEN", document_status: "OPEN" });
 const all = { create: true, approve: true, transfer: true };
@@ -124,5 +124,14 @@ describe("common requisition payload — FA/Service lines carry no unit", () => 
       expect(line.uom).toBeUndefined();
       expect(line.est_rate).toBeUndefined();
     }
+  });
+});
+
+describe("common requisition payload — PUT body (P1 e2e)", () => {
+  it("is the create body without company_id, which UpdateRequisitionDto refuses", () => {
+    const v = { ...emptyCommonRequisition("co-1", "ITEM", "STORE", "2026-10-05"), requisition_id: "r-1", from_location_id: "st", to_location_id: "sh" };
+    const { company_id: _company, ...rest } = toRequisitionPayload(v) as Record<string, unknown>;
+    expect(toRequisitionUpdatePayload(v)).toEqual(rest);
+    expect(toRequisitionUpdatePayload(v)).not.toHaveProperty("company_id");
   });
 });

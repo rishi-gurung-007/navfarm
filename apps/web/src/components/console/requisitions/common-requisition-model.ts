@@ -167,6 +167,17 @@ export function toRequisitionPayload(v: CommonRequisitionView): Record<string, u
 }
 
 /**
+ * The PUT /requisition/:id body: the create body without company_id. The API's
+ * UpdateRequisitionDto omits it (a document never changes company) and its
+ * whitelist refuses it outright — before this, Save and Submit on every saved
+ * draft answered 400 "property company_id should not exist" (P1 e2e, 5 Oct).
+ */
+export function toRequisitionUpdatePayload(v: CommonRequisitionView): Record<string, unknown> {
+  const { company_id: _company, ...body } = toRequisitionPayload(v);
+  return body;
+}
+
+/**
  * WP1c (Rishi's 4 Oct list): "Status: Open / Released". The document's four
  * state dimensions stay as they are underneath — approval is shown in its own
  * field, because approval precedes release and the two are not one state
