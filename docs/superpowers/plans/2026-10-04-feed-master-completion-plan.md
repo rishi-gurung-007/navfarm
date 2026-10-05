@@ -142,6 +142,32 @@ Evidence of what is done: `docs/VERIFICATION-2026-10-03-feed-tdd-part-a.md`, `do
 Estimates are agent wall-clock including review and the live check, at the pace observed on this branch
 (S ≈ 20–30 min, M ≈ 35–60 min, L ≈ 1–2 h).
 
+### Build order (Rishi, 5 Oct): this overrides the numeric order below
+
+**Phase 1: Common requisition, finished completely**
+1. WP1d label change already in flight (tab labels only). Commit it as-is. The Stages removal moves to Phase 3.
+2. **WP1g**: Requisition as its own top-level menu item, common kinds only, with redirects. The Feed Forecast →
+   Requisition tab gets Approve/Reject.
+3. **WP4a**: common-requisition demo data. DEPARTMENT cost centres; departments on the sub-locations and demo users;
+   at least one lot-tracked and one serial-tracked item with stock. Use the `db-*` script shape. Then run WP1c's two
+   blocked live checks: two users in two departments each refused at the other's step; a tracked item shipped and
+   received with lot/serial on both ledger sides; Item Ledger + value posted.
+4. Common requisition end-to-end live pass (Item Store, Item Purchase, FA, Service, Direct Transfer), then a review.
+
+**Phase 2: Feed requisition, finished completely** (sheet "Requisition and Loading Sheet", every section)
+5. WP5 (Priority editable) and WP6 Tasks 30 and 31 (header order and labels, Destination Silo column, manual create
+   labels). Section names: Requisition Header / Requisition Sub-Form / Approval Workflow (from WP1d).
+6. WP7 (Part B) in this order: B1 Mill location type and Mill Capacity Master, B2 Production Output, B3 Loading
+   Instruction Sheet, B4 Consolidation Sheet, B5 Transfer Orders from the plan, B6 Dispatch, B7 Feed TO Receipt,
+   B9 Worked Example end to end. (B8, the dashboard bin column, goes to Phase 3.)
+7. Review of Phase 2.
+
+**Phase 3: Feed forecast, finished completely**
+8. WP1d remainder: remove the Stages sub-tab and list any other non-workbook feature first.
+9. WP4: forecast demo data. 10. WP2: grid until run-out. 11. WP3: dashboard, plus B8.
+12. WP6 Tasks 23–26, 28, 29, 32–36. 13. WP8 (Part C). 14. WP9 (Part D).
+15. WP10 shared display primitives. 16. WP11 final review and merge prerequisites.
+
 ### WP1 — Tenant / Company admins approve every requisition, their own included (M) — Rishi 4 Oct (twice)
 - **Rule (decisions.md, both 4 Oct admin entries):** a `TENANT_ADMIN` or `COMPANY_ADMIN` may approve or reject
   **any** requisition in their scope, of every kind, **their own and anyone else's**, whatever the approval tier

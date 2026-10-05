@@ -2615,3 +2615,9 @@ Rishi, 5 Oct:
 2. Asked about the NOT NULL unit on FA/Service lines, Rishi said "follow the file shared". His list says "FA and
    Service: Description + Qty only", so those lines carry no unit. `requisition_line.uom` becomes nullable: a
    relaxing MODIFY, nothing dropped, like 0142. Item lines keep the item's unit.
+
+## 2026-10-05 — Build order: common requisition, then feed requisition, then feed forecast
+
+Rishi, 5 Oct: "first finish the common requisition then the feed requisition and then the feed forecast completely".
+The work packages are regrouped into three phases (master plan, "Build order (5 Oct)"). A phase is finished before the
+next begins, except work already in flight when this was decided.
