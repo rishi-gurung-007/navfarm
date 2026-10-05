@@ -105,7 +105,10 @@ forecast evidence services.
 - Produces: one list/dialog with the header and line rules in design §§3–4.
 
 - [ ] Write failing component tests for every dependency reset and disabled/read-only field.
-- [ ] Add feed items to Item requests without exposing a fourth user-facing type.
+- [ ] Add feed items to Item requests without exposing a fourth user-facing type. For a feed requisition, show the
+  workbook feed header and line fields in addition to the common ones (decisions.md 5 Oct "Feed requisitions in the one
+  document"), and do NOT offer the common Store/Purchase Release on it: an approved feed requisition waits for the mill
+  flow (Consolidation → TO → Loading → Dispatch → TO Receipt, master plan Part B).
 - [ ] Show origin once and render forecast evidence only when present.
 - [ ] Preserve Approve/Reject, Release, Shipment, Receipt and Item Tracking against their independent states.
 - [ ] Run targeted web tests, typecheck and lint.

@@ -2688,3 +2688,13 @@ rulings**. The coordinator asked for them to be recorded.
 4. **A transfer shipment draws only from its From location** (coordinator's ruling, 5 Oct). origin/main's company-wide
    serial fallback in `applyFifo` stays for other callers. A stock transfer refuses instead of consuming stock held
    elsewhere, which would bypass the From-department check.
+
+## 2026-10-05 — Feed requisitions in the one document: feed fields shown, mill flow fulfils
+
+Rishi, 5 Oct (to the desktop controller, after confirming the unified-requisition rulings above):
+1. A requisition for feed shows Rishi's common header and lines **plus** the workbook's feed fields, but only when the
+   requisition is for feed (Requisition and Loading Sheet §1–§2: Production Date, Submission Deadline, Priority, Farm
+   Total vs truck target, per-line destination Silo, Recommended Qty, Days Remaining, delivery date, batch breakdown).
+2. An approved feed requisition is fulfilled by the workbook's **mill flow**: Feed Mill Manager Consolidation Sheet →
+   Transfer Order from the mill → Loading Instruction Sheet → Dispatch → TO Receipt at the silo (master plan Part B).
+   It is not released as a common Store/Purchase transfer.
