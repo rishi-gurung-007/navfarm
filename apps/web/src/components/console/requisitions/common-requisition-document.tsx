@@ -159,7 +159,8 @@ export function CommonRequisitionDocument({ view, editable, options, onChange, o
           : <ReadField className={HALF} label={t("crqReqDate")} value={view.requisition_date ? formatDateShort(view.requisition_date) : null} />}
         {can ? select("crq-main", t("crqMainLocation"), view.main_location_id, locChoices, (v) => set({ main_location_id: v }))
           : <ReadField className={HALF} label={t("crqMainLocation")} value={locCode(view.main_location_id, view.main_location_code)} mono />}
-        <ReadField className={HALF} label={t("crqRequesterUserId")} value={view.requester_user_id ?? null} mono />
+        {/* Rishi, 5 Oct: "Requester User ID shows the user's login (email)". */}
+        <ReadField className={HALF} label={t("crqRequesterUserId")} value={view.requester_login ?? null} mono />
         <ReadField className={HALF} label={t("crqRequester")} value={view.requester_name ?? null} />
         {/* "auto from User Setup" — the server snapshots it from the signed-in
             user, so it is shown, never chosen. */}

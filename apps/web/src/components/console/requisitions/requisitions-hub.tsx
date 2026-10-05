@@ -30,7 +30,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Field } from "@/components/ui/field";
 import { ScrollTable } from "@/components/ui/scroll-table";
-import { getActiveCompanyId } from "@/hooks/useAuth";
+import { getActiveCompanyId, getStoredUser } from "@/hooks/useAuth";
 import { useLanguage } from "@/hooks/useLanguage";
 import { cn } from "@/lib/utils";
 import { formatDateShort } from "@/utils/date-short";
@@ -272,7 +272,7 @@ export function RequisitionsHub() {
           }
           setNotice("");
           setDecision(null);
-          setOpen(emptyCommonRequisition(companyId, docType, purpose, todayIso()));
+          setOpen(emptyCommonRequisition(companyId, docType, purpose, todayIso(), getStoredUser()?.email ?? null));
         }}
       />
     </div>

@@ -836,6 +836,28 @@ describe('Part E Task 3 — options and display names', () => {
     expect(view.lines[0]).toMatchObject({ from_location_code: 'F1/STORE', to_location_code: 'F1/SHED-1', resource_code: 'RES-1', resource_name: 'Electrician' });
   });
 
+  // P1 follow-up item 1 (Rishi, 5 Oct): "Requester User ID shows the user's
+  // login (email), not the internal id." The stored value stays the user id;
+  // the login is resolved here, in the one user lookup the document already
+  // makes for approved_by / released_by — not a second copy of it.
+  it('shows the requester login (email) beside the stored requester user id, from the one user lookup', async () => {
+    const { db, selectResults } = makeDb();
+    selectResults.push(
+      [headerRow({ requester_user_id: 'u1', approved_by: 'u2' })],
+      [lineRow()],
+      [], // locations (main_location_id farm-1); no departments on this row
+      [{ user_id: 'u1', full_name: 'Requester One', email: 'user@triplec.local' }, { user_id: 'u2', full_name: 'Approver Two', email: 'a2@x' }],
+    );
+    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
+    const view = await service.findOne('req-1', TENANT);
+    expect(view.requester_user_id).toBe('u1');
+    expect(view.requester_login).toBe('user@triplec.local');
+    expect(view.approved_by_name).toBe('Approver Two');
+    const userProjections = db.select.mock.calls.map((c: unknown[]) => c[0]).filter((p: any) => p && 'full_name' in p && 'user_id' in p);
+    expect(userProjections).toHaveLength(1);
+    expect(Object.keys(userProjections[0])).toContain('email');
+  });
+
   /**
    * Fix round 1, Important 2: findOne's shipments block (group by
    * shipment_id, match receipts by shipment_line_id, remaining = shipped -

@@ -582,11 +582,15 @@ export class RequisitionService {
       ? await this.db.select({ cost_center_id: schema.costCenterMaster.cost_center_id, cost_center_name: schema.costCenterMaster.cost_center_name })
         .from(schema.costCenterMaster).where(and(eq(schema.costCenterMaster.tenant_id, tenantId), eq(schema.costCenterMaster.company_id, row.company_id), inArray(schema.costCenterMaster.cost_center_id, departmentIds)))
       : []).map((d) => [d.cost_center_id, d.cost_center_name]));
-    const userIds = ids([row.approved_by, row.released_by]);
-    const userName = new Map((userIds.length
-      ? await this.db.select({ user_id: schema.userMaster.user_id, full_name: schema.userMaster.full_name })
+    // P1 follow-up (Rishi, 5 Oct): "Requester User ID shows the user's login
+    // (email)". The stored requester_user_id stays the id; its login is
+    // resolved here, in the same one user lookup as the approver and releaser.
+    const userIds = ids([row.approved_by, row.released_by, row.requester_user_id]);
+    const users = new Map((userIds.length
+      ? await this.db.select({ user_id: schema.userMaster.user_id, full_name: schema.userMaster.full_name, email: schema.userMaster.email })
         .from(schema.userMaster).where(and(eq(schema.userMaster.tenant_id, tenantId), inArray(schema.userMaster.user_id, userIds)))
-      : []).map((u) => [u.user_id, u.full_name]));
+      : []).map((u) => [u.user_id, u]));
+    const userName = new Map([...users].map(([id, u]) => [id, u.full_name]));
     const [transfer] = row.linked_transfer_id
       ? await this.db.select({ transfer_id: schema.stockTransfer.transfer_id, transfer_no: schema.stockTransfer.transfer_no })
         .from(schema.stockTransfer).where(eq(schema.stockTransfer.transfer_id, row.linked_transfer_id)).limit(1)
@@ -637,6 +641,7 @@ export class RequisitionService {
       sender_department_name: departmentName.get(row.sender_department_id ?? '') ?? null,
       approved_by_name: userName.get(row.approved_by ?? '') ?? null,
       released_by_name: userName.get(row.released_by ?? '') ?? null,
+      requester_login: users.get(row.requester_user_id ?? '')?.email ?? null,
       linked_transfer_no: transfer?.transfer_no ?? null,
       shipments,
       // Explicit columns win; nulls (legacy and FEED rows) project from

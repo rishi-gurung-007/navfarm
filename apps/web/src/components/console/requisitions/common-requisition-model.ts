@@ -72,6 +72,9 @@ export interface CommonRequisitionView {
   main_location_code?: string | null;
   /** WP1c (Rishi's 4 Oct list): shown on the header; never a client input. */
   requester_user_id?: string | null;
+  /** Rishi, 5 Oct: the Requester User ID is shown as the login (email); the
+   *  API resolves it from requester_user_id. Display only — never sent back. */
+  requester_login?: string | null;
   requester_name?: string | null;
   requester_department_id: string | null;
   requester_department_name?: string | null;
@@ -114,9 +117,14 @@ export const emptyLine = (): CommonRequisitionLine => ({
   lot_no: null, serial_no: null,
 });
 
-export function emptyCommonRequisition(companyId: string, docType: CommonDocType, purpose: CommonPurpose, today: string): CommonRequisitionView {
+/**
+ * A new, unsaved requisition. `requesterLogin` is the signed-in user's login:
+ * the API records the caller as the requester on create, so the header shows
+ * who that will be before the first Save (Rishi, 5 Oct).
+ */
+export function emptyCommonRequisition(companyId: string, docType: CommonDocType, purpose: CommonPurpose, today: string, requesterLogin: string | null = null): CommonRequisitionView {
   return {
-    company_id: companyId, doc_type: docType, purpose, requisition_date: today, required_date: null,
+    company_id: companyId, doc_type: docType, purpose, requisition_date: today, required_date: null, requester_login: requesterLogin,
     main_location_id: null, requester_department_id: null, sender_department_id: null,
     from_location_id: null, to_location_id: null, direct_transfer: false, justification: null, remarks: null,
     lines: [emptyLine()],

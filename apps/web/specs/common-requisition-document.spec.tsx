@@ -179,10 +179,18 @@ describe("CommonRequisitionDocument — Rishi's header field list", () => {
   });
 
   it("shows the Requester User ID and keeps Requester Department read-only (auto from User Setup)", () => {
-    render(<CommonRequisitionDocument view={storeView() as any} editable options={options} onChange={jest.fn()} />);
-    expect(screen.getByText("u-7")).toBeTruthy();
+    render(<CommonRequisitionDocument view={storeView({ requester_login: "ada@triplec.local" }) as any} editable options={options} onChange={jest.fn()} />);
+    // Rishi, 5 Oct: the User ID is the login (email), never the internal id.
+    expect(screen.getByText("ada@triplec.local")).toBeTruthy();
+    expect(screen.queryByText("u-7")).toBeNull();
     // Editable document, but this field is never a control.
     expect(screen.queryByLabelText("crqRequesterDept")).toBeNull();
+  });
+
+  it("a new, unsaved requisition shows the signed-in user's login as its Requester User ID", () => {
+    const view = emptyCommonRequisition("co-1", "ITEM", "STORE", "2026-10-05", "me@triplec.local");
+    render(<CommonRequisitionDocument view={view} editable options={options} onChange={jest.fn()} />);
+    expect(screen.getByText("me@triplec.local")).toBeTruthy();
   });
 
   it("shows Status as Open until the document is released, then Released", () => {
