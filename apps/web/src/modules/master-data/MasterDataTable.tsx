@@ -545,6 +545,7 @@ export function MasterDataTable({
   const lastEntityReloadKeyRef = useRef(entityReloadKey);
   const createOnlyOpenedRef = useRef(false);
   const codeFieldTouchedRef = useRef(false);
+  const deepLinkOpenedRef = useRef(false);
 
   const [confirmDelete, setConfirmDelete] = useState<Row | null>(null);
   const [duplicateCodeMessage, setDuplicateCodeMessage] = useState<string | null>(null);
@@ -1496,6 +1497,29 @@ export function MasterDataTable({
     setChipDrafts({});
     setModalOpen(true);
   };
+
+  useEffect(() => {
+    if (deepLinkOpenedRef.current || typeof window === "undefined") return;
+    const recordId = new URLSearchParams(window.location.search).get("recordId");
+    if (!recordId) return;
+    deepLinkOpenedRef.current = true;
+    const listed = rows.find((row) => String(row[config.idKey]) === recordId);
+    if (listed) {
+      openEdit(listed);
+      return;
+    }
+    api.get(`${config.apiBase}/${encodeURIComponent(recordId)}`)
+      .then((response) => {
+        const row = unwrap<Row>(response);
+        if (row && String(row[config.idKey]) === recordId) openEdit(row);
+      })
+      .catch(() => {
+        deepLinkOpenedRef.current = false;
+      });
+    // The URL identifies one initial open. Later list/filter refreshes must not
+    // reopen a dialog the user has deliberately closed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config.apiBase, config.idKey, rows]);
 
   const setField = (key: string, value: any) => {
     if (key === numbering.codeKey) {

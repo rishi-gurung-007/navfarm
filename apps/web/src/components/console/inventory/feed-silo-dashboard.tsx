@@ -1,211 +1,238 @@
 "use client";
 
-/**
- * Inventory -> Feed Forecast, Dashboard tab (TDD Engine §4 rows 47–64, Master
- * Setup §1): one row per silo with the client workbook's dashboard fields,
- * from GET /feed-forecast/silo-status. Everything is derived server-side from
- * the forecast engine; this screen only lays it out. The Mill Loading Bin
- * column waits for Part B. The silo balance is always labelled "System
- * Balance" (cp. 37).
- */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { api } from "@/services/api-client";
 import { InlineAlert } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
-import { ScrollTable } from "@/components/ui/scroll-table";
 import { useLanguage } from "@/hooks/useLanguage";
+import type { TranslationKeys } from "@/utils/translations";
 import { cn } from "@/lib/utils";
-import { formatDateShort, unwrap } from "./feed-format";
+import { unwrap } from "./feed-format";
 import { FeedFarmSelect, feedFarmLabel } from "./feed-farm-select";
-import { useFeedFarm } from "./use-feed-farm";
+import { FORECAST_VIEWS, type ForecastView } from "./feed-forecast-query";
+import {
+  FeedForecastProvider,
+  useFeedForecastContext,
+  useOptionalFeedForecastContext,
+} from "./feed-forecast-context";
+import { FeedSiloDashboardCards, type SelectedSiloDashboard } from "./feed-silo-dashboard-cards";
 
-export interface SiloStatusRow {
-  siloId: string;
-  siloCode: string;
-  siloName?: string;
-  houseCodes: string[];
-  capacityKg: number | null;
-  belowFeedLevelKg: number | null;
-  aboveThresholdKg: number | null;
-  feedInSiloItemId: string | null;
-  feedInSiloItemName: string | null;
-  feedType: "BULK" | "BAGGED";
-  systemBalanceKg: number;
-  lastApprovedCountKg: number | null;
-  lastApprovedCountAt: string | null;
-  lastFeedReceiptDate: string | null;
-  nonKgBalance: boolean;
-  currentDietItemId: string | null;
-  dailyRequirementKg: number;
-  daysRemaining: number | null;
-  firstShortageDate: string | null;
-  projectedNeedKg: number;
-  nextDietItemId: string | null;
-  nextDietDate: string | null;
-  siloAvailableForNextDiet: boolean | null;
-  projectedShortfallKg: number;
-  recommendedOrderKg: number;
-  requisitionStatus: string | null;
-  submissionDeadline: string | null;
-  alert: "CRITICAL_FIRST_PRIORITY" | "INFO" | null;
+interface Option {
+  id: string;
+  code: string;
+  name: string;
 }
 
 interface SiloStatusResponse {
   planningDate: string;
-  submissionDeadline: string;
-  itemNames: Record<string, string>;
-  rows: SiloStatusRow[];
+  today: string;
+  timeZone: string | null;
+  view: ForecastView;
+  from: string;
+  to: string;
+  period: { periodId: string } | null;
+  farm: { id: string; code: string; name: string };
+  selection: { shedId: string | null; siloId: string | null; sheds: Option[]; silos: Option[] };
+  submissionDeadline: string | null;
+  silo: SelectedSiloDashboard | null;
+  balanceSeries: unknown[];
+  demandSeries: unknown[];
+  farmTotalOrderKg: number;
 }
 
-const COLUMNS = [
-  "fsdColSilo", "fsdColHouses", "fsdColFeedType", "fsdColFeedInSilo", "fsdColCapacity", "fsdColBelow", "fsdColAbove",
-  "fsdColBalance", "fsdColCount", "fsdColReceipt", "fsdColCurrentDiet", "fsdColDaily", "fsdColDaysLeft", "fsdColShortage",
-  "fsdColNeed", "fsdColNextDiet", "fsdColNextAvail", "fsdColShortfall", "fsdColOrder", "fsdColReqStatus", "fsdColDeadline", "fsdColAlert",
-] as const;
-const RIGHT = new Set<string>(["fsdColCapacity", "fsdColBelow", "fsdColAbove", "fsdColBalance", "fsdColCount", "fsdColDaily", "fsdColDaysLeft", "fsdColNeed", "fsdColShortfall", "fsdColOrder"]);
-
-const TH = "h-9 whitespace-nowrap px-3 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]";
-const TD = "whitespace-nowrap px-3 py-1.5 text-xs text-[var(--text-primary)]";
-const NUM = "text-right tabular-nums";
+const VIEW_LABEL: Record<ForecastView, TranslationKeys> = {
+  DAILY: "ffViewDaily",
+  WEEKLY: "ffViewWeekly",
+  PERIOD: "ffViewPeriod",
+  CUSTOM: "ffViewCustom",
+};
 const inputStyle = { backgroundColor: "var(--input-bg)", color: "var(--input-text)", borderColor: "var(--input-border)" };
 
-const kg = (value: number | null | undefined): string =>
-  value === null || value === undefined || !Number.isFinite(value) ? "—" : value.toLocaleString("en-US", { maximumFractionDigits: 2 });
-const day = (value: string | null | undefined): string => (value ? formatDateShort(value) : "—");
-
-export default function FeedSiloDashboard() {
+function FeedSiloDashboardContent() {
   const { t } = useLanguage();
-  const farm = useFeedFarm();
-  const farmId = farm.farmId;
-  const [planningDate, setPlanningDate] = useState("");
+  const tRef = useRef(t);
+  tRef.current = t;
+  const forecast = useFeedForecastContext();
+  const {
+    farm,
+    farmId,
+    setFarmId,
+    planningDate,
+    setPlanningDate,
+    view,
+    setView,
+    from,
+    setFrom,
+    to,
+    setTo,
+    periodId,
+    hydrateWindow,
+  } = forecast;
+  const [selection, setSelection] = useState({ farmId, shedId: null as string | null, siloId: null as string | null });
+  const [sheds, setSheds] = useState<Option[]>([]);
+  const [silos, setSilos] = useState<Option[]>([]);
   const [data, setData] = useState<SiloStatusResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [reload, setReload] = useState(0);
+  const requestIdRef = useRef(0);
+
+  useEffect(() => {
+    if (selection.farmId === farmId) return;
+    requestIdRef.current += 1;
+    setSelection({ farmId, shedId: null, siloId: null });
+    setSheds([]);
+    setSilos([]);
+    setData(null);
+    setError("");
+  }, [farmId, selection.farmId]);
 
   const load = useCallback(async () => {
-    if (!farmId) {
-      setData(null);
-      return;
-    }
+    if (!farmId || selection.farmId !== farmId) return;
+    const requestId = ++requestIdRef.current;
+    const requested = { farmId, shedId: selection.shedId, siloId: selection.siloId };
+    const params = new URLSearchParams({ farmId, view });
+    if (planningDate) params.set("planningDate", planningDate);
+    if (from) params.set("from", from);
+    if (to && view === "CUSTOM") params.set("to", to);
+    if (periodId && view === "PERIOD") params.set("periodId", periodId);
+    if (requested.shedId) params.set("shedId", requested.shedId);
+    if (requested.siloId) params.set("siloId", requested.siloId);
     setLoading(true);
     setError("");
-    setData(null);
     try {
-      const params = new URLSearchParams({ farmId });
-      if (planningDate) params.set("planningDate", planningDate);
-      setData(unwrap<SiloStatusResponse>(await api.get(`/feed-forecast/silo-status?${params.toString()}`)));
+      const resolved = unwrap<SiloStatusResponse>(await api.get(`/feed-forecast/silo-status?${params.toString()}`));
+      if (requestId !== requestIdRef.current) return;
+      setSheds(resolved.selection.sheds ?? []);
+      setSilos(resolved.selection.silos ?? []);
+      hydrateWindow({
+        planningDate: resolved.planningDate,
+        view: resolved.view,
+        from: resolved.from,
+        to: resolved.to,
+        periodId: resolved.period?.periodId ?? "",
+      });
+      if (!requested.shedId) {
+        const first = resolved.selection.sheds?.[0]?.id ?? null;
+        setSelection({ farmId, shedId: first, siloId: null });
+        setData(null);
+        return;
+      }
+      if (!requested.siloId) {
+        const first = resolved.selection.silos?.[0]?.id ?? null;
+        setSelection({ farmId, shedId: requested.shedId, siloId: first });
+        setData(null);
+        return;
+      }
+      if (resolved.selection.shedId === requested.shedId && resolved.selection.siloId === requested.siloId) {
+        setData(resolved);
+      }
     } catch (err: unknown) {
-      setError((err instanceof Error && err.message) || t("fsdLoadFailed"));
+      if (requestId !== requestIdRef.current) return;
+      setError((err instanceof Error && err.message) || tRef.current("fsdLoadFailed"));
     } finally {
-      setLoading(false);
+      if (requestId === requestIdRef.current) setLoading(false);
     }
-  }, [farmId, planningDate, t]);
+  }, [farmId, from, hydrateWindow, periodId, planningDate, reload, selection.farmId, selection.shedId, selection.siloId, to, view]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
+  const chooseShed = (shedId: string) => {
+    requestIdRef.current += 1;
+    setSelection({ farmId, shedId: shedId || null, siloId: null });
+    setSilos([]);
+    setData(null);
+    setError("");
+  };
+  const chooseSilo = (siloId: string) => {
+    requestIdRef.current += 1;
+    setSelection((current) => ({ ...current, siloId: siloId || null }));
+    setData(null);
+    setError("");
+  };
+  const changeView = (next: ForecastView) => {
+    setView(next);
+    setFrom("");
+    setTo("");
+  };
+
   const fixedLabel = farm.isFixed
     ? farm.fixedFarm?.location_code
       ? feedFarmLabel({ code: farm.fixedFarm.location_code, name: farm.fixedFarm.location_name ?? "" })
-      : null
+      : data?.farm ? feedFarmLabel(data.farm) : null
     : undefined;
   const noFarms = !farm.isFixed && farm.loaded && farm.farms.length === 0;
-  const rows = data?.rows ?? [];
-  const nameOf = (id: string | null) => (id ? data?.itemNames?.[id] ?? "—" : "—");
+  const noSheds = farmId && !loading && sheds.length === 0 && selection.shedId === null;
+  const noSilos = selection.shedId && !loading && silos.length === 0 && selection.siloId === null;
 
   return (
-    <div data-fill-body>
+    <div data-fill-body className="flex min-h-0 flex-col gap-4">
       <div className="flex shrink-0 flex-wrap items-end gap-3">
-        <FeedFarmSelect id="sd-farm" label={t("ffFarm")} farms={farm.farms} farmId={farmId} fixedLabel={fixedLabel} onChange={farm.setFarmId} />
-        <Field label={t("fsdPlanningDate")} htmlFor="sd-planning-date">
-          <input
-            id="sd-planning-date"
-            type="date"
-            className="nf-input-sm"
-            style={inputStyle}
-            value={planningDate || data?.planningDate || ""}
-            onChange={(e) => setPlanningDate(e.target.value)}
-          />
+        <FeedFarmSelect id="sd-farm" label={t("ffFarm")} farms={farm.farms} farmId={farmId} fixedLabel={fixedLabel} onChange={setFarmId} />
+        <Field label={t("fsdShed")} htmlFor="sd-shed">
+          <select id="sd-shed" className="nf-input-sm nf-select min-w-44" style={inputStyle} value={selection.shedId ?? ""} onChange={(event) => chooseShed(event.target.value)} disabled={!sheds.length}>
+            {!selection.shedId && <option value="">{t("fsdSelectShed")}</option>}
+            {sheds.map((option) => <option key={option.id} value={option.id}>{option.code} — {option.name}</option>)}
+          </select>
         </Field>
+        <Field label={t("fsdSilo")} htmlFor="sd-silo">
+          <select id="sd-silo" className="nf-input-sm nf-select min-w-44" style={inputStyle} value={selection.siloId ?? ""} onChange={(event) => chooseSilo(event.target.value)} disabled={!selection.shedId || !silos.length}>
+            {!selection.siloId && <option value="">{t("fsdSelectSilo")}</option>}
+            {silos.map((option) => <option key={option.id} value={option.id}>{option.code} — {option.name}</option>)}
+          </select>
+        </Field>
+        <Field label={t("fsdPlanningDate")} htmlFor="sd-planning-date">
+          <input id="sd-planning-date" type="date" className="nf-input-sm" style={inputStyle} value={planningDate} onChange={(event) => setPlanningDate(event.target.value)} />
+        </Field>
+        <Field label={t("ffView")} htmlFor="sd-view">
+          <select id="sd-view" className="nf-input-sm nf-select" style={inputStyle} value={view} onChange={(event) => changeView(event.target.value as ForecastView)}>
+            {FORECAST_VIEWS.map((option) => <option key={option} value={option}>{t(VIEW_LABEL[option])}</option>)}
+          </select>
+        </Field>
+        {view !== "PERIOD" && (
+          <Field label={t(view === "DAILY" ? "ffDate" : view === "WEEKLY" ? "ffWeekStart" : "ffDateFrom")} htmlFor="sd-from">
+            <input id="sd-from" type="date" className="nf-input-sm" style={inputStyle} value={from} onChange={(event) => setFrom(event.target.value)} />
+          </Field>
+        )}
+        {view === "CUSTOM" && (
+          <Field label={t("ffDateTo")} htmlFor="sd-to">
+            <input id="sd-to" type="date" className="nf-input-sm" style={inputStyle} value={to} onChange={(event) => setTo(event.target.value)} />
+          </Field>
+        )}
       </div>
 
-      {error && (
-        <InlineAlert>
-          <span className="mr-3">{error}</span>
-          <Button size="sm" variant="outline" onClick={() => void load()}>{t("ffRetry")}</Button>
-        </InlineAlert>
-      )}
-
+      {error && <InlineAlert><span className="mr-3">{error}</span><Button size="sm" variant="outline" onClick={() => setReload((value) => value + 1)}>{t("ffRetry")}</Button></InlineAlert>}
       {farm.failed ? (
-        <InlineAlert>
-          <span className="mr-3">{t("ffFarmsLoadFailed")}</span>
-          <Button size="sm" variant="outline" onClick={farm.retry}>{t("ffRetry")}</Button>
-        </InlineAlert>
-      ) : !farm.loaded || loading ? (
-        <div className="p-10 text-center text-xs" style={{ color: "var(--text-secondary)" }}>
-          <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" /> {t("fsdLoading")}
-        </div>
+        <InlineAlert><span className="mr-3">{t("ffFarmsLoadFailed")}</span><Button size="sm" variant="outline" onClick={farm.retry}>{t("ffRetry")}</Button></InlineAlert>
+      ) : !farm.loaded ? (
+        <Loading label={t("fsdLoading")} />
       ) : noFarms || !farmId ? (
-        <div className="p-10 text-center text-xs" style={{ color: "var(--text-secondary)" }}>{t("ffNoFarms")}</div>
-      ) : data && rows.length === 0 ? (
-        <div className="p-10 text-center text-xs" style={{ color: "var(--text-secondary)" }}>{t("fsdEmpty")}</div>
-      ) : data ? (
-        <ScrollTable label={t("fsdLabel")}>
-          <thead>
-            <tr>
-              {COLUMNS.map((key) => (
-                <th key={key} scope="col" className={cn(TH, RIGHT.has(key) && NUM)}>{t(key)}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => (
-              <tr key={row.siloId} data-silo-row={row.siloCode}>
-                <td className={cn(TD, "font-medium")}>
-                  {row.siloCode}
-                  {row.siloName && <div className="text-[var(--text-muted)] font-normal">{row.siloName}</div>}
-                </td>
-                <td className={TD}>{row.houseCodes.length ? row.houseCodes.join(", ") : "—"}</td>
-                <td className={TD}>{row.feedType === "BAGGED" ? t("fsdBagged") : t("fsdBulk")}</td>
-                <td className={TD}>{row.feedInSiloItemName ?? "—"}</td>
-                <td className={cn(TD, NUM)}>{kg(row.capacityKg)}</td>
-                <td className={cn(TD, NUM)}>{kg(row.belowFeedLevelKg)}</td>
-                <td className={cn(TD, NUM)}>{kg(row.aboveThresholdKg)}</td>
-                <td className={cn(TD, NUM)}>
-                  {row.nonKgBalance && <Badge variant="warning" className="mr-2 px-1.5 py-0 text-[10px]">{t("fsdNonKg")}</Badge>}
-                  {kg(row.systemBalanceKg)}
-                </td>
-                <td className={cn(TD, NUM)} title={row.lastApprovedCountAt ?? undefined}>{kg(row.lastApprovedCountKg)}</td>
-                <td className={TD}>{day(row.lastFeedReceiptDate)}</td>
-                <td className={TD}>{nameOf(row.currentDietItemId)}</td>
-                <td className={cn(TD, NUM)}>{kg(row.dailyRequirementKg)}</td>
-                <td className={cn(TD, NUM)}>{row.daysRemaining === null ? "—" : row.daysRemaining.toFixed(1)}</td>
-                <td className={TD}>{day(row.firstShortageDate)}</td>
-                <td className={cn(TD, NUM)}>{kg(row.projectedNeedKg)}</td>
-                <td className={TD}>{row.nextDietItemId ? `${nameOf(row.nextDietItemId)} · ${day(row.nextDietDate)}` : "—"}</td>
-                <td className={TD}>{row.siloAvailableForNextDiet === null ? "—" : row.siloAvailableForNextDiet ? t("fsdYes") : t("fsdNo")}</td>
-                <td className={cn(TD, NUM)}>{kg(row.projectedShortfallKg)}</td>
-                <td className={cn(TD, NUM)}>{kg(row.recommendedOrderKg)}</td>
-                <td className={TD}>{row.requisitionStatus ?? "—"}</td>
-                <td className={TD}>{day(row.submissionDeadline)}</td>
-                <td className={TD}>
-                  {row.alert === "CRITICAL_FIRST_PRIORITY" ? (
-                    <Badge variant="danger" className="px-1.5 py-0 text-[10px]">{t("fsdAlertCritical")}</Badge>
-                  ) : row.alert === "INFO" ? (
-                    <Badge variant="info" className="px-1.5 py-0 text-[10px]">{t("fsdAlertInfo")}</Badge>
-                  ) : (
-                    "—"
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </ScrollTable>
+        <div className="p-10 text-center text-xs text-(--text-secondary)">{t("ffNoFarms")}</div>
+      ) : noSheds ? (
+        <div className="p-10 text-center text-xs text-(--text-secondary)">{t("fsdNoSheds")}</div>
+      ) : noSilos ? (
+        <div className="p-10 text-center text-xs text-(--text-secondary)">{t("fsdNoLinkedSilos")}</div>
+      ) : data?.silo ? (
+        <div data-dashboard-content className={cn("transition-opacity", loading && "opacity-50")}>
+          <FeedSiloDashboardCards silo={data.silo} farmTotalOrderKg={data.farmTotalOrderKg} t={t} />
+        </div>
+      ) : loading ? (
+        <Loading label={t("fsdLoading")} />
       ) : null}
     </div>
   );
+}
+
+function Loading({ label }: { label: string }) {
+  return <div className="p-10 text-center text-xs text-(--text-secondary)"><Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" />{label}</div>;
+}
+
+export default function FeedSiloDashboard() {
+  const context = useOptionalFeedForecastContext();
+  if (context) return <FeedSiloDashboardContent />;
+  return <FeedForecastProvider><FeedSiloDashboardContent /></FeedForecastProvider>;
 }
