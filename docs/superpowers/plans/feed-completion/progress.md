@@ -541,3 +541,9 @@ the blocked half.
 | Location dept + user dept visible in Location Master / Team Management | **done** — Location Master already had it; Team Management got the picker in `34aab843` |
 | Item Ledger + Value Entry on shipment/receipt | live verify owed (needs a posted shipment) |
 | Live check: two users, two departments, tracked item end to end | **blocked on demo data** (WP4) — see above |
+
+### 5 Oct 12:40 (desktop controller): Rishi's rulings, and the next order
+- WP1c's UOM question is answered: follow the list, FA/Service = Description + Qty, `uom` nullable (see the plan's WP1c addendum).
+- New **WP1g**: Requisition becomes its own top-level menu item, common kinds only. Feed requisitions only on Feed Forecast → Requisition.
+- Rishi asked why the Feed Forecast tabs still have the old names, so **WP1d is next, right after WP1c's remaining rows**.
+- Order: finish WP1c (UOM addendum) → **WP1d** → WP1g → WP4 (demo data, which also unblocks WP1c's two live rows) → WP2 → WP3 → WP5 → WP6 …

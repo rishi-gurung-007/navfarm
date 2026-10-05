@@ -272,6 +272,22 @@ have and that did not exist before the feed work began (25 Sep, the 3 Oct ruling
 Before building it, re-read every current label in the running app and record any extra mismatch in this table.
 Live check: screenshot each renamed page and tab.
 
+### WP1g — Requisition as its own menu item, common kinds only (M, ≈1–1½ h) — Rishi 5 Oct
+Decision: decisions.md "2026-10-05 — Requisition is its own menu item…". Move the hub (`requisitions-hub.tsx`) to a
+top-level sidebar entry **Requisition**, for example `/requisitions`. Restrict its list, filters, "Waiting for my approval",
+New dialog and decide actions to ITEM / FA / SERVICE; FEED rows are excluded server-side via a `kind=common` filter,
+not only hidden. Remove the Approvals sub-navigation entry for it. Redirect `/approvals/requisitions` and
+`/inventory/requisitions` to the new route, keeping the query. Feed requisitions remain only on Feed Forecast →
+Requisition, including their Approve/Reject there (that tab must offer the decide actions WP1b added to the hub).
+The Approvals inbox keeps excluding requisitions. **Tests:** hub never shows or creates FEED; the redirects; the feed tab
+can approve. **Live:** sidebar shows Requisition; a feed requisition can be approved from the Feed Forecast tab; screenshot.
+
+### WP1c addendum — FA/Service lines are Description + Qty only (Rishi 5 Oct)
+Migration 0148 (or the next free index; never 0146): `ALTER TABLE requisition_line MODIFY COLUMN uom varchar(20);`
+(relax NOT NULL, nothing dropped). Add a contract test like 0142's. DTO: `uom` is required only for ITEM lines.
+UI: FA/Service lines show only Description and Qty (no unit, no rate). Apply it to both local tenants and read the column
+back.
+
 ### WP2 — Forecast grid shows stock every day/week until it runs out (M) — Rishi 4 Oct
 Brief: `feed-completion/task-21a-brief.md`. Defect at `feed-forecast-grid.tsx` ~349–368 (cells render only on
 days the batch eats). Expose the engine's per-source by-date balance (no second calculation); Daily = one column
@@ -488,6 +504,7 @@ unchanged; screenshot each screen.
 | WP1e requisition LOB filter fix | 30–45 min | — |
 | WP1b one Requisitions page | 1–1½ h | — |
 | WP1f seed requisition permissions for demo roles | 30–45 min | — |
+| WP1g Requisition own menu item, common only | 1–1½ h | — |
 | WP1c common requisition to Rishi's list (incl. merging origin/main lot/serial) | 5–7 h | — |
 | WP1d page/tab/section names per workbook | 1–1½ h | — |
 | WP2 grid until run-out | 1 h | — |

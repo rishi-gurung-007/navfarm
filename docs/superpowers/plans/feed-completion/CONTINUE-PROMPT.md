@@ -7,8 +7,8 @@ You are continuing an in-progress build of NAVFarm (NestJS API + Next.js web, My
 2. Read in full, in order: `AGENTS.md`; `docs/superpowers/plans/2026-10-04-feed-master-completion-plan.md`
    (section 0 = the rules); the last entries of `docs/decisions.md` (all dated 2026-10-03 and 2026-10-04);
    `docs/superpowers/plans/feed-completion/progress.md` (what is done; never redo a WP marked complete).
-3. Continue in this order (check progress.md for what is done): WP1b → WP1f →
-   WP1c (fetch and merge `origin/main` locally first, for Item Tracking) → WP1d → WP2 → WP3 → WP4 → WP5 → WP6 →
+3. Continue in this order (check progress.md for what is done): finish WP1c → WP1d → WP1g → WP4 → WP2 → WP3 → WP5 → WP6 →
+  
    WP7 → WP8 → WP9 → WP10 → WP11.
 4. For each package: write failing tests first; implement; run the gates in plan §0.3 (jest with `--maxWorkers=2`,
    tsc 0 errors, no new lint errors); commit with explicit paths; then prove it in the running app

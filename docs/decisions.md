@@ -2604,3 +2604,14 @@ only) grants requisition permissions (PROCUREMENT / REQUISITION):
 - Farm Manager and Head of Farms (OPERATIONAL_ADMIN) roles: view, create, edit, submit, approve.
 - Standard User / Operator roles: view, create, edit, submit, but **not** approve.
 Release, shipment, receipt and Direct Transfer stay as configured; they are not part of this grant.
+
+## 2026-10-05 — Requisition is its own menu item, common kinds only; FA/Service lines are Description + Qty
+
+Rishi, 5 Oct:
+1. Requisitions leave the Approvals menu. A top-level sidebar item **Requisition** lists and creates **common**
+   requisitions only (Item, Fixed Asset, Service), with Approve / Reject on pending rows. **Feed requisitions live only
+   under Feed Forecast → Requisition.** The Approvals page keeps the other sign-offs. This supersedes the 4 Oct ruling
+   that the hub lists every kind. Old URLs (`/approvals/requisitions`, `/inventory/requisitions`) redirect to the new page.
+2. Asked about the NOT NULL unit on FA/Service lines, Rishi said "follow the file shared". His list says "FA and
+   Service: Description + Qty only", so those lines carry no unit. `requisition_line.uom` becomes nullable: a
+   relaxing MODIFY, nothing dropped, like 0142. Item lines keep the item's unit.
