@@ -393,3 +393,71 @@ submit route guards on 'create'). ACCOUNTANT/SUPER_ADMIN untouched; no duplicate
   none; the per-farm `*.manager@` users hold NO role at all — NULL
   user_role_assignment rows). The permission grant is correct; the persona wiring
   is demo-data work.
+
+## WP1c — Common requisition to Rishi's field and button list (IN PROGRESS)
+
+Controller: navfarm-30 (Claude Opus 5) took over 5 Oct ~10:50 on Rishi's
+instruction, after he stopped the GLM Freebuff session mid-task.
+
+Done so far on this row:
+
+- **origin/main merged** (`6f28462f`, 5 Oct 00:50) — the prerequisite WP1c
+  names for Item Tracking (Arun's PR #13 lot/serial work).
+- **Department checks on Transfer Shipment and Transfer Receipt** —
+  `143ebb1a` (Freebuff). Spec rows "user dept must match From/To Sub-Location
+  dimension". Admins do not bypass (Rishi's 4 Oct bound).
+- **Direct Transfer right in User Setup** — `51940e15` (Freebuff).
+  `user_master.direct_transfer_allowed`, migration 0148, the ONE source the
+  rule reads; `ship()` routes a direct requisition through
+  `postDirectTransfer`.
+- **Item Tracking on the line, enforced at shipment** — `0483df28`
+  (navfarm-30). See below: this one was recovered, not inherited clean.
+
+### Freebuff's uncommitted work was corrupt; it was repaired, not discarded
+
+The stopped session left 9 modified files that **did not compile — 20 tsc
+errors**. The intent was sound and the tests were spec-aligned, so the work
+was repaired rather than thrown away (the raw diff was kept while repairing).
+What was wrong, in case it recurs with that agent:
+
+- `transfer-execution.rules.ts`: `assertTrackingAssignments` written **twice**
+  in one module, the new copy referencing an undeclared `qty`; an import of
+  `./tracking-helpers`, **a file that was never created**.
+- `requisition.dto.ts`: the `lines` property had been **deleted** from
+  `CreateRequisitionDto` and replaced by a second `RequisitionLineInput`
+  class — 7 downstream errors, and the create endpoint would have taken no
+  lines at all.
+- `requisition.rules.ts`: `const present` and `assertLineFields` each declared
+  twice.
+- `requisition.service.spec.ts`: text glued mid-token (`};function
+  releaseSetup(`), the function prologue duplicated, `recordingDb` declared
+  twice, and a test referencing `STORE_SCOPE` — **an identifier that exists
+  nowhere in that file**. It had been copy-pasted from
+  `requisition.release.spec.ts`, where the harness already exists; the test
+  was moved there instead.
+
+**Ruling:** `assignmentsFromLine` takes one object (`{lot_no, serial_no, qty}`)
+rather than `(line, qty)`, because its tests — written first — call it that
+way. Cost if wrong: one signature change at one call site.
+
+**The defect none of the inherited tests could have caught:** `release()` did
+not select `lot_no`/`serial_no`, so every transfer line was created untracked.
+The recording database returns queued rows **whole**, ignoring the select
+projection — so a row-shaped assertion passes whether or not the service asked
+for the column. Verified by removing the fix: the row assertion still passed.
+The test now asserts the **projection**, and that does go RED→GREEN.
+
+Gates at `0483df28`: api 178 suites / 2319 tests pass, tsc 0, eslint 0 errors.
+
+### Still open on WP1c
+
+| Spec row | State |
+|---|---|
+| Header fields in Rishi's order and labels | not started |
+| FA/Service = Description + Qty only (UI) | API refuses tracking fields; UI not checked |
+| Status shows Open / Released, Approval separate | not started |
+| Line columns in Rishi's order | not started |
+| **Item Tracking dialog on the line (web)** | not started — API side done |
+| Location dept + user dept visible in Location Master / Team Management | not started |
+| Item Ledger + Value Entry on shipment/receipt | live verify owed |
+| Live check: two users, two departments, tracked item end to end | **owed** |
