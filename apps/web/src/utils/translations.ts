@@ -1759,6 +1759,8 @@ export const translations = {
     crqColToReceive: "Qty to receive",
     crqColReceived: "Received",
     crqColRemaining: "Remaining to receive",
+    crqColTracking: "Item tracking",
+    crqTrackingFor: "Item tracking for line {{line}}",
     crqChoose: "Choose…",
     crqAddLine: "Add line",
     crqRemoveLine: "Remove line {{line}}",

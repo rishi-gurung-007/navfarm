@@ -12,6 +12,7 @@ import { Plus, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Field, FieldGroup, ReadField } from "@/components/ui/field";
+import { LotSerialPicker } from "@/components/ui/lot-serial-picker";
 import { ScrollTable } from "@/components/ui/scroll-table";
 import { useLanguage } from "@/hooks/useLanguage";
 import { cn } from "@/lib/utils";
@@ -65,7 +66,18 @@ export function CommonRequisitionDocument({ view, editable, options, onChange }:
     "crqColLine", view.doc_type === "ITEM" ? "crqColItem" : view.doc_type === "SERVICE" ? "crqColResource" : null, "crqColDescription",
     "crqColQty", "crqColUom", "crqColRate",
     ...(store ? ["crqColFrom", "crqColTo", "crqColToShip", "crqColShipped", "crqColBalance", "crqColToReceive", "crqColReceived", "crqColRemaining"] : []),
+    // WP1c (Rishi's 4 Oct list): the Item Tracking button lives on the Store
+    // Item sub-form line. FA/Service and Purchase documents never show it.
+    ...(store && view.doc_type === "ITEM" ? ["crqColTracking"] : []),
   ].filter(Boolean) as string[];
+
+  /** The Item Master tracking mode of the line's item; NONE when untracked. */
+  const trackingOf = (line: CommonRequisitionLine): "LOT" | "SERIAL" | "NONE" => {
+    const it = items.find((x) => x.item_id === line.item_id);
+    if (it?.is_serial_tracked) return "SERIAL";
+    if (it?.is_lot_tracked) return "LOT";
+    return "NONE";
+  };
 
   return (
     <div className="flex flex-col gap-4">
@@ -177,6 +189,28 @@ export function CommonRequisitionDocument({ view, editable, options, onChange }:
                       <td className={cn(TD, NUM)}>{qty(line.qty_received)}</td>
                       <td className={cn(TD, NUM)} data-testid={`crq-remaining-${no}`}>{qty(line.remaining_to_receive)}</td>
                     </>}
+                    {store && view.doc_type === "ITEM" && (() => {
+                      const tracking = trackingOf(line);
+                      const assigned = (tracking === "SERIAL" ? line.serial_no : line.lot_no) ?? "";
+                      // An untracked item has nothing to assign; a tracked one
+                      // is MANDATORY before shipment, which the API enforces.
+                      if (tracking === "NONE") return <td className={TD}>—</td>;
+                      if (!can) return <td className={cn(TD, "font-mono")}>{assigned || "—"}</td>;
+                      return (
+                        <td className={TD}>
+                          <LotSerialPicker
+                            itemId={line.item_id ?? ""}
+                            warehouseId={line.from_location_id ?? view.from_location_id ?? undefined}
+                            trackingType={tracking}
+                            value={assigned}
+                            ariaLabel={t("crqTrackingFor", { line: i + 1 })}
+                            multiSelect={tracking === "SERIAL"}
+                            targetQuantity={Number(line.qty_to_ship ?? line.quantity) || undefined}
+                            onChange={(val) => setLine(i, tracking === "SERIAL" ? { serial_no: val || null } : { lot_no: val || null })}
+                          />
+                        </td>
+                      );
+                    })()}
                     {can && (
                       <td className={TD}>
                         <Button variant="ghost" size="sm" aria-label={t("crqRemoveLine", { line: i + 1 })} disabled={view.lines.length === 1}

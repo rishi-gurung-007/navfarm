@@ -45,6 +45,10 @@ export interface CommonRequisitionLine {
   qty_received?: number | string | null;
   balance_to_ship?: number;
   remaining_to_receive?: number;
+  /** WP1c Item Tracking (Rishi's 4 Oct list): ITEM lines only — one lot, and
+   *  a comma-separated serial list, one serial per unit. */
+  lot_no?: string | null;
+  serial_no?: string | null;
 }
 
 export interface CommonShipment {
@@ -94,7 +98,7 @@ export interface CommonRequisitionView {
 }
 
 export interface CommonRequisitionOptions {
-  items: { item_id: string; item_code: string; item_name: string; uom_primary: string | null }[];
+  items: { item_id: string; item_code: string; item_name: string; uom_primary: string | null; is_lot_tracked?: boolean; is_serial_tracked?: boolean }[];
   resources: { resource_id: string; resource_code: string; resource_name: string }[];
   locations: { location_id: string; location_code: string; location_name: string; location_type: string; farm_id: string | null }[];
   departments: { cost_center_id: string; cost_center_code: string; cost_center_name: string }[];
@@ -105,6 +109,7 @@ export interface CommonRequisitionOptions {
 export const emptyLine = (): CommonRequisitionLine => ({
   item_id: null, resource_id: null, description: null, quantity: "", uom: "", est_rate: null,
   from_location_id: null, to_location_id: null, qty_to_ship: null, qty_to_receive: null,
+  lot_no: null, serial_no: null,
 });
 
 export function emptyCommonRequisition(companyId: string, docType: CommonDocType, purpose: CommonPurpose, today: string): CommonRequisitionView {
@@ -148,6 +153,10 @@ export function toRequisitionPayload(v: CommonRequisitionView): Record<string, u
       to_location_id: store ? s(l.to_location_id) : undefined,
       qty_to_ship: store ? n(l.qty_to_ship) : undefined,
       qty_to_receive: store ? n(l.qty_to_receive) : undefined,
+      // ITEM only: the API refuses a lot or serial on an FA/Service line
+      // (assertLineFields), because those are Description + Qty only.
+      lot_no: v.doc_type === "ITEM" ? s(l.lot_no) : undefined,
+      serial_no: v.doc_type === "ITEM" ? s(l.serial_no) : undefined,
     })),
   };
 }

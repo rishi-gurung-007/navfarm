@@ -442,11 +442,19 @@ export class RequisitionService {
   async options(query: { company_id: string; farm_id?: string }, tenantId: string, userPayload?: { userId?: string }) {
     assertCompanyInScope(farmScope(this.cls), query.company_id);
     const scopeFarm = farmScope(this.cls).farmId ?? query.farm_id ?? null;
-    const items = await this.db
-      .select({ item_id: schema.itemMaster.item_id, item_code: schema.itemMaster.item_code, item_name: schema.itemMaster.item_name, uom_primary: schema.itemMaster.uom_primary })
+    const itemRows = await this.db
+      .select({
+        item_id: schema.itemMaster.item_id, item_code: schema.itemMaster.item_code, item_name: schema.itemMaster.item_name, uom_primary: schema.itemMaster.uom_primary,
+        // WP1c Item Tracking: the line offers the Lot/Serial assignment only
+        // for a tracked item, so the editor needs both Item Master flags here.
+        is_lot_tracked: schema.itemMaster.is_lot_tracked, is_serial_tracked: schema.itemMaster.is_serial_tracked,
+      })
       .from(schema.itemMaster)
       .where(and(eq(schema.itemMaster.tenant_id, tenantId), eq(schema.itemMaster.company_id, query.company_id), eq(schema.itemMaster.is_active, true), isNull(schema.itemMaster.deleted_at)))
       .orderBy(schema.itemMaster.item_code);
+    // MySQL hands these back as tinyint 1/0; the editor branches on them, so
+    // they cross the wire as real booleans rather than truthy numbers.
+    const items = itemRows.map((i) => ({ ...i, is_lot_tracked: Boolean(i.is_lot_tracked), is_serial_tracked: Boolean(i.is_serial_tracked) }));
     const resources = await this.db
       .select({ resource_id: schema.resourceMaster.resource_id, resource_code: schema.resourceMaster.resource_code, resource_name: schema.resourceMaster.resource_name })
       .from(schema.resourceMaster)

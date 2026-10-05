@@ -1,4 +1,4 @@
-import { commonActions, emptyCommonRequisition, isCommonEditable, toRequisitionPayload } from "../src/components/console/requisitions/common-requisition-model";
+import { commonActions, emptyCommonRequisition, emptyLine, isCommonEditable, toRequisitionPayload } from "../src/components/console/requisitions/common-requisition-model";
 
 const base = () => ({ ...emptyCommonRequisition("co-1", "ITEM", "STORE", "2026-10-04"), requisition_id: "req-1", approval_status: "OPEN", document_status: "OPEN" });
 const all = { create: true, approve: true, transfer: true };
@@ -70,5 +70,36 @@ describe("common requisition model", () => {
 
   it("offers nothing to a user without the grants", () => {
     expect(commonActions(base(), { create: false, approve: false, transfer: false })).toEqual([]);
+  });
+});
+
+/**
+ * WP1c Item Tracking (Rishi's 4 Oct list): the line's Lot/Serial assignment is
+ * an ITEM-line field. FA and Service lines are Description + Qty only, and the
+ * API refuses either field on them, so the payload must not send them there.
+ */
+describe("common requisition payload — Item Tracking assignment", () => {
+  it("sends lot_no and serial_no on an ITEM line", () => {
+    const v = emptyCommonRequisition("co-1", "ITEM", "STORE", "2026-10-05");
+    v.lines = [{ ...emptyLine(), item_id: "i1", quantity: "10", uom: "EA", lot_no: "L-1", serial_no: "S-1, S-2" }];
+    expect(toRequisitionPayload(v).lines).toEqual([expect.objectContaining({ lot_no: "L-1", serial_no: "S-1, S-2" })]);
+  });
+
+  it("omits them on a Fixed Asset or Service line", () => {
+    for (const docType of ["FA", "SERVICE"] as const) {
+      const v = emptyCommonRequisition("co-1", docType, "PURCHASE", "2026-10-05");
+      v.lines = [{ ...emptyLine(), description: "Tractor", quantity: "1", uom: "EA", lot_no: "L-1", serial_no: "S-1" }];
+      const [line] = toRequisitionPayload(v).lines as Record<string, unknown>[];
+      expect(line.lot_no).toBeUndefined();
+      expect(line.serial_no).toBeUndefined();
+    }
+  });
+
+  it("omits an empty assignment rather than sending blanks", () => {
+    const v = emptyCommonRequisition("co-1", "ITEM", "STORE", "2026-10-05");
+    v.lines = [{ ...emptyLine(), item_id: "i1", quantity: "10", uom: "EA", lot_no: "", serial_no: null }];
+    const [line] = toRequisitionPayload(v).lines as Record<string, unknown>[];
+    expect(line.lot_no).toBeUndefined();
+    expect(line.serial_no).toBeUndefined();
   });
 });

@@ -749,6 +749,23 @@ describe('Part E Task 3 — options and display names', () => {
     expect(out.departments.map((d) => d.cost_center_code)).toEqual(['D-1']);
   });
 
+  // WP1c: the Item Tracking button only appears on a line whose item is
+  // tracked, so the picker needs the two Item Master flags with the item.
+  it('carries each item lot/serial tracking flags so the line can offer Item Tracking', async () => {
+    const { db, selectResults } = makeDb();
+    selectResults.push(
+      [{ item_id: 'i1', item_code: 'IT-1', item_name: 'Bolts', uom_primary: 'EA', is_lot_tracked: 1, is_serial_tracked: 0 },
+       { item_id: 'i2', item_code: 'IT-2', item_name: 'Pumps', uom_primary: 'EA', is_lot_tracked: 0, is_serial_tracked: 1 }],
+      [], [], [],
+    );
+    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
+    const out = await service.options({ company_id: 'co-1' }, TENANT);
+    expect(out.items).toEqual([
+      { item_id: 'i1', item_code: 'IT-1', item_name: 'Bolts', uom_primary: 'EA', is_lot_tracked: true, is_serial_tracked: false },
+      { item_id: 'i2', item_code: 'IT-2', item_name: 'Pumps', uom_primary: 'EA', is_lot_tracked: false, is_serial_tracked: true },
+    ]);
+  });
+
   it('names the locations, departments, approver and transfer on the document', async () => {
     const { db, selectResults } = makeDb();
     selectResults.push(

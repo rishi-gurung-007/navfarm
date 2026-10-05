@@ -8,9 +8,18 @@ jest.mock("../src/hooks/useLanguage", () => {
   return { useLanguage: () => ({ t: stableT }) };
 });
 jest.mock("../src/utils/date-short", () => ({ formatDateShort: (v: string | null) => v ?? "" }));
+// The real picker fetches the available lots/serials from the API; this spec
+// is about whether the line offers it and where its value lands.
+jest.mock("../src/components/ui/lot-serial-picker", () => ({
+  LotSerialPicker: ({ ariaLabel, value, onChange, trackingType }: any) => (
+    <input aria-label={ariaLabel} data-tracking={trackingType} value={value ?? ""} onChange={(e) => onChange(e.target.value)} />
+  ),
+}));
 
 const options = {
-  items: [{ item_id: "i1", item_code: "IT-1", item_name: "Fixture item", uom_primary: "EA" }],
+  items: [{ item_id: "i1", item_code: "IT-1", item_name: "Fixture item", uom_primary: "EA" },
+          { item_id: "i-lot", item_code: "IT-LOT", item_name: "Lot item", uom_primary: "EA", is_lot_tracked: true, is_serial_tracked: false },
+          { item_id: "i-ser", item_code: "IT-SER", item_name: "Serial item", uom_primary: "EA", is_lot_tracked: false, is_serial_tracked: true }],
   resources: [], departments: [],
   locations: [{ location_id: "st", location_code: "F1/STORE", location_name: "Store", location_type: "STORE", farm_id: "f1" },
               { location_id: "sh", location_code: "F1/SHED-1", location_name: "Shed", location_type: "SHED", farm_id: "f1" }],
@@ -88,5 +97,55 @@ describe("CommonRequisitionDocument", () => {
     expect(screen.getByTestId("crq-remaining-1").textContent).toBe("8");
     expect(screen.getByTestId("crq-balance-9").textContent).toBe("4");
     expect(screen.getByTestId("crq-remaining-9").textContent).toBe("1");
+  });
+});
+
+/**
+ * WP1c Item Tracking (Rishi's 4 Oct list): "ITEM TRACKING BUTTON (on Sub-Form
+ * Line): Opens Lot/Serial assignment page". It belongs to a Store Item line
+ * whose item is tracked — nowhere else.
+ */
+describe("CommonRequisitionDocument — Item Tracking on the line", () => {
+  const storeLine = (over: Record<string, unknown> = {}) => ({
+    ...emptyLine(), item_id: "i-lot", quantity: "10", uom: "EA", qty_to_ship: "10", ...over,
+  });
+
+  it("offers a lot picker on a lot-tracked line and writes the choice to that line", () => {
+    const onChange = jest.fn();
+    const view = { ...emptyCommonRequisition("co-1", "ITEM", "STORE", "2026-10-05"), from_location_id: "st", lines: [storeLine()] };
+    render(<CommonRequisitionDocument view={view as any} editable options={options} onChange={onChange} />);
+    const picker = screen.getByLabelText('crqTrackingFor:{"line":1}');
+    expect(picker.getAttribute("data-tracking")).toBe("LOT");
+    fireEvent.change(picker, { target: { value: "L-7" } });
+    expect(onChange.mock.lastCall[0].lines[0]).toMatchObject({ lot_no: "L-7" });
+  });
+
+  it("offers a serial picker on a serial-tracked line and writes serial_no", () => {
+    const onChange = jest.fn();
+    const view = { ...emptyCommonRequisition("co-1", "ITEM", "STORE", "2026-10-05"), from_location_id: "st", lines: [storeLine({ item_id: "i-ser" })] };
+    render(<CommonRequisitionDocument view={view as any} editable options={options} onChange={onChange} />);
+    const picker = screen.getByLabelText('crqTrackingFor:{"line":1}');
+    expect(picker.getAttribute("data-tracking")).toBe("SERIAL");
+    fireEvent.change(picker, { target: { value: "S-1, S-2" } });
+    expect(onChange.mock.lastCall[0].lines[0]).toMatchObject({ serial_no: "S-1, S-2" });
+  });
+
+  it("offers nothing on an untracked item", () => {
+    const view = { ...emptyCommonRequisition("co-1", "ITEM", "STORE", "2026-10-05"), from_location_id: "st", lines: [storeLine({ item_id: "i1" })] };
+    render(<CommonRequisitionDocument view={view as any} editable options={options} onChange={jest.fn()} />);
+    expect(screen.queryByLabelText('crqTrackingFor:{"line":1}')).toBeNull();
+  });
+
+  it("shows no tracking column at all on a Purchase document", () => {
+    render(<CommonRequisitionDocument view={emptyCommonRequisition("co-1", "ITEM", "PURCHASE", "2026-10-05")} editable options={options} onChange={jest.fn()} />);
+    expect(screen.queryByText("crqColTracking")).toBeNull();
+  });
+
+  it("shows the assignment as read-only text once the document is no longer editable", () => {
+    const view = { ...emptyCommonRequisition("co-1", "ITEM", "STORE", "2026-10-05"), requisition_id: "r",
+      from_location_id: "st", lines: [storeLine({ line_id: "l1", line_seq: 1, lot_no: "L-7" })] };
+    render(<CommonRequisitionDocument view={view as any} editable={false} options={options} />);
+    expect(screen.queryByLabelText('crqTrackingFor:{"line":1}')).toBeNull();
+    expect(screen.getByText("L-7")).toBeTruthy();
   });
 });
