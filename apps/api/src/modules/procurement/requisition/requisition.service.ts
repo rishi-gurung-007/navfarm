@@ -534,6 +534,11 @@ export class RequisitionService {
         qty_shipped: schema.requisitionLine.qty_shipped,
         qty_to_receive: schema.requisitionLine.qty_to_receive,
         qty_received: schema.requisitionLine.qty_received,
+        // WP1c Item Tracking: the document shows what the line was assigned;
+        // without these the assignment vanished from the editor on reload
+        // although it was stored.
+        lot_no: schema.requisitionLine.lot_no,
+        serial_no: schema.requisitionLine.serial_no,
         item_code: schema.itemMaster.item_code,
         item_name: schema.itemMaster.item_name,
       })

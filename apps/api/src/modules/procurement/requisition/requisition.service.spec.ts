@@ -766,6 +766,19 @@ describe('Part E Task 3 — options and display names', () => {
     ]);
   });
 
+  // WP1c: without these two columns the assignment the user made disappeared
+  // from the document the moment it was reloaded, though it was stored.
+  it('returns each line Item Tracking assignment so the document can show it', async () => {
+    const { db, selectResults } = makeDb();
+    selectResults.push([headerRow()], [lineRow({ lot_no: 'L-1', serial_no: 'S-1, S-2' })], [], [], [], []);
+    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
+    await service.findOne('req-1', TENANT);
+    // The queued row is returned whole, so only the projection proves the
+    // columns were asked for (see the release spec for the same trap).
+    const lineProjection = db.select.mock.calls.map((c: unknown[]) => c[0]).find((p: any) => p?.qty_to_ship && p?.line_seq);
+    expect(Object.keys(lineProjection)).toEqual(expect.arrayContaining(['lot_no', 'serial_no']));
+  });
+
   it('names the locations, departments, approver and transfer on the document', async () => {
     const { db, selectResults } = makeDb();
     selectResults.push(
