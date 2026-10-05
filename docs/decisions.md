@@ -2302,6 +2302,10 @@ work may prepare additive tenant-agnostic migrations and verify them on local
 
 ## 2026-10-01 — Common requisition approval precedes release
 
+> **Superseded in part (5 Oct):** who may press Release changed. Any user who may approve the requisition releases it,
+> under the same not-own-requisition rule as approval (our reading of "may approve"). Transfer Shipment keeps the
+> sender-department rule. See "2026-10-05 — Common requisition: requester, Service lines, receipt and release".
+
 Rishi confirmed that approval and release are separate actions. A common
 requisition begins Open, is submitted for approval, becomes Approved only
 after the approval decision, and is then explicitly Released. Store shipment
