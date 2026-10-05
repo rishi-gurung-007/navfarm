@@ -47,6 +47,7 @@ import {
   assertReceiptByRequester,
   assertRequisitionLines,
   isSelfApproval,
+  selfApprovalSql,
   lineBalances,
   mapToTransferLines,
   resolveTrackingAssignment,
@@ -726,8 +727,7 @@ export class RequisitionService {
       });
       if (!mayApprove) return [];
       if (opts.userId && !maySelfApprove(opts.userType)) {
-        conditions.push(sql`NOT (COALESCE(${schema.requisition.source}, '') <> 'AUTO_FORECAST'
-          AND (${schema.requisition.created_by} <=> ${opts.userId} OR ${schema.requisition.requester_user_id} <=> ${opts.userId}))`);
+        conditions.push(sql`NOT ${selfApprovalSql(schema.requisition, opts.userId)}`);
       }
       const A = schema.approvalRequest;
       conditions.push(sql`EXISTS (SELECT 1 FROM approval_request WHERE approval_request.request_id = ${schema.requisition.approval_request_id}

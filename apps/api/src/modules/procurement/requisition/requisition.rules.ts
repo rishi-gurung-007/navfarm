@@ -22,6 +22,7 @@
  * Remaining to Receive are computed, never stored.
  */
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import { sql, type SQL, type SQLWrapper } from 'drizzle-orm';
 import { FLOAT_SUM_TOLERANCE as EPS } from '../../../common/numeric-tolerance';
 
 export const COMMON_DOC_TYPES = ['ITEM', 'FA', 'SERVICE'] as const;
@@ -449,13 +450,34 @@ export function assertNotFeedRequisition(docType: string | null | undefined, act
  * system-generated; anything else — MANUAL_ENTRY, and a legacy common row with
  * no source at all — is manual.
  */
+/** The one system-generated requisition source the self-approval rule exempts. */
+export const SYSTEM_DRAFT_SOURCE = 'AUTO_FORECAST';
+
 export function isSelfApproval(
   row: { source: string | null; created_by: string | null; requester_user_id: string | null },
   userId: string | undefined,
 ): boolean {
   if (!userId) return false;
-  if (row.source === 'AUTO_FORECAST') return false;
+  if (row.source === SYSTEM_DRAFT_SOURCE) return false;
   return row.created_by === userId || row.requester_user_id === userId;
+}
+
+/**
+ * isSelfApproval as a SQL predicate, for queries that must leave out what the
+ * caller could not approve without loading each row (findAll's "Waiting for
+ * my approval"). P1 follow-up item 8: it used to be re-stated by hand inside
+ * findAll. requisition.self-approval-sql.spec.ts proves the two agree on
+ * every combination of source, creator, requester and caller. The SQL is
+ * never NULL: COALESCE covers a missing source and <=> is null-safe, so
+ * NOT(...) keeps exactly the rows isSelfApproval would let the caller approve.
+ * This builds a query expression only; it does not touch the database.
+ */
+export function selfApprovalSql(
+  columns: { source: SQLWrapper; created_by: SQLWrapper; requester_user_id: SQLWrapper },
+  userId: string | undefined,
+): SQL {
+  if (!userId) return sql`FALSE`;
+  return sql`(COALESCE(${columns.source}, '') <> ${sql.raw(`'${SYSTEM_DRAFT_SOURCE}'`)} AND (${columns.created_by} <=> ${userId} OR ${columns.requester_user_id} <=> ${userId}))`;
 }
 
 /**
