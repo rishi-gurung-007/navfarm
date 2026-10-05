@@ -82,6 +82,31 @@ describe('FeedForecastGrid — Engine row 70', () => {
     expect(pivoted.map((entry) => entry.closingBySlot['2026-09-23'])).toEqual([800, 800]);
   });
 
+  it('renders daily records for the same batch, stage, item and source as one forecast row', () => {
+    const dailyRows = [
+      row(),
+      row({
+        key: 'group|r1|silo-1|2026-09-24',
+        date: '2026-09-24',
+        dateTo: '2026-09-24',
+        openingSystemBalanceKg: 0,
+        projectedClosingBalanceKg: 0,
+      }),
+    ];
+    const balances = [
+      point({ date: '2026-09-23', projectedClosingBalanceKg: 500 }),
+      point({ date: '2026-09-24', projectedClosingBalanceKg: 0 }),
+    ];
+
+    const { pivoted, columns } = pivotForecastRows(dailyRows, balances, 'DAILY', '2026-09-23');
+
+    expect(pivoted).toHaveLength(1);
+    expect(columns.map((column) => column.key)).toEqual(['2026-09-23', '2026-09-24']);
+    expect(columns.map((column) => pivoted[0].closingBySlot[column.key])).toEqual([500, 0]);
+    expect(pivoted[0].date).toBe('2026-09-23');
+    expect(pivoted[0].dateTo).toBe('2026-09-24');
+  });
+
   it('renders required and current feed items, quantities and dates from the contract', () => {
     render(<FeedForecastGrid rows={[row()]} sourceBalances={[point()]} view="DAILY" from="2026-09-23" loading={false} t={t} />);
     const cells = within(screen.getAllByRole('row')[1]).getAllByRole('cell').map((cell) => cell.textContent);

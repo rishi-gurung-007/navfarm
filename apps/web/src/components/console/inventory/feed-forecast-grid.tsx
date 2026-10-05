@@ -103,6 +103,52 @@ function sourceKey(locationId: string | null, sourceCode: string | null, itemId:
   return `${locationId ?? sourceCode ?? "NONE"}|${itemId}`;
 }
 
+function forecastLineKey(row: ReportRow): string {
+  return [
+    row.batchGroupId,
+    row.shedId ?? row.shedCode,
+    row.stageCode,
+    row.itemId,
+    row.sourceType,
+    row.sourceLocationId ?? row.sourceCode ?? "NONE",
+  ].join("|");
+}
+
+/**
+ * DAILY and CUSTOM API results contain one record per date. The grid puts
+ * dates across columns, so those records must first become one logical line.
+ * Stage and item remain in the identity so a diet/stage change is still shown
+ * as a separate line rather than being hidden inside the date columns.
+ */
+function collapseForecastLines(rows: ReportRow[]): ReportRow[] {
+  const lines = new Map<string, ReportRow>();
+  for (const row of [...rows].sort((left, right) => left.date.localeCompare(right.date))) {
+    const key = forecastLineKey(row);
+    const line = lines.get(key);
+    if (!line) {
+      lines.set(key, { ...row, key });
+      continue;
+    }
+    line.dateTo = row.dateTo > line.dateTo ? row.dateTo : line.dateTo;
+    line.days += row.days;
+    line.intakeKg += row.intakeKg;
+    line.confirmedReceiptsKg += row.confirmedReceiptsKg;
+    line.recommendedQtyKg = Math.max(line.recommendedQtyKg, row.recommendedQtyKg);
+    line.sharedBatchCount = Math.max(line.sharedBatchCount, row.sharedBatchCount);
+    line.indicative = line.indicative || row.indicative;
+    if (row.firstShortageDate && (!line.firstShortageDate || row.firstShortageDate < line.firstShortageDate)) {
+      line.firstShortageDate = row.firstShortageDate;
+    }
+    if (row.deliveryDate && (!line.deliveryDate || row.deliveryDate < line.deliveryDate)) {
+      line.deliveryDate = row.deliveryDate;
+    }
+    if (row.runDownDate && (!line.runDownDate || row.runDownDate < line.runDownDate)) {
+      line.runDownDate = row.runDownDate;
+    }
+  }
+  return [...lines.values()];
+}
+
 function slotFor(date: string, view: string | undefined, from: string): ColumnSlot {
   if (view === "WEEKLY") {
     const start = addDaysIso(from, Math.max(0, Math.floor(diffDaysIso(from, date) / 7)) * 7);
@@ -131,7 +177,7 @@ export function pivotForecastRows(
   }
 
   const slots = new Map<string, ColumnSlot>();
-  const pivoted = rows.map((row) => {
+  const pivoted = collapseForecastLines(rows).map((row) => {
     const closingBySlot: Record<string, number> = {};
     const points = pointsBySource.get(sourceKey(row.sourceLocationId, row.sourceCode, row.itemId)) ?? [];
     if (points.length) {
