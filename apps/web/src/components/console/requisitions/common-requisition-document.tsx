@@ -8,6 +8,7 @@
  * est. rate and line description are ours. Store shows the from/to locations,
  * direct-transfer flag and the shipping quantities; Purchase does not.
  */
+import { useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -37,8 +38,55 @@ const NUM = "text-right tabular-nums";
 const qty = (v: string | number | null | undefined) => (v === null || v === undefined || v === "" ? "" : Number(v).toLocaleString("en-US", { maximumFractionDigits: 4 }));
 const stamp = (v: string | null | undefined) => (v ? `${formatDateShort(v.slice(0, 10))} ${v.slice(11, 16)} UTC` : null);
 
-export function CommonRequisitionDocument({ view, editable, options, onChange }: {
+/** WP4a: what the released line's Item Tracking button saves — the lot, or the serial list. */
+export type TrackingAssignment = { lot_no: string } | { serial_no: string };
+
+/**
+ * WP4a fix round 1 — Rishi's 4 Oct list: "ITEM TRACKING BUTTON (on Sub-Form
+ * Line): Opens Lot/Serial assignment page … MANDATORY before Transfer Shipment
+ * post". After release the document is read-only, but a tracked line with a
+ * balance still to ship keeps its button: it opens the picker for that balance
+ * and saves through the caller (POST /requisition/:id/item-tracking).
+ */
+function ReleasedTrackingCell({ line, no, tracking, assigned, warehouseId, onSave }: {
+  line: CommonRequisitionLine; no: number; tracking: "LOT" | "SERIAL"; assigned: string; warehouseId?: string;
+  onSave: (lineId: string, value: TrackingAssignment) => Promise<boolean>;
+}) {
+  const { t } = useLanguage();
+  const [open, setOpen] = useState(false);
+  const [value, setValue] = useState(assigned);
+  const [saving, setSaving] = useState(false);
+  if (!open) {
+    return (
+      <div className="flex items-center gap-2">
+        <span className="font-mono">{assigned || "—"}</span>
+        <Button variant="outline" size="sm" aria-label={t("crqItemTrackingFor", { line: no })} onClick={() => { setValue(assigned); setOpen(true); }}>
+          {t("crqColTracking")}
+        </Button>
+      </div>
+    );
+  }
+  const save = async () => {
+    setSaving(true);
+    const ok = await onSave(line.line_id as string, tracking === "SERIAL" ? { serial_no: value } : { lot_no: value });
+    setSaving(false);
+    if (ok) setOpen(false);
+  };
+  return (
+    <div className="flex items-center gap-2">
+      <LotSerialPicker itemId={line.item_id ?? ""} warehouseId={warehouseId} trackingType={tracking} value={value}
+        ariaLabel={t("crqTrackingFor", { line: no })} multiSelect={tracking === "SERIAL"}
+        targetQuantity={line.balance_to_ship || undefined} onChange={(val) => setValue(val || "")} />
+      <Button size="sm" onClick={save} disabled={saving || !value.trim()}>{t("crqTrackingSave")}</Button>
+      <Button size="sm" variant="ghost" onClick={() => setOpen(false)} disabled={saving}>{t("crqTrackingCancel")}</Button>
+    </div>
+  );
+}
+
+export function CommonRequisitionDocument({ view, editable, options, onChange, onAssignTracking }: {
   view: CommonRequisitionView; editable: boolean; options?: CommonRequisitionOptions | null; onChange?: (next: CommonRequisitionView) => void;
+  /** WP4a: given on a released Store requisition to a user who may ship; saves one line's Item Tracking. */
+  onAssignTracking?: (lineId: string, value: TrackingAssignment) => Promise<boolean>;
 }) {
   const { t } = useLanguage();
   const can = editable && !!onChange;
@@ -229,6 +277,14 @@ export function CommonRequisitionDocument({ view, editable, options, onChange }:
                       // An untracked item has nothing to assign; a tracked one
                       // is MANDATORY before shipment, which the API enforces.
                       if (tracking === "NONE") return <td className={TD}>—</td>;
+                      if (!can && onAssignTracking && line.line_id && (line.balance_to_ship ?? 0) > 1e-9) {
+                        return (
+                          <td className={TD}>
+                            <ReleasedTrackingCell line={line} no={no} tracking={tracking} assigned={assigned}
+                              warehouseId={line.from_location_id ?? view.from_location_id ?? undefined} onSave={onAssignTracking} />
+                          </td>
+                        );
+                      }
                       if (!can) return <td className={cn(TD, "font-mono")}>{assigned || "—"}</td>;
                       return (
                         <td className={TD}>

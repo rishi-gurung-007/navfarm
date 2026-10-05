@@ -24,7 +24,7 @@ import { Field } from "@/components/ui/field";
 import { getStoredUser, hasPermission } from "@/hooks/useAuth";
 import { useLanguage } from "@/hooks/useLanguage";
 import { todayIso, unwrap } from "../inventory/feed-format";
-import { CommonRequisitionDocument } from "./common-requisition-document";
+import { CommonRequisitionDocument, type TrackingAssignment } from "./common-requisition-document";
 import {
   commonActions, isCommonEditable, toRequisitionPayload, type CommonRequisitionOptions, type CommonRequisitionView,
 } from "./common-requisition-model";
@@ -93,16 +93,21 @@ export function CommonRequisitionDetail({ initial, onView, onBack, embedded = fa
   const href = commonApprovalHref(draft);
   const id = draft.requisition_id;
 
+  // WP4a: a released Store document still needs the items' tracking flags,
+  // for the Item Tracking button on lines with a balance to ship.
+  const releasedStore = draft.purpose === "STORE" && (draft.document_status ?? "OPEN") === "RELEASED";
+  const needsOptions = editable || releasedStore;
+
   useEffect(() => {
     setOptions(null);
-    if (!editable) return;
+    if (!needsOptions) return;
     let live = true;
     api
       .get(`/requisition/options?company_id=${draft.company_id}${draft.farm_id ? `&farm_id=${draft.farm_id}` : ""}`)
       .then((res) => { if (live) setOptions(unwrap<CommonRequisitionOptions>(res)); })
       .catch(() => undefined); // without options the pickers stay empty; the rest of the document still edits
     return () => { live = false; };
-  }, [editable, draft.company_id, draft.farm_id]);
+  }, [needsOptions, draft.company_id, draft.farm_id]);
 
   const run = async (work: () => Promise<void>) => {
     setBusy(true);
@@ -132,6 +137,16 @@ export function CommonRequisitionDetail({ initial, onView, onBack, embedded = fa
       ? tRef.current("crqReleasedStore", { no: res.linked_transfer_no ?? "" })
       : tRef.current("crqReleasedPurchase"));
   });
+  // WP4a: Item Tracking after release, for the unshipped balance. Refusals
+  // (department, coverage, nothing left to ship) come back as the action error.
+  const assignTracking = async (lineId: string, value: TrackingAssignment): Promise<boolean> => {
+    let ok = false;
+    await run(async () => {
+      emit(await api.post(`/requisition/${id}/item-tracking`, { lines: [{ line_id: lineId, ...value }] }), tRef.current("crqTrackingSaved"));
+      ok = true;
+    });
+    return ok;
+  };
   const linkPo = () => run(async () => emit(await api.post(`/requisition/${id}/link-po`, { linked_po_no: poNo.trim() }), tRef.current("crqPoLinked")));
 
   const lineNo = (lineId: string) => {
@@ -175,7 +190,8 @@ export function CommonRequisitionDetail({ initial, onView, onBack, embedded = fa
       )}
       {error && <InlineAlert>{error}</InlineAlert>}
       <div className="min-h-0 flex-1 overflow-auto">
-        <CommonRequisitionDocument view={draft} editable={editable} options={options} onChange={setDraft} />
+        <CommonRequisitionDocument view={draft} editable={editable} options={options} onChange={setDraft}
+          onAssignTracking={releasedStore && can.transfer ? assignTracking : undefined} />
       </div>
       <div className="flex shrink-0 flex-col gap-3">
         <div className="flex flex-wrap items-end gap-2">

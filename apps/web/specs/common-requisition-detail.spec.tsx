@@ -12,6 +12,12 @@ jest.mock("../src/hooks/useLanguage", () => {
 });
 jest.mock("../src/hooks/useAuth", () => ({ getStoredUser: () => ({}), hasPermission: () => true }));
 jest.mock("../src/utils/date-short", () => ({ formatDateShort: (v: string | null) => v ?? "" }));
+// The real picker reads the available lots/serials from the API; here only its value matters.
+jest.mock("../src/components/ui/lot-serial-picker", () => ({
+  LotSerialPicker: ({ ariaLabel, value, onChange }: any) => (
+    <input aria-label={ariaLabel} value={value ?? ""} onChange={(e) => onChange(e.target.value)} />
+  ),
+}));
 
 const get = api.get as jest.Mock;
 const post = api.post as jest.Mock;
@@ -262,8 +268,11 @@ describe("CommonRequisitionDetail", () => {
     expect(await screen.findByText(message)).toBeTruthy();
   });
 
-  it("loads options only while editable", async () => {
-    render(<CommonRequisitionDetail initial={released()} onView={jest.fn()} onBack={jest.fn()} />);
+  // WP4a fix round 1: a released STORE document now loads them too, for the
+  // Item Tracking button (pinned by the item-tracking test below); a released
+  // Purchase document still does not.
+  it("loads options only while editable, or for a released Store document", async () => {
+    render(<CommonRequisitionDetail initial={released({ purpose: "PURCHASE" })} onView={jest.fn()} onBack={jest.fn()} />);
     await Promise.resolve();
     expect(get).not.toHaveBeenCalled();
   });
@@ -281,5 +290,21 @@ describe("CommonRequisitionDetail", () => {
     expect(screen.queryByRole("button", { name: "crqBack" })).toBeNull();
     expect(screen.queryByText("REQ-2026-0001", { selector: "h2" })).toBeNull();
     expect(screen.getByText("crqSave")).toBeTruthy();
+  });
+
+  // WP4a fix round 1: a released Store requisition still takes its Item
+  // Tracking for the unshipped balance, through POST /requisition/:id/item-tracking.
+  it("assigns a lot on a released Store requisition through the item-tracking route", async () => {
+    get.mockResolvedValue({ data: { ...options, items: [{ item_id: "i-lot", item_code: "IT-LOT", item_name: "Lot item", uom_primary: "EA", is_lot_tracked: true, is_serial_tracked: false }] } });
+    const after = released({ lines: [line(1, { item_id: "i-lot", item_code: "IT-LOT", lot_no: "LOT00001", balance_to_ship: 5 }) as any] });
+    post.mockImplementation(async () => ({ data: after }));
+    const onView = jest.fn();
+    render(<CommonRequisitionDetail initial={released({ linked_transfer_id: "tr-1", lines: [line(1, { item_id: "i-lot", item_code: "IT-LOT", balance_to_ship: 5 }) as any] })} onView={onView} onBack={jest.fn()} />);
+    await waitFor(() => expect(get).toHaveBeenCalledWith("/requisition/options?company_id=co-1"));
+    fireEvent.click(await screen.findByRole("button", { name: 'crqItemTrackingFor:{"line":1}' }));
+    fireEvent.change(screen.getByLabelText('crqTrackingFor:{"line":1}'), { target: { value: "LOT00001" } });
+    fireEvent.click(screen.getByRole("button", { name: "crqTrackingSave" }));
+    await waitFor(() => expect(post).toHaveBeenCalledWith("/requisition/req-1/item-tracking", { lines: [{ line_id: "l1", lot_no: "LOT00001" }] }));
+    await waitFor(() => expect(onView).toHaveBeenCalledWith(after, "crqTrackingSaved"));
   });
 });

@@ -251,4 +251,46 @@ describe("CommonRequisitionDocument — FA/Service is Description + Qty only", (
     const { container } = render(<CommonRequisitionDocument view={emptyCommonRequisition("co-1", "ITEM", "STORE", "2026-10-05")} editable options={options} onChange={jest.fn()} />);
     expect(headers(container)).toContain("crqColUom");
   });
+
+  // WP4a fix round 1 (Rishi's 4 Oct list: "ITEM TRACKING BUTTON (on Sub-Form
+  // Line): Opens Lot/Serial assignment page … MANDATORY before Transfer
+  // Shipment post"): after release the line's button opens the picker for the
+  // unshipped balance and saves through the caller (POST /requisition/:id/item-tracking).
+  describe("Item Tracking on a released Store requisition", () => {
+    const released = (over: Record<string, unknown> = {}) => ({
+      ...emptyCommonRequisition("co-1", "ITEM", "STORE", "2026-10-05"), requisition_id: "r", req_no: "RQ-00021",
+      approval_status: "APPROVED", document_status: "RELEASED",
+      lines: [{ line_id: "l1", line_seq: 1, item_id: "i-lot", item_code: "IT-LOT", item_name: "Lot item", resource_id: null, description: null,
+        quantity: "5", uom: "EA", est_rate: null, from_location_id: "st", to_location_id: "sh", qty_to_ship: "5", qty_shipped: 0,
+        qty_to_receive: "5", qty_received: 0, balance_to_ship: 5, remaining_to_receive: 0, lot_no: null, serial_no: null, ...over }],
+    });
+
+    it("opens the picker from the line's Item Tracking button and saves the lot for that line", async () => {
+      const onAssignTracking = jest.fn().mockResolvedValue(true);
+      render(<CommonRequisitionDocument view={released() as any} editable={false} options={options} onAssignTracking={onAssignTracking} />);
+      expect(screen.queryByLabelText('crqTrackingFor:{"line":1}')).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: 'crqItemTrackingFor:{"line":1}' }));
+      fireEvent.change(screen.getByLabelText('crqTrackingFor:{"line":1}'), { target: { value: "LOT00001" } });
+      fireEvent.click(screen.getByRole("button", { name: "crqTrackingSave" }));
+      expect(onAssignTracking).toHaveBeenCalledWith("l1", { lot_no: "LOT00001" });
+    });
+
+    it("sends serials for a serial-tracked line", () => {
+      const onAssignTracking = jest.fn().mockResolvedValue(true);
+      render(<CommonRequisitionDocument view={released({ item_id: "i-ser", item_code: "IT-SER" }) as any} editable={false} options={options} onAssignTracking={onAssignTracking} />);
+      fireEvent.click(screen.getByRole("button", { name: 'crqItemTrackingFor:{"line":1}' }));
+      fireEvent.change(screen.getByLabelText('crqTrackingFor:{"line":1}'), { target: { value: "SN1,SN2" } });
+      fireEvent.click(screen.getByRole("button", { name: "crqTrackingSave" }));
+      expect(onAssignTracking).toHaveBeenCalledWith("l1", { serial_no: "SN1,SN2" });
+    });
+
+    it("offers no button once the line has nothing left to ship, nor without the caller's save", () => {
+      const { unmount } = render(<CommonRequisitionDocument view={released({ balance_to_ship: 0, lot_no: "LOT00001" }) as any} editable={false} options={options} onAssignTracking={jest.fn()} />);
+      expect(screen.queryByRole("button", { name: 'crqItemTrackingFor:{"line":1}' })).toBeNull();
+      expect(screen.getByText("LOT00001")).toBeTruthy();
+      unmount();
+      render(<CommonRequisitionDocument view={released() as any} editable={false} options={options} />);
+      expect(screen.queryByRole("button", { name: 'crqItemTrackingFor:{"line":1}' })).toBeNull();
+    });
+  });
 });
