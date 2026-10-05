@@ -1017,6 +1017,8 @@ describe('WP1e — the restricted-LOB filter follows the requisition\'s farm (de
  * decide lock uses — the review's carried-forward item); other user types keep
  * the active-farm narrowing; the company boundary never moves.
  */
+const APPROVE_GRANT = { moduleCode: 'PROCUREMENT', resource: 'REQUISITION', canView: true, canCreate: true, canEdit: true, canDelete: false, canApprove: true, canExport: false, canPrint: false };
+
 describe('WP1b — the hub waiting-for-my-approval filter', () => {
   it.each(['COMPANY_ADMIN', 'TENANT_ADMIN'] as const)(
     "an %s's waiting list drops the active-farm filter and carries the inbox predicate's EXISTS",
@@ -1042,7 +1044,7 @@ describe('WP1b — the hub waiting-for-my-approval filter', () => {
   );
 
   it("a FARM_MANAGER's waiting list keeps the active-farm filter", async () => {
-    const { db, whereCalls } = makeDb();
+    const { db, whereCalls, selectResults } = makeDb();
     const cls = transactionCls(db);
     useFarmScope(cls, { farmId: 'farm-active', restricted: true, companyId: 'co-1', lobId: 'lob-pig' } as any);
     const approvals = approvalsMock();
@@ -1051,10 +1053,52 @@ describe('WP1b — the hub waiting-for-my-approval filter', () => {
       return [eq(R.status, 'PENDING'), inArray(R.doc_type, ['REQUISITION', 'FEED_REQUISITION'])];
     });
     const service = new RequisitionService(cls, approvals as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
-    await service.findAll({} as any, TENANT, { waitingForMe: true, userType: 'FARM_MANAGER' });
-    const q = new MySqlDialect().sqlToQuery(whereCalls[0] as any);
+    selectResults.push([APPROVE_GRANT]);
+    await service.findAll({} as any, TENANT, { waitingForMe: true, userType: 'FARM_MANAGER', userId: 'u-fm' });
+    const q = new MySqlDialect().sqlToQuery(whereCalls.at(-1) as any);
     expect(q.sql).toContain('`requisition`.`farm_id` = ?');
     expect(q.params).toContain('farm-active');
+  });
+
+  // P1 e2e (5 Oct): user@ (Standard User, no approve right) saw its own
+  // pending RQ-00034 under "Waiting for my approval" — a row it can neither
+  // approve nor reject. The filter now also applies what decide() applies:
+  // the approve permission, and the self-approval rule for non-admins.
+  it('a user without the approve right waits for nothing — no requisition query runs', async () => {
+    const { db, selectResults, select } = makeDb();
+    const cls = transactionCls(db);
+    useFarmScope(cls, { farmId: 'farm-active', restricted: true, companyId: 'co-1', lobId: 'lob-pig' } as any);
+    const service = new RequisitionService(cls, approvalsMock() as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
+    selectResults.push([{ ...APPROVE_GRANT, canApprove: false }]);
+    await expect(service.findAll({} as any, TENANT, { waitingForMe: true, userType: 'STANDARD_USER', userId: 'u-std' })).resolves.toEqual([]);
+    expect(select).toHaveBeenCalledTimes(1); // the permission read only
+  });
+
+  it("a non-admin approver's waiting list leaves out the manual requisitions they raised", async () => {
+    const { db, selectResults, whereCalls } = makeDb();
+    const cls = transactionCls(db);
+    useFarmScope(cls, { farmId: 'farm-active', restricted: true, companyId: 'co-1', lobId: 'lob-pig' } as any);
+    const approvals = approvalsMock() as any;
+    approvals.requisitionRequestConditions = jest.fn(() => [eq((require('../../../core/database/schema') as typeof schema).approvalRequest.status, 'PENDING')]);
+    const service = new RequisitionService(cls, approvals, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
+    selectResults.push([APPROVE_GRANT]);
+    await service.findAll({} as any, TENANT, { waitingForMe: true, userType: 'FARM_MANAGER', userId: 'u-fm' });
+    const q = new MySqlDialect().sqlToQuery(whereCalls.at(-1) as any);
+    expect(q.sql).toContain('`requisition`.`created_by`');
+    expect(q.sql).toContain('`requisition`.`requester_user_id`');
+    expect(q.params.filter((p) => p === 'u-fm')).toHaveLength(2);
+  });
+
+  it("a Company Admin's waiting list keeps their own requisitions (4 Oct: admins may self-approve)", async () => {
+    const { db, whereCalls } = makeDb();
+    const cls = transactionCls(db);
+    useFarmScope(cls, { farmId: null, restricted: false, companyId: 'co-1', lobId: null } as any);
+    const approvals = approvalsMock() as any;
+    approvals.requisitionRequestConditions = jest.fn(() => [eq((require('../../../core/database/schema') as typeof schema).approvalRequest.status, 'PENDING')]);
+    const service = new RequisitionService(cls, approvals, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
+    await service.findAll({} as any, TENANT, { waitingForMe: true, userType: 'COMPANY_ADMIN', userId: 'u-ca' });
+    const q = new MySqlDialect().sqlToQuery(whereCalls.at(-1) as any);
+    expect(q.sql).not.toContain('`requisition`.`created_by`');
   });
 
   it('the hub list without the filter adds no EXISTS and an admin sees every farm in scope', async () => {

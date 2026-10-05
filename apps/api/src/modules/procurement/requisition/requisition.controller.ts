@@ -26,7 +26,7 @@ export class RequisitionController {
       tenantId,
       // WP1b: the hub's waiting filter and the admin's farm-wide list need the
       // caller's type; the predicate itself lives in ApprovalService.
-      { waitingForMe: waitingForMe === '1' || waitingForMe === 'true', userType: req.user?.userType },
+      { waitingForMe: waitingForMe === '1' || waitingForMe === 'true', userType: req.user?.userType, userId: req.user?.userId },
     );
     return { success: true, message: 'Requisitions retrieved successfully.', data };
   }

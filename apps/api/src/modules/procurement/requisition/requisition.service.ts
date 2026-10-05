@@ -665,7 +665,7 @@ export class RequisitionService {
   async findAll(
     query: { company_id?: string; status?: string; doc_type?: string; waiting_for_me?: boolean; kind?: 'common' },
     tenantId: string,
-    opts: { waitingForMe?: boolean; userType?: string } = {},
+    opts: { waitingForMe?: boolean; userType?: string; userId?: string } = {},
   ) {
     // WP1g (decisions.md 2026-10-05): `kind=common` is the Requisition page's
     // list — ITEM / FA / SERVICE. FEED is excluded by the query, not hidden by
@@ -695,6 +695,18 @@ export class RequisitionService {
     // predicate (farmConditions + the requisition kinds, via
     // requisitionRequestConditions), never a second copy of that rule.
     if (opts.waitingForMe) {
+      // P1 e2e (5 Oct): "may decide" also means what decide() checks — the
+      // approve right, and (outside Tenant/Company admins) never a manual
+      // requisition one raised oneself. Without these a Standard User's list
+      // held its own pending requisition, which it can neither approve nor reject.
+      const mayApprove = await userHasPermission(this.db, { userId: opts.userId, userType: opts.userType }, {
+        moduleCode: REQUISITION_MODULE.moduleCode, resource: REQUISITION_MODULE.resource, action: 'approve',
+      });
+      if (!mayApprove) return [];
+      if (opts.userId && !maySelfApprove(opts.userType)) {
+        conditions.push(sql`NOT (COALESCE(${schema.requisition.source}, '') <> 'AUTO_FORECAST'
+          AND (${schema.requisition.created_by} <=> ${opts.userId} OR ${schema.requisition.requester_user_id} <=> ${opts.userId}))`);
+      }
       const A = schema.approvalRequest;
       conditions.push(sql`EXISTS (SELECT 1 FROM approval_request WHERE approval_request.request_id = ${schema.requisition.approval_request_id}
         AND approval_request.deleted_at IS NULL
