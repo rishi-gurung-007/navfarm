@@ -161,11 +161,6 @@ export function RequisitionsHub() {
     if (id) openRowRef.current(id);
   }, []);
 
-  const afterView = (notice?: string) => {
-    if (notice) setNotice(notice);
-    loadList();
-  };
-
   return (
     <div data-fill-body>
       <div className="flex shrink-0 flex-wrap items-end justify-between gap-3">
@@ -214,7 +209,9 @@ export function RequisitionsHub() {
           <CommonRequisitionDetail
             embedded
             initial={open}
-            onView={(v, n) => { setOpen(v); afterView(n); }}
+            // P1 follow-up item 7: the detail shows its own success notice
+            // inside this dialog; the page behind it gets none.
+            onView={(v) => { setOpen(v); loadList(); }}
             onBack={() => setOpen(null)}
           />
           {decision && (

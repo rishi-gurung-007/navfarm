@@ -83,6 +83,8 @@ describe("CommonRequisitionDetail", () => {
       lines: [expect.objectContaining({ item_id: "i1", quantity: 5, uom: "EA" })],
     }));
     await waitFor(() => expect(onView).toHaveBeenCalledWith(saved, "crqSaved"));
+    // P1 follow-up item 7: the success notice is shown inside the document (so inside its dialog), not behind it.
+    expect(await screen.findByText("crqSaved")).toBeTruthy();
   });
 
   it("saves an existing draft with a full-replace PUT: the whole header and every line, not a partial body", async () => {
@@ -127,6 +129,8 @@ describe("CommonRequisitionDetail", () => {
     expect(put.mock.calls[0][1].lines[1].quantity).toBe(8);
     expect(put.mock.calls[0][1]).not.toHaveProperty("company_id");
     await waitFor(() => expect(onView).toHaveBeenCalledWith(submitted, "crqSubmitted"));
+    // P1 follow-up item 7: the success notice is shown inside the document (so inside its dialog), not behind it.
+    expect(await screen.findByText("crqSubmitted")).toBeTruthy();
   });
 
   it("does not submit when the save fails, and shows the refusal", async () => {
@@ -163,6 +167,8 @@ describe("CommonRequisitionDetail", () => {
     fireEvent.click(screen.getByText("crqRelease"));
     await waitFor(() => expect(post).toHaveBeenCalledWith("/requisition/req-1/release", {}));
     await waitFor(() => expect(onView).toHaveBeenCalledWith(expect.anything(), 'crqReleasedStore:{"no":"TR-9"}'));
+    // P1 follow-up item 7: the success notice is shown inside the document (so inside its dialog), not behind it.
+    expect(await screen.findByText('crqReleasedStore:{"no":"TR-9"}')).toBeTruthy();
   });
 
   it("says the purchase is pending when a Purchase requisition is released", async () => {
@@ -187,6 +193,8 @@ describe("CommonRequisitionDetail", () => {
       posting_date: todayIso(), lines: [{ line_id: "l1", quantity: 3 }, { line_id: "l2", quantity: 6 }],
     }));
     await waitFor(() => expect(onView).toHaveBeenCalledWith(expect.anything(), "crqShipped"));
+    // P1 follow-up item 7: the success notice is shown inside the document (so inside its dialog), not behind it.
+    expect(await screen.findByText("crqShipped")).toBeTruthy();
   });
 
   it("leaves a blank shipping line out of the body", async () => {
@@ -239,6 +247,8 @@ describe("CommonRequisitionDetail", () => {
       posting_date: todayIso(), shipment_id: "s1", lines: [{ line_id: "l1", quantity: 4 }],
     }));
     await waitFor(() => expect(onView).toHaveBeenCalledWith(expect.anything(), "crqReceived"));
+    // P1 follow-up item 7: the success notice is shown inside the document (so inside its dialog), not behind it.
+    expect(await screen.findByText("crqReceived")).toBeTruthy();
   });
 
   // Rishi, 5 Oct: "The one requesting is the one who would be receiving."
@@ -323,5 +333,7 @@ describe("CommonRequisitionDetail", () => {
     fireEvent.click(screen.getByRole("button", { name: "crqTrackingSave" }));
     await waitFor(() => expect(post).toHaveBeenCalledWith("/requisition/req-1/item-tracking", { lines: [{ line_id: "l1", lot_no: "LOT00001" }] }));
     await waitFor(() => expect(onView).toHaveBeenCalledWith(after, "crqTrackingSaved"));
+    // P1 follow-up item 7: the success notice is shown inside the document (so inside its dialog), not behind it.
+    expect(await screen.findByText("crqTrackingSaved")).toBeTruthy();
   });
 });

@@ -60,6 +60,11 @@ export function CommonRequisitionDetail({ initial, onView, onBack, embedded = fa
   const [options, setOptions] = useState<CommonRequisitionOptions | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // P1 follow-up item 7: the success notice of the last action, shown here —
+  // inside the dialog that wraps this detail — rather than on the page behind
+  // it. A new action clears it; a new server view does not (the view an
+  // action returns is what triggers that reset below).
+  const [notice, setNotice] = useState("");
   const [poNo, setPoNo] = useState("");
   const [panel, setPanel] = useState<"ship" | "receive" | null>(null);
   const [postingDate, setPostingDate] = useState(todayIso());
@@ -106,6 +111,7 @@ export function CommonRequisitionDetail({ initial, onView, onBack, embedded = fa
   const run = async (work: () => Promise<void>) => {
     setBusy(true);
     setError("");
+    setNotice("");
     try {
       await work();
     } catch (err: any) {
@@ -114,7 +120,10 @@ export function CommonRequisitionDetail({ initial, onView, onBack, embedded = fa
       setBusy(false);
     }
   };
-  const emit = (res: unknown, notice: string) => onView(unwrap<CommonRequisitionView>(res), notice);
+  const emit = (res: unknown, message: string) => {
+    setNotice(message);
+    onView(unwrap<CommonRequisitionView>(res), message);
+  };
 
   const save = () => run(async () => {
     emit(id ? await api.put(`/requisition/${id}`, toRequisitionUpdatePayload(draft)) : await api.post("/requisition", toRequisitionPayload(draft)), tRef.current("crqSaved"));
@@ -126,9 +135,11 @@ export function CommonRequisitionDetail({ initial, onView, onBack, embedded = fa
   const reopen = () => run(async () => emit(await api.post(`/requisition/${id}/reopen`, {}), tRef.current("crqReopened")));
   const release = () => run(async () => {
     const res = unwrap<CommonRequisitionView>(await api.post(`/requisition/${id}/release`, {}));
-    onView(res, res.purpose === "STORE"
+    const message = res.purpose === "STORE"
       ? tRef.current("crqReleasedStore", { no: res.linked_transfer_no ?? "" })
-      : tRef.current("crqReleasedPurchase"));
+      : tRef.current("crqReleasedPurchase");
+    setNotice(message);
+    onView(res, message);
   });
   // WP4a: Item Tracking after release, for the unshipped balance. Refusals
   // (department, coverage, nothing left to ship) come back as the action error.
@@ -182,6 +193,7 @@ export function CommonRequisitionDetail({ initial, onView, onBack, embedded = fa
         </div>
       )}
       {error && <InlineAlert>{error}</InlineAlert>}
+      {notice && <InlineAlert variant="success">{notice}</InlineAlert>}
       <div className="min-h-0 flex-1 overflow-auto">
         <CommonRequisitionDocument view={draft} editable={editable} options={options} onChange={setDraft}
           onAssignTracking={releasedStore && can.transfer ? assignTracking : undefined} />
