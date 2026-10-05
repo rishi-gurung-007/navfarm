@@ -125,13 +125,13 @@ async function run() {
     // 3b. A standing operational area for the operational-admin persona (none held only).
     const [areaUsers] = await db.query<RowDataPacket[]>('SELECT user_id, email, user_type, company_id FROM user_master WHERE deleted_at IS NULL');
     const [areaAssignments] = await db.query<RowDataPacket[]>('SELECT user_id, area_id FROM user_operational_area_assignment');
-    const [areas] = await db.query<RowDataPacket[]>('SELECT area_id, company_id, area_code, is_active, deleted_at FROM operational_area_master');
+    const [areas] = await db.query<RowDataPacket[]>('SELECT area_id, company_id, area_code, is_active, deleted_at FROM operational_area_master ORDER BY area_code, area_id');
     const areaPlan = planAreaAssignments(areaUsers as never, areaAssignments as never, areas as never);
     if (write) {
-      for (const [i, a] of areaPlan.entries()) {
+      for (const a of areaPlan) {
         await db.query(
           'INSERT INTO user_operational_area_assignment (assignment_id, user_id, area_id, company_id, is_primary) VALUES (?, ?, ?, ?, ?)',
-          [randomUUID(), a.user_id, a.area_id, a.company_id, i === 0 ? 1 : 0],
+          [randomUUID(), a.user_id, a.area_id, a.company_id, 1],
         );
       }
     }

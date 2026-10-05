@@ -248,7 +248,8 @@ export function planTrackedItems(
  * an operational area first."), and the seed never gave area.admin any — WP1f
  * had to add and remove a temporary assignment to reach the code under test
  * (progress.md, "Flagged for WP4"). Only that persona, only when it holds no
- * area at all, and only areas of its own company (RolesGuard checks that too).
+ * area at all, and one area of its own company (RolesGuard checks that too):
+ * the first active one by area code.
  */
 export const DEMO_AREA_PERSONAS: Readonly<Record<string, string>> = {
   'area.admin@triplec.local': 'OPERATIONAL_ADMIN',
@@ -263,10 +264,13 @@ export function planAreaAssignments(
   for (const u of users) {
     if (DEMO_AREA_PERSONAS[u.email.toLowerCase()] !== u.user_type || !u.company_id) continue;
     if (assignments.some((a) => a.user_id === u.user_id)) continue;
-    for (const a of areas) {
-      if (a.company_id !== u.company_id || Number(a.is_active) !== 1 || a.deleted_at) continue;
-      out.push({ user_id: u.user_id, email: u.email, area_id: a.area_id, area_code: a.area_code, company_id: u.company_id });
-    }
+    // ONE area, chosen deterministically: the first active area of the
+    // company by area code (WP4a fix round 1 — it used to take every area,
+    // with an arbitrary primary).
+    const first = areas
+      .filter((a) => a.company_id === u.company_id && Number(a.is_active) === 1 && !a.deleted_at)
+      .sort((a, b) => a.area_code.localeCompare(b.area_code))[0];
+    if (first) out.push({ user_id: u.user_id, email: u.email, area_id: first.area_id, area_code: first.area_code, company_id: u.company_id });
   }
   return out;
 }

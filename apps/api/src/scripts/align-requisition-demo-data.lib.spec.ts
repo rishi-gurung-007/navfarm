@@ -206,8 +206,12 @@ describe('planAreaAssignments — the operational admin persona gets a standing 
   const area = { area_id: 'a-1', company_id: CO, area_code: 'PIGGERY-01', is_active: 1, deleted_at: null };
   const admin = { user_id: 'u-area', email: 'area.admin@triplec.local', user_type: 'OPERATIONAL_ADMIN', company_id: CO };
 
-  it('assigns every active area of the company to area.admin when it holds none', () => {
-    expect(planAreaAssignments([admin], [], [area, { ...area, area_id: 'a-2', area_code: 'OLD', is_active: 0 }])).toEqual([
+  it('assigns ONE area — the first active area of the company by area code — when area.admin holds none', () => {
+    expect(planAreaAssignments([admin], [], [
+      { ...area, area_id: 'a-3', area_code: 'ZULU' },
+      area,
+      { ...area, area_id: 'a-2', area_code: 'ALPHA', is_active: 0 },
+    ])).toEqual([
       { user_id: 'u-area', email: 'area.admin@triplec.local', area_id: 'a-1', area_code: 'PIGGERY-01', company_id: CO },
     ]);
   });
