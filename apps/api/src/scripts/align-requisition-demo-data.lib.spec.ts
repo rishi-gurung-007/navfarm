@@ -1,9 +1,11 @@
 import {
   DEMO_DEPARTMENTS,
+  DEMO_FARM_PERSONAS,
   DEMO_TRACKED_ITEMS,
   DEMO_USER_DEPARTMENTS,
   planAreaAssignments,
   planDepartmentCostCenters,
+  planFarmAssignments,
   planLocationDepartments,
   planTrackedItems,
   planTrackingSeries,
@@ -222,12 +224,63 @@ describe('planAreaAssignments — the operational admin persona gets a standing 
 
   it('touches no other user, and not an area.admin whose type is not OPERATIONAL_ADMIN', () => {
     expect(planAreaAssignments([
-      { ...admin, user_id: 'u-x', email: 'user@triplec.local', user_type: 'STANDARD_USER' },
+      { ...admin, user_id: 'u-x', email: 'gra100.entry@triplec.local', user_type: 'STANDARD_USER' },
       { ...admin, user_type: 'COMPANY_ADMIN' },
     ], [], [area])).toEqual([]);
   });
 
+  // P1 e2e (5 Oct): user@ is the standard-user persona of Rishi's flows ("a standard
+  // user cannot approve"), but with no area every requisition call it made was
+  // refused with "Select an operational area first.", so it could not even open the page.
+  it('gives the standard-user persona user@ the same one area', () => {
+    const std = { user_id: 'u-std', email: 'user@triplec.local', user_type: 'STANDARD_USER', company_id: CO };
+    expect(planAreaAssignments([std], [], [area])).toEqual([
+      { user_id: 'u-std', email: 'user@triplec.local', area_id: 'a-1', area_code: 'PIGGERY-01', company_id: CO },
+    ]);
+  });
+
   it('never assigns an area of another company', () => {
     expect(planAreaAssignments([admin], [], [{ ...area, company_id: 'co-2' }])).toEqual([]);
+  });
+});
+
+describe('planFarmAssignments — the farm-bound standard-user persona gets the demo farm (P1 e2e)', () => {
+  // A Standard User is farm-bound: farm-scope refuses it without user_master.farm_id
+  // ("No farm is assigned to this user."). The demo store and its tracked stock are on GRA100.
+  const std = { user_id: 'u-std', email: 'user@triplec.local', user_type: 'STANDARD_USER', company_id: CO, farm_id: null };
+  const farm = { location_id: 'f-gra', location_code: 'GRA100', location_type: 'FARM', company_id: CO, parent_location_id: null, is_active: 1, deleted_at: null };
+
+  it('names user@ -> GRA100', () => {
+    expect(DEMO_FARM_PERSONAS).toEqual({ 'user@triplec.local': { user_type: 'STANDARD_USER', farm_code: 'GRA100' } });
+  });
+
+  it('sets the farm of a persona that has none', () => {
+    expect(planFarmAssignments([std], [farm, { ...farm, location_id: 'f-ai', location_code: 'AI100' }])).toEqual({
+      set: [{ user_id: 'u-std', email: 'user@triplec.local', farm_id: 'f-gra', farm_code: 'GRA100' }],
+      skipped: [],
+    });
+  });
+
+  it('never overwrites a farm already held', () => {
+    expect(planFarmAssignments([{ ...std, farm_id: 'f-ai' }], [farm]).set).toEqual([]);
+  });
+
+  it('touches no other user, and not user@ when its type is not STANDARD_USER', () => {
+    expect(planFarmAssignments([
+      { ...std, user_id: 'u-x', email: 'gra100.entry@triplec.local' },
+      { ...std, user_type: 'COMPANY_ADMIN' },
+    ], [farm]).set).toEqual([]);
+  });
+
+  it('only a top-level, active FARM of the same company qualifies, and a miss is reported', () => {
+    const plan = planFarmAssignments([std], [
+      { ...farm, company_id: 'co-2' },
+      { ...farm, location_id: 'f-2', is_active: 0 },
+      { ...farm, location_id: 'f-3', location_type: 'SHED' },
+      { ...farm, location_id: 'f-4', parent_location_id: 'x' },
+      { ...farm, location_id: 'f-5', deleted_at: '2026-01-01' },
+    ]);
+    expect(plan.set).toEqual([]);
+    expect(plan.skipped).toEqual([{ email: 'user@triplec.local', why: 'no active farm GRA100 in its company' }]);
   });
 });

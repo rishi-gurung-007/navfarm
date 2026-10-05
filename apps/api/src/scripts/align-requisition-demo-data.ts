@@ -17,9 +17,10 @@
  *   2. location_master.department_id: STORE -> Stores, SHED and FARM -> Farm
  *      Operations; NULL rows only, never overwriting;
  *   3. user_master.department_id for the seeded demo users (company.admin ->
- *      Stores; area.admin and user@ -> Farm Operations); NULL rows only; and a
- *      standing operational area for area.admin when it holds none (without
- *      one every operational call it makes is refused);
+ *      Stores; area.admin and user@ -> Farm Operations); NULL rows only; a
+ *      standing operational area for area.admin and user@ when they hold none
+ *      (without one every operational call they make is refused); and the
+ *      demo farm GRA100 for user@, which is farm-bound, when it has no farm;
  *   4. the ITEM_LOT / ITEM_SERIAL number series (SYSTEM_NO_SERIES_SEED, PR #13)
  *      if missing, and one lot-tracked and one serial-tracked item
  *      (ILL-LOT-001, ILL-SER-001) cloned from the company's medicine posting
@@ -38,6 +39,7 @@ import { randomUUID } from 'node:crypto';
 import {
   planAreaAssignments,
   planDepartmentCostCenters,
+  planFarmAssignments,
   planLocationDepartments,
   planTrackedItems,
   planTrackingSeries,
@@ -136,6 +138,19 @@ async function run() {
       }
     }
 
+    // 3c. The demo farm for the farm-bound standard-user persona (none held only).
+    const [farmUsers] = await db.query<RowDataPacket[]>('SELECT user_id, email, user_type, company_id, farm_id FROM user_master WHERE deleted_at IS NULL');
+    const [farmRows] = await db.query<RowDataPacket[]>(
+      `SELECT location_id, location_code, location_type, company_id, parent_location_id, is_active, deleted_at
+         FROM location_master WHERE location_type = 'FARM' ORDER BY location_code, location_id`,
+    );
+    const farmPlan = planFarmAssignments(farmUsers as never, farmRows as never);
+    if (write) {
+      for (const f of farmPlan.set) {
+        await db.query('UPDATE user_master SET farm_id = ? WHERE user_id = ? AND farm_id IS NULL', [f.farm_id, f.user_id]);
+      }
+    }
+
     // 4. Tracking series and tracked items.
     const tenantIds = [...new Set(companies.map((c) => tenantOf.get(c)).filter((t): t is string => Boolean(t)))];
     const seriesPlan = tenantIds.flatMap((t) => planTrackingSeries(series as unknown as SeriesRow[], t));
@@ -198,6 +213,7 @@ async function run() {
       locations: { set: locPlan.set.length, byDepartment: byDept(locPlan.set), keptExisting: locPlan.keptExisting, codes: locPlan.set.map((l) => `${l.location_code} -> ${l.department}`) },
       users: { set: userPlan.set.map((u) => `${u.email} -> ${u.department}`), keptExisting: userPlan.keptExisting },
       operationalAreas: areaPlan.map((a) => `${a.email} -> ${a.area_code}`),
+      farms: { set: farmPlan.set.map((f) => `${f.email} -> ${f.farm_code}`), skipped: farmPlan.skipped },
       trackingSeries: seriesPlan.map((s) => `${s.code} (${s.document_type}, prefix ${s.prefix}, ${s.seq_length} digits)`),
       trackedItems: { create: createdItems, skipped: itemPlans.flatMap((p) => p.skipped) },
       countsAfter: after[0],

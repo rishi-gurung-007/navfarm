@@ -253,6 +253,9 @@ export function planTrackedItems(
  */
 export const DEMO_AREA_PERSONAS: Readonly<Record<string, string>> = {
   'area.admin@triplec.local': 'OPERATIONAL_ADMIN',
+  // P1 e2e (5 Oct): the standard-user persona of Rishi's flows was refused on
+  // every requisition call ("Select an operational area first.").
+  'user@triplec.local': 'STANDARD_USER',
 };
 
 export function planAreaAssignments(
@@ -273,4 +276,34 @@ export function planAreaAssignments(
     if (first) out.push({ user_id: u.user_id, email: u.email, area_id: first.area_id, area_code: first.area_code, company_id: u.company_id });
   }
   return out;
+}
+
+/**
+ * P1 e2e (5 Oct): a Standard User is farm-bound — farm-scope refuses it without
+ * user_master.farm_id ("No farm is assigned to this user.") — and the seed gave
+ * user@ none. It gets the demo farm whose store holds the tracked stock (GRA100),
+ * only while it has no farm, and only a top-level active FARM of its own company.
+ */
+export const DEMO_FARM_PERSONAS: Readonly<Record<string, { user_type: string; farm_code: string }>> = {
+  'user@triplec.local': { user_type: 'STANDARD_USER', farm_code: 'GRA100' },
+};
+
+export function planFarmAssignments(
+  users: Array<{ user_id: string; email: string; user_type: string; company_id: string | null; farm_id: string | null }>,
+  farms: Array<{ location_id: string; location_code: string; location_type: string; company_id: string | null; parent_location_id: string | null; is_active: number | boolean; deleted_at: string | Date | null }>,
+) {
+  const set: Array<{ user_id: string; email: string; farm_id: string; farm_code: string }> = [];
+  const skipped: Array<{ email: string; why: string }> = [];
+  for (const u of users) {
+    const persona = DEMO_FARM_PERSONAS[u.email.toLowerCase()];
+    if (!persona || persona.user_type !== u.user_type || u.farm_id) continue;
+    const farm = farms.find((f) => f.location_code === persona.farm_code && f.location_type === 'FARM' && f.company_id === u.company_id
+      && !f.parent_location_id && Number(f.is_active) === 1 && !f.deleted_at);
+    if (!farm) {
+      skipped.push({ email: u.email, why: `no active farm ${persona.farm_code} in its company` });
+      continue;
+    }
+    set.push({ user_id: u.user_id, email: u.email, farm_id: farm.location_id, farm_code: farm.location_code });
+  }
+  return { set, skipped };
 }
