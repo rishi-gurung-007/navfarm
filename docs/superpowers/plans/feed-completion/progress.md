@@ -7,6 +7,18 @@ Earlier ledgers (git-ignored, still readable in the worktree):
 
 One builder at a time on this branch. Every work package ends with a live check through the app and MySQL.
 
+## 5 Oct evening handoff — Dashboard/Calculation decisions complete; implementation not started
+
+- Claude's last successful code commit is `a64e4f2d`: Daily and Weekly display rows now extend through run-down (or
+  the 45-day horizon when no run-down occurs), while explicit Custom/Period dates stay bounded. Its focused tests
+  passed before the provider failed; the change still needs the plan's full gates and live proof.
+- Rishi completed the Dashboard/Calculation and MILL/BIN design decisions. Canonical spec:
+  `docs/superpowers/specs/2026-10-05-feed-forecast-dashboard-calculation-mill-design.md`.
+- Execute `2026-10-05-feed-forecast-dashboard-calculation.md` Tasks 1–6 first; then the MILL/BIN foundation; then the
+  Dashboard/Calculation Task 7 integration/live proof. No implementation from either plan has started.
+- `docs/decisions.md` is modified but uncommitted in this worktree together with these planning documents. Preserve
+  those edits; do not confuse them with a finished feature.
+
 ## Controller log
 
 - Controller: navfarm-48 active (4 Oct). Took over from the desktop session on Rishi's instruction.

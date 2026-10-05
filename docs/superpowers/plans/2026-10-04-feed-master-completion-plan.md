@@ -158,6 +158,19 @@ Estimates are agent wall-clock including review and the live check, at the pace 
 
 ### Build order (Rishi, 5 Oct): this overrides the numeric order below
 
+**Latest 5 Oct evening order:** finish Feed Forecast first. The approved design is
+`docs/superpowers/specs/2026-10-05-feed-forecast-dashboard-calculation-mill-design.md`, executed through two plans:
+
+1. `2026-10-05-feed-forecast-dashboard-calculation.md` Tasks 1–6 — shared Farm/date/range context, Dashboard and
+   Calculation first, with an honest nullable `Mill Loading Bin` contract.
+2. `2026-10-05-mill-bin-location-foundation.md` — MILL/BIN/Slot/assignment foundation.
+3. `2026-10-05-feed-forecast-dashboard-calculation.md` Task 7 — connect the real next BIN assignment and complete
+   live proof.
+
+Then continue Feed Plan, Physical Stock Count dialog, Feed Requisition convergence, the one common Requisition page,
+and the remaining mill execution flow. This latest order supersedes the phase order immediately below; that history is
+retained only to explain completed commits.
+
 **Revised later on 5 Oct:** after the Phase 1 common-requisition end-to-end close, execute the unified correction plan.
 It replaces the old separate "finish feed requisition" boundary with one canonical requisition service/page, then fixes
 the forecast range, hierarchy/dashboard, Physical Stock Count dialog and Feed Plan. Mill consolidation/loading/dispatch
@@ -176,7 +189,7 @@ remain subsequent packages; the Feed Plan task does not claim those are complete
 **Phase 2: Feed requisition, finished completely** (sheet "Requisition and Loading Sheet", every section)
 5. WP5 (Priority editable) and WP6 Tasks 30 and 31 (header order and labels, Destination Silo column, manual create
    labels). Section names: Requisition Header / Requisition Sub-Form / Approval Workflow (from WP1d).
-6. WP7 (Part B) in this order: B1 Mill location type and Mill Capacity Master, B2 Production Output, B3 Loading
+6. WP7 (Part B) in this order: B1 MILL/BIN Location foundation, B2 Production Output, B3 Loading
    Instruction Sheet, B4 Consolidation Sheet, B5 Transfer Orders from the plan, B6 Dispatch, B7 Feed TO Receipt,
    B9 Worked Example end to end. (B8, the dashboard bin column, goes to Phase 3.)
 7. Review of Phase 2.
@@ -299,7 +312,7 @@ that assert the old labels.
 | Alert rules master | Alert Rules | **Alerts and Notifications Master** | Master Setup §4 |
 | Reporting periods master | Reporting Periods | **Reporting Period Master** | Feed Forecast sheet r18 |
 | Feed Planning Settings | Feed Planning Settings | keep (ours; workbook "Design principles" settings) | — |
-| New pages (Part B–D) | — | **Mill Capacity Master**, **Loading Instruction Sheet**, **Feed Mill Manager Consolidation Sheet**, **TO Receipt**, **Feed Plan – Tentative vs Actual**, **Compare Report**, **Silo Balance**, **Monthly Stock Take** | Feed Forecast r11; Req. §3, §5, §6; Engine §3; Silo Balance §1, §3 |
+| New pages (Part B–D) | — | **MILL/BIN Locations**, **Production Slots**, **BIN Diet Assignments**, **Loading Instruction Sheet**, **Feed Mill Manager Consolidation Sheet**, **TO Receipt**, **Feed Plan – Tentative vs Actual**, **Compare Report**, **Silo Balance**, **Monthly Stock Take** | Feed Forecast r11; Req. §3, §5, §6; Engine §3; Silo Balance §1, §3 |
 | Approvals → Requisitions dialogs | New … requisition | "New Feed Requisition"; common: "New Purchase Requisition – Item / Fixed Asset / Service" (Rishi's list calls the number "Purchase Requisition No.") | Req. title; common-requisition-spec.md |
 
 Rishi's tab names (4 Oct, final): **Dashboard · Calculation · Requisition · Physical Stock Count**, in that order.
@@ -340,14 +353,14 @@ per day to the latest first-shortage date (≤45); Weekly = 7-day columns showin
 run-out date. Live on VIL100 (Rishi's screenshots: BATCH-000012 blank after 09/10 though stock remained).
 
 ### WP3 — Feed Forecast Dashboard as a dashboard (L, ≈4 pieces) — Rishi 4 Oct
-Design (approved shape): `feed-completion/task-21-design.md`; brief `task-21-brief.md`.
-- **Filter bar first:** Farm (fixed for a Farm Manager), View/Period (Daily / Weekly / Reporting Period / Custom),
-  House, Silo, Feed Item, Bulk/Bagged.
-- **KPI tiles:** silos at/below Below Feed Level (CRITICAL), at/above Above Threshold (INFO), earliest first-shortage
-  date, farm total recommended order vs 30,000 KG truck target, requisition status + submission deadline.
-- **Charts (recharts):** (a) System Balance vs capacity per silo with level lines (meter bars); (b) projected
-  closing balance by date to shortage; (c) demand by feed item, current vs next diet; (d) shortfall vs
-  recommended order.
+The 5 Oct approved design supersedes `feed-completion/task-21-design.md` where they disagree; use
+`docs/superpowers/specs/2026-10-05-feed-forecast-dashboard-calculation-mill-design.md` and its implementation plan.
+- **Filter bar first:** required Farm → Shed → Silo, then shared Planning Date and View/Range. Initial values are the
+  first valid code-ordered hierarchy plus Custom Farm-local today through +6 days.
+- **KPI/details:** selected-Silo Current Diet, Capacity, System Balance, Daily Requirement, Days Remaining,
+  Recommended Order, Projected Need, Current Diet Days Remaining, Next Diet, compatible next-diet Silo, Shortfall,
+  real next Mill BIN assignment, Requisition status/deadline; Farm Total is visibly farm-wide.
+- **Charts (recharts):** selected-Silo projected closing balance with thresholds/run-down; current-vs-next diet demand.
 - **Table beneath, workbook Engine §4 rows 47–64, in order:** Farm · House Shed · Silo Code (+ Silo Name; code
   links to the silo record) · Current Diet Feed Item · Mill Loading Bin No. (fill in Part B) · Silo Capacity KG ·
   System Balance KG (always labelled "System Balance") · Daily Requirement KG · Days of Feed Remaining (date-based;
@@ -406,18 +419,19 @@ evidence: **`feed-completion/task-22-audit.md`**. Summary:
 ### WP7 — Part B: the mill (≈12–16 h). Spec §4 (`docs/superpowers/specs/2026-10-03-feed-tdd-alignment-and-inhouse-mill-design.md`).
 Write a detailed task plan first (one task per page/flow, TDD, live proof). Pages and their workbook fields:
 
-**B1. Location type MILL + Mill Capacity Master** (new master in `configs.ts`) — Mill, Capacity KG/day and KG/hour,
-bulk and bagged daily allocation (workbook example 238,000 / 178,000 / 60,000), Diet priority order, **Loading Bins**
-child rows (Bin No., Diet item, effective production date + slot). Checkpoint 6/35: one diet per bin per slot (block).
-Feed Forecast sheet r11; Engine §3 r42–43.
+**B1. MILL/BIN Location foundation** — detailed plan `2026-10-05-mill-bin-location-foundation.md`. MILL and BIN are
+both Location Types: multiple root Mills per company, multiple child Bins per Mill. Capacities are entered/displayed in
+TON and canonicalised to KG. Production Slot Master controls time windows; effective BIN Diet Assignments carry item,
+date, slot and priority. BIN is the physical inventory location. One diet per bin/date/slot is a hard block, as is an
+item change while positive previous-item stock remains. Feed Forecast sheet r11; checkpoints 6/35.
 
 **B2. Production Output Entry** (ours, 3 Oct ruling 5) — Mill, Production date, Slot/shift, Diet item, Bin, KG produced →
-positive inventory posting at the mill location through the shared posting path (like a stock adjustment), valued at the
+positive inventory posting at the BIN location through the shared posting path (like a stock adjustment), valued at the
 item's current unit cost. No raw-material consumption.
 
 **B3. Loading Instruction Sheet** — Requisition and Loading Sheet §3 rows 60–77: Loading Sheet No. (LOAD-ReqNo-LineNo),
 Requisition No., Farm Code, Farm Name, Delivery Date, Feed Item No. Diet (Diet 1–14), Feed Item Description, Mill Loading
-Bin No. (from Mill Capacity Master via Diet No.), Silo Code at Farm, KG Ordered (mill-approved KG once consolidation
+Bin No. (from the next effective BIN Diet Assignment via Diet No., production date and slot), Silo Code at Farm, KG Ordered (mill-approved KG once consolidation
 sets it), Compartment No. (mill fills), KG Loaded (mill fills), Loaded By, Loading Date Time, Dispatch action,
 Notification Status, Notification Content, Status DRAFT → LOADED → DISPATCHED → RECEIVED. Created when the Farm Manager
 approves a feed requisition. Checkpoints 24 (compartment + KG loaded mandatory before dispatch) and 25 (no two diets in one
@@ -531,7 +545,7 @@ unchanged; screenshot each screen.
 | Approvals inbox | Approvals | built · WP1, WP1b (stops listing requisitions) |
 | Location (silo), Item, Breed Lifecycle, Alert Rules masters | Farm Master / Master data | built · WP6 (32–36) |
 | Reporting Periods, Feed Planning Settings, Number Series | Farm Master / Feed Forecast / Settings | built |
-| Mill Capacity Master, Production Output, Loading Instruction Sheet, Consolidation Sheet, Transfer Orders from plan, Dispatch, Feed TO Receipt | new | WP7 (Part B) |
+| MILL/BIN Locations, Production Slots, BIN Diet Assignments, Production Output, Loading Instruction Sheet, Consolidation Sheet, Transfer Orders from plan, Dispatch, Feed TO Receipt | new | WP7 (Part B) |
 | Feed Plan (Tentative vs Actual), Compare Report, scheduler, email | new | WP8 (Part C) |
 | Monthly Stock Take, Period Close | new | WP9 (Part D) |
 

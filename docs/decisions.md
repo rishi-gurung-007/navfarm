@@ -2653,10 +2653,37 @@ document shown by Requisition.
 
 Rishi confirmed the following UI and range rules:
 
-- Selection is hierarchical: Farm, then Shed, then Silo. Downstream choices and displayed facts are filtered by the
-  selected parent; changing a parent clears an invalid child selection.
+- Dashboard selection is hierarchical: Farm, then Shed, then Silo. Results load only when all three selections are
+  valid. On initial load the first available Farm, then that farm's first Shed, then that shed's first linked Silo are
+  selected automatically. Changing Farm or Shed automatically selects the first valid child; data from an invalid or
+  stale child is never displayed.
+- Farm, Planning Date and View/Range are the shared Dashboard/Calculation context and remain selected when switching
+  tabs. Shed and Silo are not mandatory Calculation inputs.
+- The shared default view is Custom. Date From is the farm's current date and Date To is six calendar days later,
+  giving exactly seven displayed dates including the current date. Custom remains bounded by those explicit dates;
+  Daily and Weekly keep their separate run-down display rules below.
+- Calculation runs for the whole selected Farm and forecast period. Shed, Silo, Batch, Feed Item and Bulk/Bagged are
+  optional result filters: they narrow the displayed rows without changing or rerunning the underlying farm calculation.
+- With a Silo selected, Dashboard KPIs, charts and details are scoped to that Silo unless explicitly labelled
+  otherwise. Farm-wide figures required by the workbook, especially **Farm Total Order This Cycle**, remain visible
+  as clearly labelled farm totals alongside the selected-Silo information.
+- The Dashboard filter bar contains Farm, Shed, Silo, Planning Date and View/Range. Feed Item and Bulk/Bagged are
+  displayed as facts for the selected Silo, not repeated as Dashboard filters.
+- For the selected Farm → Shed → Silo, the Dashboard must show all of these fields explicitly; a chart may visualise
+  a value but must not replace or hide the field: Current Diet Feed Item; Mill Loading Bin No.; Silo Capacity KG;
+  System Balance KG; Daily Requirement KG; Days of Feed Remaining; Projected Need for Selected Range KG; Current Diet
+  Days Remaining; Next Diet Feed Item; Silo Available for Next Diet Feed Type; Projected Shortfall KG; Recommended
+  Order Qty KG; Farm Total Order This Cycle KG; Requisition Status; Submission Deadline. Farm Total Order This Cycle KG
+  is clearly labelled as farm-wide; the remaining values are scoped to the selected Silo unless their field definition
+  inherently says otherwise.
 - Dashboard facts should use KPI cards and useful charts where they clarify balances, demand, run-down and diet change;
   the detailed workbook table remains available below them.
+- Approved Dashboard layout: primary KPI cards show Current Diet, Silo Capacity, System Balance, Daily Requirement,
+  Days Remaining and Recommended Order; forecast details show Projected Need, Current Diet Days Remaining, Next Diet,
+  next-diet Silo availability and Projected Shortfall; fulfilment details show the real Mill BIN assignment,
+  Requisition Status and Submission Deadline; Farm Total Order is a separate farm-wide card. Supplementary charts are
+  projected closing balance with thresholds/run-down and selected-range current-versus-next-diet demand. Charts never
+  replace the explicit values.
 - Daily starts on the selected date and shows every daily closing balance through the date stock becomes empty, capped
   by the configured 45-day maximum.
 - Weekly starts on the selected date and shows consecutive seven-day groups through the group containing the empty-stock
@@ -2702,6 +2729,78 @@ Rishi, 5 Oct (to the desktop controller, after confirming the unified-requisitio
 2. An approved feed requisition is fulfilled by the workbook's **mill flow**: Feed Mill Manager Consolidation Sheet →
    Transfer Order from the mill → Loading Instruction Sheet → Dispatch → TO Receipt at the silo (master plan Part B).
    It is not released as a common Store/Purchase transfer.
+
+## 2026-10-05 — Feed Forecast first: Rishi's work order (reverses the correction plan's)
+
+Rishi, 5 Oct (evening): finish the Feed Forecast surface first — **Dashboard, then
+Calculation, then the Feed Plan, all under Feed Forecast — then the Feed Requisition
+tab under it too — and only then the one common Requisition page** and the rest
+(unified requisition Tasks 1–5, mill flow, planning/period end). The correction plan's
+order (Tasks 1–5 before Tasks 6–9) is reversed on his instruction: the forecast's
+Daily/Weekly horizons, shared Farm → Shed → Silo selection, Dashboard KPIs/charts,
+Physical Stock Count dialog and Tentative-vs-Actual Feed Plan come before the
+canonical requisition service and the `/feed-requisition` facade.
+
+The API being down (nothing listening on :2877) was the cause of the 500 Rishi saw
+in the frontend on 5 Oct evening; the running `dist/main.js` was restarted.
+
+## 2026-10-05 — MILL location and real loading-bin source enter the Feed Forecast scope
+
+Rishi added a `MILL` Location Type and the fields required by
+`NAVFarm_Feed forecast TDD with examples (1).xlsx`; where the workbook is silent, add only the minimum fields needed
+to fulfil its workflow and label those fields as NAVFarm design rather than client-specified fields.
+
+`MILL` and `BIN` are both Location Types. A company can have multiple root MILL locations and each MILL can have
+multiple child BIN locations, analogous to multiple root Farms with multiple child Sheds. A BIN's parent must be a
+MILL; a MILL has no Farm parent. This supersedes the proposed separate Loading Bin child table.
+
+The workbook is sufficient for the mill-specific capacity contract (Feed Forecast row 11; Checkpoints and Validations
+rows 9 and 38): the MILL holds capacity per day, capacity per hour, bulk daily allocation, bagged daily allocation and
+diet priority. Its child BIN locations provide the loading-bin assignment for a feed item/diet and production slot.
+One BIN cannot be assigned to two diets for the same slot. Dashboard `Mill Loading Bin No.` is read from this real
+location assignment via the current diet's Item Master Diet No.; no placeholder or invented bin is shown. Standard
+Location Master fields remain owned by Location Master rather than duplicated in a second Mill Capacity Master row.
+
+Each BIN is also the physical inventory location for produced feed. Production Output posts positive Item Ledger and
+Value Entry movements to the BIN; loading/dispatch and transfers consume stock from that BIN; farm receipt posts the
+other leg to the destination Silo. Mill feed stock is therefore auditable by BIN and is not held as an undifferentiated
+balance on the parent MILL or in a separate balance column.
+
+A BIN is assigned to a Feed Item/Diet by production date and production slot, not permanently. The same BIN may serve
+another diet in a later non-overlapping slot. The system blocks two diet assignments for the same BIN and slot and
+blocks a change while the BIN still carries positive stock of the previous item, so item balances cannot be mixed.
+
+Production slots are controlled master data, not free text. Production Slot Master contains Slot Code, Slot Name,
+Start Time, End Time and Active status. BIN diet assignments reference the slot record. Triple C's actual slot names
+and times remain configuration input; NAVFarm must not seed invented shifts as customer truth.
+
+Production Slots may cross midnight. Production Date is the calendar date on which the slot starts; an End Time earlier
+than or equal to Start Time means the slot ends on the following calendar date.
+
+Mill and BIN capacities are entered and displayed in TON, with decimal values allowed. The system converts capacity to
+canonical KG using exactly 1 TON = 1,000 KG for forecast, capacity comparison, ledger, requisition and transfer logic,
+while retaining the entered TON value for master-data display and editing.
+
+Approved minimum field set:
+
+- MILL Location: generated Mill Code, Mill Name, Daily Capacity TON, Hourly Capacity TON, Bulk Daily Allocation TON,
+  Bagged Daily Allocation TON and Status. Bulk plus Bagged daily allocation cannot exceed Daily Capacity.
+- BIN Location: generated Bin Code, Bin Name, required parent Mill, Bin Capacity TON, Feed Type (Bulk or Bagged) and
+  Status.
+- BIN Diet Assignment: Bin, Feed Item/Diet, Production Date, Production Slot and Diet Priority, with the overlap and
+  positive-stock change protections above.
+
+Company scope and audit fields remain the existing automatic Location/Master fields. Do not create a duplicate Mill
+Capacity Master or add fields beyond the approved set unless a later workflow proves one is necessary.
+
+For Dashboard `Mill Loading Bin No.`, resolve the next scheduled BIN assignment for the selected Silo's current diet
+on or after the shared Planning Date. Display the BIN together with its Production Date and Production Slot. If no such
+assignment exists, display `Not scheduled`; do not fall back to an arbitrary BIN.
+
+Dashboard and Calculation are the top implementation priority. Build and verify their farm calculation, selection,
+fields, filters and charts first. Until the later MILL/BIN foundation is connected, Mill Loading Bin remains the honest
+`Not scheduled` unavailable state. The Dashboard is not declared fully complete until that foundation supplies and the
+live check proves a real effective BIN assignment.
 
 ## 2026-10-05 — Common requisition: requester, Service lines, receipt and release
 
