@@ -449,15 +449,59 @@ The test now asserts the **projection**, and that does go RED→GREEN.
 
 Gates at `0483df28`: api 178 suites / 2319 tests pass, tsc 0, eslint 0 errors.
 
+### navfarm-30 session, 5 Oct (stopped by Rishi to check the app)
+
+Commits, in order:
+
+- `0483df28` Item Tracking enforced at shipment (API) — Freebuff's repaired work
+  plus the release-projection defect below.
+- `6d4317b1` Item Tracking button on the line (web) — the Store Item sub-form
+  gains the column, reusing main's `LotSerialPicker`; `options()` returns
+  `is_lot_tracked` / `is_serial_tracked` as real booleans.
+- `c9bacdd9` findOne returns the assignment — **second projection defect of the
+  same kind**: the columns were written and then not read back, so the
+  assignment vanished from the editor on reload although it was stored.
+- `015b0d20` header follows Rishi's field list — order asserted in the spec;
+  Requester User ID added; Requester Department made read-only ("auto from
+  User Setup"); Status (Open / Released) added as its own projected field,
+  with Approval still separate.
+
+Gates at `015b0d20`: api 178 suites / 2320 tests, web 90 suites / 604 tests,
+tsc 0 errors both sides, eslint 0 errors.
+
+**Ruling (navfarm-30):** the project ledger stays this file rather than an
+`sdd-workspace` one — plan §0.4 and CONTINUE-PROMPT rule 5 both name it, and it
+is committed where the sdd ledgers are git-ignored. Cost if wrong: none beyond
+a second ledger nobody reads.
+
+**Pattern worth naming, because it has now bitten twice:** the recording
+database in these specs returns queued rows **whole**, ignoring the select
+projection. A row-shaped assertion therefore passes whether or not the service
+asked for the column. Both tracking defects were invisible to row assertions
+and only showed up once the test asserted `Object.keys(projection)`. Any future
+"the service returns X" test over this harness should assert the projection.
+
+### Open question for Rishi (do not decide it here)
+
+Rishi's list says **"FA and Service: Description + Qty only"**, and the WP1c gap
+table turns that into "no item, UOM or rate" on those lines. But
+`requisition_line.uom` is **NOT NULL** (varchar(20), verified in `nf_devco`) and
+`RequisitionLineInput.uom` is `@IsNotEmpty()`. Hiding the UOM column would make
+every FA/Service document unsaveable unless we either make the column nullable
+(a schema change, and the branch is additive-only until WP11) or silently
+default a unit, which is a data decision and not mine. **The line-column work is
+therefore left unstarted** rather than half-done. Rate is safe to hide; UOM is
+the blocked half.
+
 ### Still open on WP1c
 
 | Spec row | State |
 |---|---|
-| Header fields in Rishi's order and labels | not started |
-| FA/Service = Description + Qty only (UI) | API refuses tracking fields; UI not checked |
-| Status shows Open / Released, Approval separate | not started |
-| Line columns in Rishi's order | not started |
-| **Item Tracking dialog on the line (web)** | not started — API side done |
+| Header fields in Rishi's order and labels | **done** `015b0d20` |
+| FA/Service = Description + Qty only (UI) | **blocked** — see the UOM question above |
+| Status shows Open / Released, Approval separate | **done** `015b0d20` |
+| Line columns in Rishi's order | not started (same UOM question) |
+| **Item Tracking dialog on the line (web)** | **done** `6d4317b1` + `c9bacdd9` |
 | Location dept + user dept visible in Location Master / Team Management | not started |
 | Item Ledger + Value Entry on shipment/receipt | live verify owed |
 | Live check: two users, two departments, tracked item end to end | **owed** |
