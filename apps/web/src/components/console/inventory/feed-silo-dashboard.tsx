@@ -18,6 +18,11 @@ import {
   useOptionalFeedForecastContext,
 } from "./feed-forecast-context";
 import { FeedSiloDashboardCards, type SelectedSiloDashboard } from "./feed-silo-dashboard-cards";
+import {
+  FeedSiloDashboardCharts,
+  type BalanceSeriesPoint,
+  type DemandSeriesPoint,
+} from "./feed-silo-dashboard-charts";
 
 interface Option {
   id: string;
@@ -37,8 +42,8 @@ interface SiloStatusResponse {
   selection: { shedId: string | null; siloId: string | null; sheds: Option[]; silos: Option[] };
   submissionDeadline: string | null;
   silo: SelectedSiloDashboard | null;
-  balanceSeries: unknown[];
-  demandSeries: unknown[];
+  balanceSeries: BalanceSeriesPoint[];
+  demandSeries: DemandSeriesPoint[];
   farmTotalOrderKg: number;
 }
 
@@ -218,7 +223,16 @@ function FeedSiloDashboardContent() {
         <div className="p-10 text-center text-xs text-(--text-secondary)">{t("fsdNoLinkedSilos")}</div>
       ) : data?.silo ? (
         <div data-dashboard-content className={cn("transition-opacity", loading && "opacity-50")}>
-          <FeedSiloDashboardCards silo={data.silo} farmTotalOrderKg={data.farmTotalOrderKg} t={t} />
+          <div className="flex min-h-0 flex-col gap-4">
+            <FeedSiloDashboardCards silo={data.silo} farmTotalOrderKg={data.farmTotalOrderKg} t={t} />
+            <FeedSiloDashboardCharts
+              balanceSeries={data.balanceSeries}
+              demandSeries={data.demandSeries}
+              belowFeedLevelKg={data.silo.belowFeedLevelKg}
+              aboveThresholdKg={data.silo.aboveThresholdKg}
+              capacityKg={data.silo.capacityKg}
+            />
+          </div>
         </div>
       ) : loading ? (
         <Loading label={t("fsdLoading")} />

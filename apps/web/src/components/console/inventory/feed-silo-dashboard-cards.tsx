@@ -21,6 +21,8 @@ export interface SelectedSiloDashboard {
   siloCode: string;
   siloName: string;
   capacityKg: number | null;
+  belowFeedLevelKg: number | null;
+  aboveThresholdKg: number | null;
   systemBalanceKg: number;
   currentDietItemName: string | null;
   dailyRequirementKg: number;
