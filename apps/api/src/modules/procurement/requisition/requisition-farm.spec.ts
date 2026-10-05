@@ -6,9 +6,10 @@
  * to a farm, so its RQ-00033 was stored with farm_id NULL although its Main
  * Location was GRA100. The list then showed no farm, and the LOB scope
  * (requisitionFarmLobCondition: a requisition with no farm is every LOB's)
- * let every LOB see it. The farm is now derived on create and on update: the
- * location itself when it is a FARM, otherwise its farm ancestor through
- * parent_location_id.
+ * let every LOB see it. The farm is now derived on create and on update with
+ * the one shared rule, farmOfLocation (common/farm-scope.ts). That is the rule
+ * assertLocationOnActiveFarm checks the main location against: a root
+ * location (parent NULL) is the farm; otherwise the location's farm_id.
  *
  * The recording database keys queued rows by table, as
  * requisition.release.spec.ts does.
@@ -47,10 +48,10 @@ function recordingDb(queues: Map<unknown, unknown[][]>) {
 const UNPINNED: FarmScope = { farmId: null, companyId: null, restricted: false, lobId: null };
 const AREA_ADMIN = { userId: 'u-area', userType: 'OPERATIONAL_ADMIN' };
 
-const loc = (location_id: string, location_type: string, parent_location_id: string | null) => ({ location_id, location_type, parent_location_id });
-const FARM = loc('farm-gra', 'FARM', null);
-const SHED = loc('shed-1', 'SHED', 'farm-gra');
-const PEN = loc('pen-1', 'PEN', 'shed-1');
+/** The row farmOfLocation (common/farm-scope.ts) reads: one query per location. */
+const loc = (location_id: string, parent: string | null, farm_id: string | null) => ({ location_id, parent, farm_id });
+const FARM = loc('farm-gra', null, null);
+const PEN = loc('pen-1', 'shed-1', 'farm-gra');
 
 const HEADER = {
   requisition_id: 'req-1', tenant_id: 'tenant-1', company_id: 'co-1', farm_id: null, req_no: 'RQ-00033', doc_type: 'FA',
@@ -85,16 +86,16 @@ describe('create — the farm comes from the Main / Farm Location', () => {
     expect(header()).toMatchObject({ main_location_id: 'farm-gra', farm_id: 'farm-gra' });
   });
 
-  it('a main location below a farm takes its farm ancestor through parent_location_id', async () => {
-    const { service, as, header } = setup(createQueues([[PEN], [SHED], [FARM]]));
+  it('a main location below a farm takes its farm_id, in one lookup', async () => {
+    const { service, as, header } = setup(createQueues([[PEN]]));
     await as(() => service.create({ company_id: 'co-1', doc_type: 'FA', purpose: 'PURCHASE', main_location_id: 'pen-1', lines: FA_LINES } as any, 'tenant-1', AREA_ADMIN));
     expect(header()).toMatchObject({ main_location_id: 'pen-1', farm_id: 'farm-gra' });
   });
 
-  it('a main location with no farm above it leaves the farm empty for an unpinned caller', async () => {
-    const { service, as, header } = setup(createQueues([[loc('hq', 'OFFICE', null)]]));
-    await as(() => service.create({ company_id: 'co-1', doc_type: 'FA', purpose: 'PURCHASE', main_location_id: 'hq', lines: FA_LINES } as any, 'tenant-1', AREA_ADMIN));
-    expect(header()).toMatchObject({ main_location_id: 'hq', farm_id: null });
+  it('a main location the shared rule cannot place leaves the farm empty for an unpinned caller', async () => {
+    const { service, as, header } = setup(createQueues([[]]));
+    await as(() => service.create({ company_id: 'co-1', doc_type: 'FA', purpose: 'PURCHASE', main_location_id: 'gone', lines: FA_LINES } as any, 'tenant-1', AREA_ADMIN));
+    expect(header()).toMatchObject({ main_location_id: 'gone', farm_id: null });
   });
 });
 
@@ -111,7 +112,7 @@ describe('update — the farm follows the Main / Farm Location', () => {
   });
 
   it('moves the farm when the main location moves to another farm', async () => {
-    const { service, as, headerUpdate } = setup(updateQueues({ ...HEADER, farm_id: 'farm-gra' }, [[loc('shed-9', 'SHED', 'farm-vil')], [loc('farm-vil', 'FARM', null)]]));
+    const { service, as, headerUpdate } = setup(updateQueues({ ...HEADER, farm_id: 'farm-gra' }, [[loc('shed-9', 'farm-vil', 'farm-vil')]]));
     await as(() => service.update('req-1', { purpose: 'PURCHASE', main_location_id: 'shed-9', lines: FA_LINES } as any, 'tenant-1', AREA_ADMIN));
     expect(headerUpdate()).toMatchObject({ main_location_id: 'shed-9', farm_id: 'farm-vil' });
   });

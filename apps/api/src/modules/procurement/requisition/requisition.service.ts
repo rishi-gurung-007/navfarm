@@ -26,7 +26,7 @@ import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import type { MySql2Database } from 'drizzle-orm/mysql2';
 import { withTenantTransaction } from '../../../common/tenant-transaction';
-import { farmScope, assertCompanyInScope, assertLocationOnActiveFarm, requisitionFarmLobCondition } from '../../../common/farm-scope';
+import { farmScope, assertCompanyInScope, assertLocationOnActiveFarm, farmOfLocation, requisitionFarmLobCondition } from '../../../common/farm-scope';
 import { userHasPermission } from '../../../common/permissions';
 import { ApprovalService } from '../../production/approval/approval.service';
 import { StockTransferService } from '../../inventory/stock-transfer/stock-transfer.service';
@@ -241,13 +241,14 @@ export class RequisitionService {
       await assertLocationOnActiveFarm(this.db, scope, mainLocationId, 'Requisition main location');
     }
     // P1 follow-up item 5: the requisition belongs to the farm of its Main /
-    // Farm Location. Before, a caller not tied to a farm (area.admin's
+    // Farm Location, by the one shared rule (farmOfLocation, farm-scope.ts) —
+    // the same rule assertLocationOnActiveFarm just checked it against. Before, a caller not tied to a farm (area.admin's
     // RQ-00033) wrote farm_id NULL although its Main Location was GRA100, so
     // the list showed no farm and the LOB scope treated it as every LOB's.
     // P1 e2e (5 Oct): without a main location, a farm-pinned caller's
     // requisition still belongs to its farm (the dialog sends none, and a NULL
     // farm made the read-back below miss the row through scopeConditions()).
-    const farmId = (mainLocationId ? await this.farmOfLocation(tenantId, mainLocationId) : null) ?? dto.farm_id ?? scope.farmId ?? null;
+    const farmId = (mainLocationId ? await farmOfLocation(this.db, mainLocationId) : null) ?? dto.farm_id ?? scope.farmId ?? null;
     if (dto.from_location_id) {
       await assertLocationOnActiveFarm(this.db, scope, dto.from_location_id, 'Requisition source location');
     }
@@ -343,27 +344,6 @@ export class RequisitionService {
     // before this runs, so there is nothing left to look up.
   }
 
-  /**
-   * The farm a location belongs to: the location itself when it is a FARM,
-   * otherwise the nearest FARM up its parent_location_id chain; null when the
-   * chain reaches no farm. The walk is capped so a cycle in master data cannot
-   * loop forever.
-   */
-  private async farmOfLocation(tenantId: string, locationId: string): Promise<string | null> {
-    let current: string | null = locationId;
-    for (let depth = 0; current && depth < 10; depth++) {
-      const [loc]: Array<{ location_id: string; location_type: string | null; parent_location_id: string | null }> = await this.db
-        .select({ location_id: schema.locationMaster.location_id, location_type: schema.locationMaster.location_type, parent_location_id: schema.locationMaster.parent_location_id })
-        .from(schema.locationMaster)
-        .where(and(eq(schema.locationMaster.tenant_id, tenantId), eq(schema.locationMaster.location_id, current)))
-        .limit(1);
-      if (!loc) return null;
-      if (loc.location_type === 'FARM') return loc.location_id;
-      current = loc.parent_location_id;
-    }
-    return null;
-  }
-
   /** One insert row per supplied line — the mapping create() always used, shared with update(). */
   private lineValues(
     requisitionId: string,
@@ -452,10 +432,10 @@ export class RequisitionService {
         if (id) await assertLocationOnActiveFarm(this.db, scope, id, label);
       }
       await this.assertLineReferences(tenantId, row.company_id, dto.lines);
-      // P1 follow-up item 5: the farm follows the Main / Farm Location. A main
-      // location with no farm above it leaves the stored farm as it was.
+      // P1 follow-up item 5: the farm follows the Main / Farm Location (shared
+      // farmOfLocation). A location it cannot place leaves the stored farm.
       const mainLocationId = dto.main_location_id ?? row.main_location_id;
-      const farmId = (mainLocationId ? await this.farmOfLocation(tenantId, mainLocationId) : null) ?? row.farm_id;
+      const farmId = (mainLocationId ? await farmOfLocation(this.db, mainLocationId) : null) ?? row.farm_id;
       // Kept when omitted: purpose, requisition_date, main_location_id, requester_department_id. Cleared when omitted: sender_department_id, remarks, required_date, justification, direct_transfer.
       await this.db
         .update(schema.requisition)

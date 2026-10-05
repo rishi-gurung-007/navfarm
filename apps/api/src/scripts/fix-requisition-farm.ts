@@ -1,6 +1,6 @@
 /**
  * Fill requisition.farm_id from the Main / Farm Location where it is NULL
- * (P1 follow-up item 5; the rule is in fix-requisition-farm.lib.ts).
+ * (P1 follow-up item 5) by the shared farmOfLocation (common/farm-scope.ts).
  *
  * Default is read-only (prints the plan); --verify applies and rolls back;
  * --apply commits. Local databases only. Idempotent: a second run plans
@@ -8,7 +8,10 @@
  * that condition. The database is DEV_TENANT_DATABASE (default nf_devco).
  */
 import mysql, { RowDataPacket } from 'mysql2/promise';
-import { planRequisitionFarms, type LocationRow, type RequisitionFarmRow } from './fix-requisition-farm.lib';
+import { drizzle } from 'drizzle-orm/mysql2';
+import * as schema from '../core/database/schema';
+import { farmOfLocation } from '../common/farm-scope';
+import { planRequisitionFarms, type RequisitionFarmRow } from './fix-requisition-farm.lib';
 
 async function run() {
   const apply = process.argv.includes('--apply');
@@ -30,10 +33,16 @@ async function run() {
     const [rows] = await db.query<RowDataPacket[]>(
       'SELECT requisition_id, req_no, main_location_id, farm_id FROM requisition WHERE deleted_at IS NULL ORDER BY req_no FOR UPDATE',
     );
-    const [locations] = await db.query<RowDataPacket[]>(
-      'SELECT location_id, location_code, location_type, parent_location_id FROM location_master',
+    const [locations] = await db.query<RowDataPacket[]>('SELECT location_id, location_code FROM location_master');
+    const code = new Map(locations.map((l) => [l.location_id as string, l.location_code as string]));
+    // The one shared rule (review p1f, I2), read through the same connection
+    // and transaction as the writes below.
+    const orm = drizzle(db, { schema, mode: 'default' });
+    const plan = await planRequisitionFarms(
+      rows as unknown as RequisitionFarmRow[],
+      (id) => farmOfLocation(orm as never, id),
+      (id) => code.get(id) ?? id,
     );
-    const plan = planRequisitionFarms(rows as unknown as RequisitionFarmRow[], locations as unknown as LocationRow[]);
     let written = 0;
     if (verify || apply) {
       for (const s of plan.set) {

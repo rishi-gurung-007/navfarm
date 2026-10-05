@@ -44,7 +44,7 @@ const header = (req_no: string) => ({
 function build(series: 'configured' | 'none', issued: string[] = ['NUM-0001'], taken: string[] = [], lastOfCompany: string | null = `REQ-${YEAR}-0007`, fallbackClashes: string[] = []) {
   const queue: unknown[][] = [
     [{ full_name: 'Ada', department_id: null }],
-    [{ location_id: 'farm-1', location_type: 'FARM', parent_location_id: null }],
+    [{ location_id: 'farm-1', parent: null, farm_id: null }],
     [{ item_id: 'item-1' }],
   ];
   if (series === 'none') {
