@@ -2622,6 +2622,51 @@ Rishi, 5 Oct: "first finish the common requisition then the feed requisition and
 The work packages are regrouped into three phases (master plan, "Build order (5 Oct)"). A phase is finished before the
 next begins, except work already in flight when this was decided.
 
+## 2026-10-05 — One requisition document; approval is its decision workflow
+
+Rishi clarified that Common Requisition and Approval are not competing document types. A requisition is the business
+document (header, lines, release and fulfilment); approval is a separate decision workflow applied to that document.
+There is one top-level Requisition list and document experience. It includes Item, Fixed Asset and Service requests,
+including feed items. It owns the "Waiting for my approval" filter and Approve / Reject actions. The general Approvals
+inbox does not duplicate requisition rows; it remains the inbox for other operational sign-offs.
+
+A feed request may start in either place:
+
+- Feed Forecast creates the same requisition document, prefilled from the selected farm, shed, silo, feed item,
+  required date and calculated quantity.
+- Requisition permits the same feed item to be requested manually as an Item requisition.
+
+`FEED_FORECAST` and `MANUAL` are origins of an Item requisition, not separate user-facing requisition types or separate
+document implementations. The existing stored `FEED` subtype and `/feed-requisition` route require a compatibility
+transition so existing rows and bookmarks keep working while all new mutations converge on the canonical requisition
+service. Approval state, document state and fulfilment state remain independent. Approval precedes Release.
+
+This supersedes the earlier 5 Oct ruling that feed requisitions live only under Feed Forecast and are excluded from the
+common Requisition list. Feed Forecast retains its Requisition entry point, but it opens or creates the same canonical
+document shown by Requisition.
+
+## 2026-10-05 — Feed Forecast display and interaction correction
+
+Rishi confirmed the following UI and range rules:
+
+- Selection is hierarchical: Farm, then Shed, then Silo. Downstream choices and displayed facts are filtered by the
+  selected parent; changing a parent clears an invalid child selection.
+- Dashboard facts should use KPI cards and useful charts where they clarify balances, demand, run-down and diet change;
+  the detailed workbook table remains available below them.
+- Daily starts on the selected date and shows every daily closing balance through the date stock becomes empty, capped
+  by the configured 45-day maximum.
+- Weekly starts on the selected date and shows consecutive seven-day groups through the group containing the empty-stock
+  date. A weekly value is the closing balance at that group's end (or zero on the run-down date/group), derived from the
+  same daily projection.
+- New Physical Stock Count opens in a dialog over the count list instead of replacing the page body.
+- The workbook's Feed Plan (Tentative versus Actual, with retained run versions) is brought into the Feed Forecast work.
+  The existing Feed Planning screen is configuration and does not satisfy this requirement. Tentative uses five completed
+  weeks of posted consumption adjusted for known population/diet changes; Actual uses approved requisition quantities.
+
+The running API on 5 Oct proved the range defect: VIL100 on planning date 5 Oct calculated `horizonTo=19 Nov` and a
+run-down date of 21 Oct, but DAILY returned only 5 Oct and WEEKLY only 5–11 Oct. The data exists in the projection; the
+view contract truncates it before the web can render it.
+
 ## 2026-10-05 — Item Tracking after release, and four readings of Rishi's list (ours, to confirm with Rishi)
 
 These are interpretations of the 4 Oct list (`common-requisition-spec.md`) made in WP4a. They are **ours, not Rishi's

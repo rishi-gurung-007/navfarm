@@ -584,3 +584,28 @@ the blocked half.
   Interpretations awaiting Rishi (decisions.md): tracking assigned by From dept; Direct Transfer checks From dept only; serial lines ship whole; transfers draw only from their From location.
   Leftover: one malformed "SN00001,SN00002" layer at GRA100/SHED-001 (pre-fix), labelled.
 - Next: Phase 1 close — browser-driven end-to-end of every common kind.
+
+## 5 Oct — Rishi unified Requisition and corrected Feed Forecast scope (planning amendment; implementation not started)
+
+Rishi clarified that Requisition is the business document and Approval is its decision workflow. One top-level
+Requisition page/document covers Item, Fixed Asset and Service, including feed Items. Feed Forecast creates that same
+document prefilled; manual feed requests are also possible from Requisition. This supersedes WP1g's exclusion of FEED
+from the common list as the target architecture, but existing FEED rows/routes need a compatibility transition.
+
+The running API was probed read-only as company admin for VIL100, planning date 5 Oct:
+
+- DAILY: `from=to=2026-10-05`, five rows only, while the response already knows `runDownDate=2026-10-21` and
+  `horizonTo=2026-11-19`.
+- WEEKLY: `2026-10-05..2026-10-11`, again with run-down 21 Oct.
+- CUSTOM: seven dated columns for 5–11 Oct, matching its explicit range.
+
+This proves the reported blank/truncated display is a view-range contract defect, not absent stock data. The current
+Physical Stock Count component swaps the page body inline; New is not a dialog. The workbook's Tentative/Actual Feed
+Plan is not implemented; Feed Planning is configuration only.
+
+Planning artifacts awaiting Rishi review before product-code execution:
+
+- `docs/superpowers/specs/2026-10-05-unified-requisition-and-feed-forecast-design.md`
+- `docs/superpowers/plans/2026-10-05-unified-requisition-and-feed-forecast.md`
+
+Next remains the Phase 1 every-kind common-requisition live pass, followed by the approved correction plan.

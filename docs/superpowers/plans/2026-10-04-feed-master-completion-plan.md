@@ -72,6 +72,13 @@ review** (a fresh reviewer reads the diff against this plan + the workbook rows)
 
 ## 1. Decisions that govern the remaining work (all in `docs/decisions.md`)
 
+**5 Oct correction:** read
+`docs/superpowers/specs/2026-10-05-unified-requisition-and-feed-forecast-design.md` and execute
+`docs/superpowers/plans/2026-10-05-unified-requisition-and-feed-forecast.md` before the older Phase 2/3 boundary below.
+Rishi's later ruling makes feed an Item requisition origin in the one Requisition document/list; Approval is the
+decision workflow, not a duplicate list. Where the older table or work-package text separates common/feed documents,
+the 5 Oct correction wins.
+
 | Date | Decision |
 |---|---|
 | 3 Oct | The feed TDD workbook governs feed; behaviour it does not describe is dropped (except fields that existed before 25 Sep). |
@@ -80,7 +87,7 @@ review** (a fresh reviewer reads the diff against this plan + the workbook rows)
 | 3 Oct | In-house only; Production Output Entry replaces "BC produces feed" (no raw-material consumption). |
 | 3 Oct | Feed requisition lines per **batch + house + silo + item**: one order line per silo+item (rounding per compartment) with a read-only batch/house breakdown. |
 | 3 Oct | Common requisition (Item / Fixed Asset / Service; Store only for Item; approval precedes release) kept as first developed (1 Oct spec). |
-| 4 Oct | Feed Forecast tab creates **feed requisitions only** (New opens feed directly, no picker); Approvals → Requisitions creates **every kind**. |
+| 5 Oct (later; supersedes 4 Oct/earlier 5 Oct boundary) | One Requisition document/list. Feed Forecast and the common page both create the same Item requisition; `FEED_FORECAST` / `MANUAL` are origins. Approval is its decision workflow, not a duplicate list. |
 | 4 Oct | Requisitions (common and feed) are created and edited in a **dialog** (header fields first, then lines); read-only once not editable. |
 | 4 Oct | Every page shows the workbook's fields for it, field for field. |
 | 4 Oct | The Feed Forecast **Dashboard is a dashboard**: filter bar first, then KPI tiles and charts, then the workbook table. |
@@ -117,6 +124,13 @@ Evidence of what is done: `docs/VERIFICATION-2026-10-03-feed-tdd-part-a.md`, `do
 
 ## 3. Status (as of 4 Oct, HEAD `4b670477`)
 
+**Updated 5 Oct, HEAD `f3e53f4f`:** Phase 1 implementation packages WP1/WP1b/WP1c/WP1d-labels/WP1e/WP1f/WP1g/WP4a
+are implemented and reviewed; the remaining Phase 1 close is the browser-driven every-kind common-requisition pass.
+The branch is clean before this planning amendment, the API and web are running from this worktree, and local demo data
+now contains departments plus lot/serial-tracked items. The new unified-requisition ruling is **planned, not implemented**:
+the code still excludes FEED from `kind=common`, rejects FEED mutations on `/requisition`, and uses `/feed-requisition`.
+The Feed Forecast Daily/Weekly range defect is live-reproduced; Physical Count is inline; Feed Plan is absent.
+
 **Done and live-verified**
 - **Part A** — forecast and feed requisition aligned to the workbook (safety stock, first-shortage date,
   7-day default window, 45-day cap, delivery date = first shortage, capacity warning, 10000-step lines,
@@ -143,6 +157,11 @@ Estimates are agent wall-clock including review and the live check, at the pace 
 (S ≈ 20–30 min, M ≈ 35–60 min, L ≈ 1–2 h).
 
 ### Build order (Rishi, 5 Oct): this overrides the numeric order below
+
+**Revised later on 5 Oct:** after the Phase 1 common-requisition end-to-end close, execute the unified correction plan.
+It replaces the old separate "finish feed requisition" boundary with one canonical requisition service/page, then fixes
+the forecast range, hierarchy/dashboard, Physical Stock Count dialog and Feed Plan. Mill consolidation/loading/dispatch
+remain subsequent packages; the Feed Plan task does not claim those are complete.
 
 **Phase 1: Common requisition, finished completely**
 1. WP1d label change already in flight (tab labels only). Commit it as-is. The Stages removal moves to Phase 3.
@@ -508,8 +527,7 @@ unchanged; screenshot each screen.
 | Feed Forecast | Inventory → Feed Forecast → Forecast | built · WP2, WP6 (23–26) |
 | Feed Forecast Dashboard | … → Dashboard | table only · WP3 |
 | Physical Count (weekly) | … → Physical Count | built · WP6 (28–29) |
-| Feed Requisition | … → Feed Requisition tab; Approvals → Requisitions | built · WP5, WP6 (27, 30, 31) |
-| Common Requisition (Item/FA/Service) | Approvals → Requisitions | built · WP1c (Rishi's 4 Oct field list: dept checks, Direct Transfer right, Item Tracking) |
+| Unified Requisition (Item/FA/Service, including feed Items) | top-level Requisition; contextual entry from Feed Forecast | common document built; convergence plan 5 Oct pending |
 | Approvals inbox | Approvals | built · WP1, WP1b (stops listing requisitions) |
 | Location (silo), Item, Breed Lifecycle, Alert Rules masters | Farm Master / Master data | built · WP6 (32–36) |
 | Reporting Periods, Feed Planning Settings, Number Series | Farm Master / Feed Forecast / Settings | built |
@@ -543,7 +561,9 @@ unchanged; screenshot each screen.
 | WP9 Part D | 5–6 h | — |
 | WP10 shared primitives | 1 h | — |
 | WP11 review, drop prerequisites | 3–4 h | — |
-| **Remaining total** | **≈51–67 h** | |
+| 5 Oct unified requisition + forecast correction plan | 29–42 h | planned; not started |
+| **Requested correction set** | **≈29–42 h (4–6 focused working days)** | |
+| **Whole feed master plan remaining, including mill/loading/dispatch and period close** | **≈55–75 h (7–10 focused working days)** | |
 
 ---
 
