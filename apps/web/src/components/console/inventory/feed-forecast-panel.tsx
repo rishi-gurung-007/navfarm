@@ -4,23 +4,22 @@
  * Inventory -> Feed Forecast (Plans A, R; laid out in Plan S). The farm
  * comes from the shared feed-farm hook (one request, one choice across the
  * feed screens — review A3, A4); the query per view is feed-forecast-query.ts;
- * the grid, the stage table and the notes are their own components. The page
+ * the workbook grid and the notes are their own components. The page
  * is fixed-height (ConsolePage fill): the filters stay put and only the table
  * scrolls (review C). The planning date and range are shown before the first
  * answer (A11) but only sent once the user changes them — the farm's own
  * today is the API's to decide (D16).
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/services/api-client";
 import { InlineAlert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { EmptyState, LoadingState } from "@/components/ui/states";
-import { Tabs } from "@/components/ui/tabs";
 import { getActiveWorkspaceScope, getStoredUser, hasPermission } from "@/hooks/useAuth";
 import { useLanguage } from "@/hooks/useLanguage";
 import type { TranslationKeys } from "@/utils/translations";
 import { formatDateShort, todayIso, unwrap } from "./feed-format";
-import { FeedForecastGrid, FeedForecastStages, ReportRow, StageBlock } from "./feed-forecast-grid";
+import { FeedForecastGrid, ReportRow, SourceBalancePoint } from "./feed-forecast-grid";
 import { FeedForecastNotes, type ForecastFlag } from "./feed-forecast-notes";
 import { businessYearStartOf, forecastQueryString, FORECAST_VIEWS, ForecastView } from "./feed-forecast-query";
 import { FeedFarmSelect, feedFarmLabel } from "./feed-farm-select";
@@ -53,9 +52,19 @@ interface ForecastData {
   period: PeriodOption | null;
   farm: { id: string; code: string; name: string };
   rows: ReportRow[];
-  stages: StageBlock[];
+  sourceBalances: SourceBalancePoint[];
   flags: ForecastFlag[];
 }
+
+interface ResultFilters {
+  shedId: string;
+  siloId: string;
+  batchId: string;
+  itemId: string;
+  feedType: string;
+}
+
+const EMPTY_FILTERS: ResultFilters = { shedId: "", siloId: "", batchId: "", itemId: "", feedType: "" };
 
 const VIEW_LABEL: Record<ForecastView, TranslationKeys> = { DAILY: "ffViewDaily", WEEKLY: "ffViewWeekly", PERIOD: "ffViewPeriod", CUSTOM: "ffViewCustom" };
 const inputStyle = { backgroundColor: "var(--input-bg)", color: "var(--input-text)", borderColor: "var(--input-border)" };
@@ -91,12 +100,14 @@ function FeedForecastPanelContent() {
   const [data, setData] = useState<ForecastData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [tab, setTab] = useState<"forecast" | "stages">("forecast");
+  const [filters, setFilters] = useState<ResultFilters>(EMPTY_FILTERS);
   const [savingRun, setSavingRun] = useState(false);
   const [runMessage, setRunMessage] = useState("");
   const [runError, setRunError] = useState("");
   const [runHistoryReload, setRunHistoryReload] = useState(0);
   const resolvedSelectionRef = useRef("");
+
+  useEffect(() => setFilters(EMPTY_FILTERS), [farmId]);
 
   useEffect(() => {
     if (view !== "PERIOD" || !farmId) {
@@ -225,8 +236,41 @@ function FeedForecastPanelContent() {
   }
 
   const rows = Array.isArray(data?.rows) ? data!.rows : [];
-  const stages = Array.isArray(data?.stages) ? data!.stages : [];
+  const sourceBalances = Array.isArray(data?.sourceBalances) ? data!.sourceBalances : [];
   const flags = Array.isArray(data?.flags) ? data!.flags : [];
+  const resultOptions = useMemo(() => {
+    const selected = (row: ReportRow, through: keyof ResultFilters) => {
+      if (through !== "shedId" && filters.shedId && row.shedId !== filters.shedId) return false;
+      if (!(["shedId", "siloId"] as Array<keyof ResultFilters>).includes(through) && filters.siloId && row.sourceLocationId !== filters.siloId) return false;
+      if (!(["shedId", "siloId", "batchId"] as Array<keyof ResultFilters>).includes(through) && filters.batchId && row.batchId !== filters.batchId) return false;
+      if (through === "feedType" && filters.itemId && row.itemId !== filters.itemId) return false;
+      return true;
+    };
+    const unique = (candidates: ReportRow[], id: (row: ReportRow) => string | null, label: (row: ReportRow) => string) => {
+      const values = new Map<string, string>();
+      for (const row of candidates) {
+        const key = id(row);
+        if (key && !values.has(key)) values.set(key, label(row));
+      }
+      return [...values].map(([value, text]) => ({ value, text })).sort((left, right) => left.text.localeCompare(right.text));
+    };
+    return {
+      sheds: unique(rows, (row) => row.shedId, (row) => row.shedCode),
+      silos: unique(rows.filter((row) => selected(row, "siloId")), (row) => row.sourceLocationId, (row) => [row.sourceCode, row.sourceName].filter(Boolean).join(" — ")),
+      batches: unique(rows.filter((row) => selected(row, "batchId")), (row) => row.batchId, (row) => row.batchNo),
+      items: unique(rows.filter((row) => selected(row, "itemId")), (row) => row.itemId, (row) => [row.itemNo, row.itemName].filter(Boolean).join(" — ")),
+      feedTypes: unique(rows.filter((row) => selected(row, "feedType")), (row) => row.feedType, (row) => row.feedType),
+    };
+  }, [filters, rows]);
+  const filteredRows = rows.filter((row) =>
+    (!filters.shedId || row.shedId === filters.shedId)
+    && (!filters.siloId || row.sourceLocationId === filters.siloId)
+    && (!filters.batchId || row.batchId === filters.batchId)
+    && (!filters.itemId || row.itemId === filters.itemId)
+    && (!filters.feedType || row.feedType === filters.feedType),
+  );
+  const visibleSources = new Set(filteredRows.map((row) => `${row.sourceLocationId ?? row.sourceCode ?? "NONE"}|${row.itemId}`));
+  const filteredSourceBalances = sourceBalances.filter((point) => visibleSources.has(`${point.locationId}|${point.itemId}`));
   const periodList = Array.isArray(periods) ? periods : [];
   const rangeBeforePlanning = !!data && data.forecastFrom === null;
   const rangeStartsAtPlanning = !!data && data.forecastFrom !== null && data.forecastFrom > data.from;
@@ -291,6 +335,22 @@ function FeedForecastPanelContent() {
         </div>
       </div>
 
+      {!!data && (
+        <div className="mt-3 flex shrink-0 flex-wrap items-end gap-3" aria-label={t("ffResultFilters")}>
+          <ResultFilter id="ff-filter-shed" label={t("ffFilterShed")} value={filters.shedId} options={resultOptions.sheds} allLabel={t("ffFilterAll")}
+            onChange={(shedId) => setFilters({ ...EMPTY_FILTERS, shedId })} />
+          <ResultFilter id="ff-filter-silo" label={t("ffFilterSilo")} value={filters.siloId} options={resultOptions.silos} allLabel={t("ffFilterAll")}
+            onChange={(siloId) => setFilters((current) => ({ ...EMPTY_FILTERS, shedId: current.shedId, siloId }))} />
+          <ResultFilter id="ff-filter-batch" label={t("ffFilterBatch")} value={filters.batchId} options={resultOptions.batches} allLabel={t("ffFilterAll")}
+            onChange={(batchId) => setFilters((current) => ({ ...EMPTY_FILTERS, shedId: current.shedId, siloId: current.siloId, batchId }))} />
+          <ResultFilter id="ff-filter-item" label={t("ffFilterFeedItem")} value={filters.itemId} options={resultOptions.items} allLabel={t("ffFilterAll")}
+            onChange={(itemId) => setFilters((current) => ({ ...current, itemId, feedType: "" }))} />
+          <ResultFilter id="ff-filter-type" label={t("ffFilterFeedType")} value={filters.feedType}
+            options={resultOptions.feedTypes.map((option) => ({ ...option, text: option.value === "BAGGED" ? t("ffFeedTypeBagged") : t("ffFeedTypeBulk") }))}
+            allLabel={t("ffFilterAll")} onChange={(feedType) => setFilters((current) => ({ ...current, feedType }))} />
+        </div>
+      )}
+
       {view === "PERIOD" && !!farmId && periodsFailed && <InlineAlert>{t("ffPeriodsLoadFailed")}</InlineAlert>}
       {view === "PERIOD" && !!farmId && !periodsFailed && periods !== null && periodList.length === 0 && (
         <InlineAlert variant="info">
@@ -319,15 +379,7 @@ function FeedForecastPanelContent() {
         <EmptyState title={t("ffNoFarms")} />
       ) : error ? null : (
         <>
-          <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
-            <Tabs
-              items={[
-                { value: "forecast", label: t("ffTabForecast") },
-                { value: "stages", label: t("ffTabStages", { count: stages.length }) },
-              ]}
-              value={tab}
-              onChange={(v) => setTab(v as "forecast" | "stages")}
-            />
+          <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
             <div className="flex items-center gap-2">
               {runMessage && <span className="text-xs text-[var(--success)]">{runMessage}</span>}
               {runError && <span className="text-xs text-[var(--danger)]">{runError}</span>}
@@ -338,13 +390,30 @@ function FeedForecastPanelContent() {
               )}
             </div>
           </div>
-          {tab === "forecast"
-            ? <FeedForecastGrid rows={rows} view={view} from={shownFrom} loading={loading} horizonTo={data?.horizonTo ?? null} t={t} />
-            : <FeedForecastStages stages={stages} t={t} />}
+          <FeedForecastGrid rows={filteredRows} sourceBalances={filteredSourceBalances} view={view} from={shownFrom} loading={loading} t={t} />
           <FeedForecastNotes flags={flags} t={t} />
           {!!farmId && <FeedForecastRunHistory farmId={farmId} reloadToken={runHistoryReload} />}
         </>
       )}
+    </div>
+  );
+}
+
+function ResultFilter({ id, label, value, options, allLabel, onChange }: {
+  id: string;
+  label: string;
+  value: string;
+  options: Array<{ value: string; text: string }>;
+  allLabel: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div>
+      <label className={labelCls} htmlFor={id}>{label}</label>
+      <select id={id} className="nf-input-sm nf-select mt-1.5 min-w-[10rem]" style={inputStyle} value={value} onChange={(event) => onChange(event.target.value)}>
+        <option value="">{allLabel}</option>
+        {options.map((option) => <option key={option.value} value={option.value}>{option.text}</option>)}
+      </select>
     </div>
   );
 }

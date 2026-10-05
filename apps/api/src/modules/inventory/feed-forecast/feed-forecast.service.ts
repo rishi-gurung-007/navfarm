@@ -129,6 +129,8 @@ export interface FeedForecastResponse {
   stages: StageBlock[];
   /** location_code -> location_name of the farm's silos and store, so the report shows the name beside the code (Engine r70). The engine stays name-free. */
   sourceNames: Record<string, string>;
+  /** location_code -> configured fulfilment form; only explicit feed_in_bags is BAGGED for a silo. */
+  sourceFeedTypes: Record<string, 'BULK' | 'BAGGED'>;
   /** Detached, canonical pure-engine inputs. Saved runs use this as their deterministic source evidence. */
   sourceSnapshot: { version: string; hash: string; values: { engineInput: ForecastInput } };
 }
@@ -248,7 +250,7 @@ export interface FeedForecastReport {
   /** TDD Engine Step 8 / Dashboard row 60: the configured planning settings the engine used for this run. */
   settings: { safetyStockKg: number; bulkMultipleKg: number; bagSizeKg: number };
   rows: ReportRow[];
-  sourceBalances: Array<import('./feed-forecast.engine').SourceBalancePoint & { sourceName: string | null }>;
+  sourceBalances: Array<import('./feed-forecast.engine').SourceBalancePoint & { sourceName: string | null; feedType: 'BULK' | 'BAGGED' }>;
   flags: ForecastFlag[];
   sources: Array<ForecastSource & { sourceName: string | null }>;
   dietChanges: DietChange[];
@@ -691,10 +693,18 @@ export class FeedForecastService {
       period,
       farm: result.farm,
       settings: result.settings,
-      rows: groupRows(displayDaily(result.daily, view, query.to !== undefined, sentTo), view, from, result.sourceNames, result.farm.id),
+      rows: groupRows(
+        displayDaily(result.daily, view, query.to !== undefined, sentTo),
+        view,
+        from,
+        result.sourceNames,
+        result.farm.id,
+        result.sourceFeedTypes ?? {},
+      ),
       sourceBalances: displayDaily(result.sourceBalances ?? [], view, query.to !== undefined, sentTo).map((point) => ({
         ...point,
         sourceName: result.sourceNames[point.sourceCode] ?? null,
+        feedType: result.sourceFeedTypes?.[point.sourceCode] ?? (point.sourceType === 'STORE' ? 'BAGGED' : 'BULK'),
       })),
       flags: result.flags,
       sources: reportSources,
@@ -1235,7 +1245,7 @@ export class FeedForecastService {
       // Important 4 (fix round 2): resolved through resolveForFeedPlanning, not
       // directly — see FeedSettingsService.resolveForFeedPlanning for why.
       const resolvedSettings = await this.feedSettings.resolveForFeedPlanning(companyId, farmId);
-      const { input: loadedInput, flags: loadFlags, stageBlocks, sourceNames } = await this.loadInput(farm, planningDate, from, to, tenantId, { stockDate, horizonTo, headerCutoff });
+      const { input: loadedInput, flags: loadFlags, stageBlocks, sourceNames, sourceFeedTypes } = await this.loadInput(farm, planningDate, from, to, tenantId, { stockDate, horizonTo, headerCutoff });
       const input: ForecastInput = { ...loadedInput, safetyStockKg: resolvedSettings.safetyStockKg };
       const { rows, flags, sources, dietChanges, daily, sourceBalances = [] } = buildFeedForecast(input);
       const sourceSnapshot = buildSourceSnapshot({ engineInput: input });
@@ -1249,7 +1259,7 @@ export class FeedForecastService {
           bagSizeKg: resolvedSettings.bagSizeKg,
         },
         rows, daily, sourceBalances, flags: [...flags, ...loadFlags, ...asOf], sources, dietChanges,
-        stages: stageBlocks, sourceNames: sourceNames ?? {}, sourceSnapshot,
+        stages: stageBlocks, sourceNames: sourceNames ?? {}, sourceFeedTypes: sourceFeedTypes ?? {}, sourceSnapshot,
       };
     });
   }
@@ -1553,7 +1563,7 @@ export class FeedForecastService {
     to: string,
     tenantId: string,
     opts: { stockDate: string; horizonTo: string; headerCutoff: string },
-  ): Promise<{ input: ForecastInput; flags: ForecastFlag[]; stageBlocks: StageBlock[]; sourceNames?: Record<string, string> }> {
+  ): Promise<{ input: ForecastInput; flags: ForecastFlag[]; stageBlocks: StageBlock[]; sourceNames?: Record<string, string>; sourceFeedTypes?: Record<string, 'BULK' | 'BAGGED'> }> {
     const companyId = farm.companyId;
     // computeForFarm has already replaced the CLS scope with the effective one
     // (fix round 2, finding 1) — every read below, direct or through the
@@ -1572,6 +1582,7 @@ export class FeedForecastService {
         parent_location_id: schema.locationMaster.parent_location_id,
         is_active: schema.locationMaster.is_active,
         low_level_kg: schema.locationMaster.low_level_kg,
+        feed_in_bags: schema.locationMaster.feed_in_bags,
       })
       .from(schema.locationMaster)
       .where(
@@ -1660,9 +1671,13 @@ export class FeedForecastService {
     // Code -> name for the silos and the store the engine can name as a source; the engine itself stays a pure calculation.
     const sourceNames: Record<string, string> = {};
     for (const l of [...siloRows, ...(storeRow ? [storeRow] : [])]) sourceNames[l.location_code] = l.location_name;
+    const sourceFeedTypes: Record<string, 'BULK' | 'BAGGED'> = {};
+    for (const l of siloRows) sourceFeedTypes[l.location_code] = l.feed_in_bags === true ? 'BAGGED' : 'BULK';
+    if (storeRow) sourceFeedTypes[storeRow.location_code] = storeRow.feed_in_bags === false ? 'BULK' : 'BAGGED';
 
     return {
       sourceNames,
+      sourceFeedTypes,
       input: {
         planningDate,
         from,

@@ -41,23 +41,25 @@ const forecastResponse = {
     farm: { id: 'farm-vil100', code: 'VIL100', name: 'VILLA FRANCA FARM' },
     rows: [
       {
-        key: 'b10|item-1|VIL100/STORE-001|2026-09-25', batchId: 'b10', batchNo: 'BATCH-000010', shedCode: '', stageCode: 'WEANER',
+        key: 'b10|item-1|VIL100/STORE-001|2026-09-25', farmId: 'farm-vil100', batchId: 'b10', batchGroupId: 'b10', batchNo: 'BATCH-000010', shedId: null, shedCode: '', stageCode: 'WEANER',
         itemId: 'item-1', itemNo: 'FEED-WG', itemName: 'Weaner Grower Mash (18% CP)', sourceType: 'STORE', sourceCode: 'VIL100/STORE-001', sourceName: 'Main store',
-        date: '2026-09-25', dateTo: '2026-09-25', days: 1, currentInventoryKg: 35525.6, heads: 58, perDayIntakeKg: 127,
-        intakeKg: 127, daysOfStock: 108, sharedBatchCount: 3, indicative: false,
-        runDownDate: null,
+        sourceLocationId: 'store-1', currentItemId: null, currentItemNo: null, currentItemName: null, feedType: 'BAGGED',
+        date: '2026-09-25', dateTo: '2026-09-25', days: 1, currentInventoryKg: 35525.6, openingSystemBalanceKg: 35525.6, confirmedReceiptsKg: 0,
+        heads: 58, feedRateKg: 2.19, perDayIntakeKg: 127, intakeKg: 127, dailyUseKg: 127, projectedClosingBalanceKg: 35398.6,
+        recommendedQtyKg: 0, firstShortageDate: null, deliveryDate: null, daysOfStock: 108, sharedBatchCount: 3, indicative: false, runDownDate: null,
       },
       {
-        key: 'b20|item-2|VIL100/SILO-002|2026-09-25', batchId: 'b20', batchNo: 'BATCH-000020', shedCode: 'SHED-1', stageCode: 'DRY_SOW',
+        key: 'b20|item-2|VIL100/SILO-002|2026-09-25', farmId: 'farm-vil100', batchId: 'b20', batchGroupId: 'b20', batchNo: 'BATCH-000020', shedId: 'shed-1', shedCode: 'SHED-1', stageCode: 'DRY_SOW',
         itemId: 'item-2', itemNo: 'FEED-DS', itemName: 'Dry Sow Gestation Mash (14% CP)', sourceType: 'SILO', sourceCode: 'VIL100/SILO-002', sourceName: 'Dry sow silo',
-        date: '2026-09-25', dateTo: '2026-09-25', days: 1, currentInventoryKg: 200, heads: 40, perDayIntakeKg: 100,
-        intakeKg: 100, daysOfStock: 2, sharedBatchCount: 1, indicative: true,
-        runDownDate: '2026-09-26',
+        sourceLocationId: 'silo-2', currentItemId: 'item-2', currentItemNo: 'FEED-DS', currentItemName: 'Dry Sow Gestation Mash (14% CP)', feedType: 'BULK',
+        date: '2026-09-25', dateTo: '2026-09-25', days: 1, currentInventoryKg: 200, openingSystemBalanceKg: 200, confirmedReceiptsKg: 0,
+        heads: 40, feedRateKg: 2.5, perDayIntakeKg: 100, intakeKg: 100, dailyUseKg: 100, projectedClosingBalanceKg: 100,
+        recommendedQtyKg: 0, firstShortageDate: '2026-09-26', deliveryDate: '2026-09-26', daysOfStock: 2, sharedBatchCount: 1, indicative: true, runDownDate: '2026-09-26',
       },
     ],
-    stages: [
-      { batchId: 'b20', batchNo: 'BATCH-000020', shedCode: 'SHED-1', currentStageCode: 'DRY_SOW', currentFrom: '2026-09-01', currentTo: '2026-09-07',
-        nextStageCode: 'FLUSH', nextFrom: '2026-09-08', nextTo: '2026-09-21', stageChangeEarliest: null, stageChangeDate: '2026-09-08', stageChangeOverdue: true },
+    sourceBalances: [
+      { date: '2026-09-25', sourceType: 'STORE', sourceCode: 'VIL100/STORE-001', sourceName: 'Main store', locationId: 'store-1', itemId: 'item-1', itemNo: 'FEED-WG', itemName: 'Weaner Grower Mash (18% CP)', currentItemId: null, currentItemNo: null, currentItemName: null, openingSystemBalanceKg: 35525.6, confirmedReceiptKg: 0, dailyUseKg: 127, projectedClosingBalanceKg: 35398.6, recommendedQtyKg: 0, firstShortageDate: null, deliveryDate: null, runDownDate: null },
+      { date: '2026-09-25', sourceType: 'SILO', sourceCode: 'VIL100/SILO-002', sourceName: 'Dry sow silo', locationId: 'silo-2', itemId: 'item-2', itemNo: 'FEED-DS', itemName: 'Dry Sow Gestation Mash (14% CP)', currentItemId: 'item-2', currentItemNo: 'FEED-DS', currentItemName: 'Dry Sow Gestation Mash (14% CP)', openingSystemBalanceKg: 200, confirmedReceiptKg: 0, dailyUseKg: 100, projectedClosingBalanceKg: 100, recommendedQtyKg: 0, firstShortageDate: '2026-09-26', deliveryDate: '2026-09-26', runDownDate: '2026-09-26' },
     ],
     flags: [{ kind: 'HEADS_ASSUMED_FLAT', batchNo: 'BATCH-000010' }, { kind: 'BATCH_SHED_UNKNOWN', batchNo: 'BATCH-000010' }],
   },
@@ -81,11 +83,11 @@ describe('FeedForecastPanel — admin', () => {
     mockFarm = adminFarm();
   });
 
-  it("renders the nine static columns (silo number and name included), one column per forecast date, Days of Stock and First Shortage Date", async () => {
+  it("renders the fourteen static row-70 columns plus one dated projected-closing column", async () => {
     render(<FeedForecastPanel />);
     const table = await screen.findByRole('table', { name: 'ffGridLabel' });
     // Both fixture rows fall on 25/09/26, so there is one date column.
-    expect(within(table).getAllByRole('columnheader')).toHaveLength(9 + 1 + 2);
+    expect(within(table).getAllByRole('columnheader')).toHaveLength(14 + 1);
   });
 
   it("shares the window on screen with the Feed Requisition tab's Draft from forecast (Feed Forecast row 8)", async () => {
@@ -101,20 +103,48 @@ describe('FeedForecastPanel — admin', () => {
     expect(get.mock.calls.some(([url]) => String(url).startsWith('/location'))).toBe(false);
   });
 
-  it('shows Indicative, no Overdue and no placeholder dashes in the grid, and keeps Stages as a tab', async () => {
+  it('removes the non-workbook Stages tab and keeps the forecast grid visible', async () => {
     render(<FeedForecastPanel />);
     const table = await screen.findByRole('table', { name: 'ffGridLabel' });
     expect(within(table).queryByText('ffOverdue')).toBeNull();
-    expect(within(table).getByText('ffIndicative')).toBeTruthy();
-    // "Shared by" was a badge in the Source cell, and went with it (D33).
-    expect(within(table).queryByText(/ffSharedBy/)).toBeNull();
-    expect(within(table).queryByText(/ffBeyondHorizon|ffNotDueBy/)).toBeNull();
-    expect(within(table).queryAllByText('—')).toHaveLength(0);
-    // D34: the wastage note is gone — neither client document has wastage.
-    expect(screen.queryByText(/ffWastage/)).toBeNull();
-    fireEvent.click(screen.getByRole('tab', { name: 'ffTabStages:{"count":1}' }));
-    expect(screen.getByRole('table', { name: 'ffStagesTitle' })).toBeTruthy();
-    expect(screen.queryByRole('table', { name: 'ffGridLabel' })).toBeNull();
+    expect(screen.queryByRole('tab', { name: /ffTabStages/ })).toBeNull();
+    expect(screen.queryByRole('table', { name: 'ffStagesTitle' })).toBeNull();
+    expect(table).toBeTruthy();
+  });
+
+  it('offers All plus cascading Shed, Silo, Batch, Feed Item and Bulk/Bagged result filters without refetching', async () => {
+    render(<FeedForecastPanel />);
+    await screen.findByRole('table', { name: 'ffGridLabel' });
+    const shed = screen.getByLabelText('ffFilterShed') as HTMLSelectElement;
+    const silo = screen.getByLabelText('ffFilterSilo') as HTMLSelectElement;
+    const batch = screen.getByLabelText('ffFilterBatch') as HTMLSelectElement;
+    const item = screen.getByLabelText('ffFilterFeedItem') as HTMLSelectElement;
+    const feedType = screen.getByLabelText('ffFilterFeedType') as HTMLSelectElement;
+
+    for (const select of [shed, silo, batch, item, feedType]) expect(within(select).getByText('ffFilterAll')).toBeTruthy();
+    expect(within(shed).getByText('SHED-1')).toBeTruthy();
+    expect(within(silo).getByText('VIL100/SILO-002 — Dry sow silo')).toBeTruthy();
+    expect(within(batch).getByText('BATCH-000020')).toBeTruthy();
+    expect(within(item).getByText('FEED-DS — Dry Sow Gestation Mash (14% CP)')).toBeTruthy();
+    expect(within(feedType).getByText('ffFeedTypeBulk')).toBeTruthy();
+    expect(within(feedType).getByText('ffFeedTypeBagged')).toBeTruthy();
+
+    fireEvent.change(shed, { target: { value: 'shed-1' } });
+    const filteredTable = screen.getByRole('table', { name: 'ffGridLabel' });
+    expect(within(filteredTable).queryByText('BATCH-000010')).toBeNull();
+    expect(within(filteredTable).getByText('BATCH-000020')).toBeTruthy();
+    expect(forecastCalls()).toHaveLength(1);
+  });
+
+  it('resets a child filter to All when an upstream selection makes it invalid', async () => {
+    render(<FeedForecastPanel />);
+    await screen.findByRole('table', { name: 'ffGridLabel' });
+    const silo = screen.getByLabelText('ffFilterSilo') as HTMLSelectElement;
+    fireEvent.change(silo, { target: { value: 'store-1' } });
+    expect(silo.value).toBe('store-1');
+
+    fireEvent.change(screen.getByLabelText('ffFilterShed'), { target: { value: 'shed-1' } });
+    expect((screen.getByLabelText('ffFilterSilo') as HTMLSelectElement).value).toBe('');
   });
 
   it('shows the farm chosen in the shared hook and hands a new choice back to it (A4)', async () => {

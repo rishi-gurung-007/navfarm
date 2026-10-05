@@ -12,9 +12,20 @@ interface ForecastRunSummary {
   run_code: string;
   version: number;
   view: string;
+  planning_date?: string;
   from_date: string;
   to_date: string;
+  period_id?: string | null;
+  source_cutoff_at?: string;
+  config_snapshot?: { version?: string };
+  created_by?: string;
   created_at: string;
+}
+
+function timestampParts(value: string | undefined): { date: string; time: string } | null {
+  if (!value) return null;
+  const [date, time = ""] = value.replace("T", " ").replace("Z", "").split(" ");
+  return { date: formatDateShort(date), time: time.slice(0, 8) };
 }
 
 export function FeedForecastRunHistory({ farmId, reloadToken }: { farmId: string; reloadToken: number }) {
@@ -61,11 +72,14 @@ export function FeedForecastRunHistory({ farmId, reloadToken }: { farmId: string
       ) : (
         <ul className="divide-y divide-[var(--border)]" aria-label={t("ffRunHistoryLabel")}>
           {currentRuns.map((run) => (
-            <li key={run.run_id} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-xs">
+            <li key={run.run_id} className="grid gap-1 px-3 py-2 text-xs sm:grid-cols-[minmax(13rem,auto)_1fr]">
               <span className="font-mono font-semibold text-[var(--text-primary)]">{run.run_code}</span>
-              <span className="text-[var(--text-secondary)]">
-                {t("ffRunHistoryRow", { version: run.version, view: run.view, from: formatDateShort(run.from_date), to: formatDateShort(run.to_date) })}
-              </span>
+              <span className="text-[var(--text-secondary)]">{t("ffRunHistoryRow", { version: run.version, view: run.view, from: formatDateShort(run.from_date), to: formatDateShort(run.to_date) })}</span>
+              {timestampParts(run.created_at) && <span className="text-[var(--text-secondary)]">{t("ffRunAsOf", timestampParts(run.created_at)!)}</span>}
+              {timestampParts(run.source_cutoff_at) && <span className="text-[var(--text-secondary)]">{t("ffRunPostingCutoff", timestampParts(run.source_cutoff_at)!)}</span>}
+              {run.planning_date && <span className="text-[var(--text-secondary)]">{t("ffRunSelectedFilters", { view: run.view, planning: formatDateShort(run.planning_date), from: formatDateShort(run.from_date), to: formatDateShort(run.to_date) })}</span>}
+              {run.config_snapshot?.version && <span className="break-all text-[var(--text-secondary)]">{t("ffRunConfigVersion", { version: run.config_snapshot.version })}</span>}
+              {run.created_by && <span className="text-[var(--text-secondary)]">{t("ffRunAuthor", { author: run.created_by })}</span>}
             </li>
           ))}
         </ul>

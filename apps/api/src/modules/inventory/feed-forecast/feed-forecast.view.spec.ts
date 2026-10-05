@@ -67,6 +67,12 @@ describe('groupRows — Step 6 "Build dated forecast"', () => {
     expect(rows[1]).toMatchObject({ sourceCode: 'GRS/SILO-002', sourceName: null });
   });
 
+  it('carries the configured Bulk/Bagged location form for result filtering', () => {
+    const rows = groupRows(daily, 'DAILY', '2026-09-23', {}, 'farm-grs', { 'GRS/SILO-001': 'BAGGED' });
+    expect(rows.find((row) => row.sourceCode === 'GRS/SILO-001')?.feedType).toBe('BAGGED');
+    expect(rows.find((row) => row.sourceCode === 'GRS/SILO-002')?.feedType).toBe('BULK');
+  });
+
   it('a stage change on the same feed inside a week starts a new line, so no row keeps a stage it has left', () => {
     const staged = daily.map((d) => (d.date >= '2026-09-26' ? { ...d, stageCode: 'GROWER', itemId: 'r1', itemNo: 'FEED-R1' } : d));
     const rows = groupRows(staged, 'WEEKLY', '2026-09-23');

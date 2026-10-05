@@ -11,7 +11,7 @@ describe('FeedForecastRunHistory', () => {
 
   it('loads only the selected farm and renders immutable versions newest first', async () => {
     (api.get as jest.Mock).mockResolvedValue({ success: true, data: [
-      { run_id: 'run-2', run_code: 'FFR-farm-1-000002', version: 2, view: 'CUSTOM', from_date: '2026-10-01', to_date: '2026-10-07', created_at: '2026-10-01 09:00:00' },
+      { run_id: 'run-2', run_code: 'FFR-farm-1-000002', version: 2, planning_date: '2026-10-01', view: 'CUSTOM', from_date: '2026-10-01', to_date: '2026-10-07', period_id: null, source_cutoff_at: '2026-10-01 08:59:30', created_at: '2026-10-01 09:00:00', created_by: 'user-2', config_snapshot: { version: 'sha256:config-2' }, source_snapshot: { values: { engineInput: { stockDate: '2026-10-01' } } } },
       { run_id: 'run-1', run_code: 'FFR-farm-1-000001', version: 1, view: 'CUSTOM', from_date: '2026-09-24', to_date: '2026-09-30', created_at: '2026-09-24 09:00:00' },
     ] });
 
@@ -20,6 +20,11 @@ describe('FeedForecastRunHistory', () => {
     expect(await screen.findByText('FFR-farm-1-000002')).toBeTruthy();
     expect(screen.getByText('FFR-farm-1-000001')).toBeTruthy();
     expect(api.get).toHaveBeenCalledWith('/feed-forecast/runs?farmId=farm-1');
+    expect(screen.getByText('ffRunAsOf:{"date":"01/10/26","time":"09:00:00"}')).toBeTruthy();
+    expect(screen.getByText('ffRunPostingCutoff:{"date":"01/10/26","time":"08:59:30"}')).toBeTruthy();
+    expect(screen.getByText('ffRunSelectedFilters:{"view":"CUSTOM","planning":"01/10/26","from":"01/10/26","to":"07/10/26"}')).toBeTruthy();
+    expect(screen.getByText('ffRunConfigVersion:{"version":"sha256:config-2"}')).toBeTruthy();
+    expect(screen.getByText('ffRunAuthor:{"author":"user-2"}')).toBeTruthy();
   });
 
   it('hides the previous farm immediately and shows loading until the new farm resolves', async () => {

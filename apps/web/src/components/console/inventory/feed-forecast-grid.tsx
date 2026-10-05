@@ -1,126 +1,81 @@
 "use client";
 
-/**
- * Inventory -> Feed Forecast: the report grid and the stage table (Feed
- * Forecast Plan R, the client's field specification of 26 Sep, spec
- * D16–D19; laid out for the fixed-height page in Plan S, review C).
- * Presentational only — feed-forecast-panel.tsx fetches, these render.
- * Dates are DD/MM/YY (D16). Current Inventory is the System Balance
- * (checkpoint 37), never "physical stock".
- *
- * One line per row; numbers right-aligned with two decimals; Batch No and
- * Item held while the grid scrolls sideways; a batch + item's consecutive
- * dates grouped (a separator where a group starts, every second group
- * shaded) so eight near-identical rows do not read as a wall.
- */
 import type { CSSProperties, ReactNode } from "react";
 import { Inbox, Loader2 } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
 import { ScrollTable } from "@/components/ui/scroll-table";
 import { cn } from "@/lib/utils";
 import { formatDateShort } from "./feed-format";
 
-/** One grid line as GET /feed-forecast sends it (apps/api …/feed-forecast.view.ts ReportRow). */
 export interface ReportRow {
   key: string;
+  farmId: string;
   batchId: string;
+  batchGroupId: string;
   batchNo: string;
+  shedId: string | null;
   shedCode: string;
   stageCode: string;
   itemId: string;
   itemNo: string;
   itemName: string;
   sourceType: "SILO" | "STORE" | "NONE";
+  feedType: "BULK" | "BAGGED";
   sourceCode: string | null;
-  /** location_name of the silo or store (Engine §5 row 70). */
-  sourceName?: string | null;
+  sourceName: string | null;
+  sourceLocationId: string | null;
+  currentItemId: string | null;
+  currentItemNo: string | null;
+  currentItemName: string | null;
   date: string;
   dateTo: string;
   days: number;
   currentInventoryKg: number;
+  openingSystemBalanceKg: number;
+  confirmedReceiptsKg: number;
   heads: number;
+  feedRateKg: number;
   perDayIntakeKg: number;
   intakeKg: number;
+  dailyUseKg: number;
+  projectedClosingBalanceKg: number;
+  recommendedQtyKg: number;
+  firstShortageDate: string | null;
+  deliveryDate: string | null;
   daysOfStock: number | null;
   sharedBatchCount: number;
   indicative: boolean;
-  /** First forecast day demand exceeds the available opening stock (the API still names it runDownDate). */
   runDownDate: string | null;
 }
 
-/** The current / next stage of one batch (apps/api …/feed-forecast.service.ts StageBlock). */
-export interface StageBlock {
-  batchId: string;
-  batchNo: string;
-  shedCode: string;
-  currentStageCode: string;
-  currentFrom: string;
-  currentTo: string | null;
-  nextStageCode: string | null;
-  nextFrom: string | null;
-  nextTo: string | null;
-  /** D36: the earliest day the change could happen, on an event-based stage with a range. */
-  stageChangeEarliest: string | null;
-  stageChangeDate: string | null;
-  stageChangeOverdue: boolean;
-}
-
-// `any` for the key, as Plan R's Task 9 brief specified: useLanguage's t is
-// typed to TranslationKeys and the specs hand in a string-keyed mock.
-type Translate = (key: any, vars?: any) => string;
-
-/**
- * The field specification's Report Grid in its order. D33 (Rishi, 28 Sep) cut
- * "Source", "Feed incl. Wastage (Kg)" and "Shared by N". Rishi 4 Oct brought the
- * silo back as two columns, Silo No (the code as the Number Series issued it)
- * and Silo Name, after Shed No (Engine §5 row 70; Engine §1 rows 8-9). Wastage
- * stays gone (D34).
- */
-export const GRID_COLUMNS = [
-  "ffColBatchNo", "ffColItemName", "ffColItemNo", "ffColShedNo", "ffColSiloNo", "ffColSiloName",
-  "ffColCurrentInventoryKg", "ffColCurrentPigs", "ffColPerDayIntakeKg",
-  // Dynamic date columns are inserted here at render time (one per day or week)
-  "ffColDaysOfStock", "ffColFirstShortage",
-] as const;
-
-export const STAGE_COLUMNS = ["ffStgBatch", "ffStgShed", "ffStgCurrent", "ffStgFrom", "ffStgTo", "ffStgNext", "ffStgChange"] as const;
-
-
-/** Kilograms, grouped, always two decimals (review C: consistent decimals). */
-export function fmtKg(n: number | null | undefined): string {
-  if (n === null || n === undefined) return "—";
-  return n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-
-/** Days of stock to one decimal (3 Oct ruling); callers leave a null blank. */
-export function fmtDays(n: number): string {
-  return n.toFixed(1);
-}
-
-export function fmtRound(n: number | null | undefined): string {
-  if (n === null || n === undefined) return "—";
-  return Math.round(n).toLocaleString("en-US");
-}
-
-export interface PivotedFeedRow {
-  key: string;
-  batchId: string;
-  batchNo: string;
-  shedCode: string;
-  sourceCode: string | null;
+export interface SourceBalancePoint {
+  date: string;
+  sourceType: "SILO" | "STORE";
+  sourceCode: string;
   sourceName: string | null;
-  stageCode: string;
+  locationId: string;
   itemId: string;
   itemNo: string;
   itemName: string;
-  heads: number;
-  perDayIntakeKg: number;
-  openingInventoryKg: number;
-  dateMap: Record<string, { currentInventoryKg: number; intakeKg: number }>;
-  daysOfStock: number | null;
+  currentItemId: string | null;
+  currentItemNo: string | null;
+  currentItemName: string | null;
+  openingSystemBalanceKg: number;
+  confirmedReceiptKg: number;
+  dailyUseKg: number;
+  projectedClosingBalanceKg: number;
+  recommendedQtyKg: number;
+  firstShortageDate: string | null;
+  deliveryDate: string | null;
   runDownDate: string | null;
-  indicative: boolean;
 }
+
+type Translate = (key: any, vars?: any) => string;
+
+export const GRID_COLUMNS = [
+  "ffColBatch", "ffColHouse", "ffColSiloCode", "ffColSiloName", "ffColRequiredFeedItem", "ffColCurrentSiloItem",
+  "ffColHeadCount", "ffColFeedRate", "ffColOpeningSystemBalance", "ffColConfirmedReceipts", "ffColDailyUse",
+  "ffColFirstShortage", "ffColRecommendedQty", "ffColDeliveryDate",
+] as const;
 
 export interface ColumnSlot {
   key: string;
@@ -129,301 +84,164 @@ export interface ColumnSlot {
   dateEnd: string;
 }
 
+export interface PivotedFeedRow extends ReportRow {
+  closingBySlot: Record<string, number>;
+}
+
 export function diffDaysIso(a: string, b: string): number {
   const [ya, ma, da] = a.split("-").map(Number);
   const [yb, mb, db] = b.split("-").map(Number);
-  const utca = Date.UTC(ya, ma - 1, da);
-  const utcb = Date.UTC(yb, mb - 1, db);
-  return Math.round((utcb - utca) / 86400000);
+  return Math.round((Date.UTC(yb, mb - 1, db) - Date.UTC(ya, ma - 1, da)) / 86400000);
 }
 
-/** Add n calendar days to an ISO date string (YYYY-MM-DD). */
 export function addDaysIso(isoDate: string, n: number): string {
-  const [y, m, d] = isoDate.split("-").map(Number);
-  const dt = new Date(Date.UTC(y, m - 1, d + n));
-  return dt.toISOString().slice(0, 10);
+  const [year, month, day] = isoDate.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day + n)).toISOString().slice(0, 10);
 }
 
+function sourceKey(locationId: string | null, sourceCode: string | null, itemId: string): string {
+  return `${locationId ?? sourceCode ?? "NONE"}|${itemId}`;
+}
+
+function slotFor(date: string, view: string | undefined, from: string): ColumnSlot {
+  if (view === "WEEKLY") {
+    const start = addDaysIso(from, Math.max(0, Math.floor(diffDaysIso(from, date) / 7)) * 7);
+    const end = addDaysIso(start, 6);
+    return { key: start, label: `${formatDateShort(start)} – ${formatDateShort(end)}`, dateStart: start, dateEnd: end };
+  }
+  return { key: date, label: formatDateShort(date), dateStart: date, dateEnd: date };
+}
+
+/**
+ * Batch facts stay on report rows; dated stock comes only from the one-per-
+ * source balance series. A shared silo therefore appears on each consuming
+ * batch line without its closing balance ever being summed.
+ */
 export function pivotForecastRows(
   rows: ReportRow[],
+  sourceBalances: SourceBalancePoint[] = [],
   view?: string,
-  from?: string
+  from?: string,
 ): { pivoted: PivotedFeedRow[]; columns: ColumnSlot[] } {
-  const map = new Map<string, PivotedFeedRow>();
-  const slotsMap = new Map<string, ColumnSlot>();
-
-  // Determine latest run-down date across all rows to cap the horizon
-  let maxRunDown: string | null = null;
-  for (const r of rows) {
-    if (r.runDownDate && (!maxRunDown || r.runDownDate > maxRunDown)) {
-      maxRunDown = r.runDownDate;
-    }
+  const baseFrom = from || sourceBalances[0]?.date || rows[0]?.date || "";
+  const pointsBySource = new Map<string, SourceBalancePoint[]>();
+  for (const point of [...sourceBalances].sort((left, right) => left.date.localeCompare(right.date))) {
+    const key = sourceKey(point.locationId, point.sourceCode, point.itemId);
+    pointsBySource.set(key, [...(pointsBySource.get(key) ?? []), point]);
   }
 
-  const baseFrom = from || (rows.length > 0 ? rows[0].date : "");
-
-  for (const r of rows) {
-    const groupKey = `${r.batchId}|${r.itemId}|${r.shedCode || ""}|${r.sourceCode ?? ""}`;
-    let p = map.get(groupKey);
-    if (!p) {
-      p = {
-        key: groupKey,
-        batchId: r.batchId,
-        batchNo: r.batchNo,
-        shedCode: r.shedCode,
-        sourceCode: r.sourceCode,
-        sourceName: r.sourceName ?? null,
-        stageCode: r.stageCode,
-        itemId: r.itemId,
-        itemNo: r.itemNo,
-        itemName: r.itemName,
-        heads: r.heads,
-        perDayIntakeKg: r.perDayIntakeKg,
-        openingInventoryKg: r.currentInventoryKg,
-        dateMap: {},
-        daysOfStock: r.daysOfStock,
-        runDownDate: r.runDownDate,
-        indicative: r.indicative,
-      };
-      map.set(groupKey, p);
-    }
-
-    let slotKey = r.date;
-    let slotStart = r.date;
-    let slotEnd = r.dateTo || r.date;
-    let label = formatDateShort(r.date);
-
-    if (view === "WEEKLY" && baseFrom) {
-      const diff = diffDaysIso(baseFrom, r.date);
-      const weekIdx = Math.max(0, Math.floor(diff / 7));
-      slotStart = addDaysIso(baseFrom, weekIdx * 7);
-      slotEnd = addDaysIso(slotStart, 6);
-      slotKey = slotStart;
-      label = `${formatDateShort(slotStart)} – ${formatDateShort(slotEnd)}`;
-    }
-
-    if (!slotsMap.has(slotKey)) {
-      slotsMap.set(slotKey, {
-        key: slotKey,
-        label,
-        dateStart: slotStart,
-        dateEnd: slotEnd,
-      });
-    }
-
-    if (!p.dateMap[slotKey]) {
-      p.dateMap[slotKey] = {
-        currentInventoryKg: r.currentInventoryKg,
-        intakeKg: r.intakeKg,
-      };
+  const slots = new Map<string, ColumnSlot>();
+  const pivoted = rows.map((row) => {
+    const closingBySlot: Record<string, number> = {};
+    const points = pointsBySource.get(sourceKey(row.sourceLocationId, row.sourceCode, row.itemId)) ?? [];
+    if (points.length) {
+      for (const point of points) {
+        const slot = slotFor(point.date, view, baseFrom);
+        slots.set(slot.key, slot);
+        // Chronological traversal means the last point in a weekly bucket is
+        // its closing balance, including zero in the run-down bucket.
+        closingBySlot[slot.key] = point.projectedClosingBalanceKg;
+      }
     } else {
-      p.dateMap[slotKey].intakeKg += r.intakeKg;
+      const slot = slotFor(row.dateTo || row.date, view, baseFrom);
+      slots.set(slot.key, slot);
+      closingBySlot[slot.key] = row.projectedClosingBalanceKg;
     }
+    return { ...row, closingBySlot };
+  });
 
-    if (r.runDownDate && !p.runDownDate) p.runDownDate = r.runDownDate;
-    if (r.daysOfStock !== null && (p.daysOfStock === null || r.daysOfStock < p.daysOfStock)) {
-      p.daysOfStock = r.daysOfStock;
-    }
-  }
-
-  let sortedSlots = Array.from(slotsMap.values()).sort((a, b) => (a.dateStart < b.dateStart ? -1 : 1));
-  if (maxRunDown) {
-    const capped = sortedSlots.filter((s) => s.dateStart <= maxRunDown);
-    if (capped.length > 0) {
-      sortedSlots = capped;
-    }
-  }
-
-  return { pivoted: Array.from(map.values()), columns: sortedSlots };
+  return {
+    pivoted,
+    columns: [...slots.values()].sort((left, right) => left.dateStart.localeCompare(right.dateStart)),
+  };
 }
 
-/** Consecutive rows of one batch + item + source + stage form a group. */
-export function groupRows(rows: ReportRow[]): Array<{ row: ReportRow; start: boolean; alt: boolean }> {
-  let group = -1;
-  let previous = "";
-  return rows.map((row) => {
-    const key = `${row.batchId}|${row.itemId}|${row.sourceCode ?? ""}|${row.stageCode}`;
-    const start = key !== previous;
-    if (start) {
-      group += 1;
-      previous = key;
-    }
-    return { row, start, alt: group % 2 === 1 };
-  });
+export function fmtKg(value: number | null | undefined): string {
+  if (value === null || value === undefined) return "";
+  return value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function itemLabel(no: string | null | undefined, name: string | null | undefined): string {
+  if (no && name) return `${no} — ${name}`;
+  return no || name || "";
 }
 
 const BATCH_COL = { "--sticky-left": "0px" } as CSSProperties;
-const ITEM_COL = { "--sticky-left": "12.5rem" } as CSSProperties;
+const HOUSE_COL = { "--sticky-left": "12.5rem" } as CSSProperties;
 const TH = "h-9 whitespace-nowrap px-3 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]";
 const TD = "whitespace-nowrap px-3 py-1.5 text-xs text-[var(--text-primary)]";
 const NUM = "text-right tabular-nums";
 const MUTED = "text-[var(--text-muted)]";
-const SMALL_BADGE = "px-1.5 py-0 text-[10px]";
 
 function StateRow({ colSpan, children }: { colSpan: number; children: ReactNode }) {
-  return (
-    <tr>
-      <td colSpan={colSpan} className="px-3 py-10 text-center text-xs text-[var(--text-secondary)]">{children}</td>
-    </tr>
-  );
+  return <tr><td colSpan={colSpan} className="px-3 py-10 text-center text-xs text-[var(--text-secondary)]">{children}</td></tr>;
 }
 
 export function FeedForecastGrid({
   rows,
+  sourceBalances = [],
   view,
   from,
   loading,
   t,
 }: {
   rows: ReportRow[];
+  sourceBalances?: SourceBalancePoint[];
   view?: string;
   from?: string;
   loading: boolean;
-  horizonTo: string | null;
   t: Translate;
 }) {
-  const { pivoted, columns } = pivotForecastRows(rows, view, from);
-  const totalCols = 9 + columns.length + 2;
-
+  const { pivoted, columns } = pivotForecastRows(rows, sourceBalances, view, from);
+  const totalCols = GRID_COLUMNS.length + columns.length;
   return (
     <ScrollTable label={t("ffGridLabel")} className="w-full">
       <thead>
         <tr>
-          <th scope="col" data-sticky-col="true" style={BATCH_COL} className={cn(TH, "w-[12.5rem] min-w-[12.5rem] max-w-[12.5rem]")}>
-            {t("ffColBatchNo")}
-          </th>
-          <th scope="col" data-sticky-col="last" style={ITEM_COL} className={cn(TH, "min-w-[13rem]")}>
-            {t("ffColItemName")}
-          </th>
-          <th scope="col" className={TH}>{t("ffColItemNo")}</th>
-          <th scope="col" className={TH}>{t("ffColShedNo")}</th>
-          <th scope="col" className={TH}>{t("ffColSiloNo")}</th>
+          <th scope="col" data-sticky-col="true" style={BATCH_COL} className={cn(TH, "w-[12.5rem] min-w-[12.5rem] max-w-[12.5rem]")}>{t("ffColBatch")}</th>
+          <th scope="col" data-sticky-col="last" style={HOUSE_COL} className={cn(TH, "min-w-[11rem]")}>{t("ffColHouse")}</th>
+          <th scope="col" className={TH}>{t("ffColSiloCode")}</th>
           <th scope="col" className={TH}>{t("ffColSiloName")}</th>
-          <th scope="col" className={cn(TH, "text-right")}>{t("ffColCurrentInventoryKg")}</th>
-          <th scope="col" className={cn(TH, "text-right")}>{t("ffColCurrentPigs")}</th>
-          <th scope="col" className={cn(TH, "text-right")}>{t("ffColPerDayIntakeKg")}</th>
-
-          {/* Dynamic Columns: Weekly or Daily */}
-          {columns.map((c) => (
-            <th key={c.key} scope="col" className={cn(TH, "text-right min-w-[7.5rem] bg-[var(--table-header-alt)]")}>
-              {c.label}
-            </th>
-          ))}
-
-          <th scope="col" title={t("ffDaysOfStockHint")} className={cn(TH, "text-right")}>
-            {t("ffColDaysOfStock")}
-          </th>
-          <th scope="col" title={t("ffFirstShortageHint")} className={TH}>
-            {t("ffColFirstShortage")}
-          </th>
+          <th scope="col" className={TH}>{t("ffColRequiredFeedItem")}</th>
+          <th scope="col" className={TH}>{t("ffColCurrentSiloItem")}</th>
+          <th scope="col" className={cn(TH, NUM)}>{t("ffColHeadCount")}</th>
+          <th scope="col" className={cn(TH, NUM)}>{t("ffColFeedRate")}</th>
+          <th scope="col" className={cn(TH, NUM)}>{t("ffColOpeningSystemBalance")}</th>
+          <th scope="col" className={cn(TH, NUM)}>{t("ffColConfirmedReceipts")}</th>
+          <th scope="col" className={cn(TH, NUM)}>{t("ffColDailyUse")}</th>
+          {columns.map((column) => <th key={column.key} scope="col" className={cn(TH, NUM, "min-w-[8rem] bg-[var(--table-header-alt)]")} title={t("ffProjectedClosingOn", { date: column.label })}>{column.label}</th>)}
+          <th scope="col" className={TH}>{t("ffColFirstShortage")}</th>
+          <th scope="col" className={cn(TH, NUM)}>{t("ffColRecommendedQty")}</th>
+          <th scope="col" className={TH}>{t("ffColDeliveryDate")}</th>
         </tr>
       </thead>
       <tbody>
         {loading ? (
-          <StateRow colSpan={totalCols}>
-            <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" style={{ color: "var(--accent)" }} /> {t("ffLoading")}
-          </StateRow>
+          <StateRow colSpan={totalCols}><Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" style={{ color: "var(--accent)" }} />{t("ffLoading")}</StateRow>
         ) : pivoted.length === 0 ? (
-          <StateRow colSpan={totalCols}>
-            <Inbox className="mx-auto mb-2 h-6 w-6" style={{ color: "var(--text-muted)" }} /> {t("ffNoRows")}
-          </StateRow>
-        ) : (
-          pivoted.map((p, idx) => {
-            const isAlt = idx % 2 === 1;
-            return (
-              <tr key={p.key} data-group-alt={isAlt ? "true" : undefined} className={isAlt ? "bg-[var(--table-row-alt)]" : undefined}>
-                <td data-sticky-col="true" style={BATCH_COL} title={p.batchNo} className={cn(TD, "w-[12.5rem] min-w-[12.5rem] max-w-[12.5rem] truncate font-medium")}>
-                  {p.batchNo}
-                </td>
-                <td data-sticky-col="last" style={ITEM_COL} title={p.itemName} className={cn(TD, "min-w-[13rem] max-w-[14rem] truncate font-medium")}>
-                  {p.itemName}
-                </td>
-                <td className={cn(TD, MUTED)}>{p.itemNo}</td>
-                <td className={cn(TD, MUTED)}>{p.shedCode}</td>
-                <td className={cn(TD, MUTED)}>{p.sourceCode}</td>
-                <td className={cn(TD, MUTED)}>{p.sourceName}</td>
-                <td className={cn(TD, NUM, "font-medium")}>{fmtRound(p.openingInventoryKg)}</td>
-                <td className={cn(TD, NUM)}>{p.heads.toLocaleString("en-US")}</td>
-                <td className={cn(TD, NUM)}>{fmtRound(p.perDayIntakeKg)}</td>
-
-                {/* Day-by-Day or Week-by-Week Run-down columns */}
-                {columns.map((c) => {
-                  const entry = p.dateMap[c.key];
-                  const isDepleted = p.runDownDate && c.dateStart >= p.runDownDate;
-                  if (!entry) {
-                    if (isDepleted) {
-                      return (
-                        <td key={c.key} className={cn(TD, NUM, "text-[var(--danger)] font-medium")}>
-                          0
-                        </td>
-                      );
-                    }
-                    return <td key={c.key} className={cn(TD, NUM, MUTED)} />;
-                  }
-                  const stock = entry.currentInventoryKg;
-                  const isEmpty = stock <= 0 || isDepleted;
-                  return (
-                    <td key={c.key} className={cn(TD, NUM, isEmpty && "text-[var(--danger)] font-medium")}>
-                      {fmtRound(isEmpty && stock <= 0 ? 0 : stock)}
-                    </td>
-                  );
-                })}
-
-                <td className={cn(TD, NUM)}>
-                  <span className="inline-flex items-center justify-end gap-1.5">
-                    {p.indicative && <Badge variant="warning" className={SMALL_BADGE}>{t("ffIndicative")}</Badge>}
-                    <span>{p.daysOfStock === null ? "" : fmtDays(p.daysOfStock)}</span>
-                  </span>
-                </td>
-                <td className={cn(TD, p.runDownDate && "font-semibold text-[var(--danger)]")}>
-                  {p.runDownDate ? formatDateShort(p.runDownDate) : ""}
-                </td>
-              </tr>
-            );
-          })
-        )}
-      </tbody>
-    </ScrollTable>
-  );
-}
-
-/** The current / next stage of each batch (field spec supporting block), one table row per batch and stage. */
-export function FeedForecastStages({ stages, t }: { stages: StageBlock[]; t: Translate }) {
-  return (
-    <ScrollTable label={t("ffStagesTitle")}>
-      <thead>
-        <tr>
-          {STAGE_COLUMNS.map((c, i) => (
-            <th key={c} scope="col" data-sticky-col={i === 0 ? "last" : undefined} style={i === 0 ? BATCH_COL : undefined} className={cn(TH, i === 0 && "min-w-[8.5rem]")}>
-              {t(c)}
-            </th>
-          ))}
-        </tr>
-      </thead>
-      <tbody>
-        {stages.length === 0 ? (
-          <StateRow colSpan={STAGE_COLUMNS.length}>{t("ffNoStages")}</StateRow>
-        ) : (
-          stages.map((s) => (
-            // A batch with concurrent stages (a registered breeding batch) has one row per stage.
-            <tr key={`${s.batchId}|${s.currentStageCode}`}>
-              <td data-sticky-col="last" style={BATCH_COL} className={cn(TD, "min-w-[8.5rem] font-medium")}>{s.batchNo}</td>
-              <td className={cn(TD, MUTED)}>{s.shedCode || "—"}</td>
-              <td className={TD}>{s.currentStageCode}</td>
-              <td className={TD}>{formatDateShort(s.currentFrom)}</td>
-              <td className={TD}>{formatDateShort(s.currentTo)}</td>
-              <td className={TD}>{s.nextStageCode ?? "—"}</td>
-              <td className={TD}>
-                {/* D36: an event-based stage's change is a window — "earliest – latest (expected)";
-                    a dated stage's change is a day. Either can still be overdue (not posted). */}
-                {s.stageChangeEarliest
-                  ? `${formatDateShort(s.stageChangeEarliest)} – ${formatDateShort(s.stageChangeDate)} (${t("ffChangeExpected")})`
-                  : formatDateShort(s.stageChangeDate)}
-                {s.stageChangeOverdue && <Badge variant="warning" className={cn("ml-1.5", SMALL_BADGE)}>{t("ffStageChangeNotPosted")}</Badge>}
-              </td>
-            </tr>
-          ))
-        )}
+          <StateRow colSpan={totalCols}><Inbox className="mx-auto mb-2 h-6 w-6" style={{ color: "var(--text-muted)" }} />{t("ffNoRows")}</StateRow>
+        ) : pivoted.map((row, index) => (
+          <tr key={row.key} data-group-alt={index % 2 ? "true" : undefined} className={index % 2 ? "bg-[var(--table-row-alt)]" : undefined}>
+            <td data-sticky-col="true" style={BATCH_COL} className={cn(TD, "w-[12.5rem] max-w-[12.5rem] truncate font-medium")}>{row.batchNo}</td>
+            <td data-sticky-col="last" style={HOUSE_COL} className={cn(TD, MUTED)}>{row.shedCode}</td>
+            <td className={cn(TD, MUTED)}>{row.sourceCode ?? ""}</td>
+            <td className={cn(TD, MUTED)}>{row.sourceName ?? ""}</td>
+            <td className={TD}>{itemLabel(row.itemNo, row.itemName)}</td>
+            <td className={TD}>{itemLabel(row.currentItemNo, row.currentItemName)}</td>
+            <td className={cn(TD, NUM)}>{row.heads.toLocaleString("en-US")}</td>
+            <td className={cn(TD, NUM)}>{fmtKg(row.feedRateKg)}</td>
+            <td className={cn(TD, NUM)}>{fmtKg(row.openingSystemBalanceKg)}</td>
+            <td className={cn(TD, NUM)}>{fmtKg(row.confirmedReceiptsKg)}</td>
+            <td className={cn(TD, NUM)}>{fmtKg(row.dailyUseKg)}</td>
+            {columns.map((column) => {
+              const value = row.closingBySlot[column.key];
+              return <td key={column.key} className={cn(TD, NUM, value === 0 && "font-medium text-[var(--danger)]")}>{fmtKg(value)}</td>;
+            })}
+            <td className={cn(TD, row.firstShortageDate && "font-semibold text-[var(--danger)]")}>{row.firstShortageDate ? formatDateShort(row.firstShortageDate) : ""}</td>
+            <td className={cn(TD, NUM)}>{fmtKg(row.recommendedQtyKg)}</td>
+            <td className={TD}>{row.deliveryDate ? formatDateShort(row.deliveryDate) : ""}</td>
+          </tr>
+        ))}
       </tbody>
     </ScrollTable>
   );

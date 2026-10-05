@@ -82,6 +82,7 @@ export interface ReportRow {
   itemNo: string;
   itemName: string;
   sourceType: 'SILO' | 'STORE' | 'NONE';
+  feedType: 'BULK' | 'BAGGED';
   sourceCode: string | null;
   sourceLocationId: string | null;
   /** location_name of the silo or store (Engine §5 row 70); null for NONE or when the name is unknown. */
@@ -132,7 +133,14 @@ export function displayDaily<T extends { date: string }>(daily: T[], view: Forec
   return daily;
 }
 
-export function groupRows(daily: DailyForecastRow[], view: ForecastView, from: string, sourceNames: Record<string, string> = {}, farmId = ''): ReportRow[] {
+export function groupRows(
+  daily: DailyForecastRow[],
+  view: ForecastView,
+  from: string,
+  sourceNames: Record<string, string> = {},
+  farmId = '',
+  sourceFeedTypes: Record<string, 'BULK' | 'BAGGED'> = {},
+): ReportRow[] {
   const byDate = [...daily].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
   // Sums in integer micrograms, like the engine, so 7 × 17.9375 kg is exactly 125.5625 kg.
   const groups = new Map<string, { row: ReportRow; intake: number }>();
@@ -151,6 +159,7 @@ export function groupRows(daily: DailyForecastRow[], view: ForecastView, from: s
           key, farmId, batchId: d.realBatchId ?? d.batchId, batchGroupId: d.batchId, batchNo: d.batchNo,
           shedId: d.shedId ?? null, shedCode: d.shedCode, stageCode: d.stageCode,
           itemId: d.itemId, itemNo: d.itemNo, itemName: d.itemName, sourceType: d.sourceType, sourceCode: d.sourceCode,
+          feedType: d.sourceCode ? sourceFeedTypes[d.sourceCode] ?? (d.sourceType === 'STORE' ? 'BAGGED' : 'BULK') : 'BULK',
           sourceLocationId: d.destinationLocationId ?? null,
           sourceName: d.sourceCode ? sourceNames[d.sourceCode] ?? null : null,
           currentItemId: d.currentItemId ?? null,
