@@ -76,6 +76,24 @@ describe("common requisition model", () => {
     expect(commonActions(v, all, ME)).toEqual(["receive"]);
   });
 
+  // Rishi, 5 Oct: "Release may be pressed by any user who may approve the
+  // requisition" — the decide predicate, so the self-approval rule too.
+  describe("Release — any user who may approve the requisition", () => {
+    const approved = () => ({ ...base(), approval_status: "APPROVED", document_status: "APPROVED", source: "MANUAL_ENTRY", created_by: "u-req" });
+    it("is offered to an approver who did not raise it, whatever their department", () => {
+      expect(commonActions(approved() as any, all, { userId: "u-appr", userType: "STANDARD_USER" })).toEqual(["release"]);
+    });
+    it("is not offered without the approve grant", () => {
+      expect(commonActions(approved() as any, { ...all, approve: false }, { userId: "u-appr", userType: "STANDARD_USER" })).toEqual([]);
+    });
+    it("is not offered to the requester or creator unless they are a Tenant or Company admin", () => {
+      expect(commonActions(approved() as any, all, ME)).toEqual([]);
+      expect(commonActions({ ...approved(), requester_user_id: "u-other" } as any, all, ME)).toEqual([]);
+      expect(commonActions(approved() as any, all, { userId: "u-req", userType: "COMPANY_ADMIN" })).toEqual(["release"]);
+      expect(commonActions(approved() as any, all, { userId: "u-req", userType: "TENANT_ADMIN" })).toEqual(["release"]);
+    });
+  });
+
   it("offers nothing to a user without the grants", () => {
     expect(commonActions(base(), { create: false, approve: false, transfer: false })).toEqual([]);
   });

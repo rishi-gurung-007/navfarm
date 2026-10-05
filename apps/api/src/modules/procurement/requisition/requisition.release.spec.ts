@@ -8,8 +8,9 @@
  * they created (that rule lives in the feed handler already — here it is the
  * common document's turn); Purchase release records BC_PENDING without any
  * external call, Store release starts an internal transfer (TRANSFER_OPEN +
- * a transfer-order identity); only Procurement (Purchase) or the sender
- * department (Store) may release.
+ * a transfer-order identity); a user who may approve the requisition releases
+ * it, Purchase and Store alike (Rishi, 5 Oct — replaces the 1 Oct
+ * sender-department rule for Release).
  *
  * The recording-database pattern is feed-requisition.submit.spec.ts's: real
  * ApprovalService + AuditLogService over queued rows, writes captured.
@@ -222,37 +223,68 @@ describe('common requisition release — authorization (decisions, 1 Oct)', () =
     expect(set).toMatchObject({ document_status: 'RELEASED', integration_status: 'BC_PENDING' });
   });
 
-  it('a Store release is refused to a user from another department (decisions: the sender department releases)', async () => {
-    const { service, as, writes } = setup(new Map<unknown, unknown[][]>([
-      [schema.requisition, [[STORE_ROW]]],
-      [schema.requisitionLine, [LINES]],
-      [schema.userMaster, [[{ user_id: 'u-other', department_id: 'cc-2' }]]],
-    ]));
-    await expect(as(STORE_SCOPE, () => service.release('req-1', 'tenant-1', { ...REQUESTER, userId: 'u-other' })))
-      .rejects.toThrow('Only the sender department may release a Store requisition.');
-    expect(writes()).toEqual([]);
-  });
+  // P1 follow-up item 4 — Rishi, 5 Oct (decisions.md "Common requisition:
+  // requester, Service lines, receipt and release", point 4): "Release may be
+  // pressed by any user who may approve the requisition. This replaces the
+  // 1 Oct sender-department rule for Release only." The predicate is the
+  // decide endpoint's own: the approve grant, and no approving (so no
+  // releasing) a manual requisition one raised, outside Tenant/Company admins.
+  const APPROVER = { userId: 'u-appr', userType: 'STANDARD_USER', email: 'appr@x' };
+  const APPROVE_GRANT = [{ moduleCode: 'PROCUREMENT', resource: 'REQUISITION', canApprove: true }];
 
-  it('a Store release passes for a user of the sender department', async () => {
+  it('a Store release passes for an approver who is not of the sender department', async () => {
     const { service, as } = setup(new Map<unknown, unknown[][]>([
       [schema.requisition, [[STORE_ROW], [RELEASED_STORE_VIEW]]],
       [schema.requisitionLine, [LINES, LINES]],
-      [schema.locationMaster, [[{ location_id: 'loc-store', location_code: 'STR-01', location_name: 'Main Store' }]]],
-      [schema.userMaster, [[{ user_id: 'u-req', department_id: 'cc-1' }]]],
+      [schema.userRoleAssignment, [APPROVE_GRANT]],
+      // Not consulted any more: this user's department is not the sender's.
+      [schema.userMaster, [[{ user_id: 'u-appr', department_id: 'cc-other' }]]],
     ]));
-    const result = await as(STORE_SCOPE, () => service.release('req-1', 'tenant-1', REQUESTER));
+    const result = await as(STORE_SCOPE, () => service.release('req-1', 'tenant-1', APPROVER));
     expect(result.document_status).toBe('RELEASED');
   });
 
-  it('a Store release without a sender department falls back to the requisition create permission', async () => {
-    const { service, as } = setup(new Map<unknown, unknown[][]>([
-      [schema.requisition, [[{ ...STORE_ROW, sender_department_id: null }], [RELEASED_STORE_VIEW]]],
-      [schema.requisitionLine, [LINES, LINES]],
-      [schema.locationMaster, [[{ location_id: 'loc-store', location_code: 'STR-01', location_name: 'Main Store' }]]],
+  it('a Store release is refused to a user of the sender department who may not approve', async () => {
+    const { service, as, writes } = setup(new Map<unknown, unknown[][]>([
+      [schema.requisition, [[STORE_ROW]]],
+      [schema.requisitionLine, [LINES]],
       [schema.userRoleAssignment, [[{ moduleCode: 'PROCUREMENT', resource: 'REQUISITION', canCreate: true }]]],
+      [schema.userMaster, [[{ user_id: 'u-snd', department_id: 'cc-1' }]]],
     ]));
-    const result = await as(STORE_SCOPE, () => service.release('req-1', 'tenant-1', REQUESTER));
+    await expect(as(STORE_SCOPE, () => service.release('req-1', 'tenant-1', { userId: 'u-snd', userType: 'STANDARD_USER' })))
+      .rejects.toThrow(new ForbiddenException('Only a user who may approve requisitions may release one.'));
+    expect(writes()).toEqual([]);
+  });
+
+  it('refuses the release to an approver who raised the requisition — the same self-approval rule as decide()', async () => {
+    const { service, as, writes } = setup(new Map<unknown, unknown[][]>([
+      [schema.requisition, [[STORE_ROW]]],
+      [schema.requisitionLine, [LINES]],
+      [schema.userRoleAssignment, [APPROVE_GRANT]],
+    ]));
+    await expect(as(STORE_SCOPE, () => service.release('req-1', 'tenant-1', { ...APPROVER, userId: 'u-req' })))
+      .rejects.toThrow(new ForbiddenException('You may not release a requisition you created. Another authorized approver must release it.'));
+    expect(writes()).toEqual([]);
+  });
+
+  it('a COMPANY_ADMIN releases the requisition they raised (decisions, 4 Oct — admins may approve their own)', async () => {
+    const { service, as } = setup(new Map<unknown, unknown[][]>([
+      [schema.requisition, [[{ ...STORE_ROW, created_by: 'u-proc', requester_user_id: 'u-proc' }], [RELEASED_STORE_VIEW]]],
+      [schema.requisitionLine, [LINES, LINES]],
+    ]));
+    const result = await as(STORE_SCOPE, () => service.release('req-1', 'tenant-1', PROCUREMENT));
     expect(result.document_status).toBe('RELEASED');
+  });
+
+  it('a Purchase release follows the same predicate: an approver who raised it is refused', async () => {
+    const { service, as, writes } = setup(new Map<unknown, unknown[][]>([
+      [schema.requisition, [[PURCHASE_ROW]]],
+      [schema.requisitionLine, [LINES]],
+      [schema.userRoleAssignment, [APPROVE_GRANT]],
+    ]));
+    await expect(as(STORE_SCOPE, () => service.release('req-po', 'tenant-1', { ...APPROVER, userId: 'u-req' })))
+      .rejects.toThrow('You may not release a requisition you created.');
+    expect(writes()).toEqual([]);
   });
 });
 

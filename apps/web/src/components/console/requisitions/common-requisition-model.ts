@@ -75,6 +75,9 @@ export interface CommonRequisitionView {
   /** Rishi, 5 Oct: the Requester User ID is shown as the login (email); the
    *  API resolves it from requester_user_id. Display only — never sent back. */
   requester_login?: string | null;
+  /** Who keyed the document and how — the self-approval rule reads both (display only). */
+  created_by?: string | null;
+  source?: string | null;
   requester_name?: string | null;
   requester_department_id: string | null;
   requester_department_name?: string | null;
@@ -210,6 +213,18 @@ export type CommonAction = "save" | "submit" | "reopen" | "release" | "linkPo" |
 /** The signed-in user, for the actions that depend on who they are, not only on their grants. */
 export interface CommonActor { userId?: string | null; userType?: string | null }
 
+/**
+ * Mirrors the API's isSelfApproval + maySelfApprove (requisition.rules.ts): a
+ * user may not approve — so may not release — a manual requisition they
+ * created or requested, unless they are a Tenant or Company admin
+ * (decisions, 1 and 4 Oct). The API decides it again.
+ */
+function isOwnUnapprovable(v: CommonRequisitionView, me: CommonActor): boolean {
+  if (me.userType === "TENANT_ADMIN" || me.userType === "COMPANY_ADMIN") return false;
+  if (!me.userId || v.source === "AUTO_FORECAST") return false;
+  return v.created_by === me.userId || v.requester_user_id === me.userId;
+}
+
 export function commonActions(v: CommonRequisitionView, can: { create: boolean; approve: boolean; transfer: boolean }, me: CommonActor = {}): CommonAction[] {
   if (!v.requisition_id) return can.create ? ["save"] : [];
   const approval = v.approval_status ?? "OPEN";
@@ -217,7 +232,8 @@ export function commonActions(v: CommonRequisitionView, can: { create: boolean; 
   const out: CommonAction[] = [];
   if (approval === "OPEN" && doc === "OPEN" && can.create) out.push("save", "submit");
   if (approval === "REJECTED" && can.create) out.push("reopen");
-  if (approval === "APPROVED" && doc === "APPROVED" && can.approve) out.push("release");
+  // Rishi, 5 Oct: Release is for any user who may approve the requisition.
+  if (approval === "APPROVED" && doc === "APPROVED" && can.approve && !isOwnUnapprovable(v, me)) out.push("release");
   if (doc === "RELEASED" && v.purpose === "PURCHASE" && can.approve) out.push("linkPo");
   if (doc === "RELEASED" && v.purpose === "STORE") {
     if (can.transfer && v.lines.some((l) => (l.balance_to_ship ?? 0) > 1e-9)) out.push("ship");

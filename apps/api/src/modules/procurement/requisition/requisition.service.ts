@@ -786,13 +786,41 @@ export class RequisitionService {
   }
 
   /** Approve or reject through the linked approval_request — one decision row, one status. */
-  async decide(requisitionId: string, dto: DecideRequisitionDto, decision: 'APPROVED' | 'REJECTED', tenantId: string, userPayload?: { userId?: string; email?: string; userType?: string }) {
-    const mayDecide = await userHasPermission(this.db, { userId: userPayload?.userId, userType: userPayload?.userType }, {
+  /**
+   * "Who may approve a requisition" — the decide endpoint's predicate, in two
+   * halves because decide() asks the first before it locks the row. Release
+   * asks both (Rishi, 5 Oct: "Release may be pressed by any user who may
+   * approve the requisition"), so it is this one rule, never a copy of it.
+   *
+   * 1. The PROCUREMENT/REQUISITION approve grant (admins hold every grant).
+   */
+  private async assertApproveGrant(userPayload: { userId?: string; userType?: string } | undefined, refusal: string): Promise<void> {
+    const may = await userHasPermission(this.db, { userId: userPayload?.userId, userType: userPayload?.userType }, {
       moduleCode: REQUISITION_MODULE.moduleCode,
       resource: REQUISITION_MODULE.resource,
       action: 'approve',
     });
-    if (!mayDecide) throw new ForbiddenException('You are not allowed to decide requisitions.');
+    if (!may) throw new ForbiddenException(refusal);
+  }
+
+  /**
+   * 2. D25 (Rishi, 1 Oct): a person may not approve a manual requisition they
+   * created (isSelfApproval); decisions.md 2026-10-04 exempts exactly
+   * TENANT_ADMIN and COMPANY_ADMIN (maySelfApprove) — every other type,
+   * including SYSTEM_ADMIN (not yet decided), is still refused.
+   */
+  private assertNotOwnRequisition(
+    row: { source: string | null; created_by: string | null; requester_user_id: string | null },
+    userPayload: { userId?: string; userType?: string } | undefined,
+    refusal: string,
+  ): void {
+    if (!maySelfApprove(userPayload?.userType) && isSelfApproval(row, userPayload?.userId)) {
+      throw new ForbiddenException(refusal);
+    }
+  }
+
+  async decide(requisitionId: string, dto: DecideRequisitionDto, decision: 'APPROVED' | 'REJECTED', tenantId: string, userPayload?: { userId?: string; email?: string; userType?: string }) {
+    await this.assertApproveGrant(userPayload, 'You are not allowed to decide requisitions.');
 
     return withTenantTransaction(this.cls, async () => {
       const [row] = await this.db
@@ -815,12 +843,8 @@ export class RequisitionService {
       if (row.status !== 'PENDING_APPROVAL') {
         throw new BadRequestException(`Requisition ${row.req_no} is ${row.status}, not awaiting approval.`);
       }
-      // D25 (Rishi, 1 Oct): a person may not approve a requisition they
-      // created. decisions.md 2026-10-04 supersedes this for exactly
-      // TENANT_ADMIN and COMPANY_ADMIN (maySelfApprove) — every other type,
-      // including SYSTEM_ADMIN (not yet decided), is still refused.
-      if (decision === 'APPROVED' && !maySelfApprove(userPayload?.userType) && isSelfApproval(row, userPayload?.userId)) {
-        throw new ForbiddenException('You may not approve a requisition you created. Another authorized approver must decide it.');
+      if (decision === 'APPROVED') {
+        this.assertNotOwnRequisition(row, userPayload, 'You may not approve a requisition you created. Another authorized approver must decide it.');
       }
       if (!row.approval_request_id) {
         throw new BadRequestException(`Requisition ${row.req_no} has no linked approval request.`);
@@ -867,13 +891,17 @@ export class RequisitionService {
    * BC_PENDING; an approved Store becomes TRANSFER_OPEN, the state Task 10's
    * shipments draw against.
    *
-   * Who may release: Procurement for a Purchase document; the sender
-   * department (the requester's own department identity, falling back to the
-   * REQ/REQUISITION create grant when the document carries no department) for
-   * a Store document. The document is locked FOR UPDATE inside the tenant
-   * transaction, so two concurrent releases cannot both pass the state check.
+   * Who may release (Rishi, 5 Oct — decisions.md "Common requisition:
+   * requester, Service lines, receipt and release", point 4): "any user who
+   * may approve the requisition", Purchase and Store alike. That is decide()'s
+   * own predicate (assertApproveGrant + assertNotOwnRequisition) and its farm
+   * reach (mayDecideAnyRequisition). It replaced the 1 Oct sender-department
+   * rule for Release only; Transfer Shipment keeps the From department check.
+   * The document is locked FOR UPDATE inside the tenant transaction, so two
+   * concurrent releases cannot both pass the state check.
    */
   async release(requisitionId: string, tenantId: string, userPayload?: { userId?: string; userType?: string }) {
+    const bypassFarm = mayDecideAnyRequisition(userPayload?.userType);
     return withTenantTransaction(this.cls, async () => {
       const [row] = await this.db
         .select()
@@ -882,7 +910,7 @@ export class RequisitionService {
           eq(schema.requisition.requisition_id, requisitionId),
           eq(schema.requisition.tenant_id, tenantId),
           isNull(schema.requisition.deleted_at),
-          ...this.scopeConditions(),
+          ...this.scopeConditions({ bypassFarm }),
         ))
         .limit(1)
         .for('update');
@@ -890,11 +918,8 @@ export class RequisitionService {
       // Feed is released by the Feed Mill Manager after mill consolidation and
       // stops at Approved for now — never through this route.
       assertNotFeedRequisition(row.doc_type, 'released');
-      if (row.purpose === 'PURCHASE') {
-        await this.assertReleasePurchase(userPayload);
-      } else {
-        await this.assertReleaseStore(row, userPayload);
-      }
+      await this.assertApproveGrant(userPayload, 'Only a user who may approve requisitions may release one.');
+      this.assertNotOwnRequisition(row, userPayload, 'You may not release a requisition you created. Another authorized approver must release it.');
       const transition = releaseTransition({ ...row, purpose: row.purpose });
       // Part E (decisions 1 Oct: "Store release starts an internal transfer"):
       // a released Store requisition has nothing to ship against unless its
@@ -956,35 +981,10 @@ export class RequisitionService {
           updated_by: userPayload?.userId ?? null,
         })
         .where(eq(schema.requisition.requisition_id, requisitionId));
-      return this.findOne(requisitionId, tenantId);
+      // The read-back has the lock's reach (see decide()): an admin's
+      // cross-farm release must not commit and then 404 on the farm-only view.
+      return this.findOne(requisitionId, tenantId, { bypassFarm });
     });
-  }
-
-  private async assertReleasePurchase(userPayload?: { userId?: string; userType?: string }): Promise<void> {
-    const may = await userHasPermission(this.db, userPayload, { moduleCode: 'PROCUREMENT', resource: 'REQUISITION', action: 'approve' });
-    if (!may) throw new ForbiddenException('Only Procurement may release a Purchase requisition.');
-  }
-
-  private async assertReleaseStore(
-    row: typeof schema.requisition.$inferSelect,
-    userPayload?: { userId?: string; userType?: string },
-  ): Promise<void> {
-    // The sender department releases the transfer. The requester's own
-    // department identity decides; without one on the document (legacy rows),
-    // the create grant on REQ/REQUISITION is the fallback authority.
-    if (row.sender_department_id && userPayload?.userId) {
-      const [user] = await this.db
-        .select({ department_id: schema.userMaster.department_id })
-        .from(schema.userMaster)
-        .where(eq(schema.userMaster.user_id, userPayload.userId))
-        .limit(1);
-      if (user?.department_id && user.department_id !== row.sender_department_id) {
-        throw new ForbiddenException('Only the sender department may release a Store requisition.');
-      }
-      if (user?.department_id) return;
-    }
-    const may = await userHasPermission(this.db, userPayload, { moduleCode: 'PROCUREMENT', resource: 'REQUISITION', action: 'create' });
-    if (!may) throw new ForbiddenException('Only the sender department may release a Store requisition.');
   }
 
   // ---------------------------------------------------------------------------
@@ -1234,8 +1234,8 @@ export class RequisitionService {
     // SYSTEM_ADMIN (not yet decided), is still refused. Same gate as the
     // direct decide() above, so the Approvals-inbox path and the direct
     // /requisition/:id/approve path agree.
-    if (decision === 'APPROVED' && !maySelfApprove(userPayload?.userType) && isSelfApproval(row, userPayload?.userId)) {
-      throw new ForbiddenException('You may not approve a requisition you created. Another authorized approver must decide it.');
+    if (decision === 'APPROVED') {
+      this.assertNotOwnRequisition(row, userPayload, 'You may not approve a requisition you created. Another authorized approver must decide it.');
     }
     if (decision === 'REJECTED' && !remarks?.trim()) {
       throw new BadRequestException('A rejection reason is required.');

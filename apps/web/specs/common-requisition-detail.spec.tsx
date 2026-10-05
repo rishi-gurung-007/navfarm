@@ -154,6 +154,7 @@ describe("CommonRequisitionDetail", () => {
   });
 
   it("releases an approved Store requisition and names the transfer; Approve and Reject are not here", async () => {
+    mockStoredUser = { userId: "u-appr", userType: "STANDARD_USER" }; // an approver who did not raise it (Rishi, 5 Oct)
     const onView = jest.fn();
     post.mockResolvedValue({ data: released({ linked_transfer_no: "TR-9" }) });
     render(<CommonRequisitionDetail initial={base({ approval_status: "APPROVED", document_status: "APPROVED" })} onView={onView} onBack={jest.fn()} />);
@@ -165,6 +166,7 @@ describe("CommonRequisitionDetail", () => {
   });
 
   it("says the purchase is pending when a Purchase requisition is released", async () => {
+    mockStoredUser = { userId: "u-appr", userType: "STANDARD_USER" }; // an approver who did not raise it (Rishi, 5 Oct)
     const onView = jest.fn();
     post.mockResolvedValue({ data: released({ purpose: "PURCHASE" }) });
     render(<CommonRequisitionDetail initial={base({ purpose: "PURCHASE", approval_status: "APPROVED", document_status: "APPROVED" })} onView={onView} onBack={jest.fn()} />);
@@ -275,6 +277,7 @@ describe("CommonRequisitionDetail", () => {
   });
 
   it("shows the API's refusal on release as it comes", async () => {
+    mockStoredUser = { userId: "u-appr", userType: "STANDARD_USER" }; // an approver who did not raise it (Rishi, 5 Oct)
     const message = "A requisition must be approved before it can be released; approval never implies release.";
     post.mockRejectedValue({ message });
     render(<CommonRequisitionDetail initial={base({ approval_status: "APPROVED", document_status: "APPROVED" })} onView={jest.fn()} onBack={jest.fn()} />);
