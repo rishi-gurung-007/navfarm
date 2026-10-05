@@ -12,9 +12,8 @@
  * the view, the dates and the loaded grid, which is exactly what "preserved
  * forecast state" means in the plan.
  *
- * Each panel owns its own `useFeedFarm()` selection rather than receiving a
- * farm as a prop — that hook is one localStorage key and one cached farm list,
- * so the three tabs cannot disagree about which farm they are showing.
+ * Dashboard and Calculation share one provider-owned farm and forecast window,
+ * so switching tabs cannot make the two views disagree about their context.
  */
 import { useEffect, useState, type ReactNode } from "react";
 import { Tabs } from "@/components/ui/tabs";
@@ -24,6 +23,7 @@ import FeedSiloDashboard from "./feed-silo-dashboard";
 import FeedForecastPanel from "./feed-forecast-panel";
 import { FeedRequisitionPanel } from "./requisitions-panel";
 import FeedStockCountPanel from "./feed-stock-count-panel";
+import { FeedForecastProvider } from "./feed-forecast-context";
 
 export const FEED_FORECAST_TABS = ["dashboard", "forecast", "feed-requisition", "physical-count"] as const;
 export type FeedForecastTab = (typeof FEED_FORECAST_TABS)[number];
@@ -59,7 +59,7 @@ interface FeedForecastTabsProps {
   onTabChange: (tab: FeedForecastTab) => void;
 }
 
-export default function FeedForecastTabs({ tab, onTabChange }: FeedForecastTabsProps) {
+function FeedForecastTabsContent({ tab, onTabChange }: FeedForecastTabsProps) {
   const { t } = useLanguage();
   // Mount-once: a tab is rendered the first time it is opened and stays
   // mounted afterwards, so its state survives every later switch.
@@ -89,5 +89,13 @@ export default function FeedForecastTabs({ tab, onTabChange }: FeedForecastTabsP
         </div>
       ))}
     </div>
+  );
+}
+
+export default function FeedForecastTabs(props: FeedForecastTabsProps) {
+  return (
+    <FeedForecastProvider>
+      <FeedForecastTabsContent {...props} />
+    </FeedForecastProvider>
   );
 }

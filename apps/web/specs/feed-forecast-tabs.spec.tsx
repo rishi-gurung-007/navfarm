@@ -18,10 +18,12 @@ var mockCountMounts = 0;
 
 jest.mock('../src/components/console/inventory/feed-forecast-panel', () => {
   const { useEffect, useState } = jest.requireActual('react');
+  const { useFeedForecastContext } = jest.requireActual('../src/components/console/inventory/feed-forecast-context');
   return {
     __esModule: true,
     default: function MockForecast() {
       const [bumps, setBumps] = useState(0);
+      const forecast = useFeedForecastContext();
       // Mount only: the function itself runs on every render.
       useEffect(() => {
         mockForecastMounts += 1;
@@ -29,7 +31,9 @@ jest.mock('../src/components/console/inventory/feed-forecast-panel', () => {
       return (
         <div data-testid="panel-forecast">
           <span data-testid="forecast-bumps">{bumps}</span>
+          <span data-testid="forecast-view">{forecast.view}</span>
           <button type="button" onClick={() => setBumps((n) => n + 1)}>bump</button>
+          <button type="button" onClick={() => forecast.setView('WEEKLY')}>weekly-shared</button>
         </div>
       );
     },
@@ -52,9 +56,21 @@ jest.mock('../src/components/console/inventory/feed-stock-count-panel', () => {
     },
   };
 });
-jest.mock('../src/components/console/inventory/feed-silo-dashboard', () => ({
-  __esModule: true,
-  default: () => <div data-testid="panel-dashboard" />,
+jest.mock('../src/components/console/inventory/feed-silo-dashboard', () => {
+  const { useFeedForecastContext } = jest.requireActual('../src/components/console/inventory/feed-forecast-context');
+  return {
+    __esModule: true,
+    default: function MockDashboard() {
+      const forecast = useFeedForecastContext();
+      return <div data-testid="panel-dashboard"><span data-testid="dashboard-view">{forecast.view}</span></div>;
+    },
+  };
+});
+jest.mock('../src/components/console/inventory/use-feed-farm', () => ({
+  useFeedFarm: () => ({
+    farmId: 'farm-1', setFarmId: jest.fn(), retry: jest.fn(), farms: [], loaded: true,
+    failed: false, isFixed: false, fixedFarm: null,
+  }),
 }));
 jest.mock('../src/hooks/useLanguage', () => {
   const stableT = (key: string, vars?: Record<string, any>) => (vars ? `${key}:${JSON.stringify(vars)}` : key);
@@ -134,6 +150,14 @@ describe('FeedForecastTabs', () => {
     expect(screen.getByTestId('forecast-bumps').textContent).toBe('1');
   });
 
+  it('provides one shared forecast window to Dashboard and Calculation', () => {
+    const { rerender } = render(<FeedForecastTabs tab="forecast" onTabChange={() => undefined} />);
+    expect(screen.getByTestId('forecast-view').textContent).toBe('CUSTOM');
+    fireEvent.click(screen.getByRole('button', { name: 'weekly-shared' }));
+    rerender(<FeedForecastTabs tab="dashboard" onTabChange={() => undefined} />);
+    expect(screen.getByTestId('dashboard-view').textContent).toBe('WEEKLY');
+  });
+
   it('does not mount a tab that was never opened', () => {
     render(<FeedForecastTabs tab="forecast" onTabChange={() => undefined} />);
     expect(screen.queryByTestId('panel-requisition')).toBeNull();
@@ -147,13 +171,11 @@ describe('FeedForecastTabs', () => {
   });
 });
 
-describe('the feed screens read one shared farm selection', () => {
+describe('the feed screens read the shared farm selection', () => {
   it.each([
-    'src/components/console/inventory/feed-silo-dashboard.tsx',
-    'src/components/console/inventory/feed-forecast-panel.tsx',
     'src/components/console/inventory/requisitions-panel.tsx',
     'src/components/console/inventory/feed-stock-count-panel.tsx',
-  ])('%s chooses its farm through useFeedFarm', (path) => {
+  ])('%s keeps using the compatible shared farm hook', (path) => {
     expect(read(path)).toContain('useFeedFarm()');
   });
 });

@@ -19,14 +19,18 @@ import { Tabs } from "@/components/ui/tabs";
 import { getActiveWorkspaceScope, getStoredUser, hasPermission } from "@/hooks/useAuth";
 import { useLanguage } from "@/hooks/useLanguage";
 import type { TranslationKeys } from "@/utils/translations";
-import { defaultWindowEnd, formatDateShort, todayIso, unwrap } from "./feed-format";
+import { formatDateShort, todayIso, unwrap } from "./feed-format";
 import { FeedForecastGrid, FeedForecastStages, ReportRow, StageBlock } from "./feed-forecast-grid";
 import { FeedForecastNotes, type ForecastFlag } from "./feed-forecast-notes";
 import { businessYearStartOf, forecastQueryString, FORECAST_VIEWS, ForecastView } from "./feed-forecast-query";
 import { FeedFarmSelect, feedFarmLabel } from "./feed-farm-select";
-import { useFeedFarm } from "./use-feed-farm";
 import { FeedForecastRunHistory } from "./feed-forecast-run-history";
 import { setForecastWindow } from "./feed-forecast-window";
+import {
+  FeedForecastProvider,
+  useFeedForecastContext,
+  useOptionalFeedForecastContext,
+} from "./feed-forecast-context";
 
 interface PeriodOption {
   periodId: string;
@@ -57,20 +61,28 @@ const VIEW_LABEL: Record<ForecastView, TranslationKeys> = { DAILY: "ffViewDaily"
 const inputStyle = { backgroundColor: "var(--input-bg)", color: "var(--input-text)", borderColor: "var(--input-border)" };
 const labelCls = "nf-text-label block text-(--text-secondary)";
 
-export default function FeedForecastPanel() {
+function FeedForecastPanelContent() {
   const { t } = useLanguage();
   const tRef = useRef(t);
   tRef.current = t;
 
-  const farm = useFeedFarm();
-  const farmId = farm.farmId;
-
-  const [view, setView] = useState<ForecastView>("CUSTOM");
-  // "" = the API's default: planning date = the farm's today (D16), from/to = the view's own range.
-  const [planningDate, setPlanningDate] = useState("");
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
-  const [periodId, setPeriodId] = useState("");
+  const forecast = useFeedForecastContext();
+  const {
+    farm,
+    farmId,
+    setFarmId,
+    view,
+    setView,
+    planningDate,
+    setPlanningDate,
+    from: dateFrom,
+    setFrom: setDateFrom,
+    to: dateTo,
+    setTo: setDateTo,
+    periodId,
+    setPeriodId,
+    hydrateWindow,
+  } = forecast;
   const [periods, setPeriods] = useState<PeriodOption[] | null>(null);
   const [periodsFailed, setPeriodsFailed] = useState(false);
   const [reload, setReload] = useState(0);
@@ -84,6 +96,7 @@ export default function FeedForecastPanel() {
   const [runMessage, setRunMessage] = useState("");
   const [runError, setRunError] = useState("");
   const [runHistoryReload, setRunHistoryReload] = useState(0);
+  const resolvedSelectionRef = useRef("");
 
   useEffect(() => {
     if (view !== "PERIOD" || !farmId) {
@@ -115,15 +128,37 @@ export default function FeedForecastPanel() {
     if (!farmId) {
       setData(null);
       setError("");
+      resolvedSelectionRef.current = "";
       return;
     }
+    const selectionKey = JSON.stringify([reload, farmId, view, planningDate, dateFrom, dateTo, periodId]);
+    if (resolvedSelectionRef.current === selectionKey) return;
+
     let cancelled = false;
     setLoading(true);
     setError("");
     api
       .get(`/feed-forecast?${forecastQueryString({ farmId, view, planningDate, from: dateFrom, to: dateTo, periodId })}`)
       .then((res) => {
-        if (!cancelled) setData(unwrap<ForecastData>(res));
+        if (cancelled) return;
+        const resolved = unwrap<ForecastData>(res);
+        resolvedSelectionRef.current = JSON.stringify([
+          reload,
+          farmId,
+          resolved.view,
+          resolved.planningDate,
+          resolved.from,
+          resolved.to,
+          resolved.period?.periodId ?? "",
+        ]);
+        setData(resolved);
+        hydrateWindow({
+          planningDate: resolved.planningDate,
+          view: resolved.view,
+          from: resolved.from,
+          to: resolved.to,
+          periodId: resolved.period?.periodId ?? "",
+        });
       })
       .catch((err: any) => {
         if (cancelled) return;
@@ -136,7 +171,7 @@ export default function FeedForecastPanel() {
     return () => {
       cancelled = true;
     };
-  }, [farmId, view, planningDate, dateFrom, dateTo, periodId, reload]);
+  }, [dateFrom, dateTo, farmId, hydrateWindow, periodId, planningDate, reload, view]);
 
   // Share the window on screen with the Feed Requisition tab's "Draft from forecast".
   useEffect(() => {
@@ -195,10 +230,11 @@ export default function FeedForecastPanel() {
   const periodList = Array.isArray(periods) ? periods : [];
   const rangeBeforePlanning = !!data && data.forecastFrom === null;
   const rangeStartsAtPlanning = !!data && data.forecastFrom !== null && data.forecastFrom > data.from;
-  // A11: what the inputs show before (and between) answers — displayed, not sent.
-  const shownPlanning = planningDate || data?.planningDate || todayIso();
-  const shownFrom = dateFrom || data?.from || shownPlanning;
-  const shownTo = dateTo || data?.to || defaultWindowEnd(shownFrom);
+  // The API resolves the farm-local day. Showing the browser's local date while
+  // that request is pending would put a false planning context on screen.
+  const shownPlanning = planningDate || data?.planningDate || "";
+  const shownFrom = dateFrom || data?.from || "";
+  const shownTo = dateTo || data?.to || "";
   const businessYear = businessYearStartOf(shownPlanning);
   const isTenantWorkspace = getActiveWorkspaceScope() === "TENANT";
   const canSaveRun = hasPermission(getStoredUser(), "INVENTORY", "LEDGER", "can_create");
@@ -217,7 +253,7 @@ export default function FeedForecastPanel() {
           "Date To" alone on a second line and took a third of the table's
           height. The date pair shares a container so it never splits. */}
       <div className="flex shrink-0 flex-wrap items-end gap-3 lg:flex-nowrap">
-        <FeedFarmSelect id="ff-farm" label={t("ffFarm")} farms={farm.farms} farmId={farmId} onChange={farm.setFarmId} fixedLabel={fixedLabel} />
+        <FeedFarmSelect id="ff-farm" label={t("ffFarm")} farms={farm.farms} farmId={farmId} onChange={setFarmId} fixedLabel={fixedLabel} />
         <div>
           <label className={labelCls} htmlFor="ff-planning">{t("ffPlanningDate")}</label>
           <input id="ff-planning" type="date" value={shownPlanning} onChange={(e) => setPlanningDate(e.target.value)} className="nf-input-sm mt-1.5" style={inputStyle}
@@ -310,5 +346,15 @@ export default function FeedForecastPanel() {
         </>
       )}
     </div>
+  );
+}
+
+export default function FeedForecastPanel() {
+  const context = useOptionalFeedForecastContext();
+  if (context) return <FeedForecastPanelContent />;
+  return (
+    <FeedForecastProvider>
+      <FeedForecastPanelContent />
+    </FeedForecastProvider>
   );
 }

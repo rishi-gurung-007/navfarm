@@ -126,13 +126,12 @@ describe('FeedForecastPanel — admin', () => {
     expect(mockFarm.setFarmId).toHaveBeenCalledWith('farm-oth');
   });
 
-  it('shows default dates before the first answer arrives (A11)', () => {
+  it('waits for the API farm-local dates before showing the initial window', () => {
     get.mockImplementation(() => new Promise(() => undefined));
     render(<FeedForecastPanel />);
-    const planning = (screen.getByLabelText('ffPlanningDate') as HTMLInputElement).value;
-    expect(planning).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-    expect((screen.getByLabelText('ffDateFrom') as HTMLInputElement).value).toBe(planning);
-    expect((screen.getByLabelText('ffDateTo') as HTMLInputElement).value).not.toBe('');
+    expect((screen.getByLabelText('ffPlanningDate') as HTMLInputElement).value).toBe('');
+    expect((screen.getByLabelText('ffDateFrom') as HTMLInputElement).value).toBe('');
+    expect((screen.getByLabelText('ffDateTo') as HTMLInputElement).value).toBe('');
   });
 
   it('keeps the filters on one row and the date pair together (review, 27 Sep)', async () => {
