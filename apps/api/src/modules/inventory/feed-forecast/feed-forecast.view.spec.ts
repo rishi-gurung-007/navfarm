@@ -137,3 +137,79 @@ describe('resolveViewRange and spanProblem', () => {
       .toBe('Reporting period 2026-X runs 50 days (01/08/26 to 19/09/26); the forecast covers at most 46.');
   });
 });
+
+describe('FF1 (Rishi 5 Oct) — Daily and Weekly run through the run-down date', () => {
+  /**
+   * VIL100-shaped: 100 head at 2 kg/day = 200 kg/day against 3,200 kg on hand
+   * runs down on the 17th day (selected + 16). DAILY showed only the selected
+   * date although the walk already knew the run-down; WEEKLY showed only the
+   * first 7-day group although run-down falls in the third group.
+   */
+  const rundownInput: ForecastInput = {
+    planningDate: '2026-10-05', from: '2026-10-05', to: '2026-10-05',
+    horizonTo: '2026-11-19',
+    sheds: [{ shedId: 'h1', shedCode: 'VIL100/SHED-001', siloIds: ['s1'] }],
+    silos: [{ siloId: 's1', siloCode: 'VIL100/SILO-001', itemId: 'r1', balanceKg: 3200 }],
+    store: null,
+    items: { r1: 'Grower' },
+    itemCodes: { r1: 'FEED-G' },
+    batches: [{
+      batchId: 'b', realBatchId: 'b' as never, batchNo: 'WG-2026-40', breedId: 'l', shedId: 'h1', heads: 100,
+      segments: [{ stageId: 'grow', stageCode: 'GROWER', start: '2026-09-01', end: null, projected: false }],
+    }],
+    feedRows: [
+      { lifecycleId: 'row-g', breedId: 'l', stageId: 'grow', itemId: 'r1', itemName: 'Grower', fromDay: 1, toDay: 400, kgPerHeadPerDay: 2.0, wastagePct: 0 },
+    ],
+  };
+
+  it('the engine emits daily rows past `to` up to the run-down date', () => {
+    const { daily } = buildFeedForecast(rundownInput);
+    const dates = [...new Set(daily.map((d) => d.date))].sort();
+    // 200 kg/day against 3,200 kg: 16 full days then the 17th day's demand exceeds the opening.
+    expect(dates[0]).toBe('2026-10-05');
+    expect(dates[dates.length - 1]).toBe('2026-10-21');
+    expect(dates).toHaveLength(17);
+    expect(daily[0].runDownDate).toBe('2026-10-21');
+  });
+
+  it('DAILY groups every date from the selected date through run-down; WEEKLY groups consecutive 7-day buckets through the group containing run-down', () => {
+    const { daily } = buildFeedForecast(rundownInput);
+    const dated = groupRows(daily, 'DAILY', '2026-10-05');
+    expect(dated.map((r) => r.date)).toHaveLength(17);
+    expect(dated[dated.length - 1].date).toBe('2026-10-21');
+    const weekly = groupRows(daily, 'WEEKLY', '2026-10-05');
+    expect(weekly.map((r) => `${r.date}..${r.dateTo}`)).toEqual([
+      '2026-10-05..2026-10-11', '2026-10-12..2026-10-18', '2026-10-19..2026-10-21',
+    ]);
+  });
+
+  it('a row stops at zero: dates past its own run-down carry no row, and no demand is invented for them', () => {
+    const { daily } = buildFeedForecast(rundownInput);
+    const after = daily.filter((d) => d.date > '2026-10-21');
+    expect(after).toHaveLength(0);
+  });
+
+  it('no run-down within the horizon: rows run through the horizon and say no run-down occurs there', () => {
+    const ample: ForecastInput = {
+      ...rundownInput,
+      silos: [{ siloId: 's1', siloCode: 'VIL100/SILO-001', itemId: 'r1', balanceKg: 100000 }],
+    };
+    const { daily } = buildFeedForecast(ample);
+    const dates = [...new Set(daily.map((d) => d.date))].sort();
+    expect(dates[dates.length - 1]).toBe('2026-11-19');
+    expect(daily.every((d) => d.runDownDate === null)).toBe(true);
+  });
+
+  it('an incoming delivery moves only the dates it should: run-down shifts later, earlier balances unchanged', () => {
+    const before = buildFeedForecast(rundownInput).daily;
+    const withDelivery = buildFeedForecast({
+      ...rundownInput,
+      incoming: [{ locationId: 's1', itemId: 'r1', date: '2026-10-10', kg: 2000 }],
+    }).daily;
+    const openingOf = (rows: { date: string; currentInventoryKg: number }[], date: string) =>
+      rows.find((r) => r.date === date)!.currentInventoryKg;
+    expect(openingOf(withDelivery, '2026-10-05')).toBe(openingOf(before, '2026-10-05'));
+    expect(openingOf(withDelivery, '2026-10-10')).toBe(openingOf(before, '2026-10-10') + 2000);
+    expect(withDelivery[0].runDownDate! > '2026-10-21').toBe(true);
+  });
+});

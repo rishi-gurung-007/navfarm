@@ -551,7 +551,19 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
   // Plan R: per-date rows run from the planning date (or `from`, if later) to `to` (Q7). The batches eating from a
   // container on a day give its shared count (D18); an ANIMAL_WISE batch's stage groups count as separate batches,
   // because each is fed its own stage's diet.
+  //
+  // FF1 (Rishi, 5 Oct): the display rows run past `to` up to `horizonTo` — the
+  // balance walk already projects that far, and DAILY showed only the selected
+  // date although the walk knew the 21 Oct run-down. The per-row map below
+  // stops each row at its own run-down past `to` (no 0/0 tail through the
+  // horizon); dates inside the window are always shown, so in-window demand
+  // (the worked example's R1 23–25 Sep against a day-one run-down) is never
+  // hidden. Every planning-window aggregate (planDates, rowAggs, sources,
+  // lifecycleIds, flags) stays on planningDate..to, so requisition quantities
+  // never change with the display range. CUSTOM and PERIOD are trimmed back
+  // to `to` in getForecast — explicit ranges do not silently expand.
   const rowFrom = input.from > input.planningDate ? input.from : input.planningDate;
+  const rowTo = horizonTo;
   interface DailyEntry {
     date: string;
     batchId: string;
@@ -639,7 +651,7 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
         if (resolution.noSiloHoldsItem) noSiloKeys.add(sk.key);
       }
 
-      if (date >= rowFrom && date <= input.to) {
+      if (date >= rowFrom && date <= rowTo) {
         dailyEntries.push({
           date, batchId: batch.batchId, realBatchId: batch.realBatchId, batchNo: batch.batchNo, shedId: batch.shedId, heads: batch.heads,
           stageCode: segment.stageCode, stageId: segment.stageId, groupStageId: batch.segments[0].stageId, feedRow, key: sk.key, sourceType: sk.sourceType, sourceCode: sk.sourceCode, demandMicrograms,
@@ -837,8 +849,15 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
   }
   sources.sort((a, b) => (a.sourceCode !== b.sourceCode ? (a.sourceCode < b.sourceCode ? -1 : 1) : a.itemId < b.itemId ? -1 : a.itemId > b.itemId ? 1 : 0));
 
-  const daily: DailyForecastRow[] = dailyEntries.map((e) => {
+  const daily: DailyForecastRow[] = dailyEntries.flatMap((e) => {
     const p = projectionByKey.get(e.key)!;
+    // FF1: a row stops at zero past the window — no date past both `to` and its
+    // own run-down day. The walk clamps carried stock at zero, so without this
+    // the grid would show 0/0 rows through the horizon; with it the run-down
+    // day itself is the last row shown. Inside the window every demand date
+    // stays, even one past run-down (the worked example's 3-day R1 against a
+    // day-one run-down), because the window is the requisition's own evidence.
+    if (e.date > input.to && p.runDownDate !== null && e.date > p.runDownDate) return [];
     const opening = openingByKey.get(e.key)?.get(e.date) ?? 0;
     const rowIntakeMicrograms = toMicrograms(e.heads * e.feedRow.kgPerHeadPerDay);
     // Q13: indicative when what this container feeds per day changes later in the window — a diet, rate or stage

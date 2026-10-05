@@ -100,6 +100,21 @@ export function bucketStart(view: ForecastView, from: string, date: string): str
   return date;
 }
 
+/**
+ * FF1 (Rishi, 5 Oct) — which daily rows a view displays. DAILY and WEEKLY
+ * without an explicit `to` run from the selected date through the latest
+ * run-down date the rows carry (the engine already emits them that far, each
+ * row stopping at its own zero), capped by the 45-day horizon the walk
+ * covers. An explicit `to` (typed CUSTOM dates, Reporting Period dates) is
+ * never widened: those rows are trimmed back to exactly what was asked for.
+ */
+export function displayDaily(daily: DailyForecastRow[], view: ForecastView, explicitTo: boolean, to: string): DailyForecastRow[] {
+  if (explicitTo || (view !== 'DAILY' && view !== 'WEEKLY')) {
+    return daily.filter((d) => d.date <= to);
+  }
+  return daily;
+}
+
 export function groupRows(daily: DailyForecastRow[], view: ForecastView, from: string, sourceNames: Record<string, string> = {}): ReportRow[] {
   const byDate = [...daily].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
   // Sums in integer micrograms, like the engine, so 7 × 17.9375 kg is exactly 125.5625 kg.

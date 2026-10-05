@@ -1077,6 +1077,42 @@ describe('FeedForecastService.getForecast — views, periods and the report (Pla
     expect(compute.mock.calls[0][3]).toMatchObject({ from: '2026-09-25', to: '2026-09-25', horizonTo: '2026-11-07' });
   });
 
+  it('FF1 (Rishi 5 Oct) — DAILY without an explicit `to` shows every date through run-down, not just the selected date', async () => {
+    compute.mockResolvedValueOnce({
+      ...computed,
+      daily: [
+        daily({ date: '2026-09-23' }),
+        daily({ date: '2026-09-24', currentInventoryKg: 0 }),
+        daily({ date: '2026-09-30', currentInventoryKg: 0, runDownDate: '2026-09-30' }),
+      ],
+    });
+    const report = await service.getForecast({ view: 'DAILY' }, 'tenant-1', 'STANDARD_USER');
+    // The computation window stays the 1-day default (requisition evidence
+    // unchanged); the DISPLAYED rows run through the run-down date.
+    expect(compute.mock.calls[0][3]).toMatchObject({ from: '2026-09-23', to: '2026-09-23' });
+    expect(report.rows.map((r) => r.date)).toEqual(['2026-09-23', '2026-09-24', '2026-09-30']);
+  });
+
+  it('FF1 — WEEKLY without an explicit `to` groups consecutive 7-day buckets through the group containing run-down', async () => {
+    const days: string[] = [];
+    for (let d = 23; d <= 30; d++) days.push(`2026-09-${d}`);
+    days.push('2026-10-01', '2026-10-02', '2026-10-03', '2026-10-04', '2026-10-05');
+    compute.mockResolvedValueOnce({
+      ...computed,
+      daily: days.map((date) => daily({ date, currentInventoryKg: 0, runDownDate: '2026-10-05' })),
+    });
+    const report = await service.getForecast({ view: 'WEEKLY' }, 'tenant-1', 'STANDARD_USER');
+    expect(compute.mock.calls[0][3]).toMatchObject({ from: '2026-09-23', to: '2026-09-29' });
+    expect(report.rows.map((r) => `${r.date}..${r.dateTo}`)).toEqual([
+      '2026-09-23..2026-09-29', '2026-09-30..2026-10-05',
+    ]);
+  });
+
+  it('FF1 — an explicit `to` is never widened: CUSTOM and PERIOD stay exactly as typed', async () => {
+    const report = await service.getForecast({ view: 'CUSTOM', from: '2026-09-23', to: '2026-09-29' }, 'tenant-1', 'STANDARD_USER');
+    expect(report.rows.every((r) => r.date <= '2026-09-29' && r.dateTo <= '2026-09-29')).toBe(true);
+  });
+
   it('PERIOD: From/To come from the period covering the planning date; days before the planning date are not forecast (Q7)', async () => {
     jest.spyOn(service as any, 'loadPeriods').mockResolvedValue([september]);
     const report = await service.getForecast({ view: 'PERIOD' }, 'tenant-1', 'STANDARD_USER');

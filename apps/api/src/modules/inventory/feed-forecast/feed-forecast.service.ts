@@ -9,7 +9,7 @@ import { activeFarmOfCompany, batchScopeConditions, farmScope, FARM_SCOPE_KEY, F
 import { FeedStockMovement, InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
 import { FeedRow, stageDayRange } from '../../production/lifecycle/feed-row-days';
 import { asBatchPk, buildFeedForecast, DailyForecastRow, dayShort, DietChange, ForecastFlag, ForecastInput, ForecastRow, ForecastSource, isTimeZone, todayInZone } from './feed-forecast.engine';
-import { defaultWindowEnd, ForecastView, groupRows, MAX_SPAN_DAYS, PeriodRange, ReportRow, resolveViewRange, spanProblem } from './feed-forecast.view';
+import { defaultWindowEnd, displayDaily, ForecastView, groupRows, MAX_SPAN_DAYS, PeriodRange, ReportRow, resolveViewRange, spanProblem } from './feed-forecast.view';
 import { outstandingTransferQty, stockAsOf } from './feed-forecast.stock';
 import { OPEN_TRANSFER_STATUSES } from '../stock-transfer/transfer-execution.rules';
 import { QueryFeedForecastDto, UpdateSiloPlanningDto } from './dto/feed-forecast.dto';
@@ -690,7 +690,7 @@ export class FeedForecastService {
       period,
       farm: result.farm,
       settings: result.settings,
-      rows: groupRows(result.daily, view, from, result.sourceNames),
+      rows: groupRows(displayDaily(result.daily, view, query.to !== undefined, sentTo), view, from, result.sourceNames),
       stages: result.stages,
       flags: result.flags,
       sources: reportSources,
