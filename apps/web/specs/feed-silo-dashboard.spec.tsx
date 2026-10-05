@@ -64,6 +64,16 @@ describe('FeedSiloDashboard', () => {
     (api.get as jest.Mock).mockReset().mockImplementation(route);
   });
 
+  it('provides a contained vertical scroller for its cards and charts', async () => {
+    render(<FeedSiloDashboard />);
+
+    await screen.findAllByText('fsdCurrentDietFeedItem');
+    const dashboard = screen.getByLabelText('fsdShed').closest('[data-fill-body]');
+
+    expect(dashboard?.classList.contains('overflow-y-auto')).toBe(true);
+    expect(dashboard?.classList.contains('overscroll-contain')).toBe(true);
+  });
+
   it('selects the first valid Shed and Silo by API code order before requesting facts', async () => {
     render(<FeedSiloDashboard />);
 

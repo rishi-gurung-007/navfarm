@@ -175,7 +175,7 @@ function FeedSiloDashboardContent() {
   const noSilos = selection.shedId && !loading && silos.length === 0 && selection.siloId === null;
 
   return (
-    <div data-fill-body className="flex min-h-0 flex-col gap-4">
+    <div data-fill-body className="flex min-h-0 flex-col gap-4 overflow-y-auto overscroll-contain pb-4">
       <div className="flex shrink-0 flex-wrap items-end gap-3">
         <FeedFarmSelect id="sd-farm" label={t("ffFarm")} farms={farm.farms} farmId={farmId} fixedLabel={fixedLabel} onChange={setFarmId} />
         <Field label={t("fsdShed")} htmlFor="sd-shed">
