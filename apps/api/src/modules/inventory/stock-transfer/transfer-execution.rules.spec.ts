@@ -13,6 +13,7 @@ import {
   assertReceiptEvent,
   assertShipmentEvent,
   assertTrackingAssignments,
+  assertTrackingForShipment,
   assignmentsFromLine,
   cumulativeAfter,
   nextShipmentState,
@@ -210,5 +211,28 @@ describe('transferStatusFor — status follows the shipment and receipt events',
     const received = 0.6 + 0.7;
     expect(shipped).toBeLessThan(1.3); // the trap: a plain >= comparison would never see this as "fully shipped"
     expect(transferStatusFor([{ ordered: 1.3, shipped, received }])).toBe('POSTED');
+  });
+});
+
+describe('assertTrackingForShipment — WP4a fix round 1: the ONE tracking rule, for the shipment and the Item Tracking route', () => {
+  const LOT = { isLotTracked: true, isSerialTracked: false };
+  const SERIAL = { isLotTracked: false, isSerialTracked: true };
+
+  it('is the shipment rule: a lot item needs its lot, serials must be unique and cover the quantity', () => {
+    expect(() => assertTrackingForShipment(LOT, { lot_no: null, serial_no: null }, 4, 4)).toThrow('Item is lot-tracked; assign a lot before shipment.');
+    expect(() => assertTrackingForShipment(LOT, { lot_no: 'L-1', serial_no: null }, 2, 4)).not.toThrow();
+    expect(() => assertTrackingForShipment(SERIAL, { lot_no: null, serial_no: 'S-1,S-1' }, 2, 2)).toThrow('Serial numbers must be unique on one transfer line.');
+    expect(() => assertTrackingForShipment(SERIAL, { lot_no: null, serial_no: 'S-1' }, 2, 2)).toThrow('do not cover the shipped quantity (2)');
+  });
+
+  it('refuses a partial shipment of a serial-tracked line (the shipped serials would be a guess)', () => {
+    expect(() => assertTrackingForShipment(SERIAL, { lot_no: null, serial_no: 'S-1,S-2,S-3,S-4' }, 2, 4))
+      .toThrow('A serial-tracked line ships its whole balance (4) in one shipment; partial shipments of serial-tracked lines are not supported yet.');
+  });
+
+  it('wants exactly one serial per unit shipped, no spares', () => {
+    expect(() => assertTrackingForShipment(SERIAL, { lot_no: null, serial_no: 'S-1,S-2,S-3' }, 2, 2))
+      .toThrow('Assign exactly 2 serial number(s) to ship 2; 3 are assigned.');
+    expect(() => assertTrackingForShipment(SERIAL, { lot_no: null, serial_no: 'S-1, S-2' }, 2, 2)).not.toThrow();
   });
 });

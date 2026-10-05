@@ -584,16 +584,18 @@ export type PostingSide = 'FROM' | 'TO';
 
 export function assertPostingDepartment(
   side: PostingSide,
-  kind: 'Transfer Shipment' | 'Transfer Receipt',
+  kind: 'Transfer Shipment' | 'Transfer Receipt' | 'Item Tracking',
   check: { userDepartmentId: string | null | undefined; locationDepartmentId: string | null | undefined },
 ): void {
   const at = side === 'FROM' ? 'From' : 'To';
+  // WP4a fix round 1: assigning Item Tracking is not posting anything.
+  const act = kind === 'Item Tracking' ? 'assign Item Tracking' : `post this ${kind}`;
   if (!check.locationDepartmentId) return;
   if (!check.userDepartmentId) {
-    throw new ForbiddenException(`Your user record has no department (User Setup); the ${at} sub-location's department is set, so you cannot post this ${kind}.`);
+    throw new ForbiddenException(`Your user record has no department (User Setup); the ${at} sub-location's department is set, so you cannot ${act}.`);
   }
   if (check.userDepartmentId !== check.locationDepartmentId) {
-    throw new ForbiddenException(`Only the ${at} sub-location's department may post this ${kind}.`);
+    throw new ForbiddenException(`Only the ${at} sub-location's department may ${act}.`);
   }
 }
 
@@ -617,32 +619,47 @@ export function mapToTransferLines(
 }
 
 // --------------------------------------------------------------------------------
-// Item Tracking after release (WP4a live-check defect). Rishi's 4 Oct list:
-// "If Lot or Serial tracked: MANDATORY before Transfer Shipment post". The
-// assignment is due before SHIPMENT, not before submission — so a released
-// Store requisition must still take it while the line has not shipped. Before
-// this, a document released without its lot could never ship: the shipment
-// refused it and PUT refuses anything but an Open document.
+// Item Tracking after release (WP4a live-check defect, fix round 1). Rishi's
+// 4 Oct list: "If Lot or Serial tracked: MANDATORY before Transfer Shipment
+// post". The assignment is due before SHIPMENT, so a released Store
+// requisition takes it for whatever balance has not shipped yet. Coverage and
+// uniqueness are NOT checked here: the route runs the shipment's own rule
+// (assertTrackingForShipment, transfer-execution.rules.ts) against the balance,
+// so the two can never disagree. Only the refusals that belong to the
+// assignment itself live here.
 // --------------------------------------------------------------------------------
 
+/**
+ * An item carries only the identity it tracks. Applied by create/PUT while the
+ * document is Open AND by the Item Tracking route after release, so the same
+ * two fields follow one rule whichever endpoint writes them.
+ */
+export function assertTrackingFieldsMatchItem(
+  at: string,
+  itemCode: string | null,
+  flags: { isLotTracked: boolean; isSerialTracked: boolean },
+  input: { lot_no?: unknown; serial_no?: unknown },
+): void {
+  const item = itemCode ?? 'the item';
+  if (present(input.lot_no) && !flags.isLotTracked) throw new BadRequestException(`${at}: ${item} is not lot-tracked; it cannot carry a lot.`);
+  if (present(input.serial_no) && !flags.isSerialTracked) throw new BadRequestException(`${at}: ${item} is not serial-tracked; it cannot carry a serial number.`);
+}
+
 export function resolveTrackingAssignment(
-  line: { line_seq: number; item_code: string | null; qty_shipped: unknown },
+  line: { line_seq: number; item_code: string | null },
+  balanceToShip: number,
   flags: { isLotTracked: boolean; isSerialTracked: boolean },
   input: { lot_no?: string | null; serial_no?: string | null },
 ): { lot_no: string | null; serial_no: string | null } {
   const at = `Line ${line.line_seq}`;
-  const item = line.item_code ?? 'the item';
-  if (Number(line.qty_shipped ?? 0) > EPS) {
-    throw new BadRequestException(`${at} has shipped; its Item Tracking can no longer change.`);
+  if (!(balanceToShip > EPS)) {
+    throw new BadRequestException(`${at} has nothing left to ship; its Item Tracking can no longer change.`);
   }
   if (!flags.isLotTracked && !flags.isSerialTracked) {
-    throw new BadRequestException(`${at}: ${item} is not lot- or serial-tracked; it has no Item Tracking.`);
+    throw new BadRequestException(`${at}: ${line.item_code ?? 'the item'} is not lot- or serial-tracked; it has no Item Tracking.`);
   }
   const lot = String(input.lot_no ?? '').trim() || null;
   const serials = String(input.serial_no ?? '').split(',').map((s) => s.trim()).filter(Boolean);
-  if (lot && !flags.isLotTracked) throw new BadRequestException(`${at}: ${item} is not lot-tracked.`);
-  if (serials.length && !flags.isSerialTracked) throw new BadRequestException(`${at}: ${item} is not serial-tracked.`);
-  if (flags.isLotTracked && !lot) throw new BadRequestException(`${at}: ${item} is lot-tracked; assign a lot.`);
-  if (flags.isSerialTracked && !serials.length) throw new BadRequestException(`${at}: ${item} is serial-tracked; assign its serial numbers.`);
+  assertTrackingFieldsMatchItem(at, line.item_code, flags, { lot_no: lot, serial_no: serials.length ? 'x' : null });
   return { lot_no: lot, serial_no: serials.length ? serials.join(',') : null };
 }

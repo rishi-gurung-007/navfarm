@@ -621,7 +621,7 @@ describe('WP1c — the requisition line carries its Item Tracking assignment', (
     // of the fuller create test above are not made here.
     selectResults.push(
       [{ full_name: 'Ada Farm', department_id: null }],      // the requesting user
-      [{ item_id: 'item-1' }],                               // line items belong to the company
+      [{ item_id: 'item-1', item_code: 'IT-1', is_lot_tracked: 1, is_serial_tracked: 0 }], // line items belong to the company
       [],                                                    // number series: no prior REQ this year
       [],                                                    // number clash lookup
       [headerRow()],                                         // findOne read-back: header
@@ -630,6 +630,18 @@ describe('WP1c — the requisition line carries its Item Tracking assignment', (
     await service.create(storeDto({ lines: [itemLineTracked()] }) as any, TENANT, { userId: 'u1' });
     const lineInsert = insertValues.find((i) => i.table === schema.requisitionLine);
     expect(lineInsert?.values[0]).toMatchObject({ item_id: 'item-1', lot_no: 'L-1', serial_no: null });
+  });
+
+  // WP4a fix round 1: PUT/create and the released Item Tracking route apply the
+  // same identity rule — an item carries only the identity it tracks.
+  it('refuses a lot on an item that is not lot-tracked, before anything is written', async () => {
+    selectResults.push(
+      [{ full_name: 'Ada Farm', department_id: null }],
+      [{ item_id: 'item-1', item_code: 'IT-1', is_lot_tracked: 0, is_serial_tracked: 0 }],
+    );
+    await expect(service.create(storeDto({ lines: [itemLineTracked()] }) as any, TENANT, { userId: 'u1' }))
+      .rejects.toThrow('Line 1: IT-1 is not lot-tracked; it cannot carry a lot.');
+    expect(insertValues).toHaveLength(0);
   });
 
 });
@@ -662,6 +674,18 @@ describe('Part E Task 2 — PUT /requisition/:id', () => {
     await expect(service.update('req-1', { purpose: 'STORE', from_location_id: 'a', to_location_id: 'b', lines: [{ item_id: 'i', quantity: 1, uom: 'EA' }] } as any, TENANT, { userId: 'u1' }))
       .rejects.toThrow('can no longer be edited');
     expect(setCalls).toHaveLength(0);
+  });
+
+  it('WP4a fix round 1: refuses a serial on an item that is not serial-tracked (the rule the released route applies)', async () => {
+    const { db, selectResults, setCalls } = makeDb();
+    selectResults.push([headerRow()], [{ item_id: 'item-1', item_code: 'IT-1', is_lot_tracked: 0, is_serial_tracked: 0 }]);
+    db.delete = jest.fn(() => ({ where: jest.fn(async () => undefined) }));
+    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
+    await expect(service.update('req-1', {
+      purpose: 'STORE', from_location_id: 'a', to_location_id: 'b', lines: [{ item_id: 'item-1', quantity: 1, uom: 'EA', serial_no: 'S-1' }],
+    } as any, TENANT, { userId: 'u1' })).rejects.toThrow('Line 1: IT-1 is not serial-tracked; it cannot carry a serial number.');
+    expect(setCalls).toHaveLength(0);
+    expect(db.delete).not.toHaveBeenCalled();
   });
 
   it('refuses a change of document type', async () => {

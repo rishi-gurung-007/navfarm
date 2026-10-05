@@ -30,6 +30,7 @@ import { farmScope, assertCompanyInScope, assertLocationOnActiveFarm, requisitio
 import { userHasPermission } from '../../../common/permissions';
 import { ApprovalService } from '../../production/approval/approval.service';
 import { StockTransferService } from '../../inventory/stock-transfer/stock-transfer.service';
+import { assertTrackingForShipment } from '../../inventory/stock-transfer/transfer-execution.rules';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import * as schema from '../../../core/database/schema';
 import { CreateRequisitionDto, DecideRequisitionDto, RequisitionReceiptDto, RequisitionShipmentDto, RequisitionTrackingDto, UpdateRequisitionDto } from './dto/requisition.dto';
@@ -48,6 +49,7 @@ import {
   lineBalances,
   mapToTransferLines,
   resolveTrackingAssignment,
+  assertTrackingFieldsMatchItem,
   mayDecideAnyRequisition,
   maySelfApprove,
   normalizeCommonDocType,
@@ -298,20 +300,33 @@ export class RequisitionService {
   private async assertLineReferences(
     tenantId: string,
     companyId: string,
-    lines: Array<{ item_id?: string | null; resource_id?: string | null }>,
+    lines: Array<{ item_id?: string | null; resource_id?: string | null; lot_no?: string | null; serial_no?: string | null }>,
   ) {
     const itemIds = [...new Set(lines.map((l) => l.item_id).filter((v): v is string => !!v))];
     if (itemIds.length) {
-      const found = new Set((await this.db
-        .select({ item_id: schema.itemMaster.item_id })
+      const rows = await this.db
+        .select({
+          item_id: schema.itemMaster.item_id, item_code: schema.itemMaster.item_code,
+          is_lot_tracked: schema.itemMaster.is_lot_tracked, is_serial_tracked: schema.itemMaster.is_serial_tracked,
+        })
         .from(schema.itemMaster)
         .where(and(
           eq(schema.itemMaster.tenant_id, tenantId), eq(schema.itemMaster.company_id, companyId),
           eq(schema.itemMaster.is_active, true), isNull(schema.itemMaster.deleted_at),
           inArray(schema.itemMaster.item_id, itemIds),
-        ))).map((r) => r.item_id));
+        ));
+      const found = new Map(rows.map((r) => [r.item_id, r]));
       const at = lines.findIndex((l) => l.item_id && !found.has(l.item_id));
       if (at >= 0) throw new BadRequestException(`Line ${at + 1}: item is not an active item of this company.`);
+      // WP4a fix round 1: an item carries only the identity it tracks — the
+      // same rule the released Item Tracking route applies.
+      lines.forEach((l, i) => {
+        const item = l.item_id ? found.get(l.item_id) : undefined;
+        if (item) {
+          assertTrackingFieldsMatchItem(`Line ${i + 1}`, item.item_code ?? null,
+            { isLotTracked: Boolean(item.is_lot_tracked), isSerialTracked: Boolean(item.is_serial_tracked) }, l);
+        }
+      });
     }
     const resourceIds = [...new Set(lines.map((l) => l.resource_id).filter((v): v is string => !!v))];
     if (resourceIds.length) {
@@ -1000,7 +1015,7 @@ export class RequisitionService {
     row: { from_location_id: string | null; to_location_id: string | null },
     tenantId: string,
     side: 'FROM' | 'TO',
-    kind: 'Transfer Shipment' | 'Transfer Receipt',
+    kind: 'Transfer Shipment' | 'Transfer Receipt' | 'Item Tracking',
     userPayload?: { userId?: string },
   ): Promise<void> {
     const locationId = side === 'FROM' ? row.from_location_id : row.to_location_id;
@@ -1043,24 +1058,49 @@ export class RequisitionService {
   }
 
   /**
-   * Item Tracking on a released Store requisition, before the line ships
-   * (WP4a live-check defect; Rishi's 4 Oct list: "If Lot or Serial tracked:
-   * MANDATORY before Transfer Shipment post"). Until this existed a document
-   * released without its lot could never ship: the shipment refused it and
-   * PUT refuses anything but an Open document. The store that ships picks
-   * the lot, so the shipment's From-department check applies. The assignment
-   * is written to the requisition line AND to its transfer line (the one the
-   * shipment reads), in one transaction; every line is validated before any
-   * write.
+   * Item Tracking on a released Store requisition, for the balance not yet
+   * shipped (WP4a; Rishi's 4 Oct list: "If Lot or Serial tracked: MANDATORY
+   * before Transfer Shipment post"). Fix round 1:
+   * - ONE rule: the assignment is validated with the shipment's own
+   *   assertTrackingForShipment against the balance to ship, so the route
+   *   never accepts what the shipment would refuse.
+   * - Lock order: stock_transfer FOR UPDATE first — the lock postShipment's
+   *   loadForMutation takes — then the requisition lines. A concurrent
+   *   shipment either finishes first (and its events count below) or waits.
+   * - "Shipped" comes from the shipment events (transfer_shipment_line), never
+   *   from requisition_line.qty_shipped, which a shipment syncs only at its end.
+   * - A partly shipped lot line keeps its balance assignable; earlier
+   *   shipments keep the identity they recorded on their own lines.
+   * The store that ships picks the lot, so the From department assigns.
    */
   async assignTracking(requisitionId: string, dto: RequisitionTrackingDto, tenantId: string, userPayload?: { userId?: string }) {
+    const seen = new Set<string>();
+    for (const l of dto.lines) {
+      if (seen.has(l.line_id)) throw new BadRequestException(`Line ${l.line_id} is named twice; name each line once.`);
+      seen.add(l.line_id);
+    }
     await withTenantTransaction(this.cls, async () => {
       const { row, transferId } = await this.releasedStore(requisitionId, tenantId);
-      await this.assertPostingDepartmentFor(row, tenantId, 'FROM', 'Transfer Shipment', userPayload);
+      await this.assertPostingDepartmentFor(row, tenantId, 'FROM', 'Item Tracking', userPayload);
+      await this.db.select({ transfer_id: schema.stockTransfer.transfer_id })
+        .from(schema.stockTransfer)
+        .where(and(eq(schema.stockTransfer.transfer_id, transferId), eq(schema.stockTransfer.tenant_id, tenantId)))
+        .for('update');
+      const transferLines = await this.db
+        .select({ line_id: schema.stockTransferLine.line_id, requisition_line_id: schema.stockTransferLine.requisition_line_id, quantity: schema.stockTransferLine.quantity })
+        .from(schema.stockTransferLine)
+        .where(eq(schema.stockTransferLine.transfer_id, transferId));
+      const shippedRows = await this.db
+        .select({ line_id: schema.transferShipmentLine.line_id, qty: schema.transferShipmentLine.quantity })
+        .from(schema.transferShipmentLine)
+        .innerJoin(schema.transferShipment, eq(schema.transferShipment.shipment_id, schema.transferShipmentLine.shipment_id))
+        .where(and(eq(schema.transferShipment.transfer_id, transferId), isNull(schema.transferShipment.deleted_at)));
+      const shippedBy = new Map<string, number>();
+      for (const r of shippedRows) shippedBy.set(r.line_id, (shippedBy.get(r.line_id) ?? 0) + Number(r.qty));
       const lines = await this.db
         .select({
           line_id: schema.requisitionLine.line_id, line_seq: schema.requisitionLine.line_seq, item_id: schema.requisitionLine.item_id,
-          qty_shipped: schema.requisitionLine.qty_shipped, item_code: schema.itemMaster.item_code,
+          item_code: schema.itemMaster.item_code,
         })
         .from(schema.requisitionLine)
         .leftJoin(schema.itemMaster, eq(schema.itemMaster.item_id, schema.requisitionLine.item_id))
@@ -1075,9 +1115,13 @@ export class RequisitionService {
         : [];
       const writes = dto.lines.map((input) => {
         const line = lines.find((l) => l.line_id === input.line_id);
-        if (!line) throw new BadRequestException(`Line '${input.line_id}' is not on ${row.req_no}.`);
+        const transferLine = transferLines.find((t) => t.requisition_line_id === input.line_id);
+        if (!line || !transferLine) throw new BadRequestException(`Line '${input.line_id}' is not on ${row.req_no}.`);
         const f = flags.find((x) => x.item_id === line.item_id);
-        const assignment = resolveTrackingAssignment(line, { isLotTracked: Boolean(f?.is_lot_tracked), isSerialTracked: Boolean(f?.is_serial_tracked) }, input);
+        const itemFlags = { isLotTracked: Boolean(f?.is_lot_tracked), isSerialTracked: Boolean(f?.is_serial_tracked) };
+        const balance = Number(transferLine.quantity) - (shippedBy.get(transferLine.line_id) ?? 0);
+        const assignment = resolveTrackingAssignment(line, balance, itemFlags, input);
+        assertTrackingForShipment(itemFlags, assignment, balance, balance);
         return { line_id: line.line_id, ...assignment };
       });
       for (const w of writes) {

@@ -213,3 +213,35 @@ export function splitAmount(total: number, parts: number): number[] {
   out[parts - 1] = round4(total - share * (parts - 1));
   return out;
 }
+
+/**
+ * WP4a fix round 1 — the ONE tracking rule for a line about to ship, used by
+ * the shipment itself and by the requisition's Item Tracking route (which
+ * passes the whole balance as qty), so an assignment the route accepts is
+ * one the shipment accepts.
+ *
+ * On top of assertTrackingAssignments, a serial-tracked line ships its whole
+ * balance in one shipment with exactly one serial per unit: with spares or a
+ * partial shipment, which serials left would be FIFO's choice, not the
+ * document's, and the receipt could not know which to copy. Partial serial
+ * shipments stay refused until the consumed serials are recorded per event.
+ */
+export function assertTrackingForShipment(
+  item: ItemTrackingFlags,
+  assignment: { lot_no: string | null; serial_no: string | null },
+  qty: number,
+  balanceToShip: number,
+): void {
+  assertTrackingAssignments(item, assignmentsFromLine({ ...assignment, qty }), qty);
+  if (item.isSerialTracked) {
+    if (qty + FLOAT_SUM_TOLERANCE < balanceToShip) {
+      throw new BadRequestException(
+        `A serial-tracked line ships its whole balance (${balanceToShip}) in one shipment; partial shipments of serial-tracked lines are not supported yet.`,
+      );
+    }
+    const count = String(assignment.serial_no ?? '').split(',').map((s) => s.trim()).filter(Boolean).length;
+    if (count !== qty) {
+      throw new BadRequestException(`Assign exactly ${qty} serial number(s) to ship ${qty}; ${count} are assigned.`);
+    }
+  }
+}
