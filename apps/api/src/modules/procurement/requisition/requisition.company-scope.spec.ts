@@ -135,3 +135,34 @@ describe('Task 13 fix round 1 — a selected company is a boundary on /requisiti
     expect(view.requisition_id).toBe('req-b');
   });
 });
+
+/**
+ * P1 e2e (5 Oct): a farm-bound Standard User pressing Save on a new requisition
+ * got 404 "Requisition '<id>' not found." — create() wrote farm_id NULL (the
+ * dialog sends no farm), then read the row back through scopeConditions(), which
+ * keeps only the caller's farm, so the transaction rolled back. A requisition
+ * made by a farm-pinned caller belongs to that farm.
+ */
+describe('P1 e2e — a farm-pinned caller\'s new requisition belongs to its farm', () => {
+  function serviceForFarm(farmId: string | null) {
+    const h = makeDb();
+    const cls = transactionCls(h.db);
+    useFarmScope(cls, { farmId, restricted: true, companyId: 'co-B', lobId: 'lob-1' } as any);
+    const approvals: any = { approve: jest.fn(), reject: jest.fn(), submitFarmDocument: jest.fn(), registerDocumentHandler: jest.fn() };
+    const transfers: any = { create: jest.fn(), postShipment: jest.fn(), postReceipt: jest.fn() };
+    return { ...h, service: new RequisitionService(cls, approvals, transfers, NUMBER_SERIES_STUB as any) };
+  }
+  const header = (rows: unknown[]) => rows.find((r: any) => r && typeof r === 'object' && 'req_no' in r) as any;
+
+  it('writes the scope farm when the body names none', async () => {
+    const { service, insertValues } = serviceForFarm('farm-gra');
+    await service.create({ company_id: 'co-B', doc_type: 'FA', purpose: 'PURCHASE', lines: lines2 } as any, TENANT).catch(() => undefined);
+    expect(header(insertValues)?.farm_id).toBe('farm-gra');
+  });
+
+  it('keeps a NULL farm for a caller with no farm in scope', async () => {
+    const { service, insertValues } = serviceForFarm(null);
+    await service.create({ company_id: 'co-B', doc_type: 'FA', purpose: 'PURCHASE', lines: lines2 } as any, TENANT).catch(() => undefined);
+    expect(header(insertValues)?.farm_id).toBeNull();
+  });
+});

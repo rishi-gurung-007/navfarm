@@ -234,6 +234,10 @@ export class RequisitionService {
     if (dto.farm_id) {
       await assertLocationOnActiveFarm(this.db, scope, dto.farm_id, 'Requisition farm');
     }
+    // P1 e2e (5 Oct): a farm-pinned caller's requisition belongs to its farm.
+    // The dialog sends no farm, and a NULL farm made the read-back below miss
+    // the row through scopeConditions(), so Save answered 404 and rolled back.
+    const farmId = dto.farm_id ?? scope.farmId ?? null;
     const mainLocationId = dto.main_location_id ?? dto.farm_id ?? null;
     if (mainLocationId && mainLocationId !== dto.farm_id) {
       await assertLocationOnActiveFarm(this.db, scope, mainLocationId, 'Requisition main location');
@@ -258,7 +262,7 @@ export class RequisitionService {
         requisition_id: requisitionId,
         tenant_id: tenantId,
         company_id: dto.company_id,
-        farm_id: dto.farm_id ?? null,
+        farm_id: farmId,
         req_no: reqNo,
         doc_type: docType,
         status: 'DRAFT',
