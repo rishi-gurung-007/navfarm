@@ -730,4 +730,35 @@ describe('WP1b — one Requisitions page: inbox exclusion and the shared waiting
     const result = await module.get<ApprovalService>(ApprovalService).countsRequisitions({} as any, 'tenant-1', 'COMPANY_ADMIN');
     expect(result).toEqual({ PENDING: 7 });
   });
+
+  // WP1g: the Requisition page lists common kinds only, so the inbox card's
+  // count must count the same set — a pending FEED_REQUISITION is decided on
+  // Feed Forecast -> Requisition and would make the card disagree with the page.
+  it('the card count is bounded to the common REQUISITION request type, never FEED_REQUISITION', async () => {
+    useFarmScope(cls, { farmId: null, restricted: false, companyId: 'co-1', lobId: null });
+    const wheres: unknown[] = [];
+    const db: any = {
+      select: jest.fn(() => {
+        const self: any = {
+          from: () => self,
+          where: (w: unknown) => { wheres.push(w); return self; },
+          then: (ok: any, err: any) => Promise.resolve([{ n: 2 }]).then(ok, err),
+        };
+        return self;
+      }),
+    };
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        ApprovalService,
+        { provide: ClsService, useValue: transactionCls(db) },
+        { provide: AuditLogService, useValue: { log: jest.fn().mockResolvedValue({}) } },
+        { provide: BatchService, useValue: { addTransaction: jest.fn() } },
+      ],
+    }).compile();
+    await module.get<ApprovalService>(ApprovalService).countsRequisitions({} as any, 'tenant-1', 'COMPANY_ADMIN');
+    const { MySqlDialect } = require('drizzle-orm/mysql-core');
+    const q = new MySqlDialect().sqlToQuery(wheres[0] as any);
+    expect(q.sql).toContain('`doc_type` = ?');
+    expect(q.params).toContain('REQUISITION');
+  });
 });

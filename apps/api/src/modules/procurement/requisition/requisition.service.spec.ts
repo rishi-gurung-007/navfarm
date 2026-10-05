@@ -1028,3 +1028,54 @@ describe('WP1b — the hub waiting-for-my-approval filter', () => {
     expect(q.sql).not.toContain('`requisition`.`farm_id` = ?');
   });
 });
+
+/**
+ * WP1g (decisions.md 2026-10-05, "Requisition is its own menu item"): the
+ * Requisition page lists the common kinds only. FEED rows are excluded by the
+ * query itself (`kind=common`), not merely hidden by the page, and asking for
+ * the FEED type under that kind is refused rather than answered with nothing.
+ */
+describe('WP1g — kind=common excludes FEED server-side', () => {
+  it('adds an explicit doc_type <> FEED condition to the list query', async () => {
+    const { db, whereCalls } = makeDb();
+    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
+    await service.findAll({ kind: 'common' }, TENANT);
+    const q = new MySqlDialect().sqlToQuery(whereCalls[0] as any);
+    expect(q.sql).toContain('`requisition`.`doc_type` <> ?');
+    expect(q.params).toContain('FEED');
+  });
+
+  it('keeps the waiting-for-me EXISTS and the FEED exclusion together', async () => {
+    const { db, whereCalls } = makeDb();
+    const approvals = approvalsMock();
+    approvals.requisitionRequestConditions = jest.fn(() => {
+      const R = (require('../../../core/database/schema') as typeof schema).approvalRequest;
+      return [eq(R.status, 'PENDING')];
+    });
+    const service = new RequisitionService(transactionCls(db), approvals as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
+    await service.findAll({ kind: 'common' }, TENANT, { waitingForMe: true, userType: 'COMPANY_ADMIN' });
+    const q = new MySqlDialect().sqlToQuery(whereCalls[0] as any);
+    expect(q.sql).toContain('EXISTS');
+    expect(q.sql).toContain('`requisition`.`doc_type` <> ?');
+  });
+
+  it('refuses doc_type=FEED under kind=common before any query', async () => {
+    const { db } = makeDb();
+    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
+    await expect(service.findAll({ kind: 'common', doc_type: 'FEED' }, TENANT)).rejects.toThrow('The common requisition list does not include FEED');
+    expect(db.select).not.toHaveBeenCalled();
+  });
+
+  it('refuses an unknown kind', async () => {
+    const { db } = makeDb();
+    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
+    await expect(service.findAll({ kind: 'bogus' as any }, TENANT)).rejects.toThrow('kind must be common');
+  });
+
+  it('without kind the list is unchanged (no doc_type condition)', async () => {
+    const { db, whereCalls } = makeDb();
+    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
+    await service.findAll({}, TENANT);
+    expect(new MySqlDialect().sqlToQuery(whereCalls[0] as any).sql).not.toContain('`requisition`.`doc_type`');
+  });
+});

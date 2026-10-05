@@ -380,7 +380,7 @@ export class ApprovalService {
   /**
    * WP1b (decisions.md 2026-10-04, "one Requisitions page"): the inbox's card
    * — "Requisitions waiting for approval: N → open Requisitions" — reads this
-   * count: the requisition kinds the inbox no longer lists, under the same
+   * count: the common requisition kind the inbox no longer lists, under the same
    * waiting predicate the hub's filter uses (requisitionRequestConditions).
    */
   async countsRequisitions(query: QueryApprovalDto, tenantId: string, userType?: string) {
@@ -389,6 +389,11 @@ export class ApprovalService {
       isNull(schema.approvalRequest.deleted_at),
       eq(schema.approvalRequest.status, 'PENDING'),
       ...this.requisitionRequestConditions(userType),
+      // WP1g (decisions.md 2026-10-05): the Requisition page lists the common
+      // kinds only; a feed requisition is decided on Feed Forecast ->
+      // Requisition. Counting FEED_REQUISITION here made the card promise
+      // rows the page it links to never shows.
+      eq(schema.approvalRequest.doc_type, 'REQUISITION'),
     ];
     if (query.company_id) conditions.push(eq(schema.approvalRequest.company_id, query.company_id));
     if (query.operational_area_id) {

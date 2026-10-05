@@ -20,7 +20,7 @@
  * requisition.rules.ts projects the states from it on read.
  */
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { and, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
@@ -639,10 +639,19 @@ export class RequisitionService {
   }
 
   async findAll(
-    query: { company_id?: string; status?: string; doc_type?: string; waiting_for_me?: boolean },
+    query: { company_id?: string; status?: string; doc_type?: string; waiting_for_me?: boolean; kind?: 'common' },
     tenantId: string,
     opts: { waitingForMe?: boolean; userType?: string } = {},
   ) {
+    // WP1g (decisions.md 2026-10-05): `kind=common` is the Requisition page's
+    // list — ITEM / FA / SERVICE. FEED is excluded by the query, not hidden by
+    // the page; feed requisitions are listed by /feed-requisition.
+    if (query.kind !== undefined && query.kind !== 'common') {
+      throw new BadRequestException('kind must be common.');
+    }
+    if (query.kind === 'common' && query.doc_type === 'FEED') {
+      throw new BadRequestException('The common requisition list does not include FEED; feed requisitions are on Feed Forecast.');
+    }
     if (query.doc_type && !(COMMON_LIST_DOC_TYPES as readonly string[]).includes(query.doc_type)) {
       throw new BadRequestException(`doc_type must be one of ${COMMON_LIST_DOC_TYPES.join(', ')}.`);
     }
@@ -671,6 +680,7 @@ export class RequisitionService {
     if (query.company_id) conditions.push(eq(schema.requisition.company_id, query.company_id));
     if (query.status) conditions.push(eq(schema.requisition.status, query.status));
     if (query.doc_type) conditions.push(eq(schema.requisition.doc_type, query.doc_type));
+    if (query.kind === 'common') conditions.push(ne(schema.requisition.doc_type, 'FEED'));
     const rows = await this.db
       .select({
         requisition_id: schema.requisition.requisition_id,
