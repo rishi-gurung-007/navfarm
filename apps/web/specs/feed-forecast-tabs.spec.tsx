@@ -157,3 +157,19 @@ describe('the feed screens read one shared farm selection', () => {
     expect(read(path)).toContain('useFeedFarm()');
   });
 });
+
+/**
+ * WP1d (Rishi 4 Oct, final; he asked again on 5 Oct why the old names were
+ * still showing): the Feed Forecast tabs take the workbook's names —
+ * Dashboard · Calculation · Requisition · Physical Stock Count, in that order.
+ * The routes keep their existing `?tab=` keys, because they are bookmarks.
+ */
+describe("WP1d — Feed Forecast tab names follow the workbook", () => {
+  it("names the four tabs as Rishi ruled, in order, without renaming any route key", () => {
+    expect(FEED_FORECAST_TABS).toEqual(["dashboard", "forecast", "feed-requisition", "physical-count"]);
+    const en = (require("../src/utils/translations") as any).translations.en;
+    expect([
+      en.fftTabDashboard, en.fftTabForecast, en.fftTabFeedRequisition, en.fftTabPhysicalCount,
+    ]).toEqual(["Dashboard", "Calculation", "Requisition", "Physical Stock Count"]);
+  });
+});

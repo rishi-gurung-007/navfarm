@@ -173,10 +173,12 @@ describe('InventoryPageShell persona visibility', () => {
 });
 
 describe('FeedForecastTabs navigation copy', () => {
-  it('displays the Feed Requisition tab as Internal Feed Transfer', () => {
+  // WP1d (Rishi 5 Oct): the tab is "Requisition"; "Internal Feed Transfer" stays
+  // only as the document's Purpose value (Requisition sheet §1 row 31).
+  it('displays the Feed Requisition tab as Requisition', () => {
     render(<FeedForecastTabs tab="feed-requisition" onTabChange={() => undefined} />);
     const tabList = screen.getByRole('tablist');
     const tabTexts = Array.from(tabList.querySelectorAll('[role="tab"]')).map((t) => t.textContent);
-    expect(tabTexts).toContain('Internal Feed Transfer');
+    expect(tabTexts).toEqual(['Dashboard', 'Calculation', 'Requisition', 'Physical Stock Count']);
   });
 });

@@ -1881,7 +1881,7 @@ export const translations = {
 
     // Inventory -> Feed Forecast page tabs (Task 7): one page holds the
     // forecast, the farm feed requisition and the physical count.
-    fftTabForecast: "Forecast",
+    fftTabForecast: "Calculation",
     fftTabDashboard: "Dashboard",
     fsdLabel: "Silo dashboard",
     fsdPlanningDate: "Planning Date",
@@ -1917,8 +1917,8 @@ export const translations = {
     fsdNonKg: "Non-KG stock excluded",
     fsdAlertCritical: "Critical — first priority",
     fsdAlertInfo: "Above threshold",
-    fftTabFeedRequisition: "Internal Feed Transfer",
-    fftTabPhysicalCount: "Physical Count",
+    fftTabFeedRequisition: "Requisition",
+    fftTabPhysicalCount: "Physical Stock Count",
 
     // Physical Count tab: count entry, variance and approval/posting status.
     // Prefixed fsc — sc is already the Scheduler module's prefix.
