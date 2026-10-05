@@ -577,3 +577,10 @@ the blocked half.
   Ruling: Approve/Reject visibility hint uses PRODUCTION/APPROVAL/can_approve (the grant the /approval decide endpoints enforce).
   Phase 2 carry-overs: remove the "Type: Feed" select on the feed tab; feed approve path never writes requisition.approval_status (pre-existing).
 - Next: WP4a (common-requisition demo data + WP1c's blocked live checks).
+- WP4a: complete — 8c8a4527, f29e02a9, 639c1508, 6165c348, fix round 1 b6ce0890..f7e05a51 (review clean after 1 round; 3 new minors folded into the Phase 1 end-to-end step).
+  Script `db-align-requisition-demo-data` applied to nf_devco (DEPT-STORES, DEPT-FARM-OPS, tracked items ILL-LOT-001/ILL-SER-001).
+  Live: department checks A, lot + serial tracking B, Direct Transfer C, From-location-only consumption — all PASS.
+  Defects found and fixed: no way to assign tracking after release; receipt wrote one combined "SN1,SN2" layer; partial serial shipments duplicated serials; transfers could draw serials from another warehouse (origin/main fallback).
+  Interpretations awaiting Rishi (decisions.md): tracking assigned by From dept; Direct Transfer checks From dept only; serial lines ship whole; transfers draw only from their From location.
+  Leftover: one malformed "SN00001,SN00002" layer at GRA100/SHED-001 (pre-fix), labelled.
+- Next: Phase 1 close — browser-driven end-to-end of every common kind.
