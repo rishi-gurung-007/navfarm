@@ -5,6 +5,7 @@ export type FieldType =
   | "boolean"
   | "email"
   | "date"
+  | "time"
   | "select"
   | "select-entity"
   | "field-list"

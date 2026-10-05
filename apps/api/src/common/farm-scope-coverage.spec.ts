@@ -94,6 +94,7 @@ const EXEMPT: Record<string, string> = {
   'master-data/no-series/no-series.controller.ts': 'Master data, not farm-specific.',
   'master-data/reason/reason.controller.ts': 'Master data, not farm-specific.',
   'master-data/reporting-period/reporting-period.controller.ts': 'Company master (Reporting Period Master, D20); periods are company-wide, not a farm\'s.',
+  'master-data/production-slot/production-slot.controller.ts': 'Company mill-production master; slots schedule BIN work across the company, not one farm.',
   'master-data/resource/resource.controller.ts': 'Master data, not farm-specific.',
   'master-data/shed/shed.controller.ts': 'Master data, not farm-specific.',
   'master-data/supplier/supplier.controller.ts': 'Master data, not farm-specific.',

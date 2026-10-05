@@ -104,6 +104,7 @@ export const translations = {
     rolNotificationGateway: "Notification Gateway Settings",
     rolAlertRules: "Alerts and Notifications Master",
     rolReportingPeriods: "Reporting Periods",
+    rolProductionSlots: "Production Slots",
     rolProductionParameters: "Production Parameters",
     rolProductionSchedulers: "Production Schedulers",
     deSelectBatch: "Batch",

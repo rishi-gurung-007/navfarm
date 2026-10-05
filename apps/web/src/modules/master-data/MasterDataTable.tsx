@@ -2624,7 +2624,7 @@ export function MasterDataTable({
     return (
       <input
         {...accessibility}
-        type={f.type === "number" ? (useNativeNumber ? "number" : "text") : f.type === "email" ? "email" : f.type === "date" ? "date" : "text"}
+        type={f.type === "number" ? (useNativeNumber ? "number" : "text") : f.type === "email" ? "email" : f.type === "date" ? "date" : f.type === "time" ? "time" : "text"}
         inputMode={f.type === "number" && !useNativeNumber ? (isInteger ? "numeric" : "decimal") : undefined}
         step={f.step}
         min={f.min}

@@ -2,6 +2,28 @@ import { MASTER_DATA_CONFIGS, MASTER_DATA_NAV_ORDER, getConfig } from '../src/mo
 import { formatColumnValue } from '../src/modules/master-data/column-format';
 
 describe('Reporting Period configuration and Alert Rules navigation', () => {
+  it('defines Production Slots once through the shared master-data registry', () => {
+    const config = getConfig('production-slot')!;
+    expect(config).toEqual(expect.objectContaining({
+      label: 'Production Slots', singular: 'Production Slot', apiBase: '/production-slot',
+      idKey: 'slot_id', group: 'Settings', businessAdminOnly: true,
+    }));
+    expect(config.columns).toEqual([
+      { key: 'slot_code', label: 'Code' },
+      { key: 'slot_name', label: 'Name' },
+      { key: 'start_time', label: 'Start Time' },
+      { key: 'end_time', label: 'End Time' },
+      { key: 'status', label: 'Status' },
+    ]);
+    expect(config.fields.map((field) => field.key)).toEqual([
+      'company_id', 'slot_code', 'slot_name', 'start_time', 'end_time',
+    ]);
+    expect(config.fields.find((field) => field.key === 'start_time')?.type).toBe('time');
+    expect(config.fields.find((field) => field.key === 'end_time')?.type).toBe('time');
+    expect(MASTER_DATA_CONFIGS.filter((candidate) => candidate.key === 'production-slot')).toHaveLength(1);
+    expect(MASTER_DATA_NAV_ORDER).not.toContain('production-slot');
+  });
+
   it('keeps Alert Rules in Farm Masters', () => {
     const config = getConfig('alert-rule')!;
     expect(config.isPrimary).toBe(true);

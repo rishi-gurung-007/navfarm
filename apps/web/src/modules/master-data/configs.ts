@@ -1580,6 +1580,30 @@ const reportingPeriod: MasterDataConfig = {
   ],
 };
 
+// Configurable mill-production windows. Production Date belongs to each BIN
+// assignment, not this master; it means the calendar date on which the slot
+// starts, including when End Time falls on the following date.
+const productionSlot: MasterDataConfig = {
+  key: "production-slot", label: "Production Slots", singular: "Production Slot",
+  description: "Company production windows used to schedule feed diets into loading bins.",
+  apiBase: "/production-slot", idKey: "slot_id", group: "Settings",
+  isPrimary: false, businessAdminOnly: true,
+  columns: [
+    { key: "slot_code", label: "Code" },
+    { key: "slot_name", label: "Name" },
+    { key: "start_time", label: "Start Time" },
+    { key: "end_time", label: "End Time" },
+    { key: "status", label: "Status" },
+  ],
+  fields: [
+    { key: "company_id", label: "Company", type: "text", hideInForm: true },
+    { key: "slot_code", label: "Code", type: "text", required: true, createOnly: true, maxLength: 50 },
+    { key: "slot_name", label: "Name", type: "text", required: true, maxLength: 100 },
+    { key: "start_time", label: "Start Time", type: "time", required: true, helpText: "Production Date is the date this time starts." },
+    { key: "end_time", label: "End Time", type: "time", required: true, helpText: "An End Time at or before Start Time ends on the following date." },
+  ],
+};
+
 const disease: MasterDataConfig = {
   key: "disease",
   label: "Diseases",
@@ -2089,7 +2113,7 @@ export const MASTER_DATA_CONFIGS: MasterDataConfig[] = [
   numberSeries, stage, activity,
   item, itemCategory, itemType, itemAttribute, itemTemplateConfig, uom, uomConversion,
   animal,
-  species, breed, breedLifecycleStage, kpiMetric, reason, alertRule, reportingPeriod, disease, feedFormula,
+  species, breed, breedLifecycleStage, kpiMetric, reason, alertRule, reportingPeriod, productionSlot, disease, feedFormula,
   supplier, customer, resource,
   glAccount, glMapping, costCenter, country, currency, exchangeRate,
 ];
