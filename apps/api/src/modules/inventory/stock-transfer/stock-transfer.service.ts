@@ -551,6 +551,39 @@ export class StockTransferService {
     });
   }
 
+  /**
+   * P1 follow-up I1 (Rishi, 4 and 5 Oct): a transfer created by a requisition's
+   * Release is posted from the requisition only. There the From department
+   * ships and the requester receives. The generic stock-transfer posting
+   * routes call this first. postShipment and postReceipt do not, because
+   * RequisitionService.ship and receive call them after their own checks. A
+   * transfer is linked when any line carries a requisition_line_id, the same
+   * test update() applies to replacement lines.
+   */
+  async assertNotRequisitionTransfer(id: string, tenantId: string): Promise<void> {
+    const [linked] = await this.db
+      .select({
+        requisition_line_id: schema.stockTransferLine.requisition_line_id,
+        transfer_no: schema.stockTransfer.transfer_no,
+        req_no: schema.requisition.req_no,
+      })
+      .from(schema.stockTransferLine)
+      .innerJoin(schema.stockTransfer, eq(schema.stockTransfer.transfer_id, schema.stockTransferLine.transfer_id))
+      .leftJoin(schema.requisitionLine, eq(schema.requisitionLine.line_id, schema.stockTransferLine.requisition_line_id))
+      .leftJoin(schema.requisition, eq(schema.requisition.requisition_id, schema.requisitionLine.requisition_id))
+      .where(and(
+        eq(schema.stockTransferLine.transfer_id, id),
+        eq(schema.stockTransfer.tenant_id, tenantId),
+        sql`${schema.stockTransferLine.requisition_line_id} IS NOT NULL`,
+      ))
+      .limit(1);
+    if (linked) {
+      throw new BadRequestException(
+        `Stock Transfer ${linked.transfer_no} belongs to requisition ${linked.req_no ?? '(unknown)'}; post its shipment and receipt from the requisition.`,
+      );
+    }
+  }
+
   async post(id: string, tenantId: string, userPayload?: any) {
     // Compatibility wrapper (Task 10): the atomic one-step posting is now a
     // direct transfer — one shipment covering every line plus its matching

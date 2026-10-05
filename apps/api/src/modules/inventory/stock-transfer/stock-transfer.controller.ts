@@ -67,6 +67,8 @@ export class StockTransferController {
   @ApiParam({ name: 'id', description: 'Stock Transfer UUID' })
   async post(@Param('id') id: string, @Req() req: any) {
     const tenantId = req.user?.tenantId || req['tenantId'];
+    // A requisition's transfer is posted from the requisition (P1 follow-up I1).
+    await this.stockTransferService.assertNotRequisitionTransfer(id, tenantId);
     const result = await this.stockTransferService.post(id, tenantId, req.user);
     return { success: true, message: 'Stock Transfer posted successfully.', data: result };
   }
@@ -77,6 +79,8 @@ export class StockTransferController {
   @ApiParam({ name: 'id', description: 'Stock Transfer UUID' })
   async shipment(@Param('id') id: string, @Body() dto: PostShipmentDto, @Req() req: any) {
     const tenantId = req.user?.tenantId || req['tenantId'];
+    // A requisition's transfer is posted from the requisition (P1 follow-up I1).
+    await this.stockTransferService.assertNotRequisitionTransfer(id, tenantId);
     const result = await this.stockTransferService.postShipment(id, dto, tenantId, req.user);
     return { success: true, message: 'Shipment posted.', data: result };
   }
@@ -87,6 +91,8 @@ export class StockTransferController {
   @ApiParam({ name: 'id', description: 'Stock Transfer UUID' })
   async receipt(@Param('id') id: string, @Body() dto: PostReceiptDto, @Req() req: any) {
     const tenantId = req.user?.tenantId || req['tenantId'];
+    // A requisition's transfer is posted from the requisition (P1 follow-up I1).
+    await this.stockTransferService.assertNotRequisitionTransfer(id, tenantId);
     const result = await this.stockTransferService.postReceipt(id, dto, tenantId, req.user);
     return { success: true, message: 'Receipt posted.', data: result };
   }
@@ -97,6 +103,8 @@ export class StockTransferController {
   @ApiParam({ name: 'id', description: 'Stock Transfer UUID' })
   async directTransfer(@Param('id') id: string, @Body() dto: PostDirectTransferDto, @Req() req: any) {
     const tenantId = req.user?.tenantId || req['tenantId'];
+    // A requisition's transfer is posted from the requisition (P1 follow-up I1).
+    await this.stockTransferService.assertNotRequisitionTransfer(id, tenantId);
     const result = await this.stockTransferService.postDirectTransfer(id, dto, tenantId, req.user);
     return { success: true, message: 'Direct Transfer posted.', data: result };
   }
