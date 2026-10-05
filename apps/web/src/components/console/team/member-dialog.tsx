@@ -83,6 +83,11 @@ export function MemberDialog({
     phone: member?.phone || "",
     employee_id: member?.employee_id || "",
     department: member?.department || "",
+    // WP1c (Rishi's 4 Oct list, "User Setup defines department"): the identity
+    // the Transfer Shipment/Receipt rules compare — a Cost Center of type
+    // DEPARTMENT, never free text (decisions, 1 Oct). The legacy `department`
+    // text column stays for the records that already carry one.
+    department_id: member?.department_id || "",
     designation: member?.designation || "",
     user_type: (isEdit ? member?.user_type : typeOptions[typeOptions.length - 1]) || "STANDARD_USER",
     farm_id: member?.farm_id || "",
@@ -98,6 +103,7 @@ export function MemberDialog({
   const [farms, setFarms] = useState<Row[]>([]);
   const [areas, setAreas] = useState<Row[]>([]);
   const [roles, setRoles] = useState<Row[]>([]);
+  const [departments, setDepartments] = useState<Row[]>([]);
   const [lookupsLoading, setLookupsLoading] = useState(false);
   const [areaQuery, setAreaQuery] = useState("");
   const [saving, setSaving] = useState(false);
@@ -109,18 +115,20 @@ export function MemberDialog({
   // are narrowed by who is asking — an operational admin is only offered the
   // areas they hold themselves. The API decides all three; this only asks.
   useEffect(() => {
-    if (!companyId) { setFarms([]); setAreas([]); setRoles([]); return; }
+    if (!companyId) { setFarms([]); setAreas([]); setRoles([]); setDepartments([]); return; }
     let cancelled = false;
     setLookupsLoading(true);
     Promise.all([
       api.get(`/user/assignable-farms?companyId=${companyId}`).catch(() => []),
       api.get(`/user/assignable-areas?companyId=${companyId}`).catch(() => []),
       api.get(`/role/company/${companyId}`).catch(() => []),
+      api.get(`/cost-center?costCenterType=DEPARTMENT&companyId=${companyId}`).catch(() => []),
     ])
-      .then(([farmRows, areaRows, roleRows]) => {
+      .then(([farmRows, areaRows, roleRows, departmentRows]) => {
         if (cancelled) return;
         setFarms(Array.isArray(farmRows) ? farmRows : []);
         setAreas(Array.isArray(areaRows) ? areaRows : []);
+        setDepartments(Array.isArray(departmentRows) ? departmentRows : []);
         // SUPER_ADMIN is not a role a console user is handed from this screen.
         setRoles((Array.isArray(roleRows) ? roleRows : []).filter((r: Row) => r.role_code !== "SUPER_ADMIN" && r.role_code !== "SYSTEM_SUPER_ADMIN"));
       })
@@ -150,6 +158,7 @@ export function MemberDialog({
           phone: form.phone,
           employee_id: form.employee_id,
           department: form.department,
+          department_id: form.department_id || null,
           designation: form.designation,
           operational_area_ids: areaIds,
         };
@@ -179,6 +188,7 @@ export function MemberDialog({
           user_type: form.user_type,
           employee_id: form.employee_id || undefined,
           department: form.department || undefined,
+          department_id: form.department_id || undefined,
           designation: form.designation || undefined,
           farm_id: isFarmBound && form.farm_id ? form.farm_id : undefined,
           direct_transfer_allowed: form.direct_transfer_allowed || undefined,
@@ -260,9 +270,21 @@ export function MemberDialog({
               <Input id="tm-employee-id" value={form.employee_id}
                 onChange={(e) => setForm({ ...form, employee_id: e.target.value })} />
             </Field>
-            <Field label={t("edmDepartment")} htmlFor="tm-department">
-              <Input id="tm-department" value={form.department}
-                onChange={(e) => setForm({ ...form, department: e.target.value })} />
+            <Field label={t("tmFieldDepartment")} htmlFor="tm-department-id"
+              hint={departments.length ? undefined : t("tmNoDepartmentsHint")}>
+              {/* The rule reads this id, so it is a Cost Center picker. A
+                  company with no DEPARTMENT cost centres yet shows the hint
+                  rather than an empty box with no explanation. */}
+              <select id="tm-department-id" aria-label={t("tmFieldDepartment")} className="nf-input-sm nf-select w-full"
+                value={form.department_id}
+                onChange={(e) => setForm({ ...form, department_id: e.target.value })}>
+                <option value="">{t("tmDepartmentNone")}</option>
+                {departments.map((d) => (
+                  <option key={d.cost_center_id} value={d.cost_center_id}>
+                    {d.cost_center_code} — {d.cost_center_name}
+                  </option>
+                ))}
+              </select>
             </Field>
             <Field label={t("edmDesignation")} htmlFor="tm-designation">
               <Input id="tm-designation" value={form.designation}
