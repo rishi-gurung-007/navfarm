@@ -2698,3 +2698,14 @@ Rishi, 5 Oct (to the desktop controller, after confirming the unified-requisitio
 2. An approved feed requisition is fulfilled by the workbook's **mill flow**: Feed Mill Manager Consolidation Sheet →
    Transfer Order from the mill → Loading Instruction Sheet → Dispatch → TO Receipt at the silo (master plan Part B).
    It is not released as a common Store/Purchase transfer.
+
+## 2026-10-05 — Common requisition: requester, Service lines, receipt and release
+
+Rishi, 5 Oct, answering the Phase 1 end-to-end findings:
+1. Requester User ID shows the user's **login (email)**, not the internal id.
+2. Service lines follow his list: **Description + Qty only**. The optional Resource picker is removed from Service lines.
+3. "The one requesting is the one who would be receiving." Transfer Receipt is posted by the **requester**. The list's
+   department check still applies (the requester's department must match the To Sub-Location). The requester needs no
+   separate receive permission. Direct Transfer remains the sender's single action that posts both.
+4. **Release** may be pressed by **any user who may approve** the requisition. This replaces the 1 Oct
+   sender-department rule for Release only; Transfer Shipment stays with the sender department.
