@@ -1799,7 +1799,6 @@ export const translations = {
     crqShipment: "Shipment",
     crqShipQtyFor: "Ship now, line {{line}}",
     crqReceiveQtyFor: "Receive now, line {{line}}",
-    crqOpenApproval: "Open the approval",
     crqBack: "Back",
     crqSaved: "Saved.",
     crqSubmitted: "Submitted for approval.",

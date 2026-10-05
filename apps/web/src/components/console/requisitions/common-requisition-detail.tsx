@@ -3,9 +3,10 @@
 /**
  * The common requisition (Item / Fixed Asset / Service) document and its
  * actions: Save, Submit, Reopen, Release, Link PO, Ship and Receive (Part E,
- * Task 12). Approve and Reject are deliberately NOT here — they stay in the
- * Approvals inbox (decisions 1 Oct: approval precedes release; a requester
- * never approves their own request).
+ * Task 12). Approve and Reject are not here: the Requisition page puts them
+ * under the document (RequisitionDecision). There is no link to the Approvals
+ * inbox — it no longer lists requisitions (decisions, 5 Oct); the document's
+ * own Approval / Approved by / Approved at fields show the decision.
  *
  * The API's PUT /requisition/:id is a FULL REPLACE (omitted remarks,
  * required_date, justification, sender_department_id and direct_transfer
@@ -31,13 +32,6 @@ import {
 } from "./common-requisition-model";
 
 const inputStyle = { backgroundColor: "var(--input-bg)", color: "var(--input-text)", borderColor: "var(--input-border)" };
-
-/** The inbox tab a submitted requisition's approval sits in (keyed on approval_status). */
-export function commonApprovalHref(v: { approval_status?: string | null; approval_request_id?: string | null }): string | null {
-  if (!v.approval_request_id) return null;
-  const tab = v.approval_status === "APPROVED" ? "approved" : v.approval_status === "REJECTED" ? "rejected" : "pending";
-  return `/approvals/${tab}?request=${v.approval_request_id}`;
-}
 
 /** A quantity box's text as a number; blank is "nothing entered". */
 const entered = (raw: string | undefined) => (raw === undefined || raw.trim() === "" ? null : Number(raw));
@@ -91,7 +85,6 @@ export function CommonRequisitionDetail({ initial, onView, onBack, embedded = fa
   };
   const actions = commonActions(draft, can);
   const editable = isCommonEditable(draft);
-  const href = commonApprovalHref(draft);
   const id = draft.requisition_id;
 
   // WP4a: a released Store document still needs the items' tracking flags,
@@ -209,9 +202,6 @@ export function CommonRequisitionDetail({ initial, onView, onBack, embedded = fa
           )}
           {actions.includes("ship") && <Button size="sm" variant="outline" onClick={() => setPanel(panel === "ship" ? null : "ship")} disabled={busy}>{t("crqShip")}</Button>}
           {actions.includes("receive") && <Button size="sm" variant="outline" onClick={() => setPanel(panel === "receive" ? null : "receive")} disabled={busy}>{t("crqReceive")}</Button>}
-          {actions.includes("openApproval") && href && (
-            <a href={href} className="text-xs font-semibold underline underline-offset-2" style={{ color: "var(--accent)" }}>{t("crqOpenApproval")}</a>
-          )}
         </div>
 
         {panel === "ship" && actions.includes("ship") && (

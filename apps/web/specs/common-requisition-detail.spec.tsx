@@ -137,17 +137,17 @@ describe("CommonRequisitionDetail", () => {
   it("reopens a rejected requisition", async () => {
     const onView = jest.fn();
     render(<CommonRequisitionDetail initial={base({ approval_status: "REJECTED", approval_request_id: "ar-1" })} onView={onView} onBack={jest.fn()} />);
-    expect((screen.getByText("crqOpenApproval") as HTMLAnchorElement).getAttribute("href")).toBe("/approvals/rejected?request=ar-1");
     fireEvent.click(screen.getByText("crqReopen"));
     await waitFor(() => expect(post).toHaveBeenCalledWith("/requisition/req-1/reopen", {}));
     await waitFor(() => expect(onView).toHaveBeenCalledWith(expect.anything(), "crqReopened"));
   });
 
-  it("links the approval in the pending and approved inboxes", () => {
+  it("links nowhere: Approvals no longer lists requisitions, the document shows the approval itself (P1 e2e)", () => {
     const { rerender } = render(<CommonRequisitionDetail initial={base({ approval_status: "PENDING_APPROVAL", approval_request_id: "ar-2" })} onView={jest.fn()} onBack={jest.fn()} />);
-    expect((screen.getByText("crqOpenApproval") as HTMLAnchorElement).getAttribute("href")).toBe("/approvals/pending?request=ar-2");
+    expect(screen.queryByText("crqOpenApproval")).toBeNull();
+    expect(document.querySelector('a[href^="/approvals/"]')).toBeNull();
     rerender(<CommonRequisitionDetail initial={base({ approval_status: "APPROVED", document_status: "APPROVED", approval_request_id: "ar-2" })} onView={jest.fn()} onBack={jest.fn()} />);
-    expect((screen.getByText("crqOpenApproval") as HTMLAnchorElement).getAttribute("href")).toBe("/approvals/approved?request=ar-2");
+    expect(document.querySelector('a[href^="/approvals/"]')).toBeNull();
   });
 
   it("releases an approved Store requisition and names the transfer; Approve and Reject are not here", async () => {

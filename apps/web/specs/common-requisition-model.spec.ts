@@ -22,10 +22,12 @@ describe("common requisition model", () => {
 
   it.each([
     [{}, ["save", "submit"]],
-    [{ approval_status: "PENDING_APPROVAL", approval_request_id: "ar-1" }, ["openApproval"]],
-    [{ approval_status: "REJECTED", approval_request_id: "ar-1" }, ["reopen", "openApproval"]],
-    [{ approval_status: "APPROVED", document_status: "APPROVED", approval_request_id: "ar-1" }, ["openApproval", "release"]],
-    [{ approval_status: "APPROVED", document_status: "RELEASED", purpose: "PURCHASE", approval_request_id: "ar-1" }, ["openApproval", "linkPo"]],
+    // P1 e2e (5 Oct): no "Open the approval" link — Approvals no longer lists
+    // requisitions (decisions, 5 Oct), so the link landed on a page without it.
+    [{ approval_status: "PENDING_APPROVAL", approval_request_id: "ar-1" }, []],
+    [{ approval_status: "REJECTED", approval_request_id: "ar-1" }, ["reopen"]],
+    [{ approval_status: "APPROVED", document_status: "APPROVED", approval_request_id: "ar-1" }, ["release"]],
+    [{ approval_status: "APPROVED", document_status: "RELEASED", purpose: "PURCHASE", approval_request_id: "ar-1" }, ["linkPo"]],
   ])("offers the actions for %j", (over, actions) => {
     expect(commonActions({ ...base(), ...over } as any, all)).toEqual(actions);
   });

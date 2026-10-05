@@ -197,7 +197,7 @@ export function isCommonEditable(v: CommonRequisitionView): boolean {
   return (v.approval_status ?? "OPEN") === "OPEN" && (v.document_status ?? "OPEN") === "OPEN";
 }
 
-export type CommonAction = "save" | "submit" | "reopen" | "release" | "linkPo" | "ship" | "receive" | "openApproval";
+export type CommonAction = "save" | "submit" | "reopen" | "release" | "linkPo" | "ship" | "receive";
 
 export function commonActions(v: CommonRequisitionView, can: { create: boolean; approve: boolean; transfer: boolean }): CommonAction[] {
   if (!v.requisition_id) return can.create ? ["save"] : [];
@@ -206,7 +206,6 @@ export function commonActions(v: CommonRequisitionView, can: { create: boolean; 
   const out: CommonAction[] = [];
   if (approval === "OPEN" && doc === "OPEN" && can.create) out.push("save", "submit");
   if (approval === "REJECTED" && can.create) out.push("reopen");
-  if (v.approval_request_id && approval !== "OPEN") out.push("openApproval");
   if (approval === "APPROVED" && doc === "APPROVED" && can.approve) out.push("release");
   if (doc === "RELEASED" && v.purpose === "PURCHASE" && can.approve) out.push("linkPo");
   if (doc === "RELEASED" && v.purpose === "STORE" && can.transfer) {
