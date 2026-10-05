@@ -241,3 +241,32 @@ export function planTrackedItems(
   }
   return { create, skipped };
 }
+
+/**
+ * The operational-admin persona needs a standing operational area: RolesGuard
+ * refuses every operational call from a restricted user without one ("Select
+ * an operational area first."), and the seed never gave area.admin any — WP1f
+ * had to add and remove a temporary assignment to reach the code under test
+ * (progress.md, "Flagged for WP4"). Only that persona, only when it holds no
+ * area at all, and only areas of its own company (RolesGuard checks that too).
+ */
+export const DEMO_AREA_PERSONAS: Readonly<Record<string, string>> = {
+  'area.admin@triplec.local': 'OPERATIONAL_ADMIN',
+};
+
+export function planAreaAssignments(
+  users: Array<{ user_id: string; email: string; user_type: string; company_id: string | null }>,
+  assignments: Array<{ user_id: string; area_id: string }>,
+  areas: Array<{ area_id: string; company_id: string | null; area_code: string; is_active: number | boolean; deleted_at: string | Date | null }>,
+) {
+  const out: Array<{ user_id: string; email: string; area_id: string; area_code: string; company_id: string }> = [];
+  for (const u of users) {
+    if (DEMO_AREA_PERSONAS[u.email.toLowerCase()] !== u.user_type || !u.company_id) continue;
+    if (assignments.some((a) => a.user_id === u.user_id)) continue;
+    for (const a of areas) {
+      if (a.company_id !== u.company_id || Number(a.is_active) !== 1 || a.deleted_at) continue;
+      out.push({ user_id: u.user_id, email: u.email, area_id: a.area_id, area_code: a.area_code, company_id: u.company_id });
+    }
+  }
+  return out;
+}

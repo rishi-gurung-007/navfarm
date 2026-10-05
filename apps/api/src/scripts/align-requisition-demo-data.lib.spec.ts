@@ -2,6 +2,7 @@ import {
   DEMO_DEPARTMENTS,
   DEMO_TRACKED_ITEMS,
   DEMO_USER_DEPARTMENTS,
+  planAreaAssignments,
   planDepartmentCostCenters,
   planLocationDepartments,
   planTrackedItems,
@@ -198,5 +199,31 @@ describe('planTrackedItems — one lot-tracked and one serial-tracked illustrati
     const plan = planTrackedItems([CO], [], [], { LOT: 'ser-lot', SERIAL: 'ser-sn' });
     expect(plan.create).toEqual([]);
     expect(plan.skipped).toEqual([{ company_id: CO, why: 'no active MEDICINE item with a category to clone the posting set-up from' }]);
+  });
+});
+
+describe('planAreaAssignments — the operational admin persona gets a standing area (progress.md, "Flagged for WP4")', () => {
+  const area = { area_id: 'a-1', company_id: CO, area_code: 'PIGGERY-01', is_active: 1, deleted_at: null };
+  const admin = { user_id: 'u-area', email: 'area.admin@triplec.local', user_type: 'OPERATIONAL_ADMIN', company_id: CO };
+
+  it('assigns every active area of the company to area.admin when it holds none', () => {
+    expect(planAreaAssignments([admin], [], [area, { ...area, area_id: 'a-2', area_code: 'OLD', is_active: 0 }])).toEqual([
+      { user_id: 'u-area', email: 'area.admin@triplec.local', area_id: 'a-1', area_code: 'PIGGERY-01', company_id: CO },
+    ]);
+  });
+
+  it('adds nothing once the persona holds any area — a standing choice is never second-guessed', () => {
+    expect(planAreaAssignments([admin], [{ user_id: 'u-area', area_id: 'a-9' }], [area])).toEqual([]);
+  });
+
+  it('touches no other user, and not an area.admin whose type is not OPERATIONAL_ADMIN', () => {
+    expect(planAreaAssignments([
+      { ...admin, user_id: 'u-x', email: 'user@triplec.local', user_type: 'STANDARD_USER' },
+      { ...admin, user_type: 'COMPANY_ADMIN' },
+    ], [], [area])).toEqual([]);
+  });
+
+  it('never assigns an area of another company', () => {
+    expect(planAreaAssignments([admin], [], [{ ...area, company_id: 'co-2' }])).toEqual([]);
   });
 });

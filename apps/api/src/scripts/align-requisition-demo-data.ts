@@ -17,7 +17,9 @@
  *   2. location_master.department_id: STORE -> Stores, SHED and FARM -> Farm
  *      Operations; NULL rows only, never overwriting;
  *   3. user_master.department_id for the seeded demo users (company.admin ->
- *      Stores; area.admin and user@ -> Farm Operations); NULL rows only;
+ *      Stores; area.admin and user@ -> Farm Operations); NULL rows only; and a
+ *      standing operational area for area.admin when it holds none (without
+ *      one every operational call it makes is refused);
  *   4. the ITEM_LOT / ITEM_SERIAL number series (SYSTEM_NO_SERIES_SEED, PR #13)
  *      if missing, and one lot-tracked and one serial-tracked item
  *      (ILL-LOT-001, ILL-SER-001) cloned from the company's medicine posting
@@ -34,6 +36,7 @@
 import mysql, { RowDataPacket } from 'mysql2/promise';
 import { randomUUID } from 'node:crypto';
 import {
+  planAreaAssignments,
   planDepartmentCostCenters,
   planLocationDepartments,
   planTrackedItems,
@@ -119,6 +122,20 @@ async function run() {
       }
     }
 
+    // 3b. A standing operational area for the operational-admin persona (none held only).
+    const [areaUsers] = await db.query<RowDataPacket[]>('SELECT user_id, email, user_type, company_id FROM user_master WHERE deleted_at IS NULL');
+    const [areaAssignments] = await db.query<RowDataPacket[]>('SELECT user_id, area_id FROM user_operational_area_assignment');
+    const [areas] = await db.query<RowDataPacket[]>('SELECT area_id, company_id, area_code, is_active, deleted_at FROM operational_area_master');
+    const areaPlan = planAreaAssignments(areaUsers as never, areaAssignments as never, areas as never);
+    if (write) {
+      for (const [i, a] of areaPlan.entries()) {
+        await db.query(
+          'INSERT INTO user_operational_area_assignment (assignment_id, user_id, area_id, company_id, is_primary) VALUES (?, ?, ?, ?, ?)',
+          [randomUUID(), a.user_id, a.area_id, a.company_id, i === 0 ? 1 : 0],
+        );
+      }
+    }
+
     // 4. Tracking series and tracked items.
     const tenantIds = [...new Set(companies.map((c) => tenantOf.get(c)).filter((t): t is string => Boolean(t)))];
     const seriesPlan = tenantIds.flatMap((t) => planTrackingSeries(series as unknown as SeriesRow[], t));
@@ -180,6 +197,7 @@ async function run() {
       departments: { create: createdCostCenters, existing: deptPlan.existing, blocked: deptPlan.blocked },
       locations: { set: locPlan.set.length, byDepartment: byDept(locPlan.set), keptExisting: locPlan.keptExisting, codes: locPlan.set.map((l) => `${l.location_code} -> ${l.department}`) },
       users: { set: userPlan.set.map((u) => `${u.email} -> ${u.department}`), keptExisting: userPlan.keptExisting },
+      operationalAreas: areaPlan.map((a) => `${a.email} -> ${a.area_code}`),
       trackingSeries: seriesPlan.map((s) => `${s.code} (${s.document_type}, prefix ${s.prefix}, ${s.seq_length} digits)`),
       trackedItems: { create: createdItems, skipped: itemPlans.flatMap((p) => p.skipped) },
       countsAfter: after[0],
