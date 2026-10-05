@@ -616,3 +616,8 @@ Next remains the Phase 1 every-kind common-requisition live pass, followed by th
 - Rishi answered the e2e concerns (decisions.md 5 Oct): requester login shown; Service = Description + Qty; requester
   receives; any approver releases. → Phase 1 follow-up (p1f) dispatched next, with farm-from-location, the malformed
   serial layer repair, and success messages inside the dialog.
+- **P1 follow-up: complete** — c66b32bc..c6739a57 (items 1–8), fix round 1 1d00172f..f860740b (I1 generic stock-transfer routes guarded; I2 one farm rule; I3 server-decided may_release/may_receive; M1 one approve-grant helper; refusal messages by the buttons; RQ-00008 description), 00d17aa9 (PUT/DELETE guard; controller-reviewed 4-line mirror of the re-reviewed guard). Reviews clean.
+  Data scripts applied to nf_devco and owed on the testers' tenant at release: db-fix-requisition-farm, db-split-comma-serial-layers, db-fill-service-line-descriptions (plus db-align-requisition-demo-data / -permissions are demo-only).
+  Tightening to note for Rishi: deciding a requisition through the generic approval engine now also needs PROCUREMENT/REQUISITION approve (requisitions no longer appear in the inbox, so no visible change).
+- **PHASE 1 (common requisition) COMPLETE.**
+- Next: NEXT-STEPS Step 1 — unified requisition plan Tasks 1–5 (ledger `.superpowers/sdd/2026-10-05-unified-requisition-and-feed-forecast/progress.md`; Tasks 1+2 dispatched together, no red commits).

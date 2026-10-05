@@ -10,7 +10,7 @@ work**. Where it disagrees with an older plan, this file and `docs/decisions.md`
   requisition; the Requisition page (top-level menu); Rishi's header/line/button list word for word; department checks
   on Transfer Shipment/Receipt; Direct Transfer right in User Setup; Item Tracking (lot/serial) with merged origin/main
   work; demo data (departments, tracked items); the LOB scoping fix; demo role permissions; all 7 end-to-end flows PASS.
-- **In flight / next: the Phase 1 follow-up**, brief `briefs/p1f-brief.md` (items 1–8: requester shows email; Service
+- **DONE (5 Oct evening): the Phase 1 follow-up**, brief `briefs/p1f-brief.md` (items 1–8: requester shows email; Service
   lines Description + Qty only; the requester posts the receipt; any approver releases; farm taken from Main/Farm
   Location; repair the malformed "SN00001,SN00002" layer; success messages inside the dialog; one self-approval SQL rule).
   **How to tell what is done:** `git log --oneline` for commits mentioning those items after `fc64bc2a`, and the end
