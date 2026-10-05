@@ -18,9 +18,16 @@ import { useLanguage } from "@/hooks/useLanguage";
 import { cn } from "@/lib/utils";
 import { formatDateShort } from "@/utils/date-short";
 import {
-  APPROVAL_STATE_LABEL, COMMON_PURPOSE_LABEL, DOC_TYPE_LABEL, DOCUMENT_STATE_LABEL, FULFILMENT_STATE_LABEL, INTEGRATION_STATE_LABEL, labelOf, variantOf,
+  APPROVAL_STATE_LABEL, COMMON_PURPOSE_LABEL, DOC_TYPE_LABEL, FULFILMENT_STATE_LABEL, INTEGRATION_STATE_LABEL, labelOf, variantOf,
 } from "../inventory/requisition-labels";
-import { emptyLine, type CommonRequisitionLine, type CommonRequisitionOptions, type CommonRequisitionView } from "./common-requisition-model";
+import { commonStatus, emptyLine, type CommonRequisitionLine, type CommonRequisitionOptions, type CommonRequisitionView } from "./common-requisition-model";
+
+/** WP1c: the header's two-value Status (Rishi's list), separate from Approval. */
+const STATUS_LABEL: Record<string, { key: string; variant: "neutral" | "info" }> = {
+  OPEN: { key: "crqStatusOpen", variant: "neutral" },
+  RELEASED: { key: "crqStatusReleased", variant: "info" },
+  CANCELLED: { key: "crqStatusCancelled", variant: "neutral" },
+};
 
 const HALF = "sm:col-span-6";
 const inputStyle = { backgroundColor: "var(--input-bg)", color: "var(--input-text)", borderColor: "var(--input-border)" };
@@ -82,21 +89,27 @@ export function CommonRequisitionDocument({ view, editable, options, onChange }:
   return (
     <div className="flex flex-col gap-4">
       <FieldGroup title={t("crqHeaderTitle")}>
+        {/* WP1c — Rishi's 4 Oct list, "REQUISITION HEADER", in his order.
+            Our own fields (required date, the remaining state dimensions, the
+            audit stamps and justification) follow after his, never between. */}
         <ReadField className={HALF} label={t("crqReqNo")} value={view.req_no ?? null} mono />
-        <ReadField className={HALF} label={t("crqType")} value={labelOf(DOC_TYPE_LABEL, view.doc_type, t)} />
-        {can && view.doc_type === "ITEM"
-          ? select("crq-purpose", t("crqPurpose"), view.purpose, [{ value: "STORE", label: t("reqPurposeStore") }, { value: "PURCHASE", label: t("reqPurposePurchase") }],
-              (v) => set({ purpose: (v ?? "PURCHASE") as CommonRequisitionView["purpose"] }))
-          : <ReadField className={HALF} label={t("crqPurpose")} value={labelOf(COMMON_PURPOSE_LABEL, view.purpose, t)} />}
         {can ? input("crq-date", t("crqReqDate"), view.requisition_date, "date", (v) => set({ requisition_date: v }))
           : <ReadField className={HALF} label={t("crqReqDate")} value={view.requisition_date ? formatDateShort(view.requisition_date) : null} />}
         {can ? select("crq-main", t("crqMainLocation"), view.main_location_id, locChoices, (v) => set({ main_location_id: v }))
           : <ReadField className={HALF} label={t("crqMainLocation")} value={locCode(view.main_location_id, view.main_location_code)} mono />}
+        <ReadField className={HALF} label={t("crqRequesterUserId")} value={view.requester_user_id ?? null} mono />
         <ReadField className={HALF} label={t("crqRequester")} value={view.requester_name ?? null} />
-        {can ? select("crq-req-dept", t("crqRequesterDept"), view.requester_department_id, deptChoices, (v) => set({ requester_department_id: v }))
-          : <ReadField className={HALF} label={t("crqRequesterDept")} value={deptName(view.requester_department_id, view.requester_department_name)} />}
+        {/* "auto from User Setup" — the server snapshots it from the signed-in
+            user, so it is shown, never chosen. */}
+        <ReadField className={HALF} label={t("crqRequesterDept")} value={deptName(view.requester_department_id, view.requester_department_name)} />
         {can ? select("crq-snd-dept", t("crqSenderDept"), view.sender_department_id, deptChoices, (v) => set({ sender_department_id: v }))
           : <ReadField className={HALF} label={t("crqSenderDept")} value={deptName(view.sender_department_id, view.sender_department_name)} />}
+        <ReadField className={HALF} label={t("crqType")} value={labelOf(DOC_TYPE_LABEL, view.doc_type, t)} />
+        <ReadField className={HALF} label={t("crqStatus")} value={<Badge variant={STATUS_LABEL[commonStatus(view)].variant}>{t(STATUS_LABEL[commonStatus(view)].key as any)}</Badge>} />
+        {can && view.doc_type === "ITEM"
+          ? select("crq-purpose", t("crqPurpose"), view.purpose, [{ value: "STORE", label: t("reqPurposeStore") }, { value: "PURCHASE", label: t("reqPurposePurchase") }],
+              (v) => set({ purpose: (v ?? "PURCHASE") as CommonRequisitionView["purpose"] }))
+          : <ReadField className={HALF} label={t("crqPurpose")} value={labelOf(COMMON_PURPOSE_LABEL, view.purpose, t)} />}
         {store && (can ? select("crq-from", t("crqFrom"), view.from_location_id, locChoices, (v) => set({ from_location_id: v }))
           : <ReadField className={HALF} label={t("crqFrom")} value={locCode(view.from_location_id, view.from_location_code)} mono />)}
         {store && (can ? select("crq-to", t("crqTo"), view.to_location_id, locChoices, (v) => set({ to_location_id: v }))
@@ -120,10 +133,14 @@ export function CommonRequisitionDocument({ view, editable, options, onChange }:
             />
           </Field>
         ) : <ReadField className={HALF} label={t("crqDirectTransfer")} value={view.direct_transfer ? t("crqYes") : t("crqNo")} />)}
+        {can ? (
+          <Field className="sm:col-span-12" label={t("crqRemarks")} htmlFor="crq-remarks">
+            <textarea id="crq-remarks" rows={2} className="nf-input w-full px-2 py-1" style={inputStyle} value={view.remarks ?? ""} onChange={(e) => set({ remarks: e.target.value || null })} />
+          </Field>
+        ) : <ReadField className="sm:col-span-12" label={t("crqRemarks")} value={view.remarks} />}
         {can ? input("crq-required", t("crqRequiredDate"), view.required_date, "date", (v) => set({ required_date: v }))
           : <ReadField className={HALF} label={t("crqRequiredDate")} value={view.required_date ? formatDateShort(view.required_date) : null} />}
         <ReadField className={HALF} label={t("crqApproval")} value={view.approval_status ? <Badge variant={variantOf(APPROVAL_STATE_LABEL, view.approval_status)}>{labelOf(APPROVAL_STATE_LABEL, view.approval_status, t)}</Badge> : null} />
-        <ReadField className={HALF} label={t("crqDocument")} value={view.document_status ? <Badge variant={variantOf(DOCUMENT_STATE_LABEL, view.document_status)}>{labelOf(DOCUMENT_STATE_LABEL, view.document_status, t)}</Badge> : null} />
         <ReadField className={HALF} label={t("crqFulfilment")} value={view.fulfilment_status ? labelOf(FULFILMENT_STATE_LABEL, view.fulfilment_status, t) : null} />
         <ReadField className={HALF} label={t("crqIntegration")} value={view.integration_status ? labelOf(INTEGRATION_STATE_LABEL, view.integration_status, t) : null} />
         <ReadField className={HALF} label={t("crqApprovedBy")} value={view.approved_by_name ?? null} />
@@ -137,11 +154,6 @@ export function CommonRequisitionDocument({ view, editable, options, onChange }:
             <textarea id="crq-justification" rows={2} className="nf-input w-full px-2 py-1" style={inputStyle} value={view.justification ?? ""} onChange={(e) => set({ justification: e.target.value || null })} />
           </Field>
         ) : <ReadField className="sm:col-span-12" label={t("crqJustification")} value={view.justification} />}
-        {can ? (
-          <Field className="sm:col-span-12" label={t("crqRemarks")} htmlFor="crq-remarks">
-            <textarea id="crq-remarks" rows={2} className="nf-input w-full px-2 py-1" style={inputStyle} value={view.remarks ?? ""} onChange={(e) => set({ remarks: e.target.value || null })} />
-          </Field>
-        ) : <ReadField className="sm:col-span-12" label={t("crqRemarks")} value={view.remarks} />}
       </FieldGroup>
 
       <FieldGroup title={t("crqLinesTitle")}>

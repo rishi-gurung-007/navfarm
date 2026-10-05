@@ -149,3 +149,46 @@ describe("CommonRequisitionDocument — Item Tracking on the line", () => {
     expect(screen.getByText("L-7")).toBeTruthy();
   });
 });
+
+/**
+ * WP1c (Rishi's 4 Oct list, "REQUISITION HEADER"): the header carries his
+ * fields, with his labels, in his order. Before this the order was the
+ * editor's own and three of his fields were missing or wrong: Requester User
+ * ID was absent, Requester Department was a free select although his list says
+ * "auto from User Setup", and there was no single Status field — the document
+ * showed four separate state badges instead.
+ */
+describe("CommonRequisitionDocument — Rishi's header field list", () => {
+  const labelsInOrder = (container: HTMLElement) =>
+    Array.from(container.querySelectorAll(".nf-text-label")).map((n) => (n.textContent ?? "").trim());
+
+  const storeView = (over: Record<string, unknown> = {}) => ({
+    ...emptyCommonRequisition("co-1", "ITEM", "STORE", "2026-10-05"),
+    req_no: "REQ-2026-0001", requester_user_id: "u-7", requester_name: "Ada Farm", ...over,
+  });
+
+  it("lays the header out in the order of Rishi's list", () => {
+    const { container } = render(<CommonRequisitionDocument view={storeView() as any} editable options={options} onChange={jest.fn()} />);
+    const labels = labelsInOrder(container);
+    const expected = [
+      "crqReqNo", "crqReqDate", "crqMainLocation", "crqRequesterUserId", "crqRequester",
+      "crqRequesterDept", "crqSenderDept", "crqType", "crqStatus", "crqPurpose",
+      "crqFrom", "crqTo", "crqDirectTransfer", "crqRemarks",
+    ];
+    expect(labels.filter((l) => expected.includes(l))).toEqual(expected);
+  });
+
+  it("shows the Requester User ID and keeps Requester Department read-only (auto from User Setup)", () => {
+    render(<CommonRequisitionDocument view={storeView() as any} editable options={options} onChange={jest.fn()} />);
+    expect(screen.getByText("u-7")).toBeTruthy();
+    // Editable document, but this field is never a control.
+    expect(screen.queryByLabelText("crqRequesterDept")).toBeNull();
+  });
+
+  it("shows Status as Open until the document is released, then Released", () => {
+    const { rerender } = render(<CommonRequisitionDocument view={storeView({ document_status: "APPROVED" }) as any} editable={false} options={options} />);
+    expect(screen.getByText("crqStatusOpen")).toBeTruthy();
+    rerender(<CommonRequisitionDocument view={storeView({ document_status: "RELEASED" }) as any} editable={false} options={options} />);
+    expect(screen.getByText("crqStatusReleased")).toBeTruthy();
+  });
+});

@@ -70,6 +70,8 @@ export interface CommonRequisitionView {
   required_date: string | null;
   main_location_id: string | null;
   main_location_code?: string | null;
+  /** WP1c (Rishi's 4 Oct list): shown on the header; never a client input. */
+  requester_user_id?: string | null;
   requester_name?: string | null;
   requester_department_id: string | null;
   requester_department_name?: string | null;
@@ -159,6 +161,20 @@ export function toRequisitionPayload(v: CommonRequisitionView): Record<string, u
       serial_no: v.doc_type === "ITEM" ? s(l.serial_no) : undefined,
     })),
   };
+}
+
+/**
+ * WP1c (Rishi's 4 Oct list): "Status: Open / Released". The document's four
+ * state dimensions stay as they are underneath — approval is shown in its own
+ * field, because approval precedes release and the two are not one state
+ * (decisions, 1 Oct) — but the header's Status is this two-value projection.
+ * A cancelled document reports Cancelled rather than claiming to be Open.
+ */
+export function commonStatus(v: CommonRequisitionView): "OPEN" | "RELEASED" | "CANCELLED" {
+  const doc = v.document_status ?? "OPEN";
+  if (doc === "RELEASED") return "RELEASED";
+  if (doc === "CANCELLED") return "CANCELLED";
+  return "OPEN";
 }
 
 /** Mirrors the API's assertEditable: a new document, or approval OPEN and document OPEN. */
