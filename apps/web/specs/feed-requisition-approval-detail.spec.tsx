@@ -46,7 +46,7 @@ describe('FeedRequisitionApprovalDetail (D25)', () => {
     expect(screen.queryAllByRole('spinbutton')).toHaveLength(0);
     expect(screen.getAllByRole('textbox')).toHaveLength(1);
     expect(screen.getByLabelText('apReqApproverRemarks')).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'apReqOpen' }).getAttribute('href')).toBe('/approvals/requisitions?id=req-4');
+    expect(screen.getByRole('link', { name: 'apReqOpen' }).getAttribute('href')).toBe('/inventory/feed-forecast?tab=feed-requisition&id=req-4');
   });
 
   it('takes the approver\'s remarks while pending, and hides the box once decided', async () => {

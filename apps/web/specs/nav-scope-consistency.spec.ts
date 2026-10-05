@@ -126,6 +126,19 @@ describe('Sidebar consistency across workspace scopes', () => {
     expect(scopes.COMPANY.get('/approvals')).toBe(scopes.OPERATIONAL.get('/approvals'));
   });
 
+  /**
+   * WP1g (decisions.md 2026-10-05): Requisition is its own top-level item —
+   * not under Approvals, not under Inventory — in every scope that has
+   * Inventory, with one label.
+   */
+  it('lists Requisition as a top-level item in the company and operational workspaces', () => {
+    const scopes = navByScope();
+    for (const scope of ['COMPANY', 'OPERATIONAL']) {
+      expect([...scopes[scope].keys()]).toContain('/requisitions');
+      expect(scopes[scope].get('/requisitions')).toBe('navRequisition');
+    }
+  });
+
   it('keeps shared routes in one relative order across scopes', () => {
     const scopes = navByScope();
     const names = Object.keys(scopes).sort();

@@ -1,26 +1,27 @@
 "use client";
 
 /**
- * Approvals → Requisitions: the hub for every requisition kind (spec §6a:
- * "Approvals → Requisitions lists all types with a type filter. New offers
- * Feed, Item, Fixed Asset and Service"; Rishi 4 Oct, docs/decisions.md — the
- * Feed Forecast tab creates Feed only, this screen creates and lists all).
- *
- * The list is GET /requisition (FEED rows included, read-only there). Opening
- * a row routes by kind: a FEED row is read from /feed-requisition and shown as
- * the feed document (FeedRequisitionDetail), because every change to a feed
- * requisition goes through the feed module's own rules — the generic routes
- * refuse FEED (API Task 13). Item / Fixed Asset / Service open the common
- * document (CommonRequisitionDetail) from /requisition/:id.
+ * Requisition — its own top-level menu item (/requisitions; Rishi 5 Oct,
+ * docs/decisions.md "Requisition is its own menu item"). It lists and creates
+ * the COMMON kinds only: Item, Fixed Asset and Service. Feed requisitions live
+ * on Inventory -> Feed Forecast -> Requisition and are never listed, opened or
+ * created here: the list asks GET /requisition?kind=common, which excludes FEED
+ * in the query itself, and the New dialog does not offer Feed.
  *
  * `?id=` (the inbox's link, and the old /inventory/requisitions?id= redirect)
- * is read once: GET /requisition/:id says the kind, then as above.
+ * is read once: GET /requisition/:id says the kind. A FEED id is sent on to its
+ * Feed Forecast tab; anything else opens the common document
+ * (CommonRequisitionDetail) from /requisition/:id.
+ *
+ * Approve / Reject (RequisitionDecision, shared with the Feed Forecast tab)
+ * call the existing /approval/:id endpoints, so the checks stay in one place.
  *
  * The common detail resets its draft whenever `initial` changes identity, so
  * it is always given the last server view held in state — never an inline
  * spread, which would wipe unsaved edits on every re-render of this hub.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Inbox, Loader2 } from "lucide-react";
 import { api } from "@/services/api-client";
 import { InlineAlert } from "@/components/ui/alert";
@@ -34,14 +35,13 @@ import { useLanguage } from "@/hooks/useLanguage";
 import { cn } from "@/lib/utils";
 import { formatDateShort } from "@/utils/date-short";
 import { todayIso, unwrap } from "../inventory/feed-format";
-import { FeedRequisitionDetail } from "../inventory/feed-requisition-detail";
-import type { RequisitionView as FeedRequisitionView } from "../inventory/feed-requisition-document";
 import { RequisitionNewDialog } from "../inventory/requisition-new-dialog";
 import {
   APPROVAL_STATE_LABEL, COMMON_PURPOSE_LABEL, DOC_TYPE_LABEL, DOCUMENT_STATE_LABEL, FULFILMENT_STATE_LABEL, REQ_STATUS_LABEL,
   labelOf, variantOf,
 } from "../inventory/requisition-labels";
 import { CommonRequisitionDetail } from "./common-requisition-detail";
+import { RequisitionDecision, decisionTargetOf, type RequisitionDecisionTarget } from "./requisition-decision";
 import { emptyCommonRequisition, type CommonRequisitionView } from "./common-requisition-model";
 
 interface HubRow {
@@ -68,11 +68,12 @@ function newCommonTitleKey(view: { doc_type: string; purpose?: string | null }) 
   return "crqNewTitle" as const;
 }
 
-type Open = { kind: "feed"; view: FeedRequisitionView } | { kind: "common"; view: CommonRequisitionView } | null;
+type Open = CommonRequisitionView | null;
 /** The open row's decision surface, carried from the list row (WP1b). */
-type Decision = { requestId: string; docNo: string } | null;
+type Decision = RequisitionDecisionTarget | null;
 
-const TYPES = ["FEED", "ITEM", "FA", "SERVICE"] as const;
+/** Common kinds only (WP1g); Feed is raised and decided on Feed Forecast -> Requisition. */
+const TYPES = ["ITEM", "FA", "SERVICE"] as const;
 const STATUSES = ["DRAFT", "AUTO_DRAFT", "PENDING_APPROVAL", "APPROVED", "REJECTED"];
 const COLUMNS = [
   "rhColReqNo", "rhColType", "rhColPurpose", "rhColFarm", "rhColDate", "rhColRequired",
@@ -86,6 +87,7 @@ const SMALL_BADGE = "px-1.5 py-0 text-[10px]";
 
 export function RequisitionsHub() {
   const { t } = useLanguage();
+  const router = useRouter();
   const tRef = useRef(t);
   tRef.current = t;
 
@@ -103,16 +105,12 @@ export function RequisitionsHub() {
   // WP1b: deciding happens in the dialog, through the SAME /approval endpoints
   // the inbox uses — one decide path, one set of checks.
   const [decision, setDecision] = useState<Decision>(null);
-  const [deciding, setDeciding] = useState(false);
-  const [remarks, setRemarks] = useState("");
-  const [rejecting, setRejecting] = useState(false);
-  const [rejectReason, setRejectReason] = useState("");
 
   const loadList = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      const params = new URLSearchParams();
+      const params = new URLSearchParams({ kind: "common" });
       if (type) params.set("doc_type", type);
       if (status) params.set("status", status);
       if (waiting) params.set("waiting_for_me", "1");
@@ -130,27 +128,20 @@ export function RequisitionsHub() {
     loadList();
   }, [loadList]);
 
-  const openFeed = async (id: string) =>
-    setOpen({ kind: "feed", view: unwrap<FeedRequisitionView>(await api.get(`/feed-requisition/${id}`)) });
+  /** A feed requisition is read and decided on its Feed Forecast tab, not here. */
+  const goToFeedTab = (id: string) => router.replace(`/inventory/feed-forecast?tab=feed-requisition&id=${encodeURIComponent(id)}`);
 
-  /** Route by kind: FEED to the feed document, everything else to the common one. */
-  const openRow = async (id: string, docType?: string) => {
+  const openRow = async (id: string) => {
     setError("");
     setNotice("");
     setNeedsCompany(false);
-    setRemarks("");
-    setRejecting(false);
-    setRejectReason("");
     try {
-      const source = rows.find((r) => r.requisition_id === id);
-      setDecision(source?.approval_request_id && source.status === "PENDING_APPROVAL"
-        ? { requestId: source.approval_request_id, docNo: source.req_no }
-        : null);
-      if (docType === "FEED") return await openFeed(id);
       // GET /requisition/:id answers for every kind, FEED included (read-only).
       const view = unwrap<CommonRequisitionView | { doc_type: "FEED" }>(await api.get(`/requisition/${id}`));
-      if (view?.doc_type === "FEED") return await openFeed(id);
-      setOpen({ kind: "common", view: view as CommonRequisitionView });
+      if (view?.doc_type === "FEED") return goToFeedTab(id);
+      const source = rows.find((r) => r.requisition_id === id);
+      setDecision(decisionTargetOf(source));
+      setOpen(view as CommonRequisitionView);
     } catch (err: any) {
       setError(err?.message || tRef.current("rqLoadFailed"));
     }
@@ -159,7 +150,7 @@ export function RequisitionsHub() {
   const openRowRef = useRef(openRow);
   openRowRef.current = openRow;
 
-  // Opened by link: /approvals/requisitions?id=<requisition>.
+  // Opened by link: /requisitions?id=<requisition>.
   useEffect(() => {
     let id: string | null = null;
     try {
@@ -173,49 +164,6 @@ export function RequisitionsHub() {
   const afterView = (notice?: string) => {
     if (notice) setNotice(notice);
     loadList();
-  };
-
-  // WP1b: the same decide endpoints the Approvals inbox calls, so the
-  // document's own checks (remarks on deviation, rejection reasons) run in
-  // one place server-side. Approve closes the dialog and reloads; Reject asks
-  // for a reason first.
-  const decide = async () => {
-    if (!decision || deciding) return;
-    setDeciding(true);
-    setError("");
-    try {
-      await api.post(`/approval/${decision.requestId}/reject`, { rejection_reason: rejectReason.trim() || undefined });
-      const docNo = decision.docNo;
-      setOpen(null);
-      setDecision(null);
-      setRejecting(false);
-      setRejectReason("");
-      await loadList();
-      setNotice(tRef.current("rhRejectedMsg", { docNo }));
-    } catch (err: any) {
-      setError(err?.message || tRef.current("rqActionFailed"));
-    } finally {
-      setDeciding(false);
-    }
-  };
-
-  const approve = async () => {
-    if (!decision || deciding) return;
-    setDeciding(true);
-    setError("");
-    try {
-      await api.post(`/approval/${decision.requestId}/approve`, remarks.trim() ? { remarks: remarks.trim() } : {});
-      const docNo = decision.docNo;
-      setOpen(null);
-      setDecision(null);
-      setRemarks("");
-      await loadList();
-      setNotice(tRef.current("rhApprovedMsg", { docNo }));
-    } catch (err: any) {
-      setError(err?.message || tRef.current("rqActionFailed"));
-    } finally {
-      setDeciding(false);
-    }
   };
 
   return (
@@ -261,52 +209,26 @@ export function RequisitionsHub() {
         <Dialog
           open
           onClose={() => setOpen(null)}
-          title={open.kind === "feed" ? open.view.req_no : (open.view.req_no || t(newCommonTitleKey(open.view)))}
+          title={open.req_no || t(newCommonTitleKey(open))}
         >
-          {open.kind === "feed" ? (
-            <FeedRequisitionDetail
-              embedded
-              view={open.view}
-              onView={(v, n) => { setOpen({ kind: "feed", view: v }); afterView(n); }}
-              onBack={() => setOpen(null)}
+          <CommonRequisitionDetail
+            embedded
+            initial={open}
+            onView={(v, n) => { setOpen(v); afterView(n); }}
+            onBack={() => setOpen(null)}
+          />
+          {decision && (
+            <RequisitionDecision
+              target={decision}
+              onError={setError}
+              onDecided={async (message) => {
+                setOpen(null);
+                setDecision(null);
+                await loadList();
+                setError("");
+                setNotice(message);
+              }}
             />
-          ) : (
-            <CommonRequisitionDetail
-              embedded
-              initial={open.view}
-              onView={(v, n) => { setOpen({ kind: "common", view: v }); afterView(n); }}
-              onBack={() => setOpen(null)}
-            />
-          )}
-          {decision && !rejecting && (
-            <div className="space-y-2 border-t pt-3" style={{ borderColor: "var(--border)" }}>
-              <Field label={t("rhApproverRemarks")} htmlFor="rh-remarks">
-                <textarea id="rh-remarks" rows={2} className="nf-input w-full" style={inputStyle} value={remarks}
-                  onChange={(e) => setRemarks(e.target.value)} />
-              </Field>
-              <div className="flex justify-end gap-2">
-                <Button variant="destructive" size="sm" disabled={deciding} onClick={() => { setRejecting(true); setRejectReason(""); }}>
-                  {t("rhReject")}
-                </Button>
-                <Button size="sm" className="nf-btn-primary" disabled={deciding} onClick={approve}>
-                  {t("rhApprove")}
-                </Button>
-              </div>
-            </div>
-          )}
-          {decision && rejecting && (
-            <div className="space-y-2 border-t pt-3" style={{ borderColor: "var(--border)" }}>
-              <Field label={t("rhRejectionReason")} htmlFor="rh-reject-reason">
-                <textarea id="rh-reject-reason" rows={2} className="nf-input w-full" style={inputStyle} value={rejectReason}
-                  onChange={(e) => setRejectReason(e.target.value)} />
-              </Field>
-              <div className="flex justify-end gap-2">
-                <Button variant="outline" size="sm" disabled={deciding} onClick={() => setRejecting(false)}>{t("rhRejectCancel")}</Button>
-                <Button variant="destructive" size="sm" disabled={deciding} onClick={decide}>
-                  {t("rhRejectConfirm")}
-                </Button>
-              </div>
-            </div>
           )}
         </Dialog>
       ) : loading ? (
@@ -320,7 +242,7 @@ export function RequisitionsHub() {
           </thead>
           <tbody>
             {rows.map((r) => (
-              <tr key={r.requisition_id} className="cursor-pointer" onClick={() => openRow(r.requisition_id, r.doc_type)}>
+              <tr key={r.requisition_id} className="cursor-pointer" onClick={() => openRow(r.requisition_id)}>
                 <td className={cn(TD, "font-medium")}>{r.req_no}</td>
                 <td className={TD}>{labelOf(DOC_TYPE_LABEL, r.doc_type, t)}</td>
                 <td className={TD}>{labelOf(COMMON_PURPOSE_LABEL, r.purpose, t)}</td>
@@ -341,11 +263,8 @@ export function RequisitionsHub() {
         open={creating}
         types={[...TYPES]}
         onClose={() => setCreating(false)}
-        onCreated={(view) => {
-          setCreating(false);
-          setOpen({ kind: "feed", view });
-          afterView(tRef.current("rqCreated"));
-        }}
+        // Feed is not offered here (types above), so the feed create path never fires.
+        onCreated={() => setCreating(false)}
         onCommon={({ docType, purpose }) => {
           setCreating(false);
           // A common requisition belongs to one company; the tenant-wide workspace has none to give it.
@@ -354,7 +273,8 @@ export function RequisitionsHub() {
             return;
           }
           setNotice("");
-          setOpen({ kind: "common", view: emptyCommonRequisition(companyId, docType, purpose, todayIso()) });
+          setDecision(null);
+          setOpen(emptyCommonRequisition(companyId, docType, purpose, todayIso()));
         }}
       />
     </div>

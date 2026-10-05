@@ -1,26 +1,17 @@
-"use client";
+import { redirect } from "next/navigation";
 
-import { useRouter } from "next/navigation";
-import { ArrowLeft } from "lucide-react";
-import RequisitionsHub from "@/components/console/requisitions/requisitions-hub";
-import { Button } from "@/components/ui/button";
-import { ConsolePage } from "@/components/ui/console-page";
-import { PageHeader } from "@/components/ui/PageHeader";
-import { useLanguage } from "@/hooks/useLanguage";
+type Search = Record<string, string | string[] | undefined>;
 
-export default function ApprovalsRequisitionsPage() {
-  const router = useRouter();
-  const { t } = useLanguage();
-
-  return (
-    <ConsolePage fill>
-      <div className="flex shrink-0 items-start gap-2">
-        <Button variant="ghost" size="sm" onClick={() => router.push("/approvals/pending")} aria-label={t("approvals")}>
-          <ArrowLeft className="h-4 w-4" />
-        </Button>
-        <PageHeader title={t("invRequisitionsTitle")} description={t("rhDesc")} sticky={false} />
-      </div>
-      <RequisitionsHub />
-    </ConsolePage>
-  );
+/**
+ * Requisition is its own top-level page now (/requisitions; Rishi 5 Oct) — the
+ * old Approvals / Inventory URL stays valid and keeps its query string.
+ */
+export default async function RequisitionsMoved({ searchParams }: { searchParams: Promise<Search> }) {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(await searchParams)) {
+    if (Array.isArray(value)) value.forEach((item) => params.append(key, item));
+    else if (value !== undefined) params.set(key, value);
+  }
+  const query = params.size ? `?${params.toString()}` : "";
+  redirect(`/requisitions${query}`);
 }

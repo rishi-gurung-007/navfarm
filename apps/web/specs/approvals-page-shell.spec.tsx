@@ -70,7 +70,7 @@ test("the requisitions card shows the hub's pending count and links to Requisiti
   const link = await screen.findByRole("button", { name: /apRequisitionsCard/ });
   expect(link.textContent).toContain("4");
   fireEvent.click(link);
-  await waitFor(() => expect(routerPush).toHaveBeenCalledWith("/approvals/requisitions"));
+  await waitFor(() => expect(routerPush).toHaveBeenCalledWith("/requisitions"));
 });
 
 test("the badges count only what the inbox shows — the counts endpoint excludes requisitions", async () => {

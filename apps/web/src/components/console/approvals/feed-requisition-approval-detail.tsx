@@ -61,7 +61,7 @@ export function FeedRequisitionApprovalDetail({
             value={remarks} onChange={(e) => onRemarksChange(e.target.value)} />
         </Field>
       )}
-      <a href={`/approvals/requisitions?id=${documentId}`} className="inline-block text-[11px] font-semibold underline underline-offset-2" style={{ color: "var(--accent)" }}>
+      <a href={`/inventory/feed-forecast?tab=feed-requisition&id=${documentId}`} className="inline-block text-[11px] font-semibold underline underline-offset-2" style={{ color: "var(--accent)" }}>
         {t("apReqOpen")}
       </a>
     </div>

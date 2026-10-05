@@ -379,7 +379,7 @@ export function ApprovalsPageShell({ activeTab }: { activeTab: ApprovalStatus })
 
           <Button
             size="sm"
-            onClick={() => router.push("/approvals/requisitions")}
+            onClick={() => router.push("/requisitions")}
             className="nf-btn-primary text-xs h-8 gap-1.5 shrink-0"
           >
             <Plus className="h-3.5 w-3.5" /> {t("apNewRequest")}
@@ -397,7 +397,7 @@ export function ApprovalsPageShell({ activeTab }: { activeTab: ApprovalStatus })
       {/* WP1b: requisitions moved to the one list — show what waits there. */}
       {activeTab === "PENDING" && reqPending !== null && (
         <button
-          onClick={() => router.push("/approvals/requisitions")}
+          onClick={() => router.push("/requisitions")}
           className="nf-press flex items-center justify-between gap-2 rounded-[var(--radius-md)] border border-sky-500/30 bg-sky-500/10 px-4 py-2.5 text-xs font-semibold text-sky-700 hover:bg-sky-500/20 dark:text-sky-400"
         >
           <span>{t("apRequisitionsCard", { count: reqPending })}</span>

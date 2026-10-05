@@ -313,3 +313,60 @@ describe('RequisitionsPanel (D26)', () => {
     expect(await screen.findByRole('table', { name: 'rqListLabel' })).toBeTruthy();
   });
 });
+
+
+/**
+ * WP1g (decisions.md 2026-10-05): feed requisitions are decided on Feed Forecast
+ * -> Requisition, not on the Requisition page. The tab reuses the hub's decide
+ * component, so Approve / Reject reach the same /approval/:id endpoints.
+ */
+describe('Feed Forecast → Requisition — Approve / Reject (WP1g)', () => {
+  const pendingRow = { ...listRow, status: 'PENDING_APPROVAL', approval_request_id: 'ar-1' };
+  const pendingView = { ...view, status: 'PENDING_APPROVAL', approval_request_id: 'ar-1' };
+  const openPending = async () => {
+    get.mockImplementation(async (url: string) => (url.startsWith('/feed-requisition/') ? { data: pendingView } : { data: [pendingRow] }));
+    render(<RequisitionsPanel />);
+    fireEvent.click(await screen.findByText('REQ-VIL100-2026-00004'));
+    return screen.findByRole('dialog');
+  };
+
+  it('a pending requisition offers Approve, which posts to /approval/:id/approve and closes the dialog', async () => {
+    await openPending();
+    fireEvent.click(screen.getByRole('button', { name: 'rhApprove' }));
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/approval/ar-1/approve', {}));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(await screen.findByText('rhApprovedMsg:{"docNo":"REQ-VIL100-2026-00004"}')).toBeTruthy();
+  });
+
+  it('carries the approver remarks to the same endpoint', async () => {
+    await openPending();
+    fireEvent.change(screen.getByLabelText('rhApproverRemarks'), { target: { value: 'Capacity confirmed' } });
+    fireEvent.click(screen.getByRole('button', { name: 'rhApprove' }));
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/approval/ar-1/approve', { remarks: 'Capacity confirmed' }));
+  });
+
+  it('Reject asks for a reason and posts it to /approval/:id/reject', async () => {
+    await openPending();
+    fireEvent.click(screen.getByRole('button', { name: 'rhReject' }));
+    fireEvent.change(await screen.findByLabelText('rhRejectionReason'), { target: { value: 'Not this cycle' } });
+    fireEvent.click(screen.getByRole('button', { name: 'rhRejectConfirm' }));
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/approval/ar-1/reject', { rejection_reason: 'Not this cycle' }));
+  });
+
+  it("a refusal from the server is shown and the dialog stays open", async () => {
+    await openPending();
+    post.mockRejectedValueOnce(new Error('You cannot approve your own requisition.'));
+    fireEvent.click(screen.getByRole('button', { name: 'rhApprove' }));
+    expect(await screen.findByText('You cannot approve your own requisition.')).toBeTruthy();
+    expect(screen.getByRole('dialog')).toBeTruthy();
+  });
+
+  it('a draft requisition has no Approve / Reject', async () => {
+    get.mockImplementation(async (url: string) => (url.startsWith('/feed-requisition/') ? { data: view } : { data: [listRow] }));
+    render(<RequisitionsPanel />);
+    fireEvent.click(await screen.findByText('REQ-VIL100-2026-00004'));
+    await screen.findByRole('dialog');
+    expect(screen.queryByRole('button', { name: 'rhApprove' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'rhReject' })).toBeNull();
+  });
+});

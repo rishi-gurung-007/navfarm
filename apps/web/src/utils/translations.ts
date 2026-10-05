@@ -1420,6 +1420,7 @@ export const translations = {
     invFeedForecastDesc: "Feed on hand, daily use and refill dates for each batch.",
     invRequisitions: "Requisitions",
     invRequisitionsTitle: "Requisitions",
+    navRequisition: "Requisition",
     invRequisitionsDesc: "Feed orders to the mill, drafted from the forecast or entered by hand.",
     rqFarm: "Farm",
     rqType: "Type",
@@ -1708,7 +1709,7 @@ export const translations = {
     rhRejectCancel: "Back",
     rhApprovedMsg: "{{docNo}} approved.",
     rhRejectedMsg: "{{docNo}} rejected.",
-    rhDesc: "Every requisition — Feed, Item, Fixed Asset and Service. Open one to work on it, or raise a new one.",
+    rhDesc: "Item, Fixed Asset and Service requisitions. Open one to work on it, or raise a new one. Feed requisitions are on Feed Forecast.",
     // Task 18: a brand-new, unsaved common requisition has no req_no yet — the
     // dialog's title falls back to this rather than rendering blank.
     crqNewTitle: "New requisition",

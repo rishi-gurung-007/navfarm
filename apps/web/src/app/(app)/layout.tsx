@@ -18,6 +18,7 @@ import {
   Wheat,
   Pill,
   CheckSquare,
+  ClipboardList,
   Settings,
   AlertTriangle,
   Package,
@@ -288,7 +289,6 @@ export default function ConsoleLayout({ children, modal }: { children: React.Rea
   const inventoryChildren = [
     { label: t("invStockBalance"), href: "/inventory/balance" },
     { label: t("invFeedForecast"), href: "/inventory/feed-forecast" },
-    { label: t("invRequisitions"), href: "/inventory/requisitions" },
     { label: t("invGoodsReceipt"), href: "/inventory/goods-receipt" },
     { label: t("invTransfers"), href: "/inventory/transfers" },
     { label: t("invGoodsIssue"), href: "/inventory/goods-issue" },
@@ -339,6 +339,8 @@ export default function ConsoleLayout({ children, modal }: { children: React.Rea
       { label: t("navSchedulers"), href: "/schedulers", icon: CalendarClock, activePrefix: "/schedulers" },
       { label: t("navLivestock"), href: "/livestock", icon: Pill, children: livestockChildren },
       { label: t("inventoryStock"), href: "/inventory/balance", icon: Boxes, activePrefix: "/inventory", children: inventoryChildren, flyout: true },
+      // WP1g (decisions.md 2026-10-05): Requisition is its own item — common kinds only.
+      { label: t("navRequisition"), href: "/requisitions", icon: ClipboardList, activePrefix: "/requisitions" },
       { label: t("financeCosting"), href: "/finance/journal", icon: Landmark, activePrefix: "/finance" },
       // Alerts and Approvals belong here as much as in an area (F1/F2, review
       // I2): a company workspace has Inventory, so it has Feed Forecast and
@@ -412,6 +414,8 @@ export default function ConsoleLayout({ children, modal }: { children: React.Rea
         children: livestockChildren,
       },
       { label: t("inventoryStock"), href: "/inventory/balance", icon: Boxes, activePrefix: "/inventory", children: inventoryChildren, flyout: true },
+      // WP1g (decisions.md 2026-10-05): Requisition is its own item — common kinds only.
+      { label: t("navRequisition"), href: "/requisitions", icon: ClipboardList, activePrefix: "/requisitions" },
       { label: t("financeCosting"), href: "/finance/journal", icon: Landmark, activePrefix: "/finance" },
       { label: t("navAlerts"), href: "/alerts", icon: AlertTriangle },
       { label: t("navTraceability"), href: "/traceability", icon: Package },

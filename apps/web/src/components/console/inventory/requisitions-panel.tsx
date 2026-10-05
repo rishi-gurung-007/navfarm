@@ -5,9 +5,9 @@
  * Feed for now. The farm drafts a feed requisition from the forecast (Engine
  * Step 9, POST /feed-requisition/auto-draft) or by hand (Task 14), edits
  * Requested Qty and the delivery date, writes remarks, and submits it for
- * approval (D25): the decision is taken in the Approvals inbox, so this
- * screen has no approve or reject — a submitted requisition links to its
- * approval instead. The 20 % rule and the deadline rule are mirrored here only
+ * approval (D25). WP1g (decisions.md 2026-10-05): a feed requisition is decided
+ * HERE — an open one shows Approve / Reject (RequisitionDecision, the same
+ * component the Requisition page uses, same /approval endpoints). The 20 % rule and the deadline rule are mirrored here only
  * to say so before the click; the API enforces both (checkpoints 18, 22) and
  * its message is shown as it comes. Fixed-height page: the list, or the open
  * requisition's lines, is the one scrolling table (review C).
@@ -32,6 +32,7 @@ import { formatDateShort } from "@/utils/date-short";
 import { addDaysIso, defaultWindowEnd, todayIso, unwrap } from "./feed-format";
 import { getForecastWindow } from "./feed-forecast-window";
 import { FeedFarmSelect, feedFarmLabel } from "./feed-farm-select";
+import { RequisitionDecision, decisionTargetOf } from "../requisitions/requisition-decision";
 import { PRIORITY_LABEL, REQ_STATUS_LABEL, REQ_TYPE_LABEL, labelOf, variantOf } from "./requisition-labels";
 import { FeedRequisitionDetail } from "./feed-requisition-detail";
 import { RequisitionNewDialog } from "./requisition-new-dialog";
@@ -226,6 +227,20 @@ export function FeedRequisitionPanel() {
             onView={(v, n) => { setSelected(v); if (n) setNotice(n); loadList(); }}
             onBack={() => setSelected(null)}
           />
+          {/* WP1g: feed requisitions are decided here, through the same
+              component and /approval endpoints the Requisition page uses. */}
+          {decisionTargetOf(selected) && (
+            <RequisitionDecision
+              target={decisionTargetOf(selected)!}
+              onError={setError}
+              onDecided={async (message) => {
+                setSelected(null);
+                await loadList();
+                setError("");
+                setNotice(message);
+              }}
+            />
+          )}
         </Dialog>
       ) : loading ? (
         <div className="p-10 text-center text-xs" style={{ color: "var(--text-secondary)" }}><Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" /> {t("rqLoading")}</div>
