@@ -91,6 +91,27 @@ describe("CommonRequisitionDetail", () => {
   // is at the action buttons when they press one — a notice at the top of the
   // document was inside the dialog but scrolled out of sight. It sits by the
   // buttons, after the lines, and is scrolled into view.
+  // Review p1f, concern 5: a refusal was at the top of the document, out of
+  // sight while the user is at the buttons — the same defect as the notice.
+  it("shows a refusal next to the action buttons, after the lines, and scrolls it into view", async () => {
+    const scrolled = jest.fn();
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = scrolled;
+    try {
+      put.mockRejectedValue({ message: "Requisition line 1 needs a quantity greater than zero." });
+      render(<CommonRequisitionDetail initial={open()} onView={jest.fn()} onBack={jest.fn()} />);
+      fireEvent.click(screen.getByText("crqSave"));
+      const refusal = await screen.findByText("Requisition line 1 needs a quantity greater than zero.");
+      const table = screen.getAllByRole("table")[0];
+      expect(table.compareDocumentPosition(refusal) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      const saveButton = screen.getByText("crqSave").closest("button") as HTMLElement;
+      expect(refusal.compareDocumentPosition(saveButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      await waitFor(() => expect(scrolled).toHaveBeenCalled());
+    } finally {
+      Element.prototype.scrollIntoView = original;
+    }
+  });
+
   it("shows the success notice next to the action buttons, after the lines, and scrolls it into view", async () => {
     const scrolled = jest.fn();
     const original = Element.prototype.scrollIntoView;

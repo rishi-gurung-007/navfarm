@@ -66,9 +66,13 @@ export function CommonRequisitionDetail({ initial, onView, onBack, embedded = fa
   // action returns is what triggers that reset below).
   const [notice, setNotice] = useState("");
   const noticeRef = useRef<HTMLDivElement>(null);
+  const errorRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (notice) noticeRef.current?.scrollIntoView?.({ block: "nearest" });
   }, [notice]);
+  useEffect(() => {
+    if (error) errorRef.current?.scrollIntoView?.({ block: "nearest" });
+  }, [error]);
   const [poNo, setPoNo] = useState("");
   const [panel, setPanel] = useState<"ship" | "receive" | null>(null);
   const [postingDate, setPostingDate] = useState(todayIso());
@@ -196,7 +200,6 @@ export function CommonRequisitionDetail({ initial, onView, onBack, embedded = fa
           <h2 className="text-base font-semibold" style={{ color: "var(--text-primary)" }}>{draft.req_no}</h2>
         </div>
       )}
-      {error && <InlineAlert>{error}</InlineAlert>}
       <div className="min-h-0 flex-1 overflow-auto">
         <CommonRequisitionDocument view={draft} editable={editable} options={options} onChange={setDraft}
           onAssignTracking={releasedStore && can.transfer ? assignTracking : undefined} />
@@ -205,6 +208,8 @@ export function CommonRequisitionDetail({ initial, onView, onBack, embedded = fa
         {/* The dialog scrolls as one, and whoever pressed an action is at
             these buttons — so the success notice is shown here, and scrolled
             into view, not at the top of the document out of sight. */}
+        {/* Review p1f, concern 5: a refusal goes in the same place, for the same reason. */}
+        {error && <div ref={errorRef}><InlineAlert>{error}</InlineAlert></div>}
         {notice && <div ref={noticeRef}><InlineAlert variant="success">{notice}</InlineAlert></div>}
         <div className="flex flex-wrap items-end gap-2">
           {actions.includes("save") && <Button size="sm" variant="outline" onClick={save} disabled={busy}>{t("crqSave")}</Button>}
