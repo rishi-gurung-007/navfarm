@@ -1764,6 +1764,7 @@ export const translations = {
     crqStatusOpen: "Open",
     crqStatusReleased: "Released",
     crqStatusCancelled: "Cancelled",
+    crqColItemDescription: "Item description",
     crqColTracking: "Item tracking",
     crqTrackingFor: "Item tracking for line {{line}}",
     crqChoose: "Choose…",

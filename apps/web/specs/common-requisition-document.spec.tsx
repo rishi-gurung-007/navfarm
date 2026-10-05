@@ -192,3 +192,45 @@ describe("CommonRequisitionDocument — Rishi's header field list", () => {
     expect(screen.getByText("crqStatusReleased")).toBeTruthy();
   });
 });
+
+/**
+ * WP1c (Rishi's 4 Oct list, "REQUISITION SUB-FORM LINE"): his columns, in his
+ * order. Two things were wrong: Balance to Ship sat before Qty to Receive
+ * rather than last, and an Item line had no Item Description column at all —
+ * the item code and name were crammed into one cell. Our own columns (UOM,
+ * est. rate, the free description, Item Tracking) follow his, never between.
+ */
+describe("CommonRequisitionDocument — Rishi's line column list", () => {
+  const headers = (container: HTMLElement) =>
+    Array.from(container.querySelectorAll("thead th")).map((n) => (n.textContent ?? "").trim()).filter(Boolean);
+
+  it("orders the Store Item sub-form by Rishi's list, ours after his", () => {
+    const view = { ...emptyCommonRequisition("co-1", "ITEM", "STORE", "2026-10-05"), from_location_id: "st" };
+    const { container } = render(<CommonRequisitionDocument view={view as any} editable options={options} onChange={jest.fn()} />);
+    expect(headers(container)).toEqual([
+      "crqColLine", "crqColItem", "crqColItemDescription", "crqColQty",
+      "crqColFrom", "crqColTo", "crqColToShip", "crqColShipped",
+      "crqColToReceive", "crqColReceived", "crqColRemaining", "crqColBalance",
+      "crqColUom", "crqColRate", "crqColDescription", "crqColTracking",
+    ]);
+  });
+
+  it("shows the item's description in its own column, read-only from the Item Master", () => {
+    const view = { ...emptyCommonRequisition("co-1", "ITEM", "STORE", "2026-10-05"), from_location_id: "st",
+      lines: [{ ...emptyLine(), item_id: "i1", item_code: "IT-1", item_name: "Fixture item", quantity: "10", uom: "EA" }] };
+    const { container } = render(<CommonRequisitionDocument view={view as any} editable={false} options={options} />);
+    const cells = Array.from(container.querySelectorAll("tbody td")).map((n) => (n.textContent ?? "").trim());
+    expect(cells[1]).toBe("IT-1");
+    expect(cells[2]).toBe("Fixture item");
+  });
+
+  it("gives a Fixed Asset document only its description and quantity of Rishi's columns", () => {
+    const { container } = render(<CommonRequisitionDocument view={emptyCommonRequisition("co-1", "FA", "PURCHASE", "2026-10-05")} editable options={options} onChange={jest.fn()} />);
+    const h = headers(container);
+    expect(h).toContain("crqColDescription");
+    expect(h).toContain("crqColQty");
+    expect(h).not.toContain("crqColItem");
+    expect(h).not.toContain("crqColItemDescription");
+    expect(h).not.toContain("crqColTracking");
+  });
+});

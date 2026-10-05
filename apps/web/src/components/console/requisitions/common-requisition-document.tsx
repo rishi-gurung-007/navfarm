@@ -69,14 +69,27 @@ export function CommonRequisitionDocument({ view, editable, options, onChange }:
   const locChoices = locations.map((l) => ({ value: l.location_id, label: l.location_code }));
   const deptChoices = departments.map((d) => ({ value: d.cost_center_id, label: `${d.cost_center_code} — ${d.cost_center_name}` }));
 
-  const columns = [
-    "crqColLine", view.doc_type === "ITEM" ? "crqColItem" : view.doc_type === "SERVICE" ? "crqColResource" : null, "crqColDescription",
-    "crqColQty", "crqColUom", "crqColRate",
-    ...(store ? ["crqColFrom", "crqColTo", "crqColToShip", "crqColShipped", "crqColBalance", "crqColToReceive", "crqColReceived", "crqColRemaining"] : []),
-    // WP1c (Rishi's 4 Oct list): the Item Tracking button lives on the Store
-    // Item sub-form line. FA/Service and Purchase documents never show it.
-    ...(store && view.doc_type === "ITEM" ? ["crqColTracking"] : []),
-  ].filter(Boolean) as string[];
+  const isItem = view.doc_type === "ITEM";
+  // WP1c (Rishi's 4 Oct list, "REQUISITION SUB-FORM LINE") — his columns in
+  // his order first, then ours. An Item line carries Item No. + Item
+  // Description; an FA/Service line is its own description instead, and never
+  // names an item. Balance to Ship is last of his, after Remaining to Receive.
+  const rishiColumns = [
+    "crqColLine",
+    ...(isItem ? ["crqColItem", "crqColItemDescription"] : ["crqColDescription"]),
+    "crqColQty",
+    ...(store ? ["crqColFrom", "crqColTo", "crqColToShip", "crqColShipped", "crqColToReceive", "crqColReceived", "crqColRemaining", "crqColBalance"] : []),
+  ];
+  // Ours: the unit, our estimated rate, our free line description on an Item
+  // line (an FA/Service line already shows it as Rishi's own column), the
+  // Resource picker a Service line needs, and the Item Tracking button.
+  const ourColumns = [
+    "crqColUom", "crqColRate",
+    ...(isItem ? ["crqColDescription"] : []),
+    ...(view.doc_type === "SERVICE" ? ["crqColResource"] : []),
+    ...(store && isItem ? ["crqColTracking"] : []),
+  ];
+  const columns = [...rishiColumns, ...ourColumns].filter(Boolean) as string[];
 
   /** The Item Master tracking mode of the line's item; NONE when untracked. */
   const trackingOf = (line: CommonRequisitionLine): "LOT" | "SERIAL" | "NONE" => {
@@ -168,15 +181,37 @@ export function CommonRequisitionDocument({ view, editable, options, onChange }:
                     value={value ?? ""} onChange={(e) => onEdit(e.target.value || null)} /> : (type === "number" ? qty(value) : value ?? "");
                 return (
                   <tr key={line.line_id ?? `new-${i}`}>
+                    {/* Rishi's columns, in his order. */}
                     <td className={cn(TD, NUM)}>{no}</td>
-                    {view.doc_type === "ITEM" && (
+                    {isItem ? (<>
                       <td className={TD}>{can ? (
                         <select aria-label={t("crqItemFor", { line: i + 1 })} className="nf-input-sm nf-select w-48" style={inputStyle} value={line.item_id ?? ""}
                           onChange={(e) => { const it = items.find((x) => x.item_id === e.target.value); setLine(i, { item_id: e.target.value || null, uom: it?.uom_primary ?? line.uom }); }}>
                           <option value="">{t("crqChoose")}</option>
                           {items.map((it) => <option key={it.item_id} value={it.item_id}>{it.item_code} — {it.item_name}</option>)}
                         </select>
-                      ) : line.item_code ? `${line.item_code} — ${line.item_name ?? ""}` : ""}</td>
+                      ) : line.item_code ?? ""}</td>
+                      {/* Item Description is the Item Master's name, never typed here. */}
+                      <td className={TD}>{line.item_name ?? items.find((x) => x.item_id === line.item_id)?.item_name ?? ""}</td>
+                    </>) : (
+                      <td className={TD}>{cell("crqDescriptionFor", line.description, (v) => setLine(i, { description: v }), "text", "w-48")}</td>
+                    )}
+                    <td className={cn(TD, NUM)}>{cell("crqQtyFor", line.quantity, (v) => setLine(i, { quantity: v ?? "" }), "number")}</td>
+                    {store && <>
+                      <td className={TD}>{locCode(line.from_location_id, line.from_location_code) ?? ""}</td>
+                      <td className={TD}>{locCode(line.to_location_id, line.to_location_code) ?? ""}</td>
+                      <td className={cn(TD, NUM)}>{cell("crqToShipFor", line.qty_to_ship, (v) => setLine(i, { qty_to_ship: v }), "number")}</td>
+                      <td className={cn(TD, NUM)}>{qty(line.qty_shipped)}</td>
+                      <td className={cn(TD, NUM)}>{cell("crqToReceiveFor", line.qty_to_receive, (v) => setLine(i, { qty_to_receive: v }), "number")}</td>
+                      <td className={cn(TD, NUM)}>{qty(line.qty_received)}</td>
+                      <td className={cn(TD, NUM)} data-testid={`crq-remaining-${no}`}>{qty(line.remaining_to_receive)}</td>
+                      <td className={cn(TD, NUM)} data-testid={`crq-balance-${no}`}>{qty(line.balance_to_ship)}</td>
+                    </>}
+                    {/* Ours, after his. */}
+                    <td className={TD}>{cell("crqUomFor", line.uom, (v) => setLine(i, { uom: v ?? "" }), "text", "w-16")}</td>
+                    <td className={cn(TD, NUM)}>{cell("crqRateFor", line.est_rate, (v) => setLine(i, { est_rate: v }), "number")}</td>
+                    {isItem && (
+                      <td className={TD}>{cell("crqDescriptionFor", line.description, (v) => setLine(i, { description: v }), "text", "w-48")}</td>
                     )}
                     {view.doc_type === "SERVICE" && (
                       <td className={TD}>{can ? (
@@ -187,21 +222,7 @@ export function CommonRequisitionDocument({ view, editable, options, onChange }:
                         </select>
                       ) : line.resource_code ? `${line.resource_code} — ${line.resource_name ?? ""}` : ""}</td>
                     )}
-                    <td className={TD}>{cell("crqDescriptionFor", line.description, (v) => setLine(i, { description: v }), "text", "w-48")}</td>
-                    <td className={cn(TD, NUM)}>{cell("crqQtyFor", line.quantity, (v) => setLine(i, { quantity: v ?? "" }), "number")}</td>
-                    <td className={TD}>{cell("crqUomFor", line.uom, (v) => setLine(i, { uom: v ?? "" }), "text", "w-16")}</td>
-                    <td className={cn(TD, NUM)}>{cell("crqRateFor", line.est_rate, (v) => setLine(i, { est_rate: v }), "number")}</td>
-                    {store && <>
-                      <td className={TD}>{locCode(line.from_location_id, line.from_location_code) ?? ""}</td>
-                      <td className={TD}>{locCode(line.to_location_id, line.to_location_code) ?? ""}</td>
-                      <td className={cn(TD, NUM)}>{cell("crqToShipFor", line.qty_to_ship, (v) => setLine(i, { qty_to_ship: v }), "number")}</td>
-                      <td className={cn(TD, NUM)}>{qty(line.qty_shipped)}</td>
-                      <td className={cn(TD, NUM)} data-testid={`crq-balance-${no}`}>{qty(line.balance_to_ship)}</td>
-                      <td className={cn(TD, NUM)}>{cell("crqToReceiveFor", line.qty_to_receive, (v) => setLine(i, { qty_to_receive: v }), "number")}</td>
-                      <td className={cn(TD, NUM)}>{qty(line.qty_received)}</td>
-                      <td className={cn(TD, NUM)} data-testid={`crq-remaining-${no}`}>{qty(line.remaining_to_receive)}</td>
-                    </>}
-                    {store && view.doc_type === "ITEM" && (() => {
+                    {store && isItem && (() => {
                       const tracking = trackingOf(line);
                       const assigned = (tracking === "SERIAL" ? line.serial_no : line.lot_no) ?? "";
                       // An untracked item has nothing to assign; a tracked one
