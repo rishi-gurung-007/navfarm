@@ -40,10 +40,11 @@ const header = (req_no: string) => ({
   fulfilment_status: 'NOT_APPLICABLE', integration_status: 'NOT_APPLICABLE', direct_transfer: false,
 });
 
-/** Selects in create(): requester, line items, [fallback max req_no], header, lines. */
+/** Selects in create(): requester, the main location's farm, line items, [fallback max req_no], header, lines. */
 function build(series: 'configured' | 'none', issued: string[] = ['NUM-0001'], taken: string[] = [], lastOfCompany: string | null = `REQ-${YEAR}-0007`, fallbackClashes: string[] = []) {
   const queue: unknown[][] = [
     [{ full_name: 'Ada', department_id: null }],
+    [{ location_id: 'farm-1', location_type: 'FARM', parent_location_id: null }],
     [{ item_id: 'item-1' }],
   ];
   if (series === 'none') {

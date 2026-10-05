@@ -139,6 +139,7 @@ describe('RequisitionService.create — supplied header and line fields are stor
       [{ full_name: 'Ada Farm', department_id: 'cc-dept' }], // the requesting user
       [departmentRow('cc-dept')],                            // requester department identity
       [departmentRow('cc-snd')],                             // sender department identity
+      [{ location_id: 'farm-1', location_type: 'FARM', parent_location_id: null }], // the main location's farm
       [{ item_id: 'item-1' }],                               // line items belong to the company
       [],                                                    // number series: no prior REQ this year
       [],                                                    // number clash lookup: 0001 is free
@@ -652,6 +653,7 @@ describe('Part E Task 2 — PUT /requisition/:id', () => {
     selectResults.push(
       [headerRow()],          // the locked row
       [{ item_id: 'item-1' }], // line items belong to the company
+      [{ location_id: 'farm-1', location_type: 'FARM', parent_location_id: null }], // the main location's farm
       [headerRow({ remarks: 'Changed' })], // findOne header
       [lineRow({ quantity: '4.0000' })],   // findOne lines
     );

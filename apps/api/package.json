@@ -136,6 +136,14 @@
           "command": "node --env-file-if-exists=.env --import tsx src/scripts/align-requisition-permissions.ts"
         }
       },
+      "db-fix-requisition-farm": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --env-file-if-exists=.env --import tsx src/scripts/fix-requisition-farm.ts"
+        }
+      },
       "db-align-requisition-demo-data": {
         "executor": "nx:run-commands",
         "cache": false,
