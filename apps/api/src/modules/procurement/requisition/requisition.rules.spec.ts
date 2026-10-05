@@ -198,11 +198,11 @@ describe('direct transfer', () => {
       .toThrow(BadRequestException);
   });
 
-  it('refuses the post without the explicit permission, even when eligible', () => {
+  it('refuses the post without the User Setup right, even when eligible', () => {
     expect(() => assertDirectTransfer({ ...store, hasPermission: false }))
       .toThrow(ForbiddenException);
     expect(() => assertDirectTransfer({ ...store, hasPermission: false }))
-      .toThrow('Direct Transfer requires the explicit Direct Transfer permission.');
+      .toThrow('Direct Transfer requires the Direct Transfer right (User Setup).');
     expect(() => assertDirectTransfer({ ...store, hasPermission: true })).not.toThrow();
     expect(() => assertDirectTransfer({ ...store, docType: 'SERVICE', purpose: 'PURCHASE', hasPermission: true }))
       .toThrow(BadRequestException);

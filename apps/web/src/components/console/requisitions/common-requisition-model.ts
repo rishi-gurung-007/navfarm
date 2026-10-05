@@ -98,6 +98,8 @@ export interface CommonRequisitionOptions {
   resources: { resource_id: string; resource_code: string; resource_name: string }[];
   locations: { location_id: string; location_code: string; location_name: string; location_type: string; farm_id: string | null }[];
   departments: { cost_center_id: string; cost_center_code: string; cost_center_name: string }[];
+  /** WP1c: the signed-in user's own Direct Transfer right (User Setup). */
+  may_direct_transfer?: boolean;
 }
 
 export const emptyLine = (): CommonRequisitionLine => ({

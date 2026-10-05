@@ -126,6 +126,9 @@ export class UserService {
         employee_id: dto.employee_id || null,
         department: dto.department || null,
         department_id: dto.department_id || null,
+        // WP1c: the Direct Transfer right is granted here, in User Setup, by
+        // whoever may create the user; it is never self-service (see update).
+        direct_transfer_allowed: dto.direct_transfer_allowed ?? false,
         designation: dto.designation || null,
         timezone_pref_id: dto.timezone_pref_id || null,
         // Farm-bound personas share one fixed farm; authority remains distinct in the user-type ladder.
@@ -237,6 +240,7 @@ export class UserService {
         employee_id: schema.userMaster.employee_id,
         department: schema.userMaster.department,
         department_id: schema.userMaster.department_id,
+        direct_transfer_allowed: schema.userMaster.direct_transfer_allowed,
         designation: schema.userMaster.designation,
         is_active: schema.userMaster.is_active,
         last_login_at: schema.userMaster.last_login_at,
@@ -378,6 +382,13 @@ export class UserService {
     if (isSelf && ((dto.farm_id !== undefined && dto.farm_id !== user.farm_id) || areasRequestedChange)) {
       throw new ForbiddenException('You cannot change your own farm or operational area assignment.');
     }
+    // WP1c: the Direct Transfer right is an access grant, so — like the farm
+    // and areas — it is an assignment someone above you makes, never
+    // self-service. The requisition reads this column as its ONE source.
+    if (isSelf && dto.direct_transfer_allowed !== undefined
+      && dto.direct_transfer_allowed !== (user as any).direct_transfer_allowed) {
+      throw new ForbiddenException('You cannot change your own Direct Transfer right.');
+    }
 
     const resultingType = typeChanged ? dto.user_type : user.user_type;
     const resultingFarm = isFarmBoundUserType(resultingType) ? (dto.farm_id !== undefined ? dto.farm_id : user.farm_id) : null;
@@ -407,6 +418,7 @@ export class UserService {
     if (dto.department_id !== undefined) updates.department_id = dto.department_id || null;
     if (dto.designation !== undefined) updates.designation = dto.designation;
     if (dto.timezone_pref_id !== undefined) updates.timezone_pref_id = dto.timezone_pref_id;
+    if (dto.direct_transfer_allowed !== undefined) updates.direct_transfer_allowed = dto.direct_transfer_allowed;
     if (dto.is_active !== undefined) updates.is_active = dto.is_active;
     // Moving a farm-bound user to another type clears the farm, which would
     // otherwise sit on the row with no meaning.

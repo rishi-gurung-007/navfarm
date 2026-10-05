@@ -73,6 +73,11 @@ export class CreateUserDto {
   @IsOptional()
   farm_id?: string;
 
+  @ApiProperty({ description: 'Direct Transfer right (WP1c): User Setup grants it; the requisition reads only this', required: false, default: false })
+  @IsBoolean()
+  @IsOptional()
+  direct_transfer_allowed?: boolean;
+
   @ApiProperty({ description: 'Operational areas the user works in (replaces the current set on update)', required: false, type: [String] })
   @IsArray()
   @IsUUID('all', { each: true })
@@ -126,6 +131,11 @@ export class UpdateUserDto {
   @IsUUID()
   @IsOptional()
   farm_id?: string;
+
+  @ApiProperty({ description: 'Direct Transfer right (WP1c): User Setup grants it; the requisition reads only this', required: false, default: false })
+  @IsBoolean()
+  @IsOptional()
+  direct_transfer_allowed?: boolean;
 
   @ApiProperty({ description: 'Operational areas the user works in; replaces the current set', required: false, type: [String] })
   @IsArray()

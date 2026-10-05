@@ -198,6 +198,52 @@ describe('UserService user-type hierarchy', () => {
     });
   });
 
+  describe('WP1c — the Direct Transfer right (User Setup, never self-service)', () => {
+    /** findById's enrich does companies, farms, areas, roles — the farms read is not skipped for a farm-bound fixture. */
+    const queueFarmUser = (row: object) => selectResults.push([row], [], [], [], []);
+
+    it('forbids a user granting themselves the right', async () => {
+      queueUser(target('COMPANY_ADMIN', 'requester-1'));
+      await expect(service.update('requester-1', { direct_transfer_allowed: true }, requester('COMPANY_ADMIN')))
+        .rejects.toThrow(new ForbiddenException('You cannot change your own Direct Transfer right.'));
+      expect(set).not.toHaveBeenCalled();
+    });
+
+    it('lets an admin grant another user the right, written and audited', async () => {
+      queueFarmUser({ ...target('STANDARD_USER'), farm_id: FARM });
+      selectResults.push([{ tenant_id: TENANT }]); // the target's company is in reach
+      queueFarmUser({ ...target('STANDARD_USER'), farm_id: FARM });
+      await service.update('target-1', { direct_transfer_allowed: true }, requester('COMPANY_ADMIN'));
+      expect(set).toHaveBeenCalledWith({ direct_transfer_allowed: true });
+    });
+
+    it('lets an admin revoke another user the right', async () => {
+      queueFarmUser({ ...target('STANDARD_USER'), farm_id: FARM, direct_transfer_allowed: true });
+      selectResults.push([{ tenant_id: TENANT }]); // the target's company is in reach
+      queueFarmUser({ ...target('STANDARD_USER'), farm_id: FARM, direct_transfer_allowed: true });
+      await service.update('target-1', { direct_transfer_allowed: false }, requester('COMPANY_ADMIN'));
+      expect(set).toHaveBeenCalledWith({ direct_transfer_allowed: false });
+    });
+
+    it('stores the right at create time (default false)', async () => {
+      selectResults.push([{ tenant_id: TENANT }]);
+      selectResults.push([{ location_id: FARM }]);
+      selectResults.push([]);
+      queueUser(target('STANDARD_USER', 'created'));
+      await service.create(createDto('STANDARD_USER'), requester('COMPANY_ADMIN'));
+      expect(values).toHaveBeenCalledWith(expect.objectContaining({ direct_transfer_allowed: false }));
+    });
+
+    it('stores direct_transfer_allowed=true when the creator supplies it', async () => {
+      selectResults.push([{ tenant_id: TENANT }]);
+      selectResults.push([{ location_id: FARM }]);
+      selectResults.push([]);
+      queueUser(target('STANDARD_USER', 'created'));
+      await service.create({ ...createDto('STANDARD_USER'), direct_transfer_allowed: true }, requester('COMPANY_ADMIN'));
+      expect(values).toHaveBeenCalledWith(expect.objectContaining({ direct_transfer_allowed: true }));
+    });
+  });
+
   describe('department identity (Cost Center Master, type DEPARTMENT)', () => {
     const departmentRow = (over: Record<string, unknown> = {}) => ({
       cost_center_id: 'cc-1', tenant_id: TENANT, company_id: COMPANY,

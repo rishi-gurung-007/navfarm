@@ -36,6 +36,7 @@ import { CreateRequisitionDto, DecideRequisitionDto, RequisitionReceiptDto, Requ
 import { assertDepartmentIdentity, DEPARTMENT_COST_CENTER_TYPE } from '../../../common/department-identity';
 import {
   COMMON_LIST_DOC_TYPES,
+  assertDirectTransfer,
   assertDirectTransferEligible,
   assertEditable,
   assertNotFeedRequisition,
@@ -193,16 +194,24 @@ export class RequisitionService {
     // department falls back to the signed-in user's own identity.
     let requesterName: string | null = null;
     let requesterDepartmentId: string | null = null;
+    let callerDirectTransferAllowed = false;
     if (userPayload?.userId) {
       const [requester] = await this.db
-        .select({ full_name: schema.userMaster.full_name, department_id: schema.userMaster.department_id })
+        .select({ full_name: schema.userMaster.full_name, department_id: schema.userMaster.department_id, direct_transfer_allowed: schema.userMaster.direct_transfer_allowed })
         .from(schema.userMaster)
         .where(eq(schema.userMaster.user_id, userPayload.userId))
         .limit(1);
       requesterName = requester?.full_name ?? null;
       requesterDepartmentId = dto.requester_department_id ?? requester?.department_id ?? null;
+      callerDirectTransferAllowed = Boolean(requester?.direct_transfer_allowed);
     } else {
       requesterDepartmentId = dto.requester_department_id ?? null;
+    }
+    // WP1c: the Direct Transfer right is the caller's own User Setup flag —
+    // the ONE source (eligibility was already refused above, before any
+    // query; this is the right half). Never self-serviceable (UserService).
+    if (directTransfer) {
+      assertDirectTransfer({ docType, purpose, fromLocationId: dto.from_location_id, toLocationId: dto.to_location_id, hasPermission: callerDirectTransferAllowed });
     }
 
     // A department is a Cost Center Master row of type DEPARTMENT, never free
@@ -375,7 +384,19 @@ export class RequisitionService {
       const toLocationId = purpose === 'STORE' ? (dto.to_location_id ?? null) : null;
       assertPurposeLocations(purpose, fromLocationId, toLocationId);
       const directTransfer = Boolean(dto.direct_transfer);
-      if (directTransfer) assertDirectTransferEligible({ docType, purpose, fromLocationId, toLocationId });
+      if (directTransfer) {
+        assertDirectTransferEligible({ docType, purpose, fromLocationId, toLocationId });
+        // WP1c: the right is the caller's own User Setup flag, read here — an
+        // update turning Direct Transfer on needs it exactly like a create.
+        const [caller] = userPayload?.userId
+          ? await this.db
+            .select({ direct_transfer_allowed: schema.userMaster.direct_transfer_allowed })
+            .from(schema.userMaster)
+            .where(eq(schema.userMaster.user_id, userPayload.userId))
+            .limit(1)
+          : [];
+        assertDirectTransfer({ docType, purpose, fromLocationId, toLocationId, hasPermission: Boolean(caller?.direct_transfer_allowed) });
+      }
       for (const [id, label] of [[dto.requester_department_id, 'Requester department'], [dto.sender_department_id, 'Sender department']] as const) {
         if (id) await assertDepartmentIdentity(this.db, { tenantId, companyId: row.company_id, departmentId: id, label });
       }
@@ -413,7 +434,7 @@ export class RequisitionService {
   /** Location types a common requisition may move between — ours (no document lists them). */
   private static readonly REQUISITION_LOCATION_TYPES = ['FARM', 'STORE', 'SHED', 'SILO'];
 
-  async options(query: { company_id: string; farm_id?: string }, tenantId: string) {
+  async options(query: { company_id: string; farm_id?: string }, tenantId: string, userPayload?: { userId?: string }) {
     assertCompanyInScope(farmScope(this.cls), query.company_id);
     const scopeFarm = farmScope(this.cls).farmId ?? query.farm_id ?? null;
     const items = await this.db
@@ -448,7 +469,18 @@ export class RequisitionService {
       .from(schema.costCenterMaster)
       .where(and(eq(schema.costCenterMaster.tenant_id, tenantId), eq(schema.costCenterMaster.company_id, query.company_id), eq(schema.costCenterMaster.cost_center_type, DEPARTMENT_COST_CENTER_TYPE), eq(schema.costCenterMaster.is_active, true), isNull(schema.costCenterMaster.deleted_at)))
       .orderBy(schema.costCenterMaster.cost_center_code);
-    return { items, resources, locations, departments };
+    // WP1c: the dialog disables the Direct Transfer checkbox without the
+    // caller's own User Setup right — the same flag create/update enforce.
+    let mayDirectTransfer = false;
+    if (userPayload?.userId) {
+      const [caller] = await this.db
+        .select({ direct_transfer_allowed: schema.userMaster.direct_transfer_allowed })
+        .from(schema.userMaster)
+        .where(eq(schema.userMaster.user_id, userPayload.userId))
+        .limit(1);
+      mayDirectTransfer = Boolean(caller?.direct_transfer_allowed);
+    }
+    return { items, resources, locations, departments, may_direct_transfer: mayDirectTransfer };
   }
 
   /**
@@ -948,6 +980,14 @@ export class RequisitionService {
   async ship(requisitionId: string, dto: RequisitionShipmentDto, tenantId: string, userPayload?: { userId?: string }) {
     const { row, transferId, transferLines } = await this.releasedStore(requisitionId, tenantId);
     await this.assertPostingDepartmentFor(row, tenantId, 'FROM', 'Transfer Shipment', userPayload);
+    // WP1c (Rishi's 4 Oct list): "If Direct Transfer = True: Shipment +
+    // Receipt posted together." The one-step post is the transfer service's
+    // own postDirectTransfer — not a second writer — and it still goes through
+    // the same department check above.
+    if (row.direct_transfer) {
+      await this.stockTransfers.postDirectTransfer(transferId, { posting_date: dto.posting_date, lines: mapToTransferLines(dto.lines, transferLines) }, tenantId, userPayload);
+      return this.findOne(requisitionId, tenantId);
+    }
     await this.stockTransfers.postShipment(transferId, { posting_date: dto.posting_date, lines: mapToTransferLines(dto.lines, transferLines) }, tenantId, userPayload);
     return this.findOne(requisitionId, tenantId);
   }

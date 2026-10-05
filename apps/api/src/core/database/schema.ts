@@ -464,6 +464,10 @@ export const userMaster = mysqlTable('user_master', {
   // `department` above stays as the legacy label for existing callers.
   // Nullable and additive; validated in UserService, migration is Task 12.
   department_id: varchar('department_id', { length: 36 }).references(() => costCenterMaster.cost_center_id, { onDelete: 'set null' }),
+  // WP1c (Rishi's 4 Oct list): the Direct Transfer right lives here — User
+  // Setup — and is the ONE source the requisition's create/update reads; the
+  // posting path gates on the same flag. Previously the checkbox was ungated.
+  direct_transfer_allowed: boolean('direct_transfer_allowed').default(false).notNull(),
   designation: varchar('designation', { length: 100 }),
   profile_photo_url: varchar('profile_photo_url', { length: 500 }),
   lang_pref_id: varchar('lang_pref_id', { length: 36 }),
@@ -4493,6 +4497,11 @@ export const requisitionLine = mysqlTable('requisition_line', {
   qty_shipped: decimal('qty_shipped', { precision: 18, scale: 4 }),
   qty_to_receive: decimal('qty_to_receive', { precision: 18, scale: 4 }),
   qty_received: decimal('qty_received', { precision: 18, scale: 4 }),
+  // WP1c Item Tracking (Rishi's 4 Oct list): the line's lot/serial assignment,
+  // written through the document's Item Tracking, flowed onto the linked
+  // transfer's lines at release; a tracked line refuses shipment without it.
+  lot_no: varchar('lot_no', { length: 50 }),
+  serial_no: varchar('serial_no', { length: 100 }),
   created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
 });
 

@@ -206,10 +206,11 @@ export interface DirectTransferRequest {
 }
 
 /**
- * Eligibility only — a draft may record the intent. The permission half lives
- * in assertDirectTransfer, which Task 10 calls at posting time with the
- * caller's real grant (the concrete permission key is bound in Task 11, so
- * this task tests the rule, not a key nobody has yet).
+ * Eligibility only — a draft may record the intent. The right half lives in
+ * assertDirectTransfer, called at create/update time with the caller's own
+ * User Setup flag (WP1c: user_master.direct_transfer_allowed — the ONE source
+ * the rule reads; there is no separate permission key, so the checkbox, the
+ * write and the posting cannot disagree).
  */
 export function assertDirectTransferEligible(request: DirectTransferRequest): void {
   if (request.docType !== 'ITEM' || request.purpose !== 'STORE') {
@@ -223,7 +224,7 @@ export function assertDirectTransferEligible(request: DirectTransferRequest): vo
 export function assertDirectTransfer(request: DirectTransferRequest & { hasPermission: boolean }): void {
   assertDirectTransferEligible(request);
   if (!request.hasPermission) {
-    throw new ForbiddenException('Direct Transfer requires the explicit Direct Transfer permission.');
+    throw new ForbiddenException('Direct Transfer requires the Direct Transfer right (User Setup).');
   }
 }
 

@@ -1030,6 +1030,13 @@
       "when": 1792000000016,
       "tag": "0147_stock_transfer_line_requisition_line",
       "breakpoints": true
+    },
+    {
+      "idx": 148,
+      "version": "5",
+      "when": 1792000000017,
+      "tag": "0148_wp1c_direct_transfer_and_tracking",
+      "breakpoints": true
     }
   ]
 }

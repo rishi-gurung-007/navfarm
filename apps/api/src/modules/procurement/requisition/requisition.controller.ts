@@ -33,11 +33,13 @@ export class RequisitionController {
 
   @Get('options')
   @RequirePermission('PROCUREMENT', 'REQUISITION', 'view')
-  @ApiOperation({ summary: 'What the common requisition form may offer: items, resources, locations, departments' })
+  @ApiOperation({ summary: 'What the common requisition form may offer: items, resources, locations, departments, the caller Direct Transfer right' })
   async options(@Req() req: any, @Query('company_id') companyId: string, @Query('farm_id') farmId?: string) {
     const tenantId = req.user?.tenantId || req['tenantId'];
     if (!companyId) throw new BadRequestException('company_id is required.');
-    const data = await this.requisitions.options({ company_id: companyId, farm_id: farmId }, tenantId);
+    // WP1c: the caller rides along so the response can carry their own
+    // Direct Transfer right (the dialog disables the checkbox without it).
+    const data = await this.requisitions.options({ company_id: companyId, farm_id: farmId }, tenantId, req.user);
     return { success: true, message: 'Requisition options retrieved.', data };
   }
 

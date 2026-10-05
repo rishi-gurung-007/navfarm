@@ -90,8 +90,22 @@ export function CommonRequisitionDocument({ view, editable, options, onChange }:
         {store && (can ? select("crq-to", t("crqTo"), view.to_location_id, locChoices, (v) => set({ to_location_id: v }))
           : <ReadField className={HALF} label={t("crqTo")} value={locCode(view.to_location_id, view.to_location_code)} mono />)}
         {store && view.doc_type === "ITEM" && (can ? (
-          <Field className={HALF} label={t("crqDirectTransfer")} htmlFor="crq-direct">
-            <input id="crq-direct" type="checkbox" checked={view.direct_transfer} onChange={(e) => set({ direct_transfer: e.target.checked })} />
+          <Field
+            className={HALF}
+            label={t("crqDirectTransfer")}
+            htmlFor="crq-direct"
+            tooltip={options?.may_direct_transfer ? undefined : t("crqDirectTransferNoRight")}
+          >
+            {/* WP1c (Rishi's 4 Oct list): "user needs right in User Setup to
+                tick" — the checkbox is disabled without the right, which the
+                API enforces again on create/update. */}
+            <input
+              id="crq-direct"
+              type="checkbox"
+              checked={view.direct_transfer}
+              disabled={!options?.may_direct_transfer}
+              onChange={(e) => set({ direct_transfer: e.target.checked })}
+            />
           </Field>
         ) : <ReadField className={HALF} label={t("crqDirectTransfer")} value={view.direct_transfer ? t("crqYes") : t("crqNo")} />)}
         {can ? input("crq-required", t("crqRequiredDate"), view.required_date, "date", (v) => set({ required_date: v }))

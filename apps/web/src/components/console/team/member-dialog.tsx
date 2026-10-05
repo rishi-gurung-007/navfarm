@@ -86,6 +86,9 @@ export function MemberDialog({
     designation: member?.designation || "",
     user_type: (isEdit ? member?.user_type : typeOptions[typeOptions.length - 1]) || "STANDARD_USER",
     farm_id: member?.farm_id || "",
+    // WP1c: the Direct Transfer right is an access grant on the user record —
+    // the ONE source the requisition reads. Never self-serviceable.
+    direct_transfer_allowed: member?.direct_transfer_allowed || false,
   });
   const [areaIds, setAreaIds] = useState<string[]>(
     (member?.operational_areas || []).map((a: Row) => a.area_id),
@@ -154,6 +157,7 @@ export function MemberDialog({
         // unchanged values keeps the API's "did this actually change?" check
         // quiet, and the form locks them anyway.
         if (!isSelf) payload.user_type = form.user_type;
+        if (!isSelf) payload.direct_transfer_allowed = form.direct_transfer_allowed;
         // An empty string is not a UUID and a non-farm-bound user has no farm.
         if (isFarmBound && form.farm_id) payload.farm_id = form.farm_id;
         await api.put(`/user/${member?.user_id}`, payload);
@@ -177,6 +181,7 @@ export function MemberDialog({
           department: form.department || undefined,
           designation: form.designation || undefined,
           farm_id: isFarmBound && form.farm_id ? form.farm_id : undefined,
+          direct_transfer_allowed: form.direct_transfer_allowed || undefined,
           operational_area_ids: areaIds,
         });
         if (roleId && created?.user_id) {
@@ -343,6 +348,34 @@ export function MemberDialog({
                   />
                 </Field>
               )
+            )}
+
+            {/* WP1c: the Direct Transfer right (Rishi's 4 Oct list: "user needs
+                right in User Setup to tick"). The API refuses a self-grant, so
+                the field is read-only on your own record. */}
+            {isSelf ? (
+              <ReadField
+                className="sm:col-span-2"
+                label={t("tmDirectTransfer")}
+                value={form.direct_transfer_allowed ? t("crqYes") : t("crqNo")}
+              />
+            ) : (
+              <Field
+                className="sm:col-span-2"
+                label={t("tmDirectTransfer")}
+                htmlFor="tm-direct-transfer"
+                tooltip={t("tmDirectTransferHint")}
+              >
+                <label className="flex items-center gap-2 text-sm" style={{ color: "var(--text-primary)" }}>
+                  <input
+                    id="tm-direct-transfer"
+                    type="checkbox"
+                    checked={form.direct_transfer_allowed}
+                    onChange={(e) => setForm({ ...form, direct_transfer_allowed: e.target.checked })}
+                  />
+                  {t("tmDirectTransferHint")}
+                </label>
+              </Field>
             )}
           </div>
 
