@@ -371,8 +371,12 @@ export class RequisitionService {
         // the linked transfer's line at release).
         lot_no: line.lot_no ?? null,
         serial_no: line.serial_no ?? null,
-        from_location_id: line.from_location_id ?? header.from_location_id ?? null,
-        to_location_id: line.to_location_id ?? header.to_location_id ?? null,
+        // Rishi's list (4 Oct): a line's From/To Location are "auto from
+        // header". On a Store document the header wins over whatever the body
+        // carries per line — the screen sends each line's old locations back,
+        // and a header change used to leave them behind (P1 e2e, 5 Oct).
+        from_location_id: purpose === 'STORE' ? (header.from_location_id ?? null) : (line.from_location_id ?? header.from_location_id ?? null),
+        to_location_id: purpose === 'STORE' ? (header.to_location_id ?? null) : (line.to_location_id ?? header.to_location_id ?? null),
         // A Store line records its authorized targets up front; a Purchase
         // line has no internal fulfilment, so its targets stay null.
         qty_to_ship: purpose === 'STORE' ? String(balances.qty_to_ship) : null,

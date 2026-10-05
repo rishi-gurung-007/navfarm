@@ -667,6 +667,22 @@ describe('Part E Task 2 — PUT /requisition/:id', () => {
     expect(result.remarks).toBe('Changed');
   });
 
+  // P1 e2e (5 Oct): Rishi's list — line "From Location (auto from header)", "To Location
+  // (auto from header)". The screen sends back each line's old locations, so after a
+  // header change the lines kept the old ones and release then refused the document
+  // ("Line 1 moves between other locations than the header").
+  it('a Store line takes the header From/To, never the stale ones the body carries', async () => {
+    const { db, selectResults, insertValues } = makeDb();
+    selectResults.push([headerRow()], [{ item_id: 'item-1' }], [headerRow()], [lineRow()]);
+    db.delete = jest.fn(() => ({ where: jest.fn(async () => undefined) }));
+    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
+    await service.update('req-1', {
+      doc_type: 'ITEM', purpose: 'STORE', from_location_id: 'loc-store', to_location_id: 'loc-shed-2',
+      lines: [{ item_id: 'item-1', quantity: 4, uom: 'KG', from_location_id: 'loc-store', to_location_id: 'loc-shed-1' }],
+    } as any, TENANT, { userId: 'u1' });
+    expect(insertValues[0].values[0]).toMatchObject({ from_location_id: 'loc-store', to_location_id: 'loc-shed-2' });
+  });
+
   it('refuses a submitted document before writing anything', async () => {
     const { db, selectResults, setCalls } = makeDb();
     selectResults.push([headerRow({ status: 'PENDING_APPROVAL', approval_status: 'PENDING_APPROVAL' })]);
