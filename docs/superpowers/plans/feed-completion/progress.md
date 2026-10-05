@@ -568,3 +568,8 @@ the blocked half.
 - New **WP1g**: Requisition becomes its own top-level menu item, common kinds only. Feed requisitions only on Feed Forecast → Requisition.
 - Rishi asked why the Feed Forecast tabs still have the old names, so **WP1d is next, right after WP1c's remaining rows**.
 - Order: finish WP1c (UOM addendum) → **WP1d** → WP1g → WP4 (demo data, which also unblocks WP1c's two live rows) → WP2 → WP3 → WP5 → WP6 …
+
+### 5 Oct 12:55 — desktop controller takes over (VS Code weekly limit reached)
+- Controller: navfarm-30 (VS Code) stopped by weekly limit after WP1c (de62d078) with WP1d labels uncommitted.
+- WP1d labels committed by desktop: 2d37aa62 (tabs Dashboard · Calculation · Requisition · Physical Stock Count; persona spec updated).
+- Phase 1 step 2 (WP1g) dispatched to an implementer subagent; base 2d37aa62. SDD workspace: `.superpowers/sdd/2026-10-04-feed-master-completion-plan/`.
