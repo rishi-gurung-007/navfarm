@@ -232,11 +232,9 @@ export function FeedRequisitionPanel() {
           {decisionTargetOf(selected) && (
             <RequisitionDecision
               target={decisionTargetOf(selected)!}
-              onError={setError}
               onDecided={async (message) => {
                 setSelected(null);
                 await loadList();
-                setError("");
                 setNotice(message);
               }}
             />

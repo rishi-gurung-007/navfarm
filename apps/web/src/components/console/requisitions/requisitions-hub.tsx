@@ -220,12 +220,10 @@ export function RequisitionsHub() {
           {decision && (
             <RequisitionDecision
               target={decision}
-              onError={setError}
               onDecided={async (message) => {
                 setOpen(null);
                 setDecision(null);
                 await loadList();
-                setError("");
                 setNotice(message);
               }}
             />
