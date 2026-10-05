@@ -702,10 +702,7 @@ export class RequisitionService {
       // approve right, and (outside Tenant/Company admins) never a manual
       // requisition one raised oneself. Without these a Standard User's list
       // held its own pending requisition, which it can neither approve nor reject.
-      const mayApprove = await userHasPermission(this.db, { userId: opts.userId, userType: opts.userType }, {
-        moduleCode: REQUISITION_MODULE.moduleCode, resource: REQUISITION_MODULE.resource, action: 'approve',
-      });
-      if (!mayApprove) return [];
+      if (!(await this.hasApproveGrant({ userId: opts.userId, userType: opts.userType }))) return [];
       if (opts.userId && !maySelfApprove(opts.userType)) {
         conditions.push(sql`NOT ${selfApprovalSql(schema.requisition, opts.userId)}`);
       }
@@ -804,13 +801,16 @@ export class RequisitionService {
    *
    * 1. The PROCUREMENT/REQUISITION approve grant (admins hold every grant).
    */
-  private async assertApproveGrant(userPayload: { userId?: string; userType?: string } | undefined, refusal: string): Promise<void> {
-    const may = await userHasPermission(this.db, { userId: userPayload?.userId, userType: userPayload?.userType }, {
+  private hasApproveGrant(userPayload: { userId?: string; userType?: string } | undefined): Promise<boolean> {
+    return userHasPermission(this.db, { userId: userPayload?.userId, userType: userPayload?.userType }, {
       moduleCode: REQUISITION_MODULE.moduleCode,
       resource: REQUISITION_MODULE.resource,
       action: 'approve',
     });
-    if (!may) throw new ForbiddenException(refusal);
+  }
+
+  private async assertApproveGrant(userPayload: { userId?: string; userType?: string } | undefined, refusal: string): Promise<void> {
+    if (!(await this.hasApproveGrant(userPayload))) throw new ForbiddenException(refusal);
   }
 
   /**
@@ -1236,6 +1236,10 @@ export class RequisitionService {
     userPayload?: { userId?: string; userType?: string },
   ): Promise<void> {
     const row = await this.lockForApproval(request, tenantId);
+    // Review p1f, M1: the same approve grant decide() and release() ask, for
+    // both decisions — the inbox route's own PRODUCTION/APPROVAL grant alone
+    // let a user approve here and then be refused Release.
+    await this.assertApproveGrant(userPayload, 'You are not allowed to decide requisitions.');
     // D25 (Rishi, 1 Oct): a person may not approve a requisition they created.
     // The shared isSelfApproval rule applies: a manual or legacy-sourceless
     // draft is refused to its creator; only an AUTO_FORECAST draft is exempt.

@@ -412,7 +412,12 @@ describe('common requisition submit and decide — the Task 8 state dimensions m
       ]],
       [schema.requisitionLine, [LINES]],
       [schema.approvalRequest, [[PENDING_REQUEST], [{ ...PENDING_REQUEST, status: 'APPROVED' }]]],
-      [schema.userRoleAssignment, [[{ moduleCode: 'PROCUREMENT', resource: 'REQUISITION', canApprove: true }]]],
+      // The grant is read by decide() and again by decideFromApproval, which
+      // the engine calls back into (review p1f M1: the inbox path asks it too).
+      [schema.userRoleAssignment, [
+        [{ moduleCode: 'PROCUREMENT', resource: 'REQUISITION', canApprove: true }],
+        [{ moduleCode: 'PROCUREMENT', resource: 'REQUISITION', canApprove: true }],
+      ]],
     ]));
     const result = await as(STORE_SCOPE, () => service.decide('req-1', {}, 'APPROVED', 'tenant-1', { ...REQUESTER, userId: 'u-approver' }));
     expect(result.approval_status).toBe('APPROVED');

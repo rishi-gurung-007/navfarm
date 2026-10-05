@@ -597,6 +597,38 @@ describe('Part E Task 1 follow-up — the Approvals-inbox path refuses self-appr
 });
 
 
+/**
+ * Review p1f, M1: the inbox handler is the third way to decide a requisition.
+ * It now asks the same approve grant as decide() and release()
+ * (assertApproveGrant, PROCUREMENT/REQUISITION approve), not only the inbox
+ * route's own PRODUCTION/APPROVAL grant. Before, a user could approve through
+ * the inbox and then be refused Release, which keys on that same grant.
+ */
+describe('review p1f M1 — the Approvals-inbox path asks the requisition approve grant', () => {
+  const pending = () => headerRow({ status: 'PENDING_APPROVAL', approval_status: 'PENDING_APPROVAL', approval_request_id: 'ar-1', source: 'MANUAL_ENTRY', created_by: 'u1', requester_user_id: 'u1' });
+  const request = { request_id: 'ar-1', document_id: 'req-1', company_id: 'co-1', requested_by: 'u1' };
+  const handlerFor = (rows: unknown[][]) => {
+    const { db, selectResults, setCalls } = makeDb();
+    selectResults.push(...rows);
+    const approvals: any = { ...approvalsMock(), registerDocumentHandler: jest.fn() };
+    new RequisitionService(transactionCls(db), approvals, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any).onModuleInit();
+    return { handler: approvals.registerDocumentHandler.mock.calls[0][1], setCalls };
+  };
+
+  it.each(['APPROVED', 'REJECTED'] as const)('refuses a %s decision from a user without PROCUREMENT/REQUISITION approve, writing nothing', async (decision) => {
+    const { handler, setCalls } = handlerFor([[pending()], [{ moduleCode: 'PRODUCTION', resource: 'APPROVAL', canApprove: true }]]);
+    await expect(handler.decide(request, decision, 'reason', TENANT, { userId: 'u2', userType: 'STANDARD_USER' }))
+      .rejects.toThrow(new ForbiddenException('You are not allowed to decide requisitions.'));
+    expect(setCalls).toHaveLength(0);
+  });
+
+  it('lets a user with the grant, who did not raise it, approve', async () => {
+    const { handler, setCalls } = handlerFor([[pending()], [{ moduleCode: 'PROCUREMENT', resource: 'REQUISITION', canApprove: true }]]);
+    await handler.decide(request, 'APPROVED', null, TENANT, { userId: 'u2', userType: 'STANDARD_USER' });
+    expect(setCalls[0]).toMatchObject({ status: 'APPROVED', approved_by: 'u2' });
+  });
+});
+
 describe('WP1c — the requisition line carries its Item Tracking assignment', () => {
   let service: RequisitionService;
   let db: any;
