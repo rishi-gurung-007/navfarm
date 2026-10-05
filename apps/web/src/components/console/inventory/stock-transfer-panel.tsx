@@ -93,7 +93,6 @@ export default function StockTransferPanel() {
 
   useEffect(() => {
     load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search, statusFilter]);
 
   useEffect(() => { setPage(1); }, [search, statusFilter, pageSize]);
@@ -104,10 +103,9 @@ export default function StockTransferPanel() {
     if (companyId) params.set("companyId", companyId);
     params.set("limit", "500");
     const qs = params.toString();
-    api.get(`/warehouse?${qs}`).then((r) => setWarehouses(unwrap<Row[]>(r) || [])).catch(() => {});
-    api.get(`/item?${qs}`).then((r) => setItems(unwrap<Row[]>(r) || [])).catch(() => {});
-    api.get(`/uom?${qs}`).then((r) => setUoms(unwrap<Row[]>(r) || [])).catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    api.get(`/warehouse?${qs}`).then((r) => setWarehouses(unwrap<Row[]>(r) || [])).catch(() => undefined);
+    api.get(`/item?${qs}`).then((r) => setItems(unwrap<Row[]>(r) || [])).catch(() => undefined);
+    api.get(`/uom?${qs}`).then((r) => setUoms(unwrap<Row[]>(r) || [])).catch(() => undefined);
   }, []);
 
   const openCreate = () => {
