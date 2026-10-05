@@ -39,6 +39,7 @@ import {
   assertDirectTransferEligible,
   assertEditable,
   assertNotFeedRequisition,
+  assertPostingDepartment,
   assertPurpose,
   assertPurposeLocations,
   assertRequisitionLines,
@@ -912,14 +913,48 @@ export class RequisitionService {
     return { row, transferId: row.linked_transfer_id, transferLines };
   }
 
+  /**
+   * WP1c: the Transfer Shipment/Receipt buttons are department gates (Rishi's
+   * 4 Oct list): the posting user's user_master.department_id must equal the
+   * From (shipment) / To (receipt) sub-location's location_master.department_id
+   * — a Cost Center identity, never text, and with no admin bypass (Rishi's
+   * bound, decisions.md 2026-10-04). A row without that location (legacy,
+   * farm-less) has nothing to check; the rule itself decides.
+   */
+  private async assertPostingDepartmentFor(
+    row: { from_location_id: string | null; to_location_id: string | null },
+    tenantId: string,
+    side: 'FROM' | 'TO',
+    kind: 'Transfer Shipment' | 'Transfer Receipt',
+    userPayload?: { userId?: string },
+  ): Promise<void> {
+    const locationId = side === 'FROM' ? row.from_location_id : row.to_location_id;
+    if (!locationId) return;
+    const [location] = await this.db
+      .select({ department_id: schema.locationMaster.department_id })
+      .from(schema.locationMaster)
+      .where(and(eq(schema.locationMaster.tenant_id, tenantId), eq(schema.locationMaster.location_id, locationId)))
+      .limit(1);
+    const [user] = userPayload?.userId
+      ? await this.db
+        .select({ department_id: schema.userMaster.department_id })
+        .from(schema.userMaster)
+        .where(eq(schema.userMaster.user_id, userPayload.userId))
+        .limit(1)
+      : [];
+    assertPostingDepartment(side, kind, { userDepartmentId: user?.department_id ?? null, locationDepartmentId: location?.department_id ?? null });
+  }
+
   async ship(requisitionId: string, dto: RequisitionShipmentDto, tenantId: string, userPayload?: { userId?: string }) {
-    const { transferId, transferLines } = await this.releasedStore(requisitionId, tenantId);
+    const { row, transferId, transferLines } = await this.releasedStore(requisitionId, tenantId);
+    await this.assertPostingDepartmentFor(row, tenantId, 'FROM', 'Transfer Shipment', userPayload);
     await this.stockTransfers.postShipment(transferId, { posting_date: dto.posting_date, lines: mapToTransferLines(dto.lines, transferLines) }, tenantId, userPayload);
     return this.findOne(requisitionId, tenantId);
   }
 
   async receive(requisitionId: string, dto: RequisitionReceiptDto, tenantId: string, userPayload?: { userId?: string }) {
-    const { transferId, transferLines } = await this.releasedStore(requisitionId, tenantId);
+    const { row, transferId, transferLines } = await this.releasedStore(requisitionId, tenantId);
+    await this.assertPostingDepartmentFor(row, tenantId, 'TO', 'Transfer Receipt', userPayload);
     await this.stockTransfers.postReceipt(transferId, { posting_date: dto.posting_date, shipment_id: dto.shipment_id, lines: mapToTransferLines(dto.lines, transferLines) }, tenantId, userPayload);
     return this.findOne(requisitionId, tenantId);
   }

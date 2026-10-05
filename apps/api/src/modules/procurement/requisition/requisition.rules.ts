@@ -528,6 +528,35 @@ export function fulfilmentStatusOf(lines: Array<{ quantity: unknown; qty_to_ship
   return 'TRANSFER_OPEN';
 }
 
+// --------------------------------------------------------------------------------
+// The department checks on the Transfer Shipment and Transfer Receipt buttons
+// (WP1c — Rishi's 4 Oct list, kept verbatim in common-requisition-spec.md:
+// "Validation: user dept (from User Setup) must match From Sub-Location
+// dimension" / "...To Sub-Location dimension"). A department is a Cost Center
+// identity, so the match is between two ids, never text. Rishi's bound
+// (decisions.md 2026-10-04, last entry): admins get NO bypass — their extra
+// power is approval only. A location with no department has no dimension to
+// match — the same NULL-belongs-to-every-scope carve-out the LOB scope applies
+// — and a user without a department cannot match a location that has one.
+// --------------------------------------------------------------------------------
+
+export type PostingSide = 'FROM' | 'TO';
+
+export function assertPostingDepartment(
+  side: PostingSide,
+  kind: 'Transfer Shipment' | 'Transfer Receipt',
+  check: { userDepartmentId: string | null | undefined; locationDepartmentId: string | null | undefined },
+): void {
+  const at = side === 'FROM' ? 'From' : 'To';
+  if (!check.locationDepartmentId) return;
+  if (!check.userDepartmentId) {
+    throw new ForbiddenException(`Your user record has no department (User Setup); the ${at} sub-location's department is set, so you cannot post this ${kind}.`);
+  }
+  if (check.userDepartmentId !== check.locationDepartmentId) {
+    throw new ForbiddenException(`Only the ${at} sub-location's department may post this ${kind}.`);
+  }
+}
+
 /**
  * The requisition's ship()/receive() endpoints take requisition line ids;
  * StockTransferService.postShipment/postReceipt take transfer line ids. This
