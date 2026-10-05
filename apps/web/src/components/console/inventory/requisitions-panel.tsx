@@ -125,7 +125,7 @@ export function FeedRequisitionPanel() {
     loadList();
   }, [loadList]);
 
-  // Opened from the Approvals inbox (Task 16): /inventory/requisitions?id=<requisition>.
+  // Opened by link: /inventory/feed-forecast?tab=feed-requisition&id=<requisition> (the Requisition page and the inbox send feed ids here).
   useEffect(() => {
     let id: string | null = null;
     try {

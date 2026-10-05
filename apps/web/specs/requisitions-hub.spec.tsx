@@ -11,10 +11,12 @@ jest.mock("../src/hooks/useLanguage", () => {
 const routerReplace = jest.fn();
 jest.mock("next/navigation", () => ({ useRouter: () => ({ replace: routerReplace, push: jest.fn() }) }));
 let mockCompanyId: string | null = "co-1";
+let mockCanApprove = true;
 jest.mock("../src/hooks/useAuth", () => ({
   getActiveCompanyId: () => mockCompanyId,
   getStoredUser: () => ({}),
-  hasPermission: () => true,
+  hasPermission: (_u: unknown, mod: string, res: string, action: string) =>
+    mod === "PRODUCTION" && res === "APPROVAL" && action === "can_approve" ? mockCanApprove : true,
 }));
 jest.mock("../src/utils/date-short", () => ({ formatDateShort: (v: string | null) => v ?? "" }));
 jest.mock("../src/components/console/inventory/use-feed-farm", () => ({
@@ -55,6 +57,7 @@ const options = { items: [], resources: [], locations: [], departments: [] };
 beforeEach(() => {
   jest.clearAllMocks();
   mockCompanyId = "co-1";
+  mockCanApprove = true;
   window.history.replaceState({}, "", "/requisitions");
   get.mockImplementation(async (url: string) => {
     if (url.startsWith("/requisition/options")) return { data: options };
@@ -264,5 +267,15 @@ describe("RequisitionsHub — Waiting for my approval filter and Approve/Reject 
     fireEvent.change(screen.getByLabelText("rhApproverRemarks"), { target: { value: "Capacity confirmed" } });
     fireEvent.click(screen.getByRole("button", { name: "rhApprove" }));
     await waitFor(() => expect(api.post).toHaveBeenCalledWith("/approval/ar-req-wait-fa/approve", { remarks: "Capacity confirmed" }));
+  });
+
+  it("a user without PRODUCTION/APPROVAL can_approve sees no Approve / Reject on a pending row", async () => {
+    mockCanApprove = false;
+    render(<RequisitionsHub />);
+    fireEvent.click(await screen.findByLabelText("rhWaitingForMe"));
+    fireEvent.click(await screen.findByText("NO-req-wait-item"));
+    await screen.findByRole("dialog");
+    expect(screen.queryByRole("button", { name: "rhApprove" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "rhReject" })).toBeNull();
   });
 });

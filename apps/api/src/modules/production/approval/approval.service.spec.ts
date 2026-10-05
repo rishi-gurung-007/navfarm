@@ -758,7 +758,9 @@ describe('WP1b — one Requisitions page: inbox exclusion and the shared waiting
     await module.get<ApprovalService>(ApprovalService).countsRequisitions({} as any, 'tenant-1', 'COMPANY_ADMIN');
     const { MySqlDialect } = require('drizzle-orm/mysql-core');
     const q = new MySqlDialect().sqlToQuery(wheres[0] as any);
-    expect(q.sql).toContain('`doc_type` = ?');
-    expect(q.params).toContain('REQUISITION');
+    // the helper's own kind list, narrowed: the admin branch of farmConditions
+    // still names both kinds, the final kind filter names only the common one.
+    expect(q.sql.match(/`doc_type` in \(\?\)/g)).toHaveLength(1);
+    expect(q.params.slice(-1)).toEqual(['REQUISITION']);
   });
 });

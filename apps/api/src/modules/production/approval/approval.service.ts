@@ -284,10 +284,10 @@ export class ApprovalService {
    * keep plain farmConditions so deciding from the hub reaches the same
    * handlers.
    */
-  requisitionRequestConditions(userType?: string): SQL[] {
+  requisitionRequestConditions(userType?: string, docTypes: readonly string[] = REQUISITION_APPROVAL_DOC_TYPES): SQL[] {
     // farmConditions first, so its rendered SQL (and its parameter order) is a
     // prefix of the hub predicate's — the equivalence test asserts exactly that.
-    return [...this.farmConditions(userType), inArray(schema.approvalRequest.doc_type, [...REQUISITION_APPROVAL_DOC_TYPES])];
+    return [...this.farmConditions(userType), inArray(schema.approvalRequest.doc_type, [...docTypes])];
   }
 
   async findAll(query: QueryApprovalDto, tenantId: string, userType?: string) {
@@ -388,12 +388,11 @@ export class ApprovalService {
       eq(schema.approvalRequest.tenant_id, tenantId),
       isNull(schema.approvalRequest.deleted_at),
       eq(schema.approvalRequest.status, 'PENDING'),
-      ...this.requisitionRequestConditions(userType),
       // WP1g (decisions.md 2026-10-05): the Requisition page lists the common
-      // kinds only; a feed requisition is decided on Feed Forecast ->
-      // Requisition. Counting FEED_REQUISITION here made the card promise
-      // rows the page it links to never shows.
-      eq(schema.approvalRequest.doc_type, 'REQUISITION'),
+      // kind only; a feed requisition is decided on Feed Forecast -> Requisition.
+      // Counting FEED_REQUISITION made the card promise rows the page never shows.
+      // The kind is an argument to the shared predicate, not a second condition.
+      ...this.requisitionRequestConditions(userType, ['REQUISITION']),
     ];
     if (query.company_id) conditions.push(eq(schema.approvalRequest.company_id, query.company_id));
     if (query.operational_area_id) {

@@ -11,6 +11,13 @@ jest.mock('../src/hooks/useLanguage', () => {
   const stableT = (key: string, vars?: Record<string, any>) => (vars ? `${key}:${JSON.stringify(vars)}` : key);
   return { useLanguage: () => ({ t: stableT }) };
 });
+let mockCanApprove = true;
+jest.mock('../src/hooks/useAuth', () => ({
+  getStoredUser: () => ({ userType: 'STANDARD_USER' }),
+  hasPermission: (_u: unknown, mod: string, res: string, action: string) =>
+    mod === 'PRODUCTION' && res === 'APPROVAL' && action === 'can_approve' ? mockCanApprove : true,
+  getActiveCompanyId: () => 'co',
+}));
 let mockFarm: any;
 jest.mock('../src/components/console/inventory/use-feed-farm', () => ({ useFeedFarm: () => mockFarm }));
 
@@ -321,6 +328,7 @@ describe('RequisitionsPanel (D26)', () => {
  * component, so Approve / Reject reach the same /approval/:id endpoints.
  */
 describe('Feed Forecast → Requisition — Approve / Reject (WP1g)', () => {
+  beforeEach(() => { mockCanApprove = true; });
   const pendingRow = { ...listRow, status: 'PENDING_APPROVAL', approval_request_id: 'ar-1' };
   const pendingView = { ...view, status: 'PENDING_APPROVAL', approval_request_id: 'ar-1' };
   const openPending = async () => {
@@ -366,6 +374,13 @@ describe('Feed Forecast → Requisition — Approve / Reject (WP1g)', () => {
     render(<RequisitionsPanel />);
     fireEvent.click(await screen.findByText('REQ-VIL100-2026-00004'));
     await screen.findByRole('dialog');
+    expect(screen.queryByRole('button', { name: 'rhApprove' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'rhReject' })).toBeNull();
+  });
+
+  it('a user without PRODUCTION/APPROVAL can_approve does not see Approve / Reject; one with it does', async () => {
+    mockCanApprove = false;
+    await openPending();
     expect(screen.queryByRole('button', { name: 'rhApprove' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'rhReject' })).toBeNull();
   });

@@ -17,6 +17,7 @@ import { api } from "@/services/api-client";
 import { InlineAlert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
+import { getStoredUser, hasPermission } from "@/hooks/useAuth";
 import { useLanguage } from "@/hooks/useLanguage";
 
 export interface RequisitionDecisionTarget {
@@ -78,6 +79,12 @@ export function RequisitionDecision({
       () => api.post(`/approval/${target.requestId}/reject`, { rejection_reason: rejectReason.trim() || undefined }),
       t("rhRejectedMsg", { docNo: target.docNo }),
     );
+
+  // A display hint only, the same grant the /approval approve and reject
+  // endpoints require (PRODUCTION / APPROVAL / approve); the server stays the
+  // authority and still refuses anyone it should. The feed tab is the drafters'
+  // screen, so without this a submitter would be offered buttons they cannot use.
+  if (!hasPermission(getStoredUser(), "PRODUCTION", "APPROVAL", "can_approve")) return null;
 
   if (rejecting) {
     return (
