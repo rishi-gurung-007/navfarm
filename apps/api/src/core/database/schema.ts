@@ -4457,7 +4457,8 @@ export const requisitionLine = mysqlTable('requisition_line', {
   resource_id: varchar('resource_id', { length: 36 }).references(() => resourceMaster.resource_id, { onDelete: 'set null' }),
   description: varchar('description', { length: 200 }),
   quantity: decimal('quantity', { precision: 18, scale: 4 }).notNull(),
-  uom: varchar('uom', { length: 20 }).notNull(),
+  // Nullable from 0149: an FA/Service line is Description + Qty only (Rishi, 5 Oct).
+  uom: varchar('uom', { length: 20 }),
   est_rate: decimal('est_rate', { precision: 18, scale: 6 }),
   // Feed line (Requisition and Loading Sheet §2). `quantity` is Requested Qty KG.
   destination_location_id: varchar('destination_location_id', { length: 36 }).references(() => locationMaster.location_id, { onDelete: 'set null' }),

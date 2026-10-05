@@ -84,8 +84,9 @@ export function CommonRequisitionDocument({ view, editable, options, onChange }:
   // line (an FA/Service line already shows it as Rishi's own column), the
   // Resource picker a Service line needs, and the Item Tracking button.
   const ourColumns = [
-    "crqColUom", "crqColRate",
-    ...(isItem ? ["crqColDescription"] : []),
+    // WP1c addendum (Rishi, 5 Oct): an FA/Service line is Description + Qty
+    // only, so it shows neither the unit nor our estimated rate.
+    ...(isItem ? ["crqColUom", "crqColRate", "crqColDescription"] : []),
     ...(view.doc_type === "SERVICE" ? ["crqColResource"] : []),
     ...(store && isItem ? ["crqColTracking"] : []),
   ];
@@ -207,12 +208,12 @@ export function CommonRequisitionDocument({ view, editable, options, onChange }:
                       <td className={cn(TD, NUM)} data-testid={`crq-remaining-${no}`}>{qty(line.remaining_to_receive)}</td>
                       <td className={cn(TD, NUM)} data-testid={`crq-balance-${no}`}>{qty(line.balance_to_ship)}</td>
                     </>}
-                    {/* Ours, after his. */}
-                    <td className={TD}>{cell("crqUomFor", line.uom, (v) => setLine(i, { uom: v ?? "" }), "text", "w-16")}</td>
-                    <td className={cn(TD, NUM)}>{cell("crqRateFor", line.est_rate, (v) => setLine(i, { est_rate: v }), "number")}</td>
-                    {isItem && (
+                    {/* Ours, after his — Item lines only. */}
+                    {isItem && (<>
+                      <td className={TD}>{cell("crqUomFor", line.uom, (v) => setLine(i, { uom: v ?? "" }), "text", "w-16")}</td>
+                      <td className={cn(TD, NUM)}>{cell("crqRateFor", line.est_rate, (v) => setLine(i, { est_rate: v }), "number")}</td>
                       <td className={TD}>{cell("crqDescriptionFor", line.description, (v) => setLine(i, { description: v }), "text", "w-48")}</td>
-                    )}
+                    </>)}
                     {view.doc_type === "SERVICE" && (
                       <td className={TD}>{can ? (
                         <select aria-label={t("crqResourceFor", { line: i + 1 })} className="nf-input-sm nf-select w-48" style={inputStyle} value={line.resource_id ?? ""}

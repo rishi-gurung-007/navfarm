@@ -149,8 +149,11 @@ export function toRequisitionPayload(v: CommonRequisitionView): Record<string, u
       resource_id: v.doc_type === "SERVICE" ? s(l.resource_id) : undefined,
       description: s(l.description),
       quantity: Number(l.quantity),
-      uom: l.uom,
-      est_rate: n(l.est_rate),
+      // WP1c addendum (Rishi, 5 Oct): an FA/Service line is "Description + Qty
+      // only" — no unit (nullable since 0149; the API requires one on ITEM
+      // lines only) and no estimated rate, which was ours to begin with.
+      uom: v.doc_type === "ITEM" ? s(l.uom) : undefined,
+      est_rate: v.doc_type === "ITEM" ? n(l.est_rate) : undefined,
       from_location_id: store ? s(l.from_location_id) : undefined,
       to_location_id: store ? s(l.to_location_id) : undefined,
       qty_to_ship: store ? n(l.qty_to_ship) : undefined,

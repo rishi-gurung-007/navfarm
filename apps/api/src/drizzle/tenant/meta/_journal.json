@@ -1037,6 +1037,13 @@
       "when": 1792000000017,
       "tag": "0148_wp1c_direct_transfer_and_tracking",
       "breakpoints": true
+    },
+    {
+      "idx": 149,
+      "version": "5",
+      "when": 1792000000018,
+      "tag": "0149_requisition_line_uom_nullable",
+      "breakpoints": true
     }
   ]
 }

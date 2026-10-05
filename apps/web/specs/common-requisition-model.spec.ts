@@ -103,3 +103,26 @@ describe("common requisition payload — Item Tracking assignment", () => {
     expect(line.serial_no).toBeUndefined();
   });
 });
+
+/**
+ * WP1c addendum (decisions.md 2026-10-05, Rishi: "follow the file shared").
+ * An FA/Service line is "Description + Qty only": no unit, no rate. The column
+ * is nullable from migration 0149 and the API requires a unit on ITEM only.
+ */
+describe("common requisition payload — FA/Service lines carry no unit", () => {
+  it("sends the unit on an ITEM line", () => {
+    const v = emptyCommonRequisition("co-1", "ITEM", "STORE", "2026-10-05");
+    v.lines = [{ ...emptyLine(), item_id: "i1", quantity: "10", uom: "KG" }];
+    expect((toRequisitionPayload(v).lines as Record<string, unknown>[])[0].uom).toBe("KG");
+  });
+
+  it("omits the unit and the rate on a Fixed Asset or Service line", () => {
+    for (const docType of ["FA", "SERVICE"] as const) {
+      const v = emptyCommonRequisition("co-1", docType, "PURCHASE", "2026-10-05");
+      v.lines = [{ ...emptyLine(), description: "Tractor", quantity: "1", uom: "EA", est_rate: "500" }];
+      const [line] = toRequisitionPayload(v).lines as Record<string, unknown>[];
+      expect(line.uom).toBeUndefined();
+      expect(line.est_rate).toBeUndefined();
+    }
+  });
+});

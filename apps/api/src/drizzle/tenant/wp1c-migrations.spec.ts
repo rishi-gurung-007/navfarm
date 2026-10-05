@@ -25,3 +25,22 @@ describe('Tenant migration 0148 — WP1c direct-transfer right and requisition l
     ]);
   });
 });
+
+describe('Tenant migration 0149 — WP1c addendum: FA/Service lines carry no unit (relaxing MODIFY)', () => {
+  it('is journalled at idx 149 with a when after 0148, still leaving 146 for the deferred drop', () => {
+    const entries = journal();
+    expect(entries.find((e) => e.idx === 149)).toEqual({ idx: 149, version: '5', when: 1792000000018, tag: '0149_requisition_line_uom_nullable', breakpoints: true });
+    expect(entries.find((e) => e.idx === 146)).toBeUndefined();
+    expect(1792000000018).toBeGreaterThan(entries.find((e) => e.idx === 148)!.when);
+  });
+
+  it('only relaxes requisition_line.uom — nothing dropped, nothing narrowed', () => {
+    // Rishi, 5 Oct: "follow the file shared" — his list makes an FA/Service
+    // line Description + Qty only, so those lines carry no unit. Widening a
+    // NOT NULL column to nullable is the 0142 pattern: no data is lost and
+    // every existing row stays valid.
+    expect(statements('0149_requisition_line_uom_nullable')).toEqual([
+      'ALTER TABLE `requisition_line` MODIFY COLUMN `uom` varchar(20);',
+    ]);
+  });
+});

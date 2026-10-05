@@ -343,7 +343,8 @@ export class RequisitionService {
         resource_id: line.resource_id ?? null,
         description: line.description ?? null,
         quantity: String(line.quantity),
-        uom: line.uom,
+        // Nullable from 0149 — an FA/Service line carries no unit (Rishi, 5 Oct).
+        uom: line.uom ?? null,
         est_rate: line.est_rate !== undefined && line.est_rate !== null ? String(line.est_rate) : null,
         // WP1c Item Tracking: the assignment written through the document's
         // Item Tracking button travels onto the common line (it will flow onto

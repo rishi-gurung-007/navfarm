@@ -130,6 +130,15 @@ export function assertLineFields(docType: CommonDocType, line: RequisitionLineRu
   if (!(Number(line.quantity) > 0)) {
     throw new BadRequestException(`${at} needs a quantity greater than zero.`);
   }
+  // WP1c addendum (decisions.md 2026-10-05): Rishi's list makes an FA/Service
+  // line "Description + Qty only", so only an ITEM line carries a unit. The
+  // column is nullable from 0149, which means the per-kind rule has to live
+  // here — the database cannot express "required for one kind of row".
+  // A unit already stored on an older FA/Service row is left alone rather than
+  // refused, so editing such a document still round-trips.
+  if (docType === 'ITEM' && !present(line.uom)) {
+    throw new BadRequestException(`${at} needs a unit of measure.`);
+  }
   // WP1c Item Tracking (Rishi's 4 Oct list): a lot or serial identifies an
   // inventory item, and FA / Service lines are Description + Qty only — so
   // carrying either field is the same error as naming an item outright.
@@ -501,7 +510,7 @@ export interface TransferPlanLine {
 
 export function transferPlanFor(
   header: { from_location_id: string | null; to_location_id: string | null },
-  lines: Array<{ line_id: string; line_seq: number; item_id: string | null; quantity: unknown; uom: string; qty_to_ship?: unknown; from_location_id?: string | null; to_location_id?: string | null; lot_no?: unknown; serial_no?: unknown }>,
+  lines: Array<{ line_id: string; line_seq: number; item_id: string | null; quantity: unknown; uom: string | null; qty_to_ship?: unknown; from_location_id?: string | null; to_location_id?: string | null; lot_no?: unknown; serial_no?: unknown }>,
 ) {
   if (!header.from_location_id || !header.to_location_id) {
     throw new BadRequestException('A Store requisition needs a source and a destination before release.');
@@ -516,6 +525,11 @@ export function transferPlanFor(
       if ((l.from_location_id && l.from_location_id !== fromLocationId) || (l.to_location_id && l.to_location_id !== toLocationId)) {
         throw new BadRequestException(`Line ${l.line_seq} moves between other locations than the header; one transfer has one source and one destination.`);
       }
+      // uom is nullable from 0149 for FA/Service lines, but a Store
+      // requisition is always an Item requisition (assertPurpose), and an Item
+      // line must carry a unit (assertLineFields) — so this is unreachable
+      // rather than tolerated, and says so instead of shipping a null unit.
+      if (!l.uom) throw new BadRequestException(`Line ${l.line_seq} has no unit of measure; a Store line is an Item line and must carry one.`);
       return { requisition_line_id: l.line_id, item_id: l.item_id, quantity: lineBalances(l).qty_to_ship, uom: l.uom, lot_no: l.lot_no ?? null, serial_no: l.serial_no ?? null };
     }),
   };

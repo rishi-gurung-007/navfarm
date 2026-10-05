@@ -55,10 +55,13 @@ export class RequisitionLineInput {
   @Type(() => Number)
   quantity: number;
 
-  @ApiProperty()
+  // WP1c addendum (decisions.md 2026-10-05): required on ITEM lines only —
+  // assertLineFields enforces that per kind, because an FA/Service line is
+  // "Description + Qty only" and carries no unit at all.
+  @ApiPropertyOptional({ description: 'Unit of measure; required on ITEM lines, absent on Fixed Asset and Service lines' })
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  uom: string;
+  uom?: string;
 
   @ApiPropertyOptional({ description: 'Our field: estimated unit rate for cost visibility' })
   @IsOptional()

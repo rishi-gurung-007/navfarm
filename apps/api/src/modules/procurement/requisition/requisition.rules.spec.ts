@@ -116,14 +116,34 @@ describe('Item / Fixed Asset / Service line fields', () => {
       .toThrow('Requisition line 2 needs a quantity greater than zero.');
   });
 
+  /**
+   * WP1c addendum (decisions.md 2026-10-05, Rishi: "follow the file shared").
+   * His list makes an FA/Service line "Description + Qty only", so those lines
+   * carry no unit. requisition_line.uom was NOT NULL (relaxed in 0149) and the
+   * DTO demanded it on every kind, so such a document could not be saved.
+   */
+  it('requires a unit on an Item line and none on a Fixed Asset or Service line', () => {
+    expect(() => assertLineFields('ITEM', { item_id: 'item-1', resource_id: null, description: null, quantity: '1', uom: null }, 1))
+      .toThrow('Requisition line 1 needs a unit of measure.');
+    expect(() => assertLineFields('ITEM', { item_id: 'item-1', resource_id: null, description: null, quantity: '1', uom: 'KG' }, 1))
+      .not.toThrow();
+    for (const kind of ['FA', 'SERVICE'] as const) {
+      expect(() => assertLineFields(kind, { item_id: null, resource_id: null, description: 'Tractor', quantity: '1', uom: null }, 1))
+        .not.toThrow();
+      // A unit already stored on an older FA/Service row still round-trips.
+      expect(() => assertLineFields(kind, { item_id: null, resource_id: null, description: 'Tractor', quantity: '1', uom: 'EA' }, 1))
+        .not.toThrow();
+    }
+  });
+
   it('refuses Fixed Asset / Service lines that carry item tracking assignment', () => {
     expect(() => assertLineFields('FA', { item_id: null, resource_id: null, description: 'Tractor', quantity: '1', lot_no: 'L-1', serial_no: null }, 1))
       .toThrow('Fixed Asset line cannot reference an inventory item');
     expect(() => assertLineFields('SERVICE', { item_id: null, resource_id: null, description: 'Injection service', quantity: '1', lot_no: 'L-1', serial_no: null }, 1))
       .toThrow('Service line cannot reference an inventory item');
-    expect(() => assertLineFields('ITEM', { item_id: 'item-1', resource_id: null, description: null, quantity: '1', lot_no: 'L-1', serial_no: null }, 1))
+    expect(() => assertLineFields('ITEM', { item_id: 'item-1', resource_id: null, description: null, quantity: '1', uom: 'KG', lot_no: 'L-1', serial_no: null }, 1))
       .not.toThrow();
-    expect(() => assertLineFields('ITEM', { item_id: 'item-1', resource_id: null, description: null, quantity: '1', lot_no: null, serial_no: 'S-1, S-2' }, 1))
+    expect(() => assertLineFields('ITEM', { item_id: 'item-1', resource_id: null, description: null, quantity: '1', uom: 'KG', lot_no: null, serial_no: 'S-1, S-2' }, 1))
       .not.toThrow();
   });
 

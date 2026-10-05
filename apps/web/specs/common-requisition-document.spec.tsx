@@ -234,3 +234,21 @@ describe("CommonRequisitionDocument — Rishi's line column list", () => {
     expect(h).not.toContain("crqColTracking");
   });
 });
+
+describe("CommonRequisitionDocument — FA/Service is Description + Qty only", () => {
+  const headers = (c: HTMLElement) => Array.from(c.querySelectorAll("thead th")).map((n) => (n.textContent ?? "").trim()).filter(Boolean);
+
+  it.each(["FA", "SERVICE"] as const)("drops the unit and rate columns on a %s document", (docType) => {
+    const { container } = render(<CommonRequisitionDocument view={emptyCommonRequisition("co-1", docType, "PURCHASE", "2026-10-05")} editable options={options} onChange={jest.fn()} />);
+    const h = headers(container);
+    expect(h).not.toContain("crqColUom");
+    expect(h).not.toContain("crqColRate");
+    expect(h).toContain("crqColDescription");
+    expect(h).toContain("crqColQty");
+  });
+
+  it("keeps the unit on an Item document, where the API still requires one", () => {
+    const { container } = render(<CommonRequisitionDocument view={emptyCommonRequisition("co-1", "ITEM", "STORE", "2026-10-05")} editable options={options} onChange={jest.fn()} />);
+    expect(headers(container)).toContain("crqColUom");
+  });
+});
