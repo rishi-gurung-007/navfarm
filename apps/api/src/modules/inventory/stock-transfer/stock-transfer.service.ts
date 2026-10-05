@@ -13,7 +13,7 @@ import { GlPostingService } from '../../finance/journal/gl-posting.service';
 import { UomService } from '../../master-data/uom/uom.service';
 import { SiloFeedService } from '../silo-feed/silo-feed.service';
 import { FeedAlertService } from '../feed-alert/feed-alert.service';
-import { OPEN_TRANSFER_STATUSES, transferStatusFor, assignmentsFromLine, assertTrackingAssignments, serialsForReceipt, splitAmount } from './transfer-execution.rules';
+import { OPEN_TRANSFER_STATUSES, transferStatusFor, assertTrackingForShipment, serialsForReceipt, splitAmount } from './transfer-execution.rules';
 import { syncRequisitionFulfilment } from '../../procurement/requisition/requisition-fulfilment';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
@@ -578,7 +578,7 @@ export class StockTransferService {
       this.assertDistinctLines(dto.lines, 'shipment');
       // Cumulative shipped quantities per line, from the events so far.
       const shippedByLine = await this.shippedQuantities(id, tenantId);
-      const eventLines: Array<{ line: typeof schema.stockTransferLine.$inferSelect; qty: number; lotNo?: string; serialNo?: string }> = [];
+      const eventLines: Array<{ line: typeof schema.stockTransferLine.$inferSelect; qty: number; balance: number; lotNo?: string; serialNo?: string }> = [];
       for (const input of dto.lines) {
         const line = transfer.lines.find((l) => l.line_id === input.line_id);
         if (!line) throw new BadRequestException(`Transfer line '${input.line_id}' is not part of ${transfer.transfer_no}.`);
@@ -586,7 +586,7 @@ export class StockTransferService {
         // Bounds run in the line's own UOM: the ordered quantity is the line,
         // already-shipped comes from the events.
         this.assertShipment(Number(line.quantity), alreadyShipped, input.quantity, line);
-        eventLines.push({ line, qty: input.quantity, lotNo: line.lot_no ?? undefined, serialNo: line.serial_no ?? undefined });
+        eventLines.push({ line, qty: input.quantity, balance: Number(line.quantity) - alreadyShipped, lotNo: line.lot_no ?? undefined, serialNo: line.serial_no ?? undefined });
       }
 
       // WP1c: a tracked item (is_lot_tracked / is_serial_tracked on the
@@ -616,29 +616,50 @@ export class StockTransferService {
       });
       // Enforce before anything is written: a tracked item's lot/serial
       // assignment must exist and cover the shipped quantity exactly.
-      for (const { line, qty, lotNo, serialNo } of eventLines) {
+      // WP4a fix round 1: the ONE tracking rule (also the requisition's Item
+      // Tracking route's) — a serial-tracked line ships its whole balance with
+      // exactly one serial per unit.
+      for (const { line, qty, balance, lotNo, serialNo } of eventLines) {
         const flags = itemFlags.get(line.item_id ?? '');
         if (flags?.isLotTracked || flags?.isSerialTracked) {
-          assertTrackingAssignments(flags, assignmentsFromLine({ lot_no: lotNo ?? null, serial_no: serialNo ?? null, qty }), qty);
+          assertTrackingForShipment(flags, { lot_no: lotNo ?? null, serial_no: serialNo ?? null }, qty, balance);
         }
       }
 
       for (const { line, qty, lotNo, serialNo } of eventLines) {
+        // Out of the source only; the destination leg is the receipt's (Part E Task 4).
+        // WP4a fix round 1: a serial-tracked line leaves as one ledger row per
+        // serial — each a FIFO draw of exactly that unit from the From location
+        // (strict, writeTransferShipment) — and the shipment line records the
+        // identities those rows were written with, so the receipt copies exactly
+        // what left. A lot is FIFO-filtered to the line's lot and recorded from
+        // its ledger row the same way.
+        const serials = itemFlags.get(line.item_id ?? '')?.isSerialTracked
+          ? String(serialNo ?? '').split(',').map((v) => v.trim()).filter(Boolean)
+          : [];
+        const draws = serials.length > 0 ? serials.map((sn) => ({ quantity: 1, serialNo: sn as string | undefined })) : [{ quantity: qty, serialNo }];
+        const entries: Array<{ lot_no?: string | null; serial_no?: string | null }> = [];
+        for (const draw of draws) {
+          const shipmentEntry = await this.ledgerService.writeTransferShipment({
+            tenantId, companyId: transfer.company_id, itemId: line.item_id, documentNo: shipmentNo, documentLineId: line.line_id,
+            postingDate: dto.posting_date, quantity: draw.quantity, uom: line.uom, fromWarehouseId: transfer.from_warehouse_id,
+            lotNo, serialNo: draw.serialNo, userId: userPayload?.userId,
+          });
+          await this.glPostingService.postInventoryLedgerEntry(shipmentEntry, userPayload?.userId);
+          entries.push({ lot_no: shipmentEntry?.lot_no, serial_no: shipmentEntry?.serial_no });
+        }
+        const recorded = (key: 'lot_no' | 'serial_no', requested: string | undefined) => {
+          const values = entries.map((e) => (e[key] === undefined ? requested : e[key])).filter((v): v is string => Boolean(v));
+          return values.length ? [...new Set(values)].join(',') : null;
+        };
         await this.db.insert(schema.transferShipmentLine).values({
           shipment_id: shipmentId,
           line_id: line.line_id,
           quantity: String(qty),
           uom: line.uom,
-          lot_no: lotNo ?? null,
-          serial_no: serialNo ?? null,
+          lot_no: recorded('lot_no', lotNo),
+          serial_no: serials.length > 0 ? recorded('serial_no', undefined) ?? serials.join(',') : recorded('serial_no', serialNo),
         });
-        // Out of the source only; the destination leg is the receipt's (Part E Task 4).
-        const shipmentEntry = await this.ledgerService.writeTransferShipment({
-          tenantId, companyId: transfer.company_id, itemId: line.item_id, documentNo: shipmentNo, documentLineId: line.line_id,
-          postingDate: dto.posting_date, quantity: qty, uom: line.uom, fromWarehouseId: transfer.from_warehouse_id,
-          lotNo, serialNo, userId: userPayload?.userId,
-        });
-        await this.glPostingService.postInventoryLedgerEntry(shipmentEntry, userPayload?.userId);
       }
 
       // Status follows the event (Part E Task 4b): shipped so far plus this

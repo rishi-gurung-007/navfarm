@@ -695,3 +695,52 @@ describe('Part E Task 7 — a linked requisition follows the transfer events', (
     }, 'tenant-1', ADMIN))).rejects.toThrow('does not belong to requisition req-1');
   });
 });
+
+/**
+ * WP4a fix round 1, Important 3 (wp4a-review.md): a partial shipment of a
+ * serial line copied the WHOLE serial list onto the shipment line while FIFO
+ * consumed only some of them, in an order nobody chose; the receipt then
+ * re-landed the first serials and the rest were lost. Now:
+ * - a serial-tracked line ships its whole balance, exactly one serial per unit
+ *   (partials refused until consumed serials are recorded per event);
+ * - the outbound ledger leg is one row per serial (each a FIFO draw of exactly
+ *   that serial), and the shipment line records the identities the ledger
+ *   rows were written with — so the receipt copies exactly what left;
+ * - a lot line's shipment line takes the lot its ledger row recorded.
+ */
+describe('postShipment — WP4a fix round 1: the shipment records what the ledger consumed', () => {
+  const serialLine = { ...LINE, quantity: '2', lot_no: null, serial_no: 'SN1, SN2' };
+  const serialFlags = () => [[{ item_id: 'item-1', is_lot_tracked: false, is_serial_tracked: true }]];
+
+  it('writes one outbound ledger row per serial and records those serials on the shipment line', async () => {
+    const queues = baseQueues();
+    queues.set(schema.stockTransferLine, [[{ ...serialLine }]]);
+    queues.set(schema.itemMaster, serialFlags());
+    const { service, as, inserts, ledger } = setup(queues);
+    ledger.writeTransferShipment.mockImplementation(async (p: any) => ({ ledger_id: `led-${p.serialNo}`, lot_no: null, serial_no: p.serialNo }));
+    await as(() => service.postShipment('tr-1', { posting_date: '2026-10-05', lines: [{ line_id: 'line-1', quantity: 2 }] }, 'tenant-1', ADMIN));
+    expect(ledger.writeTransferShipment.mock.calls.map(([p]: any[]) => [p.serialNo, p.quantity])).toEqual([['SN1', 1], ['SN2', 1]]);
+    expect(inserts(schema.transferShipmentLine)[0]).toMatchObject({ quantity: '2', serial_no: 'SN1,SN2' });
+  });
+
+  it('refuses a partial shipment of a serial-tracked line before anything is written', async () => {
+    const queues = baseQueues();
+    queues.set(schema.stockTransferLine, [[{ ...serialLine, quantity: '4', serial_no: 'SN1,SN2,SN3,SN4' }]]);
+    queues.set(schema.itemMaster, serialFlags());
+    const { service, as, inserts, ledger } = setup(queues);
+    await expect(as(() => service.postShipment('tr-1', { posting_date: '2026-10-05', lines: [{ line_id: 'line-1', quantity: 2 }] }, 'tenant-1', ADMIN)))
+      .rejects.toThrow('partial shipments of serial-tracked lines are not supported yet');
+    expect(ledger.writeTransferShipment).not.toHaveBeenCalled();
+    expect(inserts(schema.transferShipmentLine)).toHaveLength(0);
+  });
+
+  it('a partial shipment of a lot line records the lot its ledger row consumed', async () => {
+    const queues = baseQueues();
+    queues.set(schema.itemMaster, [[{ item_id: 'item-1', is_lot_tracked: true, is_serial_tracked: false }]]);
+    const { service, as, inserts, ledger } = setup(queues);
+    ledger.writeTransferShipment.mockResolvedValue({ ledger_id: 'led-sh', lot_no: 'LOT-9', serial_no: null });
+    await as(() => service.postShipment('tr-1', { posting_date: '2026-10-05', lines: [{ line_id: 'line-1', quantity: 4 }] }, 'tenant-1', ADMIN));
+    expect(ledger.writeTransferShipment).toHaveBeenCalledTimes(1);
+    expect(inserts(schema.transferShipmentLine)[0]).toMatchObject({ quantity: '4', lot_no: 'LOT-9', serial_no: null });
+  });
+});
