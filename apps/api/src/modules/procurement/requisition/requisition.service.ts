@@ -46,6 +46,7 @@ import {
   assertPurposeLocations,
   assertReceiptByRequester,
   assertRequisitionLines,
+  isRequisitionRequester,
   isSelfApproval,
   selfApprovalSql,
   lineBalances,
@@ -298,7 +299,7 @@ export class RequisitionService {
         created_by: userPayload?.userId ?? null,
       });
       await this.db.insert(schema.requisitionLine).values(this.lineValues(requisitionId, purpose, dto.lines, dto));
-      return this.findOne(requisitionId, tenantId);
+      return this.findOne(requisitionId, tenantId, { caller: userPayload });
     });
   }
 
@@ -459,7 +460,7 @@ export class RequisitionService {
       await this.db.insert(schema.requisitionLine).values(
         this.lineValues(requisitionId, purpose, dto.lines, { from_location_id: fromLocationId, to_location_id: toLocationId }),
       );
-      return this.findOne(requisitionId, tenantId);
+      return this.findOne(requisitionId, tenantId, { caller: userPayload });
     });
   }
 
@@ -529,7 +530,7 @@ export class RequisitionService {
    * not a general widening of findOne's visibility (that is WP1b's, for the
    * hub's document dialog).
    */
-  async findOne(requisitionId: string, tenantId: string, opts: { bypassFarm?: boolean } = {}) {
+  async findOne(requisitionId: string, tenantId: string, opts: { bypassFarm?: boolean; caller?: { userId?: string; userType?: string } } = {}) {
     const [row] = await this.db
       .select()
       .from(schema.requisition)
@@ -630,8 +631,25 @@ export class RequisitionService {
       }
       shipments = [...byShipment.values()];
     }
+    // Review p1f, I3: the server says what release() and receive() would
+    // decide about this caller, through the same helpers, so the web shows
+    // Release and Transfer Receipt without re-stating either rule. The flags
+    // are about who the caller is; the document's state still decides whether
+    // the action applies at all.
+    const caller = opts.caller;
+    let mayRelease = false;
+    let mayReceive = false;
+    if (caller?.userId) {
+      mayRelease = (await this.hasApproveGrant(caller)) && !this.isOwnRequisitionRefused(row, caller);
+      if (row.purpose === 'STORE' && isRequisitionRequester(row, caller.userId)) {
+        mayReceive = await this.assertPostingDepartmentFor(row, tenantId, 'TO', 'Transfer Receipt', caller)
+          .then(() => true, (err) => { if (err instanceof ForbiddenException) return false; throw err; });
+      }
+    }
     return {
       ...row,
+      may_release: mayRelease,
+      may_receive: mayReceive,
       main_location_code: locationCode.get(row.main_location_id ?? '') ?? null,
       from_location_code: locationCode.get(row.from_location_id ?? '') ?? null,
       to_location_code: locationCode.get(row.to_location_id ?? '') ?? null,
@@ -788,7 +806,7 @@ export class RequisitionService {
         .update(schema.requisition)
         .set({ status: 'PENDING_APPROVAL', approval_status: 'PENDING_APPROVAL', document_status: 'OPEN', approval_request_id: requestId, updated_by: userPayload?.userId ?? null })
         .where(eq(schema.requisition.requisition_id, requisitionId));
-      return this.findOne(requisitionId, tenantId);
+      return this.findOne(requisitionId, tenantId, { caller: userPayload });
     });
   }
 
@@ -819,14 +837,19 @@ export class RequisitionService {
    * TENANT_ADMIN and COMPANY_ADMIN (maySelfApprove) — every other type,
    * including SYSTEM_ADMIN (not yet decided), is still refused.
    */
+  private isOwnRequisitionRefused(
+    row: { source: string | null; created_by: string | null; requester_user_id: string | null },
+    userPayload: { userId?: string; userType?: string } | undefined,
+  ): boolean {
+    return !maySelfApprove(userPayload?.userType) && isSelfApproval(row, userPayload?.userId);
+  }
+
   private assertNotOwnRequisition(
     row: { source: string | null; created_by: string | null; requester_user_id: string | null },
     userPayload: { userId?: string; userType?: string } | undefined,
     refusal: string,
   ): void {
-    if (!maySelfApprove(userPayload?.userType) && isSelfApproval(row, userPayload?.userId)) {
-      throw new ForbiddenException(refusal);
-    }
+    if (this.isOwnRequisitionRefused(row, userPayload)) throw new ForbiddenException(refusal);
   }
 
   async decide(requisitionId: string, dto: DecideRequisitionDto, decision: 'APPROVED' | 'REJECTED', tenantId: string, userPayload?: { userId?: string; email?: string; userType?: string }) {
@@ -891,7 +914,7 @@ export class RequisitionService {
       // in approval.service.ts's decide(): without it, an admin's cross-farm
       // decision committed the update and then rolled itself back because
       // this read-back 404'd on the farm-only view.
-      return this.findOne(requisitionId, tenantId, { bypassFarm: mayDecideAnyRequisition(userPayload?.userType) });
+      return this.findOne(requisitionId, tenantId, { bypassFarm: mayDecideAnyRequisition(userPayload?.userType), caller: userPayload });
     });
   }
 
@@ -993,7 +1016,7 @@ export class RequisitionService {
         .where(eq(schema.requisition.requisition_id, requisitionId));
       // The read-back has the lock's reach (see decide()): an admin's
       // cross-farm release must not commit and then 404 on the farm-only view.
-      return this.findOne(requisitionId, tenantId, { bypassFarm });
+      return this.findOne(requisitionId, tenantId, { bypassFarm, caller: userPayload });
     });
   }
 
@@ -1067,10 +1090,10 @@ export class RequisitionService {
     // the same department check above.
     if (row.direct_transfer) {
       await this.stockTransfers.postDirectTransfer(transferId, { posting_date: dto.posting_date, lines: mapToTransferLines(dto.lines, transferLines) }, tenantId, userPayload);
-      return this.findOne(requisitionId, tenantId);
+      return this.findOne(requisitionId, tenantId, { caller: userPayload });
     }
     await this.stockTransfers.postShipment(transferId, { posting_date: dto.posting_date, lines: mapToTransferLines(dto.lines, transferLines) }, tenantId, userPayload);
-    return this.findOne(requisitionId, tenantId);
+    return this.findOne(requisitionId, tenantId, { caller: userPayload });
   }
 
   /**
@@ -1084,7 +1107,7 @@ export class RequisitionService {
     assertReceiptByRequester(row, userPayload?.userId);
     await this.assertPostingDepartmentFor(row, tenantId, 'TO', 'Transfer Receipt', userPayload);
     await this.stockTransfers.postReceipt(transferId, { posting_date: dto.posting_date, shipment_id: dto.shipment_id, lines: mapToTransferLines(dto.lines, transferLines) }, tenantId, userPayload);
-    return this.findOne(requisitionId, tenantId);
+    return this.findOne(requisitionId, tenantId, { caller: userPayload });
   }
 
   /**
@@ -1163,7 +1186,7 @@ export class RequisitionService {
           .where(and(eq(schema.stockTransferLine.transfer_id, transferId), eq(schema.stockTransferLine.requisition_line_id, w.line_id)));
       }
     });
-    return this.findOne(requisitionId, tenantId);
+    return this.findOne(requisitionId, tenantId, { caller: userPayload });
   }
 
   /**
@@ -1193,7 +1216,7 @@ export class RequisitionService {
         .update(schema.requisition)
         .set({ ...reopenTransition(), updated_by: userPayload?.userId ?? null })
         .where(eq(schema.requisition.requisition_id, requisitionId));
-      return this.findOne(requisitionId, tenantId);
+      return this.findOne(requisitionId, tenantId, { caller: userPayload });
     });
   }
 
@@ -1306,6 +1329,6 @@ export class RequisitionService {
       .update(schema.requisition)
       .set({ linked_po_no: linkedPoNo, updated_by: userPayload?.userId ?? null })
       .where(eq(schema.requisition.requisition_id, requisitionId));
-    return this.findOne(requisitionId, tenantId);
+    return this.findOne(requisitionId, tenantId, { caller: userPayload });
   }
 }

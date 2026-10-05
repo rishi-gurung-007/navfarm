@@ -75,9 +75,11 @@ export interface CommonRequisitionView {
   /** Rishi, 5 Oct: the Requester User ID is shown as the login (email); the
    *  API resolves it from requester_user_id. Display only — never sent back. */
   requester_login?: string | null;
-  /** Who keyed the document and how — the self-approval rule reads both (display only). */
-  created_by?: string | null;
-  source?: string | null;
+  /** Review p1f, I3: what release() and receive() would decide about the
+   *  signed-in user, computed by the API with its own helpers. The web never
+   *  re-states those rules; the document's state still gates the button. */
+  may_release?: boolean;
+  may_receive?: boolean;
   requester_name?: string | null;
   requester_department_id: string | null;
   requester_department_name?: string | null;
@@ -210,38 +212,22 @@ export function isCommonEditable(v: CommonRequisitionView): boolean {
 
 export type CommonAction = "save" | "submit" | "reopen" | "release" | "linkPo" | "ship" | "receive";
 
-/** The signed-in user, for the actions that depend on who they are, not only on their grants. */
-export interface CommonActor { userId?: string | null; userType?: string | null }
-
-/**
- * Mirrors the API's isSelfApproval + maySelfApprove (requisition.rules.ts): a
- * user may not approve — so may not release — a manual requisition they
- * created or requested, unless they are a Tenant or Company admin
- * (decisions, 1 and 4 Oct). The API decides it again.
- */
-function isOwnUnapprovable(v: CommonRequisitionView, me: CommonActor): boolean {
-  if (me.userType === "TENANT_ADMIN" || me.userType === "COMPANY_ADMIN") return false;
-  if (!me.userId || v.source === "AUTO_FORECAST") return false;
-  return v.created_by === me.userId || v.requester_user_id === me.userId;
-}
-
-export function commonActions(v: CommonRequisitionView, can: { create: boolean; approve: boolean; transfer: boolean }, me: CommonActor = {}): CommonAction[] {
+export function commonActions(v: CommonRequisitionView, can: { create: boolean; approve: boolean; transfer: boolean }): CommonAction[] {
   if (!v.requisition_id) return can.create ? ["save"] : [];
   const approval = v.approval_status ?? "OPEN";
   const doc = v.document_status ?? "OPEN";
   const out: CommonAction[] = [];
   if (approval === "OPEN" && doc === "OPEN" && can.create) out.push("save", "submit");
   if (approval === "REJECTED" && can.create) out.push("reopen");
-  // Rishi, 5 Oct: Release is for any user who may approve the requisition.
-  if (approval === "APPROVED" && doc === "APPROVED" && can.approve && !isOwnUnapprovable(v, me)) out.push("release");
+  // Rishi, 5 Oct: Release is for any user who may approve the requisition —
+  // the API decides who that is and says so in may_release (review p1f, I3).
+  if (approval === "APPROVED" && doc === "APPROVED" && v.may_release) out.push("release");
   if (doc === "RELEASED" && v.purpose === "PURCHASE" && can.approve) out.push("linkPo");
   if (doc === "RELEASED" && v.purpose === "STORE") {
     if (can.transfer && v.lines.some((l) => (l.balance_to_ship ?? 0) > 1e-9)) out.push("ship");
     // Rishi, 5 Oct: "The one requesting is the one who would be receiving" —
-    // the requester posts the Transfer Receipt, with no separate receive
-    // grant. The API decides it again (and checks the To department).
-    const isRequester = !!me.userId && me.userId === v.requester_user_id;
-    if (isRequester && (v.shipments ?? []).some((sh) => sh.lines.some((l) => l.remaining > 1e-9))) out.push("receive");
+    // the API decides it (requester at the To department) in may_receive.
+    if (v.may_receive && (v.shipments ?? []).some((sh) => sh.lines.some((l) => l.remaining > 1e-9))) out.push("receive");
   }
   return out;
 }

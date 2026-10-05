@@ -447,3 +447,65 @@ describe('controller surface — release/reopen endpoints exist with their permi
     expect(typeof Object.getOwnPropertyDescriptor(RequisitionController.prototype, 'reopen')?.value).toBe('function');
   });
 });
+
+/**
+ * Review p1f, I3: the web re-stated the self-approval rule to decide whether
+ * to show Release, and the receipt rule to decide whether to show Transfer
+ * Receipt. The server now decides both. findOne, given the caller, returns
+ * may_release (release's own predicate: the approve grant, and not the
+ * caller's own requisition unless they are a Tenant or Company admin) and
+ * may_receive (receive's own: the requester, at the To sub-location's
+ * department). Both are about who the caller is; the document's state still
+ * decides whether the button applies.
+ */
+describe('review p1f I3 — findOne tells the caller what release and receive would decide', () => {
+  const APPROVED_STORE = { ...STORE_ROW, from_location_id: 'loc-store', to_location_id: 'loc-farm' };
+  const view = (caller: { userId: string; userType: string }, over: { grants?: unknown[]; userDept?: string | null; row?: Record<string, unknown> } = {}) => {
+    const { service, as } = setup(new Map<unknown, unknown[][]>([
+      [schema.requisition, [[{ ...APPROVED_STORE, ...over.row }]]],
+      [schema.requisitionLine, [LINES]],
+      // findOne's code lookup, then receive's To-department lookup.
+      [schema.locationMaster, [[], [{ location_id: 'loc-farm', department_id: 'cc-farm' }]]],
+      // findOne's name lookup, then receive's user-department lookup.
+      [schema.userMaster, [[], [{ user_id: caller.userId, department_id: over.userDept === undefined ? 'cc-farm' : over.userDept }]]],
+      [schema.userRoleAssignment, [over.grants ?? []]],
+    ]));
+    return as(STORE_SCOPE, () => service.findOne('req-1', 'tenant-1', { caller }));
+  };
+  const GRANT = [{ moduleCode: 'PROCUREMENT', resource: 'REQUISITION', canApprove: true }];
+
+  it('an approver who did not raise it may release, and may not receive', async () => {
+    const v = await view({ userId: 'u-appr', userType: 'STANDARD_USER' }, { grants: GRANT });
+    expect(v).toMatchObject({ may_release: true, may_receive: false });
+  });
+
+  it('the requester of the To department may receive, and without the grant may not release', async () => {
+    const v = await view({ userId: 'u-req', userType: 'STANDARD_USER' });
+    expect(v).toMatchObject({ may_release: false, may_receive: true });
+  });
+
+  it('the requester with the grant still may not release their own requisition', async () => {
+    expect(await view({ userId: 'u-req', userType: 'STANDARD_USER' }, { grants: GRANT })).toMatchObject({ may_release: false });
+  });
+
+  it('a Company admin may release the requisition they raised (decisions, 4 Oct)', async () => {
+    expect(await view({ userId: 'u-req', userType: 'COMPANY_ADMIN' })).toMatchObject({ may_release: true });
+  });
+
+  it('the requester of another department may not receive', async () => {
+    expect(await view({ userId: 'u-req', userType: 'STANDARD_USER' }, { userDept: 'cc-other' })).toMatchObject({ may_receive: false });
+  });
+
+  it('without a caller there is nothing to say: both flags are false', async () => {
+    const { service, as } = setup(new Map<unknown, unknown[][]>([[schema.requisition, [[APPROVED_STORE]]], [schema.requisitionLine, [LINES]]]));
+    expect(await as(STORE_SCOPE, () => service.findOne('req-1', 'tenant-1'))).toMatchObject({ may_release: false, may_receive: false });
+  });
+
+  it('GET /requisition/:id passes the signed-in user as the caller', async () => {
+    const findOne = jest.fn().mockResolvedValue({});
+    const controller = new RequisitionController({ findOne } as any);
+    const user = { tenantId: 'tenant-1', userId: 'u-req', userType: 'STANDARD_USER' };
+    await controller.findOne('req-1', { user });
+    expect(findOne).toHaveBeenCalledWith('req-1', 'tenant-1', expect.objectContaining({ caller: user }));
+  });
+});

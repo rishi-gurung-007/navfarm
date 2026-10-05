@@ -635,6 +635,10 @@ export function assertPostingDepartment(
  * on top. No admin bypass (decisions, 4 Oct). Direct Transfer is not a
  * receipt: it stays the sender's one action that posts both legs.
  */
+export function isRequisitionRequester(row: { requester_user_id: string | null }, userId: string | undefined): boolean {
+  return !!userId && !!row.requester_user_id && userId === row.requester_user_id;
+}
+
 export function assertReceiptByRequester(
   row: { req_no: string; requester_user_id: string | null },
   userId: string | undefined,
@@ -642,7 +646,7 @@ export function assertReceiptByRequester(
   if (!row.requester_user_id) {
     throw new ForbiddenException(`${row.req_no} records no requester, so no one may post its Transfer Receipt.`);
   }
-  if (!userId || userId !== row.requester_user_id) {
+  if (!isRequisitionRequester(row, userId)) {
     throw new ForbiddenException(`Only the requester of ${row.req_no} may post its Transfer Receipt.`);
   }
 }

@@ -181,10 +181,9 @@ describe("CommonRequisitionDetail", () => {
   });
 
   it("releases an approved Store requisition and names the transfer; Approve and Reject are not here", async () => {
-    mockStoredUser = { userId: "u-appr", userType: "STANDARD_USER" }; // an approver who did not raise it (Rishi, 5 Oct)
     const onView = jest.fn();
     post.mockResolvedValue({ data: released({ linked_transfer_no: "TR-9" }) });
-    render(<CommonRequisitionDetail initial={base({ approval_status: "APPROVED", document_status: "APPROVED" })} onView={onView} onBack={jest.fn()} />);
+    render(<CommonRequisitionDetail initial={base({ approval_status: "APPROVED", document_status: "APPROVED", may_release: true })} onView={onView} onBack={jest.fn()} />);
     expect(screen.queryByText(/approve$/i)).toBeNull();
     expect(screen.queryByText(/reject/i)).toBeNull();
     fireEvent.click(screen.getByText("crqRelease"));
@@ -195,10 +194,9 @@ describe("CommonRequisitionDetail", () => {
   });
 
   it("says the purchase is pending when a Purchase requisition is released", async () => {
-    mockStoredUser = { userId: "u-appr", userType: "STANDARD_USER" }; // an approver who did not raise it (Rishi, 5 Oct)
     const onView = jest.fn();
     post.mockResolvedValue({ data: released({ purpose: "PURCHASE" }) });
-    render(<CommonRequisitionDetail initial={base({ purpose: "PURCHASE", approval_status: "APPROVED", document_status: "APPROVED" })} onView={onView} onBack={jest.fn()} />);
+    render(<CommonRequisitionDetail initial={base({ purpose: "PURCHASE", approval_status: "APPROVED", document_status: "APPROVED", may_release: true })} onView={onView} onBack={jest.fn()} />);
     fireEvent.click(screen.getByText("crqRelease"));
     await waitFor(() => expect(onView).toHaveBeenCalledWith(expect.anything(), "crqReleasedPurchase"));
   });
@@ -251,7 +249,7 @@ describe("CommonRequisitionDetail", () => {
     { shipment_id: "s3", shipment_no: "SH-3", shipment_date: "2026-10-07", lines: [
       { requisition_line_id: "l1", shipped: 3, received: 3, remaining: 0 }, { requisition_line_id: "l2", shipped: 5, received: 0, remaining: 5 }] },
   ];
-  const withShipments = () => released({ lines: [line(1) as any, line(2) as any], shipments });
+  const withShipments = (may_receive = true) => released({ lines: [line(1) as any, line(2) as any], shipments, may_receive });
 
   it("receives against a chosen shipment, offering only shipments and lines that still have a remainder", async () => {
     const onView = jest.fn();
@@ -274,10 +272,10 @@ describe("CommonRequisitionDetail", () => {
     expect(await screen.findByText("crqReceived")).toBeTruthy();
   });
 
-  // Rishi, 5 Oct: "The one requesting is the one who would be receiving."
-  it("offers Transfer Receipt to the requester only", () => {
-    mockStoredUser = { userId: "u-store", userType: "STANDARD_USER" };
-    render(<CommonRequisitionDetail initial={withShipments()} onView={jest.fn()} onBack={jest.fn()} />);
+  // Rishi, 5 Oct: "The one requesting is the one who would be receiving." The
+  // server decides it (may_receive, review p1f I3); the web only follows.
+  it("offers no Transfer Receipt when the server says the caller may not receive", () => {
+    render(<CommonRequisitionDetail initial={withShipments(false)} onView={jest.fn()} onBack={jest.fn()} />);
     expect(screen.queryByText("crqReceive")).toBeNull();
   });
 
@@ -310,10 +308,9 @@ describe("CommonRequisitionDetail", () => {
   });
 
   it("shows the API's refusal on release as it comes", async () => {
-    mockStoredUser = { userId: "u-appr", userType: "STANDARD_USER" }; // an approver who did not raise it (Rishi, 5 Oct)
     const message = "A requisition must be approved before it can be released; approval never implies release.";
     post.mockRejectedValue({ message });
-    render(<CommonRequisitionDetail initial={base({ approval_status: "APPROVED", document_status: "APPROVED" })} onView={jest.fn()} onBack={jest.fn()} />);
+    render(<CommonRequisitionDetail initial={base({ approval_status: "APPROVED", document_status: "APPROVED", may_release: true })} onView={jest.fn()} onBack={jest.fn()} />);
     fireEvent.click(screen.getByText("crqRelease"));
     expect(await screen.findByText(message)).toBeTruthy();
   });

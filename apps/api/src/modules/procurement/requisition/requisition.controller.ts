@@ -51,7 +51,9 @@ export class RequisitionController {
     // WP1b: the hub's document dialog opens precisely the cross-farm rows an
     // admin may decide — the read the dialog runs must span farms the way
     // decide()'s lock does (the review's carried-forward item).
-    const data = await this.requisitions.findOne(id, tenantId, { bypassFarm: mayDecideAnyRequisition(req.user?.userType) });
+    // Review p1f, I3: the caller rides along so the document says whether
+    // release() and receive() would let them (may_release, may_receive).
+    const data = await this.requisitions.findOne(id, tenantId, { bypassFarm: mayDecideAnyRequisition(req.user?.userType), caller: req.user });
     return { success: true, message: 'Requisition retrieved successfully.', data };
   }
 

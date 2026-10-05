@@ -2,8 +2,6 @@ import { commonActions, emptyCommonRequisition, emptyLine, isCommonEditable, toR
 
 const base = () => ({ ...emptyCommonRequisition("co-1", "ITEM", "STORE", "2026-10-04"), requisition_id: "req-1", approval_status: "OPEN", document_status: "OPEN", requester_user_id: "u-req" });
 const all = { create: true, approve: true, transfer: true };
-/** The signed-in requester: base() is raised by u-req. */
-const ME = { userId: "u-req", userType: "STANDARD_USER" };
 
 describe("common requisition model", () => {
   it("starts a new document Open, dated today, with one empty line", () => {
@@ -28,7 +26,7 @@ describe("common requisition model", () => {
     // requisitions (decisions, 5 Oct), so the link landed on a page without it.
     [{ approval_status: "PENDING_APPROVAL", approval_request_id: "ar-1" }, []],
     [{ approval_status: "REJECTED", approval_request_id: "ar-1" }, ["reopen"]],
-    [{ approval_status: "APPROVED", document_status: "APPROVED", approval_request_id: "ar-1" }, ["release"]],
+    [{ approval_status: "APPROVED", document_status: "APPROVED", approval_request_id: "ar-1", may_release: true }, ["release"]],
     [{ approval_status: "APPROVED", document_status: "RELEASED", purpose: "PURCHASE", approval_request_id: "ar-1" }, ["linkPo"]],
   ])("offers the actions for %j", (over, actions) => {
     expect(commonActions({ ...base(), ...over } as any, all)).toEqual(actions);
@@ -38,11 +36,11 @@ describe("common requisition model", () => {
     const v = { ...base(), approval_status: "APPROVED", document_status: "RELEASED", purpose: "STORE" as const,
       lines: [{ ...base().lines[0], line_id: "l1", balance_to_ship: 4 }],
       shipments: [{ shipment_id: "s1", shipment_no: "SH-2026-0001", shipment_date: "2026-10-04", lines: [{ requisition_line_id: "l1", shipped: 6, received: 2, remaining: 4 }] }] };
-    expect(commonActions(v, all, ME)).toEqual(["ship", "receive"]);
     // Rishi, 5 Oct: the requester receives, with no separate receive grant;
-    // shipping stays with the transfer grant (the sender department).
-    expect(commonActions(v, { ...all, transfer: false }, ME)).toEqual(["receive"]);
-    expect(commonActions(v, all, { userId: "someone-else" })).toEqual(["ship"]);
+    // the server says so (may_receive). Shipping stays with the transfer grant.
+    expect(commonActions({ ...v, may_receive: true }, all)).toEqual(["ship", "receive"]);
+    expect(commonActions({ ...v, may_receive: true }, { ...all, transfer: false })).toEqual(["receive"]);
+    expect(commonActions({ ...v, may_receive: false }, all)).toEqual(["ship"]);
     expect(commonActions(v, all)).toEqual(["ship"]);
   });
 
@@ -73,24 +71,19 @@ describe("common requisition model", () => {
           { requisition_line_id: "l1", shipped: 6, received: 2, remaining: 4 },
         ] },
       ] };
-    expect(commonActions(v, all, ME)).toEqual(["receive"]);
+    expect(commonActions({ ...v, may_receive: true }, all)).toEqual(["receive"]);
   });
 
-  // Rishi, 5 Oct: "Release may be pressed by any user who may approve the
-  // requisition" — the decide predicate, so the self-approval rule too.
-  describe("Release — any user who may approve the requisition", () => {
-    const approved = () => ({ ...base(), approval_status: "APPROVED", document_status: "APPROVED", source: "MANUAL_ENTRY", created_by: "u-req" });
-    it("is offered to an approver who did not raise it, whatever their department", () => {
-      expect(commonActions(approved() as any, all, { userId: "u-appr", userType: "STANDARD_USER" })).toEqual(["release"]);
+  // Review p1f, I3: the server decides who may release (may_release, from
+  // release()'s own predicate); the web no longer re-states the rule.
+  describe("Release — offered as the server says (may_release)", () => {
+    const approved = (may_release?: boolean) => ({ ...base(), approval_status: "APPROVED", document_status: "APPROVED", may_release });
+    it("is offered when the server says the caller may release", () => {
+      expect(commonActions(approved(true) as any, all)).toEqual(["release"]);
     });
-    it("is not offered without the approve grant", () => {
-      expect(commonActions(approved() as any, { ...all, approve: false }, { userId: "u-appr", userType: "STANDARD_USER" })).toEqual([]);
-    });
-    it("is not offered to the requester or creator unless they are a Tenant or Company admin", () => {
-      expect(commonActions(approved() as any, all, ME)).toEqual([]);
-      expect(commonActions({ ...approved(), requester_user_id: "u-other" } as any, all, ME)).toEqual([]);
-      expect(commonActions(approved() as any, all, { userId: "u-req", userType: "COMPANY_ADMIN" })).toEqual(["release"]);
-      expect(commonActions(approved() as any, all, { userId: "u-req", userType: "TENANT_ADMIN" })).toEqual(["release"]);
+    it("is not offered when the server says no, or says nothing", () => {
+      expect(commonActions(approved(false) as any, all)).toEqual([]);
+      expect(commonActions(approved() as any, all)).toEqual([]);
     });
   });
 
