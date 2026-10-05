@@ -517,6 +517,27 @@ Verified in `nf_devco` on 5 Oct:
 
 Both are WP4 (demo data). Neither is a defect in the WP1c code.
 
+## WP1c: complete — `de62d078` (navfarm-30, 5 Oct), bar two demo-data rows
+
+Rishi's UOM ruling (decisions.md 5 Oct, "follow the file shared") closed the
+one row left open. Migration **0149** relaxes `requisition_line.uom` to
+nullable (0148 was taken; 0146 still reserved, journalled later by `when`),
+`assertLineFields` requires a unit on ITEM lines only, and FA/Service
+documents drop the unit and rate columns.
+
+**Live:** FA line with no unit → RQ-00019, `uom IS NULL` in MySQL. ITEM line
+with no unit → 400. Migration applied to both tenants and read back from
+`information_schema` (`nullable=YES` in nf_devco and nf_system).
+
+Commits: `0483df28` `6d4317b1` `c9bacdd9` `015b0d20` `f1f0fcf4` `34aab843`
+`de62d078`. Gates at the end: api 178/2324, web 91/614, tsc 0, eslint 0.
+
+Still owed on WP1c, both **blocked on demo data (WP4)**, neither a code defect:
+the two-user/two-department posting check (no cost centres exist) and the
+tracked-item end-to-end check (no item is lot- or serial-tracked). The Item
+Ledger / Value Entry verification needs a posted shipment, so it waits on the
+same data.
+
 ### Open question for Rishi (do not decide it here)
 
 Rishi's list says **"FA and Service: Description + Qty only"**, and the WP1c gap
@@ -534,9 +555,9 @@ the blocked half.
 | Spec row | State |
 |---|---|
 | Header fields in Rishi's order and labels | **done** `015b0d20` |
-| FA/Service = Description + Qty only (UI) | **blocked** — see the UOM question above |
+| FA/Service = Description + Qty only (UI) | **done** `de62d078` (Rishi ruled 5 Oct) |
 | Status shows Open / Released, Approval separate | **done** `015b0d20` |
-| Line columns in Rishi's order | **done** `f1f0fcf4` (UOM stays; see the question) |
+| Line columns in Rishi's order | **done** `f1f0fcf4` + `de62d078` |
 | **Item Tracking dialog on the line (web)** | **done** `6d4317b1` + `c9bacdd9`, **live PASS** |
 | Location dept + user dept visible in Location Master / Team Management | **done** — Location Master already had it; Team Management got the picker in `34aab843` |
 | Item Ledger + Value Entry on shipment/receipt | live verify owed (needs a posted shipment) |
