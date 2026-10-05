@@ -262,3 +262,35 @@ export class RequisitionReceiptDto extends RequisitionShipmentDto {
   @IsUUID()
   shipment_id: string;
 }
+
+/**
+ * POST /requisition/:id/item-tracking (WP4a) — the Lot/Serial assignment of a
+ * released Store requisition's lines, before they ship. Same shape the line
+ * carries while Open: one lot, and a comma-separated serial list.
+ */
+export class RequisitionTrackingLineInput {
+  @ApiProperty({ description: 'Requisition line UUID' })
+  @IsUUID()
+  line_id: string;
+
+  @ApiPropertyOptional({ description: 'Lot number (lot-tracked item)' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  lot_no?: string;
+
+  @ApiPropertyOptional({ description: 'Comma-separated serial numbers, one per unit (serial-tracked item)' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  serial_no?: string;
+}
+
+export class RequisitionTrackingDto {
+  @ApiProperty({ type: [RequisitionTrackingLineInput] })
+  @IsArray()
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type(() => RequisitionTrackingLineInput)
+  lines: RequisitionTrackingLineInput[];
+}

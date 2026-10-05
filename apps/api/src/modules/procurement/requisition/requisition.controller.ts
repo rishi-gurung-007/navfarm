@@ -6,7 +6,7 @@ import { RequirePermission } from '../../../common/decorators/require-permission
 import { FarmScoped } from '../../../common/farm-scope';
 import { mayDecideAnyRequisition } from './requisition.rules';
 import { RequisitionService } from './requisition.service';
-import { CreateRequisitionDto, DecideRequisitionDto, RequisitionReceiptDto, RequisitionShipmentDto, UpdateRequisitionDto } from './dto/requisition.dto';
+import { CreateRequisitionDto, DecideRequisitionDto, RequisitionReceiptDto, RequisitionShipmentDto, RequisitionTrackingDto, UpdateRequisitionDto } from './dto/requisition.dto';
 
 @ApiTags('Procurement Requisitions')
 @ApiBearerAuth()
@@ -130,6 +130,15 @@ export class RequisitionController {
   async receive(@Param('id') id: string, @Body() dto: RequisitionReceiptDto, @Req() req: any) {
     const tenantId = req.user?.tenantId || req['tenantId'];
     return { success: true, message: 'Receipt posted.', data: await this.requisitions.receive(id, dto, tenantId, req.user) };
+  }
+
+  @Post(':id/item-tracking')
+  @RequirePermission('INVENTORY', 'STOCK_TRANSFER', 'edit')
+  @ApiOperation({ summary: 'Assign Lot/Serial to released Store requisition lines that have not shipped (the From department, like the shipment)' })
+  @ApiParam({ name: 'id' })
+  async assignTracking(@Param('id') id: string, @Body() dto: RequisitionTrackingDto, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    return { success: true, message: 'Item Tracking assigned.', data: await this.requisitions.assignTracking(id, dto, tenantId, req.user) };
   }
 
   @Post(':id/reopen')

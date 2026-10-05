@@ -615,3 +615,34 @@ export function mapToTransferLines(
     return { line_id: target.line_id, quantity: input.quantity };
   });
 }
+
+// --------------------------------------------------------------------------------
+// Item Tracking after release (WP4a live-check defect). Rishi's 4 Oct list:
+// "If Lot or Serial tracked: MANDATORY before Transfer Shipment post". The
+// assignment is due before SHIPMENT, not before submission — so a released
+// Store requisition must still take it while the line has not shipped. Before
+// this, a document released without its lot could never ship: the shipment
+// refused it and PUT refuses anything but an Open document.
+// --------------------------------------------------------------------------------
+
+export function resolveTrackingAssignment(
+  line: { line_seq: number; item_code: string | null; qty_shipped: unknown },
+  flags: { isLotTracked: boolean; isSerialTracked: boolean },
+  input: { lot_no?: string | null; serial_no?: string | null },
+): { lot_no: string | null; serial_no: string | null } {
+  const at = `Line ${line.line_seq}`;
+  const item = line.item_code ?? 'the item';
+  if (Number(line.qty_shipped ?? 0) > EPS) {
+    throw new BadRequestException(`${at} has shipped; its Item Tracking can no longer change.`);
+  }
+  if (!flags.isLotTracked && !flags.isSerialTracked) {
+    throw new BadRequestException(`${at}: ${item} is not lot- or serial-tracked; it has no Item Tracking.`);
+  }
+  const lot = String(input.lot_no ?? '').trim() || null;
+  const serials = String(input.serial_no ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+  if (lot && !flags.isLotTracked) throw new BadRequestException(`${at}: ${item} is not lot-tracked.`);
+  if (serials.length && !flags.isSerialTracked) throw new BadRequestException(`${at}: ${item} is not serial-tracked.`);
+  if (flags.isLotTracked && !lot) throw new BadRequestException(`${at}: ${item} is lot-tracked; assign a lot.`);
+  if (flags.isSerialTracked && !serials.length) throw new BadRequestException(`${at}: ${item} is serial-tracked; assign its serial numbers.`);
+  return { lot_no: lot, serial_no: serials.length ? serials.join(',') : null };
+}

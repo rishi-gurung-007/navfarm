@@ -32,7 +32,7 @@ import { ApprovalService } from '../../production/approval/approval.service';
 import { StockTransferService } from '../../inventory/stock-transfer/stock-transfer.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import * as schema from '../../../core/database/schema';
-import { CreateRequisitionDto, DecideRequisitionDto, RequisitionReceiptDto, RequisitionShipmentDto, UpdateRequisitionDto } from './dto/requisition.dto';
+import { CreateRequisitionDto, DecideRequisitionDto, RequisitionReceiptDto, RequisitionShipmentDto, RequisitionTrackingDto, UpdateRequisitionDto } from './dto/requisition.dto';
 import { assertDepartmentIdentity, DEPARTMENT_COST_CENTER_TYPE } from '../../../common/department-identity';
 import {
   COMMON_LIST_DOC_TYPES,
@@ -47,6 +47,7 @@ import {
   isSelfApproval,
   lineBalances,
   mapToTransferLines,
+  resolveTrackingAssignment,
   mayDecideAnyRequisition,
   maySelfApprove,
   normalizeCommonDocType,
@@ -1038,6 +1039,56 @@ export class RequisitionService {
     const { row, transferId, transferLines } = await this.releasedStore(requisitionId, tenantId);
     await this.assertPostingDepartmentFor(row, tenantId, 'TO', 'Transfer Receipt', userPayload);
     await this.stockTransfers.postReceipt(transferId, { posting_date: dto.posting_date, shipment_id: dto.shipment_id, lines: mapToTransferLines(dto.lines, transferLines) }, tenantId, userPayload);
+    return this.findOne(requisitionId, tenantId);
+  }
+
+  /**
+   * Item Tracking on a released Store requisition, before the line ships
+   * (WP4a live-check defect; Rishi's 4 Oct list: "If Lot or Serial tracked:
+   * MANDATORY before Transfer Shipment post"). Until this existed a document
+   * released without its lot could never ship: the shipment refused it and
+   * PUT refuses anything but an Open document. The store that ships picks
+   * the lot, so the shipment's From-department check applies. The assignment
+   * is written to the requisition line AND to its transfer line (the one the
+   * shipment reads), in one transaction; every line is validated before any
+   * write.
+   */
+  async assignTracking(requisitionId: string, dto: RequisitionTrackingDto, tenantId: string, userPayload?: { userId?: string }) {
+    await withTenantTransaction(this.cls, async () => {
+      const { row, transferId } = await this.releasedStore(requisitionId, tenantId);
+      await this.assertPostingDepartmentFor(row, tenantId, 'FROM', 'Transfer Shipment', userPayload);
+      const lines = await this.db
+        .select({
+          line_id: schema.requisitionLine.line_id, line_seq: schema.requisitionLine.line_seq, item_id: schema.requisitionLine.item_id,
+          qty_shipped: schema.requisitionLine.qty_shipped, item_code: schema.itemMaster.item_code,
+        })
+        .from(schema.requisitionLine)
+        .leftJoin(schema.itemMaster, eq(schema.itemMaster.item_id, schema.requisitionLine.item_id))
+        .where(eq(schema.requisitionLine.requisition_id, requisitionId))
+        .for('update');
+      const itemIds = [...new Set(lines.map((l) => l.item_id).filter((v): v is string => Boolean(v)))];
+      const flags = itemIds.length
+        ? await this.db
+          .select({ item_id: schema.itemMaster.item_id, is_lot_tracked: schema.itemMaster.is_lot_tracked, is_serial_tracked: schema.itemMaster.is_serial_tracked })
+          .from(schema.itemMaster)
+          .where(and(eq(schema.itemMaster.tenant_id, tenantId), inArray(schema.itemMaster.item_id, itemIds)))
+        : [];
+      const writes = dto.lines.map((input) => {
+        const line = lines.find((l) => l.line_id === input.line_id);
+        if (!line) throw new BadRequestException(`Line '${input.line_id}' is not on ${row.req_no}.`);
+        const f = flags.find((x) => x.item_id === line.item_id);
+        const assignment = resolveTrackingAssignment(line, { isLotTracked: Boolean(f?.is_lot_tracked), isSerialTracked: Boolean(f?.is_serial_tracked) }, input);
+        return { line_id: line.line_id, ...assignment };
+      });
+      for (const w of writes) {
+        await this.db.update(schema.requisitionLine)
+          .set({ lot_no: w.lot_no, serial_no: w.serial_no })
+          .where(eq(schema.requisitionLine.line_id, w.line_id));
+        await this.db.update(schema.stockTransferLine)
+          .set({ lot_no: w.lot_no, serial_no: w.serial_no })
+          .where(and(eq(schema.stockTransferLine.transfer_id, transferId), eq(schema.stockTransferLine.requisition_line_id, w.line_id)));
+      }
+    });
     return this.findOne(requisitionId, tenantId);
   }
 
