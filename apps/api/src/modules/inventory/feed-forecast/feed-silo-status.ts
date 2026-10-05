@@ -1,4 +1,4 @@
-import type { ForecastResult, ForecastSource } from './feed-forecast.engine';
+import { diffDays, type ForecastResult, type ForecastSource } from './feed-forecast.engine';
 import { DEFAULT_FEED_SETTINGS, roundOrderKg } from '../../procurement/feed-requisition/feed-requisition.rules';
 import type { FarmFeedSettings } from '../../procurement/feed-requisition/feed-requisition.rules';
 
@@ -38,10 +38,109 @@ export interface SiloStatusRow extends SiloFact {
   siloAvailableForNextDiet: boolean | null;
   projectedShortfallKg: number;
   recommendedOrderKg: number;
+  requisitionId: string | null;
   requisitionStatus: string | null;
   submissionDeadline: string | null;
   /** At/below Below Feed Level; at/above Above Threshold (Dashboard row 53). */
   alert: 'CRITICAL_FIRST_PRIORITY' | 'INFO' | null;
+}
+
+export interface NextBinAssignment {
+  binId: string;
+  binCode: string;
+  productionDate: string;
+  slotId: string;
+  slotCode: string;
+  slotName: string;
+}
+
+export interface SiloBalancePoint {
+  date: string;
+  itemId: string;
+  itemName: string;
+  openingKg: number;
+  confirmedReceiptKg: number;
+  demandKg: number;
+  closingKg: number;
+}
+
+export interface SiloDemandPoint {
+  date: string;
+  currentDietKg: number;
+  nextDietKg: number;
+}
+
+const sum3 = (values: number[]) => round3(values.reduce((sum, value) => sum + value, 0));
+
+/** Shape one selected Silo from the already-computed Farm result. */
+export function buildSelectedSiloDashboard(args: {
+  status: SiloStatusRow;
+  result: Pick<ForecastResult, 'sources' | 'daily'>;
+  planningDate: string;
+  nextBinAssignment: NextBinAssignment | null;
+}): {
+  silo: SiloStatusRow & {
+    currentDietItemName: string | null;
+    currentProjectedNeedKg: number;
+    nextProjectedNeedKg: number;
+    currentDietDaysRemaining: number | null;
+    nextDietItemName: string | null;
+    millLoadingBin: NextBinAssignment | null;
+  };
+  balanceSeries: SiloBalancePoint[];
+  demandSeries: SiloDemandPoint[];
+} {
+  const { status, result, planningDate, nextBinAssignment } = args;
+  const sources = result.sources.filter((source) => source.sourceType === 'SILO' && source.locationId === status.siloId);
+  const currentSources = sources.filter((source) => source.itemId === status.currentDietItemId);
+  const nextSources = sources.filter((source) => source.itemId === status.nextDietItemId);
+  const currentDietItemName = currentSources[0]?.itemName
+    ?? sources.find((source) => source.itemId === status.feedInSiloItemId)?.itemName
+    ?? status.feedInSiloItemName;
+  const nextDietItemName = nextSources[0]?.itemName ?? null;
+
+  const byItemDate = new Map<string, SiloBalancePoint>();
+  for (const row of result.daily) {
+    if (row.sourceType !== 'SILO' || row.destinationLocationId !== status.siloId) continue;
+    const key = `${row.itemId}|${row.date}`;
+    const existing = byItemDate.get(key);
+    if (existing) {
+      existing.demandKg = round3(existing.demandKg + row.demandKg);
+      continue;
+    }
+    byItemDate.set(key, {
+      date: row.date,
+      itemId: row.itemId,
+      itemName: row.itemName,
+      openingKg: row.currentInventoryKg,
+      confirmedReceiptKg: row.confirmedReceiptKg ?? 0,
+      demandKg: row.demandKg,
+      closingKg: row.projectedClosingKg ?? Math.max(0, round3(row.currentInventoryKg - row.demandKg)),
+    });
+  }
+  const balanceSeries = [...byItemDate.values()].sort((a, b) =>
+    a.date.localeCompare(b.date) || a.itemName.localeCompare(b.itemName) || a.itemId.localeCompare(b.itemId));
+  const demandByDate = new Map<string, SiloDemandPoint>();
+  for (const point of balanceSeries) {
+    const demand = demandByDate.get(point.date) ?? { date: point.date, currentDietKg: 0, nextDietKg: 0 };
+    if (point.itemId === status.currentDietItemId) demand.currentDietKg = round3(demand.currentDietKg + point.demandKg);
+    if (point.itemId === status.nextDietItemId) demand.nextDietKg = round3(demand.nextDietKg + point.demandKg);
+    demandByDate.set(point.date, demand);
+  }
+
+  return {
+    silo: {
+      ...status,
+      currentDietItemName,
+      currentProjectedNeedKg: sum3(currentSources.map((source) => source.walkDemandKg + source.safetyStockKg)),
+      nextProjectedNeedKg: sum3(nextSources.map((source) => source.walkDemandKg + source.safetyStockKg)),
+      currentDietDaysRemaining: status.nextDietDate ? Math.max(0, diffDays(planningDate, status.nextDietDate)) : null,
+      nextDietItemName,
+      millLoadingBin: nextBinAssignment,
+    },
+    balanceSeries,
+    demandSeries: [...demandByDate.values()].sort((a, b) => a.date.localeCompare(b.date)),
+  };
 }
 
 const round3 = (n: number) => Math.round(n * 1000) / 1000;
@@ -49,7 +148,7 @@ const round3 = (n: number) => Math.round(n * 1000) / 1000;
 export function buildSiloStatus(args: {
   silos: SiloFact[];
   result: Pick<ForecastResult, 'sources' | 'dietChanges'>;
-  requisitionStatusBySilo: Map<string, string>;
+  requisitionStatusBySilo: Map<string, string | { requisitionId: string; status: string }>;
   submissionDeadline: string | null;
   settings?: FarmFeedSettings;
 }): SiloStatusRow[] {
@@ -85,6 +184,7 @@ export function buildSiloStatus(args: {
         : silo.aboveThresholdKg !== null && silo.aboveThresholdKg > 0 && balance >= silo.aboveThresholdKg ? 'INFO'
           : null;
 
+    const requisition = requisitionStatusBySilo.get(silo.siloId) ?? null;
     return {
       ...silo,
       currentDietItemId: current?.itemId ?? null,
@@ -97,7 +197,8 @@ export function buildSiloStatus(args: {
       siloAvailableForNextDiet: change ? change.nextSourceType === 'SILO' : null,
       projectedShortfallKg,
       recommendedOrderKg,
-      requisitionStatus: requisitionStatusBySilo.get(silo.siloId) ?? null,
+      requisitionId: typeof requisition === 'string' ? null : requisition?.requisitionId ?? null,
+      requisitionStatus: typeof requisition === 'string' ? requisition : requisition?.status ?? null,
       submissionDeadline,
       alert,
     };

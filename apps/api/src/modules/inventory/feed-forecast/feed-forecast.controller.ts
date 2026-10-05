@@ -100,7 +100,7 @@ export class FeedForecastController {
   // Silo dashboard (TDD Engine §4, Master Setup §1): read under the forecast's own grant and farm scope.
   @Get('silo-status')
   @RequirePermission('INVENTORY', 'LEDGER', 'view')
-  @ApiOperation({ summary: "One row per silo with the workbook's dashboard fields, from a seven-day forecast" })
+  @ApiOperation({ summary: 'Bootstrap Farm → Shed → Silo options, then return the selected Silo dashboard from one Farm calculation' })
   async siloStatus(@Query() query: QuerySiloStatusDto, @Req() req: any) {
     const tenantId = req.user?.tenantId || req['tenantId'];
     const data = await this.feedForecastService.siloStatus(query, tenantId, req.user?.userType);

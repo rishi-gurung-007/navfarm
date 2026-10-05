@@ -12,7 +12,7 @@ import { asBatchPk, buildFeedForecast, DailyForecastRow, dayShort, DietChange, F
 import { defaultWindowEnd, displayDaily, ForecastView, groupRows, MAX_SPAN_DAYS, PeriodRange, ReportRow, resolveViewRange, spanProblem } from './feed-forecast.view';
 import { outstandingTransferQty, stockAsOf } from './feed-forecast.stock';
 import { OPEN_TRANSFER_STATUSES } from '../stock-transfer/transfer-execution.rules';
-import { QueryFeedForecastDto, UpdateSiloPlanningDto } from './dto/feed-forecast.dto';
+import { QueryFeedForecastDto, QuerySiloStatusDto, UpdateSiloPlanningDto } from './dto/feed-forecast.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { SiloFeedService } from '../silo-feed/silo-feed.service';
 import { assertSiloLevels } from '../silo-feed/silo-levels';
@@ -23,7 +23,7 @@ import { buildSourceSnapshot } from './feed-forecast-run.rules';
 import { FeedSettingsService } from '../feed-settings/feed-settings.service';
 import { toFarmFeedSettings } from '../feed-settings/feed-settings.rules';
 import { productionCycle } from '../../procurement/feed-requisition/feed-requisition.rules';
-import { buildSiloStatus, SiloFact, SiloStatusRow } from './feed-silo-status';
+import { buildSelectedSiloDashboard, buildSiloStatus, NextBinAssignment, SiloFact } from './feed-silo-status';
 
 /**
  * The LOB bound on the forecast's location read for a restricted
@@ -1251,46 +1251,122 @@ export class FeedForecastService {
   }
 
   /**
-   * Silo dashboard (TDD Engine §4 rows 47–64, Master Setup §1): one row per silo
-   * with the workbook's derived fields, from a seven-day forecast starting at
-   * the planning date. Same farm resolution and 45-day planning-date bound as
-   * the forecast itself; the engine is run once, through computeForFarm.
+   * Dashboard bootstrap and selected-Silo facts. Farm-only and Farm+Shed calls
+   * return hierarchy options without paying for a forecast. A complete valid
+   * Farm→Shed→Silo selection computes the Farm exactly once, then shapes both
+   * the selected-Silo facts and the explicitly farm-wide order total from it.
    */
-  async siloStatus(
-    query: { farmId?: string; planningDate?: string },
-    tenantId: string,
-    userType?: string,
-  ): Promise<{ planningDate: string; farm: { id: string; code: string; name: string }; submissionDeadline: string; itemNames: Record<string, string>; rows: SiloStatusRow[] }> {
+  async siloStatus(query: QuerySiloStatusDto, tenantId: string, userType?: string) {
     const { farmId, companyId } = await this.resolveFarm(query.farmId, tenantId, userType);
-    if (query.planningDate !== undefined && !isCalendarDay(query.planningDate)) {
-      throw new BadRequestException('planningDate must be a calendar date (YYYY-MM-DD).');
+    for (const [name, value] of [['planningDate', query.planningDate], ['from', query.from], ['to', query.to]] as const) {
+      if (value !== undefined && !isCalendarDay(value)) throw new BadRequestException(`${name} must be a calendar date (YYYY-MM-DD).`);
     }
+    if (query.siloId && !query.shedId) throw new BadRequestException('Choose a Shed before choosing a Silo.');
+
     const clock = await this.farmToday(companyId, tenantId);
     const planningDate = query.planningDate ?? clock.today;
-    const to = defaultWindowEnd(planningDate);
-    const settings = toFarmFeedSettings(await this.feedSettings.resolveForFeedPlanning(companyId, farmId));
-    const { submissionDeadline } = productionCycle(planningDate, settings.productionWeekday);
-    return this.withFarmScope(farmId, companyId, async () => {
-      // 9d F1: the window stays seven days (Projected Need, the shortfall and the recommended order are the
-      // week's), but the first shortage date is "determined from the dated item level projection" (Dashboard row
-      // 55 / Master Setup row 15) with no window limit — so the run-down is searched over the forecast's own
-      // standard horizon, exactly as the grid does. Without this the dashboard left First Shortage Date blank for
-      // a shortage 8-45 days out while the grid showed its date (pass 2: RIC100/SILO-002, LEX100/SILO-001).
-      const forecast = await this.computeForFarm(
-        farmId, companyId, tenantId, { planningDate, from: planningDate, to, horizonTo: forecastHorizon(planningDate) }, clock,
-      );
-      const silos = await this.loadSiloFacts(farmId, companyId, tenantId);
-      const requisitionStatusBySilo = await this.loadLatestRequisitionStatuses(farmId, tenantId, submissionDeadline);
-      const rows = buildSiloStatus({ silos, result: forecast, requisitionStatusBySilo, submissionDeadline, settings });
-      // Names for the diet columns, which the rows carry as ids.
-      const itemNames: Record<string, string> = {};
-      for (const source of forecast.sources) itemNames[source.itemId] = source.itemName;
-      for (const change of forecast.dietChanges) {
-        itemNames[change.fromItemId] ??= change.fromItemName;
-        itemNames[change.toItemId] ??= change.toItemName;
+    const dateProblem = planningDateProblem(clock.today, planningDate);
+    if (dateProblem) throw new BadRequestException(dateProblem);
+    const view: ForecastView = query.view ?? 'CUSTOM';
+    let period: PeriodRange | null = null;
+    if (view === 'PERIOD') {
+      const periods = await this.loadPeriods(companyId, tenantId);
+      period = query.periodId
+        ? periods.find((candidate) => candidate.periodId === query.periodId) ?? null
+        : periods.find((candidate) => candidate.startDate <= planningDate && planningDate <= candidate.endDate) ?? null;
+      if (!period) {
+        throw new BadRequestException(
+          query.periodId ? 'Reporting period not found.' : `No reporting period covers ${dayShort(planningDate)}. Add one under Farm Master → Reporting Periods.`,
+        );
       }
-      return { planningDate, farm: forecast.farm, submissionDeadline, itemNames, rows };
+    } else if (query.periodId !== undefined) {
+      throw new BadRequestException('periodId applies only to the Reporting Period view.');
+    }
+    const resolved = resolveViewRange({ view, planningDate, from: query.from, to: query.to, period });
+    const span = spanProblem(resolved.from, resolved.to, period);
+    if (span) throw new BadRequestException(span);
+    const sentTo = query.to ?? resolved.to;
+
+    return this.withFarmScope(farmId, companyId, async () => {
+      const farm = await this.loadFarm(farmId, tenantId);
+      const planningSilos = ((await this.siloPlanningRows([farmId], tenantId)).get(farmId) ?? [])
+        .filter((silo) => silo.status === 'ACTIVE');
+      const shedById = new Map<string, { id: string; code: string; name: string }>();
+      for (const silo of planningSilos) {
+        for (const shed of silo.linkedSheds) shedById.set(shed.locationId, { id: shed.locationId, code: shed.code, name: shed.name });
+      }
+      const sheds = [...shedById.values()].sort((a, b) => a.code.localeCompare(b.code) || a.id.localeCompare(b.id));
+      if (query.shedId && !shedById.has(query.shedId)) throw new NotFoundException('Selected Shed is not available on this Farm.');
+      const siloOptions = query.shedId
+        ? planningSilos
+            .filter((silo) => silo.linkedSheds.some((shed) => shed.locationId === query.shedId))
+            .map((silo) => ({ id: silo.locationId, code: silo.code, name: silo.name }))
+            .sort((a, b) => a.code.localeCompare(b.code) || a.id.localeCompare(b.id))
+        : [];
+      if (query.siloId && !siloOptions.some((silo) => silo.id === query.siloId)) {
+        throw new BadRequestException('Selected Silo is not linked to the selected Shed.');
+      }
+      const selection = {
+        shedId: query.shedId ?? null,
+        siloId: query.siloId ?? null,
+        sheds,
+        silos: siloOptions,
+      };
+      const base = {
+        planningDate,
+        today: clock.today,
+        timeZone: clock.timeZone,
+        view,
+        from: resolved.from,
+        to: sentTo,
+        period,
+        farm: { id: farm.id, code: farm.code, name: farm.name },
+        selection,
+      };
+      if (!query.shedId || !query.siloId) {
+        return { ...base, submissionDeadline: null, silo: null, balanceSeries: [], demandSeries: [], farmTotalOrderKg: 0 };
+      }
+
+      const settings = toFarmFeedSettings(await this.feedSettings.resolveForFeedPlanning(companyId, farmId));
+      const { submissionDeadline } = productionCycle(planningDate, settings.productionWeekday);
+      const forecast = await this.computeForFarm(
+        farmId,
+        companyId,
+        tenantId,
+        { planningDate, from: resolved.from, to: sentTo, horizonTo: forecastHorizon(planningDate) },
+        clock,
+      );
+      const facts = await this.loadSiloFacts(farmId, companyId, tenantId);
+      const requisitions = await this.loadLatestRequisitionStatuses(farmId, tenantId, submissionDeadline);
+      const statuses = buildSiloStatus({ silos: facts, result: forecast, requisitionStatusBySilo: requisitions, submissionDeadline, settings });
+      const status = statuses.find((candidate) => candidate.siloId === query.siloId);
+      if (!status) throw new NotFoundException('Selected Silo is not available for feed planning.');
+      const itemId = status.currentDietItemId ?? status.feedInSiloItemId;
+      const nextBinAssignment = itemId ? await this.findNextBinAssignment(itemId, planningDate, companyId, tenantId) : null;
+      const displayedDaily = displayDaily(forecast.daily, view, query.to !== undefined, sentTo);
+      const dashboard = buildSelectedSiloDashboard({
+        status,
+        result: { sources: forecast.sources, daily: displayedDaily },
+        planningDate,
+        nextBinAssignment,
+      });
+      return {
+        ...base,
+        submissionDeadline,
+        ...dashboard,
+        farmTotalOrderKg: Math.round(statuses.reduce((sum, candidate) => sum + candidate.recommendedOrderKg, 0) * 1000) / 1000,
+      };
     });
+  }
+
+  /** Implemented by the Mill/BIN foundation plan; null is truthful until assignments exist. */
+  private async findNextBinAssignment(
+    _itemId: string,
+    _planningDate: string,
+    _companyId: string,
+    _tenantId: string,
+  ): Promise<NextBinAssignment | null> {
+    return null;
   }
 
   /**
@@ -1358,25 +1434,29 @@ export class FeedForecastService {
   }
 
   /** The cycle's feed requisition covering each silo: the latest created one, rejected and cancelled excluded. */
-  private async loadLatestRequisitionStatuses(farmId: string, tenantId: string, submissionDeadline: string): Promise<Map<string, string>> {
+  private async loadLatestRequisitionStatuses(
+    farmId: string,
+    tenantId: string,
+    submissionDeadline: string,
+  ): Promise<Map<string, { requisitionId: string; status: string }>> {
     const R = schema.requisition;
     const RL = schema.requisitionLine;
     const rows = await this.db
-      .select({ destination: RL.destination_location_id, status: R.status, created_at: R.created_at })
+      .select({ destination: RL.destination_location_id, requisition_id: R.requisition_id, status: R.status, created_at: R.created_at })
       .from(RL)
       .innerJoin(R, eq(R.requisition_id, RL.requisition_id))
       .where(and(
         eq(R.tenant_id, tenantId), eq(R.farm_id, farmId), eq(R.doc_type, 'FEED'),
         eq(R.submission_deadline, submissionDeadline), notInArray(R.status, ['REJECTED', 'CANCELLED']), isNull(R.deleted_at),
       ));
-    const latest = new Map<string, { status: string; createdMs: number }>();
+    const latest = new Map<string, { requisitionId: string; status: string; createdMs: number }>();
     for (const row of rows) {
       if (!row.destination) continue;
       const seen = latest.get(row.destination);
       const createdMs = new Date(row.created_at as unknown as string | Date).getTime();
-      if (!seen || createdMs > seen.createdMs) latest.set(row.destination, { status: row.status, createdMs });
+      if (!seen || createdMs > seen.createdMs) latest.set(row.destination, { requisitionId: row.requisition_id, status: row.status, createdMs });
     }
-    return new Map([...latest].map(([silo, v]) => [silo, v.status]));
+    return new Map([...latest].map(([silo, value]) => [silo, { requisitionId: value.requisitionId, status: value.status }]));
   }
 
   /**

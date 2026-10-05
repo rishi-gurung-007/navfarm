@@ -40,16 +40,16 @@ export class QueryFeedForecastDto {
   periodId?: string;
 }
 
-export class QuerySiloStatusDto {
-  @ApiProperty({ description: 'Farm (top-level Location Master row); a farm-bound user already has exactly one', required: false })
+export class QuerySiloStatusDto extends QueryFeedForecastDto {
+  @ApiProperty({ description: 'Selected Shed. Omit to bootstrap the Farm Shed options without calculating facts.', required: false })
   @IsOptional()
   @IsUUID()
-  farmId?: string;
+  shedId?: string;
 
-  @ApiProperty({ description: 'Planning date (YYYY-MM-DD); defaults to today in the farm time zone, within 45 days of it', required: false })
+  @ApiProperty({ description: 'Selected Silo linked to the selected Shed. Omit to bootstrap Silo options without calculating facts.', required: false })
   @IsOptional()
-  @IsDateString()
-  planningDate?: string;
+  @IsUUID()
+  siloId?: string;
 }
 
 export class QueryFeedPeriodsDto {
