@@ -13,7 +13,7 @@ import { GlPostingService } from '../../finance/journal/gl-posting.service';
 import { UomService } from '../../master-data/uom/uom.service';
 import { SiloFeedService } from '../silo-feed/silo-feed.service';
 import { FeedAlertService } from '../feed-alert/feed-alert.service';
-import { OPEN_TRANSFER_STATUSES, transferStatusFor, assignmentsFromLine, assertTrackingAssignments } from './transfer-execution.rules';
+import { OPEN_TRANSFER_STATUSES, transferStatusFor, assignmentsFromLine, assertTrackingAssignments, serialsForReceipt, splitAmount } from './transfer-execution.rules';
 import { syncRequisitionFulfilment } from '../../procurement/requisition/requisition-fulfilment';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
@@ -743,21 +743,42 @@ export class StockTransferService {
             tenantId, shipmentNo: shipment.shipment_no, lineId: line.line_id, receiptNos: prior.receiptNos,
           })
           : undefined;
-        const receiptEntry = await this.ledgerService.writeTransferReceipt({
-          tenantId, companyId: transfer.company_id, itemId: line.item_id, documentNo: receiptNo, documentLineId: line.line_id,
-          postingDate: dto.posting_date, quantity: input.quantity, uom: line.uom, toWarehouseId: transfer.to_warehouse_id, rate, amount,
-          lotNo: shipmentLine.lot_no ?? undefined, serialNo: shipmentLine.serial_no ?? undefined, userId: userPayload?.userId,
-        });
-        await this.glPostingService.postInventoryLedgerEntry(receiptEntry, userPayload?.userId);
+        // WP4a: several serials on one shipment line land as one layer PER
+        // SERIAL (qty 1 each, the Goods Receipt's shape) — a single layer named
+        // "SN1,SN2" matched no consumer. A partial receipt takes the next
+        // serials not yet received on this shipment line.
+        const shippedSerials = String(shipmentLine.serial_no ?? '').split(',').map((v) => v.trim()).filter(Boolean);
+        let receivedSerialNo = shipmentLine.serial_no;
+        if (shippedSerials.length > 1) {
+          const serials = serialsForReceipt(shipmentLine.serial_no, prior.qty, input.quantity);
+          const amounts = splitAmount(amount ?? input.quantity * rate, serials.length);
+          for (const [i, serialNo] of serials.entries()) {
+            const entry = await this.ledgerService.writeTransferReceipt({
+              tenantId, companyId: transfer.company_id, itemId: line.item_id, documentNo: receiptNo, documentLineId: line.line_id,
+              postingDate: dto.posting_date, quantity: 1, uom: line.uom, toWarehouseId: transfer.to_warehouse_id, rate, amount: amounts[i],
+              lotNo: shipmentLine.lot_no ?? undefined, serialNo, userId: userPayload?.userId,
+            });
+            await this.glPostingService.postInventoryLedgerEntry(entry, userPayload?.userId);
+          }
+          receivedSerialNo = serials.join(',');
+        } else {
+          const receiptEntry = await this.ledgerService.writeTransferReceipt({
+            tenantId, companyId: transfer.company_id, itemId: line.item_id, documentNo: receiptNo, documentLineId: line.line_id,
+            postingDate: dto.posting_date, quantity: input.quantity, uom: line.uom, toWarehouseId: transfer.to_warehouse_id, rate, amount,
+            lotNo: shipmentLine.lot_no ?? undefined, serialNo: shipmentLine.serial_no ?? undefined, userId: userPayload?.userId,
+          });
+          await this.glPostingService.postInventoryLedgerEntry(receiptEntry, userPayload?.userId);
+        }
         await this.db.insert(schema.transferReceiptLine).values({
           receipt_id: receiptId,
           shipment_line_id: shipmentLine.shipment_line_id,
           line_id: line.line_id,
           quantity: String(input.quantity),
           uom: line.uom,
-          // Identity copied from the shipment, never re-typed (spec).
+          // Identity copied from the shipment, never re-typed (spec) — for a
+          // multi-serial line, the serials this receipt actually carried.
           lot_no: shipmentLine.lot_no,
-          serial_no: shipmentLine.serial_no,
+          serial_no: receivedSerialNo,
         });
       }
 

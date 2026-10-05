@@ -183,3 +183,33 @@ export function transferStatusFor(lines: Array<{ ordered: number; shipped: numbe
   if (lines.some((l) => l.received > 0)) return 'PARTIALLY_RECEIVED';
   return 'IN_TRANSIT';
 }
+
+/**
+ * WP4a live-check defect: a receipt of a multi-serial shipment line wrote ONE
+ * ledger layer named "SN1,SN2", which no consumer can match (a serial is one
+ * physical unit; the Goods Receipt writes one row per serial). The receipt
+ * copies the shipment's serials (Rishi's 4 Oct list: "On Transfer Receipt:
+ * Serial/Lot auto-populated from Shipment") one layer per serial instead. A
+ * partial receipt takes the next serials not yet received on that shipment
+ * line, in shipment order.
+ */
+export function serialsForReceipt(shipmentSerialNo: string | null, alreadyReceived: number, qty: number): string[] {
+  const serials = String(shipmentSerialNo ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+  if (!Number.isInteger(qty) || !Number.isInteger(alreadyReceived)) {
+    throw new BadRequestException(`Serial-tracked receipts are whole units (got ${qty}).`);
+  }
+  const left = serials.length - alreadyReceived;
+  if (qty > left) {
+    throw new BadRequestException(`The shipment line has ${left} serial(s) left to receive; ${qty} requested.`);
+  }
+  return serials.slice(alreadyReceived, alreadyReceived + qty);
+}
+
+/** `total` in `parts` four-place shares; the last takes the rounding remainder so the sum is exact. */
+export function splitAmount(total: number, parts: number): number[] {
+  const round4 = (v: number) => Math.round(v * 10000) / 10000;
+  const share = round4(total / parts);
+  const out = Array.from({ length: parts }, () => share);
+  out[parts - 1] = round4(total - share * (parts - 1));
+  return out;
+}
