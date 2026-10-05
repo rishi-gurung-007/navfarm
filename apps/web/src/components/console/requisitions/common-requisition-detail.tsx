@@ -83,7 +83,7 @@ export function CommonRequisitionDetail({ initial, onView, onBack, embedded = fa
     approve: hasPermission(u, "PROCUREMENT", "REQUISITION", "can_approve"),
     transfer: hasPermission(u, "INVENTORY", "STOCK_TRANSFER", "can_edit"),
   };
-  const actions = commonActions(draft, can);
+  const actions = commonActions(draft, can, { userId: u?.userId ?? null, userType: u?.userType ?? null });
   const editable = isCommonEditable(draft);
   const id = draft.requisition_id;
 

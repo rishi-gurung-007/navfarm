@@ -10,7 +10,9 @@ jest.mock("../src/hooks/useLanguage", () => {
   const stableT = (key: string, vars?: Record<string, unknown>) => (vars ? `${key}:${JSON.stringify(vars)}` : key);
   return { useLanguage: () => ({ t: stableT }) };
 });
-jest.mock("../src/hooks/useAuth", () => ({ getStoredUser: () => ({}), hasPermission: () => true }));
+// The signed-in user; the fixtures below are raised by u-req.
+let mockStoredUser: Record<string, unknown> = { userId: "u-req", userType: "STANDARD_USER" };
+jest.mock("../src/hooks/useAuth", () => ({ getStoredUser: () => mockStoredUser, hasPermission: () => true }));
 jest.mock("../src/utils/date-short", () => ({ formatDateShort: (v: string | null) => v ?? "" }));
 // The real picker reads the available lots/serials from the API; here only its value matters.
 jest.mock("../src/components/ui/lot-serial-picker", () => ({
@@ -41,7 +43,7 @@ const line = (n: number, extra: Record<string, unknown> = {}) => ({
 
 const base = (over: Partial<CommonRequisitionView> = {}): CommonRequisitionView => ({
   ...emptyCommonRequisition("co-1", "ITEM", "STORE", "2026-10-04"),
-  requisition_id: "req-1", req_no: "REQ-2026-0001", from_location_id: "st", to_location_id: "sh",
+  requisition_id: "req-1", req_no: "REQ-2026-0001", from_location_id: "st", to_location_id: "sh", requester_user_id: "u-req",
   approval_status: "OPEN", document_status: "OPEN", ...over,
 } as CommonRequisitionView);
 
@@ -55,6 +57,7 @@ const released = (over: Partial<CommonRequisitionView> = {}): CommonRequisitionV
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockStoredUser = { userId: "u-req", userType: "STANDARD_USER" };
   get.mockResolvedValue({ data: options });
   post.mockImplementation(async () => ({ data: base() }));
   put.mockImplementation(async () => ({ data: base() }));
@@ -234,6 +237,13 @@ describe("CommonRequisitionDetail", () => {
       posting_date: todayIso(), shipment_id: "s1", lines: [{ line_id: "l1", quantity: 4 }],
     }));
     await waitFor(() => expect(onView).toHaveBeenCalledWith(expect.anything(), "crqReceived"));
+  });
+
+  // Rishi, 5 Oct: "The one requesting is the one who would be receiving."
+  it("offers Transfer Receipt to the requester only", () => {
+    mockStoredUser = { userId: "u-store", userType: "STANDARD_USER" };
+    render(<CommonRequisitionDetail initial={withShipments()} onView={jest.fn()} onBack={jest.fn()} />);
+    expect(screen.queryByText("crqReceive")).toBeNull();
   });
 
   it("shows the second shipment's own line and caps the receipt at its remainder", async () => {

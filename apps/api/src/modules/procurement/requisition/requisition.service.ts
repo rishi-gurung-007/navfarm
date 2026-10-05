@@ -44,6 +44,7 @@ import {
   assertPostingDepartment,
   assertPurpose,
   assertPurposeLocations,
+  assertReceiptByRequester,
   assertRequisitionLines,
   isSelfApproval,
   lineBalances,
@@ -988,10 +989,11 @@ export class RequisitionService {
 
   // ---------------------------------------------------------------------------
   // Shipping and receiving from the requisition (Task 7): the requisition
-  // lines follow its linked transfer's events. The endpoints reuse the
+  // lines follow its linked transfer's events. The shipment reuses the
   // transfer's own permission pair (INVENTORY/STOCK_TRANSFER/edit, bound in
-  // the controller) — no new permission pair, so role-permissions-coverage
-  // holds. StockTransferService does the actual posting (ledger, GL, status);
+  // the controller); the receipt is the requester's (Rishi, 5 Oct) and asks
+  // only PROCUREMENT/REQUISITION/view — no new permission pair either way, so
+  // role-permissions-coverage holds. StockTransferService does the actual posting (ledger, GL, status);
   // syncRequisitionFulfilment, called from inside that same transaction, is
   // what writes qty_shipped/qty_received back here.
   // ---------------------------------------------------------------------------
@@ -1061,8 +1063,15 @@ export class RequisitionService {
     return this.findOne(requisitionId, tenantId);
   }
 
+  /**
+   * Who may post the Transfer Receipt is decided here, once (Rishi, 5 Oct):
+   * the requisition's requester, whose department matches the To
+   * sub-location. The route itself asks only the requisition's view grant —
+   * the requester needs no separate receive permission.
+   */
   async receive(requisitionId: string, dto: RequisitionReceiptDto, tenantId: string, userPayload?: { userId?: string }) {
     const { row, transferId, transferLines } = await this.releasedStore(requisitionId, tenantId);
+    assertReceiptByRequester(row, userPayload?.userId);
     await this.assertPostingDepartmentFor(row, tenantId, 'TO', 'Transfer Receipt', userPayload);
     await this.stockTransfers.postReceipt(transferId, { posting_date: dto.posting_date, shipment_id: dto.shipment_id, lines: mapToTransferLines(dto.lines, transferLines) }, tenantId, userPayload);
     return this.findOne(requisitionId, tenantId);

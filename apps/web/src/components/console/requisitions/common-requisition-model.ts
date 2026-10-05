@@ -207,7 +207,10 @@ export function isCommonEditable(v: CommonRequisitionView): boolean {
 
 export type CommonAction = "save" | "submit" | "reopen" | "release" | "linkPo" | "ship" | "receive";
 
-export function commonActions(v: CommonRequisitionView, can: { create: boolean; approve: boolean; transfer: boolean }): CommonAction[] {
+/** The signed-in user, for the actions that depend on who they are, not only on their grants. */
+export interface CommonActor { userId?: string | null; userType?: string | null }
+
+export function commonActions(v: CommonRequisitionView, can: { create: boolean; approve: boolean; transfer: boolean }, me: CommonActor = {}): CommonAction[] {
   if (!v.requisition_id) return can.create ? ["save"] : [];
   const approval = v.approval_status ?? "OPEN";
   const doc = v.document_status ?? "OPEN";
@@ -216,9 +219,13 @@ export function commonActions(v: CommonRequisitionView, can: { create: boolean; 
   if (approval === "REJECTED" && can.create) out.push("reopen");
   if (approval === "APPROVED" && doc === "APPROVED" && can.approve) out.push("release");
   if (doc === "RELEASED" && v.purpose === "PURCHASE" && can.approve) out.push("linkPo");
-  if (doc === "RELEASED" && v.purpose === "STORE" && can.transfer) {
-    if (v.lines.some((l) => (l.balance_to_ship ?? 0) > 1e-9)) out.push("ship");
-    if ((v.shipments ?? []).some((sh) => sh.lines.some((l) => l.remaining > 1e-9))) out.push("receive");
+  if (doc === "RELEASED" && v.purpose === "STORE") {
+    if (can.transfer && v.lines.some((l) => (l.balance_to_ship ?? 0) > 1e-9)) out.push("ship");
+    // Rishi, 5 Oct: "The one requesting is the one who would be receiving" —
+    // the requester posts the Transfer Receipt, with no separate receive
+    // grant. The API decides it again (and checks the To department).
+    const isRequester = !!me.userId && me.userId === v.requester_user_id;
+    if (isRequester && (v.shipments ?? []).some((sh) => sh.lines.some((l) => l.remaining > 1e-9))) out.push("receive");
   }
   return out;
 }

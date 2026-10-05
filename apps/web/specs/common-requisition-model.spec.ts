@@ -1,7 +1,9 @@
 import { commonActions, emptyCommonRequisition, emptyLine, isCommonEditable, toRequisitionPayload, toRequisitionUpdatePayload } from "../src/components/console/requisitions/common-requisition-model";
 
-const base = () => ({ ...emptyCommonRequisition("co-1", "ITEM", "STORE", "2026-10-04"), requisition_id: "req-1", approval_status: "OPEN", document_status: "OPEN" });
+const base = () => ({ ...emptyCommonRequisition("co-1", "ITEM", "STORE", "2026-10-04"), requisition_id: "req-1", approval_status: "OPEN", document_status: "OPEN", requester_user_id: "u-req" });
 const all = { create: true, approve: true, transfer: true };
+/** The signed-in requester: base() is raised by u-req. */
+const ME = { userId: "u-req", userType: "STANDARD_USER" };
 
 describe("common requisition model", () => {
   it("starts a new document Open, dated today, with one empty line", () => {
@@ -36,8 +38,12 @@ describe("common requisition model", () => {
     const v = { ...base(), approval_status: "APPROVED", document_status: "RELEASED", purpose: "STORE" as const,
       lines: [{ ...base().lines[0], line_id: "l1", balance_to_ship: 4 }],
       shipments: [{ shipment_id: "s1", shipment_no: "SH-2026-0001", shipment_date: "2026-10-04", lines: [{ requisition_line_id: "l1", shipped: 6, received: 2, remaining: 4 }] }] };
-    expect(commonActions(v, all)).toEqual(["ship", "receive"]);
-    expect(commonActions(v, { ...all, transfer: false })).toEqual([]);
+    expect(commonActions(v, all, ME)).toEqual(["ship", "receive"]);
+    // Rishi, 5 Oct: the requester receives, with no separate receive grant;
+    // shipping stays with the transfer grant (the sender department).
+    expect(commonActions(v, { ...all, transfer: false }, ME)).toEqual(["receive"]);
+    expect(commonActions(v, all, { userId: "someone-else" })).toEqual(["ship"]);
+    expect(commonActions(v, all)).toEqual(["ship"]);
   });
 
   // Pins the .some() over v.lines: a lines[0]-only check would miss the
@@ -67,7 +73,7 @@ describe("common requisition model", () => {
           { requisition_line_id: "l1", shipped: 6, received: 2, remaining: 4 },
         ] },
       ] };
-    expect(commonActions(v, all)).toEqual(["receive"]);
+    expect(commonActions(v, all, ME)).toEqual(["receive"]);
   });
 
   it("offers nothing to a user without the grants", () => {

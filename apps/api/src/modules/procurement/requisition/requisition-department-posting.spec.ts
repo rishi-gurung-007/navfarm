@@ -26,6 +26,8 @@ import * as schema from '../../../core/database/schema';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { ApprovalService } from '../../production/approval/approval.service';
 import { RequisitionService } from './requisition.service';
+import { RequisitionController } from './requisition.controller';
+import { REQUIRE_PERMISSION_KEY } from '../../../common/decorators/require-permission.decorator';
 
 interface Entry { op: string; table: unknown; values?: any; set?: any; inTx?: boolean }
 
@@ -163,19 +165,54 @@ describe('WP1c — the Transfer Shipment button is the From sub-location departm
   });
 });
 
-describe('WP1c — the Transfer Receipt button is the To sub-location department\'s', () => {
+/**
+ * P1 follow-up item 3 — Rishi, 5 Oct (decisions.md "Common requisition:
+ * requester, Service lines, receipt and release", point 3): "The one
+ * requesting is the one who would be receiving." The Transfer Receipt is
+ * posted by the requisition's requester (requester_user_id); the list's
+ * department check still applies (the requester's department must match the
+ * To Sub-Location); no separate receive permission is needed — which is why
+ * the route is guarded by the requisition's own view grant, not the stock
+ * transfer's edit grant.
+ */
+describe('Transfer Receipt — posted by the requester, at the To sub-location\'s department', () => {
   const RECV_DTO = { posting_date: '2026-10-03', shipment_id: 'sh-1', lines: [{ line_id: 'l1', quantity: 6 }] };
+  const REQUESTER = { userId: 'u-req', userType: 'STANDARD_USER', email: 'req@x' };
 
-  it('refuses a user whose department differs from the To sub-location\'s', async () => {
-    const { service, as, stockTransfers } = setup(receiveQueues({ toDepartmentId: 'cc-farm', userDepartmentId: 'cc-other' }));
+  it('posts the receipt for the requester whose department matches the To sub-location', async () => {
+    const { service, as, stockTransfers } = setup(receiveQueues({ toDepartmentId: 'cc-farm', userDepartmentId: 'cc-farm' }));
+    await as(STORE_SCOPE, () => service.receive('req-1', RECV_DTO, 'tenant-1', REQUESTER));
+    expect(stockTransfers.postReceipt).toHaveBeenCalledWith('tr-1', { posting_date: '2026-10-03', shipment_id: 'sh-1', lines: [{ line_id: 'tl-1', quantity: 6 }] }, 'tenant-1', REQUESTER);
+  });
+
+  it('refuses any other user, even one of the To sub-location\'s department', async () => {
+    const { service, as, stockTransfers } = setup(receiveQueues({ toDepartmentId: 'cc-farm', userDepartmentId: 'cc-farm' }));
     await expect(as(STORE_SCOPE, () => service.receive('req-1', RECV_DTO, 'tenant-1', SENDER)))
+      .rejects.toThrow(new ForbiddenException('Only the requester of REQ-2026-0001 may post its Transfer Receipt.'));
+    expect(stockTransfers.postReceipt).not.toHaveBeenCalled();
+  });
+
+  it('refuses an admin who is not the requester — admins get no bypass here (decisions, 4 Oct)', async () => {
+    const { service, as, stockTransfers } = setup(receiveQueues({ toDepartmentId: 'cc-farm', userDepartmentId: 'cc-farm' }));
+    await expect(as(STORE_SCOPE, () => service.receive('req-1', RECV_DTO, 'tenant-1', { userId: 'u-admin', userType: 'COMPANY_ADMIN', email: 'ca@x' })))
+      .rejects.toThrow('Only the requester of REQ-2026-0001 may post its Transfer Receipt.');
+    expect(stockTransfers.postReceipt).not.toHaveBeenCalled();
+  });
+
+  it('refuses the requester when their department differs from the To sub-location\'s', async () => {
+    const { service, as, stockTransfers } = setup(receiveQueues({ toDepartmentId: 'cc-farm', userDepartmentId: 'cc-other' }));
+    await expect(as(STORE_SCOPE, () => service.receive('req-1', RECV_DTO, 'tenant-1', REQUESTER)))
       .rejects.toThrow(new ForbiddenException("Only the To sub-location's department may post this Transfer Receipt."));
     expect(stockTransfers.postReceipt).not.toHaveBeenCalled();
   });
 
-  it('posts the receipt for a user of the To sub-location\'s department', async () => {
-    const { service, as, stockTransfers } = setup(receiveQueues({ toDepartmentId: 'cc-farm', userDepartmentId: 'cc-farm' }));
-    await as(STORE_SCOPE, () => service.receive('req-1', RECV_DTO, 'tenant-1', SENDER));
-    expect(stockTransfers.postReceipt).toHaveBeenCalledWith('tr-1', { posting_date: '2026-10-03', shipment_id: 'sh-1', lines: [{ line_id: 'tl-1', quantity: 6 }] }, 'tenant-1', SENDER);
+  it('the receipt route asks the requisition view grant, not INVENTORY/STOCK_TRANSFER edit', () => {
+    const receive = Object.getOwnPropertyDescriptor(RequisitionController.prototype, 'receive')?.value;
+    expect(Reflect.getMetadata(REQUIRE_PERMISSION_KEY, receive)).toEqual({ moduleCode: 'PROCUREMENT', resource: 'REQUISITION', action: 'view' });
+  });
+
+  it('leaves the shipment route on INVENTORY/STOCK_TRANSFER edit (the sender department ships)', () => {
+    const ship = Object.getOwnPropertyDescriptor(RequisitionController.prototype, 'ship')?.value;
+    expect(Reflect.getMetadata(REQUIRE_PERMISSION_KEY, ship)).toEqual({ moduleCode: 'INVENTORY', resource: 'STOCK_TRANSFER', action: 'edit' });
   });
 });

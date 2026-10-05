@@ -606,6 +606,26 @@ export function assertPostingDepartment(
 }
 
 /**
+ * Rishi, 5 Oct (decisions.md "Common requisition: requester, Service lines,
+ * receipt and release", point 3): "The one requesting is the one who would be
+ * receiving." Only the requisition's requester posts its Transfer Receipt; the
+ * To sub-location's department check (assertPostingDepartment) still applies
+ * on top. No admin bypass (decisions, 4 Oct). Direct Transfer is not a
+ * receipt: it stays the sender's one action that posts both legs.
+ */
+export function assertReceiptByRequester(
+  row: { req_no: string; requester_user_id: string | null },
+  userId: string | undefined,
+): void {
+  if (!row.requester_user_id) {
+    throw new ForbiddenException(`${row.req_no} records no requester, so no one may post its Transfer Receipt.`);
+  }
+  if (!userId || userId !== row.requester_user_id) {
+    throw new ForbiddenException(`Only the requester of ${row.req_no} may post its Transfer Receipt.`);
+  }
+}
+
+/**
  * The requisition's ship()/receive() endpoints take requisition line ids;
  * StockTransferService.postShipment/postReceipt take transfer line ids. This
  * is the one translation between them, re-raising the linked transfer's own

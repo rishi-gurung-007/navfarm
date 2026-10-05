@@ -124,8 +124,11 @@ export class RequisitionController {
   }
 
   @Post(':id/receipt')
-  @RequirePermission('INVENTORY', 'STOCK_TRANSFER', 'edit')
-  @ApiOperation({ summary: 'Post a partial receipt against one shipment of a released Store requisition' })
+  // Rishi, 5 Oct: the requester receives and needs no separate receive
+  // permission. Who may post is decided in RequisitionService.receive (the
+  // requester, at the To sub-location's department), not by this guard.
+  @RequirePermission('PROCUREMENT', 'REQUISITION', 'view')
+  @ApiOperation({ summary: 'Post a partial receipt against one shipment of a released Store requisition — the requester only, at the To sub-location department' })
   @ApiParam({ name: 'id' })
   async receive(@Param('id') id: string, @Body() dto: RequisitionReceiptDto, @Req() req: any) {
     const tenantId = req.user?.tenantId || req['tenantId'];
