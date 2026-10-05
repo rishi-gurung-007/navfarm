@@ -22,7 +22,7 @@ import { assertSiloLevels } from '../../inventory/silo-feed/silo-levels';
  * twice — a new type that inventory should hold (a tenant's own BINS, say)
  * joins this list once and both the tree and the /warehouse projection agree.
  */
-export const WAREHOUSE_LOCATION_TYPES = ['STORE', 'SILO'];
+export const WAREHOUSE_LOCATION_TYPES = ['STORE', 'SILO', 'BIN'];
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   return date.toISOString().slice(0, 19).replace('T', ' ');
@@ -109,6 +109,22 @@ export function siloCapacityForDisplay(
   const kg = Number(siloCapacityKg);
   if (!Number.isFinite(kg)) return null;
   return (uom?.toUpperCase() === 'TON' ? kg / 1000 : kg).toString();
+}
+
+/** MILL/BIN form capacities are always metric tonnes; storage is always KG. */
+export function capacityTonToKg(value: number | string | null | undefined): string | null {
+  if (value == null || value === '') return null;
+  const ton = Number(value);
+  if (!Number.isFinite(ton)) return null;
+  return (ton * 1000).toString();
+}
+
+/** Inverse of capacityTonToKg for an edit form; prevents untouched saves multiplying twice. */
+export function capacityKgForTonDisplay(value: number | string | null | undefined): string | null {
+  if (value == null || value === '') return null;
+  const kg = Number(value);
+  if (!Number.isFinite(kg)) return null;
+  return (kg / 1000).toString();
 }
 
 /** One silo on a shed's record view (checklist 1a). Read-only. */
@@ -348,6 +364,12 @@ export class LocationService {
       silo_reorder_days: dto.silo_reorder_days ?? null,
       low_level_kg: dto.storage_type === 'SILO' && dto.low_level_kg != null ? String(dto.low_level_kg) : null,
       high_level_kg: dto.storage_type === 'SILO' && dto.high_level_kg != null ? String(dto.high_level_kg) : null,
+      mill_daily_capacity_kg: capacityTonToKg(dto.mill_daily_capacity_ton),
+      mill_hourly_capacity_kg: capacityTonToKg(dto.mill_hourly_capacity_ton),
+      mill_bulk_daily_allocation_kg: capacityTonToKg(dto.mill_bulk_daily_allocation_ton),
+      mill_bagged_daily_allocation_kg: capacityTonToKg(dto.mill_bagged_daily_allocation_ton),
+      bin_capacity_kg: capacityTonToKg(dto.bin_capacity_ton),
+      bin_feed_type: dto.bin_feed_type ?? null,
       downtime_days_required: dto.downtime_days_required ?? null,
       storage_name: dto.storage_name ?? null,
       department_id: dto.department_id || null,
@@ -558,6 +580,11 @@ export class LocationService {
     const shaped = {
       ...row,
       silo_capacity_kg: siloCapacityForDisplay(row.silo_capacity_kg, row.silo_capacity_uom),
+      mill_daily_capacity_ton: capacityKgForTonDisplay(row.mill_daily_capacity_kg),
+      mill_hourly_capacity_ton: capacityKgForTonDisplay(row.mill_hourly_capacity_kg),
+      mill_bulk_daily_allocation_ton: capacityKgForTonDisplay(row.mill_bulk_daily_allocation_kg),
+      mill_bagged_daily_allocation_ton: capacityKgForTonDisplay(row.mill_bagged_daily_allocation_kg),
+      bin_capacity_ton: capacityKgForTonDisplay(row.bin_capacity_kg),
     } as T & {
       attached_sheds?: string[];
       attached_silos?: AttachedSilo[];
@@ -618,6 +645,26 @@ export class LocationService {
       throw new ConflictException(
         'A SILO location requires silo_capacity_kg, silo_capacity_uom (KG or TON) and silo_reorder_days.'
       );
+    }
+  }
+
+  private assertMillBinFields(dto: CreateLocationDto, locationType: string) {
+    if (locationType === 'MILL') {
+      const fields = [
+        dto.mill_daily_capacity_ton,
+        dto.mill_hourly_capacity_ton,
+        dto.mill_bulk_daily_allocation_ton,
+        dto.mill_bagged_daily_allocation_ton,
+      ];
+      if (fields.some((value) => value == null)) {
+        throw new ConflictException('A MILL requires Daily Capacity, Hourly Capacity, Bulk Daily Allocation and Bagged Daily Allocation in TON.');
+      }
+      if (Number(dto.mill_bulk_daily_allocation_ton) + Number(dto.mill_bagged_daily_allocation_ton) > Number(dto.mill_daily_capacity_ton)) {
+        throw new ConflictException('Bulk Daily Allocation plus Bagged Daily Allocation cannot exceed Daily Capacity.');
+      }
+    }
+    if (locationType === 'BIN' && (dto.bin_capacity_ton == null || dto.bin_feed_type == null)) {
+      throw new ConflictException('A BIN requires Bin Capacity TON and Feed Type (BULK or BAGGED).');
     }
   }
 
@@ -879,13 +926,19 @@ export class LocationService {
     const companyId = dto.company_id;
     const locationType = await this.resolveLocationType(dto.location_type, tenantId, companyId);
     const typeCode = locationType.type_code;
-    const allowedParentTypes = this.allowedParentTypes(locationType.allowed_parent_types);
+    const configuredParentTypes = this.allowedParentTypes(locationType.allowed_parent_types);
+    const allowedParentTypes = typeCode === 'MILL' ? [] : typeCode === 'BIN' ? ['MILL'] : configuredParentTypes;
+
+    this.assertMillBinFields(dto, typeCode);
 
     // parent_location_id is the single canonical hierarchy. Legacy ancestry
     // columns are derived below only to keep older operational flows working.
     let locationLevel = 1;
     let parent: typeof schema.locationMaster.$inferSelect | undefined;
     if (allowedParentTypes.length === 0 && dto.parent_location_id) {
+      if (typeCode === 'MILL') {
+        throw new ConflictException('A MILL is a root location and cannot have a parent.');
+      }
       throw new ConflictException(`${locationType.type_name} is a root location and cannot have a parent.`);
     }
     if (dto.parent_location_id) {
@@ -896,6 +949,12 @@ export class LocationService {
         isNull(schema.locationMaster.deleted_at),
       )).limit(1);
       if (!parent) throw new NotFoundException(`Parent Location '${dto.parent_location_id}' not found.`);
+      if (typeCode === 'MILL') {
+        throw new ConflictException('A MILL is a root location and cannot have a parent.');
+      }
+      if (typeCode === 'BIN' && (parent.location_type !== 'MILL' || parent.is_active !== true)) {
+        throw new ConflictException('A BIN must be created under an active MILL in the same company.');
+      }
       if (!allowedParentTypes.includes(parent.location_type)) {
         throw new ConflictException(`${locationType.type_name} must be created under ${allowedParentTypes.join(' or ')}.`);
       }
@@ -911,6 +970,34 @@ export class LocationService {
     // and the sheds it actually feeds are the attached_sheds set below.
     if (typeCode === 'SILO' && parent?.location_type !== 'FARM') {
       throw new ConflictException('A SILO must be created under a FARM.');
+    }
+    if (typeCode === 'MILL' && parent) {
+      throw new ConflictException('A MILL is a root location and cannot have a parent.');
+    }
+    if (typeCode === 'BIN' && (!parent || parent.location_type !== 'MILL' || parent.is_active !== true)) {
+      throw new ConflictException('A BIN must be created under an active MILL in the same company.');
+    }
+
+    // MILL/BIN have dedicated TON fields; generic livestock/area/biosecurity
+    // columns do not describe them and are never accepted as substitutes.
+    if (typeCode === 'MILL' || typeCode === 'BIN') {
+      dto.area_size = undefined;
+      dto.area_unit = undefined;
+      dto.max_capacity = undefined;
+      dto.capacity_uom = undefined;
+      dto.current_count = undefined;
+      dto.is_quarantine_zone = undefined;
+      dto.downtime_days_required = undefined;
+    }
+    if (typeCode !== 'MILL') {
+      dto.mill_daily_capacity_ton = undefined;
+      dto.mill_hourly_capacity_ton = undefined;
+      dto.mill_bulk_daily_allocation_ton = undefined;
+      dto.mill_bagged_daily_allocation_ton = undefined;
+    }
+    if (typeCode !== 'BIN') {
+      dto.bin_capacity_ton = undefined;
+      dto.bin_feed_type = undefined;
     }
 
     // 3.5. This location's area, plus everything already under the same parent,
@@ -1165,6 +1252,11 @@ export class LocationService {
       data: rows.map((row) => ({
         ...row,
         silo_capacity_kg: siloCapacityForDisplay(row.silo_capacity_kg, row.silo_capacity_uom),
+        mill_daily_capacity_ton: capacityKgForTonDisplay(row.mill_daily_capacity_kg),
+        mill_hourly_capacity_ton: capacityKgForTonDisplay(row.mill_hourly_capacity_kg),
+        mill_bulk_daily_allocation_ton: capacityKgForTonDisplay(row.mill_bulk_daily_allocation_kg),
+        mill_bagged_daily_allocation_ton: capacityKgForTonDisplay(row.mill_bagged_daily_allocation_kg),
+        bin_capacity_ton: capacityKgForTonDisplay(row.bin_capacity_kg),
         ...(row.location_type === 'SILO'
           ? {
               attached_sheds: attachedBySilo.get(row.location_id) || [],
@@ -1200,8 +1292,41 @@ export class LocationService {
 
     const effectiveLocationType = dto.location_type !== undefined ? dto.location_type : location.location_type;
     const effectiveCompanyId = dto.company_id !== undefined ? dto.company_id : location.company_id;
+
+    if (effectiveLocationType === 'MILL' || effectiveLocationType === 'BIN') {
+      dto.area_size = undefined;
+      dto.area_unit = undefined;
+      dto.max_capacity = undefined;
+      dto.capacity_uom = undefined;
+      dto.current_count = undefined;
+      dto.is_quarantine_zone = undefined;
+      dto.downtime_days_required = undefined;
+    }
+
+    if (effectiveLocationType === 'MILL') {
+      const storedDailyTon = capacityKgForTonDisplay(location.mill_daily_capacity_kg);
+      const storedHourlyTon = capacityKgForTonDisplay(location.mill_hourly_capacity_kg);
+      const storedBulkTon = capacityKgForTonDisplay(location.mill_bulk_daily_allocation_kg);
+      const storedBaggedTon = capacityKgForTonDisplay(location.mill_bagged_daily_allocation_kg);
+      const effectiveMill = {
+        mill_daily_capacity_ton: dto.mill_daily_capacity_ton ?? (storedDailyTon == null ? undefined : Number(storedDailyTon)),
+        mill_hourly_capacity_ton: dto.mill_hourly_capacity_ton ?? (storedHourlyTon == null ? undefined : Number(storedHourlyTon)),
+        mill_bulk_daily_allocation_ton: dto.mill_bulk_daily_allocation_ton ?? (storedBulkTon == null ? undefined : Number(storedBulkTon)),
+        mill_bagged_daily_allocation_ton: dto.mill_bagged_daily_allocation_ton ?? (storedBaggedTon == null ? undefined : Number(storedBaggedTon)),
+      } as CreateLocationDto;
+      this.assertMillBinFields(effectiveMill, 'MILL');
+    }
+    if (effectiveLocationType === 'BIN') {
+      const storedBinTon = capacityKgForTonDisplay(location.bin_capacity_kg);
+      const effectiveBin = {
+        bin_capacity_ton: dto.bin_capacity_ton ?? (storedBinTon == null ? undefined : Number(storedBinTon)),
+        bin_feed_type: dto.bin_feed_type ?? location.bin_feed_type,
+      } as CreateLocationDto;
+      this.assertMillBinFields(effectiveBin, 'BIN');
+    }
     const locationType = await this.resolveLocationType(effectiveLocationType, tenantId, effectiveCompanyId);
-    const allowedParentTypes = this.allowedParentTypes(locationType.allowed_parent_types);
+    const configuredParentTypes = this.allowedParentTypes(locationType.allowed_parent_types);
+    const allowedParentTypes = effectiveLocationType === 'MILL' ? [] : effectiveLocationType === 'BIN' ? ['MILL'] : configuredParentTypes;
     const effectiveParentId = dto.parent_location_id !== undefined ? dto.parent_location_id : location.parent_location_id;
     let parent: typeof schema.locationMaster.$inferSelect | undefined;
     let newLocationLevel: number | undefined;
@@ -1216,6 +1341,12 @@ export class LocationService {
         isNull(schema.locationMaster.deleted_at),
       )).limit(1);
       if (!parent) throw new NotFoundException(`Parent Location '${effectiveParentId}' not found.`);
+      if (effectiveLocationType === 'MILL') {
+        throw new ConflictException('A MILL is a root location and cannot have a parent.');
+      }
+      if (effectiveLocationType === 'BIN' && (parent.location_type !== 'MILL' || parent.is_active !== true)) {
+        throw new ConflictException('A BIN must be placed under an active MILL in the same company.');
+      }
       if (!allowedParentTypes.includes(parent.location_type)) {
         throw new ConflictException(`${locationType.type_name} must be placed under ${allowedParentTypes.join(' or ')}.`);
       }
@@ -1231,6 +1362,9 @@ export class LocationService {
     // re-parenting cannot quietly undo what create() refused.
     if (effectiveLocationType === 'SILO' && parent?.location_type !== 'FARM') {
       throw new ConflictException('A SILO must be placed under a FARM.');
+    }
+    if (effectiveLocationType === 'BIN' && (!parent || parent.location_type !== 'MILL' || parent.is_active !== true)) {
+      throw new ConflictException('A BIN must be placed under an active MILL in the same company.');
     }
 
     // SILO locations must carry silo tracking fields — validate against effective values so a
@@ -1350,6 +1484,12 @@ export class LocationService {
     }
     if (dto.low_level_kg !== undefined) updates.low_level_kg = dto.low_level_kg == null ? null : String(dto.low_level_kg);
     if (dto.high_level_kg !== undefined) updates.high_level_kg = dto.high_level_kg == null ? null : String(dto.high_level_kg);
+    if (dto.mill_daily_capacity_ton !== undefined) updates.mill_daily_capacity_kg = capacityTonToKg(dto.mill_daily_capacity_ton);
+    if (dto.mill_hourly_capacity_ton !== undefined) updates.mill_hourly_capacity_kg = capacityTonToKg(dto.mill_hourly_capacity_ton);
+    if (dto.mill_bulk_daily_allocation_ton !== undefined) updates.mill_bulk_daily_allocation_kg = capacityTonToKg(dto.mill_bulk_daily_allocation_ton);
+    if (dto.mill_bagged_daily_allocation_ton !== undefined) updates.mill_bagged_daily_allocation_kg = capacityTonToKg(dto.mill_bagged_daily_allocation_ton);
+    if (dto.bin_capacity_ton !== undefined) updates.bin_capacity_kg = capacityTonToKg(dto.bin_capacity_ton);
+    if (dto.bin_feed_type !== undefined) updates.bin_feed_type = dto.bin_feed_type;
     if (effectiveLocationType !== 'SILO') {
       updates.silo_capacity_kg = null;
       updates.silo_capacity_uom = null;

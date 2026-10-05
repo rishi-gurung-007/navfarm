@@ -4,7 +4,14 @@ import { ClsService } from 'nestjs-cls';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { SiloFeedService } from '../../inventory/silo-feed/silo-feed.service';
-import { LocationService, siloCapacityForDisplay, siloCapacityToKg } from './location.service';
+import {
+  LocationService,
+  WAREHOUSE_LOCATION_TYPES,
+  capacityKgForTonDisplay,
+  capacityTonToKg,
+  siloCapacityForDisplay,
+  siloCapacityToKg,
+} from './location.service';
 
 describe('LocationService canonical hierarchy', () => {
   let service: LocationService;
@@ -65,6 +72,14 @@ describe('LocationService canonical hierarchy', () => {
     type_code: 'SILO', type_name: 'Silo', code_prefix: 'SILO',
     allowed_parent_types: ['FARM', 'SHED'], company_id: null,
   };
+  const millType = {
+    type_code: 'MILL', type_name: 'Mill', code_prefix: 'MILL',
+    allowed_parent_types: [], company_id: null,
+  };
+  const binType = {
+    type_code: 'BIN', type_name: 'Bin', code_prefix: 'BIN',
+    allowed_parent_types: ['MILL'], company_id: null,
+  };
   const uom = { uom_code: 'HEAD' };
   /** The farm a silo hangs off. No area_size or max_capacity, so the parent-fit
    *  checks return before issuing a SELECT and the queue above stays readable. */
@@ -113,6 +128,121 @@ describe('LocationService canonical hierarchy', () => {
       max_capacity: 100, capacity_uom: 'HEAD',
     }, 'tenant-1')).rejects.toThrow(ConflictException);
     expect(db.select).not.toHaveBeenCalled();
+  });
+
+  describe('MILL and BIN capacity contract', () => {
+    it('converts decimal TON values to canonical KG and back without multiplying twice', () => {
+      expect(capacityTonToKg(12.5)).toBe('12500');
+      expect(capacityKgForTonDisplay('12500.00')).toBe('12.5');
+      expect(capacityTonToKg(capacityKgForTonDisplay('12500.00'))).toBe('12500');
+      expect(capacityTonToKg(null)).toBeNull();
+    });
+
+    it('allows allocations equal to daily capacity and stores dedicated MILL values in KG', async () => {
+      selectResults.push(
+        [company], [millType], [series],
+        [{
+          location_id: 'mill-1', location_code: 'MILL-001', location_type: 'MILL', location_level: 1,
+          mill_daily_capacity_kg: '10000.00', mill_hourly_capacity_kg: '1250.00',
+          mill_bulk_daily_allocation_kg: '6000.00', mill_bagged_daily_allocation_kg: '4000.00',
+        }],
+      );
+
+      const result = await service.create({
+        company_id: 'comp-1', location_name: 'Main Mill', location_type: 'MILL',
+        mill_daily_capacity_ton: 10, mill_hourly_capacity_ton: 1.25,
+        mill_bulk_daily_allocation_ton: 6, mill_bagged_daily_allocation_ton: 4,
+      }, 'tenant-1');
+
+      expect(inserted()).toEqual(expect.objectContaining({
+        mill_daily_capacity_kg: '10000', mill_hourly_capacity_kg: '1250',
+        mill_bulk_daily_allocation_kg: '6000', mill_bagged_daily_allocation_kg: '4000',
+        max_capacity: null, capacity_uom: null,
+      }));
+      expect(result).toEqual(expect.objectContaining({
+        mill_daily_capacity_ton: '10', mill_hourly_capacity_ton: '1.25',
+        mill_bulk_daily_allocation_ton: '6', mill_bagged_daily_allocation_ton: '4',
+      }));
+    });
+
+    it('rejects MILL allocations above daily capacity', async () => {
+      selectResults.push([company], [millType]);
+      await expect(service.create({
+        company_id: 'comp-1', location_name: 'Main Mill', location_type: 'MILL',
+        mill_daily_capacity_ton: 10, mill_hourly_capacity_ton: 1,
+        mill_bulk_daily_allocation_ton: 6.01, mill_bagged_daily_allocation_ton: 4,
+      }, 'tenant-1')).rejects.toThrow('cannot exceed Daily Capacity');
+      expect(txInsert).not.toHaveBeenCalled();
+    });
+
+    it('round-trips an untouched MILL edit without multiplying stored KG twice', async () => {
+      const mill = {
+        location_id: 'mill-1', tenant_id: 'tenant-1', company_id: 'comp-1', location_code: 'MILL-001',
+        location_name: 'Main Mill', location_type: 'MILL', location_level: 1, parent_location_id: null,
+        mill_daily_capacity_kg: '12500.00', mill_hourly_capacity_kg: '1500.00',
+        mill_bulk_daily_allocation_kg: '7500.00', mill_bagged_daily_allocation_kg: '5000.00',
+        bin_capacity_kg: null, bin_feed_type: null, storage_type: null,
+      };
+      selectResults.push([mill], [millType], [mill]);
+
+      await service.update('mill-1', {
+        location_name: 'Main Mill',
+        mill_daily_capacity_ton: 12.5, mill_hourly_capacity_ton: 1.5,
+        mill_bulk_daily_allocation_ton: 7.5, mill_bagged_daily_allocation_ton: 5,
+      }, 'tenant-1');
+
+      const updates = (txUpdate.mock.results[0].value.set as jest.Mock).mock.calls[0][0];
+      expect(updates).toEqual(expect.objectContaining({
+        mill_daily_capacity_kg: '12500', mill_hourly_capacity_kg: '1500',
+        mill_bulk_daily_allocation_kg: '7500', mill_bagged_daily_allocation_kg: '5000',
+      }));
+    });
+
+    it('enforces MILL as a root even if tenant type configuration permits a parent', async () => {
+      selectResults.push(
+        [company], [{ ...millType, allowed_parent_types: ['FARM'] }], [farmParent()],
+      );
+      await expect(service.create({
+        company_id: 'comp-1', parent_location_id: 'farm-1', location_name: 'Main Mill', location_type: 'MILL',
+        mill_daily_capacity_ton: 10, mill_hourly_capacity_ton: 1,
+        mill_bulk_daily_allocation_ton: 6, mill_bagged_daily_allocation_ton: 4,
+      }, 'tenant-1')).rejects.toThrow('MILL is a root location');
+    });
+
+    it('stores BIN capacity in KG, derives itself as a warehouse, and reads TON back', async () => {
+      const millParent = {
+        location_id: 'mill-1', company_id: 'comp-1', location_type: 'MILL', location_code: 'MILL-001',
+        location_level: 1, farm_id: 'mill-1', shed_id: null, warehouse_id: null, is_active: true,
+      };
+      selectResults.push(
+        [company], [binType], [millParent], [series], [],
+        [{
+          location_id: 'bin-1', location_code: 'MILL-001/BIN-001', location_type: 'BIN', location_level: 2,
+          bin_capacity_kg: '22500.00', bin_feed_type: 'BULK', warehouse_id: 'bin-1',
+        }],
+      );
+      const result = await service.create({
+        company_id: 'comp-1', parent_location_id: 'mill-1', location_name: 'Loading Bin', location_type: 'BIN',
+        bin_capacity_ton: 22.5, bin_feed_type: 'BULK',
+      }, 'tenant-1');
+
+      expect(inserted()).toEqual(expect.objectContaining({
+        bin_capacity_kg: '22500', bin_feed_type: 'BULK', warehouse_id: expect.any(String),
+        max_capacity: null, capacity_uom: null,
+      }));
+      expect(result.bin_capacity_ton).toBe('22.5');
+      expect(WAREHOUSE_LOCATION_TYPES).toEqual(['STORE', 'SILO', 'BIN']);
+    });
+
+    it('rejects a BIN whose parent is not an active MILL', async () => {
+      selectResults.push(
+        [company], [binType], [{ ...farmParent(), is_active: true }],
+      );
+      await expect(service.create({
+        company_id: 'comp-1', parent_location_id: 'farm-1', location_name: 'Loading Bin', location_type: 'BIN',
+        bin_capacity_ton: 10, bin_feed_type: 'BAGGED',
+      }, 'tenant-1')).rejects.toThrow('BIN must be created under an active MILL');
+    });
   });
 
   it('generates FARM-001 for a root farm as a single location_master insert', async () => {

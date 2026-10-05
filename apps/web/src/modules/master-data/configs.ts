@@ -43,7 +43,7 @@ const locationType: MasterDataConfig = {
 const location: MasterDataConfig = {
   key: "location",
   label: "Locations",
-  description: "One hierarchy for farms, sheds, pens, cages, stores, quarantine areas and silos.",
+  description: "One hierarchy for farms, sheds, pens, cages, stores, silos, mills and loading bins.",
   apiBase: "/location",
   idKey: "location_id",
   group: "Farm Operations",
@@ -59,12 +59,12 @@ const location: MasterDataConfig = {
     { key: "nob_id", label: "Nature of Business", type: "select-entity", entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], helpText: "Leave blank if this location is shared across all business verticals." },
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank if this location is shared across all LOBs under the selected NOB." },
     { key: "company_id", label: "Company", type: "text", hideInForm: true },
-    { key: "location_code", label: "Code", type: "text", readOnly: true, helpText: "Generated from the selected Location Type prefix and kept permanently.", section: "Identification" },
+    { key: "location_code", label: "Code", labelWhen: { key: "location_type", labels: { MILL: "Mill Code", BIN: "Bin Code" } }, type: "text", readOnly: true, helpText: "Generated from the selected Location Type prefix and kept permanently.", section: "Identification" },
     {
       key: "location_type", label: "Location Type", type: "select-entity", required: true,
       entityEndpoint: "/location-type", entityValueKey: "type_code", entityLabelKeys: ["type_code", "type_name"], section: "Identification",
     },
-    { key: "location_name", label: "Name", type: "text", required: true, maxLength: 100, placeholder: "Porta Farm", section: "Identification" },
+    { key: "location_name", label: "Name", labelWhen: { key: "location_type", labels: { MILL: "Mill Name", BIN: "Bin Name" } }, type: "text", required: true, maxLength: 100, placeholder: "Porta Farm", section: "Identification" },
     {
       key: "location_address", label: "Location Address", type: "text", maxLength: 255,
       visibleWhen: { anyOf: [{ key: "location_type", equals: "FARM" }] },
@@ -79,7 +79,7 @@ const location: MasterDataConfig = {
       // SHED filtered 50 rows that held no Farm and offered nothing. parentForType
       // asks for exactly the allowed parent types, whatever the table's size.
       key: "parent_location_id", label: "Parent Location", type: "select-entity", required: true, searchable: true,
-      entityEndpoint: "/location?parentForType={value}", entityValueKey: "location_id", entityLabelKeys: ["location_code", "location_name"],
+      entityEndpoint: "/location?parentForType={value}&isActive=true", entityValueKey: "location_id", entityLabelKeys: ["location_code", "location_name"],
       dependsOn: "location_type",
       restrictOptionsBy: {
         selectorKey: "location_type", selectorEntityEndpoint: "/location-type", selectorCodeKey: "type_code",
@@ -105,8 +105,8 @@ const location: MasterDataConfig = {
     // spelled out under Max Capacity just below: a location type added later
     // stays visible by default instead of silently inheriting the SILO
     // exception.
-    { key: "area_size", label: "Area Size", type: "number", min: 0, max: 999999.99, step: "0.01", visibleWhen: { anyOf: [{ key: "location_type", notEquals: "SILO" }] }, section: "Identification" },
-    { key: "area_unit", label: "Area UOM", type: "select-entity", entityEndpoint: "/uom?uomType=AREA", entityValueKey: "uom_code", entityLabelKeys: ["uom_code", "uom_name"], visibleWhen: { anyOf: [{ key: "location_type", notEquals: "SILO" }] }, section: "Identification" },
+    { key: "area_size", label: "Area Size", type: "number", min: 0, max: 999999.99, step: "0.01", visibleWhen: { anyOf: [{ key: "location_type", notEquals: ["SILO", "MILL", "BIN"] }] }, section: "Identification" },
+    { key: "area_unit", label: "Area UOM", type: "select-entity", entityEndpoint: "/uom?uomType=AREA", entityValueKey: "uom_code", entityLabelKeys: ["uom_code", "uom_name"], visibleWhen: { anyOf: [{ key: "location_type", notEquals: ["SILO", "MILL", "BIN"] }] }, section: "Identification" },
     // Hidden for SILO (2026-09-22, client request) — asking for a general Max
     // Capacity right next to Silo Capacity read as the same question
     // twice. Silo Capacity + Silo Reorder Days are what a silo's own
@@ -115,8 +115,39 @@ const location: MasterDataConfig = {
     // check validates against. notEquals rather than an enumerated equals
     // list, so a location type added later stays required by default instead
     // of silently inheriting the SILO exception.
-    { key: "max_capacity", label: "Max Capacity", type: "number", min: 0, max: 9999999, step: "1", visibleWhen: { anyOf: [{ key: "location_type", notEquals: "SILO" }] }, requiredWhen: { anyOf: [{ key: "location_type", notEquals: "SILO" }] }, section: "Identification" },
-    { key: "capacity_uom", label: "Capacity UOM", type: "select-entity", entityEndpoint: "/uom?uomType=COUNT", entityValueKey: "uom_code", entityLabelKeys: ["uom_code", "uom_name"], visibleWhen: { anyOf: [{ key: "location_type", notEquals: "SILO" }] }, requiredWhen: { anyOf: [{ key: "location_type", notEquals: "SILO" }] }, section: "Identification" },
+    { key: "max_capacity", label: "Max Capacity", type: "number", min: 0, max: 9999999, step: "1", visibleWhen: { anyOf: [{ key: "location_type", notEquals: ["SILO", "MILL", "BIN"] }] }, requiredWhen: { anyOf: [{ key: "location_type", notEquals: ["SILO", "MILL", "BIN"] }] }, section: "Identification" },
+    { key: "capacity_uom", label: "Capacity UOM", type: "select-entity", entityEndpoint: "/uom?uomType=COUNT", entityValueKey: "uom_code", entityLabelKeys: ["uom_code", "uom_name"], visibleWhen: { anyOf: [{ key: "location_type", notEquals: ["SILO", "MILL", "BIN"] }] }, requiredWhen: { anyOf: [{ key: "location_type", notEquals: ["SILO", "MILL", "BIN"] }] }, section: "Identification" },
+    {
+      key: "mill_daily_capacity_ton", label: "Daily Capacity TON", type: "number", min: 0, step: "0.001", nativeNumber: true,
+      visibleWhen: { anyOf: [{ key: "location_type", equals: "MILL" }] },
+      requiredWhen: { anyOf: [{ key: "location_type", equals: "MILL" }] }, section: "Identification",
+    },
+    {
+      key: "mill_hourly_capacity_ton", label: "Hourly Capacity TON", type: "number", min: 0, step: "0.001", nativeNumber: true,
+      visibleWhen: { anyOf: [{ key: "location_type", equals: "MILL" }] },
+      requiredWhen: { anyOf: [{ key: "location_type", equals: "MILL" }] }, section: "Identification",
+    },
+    {
+      key: "mill_bulk_daily_allocation_ton", label: "Bulk Daily Allocation TON", type: "number", min: 0, step: "0.001", nativeNumber: true,
+      visibleWhen: { anyOf: [{ key: "location_type", equals: "MILL" }] },
+      requiredWhen: { anyOf: [{ key: "location_type", equals: "MILL" }] }, section: "Identification",
+    },
+    {
+      key: "mill_bagged_daily_allocation_ton", label: "Bagged Daily Allocation TON", type: "number", min: 0, step: "0.001", nativeNumber: true,
+      visibleWhen: { anyOf: [{ key: "location_type", equals: "MILL" }] },
+      requiredWhen: { anyOf: [{ key: "location_type", equals: "MILL" }] }, section: "Identification",
+    },
+    {
+      key: "bin_capacity_ton", label: "Bin Capacity TON", type: "number", min: 0, step: "0.001", nativeNumber: true,
+      visibleWhen: { anyOf: [{ key: "location_type", equals: "BIN" }] },
+      requiredWhen: { anyOf: [{ key: "location_type", equals: "BIN" }] }, section: "Identification",
+    },
+    {
+      key: "bin_feed_type", label: "Feed Type", type: "select",
+      options: [{ value: "BULK", label: "Bulk" }, { value: "BAGGED", label: "Bagged" }],
+      visibleWhen: { anyOf: [{ key: "location_type", equals: "BIN" }] },
+      requiredWhen: { anyOf: [{ key: "location_type", equals: "BIN" }] }, section: "Identification",
+    },
     // Hidden (2026-09-22, client request) — Storage Location duplicated
     // Location Type (STORE/SILO were already choices there); MasterDataTable's
     // setField now derives this straight from location_type instead. Kept in
@@ -193,7 +224,7 @@ const location: MasterDataConfig = {
       section: "Identification",
       helpText: "The sheds on this silo's parent farm that may take their feed from it. A shed can draw from several silos, one per feed item; two silos feeding the same shed may not hold the same feed.",
     },
-    { key: "downtime_days_required", label: "Downtime Days Required", type: "number", min: 0, max: 365, step: "1", helpText: "Empty days required between batches for biosecurity.", section: "Identification" },
+    { key: "downtime_days_required", label: "Downtime Days Required", type: "number", min: 0, max: 365, step: "1", visibleWhen: { anyOf: [{ key: "location_type", notEquals: ["MILL", "BIN"] }] }, helpText: "Empty days required between batches for biosecurity.", section: "Identification" },
     // D32: "Silo / Store Name" is gone from the form — it duplicated the
     // required Name field. The storage_name column is kept, and the seeds
     // still fill it for the silos and stores the client's master names.

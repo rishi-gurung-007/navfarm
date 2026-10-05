@@ -81,13 +81,13 @@ export class CreateLocationDto {
   // twice (client request, 2026-09-22). ValidateIf keys off the DTO's own
   // location_type field, so this still runs before the entity is loaded.
   @ApiProperty({ description: 'Maximum storage or bird/animal capacity limit. Not required for SILO.', required: false })
-  @ValidateIf((dto: CreateLocationDto) => dto.location_type !== 'SILO')
+  @ValidateIf((dto: CreateLocationDto) => !['SILO', 'MILL', 'BIN'].includes(dto.location_type))
   @IsNumber()
   @Min(0)
   max_capacity?: number;
 
   @ApiProperty({ description: 'Capacity unit representation. Not required for SILO.', required: false })
-  @ValidateIf((dto: CreateLocationDto) => dto.location_type !== 'SILO')
+  @ValidateIf((dto: CreateLocationDto) => !['SILO', 'MILL', 'BIN'].includes(dto.location_type))
   @IsString()
   @IsNotEmpty()
   capacity_uom?: string;
@@ -177,6 +177,41 @@ export class CreateLocationDto {
   @IsNumber()
   @Min(0)
   high_level_kg?: number | null;
+
+  @ApiProperty({ description: 'MILL daily production capacity entered in metric tonnes.', required: false })
+  @IsNumber()
+  @IsOptional()
+  @Min(0)
+  mill_daily_capacity_ton?: number;
+
+  @ApiProperty({ description: 'MILL hourly production capacity entered in metric tonnes.', required: false })
+  @IsNumber()
+  @IsOptional()
+  @Min(0)
+  mill_hourly_capacity_ton?: number;
+
+  @ApiProperty({ description: 'MILL daily bulk allocation entered in metric tonnes.', required: false })
+  @IsNumber()
+  @IsOptional()
+  @Min(0)
+  mill_bulk_daily_allocation_ton?: number;
+
+  @ApiProperty({ description: 'MILL daily bagged allocation entered in metric tonnes.', required: false })
+  @IsNumber()
+  @IsOptional()
+  @Min(0)
+  mill_bagged_daily_allocation_ton?: number;
+
+  @ApiProperty({ description: 'BIN physical capacity entered in metric tonnes.', required: false })
+  @IsNumber()
+  @IsOptional()
+  @Min(0)
+  bin_capacity_ton?: number;
+
+  @ApiProperty({ description: 'Feed form held by a BIN.', required: false, enum: ['BULK', 'BAGGED'] })
+  @IsIn(['BULK', 'BAGGED'])
+  @IsOptional()
+  bin_feed_type?: 'BULK' | 'BAGGED';
 
   @ApiProperty({ description: 'Flexible custom config configurations in JSON format', required: false })
   @IsOptional()
@@ -340,6 +375,41 @@ export class UpdateLocationDto {
   @IsNumber()
   @Min(0)
   high_level_kg?: number | null;
+
+  @ApiProperty({ required: false })
+  @IsNumber()
+  @IsOptional()
+  @Min(0)
+  mill_daily_capacity_ton?: number;
+
+  @ApiProperty({ required: false })
+  @IsNumber()
+  @IsOptional()
+  @Min(0)
+  mill_hourly_capacity_ton?: number;
+
+  @ApiProperty({ required: false })
+  @IsNumber()
+  @IsOptional()
+  @Min(0)
+  mill_bulk_daily_allocation_ton?: number;
+
+  @ApiProperty({ required: false })
+  @IsNumber()
+  @IsOptional()
+  @Min(0)
+  mill_bagged_daily_allocation_ton?: number;
+
+  @ApiProperty({ required: false })
+  @IsNumber()
+  @IsOptional()
+  @Min(0)
+  bin_capacity_ton?: number;
+
+  @ApiProperty({ required: false, enum: ['BULK', 'BAGGED'] })
+  @IsIn(['BULK', 'BAGGED'])
+  @IsOptional()
+  bin_feed_type?: 'BULK' | 'BAGGED';
 
   @ApiProperty({ required: false })
   @IsBoolean()

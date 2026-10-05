@@ -5,9 +5,10 @@ import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
 import { QueryWarehouseDto } from './dto/warehouse.dto';
 import { masterScopeConditions } from '../../../common/master-data-scope';
+import { WAREHOUSE_LOCATION_TYPES } from '../location/location.service';
 
 /**
- * Read-only projection of `location_master` for the STORE and SILO types.
+ * Read-only projection of `location_master` for inventory-holding location types.
  *
  * `warehouse_master` used to be a real table holding a duplicate identity for
  * every store and silo. It is gone: a warehouse is a location, and its
@@ -19,8 +20,6 @@ import { masterScopeConditions } from '../../../common/master-data-scope';
  * Creating, renaming and retiring a warehouse happens through /location, which
  * is the single write path for the whole tree.
  */
-
-const WAREHOUSE_TYPES = ['STORE', 'SILO'];
 
 @Injectable()
 export class WarehouseService {
@@ -60,7 +59,7 @@ export class WarehouseService {
     // blocked row can be found again, matching the old warehouse behaviour.
     const conditions: any[] = [
       eq(schema.locationMaster.tenant_id, tenantId),
-      inArray(schema.locationMaster.location_type, WAREHOUSE_TYPES),
+      inArray(schema.locationMaster.location_type, WAREHOUSE_LOCATION_TYPES),
     ];
 
     conditions.push(...masterScopeConditions(this.cls, schema.locationMaster, query.companyId));
@@ -91,7 +90,7 @@ export class WarehouseService {
     const [row] = await this.db
       .select()
       .from(schema.locationMaster)
-      .where(and(eq(schema.locationMaster.location_id, id), inArray(schema.locationMaster.location_type, WAREHOUSE_TYPES)))
+      .where(and(eq(schema.locationMaster.location_id, id), inArray(schema.locationMaster.location_type, WAREHOUSE_LOCATION_TYPES)))
       .limit(1);
 
     if (!row) throw new NotFoundException(`Warehouse with ID '${id}' not found.`);
