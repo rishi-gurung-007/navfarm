@@ -182,6 +182,10 @@ export function pivotForecastRows(
     const points = pointsBySource.get(sourceKey(row.sourceLocationId, row.sourceCode, row.itemId)) ?? [];
     if (points.length) {
       for (const point of points) {
+        // Only include balance points within this row's own date range — a
+        // shared silo has points for other rows' dates too, and those must not
+        // appear on this row's projected closing columns (FF2).
+        if (point.date < row.date || point.date > row.dateTo) continue;
         const slot = slotFor(point.date, view, baseFrom);
         slots.set(slot.key, slot);
         // Chronological traversal means the last point in a weekly bucket is
@@ -193,7 +197,17 @@ export function pivotForecastRows(
       slots.set(slot.key, slot);
       closingBySlot[slot.key] = row.projectedClosingBalanceKg;
     }
-    return { ...row, closingBySlot };
+    // FF2: firstShortageDate and deliveryDate must fall within this row's own
+    // date range. The API stamps them from the silo-level shortageDate onto
+    // every row for that silo; the grid must clear them when the shortage date
+    // is outside this particular row's window.
+    const inWindow = (date: string | null) => !!date && date >= row.date && date <= row.dateTo;
+    return {
+      ...row,
+      closingBySlot,
+      firstShortageDate: inWindow(row.firstShortageDate) ? row.firstShortageDate : null,
+      deliveryDate: inWindow(row.firstShortageDate) ? row.deliveryDate : null,
+    };
   });
 
   return {

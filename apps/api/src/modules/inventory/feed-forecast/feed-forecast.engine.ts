@@ -654,7 +654,9 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
       const result = feedRowFor(candidates, dayOfStage);
 
       if ('error' in result) {
-        // Flags are reserved for the visible window; a gap outside it still correctly contributes no demand.
+        // Flags are emitted for the visible window (from..to) and, for NO_FEED_ROW only, for the first
+        // day of a future segment that falls inside the displayed horizon (to..rowTo). OVERLAPPING_FEED_ROWS
+        // inside the horizon past `to` is a configuration error in the visible range — not surfaced there.
         if (isInRange(date)) {
           flags.push({
             kind: result.error === 'NONE' ? 'NO_FEED_ROW' : 'OVERLAPPING_FEED_ROWS',
@@ -663,6 +665,20 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
             day: dayOfStage,
             date,
           });
+        } else if (result.error === 'NONE' && date > input.to && date >= rowFrom && date <= rowTo) {
+          // Only flag the first displayed day of the missing-feed segment in the horizon.
+          // That is the segment's own start date (if it starts in the horizon) or rowFrom
+          // (if the segment started before the horizon but has no feed rows covering it).
+          const firstDisplayedDay = segment.start >= rowFrom ? segment.start : rowFrom;
+          if (date === firstDisplayedDay) {
+            flags.push({
+              kind: 'NO_FEED_ROW',
+              batchNo: batch.batchNo,
+              stageCode: segment.stageCode,
+              day: dayOfStage,
+              date,
+            });
+          }
         }
         continue;
       }

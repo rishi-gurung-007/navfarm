@@ -152,6 +152,14 @@ export function groupRows(
     const key = `${d.batchId}|${d.stageCode}|${d.itemId}|${d.sourceCode ?? 'NONE'}|${start}`;
     const intake = Math.round(d.perDayIntakeKg * 1e6);
     const group = groups.get(key);
+    // FF2: the engine's shortageDate is a silo-level property stamped on every
+    // daily row for that silo, regardless of the row's own date. The view must
+    // expose firstShortageDate only on the grouped line whose date range
+    // actually contains the shortage (i.e. d.date === d.shortageDate for the
+    // day being merged). Rows before the shortage date carry null; rows after
+    // the run-down day are not emitted at all (engine FF1 rule).
+    const rowShortageDate = d.shortageDate === d.date ? d.shortageDate : null;
+    const rowDeliveryDate = rowShortageDate ? addDays(rowShortageDate, -2) : null;
     if (!group) {
       groups.set(key, {
         intake,
@@ -179,8 +187,8 @@ export function groupRows(
           dailyUseKg: d.demandKg ?? d.perDayIntakeKg,
           projectedClosingBalanceKg: d.projectedClosingKg ?? Math.max(0, d.currentInventoryKg - d.perDayIntakeKg),
           recommendedQtyKg: d.recommendedQtyKg ?? 0,
-          firstShortageDate: d.shortageDate ?? null,
-          deliveryDate: d.shortageDate ? addDays(d.shortageDate, -2) : null,
+          firstShortageDate: rowShortageDate,
+          deliveryDate: rowDeliveryDate,
           daysOfStock: d.daysOfStock, sharedBatchCount: d.sharedBatchCount, indicative: d.indicative,
           runDownDate: d.runDownDate,
         },
@@ -197,6 +205,11 @@ export function groupRows(
     group.row.recommendedQtyKg = Math.max(group.row.recommendedQtyKg, d.recommendedQtyKg ?? 0);
     group.row.indicative = group.row.indicative || d.indicative;
     group.row.sharedBatchCount = Math.max(group.row.sharedBatchCount, d.sharedBatchCount);
+    // FF2: only update shortage/delivery when this specific day IS the shortage day.
+    if (rowShortageDate && !group.row.firstShortageDate) {
+      group.row.firstShortageDate = rowShortageDate;
+      group.row.deliveryDate = rowDeliveryDate;
+    }
   }
   return [...groups.values()]
     .map((g) => g.row)
