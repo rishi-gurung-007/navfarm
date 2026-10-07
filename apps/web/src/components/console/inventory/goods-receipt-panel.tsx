@@ -738,8 +738,8 @@ export default function GoodsReceiptPanel() {
                 valueKey="warehouse_id"
                 onChange={(val) => setHeader((h) => ({ ...h, warehouse_id: val }))}
                 placeholder={t("grpSelectEllipsis")}
-                searchPlaceholder="Search warehouse…"
-                columnHeaders={["Code", "Warehouse Name"]}
+                searchPlaceholder="Search location…"
+                columnHeaders={["Code", "Location Name"]}
                 getLabelParts={(w: any) => [w.warehouse_code || "", w.warehouse_name || ""]}
                 getLabel={(w: any) => (w ? `${w.warehouse_code} — ${w.warehouse_name}` : "")}
                 triggerClassName="w-full text-xs h-9"
@@ -786,7 +786,8 @@ export default function GoodsReceiptPanel() {
             <table className="w-full border-collapse text-left text-xs min-w-[960px]">
               <TableHeader>
                 <tr className="border-b border-(--row-border)">
-                  <TableHead className="h-auto px-3 py-2 min-w-[260px]">{t("grpColItem")}</TableHead>
+                  <TableHead className="h-auto px-3 py-2 w-32 min-w-[120px]">Item Code</TableHead>
+                  <TableHead className="h-auto px-3 py-2 min-w-[220px]">Item Description</TableHead>
                   <TableHead className="h-auto px-3 py-2 w-28 min-w-[105px]">{t("grpColQty")}</TableHead>
                   <TableHead className="h-auto px-3 py-2 w-24 min-w-[85px]">{t("grpColUom")}</TableHead>
                   <TableHead className="h-auto px-3 py-2 w-24 min-w-[85px]">{t("grpColRate")}</TableHead>
@@ -806,23 +807,37 @@ export default function GoodsReceiptPanel() {
 
                   return (
                     <TableRow key={idx}>
-                      <TableCell className="px-2 py-1.5 min-w-[260px]">
+                      {/* Item Code (Disabled, Auto-filled from selected Item Description) */}
+                      <TableCell className="px-2 py-1.5 w-32 min-w-[120px]">
+                        <input
+                          type="text"
+                          readOnly
+                          disabled
+                          placeholder="—"
+                          value={it?.item_code || ""}
+                          aria-label={`Item Code ${idx + 1}`}
+                          className={`${lineInputCls} font-mono opacity-75 cursor-not-allowed`}
+                          style={S.surface}
+                        />
+                      </TableCell>
+
+                      {/* Item Description: SearchableSelect */}
+                      <TableCell className="px-2 py-1.5 min-w-[220px]">
                         <SearchableSelect
                           options={items}
                           value={line.item_id}
                           valueKey="item_id"
                           onChange={(val) => setLineField(idx, "item_id", val)}
                           placeholder={t("grpSelectItemOptions", { count: items.length })}
-                          searchPlaceholder="Search item code or name…"
-                          columnHeaders={["Item Code", "Item Name", "Tracking"]}
+                          searchPlaceholder="Search item description…"
+                          columnHeaders={["Description", "Tracking"]}
                           getLabelParts={(itemRow: any) => [
-                            itemRow.item_code || "",
-                            itemRow.item_name || "",
+                            itemRow.item_name || itemRow.item_code || "",
                             itemRow.is_lot_tracked ? "LOT" : itemRow.is_serial_tracked ? "SERIAL NS" : "—",
                           ]}
                           getLabel={(itemRow: any) =>
                             itemRow
-                              ? `${itemRow.item_code} — ${itemRow.item_name}${itemRow.is_lot_tracked ? " [LOT]" : itemRow.is_serial_tracked ? " [SERIAL NS]" : ""}`
+                              ? `${itemRow.item_name || itemRow.item_code}${itemRow.is_lot_tracked ? " [LOT]" : itemRow.is_serial_tracked ? " [SERIAL NS]" : ""}`
                               : ""
                           }
                           triggerClassName="w-full text-xs h-9 min-h-[36px] max-h-[36px] box-border"

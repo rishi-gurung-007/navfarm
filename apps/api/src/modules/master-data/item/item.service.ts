@@ -2,7 +2,7 @@ import { masterScopeConditions } from '../../../common/master-data-scope';
 import { itemKindCondition } from './item-kind-filter';
 import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, like, or, isNull, getTableColumns, count } from 'drizzle-orm';
+import { eq, ne, and, like, or, isNull, getTableColumns, count, sql } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
@@ -11,6 +11,7 @@ import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { NobLobResolutionService } from '../../core/operational-area/nob-lob-resolution.service';
 import { listFilterConditions, listOrderBy } from '../../../common/master-list-query';
+import { assertCodeUnchanged } from '../../../common/master-code';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   return date.toISOString().slice(0, 19).replace('T', ' ');
@@ -172,7 +173,7 @@ export class ItemService {
   /** standard_cost is mandatory when valuation_method is STANDARD, per spec. */
   private assertStandardCost(valuationMethod?: string | null, standardCost?: number | null) {
     if (valuationMethod === 'STANDARD' && standardCost == null) {
-      throw new BadRequestException('standard_cost is required when valuation_method is STANDARD.');
+      throw new BadRequestException('Enter a Standard Cost — it is required when the Valuation Method is Standard.');
     }
   }
 
@@ -278,9 +279,9 @@ export class ItemService {
 
     // 4. One company-wide ITEM sequence is shared by all Item Types.
     await this.ensureCompanyItemSeries(tenantId, companyId);
-    const seriesCode = await this.numberSeriesService.resolveSeriesFor('ITEM', dto.item_type, tenantId, companyId) || 'ITEM';
+    const seriesCode = await this.numberSeriesService.resolveSeriesFor('ITEM', undefined, tenantId, companyId) || 'ITEM';
     const itemCode = dto.item_code?.trim()
-      ? await this.numberSeriesService.manualCode('ITEM', dto.item_code, tenantId, companyId, dto.item_type)
+      ? await this.numberSeriesService.manualCode('ITEM', dto.item_code, tenantId, companyId, undefined)
       : await this.numberSeriesService.generateNext(seriesCode, tenantId, companyId, undefined, dto as unknown as Record<string, unknown>);
 
     const itemId = randomUUID();
@@ -605,6 +606,8 @@ export class ItemService {
         category_code: schema.itemCategoryMaster.category_code,
         category_name: schema.itemCategoryMaster.category_name,
         template_code: schema.itemTemplate.template_code,
+        // Lets the form lock Valuation Method and Tracking once stock exists.
+        has_inventory: sql<number>`exists (select 1 from ${schema.inventoryLedger} where ${schema.inventoryLedger.item_id} = ${schema.itemMaster.item_id})`.mapWith(Boolean),
       })
       .from(schema.itemMaster)
       .leftJoin(
@@ -632,8 +635,44 @@ export class ItemService {
     return { data, total: Number(counted?.total ?? 0), limit, offset };
   }
 
+  /** True once any inventory ledger row (receipt, issue, transfer, adjustment) exists for the item. */
+  async hasInventory(itemId: string): Promise<boolean> {
+    const [row] = await this.db
+      .select({ ledger_id: schema.inventoryLedger.ledger_id })
+      .from(schema.inventoryLedger)
+      .where(eq(schema.inventoryLedger.item_id, itemId))
+      .limit(1);
+    return !!row;
+  }
+
+  /**
+   * Valuation method and tracking decide how existing stock layers were costed
+   * and which lot/serial each unit carries. Once the item has inventory,
+   * changing either would leave those layers disagreeing with the item card.
+   */
+  private async assertCostingAndTrackingUnlocked(
+    item: typeof schema.itemMaster.$inferSelect,
+    dto: UpdateItemDto,
+  ): Promise<void> {
+    const changes: string[] = [];
+    if (dto.valuation_method !== undefined && (dto.valuation_method || null) !== (item.valuation_method || null)) {
+      changes.push('Valuation Method');
+    }
+    if (dto.is_lot_tracked !== undefined && !!dto.is_lot_tracked !== !!item.is_lot_tracked) changes.push('Tracking');
+    if (dto.is_serial_tracked !== undefined && !!dto.is_serial_tracked !== !!item.is_serial_tracked) changes.push('Tracking');
+    if (dto.tracking_series_id !== undefined && (dto.tracking_series_id || null) !== (item.tracking_series_id || null)) {
+      changes.push('Tracking Series');
+    }
+    if (!changes.length) return;
+    if (!(await this.hasInventory(item.item_id))) return;
+    throw new BadRequestException(
+      `${[...new Set(changes)].join(' and ')} cannot be changed because this item already has inventory entries. Create a new item if you need a different one.`,
+    );
+  }
+
   async update(id: string, dto: UpdateItemDto, tenantId: string, userPayload?: any) {
     const item = await this.findOne(id);
+    await this.assertCostingAndTrackingUnlocked(item, dto);
 
     if (dto.category_id) {
       const [category] = await this.db
@@ -656,37 +695,24 @@ export class ItemService {
       updated_at: toMysqlTimestamp(),
     };
 
+    assertCodeUnchanged('Item', item.item_code, dto.item_code);
     if (dto.item_code && dto.item_code.trim() !== item.item_code) {
-      let allowManual = false;
-      if (item.item_template_id) {
-        const [tmpl] = await this.db
-          .select({ manual_nos: schema.noSeries.manual_nos })
-          .from(schema.itemTemplate)
-          .innerJoin(schema.noSeries, eq(schema.itemTemplate.no_series_id, schema.noSeries.id))
-          .where(eq(schema.itemTemplate.id, item.item_template_id))
-          .limit(1);
-        if (tmpl?.manual_nos) {
-          allowManual = true;
-        }
+      const trimmedCode = dto.item_code.trim().toUpperCase();
+      const [dup] = await this.db
+        .select({ id: schema.itemMaster.item_id })
+        .from(schema.itemMaster)
+        .where(and(
+          eq(schema.itemMaster.tenant_id, tenantId),
+          eq(schema.itemMaster.item_code, trimmedCode),
+          ne(schema.itemMaster.item_id, id),
+          isNull(schema.itemMaster.deleted_at),
+          item.company_id ? eq(schema.itemMaster.company_id, item.company_id) : isNull(schema.itemMaster.company_id),
+        ))
+        .limit(1);
+      if (dup) {
+        throw new ConflictException(`Item code '${trimmedCode}' already exists in this scope.`);
       }
-      if (!allowManual) {
-        throw new ConflictException('Item Code is generated from the company-wide ITEM sequence and cannot be changed.');
-      } else {
-        const [dup] = await this.db
-          .select({ id: schema.itemMaster.item_id })
-          .from(schema.itemMaster)
-          .where(and(
-            eq(schema.itemMaster.tenant_id, tenantId),
-            eq(schema.itemMaster.item_code, dto.item_code.trim()),
-            isNull(schema.itemMaster.deleted_at),
-            item.company_id ? eq(schema.itemMaster.company_id, item.company_id) : isNull(schema.itemMaster.company_id),
-          ))
-          .limit(1);
-        if (dup && dup.id !== id) {
-          throw new ConflictException(`Generated item code [${dto.item_code.trim()}] already exists. Check No. Series Last No. Used.`);
-        }
-        updates.item_code = dto.item_code.trim();
-      }
+      updates.item_code = trimmedCode;
     }
 
     const effectiveItemType = dto.item_type ?? item.item_type;

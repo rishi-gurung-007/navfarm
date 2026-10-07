@@ -617,7 +617,7 @@ export class BatchController {
       throw new BadRequestException('No file was uploaded.');
     }
     if (!logDate) {
-      throw new BadRequestException('log_date is required.');
+      throw new BadRequestException('Choose a log date.');
     }
     const result = await this.batchService.addAttachment(
       id,

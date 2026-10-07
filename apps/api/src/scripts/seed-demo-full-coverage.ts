@@ -175,7 +175,6 @@ export async function seedFullCoverage() {
           entry_type: 'PURCHASED_LOCAL',
           entry_date: '2026-06-15',
           item_id: (a.item || piglet)!.item_id,
-          ear_tag: a.tag,
           rfid_tag: a.rfid,
           acquisition_cost: a.cost,
           total_opening_asset_value: a.cost,
@@ -291,7 +290,6 @@ export async function seedFullCoverage() {
             ro('PRODUCTION', 'QC_PARAMETER'),
             ro('PRODUCTION', 'QR_CODE'),
             rw('PIGGERY', 'ANIMAL', true),
-            rw('INVENTORY', 'GOODS_ISSUE'),
             rw('INVENTORY', 'GOODS_RECEIPT'),
             rw('INVENTORY', 'STOCK_TRANSFER'),
             rw('INVENTORY', 'STOCK_ADJUSTMENT'),
@@ -506,32 +504,9 @@ export async function seedFullCoverage() {
         });
         await postJournal(cfg.compId, cfg.glMap, `JV-2026-${cfg.tag}-0002`, todayMinus(18), 'GOODS_RECEIPT', `GRN-2026-${cfg.tag}-0002`, grn2LedgerId, '1010', '2010', feedQty * feedRate, `Feed procurement — ${feedItem.item_name}`, cfg.admin.user_id);
 
-        // --- Goods Issue: consume 800 KG of raw material against GRN 1's layer ---
-        const issueQty = 800;
-        const issueId = randomUUID();
-        const costCenterId = cfg.ccMap.get(cfg.tag === 'APX' ? 'CC-FEEDMILL-A' : 'CC-FEEDMILL-H');
-        await db.insert(schema.goodsIssue).values({
-          issue_id: issueId, tenant_id: tenantId, company_id: cfg.compId, issue_no: `ISS-2026-${cfg.tag}-0001`,
-          posting_date: todayMinus(14), warehouse_id: cfg.warehouse.warehouse_id, cost_center_id: costCenterId, remarks: 'Issued to feed mill for ration mixing', status: 'POSTED', posted_at: tsMinus(14), posted_by: cfg.admin.user_id, created_by: cfg.admin.user_id,
-        });
-        await db.insert(schema.goodsIssueLine).values({ line_id: randomUUID(), issue_id: issueId, line_no: 1, item_id: rawItem.item_id, quantity: d4(issueQty), uom: rawItem.uom_primary });
-        const issueLedgerId = randomUUID();
-        await db.insert(schema.inventoryLedger).values({
-          ledger_id: issueLedgerId, tenant_id: tenantId, company_id: cfg.compId, item_id: rawItem.item_id, item_code: rawItem.item_code, item_description: rawItem.item_name,
-          document_type: 'GOODS_ISSUE', document_no: `ISS-2026-${cfg.tag}-0001`, posting_date: todayMinus(14), entry_type: 'NEGATIVE', transaction_type: 'CONSUMPTION',
-          quantity: d4(-issueQty), remaining_quantity: '0.0000', uom: rawItem.uom_primary, rate: rawRate.toFixed(6), amount: d4(-issueQty * rawRate),
-          warehouse_id: cfg.warehouse.warehouse_id, nob_id: nobId, lob_id: lobId, category_id: rawItem.category_id, created_by: cfg.admin.user_id,
-        });
-        await db.insert(schema.inventoryApplication).values({
-          application_id: randomUUID(), tenant_id: tenantId, company_id: cfg.compId, item_id: rawItem.item_id,
-          inbound_ledger_id: grn1LedgerId, outbound_ledger_id: issueLedgerId, applied_qty: d4(issueQty), applied_cost_amount: d4(issueQty * rawRate), application_date: todayMinus(14), created_by: cfg.admin.user_id,
-        });
-        await db.update(schema.inventoryLedger).set({ remaining_quantity: d4(rawQty - issueQty) }).where(eq(schema.inventoryLedger.ledger_id, grn1LedgerId));
-        await postJournal(cfg.compId, cfg.glMap, `JV-2026-${cfg.tag}-0003`, todayMinus(14), 'GOODS_ISSUE', `ISS-2026-${cfg.tag}-0001`, issueLedgerId, '5020', '1010', issueQty * rawRate, `Feed mill issue — ${rawItem.item_name}`, cfg.admin.user_id);
-
         // --- Stock transfer: 500 KG raw material, main warehouse -> feed mill store ---
         const transferQty = 500;
-        const remainingAfterIssue = rawQty - issueQty;
+        const remainingAfterIssue = rawQty;
         const stTransferId = randomUUID();
         await db.insert(schema.stockTransfer).values({
           transfer_id: stTransferId, tenant_id: tenantId, company_id: cfg.compId, transfer_no: `TRF-2026-${cfg.tag}-0001`,
@@ -718,7 +693,6 @@ export async function seedFullCoverage() {
           { action: 'CREATE', entity: 'batch_header', entityId: cfg.batch.batch_id, daysAgo: 20, newValues: { batch_no: cfg.batch.batch_no, status: 'ACTIVE' } },
           { action: 'CREATE', entity: 'goods_receipt', entityId: cfg.batch.batch_id, daysAgo: 20 },
           { action: 'CREATE', entity: 'goods_receipt', entityId: cfg.batch.batch_id, daysAgo: 18 },
-          { action: 'CREATE', entity: 'goods_issue', entityId: cfg.batch.batch_id, daysAgo: 14 },
           { action: 'CREATE', entity: 'stock_transfer', entityId: cfg.batch.batch_id, daysAgo: 10 },
           { action: 'CREATE', entity: 'stock_adjustment', entityId: cfg.batch.batch_id, daysAgo: 7 },
           { action: 'UPDATE', entity: 'batch_transfer', entityId: cfg.batch.batch_id, daysAgo: 5 },

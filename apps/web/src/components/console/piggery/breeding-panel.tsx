@@ -773,7 +773,7 @@ export function BreedingPanel() {
                   <option value="">{t("brpSelectSow")}</option>
                   {sows.map((s) => (
                     <option key={s.animal_id} value={s.animal_id}>
-                      {t("brpAnimalOptionLabel", { code: s.animal_code, tag: s.ear_tag || t("brpNa"), parity: s.parity_count })}
+                      {t("brpAnimalOptionLabel", { code: s.animal_code, tag: s.rfid_tag || t("brpNa"), parity: s.parity_count })}
                     </option>
                   ))}
                 </select>
@@ -824,7 +824,7 @@ export function BreedingPanel() {
                     <option value="">{t("brpSelectBoar")}</option>
                     {boars.map((b) => (
                       <option key={b.animal_id} value={b.animal_id}>
-                        {t("brpBoarOptionLabel", { code: b.animal_code, tag: b.ear_tag || t("brpNa") })}
+                        {t("brpBoarOptionLabel", { code: b.animal_code, tag: b.rfid_tag || t("brpNa") })}
                       </option>
                     ))}
                   </select>
@@ -1081,7 +1081,7 @@ export function BreedingPanel() {
                   <option value="">{t("brpSelectSow")}</option>
                   {sows.map((s) => (
                     <option key={s.animal_id} value={s.animal_id}>
-                      {t("brpAnimalOptionLabel", { code: s.animal_code, tag: s.ear_tag || t("brpNa"), parity: s.parity_count })}
+                      {t("brpAnimalOptionLabel", { code: s.animal_code, tag: s.rfid_tag || t("brpNa"), parity: s.parity_count })}
                     </option>
                   ))}
                 </select>
@@ -1293,7 +1293,7 @@ export function BreedingPanel() {
                   <option value="">{t("brpSelectBoar")}</option>
                   {boars.map((b) => (
                     <option key={b.animal_id} value={b.animal_id}>
-                      {t("brpBoarOptionLabel", { code: b.animal_code, tag: b.ear_tag || t("brpNa") })}
+                      {t("brpBoarOptionLabel", { code: b.animal_code, tag: b.rfid_tag || t("brpNa") })}
                     </option>
                   ))}
                 </select>

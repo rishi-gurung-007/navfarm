@@ -137,7 +137,7 @@ export class BatchTransferService {
       .select({
         animal_id: schema.animalRegister.animal_id,
         animal_code: schema.animalRegister.animal_code,
-        ear_tag: schema.animalRegister.ear_tag,
+        rfid_tag: schema.animalRegister.rfid_tag,
         animal_type: schema.animalRegister.animal_type,
         gender: schema.animalRegister.gender,
         status: schema.animalRegister.status,
@@ -916,7 +916,7 @@ export class BatchTransferService {
         book_value: schema.batchTransferLine.book_value,
         remarks: schema.batchTransferLine.remarks,
         animal_code: schema.animalRegister.animal_code,
-        ear_tag: schema.animalRegister.ear_tag,
+        rfid_tag: schema.animalRegister.rfid_tag,
         animal_type: schema.animalRegister.animal_type,
       })
       .from(schema.batchTransferLine)

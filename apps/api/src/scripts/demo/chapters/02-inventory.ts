@@ -7,7 +7,6 @@
  *     diet chosen from the silo's own shed role (a farrowing house takes
  *     lactation feed, a finisher house finisher feed, and so on), and of two
  *     medicines and one vaccine into the farm's Demo Medicine Store;
- *   - one goods issue of a medicine from the Demo Medicine Store;
  *   - one stock transfer between the farm's first two silos;
  *   - one positive and one negative stock adjustment with reason text
  *     carrying DEMO.
@@ -36,7 +35,6 @@ import { and, eq, isNull } from 'drizzle-orm';
 import { ClsService } from 'nestjs-cls';
 import type { MySql2Database } from 'drizzle-orm/mysql2';
 import { GoodsReceiptService } from '../../../modules/inventory/goods-receipt/goods-receipt.service';
-import { GoodsIssueService } from '../../../modules/inventory/goods-issue/goods-issue.service';
 import { StockTransferService } from '../../../modules/inventory/stock-transfer/stock-transfer.service';
 import { StockAdjustmentService } from '../../../modules/inventory/stock-adjustment/stock-adjustment.service';
 import * as schema from '../../../core/database/schema';
@@ -125,7 +123,6 @@ const DEMO_OPERATIONS = {
     { item_code: FEED_GROWER, quantity: 40000, uom: 'KG' },
     { item_code: FEED_LACTATION, quantity: 40000, uom: 'KG' },
   ],
-  medicineIssue: { item_code: MED_ANTIBIOTIC_1, quantity: 4, uom: 'PCS' },
   siloTransferKg: 300,
   adjustments: {
     positive: { item_code: MED_ANTIBIOTIC_2, quantity: 2, uom: 'PCS' },
@@ -210,7 +207,6 @@ export const inventoryChapter: DemoChapter = {
 
   async run(ctx: DemoContext) {
     const receipts = ctx.app.get(GoodsReceiptService);
-    const issues = ctx.app.get(GoodsIssueService);
     const transfers = ctx.app.get(StockTransferService);
     const adjustments = ctx.app.get(StockAdjustmentService);
     const cls = ctx.app.get(ClsService);
@@ -328,35 +324,6 @@ export const inventoryChapter: DemoChapter = {
           ctx.log(`${tag} store receipt posted`);
         } else {
           ctx.log(`${tag} store receipt already posted — skipped`);
-        }
-      }
-
-      // --- 3. Goods issue of one medicine from the store.
-      {
-        const [existing] = await db
-          .select({ id: schema.goodsIssue.issue_id, status: schema.goodsIssue.status })
-          .from(schema.goodsIssue)
-          .where(eq(schema.goodsIssue.remarks, ref('ISSUE')))
-          .limit(1);
-        if (!existing) {
-          const med = await itemByHandle(db, DEMO_OPERATIONS.medicineIssue.item_code);
-          const created = await issues.create(
-            {
-              company_id: ctx.companyId,
-              warehouse_id: store.location_id,
-              posting_date: postingDate,
-              remarks: ref('ISSUE'),
-              lines: [{ item_id: med.item_id, quantity: DEMO_OPERATIONS.medicineIssue.quantity, uom: DEMO_OPERATIONS.medicineIssue.uom, remarks: 'DEMO medicine issue for routine treatment' }],
-            },
-            ctx.tenantId,
-          );
-          await issues.post(created.issue_id, ctx.tenantId);
-          ctx.log(`${tag} medicine issue posted`);
-        } else if (existing.status === 'DRAFT') {
-          await issues.post(existing.id, ctx.tenantId);
-          ctx.log(`${tag} medicine issue posted`);
-        } else {
-          ctx.log(`${tag} medicine issue already posted — skipped`);
         }
       }
 

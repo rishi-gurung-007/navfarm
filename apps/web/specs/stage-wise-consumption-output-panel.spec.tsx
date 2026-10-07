@@ -122,8 +122,8 @@ describe('StageWiseConsumptionOutputPanel', () => {
       }
       if (path.startsWith('/animal?')) {
         return [
-          { animal_id: 'an-1', animal_code: 'PIG-001', ear_tag: 'TAG-001', current_stage_code: 'FLUSH' },
-          { animal_id: 'an-2', animal_code: 'PIG-002', ear_tag: 'TAG-002', current_stage_code: 'INSEMINATION' },
+          { animal_id: 'an-1', animal_code: 'PIG-001', rfid_tag: 'TAG-001', current_stage_code: 'FLUSH' },
+          { animal_id: 'an-2', animal_code: 'PIG-002', rfid_tag: 'TAG-002', current_stage_code: 'INSEMINATION' },
         ];
       }
       if (path === '/stage') {

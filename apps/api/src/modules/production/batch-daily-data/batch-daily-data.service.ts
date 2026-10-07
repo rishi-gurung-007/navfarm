@@ -117,6 +117,7 @@ export class BatchDailyDataService {
         company_id: schema.batchHeader.company_id,
         shed_id: schema.batchHeader.shed_id,
         location_id: schema.batchHeader.location_id,
+        batch_no: schema.batchHeader.batch_no,
         // The last resort when resolving where a consumption line draws its
         // stock from: a batch whose scheduler records no shed or pen still
         // belongs to a farm, and that farm's store is the right source.
@@ -127,7 +128,7 @@ export class BatchDailyDataService {
       .limit(1);
     if (batchRow?.tracking_mode === 'ANIMAL_WISE' && !dto.animal_id) {
       throw new BadRequestException(
-        `Batch '${batchId}' is ANIMAL_WISE — animal_id is required for data entry.`,
+        `Batch '${batchId}' is Animal Wise — choose an animal for data entry.`,
       );
     }
     if (dto.animal_id) {
@@ -295,7 +296,7 @@ export class BatchDailyDataService {
           );
         if (dto.entered_value == null)
           throw new BadRequestException(
-            'entered_value is required for this line.',
+            'Enter a value for this line.',
           );
         const [item] = await this.db
           .select()
@@ -391,7 +392,7 @@ export class BatchDailyDataService {
       case 'DESCRIPTIVE': {
         if (dto.entered_value == null && !dto.entered_text) {
           throw new BadRequestException(
-            'entered_value or entered_text is required for this line.',
+            'Enter a value or text for this line.',
           );
         }
         if (dto.entered_value != null) {
@@ -542,13 +543,45 @@ export class BatchDailyDataService {
               eq(schema.schedulerHeader.scheduler_id, header.scheduler_id),
             );
         }
+
+        // Transaction Ledger Structure (Row 11): Record DESCRIPTIVE entry into inventory_ledger only if non-zero value
+        const valNum = dto.entered_value != null ? Number(dto.entered_value) : 0;
+        if (Math.abs(valNum) > 0.0001) {
+          await this.db.insert(schema.inventoryLedger).values({
+            ledger_id: randomUUID(),
+            tenant_id: tenantId,
+            company_id: header.company_id,
+            item_id: line.item_id || null,
+            item_code: line.kpi_metric || 'DESCRIPTIVE',
+            item_description: line.activity_name,
+            document_type: 'BATCH',
+            document_no: batchRow?.batch_no || batchId,
+            document_line_id: line.line_id,
+            posting_date: dto.entry_date,
+            external_reference_no: dto.entered_text || null,
+            entry_type: 'DESCRIPTIVE',
+            transaction_type: 'DESCRIPTIVE',
+            quantity: valNum.toString(),
+            remaining_quantity: null,
+            uom: line.kpi_uom || 'OBSERVATION',
+            rate: '0',
+            amount: '0',
+            batch_no: batchRow?.batch_no || null,
+            location_id: header.location_id || batchRow?.location_id || null,
+            warehouse_id: batchRow?.shed_id || header.location_id || null,
+            nob_id: header.nob_id || null,
+            lob_id: header.lob_id,
+            created_by: userPayload?.userId || null,
+          });
+        }
+        posted = true;
         break;
       }
       case 'OVERHEAD':
       case 'RESOURCE': {
         if (dto.entered_value == null)
           throw new BadRequestException(
-            'entered_value is required for this line.',
+            'Enter a value for this line.',
           );
         let quantity = dto.entered_value;
         let rate = dto.rate ?? null;
@@ -652,12 +685,43 @@ export class BatchDailyDataService {
         posted = true;
         postingReference =
           matchingTx[matchingTx.length - 1]?.transaction_id || null;
+
+        // Transaction Ledger Structure (Row 11): Record OVERHEAD entry into inventory_ledger only if non-zero amount
+        const totalAmount = Number((quantity * (rate ?? 0)).toFixed(4));
+        if (Math.abs(totalAmount) > 0.0001) {
+          await this.db.insert(schema.inventoryLedger).values({
+            ledger_id: randomUUID(),
+            tenant_id: tenantId,
+            company_id: header.company_id,
+            item_id: line.item_id || null,
+            item_code: line.line_type === 'RESOURCE' ? (line.activity_name || 'RESOURCE') : 'OVERHEAD',
+            item_description: dto.remarks || line.activity_name,
+            document_type: 'BATCH',
+            document_no: batchRow?.batch_no || batchId,
+            document_line_id: matchingTx[matchingTx.length - 1]?.transaction_id || line.line_id,
+            posting_date: dto.entry_date,
+            external_reference_no: dto.remarks || null,
+            entry_type: 'OVERHEAD',
+            transaction_type: 'OVERHEAD',
+            quantity: (-Math.abs(quantity)).toString(),
+            remaining_quantity: null,
+            uom: 'PCS',
+            rate: (rate ?? 0).toString(),
+            amount: (-Math.abs(totalAmount)).toString(),
+            batch_no: batchRow?.batch_no || null,
+            location_id: header.location_id || batchRow?.location_id || null,
+            warehouse_id: batchRow?.shed_id || header.location_id || null,
+            nob_id: header.nob_id || null,
+            lob_id: header.lob_id,
+            created_by: userPayload?.userId || null,
+          });
+        }
         break;
       }
       case 'TRANSFER': {
         if (!dto.destination_batch_id)
           throw new BadRequestException(
-            'TRANSFER lines require destination_batch_id.',
+            'A transfer line needs a destination batch.',
           );
         // Animal-wise entries already name the exact animal — that's the whole
         // transfer, no FIFO guess needed. Whole-batch entries only say how many
@@ -669,7 +733,7 @@ export class BatchDailyDataService {
         } else {
           if (dto.entered_value == null && line.standard_qty == null) {
             throw new BadRequestException(
-              "entered_value (or the line's standard_qty) is required to know how many head to move.",
+              "Enter how many head to move (or set the line's standard quantity).",
             );
           }
           const headcount = Math.round(
@@ -719,7 +783,7 @@ export class BatchDailyDataService {
         break;
       }
       default:
-        throw new BadRequestException(`Unknown line_type '${line.line_type}'.`);
+        throw new BadRequestException(`Unknown line type '${line.line_type}'.`);
     }
 
     await this.db

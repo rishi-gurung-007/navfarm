@@ -13,7 +13,7 @@
  * Ruling 3), standing at real pens.
  *
  * Resume-safe: batches are located by their DEMO remarks token, animals by
- * ear_tag — a farm already carrying its demo herd is adopted, not duplicated.
+ * rfid_tag — a farm already carrying its demo herd is adopted, not duplicated.
  */
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { breedingSiloLinks, stageEntryDaysAgo } from './feed-planning';
@@ -259,7 +259,7 @@ export async function registerBreedingStock(ctx: DemoContext, farm: DemoFarm, de
         const [already] = await db
           .select({ animal_id: schema.animalRegister.animal_id })
           .from(schema.animalRegister)
-          .where(eq(schema.animalRegister.ear_tag, tagNo))
+          .where(eq(schema.animalRegister.rfid_tag, tagNo))
           .limit(1);
         if (already) continue;
 
@@ -274,7 +274,7 @@ export async function registerBreedingStock(ctx: DemoContext, farm: DemoFarm, de
             age_at_entry_weeks: facts.baseAgeWeeks + (i % facts.ageSpread),
             source_receipt_id: receiptIdByItem.get(itemRow.item_id)!,
             item_id: itemRow.item_id,
-            ear_tag: tagNo,
+            rfid_tag: tagNo,
             current_batch_id: entry.batchId,
             current_location_id: pens[(i - 1) % pens.length],
             current_stage_id: batchStageId,
@@ -303,7 +303,7 @@ export async function registerBreedingStock(ctx: DemoContext, farm: DemoFarm, de
     const batchStageId = stageOfBatch.get(entry.batchId);
     if (!batchStageId) continue;
     const batchAnimals = await db
-      .select({ animal_id: schema.animalRegister.animal_id, ear_tag: schema.animalRegister.ear_tag })
+      .select({ animal_id: schema.animalRegister.animal_id, rfid_tag: schema.animalRegister.rfid_tag })
       .from(schema.animalRegister)
       .where(and(
         eq(schema.animalRegister.current_batch_id, entry.batchId),
@@ -319,8 +319,8 @@ export async function registerBreedingStock(ctx: DemoContext, farm: DemoFarm, de
           .where(inArray(schema.stageMaster.stage_id, [...new Set(destStages)]))).map((r) => [r.stage_id, r.days] as const),
       );
       let cursor = 0;
-      for (const { animal_id, ear_tag } of batchAnimals) {
-        const isBoar = (ear_tag ?? '').includes('BOAR');
+      for (const { animal_id, rfid_tag } of batchAnimals) {
+        const isBoar = (rfid_tag ?? '').includes('BOAR');
         const target = destStages[isBoar ? 0 : cursor % destStages.length];
         cursor += 1;
         try {
@@ -331,7 +331,7 @@ export async function registerBreedingStock(ctx: DemoContext, farm: DemoFarm, de
             remarks: `DEMO breeding-stock flow on ${farm.code}`,
           }, ctx.tenantId);
         } catch (err) {
-          ctx.log(`${tag} ${ear_tag}: stage transition refused — ${err instanceof Error ? err.message : String(err)}`);
+          ctx.log(`${tag} ${rfid_tag}: stage transition refused — ${err instanceof Error ? err.message : String(err)}`);
         }
       }
       for (const destStageId of new Set(destStages)) {

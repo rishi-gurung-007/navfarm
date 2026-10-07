@@ -14,17 +14,17 @@ export class CreateWarehouseDto {
   @IsOptional()
   farm_id?: string;
 
-  @ApiProperty({ description: 'Unique code representing the warehouse within company', example: 'WH01' })
+  @ApiProperty({ description: 'Unique code representing the location within company', example: 'WH01' })
   @IsString()
   @IsNotEmpty()
   warehouse_code: string;
 
-  @ApiProperty({ description: 'Full name of the warehouse', example: 'Raw Material Feed Silo 1' })
+  @ApiProperty({ description: 'Full name of the location', example: 'Raw Material Feed Silo 1' })
   @IsString()
   @IsNotEmpty()
   warehouse_name: string;
 
-  @ApiProperty({ description: 'Warehouse type classification', example: 'SILO', enum: ['COLD_STORAGE', 'SILO', 'GENERAL', 'INGREDIENTS', 'MEDICINE'] })
+  @ApiProperty({ description: 'Location type classification', example: 'SILO', enum: ['COLD_STORAGE', 'SILO', 'GENERAL', 'INGREDIENTS', 'MEDICINE'] })
   @IsString()
   @IsNotEmpty()
   warehouse_type: string;
@@ -81,7 +81,7 @@ export class QueryWarehouseDto extends MasterListQueryDto {
   @IsUUID()
   farmId?: string;
 
-  @ApiProperty({ description: 'Filter by warehouse type', required: false })
+  @ApiProperty({ description: 'Filter by location type', required: false })
   @IsOptional()
   @IsString()
   warehouseType?: string;
@@ -92,7 +92,7 @@ export class QueryWarehouseDto extends MasterListQueryDto {
   @Type(() => Boolean)
   isActive?: boolean;
 
-  @ApiProperty({ description: 'Search warehouse code or name', required: false })
+  @ApiProperty({ description: 'Search location code or name', required: false })
   @IsOptional()
   @IsString()
   search?: string;

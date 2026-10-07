@@ -53,7 +53,7 @@ export class CreateQrCodeDto {
   @IsNotEmpty()
   pack_uom: string;
 
-  @ApiProperty({ description: 'Destination/facility warehouse UUID', required: false })
+  @ApiProperty({ description: 'Destination/facility location UUID', required: false })
   @IsUUID()
   @IsOptional()
   warehouse_id?: string;

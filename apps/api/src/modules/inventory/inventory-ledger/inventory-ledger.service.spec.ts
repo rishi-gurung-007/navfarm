@@ -77,7 +77,7 @@ describe('Inventory FIFO', () => {
     const fifo = jest.spyOn(service, 'applyFifo').mockResolvedValue({ totalCost: 10, averageRate: 10 });
     await service.writeNegativeEntry({ tenantId: 'tenant', companyId: 'company', itemId: 'item',
       documentType: 'BATCH', documentNo: 'batch', postingDate: '2026-09-14',
-      transactionType: 'BATCH_CONSUMPTION', quantity: 1, uom: 'KG', lotNo: 'selected-lot' });
+      transactionType: 'CONSUMPTION', quantity: 1, uom: 'KG', lotNo: 'selected-lot' });
     expect(insert).toHaveBeenCalledWith(expect.objectContaining({ lot_no: 'selected-lot' }));
     expect(fifo).toHaveBeenCalledWith(expect.objectContaining({ lotNo: 'selected-lot' }), db);
   });
@@ -138,7 +138,7 @@ describe('InventoryLedgerService farm scope', () => {
     service = new InventoryLedgerService(cls);
   });
 
-  it('includes batch issues with no warehouse through their batch farm', async () => {
+  it('includes batch issues with no location through their batch farm', async () => {
     useFarmScope(cls, { farmId: 'farm-g', restricted: true, companyId: 'co-1', lobId: 'lob-pig' });
 
     await service.findAll({} as any, 'tenant-1');

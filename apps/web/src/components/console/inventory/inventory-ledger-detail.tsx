@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { 
   ArrowLeft, 
   ExternalLink, 
@@ -47,30 +48,59 @@ export const BC_ENTRY_TYPES: Record<string, string> = {
   PURCHASE: "Purchase",
   CONSUMPTION: "Consumption",
   OUTPUT: "Output",
-  TRANSFER_SHIPMENT: "Transfer (Shipment)",
-  TRANSFER_RECEIPT: "Transfer (Receipt)",
-  SALES: "Sale",
-  VARIANCE_POSITIVE: "Positive Adjmt.",
-  VARIANCE_NEGATIVE: "Negative Adjmt.",
+  TRANSFER_SHIPMENT: "Transfer_Shipment",
+  TRANSFER_RECEIPT: "Transfer_Receipt",
+  SALES: "Sales",
+  VARIANCE_POSITIVE: "Variance_Positive",
+  VARIANCE_NEGATIVE: "Variance_Negative",
+  BATCH_CONSUMPTION: "Consumption",
+  BATCH_INPUT: "Consumption",
+  BATCH_OUTPUT: "Output",
+  BIO_OUTPUT: "Output",
   REVERSAL: "Reversal",
+  OVERHEAD: "Overhead",
+  DESCRIPTIVE: "Descriptive",
 };
 
 export const formatBcEntryType = (type?: string) => {
   if (!type) return "—";
-  return BC_ENTRY_TYPES[type.toUpperCase()] || type.replace(/_/g, " ");
+  const upper = type.toUpperCase();
+  if (BC_ENTRY_TYPES[upper]) return BC_ENTRY_TYPES[upper];
+  return upper.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+};
+
+export const formatBcEntryTypeLabel = (entryType?: string) => {
+  if (!entryType) return "—";
+  const upper = entryType.toUpperCase();
+  if (upper === "POSITIVE") return "Positive (+)";
+  if (upper === "NEGATIVE") return "Negative (-)";
+  if (upper === "TRANSFER") return "Transfer";
+  if (upper === "OVERHEAD") return "Overhead";
+  if (upper === "DESCRIPTIVE") return "Descriptive";
+  return upper.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 };
 
 export const BC_DOCUMENT_TYPES: Record<string, string> = {
-  GOODS_RECEIPT: "Purchase Receipt",
-  GOODS_ISSUE: "Item Journal",
+  GOODS_RECEIPT: "GRN",
   STOCK_TRANSFER: "Transfer Order",
-  STOCK_ADJUSTMENT: "Physical Inventory",
-  BATCH: "Production Order",
+  STOCK_ADJUSTMENT: "Stock Adjustment",
+  BATCH: "Batch",
+  DAILY_ENTRY: "Daily Operations Entry",
 };
 
 export const formatBcDocumentType = (type?: string) => {
   if (!type) return "—";
   return BC_DOCUMENT_TYPES[type.toUpperCase()] || type.replace(/_/g, " ");
+};
+
+export const getSourceDocumentRoute = (documentType?: string) => {
+  if (!documentType) return null;
+  const upper = documentType.toUpperCase();
+  if (upper === "GOODS_RECEIPT") return "/inventory/goods-receipt";
+  if (upper === "STOCK_TRANSFER") return "/inventory/transfers";
+  if (upper === "STOCK_ADJUSTMENT") return "/inventory/stock-adjustment";
+  if (upper === "BATCH" || upper === "DAILY_ENTRY") return "/batches";
+  return null;
 };
 
 interface InventoryLedgerDetailProps {
@@ -88,6 +118,7 @@ export default function InventoryLedgerDetail({
   onOpenFullPage,
   isStandalone = false,
 }: InventoryLedgerDetailProps) {
+  const router = useRouter();
   const [data, setData] = useState<Row | null>(initialData || null);
   const [loading, setLoading] = useState(!initialData || !initialData.applications);
   const [error, setError] = useState("");
@@ -108,7 +139,7 @@ export default function InventoryLedgerDetail({
       })
       .catch((err: any) => {
         if (!cancelled) {
-          setError(err?.message || "Failed to load Item Ledger Entry details.");
+          setError(err?.message || "Failed to load Inventory Ledger Entry details.");
         }
       })
       .finally(() => {
@@ -132,7 +163,7 @@ export default function InventoryLedgerDetail({
     return (
       <div className="flex flex-col items-center justify-center p-12 text-center" style={S.sub}>
         <Loader2 className="mb-3 h-7 w-7 animate-spin" style={S.accent} />
-        <p className="text-sm font-medium">Loading Item Ledger Entry…</p>
+        <p className="text-sm font-medium">Loading Inventory Ledger Entry…</p>
       </div>
     );
   }
@@ -188,19 +219,25 @@ export default function InventoryLedgerDetail({
                 className="mr-1 inline-flex items-center gap-1 text-xs font-medium hover:underline"
                 style={S.sub}
               >
-                <ArrowLeft className="h-3.5 w-3.5" /> Back to Item Ledger Entries
+                <ArrowLeft className="h-3.5 w-3.5" /> Back to Inventory Ledger Entries
               </button>
             )}
             <h1 className="font-mono text-xl font-bold tracking-tight" style={S.primary}>
-              {entry.document_no || "Item Ledger Entry"}
+              {entry.document_no || "Inventory Ledger Entry"}
             </h1>
-            <Badge variant="neutral" className="font-mono text-xs font-bold">
-              {formatBcEntryType(entry.transaction_type)}
-            </Badge>
-            <StatusBadge
-              status={entry.entry_type}
-              label={isPositive ? "Positive (+)" : "Negative (-)"}
-            />
+            <div className="flex items-center gap-1.5 rounded-[var(--radius-sm)] border px-2 py-0.5" style={S.raised}>
+              <span className="text-[10px] font-semibold uppercase tracking-wider" style={S.muted}>Transaction Type:</span>
+              <span className="font-mono text-xs font-bold" style={S.primary}>
+                {formatBcEntryType(entry.transaction_type)}
+              </span>
+            </div>
+            <div className="flex items-center gap-1.5 rounded-[var(--radius-sm)] border px-2 py-0.5" style={S.raised}>
+              <span className="text-[10px] font-semibold uppercase tracking-wider" style={S.muted}>Entry Type:</span>
+              <StatusBadge
+                status={entry.entry_type}
+                label={formatBcEntryTypeLabel(entry.entry_type)}
+              />
+            </div>
             {entry.document_type && (
               <Badge variant="neutral" className="text-xs">
                 {formatBcDocumentType(entry.document_type)}
@@ -222,6 +259,19 @@ export default function InventoryLedgerDetail({
         </div>
 
         <div className="flex items-center gap-2">
+          {getSourceDocumentRoute(entry.document_type) && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                const route = getSourceDocumentRoute(entry.document_type);
+                if (route) router.push(route);
+              }}
+              className="flex items-center gap-1.5 text-xs"
+            >
+              <ExternalLink className="h-3.5 w-3.5" /> View {formatBcDocumentType(entry.document_type)}
+            </Button>
+          )}
           {!isStandalone && onOpenFullPage && (
             <Button
               variant="outline"
@@ -383,6 +433,23 @@ export default function InventoryLedgerDetail({
               </div>
             </div>
 
+            <div>
+              <p className="font-semibold uppercase tracking-wider text-[11px]" style={S.muted}>Transaction Type</p>
+              <p className="mt-0.5 font-mono font-bold" style={S.primary}>
+                {formatBcEntryType(entry.transaction_type)}
+              </p>
+            </div>
+
+            <div>
+              <p className="font-semibold uppercase tracking-wider text-[11px]" style={S.muted}>Entry Type</p>
+              <div className="mt-0.5">
+                <StatusBadge
+                  status={entry.entry_type}
+                  label={formatBcEntryTypeLabel(entry.entry_type)}
+                />
+              </div>
+            </div>
+
             {entry.alternate_quantity && (
               <>
                 <div>
@@ -491,12 +558,12 @@ export default function InventoryLedgerDetail({
             <Layers className="mb-2 h-6 w-6" style={S.muted} />
             <p className="text-sm font-medium">
               {isPositive
-                ? "This Item Ledger Entry is currently intact with zero drawdowns."
+                ? "This Inventory Ledger Entry is currently intact with zero drawdowns."
                 : "No Item Application Entries recorded for this movement."}
             </p>
             <p className="mt-1 text-xs" style={S.muted}>
               {isPositive
-                ? "When Goods Issues, Transfers, or Production Orders apply against this entry, they will be listed here."
+                ? "When Transfer Orders or Batches apply against this entry, they will be listed here."
                 : "Standard costing or direct ledger adjustment."}
             </p>
           </div>
@@ -505,47 +572,66 @@ export default function InventoryLedgerDetail({
             <table className="w-full border-collapse text-left text-xs">
               <TableHeader>
                 <tr className="border-b" style={{ borderColor: "var(--border)" }}>
+                  <TableHead className="py-2.5 px-3">Application ID</TableHead>
                   <TableHead className="py-2.5 px-3">Posting Date</TableHead>
                   <TableHead className="py-2.5 px-3">
                     {isPositive ? "Outbound Document No." : "Inbound Document No."}
                   </TableHead>
                   <TableHead className="py-2.5 px-3">Entry Type</TableHead>
-                  {!isPositive && <TableHead className="py-2.5 px-3">Lot No.</TableHead>}
-                  {!isPositive && <TableHead className="py-2.5 px-3 text-right">Inbound Unit Cost</TableHead>}
+                  <TableHead className="py-2.5 px-3">Tracking</TableHead>
+                  <TableHead className="py-2.5 px-3 text-right">Applied Unit Cost</TableHead>
                   <TableHead className="py-2.5 px-3 text-right">Applied Quantity</TableHead>
                   <TableHead className="py-2.5 px-3 text-right">Cost Amount</TableHead>
                 </tr>
               </TableHeader>
               <TableBody>
-                {applications.map((app) => (
-                  <TableRow key={app.application_id} style={{ borderColor: "var(--border)" }}>
-                    <TableCell className="py-2.5 px-3 font-mono" style={S.primary}>
-                      {app.application_date || "—"}
-                    </TableCell>
-                    <TableCell className="py-2.5 px-3 font-mono font-medium" style={S.primary}>
-                      {isPositive ? app.document_no || "Outbound Doc" : app.document_no || "Inbound Layer"}
-                    </TableCell>
-                    <TableCell className="py-2.5 px-3" style={S.sub}>
-                      {formatBcEntryType(app.transaction_type || app.document_type)}
-                    </TableCell>
-                    {!isPositive && (
-                      <TableCell className="py-2.5 px-3 font-mono" style={S.sub}>
-                        {app.lot_no || "—"}
+                {applications.map((app) => {
+                  const appliedUnitCost = Number(app.unit_cost ?? app.rate ?? (Number(app.applied_cost_amount || 0) / Number(app.applied_qty || 1)));
+                  return (
+                    <TableRow key={app.application_id} style={{ borderColor: "var(--border)" }}>
+                      <TableCell className="py-2.5 px-3 font-mono text-[11px]" style={S.sub}>
+                        <div className="flex items-center gap-1">
+                          <span>{app.application_id ? (app.application_id.length > 20 ? `${app.application_id.slice(0, 12)}…` : app.application_id) : "—"}</span>
+                          {app.application_id && (
+                            <button
+                              type="button"
+                              onClick={() => copyToClipboard(app.application_id, app.application_id)}
+                              className="rounded p-0.5 hover:bg-[var(--surface-raised)]"
+                              title="Copy Application ID"
+                            >
+                              {copiedKey === app.application_id ? <Check className="h-3 w-3 text-green-500" /> : <Copy className="h-3 w-3" style={S.muted} />}
+                            </button>
+                          )}
+                        </div>
                       </TableCell>
-                    )}
-                    {!isPositive && (
-                      <TableCell className="py-2.5 px-3 font-mono text-right" style={S.sub}>
-                        {app.rate ? formatMoney(Number(app.rate)) : "—"}
+                      <TableCell className="py-2.5 px-3 font-mono" style={S.primary}>
+                        {app.application_date || "—"}
                       </TableCell>
-                    )}
-                    <TableCell className="py-2.5 px-3 font-mono text-right font-semibold" style={{ color: isPositive ? "var(--danger)" : "var(--success)" }}>
-                      {isPositive ? `-${Number(app.applied_qty).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}` : `+${Number(app.applied_qty).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`} {entry.uom}
-                    </TableCell>
-                    <TableCell className="py-2.5 px-3 font-mono text-right font-medium" style={S.primary}>
-                      {formatMoney(Number(app.applied_cost_amount))}
-                    </TableCell>
-                  </TableRow>
-                ))}
+                      <TableCell className="py-2.5 px-3 font-mono font-medium" style={S.primary}>
+                        {isPositive ? app.document_no || "Outbound Doc" : app.document_no || "Inbound Layer"}
+                      </TableCell>
+                      <TableCell className="py-2.5 px-3" style={S.sub}>
+                        {formatBcEntryType(app.transaction_type || app.document_type)}
+                      </TableCell>
+                      <TableCell className="py-2.5 px-3 font-mono text-[11px]" style={S.sub}>
+                        {app.lot_no ? (
+                          <Badge variant="accent" className="font-mono text-[10px]">Lot: {app.lot_no}</Badge>
+                        ) : app.serial_no ? (
+                          <Badge variant="accent" className="font-mono text-[10px]">SN: {app.serial_no}</Badge>
+                        ) : "—"}
+                      </TableCell>
+                      <TableCell className="py-2.5 px-3 font-mono text-right font-medium" style={S.primary}>
+                        {formatMoney(appliedUnitCost)}
+                      </TableCell>
+                      <TableCell className="py-2.5 px-3 font-mono text-right font-semibold" style={{ color: isPositive ? "var(--danger)" : "var(--success)" }}>
+                        {isPositive ? `-${Number(app.applied_qty).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}` : `+${Number(app.applied_qty).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`} {entry.uom}
+                      </TableCell>
+                      <TableCell className="py-2.5 px-3 font-mono text-right font-medium" style={S.primary}>
+                        {formatMoney(Number(app.applied_cost_amount))}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </table>
           </div>

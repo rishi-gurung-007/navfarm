@@ -16,4 +16,5 @@ export const MASTER_CODE_COLUMNS: Record<string, string> = {
   UOM_CONVERSION: 'conversion_code',
   GL_MAPPING: 'mapping_code', BREED_LIFECYCLE_STAGE: 'lifecycle_code',
   KPI_METRIC: 'metric_code',
+  ITEM_APPLICATION: 'application_id', APPLICATION: 'application_id',
 };

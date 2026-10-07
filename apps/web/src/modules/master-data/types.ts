@@ -307,6 +307,27 @@ export interface MasterDataField {
   /** Only sent on create — omit from the edit form/payload (e.g. the API's update endpoint doesn't accept this field). */
   createOnly?: boolean;
   /**
+   * Editable until the record has issued its first number, then read-only. For a
+   * number series: its master, prefix, length and step become part of the codes
+   * already handed out, so changing them afterwards would make new codes
+   * disagree with the old ones. The API refuses the change too.
+   */
+  lockWhenIssued?: boolean;
+  /**
+   * On a select-entity field: when the user picks an option, copy values from that option's
+   * row into other fields of the form. `rowKeys` are tried in order and the first non-empty
+   * one wins. An animal's Sire fills Sire Serial No. from the sire's RFID tag this way.
+   */
+  fills?: Array<{ key: string; rowKeys: string[] }>;
+  /** Read-only while the named field holds a value: the value is supplied by that field's `fills`. */
+  readOnlyWhenSet?: string;
+  /**
+   * Read-only while editing a row whose `<this key>` flag is true. An item's
+   * Valuation Method and Tracking use `has_inventory`: once stock exists they
+   * decide how its layers were costed, so they can no longer change.
+   */
+  lockWhenRowFlag?: string;
+  /**
    * Only shown once editing — omit from the create form/payload (e.g. a value the service
    * computes on create, such as an animal's opening bio-asset value, that the API's create
    * endpoint doesn't accept but its update endpoint does).

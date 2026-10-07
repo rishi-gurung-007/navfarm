@@ -291,7 +291,6 @@ export default function ConsoleLayout({ children, modal }: { children: React.Rea
     { label: t("invRequisitions"), href: "/inventory/requisitions" },
     { label: t("invGoodsReceipt"), href: "/inventory/goods-receipt" },
     { label: t("invTransfers"), href: "/inventory/transfers" },
-    { label: t("invGoodsIssue"), href: "/inventory/goods-issue" },
     { label: t("invStockAdjustment"), href: "/inventory/stock-adjustment" },
     { label: t("invLedger"), href: "/inventory/ledger" },
   ];

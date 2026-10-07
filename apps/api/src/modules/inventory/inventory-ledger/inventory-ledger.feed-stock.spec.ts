@@ -65,10 +65,10 @@ describe('InventoryLedgerService.getFeedStockAsOf (Plan R, D19 / Q6)', () => {
     }
   });
 
-  // Fix round 1 (Ruling M7): a Goods Issue posts transaction_type CONSUMPTION and is a non-feeding outflow — it
+  // Fix round 1 (Ruling M7): a batch consumption posts transaction_type CONSUMPTION and is a non-feeding outflow — it
   // must reach the forecast as a negative movement on its day, and its REVERSAL (positive, same document_type)
   // must pass the same filter so the pair sums to nothing in the grouped read.
-  it('a goods issue after the stock date is a negative movement on its day', async () => {
+  it('a consumption after the stock date is a negative movement on its day', async () => {
     const cls = transactionCls(db);
     useFarmScope(cls, { farmId: 'farm-1', restricted: false, companyId: 'co-1', lobId: null });
     results.push([], [{ warehouse_id: 'st', item_id: 'i1', item_code: 'FEED-R1', uom: 'KG', posting_date: '2026-09-28', qty: '-250.0000' }]);
@@ -81,7 +81,7 @@ describe('InventoryLedgerService.getFeedStockAsOf (Plan R, D19 / Q6)', () => {
     expect(movements.params).not.toContain('REVERSAL');
   });
 
-  it('a goods issue and its reversal pass the same filter, so the day nets to zero', async () => {
+  it('a consumption and its reversal pass the same filter, so the day nets to zero', async () => {
     const cls = transactionCls(db);
     useFarmScope(cls, { farmId: 'farm-1', restricted: false, companyId: 'co-1', lobId: null });
     // The database sums the pair (−250 CONSUMPTION, +250 REVERSAL) in one group; the read hands back the net.

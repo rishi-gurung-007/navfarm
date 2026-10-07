@@ -265,7 +265,7 @@ describe('LocationService canonical hierarchy', () => {
       location_name: 'Feed Silo 1', location_address: 'Farm Road', location_type: 'SILO',
       low_level_kg: 200, high_level_kg: 1800,
       capacity_uom: 'KG', silo_capacity_kg: 40, silo_reorder_days: 7,
-    }, 'tenant-1')).rejects.toThrow('silo_capacity_uom');
+    }, 'tenant-1')).rejects.toThrow('a capacity unit (KG or TON)');
   });
 
   it('stores a TON capacity as canonical kilograms and reads it back in tonnes', async () => {
@@ -780,7 +780,7 @@ describe('LocationService canonical hierarchy', () => {
       company_id: 'comp-1', parent_location_id: 'farm-1', location_name: 'Feed Silo 9',
       location_address: 'Farm Road', location_type: 'SILO', storage_type: 'SILO',
       low_level_kg: 200, high_level_kg: 1800,
-    } as any, 'tenant-1')).rejects.toThrow('A SILO location requires');
+    } as any, 'tenant-1')).rejects.toThrow('A silo needs a Silo Capacity');
   });
 
   it('does not require levels on a pen that carries a legacy SILO storage type (Review Focus 1)', async () => {

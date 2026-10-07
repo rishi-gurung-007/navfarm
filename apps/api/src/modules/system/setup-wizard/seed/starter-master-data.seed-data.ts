@@ -94,6 +94,6 @@ export const STARTER_GL_MAPPINGS: StarterGlMapping[] = [
 
 export const STARTER_WAREHOUSE = {
   warehouse_code: 'WH-MAIN',
-  warehouse_name: 'Main Warehouse',
+  warehouse_name: 'Main Location',
   warehouse_type: 'GENERAL',
 };

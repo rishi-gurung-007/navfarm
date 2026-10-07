@@ -483,8 +483,8 @@ describe('BatchDailyDataService', () => {
     );
 
     expect(batchService.addTransaction).not.toHaveBeenCalled();
-    // First insert call is the notification_alert_log write; second is batch_daily_data.
-    expect(mockDbInsert).toHaveBeenCalledTimes(2);
+    // First insert call is notification_alert_log, second is batch_daily_data, third is inventory_ledger (DESCRIPTIVE).
+    expect(mockDbInsert).toHaveBeenCalledTimes(3);
   });
 
   describe('ANIMAL_WISE batches', () => {
@@ -941,7 +941,7 @@ describe('BatchDailyDataService', () => {
 
     // OUTPUT lines put stock IN and carry no FIFO draw, so they resolve
     // nothing and keep behaving exactly as before.
-    it('resolves no warehouse for an OUTPUT line', async () => {
+    it('resolves no location for an OUTPUT line', async () => {
       answers(
         [{ ...consumptionLine, line_type: 'OUTPUT' }],
         [header],

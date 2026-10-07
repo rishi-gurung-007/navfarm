@@ -10,6 +10,7 @@ import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { NobLobResolutionService } from '../../core/operational-area/nob-lob-resolution.service';
 import { listFilterConditions, listOrderBy } from '../../../common/master-list-query';
+import { assertCodeUnchanged } from '../../../common/master-code';
 
 @Injectable()
 export class StageService {
@@ -33,7 +34,7 @@ export class StageService {
     const seriesCode = await this.numberSeriesService.resolveSeriesFor('STAGE', dto.stage_category, tenantId, dto.company_id);
     if (!seriesCode) {
       if (!dto.stage_code) {
-        throw new BadRequestException('stage_code is required — no number series is configured for stages.');
+        throw new BadRequestException('Enter a Code for this stage — no number series is configured for stages.');
       }
       return dto.stage_code.toUpperCase();
     }
@@ -52,7 +53,7 @@ export class StageService {
   ) {
     if (transitionTrigger === 'AUTO_BY_DAY') {
       if (autoMoveOnDay == null) {
-        throw new ConflictException('auto_move_on_day is required when transition_trigger is AUTO_BY_DAY.');
+        throw new ConflictException('Enter the day to move automatically when the transition trigger is Automatic by Day.');
       }
       if (typicalDurationDays != null && autoMoveOnDay > typicalDurationDays) {
         throw new BadRequestException('Auto-Move On Day cannot be greater than Duration (days).');
@@ -65,7 +66,7 @@ export class StageService {
    * alt-path fields instead of auto_move_on_day. */
   private assertAltFieldsWhenConditional(transitionTrigger: string, altNextStageId?: string | null, altTriggerCondition?: string | null) {
     if ((transitionTrigger === 'KPI_BASED' || transitionTrigger === 'EVENT_BASED') && (!altNextStageId || !altTriggerCondition)) {
-      throw new ConflictException('alt_next_stage_id and alt_trigger_condition are required when transition_trigger is KPI_BASED or EVENT_BASED.');
+      throw new ConflictException('Choose an alternate next stage and enter its trigger condition when the transition trigger is KPI Based or Event Based.');
     }
   }
 
@@ -93,7 +94,7 @@ export class StageService {
     });
     if (!resolved.nob_id || !resolved.lob_id) {
       throw new BadRequestException(
-        "Cannot determine this stage's Nature of Business / Line of Business — this company's operational areas span multiple business verticals. Specify nob_id and lob_id explicitly.",
+        "Cannot determine this stage's Nature of Business / Line of Business — this company's operational areas span multiple business verticals. Choose the Nature of Business and Line of Business explicitly.",
       );
     }
     const nobId = resolved.nob_id;
@@ -280,14 +281,19 @@ export class StageService {
     // the operational tables (batch_header.current_stage_code, stage logs, farm
     // records, reason applicability), so the rename is refused while anything
     // still references the old one.
-    if (dto.stage_name !== undefined && dto.stage_name.trim() !== stage.stage_name
-        && stage.stage_code === stage.stage_name.replaceAll(/\s+/g, '_').toUpperCase()) {
-      updates.stage_code = await this.numberSeriesService.renameCode(
-        'STAGE',
-        { ...stage, stage_name: dto.stage_name },
-        tenantId,
-        stage.company_id,
-      );
+    assertCodeUnchanged('Stage', stage.stage_code, dto.stage_code);
+    if (dto.stage_code !== undefined && dto.stage_code.trim()) {
+      const trimmedCode = dto.stage_code.trim().toUpperCase();
+      if (trimmedCode !== stage.stage_code) {
+        const edited = await this.numberSeriesService.editedCode(
+          'STAGE',
+          trimmedCode,
+          stage.stage_code,
+          tenantId,
+          stage.company_id,
+        );
+        if (edited) updates.stage_code = edited;
+      }
     }
     if (dto.stage_sequence !== undefined && dto.stage_sequence !== stage.stage_sequence) {
       const seqDuplicateConditions = [
@@ -355,10 +361,6 @@ export class StageService {
 
   async remove(id: string, tenantId: string, userPayload?: any) {
     const stage = await this.findOne(id);
-
-    if (stage.is_system) {
-      throw new BadRequestException(`Stage '${stage.stage_code}' is a system-seeded stage and cannot be deleted.`);
-    }
 
     await this.db
       .update(schema.stageMaster)

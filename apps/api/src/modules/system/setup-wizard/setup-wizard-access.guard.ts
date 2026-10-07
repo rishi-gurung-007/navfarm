@@ -114,7 +114,7 @@ export class SetupWizardAccessGuard implements CanActivate {
     }
 
     if (!companyId) {
-      throw new BadRequestException('company_id is required.');
+      throw new BadRequestException('A company must be selected.');
     }
 
     if (!(await this.companyAccess(user, companyId))) {

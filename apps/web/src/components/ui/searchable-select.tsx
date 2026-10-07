@@ -77,6 +77,20 @@ export function SearchableSelect({
     return "";
   };
 
+  // The open list shows code and name together; once a row is picked the field
+  // shows the name alone (the code when there is no name).
+  const selectedRowLabel = (row: Row): string => {
+    if (getLabelParts) {
+      const parts = getLabelParts(row);
+      if (parts.length > 1) return parts[1] || parts[0] || defaultGetLabel(row);
+    }
+    if (row.shortLabel != null && String(row.shortLabel) !== "") return String(row.shortLabel);
+    if (row[labelKey] != null) return String(row[labelKey]);
+    if (row.name != null && String(row.name) !== "") return String(row.name);
+    if (row.title != null && String(row.title) !== "") return String(row.title);
+    return defaultGetLabel(row);
+  };
+
   const effectiveColumnHeaders = useMemo(() => {
     // If explicitly provided as false or empty array, disable headers
     if (columnHeaders === false || (Array.isArray(columnHeaders) && columnHeaders.length === 0)) {
@@ -175,6 +189,7 @@ export function SearchableSelect({
       options={normalizedOptions}
       valueKey={valueKey}
       getLabel={defaultGetLabel}
+      getSelectedLabel={getLabel && !getLabelParts ? undefined : selectedRowLabel}
       getLabelParts={effectiveGetLabelParts}
       columnHeaders={effectiveColumnHeaders}
       placeholder={placeholder}

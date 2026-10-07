@@ -3301,7 +3301,7 @@ export default function OperationalBatchDataEntry() {
                           className="px-3 py-1.5 font-mono"
                           style={S.sub}
                         >
-                          {a.ear_tag || '—'}
+                          {a.rfid_tag || '—'}
                         </TableCell>
                         <TableCell className="px-3 py-1.5" style={S.sub}>
                           {a.gender === 'F' || a.gender === 'Female'
@@ -3404,7 +3404,7 @@ export default function OperationalBatchDataEntry() {
                 }
                 options={stageMasterList.map((s: Row) => ({
                   value: s.stage_id,
-                  label: `${s.stage_code} — ${s.stage_name}`,
+                  label: `${s.stage_code} — ${s.stage_name}`, shortLabel: (s.stage_name) ?? "",
                 }))}
                 placeholder="Select a stage…"
                 searchPlaceholder="Search stages…"

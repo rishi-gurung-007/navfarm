@@ -13,7 +13,7 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiParam } from '@nestjs/swagger';
 import { BreedService } from './breed.service';
-import { CreateBreedDto, UpdateBreedDto, QueryBreedDto } from './dto/breed.dto';
+import { CreateBreedDto, UpdateBreedDto, QueryBreedDto, BulkCreateBreedDto } from './dto/breed.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
@@ -37,6 +37,19 @@ export class BreedController {
       success: true,
       message: 'Breed registered successfully.',
       data: result
+    };
+  }
+
+  @Post('bulk')
+  @RequirePermission('MASTER_DATA', 'BREED', 'create')
+  @ApiOperation({ summary: 'Register multiple Breeds in bulk' })
+  async createBulk(@Body() dto: BulkCreateBreedDto, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const result = await this.breedService.createBreedsBulk(dto.items, tenantId, req.user);
+    return {
+      success: true,
+      message: `${result.createdCount} breeds registered successfully.`,
+      data: result,
     };
   }
 

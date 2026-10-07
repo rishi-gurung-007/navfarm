@@ -946,6 +946,34 @@
       "when": 1792000000003,
       "tag": "0134_animal_parent_serial_no",
       "breakpoints": true
+    },
+    {
+      "idx": 135,
+      "version": "5",
+      "when": 1792000000004,
+      "tag": "0135_inventory_ledger_overhead_descriptive",
+      "breakpoints": true
+    },
+    {
+      "idx": 136,
+      "version": "5",
+      "when": 1792000000005,
+      "tag": "0136_expand_serial_no_text",
+      "breakpoints": true
+    },
+    {
+      "idx": 137,
+      "version": "5",
+      "when": 1792000000006,
+      "tag": "0137_animal_register_rfid_only",
+      "breakpoints": true
+    },
+    {
+      "idx": 138,
+      "version": "5",
+      "when": 1792000000007,
+      "tag": "0138_drop_goods_issue",
+      "breakpoints": true
     }
   ]
 }

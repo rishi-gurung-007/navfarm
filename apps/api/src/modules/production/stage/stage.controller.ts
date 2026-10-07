@@ -52,7 +52,7 @@ export class StageController {
 
   @Delete(':id')
   @RequirePermission('PRODUCTION', 'STAGE', 'delete')
-  @ApiOperation({ summary: 'Deactivate a Stage (system-seeded stages cannot be deleted, only deactivated via update)' })
+  @ApiOperation({ summary: 'Deactivate a Stage' })
   @ApiParam({ name: 'id', description: 'Stage UUID' })
   async remove(@Param('id') id: string, @Req() req: any) {
     const tenantId = req.user?.tenantId || req['tenantId'];

@@ -192,7 +192,7 @@ describe('buildFeedForecast — rows start at the planning date (Q7)', () => {
 
 describe('buildFeedForecast — Current Inventory takes the day\'s posted movements, not its feeding (Ruling M7, Q6)', () => {
   // 100 pigs at 1 kg = 100 kg/day from a 525 kg silo. The service passes posted receipts and non-feeding outflows
-  // (goods issue, negative adjustment) dated inside the walk as signed `incoming`; the day's feeding is the forecast's.
+  // (a consumption, negative adjustment) dated inside the walk as signed `incoming`; the day's feeding is the forecast's.
   const input: ForecastInput = {
     planningDate: '2026-09-23', from: '2026-09-23', to: '2026-09-26', leadTimeDays: 2,
     sheds: [{ shedId: 'h1', shedCode: 'GRS/SHED-001', siloIds: ['s1'] }],
@@ -200,14 +200,14 @@ describe('buildFeedForecast — Current Inventory takes the day\'s posted moveme
     store: null, items: { r1: 'Grower Diet' },
     incoming: [
       { locationId: 's1', itemId: 'r1', date: '2026-09-24', kg: 1000 }, // a receipt posted on the 24th
-      { locationId: 's1', itemId: 'r1', date: '2026-09-25', kg: -200 }, // a goods issue posted on the 25th
+      { locationId: 's1', itemId: 'r1', date: '2026-09-25', kg: -200 }, // a consumption posted on the 25th
     ],
     batches: [{ batchId: 'b1', batchNo: 'GR-2026-01', breedId: 'l', shedId: 'h1', heads: 100,
       segments: [{ stageId: 'grower', stageCode: 'GROWER', start: '2026-09-01', end: null, projected: false }] }],
     feedRows: [row()],
   };
 
-  it('adds the receipt and takes off the goods issue on their own day, and the feeding the day after', () => {
+  it('adds the receipt and takes off the consumption on their own day, and the feeding the day after', () => {
     // 525; 425 + 1,000 = 1,425; 1,325 − 200 = 1,125; 1,025.
     const { daily } = buildFeedForecast(input);
     expect(daily.map((d) => d.currentInventoryKg)).toEqual([525, 1425, 1125, 1025]);

@@ -48,7 +48,7 @@ const MASTER_DATA_RESOURCES = [
 ];
 
 const INVENTORY_RESOURCES = [
-  'BIO_ASSET_LEDGER', 'GOODS_ISSUE', 'GOODS_RECEIPT', 'LEDGER',
+  'BIO_ASSET_LEDGER', 'GOODS_RECEIPT', 'LEDGER',
   'STOCK_ADJUSTMENT', 'STOCK_TRANSFER',
 ];
 
@@ -162,7 +162,6 @@ export async function seedDefaultCompanyRoles(
     row(operatorRoleId, { module: 'PRODUCTION', resource: 'QR_CODE', view: true }),
     row(operatorRoleId, { module: 'PRODUCTION', resource: 'APPROVAL', view: true, create: true }),
     row(operatorRoleId, { module: 'PIGGERY', resource: 'ANIMAL', view: true, create: true, edit: true }),
-    row(operatorRoleId, { module: 'INVENTORY', resource: 'GOODS_ISSUE', view: true, create: true }),
     row(operatorRoleId, { module: 'INVENTORY', resource: 'GOODS_RECEIPT', view: true, create: true }),
     row(operatorRoleId, { module: 'INVENTORY', resource: 'LEDGER', view: true }),
     row(operatorRoleId, { module: 'INVENTORY', resource: 'STOCK_TRANSFER', view: true, create: true }),

@@ -119,7 +119,7 @@ export default function BatchTransferPanel() {
   );
 
   const animalOptions: AnimalOption[] = useMemo(
-    () => pool.map((a) => ({ animal_id: a.animal_id, label: a.ear_tag || a.animal_code })),
+    () => pool.map((a) => ({ animal_id: a.animal_id, label: a.rfid_tag || a.animal_code })),
     [pool]
   );
 
@@ -444,7 +444,7 @@ function TransferLines({ transferId }: { transferId: string }) {
         <tbody>
           {lines.map((l) => (
             <tr key={l.line_id} className="border-b border-[var(--border)] last:border-b-0">
-              <td className="px-3 py-2 font-mono font-semibold text-[var(--accent)]">{l.ear_tag || l.animal_code}</td>
+              <td className="px-3 py-2 font-mono font-semibold text-[var(--accent)]">{l.rfid_tag || l.animal_code}</td>
               <td className="px-3 py-2 text-[var(--text-secondary)]">{l.animal_type || "—"}</td>
               <td className="px-3 py-2 text-right tabular-nums text-[var(--text-primary)]">{money(l.book_value)}</td>
             </tr>

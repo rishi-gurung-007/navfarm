@@ -129,20 +129,44 @@ describe('BatchService', () => {
       expect(result.batch_no).toBe('BATCH-000001');
     });
 
-    it('rejects an ANIMAL_WISE batch with no animal_ids', async () => {
-      await expect(
-        service.create(
-          {
-            tracking_mode: 'ANIMAL_WISE',
-            company_id: 'comp-1',
-            lob_id: 'lob-piggery',
-            costing_method: 'FIFO',
-            start_date: '2026-01-01',
-            uom: 'HEAD',
-          } as any,
-          'tenant-123',
-        ),
-      ).rejects.toThrow('animal_ids is required for ANIMAL_WISE batches.');
+    it('saves an ANIMAL_WISE draft with no animals, opening quantity 0 and nothing claimed', async () => {
+      mockDbSelect.mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockReturnValue({
+            limit: jest
+              .fn()
+              .mockResolvedValue([
+                { nob_id: 'nob-1', costing_method_allowed: 'FIFO,STANDARD' },
+              ]),
+          }),
+        }),
+      });
+      mockDbTransaction.mockImplementation(async (cb: any) => cb(mockDb));
+      const values = jest.fn().mockResolvedValue({});
+      mockDbInsert.mockReturnValue({ values });
+      jest.spyOn(service, 'findOne').mockResolvedValueOnce({
+        ...activeBatch,
+        batch_no: 'BATCH-000001',
+        tracking_mode: 'ANIMAL_WISE',
+      } as any);
+
+      await service.create(
+        {
+          tracking_mode: 'ANIMAL_WISE',
+          company_id: 'comp-1',
+          lob_id: 'lob-piggery',
+          costing_method: 'FIFO',
+          start_date: '2026-01-01',
+          uom: 'HEAD',
+        } as any,
+        'tenant-123',
+        { userId: 'user-1' },
+      );
+
+      expect(values).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'DRAFT', tracking_mode: 'ANIMAL_WISE', opening_quantity: '0' }),
+      );
+      expect(mockDbUpdate).not.toHaveBeenCalled();
     });
 
     it('rejects an ANIMAL_WISE batch that includes an already-assigned animal', async () => {
@@ -186,7 +210,7 @@ describe('BatchService', () => {
           } as any,
           'tenant-123',
         ),
-      ).rejects.toThrow('Animal(s) already assigned to a batch: PIG-0001.');
+      ).rejects.toThrow('These animals already belong to a batch: PIG-0001.');
     });
 
     it('assigns unassigned animals to the new batch, keyed by their own stage, without input_lines', async () => {
@@ -330,6 +354,11 @@ describe('BatchService', () => {
           status: 'ACTIVE',
           tracking_mode: 'ANIMAL_WISE',
         } as any);
+      mockDbSelect.mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ animal_id: 'a-1' }]) }),
+        }),
+      });
 
       const updateCalls: { table: any; set: any; where: any }[] = [];
       mockDbUpdate.mockImplementation((table: any) => ({
@@ -351,6 +380,26 @@ describe('BatchService', () => {
         (c) => c.table === schema.schedulerHeader,
       );
       expect(schedulerUpdate?.set.scheduler_status).toBe('ACTIVE');
+    });
+
+    it('refuses to activate an ANIMAL_WISE batch that has no animals', async () => {
+      jest.spyOn(service, 'findOne').mockResolvedValueOnce({
+        ...activeBatch,
+        status: 'DRAFT',
+        tracking_mode: 'ANIMAL_WISE',
+        input_lines: [],
+        stage_id: null,
+      } as any);
+      mockDbSelect.mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }),
+        }),
+      });
+
+      await expect(service.activate('batch-1', 'tenant-123', { userId: 'user-1' })).rejects.toThrow(
+        'Add at least one animal to this batch before creating it.',
+      );
+      expect(mockDbUpdate).not.toHaveBeenCalled();
     });
 
     it('still rejects a BATCH_WISE batch with no input lines', async () => {

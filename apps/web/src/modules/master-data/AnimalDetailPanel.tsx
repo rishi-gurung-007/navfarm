@@ -641,7 +641,6 @@ export default function AnimalDetailPanel({ row, onClose }: { row: Row; onClose:
             <ReadField label="Sire" value={fmt(lineage.sire_code)} mono />
             <ReadField label="Dam" value={fmt(lineage.dam_code)} mono />
             <ReadField mono label="RFID" value={fmt(row.rfid_tag)} />
-            <ReadField mono label="Tattoo number" value={fmt(row.ear_tag)} />
             <ReadField
               label="Ear tag image"
               value={row.ear_tag_image_url
@@ -727,11 +726,6 @@ export default function AnimalDetailPanel({ row, onClose }: { row: Row; onClose:
               />
               {/* Only a permanent gap needs stating; an absent card already says
                   a thing has not happened. */}
-              <p className="text-[11px] leading-5" style={S.muted}>
-                The chain ends at the transfer order. DOA at Colcom and the kill sheet have no tables in
-                the schema — BBP-1 describes the kill sheet as a process, attached to the transfer order
-                with carcass weights per line, without a field specification.
-              </p>
             </div>
           )
         )}

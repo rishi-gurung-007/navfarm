@@ -17,6 +17,7 @@ import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { NobLobResolutionService } from '../../core/operational-area/nob-lob-resolution.service';
 import { listFilterConditions, runMasterList } from '../../../common/master-list-query';
+import { assertCodeUnchanged } from '../../../common/master-code';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   return date.toISOString().slice(0, 19).replace('T', ' ');
@@ -137,7 +138,7 @@ export class ResourceService {
     const [resource] = await this.db
       .select()
       .from(schema.resourceMaster)
-      .where(and(eq(schema.resourceMaster.resource_id, id), isNull(schema.resourceMaster.deleted_at)))
+      .where(eq(schema.resourceMaster.resource_id, id))
       .limit(1);
 
     if (!resource) {
@@ -199,18 +200,31 @@ export class ResourceService {
   async update(id: string, dto: UpdateResourceDto, tenantId: string, userPayload?: any) {
     const resource = await this.findOne(id);
 
-    if (dto.resource_code && dto.resource_code.toUpperCase() !== resource.resource_code) {
-      throw new ConflictException('Resource Code is generated from the company-wide RESOURCE sequence and cannot be changed.');
+    const updates: any = {
+      updated_by: userPayload?.userId || null,
+      updated_at: toMysqlTimestamp(),
+    };
+
+    assertCodeUnchanged('Resource', resource.resource_code, dto.resource_code);
+    if (dto.resource_code && dto.resource_code.trim()) {
+      const trimmed = dto.resource_code.trim().toUpperCase();
+      if (trimmed !== resource.resource_code) {
+        const edited = await this.numberSeriesService.editedCode(
+          'RESOURCE',
+          trimmed,
+          resource.resource_code,
+          tenantId,
+          resource.company_id,
+        );
+        if (edited) {
+          updates.resource_code = edited;
+        }
+      }
     }
     if (dto.resource_type !== undefined && dto.resource_type !== resource.resource_type
       && !(RESOURCE_TYPES as readonly string[]).includes(dto.resource_type)) {
       throw new BadRequestException(`Resource Type must be one of ${RESOURCE_TYPES.join(', ')}.`);
     }
-
-    const updates: any = {
-      updated_by: userPayload?.userId || null,
-      updated_at: toMysqlTimestamp(),
-    };
 
     if (dto.nob_id !== undefined) updates.nob_id = dto.nob_id;
     if (dto.lob_id !== undefined) updates.lob_id = dto.lob_id;

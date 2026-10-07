@@ -17,6 +17,7 @@ import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { normalizeSegment } from '../../system/number-series/code-format.util';
 import { listFilterConditions, listOrderBy } from '../../../common/master-list-query';
+import { assertCodeUnchanged } from '../../../common/master-code';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   return date.toISOString().slice(0, 19).replace('T', ' ');
@@ -43,7 +44,7 @@ export class UomService {
     const seriesCode = await this.numberSeriesService.resolveSeriesFor('UOM', dto.uom_type, tenantId, companyId);
     if (!seriesCode) {
       if (!dto.uom_code) {
-        throw new BadRequestException('uom_code is required — no number series is configured for units of measure.');
+        throw new BadRequestException('Enter a Code for this unit of measure — no number series is configured for units of measure.');
       }
       return dto.uom_code.toUpperCase();
     }
@@ -204,19 +205,20 @@ export class UomService {
     // A code that was typed by hand (KG, ML — standard symbols the series cannot
     // derive, which is what allow_manual exists for) stays as it is: it was never
     // following the series, so it has nothing to follow.
+    assertCodeUnchanged('Unit of measure', uom.uom_code, dto.uom_code);
     let uomCode = uom.uom_code;
-    if (dto.uom_name !== undefined && dto.uom_name.trim() !== uom.uom_name
-        && uom.uom_code === normalizeSegment(uom.uom_name)) {
-      uomCode = await this.numberSeriesService.renameCode(
-        'UOM',
-        { ...uom, uom_name: dto.uom_name },
-        tenantId,
-        uom.company_id,
-      );
-    } else if (dto.uom_code !== undefined && dto.uom_code.toUpperCase() !== uom.uom_code) {
-      throw new ConflictException(
-        `UOM codes follow the number series and cannot be typed over. Rename the unit's name and the code follows it, or create a new unit with the code you need.`,
-      );
+    if (dto.uom_code !== undefined && dto.uom_code.trim()) {
+      const trimmed = dto.uom_code.trim().toUpperCase();
+      if (trimmed !== uom.uom_code) {
+        const edited = await this.numberSeriesService.editedCode(
+          'UOM',
+          trimmed,
+          uom.uom_code,
+          tenantId,
+          uom.company_id,
+        );
+        if (edited) uomCode = edited;
+      }
     }
 
     // Handle is_base_uom rule: only one base UOM per type
@@ -423,7 +425,7 @@ export class UomService {
     const [conv] = await this.db
       .select()
       .from(schema.uomConversionMaster)
-      .where(and(eq(schema.uomConversionMaster.conversion_id, id), isNull(schema.uomConversionMaster.deleted_at)))
+      .where(eq(schema.uomConversionMaster.conversion_id, id))
       .limit(1);
 
     if (!conv) {
@@ -522,6 +524,7 @@ export class UomService {
 
     // Blank means "untouched": the master-data form posts "" for every optional
     // field, and rows created before this column existed still hold NULL.
+    assertCodeUnchanged('Conversion', conv.conversion_code, dto.conversion_code);
     const conversionCode = await this.numberSeriesService.editedCode('UOM_CONVERSION', dto.conversion_code, conv.conversion_code, tenantId, conv.company_id);
     if (conversionCode) updates.conversion_code = conversionCode;
     if (dto.conversion_factor !== undefined) updates.conversion_factor = dto.conversion_factor.toString();

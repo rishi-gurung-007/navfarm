@@ -21,7 +21,7 @@ import { ReasonSelect } from "@/components/ui/reason-select";
 
 export interface AnimalAssignmentRow {
   id: string;
-  earTag: string;
+  tagLabel: string;
   animalId: string;
   rfid?: string;
   sex: "Female (Gilt)" | "Female (Sow)" | "Male (Boar)" | "Piglet";
@@ -122,7 +122,7 @@ export default function BatchAnimalAssignmentPanel() {
   const [regNobId, setRegNobId] = useState("");
   const [regForm, setRegForm] = useState<Row>({
     lob_id: "", animal_type: "", gender: "", entry_type: "", entry_date: new Date().toISOString().slice(0, 10),
-    breed_id: "", item_id: "", acquisition_cost: "", dob: "", ear_tag: "", rfid_tag: "",
+    breed_id: "", item_id: "", acquisition_cost: "", dob: "", rfid_tag: "",
     source_receipt_id: "", source_batch_id: "", notes: "", status: "ACTIVE",
   });
   const [regSaving, setRegSaving] = useState(false);
@@ -249,7 +249,7 @@ export default function BatchAnimalAssignmentPanel() {
             ["QUARANTINE", "SICK"].includes(statusRaw) ? "Isolated" : "Active";
           return {
             id: a.animal_id,
-            earTag: a.ear_tag || a.animal_code,
+            tagLabel: a.rfid_tag || a.animal_code,
             animalId: a.animal_code,
             rfid: a.rfid_tag || undefined,
             sex: a.gender === "M" ? "Male (Boar)" : a.animal_type === "PIGLET" ? "Piglet" : a.animal_type === "GILT" ? "Female (Gilt)" : "Female (Sow)",
@@ -362,7 +362,6 @@ export default function BatchAnimalAssignmentPanel() {
         item_id: regForm.item_id,
         acquisition_cost: Number(regForm.acquisition_cost),
         dob: regForm.dob || undefined,
-        ear_tag: regForm.ear_tag || undefined,
         rfid_tag: regForm.rfid_tag || undefined,
         source_receipt_id: regForm.source_receipt_id || undefined,
         source_batch_id: regForm.source_batch_id || undefined,
@@ -376,10 +375,10 @@ export default function BatchAnimalAssignmentPanel() {
 
       setRegForm({
         lob_id: currentBatch?.lobId || "", animal_type: "", gender: "", entry_type: "", entry_date: new Date().toISOString().slice(0, 10),
-        breed_id: currentBatch?.breedId || "", item_id: "", acquisition_cost: "", dob: "", ear_tag: "", rfid_tag: "",
+        breed_id: currentBatch?.breedId || "", item_id: "", acquisition_cost: "", dob: "", rfid_tag: "",
         source_receipt_id: "", source_batch_id: "", notes: "", status: "ACTIVE",
       });
-      setToastMsg(t("baapAnimalRegisteredToast", { tag: regForm.ear_tag || created?.ear_tag || "—", id: created?.animal_code || "" }));
+      setToastMsg(t("baapAnimalRegisteredToast", { tag: regForm.rfid_tag || created?.rfid_tag || "—", id: created?.animal_code || "" }));
       setTimeout(() => setToastMsg(""), 3500);
       loadAssignedAnimals();
     } catch (err: any) {
@@ -462,7 +461,7 @@ export default function BatchAnimalAssignmentPanel() {
       const destLabel = locations.find((l) => l.location_id === targetLocationId)?.location_name
         || locations.find((l) => l.location_id === targetLocationId)?.location_code
         || targetLocationId;
-      setToastMsg(t("baapAnimalMovedToast", { tag: selectedAnimalForTransfer.earTag, pen: destLabel, reason: transferReason }));
+      setToastMsg(t("baapAnimalMovedToast", { tag: selectedAnimalForTransfer.tagLabel, pen: destLabel, reason: transferReason }));
       setTimeout(() => setToastMsg(""), 3500);
       setTransferModalOpen(false);
       setSelectedAnimalForTransfer(null);
@@ -476,12 +475,12 @@ export default function BatchAnimalAssignmentPanel() {
   };
 
   const handleRemoveAnimal = async (animal: AnimalAssignmentRow) => {
-    if (!confirm(t("baapConfirmRemoveAnimal", { tag: animal.earTag }))) return;
+    if (!confirm(t("baapConfirmRemoveAnimal", { tag: animal.tagLabel }))) return;
     setRemovingAnimalId(animal.id);
     setRemoveError("");
     try {
       await api.put(`/animal/${animal.id}`, { current_batch_id: null });
-      setToastMsg(t("baapAnimalRemovedToast", { tag: animal.earTag }));
+      setToastMsg(t("baapAnimalRemovedToast", { tag: animal.tagLabel }));
       setTimeout(() => setToastMsg(""), 3500);
       loadAssignedAnimals();
     } catch (err: any) {
@@ -502,7 +501,7 @@ export default function BatchAnimalAssignmentPanel() {
       const pen = parts[2] || "Gestation Barn 1 / Row B";
       return {
         id: `csv-${Date.now()}-${idx}`,
-        earTag: tag,
+        tagLabel: tag,
         animalId: anId,
         sex: "Female (Sow)",
         breed: currentBatch?.breed || "Large White",
@@ -527,7 +526,7 @@ export default function BatchAnimalAssignmentPanel() {
 
   const filtered = animals.filter((a) => {
     const matchSearch =
-      a.earTag.toLowerCase().includes(search.toLowerCase()) ||
+      a.tagLabel.toLowerCase().includes(search.toLowerCase()) ||
       a.animalId.toLowerCase().includes(search.toLowerCase()) ||
       a.penLocation.toLowerCase().includes(search.toLowerCase()) ||
       (a.rfid && a.rfid.toLowerCase().includes(search.toLowerCase())) ||
@@ -805,14 +804,14 @@ export default function BatchAnimalAssignmentPanel() {
                         <td className="px-3 py-2.5" onClick={(e) => e.stopPropagation()}>
                           <input
                             type="checkbox"
-                            aria-label={`Select ${animal.earTag}`}
+                            aria-label={`Select ${animal.tagLabel}`}
                             checked={selectedIds.has(animal.id)}
                             onChange={() => toggleSelected(animal.id)}
                           />
                         </td>
                         <td className="px-4 py-2.5 text-[var(--text-muted)]">{idx + 1}</td>
                         <td className="px-4 py-2.5">
-                          <span className="font-mono font-bold text-[var(--accent)] block group-hover:underline">{animal.earTag}</span>
+                          <span className="font-mono font-bold text-[var(--accent)] block group-hover:underline">{animal.tagLabel}</span>
                           {animal.rfid && <span className="text-[10px] text-[var(--text-muted)] font-mono">{animal.rfid}</span>}
                         </td>
                         <td className="px-4 py-2.5 font-mono text-[var(--text-secondary)]">{animal.animalId}</td>
@@ -990,10 +989,6 @@ export default function BatchAnimalAssignmentPanel() {
                 <input type="date" className="nf-input w-full" value={regForm.dob} onChange={(e) => setRegForm((f) => ({ ...f, dob: e.target.value }))} />
               </div>
               <div>
-                <label className="font-semibold block mb-1">{t("baapEarTagNumberLabel")}</label>
-                <input type="text" className="nf-input w-full font-mono font-bold" placeholder={t("baapEarTagPlaceholder1")} value={regForm.ear_tag} onChange={(e) => setRegForm((f) => ({ ...f, ear_tag: e.target.value }))} />
-              </div>
-              <div>
                 <label className="font-semibold block mb-1">{t("anpRfidTag")}</label>
                 <input type="text" className="nf-input w-full font-mono" placeholder={t("baapRfidPlaceholder")} value={regForm.rfid_tag} onChange={(e) => setRegForm((f) => ({ ...f, rfid_tag: e.target.value }))} />
               </div>
@@ -1034,7 +1029,7 @@ export default function BatchAnimalAssignmentPanel() {
             {animals.slice(0, 6).map((a) => (
               <div key={a.id} className="p-3 rounded-[var(--radius-xs)] bg-[var(--surface-raised)] border border-[var(--border)] text-xs flex justify-between items-center">
                 <div>
-                  <span className="font-mono font-bold text-[var(--accent)]">{a.earTag}</span>
+                  <span className="font-mono font-bold text-[var(--accent)]">{a.tagLabel}</span>
                   <span className="text-[11px] text-[var(--text-secondary)] block">{a.penLocation}</span>
                 </div>
                 <Button
@@ -1072,7 +1067,7 @@ export default function BatchAnimalAssignmentPanel() {
             {animals.map((a) => (
               <div key={a.id} className="p-3 rounded-[var(--radius-xs)] bg-[var(--surface-raised)] border border-[var(--border)] text-xs flex justify-between items-center">
                 <div>
-                  <span className="font-mono font-bold text-[var(--text-primary)]">{a.earTag}</span>
+                  <span className="font-mono font-bold text-[var(--text-primary)]">{a.tagLabel}</span>
                   <span className="text-[11px] text-[var(--text-secondary)] block">{a.sex} · {a.penLocation}</span>
                 </div>
                 <Button
@@ -1095,7 +1090,7 @@ export default function BatchAnimalAssignmentPanel() {
         <Dialog
           open={transferModalOpen}
           onClose={() => setTransferModalOpen(false)}
-          title={t("baapRelocateAnimalTitle", { tag: selectedAnimalForTransfer.earTag })}
+          title={t("baapRelocateAnimalTitle", { tag: selectedAnimalForTransfer.tagLabel })}
           maxWidth="sm"
           footer={
             <Button size="sm" onClick={handleConfirmTransfer} disabled={transferSaving || !targetLocationId} className="nf-btn-primary">
@@ -1179,7 +1174,7 @@ export default function BatchAnimalAssignmentPanel() {
               onChange={(val) => setMoveStageId(val)}
               options={uniqueStages.map((st: any) => ({
                 value: st.stage_id,
-                label: `${st.stage_code} — ${st.stage_name}`,
+                label: `${st.stage_code} — ${st.stage_name}`, shortLabel: (st.stage_name) ?? "",
               }))}
               placeholder="Select a stage…"
               searchPlaceholder="Search stage…"
@@ -1193,7 +1188,7 @@ export default function BatchAnimalAssignmentPanel() {
               onChange={(val) => setMoveLocationId(val)}
               options={locations.map((l: any) => ({
                 value: l.location_id,
-                label: `${l.location_code} — ${l.location_name}`,
+                label: `${l.location_code} — ${l.location_name}`, shortLabel: (l.location_name) ?? "",
               }))}
               placeholder="Leave where they are"
               searchPlaceholder="Search pen…"
@@ -1243,7 +1238,7 @@ export default function BatchAnimalAssignmentPanel() {
               onChange={(val) => setSplitStageCode(val)}
               options={stages.map((st: any) => ({
                 value: st.stage_code,
-                label: `${st.stage_code} — ${st.stage_name}`,
+                label: `${st.stage_code} — ${st.stage_name}`, shortLabel: (st.stage_name) ?? "",
               }))}
               placeholder="Keep the batch's current stage"
               searchPlaceholder="Search stage…"
@@ -1258,7 +1253,7 @@ export default function BatchAnimalAssignmentPanel() {
               onChange={(val) => setSplitLocationId(val)}
               options={locations.map((l: any) => ({
                 value: l.location_id,
-                label: `${l.location_code} — ${l.location_name}`,
+                label: `${l.location_code} — ${l.location_name}`, shortLabel: (l.location_name) ?? "",
               }))}
               placeholder="Keep the batch's pen"
               searchPlaceholder="Search pen…"

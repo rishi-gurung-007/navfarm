@@ -89,7 +89,7 @@ export class QrCodeService {
       throw new NotFoundException(`Item with ID '${dto.item_id}' not found.`);
     }
     if (!item.is_qr_enabled) {
-      throw new BadRequestException(`Item '${item.item_code}' is not QR-enabled. Enable is_qr_enabled on the item first.`);
+      throw new BadRequestException(`Item '${item.item_code}' is not QR-enabled. Turn on QR for the item first.`);
     }
 
     if (dto.output_line_id) {
@@ -128,7 +128,7 @@ export class QrCodeService {
       const [lob] = await this.db.select().from(schema.lobMaster).where(eq(schema.lobMaster.lob_id, batch.lob_id)).limit(1);
       if (lob?.qc_required === 'YES' && qc.overall_result !== 'PASS') {
         throw new BadRequestException(
-          `This LOB requires QC before a pack can be generated — the linked QC record's overall_result is '${qc.overall_result}', not PASS.`
+          `This LOB requires QC before a pack can be generated — the linked QC record's overall result is '${qc.overall_result}', not PASS.`
         );
       }
     } else {
@@ -144,7 +144,7 @@ export class QrCodeService {
 
     let facilityCode: string | null = null;
     if (dto.warehouse_id) {
-      await assertLocationOnActiveFarm(this.db, farmScope(this.cls), dto.warehouse_id, 'Pack warehouse');
+      await assertLocationOnActiveFarm(this.db, farmScope(this.cls), dto.warehouse_id, 'Pack location');
       const [wh] = await this.db.select().from(schema.locationMaster).where(and(
         eq(schema.locationMaster.location_id, dto.warehouse_id),
         eq(schema.locationMaster.company_id, batch.company_id),

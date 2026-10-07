@@ -531,6 +531,8 @@ export const SYSTEM_NO_SERIES_SEED: Array<{
   // Auto-issues lot or serial numbers on Goods Receipt when omitted, or allows manual entry.
   { series_code: 'ITEM_LOT', series_name: 'Lot Number Series', document_type: 'LOT', prefix: 'LOT', separator: '-', seq_length: 5, reset_frequency: 'NEVER', allow_manual: true },
   { series_code: 'ITEM_SERIAL', series_name: 'Serial Number Series', document_type: 'SERIAL', prefix: 'SN', separator: '-', seq_length: 5, reset_frequency: 'NEVER', allow_manual: true },
+  // Item Application tracking series (readable FIFO application id, e.g. APP-00001)
+  { series_code: 'ITEM_APPLICATION', series_name: 'Item Application Series', document_type: 'APPLICATION', prefix: 'APP', separator: '-', seq_length: 5, reset_frequency: 'NEVER', allow_manual: true },
 ];
 
 /**

@@ -51,7 +51,6 @@ import { FeedForecastModule } from './modules/inventory/feed-forecast/feed-forec
 import { FeedAlertModule } from './modules/inventory/feed-alert/feed-alert.module';
 import { GoodsReceiptModule } from './modules/inventory/goods-receipt/goods-receipt.module';
 import { BioAssetLedgerModule } from './modules/inventory/bio-asset-ledger/bio-asset-ledger.module';
-import { GoodsIssueModule } from './modules/inventory/goods-issue/goods-issue.module';
 import { StockTransferModule } from './modules/inventory/stock-transfer/stock-transfer.module';
 import { StockAdjustmentModule } from './modules/inventory/stock-adjustment/stock-adjustment.module';
 import { InventorySetupModule } from './modules/inventory/inventory-setup/inventory-setup.module';
@@ -144,7 +143,6 @@ import { SystemController } from './system/system.controller';
     FeedAlertModule,
     GoodsReceiptModule,
     BioAssetLedgerModule,
-    GoodsIssueModule,
     StockTransferModule,
     StockAdjustmentModule,
     InventorySetupModule,

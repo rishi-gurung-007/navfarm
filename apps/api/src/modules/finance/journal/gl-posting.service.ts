@@ -47,10 +47,12 @@ export class GlPostingService {
       valuationMethod: schema.glMappingMaster.valuation_method,
     } as const;
 
+    const normalizedType = transactionType === 'STOCK_ADJUSTMENT' ? 'VARIANCE_NEGATIVE' : transactionType;
+
     const conditions = [
       eq(schema.glMappingMaster.tenant_id, tenantId),
       eq(schema.glMappingMaster.company_id, companyId),
-      eq(schema.glMappingMaster.transaction_type, transactionType),
+      eq(schema.glMappingMaster.transaction_type, normalizedType),
       eq(schema.glMappingMaster.is_active, true),
       isNull(schema.glMappingMaster.deleted_at),
     ];
@@ -79,8 +81,8 @@ export class GlPostingService {
 
     if (!mapping || !mapping.debit_gl_account_id || !mapping.credit_gl_account_id) {
       throw new BadRequestException(
-        `No GL mapping configured for company '${companyId}', transaction type '${transactionType}'` +
-          (context.categoryId ? `, item category '${context.categoryId}'` : '') +
+        `No GL mapping is set up for the '${normalizedType}' transaction type` +
+          (context.categoryId ? ' and this item category' : '') +
           '. Add one under Master Data → GL Mappings before posting this document.'
       );
     }
@@ -106,11 +108,13 @@ export class GlPostingService {
   }
 
   async postInventoryLedgerEntry(ledgerEntry: typeof schema.inventoryLedger.$inferSelect, userId?: string) {
-    const [item] = await this.db
-      .select({ valuation_method: schema.itemMaster.valuation_method })
-      .from(schema.itemMaster)
-      .where(eq(schema.itemMaster.item_id, ledgerEntry.item_id))
-      .limit(1);
+    const [item] = ledgerEntry.item_id
+      ? await this.db
+          .select({ valuation_method: schema.itemMaster.valuation_method })
+          .from(schema.itemMaster)
+          .where(eq(schema.itemMaster.item_id, ledgerEntry.item_id))
+          .limit(1)
+      : [null];
 
     const mapping = await this.resolveMapping(
       ledgerEntry.tenant_id,

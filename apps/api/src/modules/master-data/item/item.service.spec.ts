@@ -359,7 +359,7 @@ describe('ItemService', () => {
     });
   });
 
-  it('does not allow the generated company-wide Item Code to be changed', async () => {
+  it('refuses to change an item code after it is created', async () => {
     mockDbSelect
       .mockReturnValueOnce({
         from: jest.fn().mockReturnValue({
@@ -375,7 +375,42 @@ describe('ItemService', () => {
       });
 
     await expect(service.update('item-1', { item_code: 'RAW-0001' }, 'tenant-123'))
-      .rejects.toThrow(ConflictException);
+      .rejects.toThrow(BadRequestException);
+  });
+
+  describe('valuation method and tracking lock', () => {
+    const itemRow = {
+      item_id: 'item-1', item_code: 'ITM-0001', company_id: 'comp-1',
+      valuation_method: 'FIFO', is_lot_tracked: false, is_serial_tracked: false, tracking_series_id: null,
+    };
+    const selectItem = () =>
+      mockDbSelect
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([itemRow]) }) }),
+        })
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({ leftJoin: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([]) }) }),
+        });
+
+    it('refuses to change the valuation method once the item has inventory entries', async () => {
+      selectItem();
+      mockDbSelect.mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ ledger_id: 'l-1' }]) }) }),
+      });
+
+      await expect(service.update('item-1', { valuation_method: 'STANDARD' } as any, 'tenant-123'))
+        .rejects.toThrow('Valuation Method cannot be changed because this item already has inventory entries.');
+    });
+
+    it('refuses to turn tracking on once the item has inventory entries', async () => {
+      selectItem();
+      mockDbSelect.mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ ledger_id: 'l-1' }]) }) }),
+      });
+
+      await expect(service.update('item-1', { is_lot_tracked: true } as any, 'tenant-123'))
+        .rejects.toThrow('Tracking cannot be changed because this item already has inventory entries.');
+    });
   });
 
   it('initializes one company ITEM counter after the highest existing item code', async () => {

@@ -135,7 +135,6 @@ export async function seedUnallocatedAnimals() {
         .slice(0, 10);
       const code = `PIG-2026-${String(nextCode).padStart(4, '0')}`;
       const rfid = `9820004128800${String(nextCode).padStart(2, '0')}`.slice(-15);
-      const earTag = `GLT-${breedCode === 'TN-70-Sow' ? 'TN' : 'ZL'}-${String(nextCode).padStart(3, '0')}`;
       const tsi = (120 + ((i * 3.7) % 8)).toFixed(2);
       const animalId = randomUUID();
 
@@ -143,7 +142,7 @@ export async function seedUnallocatedAnimals() {
         `INSERT INTO animal_register (
           animal_id, tenant_id, company_id, nob_id, lob_id, operational_area_id,
           animal_code, animal_type, breed_id, gender, dob, age_at_entry_weeks,
-          entry_type, entry_date, item_id, ear_tag, rfid_tag, acquisition_cost,
+          entry_type, entry_date, item_id, rfid_tag, acquisition_cost,
           total_opening_asset_value, current_bio_asset_value, book_value, total_amortised,
           parity_count, total_piglets_born_live, total_piglets_weaned,
           current_stage_id, current_location_id, no_of_teats, tsi, grading,
@@ -151,7 +150,7 @@ export async function seedUnallocatedAnimals() {
         ) VALUES (
           ?, ?, ?, ?, ?, ?,
           ?, 'GILT', ?, 'F', ?, ?,
-          'PURCHASED_LOCAL', ?, ?, ?, ?, ?,
+          'PURCHASED_LOCAL', ?, ?, ?, ?,
           ?, ?, ?, 0.0000,
           0, 0, 0,
           ?, ?, 16, ?, ?,
@@ -160,7 +159,7 @@ export async function seedUnallocatedAnimals() {
         [
           animalId, tenantId, companyId, nobId, lobId, areaId,
           code, breedId, dob, ageWeeks,
-          entryDate, giltItemId, earTag, rfid, cost,
+          entryDate, giltItemId, rfid, cost,
           cost, cost, cost,
           stageId, pen.location_id, tsi, grading,
           SEED_TAG,

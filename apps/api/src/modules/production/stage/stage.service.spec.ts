@@ -272,4 +272,58 @@ describe('StageService', () => {
       )).rejects.toThrow(ConflictException);
     });
   });
+
+  describe('remove and restore', () => {
+    it('deactivates a system-seeded stage without error', async () => {
+      mockDbSelect.mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockReturnValue({
+            limit: jest.fn().mockResolvedValue([{
+              stage_id: 'stage-sys',
+              stage_code: 'FINISHER',
+              stage_name: 'Finisher',
+              is_system: true,
+              is_active: true,
+            }]),
+          }),
+        }),
+      });
+      mockDbUpdate.mockReturnValue({
+        set: jest.fn().mockReturnValue({
+          where: jest.fn().mockResolvedValue({}),
+        }),
+      });
+
+      const res = await service.remove('stage-sys', 'tenant-123', { userId: 'user-1' });
+      expect(res.success).toBe(true);
+      expect(res.message).toContain('Finisher');
+      expect(mockDbUpdate).toHaveBeenCalled();
+    });
+
+    it('restores a deactivated stage', async () => {
+      mockDbSelect.mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockReturnValue({
+            limit: jest.fn().mockResolvedValue([{
+              stage_id: 'stage-sys',
+              stage_code: 'FINISHER',
+              stage_name: 'Finisher',
+              is_system: true,
+              is_active: false,
+            }]),
+          }),
+        }),
+      });
+      mockDbUpdate.mockReturnValue({
+        set: jest.fn().mockReturnValue({
+          where: jest.fn().mockResolvedValue({}),
+        }),
+      });
+
+      const res = await service.restore('stage-sys', 'tenant-123', { userId: 'user-1' });
+      expect(res.success).toBe(true);
+      expect(res.message).toContain('restored');
+      expect(mockDbUpdate).toHaveBeenCalled();
+    });
+  });
 });

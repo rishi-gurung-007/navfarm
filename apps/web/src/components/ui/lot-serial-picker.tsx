@@ -36,6 +36,7 @@ export interface LotSerialPickerProps {
   excludedValues?: string[];
   multiSelect?: boolean;
   targetQuantity?: number;
+  fullWidth?: boolean;
 }
 
 function unwrap<T = any>(res: any): T {
@@ -58,6 +59,7 @@ function LotSerialPanel({
   onClearValue,
   loading,
   excludedValues = [],
+  fullWidth = false,
 }: {
   options: Array<LotOption | SerialOption>;
   valueKey: string;
@@ -70,6 +72,7 @@ function LotSerialPanel({
   onClearValue?: () => void;
   loading: boolean;
   excludedValues?: string[];
+  fullWidth?: boolean;
 }) {
   const { close } = usePopoverSurface();
   const [query, setQuery] = useState("");
@@ -139,13 +142,17 @@ function LotSerialPanel({
 
   const isLot = trackingType === "LOT";
   const gridTemplate = isLot
-    ? "20px minmax(110px, 1fr) 70px 75px"
-    : "20px minmax(110px, 1fr) 78px 72px";
+    ? "24px minmax(130px, 1fr) 100px 105px"
+    : "24px minmax(160px, 1fr) 125px 115px";
 
   const selectedCount = selectedSet.size;
 
   return (
-    <div className="flex max-h-[390px] w-[340px] sm:w-[370px] max-w-[calc(100vw-24px)] flex-col p-2 bg-[var(--surface-raised)] border border-[var(--border)] rounded-[var(--radius-md)] shadow-2xl backdrop-blur-md">
+    <div
+      className={`flex max-h-[420px] ${
+        fullWidth ? "w-full max-w-full" : "w-[340px] sm:w-[380px] max-w-[calc(100vw-24px)]"
+      } flex-col p-2 bg-[var(--surface-raised)] border border-[var(--border)] rounded-[var(--radius-md)] shadow-2xl backdrop-blur-md`}
+    >
       {/* Header bar */}
       <div className="flex items-center justify-between px-1.5 pb-2 border-b border-[var(--border-subtle)] shrink-0 gap-1.5">
         <div className="flex items-center gap-1.5 min-w-0">
@@ -399,6 +406,7 @@ export function LotSerialPicker({
   excludedValues = [],
   multiSelect,
   targetQuantity,
+  fullWidth,
 }: LotSerialPickerProps) {
   const [options, setOptions] = useState<Array<LotOption | SerialOption>>([]);
   const [loading, setLoading] = useState(false);
@@ -509,11 +517,12 @@ export function LotSerialPicker({
     <Popover
       open={open}
       onOpenChange={setOpen}
-      align={align}
+      align={fullWidth ? "start" : align}
       haspopup="listbox"
       className="w-full"
       panelClassName="nf-tracking-popover-panel"
       floating
+      matchTriggerWidth={fullWidth}
       trigger={(triggerProps) => (
         <button
           {...triggerProps}
@@ -538,6 +547,7 @@ export function LotSerialPicker({
         value={value}
         multiSelect={isMulti}
         targetQuantity={targetQuantity}
+        fullWidth={fullWidth}
         onPickSingle={(row) => onChange(String(row[valueKey]), row)}
         onPickMulti={(newVal, rows) => onChange(newVal, rows)}
         onClearValue={() => onChange("", undefined)}

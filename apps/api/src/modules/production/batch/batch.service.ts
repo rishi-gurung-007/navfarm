@@ -159,15 +159,14 @@ export class BatchService {
     // each is required for exactly one mode, enforced here rather than as DTO decorators
     // since which one applies depends on this same field.
     if (trackingMode === 'ANIMAL_WISE') {
-      if (!dto.animal_ids || dto.animal_ids.length === 0) {
-        throw new BadRequestException(
-          'animal_ids is required for ANIMAL_WISE batches.',
-        );
-      }
+      // A DRAFT animal-wise batch may be saved before any animal is chosen:
+      // animals are added to it by editing the draft. Activation is where at
+      // least one animal becomes mandatory (see activate()).
+      dto.animal_ids = dto.animal_ids ?? [];
     } else {
       if (!dto.input_lines || dto.input_lines.length === 0) {
         throw new BadRequestException(
-          'input_lines is required for BATCH_WISE batches.',
+          'Add at least one input line to a Batch Wise batch.',
         );
       }
       if (
@@ -176,14 +175,14 @@ export class BatchService {
         Number(dto.opening_quantity) <= 0
       ) {
         throw new BadRequestException(
-          'opening_quantity is required for BATCH_WISE batches and must be greater than zero.',
+          'Enter an opening quantity greater than zero for a Batch Wise batch.',
         );
       }
 
       for (const line of dto.input_lines) {
         if (!line.item_id) {
           throw new BadRequestException(
-            'item_id is required for all batch input lines.',
+            'Choose an item on every input line.',
           );
         }
         const qty = Number(line.quantity);
@@ -232,7 +231,7 @@ export class BatchService {
     // ANIMAL_WISE: validate the selected animals up front (before any row is
     // written) so a bad animal_id fails clean instead of leaving a half-built batch.
     let animalWiseAnimals: (typeof schema.animalRegister.$inferSelect)[] = [];
-    if (trackingMode === 'ANIMAL_WISE') {
+    if (trackingMode === 'ANIMAL_WISE' && dto.animal_ids!.length > 0) {
       animalWiseAnimals = await this.db
         .select()
         .from(schema.animalRegister)
@@ -246,7 +245,7 @@ export class BatchService {
       const missing = dto.animal_ids!.filter((id) => !foundIds.has(id));
       if (missing.length) {
         throw new BadRequestException(
-          `Animal(s) not found: ${missing.join(', ')}.`,
+          `Some of the selected animals could not be found. Reload the list and choose again.`,
         );
       }
       const alreadyAssigned = animalWiseAnimals.filter(
@@ -254,13 +253,13 @@ export class BatchService {
       );
       if (alreadyAssigned.length) {
         throw new BadRequestException(
-          `Animal(s) already assigned to a batch: ${alreadyAssigned.map((a) => a.animal_code).join(', ')}.`,
+          `These animals already belong to a batch: ${alreadyAssigned.map((a) => a.animal_code).join(', ')}.`,
         );
       }
       const wrongLob = animalWiseAnimals.filter((a) => a.lob_id !== dto.lob_id);
       if (wrongLob.length) {
         throw new BadRequestException(
-          `Animal(s) do not belong to this Line of Business: ${wrongLob.map((a) => a.animal_code).join(', ')}.`,
+          `These animals do not belong to this Line of Business: ${wrongLob.map((a) => a.animal_code).join(', ')}.`,
         );
       }
     } else {
@@ -447,6 +446,8 @@ export class BatchService {
         // assigned one of these same animals elsewhere in the meantime. Only
         // one concurrent claim on any given animal may win; the other must see
         // a clean failure, not silently overwrite the winner's assignment.
+        if (dto.animal_ids!.length === 0) return no;
+
         const locked = await tx
           .select({
             animal_id: schema.animalRegister.animal_id,
@@ -786,11 +787,9 @@ export class BatchService {
     let openingQuantity: number;
 
     if (trackingMode === 'ANIMAL_WISE') {
-      if (!dto.animal_ids || dto.animal_ids.length === 0) {
-        throw new BadRequestException(
-          'animal_ids is required for ANIMAL_WISE batches.',
-        );
-      }
+      // Saving a draft with every animal removed is allowed; activation is what
+      // insists on at least one.
+      dto.animal_ids = dto.animal_ids ?? [];
       const currentAnimals = await this.db
         .select({ animal_id: schema.animalRegister.animal_id })
         .from(schema.animalRegister)
@@ -814,19 +813,19 @@ export class BatchService {
         const missing = toAdd.filter((a) => !foundIds.has(a));
         if (missing.length) {
           throw new BadRequestException(
-            `Animal(s) not found: ${missing.join(', ')}.`,
+            `Some of the selected animals could not be found. Reload the list and choose again.`,
           );
         }
         const alreadyAssigned = candidates.filter((a) => a.current_batch_id);
         if (alreadyAssigned.length) {
           throw new BadRequestException(
-            `Animal(s) already assigned to a batch: ${alreadyAssigned.map((a) => a.animal_code).join(', ')}.`,
+            `These animals already belong to a batch: ${alreadyAssigned.map((a) => a.animal_code).join(', ')}.`,
           );
         }
         const wrongLob = candidates.filter((a) => a.lob_id !== dto.lob_id);
         if (wrongLob.length) {
           throw new BadRequestException(
-            `Animal(s) do not belong to this Line of Business: ${wrongLob.map((a) => a.animal_code).join(', ')}.`,
+            `These animals do not belong to this Line of Business: ${wrongLob.map((a) => a.animal_code).join(', ')}.`,
           );
         }
         for (const animal of candidates) {
@@ -900,7 +899,7 @@ export class BatchService {
     } else {
       if (!dto.input_lines || dto.input_lines.length === 0) {
         throw new BadRequestException(
-          'input_lines is required for BATCH_WISE batches.',
+          'Add at least one input line to a Batch Wise batch.',
         );
       }
       if (
@@ -909,14 +908,14 @@ export class BatchService {
         Number(dto.opening_quantity) <= 0
       ) {
         throw new BadRequestException(
-          'opening_quantity is required for BATCH_WISE batches and must be greater than zero.',
+          'Enter an opening quantity greater than zero for a Batch Wise batch.',
         );
       }
 
       for (const line of dto.input_lines) {
         if (!line.item_id) {
           throw new BadRequestException(
-            'item_id is required for all batch input lines.',
+            'Choose an item on every input line.',
           );
         }
         const qty = Number(line.quantity);
@@ -1300,7 +1299,7 @@ export class BatchService {
         animal_id: schema.batchTransaction.animal_id,
         item_name: schema.itemMaster.item_name,
         item_code: schema.itemMaster.item_code,
-        animal_ear_tag: schema.animalRegister.ear_tag,
+        animal_rfid_tag: schema.animalRegister.rfid_tag,
         animal_code: schema.animalRegister.animal_code,
         // Who logged it — the mortality/treatment registers show this, and
         // without the join they had no recorder to display.
@@ -1816,7 +1815,17 @@ export class BatchService {
     }
 
     if (batch.tracking_mode === 'ANIMAL_WISE') {
-      // no-op: no acquisition to post
+      const [assigned] = await this.db
+        .select({ animal_id: schema.animalRegister.animal_id })
+        .from(schema.animalRegister)
+        .where(eq(schema.animalRegister.current_batch_id, id))
+        .limit(1);
+      if (!assigned) {
+        throw new BadRequestException(
+          'Add at least one animal to this batch before creating it. A draft can be saved without animals, but an Animal Wise batch cannot be activated empty.',
+        );
+      }
+      // otherwise no acquisition to post
     } else if (batch.costing_method === 'BIO_ASSET') {
       // Acquiring animals is a direct purchase creating an NCA — not a draw
       // against existing warehouse stock, so no FIFO/inventory_ledger here.
@@ -1875,7 +1884,7 @@ export class BatchService {
           documentNo: batch.batch_no,
           documentLineId: line.line_id,
           postingDate: batch.start_date,
-          transactionType: 'BATCH_INPUT',
+          transactionType: 'CONSUMPTION',
           quantity: Number(line.quantity),
           uom: line.uom,
           batchNo: batch.batch_no,
@@ -1986,12 +1995,12 @@ export class BatchService {
     // so rejecting it later would leave a half-recorded event behind.
     if (dto.mortality_detail && dto.transaction_type !== 'MORTALITY') {
       throw new BadRequestException(
-        'mortality_detail can only be recorded on a MORTALITY transaction.',
+        'Mortality details can only be recorded on a mortality entry.',
       );
     }
     if (dto.treatment_detail && dto.transaction_type !== 'CONSUMPTION') {
       throw new BadRequestException(
-        'treatment_detail belongs on the CONSUMPTION row that issues the medicine or vaccine.',
+        'Treatment details belong on the consumption entry that issues the medicine or vaccine.',
       );
     }
 
@@ -2097,14 +2106,14 @@ export class BatchService {
 
       if (!dto.item_id || !dto.quantity || !dto.uom) {
         throw new BadRequestException(
-          'CONSUMPTION transactions require item_id, quantity and uom.',
+          'A consumption entry needs an item, a quantity and a unit of measure.',
         );
       }
       const bioTransactionType = isBioAsset
         ? bio?.stage === 'PREMATURE'
           ? 'BIO_CONSUMPTION_PREMATURE'
           : 'BIO_CONSUMPTION_MATURE'
-        : 'BATCH_CONSUMPTION';
+        : 'CONSUMPTION';
       const ledgerEntry = await this.ledgerService.writeNegativeEntry({
         tenantId,
         companyId: batch.company_id,
@@ -2171,7 +2180,7 @@ export class BatchService {
     } else if (dto.transaction_type === 'OUTPUT') {
       if (!dto.item_id || !dto.quantity || !dto.uom) {
         throw new BadRequestException(
-          'OUTPUT transactions require item_id, quantity and uom.',
+          'An output entry needs an item, a quantity and a unit of measure.',
         );
       }
       if (isBioAsset && bio?.stage !== 'MATURE') {
@@ -2193,7 +2202,7 @@ export class BatchService {
         documentNo: batch.batch_no,
         documentLineId: transactionId,
         postingDate: dto.transaction_date,
-        transactionType: isBioAsset ? 'BIO_OUTPUT' : 'BATCH_OUTPUT',
+        transactionType: isBioAsset ? 'BIO_OUTPUT' : 'OUTPUT',
         quantity: dto.quantity,
         uom: dto.uom,
         rate: isByProductRemoval ? dto.nrv_rate : dto.rate,
@@ -4618,7 +4627,7 @@ export class BatchService {
     );
     if (Math.abs(totalSplitPct - 100) > 0.01) {
       throw new BadRequestException(
-        `Output line cost_split_pct must sum to 100 (got ${totalSplitPct}).`,
+        `The cost split percentages of the output lines must add up to 100 (they add up to ${totalSplitPct}).`,
       );
     }
 
@@ -4715,7 +4724,7 @@ export class BatchService {
         documentType: 'BATCH',
         documentNo: batch.batch_no,
         postingDate: actualEndDate,
-        transactionType: 'BATCH_OUTPUT',
+        transactionType: 'OUTPUT',
         quantity: line.quantity,
         uom: line.uom,
         rate: unitCost,
@@ -5026,7 +5035,7 @@ export class BatchService {
     }
     if (!productiveLifeMonths) {
       throw new BadRequestException(
-        "productive_life_months is required (either on the request, or via the batch's breed).",
+        "Enter the productive life in months, or set it on the batch's breed.",
       );
     }
 
@@ -5293,7 +5302,7 @@ export class BatchService {
         !dto.warehouse_id
       ) {
         throw new BadRequestException(
-          'HARVEST disposal requires output_item_id, output_uom, output_quantity and warehouse_id.',
+          'A harvest disposal needs an output item, a unit of measure, a quantity and a location.',
         );
       }
       const rate =
@@ -5319,7 +5328,7 @@ export class BatchService {
       );
     } else {
       if (dto.sale_proceeds === undefined || dto.sale_proceeds === null) {
-        throw new BadRequestException('SOLD disposal requires sale_proceeds.');
+        throw new BadRequestException('A sale disposal needs the sale proceeds.');
       }
       const gainLoss = dto.sale_proceeds - nbvDisposed;
       if (Math.abs(gainLoss) >= 0.005) {
@@ -5797,7 +5806,7 @@ export class BatchService {
     const batch = await this.findOne(batchId);
     if (tenantId && batch.tenant_id && batch.tenant_id !== tenantId) {
       throw new NotFoundException(
-        `Batch ${batchId} not found for current tenant`,
+        'Batch not found.',
       );
     }
     const startDate = new Date(batch.start_date);

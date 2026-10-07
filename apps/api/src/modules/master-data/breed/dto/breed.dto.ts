@@ -281,10 +281,11 @@ export class UpdateBreedDto {
   @IsOptional()
   lob_id?: string;
 
-  // No breed_code on update: the code belongs to the BREED number series
-  // (decided 2026-09-15). It follows a rename of breed_name, or is created
-  // through the series (with allow_manual for hand-typed codes); it cannot be
-  // typed over here. forbidNonWhitelisted would 400 a payload that sent it.
+  @ApiProperty({ required: false, example: 'LARGE_WHITE' })
+  @IsString()
+  @IsOptional()
+  breed_code?: string;
+
   @ApiProperty({ required: false, example: 'Cobb 500 Broiler' })
   @IsString()
   @IsOptional()
@@ -939,3 +940,20 @@ export class QueryBreedLifecycleStageDto extends MasterListQueryDto {
   @IsUUID()
   stageId?: string;
 }
+
+export class BulkCreateBreedDto {
+  @ApiProperty({ description: 'Array of breeds to register', type: [CreateBreedDto] })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CreateBreedDto)
+  items: CreateBreedDto[];
+}
+
+export class BulkCreateBreedLifecycleStageDto {
+  @ApiProperty({ description: 'Array of breed lifecycle stages to create', type: [CreateBreedLifecycleStageDto] })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CreateBreedLifecycleStageDto)
+  items: CreateBreedLifecycleStageDto[];
+}
+

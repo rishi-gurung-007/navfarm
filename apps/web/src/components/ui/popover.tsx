@@ -141,6 +141,8 @@ export interface PopoverProps {
    * `false`, which leaves every existing popover exactly as it was.
    */
   floating?: boolean;
+  /** When true, forces the panel's width to exactly match its trigger's width. */
+  matchTriggerWidth?: boolean;
 }
 
 export function Popover({
@@ -156,6 +158,7 @@ export function Popover({
   className,
   panelClassName,
   floating = false,
+  matchTriggerWidth = false,
 }: PopoverProps) {
   const panelId = `nf-popover-${useId()}`;
   const anchorRef = useRef<HTMLDivElement>(null);
@@ -305,9 +308,16 @@ export function Popover({
       (panel.style as any).insetInlineStart = "auto";
       (panel.style as any).insetInlineEnd = "auto";
 
-      // A full-width field's panel must be at least as wide as the field; the
-      // stylesheet floor wins where it is larger, so a menu stays a menu.
-      panel.style.minWidth = `${Math.min(maxPanelWidth, Math.max(a.width, baseMinWidth))}px`;
+      // When matchTriggerWidth is requested, lock the panel width to the trigger's width
+      if (matchTriggerWidth) {
+        panel.style.width = `${a.width}px`;
+        panel.style.minWidth = `${a.width}px`;
+        panel.style.maxWidth = `${Math.min(maxPanelWidth, a.width)}px`;
+      } else {
+        // A full-width field's panel must be at least as wide as the field; the
+        // stylesheet floor wins where it is larger, so a menu stays a menu.
+        panel.style.minWidth = `${Math.min(maxPanelWidth, Math.max(a.width, baseMinWidth))}px`;
+      }
 
       const p = panel.getBoundingClientRect();
 
@@ -322,7 +332,7 @@ export function Popover({
 
       const top =
         nextSide === "bottom" ? a.bottom + FLOATING_GAP : a.top - FLOATING_GAP - p.height;
-      const rawLeft = align === "start" ? a.left : a.right - p.width;
+      const rawLeft = (align === "start" || matchTriggerWidth) ? a.left : a.right - p.width;
       const maxLeft = Math.max(FLOATING_MARGIN, viewportWidth - p.width - FLOATING_MARGIN);
       const left = Math.min(Math.max(rawLeft, FLOATING_MARGIN), maxLeft);
 

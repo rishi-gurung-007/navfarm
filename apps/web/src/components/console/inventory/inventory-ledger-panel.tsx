@@ -7,9 +7,13 @@ import {
   Inbox, 
   Eye, 
   RotateCcw,
-  Search
+  Search,
+  Download,
+  FileSpreadsheet
 } from "lucide-react";
 import { api } from "@/services/api-client";
+import { apiDownload } from "@/lib/api-client";
+import { showToast } from "@/components/ui/toast";
 import { InlineAlert } from "@/components/ui/alert";
 import { Pagination } from "@/components/ui/pagination";
 import { getActiveCompanyId } from "@/hooks/useAuth";
@@ -19,7 +23,7 @@ import { StatusBadge } from "@/components/ui/status-badge";
 import { Badge } from "@/components/ui/badge";
 import { Dialog } from "@/components/ui/dialog";
 import { useCompanyCurrency } from "@/hooks/useCompanyCurrency";
-import InventoryLedgerDetail, { formatBcEntryType } from "./inventory-ledger-detail";
+import InventoryLedgerDetail, { formatBcEntryType, formatBcDocumentType } from "./inventory-ledger-detail";
 
 const PAGE_SIZE = 25;
 
@@ -119,6 +123,45 @@ export default function InventoryLedgerPanel() {
     return wh.location_code || wh.warehouse_code || wh.warehouse_name;
   };
 
+  // The export is the whole filtered ledger from the server, not the 250 rows
+  // the screen loads, so a file always matches what the filters describe.
+  const [exporting, setExporting] = useState<"" | "xlsx" | "csv">("");
+  const exportLedger = async (format: "xlsx" | "csv") => {
+    setExporting(format);
+    try {
+      const params = new URLSearchParams();
+      if (companyId) params.set("companyId", companyId);
+      if (itemId) params.set("itemId", itemId);
+      if (warehouseId) params.set("warehouseId", warehouseId);
+      if (entryType) params.set("entryType", entryType);
+      if (transactionType) params.set("transactionType", transactionType);
+      if (documentNo) params.set("documentNo", documentNo);
+      if (sortBy) params.set("sortBy", sortBy);
+      if (dateFrom) params.set("dateFrom", dateFrom);
+      if (dateTo) params.set("dateTo", dateTo);
+      params.set("format", format);
+      const file = await apiDownload(`/inventory-ledger/export?${params.toString()}`, `inventory-ledger-entries.${format}`);
+      const url = URL.createObjectURL(file.blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = file.filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      const count = Number(file.headers.get("x-export-row-count") ?? 0);
+      if (file.headers.get("x-export-truncated") === "true") {
+        showToast.warn(`Exported the first ${count.toLocaleString()} entries. Narrow the filters to export the rest.`);
+      } else {
+        showToast.success(`Exported ${count.toLocaleString()} ${count === 1 ? "entry" : "entries"} to ${format === "xlsx" ? "Excel" : "CSV"}.`);
+      }
+    } catch (err: any) {
+      showToast.error(err?.message || "The export could not be created. Please try again.");
+    } finally {
+      setExporting("");
+    }
+  };
+
   const hasActiveFilters = Boolean(
     itemId || warehouseId || entryType || transactionType || documentNo || dateFrom || dateTo
   );
@@ -147,6 +190,26 @@ export default function InventoryLedgerPanel() {
           <Badge variant="neutral" className="text-xs font-mono">
             {rows.length} {rows.length === 1 ? "entry" : "entries"}
           </Badge>
+          <button
+            type="button"
+            onClick={() => exportLedger("xlsx")}
+            disabled={!!exporting}
+            className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition hover:bg-[var(--surface-raised)] disabled:cursor-not-allowed disabled:opacity-60"
+            style={{ ...S.surface, ...S.primary }}
+            title="Download every entry matching the filters as an Excel file"
+          >
+            {exporting === "xlsx" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileSpreadsheet className="h-3.5 w-3.5" />} Export Excel
+          </button>
+          <button
+            type="button"
+            onClick={() => exportLedger("csv")}
+            disabled={!!exporting}
+            className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition hover:bg-[var(--surface-raised)] disabled:cursor-not-allowed disabled:opacity-60"
+            style={{ ...S.surface, ...S.primary }}
+            title="Download every entry matching the filters as a CSV file"
+          >
+            {exporting === "csv" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />} Export CSV
+          </button>
           {hasActiveFilters && (
             <button
               type="button"
@@ -205,19 +268,22 @@ export default function InventoryLedgerPanel() {
           ))}
         </select>
 
-        {/* Direction / Movement Filter */}
+        {/* Entry Type Filter (Transaction Ledger Structure Row 11) */}
         <select
           value={entryType}
           onChange={(e) => setEntryType(e.target.value)}
           className={`${inputCls} nf-select`}
           style={S.input}
         >
-          <option value="">All Movements</option>
+          <option value="">All Entry Types</option>
           <option value="POSITIVE">Positive (+)</option>
           <option value="NEGATIVE">Negative (-)</option>
+          <option value="TRANSFER">Transfer</option>
+          <option value="OVERHEAD">Overhead</option>
+          <option value="DESCRIPTIVE">Descriptive</option>
         </select>
 
-        {/* Entry Type Filter (Business Central standard Entry Types) */}
+        {/* Transaction Type Filter (Transaction Ledger Structure Row 12) */}
         <select 
           value={transactionType} 
           onChange={(e) => setTransactionType(e.target.value)} 
@@ -228,11 +294,13 @@ export default function InventoryLedgerPanel() {
           <option value="PURCHASE">Purchase</option>
           <option value="CONSUMPTION">Consumption</option>
           <option value="OUTPUT">Output</option>
-          <option value="TRANSFER_SHIPMENT">Transfer (Shipment)</option>
-          <option value="TRANSFER_RECEIPT">Transfer (Receipt)</option>
-          <option value="SALES">Sale</option>
-          <option value="VARIANCE_POSITIVE">Positive Adjmt.</option>
-          <option value="VARIANCE_NEGATIVE">Negative Adjmt.</option>
+          <option value="TRANSFER_SHIPMENT">Transfer_Shipment</option>
+          <option value="TRANSFER_RECEIPT">Transfer_Receipt</option>
+          <option value="SALES">Sales</option>
+          <option value="VARIANCE_POSITIVE">Variance_Positive</option>
+          <option value="VARIANCE_NEGATIVE">Variance_Negative</option>
+          <option value="OVERHEAD">Overhead</option>
+          <option value="DESCRIPTIVE">Descriptive</option>
           <option value="REVERSAL">Reversal</option>
         </select>
 
@@ -260,7 +328,7 @@ export default function InventoryLedgerPanel() {
 
       {error && <InlineAlert>{error}</InlineAlert>}
 
-      {/* Main Item Ledger Entries Table */}
+      {/* Main Inventory Ledger Entries Table */}
       <div className="overflow-hidden rounded-[var(--radius-md)] border" style={S.surface}>
         <div className="overflow-x-auto">
           <table className="w-full border-collapse text-left text-sm min-w-[1250px]">
@@ -270,13 +338,13 @@ export default function InventoryLedgerPanel() {
                 <TableHead className="whitespace-nowrap w-36 min-w-[130px]">{t("ilpDocument")}</TableHead>
                 <TableHead className="whitespace-nowrap min-w-[210px]">{t("ilpItem")}</TableHead>
                 <TableHead className="whitespace-nowrap min-w-[150px]">{t("ilpLocation")}</TableHead>
-                <TableHead className="whitespace-nowrap w-32">{t("ilpType")}</TableHead>
-                <TableHead className="whitespace-nowrap w-28">Movement</TableHead>
+                <TableHead className="whitespace-nowrap min-w-[135px]">Transaction Type</TableHead>
+                <TableHead className="whitespace-nowrap min-w-[110px]">Entry Type</TableHead>
                 <TableHead className="whitespace-nowrap text-right w-28">{t("ilpQty")}</TableHead>
                 <TableHead className="whitespace-nowrap text-right w-28">{t("ilpRemaining")}</TableHead>
                 <TableHead className="whitespace-nowrap text-right w-24">{t("ilpRate")}</TableHead>
                 <TableHead className="whitespace-nowrap text-right w-28">{t("ilpAmount")}</TableHead>
-                <TableHead className="whitespace-nowrap w-32">Item Tracking</TableHead>
+                <TableHead className="whitespace-nowrap text-center min-w-[100px]">Item Tracking</TableHead>
                 <TableHead className="whitespace-nowrap w-28">{t("ilpBatchNo")}</TableHead>
                 <TableHead className="whitespace-nowrap text-center w-16">Action</TableHead>
               </tr>
@@ -293,7 +361,7 @@ export default function InventoryLedgerPanel() {
                 <tr>
                   <TableCell colSpan={13} className="py-12 text-center" style={S.sub}>
                     <Inbox className="mx-auto mb-2 h-6 w-6" style={S.muted} /> 
-                    {hasActiveFilters ? "No item ledger entries match the selected filters." : t("ilpNoLedgerEntries")}
+                    {hasActiveFilters ? "No inventory ledger entries match the selected filters." : t("ilpNoLedgerEntries")}
                   </TableCell>
                 </tr>
               ) : (
@@ -323,11 +391,10 @@ export default function InventoryLedgerPanel() {
                           <span className="font-mono text-xs font-semibold" style={S.primary}>
                             {row.document_no}
                           </span>
-                          {row.external_reference_no && (
-                            <span className="font-mono text-[10px]" style={S.muted}>
-                              Ext: {row.external_reference_no}
-                            </span>
-                          )}
+                          <span className="text-[10px]" style={S.muted}>
+                            {formatBcDocumentType(row.document_type)}
+                            {row.external_reference_no ? ` • Ext: ${row.external_reference_no}` : ""}
+                          </span>
                         </div>
                       </TableCell>
 
@@ -357,20 +424,40 @@ export default function InventoryLedgerPanel() {
                         </Badge>
                       </TableCell>
 
-                      {/* Movement (Positive / Negative) */}
+                      {/* Movement (Positive / Negative / Transfer / Overhead / Descriptive) */}
                       <TableCell className="whitespace-nowrap">
                         <StatusBadge
                           status={row.entry_type}
-                          label={isPos ? "Positive (+)" : "Negative (-)"}
+                          label={
+                            row.entry_type === "POSITIVE"
+                              ? "Positive (+)"
+                              : row.entry_type === "NEGATIVE"
+                              ? "Negative (-)"
+                              : row.entry_type === "TRANSFER"
+                              ? "Transfer"
+                              : row.entry_type === "OVERHEAD"
+                              ? "Overhead"
+                              : row.entry_type === "DESCRIPTIVE"
+                              ? "Descriptive"
+                              : row.entry_type
+                          }
                         />
                       </TableCell>
 
                       {/* Quantity with UOM */}
                       <TableCell 
                         className="whitespace-nowrap text-right font-mono font-semibold"
-                        style={{ color: isPos ? "var(--success)" : "var(--danger)" }}
+                        style={{
+                          color: (isPos || (row.entry_type === "TRANSFER" && qty > 0))
+                            ? "var(--success)"
+                            : qty < 0
+                            ? "var(--danger)"
+                            : "var(--text-primary)",
+                        }}
                       >
-                        {isPos ? `+${qty.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}` : qty.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
+                        {(isPos || (row.entry_type === "TRANSFER" && qty > 0))
+                          ? `+${qty.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`
+                          : qty.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
                         <span className="ml-1 text-[10px] font-normal text-[var(--text-muted)]">{row.uom}</span>
                       </TableCell>
 
@@ -398,18 +485,22 @@ export default function InventoryLedgerPanel() {
                         {formatMoney(amt)}
                       </TableCell>
 
-                      {/* Item Tracking (Lot No. / Serial No.) */}
-                      <TableCell className="whitespace-nowrap text-xs">
-                        {row.lot_no ? (
-                          <Badge variant="accent" className="font-mono text-[10px]">
-                            Lot: {row.lot_no}
-                          </Badge>
-                        ) : row.serial_no ? (
-                          <Badge variant="accent" className="font-mono text-[10px]">
-                            SN: {row.serial_no}
+                      {/* Item Tracking (Yes / No) */}
+                      <TableCell className="whitespace-nowrap text-center text-xs">
+                        {row.lot_no || row.serial_no ? (
+                          <Badge
+                            variant="success"
+                            className="text-[10px] font-semibold cursor-default"
+                            title={
+                              row.serial_no
+                                ? `Serial No(s): ${row.serial_no}`
+                                : `Lot: ${row.lot_no}${row.expiry_date ? ` (Exp: ${String(row.expiry_date).slice(0, 10)})` : ""}`
+                            }
+                          >
+                            Yes
                           </Badge>
                         ) : (
-                          <span style={S.muted}>—</span>
+                          <span style={S.muted}>No</span>
                         )}
                       </TableCell>
 
@@ -428,7 +519,7 @@ export default function InventoryLedgerPanel() {
                           }}
                           className="inline-flex items-center justify-center rounded p-1 hover:bg-[var(--surface-raised)] transition"
                           style={S.sub}
-                          title="View Item Ledger Entry"
+                          title="View Inventory Ledger Entry"
                         >
                           <Eye className="h-4 w-4" style={S.accent} />
                         </button>
@@ -458,11 +549,11 @@ export default function InventoryLedgerPanel() {
         )}
       </div>
 
-      {/* Item Ledger Entry Detail Dialog Modal */}
+      {/* Inventory Ledger Entry Detail Dialog Modal */}
       <Dialog
         open={Boolean(viewingEntry)}
         onClose={() => setViewingEntry(null)}
-        title={viewingEntry ? `Item Ledger Entry — ${viewingEntry.document_no}` : ""}
+        title={viewingEntry ? `Inventory Ledger Entry — ${viewingEntry.document_no}` : ""}
         maxWidth="xl"
       >
         {viewingEntry && (

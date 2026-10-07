@@ -18,7 +18,7 @@ export class QueryInventoryLedgerDto {
   @IsUUID()
   locationId?: string;
 
-  @ApiProperty({ description: 'Filter by warehouse UUID', required: false })
+  @ApiProperty({ description: 'Filter by location UUID', required: false })
   @IsOptional()
   @IsUUID()
   warehouseId?: string;
@@ -73,12 +73,20 @@ export class QueryInventoryLedgerDto {
   offset?: number;
 }
 
+/** The list filters plus the file format. Paging is ignored: an export is the whole result. */
+export class ExportInventoryLedgerDto extends QueryInventoryLedgerDto {
+  @ApiProperty({ description: 'File format: xlsx (default) or csv', required: false, enum: ['xlsx', 'csv'] })
+  @IsOptional()
+  @IsIn(['xlsx', 'csv'])
+  format?: 'xlsx' | 'csv';
+}
+
 export class QueryStockBalanceDto {
   @ApiProperty({ description: 'Filter by company UUID (required)' })
   @IsUUID()
   companyId: string;
 
-  @ApiProperty({ description: 'Filter by warehouse UUID', required: false })
+  @ApiProperty({ description: 'Filter by location UUID', required: false })
   @IsOptional()
   @IsUUID()
   warehouseId?: string;
@@ -115,7 +123,7 @@ export class QueryAvailableLotsDto {
   @IsUUID()
   item_id?: string;
 
-  @ApiProperty({ description: 'Filter by warehouse UUID', required: false })
+  @ApiProperty({ description: 'Filter by location UUID', required: false })
   @IsOptional()
   @IsUUID()
   warehouseId?: string;
@@ -144,7 +152,7 @@ export class QueryAvailableSerialsDto {
   @IsUUID()
   item_id?: string;
 
-  @ApiProperty({ description: 'Filter by warehouse UUID', required: false })
+  @ApiProperty({ description: 'Filter by location UUID', required: false })
   @IsOptional()
   @IsUUID()
   warehouseId?: string;

@@ -21,7 +21,7 @@ export const INVENTORY_MASTER_TYPES: MasterMeta[] = [
   { key: 'ITEM', label: 'Item', description: 'Raw materials, feeds, medicines, and finished goods', category: 'Inventory' },
   { key: 'SUPPLIER', label: 'Supplier', description: 'Vendors and feed/medicine suppliers', category: 'Procurement' },
   { key: 'CUSTOMER', label: 'Customer', description: 'Buyers, traders, and slaughterhouses', category: 'Sales' },
-  { key: 'LOCATION', label: 'Location', description: 'Farms, sheds, barns, warehouses, and storage silos', category: 'Infrastructure' },
+  { key: 'LOCATION', label: 'Location', description: 'Farms, sheds, barns, locations, and storage silos', category: 'Infrastructure' },
   { key: 'LOCATION_TYPE', label: 'Location Type', description: 'Classification of physical structures', category: 'Infrastructure' },
   { key: 'ANIMAL', label: 'Animal', description: 'Individual animals and breeding stock registry', category: 'Livestock' },
   { key: 'SPECIES', label: 'Species', description: 'Animal species classification', category: 'Livestock' },

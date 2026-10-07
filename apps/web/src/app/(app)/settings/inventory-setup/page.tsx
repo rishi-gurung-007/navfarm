@@ -750,7 +750,7 @@ export default function InventorySetupPage() {
                   Location Mandatory
                 </div>
                 <div className="text-[11px] text-[var(--text-secondary)]">
-                  Enforce location entry on all goods receipts, issues, and adjustments.
+                  Enforce location entry on all GRNs, issues, and adjustments.
                 </div>
               </div>
               <input

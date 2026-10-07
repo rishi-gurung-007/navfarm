@@ -159,7 +159,7 @@ export class MilkService {
         batch_no: schema.batchHeader.batch_no,
         animal_id: schema.milkProductionLog.animal_id,
         animal_code: schema.animalRegister.animal_code,
-        ear_tag: schema.animalRegister.ear_tag,
+        rfid_tag: schema.animalRegister.rfid_tag,
         log_date: schema.milkProductionLog.log_date,
         session: schema.milkProductionLog.session,
         quantity_litres: schema.milkProductionLog.quantity_litres,

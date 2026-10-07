@@ -153,7 +153,7 @@ describe('GoodsReceiptService', () => {
           siloId: 'wh-1',
           companyId: 'comp-1',
           itemIds: ['item-1'],
-          documentLabel: 'Goods Receipt',
+          documentLabel: 'GRN',
         }),
       );
       expect(result.status).toBe('POSTED');
@@ -165,7 +165,7 @@ describe('GoodsReceiptService', () => {
       mockDbSelect.mockReturnValueOnce(activeWarehouse());
       mockDbSelect.mockReturnValueOnce(siloWarehouse());
       mockAssertCanReceive.mockRejectedValue(new BadRequestException(
-        "Cannot post this Goods Receipt — silo 'Feed Silo 01' already holds 'FEED-GROWER'. A silo holds one feed item at a time; empty it before moving a different item in.",
+        "Cannot post this GRN — silo 'Feed Silo 01' already holds 'FEED-GROWER'. A silo holds one feed item at a time; empty it before moving a different item in.",
       ));
 
       await expect(service.post('gr-3', 'tenant-123', { userId: 'user-1' })).rejects.toThrow(/already holds 'FEED-GROWER'/);
@@ -212,7 +212,7 @@ describe('GoodsReceiptService', () => {
       service = module.get<GoodsReceiptService>(GoodsReceiptService);
     };
 
-    it('re-checks the receipt warehouse once, after the transaction has committed', async () => {
+    it('re-checks the receipt location once, after the transaction has committed', async () => {
       const cls = transactionCls(mockDb);
       let committed = false;
       mockDbTransaction.mockImplementationOnce(async (work: (tx: any) => Promise<any>) => {
@@ -310,7 +310,7 @@ describe('GoodsReceiptService', () => {
       service = module.get<GoodsReceiptService>(GoodsReceiptService);
     });
 
-    it('lists only receipts into warehouses on the active farm', async () => {
+    it('lists only receipts into locations on the active farm', async () => {
       useFarmScope(cls, grasmere);
       await service.findAll({} as any, 'tenant-1');
       expect(renderedWhere()).toContain('location_master lf');
@@ -329,11 +329,11 @@ describe('GoodsReceiptService', () => {
       expect(renderedWhere()).toContain('`goods_receipt`.`company_id` = ?');
     });
 
-    it('refuses a receipt into a warehouse on another farm', async () => {
+    it('refuses a receipt into a location on another farm', async () => {
       useFarmScope(cls, grasmere);
       rows.set(schema.locationMaster, [{ location_id: 'store-k', parent: 'farm-k', farm_id: 'farm-k', company_id: 'co-1', lob_id: 'lob-pig' }]);
       await expect(service.create({ ...validReceiptDto, warehouse_id: 'store-k' } as any, 'tenant-1'))
-        .rejects.toThrow('Warehouse is not on your active farm.');
+        .rejects.toThrow('Location is not on your active farm.');
     });
 
     // Item 2: an inactive/soft-deleted warehouse must not accept new stock.
@@ -341,30 +341,30 @@ describe('GoodsReceiptService', () => {
     // farm/company/LOB, so these rows are on-farm (pass that check) but
     // is_active: false — before the fix, create/update/post never looked at
     // is_active at all and would have proceeded.
-    it('refuses to create a receipt into an inactive warehouse', async () => {
+    it('refuses to create a receipt into an inactive location', async () => {
       useFarmScope(cls, grasmere);
       rows.set(schema.locationMaster, [
         { location_id: 'wh-1', parent: 'farm-g', farm_id: 'farm-g', company_id: 'co-1', lob_id: 'lob-pig', is_active: false, deleted_at: null },
       ]);
       await expect(service.create({ ...validReceiptDto, warehouse_id: 'wh-1' } as any, 'tenant-1'))
-        .rejects.toThrow('The selected warehouse is inactive.');
+        .rejects.toThrow('The selected location is inactive.');
     });
 
-    it('refuses to move a draft receipt into an inactive warehouse on update', async () => {
+    it('refuses to move a draft receipt into an inactive location on update', async () => {
       useFarmScope(cls, grasmere);
       rows.set(schema.goodsReceipt, [{ receipt_id: 'gr-1', status: 'DRAFT', company_id: 'co-1', warehouse_id: 'wh-1' }]);
       rows.set(schema.locationMaster, [
         { location_id: 'wh-2', parent: 'farm-g', farm_id: 'farm-g', company_id: 'co-1', lob_id: 'lob-pig', is_active: false, deleted_at: null },
       ]);
       await expect(service.update('gr-1', { warehouse_id: 'wh-2' } as any, 'tenant-1'))
-        .rejects.toThrow('The selected warehouse is inactive.');
+        .rejects.toThrow('The selected location is inactive.');
     });
 
-    it('refuses to post a draft receipt whose warehouse was deactivated after the draft was created', async () => {
+    it('refuses to post a draft receipt whose location was deactivated after the draft was created', async () => {
       useFarmScope(cls, grasmere);
       rows.set(schema.goodsReceipt, [{ receipt_id: 'gr-1', status: 'DRAFT', company_id: 'co-1', warehouse_id: 'wh-1' }]);
       rows.set(schema.locationMaster, [{ location_id: 'wh-1', is_active: false, deleted_at: null }]);
-      await expect(service.post('gr-1', 'tenant-1')).rejects.toThrow('The selected warehouse is inactive.');
+      await expect(service.post('gr-1', 'tenant-1')).rejects.toThrow('The selected location is inactive.');
     });
   });
 
@@ -400,4 +400,55 @@ describe('GoodsReceiptService', () => {
       expect(errors).toHaveLength(0);
     });
   });
+
+  describe('serial number consolidation on receipt lines', () => {
+    it('creates a single line with comma-separated serial numbers when receiving serial-tracked item', async () => {
+      const insertedRows: any[] = [];
+      mockDbInsert.mockReturnValue({
+        values: jest.fn().mockImplementation((val) => {
+          if (Array.isArray(val)) {
+            insertedRows.push(...val);
+          } else {
+            insertedRows.push(val);
+          }
+          return Promise.resolve([{ insertId: 1 }]);
+        }),
+      });
+
+      // Item lookup returning serial-tracked item
+      mockDbSelect.mockReturnValueOnce(found({
+        item_id: 'item-ser-1',
+        is_serial_tracked: true,
+        is_lot_tracked: false,
+      }));
+      // Check existing serials returning none
+      mockDbSelect.mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockReturnValue({
+            limit: jest.fn().mockResolvedValue([]),
+          }),
+        }),
+      });
+
+      await (service as any).insertLines(
+        'receipt-1',
+        [
+          {
+            item_id: 'item-ser-1',
+            quantity: 3,
+            uom: 'PCS',
+            serial_no: 'SN001, SN002, SN003',
+          },
+        ],
+        'tenant-1',
+        'comp-1',
+      );
+
+      // Verify that exactly 1 line was inserted with quantity 3 and comma-separated serials
+      expect(insertedRows).toHaveLength(1);
+      expect(insertedRows[0].quantity).toBe('3');
+      expect(insertedRows[0].serial_no).toBe('SN001, SN002, SN003');
+    });
+  });
 });
+

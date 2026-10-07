@@ -151,7 +151,7 @@ export class SchedulerHeaderService {
         // Corrupt master data is the caller's to fix in Breed Master, so it is
         // answered as a 400 naming the stage and the unit — not a bare 500.
         throw new BadRequestException(
-          `Stage '${stage.stage_name}' of this batch's breed has a feed row with calc_unit '${row.calc_unit}' — ${(e as Error).message}. Fix the row in Breed Master before generating the scheduler.`,
+          `Stage '${stage.stage_name}' of this batch's breed has a feed row with calculation unit '${row.calc_unit}' — ${(e as Error).message}. Fix the row in Breed Master before generating the scheduler.`,
         );
       }
       const { fromDay, toDay } = range;
@@ -869,18 +869,18 @@ export class SchedulerHeaderService {
   /** Enforces the "LINE TYPE REFERENCE" matrix: which fields a line_type requires. */
   private assertLineTypeFields(line_type: string, dto: CreateSchedulerLineDto | UpdateSchedulerLineDto, effective: Record<string, unknown>) {
     const spec = LINE_TYPE_FIELDS[line_type];
-    if (!spec) throw new BadRequestException(`Unknown line_type '${line_type}'.`);
+    if (!spec) throw new BadRequestException(`Unknown line type '${line_type}'.`);
     const missing = spec.required.filter((key) => effective[key] === undefined || effective[key] === null || effective[key] === '');
     if (missing.length) {
       throw new ConflictException(`${line_type} lines require: ${missing.join(', ')}.`);
     }
     if (dto.occurrence === 'WEEKLY') {
       if (effective.day_of_week == null) {
-        throw new ConflictException('Occurrence WEEKLY requires day_of_week.');
+        throw new ConflictException('A weekly occurrence needs a day of the week.');
       }
       const dow = Number(effective.day_of_week);
       if (!Number.isInteger(dow) || dow < 1 || dow > 7) {
-        throw new ConflictException('Occurrence WEEKLY day_of_week must be an integer between 1 (Monday) and 7 (Sunday).');
+        throw new ConflictException('For a weekly occurrence the day of the week must be between 1 (Monday) and 7 (Sunday).');
       }
     }
     if (dto.occurrence === 'MONTHLY') {
@@ -897,7 +897,7 @@ export class SchedulerHeaderService {
     const startDay = effective.start_day as number | undefined;
     const endDay = effective.end_day as number | null | undefined;
     if (startDay != null && endDay != null && endDay < startDay) {
-      throw new ConflictException(`end_day (${endDay}) cannot be earlier than start_day (${startDay}).`);
+      throw new ConflictException(`End Day (${endDay}) cannot be earlier than Start Day (${startDay}).`);
     }
   }
 

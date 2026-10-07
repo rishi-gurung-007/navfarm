@@ -96,7 +96,7 @@ export class CreateSupplierDto {
   @IsIn(VENDOR_TYPES)
   vendor_type?: string;
 
-  @ApiProperty({ description: 'Health certificate URL — required for ANIMAL_SUPPLIER, checked at Goods Receipt posting', required: false, maxLength: 50 })
+  @ApiProperty({ description: 'Health certificate URL — required for ANIMAL_SUPPLIER, checked at GRN posting', required: false, maxLength: 50 })
   @IsString()
   @IsOptional()
   @MaxLength(DESCRIPTIVE_MAX)

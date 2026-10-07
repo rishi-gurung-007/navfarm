@@ -389,7 +389,7 @@ async function seedOperationalDataAndBatches() {
         `INSERT INTO animal_register (
           animal_id, tenant_id, company_id, nob_id, lob_id, operational_area_id,
           animal_code, animal_type, breed_id, gender, dob, age_at_entry_weeks,
-          entry_type, entry_date, item_id, ear_tag, rfid_tag, acquisition_cost,
+          entry_type, entry_date, item_id, rfid_tag, acquisition_cost,
           total_opening_asset_value, current_bio_asset_value, book_value, total_amortised,
           parity_count, total_piglets_born_live, total_piglets_weaned,
           current_stage_id, current_location_id, no_of_teats, tsi, grading,
@@ -397,7 +397,7 @@ async function seedOperationalDataAndBatches() {
         ) VALUES (
           ?, ?, ?, ?, ?, ?,
           ?, ?, ?, ?, ?, ?,
-          'PURCHASED_LOCAL', '2026-01-10', ?, ?, ?, ?,
+          'PURCHASED_LOCAL', '2026-01-10', ?, ?, ?,
           ?, ?, ?, 0.0000,
           ?, ?, ?,
           ?, ?, ?, ?, ?,
@@ -406,7 +406,7 @@ async function seedOperationalDataAndBatches() {
         [
           animalId, tenantId, companyId, nobId, lobId, operationalAreaId,
           a.code, a.type, a.breedId, a.gender, a.dob, a.age,
-          a.itemId, a.tag, a.rfid, a.cost,
+          a.itemId, a.rfid, a.cost,
           a.cost, a.cost, a.cost,
           a.parity, a.live, a.wean,
           a.stage, a.pen, a.teats, a.tsi, a.grading,

@@ -428,9 +428,9 @@ export default function AnimalDetailsModal({
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2.5">
               <span className="font-mono text-xl font-bold tracking-tight text-[var(--accent)]">
-                {animal?.ear_tag || animal?.animal_code || 'Loading…'}
+                {animal?.rfid_tag || animal?.animal_code || 'Loading…'}
               </span>
-              {animal?.animal_code && animal.animal_code !== animal.ear_tag && (
+              {animal?.animal_code && animal.animal_code !== animal.rfid_tag && (
                 <span className="font-mono text-xs text-[var(--text-muted)]">
                   ({animal.animal_code})
                 </span>
@@ -590,16 +590,8 @@ export default function AnimalDetailsModal({
                       <span className="font-mono font-bold text-[var(--text-primary)]">{fmt(animal?.animal_code)}</span>
                     </div>
                     <div>
-                      <span className="text-[10px] uppercase text-[var(--text-muted)] block font-semibold">Ear Tag</span>
-                      <span className="font-mono font-bold text-[var(--accent)]">{fmt(animal?.ear_tag)}</span>
-                    </div>
-                    <div>
                       <span className="text-[10px] uppercase text-[var(--text-muted)] block font-semibold">RFID Tag</span>
                       <span className="font-mono text-[var(--text-primary)]">{fmt(animal?.rfid_tag)}</span>
-                    </div>
-                    <div>
-                      <span className="text-[10px] uppercase text-[var(--text-muted)] block font-semibold">Serial / Asset Tag</span>
-                      <span className="font-mono text-[var(--text-primary)]">{fmt(animal?.serial_number)}</span>
                     </div>
 
                     <div>
@@ -1283,14 +1275,6 @@ export default function AnimalDetailsModal({
                       {formatMoney(animal?.acquisition_cost)}
                     </span>
                     <span className="text-[10px] text-[var(--text-secondary)]">Base purchase / birth cost</span>
-                  </div>
-
-                  <div className="rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface-raised)] p-3">
-                    <span className="text-[10px] uppercase font-bold text-[var(--text-muted)] block">Landing Cost</span>
-                    <span className="text-base font-bold font-mono text-[var(--text-primary)] mt-0.5 block">
-                      {formatMoney(animal?.landing_cost)}
-                    </span>
-                    <span className="text-[10px] text-[var(--text-secondary)]">Import & freight charges</span>
                   </div>
 
                   <div className="rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface-raised)] p-3">
