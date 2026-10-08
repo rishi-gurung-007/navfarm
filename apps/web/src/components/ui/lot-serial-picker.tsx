@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Search, X, Check, Sparkles, RotateCcw, ChevronDown, Layers, Hash } from "lucide-react";
 import { api } from "@/services/api-client";
 import { Popover, usePopoverSurface } from "@/components/ui/popover";
@@ -11,6 +11,11 @@ export interface LotOption {
   remaining_quantity: string;
   expiry_date: string | null;
   posting_date: string;
+  /** What a draw on this lot costs per unit (what is left of it, valued layer by layer). */
+  unit_cost?: number;
+  expired?: boolean;
+  /** The lot to use unless the user chooses otherwise: earliest expiry, then oldest receipt, never expired. */
+  suggested?: boolean;
 }
 
 export interface SerialOption {
@@ -19,6 +24,7 @@ export interface SerialOption {
   expiry_date?: string | null;
   posting_date: string;
   remaining_quantity?: number | string;
+  unit_cost?: number;
 }
 
 export interface LotSerialPickerProps {
@@ -36,6 +42,13 @@ export interface LotSerialPickerProps {
   excludedValues?: string[];
   multiSelect?: boolean;
   targetQuantity?: number;
+  fullWidth?: boolean;
+  /** Lots only: once the list loads and nothing is chosen, choose the suggested lot. The user can change it. */
+  autoSelectSuggested?: boolean;
+  /** Called with the loaded options, so a caller can preview what a selection will draw. */
+  onOptions?: (options: Array<LotOption | SerialOption>) => void;
+  /** Change it to reload the list — stock moves when entries post, so a list loaded earlier is out of date. */
+  refreshKey?: string | number;
 }
 
 function unwrap<T = any>(res: any): T {
@@ -58,6 +71,7 @@ function LotSerialPanel({
   onClearValue,
   loading,
   excludedValues = [],
+  fullWidth = false,
 }: {
   options: Array<LotOption | SerialOption>;
   valueKey: string;
@@ -70,6 +84,7 @@ function LotSerialPanel({
   onClearValue?: () => void;
   loading: boolean;
   excludedValues?: string[];
+  fullWidth?: boolean;
 }) {
   const { close } = usePopoverSurface();
   const [query, setQuery] = useState("");
@@ -139,13 +154,17 @@ function LotSerialPanel({
 
   const isLot = trackingType === "LOT";
   const gridTemplate = isLot
-    ? "20px minmax(110px, 1fr) 70px 75px"
-    : "20px minmax(110px, 1fr) 78px 72px";
+    ? "24px minmax(130px, 1fr) 100px 105px"
+    : "24px minmax(160px, 1fr) 125px 115px";
 
   const selectedCount = selectedSet.size;
 
   return (
-    <div className="flex max-h-[390px] w-[340px] sm:w-[370px] max-w-[calc(100vw-24px)] flex-col p-2 bg-[var(--surface-raised)] border border-[var(--border)] rounded-[var(--radius-md)] shadow-2xl backdrop-blur-md">
+    <div
+      className={`flex max-h-[420px] ${
+        fullWidth ? "w-full max-w-full" : "w-[340px] sm:w-[380px] max-w-[calc(100vw-24px)]"
+      } flex-col p-2 bg-[var(--surface-raised)] border border-[var(--border)] rounded-[var(--radius-md)] shadow-2xl backdrop-blur-md`}
+    >
       {/* Header bar */}
       <div className="flex items-center justify-between px-1.5 pb-2 border-b border-[var(--border-subtle)] shrink-0 gap-1.5">
         <div className="flex items-center gap-1.5 min-w-0">
@@ -168,7 +187,7 @@ function LotSerialPanel({
 
         {multiSelect && (
           <div className="flex items-center gap-1 shrink-0">
-            {targetQuantity && targetQuantity > 0 && availableUnexcluded.length > 0 && (
+            {!isLot && targetQuantity && targetQuantity > 0 && availableUnexcluded.length > 0 && (
               <button
                 type="button"
                 onClick={handleAutoFifo}
@@ -179,14 +198,14 @@ function LotSerialPanel({
                 <span>Auto ({targetQuantity})</span>
               </button>
             )}
-            <button
+            {!isLot && <button
               type="button"
               onClick={handleToggleAll}
               disabled={availableUnexcluded.length === 0}
               className="px-1.5 py-0.5 text-[10px] font-medium rounded border border-[var(--border)] bg-[var(--surface)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-secondary)] transition-colors disabled:opacity-50"
             >
               {selectedCount === availableUnexcluded.length && availableUnexcluded.length > 0 ? "Deselect" : "All"}
-            </button>
+            </button>}
             {selectedCount > 0 && (
               <button
                 type="button"
@@ -308,12 +327,25 @@ function LotSerialPanel({
                 </div>
 
                 {/* Primary Identifer (Lot or Serial) */}
-                <div className="truncate font-mono font-medium flex items-center gap-1.5" style={{ color: "var(--text-primary)" }}>
-                  <span className="truncate">{isLot ? row.lot_no : row.serial_no}</span>
-                  {isExcluded && (
-                    <span className="text-[9px] text-[var(--danger)] font-normal shrink-0">
-                      (Assigned)
-                    </span>
+                <div className="min-w-0">
+                  <div className="truncate font-mono font-medium flex items-center gap-1.5" style={{ color: "var(--text-primary)" }}>
+                    <span className="truncate">{isLot ? row.lot_no : row.serial_no}</span>
+                    {isExcluded && (
+                      <span className="text-[9px] text-[var(--danger)] font-normal shrink-0">
+                        (Assigned)
+                      </span>
+                    )}
+                  </div>
+                  {(row.suggested || row.expired || row.unit_cost != null) && (
+                    <div className="mt-0.5 flex items-center gap-1.5 text-[10px] font-normal" style={{ color: "var(--text-muted)" }}>
+                      {row.suggested && (
+                        <span className="rounded px-1 font-semibold" style={{ background: "var(--accent-muted)", color: "var(--accent)" }}>Suggested</span>
+                      )}
+                      {row.expired && (
+                        <span className="rounded px-1 font-semibold" style={{ color: "var(--danger)" }}>Expired</span>
+                      )}
+                      {row.unit_cost != null && <span className="font-mono">cost {Number(row.unit_cost).toFixed(2)}</span>}
+                    </div>
                   )}
                 </div>
 
@@ -352,7 +384,7 @@ function LotSerialPanel({
       {multiSelect ? (
         <div className="flex shrink-0 items-center justify-between border-t border-[var(--border-subtle)] px-2 pt-2 pb-0.5">
           <div className="text-xs text-[var(--text-secondary)]">
-            <strong className="text-[var(--text-primary)] font-mono">{selectedCount}</strong> {selectedCount === 1 ? "serial" : "serials"} selected
+            <strong className="text-[var(--text-primary)] font-mono">{selectedCount}</strong> {isLot ? (selectedCount === 1 ? "lot" : "lots") : selectedCount === 1 ? "serial" : "serials"} selected
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -399,10 +431,19 @@ export function LotSerialPicker({
   excludedValues = [],
   multiSelect,
   targetQuantity,
+  fullWidth,
+  autoSelectSuggested,
+  onOptions,
+  refreshKey,
 }: LotSerialPickerProps) {
   const [options, setOptions] = useState<Array<LotOption | SerialOption>>([]);
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
+  // Opening the list reloads it, so what the user picks from is what the location holds now.
+  const [openedCount, setOpenedCount] = useState(0);
+  useEffect(() => {
+    if (open) setOpenedCount((n) => n + 1);
+  }, [open]);
 
   const isMulti = multiSelect ?? (trackingType === "SERIAL");
 
@@ -432,6 +473,7 @@ export function LotSerialPicker({
         if (!active) return;
         const list = unwrap<any[]>(res) || [];
         setOptions(list);
+        onOptions?.(list);
       })
       .catch((err) => {
         console.error("Failed to load available lots/serials:", err);
@@ -444,9 +486,21 @@ export function LotSerialPicker({
     return () => {
       active = false;
     };
-  }, [itemId, warehouseId, trackingType]);
+  }, [itemId, warehouseId, trackingType, refreshKey, openedCount]);
 
   const valueKey = trackingType === "LOT" ? "lot_no" : "serial_no";
+
+  // Choose the suggested lot once the list is in, when the user has chosen nothing — so entering
+  // today's feed is one step, and picking a different lot is a deliberate one.
+  const autoPicked = useRef<string>("");
+  useEffect(() => {
+    if (!autoSelectSuggested || trackingType !== "LOT" || loading || disabled || value) return;
+    const suggested = (options as LotOption[]).find((o) => o.suggested);
+    const stamp = `${itemId}|${warehouseId ?? ""}`;
+    if (!suggested || autoPicked.current === stamp) return;
+    autoPicked.current = stamp;
+    onChange(String(suggested.lot_no), suggested);
+  }, [autoSelectSuggested, trackingType, loading, disabled, value, options, itemId, warehouseId]);
 
   const selectedList = useMemo(() => {
     if (!value) return [];
@@ -490,9 +544,10 @@ export function LotSerialPicker({
     );
   } else {
     const selected = options.find((o: any) => String(o[valueKey]) === String(value));
-    const expirySuffix = selected?.expiry_date
-      ? ` (Exp: ${String(selected.expiry_date).slice(0, 10)})`
-      : "";
+    const hasSuggestion = (options as LotOption[]).some((o) => o.suggested);
+    const expirySuffix =
+      (selected?.expiry_date ? ` (Exp: ${String(selected.expiry_date).slice(0, 10)})` : "") +
+      (selected && hasSuggestion && !(selected as LotOption).suggested ? " · not the suggested lot" : "");
     displayNode = (
       <div className="flex items-center justify-between w-full gap-1.5" title={`${value}${expirySuffix}`}>
         <span className="truncate text-[var(--input-text)]">
@@ -509,11 +564,12 @@ export function LotSerialPicker({
     <Popover
       open={open}
       onOpenChange={setOpen}
-      align={align}
+      align={fullWidth ? "start" : align}
       haspopup="listbox"
       className="w-full"
       panelClassName="nf-tracking-popover-panel"
       floating
+      matchTriggerWidth={fullWidth}
       trigger={(triggerProps) => (
         <button
           {...triggerProps}
@@ -538,6 +594,7 @@ export function LotSerialPicker({
         value={value}
         multiSelect={isMulti}
         targetQuantity={targetQuantity}
+        fullWidth={fullWidth}
         onPickSingle={(row) => onChange(String(row[valueKey]), row)}
         onPickMulti={(newVal, rows) => onChange(newVal, rows)}
         onClearValue={() => onChange("", undefined)}

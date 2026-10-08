@@ -25,8 +25,7 @@ describe('AnimalDetailsModal', () => {
   const mockAnimal = {
     animal_id: 'animal-1',
     animal_code: 'PIG-0100',
-    ear_tag: 'DEMO-POR100-SOW-01',
-    rfid_tag: 'RFID-1234',
+    rfid_tag: 'DEMO-POR100-SOW-01',
     animal_type: 'SOW',
     gender: 'F',
     breed_name: 'TN-70-Sow',

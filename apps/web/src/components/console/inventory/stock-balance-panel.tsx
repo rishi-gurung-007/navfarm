@@ -8,6 +8,9 @@ import { getActiveCompanyId } from "@/hooks/useAuth";
 import { useLanguage } from "@/hooks/useLanguage";
 import { TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { useCompanyCurrency } from "@/hooks/useCompanyCurrency";
+import { Dialog } from "@/components/ui/dialog";
+import ItemLedgerHistoryCard from "./item-ledger-history-card";
+import InventoryLedgerDetail from "./inventory-ledger-detail";
 
 type Row = Record<string, any>;
 
@@ -43,6 +46,8 @@ export default function StockBalancePanel() {
   const [itemId, setItemId] = useState("");
   const [warehouseId, setWarehouseId] = useState("");
   const [belowReorderOnly, setBelowReorderOnly] = useState(false);
+  const [selectedItem, setSelectedItem] = useState<Row | null>(null);
+  const [viewingLedgerEntry, setViewingLedgerEntry] = useState<Row | null>(null);
 
   const companyId = getActiveCompanyId();
 
@@ -68,16 +73,14 @@ export default function StockBalancePanel() {
 
   useEffect(() => {
     load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [itemId, warehouseId, belowReorderOnly]);
 
   useEffect(() => {
     if (!companyId) return;
     const params = new URLSearchParams({ companyId, limit: "500" });
-    api.get(`/item?${params.toString()}`).then((r) => setItems(unwrap<Row[]>(r) || [])).catch(() => {});
-    api.get(`/warehouse?companyId=${companyId}`).then((r) => setWarehouses(unwrap<Row[]>(r) || [])).catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    api.get(`/item?${params.toString()}`).then((r) => setItems(unwrap<Row[]>(r) || [])).catch(() => undefined);
+    api.get(`/warehouse?companyId=${companyId}`).then((r) => setWarehouses(unwrap<Row[]>(r) || [])).catch(() => undefined);
+  }, [companyId]);
 
   const totalValue = rows.reduce((sum, r) => sum + Number(r.on_hand_value || 0), 0);
   const belowReorderCount = rows.filter((r) => r.reorder_level != null && r.on_hand_qty <= r.reorder_level).length;
@@ -152,13 +155,35 @@ export default function StockBalancePanel() {
                 rows.map((row) => {
                   const belowReorder = row.reorder_level != null && row.on_hand_qty <= row.reorder_level;
                   return (
-                    <TableRow key={`${row.item_id}-${row.warehouse_id}`}>
-                      <TableCell className="whitespace-nowrap" style={S.primary}>{row.item_code} — {row.item_description}</TableCell>
-                      <TableCell className="whitespace-nowrap" style={S.sub}>{row.warehouse_code ? `${row.warehouse_code} — ${row.warehouse_name}` : "—"}</TableCell>
-                      <TableCell className="whitespace-nowrap text-right font-semibold" style={S.primary}>{fmt(row.on_hand_qty)}</TableCell>
-                      <TableCell className="whitespace-nowrap" style={S.sub}>{row.uom}</TableCell>
-                      <TableCell className="whitespace-nowrap text-right" style={S.primary}>{formatMoney(fmt(row.on_hand_value))}</TableCell>
-                      <TableCell className="whitespace-nowrap text-right" style={S.sub}>{row.reorder_level != null ? fmt(row.reorder_level) : "—"}</TableCell>
+                    <TableRow 
+                      key={`${row.item_id}-${row.warehouse_id}`}
+                      onClick={() => setSelectedItem(row)}
+                      className="cursor-pointer hover:bg-[var(--surface-raised)] transition"
+                      title="Click to view purchase and consumption ledger history"
+                    >
+                      <TableCell className="whitespace-nowrap font-medium" style={S.primary}>
+                        <div className="flex flex-col">
+                          <span className="font-mono text-xs font-bold text-[var(--accent)] hover:underline">
+                            {row.item_code}
+                          </span>
+                          <span className="truncate max-w-[280px] text-xs" style={S.sub} title={row.item_description}>
+                            {row.item_description}
+                          </span>
+                        </div>
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap font-mono text-xs" style={S.sub}>
+                        {row.warehouse_code ? `${row.warehouse_code} — ${row.warehouse_name}` : "—"}
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap text-right font-mono font-semibold" style={S.primary}>
+                        {fmt(row.on_hand_qty)}
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap font-mono text-xs" style={S.sub}>{row.uom}</TableCell>
+                      <TableCell className="whitespace-nowrap text-right font-mono text-xs font-semibold" style={S.primary}>
+                        {formatMoney(fmt(row.on_hand_value))}
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap text-right font-mono text-xs" style={S.sub}>
+                        {row.reorder_level != null ? fmt(row.reorder_level) : "—"}
+                      </TableCell>
                       <TableCell className="whitespace-nowrap">
                         {belowReorder ? (
                           <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold" style={{ backgroundColor: "var(--danger-muted, #fee2e2)", color: "var(--danger)" }}>
@@ -176,6 +201,43 @@ export default function StockBalancePanel() {
           </table>
         </div>
       </div>
+
+      {/* Item Stock & Purchase/Consumption Ledger History Card Dialog */}
+      <Dialog
+        open={Boolean(selectedItem)}
+        onClose={() => setSelectedItem(null)}
+        title={selectedItem ? `Item Stock & Ledger History — ${selectedItem.item_code}` : ""}
+        maxWidth="xl"
+      >
+        {selectedItem && (
+          <div className="py-1">
+            <ItemLedgerHistoryCard
+              itemId={selectedItem.item_id}
+              companyId={companyId}
+              onClose={() => setSelectedItem(null)}
+              onViewLedgerEntry={(entry) => setViewingLedgerEntry(entry)}
+            />
+          </div>
+        )}
+      </Dialog>
+
+      {/* Single Ledger Entry Detail Dialog */}
+      <Dialog
+        open={Boolean(viewingLedgerEntry)}
+        onClose={() => setViewingLedgerEntry(null)}
+        title={viewingLedgerEntry ? `Inventory Ledger Entry — ${viewingLedgerEntry.document_no}` : ""}
+        maxWidth="xl"
+      >
+        {viewingLedgerEntry && (
+          <div className="py-1">
+            <InventoryLedgerDetail
+              ledgerId={viewingLedgerEntry.ledger_id}
+              initialData={viewingLedgerEntry}
+              onClose={() => setViewingLedgerEntry(null)}
+            />
+          </div>
+        )}
+      </Dialog>
     </div>
   );
 }

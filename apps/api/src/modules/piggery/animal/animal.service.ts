@@ -129,11 +129,9 @@ export function resolveAgeAtEntryWeeks(
 }
 
 function assertGiltTeatCount(animalType: string | undefined, noOfTeats: number | undefined | null): void {
-  if (animalType !== 'GILT' || noOfTeats === undefined || noOfTeats === null) return;
-  if (noOfTeats < MIN_GILT_TEATS) {
-    throw new BadRequestException(
-      `Teat count ${noOfTeats} is below the minimum of ${MIN_GILT_TEATS} — this gilt cannot be selected regardless of TSI score.`,
-    );
+  if (noOfTeats === undefined || noOfTeats === null) return;
+  if (noOfTeats < 1 || noOfTeats > 99) {
+    throw new BadRequestException('Teat count must be a 2-digit number between 1 and 99.');
   }
 }
 
@@ -192,6 +190,29 @@ export class AnimalService {
       throw new Error('Tenant database connection context not established.');
     }
     return tenantDb;
+  }
+
+  /** RFID tags are compared and stored trimmed and upper-case so "ab12 " and "AB12" cannot both be registered. */
+  private normalizeRfid(value: string | null | undefined): string | null {
+    const tag = value?.trim().toUpperCase();
+    return tag ? tag : null;
+  }
+
+  /** Refuses an RFID already on another animal and names that animal, so the user knows which one to look at. */
+  private async assertRfidFree(rfid: string, tenantId: string, exceptAnimalId?: string) {
+    const [owner] = await this.db
+      .select({ animal_id: schema.animalRegister.animal_id, animal_code: schema.animalRegister.animal_code })
+      .from(schema.animalRegister)
+      .where(and(eq(schema.animalRegister.tenant_id, tenantId), eq(schema.animalRegister.rfid_tag, rfid)))
+      .limit(1);
+    if (owner && owner.animal_id !== exceptAnimalId) {
+      throw new ConflictException(`RFID tag '${rfid}' is already assigned to animal ${owner.animal_code}. Each animal needs its own RFID tag.`);
+    }
+  }
+
+  /** What a parent is called on its offspring's record: its RFID tag, or its animal code when it has none. */
+  private parentReference(parent: { rfid_tag?: string | null; animal_code?: string | null } | undefined): string | null {
+    return parent?.rfid_tag || parent?.animal_code || null;
   }
 
   private async assertExists<T extends { limit: (n: number) => Promise<any[]> }>(
@@ -304,8 +325,8 @@ export class AnimalService {
       if (!location) {
         throw new NotFoundException(`Current Location with ID '${animal.current_location_id}' not found.`);
       }
-      if (location.location_type !== 'PEN') {
-        throw new BadRequestException('Animals can only be placed in a Pen.');
+      if (location.location_type !== 'PEN' && location.location_type !== 'SHED') {
+        throw new BadRequestException('Animals can only be placed in a Shed or a Pen.');
       }
       locationFarmId = location.parent_location_id === null ? location.location_id : location.farm_id;
       if (!locationFarmId) {
@@ -535,7 +556,7 @@ export class AnimalService {
     });
     if (!resolved.nob_id || !resolved.lob_id) {
       throw new BadRequestException(
-        "Cannot determine this animal's Nature of Business / Line of Business — this company's operational areas span multiple business verticals. Specify nob_id and lob_id explicitly.",
+        "Cannot determine this animal's Nature of Business / Line of Business — this company's operational areas span multiple business verticals. Choose the Nature of Business and Line of Business explicitly.",
       );
     }
     const nobId = resolved.nob_id;
@@ -566,10 +587,10 @@ export class AnimalService {
     // source_batch_id required for on-farm births. For local purchases, source_receipt_id is optional;
     // if omitted, acquisition_cost must be provided manually.
     if (dto.entry_type === 'PURCHASED_IMPORTED' && !dto.source_receipt_id) {
-      throw new BadRequestException(`source_receipt_id is required when entry_type is 'PURCHASED_IMPORTED'.`);
+      throw new BadRequestException(`Select the source GRN when the entry type is Purchased (Imported).`);
     }
     if (dto.entry_type === 'BORN_ON_FARM' && !dto.source_batch_id) {
-      throw new BadRequestException(`source_batch_id is required when entry_type is 'BORN_ON_FARM'.`);
+      throw new BadRequestException(`Select the source batch when the entry type is Born on Farm.`);
     }
 
     // A purchased animal's cost is a fact on the receipt it arrived on when a receipt is provided.
@@ -600,12 +621,12 @@ export class AnimalService {
 
       if (!receiptLine) {
         throw new BadRequestException(
-          `The source goods receipt has no line for this animal's item, so there is no purchase price to read. Either the wrong receipt was chosen or the wrong item.`,
+          `The source GRN has no line for this animal's item, so there is no purchase price to read. Either the wrong receipt was chosen or the wrong item.`,
         );
       }
       if (receiptLine.rate === null || receiptLine.rate === undefined) {
         throw new BadRequestException(
-          `The source goods receipt line for this animal's item carries no rate, so the acquisition cost cannot be derived from it.`,
+          `The source GRN line for this animal's item carries no rate, so the acquisition cost cannot be derived from it.`,
         );
       }
       acquisitionCost = Number(receiptLine.rate);
@@ -613,17 +634,19 @@ export class AnimalService {
 
     if (acquisitionCost === undefined || acquisitionCost === null || Number.isNaN(Number(acquisitionCost))) {
       throw new BadRequestException(
-        `Acquisition cost is required for a '${dto.entry_type}' entry when no source goods receipt is provided.`,
+        `Acquisition cost is required for a '${dto.entry_type}' entry when no source GRN is provided.`,
       );
     }
     if (dto.source_batch_id) {
       await this.assertExists(this.scopedBatchQuery(dto.source_batch_id, tenantId, dto.company_id), 'Batch', dto.source_batch_id);
     }
+    let sireRow: any;
+    let damRow: any;
     if (dto.sire_animal_id) {
-      await this.assertExists(this.scopedAnimalQuery(dto.sire_animal_id, tenantId, dto.company_id), 'Sire animal', dto.sire_animal_id);
+      sireRow = await this.assertExists(this.scopedAnimalQuery(dto.sire_animal_id, tenantId, dto.company_id), 'Sire animal', dto.sire_animal_id);
     }
     if (dto.dam_animal_id) {
-      await this.assertExists(this.scopedAnimalQuery(dto.dam_animal_id, tenantId, dto.company_id), 'Dam animal', dto.dam_animal_id);
+      damRow = await this.assertExists(this.scopedAnimalQuery(dto.dam_animal_id, tenantId, dto.company_id), 'Dam animal', dto.dam_animal_id);
     }
     let placementFarmId: string | null = null;
     if (dto.current_batch_id || dto.current_location_id) {
@@ -656,20 +679,12 @@ export class AnimalService {
       throw new BadRequestException('Choose where this animal is: a batch or a location on your farm.');
     }
 
-    if (dto.rfid_tag) {
-      const duplicateRfid = await this.db
-        .select()
-        .from(schema.animalRegister)
-        .where(and(eq(schema.animalRegister.tenant_id, tenantId), eq(schema.animalRegister.rfid_tag, dto.rfid_tag)))
-        .limit(1);
-      if (duplicateRfid.length > 0) {
-        throw new ConflictException(`RFID tag '${dto.rfid_tag}' is already registered to another animal.`);
-      }
-    }
+    const rfidTag = this.normalizeRfid(dto.rfid_tag);
+    if (rfidTag) await this.assertRfidFree(rfidTag, tenantId);
 
     const animalId = randomUUID();
     const animalCode = await this.generateAnimalCode(lobId, tenantId, dto.company_id, dto.animal_code, dto as unknown as Record<string, unknown>);
-    const totalOpeningAssetValue = acquisitionCost + (dto.landing_cost || 0);
+    const totalOpeningAssetValue = acquisitionCost;
 
     const newAnimal = {
       animal_id: animalId,
@@ -688,17 +703,17 @@ export class AnimalService {
       source_receipt_id: dto.source_receipt_id || null,
       source_batch_id: dto.source_batch_id || null,
       item_id: dto.item_id,
-      rfid_tag: dto.rfid_tag || null,
-      ear_tag: dto.ear_tag || null,
+      rfid_tag: rfidTag,
       ear_tag_image_url: dto.ear_tag_image_url || null,
       sire_animal_id: dto.sire_animal_id || null,
       dam_animal_id: dto.dam_animal_id || null,
       // D42: what the papers say, for a parent not registered here. Kept for
       // every animal whatever its entry type, and independent of the two ids above.
-      sire_serial_no: dto.sire_serial_no?.trim() || null,
-      dam_serial_no: dto.dam_serial_no?.trim() || null,
+      // A registered parent fills its own serial automatically; the typed value
+      // is only for a parent that is not registered here.
+      sire_serial_no: this.parentReference(sireRow) ?? (dto.sire_serial_no?.trim() || null),
+      dam_serial_no: this.parentReference(damRow) ?? (dto.dam_serial_no?.trim() || null),
       acquisition_cost: acquisitionCost.toString(),
-      landing_cost: dto.landing_cost?.toString() || null,
       total_opening_asset_value: totalOpeningAssetValue.toString(),
       current_bio_asset_value: totalOpeningAssetValue.toString(),
       total_amortised: '0.0000',
@@ -716,7 +731,6 @@ export class AnimalService {
       // is stored as text. ?? not ||: grading 0 is a valid grade, not an
       // absence of one.
       grading: dto.grading?.toString() ?? null,
-      serial_number: dto.serial_number || null,
       notes: dto.notes || null,
       is_active: true,
       created_by: userPayload?.userId || null,
@@ -785,7 +799,6 @@ export class AnimalService {
           ...animalScopeConditions(farmScope(this.cls)),
           or(
             eq(schema.animalRegister.rfid_tag, trimmed),
-            eq(schema.animalRegister.ear_tag, trimmed),
             eq(schema.animalRegister.animal_code, trimmed),
             eq(schema.animalRegister.animal_id, trimmed)
           )
@@ -794,7 +807,7 @@ export class AnimalService {
       .limit(1);
 
     if (rows.length === 0) {
-      throw new NotFoundException(`No animal found matching RFID tag, ear tag, or code '${trimmed}'.`);
+      throw new NotFoundException(`No animal found matching RFID tag or animal code '${trimmed}'.`);
     }
 
     const { animal, breed, stage, batch } = rows[0];
@@ -846,7 +859,6 @@ export class AnimalService {
           like(schema.animalRegister.animal_code, `%${query.search}%`),
           like(schema.animalRegister.animal_type, `%${query.search}%`),
           like(schema.animalRegister.rfid_tag, `%${query.search}%`),
-          like(schema.animalRegister.ear_tag, `%${query.search}%`)
         )
       );
     }
@@ -893,28 +905,22 @@ export class AnimalService {
     if (dto.breed_id && dto.breed_id !== animal.breed_id) {
       await this.assertOperationalPlacement(animal, tenantId, dto.breed_id);
     }
+    let sireRow: any;
+    let damRow: any;
     if (dto.sire_animal_id) {
       if (dto.sire_animal_id === id) {
         throw new BadRequestException('An animal cannot be its own sire.');
       }
-      await this.assertExists(this.scopedAnimalQuery(dto.sire_animal_id, tenantId, animal.company_id), 'Sire animal', dto.sire_animal_id);
+      sireRow = await this.assertExists(this.scopedAnimalQuery(dto.sire_animal_id, tenantId, animal.company_id), 'Sire animal', dto.sire_animal_id);
     }
     if (dto.dam_animal_id) {
       if (dto.dam_animal_id === id) {
         throw new BadRequestException('An animal cannot be its own dam.');
       }
-      await this.assertExists(this.scopedAnimalQuery(dto.dam_animal_id, tenantId, animal.company_id), 'Dam animal', dto.dam_animal_id);
+      damRow = await this.assertExists(this.scopedAnimalQuery(dto.dam_animal_id, tenantId, animal.company_id), 'Dam animal', dto.dam_animal_id);
     }
-    if (dto.rfid_tag && dto.rfid_tag !== animal.rfid_tag) {
-      const duplicateRfid = await this.db
-        .select()
-        .from(schema.animalRegister)
-        .where(and(eq(schema.animalRegister.tenant_id, tenantId), eq(schema.animalRegister.rfid_tag, dto.rfid_tag)))
-        .limit(1);
-      if (duplicateRfid.length > 0) {
-        throw new ConflictException(`RFID tag '${dto.rfid_tag}' is already registered to another animal.`);
-      }
-    }
+    const nextRfid = dto.rfid_tag !== undefined ? this.normalizeRfid(dto.rfid_tag) : undefined;
+    if (nextRfid && nextRfid !== animal.rfid_tag) await this.assertRfidFree(nextRfid, tenantId, id);
 
     const updates: any = {
       updated_by: userPayload?.userId || null,
@@ -939,13 +945,14 @@ export class AnimalService {
       dto.productive_life_start !== undefined ? dto.productive_life_start : animal.productive_life_start,
       dto.expected_cull_date !== undefined ? dto.expected_cull_date : animal.expected_cull_date,
     );
-    if (dto.rfid_tag !== undefined) updates.rfid_tag = dto.rfid_tag;
-    if (dto.ear_tag !== undefined) updates.ear_tag = dto.ear_tag;
+    if (nextRfid !== undefined) updates.rfid_tag = nextRfid;
     if (dto.ear_tag_image_url !== undefined) updates.ear_tag_image_url = dto.ear_tag_image_url;
     if (dto.sire_animal_id !== undefined) updates.sire_animal_id = dto.sire_animal_id;
     // D42: emptying the box clears the stored number.
-    if (dto.sire_serial_no !== undefined) updates.sire_serial_no = dto.sire_serial_no?.trim() || null;
-    if (dto.dam_serial_no !== undefined) updates.dam_serial_no = dto.dam_serial_no?.trim() || null;
+    if (sireRow) updates.sire_serial_no = this.parentReference(sireRow);
+    else if (dto.sire_serial_no !== undefined) updates.sire_serial_no = dto.sire_serial_no?.trim() || null;
+    if (damRow) updates.dam_serial_no = this.parentReference(damRow);
+    else if (dto.dam_serial_no !== undefined) updates.dam_serial_no = dto.dam_serial_no?.trim() || null;
     if (dto.dam_animal_id !== undefined) updates.dam_animal_id = dto.dam_animal_id;
     if (dto.parity_count !== undefined) updates.parity_count = dto.parity_count;
     if (dto.total_piglets_born_live !== undefined) updates.total_piglets_born_live = dto.total_piglets_born_live;
@@ -961,7 +968,6 @@ export class AnimalService {
     if (dto.no_of_teats !== undefined) updates.no_of_teats = animal.gender === 'F' ? dto.no_of_teats : null;
     if (dto.tsi !== undefined) updates.tsi = dto.tsi?.toString() ?? null;
     if (dto.grading !== undefined) updates.grading = dto.grading?.toString() ?? null;
-    if (dto.serial_number !== undefined) updates.serial_number = dto.serial_number;
     if (dto.notes !== undefined) updates.notes = dto.notes;
 
     await this.db

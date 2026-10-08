@@ -10,6 +10,7 @@ import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { generateCompositeCode } from '../../system/number-series/composite-code.util';
 import { listFilterConditions, runMasterList } from '../../../common/master-list-query';
+import { assertCodeUnchanged } from '../../../common/master-code';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   return date.toISOString().slice(0, 19).replace('T', ' ');
@@ -103,7 +104,7 @@ export class CostCenterService {
   /** No series configured for COST_CENTER[_<type>] — manual entry, exactly as before this feature existed. */
   private async createManual(dto: CreateCostCenterDto, tenantId: string, userPayload?: any) {
     if (!dto.cost_center_code) {
-      throw new BadRequestException('cost_center_code is required — no number series is configured for cost centers.');
+      throw new BadRequestException('Enter a Code for this cost center — no number series is configured for cost centers.');
     }
 
     const existing = await this.db
@@ -273,6 +274,7 @@ export class CostCenterService {
   async update(id: string, dto: UpdateCostCenterDto, tenantId: string, userPayload?: any) {
     const cc = await this.findOne(id);
 
+    assertCodeUnchanged('Cost center', cc.cost_center_code, dto.cost_center_code);
     if (dto.cost_center_code && dto.cost_center_code.toUpperCase() !== cc.cost_center_code) {
       const existing = await this.db
         .select()

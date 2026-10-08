@@ -232,10 +232,6 @@ export default function RfidScannerModal({
                   <span className="font-mono font-medium" style={S.primary}>{animal.rfid_tag || "—"}</span>
                 </div>
                 <div>
-                  <span className="block text-[10px] uppercase font-semibold" style={S.muted}>{t("rfmEarTag")}</span>
-                  <span className="font-mono font-medium" style={S.primary}>{animal.ear_tag || "—"}</span>
-                </div>
-                <div>
                   <span className="block text-[10px] uppercase font-semibold" style={S.muted}>{t("rfmCurrentStage")}</span>
                   <span className="font-medium" style={S.primary}>{animal.stage_name || t("rfmQuarantine")}</span>
                 </div>

@@ -11,7 +11,7 @@ export const CODE_SERIES: Record<string, [string, string, string?]> = {
   species: ["SPECIES", "species_code"],
   "item-attribute": ["ITEM_ATTRIBUTE", "attribute_code"],
   "location-type": ["LOCATION_TYPE", "type_code"],
-  item: ["ITEM", "item_code", "item_type"],
+  item: ["ITEM", "item_code"],
   supplier: ["SUPPLIER", "supplier_code"],
   customer: ["CUSTOMER", "customer_code"],
   resource: ["RESOURCE", "resource_code"],
@@ -174,7 +174,9 @@ export function useCodeSeries(key: string, form: Record<string, unknown>, enable
     },
     value: (fieldKey: string, value: unknown) => {
       if (fieldKey !== definition?.[1]) return value;
-      if (!managedCode && !preview) return value;
+      if (!enabled || (!managedCode && !preview)) return value;
+      // If a non-empty value was explicitly provided (e.g. from template or typing), do not overwrite it
+      if (value !== undefined && value !== null && value !== "") return value;
       // Auto-generated (manual_nos = false): always show the live preview
       if (serial || (!allowManual && preview)) return preview;
       // Manual (manual_nos = true): the user's value is authoritative. The

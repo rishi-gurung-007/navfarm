@@ -5,7 +5,7 @@ import {
   Plus, Pencil, Trash2, Search, Loader2, Inbox, Eye, SlidersHorizontal,
   ArrowUpDown, X, FileText, Info, Users, Boxes, Activity, Layers, MapPin,
   Scale, QrCode, Landmark, Clock, ArrowRight, Edit3, Building2, Coins, MoreHorizontal,
-  CheckCircle2, Power, Wrench
+  CheckCircle2, Power, Wrench, Download, Upload
 } from "lucide-react";
 import { api } from "@/services/api-client";
 import { API_ORIGIN } from "@/lib/api-client";
@@ -33,6 +33,8 @@ import { BcOwnershipNotice } from "./BcOwnershipNotice";
 import { EntityLookupDialog, EntityLookupField } from "./EntityLookupField";
 import { SearchableEntitySelect } from "./SearchableEntitySelect";
 import { ItemTemplateSelectModal } from "./ItemTemplateSelectModal";
+import { exportMasterRowsToCsv } from "./utils/master-csv";
+import MasterDataImportModal from "./MasterDataImportModal";
 
 const PAGE_SIZE = 25;
 
@@ -575,7 +577,38 @@ export function MasterDataTable({
   const [filterDraft, setFilterDraft] = useState<Record<string, string>>({});
   const [filterOpen, setFilterOpen] = useState(false);
   const [templateModalOpen, setTemplateModalOpen] = useState(false);
+  const [importModalOpen, setImportModalOpen] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isManualNoAllowed, setIsManualNoAllowed] = useState(false);
+
+  useEffect(() => {
+    setSelectedIds(new Set());
+  }, [page, search, colFilters, activeFilterTab]);
+
+  const allPageIds = rows.map((r) => String(r[config.idKey]));
+  const allPageSelected = allPageIds.length > 0 && allPageIds.every((id) => selectedIds.has(id));
+  const somePageSelected = allPageIds.some((id) => selectedIds.has(id));
+
+  const toggleSelectAll = () => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (allPageSelected) {
+        allPageIds.forEach((id) => next.delete(id));
+      } else {
+        allPageIds.forEach((id) => next.add(id));
+      }
+      return next;
+    });
+  };
+
+  const handleExport = async () => {
+    let exportRows = rows;
+    if (selectedIds.size > 0) {
+      exportRows = rows.filter((r) => selectedIds.has(String(r[config.idKey])));
+    }
+    await exportMasterRowsToCsv(config, exportRows, entityOptions);
+  };
+
   /**
    * The set of form-field keys that were filled by the last template selection.
    * These fields are locked (disabled) so the user cannot accidentally override
@@ -660,7 +693,15 @@ export function MasterDataTable({
 
   const visibleFields = (
     editing
-      ? formFields.filter((field, index, fields) => fields.findIndex((candidate) => candidate.key === field.key) === index)
+      ? formFields
+          .filter((field, index, fields) => fields.findIndex((candidate) => candidate.key === field.key) === index)
+          .filter((f) => {
+            if (config.key === "stage") return true;
+            if (isFieldVisible(f, form)) return true;
+            if (f.filterOnly || f.booleanColumns) return false;
+            const stored = editing[f.key];
+            return stored !== undefined && stored !== null && stored !== "" && stored !== false;
+          })
       : formFields
           .filter((f) => !f.editOnly)
           .filter((f) => config.key === "stage" || isFieldVisible(f, form))
@@ -681,6 +722,7 @@ export function MasterDataTable({
   // on medicine withdrawal periods and posts the gain or loss. So the column
   // could only ever be a dead badge there. Rishi's call: drop it.
   const ownsStatusColumn = columns.some((c) => c.key === "status");
+  const isDraftFromTemplate = Boolean(editing && (editing.status === "DRAFT" || (config.key === "item" && templateLockedFields.size > 0)));
   // Master-detail: clicking a row narrows the list and opens a panel beside it,
   // for masters where one record has enough behind it to be worth reading on
   // its own. Only Animal Register qualifies today.
@@ -1327,7 +1369,7 @@ export function MasterDataTable({
   // When a number series code preview arrives or updates, populate it into the form
   // only if the user has not manually touched/cleared the field.
   useEffect(() => {
-    if (!modalOpen || editing || !numbering.codeKey) return;
+    if (!modalOpen || editing || !numbering.codeKey || templateLockedFields.has(numbering.codeKey)) return;
     if (codeFieldTouchedRef.current) return;
     const preview = numbering.preview || (numbering.value(numbering.codeKey, undefined) as string);
     if (preview && (!form[numbering.codeKey] || !codeFieldTouchedRef.current)) {
@@ -1337,7 +1379,7 @@ export function MasterDataTable({
         return { ...prev, [numbering.codeKey!]: preview };
       });
     }
-  }, [modalOpen, editing, numbering.codeKey, numbering.preview]);
+  }, [modalOpen, editing, numbering.codeKey, numbering.preview, templateLockedFields]);
 
   const onConfirmTemplate = (generatedItem: any) => {
     setEditing(generatedItem);
@@ -1565,6 +1607,10 @@ export function MasterDataTable({
     setSaving(true);
     try {
       const isNumberSeriesForm = config.key === "number-series" || config.key === "no-series";
+      // Everything that is missing is reported together, in form order. Stopping at
+      // the first one made a blank Code (listed first, but built from the Location
+      // Type and Parent chosen further down) the thing the user was told about.
+      const missing: Array<{ label: string; section: string; isCode: boolean }> = [];
       for (const f of visibleFields) {
         if (editing && f.createOnly) continue;
         // filterOnly normally means "not saved, so nothing to check". A control
@@ -1573,7 +1619,7 @@ export function MasterDataTable({
         if (f.filterOnly && !f.booleanColumns) continue;
         let v = form[f.key];
         const isManagedCode = f.key === numbering.codeKey && numbering.managed;
-        if ((v === "" || v === undefined || v === null) && f.key === numbering.codeKey && !codeFieldTouchedRef.current) {
+        if ((v === "" || v === undefined || v === null) && f.key === numbering.codeKey && !codeFieldTouchedRef.current && !editing && !templateLockedFields.has(f.key)) {
           const fallbackVal = numbering.preview || (numbering.value(f.key, undefined) as string);
           if (fallbackVal) {
             v = fallbackVal;
@@ -1582,36 +1628,51 @@ export function MasterDataTable({
         }
         const isEmpty = v === "" || v === undefined || v === null || (Array.isArray(v) && !v.length);
         if (isEmpty && isFieldRequired(f, form) && !isManagedCode) {
-          setActiveFormTab(f.section || "Identification");
-          throw new Error(`"${tLabel(currentLabel(f, form))}" is required.`);
+          missing.push({ label: tLabel(currentLabel(f, form)), section: f.section || "Identification", isCode: f.key === numbering.codeKey });
+          continue;
         }
         // A field with a character-format whitelist (f.pattern) is tested over
         // its whole value at save — the HTML pattern attribute alone only
         // validates on native form submit, which this dialog does not use.
         if (!isEmpty && f.pattern && typeof v === "string" && !new RegExp(`^${f.pattern}$`).test(v)) {
           setActiveFormTab(f.section || "Identification");
-          throw new Error(`"${tLabel(currentLabel(f, form))}" has characters it does not allow.`);
+          throw new Error(`${tLabel(currentLabel(f, form))} contains characters that are not allowed.`);
         }
         if (isNumberSeriesForm && !isEmpty) {
           if (f.maxLength && typeof v === "string" && v.length > f.maxLength) {
             setActiveFormTab(f.section || "Identification");
-            throw new Error(`"${tLabel(currentLabel(f, form))}" cannot exceed ${f.maxLength} characters.`);
+            throw new Error(`${tLabel(currentLabel(f, form))} can have at most ${f.maxLength} characters.`);
           }
           if (f.type === "number") {
             const num = Number(v);
             if (!isNaN(num)) {
               if ((f.key === "seq_length" || f.key === "increment_by") && !Number.isInteger(num)) {
-                throw new Error(`"${tLabel(currentLabel(f, form))}" must be a whole number.`);
+                throw new Error(`${tLabel(currentLabel(f, form))} must be a whole number.`);
               }
               if (f.min !== undefined && num < f.min) {
-                throw new Error(`"${tLabel(currentLabel(f, form))}" must be at least ${f.min}.`);
+                throw new Error(`${tLabel(currentLabel(f, form))} must be ${f.min} or more.`);
               }
               if (f.max !== undefined && num > f.max) {
-                throw new Error(`"${tLabel(currentLabel(f, form))}" cannot exceed ${f.max}.`);
+                throw new Error(`${tLabel(currentLabel(f, form))} must be ${f.max} or less.`);
               }
             }
           }
         }
+      }
+      if (missing.length) {
+        // A blank Code is only worth naming when it is the one thing missing: when
+        // other fields are blank too, the code is usually waiting on them.
+        const others = missing.filter((m) => !m.isCode);
+        const shown = others.length ? others : missing;
+        setActiveFormTab(shown[0].section);
+        if (shown.length === 1) {
+          throw new Error(
+            others.length === 0
+              ? `${shown[0].label} is required. Enter one, or fill in the fields it is built from.`
+              : `${shown[0].label} is required.`,
+          );
+        }
+        throw new Error(`Complete the required fields: ${shown.map((m) => m.label).join(", ")}.`);
       }
 
       const payload: Row = {};
@@ -1619,9 +1680,17 @@ export function MasterDataTable({
       // fields are hidden the moment the switch flips, so the payload loop below
       // skips them and the API would keep the old prefix or digit count —
       // invisible on the form and still in every code it issues.
-      for (const f of formFields) {
-        if (!f.clearsWhenOff || form[f.key] !== false) continue;
-        for (const [k, v] of Object.entries(f.clearsWhenOff)) payload[k] = v;
+      // Filter-only UI fields must never leak into API payloads, and empty strings
+      // for cleared nullable fields should be sent as null.
+      if (editing && !isDraftFromTemplate) {
+        for (const f of formFields) {
+          if (!f.clearsWhenOff || form[f.key] !== false) continue;
+          for (const [k, v] of Object.entries(f.clearsWhenOff)) {
+            const targetField = formFields.find((ff) => ff.key === k);
+            if (targetField?.filterOnly) continue;
+            payload[k] = v === "" ? null : v;
+          }
+        }
       }
       for (const f of visibleFields) {
         if (editing && f.createOnly) continue;
@@ -1635,11 +1704,11 @@ export function MasterDataTable({
         // generateNext()), so the series' current_seq never advanced no matter
         // how many records were created — only a genuinely edited code should
         // take the manual path.
-        if (f.key === numbering.codeKey && numbering.managed && numbering.allowManual && (!codeFieldTouchedRef.current || !form[f.key])) {
+        if (!editing && f.key === numbering.codeKey && numbering.managed && numbering.allowManual && (!codeFieldTouchedRef.current || !form[f.key])) {
           continue;
         }
         let v = form[f.key];
-        if ((v === "" || v === undefined || v === null) && f.key === numbering.codeKey && !codeFieldTouchedRef.current) {
+        if (!editing && !templateLockedFields.has(f.key) && (v === "" || v === undefined || v === null) && f.key === numbering.codeKey && !codeFieldTouchedRef.current) {
           const fallbackVal = numbering.preview || (numbering.value(f.key, undefined) as string);
           if (fallbackVal) v = fallbackVal;
         }
@@ -1668,6 +1737,28 @@ export function MasterDataTable({
         if (!f.booleanColumns) continue;
         const chosen = visibleFields.some((v) => v.key === f.key) ? String(form[f.key] ?? "") : "";
         for (const [option, column] of Object.entries(f.booleanColumns)) payload[column] = chosen === option;
+      }
+
+      // Remove any filter-only virtual fields that should never be sent to the API
+      for (const f of formFields) {
+        if (f.filterOnly && f.key in payload) {
+          delete payload[f.key];
+        }
+      }
+
+      if (config.key === "item") {
+        if (!form.is_tracked) {
+          payload.is_lot_tracked = false;
+          payload.is_serial_tracked = false;
+          if (editing && !isDraftFromTemplate) {
+            payload.tracking_series_id = null;
+          } else {
+            delete payload.tracking_series_id;
+          }
+        } else if (payload.tracking_series_id === "") {
+          delete payload.tracking_series_id;
+        }
+        delete payload.tracking_type;
       }
 
       if (form.item_template_id || editing?.item_template_id) {
@@ -1721,7 +1812,6 @@ export function MasterDataTable({
           delete payload.source_receipt_id;
           delete payload.source_batch_id;
           delete payload.acquisition_cost;
-          delete payload.landing_cost;
           delete payload.total_opening_asset_value;
           delete payload.current_stage_id;
           delete payload.current_batch_id;
@@ -1730,7 +1820,7 @@ export function MasterDataTable({
         await api.put(`${config.apiBase}/${editing[config.idKey]}`, payload);
         forgetOwnOptions();
         setModalOpen(false);
-        showToast.success("Updated successfully");
+        showToast.success(isDraftFromTemplate ? "Created successfully" : "Updated successfully");
         load();
       } else {
         const response = await api.post(config.apiBase, payload);
@@ -1828,14 +1918,26 @@ export function MasterDataTable({
     }
   };
 
+  /** Why a locked field is locked, when its config says (`lockReason`). */
+  const lockHint = (f: MasterDataField): string | undefined => {
+    if (!editing || !f.lockWhenRowFlag || !f.lockReason || !(editing as Row)[f.lockWhenRowFlag]) return undefined;
+    const reason = f.lockReason(editing as Row);
+    return reason ? `🔒 ${reason}` : undefined;
+  };
+
   const renderField = (f: MasterDataField) => {
     const isLockedByTemplate = templateLockedFields.has(f.key);
     const immutableOnEdit = !!editing && !!f.createOnly;
     const disabledByStageTrigger = config.key === "stage" && !!f.visibleWhen
       && !isFieldRequired({ ...f, required: false, requiredWhen: f.visibleWhen }, form);
-    const fieldDisabled = readOnly || immutableOnEdit || !!f.readOnly || isLockedByTemplate || disabledByStageTrigger;
+    const lockedByIssuedNumbers = !!editing && !!f.lockWhenIssued
+      && (!!(editing as Row).last_no_used || Number((editing as Row).current_seq ?? 0) > 0);
+    const lockedByRowFlag = !!editing && !!f.lockWhenRowFlag && !!(editing as Row)[f.lockWhenRowFlag];
+    const lockedByOtherField = !!f.readOnlyWhenSet && !!form[f.readOnlyWhenSet];
+    const lockedByRule = lockedByIssuedNumbers || lockedByRowFlag || lockedByOtherField;
+    const fieldDisabled = readOnly || immutableOnEdit || lockedByRule || !!f.readOnly || isLockedByTemplate || disabledByStageTrigger;
     const isCodeField = f.key === numbering.codeKey;
-    const value = isCodeField && codeFieldTouchedRef.current
+    const value = isCodeField && (codeFieldTouchedRef.current || isLockedByTemplate || !!editing)
       ? (form[f.key] ?? "")
       : (numbering.value(f.key, form[f.key] !== undefined && form[f.key] !== "" ? form[f.key] : undefined) as any);
     const accessibility = { id: `master-${config.key}-${f.key}`, "aria-label": tLabel(currentLabel(f, form)), "aria-required": isFieldRequired(f, form) };
@@ -2548,7 +2650,16 @@ export function MasterDataTable({
           ariaLabel={accessibility["aria-label"]}
           ariaRequired={accessibility["aria-required"]}
           value={String(value ?? "")}
-          onChange={(next) => setField(f.key, next)}
+          onChange={(next) => {
+            setField(f.key, next);
+            // A picked row can supply other fields (a Sire fills Sire Serial No.).
+            // Clearing the pick clears what it supplied.
+            for (const fill of f.fills || []) {
+              const picked = next ? options.find((o) => String(o[f.entityValueKey || "id"]) === String(next)) : undefined;
+              const supplied = picked ? fill.rowKeys.map((k) => picked[k]).find((v) => v !== null && v !== undefined && String(v) !== "") : "";
+              setField(fill.key, supplied === undefined ? "" : String(supplied));
+            }
+          }}
           options={options}
           valueKey={f.entityValueKey || "id"}
           getLabel={(o) => entityLabel(o, f)}
@@ -2566,7 +2677,7 @@ export function MasterDataTable({
       );
     }
     const codeAllowsManual = isCodeField && (numbering.allowManual || isManualNoAllowed);
-    const isDisabled = immutableOnEdit || isLockedByTemplate || disabledByStageTrigger || (f.readOnly && !codeAllowsManual);
+    const isDisabled = immutableOnEdit || lockedByRule || isLockedByTemplate || disabledByStageTrigger || (f.readOnly && !codeAllowsManual);
     const isInteger = f.type === "number" && (f.step === "1" || !f.step);
     // A field like GPS Latitude/Longitude allows a negative sign only when its
     // floor is unset or itself negative — same rule the keydown guard below uses.
@@ -2686,6 +2797,30 @@ export function MasterDataTable({
 
             {/* Header Action Buttons */}
             <div className="flex items-center gap-2 shrink-0 self-start sm:self-auto">
+              <button
+                type="button"
+                onClick={handleExport}
+                disabled={loading || rows.length === 0}
+                className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold shadow-xs transition-colors hover:border-[var(--accent)] hover:text-[var(--accent)] active:scale-95 cursor-pointer disabled:opacity-50"
+                style={S.surface}
+                title={selectedIds.size > 0 ? `Export ${selectedIds.size} selected rows to CSV` : "Export all current rows to CSV"}
+              >
+                <Download className="h-3.5 w-3.5" />
+                <span>{selectedIds.size > 0 ? `Export Selected (${selectedIds.size})` : "Export CSV"}</span>
+              </button>
+
+              {!readOnly && (config.key === "breed" || config.key === "breed-lifecycle-stage") && (
+                <button
+                  type="button"
+                  onClick={() => setImportModalOpen(true)}
+                  className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold shadow-xs transition-colors hover:border-[var(--accent)] hover:text-[var(--accent)] active:scale-95 cursor-pointer"
+                  style={S.surface}
+                >
+                  <Upload className="h-3.5 w-3.5" />
+                  <span>Import CSV</span>
+                </button>
+              )}
+
               {config.key === "item" && !readOnly && canCreateItem && (
                 <button
                   type="button"
@@ -2905,6 +3040,27 @@ export function MasterDataTable({
                 )}
               </button>
             )}
+            <button
+              type="button"
+              onClick={handleExport}
+              disabled={loading || rows.length === 0}
+              className="flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-(--accent) hover:text-(--accent) disabled:opacity-50"
+              style={S.surface}
+              title={selectedIds.size > 0 ? `Export ${selectedIds.size} selected rows to CSV` : "Export all current rows to CSV"}
+            >
+              <Download className="h-3.5 w-3.5" />
+              {selectedIds.size > 0 ? `Export Selected (${selectedIds.size})` : "Export CSV"}
+            </button>
+            {!readOnly && (config.key === "breed" || config.key === "breed-lifecycle-stage") && (
+              <button
+                type="button"
+                onClick={() => setImportModalOpen(true)}
+                className="flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-(--accent) hover:text-(--accent)"
+                style={S.surface}
+              >
+                <Upload className="h-3.5 w-3.5" /> Import CSV
+              </button>
+            )}
             {config.key === "item" && !readOnly && canCreateItem && (
               <button
                 type="button"
@@ -3010,6 +3166,18 @@ export function MasterDataTable({
           <table className="w-full border-collapse text-left text-sm">
             <TableHeader className="sticky top-0 z-10 bg-[var(--surface-raised)] shadow-xs">
               <tr className="border-b" style={{ borderColor: "var(--row-border)" }}>
+                <TableHead className="w-10 px-3">
+                  <input
+                    type="checkbox"
+                    checked={allPageSelected}
+                    ref={(el) => {
+                      if (el) el.indeterminate = somePageSelected && !allPageSelected;
+                    }}
+                    onChange={toggleSelectAll}
+                    aria-label="Select all rows"
+                    className="h-4 w-4 rounded border-gray-300 text-[var(--accent)] focus:ring-[var(--accent)] cursor-pointer"
+                  />
+                </TableHead>
                 {columns.map((c) => {
                   const active = sortKey === c.key;
                   return (
@@ -3053,13 +3221,13 @@ export function MasterDataTable({
             <TableBody>
               {loading ? (
                 <tr>
-                  <TableCell colSpan={columns.length + (ownsStatusColumn ? 0 : 1)} className="py-10 text-center" style={S.sub}>
+                  <TableCell colSpan={columns.length + (ownsStatusColumn ? 1 : 2)} className="py-10 text-center" style={S.sub}>
                     <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" style={S.accent} /> {t("loadingEllipsis")}
                   </TableCell>
                 </tr>
               ) : rows.length === 0 ? (
                 <tr>
-                  <TableCell colSpan={columns.length + (ownsStatusColumn ? 0 : 1)} className="py-10 text-center" style={S.sub}>
+                  <TableCell colSpan={columns.length + (ownsStatusColumn ? 1 : 2)} className="py-10 text-center" style={S.sub}>
                     <Inbox className="mx-auto mb-2 h-6 w-6" style={S.muted} />
                     {t("noRecordsYet", { name: tLabel(config.label).toLowerCase() })}
                     {!readOnly && <button onClick={openCreate} className="mt-2 block w-full font-semibold" style={S.accent}>{t("addFirstOne")}</button>}
@@ -3077,6 +3245,23 @@ export function MasterDataTable({
                         ? { backgroundColor: "var(--surface-raised)" }
                         : undefined}
                     >
+                      <TableCell className="w-10 px-3" onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(String(row[config.idKey]))}
+                          onChange={(e) => {
+                            const rowId = String(row[config.idKey]);
+                            setSelectedIds((prev) => {
+                              const next = new Set(prev);
+                              if (e.target.checked) next.add(rowId);
+                              else next.delete(rowId);
+                              return next;
+                            });
+                          }}
+                          aria-label={`Select row ${String(row[config.idKey])}`}
+                          className="h-4 w-4 rounded border-gray-300 text-[var(--accent)] focus:ring-[var(--accent)] cursor-pointer"
+                        />
+                      </TableCell>
                       {columns.map((c) => (
                         c.key === "status" && row.status ? (
                           // A chip, in the same shape as the Active badge below,
@@ -3244,7 +3429,7 @@ export function MasterDataTable({
           setTemplateLockedFields(new Set());
           if (createOnly) onCreateCancelled?.();
         }}
-        title={editing ? t("editItem", { name: tLabel(singularLabel(config)) }) : t("addItem", { name: tLabel(singularLabel(config)) })}
+        title={editing && !isDraftFromTemplate ? t("editItem", { name: tLabel(singularLabel(config)) }) : t("addItem", { name: tLabel(singularLabel(config)) })}
         maxWidth="xl"
         presentation="modal"
         footer={
@@ -3260,7 +3445,7 @@ export function MasterDataTable({
               className="rounded-lg px-5 py-2 text-sm font-semibold text-white shadow-xs transition-all hover:opacity-95 active:scale-95 disabled:opacity-50 cursor-pointer"
               style={{ backgroundColor: "var(--accent)" }}
             >
-              {saving ? t("saving") : editing ? t("saveChanges") : t("create")}
+              {saving ? t("saving") : (editing && !isDraftFromTemplate) ? t("saveChanges") : t("create")}
             </button>
           </div>
         }
@@ -3288,7 +3473,7 @@ export function MasterDataTable({
                       label={tLabel(currentLabel(f, form))}
                       htmlFor={`master-${config.key}-${f.key}`}
                       required={isFieldRequired(f, form)}
-                      hint={templateLockedFields.has(f.key) ? "🔒 Set by template" : undefined}
+                      hint={templateLockedFields.has(f.key) ? "🔒 Set by template" : lockHint(f)}
                       tooltip={f.helpText}
                       className={f.type === "textarea" || f.type === "json" || f.type === "string-list" ? "sm:col-span-2" : undefined}
                     >
@@ -3369,7 +3554,7 @@ export function MasterDataTable({
                       label={tLabel(currentLabel(f, form))}
                       htmlFor={`master-${config.key}-${f.key}`}
                       required={isFieldRequired(f, form)}
-                      hint={templateLockedFields.has(f.key) ? "🔒 Set by template" : undefined}
+                      hint={templateLockedFields.has(f.key) ? "🔒 Set by template" : lockHint(f)}
                       tooltip={f.helpText}
                       className={f.type === "textarea" || f.type === "json" || f.type === "string-list" ? "sm:col-span-2" : undefined}
                     >
@@ -3499,6 +3684,16 @@ export function MasterDataTable({
           onConfirm={onConfirmTemplate}
         />
       )}
+
+      <MasterDataImportModal
+        config={config}
+        isOpen={importModalOpen}
+        onClose={() => setImportModalOpen(false)}
+        onSuccess={() => {
+          load();
+          setSelectedIds(new Set());
+        }}
+      />
 
     </div>
   );

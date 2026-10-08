@@ -57,9 +57,10 @@ function rowValues(row: LookupRow, labelKeys: string[]): { code: string; name: s
   };
 }
 
-function rowLabel(row: LookupRow, labelKeys: string[], valueKey: string): string {
-  const joined = labelKeys.map((key) => stringValue(row[key])).filter(Boolean).join(" — ");
-  return joined || stringValue(row[valueKey]);
+/** What a picked row is called in the field itself: its name, or its code when it has none. */
+function selectedRowLabel(row: LookupRow, labelKeys: string[], valueKey: string): string {
+  const { code, name } = rowValues(row, labelKeys);
+  return name || code || stringValue(row[valueKey]);
 }
 
 export function EntityLookupDialog({
@@ -239,7 +240,7 @@ export function EntityLookupField({
   }));
   const currentLabel = !multiple && selectedRows[0]
     ? selectedRows[0].row
-      ? rowLabel(selectedRows[0].row, labelKeys, valueKey)
+      ? selectedRowLabel(selectedRows[0].row, labelKeys, valueKey)
       : `${selectedRows[0].value} — unavailable in active catalog`
     : "";
 
@@ -249,7 +250,7 @@ export function EntityLookupField({
         <div className="flex flex-wrap gap-1.5">
           {selectedRows.map((selected) => (
             <span key={selected.value} className="inline-flex items-center gap-1 rounded-full border border-(--border) bg-(--surface-raised) px-2 py-0.5 text-xs text-(--text-primary)">
-              {selected.row ? rowLabel(selected.row, labelKeys, valueKey) : `${selected.value} — unavailable in active catalog`}
+              {selected.row ? selectedRowLabel(selected.row, labelKeys, valueKey) : `${selected.value} — unavailable in active catalog`}
               {!disabled && (
                 <button
                   type="button"

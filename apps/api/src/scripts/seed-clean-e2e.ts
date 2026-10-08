@@ -40,8 +40,6 @@ const OPERATIONAL_TABLES = [
   'resource_ledger',
   'goods_receipt_line',
   'goods_receipt',
-  'goods_issue_line',
-  'goods_issue',
   'stock_transfer_line',
   'stock_transfer',
   'stock_adjustment_line',
@@ -644,7 +642,7 @@ export async function seedCleanE2E() {
         `INSERT INTO animal_register (
           animal_id, tenant_id, company_id, nob_id, lob_id, operational_area_id,
           animal_code, animal_type, breed_id, gender, dob, age_at_entry_weeks,
-          entry_type, entry_date, item_id, ear_tag, rfid_tag, acquisition_cost,
+          entry_type, entry_date, item_id, rfid_tag, acquisition_cost,
           total_opening_asset_value, current_bio_asset_value, book_value, total_amortised,
           parity_count, total_piglets_born_live, total_piglets_weaned,
           current_stage_id, current_location_id, no_of_teats, tsi, grading,
@@ -652,7 +650,7 @@ export async function seedCleanE2E() {
         ) VALUES (
           ?, ?, ?, ?, ?, ?,
           ?, ?, ?, ?, ?, ?,
-          'PURCHASED_LOCAL', '2026-01-10', ?, ?, ?, ?,
+          'PURCHASED_LOCAL', '2026-01-10', ?, ?, ?,
           ?, ?, ?, 0.0000,
           ?, ?, ?,
           ?, ?, ?, ?, ?,
@@ -661,7 +659,7 @@ export async function seedCleanE2E() {
         [
           animalId, tenantId, companyId, nobId, lobId, areas[0]?.area_id || null,
           a.code, a.type, a.breedId, a.gender, a.dob, a.ageWeeks,
-          a.itemId, a.earTag, a.rfidTag, a.cost,
+          a.itemId, a.rfidTag, a.cost,
           a.cost, a.cost, a.cost,
           a.parity, a.bornLive, a.weaned,
           a.stageId, a.penId, a.teats, a.tsi, a.grading,

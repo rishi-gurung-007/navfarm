@@ -458,7 +458,7 @@ export class QueryLocationDto extends MasterListQueryDto {
   @IsUUID()
   shedId?: string;
 
-  @ApiProperty({ description: 'Filter by linked warehouse UUID', required: false })
+  @ApiProperty({ description: 'Filter by linked location UUID', required: false })
   @IsOptional()
   @IsUUID()
   warehouseId?: string;

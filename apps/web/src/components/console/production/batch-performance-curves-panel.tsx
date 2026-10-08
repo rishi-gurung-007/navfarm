@@ -143,7 +143,7 @@ export default function BatchPerformanceCurvesPanel({
                   { value: "", label: t("schedWholeBatch") },
                   ...animals.map((a) => ({
                     value: a.animal_id,
-                    label: a.ear_tag || a.animal_code,
+                    label: a.rfid_tag || a.animal_code,
                   })),
                 ]}
                 placeholder={t("schedWholeBatch")}

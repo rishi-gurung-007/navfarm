@@ -33,6 +33,16 @@ describe('rebuild guards', () => {
     expect(parseRebuildArgs(['--apply', '--skip-reset'])).toEqual({ apply: true, chaptersOnly: false, skipReset: true });
   });
 
+  it('accepts a volume for the chapters and refuses an unknown one', () => {
+    expect(parseRebuildArgs(['--apply', '--volume=light']).volume).toBe('light');
+    expect(() => parseRebuildArgs(['--volume=huge'])).toThrow("Unknown volume 'huge'");
+  });
+
+  it('accepts the small preset and refuses an unknown one', () => {
+    expect(parseRebuildArgs(['--apply', '--preset=small']).preset).toBe('small');
+    expect(() => parseRebuildArgs(['--preset=huge'])).toThrow("Unknown preset 'huge'");
+  });
+
   // Added in fix round 1: a name that matches the NAVFarm regex (nf_[a-z0-9_]+)
   // AND contains "navcrm" isolates the `.includes('navcrm')` branch from the
   // regex-mismatch branch above it — "refuses a database outside the NAVFarm

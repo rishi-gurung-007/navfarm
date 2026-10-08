@@ -216,7 +216,7 @@ export class BreedingService {
     const companyId = this.assertAnimalCompany(dto.company_id, sow, 'sow');
 
     if (dto.mating_type === MatingType.NATURAL_MATING && !dto.boar_animal_id) {
-      throw new BadRequestException('boar_animal_id is required for NATURAL_MATING.');
+      throw new BadRequestException('Select a boar for a natural mating.');
     }
 
     let boarAnimalId = dto.boar_animal_id || null;
@@ -338,12 +338,12 @@ export class BreedingService {
     if (dto.conception_result) {
       conceptionResult = dto.conception_result;
       if (dto.pregnancy_confirmed !== undefined && dto.pregnancy_confirmed !== this.pregnancyConfirmedFor(conceptionResult)) {
-        throw new BadRequestException(`pregnancy_confirmed contradicts conception_result ${conceptionResult}.`);
+        throw new BadRequestException(`The pregnancy confirmation contradicts the conception result (${conceptionResult}).`);
       }
     } else if (dto.pregnancy_confirmed !== undefined) {
       conceptionResult = dto.pregnancy_confirmed ? ConceptionResult.CONFIRMED : ConceptionResult.FAILED;
     } else {
-      throw new BadRequestException('conception_result is required.');
+      throw new BadRequestException('Choose a conception result.');
     }
     const pregnancyConfirmed = this.pregnancyConfirmedFor(conceptionResult);
     if (dto.preg_check_date && dto.preg_check_date < breeding.mating_date) {
@@ -414,7 +414,7 @@ export class BreedingService {
         created_at: schema.breedingRecord.created_at,
         sow_id: schema.breedingRecord.sow_animal_id,
         sow_code: schema.animalRegister.animal_code,
-        sow_tag: schema.animalRegister.ear_tag,
+        sow_tag: schema.animalRegister.rfid_tag,
         sow_status: schema.animalRegister.status,
         boar_id: schema.breedingRecord.boar_animal_id,
         boar_code: boar.animal_code,
@@ -626,7 +626,7 @@ export class BreedingService {
         created_at: schema.farrowingRecord.created_at,
         sow_id: schema.farrowingRecord.sow_animal_id,
         sow_code: schema.animalRegister.animal_code,
-        sow_tag: schema.animalRegister.ear_tag,
+        sow_tag: schema.animalRegister.rfid_tag,
       })
       .from(schema.farrowingRecord)
       .innerJoin(schema.animalRegister, eq(schema.farrowingRecord.sow_animal_id, schema.animalRegister.animal_id))
@@ -732,7 +732,7 @@ export class BreedingService {
         created_at: schema.semenBatch.created_at,
         boar_id: schema.semenBatch.boar_animal_id,
         boar_code: schema.animalRegister.animal_code,
-        boar_tag: schema.animalRegister.ear_tag,
+        boar_tag: schema.animalRegister.rfid_tag,
       })
       .from(schema.semenBatch)
       .innerJoin(schema.animalRegister, eq(schema.semenBatch.boar_animal_id, schema.animalRegister.animal_id))

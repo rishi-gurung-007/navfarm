@@ -7,6 +7,7 @@ import {
   IsNumber,
   IsDateString,
   IsBoolean,
+  MaxLength,
 } from 'class-validator';
 
 export class CreateBatchDailyDataDto {
@@ -47,11 +48,12 @@ export class CreateBatchDailyDataDto {
   entered_text?: string;
 
   @ApiProperty({
-    description: "Lot number — required when the line has lot_required and the item is lot-tracked",
+    description: "Lot number — required when the line has lot_required and the item is lot-tracked. A consumption may name several lots, comma separated: they are used in turn until the quantity is covered.",
     required: false,
   })
   @IsOptional()
   @IsString()
+  @MaxLength(80, { message: 'Too many lots for one entry — the lot list must fit in 80 characters.' })
   lot_no?: string;
 
   @ApiProperty({

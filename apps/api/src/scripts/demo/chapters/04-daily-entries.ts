@@ -71,8 +71,12 @@ const SKIP_DAYS_ON_REGISTERED = [4, 9];
 /** Deterministic ±2% feed variation: +2% on odd days, −2% on even days. */
 const feedFactor = (day: number): number => (day % 2 === 1 ? 1.02 : 0.98);
 
-/** The two single deaths: day 6 and day 11 on the Grasmere grower batch. */
+/** The two single deaths: day 6 and day 11 on the Grasmere headcount batch. */
 const mortalityDays = (day: number): number => (day === 6 || day === 11 ? 1 : 0);
+
+/** Grasmere's (MUL100) bulk batch: the legacy token its first run used, or the stage-keyed one a rebuild now gives it. */
+const isGrasmereHeadcountBatch = (remarks: string | null): boolean =>
+  remarks === 'DEMO-BATCH-CO-GRASMERE' || (remarks?.startsWith('DEMO-MUL100-CO-') ?? false);
 
 function dateNdaysAgo(days: number): string {
   return new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
@@ -80,6 +84,7 @@ function dateNdaysAgo(days: number): string {
 
 interface DemoLine {
   scheduler_id: string;
+  stage_id: string | null;
   effective_from: string | Date;
   location_id: string | null;
   animal_count: string | null;
@@ -113,6 +118,7 @@ export const dailyEntriesChapter: DemoChapter = {
         remarks: schema.batchHeader.remarks,
         farm_id: schema.batchHeader.farm_id,
         start_date: schema.batchHeader.start_date,
+        tracking_mode: schema.batchHeader.tracking_mode,
       })
       .from(schema.batchHeader)
       .where(and(
@@ -139,6 +145,7 @@ export const dailyEntriesChapter: DemoChapter = {
     const allLines = await db
       .select({
         batch_id: schema.schedulerHeader.batch_id,
+        stage_id: schema.schedulerHeader.stage_id,
         scheduler_id: schema.schedulerHeader.scheduler_id,
         effective_from: schema.schedulerHeader.effective_from,
         location_id: schema.schedulerHeader.location_id,
@@ -164,6 +171,23 @@ export const dailyEntriesChapter: DemoChapter = {
       const list = linesByBatch.get(line.batch_id) ?? [];
       list.push(line);
       linesByBatch.set(line.batch_id, list);
+    }
+
+    // An Animal Wise batch takes its entries per animal, and only for the animals
+    // standing in that scheduler's stage right now (BatchDailyDataService refuses
+    // any other). Group them by batch and stage once, up front.
+    const animalWiseIds = batches.filter((b) => b.tracking_mode === 'ANIMAL_WISE').map((b) => b.batch_id);
+    const animalsByBatchStage = new Map<string, string[]>();
+    if (animalWiseIds.length) {
+      const standing = await db
+        .select({ animal_id: schema.animalRegister.animal_id, batch_id: schema.animalRegister.current_batch_id, stage_id: schema.animalRegister.current_stage_id })
+        .from(schema.animalRegister)
+        .where(and(inArray(schema.animalRegister.current_batch_id, animalWiseIds), eq(schema.animalRegister.is_active, true)))
+        .orderBy(schema.animalRegister.animal_code);
+      for (const a of standing) {
+        const key = `${a.batch_id}|${a.stage_id}`;
+        animalsByBatchStage.set(key, [...(animalsByBatchStage.get(key) ?? []), a.animal_id]);
+      }
     }
 
     // Headcount per scheduler, not per batch: each stage's scheduler snapshots
@@ -217,13 +241,13 @@ export const dailyEntriesChapter: DemoChapter = {
 
     // Already-posted day/line pairs — the resume probe.
     const posted = await db
-      .select({ line_id: schema.batchDailyData.line_id, entry_date: schema.batchDailyData.entry_date })
+      .select({ line_id: schema.batchDailyData.line_id, entry_date: schema.batchDailyData.entry_date, animal_id: schema.batchDailyData.animal_id })
       .from(schema.batchDailyData)
       .where(and(
         inArray(schema.batchDailyData.batch_id, batches.map((b) => b.batch_id)),
         eq(schema.batchDailyData.posted, true),
       ));
-    const postedKeys = new Set(posted.map((p) => `${p.line_id}|${p.entry_date}`));
+    const postedKeys = new Set(posted.map((p) => `${p.line_id}|${p.entry_date}|${p.animal_id ?? ''}`));
 
     // The calendar days of the window, ending yesterday.
     const days: string[] = [];
@@ -242,7 +266,7 @@ export const dailyEntriesChapter: DemoChapter = {
     // ── 1. The work: every due, unposted line-day, in the order it will post.
     // Enumerated once, up front, so the top-up below sums exactly the draws
     // the posting loop is about to make — not an estimate of them.
-    interface Work { batch: (typeof batches)[number]; line: DemoLine; date: string; day: number; draw?: { value: number; warehouseId: string } }
+    interface Work { batch: (typeof batches)[number]; line: DemoLine; date: string; day: number; animalId?: string; draw?: { value: number; warehouseId: string } }
     const work: Work[] = [];
     for (const batch of batches) {
       const lines = linesByBatch.get(batch.batch_id) ?? [];
@@ -255,17 +279,22 @@ export const dailyEntriesChapter: DemoChapter = {
           if (day < 1) continue; // the stage had not begun on this calendar day
           if (!isDue(line, day, date, weeklyAnchor)) continue;
 
-          if (postedKeys.has(`${line.line_id}|${date}`)) {
-            skippedCount += 1;
-            continue;
+          // Batch Wise: one whole-batch entry. Animal Wise: one entry per animal in this stage.
+          const targets: Array<string | undefined> = batch.tracking_mode === 'ANIMAL_WISE'
+            ? (animalsByBatchStage.get(`${batch.batch_id}|${line.stage_id}`) ?? [])
+            : [undefined];
+          for (const animalId of targets) {
+            if (postedKeys.has(`${line.line_id}|${date}|${animalId ?? ''}`)) {
+              skippedCount += 1;
+              continue;
+            }
+            // Skip one mandatory line on two distinct days on registered batches for missing backlog demonstration
+            if (registeredBatches.has(batch.batch_id) && line.is_mandatory && SKIP_DAYS_ON_REGISTERED.includes(day)) {
+              skippedCount += 1;
+              continue;
+            }
+            work.push({ batch, line, date, day, animalId });
           }
-
-          // Skip one mandatory line on two distinct days on registered batches for missing backlog demonstration
-          if (registeredBatches.has(batch.batch_id) && line.is_mandatory && SKIP_DAYS_ON_REGISTERED.includes(day)) {
-            skippedCount += 1;
-            continue;
-          }
-          work.push({ batch, line, date, day });
         }
       }
     }
@@ -279,7 +308,8 @@ export const dailyEntriesChapter: DemoChapter = {
       if (line.line_type !== 'CONSUMPTION' || !line.item_id || !batch.farm_id) continue;
       const standard = Number(line.standard_qty ?? 0);
       if (standard <= 0) continue;
-      const value = round2(standard * (headcountByScheduler.get(line.scheduler_id) ?? 0) * feedFactor(w.day));
+      const heads = w.animalId ? 1 : headcountByScheduler.get(line.scheduler_id) ?? 0;
+      const value = round2(standard * heads * feedFactor(w.day));
       if (value <= 0) continue;
       const cacheKey = `${line.location_id}|${line.item_id}|${batch.farm_id}`;
       let warehouseId = sourceCache.get(cacheKey);
@@ -386,7 +416,7 @@ export const dailyEntriesChapter: DemoChapter = {
 
     // ── 4. Post.
     const actor = { userId: ctx.actor.userId, userType: ctx.actor.userType, email: ctx.actor.email };
-    for (const { batch, line, date, day, draw } of work) {
+    for (const { batch, line, date, day, draw, animalId } of work) {
       if (line.line_type === 'CONSUMPTION' && line.item_id) {
         if (!draw) {
           skippedCount += 1;
@@ -415,18 +445,18 @@ export const dailyEntriesChapter: DemoChapter = {
           skippedCount += 1;
           continue;
         }
-        await entries.postEntry(batch.batch_id, { line_id: line.line_id, entry_date: date, entered_value: draw.value, lot_no: lot }, ctx.tenantId, actor);
+        await entries.postEntry(batch.batch_id, { line_id: line.line_id, entry_date: date, entered_value: draw.value, lot_no: lot, ...(animalId ? { animal_id: animalId } : {}) }, ctx.tenantId, actor);
         balance.set(key, round2((balance.get(key) ?? 0) - draw.value));
         remaining.set(key, round2((remaining.get(key) ?? 0) - draw.value));
         postedCount += 1;
       } else if (line.line_type === 'DESCRIPTIVE' && line.kpi_metric === 'MORTALITY_COUNT') {
-        const value = batch.remarks === 'DEMO-BATCH-CO-GRASMERE' ? mortalityDays(day) : 0;
-        await entries.postEntry(batch.batch_id, { line_id: line.line_id, entry_date: date, entered_value: value }, ctx.tenantId, actor);
+        const value = isGrasmereHeadcountBatch(batch.remarks) ? mortalityDays(day) : 0;
+        await entries.postEntry(batch.batch_id, { line_id: line.line_id, entry_date: date, entered_value: value, ...(animalId ? { animal_id: animalId } : {}) }, ctx.tenantId, actor);
         postedCount += 1;
       } else if (line.line_type === 'DESCRIPTIVE' && line.kpi_metric === 'BODY_WEIGHT') {
         const isReg = registeredBatches.has(batch.batch_id);
         const value = isReg ? 160 + day : 62 + day;
-        await entries.postEntry(batch.batch_id, { line_id: line.line_id, entry_date: date, entered_value: value }, ctx.tenantId, actor);
+        await entries.postEntry(batch.batch_id, { line_id: line.line_id, entry_date: date, entered_value: value, ...(animalId ? { animal_id: animalId } : {}) }, ctx.tenantId, actor);
         postedCount += 1;
       } else {
         skippedCount += 1;

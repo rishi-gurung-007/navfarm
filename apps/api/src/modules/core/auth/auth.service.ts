@@ -106,7 +106,7 @@ export class AuthService {
     // took the unauthenticated first-user path.
     const contextTenantId = this.cls.get<string>('tenantId');
     if (contextTenantId && contextTenantId !== dto.tenant_id) {
-      throw new BadRequestException('tenant_id does not match the active tenant workspace.');
+      throw new BadRequestException('The tenant does not match the active tenant workspace.');
     }
 
     const activeUsers = await this.db

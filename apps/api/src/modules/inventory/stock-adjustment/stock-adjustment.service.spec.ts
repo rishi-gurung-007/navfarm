@@ -116,7 +116,7 @@ describe('StockAdjustmentService', () => {
       mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ affectedRows: 1 }]) }) });
     });
 
-    it('re-checks the warehouse\'s farm once, after the transaction has committed', async () => {
+    it('re-checks the location\'s farm once, after the transaction has committed', async () => {
       const seen: unknown[] = [];
       const evaluate = jest.spyOn(feedAlerts, 'evaluateFarm').mockImplementation(async () => {
         seen.push({ committed, inTx: cls.get('tenantPostingTransaction') });
@@ -144,7 +144,7 @@ describe('StockAdjustmentService', () => {
   describe('farm scope', () => {
     const grasmere = { farmId: 'farm-g', restricted: true, companyId: 'co-1', lobId: 'lob-pig' };
 
-    it('lists only adjustments in warehouses on the active farm', async () => {
+    it('lists only adjustments in locations on the active farm', async () => {
       useFarmScope(cls, grasmere);
       await service.findAll({} as any, 'tenant-1');
       expect(renderedWhere()).toContain('location_master lf');
@@ -163,11 +163,11 @@ describe('StockAdjustmentService', () => {
       expect(renderedWhere()).toContain('`stock_adjustment`.`company_id` = ?');
     });
 
-    it('refuses adjusting a warehouse on another farm', async () => {
+    it('refuses adjusting a location on another farm', async () => {
       useFarmScope(cls, grasmere);
       rows.set(schema.locationMaster, [{ location_id: 'store-k', parent: 'farm-k', farm_id: 'farm-k', company_id: 'co-1', lob_id: 'lob-pig' }]);
       await expect(service.create({ ...validAdjustmentDto, warehouse_id: 'store-k' } as any, 'tenant-1'))
-        .rejects.toThrow('Warehouse is not on your active farm.');
+        .rejects.toThrow('Location is not on your active farm.');
     });
   });
 });

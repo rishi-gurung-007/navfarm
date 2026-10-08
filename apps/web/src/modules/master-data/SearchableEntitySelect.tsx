@@ -131,7 +131,7 @@ function SearchableEntityPanel({
   }
 
   return (
-    <div className={`flex w-full min-h-0 flex-col gap-1.5 p-1 ${columnar ? "min-w-[280px]" : ""}`}>
+    <div className={`flex w-full min-h-0 flex-col gap-1.5 p-1 ${columnar ? (columnCount >= 3 ? "min-w-[480px]" : "min-w-[280px]") : ""}`}>
       <div className="relative shrink-0">
         <Search
           className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2"
@@ -302,9 +302,12 @@ export interface SearchableEntitySelectProps {
   getLabel: (row: Row) => string;
   /** One option row's columns, in order — the open list renders them as aligned
    * columns instead of one joined line. Omitted, the list stays single-column
-   * on `getLabel`, so every existing call site is unaffected. The trigger always
-   * shows `getLabel`. */
+   * on `getLabel`, so every existing call site is unaffected. */
   getLabelParts?: (row: Row) => string[];
+  /** What the trigger shows once an option is picked. The open list shows code and
+   * name side by side to help find a row; the field itself shows one value. Omitted,
+   * it is the name (the second column), or the whole label when there are no columns. */
+  getSelectedLabel?: (row: Row) => string;
   columnHeaders?: string[];
   disabled?: boolean;
   loading?: boolean;
@@ -333,6 +336,7 @@ export function SearchableEntitySelect({
   valueKey,
   getLabel,
   getLabelParts,
+  getSelectedLabel,
   columnHeaders,
   disabled,
   loading = false,
@@ -353,6 +357,12 @@ export function SearchableEntitySelect({
   useEffect(() => { if (unavailable) setOpen(false); }, [unavailable]);
 
   const selected = options.find((o) => String(o[valueKey]) === String(value));
+  const selectedLabelOf = (row: Row): string => {
+    if (getSelectedLabel) return getSelectedLabel(row);
+    const parts = getLabelParts?.(row);
+    if (parts && parts.length > 1) return parts[1] || parts[0] || getLabel(row);
+    return getLabel(row);
+  };
 
   return (
     <Popover
@@ -383,7 +393,7 @@ export function SearchableEntitySelect({
             ...triggerStyle,
           }}
         >
-          {loading ? "Loading records…" : selected ? getLabel(selected) : placeholder}
+          {loading ? "Loading records…" : selected ? selectedLabelOf(selected) : placeholder}
         </button>
       )}
     >

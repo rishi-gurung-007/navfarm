@@ -38,7 +38,7 @@ const inputCls = "nf-input";
 
 const LINE_TYPES = ["CONSUMPTION", "OUTPUT", "DESCRIPTIVE", "OVERHEAD", "RESOURCE", "TRANSFER"] as const;
 const OCCURRENCES = ["DAILY", "WEEKLY", "MONTHLY", "ONCE", "CUSTOM"] as const;
-const QTY_BASES = ["PER_HEAD", "TOTAL_BATCH", "PER_PEN", "FIXED"] as const;
+const QTY_BASES = ["PER_HEAD", "TOTAL_BATCH"] as const;
 const OUTPUT_BASES = ["PER_SOW", "PER_BATCH", "PER_PEN"] as const;
 const DATA_ENTRY_LEVELS = ["SHED", "PEN", "FARM"] as const;
 const ALERT_SEVERITIES = ["INFO", "WARNING", "CRITICAL"] as const;

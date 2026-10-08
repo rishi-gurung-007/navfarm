@@ -106,6 +106,7 @@ export async function buildDemoContext(
     farms: { grasmere, kintyre },
     demoFarms,
     volume,
+    withBatches: true,
     log,
   };
 }

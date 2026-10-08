@@ -59,7 +59,7 @@ import { FeedRow, feedRowFor } from '../../production/lifecycle/feed-row-days';
 
 /**
  * D19 "confirmed incoming" into (or, negative, out of) one container, on one day. What counts is the service's rule
- * (Q2): posted non-feeding movements dated on or after the stock date (receipts, transfers, goods issues, adjustments)
+ * (Q2): posted non-feeding movements dated on or after the stock date (receipts, transfers, adjustments)
  * and saved-but-unposted transfers. Each lands in the opening of its own day, so it is in that day's Current
  * Inventory (Ruling M7); feeding is never passed here — the engine's own demand stands for it.
  */

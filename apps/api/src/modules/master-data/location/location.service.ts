@@ -3,7 +3,7 @@ import { listFilterConditions, runMasterList } from '../../../common/master-list
 import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { alias } from 'drizzle-orm/mysql-core';
-import { eq, and, like, or, isNull, not, sql, inArray } from 'drizzle-orm';
+import { eq, ne, and, like, or, isNull, not, sql, inArray } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
@@ -14,6 +14,7 @@ import { generateCompositeCode } from '../../system/number-series/composite-code
 import { segmentFields } from '../../system/number-series/code-format.util';
 import { SiloFeedService } from '../../inventory/silo-feed/silo-feed.service';
 import { assertSiloLevels } from '../../inventory/silo-feed/silo-levels';
+import { assertCodeUnchanged } from '../../../common/master-code';
 
 /**
  * The location types a warehouse reads as. WarehouseService projects exactly
@@ -222,13 +223,14 @@ export class LocationService {
     parent: typeof schema.locationMaster.$inferSelect | undefined,
     executor: MySql2Database<typeof schema>,
   ): Promise<string> {
-    if (!parent) {
-      // A root location has no parent to name, so the only segment it can offer
-      // is its own type. Children still take the hierarchical path below.
-      return this.numberSeriesService.generateNext(seriesCode, tenantId, companyId, executor, { location_type: type.type_code });
-    }
-
     const series = await this.numberSeriesService.lockSeries(seriesCode, tenantId, companyId, executor);
+
+    if (!parent) {
+      // A root location has no parent to name. If the number series has an explicit prefix (e.g. LOC),
+      // use that prefix so preview and save produce the identical code. Fall back to type.type_code.
+      const explicitPrefix = series?.prefix || series?.no_series_code || type.type_code;
+      return this.numberSeriesService.generateNext(seriesCode, tenantId, companyId, executor, { location_type: explicitPrefix });
+    }
 
     // Series-driven when the series says how, guaranteed when it does not.
     //
@@ -547,6 +549,24 @@ export class LocationService {
     return rows.map((row) => row.shed_id);
   }
 
+  private async attachedSheds(siloId: string, tenantId: string): Promise<Array<{ location_id: string; location_code: string; location_name: string }>> {
+    const rows = await this.db
+      .select({
+        location_id: schema.locationMaster.location_id,
+        location_code: schema.locationMaster.location_code,
+        location_name: schema.locationMaster.location_name,
+      })
+      .from(schema.siloShedLink)
+      .innerJoin(schema.locationMaster, eq(schema.locationMaster.location_id, schema.siloShedLink.shed_id))
+      .where(and(
+        eq(schema.siloShedLink.tenant_id, tenantId),
+        eq(schema.siloShedLink.silo_id, siloId),
+        isNull(schema.locationMaster.deleted_at),
+      ))
+      .orderBy(schema.locationMaster.location_code);
+    return rows;
+  }
+
   /**
    * The edit shape of a location: some of its fields are not what the column
    * holds.
@@ -564,6 +584,7 @@ export class LocationService {
       silo_capacity_kg: siloCapacityForDisplay(row.silo_capacity_kg, row.silo_capacity_uom),
     } as T & {
       attached_sheds?: string[];
+      attached_shed_details?: Array<{ location_id: string; location_code: string; location_name: string }>;
       attached_silos?: AttachedSilo[];
       current_feed_item_code?: string | null;
       current_feed_item_name?: string | null;
@@ -577,6 +598,7 @@ export class LocationService {
     }
     if (row.location_type === 'SILO') {
       shaped.attached_sheds = await this.attachedShedIds(row.location_id, tenantId);
+      shaped.attached_shed_details = await this.attachedSheds(row.location_id, tenantId);
       // company_id is required to create a SILO (create() enforces it), so a
       // row read back here should always carry one — the guard only protects
       // a legacy or cross-scope row that somehow does not.
@@ -620,7 +642,7 @@ export class LocationService {
   ) {
     if (locationType === 'SILO' && (siloCapacityKg == null || siloReorderDays == null || siloCapacityUom == null)) {
       throw new ConflictException(
-        'A SILO location requires silo_capacity_kg, silo_capacity_uom (KG or TON) and silo_reorder_days.'
+        'A silo needs a Silo Capacity, a capacity unit (KG or TON) and a Refill Lead Time (days).'
       );
     }
   }
@@ -1283,6 +1305,27 @@ export class LocationService {
       updated_at: toMysqlTimestamp(),
     };
 
+    assertCodeUnchanged('Location', location.location_code, dto.location_code);
+    if (dto.location_code !== undefined && dto.location_code.trim()) {
+      const trimmedCode = dto.location_code.trim().toUpperCase();
+      if (trimmedCode !== location.location_code) {
+        const [existingCode] = await this.db
+          .select({ location_id: schema.locationMaster.location_id })
+          .from(schema.locationMaster)
+          .where(and(
+            eq(schema.locationMaster.tenant_id, tenantId),
+            location.company_id ? eq(schema.locationMaster.company_id, location.company_id) : isNull(schema.locationMaster.company_id),
+            eq(schema.locationMaster.location_code, trimmedCode),
+            ne(schema.locationMaster.location_id, id),
+            isNull(schema.locationMaster.deleted_at),
+          ))
+          .limit(1);
+        if (existingCode) {
+          throw new ConflictException(`Location code '${trimmedCode}' is already in use.`);
+        }
+        updates.location_code = trimmedCode;
+      }
+    }
     if (dto.nob_id !== undefined) updates.nob_id = dto.nob_id;
     if (dto.lob_id !== undefined) updates.lob_id = dto.lob_id;
     if (dto.location_name !== undefined) updates.location_name = dto.location_name;

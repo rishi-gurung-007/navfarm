@@ -9,6 +9,7 @@ import { CreateCustomerDto, UpdateCustomerDto, QueryCustomerDto } from './dto/cu
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { listFilterConditions, runMasterList } from '../../../common/master-list-query';
+import { assertCodeUnchanged } from '../../../common/master-code';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   return date.toISOString().slice(0, 19).replace('T', ' ');
@@ -129,7 +130,7 @@ export class CustomerService {
     const [customer] = await this.db
       .select()
       .from(schema.customerMaster)
-      .where(and(eq(schema.customerMaster.customer_id, id), isNull(schema.customerMaster.deleted_at)))
+      .where(eq(schema.customerMaster.customer_id, id))
       .limit(1);
 
     if (!customer) {
@@ -169,14 +170,27 @@ export class CustomerService {
   async update(id: string, dto: UpdateCustomerDto, tenantId: string, userPayload?: any) {
     const customer = await this.findOne(id);
 
-    if (dto.customer_code && dto.customer_code.toUpperCase() !== customer.customer_code) {
-      throw new ConflictException('Customer Code is generated from the company-wide CUSTOMER sequence and cannot be changed.');
-    }
-
     const updates: any = {
       updated_by: userPayload?.userId || null,
       updated_at: toMysqlTimestamp(),
     };
+
+    assertCodeUnchanged('Customer', customer.customer_code, dto.customer_code);
+    if (dto.customer_code && dto.customer_code.trim()) {
+      const trimmed = dto.customer_code.trim().toUpperCase();
+      if (trimmed !== customer.customer_code) {
+        const edited = await this.numberSeriesService.editedCode(
+          'CUSTOMER',
+          trimmed,
+          customer.customer_code,
+          tenantId,
+          customer.company_id,
+        );
+        if (edited) {
+          updates.customer_code = edited;
+        }
+      }
+    }
 
     if (dto.customer_name !== undefined) updates.customer_name = dto.customer_name;
     if (dto.email !== undefined) updates.email = dto.email;

@@ -14,7 +14,6 @@ const INVENTORY_SECTIONS = [
   { key: "feed-forecast", href: "/inventory/feed-forecast", labelKey: "invFeedForecast" },
   { key: "goods-receipt", href: "/inventory/goods-receipt", labelKey: "invGoodsReceipt" },
   { key: "transfers", href: "/inventory/transfers", labelKey: "invTransfers" },
-  { key: "goods-issue", href: "/inventory/goods-issue", labelKey: "invGoodsIssue" },
   { key: "stock-adjustment", href: "/inventory/stock-adjustment", labelKey: "invStockAdjustment" },
   { key: "ledger", href: "/inventory/ledger", labelKey: "invLedger" },
 ] as const;
@@ -77,12 +76,12 @@ export function InventoryPageShell({ activeKey, fill = false, children }: { acti
     activeKey === "feed-forecast" ? t("invFeedForecastTitle") :
     activeKey === "goods-receipt" ? t("invGoodsReceiptTitle") :
     activeKey === "transfers" ? t("invTransfersTitle") :
-    activeKey === "goods-issue" ? t("invGoodsIssueTitle") :
     activeKey === "stock-adjustment" ? t("invStockAdjustmentTitle") :
     activeKey === "ledger" ? t("invLedgerTitle") :
     scope === "OPERATIONAL" ? t("invUnitBalanceTitle", { lob: tLob(activeLob) }) : t("invCompanyBalanceTitle");
 
   const description =
+    activeKey === "transfers" ? (t("invTransfersDesc") || "Manage inter-location transfer orders, dispatch shipments, and in-transit receipts.") :
     activeKey === "feed-forecast" ? t("invFeedForecastDesc") :
     scope === "OPERATIONAL" ? t("invOperationalDesc", { lob: tLob(activeLob) }) : t("invCompanyDesc");
 

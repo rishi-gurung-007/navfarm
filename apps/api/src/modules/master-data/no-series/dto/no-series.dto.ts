@@ -24,6 +24,12 @@ export class CreateNoSeriesDto {
   @IsOptional()
   @IsString()
   @MaxLength(20)
+  prefix?: string;
+
+  @ApiPropertyOptional({ description: 'Prefix for generated codes (e.g. FEED-)', maxLength: 20 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
   no_series_code?: string;
 
   @ApiPropertyOptional({ description: 'Sequence length / number of digits for zero padding (e.g. 3 for -001, 4 for -0001)', default: 4 })
@@ -78,6 +84,12 @@ export class UpdateNoSeriesDto {
   @IsString()
   @MaxLength(50)
   document_type?: string;
+
+  @ApiPropertyOptional({ description: 'Prefix for generated codes', maxLength: 20 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  prefix?: string;
 
   @ApiPropertyOptional({ description: 'Prefix for generated codes', maxLength: 20 })
   @IsOptional()

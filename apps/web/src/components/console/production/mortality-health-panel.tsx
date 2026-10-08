@@ -22,7 +22,7 @@ type MortalityRecord = {
   id: string;
   record_date: string;
   batch_no: string;
-  ear_tag?: string;
+  rfid_tag?: string;
   animal_id?: string;
   pen_location: string;
   head_count: number;
@@ -35,7 +35,7 @@ type MortalityRecord = {
 type TreatmentRecord = {
   id: string;
   treatment_date: string;
-  ear_tag: string;
+  rfid_tag: string;
   animal_id?: string;
   batch_no: string;
   diagnosis: string;
@@ -286,7 +286,7 @@ export default function MortalityHealthPanel() {
                     id: t.transaction_id || `m-${Date.now()}`,
                     record_date: t.transaction_date || "",
                     batch_no: b.batch_no,
-                    ear_tag: t.animal_ear_tag || t.animal_code || undefined,
+                    rfid_tag: t.animal_rfid_tag || t.animal_code || undefined,
                     animal_id: t.animal_id || undefined,
                     pen_location: t.pen_location_name || legacy.pen || "—",
                     head_count: Number(t.quantity || 1),
@@ -321,7 +321,7 @@ export default function MortalityHealthPanel() {
                   treatments.push({
                     id: t.transaction_id || `t-${Date.now()}`,
                     treatment_date: t.transaction_date || "",
-                    ear_tag: t.animal_ear_tag || t.animal_code || "Batch Herd Cohort",
+                    rfid_tag: t.animal_rfid_tag || t.animal_code || "Batch Herd Cohort",
                     animal_id: t.animal_id || undefined,
                     batch_no: b.batch_no,
                     diagnosis: t.diagnosis || legacy.diagnosis || t.remarks || "—",
@@ -363,7 +363,7 @@ export default function MortalityHealthPanel() {
     try {
       const res = await api.get(`/animal?companyId=${companyId}&currentBatchId=${batchObj.id}&limit=500`);
       const list: any[] = Array.isArray(res) ? res : (res?.data ?? []);
-      if (sequence === animalLoadSequence.current) setModalAnimals(list.map((a) => ({ animal_id: a.animal_id, label: a.ear_tag || a.animal_code })));
+      if (sequence === animalLoadSequence.current) setModalAnimals(list.map((a) => ({ animal_id: a.animal_id, label: a.rfid_tag || a.animal_code })));
     } catch {
       if (sequence === animalLoadSequence.current) setModalAnimals([]);
     } finally {
@@ -434,7 +434,7 @@ export default function MortalityHealthPanel() {
       } catch {}
     }
 
-    const earTagLabel = selectedAnimals.length > 0
+    const tagLabel = selectedAnimals.length > 0
       ? selectedAnimals.map((id) => modalAnimals.find((a) => a.animal_id === id)?.label || id).join(", ")
       : "Unidentified / Litter";
 
@@ -442,7 +442,7 @@ export default function MortalityHealthPanel() {
       id: `m-${Date.now()}`,
       record_date: newMortality.record_date || new Date().toISOString().slice(0, 10),
       batch_no: newMortality.batch_no || (batchObj?.no ?? "BATCH-01"),
-      ear_tag: earTagLabel,
+      rfid_tag: tagLabel,
       animal_id: selectedAnimals.length === 1 ? selectedAnimals[0] : undefined,
       pen_location: newMortality.pen_location || "—",
       head_count: qty,
@@ -502,7 +502,7 @@ export default function MortalityHealthPanel() {
         setTreatmentList((current) => [{
           id: transactionId,
           treatment_date: newTreatment.treatment_date!,
-          ear_tag: modalAnimals.find((animal) => animal.animal_id === animalId)?.label || animalId,
+          rfid_tag: modalAnimals.find((animal) => animal.animal_id === animalId)?.label || animalId,
           animal_id: animalId,
           batch_no: batchObj.no,
           diagnosis: treatmentDetail.diagnosis || "—",
@@ -540,10 +540,10 @@ export default function MortalityHealthPanel() {
   const biosecurityPct = pens.length > 0 ? Math.round((pensDisinfected / pens.length) * 100) : 0;
 
   const mortalityAnimalOptions = Array.from(
-    new Map(mortalityList.filter((m) => m.animal_id).map((m) => [m.animal_id as string, m.ear_tag || (m.animal_id as string)])).entries()
+    new Map(mortalityList.filter((m) => m.animal_id).map((m) => [m.animal_id as string, m.rfid_tag || (m.animal_id as string)])).entries()
   );
   const treatmentAnimalOptions = Array.from(
-    new Map(treatmentList.filter((t) => t.animal_id).map((t) => [t.animal_id as string, t.ear_tag])).entries()
+    new Map(treatmentList.filter((t) => t.animal_id).map((t) => [t.animal_id as string, t.rfid_tag])).entries()
   );
   const filteredMortalityList = mortalityAnimalFilter ? mortalityList.filter((m) => m.animal_id === mortalityAnimalFilter) : mortalityList;
   const filteredTreatmentList = treatmentAnimalFilter ? treatmentList.filter((t) => t.animal_id === treatmentAnimalFilter) : treatmentList;
@@ -696,7 +696,7 @@ export default function MortalityHealthPanel() {
                       {m.batch_no}
                       <span className="block text-[10px] font-normal text-[var(--text-secondary)]">{m.pen_location}</span>
                     </TableCell>
-                    <TableCell className="py-2.5 px-3 font-mono">{m.ear_tag || "—"}</TableCell>
+                    <TableCell className="py-2.5 px-3 font-mono">{m.rfid_tag || "—"}</TableCell>
                     <TableCell className="py-2.5 px-3 text-center font-bold text-[var(--danger)]">{m.head_count}</TableCell>
                     <TableCell className="py-2.5 px-3 font-medium text-[var(--text-primary)]">{m.cause_of_death}</TableCell>
                     <TableCell className="py-2.5 px-3 text-[var(--text-secondary)] max-w-xs truncate" title={m.post_mortem_notes}>
@@ -761,7 +761,7 @@ export default function MortalityHealthPanel() {
                 {filteredTreatmentList.map((tr) => (
                   <TableRow key={tr.id} className="border-b border-[var(--border)] hover:bg-[var(--surface-raised)] transition-colors">
                     <TableCell className="py-2.5 px-3 font-mono">{tr.treatment_date}</TableCell>
-                    <TableCell className="py-2.5 px-3 font-mono font-bold text-[var(--accent)]">{tr.ear_tag}</TableCell>
+                    <TableCell className="py-2.5 px-3 font-mono font-bold text-[var(--accent)]">{tr.rfid_tag}</TableCell>
                     <TableCell className="py-2.5 px-3 font-medium text-[var(--text-primary)]">{tr.diagnosis}</TableCell>
                     <TableCell className="py-2.5 px-3">
                       <span className="font-semibold text-[var(--text-primary)]">{tr.medicine_name}</span>

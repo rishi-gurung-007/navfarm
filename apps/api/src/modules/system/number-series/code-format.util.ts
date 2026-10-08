@@ -1,6 +1,7 @@
 /** The preview and the allocator must use the same clock/reset/format rules. */
 export interface CodeSeriesFormat {
   prefix: string | null;
+  no_series_code?: string | null;
   separator: string | null;
   seq_length: number;
   current_seq: number;
@@ -166,19 +167,19 @@ export function formatSeriesStem(
   const parts: string[] = [];
   const configured = segmentFields(series);
 
-  const prefix = normalizeSegment(series.prefix);
-  if (prefix && series.prefix_position === 'START') parts.push(prefix);
+  const prefix = normalizeSegment(series.prefix || series.no_series_code);
+  if (prefix && series.prefix_position === 'START' && !parts.includes(prefix)) parts.push(prefix);
 
   for (const entry of configured) {
     const { field, part } = parseSegment(entry);
     const raw = segmentValues[field];
     const segment = part ? formatDateSegment(raw, part) : normalizeSegment(raw);
-    if (segment) parts.push(segment);
+    if (segment && !parts.includes(segment)) parts.push(segment);
   }
 
   // END is the default, and with no segments configured it is also the only
   // position there is — which is what every series did before any of this.
-  if (prefix && series.prefix_position !== 'START') parts.push(prefix);
+  if (prefix && series.prefix_position !== 'START' && !parts.includes(prefix)) parts.push(prefix);
 
   return parts.join(series.separator || '-');
 }

@@ -18,7 +18,7 @@ describe('BatchDailyDataService', () => {
   const mockDbSelect = jest.fn();
   const mockDbInsert = jest.fn();
 
-  const mockDb = { select: mockDbSelect, insert: mockDbInsert };
+  const mockDb: any = { select: mockDbSelect, insert: mockDbInsert, transaction: async (work: (tx: unknown) => unknown) => work(mockDb) };
 
   const header = {
     scheduler_id: 'sched-1',
@@ -65,6 +65,22 @@ describe('BatchDailyDataService', () => {
     return where;
   };
 
+
+  /**
+   * The check, before a consumption posts, for a silo that holds less than the entry needs
+   * (splitSiloShortfall): it reads the source's type, and for a silo its stock. A store ends it at once.
+   * `heldKg` is what the silo holds — enough to cover the entry unless a test says otherwise.
+   */
+  const answerSplitCheck = (sourceType: 'SILO' | 'STORE', heldKg = 1000) => {
+    const limit = jest.fn().mockResolvedValue([{ type: sourceType, code: sourceType === 'SILO' ? 'SILO-1' : 'STORE-1' }]);
+    mockDbSelect.mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit }) }) });
+    if (sourceType === 'SILO') {
+      mockDbSelect.mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ total: String(heldKg) }]) }),
+      });
+    }
+  };
+
   const siloFeedService = { currentItems: jest.fn() };
   const feedAlerts = { evaluateLevelsSafely: jest.fn() };
 
@@ -94,7 +110,7 @@ describe('BatchDailyDataService', () => {
         BatchDailyDataService,
         {
           provide: ClsService,
-          useValue: { get: jest.fn().mockReturnValue(mockDb) },
+          useValue: { get: jest.fn().mockReturnValue(mockDb), run: (work: () => unknown) => work(), set: jest.fn() },
         },
         {
           provide: AuditLogService,
@@ -104,6 +120,7 @@ describe('BatchDailyDataService', () => {
           provide: BatchService,
           useValue: {
             addTransaction: jest.fn(),
+            postConsumptionGroup: jest.fn(),
             findOne: jest.fn().mockResolvedValue({}),
           },
         },
@@ -151,7 +168,7 @@ describe('BatchDailyDataService', () => {
   it.each([
     ['re-checks the farm\'s silo levels afterwards', {}, [[['farm-1'], 'tenant-123']]],
     ['leaves the silo re-check to the day post when deferred', { deferFeedAlerts: true }, []],
-  ])("delegates a CONSUMPTION entry to BatchService.addTransaction with the item's stock UOM, and %s", async (_label, opts, alertCalls) => {
+  ])("issues a CONSUMPTION entry through BatchService.postConsumptionGroup with the item's stock UOM, and %s", async (_label, opts, alertCalls) => {
     mockDbSelect
       .mockReturnValueOnce({
         from: jest.fn().mockReturnValue({
@@ -225,17 +242,12 @@ describe('BatchDailyDataService', () => {
         ],
       ]),
     );
+    answerSplitCheck('SILO');
     answerFindForDate();
 
-    (batchService.addTransaction as jest.Mock).mockResolvedValue({
-      transactions: [
-        {
-          transaction_id: 'tx-1',
-          transaction_date: '2026-09-08',
-          item_id: 'item-feed',
-          transaction_type: 'CONSUMPTION',
-        },
-      ],
+    (batchService.postConsumptionGroup as jest.Mock).mockResolvedValue({
+      ledgerEntry: { ledger_id: 'led-1' },
+      transactions: [{ transaction_id: 'tx-1', quantity: 22.5, amount: -100 }],
     });
 
     await service.postEntry(
@@ -251,13 +263,13 @@ describe('BatchDailyDataService', () => {
     );
 
     expect(feedAlerts.evaluateLevelsSafely.mock.calls).toEqual(alertCalls);
-    expect(batchService.addTransaction).toHaveBeenCalledWith(
+    expect(batchService.postConsumptionGroup).toHaveBeenCalledWith(
       'batch-1',
       expect.objectContaining({
-        transaction_type: 'CONSUMPTION',
         item_id: 'item-feed',
-        quantity: 22.5,
         uom: 'KG',
+        transaction_date: '2026-09-08',
+        shares: [{ animal_id: undefined, quantity: 22.5 }],
       }),
       'tenant-123',
       { userId: 'user-1' },
@@ -483,8 +495,8 @@ describe('BatchDailyDataService', () => {
     );
 
     expect(batchService.addTransaction).not.toHaveBeenCalled();
-    // First insert call is the notification_alert_log write; second is batch_daily_data.
-    expect(mockDbInsert).toHaveBeenCalledTimes(2);
+    // First insert call is notification_alert_log, second is batch_daily_data, third is inventory_ledger (DESCRIPTIVE).
+    expect(mockDbInsert).toHaveBeenCalledTimes(3);
   });
 
   describe('ANIMAL_WISE batches', () => {
@@ -718,6 +730,104 @@ describe('BatchDailyDataService', () => {
    * ledger row with no warehouse_id at all, so applyFifo drew the feed from
    * whichever layer in the company happened to be oldest.
    */
+  describe('lot rules on a consumption', () => {
+    const FUTURE = '2099-01-01';
+    const PAST = '2020-01-01';
+    /**
+     * What planLots reads (lotBalances): per-lot sums off the entries, then per-lot sums off the ledger lines —
+     * both `.from().where().groupBy()`. `remaining` is the lot's stock; the lines read as empty.
+     */
+    const lotsAtLocation = (rows: Array<{ lot_no: string; remaining: string; expiry_date: string | null; receipt_date: string }>) => {
+      mockDbSelect.mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockReturnValue({
+            groupBy: jest.fn().mockResolvedValue(rows.map((r) => ({ lot_no: r.lot_no, quantity: r.remaining, expiry_date: r.expiry_date, receipt_date: r.receipt_date }))),
+          }),
+        }),
+      });
+      mockDbSelect.mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ groupBy: jest.fn().mockResolvedValue([]) }) }),
+      });
+    };
+    const plan = (itemType: string, lotNo: string, quantity = 4) =>
+      (service as any).planLots(
+        { lot_no: lotNo, entered_value: quantity },
+        { line_type: 'CONSUMPTION', activity_name: 'Morning Feed' },
+        itemType, 'item-1', 'wh-1', 'comp-1', 'tenant-123',
+      );
+
+    it('refuses an expired lot of a medicine or vaccine', async () => {
+      lotsAtLocation([
+        { lot_no: 'OLD', remaining: '10', expiry_date: PAST, receipt_date: '2019-06-01' },
+        { lot_no: 'NEW', remaining: '10', expiry_date: FUTURE, receipt_date: '2026-01-01' },
+      ]);
+      await expect(plan('MEDICINE', 'OLD')).rejects.toThrow('OLD (expired 2020-01-01) — expired medicine and vaccine cannot be used');
+    });
+
+    it('allows an expired lot of feed and notes it', async () => {
+      lotsAtLocation([
+        { lot_no: 'OLD', remaining: '10', expiry_date: PAST, receipt_date: '2019-06-01' },
+        { lot_no: 'NEW', remaining: '10', expiry_date: FUTURE, receipt_date: '2026-01-01' },
+      ]);
+      const result = await plan('FEED', 'OLD');
+      expect(result.shares).toEqual([{ lot_no: 'OLD', quantity: 4 }]);
+      expect(result.notes).toEqual(expect.arrayContaining(['Expired lot used: OLD']));
+    });
+
+    it('notes a lot chosen against the suggestion, and nothing when the suggested lot is used', async () => {
+      const rows = [
+        { lot_no: 'A', remaining: '10', expiry_date: '2098-01-01', receipt_date: '2026-01-01' },
+        { lot_no: 'B', remaining: '10', expiry_date: '2099-06-01', receipt_date: '2026-02-01' },
+      ];
+      lotsAtLocation(rows);
+      expect((await plan('FEED', 'B')).notes).toEqual(['Lot override: used B, suggested A']);
+      lotsAtLocation(rows);
+      expect((await plan('FEED', 'A')).notes).toEqual([]);
+    });
+
+    describe('a lot-tracked item posted with no lot named', () => {
+      const planTracked = (quantity: number, lotTracked = true) =>
+        (service as any).planLots(
+          { entered_value: quantity },
+          { line_type: 'CONSUMPTION', activity_name: 'Morning Feed' },
+          'FEED', 'item-1', 'wh-1', 'comp-1', 'tenant-123', lotTracked,
+        );
+      const rows = [
+        { lot_no: 'FAR', remaining: '10', expiry_date: '2099-06-01', receipt_date: '2026-01-01' },
+        { lot_no: 'NEAR', remaining: '6', expiry_date: '2098-01-01', receipt_date: '2026-02-01' },
+        { lot_no: 'GONE', remaining: '50', expiry_date: PAST, receipt_date: '2019-01-01' },
+      ];
+
+      it('takes the in-date lot with the nearest expiry first, then the next, and says so', async () => {
+        lotsAtLocation(rows);
+        const result = await planTracked(9);
+        expect(result.shares).toEqual([{ lot_no: 'NEAR', quantity: 6 }, { lot_no: 'FAR', quantity: 3 }]);
+        expect(result.notes).toEqual(['Lots chosen by nearest expiry: NEAR 6, FAR 3']);
+      });
+
+      it('never takes an expired lot on its own choice, even when only it could cover the entry', async () => {
+        lotsAtLocation(rows);
+        await expect(planTracked(20)).rejects.toThrow('16 in date at this location, 4 short of 20');
+      });
+
+      it('does nothing for an item that is not lot tracked — the costing method alone prices it', async () => {
+        const result = await planTracked(9, false);
+        expect(result).toEqual({ shares: [{ lot_no: undefined, quantity: 9 }], notes: [] });
+      });
+    });
+
+    it('fills several ticked lots in order and refuses when they cannot cover the entry', async () => {
+      const rows = [
+        { lot_no: 'A', remaining: '10', expiry_date: '2098-01-01', receipt_date: '2026-01-01' },
+        { lot_no: 'B', remaining: '6', expiry_date: '2099-06-01', receipt_date: '2026-02-01' },
+      ];
+      lotsAtLocation(rows);
+      expect((await plan('FEED', 'B, A', 12)).shares).toEqual([{ lot_no: 'A', quantity: 10 }, { lot_no: 'B', quantity: 2 }]);
+      lotsAtLocation(rows);
+      await expect(plan('FEED', 'A, B', 18)).rejects.toThrow('2 short of 18');
+    });
+  });
+
   describe('a feed entry draws from the silo holding the posted item', () => {
     const shed = { location_id: 'shed-1', location_type: 'SHED', parent_location_id: 'farm-1', farm_id: 'farm-1' };
 
@@ -730,15 +840,9 @@ describe('BatchDailyDataService', () => {
       );
 
     beforeEach(() => {
-      (batchService.addTransaction as jest.Mock).mockResolvedValue({
-        transactions: [
-          {
-            transaction_id: 'tx-1',
-            transaction_date: '2026-09-08',
-            item_id: 'item-feed',
-            transaction_type: 'CONSUMPTION',
-          },
-        ],
+      (batchService.postConsumptionGroup as jest.Mock).mockResolvedValue({
+        ledgerEntry: { ledger_id: 'led-1' },
+        transactions: [{ transaction_id: 'tx-1', quantity: 22.5, amount: -100 }],
       });
     });
 
@@ -761,11 +865,12 @@ describe('BatchDailyDataService', () => {
           ['silo-2', { item_id: 'item-r2', item_code: 'R2', item_description: null, on_hand_qty: 50 }],
         ]),
       );
-      answerFindForDate();
+      answerSplitCheck('SILO');
+    answerFindForDate();
 
       await postFeed('item-r2');
 
-      expect(batchService.addTransaction).toHaveBeenCalledWith(
+      expect(batchService.postConsumptionGroup).toHaveBeenCalledWith(
         'batch-1',
         expect.objectContaining({ source_warehouse_id: 'silo-2' }),
         'tenant-123',
@@ -789,16 +894,42 @@ describe('BatchDailyDataService', () => {
           ['silo-2', { item_id: 'item-r2', item_code: 'R2', item_description: null, on_hand_qty: 50 }],
         ]),
       );
-      answerFindForDate();
+      answerSplitCheck('SILO');
+    answerFindForDate();
 
       await postFeed('item-r1');
 
-      expect(batchService.addTransaction).toHaveBeenCalledWith(
+      expect(batchService.postConsumptionGroup).toHaveBeenCalledWith(
         'batch-1',
         expect.objectContaining({ source_warehouse_id: 'silo-1' }),
         'tenant-123',
         { userId: 'user-1' },
       );
+    });
+
+    it("takes what the silo holds and the rest from the farm's store when the silo is short", async () => {
+      answers(
+        [{ ...consumptionLine, item_id: 'item-r1' }],
+        [header],
+        [{ tracking_mode: 'BATCH_WISE', farm_id: 'farm-1' }],
+        [],
+        [{ item_id: 'item-r1', uom_primary: 'KG' }],
+        [shed],
+      );
+      answerSiloLinks(['silo-1']);
+      siloFeedService.currentItems.mockResolvedValueOnce(
+        new Map([['silo-1', { item_id: 'item-r1', item_code: 'R1', item_description: null, on_hand_qty: 10 }]]),
+      );
+      answerSplitCheck('SILO', 10);
+      answers([{ location_id: 'store-1' }], [{ code: 'STORE-1' }]);
+      answerFindForDate();
+
+      await postFeed('item-r1');
+
+      const calls = (batchService.postConsumptionGroup as jest.Mock).mock.calls;
+      expect(calls).toHaveLength(2);
+      expect(calls[0][1]).toEqual(expect.objectContaining({ source_warehouse_id: 'silo-1', shares: [{ animal_id: undefined, quantity: 10 }] }));
+      expect(calls[1][1]).toEqual(expect.objectContaining({ source_warehouse_id: 'store-1', shares: [{ animal_id: undefined, quantity: 12.5 }] }));
     });
 
     // Data entry happens at PEN level on some farms; a silo is attached to
@@ -817,11 +948,12 @@ describe('BatchDailyDataService', () => {
       siloFeedService.currentItems.mockResolvedValueOnce(
         new Map([['silo-1', { item_id: 'item-feed', item_code: 'FEED', item_description: null, on_hand_qty: 200 }]]),
       );
-      answerFindForDate();
+      answerSplitCheck('SILO');
+    answerFindForDate();
 
       await postFeed();
 
-      expect(batchService.addTransaction).toHaveBeenCalledWith(
+      expect(batchService.postConsumptionGroup).toHaveBeenCalledWith(
         'batch-1',
         expect.objectContaining({ source_warehouse_id: 'silo-1' }),
         'tenant-123',
@@ -848,11 +980,12 @@ describe('BatchDailyDataService', () => {
         ]),
       );
       answers([{ location_id: 'store-1' }]);
-      answerFindForDate();
+      answerSplitCheck('STORE');
+    answerFindForDate();
 
       await postFeed('item-medicine');
 
-      expect(batchService.addTransaction).toHaveBeenCalledWith(
+      expect(batchService.postConsumptionGroup).toHaveBeenCalledWith(
         'batch-1',
         expect.objectContaining({ source_warehouse_id: 'store-1' }),
         'tenant-123',
@@ -871,11 +1004,12 @@ describe('BatchDailyDataService', () => {
       );
       answerSiloLinks([]);
       answers([{ location_id: 'store-1' }]);
-      answerFindForDate();
+      answerSplitCheck('STORE');
+    answerFindForDate();
 
       await postFeed();
 
-      expect(batchService.addTransaction).toHaveBeenCalledWith(
+      expect(batchService.postConsumptionGroup).toHaveBeenCalledWith(
         'batch-1',
         expect.objectContaining({ source_warehouse_id: 'store-1' }),
         'tenant-123',
@@ -896,7 +1030,8 @@ describe('BatchDailyDataService', () => {
       );
       const where = answerSiloLinks([]);
       answers([{ location_id: 'store-1' }]);
-      answerFindForDate();
+      answerSplitCheck('STORE');
+    answerFindForDate();
 
       await postFeed();
 
@@ -923,7 +1058,7 @@ describe('BatchDailyDataService', () => {
       answers([]);
 
       await expect(postFeed('item-medicine')).rejects.toThrow(BadRequestException);
-      expect(batchService.addTransaction).not.toHaveBeenCalled();
+      expect(batchService.postConsumptionGroup).not.toHaveBeenCalled();
     });
 
     it('refuses the entry when the stage has no location at all', async () => {
@@ -936,12 +1071,15 @@ describe('BatchDailyDataService', () => {
       );
 
       await expect(postFeed()).rejects.toThrow(BadRequestException);
-      expect(batchService.addTransaction).not.toHaveBeenCalled();
+      expect(batchService.postConsumptionGroup).not.toHaveBeenCalled();
     });
 
     // OUTPUT lines put stock IN and carry no FIFO draw, so they resolve
     // nothing and keep behaving exactly as before.
-    it('resolves no warehouse for an OUTPUT line', async () => {
+    it('resolves no location for an OUTPUT line', async () => {
+      (batchService.addTransaction as jest.Mock).mockResolvedValue({
+        transactions: [{ transaction_id: 'tx-1', transaction_date: '2026-09-08', item_id: 'item-feed', transaction_type: 'OUTPUT' }],
+      });
       answers(
         [{ ...consumptionLine, line_type: 'OUTPUT' }],
         [header],

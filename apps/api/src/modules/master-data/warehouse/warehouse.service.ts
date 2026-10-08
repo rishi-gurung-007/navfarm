@@ -94,7 +94,7 @@ export class WarehouseService {
       .where(and(eq(schema.locationMaster.location_id, id), inArray(schema.locationMaster.location_type, WAREHOUSE_TYPES)))
       .limit(1);
 
-    if (!row) throw new NotFoundException(`Warehouse with ID '${id}' not found.`);
+    if (!row) throw new NotFoundException(`Location with ID '${id}' not found.`);
     return this.project(row);
   }
 }

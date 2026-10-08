@@ -15,6 +15,7 @@ describe('SupplierService', () => {
   const mockDbUpdate = jest.fn();
   const mockEnsureCompanySeries = jest.fn();
   const mockGenerateNext = jest.fn();
+  const mockEditedCode = jest.fn();
 
   const mockDb = {
     select: mockDbSelect,
@@ -28,6 +29,7 @@ describe('SupplierService', () => {
     mockDbUpdate.mockReset();
     mockEnsureCompanySeries.mockReset().mockResolvedValue(undefined);
     mockGenerateNext.mockReset().mockResolvedValue('SUP-001');
+    mockEditedCode.mockReset().mockImplementation((_master, supplied) => Promise.resolve(supplied));
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -56,6 +58,7 @@ describe('SupplierService', () => {
           useValue: {
             ensureCompanySeries: mockEnsureCompanySeries,
             generateNext: mockGenerateNext,
+            editedCode: mockEditedCode,
           },
         },
       ],
@@ -178,12 +181,28 @@ describe('SupplierService', () => {
   });
 
   describe('update', () => {
-    it('should reject changes to the generated supplier code', async () => {
+    it('refuses to change the supplier code after it is created', async () => {
       mockDbSelect.mockReturnValueOnce({
-        from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ supplier_id: 's-1', company_id: 'comp-1', supplier_code: 'SUP-001' }]) }) }),
+        from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ supplier_id: 's-1', company_id: 'comp-1', supplier_code: 'SUP-001', vendor_type: 'GENERAL' }]) }) }),
       });
 
-      await expect(service.update('s-1', { supplier_code: 'SUP-099' }, 'tenant-123')).rejects.toThrow(ConflictException);
+      await expect(service.update('s-1', { supplier_code: 'SUP-099' }, 'tenant-123')).rejects.toThrow(BadRequestException);
+      expect(mockEditedCode).not.toHaveBeenCalled();
+      expect(mockDbUpdate).not.toHaveBeenCalled();
+    });
+
+    it('accepts an update that repeats the stored supplier code', async () => {
+      mockDbSelect
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ supplier_id: 's-1', company_id: 'comp-1', supplier_code: 'SUP-001', vendor_type: 'GENERAL' }]) }) }),
+        })
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ supplier_id: 's-1', company_id: 'comp-1', supplier_code: 'SUP-001', vendor_type: 'GENERAL' }]) }) }),
+        });
+      mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) }) });
+
+      const res = await service.update('s-1', { supplier_code: 'sup-001' }, 'tenant-123');
+      expect(res.supplier_code).toBe('SUP-001');
     });
 
     it('should re-validate vendor_type requirements against effective values', async () => {

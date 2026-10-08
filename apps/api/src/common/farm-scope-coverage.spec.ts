@@ -13,7 +13,6 @@ import { AnimalMedicationLogController } from '../modules/piggery/animal/animal-
 import { AnimalMovementLogController } from '../modules/piggery/animal-movement-log/animal-movement-log.controller';
 import { BreedingController } from '../modules/piggery/breeding/breeding.controller';
 import { GoodsReceiptController } from '../modules/inventory/goods-receipt/goods-receipt.controller';
-import { GoodsIssueController } from '../modules/inventory/goods-issue/goods-issue.controller';
 import { StockAdjustmentController } from '../modules/inventory/stock-adjustment/stock-adjustment.controller';
 import { StockTransferController } from '../modules/inventory/stock-transfer/stock-transfer.controller';
 import { InventoryLedgerController } from '../modules/inventory/inventory-ledger/inventory-ledger.controller';
@@ -52,7 +51,7 @@ import { ResourceLedgerController } from '../modules/production/resource-ledger/
 const SCOPED = {
   BatchController, BatchDailyDataController, BatchTransferController, SchedulerHeaderController,
   ApprovalController, AnimalController, AnimalMedicationLogController, AnimalMovementLogController, BreedingController,
-  GoodsReceiptController, GoodsIssueController, StockAdjustmentController, StockTransferController,
+  GoodsReceiptController, StockAdjustmentController, StockTransferController,
   InventoryLedgerController, FeedForecastController, FeedAlertController,
   AlertController, MilkController, QcController, QrCodeController,
   BioAssetLedgerController,

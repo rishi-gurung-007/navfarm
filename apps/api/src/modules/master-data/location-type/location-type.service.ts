@@ -126,7 +126,6 @@ export class LocationTypeService {
     const [row] = await this.db.select().from(schema.locationTypeMaster).where(and(
       eq(schema.locationTypeMaster.location_type_id, id),
       eq(schema.locationTypeMaster.tenant_id, tenantId),
-      isNull(schema.locationTypeMaster.deleted_at),
     )).limit(1);
     if (!row) throw new NotFoundException(`Location type '${id}' not found.`);
     return row;

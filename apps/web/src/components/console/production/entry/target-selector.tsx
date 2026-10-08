@@ -74,7 +74,7 @@ export function TargetSelector({
                 }
               />
               {a.animal_code}
-              {a.ear_tag && <span className="text-(--text-muted)">· {a.ear_tag}</span>}
+              {a.rfid_tag && <span className="text-(--text-muted)">· {a.rfid_tag}</span>}
             </label>
           ))}
         </div>

@@ -2416,3 +2416,49 @@ later Tentative Plan uses five completed Wednesday-Tuesday weeks, normalizes
 actual consumption against lifecycle-expected consumption, and uses the ISO
 week containing the production date for `YYYYWW` when that deferred plan enters
 scope.
+
+## 8 Oct 2026 — Lot and serial consumption under FIFO costing (defaults, awaiting Rishi)
+
+Costing stays FIFO; the user's lot or serial selection decides which layers a consumption uses
+(lot: oldest receipt first inside each ticked lot, one ledger entry per lot; serial: each serial at
+its own receipt's cost). Until Rishi decides otherwise: expired medicine and vaccine are blocked and
+expired feed warned; the suggested lot is the earliest expiry, then the oldest receipt; anyone may
+override the suggestion and the entry is marked as an override; an item's tracking type can change
+only with no stock on hand and no draft documents. Plan:
+`docs/superpowers/plans/2026-10-08-lot-serial-consumption.md`.
+
+## 8 Oct 2026 — Costing follows the item's method; one ledger entry per activity (user's instruction)
+
+Supersedes the 8 Oct default above that priced a draw from the lot chosen. Cost is now decided only by the
+item's costing method: FIFO prices a draw at the oldest receipts at the location at their own price; Average
+at the average of what is on hand; Standard at the item's standard cost. Which lot or serial the stock leaves
+is a separate, physical record: it is checked against what each lot or serial holds, and does not move cost
+(a lot picked for its expiry can be costed from an older receipt). Lot and serial stock is therefore read off
+the lots and serials themselves, not off a receipt's remaining quantity (which now belongs to costing alone).
+
+A consumption activity posts as ONE ledger entry for all the animals that took it: the entry carries the
+total, its lots as ledger lines (`inventory_ledger_line`), and the receipts it was costed from as
+applications. Each animal keeps its own batch transaction with its share of the quantity and cost. When a silo
+is short and the farm store gives the rest, that is one entry per location.
+
+Average is a true moving average (9 Oct correction): an issue is priced at Σ signed ledger amount ÷ Σ signed
+quantity for the item at the location, excluding the issue being priced, so a draw never shifts the average
+(10 @ 10 + 10 @ 20, issue 5 then 10 costs 75 then 150). Stock value for an Average item is that book value, on
+the Stock Balance screen and the item ledger history; FIFO items keep receipt-by-receipt valuation. With no
+book quantity left the draw falls back to the receipts' own prices. Standard still does not re-value receipts.
+An inbound entry for a lot or serials now lists the entries that physically issued from it (`lot_issues`)
+beside the cost entries (`applications`).
+
+## 8 Oct 2026 — Lot required only for tracked items; tracked items default to nearest expiry (defaults, awaiting Rishi)
+
+Found while rehearsing batch + scheduler posting for the four costing test items (FIFO / Average × not tracked /
+lot tracked, seeded by chapter `09-costing-scenarios`; `pnpm verify:costing` rehearses them and rolls back).
+
+- Scheduler lines generated from the breed lifecycle set `lot_required = true` for every item, so an untracked
+  feed demanded a lot number. They now follow the item (lot or serial tracked), the same rule the line form
+  applies; the posting check also ignores `lot_required` on a line whose item is not tracked, so lines already
+  generated stop asking for a lot.
+- A lot-tracked item posted with no lot named (bulk entry, seed, API client) used to be refused at the ledger.
+  The entry now takes the in-date lot with the nearest expiry first, then the next, noted on the entry. Expired
+  stock is never taken on the system's own choice. A lot the user names still wins; the price follows the item's
+  costing method either way.

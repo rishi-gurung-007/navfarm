@@ -68,8 +68,8 @@ const form = (over: Partial<EntryFormResponse>): EntryFormResponse => ({
     mode: "REGISTERED",
     default_scope: "STAGE_ANIMALS",
     stage_animals: [
-      { animal_id: "a1", animal_code: "PIG-2026-0001", ear_tag: null },
-      { animal_id: "a2", animal_code: "PIG-2026-0002", ear_tag: "T2" },
+      { animal_id: "a1", animal_code: "PIG-2026-0001", rfid_tag: null },
+      { animal_id: "a2", animal_code: "PIG-2026-0002", rfid_tag: "T2" },
     ],
   },
   ...over,

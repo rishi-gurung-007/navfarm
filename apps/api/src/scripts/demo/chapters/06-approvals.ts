@@ -16,7 +16,7 @@
  *
  *   pnpm nx run api:db-demo-chapters -- --apply --chapter=06-approvals
  */
-import { eq } from 'drizzle-orm';
+import { eq, like, or } from 'drizzle-orm';
 import { ClsService } from 'nestjs-cls';
 import type { MySql2Database } from 'drizzle-orm/mysql2';
 import { ApprovalService } from '../../../modules/production/approval/approval.service';
@@ -46,7 +46,8 @@ export const approvalsChapter: DemoChapter = {
     const [grower] = await db
       .select({ batch_id: schema.batchHeader.batch_id, batch_no: schema.batchHeader.batch_no })
       .from(schema.batchHeader)
-      .where(eq(schema.batchHeader.remarks, 'DEMO-BATCH-CO-GRASMERE'))
+      // Grasmere's bulk batch: the legacy token its first run used, or the stage-keyed one.
+      .where(or(eq(schema.batchHeader.remarks, 'DEMO-BATCH-CO-GRASMERE'), like(schema.batchHeader.remarks, 'DEMO-MUL100-CO-%')))
       .limit(1);
     if (!registered || !grower) throw new Error('06-approvals: demo batches not found — run 03-batches-and-animals first.');
 

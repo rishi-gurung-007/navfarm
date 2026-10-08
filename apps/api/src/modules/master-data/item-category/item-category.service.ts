@@ -10,6 +10,7 @@ import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { generateCompositeCode } from '../../system/number-series/composite-code.util';
 import { listFilterConditions, runMasterList } from '../../../common/master-list-query';
+import { assertCodeUnchanged } from '../../../common/master-code';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   return date.toISOString().slice(0, 19).replace('T', ' ');
@@ -93,7 +94,7 @@ export class ItemCategoryService {
   /** No series configured for ITEM_CATEGORY — manual entry, exactly as before this feature existed. */
   private async createManual(dto: CreateItemCategoryDto, tenantId: string, companyId: string | null, userPayload?: any) {
     if (!dto.category_code) {
-      throw new BadRequestException('category_code is required — no number series is configured for item categories.');
+      throw new BadRequestException('Enter a Code for this item category — no number series is configured for item categories.');
     }
 
     const duplicateConditions = [
@@ -289,6 +290,7 @@ export class ItemCategoryService {
       await this.findOne(dto.parent_category_id);
     }
 
+    assertCodeUnchanged('Item category', category.category_code, dto.category_code);
     if (dto.category_code && dto.category_code.toUpperCase() !== category.category_code) {
       const duplicateConditions = [
         eq(schema.itemCategoryMaster.tenant_id, tenantId),
@@ -321,23 +323,7 @@ export class ItemCategoryService {
 
     if (dto.parent_category_id !== undefined) updates.parent_category_id = dto.parent_category_id;
     if (dto.item_type !== undefined) updates.item_type = dto.item_type;
-    // ITEM_CATEGORY is a named series (code = the uppercased name). Renaming a
-    // category recomposes its code from the new name — refused while an item's
-    // legacy sub_category still carries the old one (item_master joins by
-    // category_id, so that string is the only copy that could go stale).
-    if (dto.category_name !== undefined && dto.category_name.trim() !== category.category_name
-        && category.category_code === category.category_name.replaceAll(/\s+/g, '_').toUpperCase()) {
-      updates.category_code = await this.numberSeriesService.renameCode(
-        'ITEM_CATEGORY',
-        { ...category, category_name: dto.category_name },
-        tenantId,
-        category.company_id,
-      );
-    } else if (dto.category_code !== undefined && dto.category_code.toUpperCase() !== category.category_code) {
-      throw new ConflictException(
-        `Category codes follow the number series and cannot be typed over. Rename the category's name and the code follows it.`,
-      );
-    }
+    // category_code is its identity: a rename of category_name never touches it.
     if (dto.category_name !== undefined) updates.category_name = dto.category_name;
     if (dto.is_active !== undefined) updates.is_active = dto.is_active;
     if (dto.status !== undefined) updates.status = dto.status;

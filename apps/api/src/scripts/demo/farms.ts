@@ -34,12 +34,14 @@
 import { and, eq, inArray, isNull } from 'drizzle-orm';
 import type { MySql2Database } from 'drizzle-orm/mysql2';
 import * as schema from '../../core/database/schema';
+import { selectDemoFarmCodes, type DemoFarmCode } from '../lib/demo-farm-selection';
 
 type Db = MySql2Database<typeof schema>;
 
 /** The nine farms of the demo, in the order the chapters walk them. */
-export const DEMO_FARM_CODES = ['MUL100', 'POR100', 'RIC100', 'VIL100', 'GRA100', 'LEA100', 'LIO100', 'AI100', 'LEX100'] as const;
-export type DemoFarmCode = (typeof DEMO_FARM_CODES)[number];
+export type { DemoFarmCode };
+/** The farms this run covers: all nine, or the DEMO_FARMS subset (lib/demo-farm-selection.ts). */
+export const DEMO_FARM_CODES: readonly DemoFarmCode[] = selectDemoFarmCodes(process.env.DEMO_FARMS);
 
 /** What a farm is for (docs/decisions.md, "Nine-farm demo data"). */
 export type FarmRole = 'MULTIPLIER' | 'AI_STATION' | 'GROW_OUT' | 'FARROW_TO_FINISH';

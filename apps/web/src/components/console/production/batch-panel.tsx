@@ -692,7 +692,6 @@ export default function BatchPanel() {
       const q = animalSearch.toLowerCase();
       const matches =
         (a.animal_code || '').toLowerCase().includes(q) ||
-        (a.ear_tag || '').toLowerCase().includes(q) ||
         (a.rfid_tag || '').toLowerCase().includes(q);
       if (!matches) return false;
     }
@@ -775,7 +774,6 @@ export default function BatchPanel() {
     const rows = filteredAnimalCandidates;
     const header = [
       'animal_code',
-      'ear_tag',
       'rfid_tag',
       'gender',
       'animal_type',
@@ -789,7 +787,6 @@ export default function BatchPanel() {
       lines.push(
         [
           a.animal_code || '',
-          a.ear_tag || '',
           a.rfid_tag || '',
           a.gender || '',
           a.animal_type || '',
@@ -865,12 +862,12 @@ export default function BatchPanel() {
     }
     const headerRow = rows[0].map((h) => h.trim().toLowerCase());
     const codeCol = headerRow.indexOf('animal_code');
-    const earTagCol = headerRow.indexOf('ear_tag');
-    if (codeCol === -1 && earTagCol === -1) {
+    const rfidCol = headerRow.indexOf('rfid_tag');
+    if (codeCol === -1 && rfidCol === -1) {
       setCsvImportResult({
         matched: 0,
         errors: [
-          "The file needs an 'animal_code' (or 'ear_tag') column — export the current list to see the expected format.",
+          "The file needs an 'animal_code' (or 'rfid_tag') column — export the current list to see the expected format.",
         ],
       });
       return;
@@ -881,10 +878,10 @@ export default function BatchPanel() {
         .filter((a) => a.animal_code)
         .map((a) => [String(a.animal_code).trim().toLowerCase(), a]),
     );
-    const byEarTag = new Map(
+    const byRfid = new Map(
       animalCandidates
-        .filter((a) => a.ear_tag)
-        .map((a) => [String(a.ear_tag).trim().toLowerCase(), a]),
+        .filter((a) => a.rfid_tag)
+        .map((a) => [String(a.rfid_tag).trim().toLowerCase(), a]),
     );
 
     const errors: string[] = [];
@@ -894,14 +891,14 @@ export default function BatchPanel() {
       const line = i + 2; // 1-based, plus the header row
       const raw =
         (codeCol !== -1 ? dataRows[i][codeCol] : '') ||
-        (earTagCol !== -1 ? dataRows[i][earTagCol] : '');
+        (rfidCol !== -1 ? dataRows[i][rfidCol] : '');
       const key = raw.trim();
       if (!key) {
         errors.push(`Row ${line}: identifier is empty.`);
         continue;
       }
       const animal =
-        byCode.get(key.toLowerCase()) || byEarTag.get(key.toLowerCase());
+        byCode.get(key.toLowerCase()) || byRfid.get(key.toLowerCase());
       if (!animal) {
         errors.push(`Row ${line}: '${key}' does not match any animal.`);
         continue;
@@ -998,9 +995,10 @@ export default function BatchPanel() {
       if (trackingMode === 'ANIMAL_WISE') {
         if (!header.shed_id)
           throw new Error('Shed is required for an Animal Wise batch.');
-        if (selectedAnimalIds.size === 0)
+        // Save as Draft may go ahead with no animals; Create may not.
+        if (activateAfter && selectedAnimalIds.size === 0)
           throw new Error(
-            'Select at least one animal for an Animal Wise batch.',
+            'Select at least one animal before creating an Animal Wise batch. You can still save it as a draft without animals.',
           );
         const animalWisePayload = {
           tracking_mode: 'ANIMAL_WISE',
@@ -1030,7 +1028,9 @@ export default function BatchPanel() {
         showToast.success(
           editingBatchId
             ? `Batch ${codeName} is updated successfully.`
-            : `Batch ${codeName} is created successfully.`,
+            : activateAfter
+              ? `Batch ${codeName} is created and active.`
+              : `Batch ${codeName} is saved as a draft.`,
         );
         if (viewing?.batch_id === created.batch_id) await refreshViewing();
         load();
@@ -1140,7 +1140,9 @@ export default function BatchPanel() {
       showToast.success(
         editingBatchId
           ? `Batch ${codeName} is updated successfully.`
-          : `Batch ${codeName} is created successfully.`,
+          : activateAfter
+            ? `Batch ${codeName} is created and active.`
+            : `Batch ${codeName} is saved as a draft.`,
       );
       if (viewing?.batch_id === created.batch_id) await refreshViewing();
       load();
@@ -1925,7 +1927,7 @@ export default function BatchPanel() {
                     }}
                     options={nobs.map((n) => ({
                       value: n.nob_id,
-                      label: `${n.nob_code} — ${n.nob_name}`,
+                      label: `${n.nob_code} — ${n.nob_name}`, shortLabel: (n.nob_name) ?? "",
                     }))}
                     placeholder={t('blSelectEllipsis')}
                     searchPlaceholder="Search NOBs…"
@@ -1945,7 +1947,7 @@ export default function BatchPanel() {
                     disabled={!nobId}
                     options={lobs.map((l) => ({
                       value: l.lob_id,
-                      label: `${l.lob_code} — ${l.lob_name}`,
+                      label: `${l.lob_code} — ${l.lob_name}`, shortLabel: (l.lob_name) ?? "",
                     }))}
                     placeholder={nobId ? t('blSelectEllipsis') : t('blSelectNobFirst')}
                     searchPlaceholder="Search LOBs…"
@@ -2025,7 +2027,7 @@ export default function BatchPanel() {
                   value: b.breed_id,
                   code: b.breed_code,
                   name: b.breed_name,
-                  label: `${b.breed_code} — ${b.breed_name}`,
+                  label: `${b.breed_code} — ${b.breed_name}`, shortLabel: (b.breed_name) ?? "",
                 }))}
                 columnHeaders={['Code', 'Name']}
                 placeholder={t('blSelectEllipsis')}
@@ -2330,7 +2332,7 @@ export default function BatchPanel() {
                                 value: it.item_id,
                                 code: it.item_code,
                                 name: it.item_name || it.item_code,
-                                label: `${it.item_code} — ${it.item_name || it.item_code}`,
+                                label: `${it.item_code} — ${it.item_name || it.item_code}`, shortLabel: (it.item_name || it.item_code) ?? "",
                               }))}
                               columnHeaders={['Code', 'Name']}
                               placeholder={t('blSelectItemOptions', {
@@ -2569,7 +2571,7 @@ export default function BatchPanel() {
                                   value: it.item_id,
                                   code: it.item_code,
                                   name: it.item_name || it.item_code,
-                                  label: `${it.item_code} — ${it.item_name || it.item_code}`,
+                                  label: `${it.item_code} — ${it.item_name || it.item_code}`, shortLabel: (it.item_name || it.item_code) ?? "",
                                 }))}
                                 columnHeaders={['Code', 'Name']}
                                 placeholder={t('blSelectItemOptions', {
@@ -2864,7 +2866,7 @@ export default function BatchPanel() {
                               className="px-3 py-1.5 font-mono"
                               style={S.sub}
                             >
-                              {a.ear_tag || '—'}
+                              {a.rfid_tag || '—'}
                             </TableCell>
                             <TableCell className="px-3 py-1.5" style={S.sub}>
                               {a.animal_type} /{' '}
@@ -3946,7 +3948,7 @@ export default function BatchPanel() {
                     value: it.item_id,
                     code: it.item_code,
                     name: it.item_name || it.item_code,
-                    label: `${it.item_code} — ${it.item_name || it.item_code}`,
+                    label: `${it.item_code} — ${it.item_name || it.item_code}`, shortLabel: (it.item_name || it.item_code) ?? "",
                   }))}
                   columnHeaders={['Code', 'Name']}
                   placeholder={t('blSelectItemOptions', { count: items.length })}
@@ -4209,7 +4211,7 @@ export default function BatchPanel() {
                     </TableCell>
                     <TableCell className="px-2 py-1.5">
                       <SearchableSelect
-                        ariaLabel="Warehouse"
+                        ariaLabel="Location"
                         value={line.warehouse_id}
                         onChange={(val) =>
                           setOutputLineField(idx, 'warehouse_id', val)
@@ -4219,7 +4221,7 @@ export default function BatchPanel() {
                           label: w.warehouse_code,
                         }))}
                         placeholder={t('blSelectEllipsis')}
-                        searchPlaceholder="Search warehouse…"
+                        searchPlaceholder="Search location…"
                       />
                     </TableCell>
                     <TableCell className="px-2 py-1.5">
@@ -4529,7 +4531,7 @@ export default function BatchPanel() {
                         label: w.warehouse_code,
                       }))}
                       placeholder={t('blSelectEllipsis')}
-                      searchPlaceholder="Search warehouse…"
+                      searchPlaceholder="Search location…"
                     />
                   </div>
                 </div>
@@ -5050,7 +5052,7 @@ export default function BatchPanel() {
                     label: w.warehouse_code,
                   }))}
                   placeholder={t('blSelectEllipsis')}
-                  searchPlaceholder="Search warehouse…"
+                  searchPlaceholder="Search location…"
                 />
               </div>
               <div className="flex flex-col gap-1.5">

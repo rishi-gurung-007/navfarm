@@ -57,7 +57,6 @@ export default function DairyCowRegisterPanel() {
   const [notice, setNotice] = useState("");
 
   const [form, setForm] = useState({
-    ear_tag: "",
     rfid_tag: "",
     breed_id: "",
     animal_type: "COW",
@@ -114,8 +113,7 @@ export default function DairyCowRegisterPanel() {
       const matchesSearch =
         !q ||
         (c.animal_code || "").toLowerCase().includes(q) ||
-        (c.rfid_tag || "").toLowerCase().includes(q) ||
-        (c.ear_tag || "").toLowerCase().includes(q);
+        (c.rfid_tag || "").toLowerCase().includes(q);
       const matchesStatus = statusFilter === "ALL" || c.status === statusFilter;
       const matchesBreed = breedFilter === "ALL" || c.breed_id === breedFilter;
       return matchesSearch && matchesStatus && matchesBreed;
@@ -169,7 +167,6 @@ export default function DairyCowRegisterPanel() {
         entry_type: form.entry_type,
         entry_date: form.entry_date,
         ...(form.dob ? { dob: form.dob } : {}),
-        ...(form.ear_tag.trim() ? { ear_tag: form.ear_tag.trim() } : {}),
         ...(form.rfid_tag.trim() ? { rfid_tag: form.rfid_tag.trim() } : {}),
         ...(areaId ? { operational_area_id: areaId } : {}),
         ...(form.parity_count ? { parity_count: Number(form.parity_count) } : {}),
@@ -177,7 +174,7 @@ export default function DairyCowRegisterPanel() {
       });
       const created = unwrap<Row>(res);
       setShowAddModal(false);
-      setForm({ ...form, ear_tag: "", rfid_tag: "", dob: "", parity_count: 0, acquisition_cost: "" });
+      setForm({ ...form, rfid_tag: "", dob: "", parity_count: 0, acquisition_cost: "" });
       await load();
       setNotice(t("dyCowRegistered", { code: created?.animal_code || "" }));
       setTimeout(() => setNotice(""), 4000);
@@ -304,10 +301,9 @@ export default function DairyCowRegisterPanel() {
                     <tr key={cow.animal_id} className="transition-colors hover:bg-[var(--surface-raised)]">
                       <td className="p-3 font-semibold">
                         <span className="font-mono text-xs font-bold text-[var(--accent)]">{cow.animal_code}</span>
-                        {/* Many herds use the animal code as the ear tag; only
-                            show the second line when it adds information. */}
-                        {cow.ear_tag && cow.ear_tag !== cow.animal_code && (
-                          <p className="text-[10px] font-normal text-[var(--text-secondary)]">{cow.ear_tag}</p>
+                        {/* The RFID tag is the animal's only tag; show it under the code. */}
+                        {cow.rfid_tag && cow.rfid_tag !== cow.animal_code && (
+                          <p className="text-[10px] font-normal text-[var(--text-secondary)]">{cow.rfid_tag}</p>
                         )}
                       </td>
                       <td className="p-3 font-mono text-[11px] text-[var(--text-secondary)]">{cow.rfid_tag || "—"}</td>
@@ -348,15 +344,6 @@ export default function DairyCowRegisterPanel() {
           <div className="grid gap-4 sm:grid-cols-2">
             {/* animal_code is issued by the number series on the server — the
                 old form let the user type one, which would collide. */}
-            <label className="block">
-              <span className="nf-text-label">{t("dyEarTagIdRequired")}</span>
-              <input
-                type="text"
-                value={form.ear_tag}
-                onChange={(e) => setForm({ ...form, ear_tag: e.target.value })}
-                className="nf-input w-full font-mono text-sm"
-              />
-            </label>
             <label className="block">
               <span className="nf-text-label">{t("dyRfidTag")}</span>
               <input

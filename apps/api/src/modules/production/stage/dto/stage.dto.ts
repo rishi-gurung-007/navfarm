@@ -130,6 +130,11 @@ export class UpdateStageDto {
   @ApiProperty({ required: false })
   @IsString()
   @IsOptional()
+  stage_code?: string;
+
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
   stage_name?: string;
 
   @ApiProperty({ required: false, enum: STAGE_CATEGORIES })

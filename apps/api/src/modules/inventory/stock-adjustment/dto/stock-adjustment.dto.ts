@@ -61,7 +61,7 @@ export class CreateStockAdjustmentDto {
   @IsNotEmpty()
   company_id: string;
 
-  @ApiProperty({ description: 'Warehouse UUID' })
+  @ApiProperty({ description: 'Location UUID' })
   @IsUUID()
   @IsNotEmpty()
   warehouse_id: string;
@@ -129,7 +129,7 @@ export class QueryStockAdjustmentDto {
   @IsString()
   status?: string;
 
-  @ApiProperty({ description: 'Filter by warehouse UUID', required: false })
+  @ApiProperty({ description: 'Filter by location UUID', required: false })
   @IsOptional()
   @IsUUID()
   warehouseId?: string;

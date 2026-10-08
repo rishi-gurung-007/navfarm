@@ -72,7 +72,7 @@ export class CreateGoodsReceiptDto {
   @IsNotEmpty()
   company_id: string;
 
-  @ApiProperty({ description: 'Receiving warehouse UUID' })
+  @ApiProperty({ description: 'Receiving location UUID' })
   @IsUUID()
   @IsNotEmpty()
   warehouse_id: string;
@@ -150,7 +150,7 @@ export class QueryGoodsReceiptDto {
   @IsString()
   status?: string;
 
-  @ApiProperty({ description: 'Filter by warehouse UUID', required: false })
+  @ApiProperty({ description: 'Filter by location UUID', required: false })
   @IsOptional()
   @IsUUID()
   warehouseId?: string;

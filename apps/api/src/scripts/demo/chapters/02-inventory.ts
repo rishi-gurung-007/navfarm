@@ -7,7 +7,6 @@
  *     diet chosen from the silo's own shed role (a farrowing house takes
  *     lactation feed, a finisher house finisher feed, and so on), and of two
  *     medicines and one vaccine into the farm's Demo Medicine Store;
- *   - one goods issue of a medicine from the Demo Medicine Store;
  *   - one stock transfer between the farm's first two silos;
  *   - one positive and one negative stock adjustment with reason text
  *     carrying DEMO.
@@ -36,7 +35,6 @@ import { and, eq, isNull } from 'drizzle-orm';
 import { ClsService } from 'nestjs-cls';
 import type { MySql2Database } from 'drizzle-orm/mysql2';
 import { GoodsReceiptService } from '../../../modules/inventory/goods-receipt/goods-receipt.service';
-import { GoodsIssueService } from '../../../modules/inventory/goods-issue/goods-issue.service';
 import { StockTransferService } from '../../../modules/inventory/stock-transfer/stock-transfer.service';
 import { StockAdjustmentService } from '../../../modules/inventory/stock-adjustment/stock-adjustment.service';
 import * as schema from '../../../core/database/schema';
@@ -66,6 +64,11 @@ function rateOf(standardCost: string | null | undefined): number | undefined {
 const NAME_BY_HANDLE: Record<string, string> = {
   MED_ANTIBIOTIC_1: 'Penicillin G Procaine 300K IU 100ml',
   MED_ANTIBIOTIC_2: 'Tylosin Tartrate 100g Soluble Powder',
+  MED_IRON: 'Iron Dextran 100mg/ml 100ml Injection',
+  MED_IVERMECTIN: 'Ivermectin 1% Swine Dewormer 100ml',
+  MED_OXYTOCIN: 'Oxytocin 10 IU/ml 50ml Injection',
+  VACCINE_PRRS: 'Ingelvac PRRS MLV Swine Vaccine (50 Doses)',
+  FEED_CREEP: 'Creep Feed Pre-Starter (22% CP)',
   VACCINE_BREEDING: 'Parvo-Shield L5 Swine Vaccine (50 Doses)',
   FEED_GESTATION: 'Dry Sow Gestation Mash (14% CP)',
   FEED_LACTATION: 'High-Density Lactation Diet (17.5% CP)',
@@ -74,6 +77,11 @@ const NAME_BY_HANDLE: Record<string, string> = {
 };
 const MED_ANTIBIOTIC_1 = 'MED_ANTIBIOTIC_1';
 const MED_ANTIBIOTIC_2 = 'MED_ANTIBIOTIC_2';
+const MED_IRON = 'MED_IRON';
+const MED_IVERMECTIN = 'MED_IVERMECTIN';
+const MED_OXYTOCIN = 'MED_OXYTOCIN';
+const VACCINE_PRRS = 'VACCINE_PRRS';
+const FEED_CREEP = 'FEED_CREEP';
 const VACCINE_BREEDING = 'VACCINE_BREEDING';
 const FEED_GESTATION = 'FEED_GESTATION';
 const FEED_LACTATION = 'FEED_LACTATION';
@@ -124,8 +132,16 @@ const DEMO_OPERATIONS = {
     { item_code: FEED_GESTATION, quantity: 40000, uom: 'KG' },
     { item_code: FEED_GROWER, quantity: 40000, uom: 'KG' },
     { item_code: FEED_LACTATION, quantity: 40000, uom: 'KG' },
+    // The rest of what the schedulers consume — the other rations and every medicine and vaccine
+    // their lines name. A line whose item the store never received posts nothing: the draw falls
+    // to the store (no silo holds it) and finds no stock. Each is received in the item's own unit.
+    { item_code: FEED_FINISHER, quantity: 40000, uom: 'KG' },
+    { item_code: FEED_CREEP, quantity: 5000, uom: 'KG' },
+    { item_code: MED_IRON, quantity: 30, uom: 'PCS' },
+    { item_code: MED_IVERMECTIN, quantity: 20, uom: 'PCS' },
+    { item_code: MED_OXYTOCIN, quantity: 10, uom: 'PCS' },
+    { item_code: VACCINE_PRRS, quantity: 10, uom: 'PCS' },
   ],
-  medicineIssue: { item_code: MED_ANTIBIOTIC_1, quantity: 4, uom: 'PCS' },
   siloTransferKg: 300,
   adjustments: {
     positive: { item_code: MED_ANTIBIOTIC_2, quantity: 2, uom: 'PCS' },
@@ -154,7 +170,7 @@ async function itemByHandle(db: MySql2Database<typeof schema>, handle: string) {
   // Company-scoped row when present (company wins for an operational caller),
   // else the tenant row.
   const [row] = await db
-    .select({ item_id: schema.itemMaster.item_id, item_code: schema.itemMaster.item_code, standard_cost: schema.itemMaster.standard_cost })
+    .select({ item_id: schema.itemMaster.item_id, item_code: schema.itemMaster.item_code, standard_cost: schema.itemMaster.standard_cost, uom_primary: schema.itemMaster.uom_primary })
     .from(schema.itemMaster)
     .where(and(eq(schema.itemMaster.item_name, name), eq(schema.itemMaster.is_active, true), isNull(schema.itemMaster.deleted_at)))
     .orderBy(schema.itemMaster.company_id)
@@ -210,7 +226,6 @@ export const inventoryChapter: DemoChapter = {
 
   async run(ctx: DemoContext) {
     const receipts = ctx.app.get(GoodsReceiptService);
-    const issues = ctx.app.get(GoodsIssueService);
     const transfers = ctx.app.get(StockTransferService);
     const adjustments = ctx.app.get(StockAdjustmentService);
     const cls = ctx.app.get(ClsService);
@@ -297,7 +312,7 @@ export const inventoryChapter: DemoChapter = {
         }
       }
 
-      // --- 2. Store receipt: two medicines + one vaccine into the store.
+      // --- 2. Store receipt: every feed, medicine and vaccine the schedulers consume, into the store.
       {
         const [existing] = await db
           .select({ id: schema.goodsReceipt.receipt_id, status: schema.goodsReceipt.status })
@@ -308,7 +323,7 @@ export const inventoryChapter: DemoChapter = {
           const storeLines: GoodsReceiptLineInput[] = [];
           for (const line of DEMO_OPERATIONS.storeReceipt) {
             const item = await itemByHandle(db, line.item_code);
-            storeLines.push({ item_id: item.item_id, quantity: line.quantity, uom: line.uom, rate: rateOf(item.standard_cost), lot_no: `DEMO-${farm.code}-${line.item_code}` });
+            storeLines.push({ item_id: item.item_id, quantity: line.quantity, uom: item.uom_primary || line.uom, rate: rateOf(item.standard_cost), lot_no: `DEMO-${farm.code}-${line.item_code}` });
           }
           const created = await receipts.create(
             {
@@ -316,7 +331,7 @@ export const inventoryChapter: DemoChapter = {
               warehouse_id: store.location_id,
               posting_date: postingDate,
               external_reference_no: ref('STORERCP'),
-              remarks: 'DEMO medicine and vaccine receipt into Demo Medicine Store',
+              remarks: 'DEMO feed, medicine and vaccine receipt into Demo Medicine Store',
               lines: storeLines,
             },
             ctx.tenantId,
@@ -328,35 +343,6 @@ export const inventoryChapter: DemoChapter = {
           ctx.log(`${tag} store receipt posted`);
         } else {
           ctx.log(`${tag} store receipt already posted — skipped`);
-        }
-      }
-
-      // --- 3. Goods issue of one medicine from the store.
-      {
-        const [existing] = await db
-          .select({ id: schema.goodsIssue.issue_id, status: schema.goodsIssue.status })
-          .from(schema.goodsIssue)
-          .where(eq(schema.goodsIssue.remarks, ref('ISSUE')))
-          .limit(1);
-        if (!existing) {
-          const med = await itemByHandle(db, DEMO_OPERATIONS.medicineIssue.item_code);
-          const created = await issues.create(
-            {
-              company_id: ctx.companyId,
-              warehouse_id: store.location_id,
-              posting_date: postingDate,
-              remarks: ref('ISSUE'),
-              lines: [{ item_id: med.item_id, quantity: DEMO_OPERATIONS.medicineIssue.quantity, uom: DEMO_OPERATIONS.medicineIssue.uom, remarks: 'DEMO medicine issue for routine treatment' }],
-            },
-            ctx.tenantId,
-          );
-          await issues.post(created.issue_id, ctx.tenantId);
-          ctx.log(`${tag} medicine issue posted`);
-        } else if (existing.status === 'DRAFT') {
-          await issues.post(existing.id, ctx.tenantId);
-          ctx.log(`${tag} medicine issue posted`);
-        } else {
-          ctx.log(`${tag} medicine issue already posted — skipped`);
         }
       }
 
@@ -432,8 +418,8 @@ export const inventoryChapter: DemoChapter = {
               reason: ref('ADJ'),
               remarks: 'DEMO positive (found stock) and negative (damaged) adjustment',
               lines: [
-                { item_id: posItem.item_id, quantity: DEMO_OPERATIONS.adjustments.positive.quantity, uom: DEMO_OPERATIONS.adjustments.positive.uom, rate: rateOf(posItem.standard_cost), remarks: 'DEMO found stock' },
-                { item_id: negItem.item_id, quantity: DEMO_OPERATIONS.adjustments.negative.quantity, uom: DEMO_OPERATIONS.adjustments.negative.uom, remarks: 'DEMO damaged vial' },
+                { item_id: posItem.item_id, quantity: DEMO_OPERATIONS.adjustments.positive.quantity, uom: posItem.uom_primary || DEMO_OPERATIONS.adjustments.positive.uom, rate: rateOf(posItem.standard_cost), remarks: 'DEMO found stock' },
+                { item_id: negItem.item_id, quantity: DEMO_OPERATIONS.adjustments.negative.quantity, uom: negItem.uom_primary || DEMO_OPERATIONS.adjustments.negative.uom, remarks: 'DEMO damaged vial' },
               ],
             },
             ctx.tenantId,

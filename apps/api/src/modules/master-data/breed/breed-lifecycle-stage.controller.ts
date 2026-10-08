@@ -1,7 +1,12 @@
 import { Controller, Get, Post, Put, Patch, Delete, Param, Body, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiParam } from '@nestjs/swagger';
 import { BreedService } from './breed.service';
-import { CreateBreedLifecycleStageDto, UpdateBreedLifecycleStageDto, QueryBreedLifecycleStageDto } from './dto/breed.dto';
+import { 
+  CreateBreedLifecycleStageDto, 
+  UpdateBreedLifecycleStageDto, 
+  QueryBreedLifecycleStageDto,
+  BulkCreateBreedLifecycleStageDto,
+} from './dto/breed.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
@@ -21,6 +26,20 @@ export class BreedLifecycleStageController {
     const result = await this.breedService.createLifecycleStage(dto, tenantId, req.user);
     return { success: true, message: 'Breed lifecycle stage created successfully.', data: result };
   }
+
+  @Post('bulk')
+  @RequirePermission('MASTER_DATA', 'BREED_LIFECYCLE_STAGE', 'create')
+  @ApiOperation({ summary: 'Create multiple breed lifecycle stages in bulk' })
+  async createBulk(@Body() dto: BulkCreateBreedLifecycleStageDto, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const result = await this.breedService.createLifecycleStagesBulk(dto.items, tenantId, req.user);
+    return {
+      success: true,
+      message: `${result.createdCount} breed lifecycle stages created successfully.`,
+      data: result,
+    };
+  }
+
 
   @Get()
   @RequirePermission('MASTER_DATA', 'BREED_LIFECYCLE_STAGE', 'view')
