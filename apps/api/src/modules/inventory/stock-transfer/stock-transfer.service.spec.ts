@@ -125,6 +125,81 @@ describe('StockTransferService', () => {
     service = module.get<StockTransferService>(StockTransferService);
   });
 
+  describe('feed release transfer creation', () => {
+    const dto = {
+      company_id: 'co-1',
+      from_warehouse_id: 'bin-1',
+      to_warehouse_id: 'silo-1',
+      posting_date: '2026-10-08',
+      lines: [{ item_id: 'feed-1', quantity: 5000, uom: 'KG', requisition_line_id: 'req-line-1' }],
+    };
+    const validContext = {
+      requisition: { requisition_id: 'req-1', tenant_id: 'tenant-1', company_id: 'co-1', main_location_id: 'farm-1' },
+      source: { location_id: 'bin-1', tenant_id: 'tenant-1', company_id: 'co-1', location_type: 'BIN', parent_location_id: 'mill-1', is_active: true, status: 'ACTIVE', deleted_at: null },
+      mill: { location_id: 'mill-1', tenant_id: 'tenant-1', company_id: 'co-1', location_type: 'MILL', is_active: true, status: 'ACTIVE', deleted_at: null },
+      destination: { location_id: 'silo-1', tenant_id: 'tenant-1', company_id: 'co-1', location_type: 'SILO', parent_location_id: 'farm-1', farm_id: 'farm-1', is_active: true, status: 'ACTIVE', deleted_at: null },
+    };
+
+    const enterPostingTransaction = () => {
+      const get = cls.get.bind(cls);
+      cls.get = ((key?: string) => key === 'tenantPostingTransaction' ? true : get(key as any)) as typeof cls.get;
+    };
+
+    it('is callable only while the owning feed release transaction is active', async () => {
+      await expect(service.createForFeedRelease(dto as any, 'tenant-1')).rejects.toThrow(
+        'Feed release transfers must be created inside the feed requisition transaction.',
+      );
+      expect(mockDbInsert).not.toHaveBeenCalled();
+    });
+
+    it('requires every generated transfer line to retain its requisition line id', async () => {
+      enterPostingTransaction();
+      await expect(service.createForFeedRelease({ ...dto, lines: [{ item_id: 'feed-1', quantity: 5, uom: 'KG' }] } as any, 'tenant-1'))
+        .rejects.toThrow('Every feed release transfer line must include requisition_line_id.');
+      expect(mockDbInsert).not.toHaveBeenCalled();
+    });
+
+    it('creates a validated BIN-to-SILO transfer through the shared insert path', async () => {
+      enterPostingTransaction();
+      jest.spyOn(service as any, 'loadFeedReleaseContext').mockResolvedValue(validContext);
+      const createRecord = jest.spyOn(service as any, 'createRecord').mockResolvedValue({ transfer_id: 'tr-1', transfer_no: 'TR-000001' });
+
+      await expect(service.createForFeedRelease(dto as any, 'tenant-1', { userId: 'u-1' })).resolves.toEqual({
+        transfer_id: 'tr-1', transfer_no: 'TR-000001',
+      });
+      expect(createRecord).toHaveBeenCalledWith(dto, 'tenant-1', { userId: 'u-1' });
+    });
+
+    it('allocates a fresh sequential transfer number for each release group', async () => {
+      jest.spyOn(service as any, 'generateTransferNo')
+        .mockResolvedValueOnce('TR-000041')
+        .mockResolvedValueOnce('TR-000042');
+
+      const first = await (service as any).createRecord(dto, 'tenant-1', { userId: 'u-1' });
+      const second = await (service as any).createRecord({ ...dto, from_warehouse_id: 'bin-2' }, 'tenant-1', { userId: 'u-1' });
+
+      expect(first.transfer_no).toBe('TR-000041');
+      expect(second.transfer_no).toBe('TR-000042');
+      expect(first.transfer_id).not.toBe(second.transfer_id);
+    });
+
+    it.each([
+      ['a source that is not a BIN', { source: { ...validContext.source, location_type: 'STORE' } }, 'must be an active BIN'],
+      ['a BIN without a MILL parent', { mill: null }, 'must have an active MILL parent'],
+      ['an inactive BIN', { source: { ...validContext.source, is_active: false } }, 'must be an active BIN'],
+      ['a source in another company', { source: { ...validContext.source, company_id: 'co-2' } }, 'must belong to company co-1'],
+      ['a destination that is not a SILO', { destination: { ...validContext.destination, location_type: 'STORE' } }, 'must be an active SILO'],
+      ['a destination on another farm', { destination: { ...validContext.destination, parent_location_id: 'farm-2', farm_id: 'farm-2' } }, 'must belong to requisition farm farm-1'],
+    ])('refuses %s', async (_label, override, message) => {
+      enterPostingTransaction();
+      jest.spyOn(service as any, 'loadFeedReleaseContext').mockResolvedValue({ ...validContext, ...override });
+      const createRecord = jest.spyOn(service as any, 'createRecord');
+
+      await expect(service.createForFeedRelease(dto as any, 'tenant-1')).rejects.toThrow(message);
+      expect(createRecord).not.toHaveBeenCalled();
+    });
+  });
+
   // Ruling M6: a posted transfer re-checks the silo levels of the farms at
   // both ends, once, after its transaction has committed — and nothing that
   // goes wrong in that re-check fails the posting.

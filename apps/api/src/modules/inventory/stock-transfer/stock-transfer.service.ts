@@ -76,39 +76,120 @@ export class StockTransferService {
         'Destination warehouse',
       );
 
-      const transferId = randomUUID();
-      const transferNo = await this.db.transaction(async (tx) => {
-        const no = await this.generateTransferNo(tenantId, dto.company_id, tx);
-        await tx.insert(schema.stockTransfer).values({
-          transfer_id: transferId,
-          tenant_id: tenantId,
-          company_id: dto.company_id,
-          transfer_no: no,
-          posting_date: dto.posting_date,
-          from_warehouse_id: dto.from_warehouse_id,
-          to_warehouse_id: dto.to_warehouse_id,
-          remarks: dto.remarks || null,
-          status: 'DRAFT',
-          created_by: userPayload?.userId || null,
-          updated_by: userPayload?.userId || null,
-        });
-        return no;
-      });
-
-      await this.insertLines(transferId, dto.lines);
-
-      await this.auditService.log({
-        tenantId,
-        companyId: dto.company_id,
-        userId: userPayload?.userId,
-        action: 'CREATE',
-        entityName: 'stock_transfer',
-        entityId: transferId,
-        newValues: { transfer_no: transferNo, ...dto },
-      });
-
-      return this.findOne(transferId);
+      const created = await this.createRecord(dto, tenantId, userPayload);
+      return this.findOne(created.transfer_id);
     });
+  }
+
+  /**
+   * Internal feed release path. The feed service owns the surrounding tenant
+   * transaction so every grouped transfer and its link either commits together
+   * or disappears together. This method deliberately refuses standalone use.
+   */
+  async createForFeedRelease(
+    dto: CreateStockTransferDto,
+    tenantId: string,
+    userPayload?: { userId?: string; userType?: string; email?: string },
+  ): Promise<{ transfer_id: string; transfer_no: string }> {
+    if (this.cls.get('tenantPostingTransaction') !== true) {
+      throw new Error('Feed release transfers must be created inside the feed requisition transaction.');
+    }
+    assertCompanyInScope(farmScope(this.cls), dto.company_id);
+    if (dto.lines.some((line) => !line.requisition_line_id)) {
+      throw new BadRequestException('Every feed release transfer line must include requisition_line_id.');
+    }
+
+    const context = await this.loadFeedReleaseContext(dto, tenantId);
+    const active = (row: any) => row?.is_active === true && row?.status === 'ACTIVE' && !row?.deleted_at;
+    if (!context.source || context.source.location_type !== 'BIN' || !active(context.source)) {
+      throw new BadRequestException(`Feed transfer source ${dto.from_warehouse_id} must be an active BIN.`);
+    }
+    if (context.source.tenant_id !== tenantId || context.source.company_id !== dto.company_id) {
+      throw new BadRequestException(`Feed transfer source ${dto.from_warehouse_id} must belong to company ${dto.company_id}.`);
+    }
+    if (!context.mill || context.mill.location_type !== 'MILL' || !active(context.mill)
+      || context.mill.tenant_id !== tenantId || context.mill.company_id !== dto.company_id) {
+      throw new BadRequestException(`Feed transfer source ${dto.from_warehouse_id} must have an active MILL parent.`);
+    }
+    if (!context.destination || context.destination.location_type !== 'SILO' || !active(context.destination)) {
+      throw new BadRequestException(`Feed transfer destination ${dto.to_warehouse_id} must be an active SILO.`);
+    }
+    if (context.destination.tenant_id !== tenantId || context.destination.company_id !== dto.company_id) {
+      throw new BadRequestException(`Feed transfer destination ${dto.to_warehouse_id} must belong to company ${dto.company_id}.`);
+    }
+    const requisitionFarmId = context.requisition.main_location_id;
+    if (!requisitionFarmId
+      || (context.destination.parent_location_id !== requisitionFarmId && context.destination.farm_id !== requisitionFarmId)) {
+      throw new BadRequestException(`Feed transfer destination ${dto.to_warehouse_id} must belong to requisition farm ${requisitionFarmId ?? '(missing)'}.`);
+    }
+
+    return this.createRecord(dto, tenantId, userPayload);
+  }
+
+  private async loadFeedReleaseContext(dto: CreateStockTransferDto, tenantId: string) {
+    const lineIds = dto.lines.map((line) => line.requisition_line_id!);
+    const requisitions = await this.db
+      .select({
+        line_id: schema.requisitionLine.line_id,
+        requisition_id: schema.requisition.requisition_id,
+        tenant_id: schema.requisition.tenant_id,
+        company_id: schema.requisition.company_id,
+        main_location_id: schema.requisition.main_location_id,
+      })
+      .from(schema.requisitionLine)
+      .innerJoin(schema.requisition, eq(schema.requisition.requisition_id, schema.requisitionLine.requisition_id))
+      .where(and(
+        inArray(schema.requisitionLine.line_id, lineIds),
+        eq(schema.requisition.tenant_id, tenantId),
+        eq(schema.requisition.company_id, dto.company_id),
+        isNull(schema.requisition.deleted_at),
+      ));
+    const requisitionIds = new Set(requisitions.map((row) => row.requisition_id));
+    if (requisitions.length !== lineIds.length || requisitionIds.size !== 1) {
+      throw new BadRequestException('Every feed transfer line must belong to the same active feed requisition.');
+    }
+
+    const selectLocation = async (locationId: string) => {
+      const [row] = await this.db.select().from(schema.locationMaster).where(and(
+        eq(schema.locationMaster.location_id, locationId),
+        eq(schema.locationMaster.tenant_id, tenantId),
+        isNull(schema.locationMaster.deleted_at),
+      )).limit(1);
+      return row;
+    };
+    const source = await selectLocation(dto.from_warehouse_id);
+    const mill = source?.parent_location_id ? await selectLocation(source.parent_location_id) : undefined;
+    const destination = await selectLocation(dto.to_warehouse_id);
+    return { requisition: requisitions[0], source, mill, destination };
+  }
+
+  private async createRecord(dto: CreateStockTransferDto, tenantId: string, userPayload?: { userId?: string }) {
+    const transferId = randomUUID();
+    const transferNo = await this.generateTransferNo(tenantId, dto.company_id, this.db);
+    await this.db.insert(schema.stockTransfer).values({
+      transfer_id: transferId,
+      tenant_id: tenantId,
+      company_id: dto.company_id,
+      transfer_no: transferNo,
+      posting_date: dto.posting_date,
+      from_warehouse_id: dto.from_warehouse_id,
+      to_warehouse_id: dto.to_warehouse_id,
+      remarks: dto.remarks || null,
+      status: 'DRAFT',
+      created_by: userPayload?.userId || null,
+      updated_by: userPayload?.userId || null,
+    });
+    await this.insertLines(transferId, dto.lines);
+    await this.auditService.log({
+      tenantId,
+      companyId: dto.company_id,
+      userId: userPayload?.userId,
+      action: 'CREATE',
+      entityName: 'stock_transfer',
+      entityId: transferId,
+      newValues: { transfer_no: transferNo, ...dto },
+    });
+    return { transfer_id: transferId, transfer_no: transferNo };
   }
 
   private async insertLines(transferId: string, lines: CreateStockTransferDto['lines']) {
