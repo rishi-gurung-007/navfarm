@@ -7,7 +7,7 @@
  * already uses for requisition.rules.ts.
  */
 import { BadRequestException } from '@nestjs/common';
-import { and, eq, isNull, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { MySql2Database } from 'drizzle-orm/mysql2';
 import * as schema from '../../../core/database/schema';
 import { fulfilmentStatusOf } from './requisition.rules';
@@ -21,8 +21,8 @@ export async function syncRequisitionFulfilment(db: MySql2Database<typeof schema
   // some requisition somewhere carries this transfer id. Also excludes a
   // soft-deleted requisition, consistent with every other query in this
   // module.
-  const [linked] = await db
-    .select({ requisition_id: schema.requisition.requisition_id })
+  const [commonLinked] = await db
+    .select({ requisition_id: schema.requisition.requisition_id, tenant_id: schema.requisition.tenant_id })
     .from(schema.requisition)
     .innerJoin(schema.stockTransfer, eq(schema.stockTransfer.transfer_id, schema.requisition.linked_transfer_id))
     .where(and(
@@ -30,18 +30,50 @@ export async function syncRequisitionFulfilment(db: MySql2Database<typeof schema
       eq(schema.requisition.tenant_id, schema.stockTransfer.tenant_id),
       isNull(schema.requisition.deleted_at),
     ));
-  if (!linked) return;
+  let linked = commonLinked;
+  let linkedTransferIds = [transferId];
+
+  if (!linked) {
+    const [feedLinked] = await db
+      .select({ requisition_id: schema.feedRequisitionTransfer.requisition_id, tenant_id: schema.feedRequisitionTransfer.tenant_id })
+      .from(schema.feedRequisitionTransfer)
+      .innerJoin(schema.requisition, eq(schema.requisition.requisition_id, schema.feedRequisitionTransfer.requisition_id))
+      .innerJoin(schema.stockTransfer, eq(schema.stockTransfer.transfer_id, schema.feedRequisitionTransfer.transfer_id))
+      .where(and(
+        eq(schema.feedRequisitionTransfer.transfer_id, transferId),
+        eq(schema.feedRequisitionTransfer.tenant_id, schema.requisition.tenant_id),
+        eq(schema.feedRequisitionTransfer.tenant_id, schema.stockTransfer.tenant_id),
+        isNull(schema.requisition.deleted_at),
+      ));
+    linked = feedLinked;
+    if (!linked) return;
+
+    const transferLinks = await db
+      .select({ transfer_id: schema.feedRequisitionTransfer.transfer_id })
+      .from(schema.feedRequisitionTransfer)
+      .where(and(
+        eq(schema.feedRequisitionTransfer.requisition_id, linked.requisition_id),
+        eq(schema.feedRequisitionTransfer.tenant_id, linked.tenant_id),
+      ));
+    linkedTransferIds = transferLinks.map((row) => row.transfer_id);
+  }
+
+  const triggeringLinks = await db
+    .select({ requisition_line_id: schema.stockTransferLine.requisition_line_id })
+    .from(schema.stockTransferLine)
+    .where(eq(schema.stockTransferLine.transfer_id, transferId));
+
   const shipped = await db
     .select({ requisition_line_id: schema.stockTransferLine.requisition_line_id, qty: sql<string>`SUM(${schema.transferShipmentLine.quantity})` })
     .from(schema.transferShipmentLine)
     .innerJoin(schema.stockTransferLine, eq(schema.stockTransferLine.line_id, schema.transferShipmentLine.line_id))
-    .where(eq(schema.stockTransferLine.transfer_id, transferId))
+    .where(inArray(schema.stockTransferLine.transfer_id, linkedTransferIds))
     .groupBy(schema.stockTransferLine.requisition_line_id);
   const received = await db
     .select({ requisition_line_id: schema.stockTransferLine.requisition_line_id, qty: sql<string>`SUM(${schema.transferReceiptLine.quantity})` })
     .from(schema.transferReceiptLine)
     .innerJoin(schema.stockTransferLine, eq(schema.stockTransferLine.line_id, schema.transferReceiptLine.line_id))
-    .where(eq(schema.stockTransferLine.transfer_id, transferId))
+    .where(inArray(schema.stockTransferLine.transfer_id, linkedTransferIds))
     .groupBy(schema.stockTransferLine.requisition_line_id);
   const lines = await db
     .select({ line_id: schema.requisitionLine.line_id, quantity: schema.requisitionLine.quantity, qty_to_ship: schema.requisitionLine.qty_to_ship, qty_to_receive: schema.requisitionLine.qty_to_receive })
@@ -61,7 +93,7 @@ export async function syncRequisitionFulfilment(db: MySql2Database<typeof schema
   // whole shipment/receipt back rather than letting a corrupted link's
   // quantity vanish quietly.
   const validLineIds = new Set(lines.map((l) => l.line_id));
-  for (const row of [...shipped, ...received]) {
+  for (const row of [...triggeringLinks, ...shipped, ...received]) {
     if (row.requisition_line_id && !validLineIds.has(row.requisition_line_id)) {
       throw new BadRequestException(
         `Transfer ${transferId}: requisition_line_id '${row.requisition_line_id}' does not belong to requisition ${linked.requisition_id}.`,

@@ -6,11 +6,14 @@
  * shape transfer-execution.rules.ts already uses for requisition.rules.ts's
  * assertShipmentQty/assertReceiptQty, just the other direction.
  *
- * Read order per call (db() below queues in call order, not by table):
- *   1. the requisition linked to this transfer (if any — no-op otherwise)
- *   2. shipped quantities grouped by requisition_line_id, for this transfer
- *   3. received quantities grouped by requisition_line_id, for this transfer
- *   4. the linked requisition's own lines
+ * Read order per common call (db() below queues in call order, not by table):
+ *   1. common requisition link
+ *   2. triggering transfer's requisition-line references
+ *   3. shipped quantities grouped by requisition_line_id
+ *   4. received quantities grouped by requisition_line_id
+ *   5. the linked requisition's own lines
+ * Feed calls first miss the common lookup, then resolve the feed link and read
+ * every transfer id linked to the same requisition before the remaining reads.
  * then one update per line (qty_shipped/qty_received) and one update on the
  * requisition itself (fulfilment_status).
  */
@@ -32,7 +35,7 @@ function db(queues: unknown[][]) {
 
 describe('syncRequisitionFulfilment', () => {
   it('does nothing for a transfer no requisition links to', async () => {
-    const { db: d, sets } = db([[]]);
+    const { db: d, sets } = db([[], []]);
     await syncRequisitionFulfilment(d, 'tr-x');
     expect(sets).toEqual([]);
   });
@@ -40,6 +43,7 @@ describe('syncRequisitionFulfilment', () => {
   it('writes shipped/received per requisition line and the fulfilment status', async () => {
     const { db: d, sets } = db([
       [{ requisition_id: 'req-1' }],                                                         // linked requisition
+      [{ requisition_line_id: 'l1' }],                                                       // triggering transfer links
       [{ requisition_line_id: 'l1', qty: '6' }],                                             // shipped sums
       [{ requisition_line_id: 'l1', qty: '4' }],                                             // received sums
       [{ line_id: 'l1', quantity: '10', qty_to_ship: '10', qty_to_receive: '10' }],          // requisition lines
@@ -65,6 +69,7 @@ describe('syncRequisitionFulfilment', () => {
   it('refuses a shipped/received row whose requisition_line_id belongs to a different requisition', () => {
     const { db: d } = db([
       [{ requisition_id: 'req-1' }],                                                          // linked requisition
+      [{ requisition_line_id: 'line-of-another-requisition' }],                               // triggering transfer links
       [{ requisition_line_id: 'line-of-another-requisition', qty: '6' }],                     // shipped sums — foreign link
       [],                                                                                      // received sums
       [{ line_id: 'l1', quantity: '10', qty_to_ship: '10', qty_to_receive: '10' }],            // requisition lines (req-1's own)
@@ -87,6 +92,7 @@ describe('syncRequisitionFulfilment', () => {
   it('ignores an unlinked (NULL requisition_line_id) line alongside a linked one', async () => {
     const { db: d, sets } = db([
       [{ requisition_id: 'req-1' }],                                                          // linked requisition
+      [{ requisition_line_id: null }, { requisition_line_id: 'l1' }],                         // triggering transfer links
       [{ requisition_line_id: null, qty: '3' }, { requisition_line_id: 'l1', qty: '6' }],      // shipped sums — one unlinked, one linked
       [{ requisition_line_id: 'l1', qty: '4' }],                                               // received sums
       [{ line_id: 'l1', quantity: '10', qty_to_ship: '10', qty_to_receive: '10' }],             // requisition lines (req-1's own)
@@ -94,5 +100,62 @@ describe('syncRequisitionFulfilment', () => {
     await syncRequisitionFulfilment(d, 'tr-1');
     expect(sets.filter((s) => s.table === schema.requisitionLine).map((s) => s.values)).toEqual([{ qty_shipped: '6', qty_received: '4' }]);
     expect(sets.find((s) => s.table === schema.requisition)!.values).toEqual({ fulfilment_status: 'PARTIALLY_RECEIVED' });
+  });
+
+  it('aggregates two feed-linked transfers contributing to the same requisition line', async () => {
+    const { db: d, sets } = db([
+      [],                                                                                     // no common link
+      [{ requisition_id: 'feed-req-1' }],                                                     // feed link
+      [{ transfer_id: 'tr-1' }, { transfer_id: 'tr-2' }],                                     // all feed transfers
+      [{ requisition_line_id: 'l1' }],                                                        // triggering transfer links
+      [{ requisition_line_id: 'l1', qty: '10' }],                                            // aggregate shipped across both
+      [{ requisition_line_id: 'l1', qty: '7' }],                                             // aggregate received across both
+      [{ line_id: 'l1', quantity: '10', qty_to_ship: '10', qty_to_receive: '10' }],
+    ]);
+
+    await syncRequisitionFulfilment(d, 'tr-2');
+
+    expect(sets.filter((s) => s.table === schema.requisitionLine).map((s) => s.values)).toEqual([
+      { qty_shipped: '10', qty_received: '7' },
+    ]);
+    expect(sets.find((s) => s.table === schema.requisition)!.values).toEqual({ fulfilment_status: 'PARTIALLY_RECEIVED' });
+  });
+
+  it('keeps feed fulfilment open until every line across every linked transfer is received', async () => {
+    const { db: d, sets } = db([
+      [],
+      [{ requisition_id: 'feed-req-1' }],
+      [{ transfer_id: 'tr-1' }, { transfer_id: 'tr-2' }],
+      [{ requisition_line_id: 'l2' }],
+      [{ requisition_line_id: 'l1', qty: '5' }, { requisition_line_id: 'l2', qty: '8' }],
+      [{ requisition_line_id: 'l1', qty: '5' }, { requisition_line_id: 'l2', qty: '6' }],
+      [
+        { line_id: 'l1', quantity: '5', qty_to_ship: '5', qty_to_receive: '5' },
+        { line_id: 'l2', quantity: '8', qty_to_ship: '8', qty_to_receive: '8' },
+      ],
+    ]);
+
+    await syncRequisitionFulfilment(d, 'tr-2');
+
+    expect(sets.find((s) => s.table === schema.requisition)!.values).toEqual({ fulfilment_status: 'PARTIALLY_RECEIVED' });
+  });
+
+  it('marks a feed requisition received after every line across its linked transfers is received', async () => {
+    const { db: d, sets } = db([
+      [],
+      [{ requisition_id: 'feed-req-1' }],
+      [{ transfer_id: 'tr-1' }, { transfer_id: 'tr-2' }],
+      [{ requisition_line_id: 'l2' }],
+      [{ requisition_line_id: 'l1', qty: '5' }, { requisition_line_id: 'l2', qty: '8' }],
+      [{ requisition_line_id: 'l1', qty: '5' }, { requisition_line_id: 'l2', qty: '8' }],
+      [
+        { line_id: 'l1', quantity: '5', qty_to_ship: '5', qty_to_receive: '5' },
+        { line_id: 'l2', quantity: '8', qty_to_ship: '8', qty_to_receive: '8' },
+      ],
+    ]);
+
+    await syncRequisitionFulfilment(d, 'tr-2');
+
+    expect(sets.find((s) => s.table === schema.requisition)!.values).toEqual({ fulfilment_status: 'RECEIVED' });
   });
 });
