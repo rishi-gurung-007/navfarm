@@ -1918,6 +1918,13 @@ export function MasterDataTable({
     }
   };
 
+  /** Why a locked field is locked, when its config says (`lockReason`). */
+  const lockHint = (f: MasterDataField): string | undefined => {
+    if (!editing || !f.lockWhenRowFlag || !f.lockReason || !(editing as Row)[f.lockWhenRowFlag]) return undefined;
+    const reason = f.lockReason(editing as Row);
+    return reason ? `🔒 ${reason}` : undefined;
+  };
+
   const renderField = (f: MasterDataField) => {
     const isLockedByTemplate = templateLockedFields.has(f.key);
     const immutableOnEdit = !!editing && !!f.createOnly;
@@ -3466,7 +3473,7 @@ export function MasterDataTable({
                       label={tLabel(currentLabel(f, form))}
                       htmlFor={`master-${config.key}-${f.key}`}
                       required={isFieldRequired(f, form)}
-                      hint={templateLockedFields.has(f.key) ? "🔒 Set by template" : undefined}
+                      hint={templateLockedFields.has(f.key) ? "🔒 Set by template" : lockHint(f)}
                       tooltip={f.helpText}
                       className={f.type === "textarea" || f.type === "json" || f.type === "string-list" ? "sm:col-span-2" : undefined}
                     >
@@ -3547,7 +3554,7 @@ export function MasterDataTable({
                       label={tLabel(currentLabel(f, form))}
                       htmlFor={`master-${config.key}-${f.key}`}
                       required={isFieldRequired(f, form)}
-                      hint={templateLockedFields.has(f.key) ? "🔒 Set by template" : undefined}
+                      hint={templateLockedFields.has(f.key) ? "🔒 Set by template" : lockHint(f)}
                       tooltip={f.helpText}
                       className={f.type === "textarea" || f.type === "json" || f.type === "string-list" ? "sm:col-span-2" : undefined}
                     >

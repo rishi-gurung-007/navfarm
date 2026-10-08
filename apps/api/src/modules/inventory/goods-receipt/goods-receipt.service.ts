@@ -9,6 +9,7 @@ import { assertCompanyInScope, farmScope, locationReferenceScopeConditions, asse
 import { CreateGoodsReceiptDto, UpdateGoodsReceiptDto, QueryGoodsReceiptDto } from './dto/goods-receipt.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
+import { hasSerial } from '../inventory-ledger/serial-utils';
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
 import { SiloFeedService } from '../silo-feed/silo-feed.service';
 import { FeedAlertService } from '../feed-alert/feed-alert.service';
@@ -236,7 +237,9 @@ export class GoodsReceiptService {
             seen.add(s);
           }
 
-          const existingLedger = await executor
+          // The text search only narrows the rows; whole serials are compared below, so SN1 is not
+          // refused because SN10 was received.
+          const narrowed = await executor
             .select({ serial_no: schema.inventoryLedger.serial_no })
             .from(schema.inventoryLedger)
             .where(
@@ -244,13 +247,11 @@ export class GoodsReceiptService {
                 eq(schema.inventoryLedger.tenant_id, tenantId),
                 eq(schema.inventoryLedger.item_id, item.item_id),
                 eq(schema.inventoryLedger.entry_type, 'POSITIVE'),
-                or(
-                  inArray(schema.inventoryLedger.serial_no, serials),
-                  ...serials.map((s) => like(schema.inventoryLedger.serial_no, `%${s}%`)),
-                )!,
+                or(...serials.map((s) => like(schema.inventoryLedger.serial_no, `%${s}%`)))!,
               ),
             )
-            .limit(1);
+            .limit(1000);
+          const existingLedger = narrowed.filter((row) => serials.some((s) => hasSerial(row.serial_no, s))).slice(0, 1);
 
           if (existingLedger.length > 0) {
             throw new BadRequestException(

@@ -19,7 +19,9 @@ import {
   FileText,
   ShieldCheck,
   Loader2,
-  Database
+  Database,
+  Calculator,
+  ChevronDown,
 } from "lucide-react";
 import { api } from "@/services/api-client";
 import { Badge } from "@/components/ui/badge";
@@ -28,6 +30,7 @@ import { Button } from "@/components/ui/button";
 import { InlineAlert } from "@/components/ui/alert";
 import { useCompanyCurrency } from "@/hooks/useCompanyCurrency";
 import { TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
+import { CostingCalculation } from "./costing-calculation";
 
 type Row = Record<string, any>;
 
@@ -54,9 +57,13 @@ export const BC_ENTRY_TYPES: Record<string, string> = {
   VARIANCE_POSITIVE: "Variance_Positive",
   VARIANCE_NEGATIVE: "Variance_Negative",
   BATCH_CONSUMPTION: "Consumption",
+  // A bio-asset batch's feed is a consumption too; the pre-mature/mature split only decides the GL accounts.
+  BIO_CONSUMPTION_PREMATURE: "Consumption",
+  BIO_CONSUMPTION_MATURE: "Consumption",
   BATCH_INPUT: "Consumption",
   BATCH_OUTPUT: "Output",
   BIO_OUTPUT: "Output",
+  BIO_HARVEST: "Harvest",
   REVERSAL: "Reversal",
   OVERHEAD: "Overhead",
   DESCRIPTIVE: "Descriptive",
@@ -123,6 +130,7 @@ export default function InventoryLedgerDetail({
   const [loading, setLoading] = useState(!initialData || !initialData.applications);
   const [error, setError] = useState("");
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [showCalculation, setShowCalculation] = useState(false);
   const { formatMoney } = useCompanyCurrency();
 
   useEffect(() => {
@@ -537,6 +545,129 @@ export default function InventoryLedgerDetail({
         </div>
       </div>
 
+      {/* Which lots the stock physically left (or came into) — one ledger entry can issue from several. */}
+      {Array.isArray(entry.lots) && entry.lots.length > 0 && (
+        <div className="rounded-[var(--radius-md)] border overflow-hidden" style={S.surface}>
+          <div className="flex items-center justify-between border-b px-4 py-3" style={{ borderColor: "var(--border)" }}>
+            <h3 className="text-sm font-semibold" style={S.primary}>
+              {isPositive ? "Lots Received" : "Lots Issued"}
+            </h3>
+            <span className="text-xs font-mono" style={S.muted}>
+              {entry.lots.length} {entry.lots.length === 1 ? "lot" : "lots"}
+            </span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-left text-xs">
+              <TableHeader>
+                <tr className="border-b" style={{ borderColor: "var(--border)" }}>
+                  <TableHead className="py-2.5 px-3">Lot / Serial No.</TableHead>
+                  <TableHead className="py-2.5 px-3">Expiry</TableHead>
+                  <TableHead className="py-2.5 px-3 text-right">Quantity</TableHead>
+                </tr>
+              </TableHeader>
+              <TableBody>
+                {entry.lots.map((lot: Row) => (
+                  <TableRow key={`${lot.line_no}-${lot.lot_no ?? lot.serial_no}`} style={{ borderColor: "var(--border)" }}>
+                    <TableCell className="py-2.5 px-3 font-mono font-semibold" style={S.primary}>
+                      {lot.lot_no || lot.serial_no || "—"}
+                    </TableCell>
+                    <TableCell className="py-2.5 px-3 font-mono" style={S.sub}>
+                      {lot.expiry_date ? String(lot.expiry_date).slice(0, 10) : "—"}
+                    </TableCell>
+                    <TableCell className="py-2.5 px-3 font-mono text-right font-semibold" style={S.primary}>
+                      {Number(lot.quantity).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })} {entry.uom}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* The animals that took the stock, each with its share of the quantity and the cost. */}
+      {Array.isArray(entry.animals) && entry.animals.length > 0 && (
+        <div className="rounded-[var(--radius-md)] border overflow-hidden" style={S.surface}>
+          <div className="flex items-center justify-between border-b px-4 py-3" style={{ borderColor: "var(--border)" }}>
+            <h3 className="text-sm font-semibold" style={S.primary}>Animals</h3>
+            <span className="text-xs font-mono" style={S.muted}>
+              {entry.animals.length} {entry.animals.length === 1 ? "animal" : "animals"}
+            </span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-left text-xs">
+              <TableHeader>
+                <tr className="border-b" style={{ borderColor: "var(--border)" }}>
+                  <TableHead className="py-2.5 px-3">Animal</TableHead>
+                  <TableHead className="py-2.5 px-3 text-right">Quantity</TableHead>
+                  <TableHead className="py-2.5 px-3 text-right">Cost Amount</TableHead>
+                </tr>
+              </TableHeader>
+              <TableBody>
+                {entry.animals.map((a: Row) => (
+                  <TableRow key={a.animal_id} style={{ borderColor: "var(--border)" }}>
+                    <TableCell className="py-2.5 px-3 font-mono font-semibold" style={S.primary}>{a.animal_code || a.animal_id}</TableCell>
+                    <TableCell className="py-2.5 px-3 font-mono text-right" style={S.primary}>
+                      {Number(a.quantity).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })} {entry.uom}
+                    </TableCell>
+                    <TableCell className="py-2.5 px-3 font-mono text-right font-medium" style={S.primary}>
+                      {formatMoney(Math.abs(Number(a.amount)))}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* The physical trail of a received lot / serials: every entry that took stock out of it. */}
+      {isPositive && Array.isArray(entry.lot_issues) && entry.lot_issues.length > 0 && (
+        <div className="rounded-[var(--radius-md)] border overflow-hidden" style={S.surface}>
+          <div className="flex items-center justify-between border-b px-4 py-3" style={{ borderColor: "var(--border)" }}>
+            <h3 className="text-sm font-semibold" style={S.primary}>
+              Issued From {entry.lot_no ? `Lot ${entry.lot_no}` : "these Serials"} (physical stock)
+            </h3>
+            <span className="text-xs font-mono" style={S.muted}>
+              {entry.lot_issues.length} {entry.lot_issues.length === 1 ? "line" : "lines"}
+            </span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-left text-xs">
+              <TableHeader>
+                <tr className="border-b" style={{ borderColor: "var(--border)" }}>
+                  <TableHead className="py-2.5 px-3">Entry No.</TableHead>
+                  <TableHead className="py-2.5 px-3">Posting Date</TableHead>
+                  <TableHead className="py-2.5 px-3">Document No.</TableHead>
+                  <TableHead className="py-2.5 px-3">Entry Type</TableHead>
+                  <TableHead className="py-2.5 px-3">Lot / Serial</TableHead>
+                  <TableHead className="py-2.5 px-3">Location</TableHead>
+                  <TableHead className="py-2.5 px-3 text-right">Quantity</TableHead>
+                </tr>
+              </TableHeader>
+              <TableBody>
+                {entry.lot_issues.map((issue: Row, i: number) => (
+                  <TableRow key={`${issue.ledger_id}-${i}`} style={{ borderColor: "var(--border)" }}>
+                    <TableCell className="py-2.5 px-3 font-mono font-semibold" style={S.primary}>#{issue.entry_no}</TableCell>
+                    <TableCell className="py-2.5 px-3 font-mono" style={S.primary}>{issue.posting_date ? String(issue.posting_date).slice(0, 10) : "—"}</TableCell>
+                    <TableCell className="py-2.5 px-3 font-mono font-medium" style={S.primary}>{issue.document_no || "—"}</TableCell>
+                    <TableCell className="py-2.5 px-3" style={S.sub}>{formatBcEntryType(issue.transaction_type || issue.document_type)}</TableCell>
+                    <TableCell className="py-2.5 px-3 font-mono text-[11px]" style={S.sub}>{issue.lot_no || issue.serial_no || "—"}</TableCell>
+                    <TableCell className="py-2.5 px-3 font-mono" style={S.sub}>{issue.warehouse_code || "—"}</TableCell>
+                    <TableCell className="py-2.5 px-3 font-mono text-right font-semibold" style={{ color: Number(issue.quantity) < 0 ? "var(--danger)" : "var(--success)" }}>
+                      {Number(issue.quantity) > 0 ? "+" : ""}{Number(issue.quantity).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })} {entry.uom}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </table>
+          </div>
+          <p className="border-t px-4 py-2 text-[11px]" style={{ ...S.muted, borderColor: "var(--border)" }}>
+            Which lot left is physical. The price of each issue comes from the item's costing method — see the cost entries below.
+          </p>
+        </div>
+      )}
+
       {/* Item Application Entries (Business Central Table 339) */}
       <div className="rounded-[var(--radius-md)] border overflow-hidden" style={S.surface}>
         <div className="flex items-center justify-between border-b px-4 py-3" style={{ borderColor: "var(--border)" }}>
@@ -545,13 +676,33 @@ export default function InventoryLedgerDetail({
             <h3 className="text-sm font-semibold" style={S.primary}>
               {isPositive 
                 ? "Item Application Entries (Downstream Consumptions & Issues)" 
-                : "Item Application Entries (Upstream Source Layers Applied)"}
+                : "Costing — Receipts Consumed (priced by the item's costing method)"}
             </h3>
           </div>
-          <span className="text-xs font-mono" style={S.muted}>
-            {applications.length} {applications.length === 1 ? "application entry" : "application entries"}
-          </span>
+          <div className="flex items-center gap-3">
+            <span className="text-xs font-mono" style={S.muted}>
+              {applications.length} {applications.length === 1 ? "application entry" : "application entries"}
+            </span>
+            {!isPositive && entry.costing && (
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => setShowCalculation((v) => !v)}
+                aria-expanded={showCalculation}
+                data-testid="toggle-costing-calculation"
+              >
+                <Calculator className="mr-1.5 h-3.5 w-3.5" />
+                {showCalculation ? "Hide calculation" : "Show calculation"}
+                <ChevronDown className={`ml-1 h-3.5 w-3.5 transition-transform ${showCalculation ? "rotate-180" : ""}`} />
+              </Button>
+            )}
+          </div>
         </div>
+
+        {!isPositive && entry.costing && showCalculation && (
+          <CostingCalculation costing={entry.costing} uom={entry.uom} formatMoney={formatMoney} />
+        )}
 
         {applications.length === 0 ? (
           <div className="flex flex-col items-center justify-center p-8 text-center" style={S.sub}>
@@ -572,6 +723,9 @@ export default function InventoryLedgerDetail({
             <table className="w-full border-collapse text-left text-xs">
               <TableHeader>
                 <tr className="border-b" style={{ borderColor: "var(--border)" }}>
+                  <TableHead className="py-2.5 px-3">
+                    {isPositive ? "Consumed By Entry No." : "Consumed From Entry No."}
+                  </TableHead>
                   <TableHead className="py-2.5 px-3">Application ID</TableHead>
                   <TableHead className="py-2.5 px-3">Posting Date</TableHead>
                   <TableHead className="py-2.5 px-3">
@@ -589,6 +743,9 @@ export default function InventoryLedgerDetail({
                   const appliedUnitCost = Number(app.unit_cost ?? app.rate ?? (Number(app.applied_cost_amount || 0) / Number(app.applied_qty || 1)));
                   return (
                     <TableRow key={app.application_id} style={{ borderColor: "var(--border)" }}>
+                      <TableCell className="py-2.5 px-3 font-mono font-semibold" style={S.primary}>
+                        #{isPositive ? app.outbound_entry_no : app.inbound_entry_no}
+                      </TableCell>
                       <TableCell className="py-2.5 px-3 font-mono text-[11px]" style={S.sub}>
                         <div className="flex items-center gap-1">
                           <span>{app.application_id ? (app.application_id.length > 20 ? `${app.application_id.slice(0, 12)}…` : app.application_id) : "—"}</span>
@@ -632,6 +789,19 @@ export default function InventoryLedgerDetail({
                     </TableRow>
                   );
                 })}
+                <TableRow style={{ borderColor: "var(--border)", background: "var(--surface-raised)" }}>
+                  <TableCell colSpan={7} className="py-2.5 px-3 text-right font-semibold" style={S.sub}>
+                    {isPositive ? "Total cost drawn from this entry" : "Total cost of this entry (sum of the entries above)"}
+                  </TableCell>
+                  <TableCell className="py-2.5 px-3 font-mono text-right font-semibold" style={S.primary}>
+                    {applications
+                      .reduce((sum, a) => sum + Number(a.applied_qty || 0), 0)
+                      .toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })} {entry.uom}
+                  </TableCell>
+                  <TableCell className="py-2.5 px-3 font-mono text-right font-semibold" style={S.primary}>
+                    {formatMoney(applications.reduce((sum, a) => sum + Number(a.applied_cost_amount || 0), 0))}
+                  </TableCell>
+                </TableRow>
               </TableBody>
             </table>
           </div>
@@ -642,10 +812,10 @@ export default function InventoryLedgerDetail({
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-[var(--radius-md)] border p-3 text-[11px]" style={S.surface}>
         <div className="flex flex-wrap items-center gap-4">
           <span className="flex items-center gap-1 font-mono" style={S.muted}>
-            <Hash className="h-3 w-3" /> Entry No.: <span style={S.sub}>{entry.ledger_id}</span>
+            <Hash className="h-3 w-3" /> Entry No.: <span style={S.sub}>{entry.entry_no}</span>
             <button
               type="button"
-              onClick={() => copyToClipboard(entry.ledger_id, "ledger_id")}
+              onClick={() => copyToClipboard(String(entry.entry_no), "ledger_id")}
               className="ml-1 rounded p-0.5 hover:bg-[var(--surface-raised)]"
               title="Copy Entry No."
             >

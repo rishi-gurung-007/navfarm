@@ -48,7 +48,8 @@ describe('BatchService', () => {
         BatchService,
         {
           provide: ClsService,
-          useValue: { get: jest.fn().mockReturnValue(mockDb) },
+          // 'tenantPostingTransaction' true: a day's posting joins the transaction the unit test stands in for.
+          useValue: { get: jest.fn((key: string) => (key === 'tenantPostingTransaction' ? true : mockDb)) },
         },
         {
           provide: AuditLogService,
@@ -75,7 +76,7 @@ describe('BatchService', () => {
         },
         {
           provide: 'BATCH_DAILY_DATA_POSTER',
-          useValue: { postEntry: jest.fn().mockResolvedValue({}), reevaluateFeedLevels: jest.fn().mockResolvedValue(undefined) },
+          useValue: { postEntry: jest.fn().mockResolvedValue({}), postCollected: jest.fn().mockResolvedValue(undefined), reevaluateFeedLevels: jest.fn().mockResolvedValue(undefined) },
         },
       ],
     }).compile();
@@ -650,12 +651,12 @@ describe('BatchService', () => {
         const result = await service.postStageDay('batch-1', 'stage-flush', '2026-09-11', 'tenant-123', { userId: 'user-1' });
         expect(result.status).toBe('LOCKED');
         expect(poster.postEntry).toHaveBeenCalledTimes(2);
-        for (const call of (poster.postEntry as jest.Mock).mock.calls) expect(call[4]).toEqual({ deferFeedAlerts: true });
+        for (const call of (poster.postEntry as jest.Mock).mock.calls) expect(call[4]).toEqual({ deferFeedAlerts: true, collector: expect.any(Array) });
         expect(poster.reevaluateFeedLevels).toHaveBeenCalledTimes(1);
         expect(poster.reevaluateFeedLevels).toHaveBeenCalledWith('farm-1', 'tenant-123');
       });
 
-      it('still re-checks once when a later line throws, then rethrows', async () => {
+      it('does not re-check when a later line throws — the whole day rolls back, then rethrows', async () => {
         const poster = arrange();
         (poster.postEntry as jest.Mock)
           .mockResolvedValueOnce({})
@@ -663,8 +664,8 @@ describe('BatchService', () => {
         await expect(
           service.postStageDay('batch-1', 'stage-flush', '2026-09-11', 'tenant-123', { userId: 'user-1' }),
         ).rejects.toThrow('line 2 refused');
-        expect(poster.reevaluateFeedLevels).toHaveBeenCalledTimes(1);
-        expect(poster.reevaluateFeedLevels).toHaveBeenCalledWith('farm-1', 'tenant-123');
+        // The day posts together or not at all: line 1 went back with line 2, so no silo moved.
+        expect(poster.reevaluateFeedLevels).not.toHaveBeenCalled();
         expect(mockDbInsert).not.toHaveBeenCalled(); // the day was not locked
       });
 
@@ -957,6 +958,23 @@ describe('BatchService', () => {
     });
   });
 
+  describe('expected quantity of a scheduler line', () => {
+    const expected = (line: object, animals: number, stageAnimals?: number) =>
+      (service as any).computeExpectedQty({ standard_qty: '2', ...line }, animals, stageAnimals);
+
+    it('per head is the standard times the animals — and a line with no basis reads as per head', () => {
+      expect(expected({ qty_basis: 'PER_HEAD' }, 4)).toBe(8);
+      expect(expected({ qty_basis: null }, 4)).toBe(8);
+      expect(expected({ qty_basis: 'PER_HEAD' }, 1)).toBe(2);
+    });
+
+    it('per batch is the whole stage\'s standard, shared out per animal in an animal-wise stage', () => {
+      expect(expected({ qty_basis: 'TOTAL_BATCH' }, 4)).toBe(2);
+      expect(expected({ qty_basis: 'TOTAL_BATCH' }, 1, 2)).toBe(1);
+      expect(expected({ qty_basis: 'TOTAL_BATCH' }, 1, 3)).toBeCloseTo(0.6667, 4);
+    });
+  });
+
   describe('postBatchDay', () => {
     const batchWiseBatch = {
       ...activeBatch,
@@ -1131,7 +1149,7 @@ describe('BatchService', () => {
         }),
         'tenant-123',
         { userId: 'user-1' },
-        { deferFeedAlerts: true },
+        { deferFeedAlerts: true, collector: expect.any(Array) },
       );
       expect(dailyDataPoster.postEntry).toHaveBeenCalledWith(
         'batch-1',
@@ -1142,7 +1160,7 @@ describe('BatchService', () => {
         }),
         'tenant-123',
         { userId: 'user-1' },
-        { deferFeedAlerts: true },
+        { deferFeedAlerts: true, collector: expect.any(Array) },
       );
       // Ruling M6: the lines defer their silo-level re-check, and the day
       // makes it once, for the batch's farm, after every line has posted.
@@ -1155,7 +1173,7 @@ describe('BatchService', () => {
       expect(calledDtos.every((dto) => dto.draft === undefined)).toBe(true);
     });
 
-    it('re-checks the farm\'s silo levels once even when a later draft line throws, then rethrows', async () => {
+    it('does not re-check silo levels when a later draft line throws — the whole day rolls back, then rethrows', async () => {
       jest
         .spyOn(service, 'findOne')
         .mockResolvedValueOnce(batchWiseBatch as any);
@@ -1178,8 +1196,8 @@ describe('BatchService', () => {
       await expect(
         service.postBatchDay('batch-1', '2026-09-11', 'tenant-123', { userId: 'user-1' }),
       ).rejects.toThrow('line 2 refused');
-      expect(poster.reevaluateFeedLevels).toHaveBeenCalledTimes(1);
-      expect(poster.reevaluateFeedLevels).toHaveBeenCalledWith('farm-1', 'tenant-123');
+      // Line 1 went back with line 2, so no silo moved and nothing is re-checked.
+      expect(poster.reevaluateFeedLevels).not.toHaveBeenCalled();
       expect(mockDbInsert).not.toHaveBeenCalled(); // the day was not locked
     });
 

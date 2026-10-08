@@ -3,6 +3,7 @@ import { LEDGER_EXPORT_COLUMNS, LedgerExportRow, ledgerRowsToCsv, ledgerRowsToXl
 
 const row = (over: Partial<LedgerExportRow> = {}): LedgerExportRow => ({
   ledger_id: 'led-1',
+  entry_no: 7,
   posting_date: '2026-09-30',
   document_type: 'GOODS_RECEIPT',
   document_no: 'GRN-000001',
@@ -56,7 +57,8 @@ describe('inventory ledger export', () => {
     await workbook.xlsx.load(buffer as any);
     const sheet = workbook.getWorksheet('Inventory Ledger Entries')!;
     expect(sheet.rowCount).toBe(2);
-    expect(sheet.getRow(1).getCell(1).value).toBe('Posting Date');
+    expect(sheet.getRow(1).getCell(1).value).toBe('Entry No.');
+    expect(sheet.getRow(2).getCell(1).value).toBe(7);
     const quantityCol = LEDGER_EXPORT_COLUMNS.findIndex((c) => c.key === 'quantity') + 1;
     const dateCol = LEDGER_EXPORT_COLUMNS.findIndex((c) => c.key === 'posting_date') + 1;
     expect(sheet.getRow(2).getCell(quantityCol).value).toBe(1500);

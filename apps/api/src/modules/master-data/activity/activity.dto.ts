@@ -5,7 +5,7 @@ import { MasterListQueryDto } from '../../../common/master-list-query';
 
 export const LINE_TYPES = ['CONSUMPTION', 'OUTPUT', 'DESCRIPTIVE', 'OVERHEAD', 'RESOURCE', 'TRANSFER'] as const;
 export const OCCURRENCES = ['DAILY', 'WEEKLY', 'MONTHLY', 'ONCE', 'CUSTOM'] as const;
-export const QTY_BASES = ['PER_HEAD', 'TOTAL_BATCH', 'PER_PEN', 'FIXED'] as const;
+export const QTY_BASES = ['PER_HEAD', 'TOTAL_BATCH'] as const;
 export const OUTPUT_BASES = ['PER_SOW', 'PER_PEN', 'PER_BATCH'] as const;
 export const CAPTURE_PERS = ['AVERAGE', 'TOTAL', 'PER_HEAD'] as const;
 

@@ -1,18 +1,17 @@
 /**
- * Seeds animals only — no count-only headcount batches, no daily entries, no
- * breeding records, no approvals. Registers each farm's breeding stock (sows,
- * gilts, boars) as real animal_register rows, each properly linked: farm,
- * pen, breed, item, stage, and the one "Registered Animals" batch it belongs
- * to (BIO_ASSET costing, auto-generated scheduler) — that batch is how an
- * animal gets a stage and a scheduler in this app's data model at all, so it
- * is created too, but nothing beyond it (see docs/decisions.md, 2026-09-23:
- * "wrap the existing chapter" rather than a batch-less, untested path).
+ * Seeds animals only — no headcount batches, no daily entries, no breeding
+ * records, no approvals. Registers each farm's breeding stock (sows, gilts,
+ * boars) as real animal_register rows, each properly linked: farm, pen, breed,
+ * item and stage, and groups them into one Animal Wise batch — that batch is
+ * how an animal gets a scheduler in this app's data model, so it is created
+ * too, but nothing beyond it.
  *
  * Everything through the services (Ruling 1, same as the demo chapters this
- * reuses register-breeding-stock.ts from): goods receipt -> post -> batch ->
- * activate -> AnimalService.create() one animal at a time, never a raw
- * insert. Resume-safe — a farm's existing demo herd is adopted, not
- * duplicated (batches by DEMO remarks token, animals by ear_tag).
+ * reuses register-breeding-stock.ts from): goods receipt -> post ->
+ * AnimalService.create() one animal at a time -> BatchService.create()
+ * (ANIMAL_WISE, by animal id) -> activate, never a raw insert. Resume-safe — a
+ * farm's existing demo herd is adopted, not duplicated (batch by DEMO remarks
+ * token, animals by rfid_tag).
  *
  * Requires the masters to already be seeded (db-seed-masters-only or the
  * full db-rebuild-demo master stages) — farms, sheds, pens, breeds and the
@@ -25,10 +24,9 @@
  */
 import { bootApp, buildDemoContext, inTenant } from './demo/harness';
 import { registerBreedingStock } from './demo/register-breeding-stock';
-import { createItemLookup, createBatchEnsurer } from './demo/batch-helpers';
+import { createItemLookup, createAnimalWiseBatchEnsurer } from './demo/batch-helpers';
 import { BatchService } from '../modules/production/batch/batch.service';
 import { AnimalService } from '../modules/piggery/animal/animal.service';
-import { SchedulerHeaderService } from '../modules/production/scheduler-header/scheduler-header.service';
 import { GoodsReceiptService } from '../modules/inventory/goods-receipt/goods-receipt.service';
 import { ClsService } from 'nestjs-cls';
 import type { MySql2Database } from 'drizzle-orm/mysql2';
@@ -74,21 +72,20 @@ async function main() {
     await inTenant(ctx, async () => {
       const batches = app.get(BatchService);
       const animals = app.get(AnimalService);
-      const schedulers = app.get(SchedulerHeaderService);
       const receipts = app.get(GoodsReceiptService);
       const cls = app.get(ClsService);
       const db = cls.get<MySql2Database<typeof schema>>('tenantDb');
       if (!db) throw new Error('db-seed-animals: tenantDb is not set — run through the harness.');
 
       const item = createItemLookup(db, ctx.companyId);
-      const ensureBatch = createBatchEnsurer(db, batches, ctx);
+      const ensureAnimalWiseBatch = createAnimalWiseBatchEnsurer(db, batches, ctx);
 
       let registered = 0;
       for (const demoFarm of farms) {
-        const refs = await registerBreedingStock(ctx, demoFarm, { db, animals, schedulers, receipts, item, ensureBatch });
+        const refs = await registerBreedingStock(ctx, demoFarm, { db, animals, receipts, item, ensureAnimalWiseBatch });
         if (refs) registered += 1;
       }
-      log(`\nDone — ${registered} of ${farms.length} farm(s) carry registered-animals batch(es).`);
+      log(`\nDone — ${registered} of ${farms.length} farm(s) carry an Animal Wise batch.`);
     });
   } finally {
     await Promise.race([app.close(), new Promise((resolve) => setTimeout(resolve, 5000))]);

@@ -436,6 +436,14 @@
           "cwd": "apps/api"
         }
       },
+      "verify-costing-scenarios": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "command": "DEMO_FARMS=${DEMO_FARMS:-MUL100,POR100} ../../node_modules/.bin/ts-node --transpile-only --project tsconfig.app.json -O '{\"module\":\"node16\",\"moduleResolution\":\"node16\",\"esModuleInterop\":true,\"ignoreDeprecations\":\"6.0\"}' src/scripts/verify-costing-scenarios.ts",
+          "cwd": "apps/api"
+        }
+      },
       "db-seed-animals": {
         "executor": "nx:run-commands",
         "cache": false,
@@ -465,6 +473,14 @@
         "cache": false,
         "options": {
           "command": "node --env-file-if-exists=.env --import tsx src/scripts/seed-demo-item-catalog.ts",
+          "cwd": "apps/api"
+        }
+      },
+      "db-reset-seed": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "command": "node --env-file-if-exists=.env --import tsx src/scripts/rebuild-demo.ts --apply --preset=small",
           "cwd": "apps/api"
         }
       },

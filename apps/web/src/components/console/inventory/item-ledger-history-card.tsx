@@ -204,6 +204,7 @@ export default function ItemLedgerHistoryCard({
                 <table className="w-full border-collapse text-left text-xs">
                   <TableHeader>
                     <tr className="border-b" style={{ borderColor: "var(--border)" }}>
+                      <TableHead className="py-2.5 px-3">Entry No.</TableHead>
                       <TableHead className="py-2.5 px-3">Posting Date</TableHead>
                       <TableHead className="py-2.5 px-3">Document No.</TableHead>
                       <TableHead className="py-2.5 px-3">Location</TableHead>
@@ -227,6 +228,9 @@ export default function ItemLedgerHistoryCard({
 
                       return (
                         <TableRow key={layer.ledger_id} style={{ borderColor: "var(--border)" }}>
+                          <TableCell className="py-2.5 px-3 font-mono font-semibold" style={S.primary}>
+                            #{layer.entry_no}
+                          </TableCell>
                           <TableCell className="py-2.5 px-3 font-mono" style={S.primary}>
                             {layer.posting_date}
                           </TableCell>
@@ -331,6 +335,7 @@ export default function ItemLedgerHistoryCard({
                 <table className="w-full border-collapse text-left text-xs">
                   <TableHeader>
                     <tr className="border-b" style={{ borderColor: "var(--border)" }}>
+                      <TableHead className="py-2.5 px-3">Entry No.</TableHead>
                       <TableHead className="py-2.5 px-3">Posting Date</TableHead>
                       <TableHead className="py-2.5 px-3">Document No.</TableHead>
                       <TableHead className="py-2.5 px-3">Transaction Type</TableHead>
@@ -338,7 +343,7 @@ export default function ItemLedgerHistoryCard({
                       <TableHead className="py-2.5 px-3 text-right">Consumed Qty</TableHead>
                       <TableHead className="py-2.5 px-3 text-right">Applied Unit Cost</TableHead>
                       <TableHead className="py-2.5 px-3 text-right">Total Cost</TableHead>
-                      <TableHead className="py-2.5 px-3">Linked Application ID & Source Purchase</TableHead>
+                      <TableHead className="py-2.5 px-3">Consumed From Entry No. (Qty × Unit Cost = Cost)</TableHead>
                       <TableHead className="py-2.5 px-3 text-center">Action</TableHead>
                     </tr>
                   </TableHeader>
@@ -351,6 +356,9 @@ export default function ItemLedgerHistoryCard({
 
                       return (
                         <TableRow key={out.ledger_id} style={{ borderColor: "var(--border)" }}>
+                          <TableCell className="py-2.5 px-3 font-mono font-semibold" style={S.primary}>
+                            #{out.entry_no}
+                          </TableCell>
                           <TableCell className="py-2.5 px-3 font-mono" style={S.primary}>
                             {out.posting_date}
                           </TableCell>
@@ -384,8 +392,8 @@ export default function ItemLedgerHistoryCard({
                               <div className="flex flex-col gap-1.5">
                                 {apps.map((app) => (
                                   <div key={app.application_id} className="flex flex-wrap items-center gap-1.5 rounded p-1 border" style={S.raised}>
-                                    <span className="font-mono text-[10px] font-semibold text-[var(--accent)]" title={app.application_id}>
-                                      App: {app.application_id.length > 20 ? `${app.application_id.slice(0, 12)}…` : app.application_id}
+                                    <span className="font-mono text-[11px] font-bold text-[var(--accent)]" title={`Application ${app.application_id}`}>
+                                      Entry #{app.inbound_entry_no}
                                     </span>
                                     <button
                                       type="button"
@@ -400,7 +408,7 @@ export default function ItemLedgerHistoryCard({
                                       {app.inbound_document_no || "GRN"}
                                     </span>
                                     <span className="font-mono text-[10px] font-medium" style={S.sub}>
-                                      ({Number(app.applied_qty).toLocaleString()} @ {formatMoney(Number(app.unit_cost ?? app.inbound_rate ?? 0))})
+                                      ({Number(app.applied_qty).toLocaleString()} × {formatMoney(Number(app.unit_cost ?? app.inbound_rate ?? 0))} = {formatMoney(Number(app.applied_cost_amount || 0))})
                                     </span>
                                   </div>
                                 ))}

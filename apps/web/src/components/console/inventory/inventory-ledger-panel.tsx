@@ -301,6 +301,7 @@ export default function InventoryLedgerPanel() {
           <option value="VARIANCE_NEGATIVE">Variance_Negative</option>
           <option value="OVERHEAD">Overhead</option>
           <option value="DESCRIPTIVE">Descriptive</option>
+          <option value="BIO_HARVEST">Harvest (bio-asset slaughter)</option>
           <option value="REVERSAL">Reversal</option>
         </select>
 
@@ -334,6 +335,7 @@ export default function InventoryLedgerPanel() {
           <table className="w-full border-collapse text-left text-sm min-w-[1250px]">
             <TableHeader>
               <tr className="border-b border-(--row-border)">
+                <TableHead className="whitespace-nowrap w-20">Entry No.</TableHead>
                 <TableHead className="whitespace-nowrap w-28 min-w-[105px]">{t("ilpPostingDate")}</TableHead>
                 <TableHead className="whitespace-nowrap w-36 min-w-[130px]">{t("ilpDocument")}</TableHead>
                 <TableHead className="whitespace-nowrap min-w-[210px]">{t("ilpItem")}</TableHead>
@@ -352,14 +354,14 @@ export default function InventoryLedgerPanel() {
             <TableBody>
               {loading ? (
                 <tr>
-                  <TableCell colSpan={13} className="py-12 text-center" style={S.sub}>
+                  <TableCell colSpan={14} className="py-12 text-center" style={S.sub}>
                     <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" style={S.accent} /> 
                     {t("ilpLoading")}
                   </TableCell>
                 </tr>
               ) : rows.length === 0 ? (
                 <tr>
-                  <TableCell colSpan={13} className="py-12 text-center" style={S.sub}>
+                  <TableCell colSpan={14} className="py-12 text-center" style={S.sub}>
                     <Inbox className="mx-auto mb-2 h-6 w-6" style={S.muted} /> 
                     {hasActiveFilters ? "No inventory ledger entries match the selected filters." : t("ilpNoLedgerEntries")}
                   </TableCell>
@@ -380,6 +382,11 @@ export default function InventoryLedgerPanel() {
                       onClick={() => setViewingEntry(row)}
                       className="cursor-pointer hover:bg-[var(--surface-raised)] transition"
                     >
+                      {/* Entry No. */}
+                      <TableCell className="whitespace-nowrap font-mono font-semibold" style={S.primary}>
+                        {row.entry_no}
+                      </TableCell>
+
                       {/* Posting Date */}
                       <TableCell className="whitespace-nowrap font-medium" style={S.primary}>
                         {row.posting_date}
@@ -419,7 +426,7 @@ export default function InventoryLedgerPanel() {
 
                       {/* Entry Type (Business Central format) */}
                       <TableCell className="whitespace-nowrap">
-                        <Badge variant="neutral" className="text-[11px] font-semibold">
+                        <Badge variant="neutral" className="text-[11px] font-semibold" title={row.transaction_type}>
                           {formatBcEntryType(row.transaction_type)}
                         </Badge>
                       </TableCell>
@@ -487,17 +494,19 @@ export default function InventoryLedgerPanel() {
 
                       {/* Item Tracking (Yes / No) */}
                       <TableCell className="whitespace-nowrap text-center text-xs">
-                        {row.lot_no || row.serial_no ? (
+                        {row.lot_no || row.serial_no || Number(row.lot_lines) > 0 ? (
                           <Badge
                             variant="success"
                             className="text-[10px] font-semibold cursor-default"
                             title={
-                              row.serial_no
+                              Number(row.lot_lines) > 0
+                                ? `${row.lot_lines} lots — open the entry to see which`
+                                : row.serial_no
                                 ? `Serial No(s): ${row.serial_no}`
                                 : `Lot: ${row.lot_no}${row.expiry_date ? ` (Exp: ${String(row.expiry_date).slice(0, 10)})` : ""}`
                             }
                           >
-                            Yes
+                            {Number(row.lot_lines) > 0 ? `${row.lot_lines} lots` : "Yes"}
                           </Badge>
                         ) : (
                           <span style={S.muted}>No</span>

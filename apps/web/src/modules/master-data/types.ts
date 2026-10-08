@@ -327,6 +327,8 @@ export interface MasterDataField {
    * decide how its layers were costed, so they can no longer change.
    */
   lockWhenRowFlag?: string;
+  /** Says why the field is locked, shown under it while `lockWhenRowFlag` holds. */
+  lockReason?: (row: Record<string, unknown>) => string | undefined;
   /**
    * Only shown once editing — omit from the create form/payload (e.g. a value the service
    * computes on create, such as an animal's opening bio-asset value, that the API's create

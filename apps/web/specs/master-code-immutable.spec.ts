@@ -34,10 +34,18 @@ describe("number series lock once numbers are issued", () => {
   });
 });
 
-describe("item costing and tracking lock once inventory exists", () => {
+describe("item costing and tracking locks", () => {
   const item = MASTER_DATA_CONFIGS.find((c) => c.key === "item")!;
-  it.each(["valuation_method", "is_tracked", "tracking_type", "tracking_series_id"])("%s locks on has_inventory", (key) => {
-    expect(item.fields.find((f) => f.key === key)!.lockWhenRowFlag).toBe("has_inventory");
+  // Valuation method is fixed by the first ledger entry; tracking only while stock is on hand or a
+  // document is open (the API's trackingBlockers, surfaced as `tracking_locked`).
+  it("valuation_method locks on has_inventory", () => {
+    expect(item.fields.find((f) => f.key === "valuation_method")!.lockWhenRowFlag).toBe("has_inventory");
+  });
+  it.each(["is_tracked", "tracking_type", "tracking_series_id"])("%s locks on tracking_locked and says why", (key) => {
+    const field = item.fields.find((f) => f.key === key)!;
+    expect(field.lockWhenRowFlag).toBe("tracking_locked");
+    expect(field.lockReason?.({ on_hand_qty: 50, uom_primary: "KG", open_documents: 0 })).toBe("50 KG on hand — consume it or adjust it out first");
+    expect(field.lockReason?.({ on_hand_qty: 0, open_documents: 2 })).toBe("2 open documents name this item — post or cancel them first");
   });
 });
 

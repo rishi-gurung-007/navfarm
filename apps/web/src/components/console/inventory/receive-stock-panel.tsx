@@ -584,7 +584,7 @@ export default function ReceiveStockPanel({ onOpenTransferOrder }: ReceiveStockP
                 </span>
               </div>
               <p className="mt-1 text-[11px]" style={S.sub}>
-                Entry ID: <span className="font-mono font-semibold" style={S.primary}>{viewingReceipt.ledger_id}</span> | Transaction: <strong style={S.primary}>TRANSFER_RECEIPT</strong> (+{viewingReceipt.quantity} {viewingReceipt.uom}).
+                Entry No.: <span className="font-mono font-semibold" style={S.primary}>{viewingReceipt.entry_no}</span> | Transaction: <strong style={S.primary}>TRANSFER_RECEIPT</strong> (+{viewingReceipt.quantity} {viewingReceipt.uom}).
               </p>
             </div>
           </div>

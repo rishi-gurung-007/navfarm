@@ -7,6 +7,7 @@ import * as ExcelJS from 'exceljs';
  */
 export interface LedgerExportRow {
   ledger_id: string;
+  entry_no: number;
   posting_date: string | null;
   document_type: string | null;
   document_no: string | null;
@@ -46,6 +47,7 @@ export interface LedgerExportColumn {
 }
 
 export const LEDGER_EXPORT_COLUMNS: LedgerExportColumn[] = [
+  { key: 'entry_no', header: 'Entry No.', kind: 'number', width: 11 },
   { key: 'posting_date', header: 'Posting Date', kind: 'date', width: 14 },
   { key: 'document_type', header: 'Document Type', kind: 'text', width: 18 },
   { key: 'document_no', header: 'Document No.', kind: 'text', width: 20 },
@@ -73,7 +75,6 @@ export const LEDGER_EXPORT_COLUMNS: LedgerExportColumn[] = [
   { key: 'location_name', header: 'Batch Location', kind: 'text', width: 26 },
   { key: 'created_by', header: 'Created By', kind: 'text', width: 38 },
   { key: 'created_at', header: 'Created At', kind: 'datetime', width: 20 },
-  { key: 'ledger_id', header: 'Ledger Entry ID', kind: 'text', width: 38 },
 ];
 
 const pad = (n: number) => String(n).padStart(2, '0');

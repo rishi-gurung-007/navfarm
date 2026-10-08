@@ -6,6 +6,7 @@ import {
   ConflictException,
   Inject,
 } from '@nestjs/common';
+import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { eq, and, like, isNull, inArray, desc, asc, gt, SQL } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
@@ -49,7 +50,7 @@ import { AnimalMovementLogService } from '../../piggery/animal-movement-log/anim
 // direct class reference — the DI graph stays circular (both modules import
 // each other, which is fine and forwardRef-guarded at the module level) but
 // no compiled file ends up needing the other's class value at load time.
-import type { BatchDailyDataService } from '../batch-daily-data/batch-daily-data.service';
+import type { BatchDailyDataService, PendingConsumption } from '../batch-daily-data/batch-daily-data.service';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   return date.toISOString().slice(0, 19).replace('T', ' ');
@@ -480,8 +481,8 @@ export class BatchService {
       // stock) — assign them to this batch while explicitly preserving each animal's
       // own current_stage_id/current_location_id, then log the move and stand up a
       // scheduler for every distinct stage now represented in the batch. Deliberately
-      // skips registerPlaceholderAnimals() (that creates NEW animal rows for a
-      // headcount — not applicable here) and the input-line-driven bio-asset ledger
+      // creates no animal rows (a Batch Wise batch is a bare headcount and never
+      // does; here the rows already exist) and skips the input-line-driven bio-asset ledger
       // posting (no acquisition is happening; these animals' value is already on the
       // books from whatever batch/purchase originally brought them in).
       const rawStageIds = [
@@ -717,16 +718,11 @@ export class BatchService {
    * needing a reversal/correction flow. Reuses CreateBatchDto's shape and
    * most of create()'s own validation.
    *
-   * Deliberately narrower than create() in one place: a livestock BATCH_WISE
-   * batch (breed_id set) already got one animal_register placeholder row per
-   * head at creation time (registerPlaceholderAnimals()). Reconciling that
-   * set on every edit — working out which placeholders to delete, which to
-   * keep, whether one already has hand-edited fields worth preserving — is
-   * real animal-record surgery, not batch-header editing, so breed_id and
-   * opening_quantity are refused once placeholders exist. Every other field,
-   * including the input lines and standard-cost config, is fully editable.
-   * A mistake that big is what the existing DELETE (cancel) endpoint is for
-   * — discard the draft and start over.
+   * Every field, including the input lines, opening quantity and
+   * standard-cost config, is editable while the batch is DRAFT: a Batch Wise
+   * batch is a bare headcount and creates no animal_register rows, and an Animal
+   * Wise batch's animals are chosen by id. A mistake that big is what the
+   * existing DELETE (cancel) endpoint is for — discard the draft and start over.
    */
   async update(
     id: string,
@@ -1976,6 +1972,167 @@ export class BatchService {
     return opening > 0 ? (inputTotal + consumptionTotal) / opening : 0;
   }
 
+  /** The herd's bio-asset state row, created on first use (a batch can consume before anything else touched it). */
+  private async ensureBioState(batch: Awaited<ReturnType<BatchService['findOne']>>, id: string) {
+    let [bioState] = await this.db
+      .select()
+      .from(schema.batchBioAssetState)
+      .where(eq(schema.batchBioAssetState.batch_id, id))
+      .limit(1);
+    if (!bioState) {
+      const stateId = randomUUID();
+      const stage = ['GESTATION', 'DRY_SOW_GESTATION', 'LACTATION'].includes(batch.current_stage_code || '')
+        ? 'MATURE'
+        : 'PREMATURE';
+      await this.db.insert(schema.batchBioAssetState).values({
+        state_id: stateId,
+        batch_id: id,
+        stage,
+        current_quantity: batch.opening_quantity?.toString() || '1',
+        nca_book_value: stage === 'MATURE' ? (Number(batch.opening_quantity || 1) * 28000).toString() : '0.0000',
+      });
+      [bioState] = await this.db
+        .select()
+        .from(schema.batchBioAssetState)
+        .where(eq(schema.batchBioAssetState.state_id, stateId))
+        .limit(1);
+    }
+    return bioState;
+  }
+
+  /**
+   * Issues one activity's stock for the whole group of animals that took it, as ONE ledger entry: the entry
+   * carries the total quantity, its lots as ledger lines, and its cost by the item's costing method (the
+   * applications show which receipts it was drawn on). The cost is then shared out per animal — each animal
+   * keeps its own batch transaction, with its share of the quantity and of the cost — so the batch's costing
+   * by animal is unchanged. One GL journal, and one bio-asset ledger row, for the entry.
+   */
+  async postConsumptionGroup(
+    id: string,
+    params: {
+      item_id: string;
+      uom: string;
+      transaction_date: string;
+      source_warehouse_id?: string;
+      lots?: Array<{ lotNo: string; quantity: number }>;
+      lot_no?: string;
+      serial_no?: string;
+      remarks?: string;
+      /** One per animal (or one with no animal, for a batch-wise batch). */
+      shares: Array<{ animal_id?: string; quantity: number }>;
+    },
+    tenantId: string,
+    userPayload?: UserContext,
+  ) {
+    const batch = await this.findOne(id);
+    this.assertStatus(batch, 'ACTIVE');
+    const total = Math.round(params.shares.reduce((n, s) => n + s.quantity, 0) * 1e4) / 1e4;
+    if (!(total > 0)) throw new BadRequestException('A consumption entry needs a quantity.');
+
+    const isBioAsset = batch.costing_method === 'BIO_ASSET';
+    const bio = isBioAsset ? await this.ensureBioState(batch, id) : undefined;
+    const transactionType = isBioAsset
+      ? bio?.stage === 'PREMATURE' ? 'BIO_CONSUMPTION_PREMATURE' : 'BIO_CONSUMPTION_MATURE'
+      : 'CONSUMPTION';
+
+    const groupId = randomUUID();
+    const ledgerEntry = await this.ledgerService.writeNegativeEntry({
+      tenantId,
+      companyId: batch.company_id,
+      itemId: params.item_id,
+      documentType: 'BATCH',
+      documentNo: batch.batch_no,
+      documentLineId: groupId,
+      postingDate: params.transaction_date,
+      transactionType,
+      quantity: total,
+      uom: params.uom,
+      batchNo: batch.batch_no,
+      warehouseId: params.source_warehouse_id,
+      ...(params.lots?.length ? { lots: params.lots } : { lotNo: params.lot_no }),
+      serialNo: params.serial_no,
+      userId: userPayload?.userId,
+    });
+    await this.glPostingService.postInventoryLedgerEntry(ledgerEntry, userPayload?.userId);
+
+    const amount = Number(ledgerEntry.amount); // negative
+    const rate = Number(ledgerEntry.rate);
+
+    // Premature-stage cost capitalizes into the herd's carrying value; mature-stage cost is expensed
+    // (already handled by the GL mapping).
+    if (isBioAsset && bio?.stage === 'PREMATURE') {
+      const capitalized = Math.abs(amount);
+      await this.db
+        .update(schema.batchBioAssetState)
+        .set({ nca_book_value: (Number(bio.nca_book_value) + capitalized).toString(), updated_at: toMysqlTimestamp() })
+        .where(eq(schema.batchBioAssetState.batch_id, id));
+      await this.db.insert(schema.bioAssetLedger).values({
+        entry_id: randomUUID(),
+        tenant_id: tenantId,
+        company_id: batch.company_id,
+        bio_asset_item_id: params.item_id,
+        entry_type: 'CONSUMPTION',
+        document_no: batch.batch_no,
+        batch_id: id,
+        batch_no: batch.batch_no,
+        posting_date: params.transaction_date,
+        stage: 'PREMATURE',
+        quantity: total.toString(),
+        cost_amount: capitalized.toString(),
+        cost_amount_each_unit: rate?.toString() || null,
+        costing_method: 'COST_ACCUMULATION',
+        nob_id: batch.nob_id,
+        lob_id: batch.lob_id,
+        created_by: userPayload?.userId || null,
+      });
+    }
+
+    // Each animal's share of the entry: its quantity, and that fraction of the cost (the last takes the rounding).
+    const transactions: Array<{ transaction_id: string; animal_id?: string; quantity: number; amount: number }> = [];
+    let allocated = 0;
+    for (let i = 0; i < params.shares.length; i++) {
+      const share = params.shares[i];
+      const last = i === params.shares.length - 1;
+      const shareAmount = last ? Math.round((amount - allocated) * 1e4) / 1e4 : Math.round(amount * (share.quantity / total) * 1e4) / 1e4;
+      allocated = Math.round((allocated + shareAmount) * 1e4) / 1e4;
+      const transactionId = randomUUID();
+      await this.db.insert(schema.batchTransaction).values({
+        transaction_id: transactionId,
+        batch_id: id,
+        transaction_date: params.transaction_date,
+        transaction_type: 'CONSUMPTION',
+        item_id: params.item_id,
+        quantity: share.quantity.toString(),
+        uom: params.uom,
+        rate: rate?.toString() || null,
+        amount: shareAmount.toString(),
+        remarks: params.remarks || null,
+        ledger_id: ledgerEntry.ledger_id,
+        animal_id: share.animal_id || null,
+        created_by: userPayload?.userId || null,
+      });
+      await this.evaluateKpi(batch, {
+        transaction_id: transactionId,
+        transaction_date: params.transaction_date,
+        transaction_type: 'CONSUMPTION',
+        item_id: params.item_id,
+        resource_id: null,
+        quantity: share.quantity,
+      });
+      await this.auditService.log({
+        tenantId,
+        companyId: batch.company_id,
+        userId: userPayload?.userId,
+        action: 'CREATE',
+        entityName: 'batch_transaction',
+        entityId: transactionId,
+        newValues: { batch_id: id, item_id: params.item_id, animal_id: share.animal_id, quantity: share.quantity, amount: shareAmount, ledger_id: ledgerEntry.ledger_id },
+      });
+      transactions.push({ transaction_id: transactionId, animal_id: share.animal_id, quantity: share.quantity, amount: shareAmount });
+    }
+    return { ledgerEntry, transactions };
+  }
+
   async addTransaction(
     id: string,
     // source_warehouse_id is deliberately not on AddBatchTransactionDto: it is
@@ -2005,37 +2162,7 @@ export class BatchService {
     }
 
     const isBioAsset = batch.costing_method === 'BIO_ASSET';
-    let bioState: typeof schema.batchBioAssetState.$inferSelect | undefined;
-    if (isBioAsset) {
-      [bioState] = await this.db
-        .select()
-        .from(schema.batchBioAssetState)
-        .where(eq(schema.batchBioAssetState.batch_id, id))
-        .limit(1);
-      if (!bioState) {
-        const stateId = randomUUID();
-        const stage = ['GESTATION', 'DRY_SOW_GESTATION', 'LACTATION'].includes(
-          batch.current_stage_code || '',
-        )
-          ? 'MATURE'
-          : 'PREMATURE';
-        await this.db.insert(schema.batchBioAssetState).values({
-          state_id: stateId,
-          batch_id: id,
-          stage,
-          current_quantity: batch.opening_quantity?.toString() || '1',
-          nca_book_value:
-            stage === 'MATURE'
-              ? (Number(batch.opening_quantity || 1) * 28000).toString()
-              : '0.0000',
-        });
-        [bioState] = await this.db
-          .select()
-          .from(schema.batchBioAssetState)
-          .where(eq(schema.batchBioAssetState.state_id, stateId))
-          .limit(1);
-      }
-    }
+    const bioState = isBioAsset ? await this.ensureBioState(batch, id) : undefined;
     const bio = bioState;
 
     let bioAssetSubjectItemId = dto.item_id || batch.input_lines?.[0]?.item_id;
@@ -2770,10 +2897,11 @@ export class BatchService {
   ): number {
     if (line.standard_qty == null) return 0;
     const qty = Number(line.standard_qty);
-    if (line.qty_basis === 'PER_HEAD') {
+    // A line with no basis reads as per head, as the data entry line reports it.
+    if (line.qty_basis == null || line.qty_basis === 'PER_HEAD') {
       return Number((qty * animalCount).toFixed(4));
     }
-    // PER_BATCH / TOTAL_BATCH:
+    // TOTAL_BATCH:
     // If calculating for a single individual animal (animalCount === 1 and stageAnimalCount > 0):
     // distribute the batch total across all active animals in the stage/batch.
     if (stageAnimalCount && stageAnimalCount > 0) {
@@ -3482,25 +3610,36 @@ export class BatchService {
           ),
         );
       try {
-        for (const row of draftRows) {
-          await this.batchDailyDataService.postEntry(
-            batchId,
-            {
-              line_id: row.line_id,
-              entry_date: dateStr,
-              entered_value:
-                row.entered_value != null ? Number(row.entered_value) : undefined,
-              entered_text: row.entered_text || undefined,
-              lot_no: row.lot_no || undefined,
-              serial_no: row.serial_no || undefined,
-              remarks: row.remarks || undefined,
-            } as any,
-            tenantId,
-            userPayload,
-            { deferFeedAlerts: true },
-          );
-          postedDrafts++;
-        }
+        // All of the day's drafts post together or none does: a line that fails (a lot that has run out,
+        // say) takes the lines before it back with it, instead of leaving half a day posted.
+        await withTenantTransaction(this.cls, async () => {
+          // Each consumption is checked as it comes in and held; what an activity's animals took is then
+          // issued together, as one ledger entry per activity.
+          const collector: PendingConsumption[] = [];
+          for (const row of draftRows) {
+            await this.batchDailyDataService.postEntry(
+              batchId,
+              {
+                line_id: row.line_id,
+                entry_date: dateStr,
+                entered_value:
+                  row.entered_value != null ? Number(row.entered_value) : undefined,
+                entered_text: row.entered_text || undefined,
+                lot_no: row.lot_no || undefined,
+                serial_no: row.serial_no || undefined,
+                remarks: row.remarks || undefined,
+              } as any,
+              tenantId,
+              userPayload,
+              { deferFeedAlerts: true, collector },
+            );
+            postedDrafts++;
+          }
+          await this.batchDailyDataService.postCollected(collector);
+        });
+      } catch (err) {
+        postedDrafts = 0; // rolled back: nothing moved, so no silo level changed
+        throw err;
       } finally {
         // Once per call (Ruling M6), and in a finally: if a later line throws,
         // the lines before it have already moved stock (postEntry opens no
@@ -4165,28 +4304,39 @@ export class BatchService {
             ),
           );
         try {
-          for (const row of draftRows) {
-            await this.batchDailyDataService.postEntry(
-              batchId,
-              {
-                line_id: row.line_id,
-                entry_date: dateStr,
-                animal_id: row.animal_id || undefined,
-                entered_value:
-                  row.entered_value != null
-                    ? Number(row.entered_value)
-                    : undefined,
-                entered_text: row.entered_text || undefined,
-                lot_no: row.lot_no || undefined,
-                serial_no: row.serial_no || undefined,
-                remarks: row.remarks || undefined,
-              } as any,
-              tenantId,
-              userPayload,
-              { deferFeedAlerts: true },
-            );
-            postedDrafts++;
-          }
+          // Every animal's drafts for the stage post together or none does, so a lot that runs out on
+          // the third animal does not leave the first two posted.
+          await withTenantTransaction(this.cls, async () => {
+            // Each animal's consumption is checked as it comes in and held; what the stage's animals took of an
+            // activity is then issued together, as one ledger entry per activity.
+            const collector: PendingConsumption[] = [];
+            for (const row of draftRows) {
+              await this.batchDailyDataService.postEntry(
+                batchId,
+                {
+                  line_id: row.line_id,
+                  entry_date: dateStr,
+                  animal_id: row.animal_id || undefined,
+                  entered_value:
+                    row.entered_value != null
+                      ? Number(row.entered_value)
+                      : undefined,
+                  entered_text: row.entered_text || undefined,
+                  lot_no: row.lot_no || undefined,
+                  serial_no: row.serial_no || undefined,
+                  remarks: row.remarks || undefined,
+                } as any,
+                tenantId,
+                userPayload,
+                { deferFeedAlerts: true, collector },
+              );
+              postedDrafts++;
+            }
+            await this.batchDailyDataService.postCollected(collector);
+          });
+        } catch (err) {
+          postedDrafts = 0; // rolled back: nothing moved, so no silo level changed
+          throw err;
         } finally {
           // As in postBatchDay: once per call, and even when a later line throws.
           if (postedDrafts) await this.batchDailyDataService.reevaluateFeedLevels(batch.farm_id, tenantId);

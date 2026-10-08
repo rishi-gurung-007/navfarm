@@ -26,6 +26,7 @@ describe('InventoryLedgerService reverseEntry — created_at', () => {
         .mockReturnValueOnce({ from: () => ({ where: () => ({ for: async () => [original] }) }) }) // original, locked
         .mockReturnValueOnce({ from: () => ({ where: () => ({ limit: async () => [] }) }) }) // not already reversed
         .mockReturnValueOnce({ from: () => ({ where: async () => [] }) }) // no FIFO applications to unwind
+        .mockReturnValueOnce({ from: () => ({ where: async () => [] }) }) // no ledger lines to give back
         .mockReturnValueOnce({ from: () => ({ where: () => ({ limit: async () => [{ ledger_id: 'reversal-1' }] }) }) }), // loadOne read-back
       insert: jest.fn(() => ({ values: async (v: any) => { insertedValues.push(v); return undefined; } })),
       update: jest.fn(() => ({ set: () => ({ where: async () => undefined }) })),
@@ -36,6 +37,8 @@ describe('InventoryLedgerService reverseEntry — created_at', () => {
 
     expect(insertedValues).toHaveLength(1);
     expect(insertedValues[0]).not.toHaveProperty('created_at');
+    // The reversal is a new entry: copying the original's Entry No. would break the unique key.
+    expect(insertedValues[0]).not.toHaveProperty('entry_no');
     // The original row's own created_at must not leak through the `...original`
     // spread either — that would silently backdate the reversal to look as if
     // it were written when the original entry was.
@@ -43,24 +46,192 @@ describe('InventoryLedgerService reverseEntry — created_at', () => {
   });
 });
 
-describe('Inventory FIFO', () => {
-  it('requires the selected lot and refuses its shortage without retrying unrestricted FIFO', async () => {
-    const queries: any[] = [];
-    const db: any = {
-      select: () => ({ from: () => ({ where: (condition: any) => {
-        queries.push(new MySqlDialect().sqlToQuery(condition));
-        return { orderBy: () => ({ for: async () => [] }) };
-      } }) }),
-      insert: jest.fn(() => ({ values: async () => undefined })),
-    };
+/**
+ * A query-builder double for applyFifo: every `.where()` answers the same chain whatever it is asked, and the
+ * reads are told apart by what they select. It reads, in order, the item, the receipt layers (`.orderBy().for()`),
+ * the lots' balances (`.groupBy()`, entries then lines) and, for a layer drawn empty, what was already applied to it.
+ */
+const costingDb = (opts: { item?: object; layers: any[]; lotBalanceRows?: any[]; book?: { quantity: string; value: string }; onWhere?: (condition: any) => void }) => {
+  const applications: any[] = [];
+  const db: any = { current: '' };
+  const chain = (result: any, cols?: any) => {
+    const done = Promise.resolve(result);
+    return Object.assign(done, {
+      limit: async () => result,
+      orderBy: () => ({ for: async () => opts.layers }),
+      groupBy: async () => (cols && 'quantity' in cols && !('expiry_date' in cols) ? [] : result),
+    });
+  };
+  db.select = (cols?: any) => ({
+    from: () => ({
+      where: (condition: any) => {
+        opts.onWhere?.(condition);
+        if (cols && 'valuation_method' in cols) return chain([opts.item ?? { valuation_method: 'FIFO', standard_cost: null }]);
+        if (cols && 'applied' in cols) {
+          return chain([{ applied: String(applications.filter((a) => a.inbound_ledger_id === db.current).reduce((n, a) => n + Number(a.applied_cost_amount), 0)) }]);
+        }
+        // The signed ledger totals the moving average is taken from.
+        if (cols && 'value' in cols) return chain([opts.book ?? { quantity: String(opts.layers.reduce((n, l) => n + Number(l.remaining_quantity), 0)), value: String(opts.layers.reduce((n, l) => n + Number(l.remaining_quantity) * Number(l.rate), 0)) }]);
+        if (cols && 'lot_no' in cols) return chain(opts.lotBalanceRows ?? [], cols);
+        if (cols && 'code' in cols) return chain([]);
+        return chain(opts.layers);
+      },
+    }),
+  });
+  db.insert = () => ({ values: async (v: any) => { db.current = v.inbound_ledger_id; applications.push(v); } });
+  db.update = () => ({ set: (v: any) => ({ where: async () => { opts.layers.forEach((l) => { if (l.ledger_id === db.current) l.remaining_quantity = v.remaining_quantity; }); } }) });
+  return { db, applications };
+};
+
+describe('Inventory costing — by the item\'s costing method', () => {
+  const base = { tenantId: 't', companyId: 'c', itemId: 'i', outboundLedgerId: 'out', applicationDate: '2026-10-01' };
+  const make = (opts: Parameters<typeof costingDb>[0]) => {
+    const { db, applications } = costingDb(opts);
     const service = new InventoryLedgerService({ get: () => db } as any);
-    await expect(service.applyFifo({ tenantId: 'tenant', companyId: 'company', itemId: 'item',
-      outboundLedgerId: 'out', quantity: 1, applicationDate: '2026-09-14', lotNo: 'selected-lot' }, db))
-      .rejects.toThrow(/Insufficient stock/);
-    expect(queries).toHaveLength(1);
-    expect(queries[0].sql).toContain('`lot_no` = ?');
-    expect(queries[0].params).toContain('selected-lot');
-    expect(db.insert).not.toHaveBeenCalled();
+    return { db, applications, service };
+  };
+  const two = () => [
+    { ledger_id: 'a', quantity: '100', remaining_quantity: '100', rate: '20', amount: '2000', warehouse_id: 'w' },
+    { ledger_id: 'b', quantity: '100', remaining_quantity: '100', rate: '25', amount: '2500', warehouse_id: 'w' },
+  ];
+
+  it('FIFO draws the oldest receipt first and costs 100 @ 20 then 50 @ 25 as 3,250', async () => {
+    const layers = two();
+    const { db, applications, service } = make({ layers });
+    const result = await service.applyFifo({ ...base, quantity: 150 }, db);
+    expect(result.totalCost).toBe(3250);
+    expect(applications.map((a) => [a.inbound_ledger_id, a.applied_qty, a.applied_cost_amount])).toEqual([['a', '100', '2000'], ['b', '50', '1250']]);
+    expect(layers.map((l) => l.remaining_quantity)).toEqual(['0', '50']);
+  });
+
+  it('FIFO costs 3 units received for 10.00 consumed 1 + 1 + 1 as exactly 10.00', async () => {
+    const layers = [{ ledger_id: 'a', quantity: '3', remaining_quantity: '3', rate: '3.333333', amount: '10', warehouse_id: 'w' }];
+    const { db, service } = make({ layers });
+    const costs = [(await service.applyFifo({ ...base, quantity: 1 }, db)).totalCost, (await service.applyFifo({ ...base, quantity: 1 }, db)).totalCost, (await service.applyFifo({ ...base, quantity: 1 }, db)).totalCost];
+    expect(costs).toEqual([3.3333, 3.3333, 3.3334]);
+    expect(Number(costs.reduce((n, c) => n + c, 0).toFixed(4))).toBe(10);
+  });
+
+  it('the lot chosen does not move the cost: stock issued from the newer lot is still costed from the oldest receipt', async () => {
+    const layers = [
+      { ledger_id: 'old', quantity: '20', remaining_quantity: '20', rate: '120', amount: '2400', warehouse_id: 'w', lot_no: 'LOT-OLD' },
+      { ledger_id: 'new', quantity: '30', remaining_quantity: '30', rate: '80', amount: '2400', warehouse_id: 'w', lot_no: 'LOT-NEW' },
+    ];
+    const { db, applications, service } = make({
+      layers,
+      lotBalanceRows: [{ lot_no: 'LOT-NEW', quantity: '30', expiry_date: null, receipt_date: '2026-10-02' }],
+    });
+    const result = await service.applyFifo({ ...base, quantity: 10, lots: [{ lotNo: 'LOT-NEW', quantity: 10 }] }, db);
+    // LOT-NEW is where the stock came out of; FIFO still prices it at the oldest receipt, 10 x 120.
+    expect(result.totalCost).toBe(1200);
+    expect(applications.map((a) => [a.inbound_ledger_id, a.applied_qty])).toEqual([['old', '10']]);
+  });
+
+  describe('AVERAGE is a moving average of the ledger', () => {
+    const avg = { valuation_method: 'AVG', standard_cost: null };
+    const layers = () => [
+      { ledger_id: 'a', quantity: '10', remaining_quantity: '10', rate: '10', amount: '100', warehouse_id: 'w' },
+      { ledger_id: 'b', quantity: '10', remaining_quantity: '10', rate: '20', amount: '200', warehouse_id: 'w' },
+    ];
+
+    it('prices the draw at the average of what is on hand', async () => {
+      const { db, applications, service } = make({ layers: layers(), item: avg });
+      const result = await service.applyFifo({ ...base, quantity: 10 }, db);
+      expect(result.totalCost).toBe(150);
+      expect(applications.reduce((n, a) => n + Number(a.applied_cost_amount), 0)).toBe(150);
+    });
+
+    it('does not move the average after an earlier draw: 10 @ 10 + 10 @ 20, issue 5 then 10 costs 75 then 150', async () => {
+      // After the first issue the receipts' layers are 5 @ 10 and 10 @ 20 (a layer average of 16.67), but the
+      // ledger holds 15 units worth 225: still 15 each.
+      const afterFirstIssue = [
+        { ledger_id: 'a', quantity: '10', remaining_quantity: '5', rate: '10', amount: '100', warehouse_id: 'w' },
+        { ledger_id: 'b', quantity: '10', remaining_quantity: '10', rate: '20', amount: '200', warehouse_id: 'w' },
+      ];
+      const { db, service } = make({ layers: afterFirstIssue, item: avg, book: { quantity: '15', value: '225' } });
+      expect((await service.applyFifo({ ...base, quantity: 10 }, db)).totalCost).toBe(150);
+    });
+
+    it('is taken from the ledger without the issue being priced', async () => {
+      const queries: any[] = [];
+      const { db, service } = make({ layers: layers(), item: avg, onWhere: (c) => queries.push(new MySqlDialect().sqlToQuery(c)) });
+      await service.applyFifo({ ...base, quantity: 1 }, db);
+      const bookQuery = queries.find((q) => q.sql.includes('`entry_type` in') && q.sql.includes('`ledger_id` <> ?') && !q.sql.includes('`lot_no`'));
+      expect(bookQuery.params).toEqual(expect.arrayContaining(['POSITIVE', 'NEGATIVE', 'TRANSFER', 'out']));
+    });
+
+    it('falls back to each receipt\'s own price when the ledger holds no quantity to average over', async () => {
+      const { db, service } = make({ layers: layers(), item: avg, book: { quantity: '0', value: '0' } });
+      expect((await service.applyFifo({ ...base, quantity: 15 }, db)).totalCost).toBe(200);
+    });
+  });
+
+  it('STANDARD prices the draw at the item\'s standard cost, whatever the receipts cost', async () => {
+    const { db, service } = make({ layers: two(), item: { valuation_method: 'STANDARD', standard_cost: '12' } });
+    expect((await service.applyFifo({ ...base, quantity: 5 }, db)).totalCost).toBe(60);
+  });
+
+  it('refuses a lot that holds less than asked, naming it, and draws nothing', async () => {
+    const { db, applications, service } = make({
+      layers: two(),
+      lotBalanceRows: [{ lot_no: 'LOT-A', quantity: '4', expiry_date: null, receipt_date: '2026-10-01' }],
+    });
+    await expect(service.applyFifo({ ...base, quantity: 6, lots: [{ lotNo: 'LOT-A', quantity: 6 }] }, db)).rejects.toThrow(/Insufficient stock/);
+    expect(applications).toHaveLength(0);
+  });
+
+  it('does not count the entry being posted against the lot it is taking from', async () => {
+    // The outbound row is inserted before the check runs; a lot holding exactly what is asked must still pass.
+    const queries: any[] = [];
+    const { db } = make({
+      layers: two(),
+      lotBalanceRows: [{ lot_no: 'LOT-A', quantity: '6', expiry_date: null, receipt_date: '2026-10-01' }],
+      onWhere: (c) => queries.push(new MySqlDialect().sqlToQuery(c)),
+    });
+    const service = new InventoryLedgerService({ get: () => db } as any);
+    await service.applyFifo({ ...base, quantity: 6, lots: [{ lotNo: 'LOT-A', quantity: 6 }] }, db);
+    const lotQuery = queries.find((q) => q.sql.includes('`lot_no` in'));
+    expect(lotQuery.sql).toContain('`ledger_id` <> ?');
+    expect(lotQuery.params).toContain('out');
+  });
+
+  it('refuses lots that do not add up to the quantity', async () => {
+    const { db, service } = make({ layers: two() });
+    await expect(service.applyFifo({ ...base, quantity: 10, lots: [{ lotNo: 'A', quantity: 4 }, { lotNo: 'B', quantity: 4 }] }, db))
+      .rejects.toThrow('The lots add up to 8 but the quantity is 10');
+  });
+});
+
+describe('Inventory FIFO — serial-tracked draws', () => {
+  const params = { tenantId: 't', companyId: 'c', itemId: 'i', outboundLedgerId: 'out', applicationDate: '2026-10-01' };
+  const noDb: any = { select: jest.fn(), insert: jest.fn(), update: jest.fn() };
+  const service = new InventoryLedgerService({ get: () => noDb } as any);
+
+  it('refuses a quantity that does not equal the number of serials, before touching stock', async () => {
+    await expect(service.applyFifo({ ...params, quantity: 2, serialNo: 'SN1' }, noDb))
+      .rejects.toThrow('1 serial number(s) selected but the quantity is 2');
+    expect(noDb.select).not.toHaveBeenCalled();
+  });
+
+  it('refuses the same serial listed twice', async () => {
+    await expect(service.applyFifo({ ...params, quantity: 2, serialNo: 'SN1, SN1' }, noDb))
+      .rejects.toThrow('A serial number is listed twice: SN1');
+    expect(noDb.insert).not.toHaveBeenCalled();
+  });
+});
+
+describe('Inventory FIFO', () => {
+  const params = { tenantId: 'tenant', companyId: 'company', itemId: 'item', outboundLedgerId: 'out', quantity: 1, applicationDate: '2026-09-14' };
+
+  it('checks the selected lot against what the lot holds, refusing its shortage without drawing anything', async () => {
+    const queries: any[] = [];
+    const { db, applications } = costingDb({ layers: [], onWhere: (c) => queries.push(new MySqlDialect().sqlToQuery(c)) });
+    const service = new InventoryLedgerService({ get: () => db } as any);
+    await expect(service.applyFifo({ ...params, lotNo: 'selected-lot' }, db)).rejects.toThrow(/Insufficient stock/);
+    // The lot is looked up by name, on its own; the receipt layers are not filtered by it (cost follows the item's method).
+    expect(queries.some((q) => q.sql.includes('`lot_no` in') && q.params.includes('selected-lot'))).toBe(true);
+    expect(queries.filter((q) => q.sql.includes('`entry_type`') && q.sql.includes('`remaining_quantity`')).every((q) => !q.params.includes('selected-lot'))).toBe(true);
+    expect(applications).toHaveLength(0);
   });
 
   it('persists the outbound lot and forwards it to FIFO', async () => {
@@ -82,28 +253,48 @@ describe('Inventory FIFO', () => {
     expect(fifo).toHaveBeenCalledWith(expect.objectContaining({ lotNo: 'selected-lot' }), db);
   });
 
-  it('refuses a shortfall without manufacturing an opening layer', async () => {
+  it('writes one ledger entry for several lots, with a line per lot and no lot on the entry', async () => {
+    const inserted: Array<{ table: unknown; values: any }> = [];
     const db: any = {
-      select: () => ({ from: () => ({ where: () => ({ orderBy: () => ({ for: async () => [] }), limit: async () => [{ standard_cost: '25' }] }) }) }),
-      insert: jest.fn(() => ({ values: async () => undefined })),
+      select: () => ({ from: () => ({ where: () => ({ limit: async () => [{
+        item_id: 'item', item_code: 'item', item_name: 'Item',
+      }] }) }) }),
+      transaction: async (work: any) => work(db),
+      insert: (table: unknown) => ({ values: async (values: any) => { inserted.push({ table, values }); } }),
+      update: () => ({ set: () => ({ where: async () => undefined }) }),
     };
     const service = new InventoryLedgerService({ get: () => db } as any);
-    await expect(service.applyFifo({ tenantId: 'tenant', companyId: 'company', itemId: 'item',
-      outboundLedgerId: 'out', quantity: 1, applicationDate: '2026-09-14' }, db)).rejects.toThrow(/Insufficient stock/);
-    expect(db.insert).not.toHaveBeenCalled();
+    jest.spyOn(service, 'applyFifo').mockResolvedValue({ totalCost: 3440, averageRate: 95.56, lotExpiry: new Map([['A', '2027-01-01'], ['B', null]]) } as any);
+    await service.writeNegativeEntry({ tenantId: 'tenant', companyId: 'company', itemId: 'item',
+      documentType: 'BATCH', documentNo: 'batch', postingDate: '2026-09-14',
+      transactionType: 'CONSUMPTION', quantity: 36, uom: 'KG', lots: [{ lotNo: 'A', quantity: 30 }, { lotNo: 'B', quantity: 6 }] });
+    const header = inserted.find((i) => !Array.isArray(i.values))!.values;
+    expect(header).toEqual(expect.objectContaining({ quantity: '-36', lot_no: null }));
+    const lines = inserted.find((i) => Array.isArray(i.values))!.values;
+    expect(lines.map((l: any) => [l.line_no, l.lot_no, l.quantity, l.expiry_date])).toEqual([[1, 'A', '-30', '2027-01-01'], [2, 'B', '-6', null]]);
+  });
+
+  it('refuses naming one lot on the entry and several as lines', async () => {
+    const db: any = { select: () => ({ from: () => ({ where: () => ({ limit: async () => [{ item_id: 'item', item_code: 'item', item_name: 'Item' }] }) }) }) };
+    const service = new InventoryLedgerService({ get: () => db } as any);
+    await expect(service.writeNegativeEntry({ tenantId: 'tenant', companyId: 'company', itemId: 'item', documentType: 'BATCH', documentNo: 'b', postingDate: '2026-09-14',
+      transactionType: 'CONSUMPTION', quantity: 2, uom: 'KG', lotNo: 'A', lots: [{ lotNo: 'A', quantity: 2 }] })).rejects.toThrow('Name either one lot on the entry or several lots as lines');
+  });
+
+  it('refuses a shortfall without manufacturing an opening layer', async () => {
+    const { db, applications } = costingDb({ layers: [] });
+    const service = new InventoryLedgerService({ get: () => db } as any);
+    await expect(service.applyFifo(params, db)).rejects.toThrow(/Insufficient stock/);
+    expect(applications).toHaveLength(0);
   });
 
   it('restricts source layers to the issuing company', async () => {
-    let query: any;
-    const db: any = { select: () => ({ from: () => ({ where: (condition: any) => {
-      query ??= new MySqlDialect().sqlToQuery(condition);
-      return { orderBy: () => ({ for: async () => [] }), limit: async () => [] };
-    } }) }), insert: () => ({ values: async () => undefined }) };
+    let layerQuery: any;
+    const { db } = costingDb({ layers: [], onWhere: (c) => { const q = new MySqlDialect().sqlToQuery(c); if (q.sql.includes('`entry_type`') && !layerQuery) layerQuery = q; } });
     const service = new InventoryLedgerService({ get: () => db } as any);
-    await service.applyFifo({ tenantId: 'tenant', companyId: 'company', itemId: 'item',
-      outboundLedgerId: 'out', quantity: 1, applicationDate: '2026-09-14' }, db).catch(() => undefined);
-    expect(query.sql).toContain('`company_id` = ?');
-    expect(query.params).toContain('company');
+    await service.applyFifo(params, db).catch(() => undefined);
+    expect(layerQuery.sql).toContain('`company_id` = ?');
+    expect(layerQuery.params).toContain('company');
   });
 });
 

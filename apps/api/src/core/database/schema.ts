@@ -1618,7 +1618,7 @@ export const activityMaster = mysqlTable('activity_master', {
   default_item_id: varchar('default_item_id', { length: 36 }).references(() => itemMaster.item_id, { onDelete: 'restrict' }),
   default_resource_id: varchar('default_resource_id', { length: 36 }).references(() => resourceMaster.resource_id, { onDelete: 'restrict' }),
   default_occurrence: varchar('default_occurrence', { length: 10 }), // DAILY, WEEKLY, MONTHLY, ONCE, CUSTOM
-  default_qty_basis: varchar('default_qty_basis', { length: 20 }), // PER_HEAD, TOTAL_BATCH, PER_PEN, FIXED
+  default_qty_basis: varchar('default_qty_basis', { length: 20 }), // PER_HEAD, TOTAL_BATCH
   default_output_basis: varchar('default_output_basis', { length: 20 }), // PER_SOW, PER_PEN, PER_BATCH
   default_kpi_metric: varchar('default_kpi_metric', { length: 50 }),
   default_capture_per: varchar('default_capture_per', { length: 20 }), // AVERAGE, TOTAL, PER_HEAD
@@ -2790,7 +2790,7 @@ export const schedulerLine = mysqlTable('scheduler_line', {
   // when auto-generated, but the TDD explicitly wants this writable afterward.
   item_description: varchar('item_description', { length: 200 }),
   standard_qty: decimal('standard_qty', { precision: 18, scale: 6 }),
-  qty_basis: varchar('qty_basis', { length: 20 }), // PER_HEAD, TOTAL_BATCH, PER_PEN, FIXED
+  qty_basis: varchar('qty_basis', { length: 20 }), // PER_HEAD (standard x animals), TOTAL_BATCH (the standard is the whole stage's)
   allow_qty_edit: boolean('allow_qty_edit').default(true).notNull(),
   lot_required: boolean('lot_required').default(false).notNull(),
   creates_inventory: boolean('creates_inventory').default(false).notNull(), // OUTPUT only
@@ -3365,6 +3365,9 @@ export const feedAlert = mysqlTable('feed_alert', {
 // are made via new offsetting entries, matching standard ERP ledger practice.
 export const inventoryLedger = mysqlTable('inventory_ledger', {
   ledger_id: varchar('ledger_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  // Readable Entry No. (1, 2, 3 ...) per tenant, assigned by the trg_inventory_ledger_entry_no
+  // trigger on insert (migration 0139); leave it out of inserts. ledger_id stays the internal key.
+  entry_no: bigint('entry_no', { mode: 'number', unsigned: true }).notNull().default(0),
   tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
   company_id: varchar('company_id', { length: 36 }).notNull().references(() => companyMaster.company_id, { onDelete: 'restrict' }),
   item_id: varchar('item_id', { length: 36 }).references(() => itemMaster.item_id, { onDelete: 'restrict' }),
@@ -3406,6 +3409,9 @@ export const inventoryApplication = mysqlTable('inventory_application', {
   item_id: varchar('item_id', { length: 36 }).notNull().references(() => itemMaster.item_id, { onDelete: 'restrict' }),
   inbound_ledger_id: varchar('inbound_ledger_id', { length: 36 }).notNull(),
   outbound_ledger_id: varchar('outbound_ledger_id', { length: 36 }).notNull(),
+  // Entry Nos. of the two ledger rows, filled by trg_inventory_application_entry_no on insert.
+  inbound_entry_no: bigint('inbound_entry_no', { mode: 'number', unsigned: true }).notNull().default(0),
+  outbound_entry_no: bigint('outbound_entry_no', { mode: 'number', unsigned: true }).notNull().default(0),
   applied_qty: decimal('applied_qty', { precision: 18, scale: 4 }).notNull(),
   applied_cost_amount: decimal('applied_cost_amount', { precision: 18, scale: 4 }).notNull(),
   application_date: date('application_date', { mode: 'string' }).notNull(),
@@ -3423,6 +3429,24 @@ export const inventoryApplication = mysqlTable('inventory_application', {
     name: 'inv_app_outbound_ledger_fk'
   }).onDelete('restrict'),
 }));
+
+// The lots (and serials) one ledger entry physically issued from — an entry that took 36 kg over two lots has
+// one row in inventory_ledger and two lines here. Written with the entry, never edited (a reversal writes
+// opposite lines). Quantity carries the entry's sign. See migration 0141.
+export const inventoryLedgerLine = mysqlTable('inventory_ledger_line', {
+  line_id: varchar('line_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+  company_id: varchar('company_id', { length: 36 }).notNull(),
+  ledger_id: varchar('ledger_id', { length: 36 }).notNull().references(() => inventoryLedger.ledger_id, { onDelete: 'restrict' }),
+  line_no: int('line_no').notNull(),
+  item_id: varchar('item_id', { length: 36 }).notNull(),
+  warehouse_id: varchar('warehouse_id', { length: 36 }),
+  lot_no: varchar('lot_no', { length: 50 }),
+  serial_no: text('serial_no'),
+  quantity: decimal('quantity', { precision: 18, scale: 4 }).notNull(),
+  expiry_date: date('expiry_date', { mode: 'string' }),
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+});
 
 // Living/biological asset value-change log (mortality, growth, fair-value
 // adjustments, transformation). Auto-written by BIO_ASSET batch lifecycle

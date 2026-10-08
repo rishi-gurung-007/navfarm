@@ -910,6 +910,19 @@ const itemTemplateConfig: MasterDataConfig = {
 // seven fields cannot drift apart.
 const WHEN_INVENTORIED = { anyOf: [{ key: "is_inventoriable", equals: true }] };
 
+/**
+ * Why an item's Tracking is locked: tracking can change only while nothing carries lot or serial numbers
+ * for it — no stock on hand and no open document (the API's `trackingBlockers`). The row carries both counts.
+ */
+const trackingLockReason = (row: Record<string, unknown>): string | undefined => {
+  const onHand = Number(row.on_hand_qty ?? 0);
+  const open = Number(row.open_documents ?? 0);
+  const parts: string[] = [];
+  if (onHand > 0) parts.push(`${onHand} ${String(row.uom_primary ?? "")} on hand — consume it or adjust it out first`.replace("  ", " "));
+  if (open > 0) parts.push(`${open} open document${open === 1 ? "" : "s"} name this item — post or cancel ${open === 1 ? "it" : "them"} first`);
+  return parts.join(" · ") || undefined;
+};
+
 const item: MasterDataConfig = {
   key: "item",
   owner: "BC",
@@ -1001,7 +1014,7 @@ const item: MasterDataConfig = {
       },
       helpText: "Choose a Primary and Secondary UOM; the factor comes from UOM Conversion.",
     },
-    { key: "valuation_method", label: "Valuation Method", type: "select-entity", lockWhenRowFlag: "has_inventory", entityEndpoint: "/costing-method", entityValueKey: "method_code", entityLabelKeys: ["method_code", "method_name"], helpText: "Leave blank to inherit the LOB default. Cannot be changed once the item has inventory entries.", section: "Units & Valuation" },
+    { key: "valuation_method", label: "Valuation Method", type: "select-entity", lockWhenRowFlag: "has_inventory", lockReason: () => "this item already has inventory entries — create a new item for a different valuation method", entityEndpoint: "/costing-method", entityValueKey: "method_code", entityLabelKeys: ["method_code", "method_name"], helpText: "Leave blank to inherit the LOB default. Cannot be changed once the item has inventory entries.", section: "Units & Valuation" },
     // Asked immediately after the method that demands it, and only then: on any
     // other method the cost is not merely optional, it has no meaning.
     { key: "standard_cost", label: "Standard Cost", type: "number", step: "0.01", min: 0, section: "Units & Valuation", visibleWhen: { anyOf: [{ key: "valuation_method", equals: "STANDARD" }] }, requiredWhen: { anyOf: [{ key: "valuation_method", equals: "STANDARD" }] }, helpText: "Per Primary UOM. Required when Valuation Method is STANDARD." },
@@ -1014,9 +1027,9 @@ const item: MasterDataConfig = {
     // The series also used to sit in the Classification card, beside Nature of
     // Business, while the switches that make it mandatory sat in another card
     // entirely. All three now stand together, in the order they are decided.
-    { key: "is_tracked", label: "Item Tracking", type: "boolean", filterOnly: true, lockWhenRowFlag: "has_inventory", seedFromAnyTrue: ["is_lot_tracked", "is_serial_tracked"], clearsWhenOff: { tracking_type: "", tracking_series_id: "" }, helpText: "Track individual lots or serial numbers of this item through the chain.", section: "Tracking" },
+    { key: "is_tracked", label: "Item Tracking", type: "boolean", filterOnly: true, lockWhenRowFlag: "tracking_locked", lockReason: trackingLockReason, seedFromAnyTrue: ["is_lot_tracked", "is_serial_tracked"], clearsWhenOff: { tracking_type: "", tracking_series_id: "" }, helpText: "Track individual lots or serial numbers of this item through the chain.", section: "Tracking" },
     {
-      key: "tracking_type", label: "Tracked By", type: "select", control: "toggle", filterOnly: true, lockWhenRowFlag: "has_inventory",
+      key: "tracking_type", label: "Tracked By", type: "select", control: "toggle", filterOnly: true, lockWhenRowFlag: "tracking_locked", lockReason: trackingLockReason,
       options: [{ value: "LOT", label: "Lot" }, { value: "SERIAL", label: "Serial" }],
       defaultValue: "LOT",
       booleanColumns: { LOT: "is_lot_tracked", SERIAL: "is_serial_tracked" },
@@ -1033,7 +1046,7 @@ const item: MasterDataConfig = {
     // is its parent, so switching Lot to Serial clears the choice, and the API
     // clears the column when tracking is turned off.
     {
-      key: "tracking_series_id", label: "Tracking No. Series", type: "select-entity", lockWhenRowFlag: "has_inventory",
+      key: "tracking_series_id", label: "Tracking No. Series", type: "select-entity", lockWhenRowFlag: "tracking_locked", lockReason: trackingLockReason,
       entityEndpoint: "/no-series", entityValueKey: "id", entityLabelKeys: ["code", "description"],
       dependsOn: "tracking_type", dependsOnMode: "query", queryParams: { tracking_type: "document_type" }, requiresParent: true,
       labelWhen: { key: "tracking_type", labels: { LOT: "Lot No. Series", SERIAL: "Serial No. Series" } },
@@ -1815,6 +1828,7 @@ const glMapping: MasterDataConfig = {
         { value: "BATCH_INPUT", label: "Batch — Input Draw (on Activation)" },
         { value: "BATCH_CONSUMPTION", label: "Batch — Daily Consumption" },
         { value: "BATCH_OUTPUT", label: "Batch — Output (on Close)" },
+        { value: "OUTPUT", label: "Batch — Output Entry (finished goods in, WIP out)" },
         { value: "BATCH_IMPAIRMENT", label: "Batch — By-Product / Waste Impairment (at-cost vs NRV)" },
         { value: "MORTALITY", label: "Batch — Mortality Write-off" },
         { value: "OVERHEAD", label: "Batch — Overhead" },

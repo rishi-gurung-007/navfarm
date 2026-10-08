@@ -13,6 +13,13 @@ export class QueryInventoryLedgerDto {
   @IsUUID()
   itemId?: string;
 
+  @ApiProperty({ description: 'Filter by Entry No.', required: false })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  entryNo?: number;
+
   @ApiProperty({ description: 'Filter by location UUID', required: false })
   @IsOptional()
   @IsUUID()

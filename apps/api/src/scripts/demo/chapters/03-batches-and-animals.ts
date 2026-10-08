@@ -1,22 +1,23 @@
 /**
- * Chapter `03-batches-and-animals` — Phase 3 Task 5, now over all nine farms.
- * Everything through the services (Ruling 1):
+ * Chapter `03-batches-and-animals` — the farm's two batch types, each used as
+ * designed. Everything through the services (Ruling 1):
  *
- *   - one **Registered Animals** batch per farm that may hold breeding stock
- *     (BIO_ASSET costing, the farm's own breed profile,
- *     `auto_generate_scheduler`), whose sows, gilts and boars are then created
- *     one by one through `AnimalService.create` with explicit demo facts —
- *     never derived from opening quantity (Ruling 3). This half lives in
- *     register-breeding-stock.ts, shared with the standalone `db-seed-animals`
- *     script so both call the exact same, already-tested logic;
- *   - one to three **Count Only** batches per farm, one per stage the farm's
- *     role allows *and* the farm's breed actually carries a lifecycle row for.
+ *   - one **Animal Wise** batch per farm that may hold breeding stock: its sows,
+ *     gilts and boars are first created one by one in the Animal Register
+ *     (`AnimalService.create`, standing in the shed matching their stage), then
+ *     `BatchService.create` takes them by id. Each animal keeps its own stage,
+ *     so the batch has several stages live at once and a scheduler for each.
+ *     This half lives in register-breeding-stock.ts, shared with the standalone
+ *     `db-seed-animals` script;
+ *   - `countOnlyBatches` **Batch Wise** batches per farm: bulk animals bought in
+ *     as one headcount with a BIO_ASSET cost that builds up through daily
+ *     feed, and is later harvested (chapter 08). They create no animal rows.
  *
  * What a farm may do comes from its role (docs/decisions.md, last section):
  *   MUL100  multiplier — gilt production, no grow-out;
- *   AI100   boars only — no farrowing and no grow-out, so one registered boar
- *           batch at Boar AI and one quarantine intake, nothing else;
- *   LEX100  weaners and growers only — count-only batches, no registered
+ *   AI100   boars only — no farrowing and no grow-out, so one boar batch at
+ *           Boar AI and one quarantine intake, nothing else;
+ *   LEX100  weaners and growers only — headcount batches, no registered
  *           breeding stock at all;
  *   the other six farrow-to-finish.
  * A stage the farm's breed has no `breed_lifecycle_stages` row for is skipped
@@ -24,7 +25,9 @@
  * and chapter 04 would have nothing to post.
  *
  * Batch create leaves the batch DRAFT; `BatchService.activate` takes it
- * through BIO_ACQUISITION GL + bio-asset ledger posting.
+ * through BIO_ACQUISITION GL + bio-asset ledger posting (Batch Wise only — an
+ * Animal Wise batch posts no acquisition, its animals' cost is already on the
+ * receipt they were registered against).
  *
  * Resume semantics like 02-inventory: batches are located by their DEMO
  * remarks token; DRAFT batches are activated, absent batches are created.
@@ -33,12 +36,11 @@ import { ClsService } from 'nestjs-cls';
 import type { MySql2Database } from 'drizzle-orm/mysql2';
 import { BatchService } from '../../../modules/production/batch/batch.service';
 import { AnimalService } from '../../../modules/piggery/animal/animal.service';
-import { SchedulerHeaderService } from '../../../modules/production/scheduler-header/scheduler-header.service';
 import { GoodsReceiptService } from '../../../modules/inventory/goods-receipt/goods-receipt.service';
 import * as schema from '../../../core/database/schema';
 import type { DemoChapter, DemoContext } from '../chapter';
 import { batchBreedOf, batchRef, tagOf } from '../farms';
-import { createItemLookup, createBatchEnsurer, rateOf } from '../batch-helpers';
+import { createItemLookup, createBatchEnsurer, createAnimalWiseBatchEnsurer, rateOf } from '../batch-helpers';
 import { registerBreedingStock } from '../register-breeding-stock';
 
 /**
@@ -54,10 +56,14 @@ const ITEM_WEANED = 'Weaned Feeder Piglet (7-10kg)';
 
 type FarmRole = 'MULTIPLIER' | 'AI_STATION' | 'GROW_OUT' | 'FARROW_TO_FINISH';
 
-/** Count-only stages a farm of each role may run, in priority order. */
+/**
+ * Headcount stages a farm of each role may run, in priority order. Growing
+ * stages come first: a bulk batch is the pigs that grow out and are harvested,
+ * so the first batch a farm gets is a weaner or grower batch, not a gestation one.
+ */
 const COUNT_ONLY_STAGE_PREFERENCE: Record<FarmRole, string[]> = {
-  MULTIPLIER: ['GESTATION', 'WEANER', 'LACTATION'],
-  FARROW_TO_FINISH: ['GESTATION', 'WEANER', 'GROWER', 'FINISHER'],
+  MULTIPLIER: ['WEANER', 'GESTATION', 'LACTATION'],
+  FARROW_TO_FINISH: ['WEANER', 'GROWER', 'FINISHER', 'GESTATION'],
   AI_STATION: ['QUARANTINE'],
   GROW_OUT: ['WEANER', 'GROWER'],
 };
@@ -83,7 +89,6 @@ export const batchesAndAnimalsChapter: DemoChapter<BatchRefs> = {
   async run(ctx: DemoContext): Promise<BatchRefs> {
     const batches = ctx.app.get(BatchService);
     const animals = ctx.app.get(AnimalService);
-    const schedulers = ctx.app.get(SchedulerHeaderService);
     const receipts = ctx.app.get(GoodsReceiptService);
     const cls = ctx.app.get(ClsService);
     const db = cls.get<MySql2Database<typeof schema>>('tenantDb');
@@ -91,6 +96,7 @@ export const batchesAndAnimalsChapter: DemoChapter<BatchRefs> = {
 
     const item = createItemLookup(db, ctx.companyId);
     const ensureBatch = createBatchEnsurer(db, batches, ctx);
+    const ensureAnimalWiseBatch = createAnimalWiseBatchEnsurer(db, batches, ctx);
 
     const byFarm = new Map<string, { registered?: string; countOnly: string[] }>();
 
@@ -105,12 +111,13 @@ export const batchesAndAnimalsChapter: DemoChapter<BatchRefs> = {
         continue;
       }
 
-      // ── Registered breeding stock (shared with db-seed-animals). D37: the
-      // tokens of every registered batch the farm got — the gilt batch and,
-      // where the farm has sows, the sow batch beside it.
-      refs.registered = (await registerBreedingStock(ctx, farm, { db, animals, schedulers, receipts, item, ensureBatch }))?.join(' + ') ?? undefined;
+      // ── Breeding stock in the Animal Register, grouped into one Animal Wise
+      // batch (shared with db-seed-animals).
+      // With --no-batches the animals are registered and left unassigned, for the user to group into a batch.
+      refs.registered = (await registerBreedingStock(ctx, farm, { db, animals, receipts, item, ensureAnimalWiseBatch: ctx.withBatches ? ensureAnimalWiseBatch : undefined }))?.join(' + ') ?? undefined;
+      if (!ctx.withBatches) continue;
 
-      // ── Count-only batches, one per allowed stage the breed carries.
+      // ── Batch Wise (headcount) batches, one per allowed stage the breed carries.
       const startDate = new Date(Date.now() - farm.volume.days * 86_400_000).toISOString().slice(0, 10);
       const stageCodes = COUNT_ONLY_STAGE_PREFERENCE[farm.role]
         .filter((code) => breed.lifecycleStages.has(code))
@@ -133,7 +140,6 @@ export const batchesAndAnimalsChapter: DemoChapter<BatchRefs> = {
         await ensureBatch({
           ref,
           farm,
-          animalTracking: 'COUNT_ONLY',
           stageId: breed.lifecycleStages.get(stageCode)!,
           stageCode,
           // A count-only batch still carries its farm's breed: the

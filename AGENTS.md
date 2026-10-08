@@ -134,6 +134,8 @@ have not opened.
 ## 5. Commands
 
 ```bash
+pnpm seed                   # DROPS nf_master/nf_system/nf_devco, then seeds the small demo (2 farms, light volume)
+pnpm verify:costing          # rehearses FIFO/Average × tracked/untracked through batch + scheduler, ROLLS BACK (changes nothing)
 pnpm nx test api            # 463 tests / 52 suites
 pnpm nx test web            # 108 tests / 17 suites
 pnpm nx run-many -t typecheck -p api web web-e2e

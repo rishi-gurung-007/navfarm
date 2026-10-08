@@ -974,6 +974,27 @@
       "when": 1792000000007,
       "tag": "0138_drop_goods_issue",
       "breakpoints": true
+    },
+    {
+      "idx": 139,
+      "version": "5",
+      "when": 1792000000008,
+      "tag": "0139_inventory_entry_no",
+      "breakpoints": true
+    },
+    {
+      "idx": 140,
+      "version": "5",
+      "when": 1792000000009,
+      "tag": "0140_qty_basis_per_head_or_batch",
+      "breakpoints": true
+    },
+    {
+      "idx": 141,
+      "version": "5",
+      "when": 1792000000010,
+      "tag": "0141_inventory_ledger_line",
+      "breakpoints": true
     }
   ]
 }

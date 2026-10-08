@@ -44,7 +44,8 @@ import { getActiveCompanyId } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
 import { Dialog } from '@/components/ui/dialog';
 import { InlineAlert } from '@/components/ui/alert';
-import { LotSerialPicker } from '@/components/ui/lot-serial-picker';
+import { ConsumptionLotPicker } from './entry/consumption-lot-picker';
+import { asStageTotalLine, isTotalBatch, round4, splitTotal } from './entry/stage-total';
 import {
   TableHeader,
   TableBody,
@@ -190,6 +191,8 @@ export default function OperationalBatchDataEntry() {
   // hardcoded or hand-typed. BATCH_WISE gets a flat due-lines list;
   // ANIMAL_WISE gets one section per stage its live animals are actually in. ──
   const [dataEntryLines, setDataEntryLines] = useState<Row[]>([]);
+  // Bumped whenever the day's entries reload, so lot and serial lists reload with them: stock moved.
+  const [stockVersion, setStockVersion] = useState(0);
   const [dataEntryStages, setDataEntryStages] = useState<Row[]>([]);
   // Every stage in this batch's own LOB pipeline (not just the ones with
   // animals right now), each carrying its own live headcount — drives the
@@ -248,16 +251,12 @@ export default function OperationalBatchDataEntry() {
     const day = String(d.getDate()).padStart(2, '0');
     return `${year}-${month}-${day}`;
   })();
+  const pendingStageAnimalCount = (selectedStage?.animals || []).filter((a: Row) => !a.is_posted).length || (selectedStage?.animals || []).length || 1;
   const isFutureDate = selectedDate > todayStr;
 
-  // ── Weight/BCS and general-notes quick capture — OBSERVATION transactions,
+  // ── General-notes quick capture — OBSERVATION transactions,
   // confirmed to never touch inventory_ledger/GL, so they post immediately
   // rather than going through the draft/post cycle the scheduled table uses. ──
-  const [avgWeight, setAvgWeight] = useState(0);
-  const [weightGain, setWeightGain] = useState(0);
-  const [bcsScore, setBcsScore] = useState('');
-  const [weightNotes, setWeightNotes] = useState('');
-  const [savingWeight, setSavingWeight] = useState(false);
   const [generalNotes, setGeneralNotes] = useState('');
   const [savingNotes, setSavingNotes] = useState(false);
 
@@ -718,7 +717,11 @@ export default function OperationalBatchDataEntry() {
                 // every animal. The first animal in the stage stands in as
                 // the template both here and in the broadcast row renderer.
                 if (animalIdx === 0) {
-                  values[entryKey(line.line_id, '__ALL__')] = enteredStr;
+                  const pendingForAll = (stage.animals || []).filter((a: Row) => !a.is_posted).length || (stage.animals || []).length;
+                  values[entryKey(line.line_id, '__ALL__')] =
+                    enteredStr !== '' && isTotalBatch(line) && pendingForAll > 1
+                      ? String(round4(Number(enteredStr) * pendingForAll))
+                      : enteredStr;
                   if (line.already_entered_lot) {
                     initialLots[entryKey(line.line_id, '__ALL__')] =
                       line.already_entered_lot;
@@ -887,19 +890,8 @@ export default function OperationalBatchDataEntry() {
           ),
         );
 
-        // DESCRIPTIVE body-weight lines (BATCH_WISE) seed the weight quick-capture field.
-        const weightLine = (schedData?.lines ?? []).find(
-          (ln: any) =>
-            ln.line_type === 'DESCRIPTIVE' && ln.kpi_metric === 'BODY_WEIGHT',
-        );
-        if (weightLine)
-          setAvgWeight(
-            weightLine.already_entered_qty > 0
-              ? weightLine.already_entered_qty
-              : 0,
-          );
-
         setDataEntryLoading(false);
+        setStockVersion((v) => v + 1);
       })
       .catch(() => {
         setDataEntryLoading(false);
@@ -1053,14 +1045,13 @@ export default function OperationalBatchDataEntry() {
         for (const line of lines) {
           if (!dataEntryCanSave(line, '__ALL__')) continue;
           const key = entryKey(line.line_id, '__ALL__');
-          for (const animalId of animalIds) {
-            tasks.push(
-              api.post(
-                `/batch/${currentBatch.id}/daily-data`,
-                buildPayload(line, key, animalId),
-              ),
-            );
-          }
+          // A per-batch line holds the stage total here: each animal gets its share of it.
+          const shares = isTotalBatch(line) && !isTextCapture(line) ? splitTotal(Number(dataEntryValues[key]), animalIds.length) : null;
+          animalIds.forEach((animalId: string, i: number) => {
+            const payload = buildPayload(line, key, animalId);
+            if (shares) payload.entered_value = shares[i];
+            tasks.push(api.post(`/batch/${currentBatch.id}/daily-data`, payload));
+          });
         }
       } else {
         const animal = (selectedStage.animals || []).find(
@@ -1339,39 +1330,10 @@ export default function OperationalBatchDataEntry() {
     }
   };
 
-  // Weight/BCS and general-notes quick capture — plain OBSERVATION
+  // General-notes quick capture — plain OBSERVATION
   // transactions (no cost, no GL, no inventory ledger — see addTransaction()'s
   // own comment), so they post immediately rather than joining the
   // draft/post cycle above.
-  const handleSaveWeightSample = async () => {
-    if (!currentBatch || avgWeight <= 0) return;
-    if (selectedDate > todayStr) {
-      setSaveErrorMsg(
-        `Cannot record weight sample for future date (${selectedDate}). Today is ${todayStr}.`,
-      );
-      return;
-    }
-    setSavingWeight(true);
-    setSaveErrorMsg('');
-    try {
-      await api.post(`/batch/${currentBatch.id}/transaction`, {
-        transaction_date: selectedDate,
-        transaction_type: 'OBSERVATION',
-        quantity: avgWeight,
-        uom: 'KG',
-        adg: weightGain || undefined,
-        bcs_score: bcsScore ? Number(bcsScore) || undefined : undefined,
-        remarks: `Weight Sample: ${avgWeight} kg (ADG: +${weightGain} kg/day, BCS: ${bcsScore || '3.0'})${weightNotes ? ` — ${weightNotes}` : ''}`,
-      });
-      setSaveSuccessMsg('✓ Weight sample recorded.');
-      setTimeout(() => setSaveSuccessMsg(''), 3500);
-    } catch (err: any) {
-      setSaveErrorMsg(err?.message || 'Failed to record weight sample.');
-    } finally {
-      setSavingWeight(false);
-    }
-  };
-
   const handleSaveNotes = async () => {
     if (!currentBatch || !generalNotes.trim()) return;
     if (selectedDate > todayStr) {
@@ -1737,11 +1699,15 @@ export default function OperationalBatchDataEntry() {
                   </Button>
                 );
               })() : (
-                <LotSerialPicker
+                <ConsumptionLotPicker
+                  batchId={currentBatch?.id}
+                  lineId={line.line_id}
+                  refreshKey={stockVersion}
+                  quantity={(Number(dataEntryValues[key]) || 0) * (animalId === '__ALL__' && !isTotalBatch(line) ? pendingStageAnimalCount : 1)}
                   itemId={line.item_id || ''}
                   warehouseId={(currentBatch as any)?.warehouse_id}
                   trackingType={line.is_serial_tracked ? 'SERIAL' : 'LOT'}
-                  multiSelect={line.is_serial_tracked}
+                  multiSelect
                   targetQuantity={line.expected_qty != null ? Number(line.expected_qty) : undefined}
                   value={dataEntryLotNos[key] ?? ''}
                   align="end"
@@ -1829,12 +1795,17 @@ export default function OperationalBatchDataEntry() {
           const uoms = new Set(box.lines.map((l) => l.uom).filter(Boolean));
           const canTotal =
             uoms.size === 1 && box.lines.every((l) => !isTextCapture(l));
+          // In the "All animals" view a per-head value is each animal's own, so what is consumed is the
+          // value times the animals still to post; a per-batch value is already the stage total.
+          const allViewAnimals = animalId === '__ALL__'
+            ? (selectedStage?.animals || []).filter((a: Row) => !a.is_posted).length || (selectedStage?.animals || []).length
+            : 1;
           const total = canTotal
             ? box.lines.reduce((sum, l) => {
                 const v = Number(
                   dataEntryValues[entryKey(l.line_id, animalId)],
                 );
-                return sum + (Number.isFinite(v) ? v : 0);
+                return sum + (Number.isFinite(v) ? v * (isTotalBatch(l) ? 1 : allViewAnimals) : 0);
               }, 0)
             : null;
           return (
@@ -1897,7 +1868,9 @@ export default function OperationalBatchDataEntry() {
                       className="flex items-center justify-end gap-1.5 px-3 py-1.5 border-t text-[11px]"
                       style={{ borderColor: 'var(--border)' }}
                     >
-                      <span style={S.muted}>Total:</span>
+                      <span style={S.muted}>
+                        Total{allViewAnimals > 1 ? ` (${allViewAnimals} animals)` : ''}:
+                      </span>
                       <span className="font-bold" style={S.primary}>
                         {total.toLocaleString(undefined, {
                           maximumFractionDigits: 2,
@@ -2994,7 +2967,7 @@ export default function OperationalBatchDataEntry() {
                                 </div>
                               )}
                             {renderActivityBoxes(
-                              templateAnimal.lines || [],
+                              (templateAnimal.lines || []).map((l: Row) => asStageTotalLine(l, pendingAnimals.length || stageAnimals.length)),
                               '__ALL__',
                               selectedStage.lock_status === 'LOCKED' || isFutureDate || allPosted,
                               true,
@@ -3085,75 +3058,9 @@ export default function OperationalBatchDataEntry() {
             renderActivityBoxes(dataEntryLines, undefined, locked || isFutureDate)
           )}
 
-          {/* ── Weight/BCS, Notes & Attachments — quick, non-scheduled captures,
+          {/* ── Notes & Attachments — quick, non-scheduled captures,
           kept visually separate from the scheduled-activity table above. ── */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-            <div className="rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface)] p-4 shadow-2xs">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--text-primary)] mb-3 flex items-center gap-1.5">
-                <Scale className="w-3.5 h-3.5 text-[var(--text-secondary)]" />
-                <span>{t('bdeSecWeightBcs')}</span>
-              </h3>
-              <div className="grid grid-cols-3 gap-3">
-                <div>
-                  <label className="nf-text-label mb-1 block text-[var(--text-muted)]">
-                    {t('bdeAvgWeightKg')}
-                  </label>
-                  <input
-                    type="number"
-                    step="0.1"
-                    value={avgWeight}
-                    onChange={(e) => setAvgWeight(Number(e.target.value))}
-                    className="w-full rounded-[var(--radius-xs)] border border-[var(--border)] bg-[var(--surface-raised)] p-2 text-xs font-bold text-[var(--text-primary)] font-mono"
-                  />
-                </div>
-                <div>
-                  <label className="nf-text-label mb-1 block text-[var(--text-muted)]">
-                    {t('bdeAdg')}
-                  </label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={weightGain}
-                    onChange={(e) => setWeightGain(Number(e.target.value))}
-                    className="w-full rounded-[var(--radius-xs)] border border-[var(--border)] bg-[var(--surface-raised)] p-2 text-xs font-bold text-[var(--text-primary)] font-mono"
-                  />
-                </div>
-                <div>
-                  <label className="nf-text-label mb-1 block text-[var(--text-muted)]">
-                    {t('bdeBcsRange')}
-                  </label>
-                  <input
-                    type="text"
-                    value={bcsScore}
-                    onChange={(e) => setBcsScore(e.target.value)}
-                    className="w-full rounded-[var(--radius-xs)] border border-[var(--border)] bg-[var(--surface-raised)] p-2 text-xs font-bold text-[var(--text-primary)] font-mono"
-                  />
-                </div>
-              </div>
-              <div className="mt-3 flex items-center gap-2">
-                <input
-                  type="text"
-                  value={weightNotes}
-                  onChange={(e) => setWeightNotes(e.target.value)}
-                  placeholder={t('bdeConditionObs')}
-                  className="flex-1 rounded-[var(--radius-xs)] border border-[var(--border)] bg-[var(--surface-raised)] px-2.5 py-1.5 text-xs text-[var(--text-secondary)]"
-                />
-                <Button
-                  size="sm"
-                  onClick={handleSaveWeightSample}
-                  disabled={savingWeight || avgWeight <= 0}
-                  className="nf-btn-primary text-xs h-8 gap-1.5"
-                >
-                  {savingWeight ? (
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                  ) : (
-                    <Save className="w-3.5 h-3.5" />
-                  )}
-                  {t('blSave')}
-                </Button>
-              </div>
-            </div>
-
+          <div className="grid grid-cols-1 gap-5">
             <div className="rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface)] p-4 shadow-2xs">
               <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--text-primary)] mb-3 flex items-center gap-1.5">
                 <FileText className="w-3.5 h-3.5 text-[var(--text-secondary)]" />

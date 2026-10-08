@@ -25,6 +25,8 @@ export interface SeedItem {
   val: string;
   cost: string;
   bio: boolean;
+  /** Tracked by lot: its receipts name a lot and an expiry, and issues name the lot they take. */
+  lot?: boolean;
 }
 
 /**
@@ -107,9 +109,21 @@ export const ITEM_CATALOG_2: SeedItem[] = [
       { key: 'LVS-DRESSED-PORK', name: 'Dressed Pork Carcass (Wholesale Cut)', type: 'FINISHED_GOODS', cat: 'CAT-BIO-COMMERCIAL', sub: 'CARCASS', uom: 'KG', val: 'FIFO', cost: '185.0000', bio: false },
 ];
 
+/**
+ * The four items that exercise every costing path: FIFO and Average, each with and without lot tracking.
+ * They are plain swine feed, so a scheduler line can consume them like any other. Their receipts are
+ * seeded by chapter 09-costing-scenarios; the names are what that chapter (and the check script) resolve by.
+ */
+export const COSTING_TEST_ITEMS: SeedItem[] = [
+      { key: 'COST-FIFO-PLAIN', name: 'Costing Test Feed A (FIFO, not tracked)', type: 'FEED', cat: 'CAT-SWINE-FEEDS', sub: 'GROWER_FEED', uom: 'KG', val: 'FIFO', cost: '25.0000', bio: false },
+      { key: 'COST-FIFO-LOT', name: 'Costing Test Feed B (FIFO, lot tracked)', type: 'FEED', cat: 'CAT-SWINE-FEEDS', sub: 'GROWER_FEED', uom: 'KG', val: 'FIFO', cost: '25.0000', bio: false, lot: true },
+      { key: 'COST-AVG-PLAIN', name: 'Costing Test Feed C (Average, not tracked)', type: 'FEED', cat: 'CAT-SWINE-FEEDS', sub: 'GROWER_FEED', uom: 'KG', val: 'AVG', cost: '25.0000', bio: false },
+      { key: 'COST-AVG-LOT', name: 'Costing Test Feed D (Average, lot tracked)', type: 'FEED', cat: 'CAT-SWINE-FEEDS', sub: 'GROWER_FEED', uom: 'KG', val: 'AVG', cost: '25.0000', bio: false, lot: true },
+];
+
 /** name -> seed key, across both catalogues. Names are unique within the demo. */
 export const SEED_KEY_BY_ITEM_NAME: Record<string, string> = Object.fromEntries(
-  [...ITEM_CATALOG_1, ...ITEM_CATALOG_2].map((i) => [i.name, i.key]),
+  [...ITEM_CATALOG_1, ...ITEM_CATALOG_2, ...COSTING_TEST_ITEMS].map((i) => [i.name, i.key]),
 );
 
 /**

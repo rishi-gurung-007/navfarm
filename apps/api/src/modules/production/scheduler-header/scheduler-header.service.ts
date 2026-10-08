@@ -155,7 +155,7 @@ export class SchedulerHeaderService {
         );
       }
       const { fromDay, toDay } = range;
-      const [feedItem] = await this.db.select({ item_name: schema.itemMaster.item_name }).from(schema.itemMaster).where(eq(schema.itemMaster.item_id, row.feed_item_id as string)).limit(1);
+      const [feedItem] = await this.db.select({ item_name: schema.itemMaster.item_name, is_lot_tracked: schema.itemMaster.is_lot_tracked, is_serial_tracked: schema.itemMaster.is_serial_tracked }).from(schema.itemMaster).where(eq(schema.itemMaster.item_id, row.feed_item_id as string)).limit(1);
       lines.push({
         line_id: randomUUID(), scheduler_id: schedulerId, line_seq: seq++, line_type: 'CONSUMPTION',
         activity_name: `${stage.stage_name} Feed — ${feedItem?.item_name ?? 'Unknown Item'}`, stage_id: stageId, occurrence: 'DAILY', start_day: fromDay, end_day: toDay,
@@ -163,7 +163,8 @@ export class SchedulerHeaderService {
         nob_id: batch.nob_id, lob_id: batch.lob_id, item_id: row.feed_item_id,
         item_description: feedItem?.item_name ?? null,
         standard_qty: row.feed_qty_per_head_per_day_kg, qty_basis: 'PER_HEAD',
-        allow_qty_edit: true, lot_required: true,
+        // A lot is asked for only when the item is tracked by lot or serial — the same rule the line form applies.
+        allow_qty_edit: true, lot_required: Boolean(feedItem?.is_lot_tracked || feedItem?.is_serial_tracked),
       });
     }
 
@@ -214,7 +215,7 @@ export class SchedulerHeaderService {
         is_mandatory: true, source: 'AUTO', lifecycle_ref_id: lifecycle.lifecycle_id,
         nob_id: batch.nob_id, lob_id: batch.lob_id, item_id: item.item_id,
         item_description: item.item_name,
-        qty_basis: 'PER_HEAD', allow_qty_edit: true, lot_required: true,
+        qty_basis: 'PER_HEAD', allow_qty_edit: true, lot_required: Boolean(item.is_lot_tracked || item.is_serial_tracked),
       });
       customDaysByLine[lineId] = [entry.day];
     }
@@ -293,8 +294,8 @@ export class SchedulerHeaderService {
     // right now, not the batch's original opening_quantity (which would ignore
     // every mortality/transfer that happened in earlier stages). Preference order:
     // (1) a live animal_register count, for LOBs that track individual animals
-    //     (BIO_ASSET costing only — registerPlaceholderAnimals() never runs for
-    //     STANDARD-costed batches, so this is legitimately 0 for those);
+    //     (Animal Wise batches, whose animals come from the register; a Batch Wise
+    //     batch is a bare headcount with no animal rows, so this is 0 for those);
     // (2) the prior stage's own scheduler_header.animal_count, which already
     //     carries forward whatever mortality/head-count corrections were posted
     //     against it — this is the only place a STANDARD-costed batch's running
