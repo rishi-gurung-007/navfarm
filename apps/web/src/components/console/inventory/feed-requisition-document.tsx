@@ -18,13 +18,14 @@ import { AlertTriangle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Field, FieldGroup, ReadField } from "@/components/ui/field";
 import { ScrollTable } from "@/components/ui/scroll-table";
+import { SearchableSelect } from "@/components/ui/searchable-select";
+import { ReasonSelect } from "@/components/ui/reason-select";
 import { useLanguage } from "@/hooks/useLanguage";
 import type { TranslationKeys } from "@/utils/translations";
 import { cn } from "@/lib/utils";
 import { formatDateShort } from "@/utils/date-short";
-import { locationLabel } from "./feed-format";
 import {
-  FEED_TYPE_LABEL, PRIORITY_LABEL, PURPOSE_LABEL, REQ_STATUS_LABEL, REQ_TYPE_LABEL, SOURCE_LABEL, SUPPLY_LABEL, labelOf, variantOf,
+  DOC_TYPE_LABEL, FEED_TYPE_LABEL, PRIORITY_LABEL, PURPOSE_LABEL, REQ_STATUS_LABEL, SOURCE_LABEL, SUPPLY_LABEL, labelOf, variantOf,
 } from "./requisition-labels";
 
 export interface FeedRequisitionBreakdownRow {
@@ -72,6 +73,10 @@ export interface FeedRequisitionLine {
   proposed_delivery_date: string | null;
   exceeds_silo_capacity: boolean;
   needs_silo_changeover?: boolean;
+  reason_id?: string | null;
+  reason_code?: string | null;
+  reason_name?: string | null;
+  reason_label?: string | null;
   exception_reason: string | null;
   breakdown?: FeedRequisitionBreakdownRow[];
 }
@@ -116,7 +121,7 @@ export interface FeedLineEdit {
   date?: string;
   itemId?: string;
   destinationId?: string;
-  exceptionReason?: string;
+  reasonId?: string;
 }
 
 /** GET /feed-requisition/options: the farm's silos and stores, and its company's feed items. */
@@ -182,26 +187,26 @@ export function remarksRequiredMessage(
 }
 
 const num = (v: string | number | null | undefined) => (v === null || v === undefined || v === "" ? null : Number(v));
-const kg = (v: string | number | null | undefined) => {
+const kg = (v: string | number | null | undefined, empty = "Not yet available") => {
   const n = num(v);
-  return n === null ? "—" : n.toLocaleString("en-US", { maximumFractionDigits: 2 });
+  return n === null ? empty : n.toLocaleString("en-US", { maximumFractionDigits: 2 });
 };
 /** Silo Balance row 9: "Displayed to 1 decimal". */
-const oneDecimal = (v: string | number | null | undefined) => {
+const oneDecimal = (v: string | number | null | undefined, empty = "Not yet available") => {
   const n = num(v);
-  return n === null ? "—" : n.toFixed(1);
+  return n === null ? empty : n.toFixed(1);
 };
 /** approved_at is stored UTC (utcTimestamp): the date as everywhere else, then the time, labelled. */
 const dateTime = (v: string | null) => (v ? `${formatDateShort(v.slice(0, 10))} ${v.slice(11, 16)} UTC` : null);
 
 const inputStyle = { backgroundColor: "var(--input-bg)", color: "var(--input-text)", borderColor: "var(--input-border)" };
 const TH = "h-9 whitespace-nowrap px-3 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]";
-const TD = "whitespace-nowrap px-3 py-1.5 align-top text-xs text-[var(--text-primary)]";
+const TD = "whitespace-nowrap px-3 py-1.5 align-middle text-xs text-[var(--text-primary)]";
 const NUM = "text-right tabular-nums";
 const MUTED = "text-[10px] text-[var(--text-muted)]";
 
 const LINE_COLUMNS = [
-  "rqdColLineNo", "rqdColSilo", "rqdColItemNo", "rqdColItemDesc", "rqdColFeedType", "rqdColNextDiet", "rqdColDaysBefore", "rqdColLifecycle",
+  "rqdColLineNo", "rqdColSilo", "rqdColItemNo", "rqdColItemDesc", "rqdColReason", "rqdColFeedType", "rqdColNextDiet", "rqdColDaysBefore", "rqdColLifecycle",
   "rqdColSystemBalance", "rqdColDaily", "rqdColDaysRemaining", "rqdColRecommended", "rqdColRequested", "rqdColBags", "rqdColDelivery",
 ] as const;
 const RIGHT = new Set<string>([
@@ -267,6 +272,7 @@ export function FeedRequisitionDocument({
   const destinations = options && Array.isArray(options.destinations) ? options.destinations : [];
   const items = options && Array.isArray(options.items) ? options.items : [];
   const canEdit = editable && !!onLineEdit;
+  const notAvailable = t("rqNotYetAvailable");
 
   // Requisition §1 rows 26–27, bagged beside them: the shared helper (feed-requisition-header.tsx).
   const target = header?.truck_target_kg ?? 0;
@@ -283,11 +289,11 @@ export function FeedRequisitionDocument({
 
   return (
     <div className="flex flex-col gap-4">
-      <FieldGroup title={t("rqdHeaderTitle")}>
+      <FieldGroup>
         <FeedRequisitionHeaderFields values={{
           reqNo: view.req_no,
           reqDate: header?.requisition_date ? formatDateShort(header.requisition_date) : null,
-          reqType: labelOf(REQ_TYPE_LABEL, view.requisition_type, t),
+          reqType: labelOf(DOC_TYPE_LABEL, "ITEM", t),
           source: labelOf(SOURCE_LABEL, view.source, t),
           farmCode: header?.farm_code,
           farmName: header?.farm_name,
@@ -314,7 +320,8 @@ export function FeedRequisitionDocument({
               value={remarks ?? ""} onChange={(e) => onRemarksChange(e.target.value)} />
           </Field>
         ) : (
-          <ReadField className="sm:col-span-12" label={t("rqdRemarks")} value={view.remarks} />
+          <ReadField className="sm:col-span-12" label={t("rqdRemarks")} value={view.remarks}
+            appearance="control" emptyText={t("rqNoRemarks")} />
         )}
       </FieldGroup>
 
@@ -347,52 +354,61 @@ export function FeedRequisitionDocument({
                     <td className={cn(TD, NUM)} data-testid="rqd-line-no">{seq}</td>
                     <td className={TD}>
                       {canEdit && destinations.length ? (
-                        <select className="nf-input-sm nf-select w-72" style={inputStyle} aria-label={t("rqdSiloFor", { line: seq })}
-                          value={destinationId} onChange={(e) => onLineEdit?.(line.line_id, { destinationId: e.target.value })}>
-                          {destinations.map((d) => <option key={d.location_id} value={d.location_id}>{locationLabel(d.location_code, d.location_name)}</option>)}
-                        </select>
+                        <SearchableSelect ariaLabel={t("rqdSiloFor", { line: seq })} value={destinationId}
+                          placeholder={t("rqNewChoose")} searchPlaceholder={t("crqSearch")} noMatchesLabel={t("crqNoMatches")}
+                          triggerClassName="w-72" triggerStyle={inputStyle}
+                          options={destinations.map((d) => ({ value: d.location_id, code: d.location_code, name: d.location_name ?? "" }))}
+                          getLabel={(option) => `${String(option.code)} — ${String(option.name)}`}
+                          getSelectedLabel={(option) => String(option.code)}
+                          columns={[{ key: "code", label: t("paramColCode") }, { key: "name", label: t("paramColName") }]}
+                          onChange={(value) => onLineEdit?.(line.line_id, { destinationId: value })} />
                       ) : (
-                        line.destination_code ? locationLabel(line.destination_code, line.destination_name) : "—"
+                        line.destination_code ?? t("rqNotYetAvailable")
                       )}
                       {line.needs_silo_changeover && <div className={MUTED}>{t("rqChangeover")}</div>}
                     </td>
                     <td className={TD}>
                       {canEdit && items.length ? (
-                        <select className="nf-input-sm nf-select w-28" style={inputStyle} aria-label={t("rqdItemFor", { line: seq })}
-                          value={itemId} onChange={(e) => onLineEdit?.(line.line_id, { itemId: e.target.value })}>
-                          {items.map((i) => <option key={i.item_id} value={i.item_id}>{i.item_code}</option>)}
-                        </select>
-                      ) : (itemCode ?? "—")}
+                        <SearchableSelect ariaLabel={t("rqdItemFor", { line: seq })} value={itemId}
+                          placeholder={t("rqNewChoose")} searchPlaceholder={t("crqSearch")} noMatchesLabel={t("crqNoMatches")}
+                          triggerClassName="w-44" triggerStyle={inputStyle}
+                          options={items.map((i) => ({ value: i.item_id, code: i.item_code, description: i.item_name }))}
+                          getLabel={(option) => `${String(option.code)} — ${String(option.description)}`}
+                          getSelectedLabel={(option) => String(option.code)}
+                          columns={[{ key: "code", label: t("paramColCode") }, { key: "description", label: t("crqColDescription") }]}
+                          onChange={(value) => onLineEdit?.(line.line_id, { itemId: value })} />
+                      ) : (itemCode ?? t("rqNotYetAvailable"))}
                     </td>
+                    <td className={TD}>{itemDescription ?? t("rqNotYetAvailable")}</td>
                     <td className={TD}>
-                      {itemDescription ?? "—"}
                       {canEdit && isException ? (
-                        <input type="text" maxLength={180} className="nf-input-sm mt-1 block w-48 px-2" style={inputStyle}
-                          aria-label={t("rqdExceptionFor", { line: seq })} placeholder={t("rqdExceptionPlaceholder")}
-                          value={edit?.exceptionReason ?? line.exception_reason ?? ""}
-                          onChange={(e) => onLineEdit?.(line.line_id, { exceptionReason: e.target.value })} />
-                      ) : line.exception_reason ? (
-                        <div className={MUTED}>{line.exception_reason}</div>
-                      ) : null}
+                        <ReasonSelect ariaLabel={t("rqdExceptionFor", { line: seq })}
+                          value={edit?.reasonId ?? line.reason_id ?? line.exception_reason ?? ""} valueFormat="id"
+                          category="REQUISITION" placeholder={t("rqNewChooseReason")} searchPlaceholder={t("rqNewSearchReason")}
+                          triggerClassName="mt-1 w-56" triggerStyle={inputStyle}
+                          onChange={(reasonId) => onLineEdit?.(line.line_id, { reasonId })} />
+                      ) : (line.reason_name ?? line.reason_label ?? line.exception_reason) ? (
+                        <span>{line.reason_name ?? line.reason_label ?? line.exception_reason}</span>
+                      ) : t("rqNotApplicable")}
                     </td>
                     <td className={TD}>{labelOf(FEED_TYPE_LABEL, line.feed_type, t)}</td>
                     <td className={TD}>{line.is_next_diet ? t("rqYes") : t("rqNo")}</td>
-                    <td className={cn(TD, NUM)}>{line.days_before_diet_change ?? "—"}</td>
-                    <td className={TD}>{line.lifecycle_ref_label ?? "—"}</td>
-                    <td className={cn(TD, NUM)}>{kg(line.system_balance_kg)}</td>
-                    <td className={cn(TD, NUM)}>{kg(line.daily_requirement_kg)}</td>
+                    <td className={cn(TD, NUM)}>{line.days_before_diet_change ?? t("rqNotApplicable")}</td>
+                    <td className={TD}>{line.lifecycle_ref_label ?? notAvailable}</td>
+                    <td className={cn(TD, NUM)}>{kg(line.system_balance_kg, notAvailable)}</td>
+                    <td className={cn(TD, NUM)}>{kg(line.daily_requirement_kg, notAvailable)}</td>
                     <td className={cn(TD, NUM)}>
-                      <div>{oneDecimal(line.days_remaining)}</div>
+                      <div>{oneDecimal(line.days_remaining, notAvailable)}</div>
                       {line.first_shortage_date && <div className={MUTED}>{formatDateShort(line.first_shortage_date)}</div>}
                     </td>
                     <td className={cn(TD, NUM)}>
-                      <div>{kg(line.recommended_qty_kg)}</div>
-                      {line.unrounded_need_kg !== null && <div className={MUTED}>{t("rqdUnrounded", { kg: kg(line.unrounded_need_kg) })}</div>}
+                      <div>{kg(line.recommended_qty_kg, notAvailable)}</div>
+                      {line.unrounded_need_kg !== null && <div className={MUTED}>{t("rqdUnrounded", { kg: kg(line.unrounded_need_kg, notAvailable) })}</div>}
                     </td>
                     <td className={cn(TD, NUM)}>
                       <div className="inline-flex items-center gap-1.5">
                         {siloDataStale ? (
-                          <span className={MUTED} data-testid="rqd-capacity-unknown" title={t("rqdCapacityUnknown")}>—</span>
+                          <span className={MUTED} data-testid="rqd-capacity-unknown" title={t("rqdCapacityUnknown")}>{notAvailable}</span>
                         ) : line.exceeds_silo_capacity && (
                           // Engine Step 8: a warning, never a cap.
                           <span role="img" aria-label={t("rqdCapacityWarning")} title={t("rqdCapacityWarning")} style={{ color: "var(--warning)" }}>
@@ -404,10 +420,10 @@ export function FeedRequisitionDocument({
                             aria-label={t("rqdRequestedFor", { line: seq })}
                             value={edit?.quantity ?? String(Number(line.quantity))}
                             onChange={(e) => onLineEdit?.(line.line_id, { quantity: e.target.value })} />
-                        ) : kg(line.quantity)}
+                        ) : kg(line.quantity, notAvailable)}
                       </div>
                     </td>
-                    <td className={cn(TD, NUM)}>{line.feed_type === "BAGGED" ? (line.bag_count ?? "—") : "—"}</td>
+                    <td className={cn(TD, NUM)}>{line.feed_type === "BAGGED" ? (line.bag_count ?? notAvailable) : t("rqNotApplicable")}</td>
                     <td className={TD}>
                       {canEdit ? (
                         <input type="date" className="nf-input-sm w-36 px-2" style={inputStyle}
@@ -434,13 +450,13 @@ export function FeedRequisitionDocument({
                           <tbody>
                             {breakdown.map((b) => (
                               <tr key={`${b.batch_id}|${b.stage_id ?? ""}|${b.shed_id ?? ""}`}>
-                                <td className="whitespace-nowrap px-2 py-0.5 text-[var(--text-secondary)]">{b.batch_no ?? "—"}</td>
-                                <td className="whitespace-nowrap px-2 py-0.5 text-[var(--text-secondary)]">{b.shed_code ?? "—"}</td>
+                                <td className="whitespace-nowrap px-2 py-0.5 text-[var(--text-secondary)]">{b.batch_no ?? notAvailable}</td>
+                                <td className="whitespace-nowrap px-2 py-0.5 text-[var(--text-secondary)]">{b.shed_code ?? notAvailable}</td>
                                 <td className={cn("whitespace-nowrap px-2 py-0.5 text-[var(--text-secondary)]", NUM)}>{kg(b.heads)}</td>
                                 <td className={cn("whitespace-nowrap px-2 py-0.5 text-[var(--text-secondary)]", NUM)}>
-                                  {b.feed_rate_kg === null ? "—" : b.feed_rate_kg.toLocaleString("en-US", { maximumFractionDigits: 4 })}
+                                  {b.feed_rate_kg === null ? notAvailable : b.feed_rate_kg.toLocaleString("en-US", { maximumFractionDigits: 4 })}
                                 </td>
-                                <td className="whitespace-nowrap px-2 py-0.5 text-[var(--text-secondary)]">{b.lifecycle_ref_label ?? "—"}</td>
+                                <td className="whitespace-nowrap px-2 py-0.5 text-[var(--text-secondary)]">{b.lifecycle_ref_label ?? notAvailable}</td>
                                 <td className={cn("whitespace-nowrap px-2 py-0.5 text-[var(--text-secondary)]", NUM)}>{kg(b.demand_kg)}</td>
                               </tr>
                             ))}

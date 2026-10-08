@@ -15,8 +15,17 @@ jest.mock("../src/hooks/useLanguage", () => {
     String((dict.en as Record<string, string>)[key] ?? key).replace(/\{\{(\w+)\}\}/g, (m: string, n: string) => (vars && n in vars ? String(vars[n]) : m));
   return { useLanguage: () => ({ t }) };
 });
+jest.mock("../src/components/ui/reason-select", () => ({
+  ReasonSelect: ({ ariaLabel, onChange }: any) => (
+    <button type="button" aria-label={ariaLabel} onClick={() => onChange("reason-1")}>Choose reason</button>
+  ),
+}));
 
 const en = translations.en;
+
+beforeAll(() => {
+  if (!HTMLElement.prototype.scrollIntoView) HTMLElement.prototype.scrollIntoView = jest.fn();
+});
 
 const view: FeedRequisitionDocumentView = {
   requisition_id: "req-41", req_no: "REQ-GRS-2026-00041", requisition_type: "FEED_FORECAST", source: "AUTO_FORECAST",
@@ -65,6 +74,23 @@ const options = {
 const valueOf = (label: string) => screen.getByText(label, { selector: "span" }).nextElementSibling?.textContent;
 
 describe("FeedRequisitionDocument — header form (Requisition §1)", () => {
+  it("uses three header columns on wide screens and two on medium screens", () => {
+    render(<FeedRequisitionDocument view={view} editable={false} />);
+
+    const typeField = screen.getByText(en.rqdReqType, { selector: "span" }).parentElement as HTMLElement;
+    expect(typeField.className).toContain("sm:col-span-6");
+    expect(typeField.className).toContain("lg:col-span-4");
+  });
+
+  it("presents header values as bordered read-only controls with human empty states", () => {
+    render(<FeedRequisitionDocument view={view} editable={false} />);
+
+    const reqNo = screen.getByRole("textbox", { name: en.rqdReqNo });
+    expect(reqNo.textContent).toBe("REQ-GRS-2026-00041");
+    expect(screen.getByRole("textbox", { name: en.rqdApprovedBy }).textContent).toBe(en.rqNotYetAvailable);
+    expect(within(reqNo.closest("section") as HTMLElement).queryByText("—")).toBeNull();
+  });
+
   it("shows the workbook header fields in their words", () => {
     render(<FeedRequisitionDocument view={view} editable={false} />);
     expect(valueOf(en.rqdReqNo)).toBe("REQ-GRS-2026-00041");
@@ -104,17 +130,34 @@ describe("FeedRequisitionDocument — header form (Requisition §1)", () => {
   });
 });
 
-describe("FeedRequisitionDocument — silo number and name (Rishi 4 Oct)", () => {
-  it("a read-only line shows the silo code and the silo name", () => {
+describe("FeedRequisitionDocument — semantic code, name and reason fields", () => {
+  it("a read-only Silo Code cell shows only the code", () => {
     render(<FeedRequisitionDocument view={view} editable={false} />);
-    expect(screen.getByText("GRS/SILO-001 — Weaner silo")).toBeTruthy();
-    expect(screen.getByText("GRS/SILO-002 — Grower silo")).toBeTruthy();
+    expect(screen.getByText("GRS/SILO-001")).toBeTruthy();
+    expect(screen.getByText("GRS/SILO-002")).toBeTruthy();
+    expect(screen.queryByText("GRS/SILO-001 — Weaner silo")).toBeNull();
   });
 
-  it("an editable line offers each silo as code and name", () => {
+  it("an editable line offers each silo as code and name", async () => {
     render(<FeedRequisitionDocument view={view} editable options={options} edits={{}} onLineEdit={jest.fn()} remarks="" onRemarksChange={jest.fn()} />);
-    const select = screen.getByLabelText("Silo Code, line 10000") as HTMLSelectElement;
-    expect([...select.options].map((o) => o.textContent)).toEqual(["GRS/SILO-001 — Weaner silo", "GRS/SILO-002 — Grower silo"]);
+    expect(screen.getByRole("button", { name: "Silo Code, line 10000" }).textContent).toBe("GRS/SILO-001");
+    expect(screen.getByRole("button", { name: "Feed Item No., line 10000" }).textContent).toBe("R1");
+    fireEvent.click(screen.getByRole("button", { name: "Silo Code, line 10000" }));
+    expect(await screen.findByRole("option", { name: "GRS/SILO-001 — Weaner silo" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "GRS/SILO-002 — Grower silo" })).toBeTruthy();
+  });
+
+  it("keeps the feed description and Reason in separate columns", () => {
+    const withReason = {
+      ...view,
+      lines: [{ ...view.lines[0], reason_label: "Diet changed by farm manager", exception_reason: "legacy combined text" }],
+    };
+    render(<FeedRequisitionDocument view={withReason} editable={false} />);
+    const row = screen.getByText("10000").closest("tr")!;
+    expect(within(row).getByText("Weaner Diet R1")).toBeTruthy();
+    expect(within(row).getByText("Diet changed by farm manager")).toBeTruthy();
+    expect(within(row).queryByText("legacy combined text")).toBeNull();
+    expect(screen.getByText(en.rqdColReason)).toBeTruthy();
   });
 });
 
@@ -189,19 +232,21 @@ describe("FeedRequisitionDocument — lines sub-form (Requisition §2)", () => {
     expect(container.querySelectorAll("input, select, textarea")).toHaveLength(0);
   });
 
-  it("an open one edits silo, item, requested qty and delivery date, and asks for an exception reason off the lifecycle item", () => {
+  it("an open one edits silo, item, requested qty and delivery date, and asks for a Reason Master choice off the lifecycle item", async () => {
     const onLineEdit = jest.fn();
     const { rerender } = render(<FeedRequisitionDocument view={view} editable options={options} edits={{}} onLineEdit={onLineEdit} remarks="" onRemarksChange={jest.fn()} />);
     fireEvent.change(screen.getByLabelText("Requested Qty KG, line 10000"), { target: { value: "9000" } });
     expect(onLineEdit).toHaveBeenCalledWith("L1", { quantity: "9000" });
-    fireEvent.change(screen.getByLabelText("Silo Code, line 10000"), { target: { value: "s2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Silo Code, line 10000" }));
+    fireEvent.click(await screen.findByRole("option", { name: "GRS/SILO-002 — Grower silo" }));
     expect(onLineEdit).toHaveBeenCalledWith("L1", { destinationId: "s2" });
-    fireEvent.change(screen.getByLabelText("Feed Item No., line 10000"), { target: { value: "r2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Feed Item No., line 10000" }));
+    fireEvent.click(await screen.findByRole("option", { name: "R2 — Weaner Diet R2" }));
     expect(onLineEdit).toHaveBeenCalledWith("L1", { itemId: "r2" });
     expect(screen.queryByLabelText("Exception reason, line 10000")).toBeNull();
     rerender(<FeedRequisitionDocument view={view} editable options={options} edits={{ L1: { itemId: "r2" } }} onLineEdit={onLineEdit} remarks="" onRemarksChange={jest.fn()} />);
-    fireEvent.change(screen.getByLabelText("Exception reason, line 10000"), { target: { value: "Vet instruction" } });
-    expect(onLineEdit).toHaveBeenCalledWith("L1", { exceptionReason: "Vet instruction" });
+    fireEvent.click(screen.getByRole("button", { name: "Exception reason, line 10000" }));
+    expect(onLineEdit).toHaveBeenCalledWith("L1", { reasonId: "reason-1" });
     expect(screen.getByLabelText(en.rqdRemarks)).toBeTruthy();
   });
 });

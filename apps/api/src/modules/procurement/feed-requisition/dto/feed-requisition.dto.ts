@@ -21,6 +21,8 @@ export class ManualFeedLineInput {
   @ApiProperty() @IsDateString() proposed_delivery_date: string;
   @ApiPropertyOptional({ description: 'Requisition row 13: why the line orders an item the lifecycle does not require' })
   @IsOptional() @IsString() @MaxLength(180) exception_reason?: string;
+  @ApiPropertyOptional({ description: 'Active company Reason Master identity for the feed-line exception/override' })
+  @IsOptional() @IsUUID() reason_id?: string;
 }
 
 export class CreateManualFeedRequisitionDto {
@@ -46,6 +48,8 @@ export class FeedLineEditInput {
   @ApiPropertyOptional() @IsOptional() @IsUUID() destination_location_id?: string;
   @ApiPropertyOptional({ description: 'Requisition row 13: why the line orders an item the lifecycle does not require' })
   @IsOptional() @IsString() @MaxLength(180) exception_reason?: string;
+  @ApiPropertyOptional({ description: 'Active company Reason Master identity for the feed-line exception/override' })
+  @IsOptional() @IsUUID() reason_id?: string;
 }
 
 export class UpdateFeedRequisitionDto {

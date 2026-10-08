@@ -773,6 +773,22 @@ export class FeedRequisitionService implements OnModuleInit {
     )!;
   }
 
+  private async activeReason(reasonId: string, companyId: string, tenantId: string) {
+    const [reason] = await this.db
+      .select({ reason_id: schema.reasonMaster.reason_id, reason_code: schema.reasonMaster.reason_code, reason_name: schema.reasonMaster.reason_name })
+      .from(schema.reasonMaster)
+      .where(and(
+        eq(schema.reasonMaster.reason_id, reasonId),
+        eq(schema.reasonMaster.tenant_id, tenantId),
+        eq(schema.reasonMaster.company_id, companyId),
+        eq(schema.reasonMaster.is_active, true),
+        isNull(schema.reasonMaster.deleted_at),
+      ))
+      .limit(1);
+    if (!reason) throw new BadRequestException(`Reason ${reasonId} is not an active Reason Master record of this company.`);
+    return { ...reason, label: `${reason.reason_code} — ${reason.reason_name}` };
+  }
+
   async createManual(dto: CreateManualFeedRequisitionDto, tenantId: string, user: UserCtx) {
     const { farmId, companyId } = await this.forecast.resolveFarm(dto.farmId, tenantId, user?.userType);
     const requisitionId = await this.forecast.withFarmScope(farmId, companyId, async () => {
@@ -801,6 +817,10 @@ export class FeedRequisitionService implements OnModuleInit {
       const nameOf = new Map(items.map((i) => [i.item_id, i.item_name]));
       const missing = itemIds.find((id) => !nameOf.has(id));
       if (missing) throw new BadRequestException(`Feed item ${missing} is not an active feed item of this company.`);
+      const reasonOf = new Map<number, { reason_id: string; label: string }>();
+      for (const [i, line] of dto.lines.entries()) {
+        if (line.reason_id) reasonOf.set(i, await this.activeReason(line.reason_id, companyId, tenantId));
+      }
 
       // D16: the requisition cycle is dated by the farm's day, the same one the forecast plans from.
       const clock = await this.forecast.farmToday(companyId, tenantId);
@@ -821,11 +841,11 @@ export class FeedRequisitionService implements OnModuleInit {
         const problems = lineChangeProblems({
           requiredItemId,
           itemId: line.item_id,
-          exceptionReason: line.exception_reason?.trim() || null,
+          exceptionReason: reasonOf.get(i)?.label ?? line.exception_reason?.trim() ?? null,
           destination: { locationType: dest.locationType, heldItemId: resident?.item_id ?? null, heldBalanceKg: resident?.on_hand_qty ?? 0 },
         });
         if (problems.length) throw new BadRequestException(problems.map((p) => `Line ${i + 1}: ${p}`).join(' '));
-        if (requiredItemId !== null && requiredItemId !== line.item_id) exceptionOf.set(i, line.exception_reason!.trim());
+        if (requiredItemId !== null && requiredItemId !== line.item_id) exceptionOf.set(i, reasonOf.get(i)?.label ?? line.exception_reason!.trim());
       });
       const cycle = productionCycle(manualToday, farm.settings.productionWeekday);
       return this.numbered(() => withTenantTransaction(this.cls, async () => {
@@ -860,6 +880,7 @@ export class FeedRequisitionService implements OnModuleInit {
             // Requisition §1 row 42: the same NAV-style 10000-step convention the auto-drafted lines use.
             line_seq: (i + 1) * 10000,
             item_id: line.item_id,
+            reason_id: reasonOf.get(i)?.reason_id ?? null,
             // Stored exactly as the edit path stores it (changeLineTarget): an exception reason
             // (exception_reason is non-empty here — lineChangeProblems already refused the line
             // otherwise), or the item's own name.
@@ -1355,14 +1376,14 @@ export class FeedRequisitionService implements OnModuleInit {
    */
   private async changeLineTarget(
     requisitionId: string,
-    line: { line_id: string; line_seq: number; item_id: string | null; destination_location_id: string | null; lifecycle_ref_id: string | null; description: string | null },
+    line: { line_id: string; line_seq: number; item_id: string | null; destination_location_id: string | null; lifecycle_ref_id: string | null; description: string | null; reason_id?: string | null },
     edit: FeedLineEditInput, farmId: string, farmCode: string, companyId: string, tenantId: string,
   ) {
     const itemId = edit.item_id ?? line.item_id;
     const destinationId = edit.destination_location_id ?? line.destination_location_id;
     const itemChanged = !!edit.item_id && edit.item_id !== line.item_id;
     const destinationChanged = !!edit.destination_location_id && edit.destination_location_id !== line.destination_location_id;
-    const reasonGiven = edit.exception_reason !== undefined;
+    const reasonGiven = edit.reason_id !== undefined || edit.exception_reason !== undefined;
     if (!itemChanged && !destinationChanged && !reasonGiven) return null;
     if (!itemId || !destinationId) throw new BadRequestException(`Line ${line.line_seq}: a feed line needs a destination and an item.`);
 
@@ -1403,7 +1424,16 @@ export class FeedRequisitionService implements OnModuleInit {
     }
     let held: { item_id: string; on_hand_qty: number } | null = null;
     if (dest.locationType === 'SILO') held = (await this.siloFeed.currentItems([destinationId], companyId, tenantId)).get(destinationId) ?? null;
-    const reason = reasonGiven ? edit.exception_reason?.trim() || null : exceptionReasonOf(line.description);
+    const reasonMaster = edit.reason_id
+      ? await this.activeReason(edit.reason_id, companyId, tenantId)
+      : line.reason_id
+        ? await this.activeReason(line.reason_id, companyId, tenantId)
+        : null;
+    const reason = edit.reason_id !== undefined
+      ? reasonMaster?.label ?? null
+      : edit.exception_reason !== undefined
+        ? edit.exception_reason?.trim() || null
+        : reasonMaster?.label ?? exceptionReasonOf(line.description);
     const problems = lineChangeProblems({
       requiredItemId: requirement?.feed_item_id ?? null,
       itemId,
@@ -1417,6 +1447,7 @@ export class FeedRequisitionService implements OnModuleInit {
       destination_location_id: destinationId,
       source_type: dest.locationType,
       feed_type: feedTypeOf(dest),
+      reason_id: exception ? reasonMaster?.reason_id ?? null : null,
       description: (exception ? `${EXCEPTION_PREFIX}${exception}` : item.item_name).slice(0, 200),
       ...(itemChanged || destinationChanged ? {
         quantity_edited: true,
@@ -1785,12 +1816,15 @@ export class FeedRequisitionService implements OnModuleInit {
         destination_code: destination.location_code,
         destination_name: destination.location_name,
         required_item_id: lifecycle.feed_item_id,
+        reason_code: schema.reasonMaster.reason_code,
+        reason_name: schema.reasonMaster.reason_name,
         ...lifecycleFields,
       })
       .from(schema.requisitionLine)
       .leftJoin(schema.itemMaster, eq(schema.itemMaster.item_id, schema.requisitionLine.item_id))
       .leftJoin(destination, eq(destination.location_id, schema.requisitionLine.destination_location_id))
       .leftJoin(lifecycle, eq(lifecycle.lifecycle_id, schema.requisitionLine.lifecycle_ref_id))
+      .leftJoin(schema.reasonMaster, eq(schema.reasonMaster.reason_id, schema.requisitionLine.reason_id))
       .leftJoin(schema.breedMaster, eq(schema.breedMaster.breed_id, lifecycle.breed_id))
       .leftJoin(schema.stageMaster, eq(schema.stageMaster.stage_id, lifecycle.stage_id))
       .where(eq(schema.requisitionLine.requisition_id, requisitionId))
@@ -1893,7 +1927,11 @@ export class FeedRequisitionService implements OnModuleInit {
         destination_name: l.destination_name,
         required_item_id: l.required_item_id ?? null,
         lifecycle_ref_label: lifecycleRefLabel(l),
-        exception_reason: exceptionReasonOf(l.line.description),
+        reason_id: l.line.reason_id ?? null,
+        reason_code: l.reason_code ?? null,
+        reason_name: l.reason_name ?? null,
+        reason_label: l.reason_name ?? null,
+        exception_reason: l.reason_name ?? exceptionReasonOf(l.line.description),
         breakdown: breakdownOf.get(l.line.line_id) ?? [],
       })),
       farm_total_requested_kg: farmTotal,
