@@ -366,7 +366,6 @@ export default function ConsoleLayout({ children, modal }: { children: React.Rea
         children: [
           { label: t("companySettings"), href: "/company/settings" },
           { label: t("navInventorySetup"), href: "/settings/inventory-setup" },
-          { label: tLabel("Reporting Periods"), href: "/settings/reporting-periods" },
         ],
       },
     ];

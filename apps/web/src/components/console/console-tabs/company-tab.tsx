@@ -20,6 +20,7 @@ import { api } from "../../../services/api-client";
 import { Dialog } from "../../ui/dialog";
 import { useLanguage } from "@/hooks/useLanguage";
 import { API_ORIGIN } from "@/lib/api-client";
+import { FeedFarmOverrides } from "@/components/console/company/feed-farm-overrides";
 
 interface CompanyTabProps {
   activeCompany: any;
@@ -1417,6 +1418,8 @@ export default function CompanyTab({
                           <Field className="sm:col-span-3" label={t("ctFeedFinanceVariancePct")} htmlFor="feed-finance-pct" required><Input id="feed-finance-pct" type="number" min={0} step="0.01" value={feedForm.financeVariancePct} onChange={(e) => setFeedForm({ ...feedForm, financeVariancePct: e.target.value === "" ? "" : Number(e.target.value) })} required /></Field>
                           <Field className="sm:col-span-3" label={t("ctFeedFinanceVarianceAmount")} htmlFor="feed-finance-amount"><Input id="feed-finance-amount" type="number" min={0} step="0.01" value={feedForm.financeVarianceAmount} onChange={(e) => setFeedForm({ ...feedForm, financeVarianceAmount: e.target.value === "" ? "" : Number(e.target.value) })} /></Field>
                         </FieldGroup>
+
+                        <FeedFarmOverrides companyId={targetCompany.company_id} />
 
                         <div className="flex justify-end border-t border-(--border) pt-4">
                           <Button type="submit" disabled={saving} className="text-xs"><Save className="w-4 h-4" /> {saving ? t("saving") : t("saveChanges")}</Button>

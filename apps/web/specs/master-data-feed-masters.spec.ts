@@ -32,12 +32,12 @@ describe('Reporting Period configuration and Alert Rules navigation', () => {
     expect(MASTER_DATA_NAV_ORDER).toContain('alert-rule');
   });
 
-  it('places Reporting Periods in Settings, not Farm Masters', () => {
+  it('places Reporting Periods in Farm Operations master navigation', () => {
     const config = getConfig('reporting-period')!;
-    expect(config.isPrimary).toBe(false);
-    expect(config.group).toBe('Settings');
+    expect(config.isPrimary).toBe(true);
+    expect(config.group).toBe('Farm Operations');
     expect(config.businessAdminOnly).toBe(true);
-    expect(MASTER_DATA_NAV_ORDER).not.toContain('reporting-period');
+    expect(MASTER_DATA_NAV_ORDER).toContain('reporting-period');
     expect(config.draftLifecycle).toEqual({
       activatePath: 'activate',
       approvePermission: { moduleCode: 'MASTER_DATA', resource: 'REPORTING_PERIOD' },

@@ -1482,6 +1482,12 @@ export const translations = {
     fsetProductionWeekdayCol: "Production Weekday",
     fsetInheritCompany: "Company value",
     fsetSave: "Save feed planning settings of {{name}}",
+    fsetFarmOverrides: "Farm order quantity overrides",
+    fsetFarmOverridesHint: "Leave a Farm value blank to use the company default.",
+    fsetInheritedValue: "Company default: {{value}}",
+    fsetFarmValue: "Farm override: {{value}}",
+    fsetPositiveOnly: "Configured quantities must be greater than zero.",
+    fsetOverridesLoadFailed: "Farm feed planning overrides could not be loaded.",
 
     // D41 — each farm's physical silos under Silo Feed Setup.
     fpSiloSection: "Silos of {{farm}}",

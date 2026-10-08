@@ -36,59 +36,6 @@ beforeEach(() => {
   put.mockResolvedValue({ data: {} });
 });
 
-describe('Feed Planning Settings — safety stock and bag size (3 Oct ruling)', () => {
-  const label = (key: string, name: string) => `${key}:${JSON.stringify({ name })}`;
-
-  it('shows the company Safety Stock KG and Bag Size KG from GET /feed-settings and saves them through PUT /feed-settings', async () => {
-    render(<FeedPlanningPanel />);
-    await screen.findByRole('table', { name: 'Silo Feed Setup by farm and silo' });
-    expect(get).toHaveBeenCalledWith('/feed-settings?companyId=co-1');
-    const safety = (await screen.findByLabelText(label('fsetSafetyStock', 'Colcom'))) as HTMLInputElement;
-    const bag = screen.getByLabelText(label('fsetBagSize', 'Colcom')) as HTMLInputElement;
-    expect(safety.value).toBe('0');
-    expect(bag.value).toBe('50');
-    const save = screen.getByRole('button', { name: label('fsetSave', 'Colcom') }) as HTMLButtonElement;
-    expect(save.disabled).toBe(true);
-    fireEvent.change(safety, { target: { value: '500' } });
-    fireEvent.change(bag, { target: { value: '25' } });
-    fireEvent.click(save);
-    await waitFor(() => expect(put).toHaveBeenCalledWith('/feed-settings', { companyId: 'co-1', safetyStockKg: 500, bagSizeKg: 25 }));
-  });
-
-  it('a farm override starts blank where the farm inherits, shows the company value as the placeholder, and has no lead-time input', async () => {
-    render(<FeedPlanningPanel />);
-    await screen.findByRole('table', { name: 'Silo Feed Setup by farm and silo' });
-    await screen.findByLabelText(label('fsetSafetyStock', 'Colcom'));
-    expand('VIL100');
-    const safety = screen.getByLabelText(label('fsetSafetyStock', 'VIL100')) as HTMLInputElement;
-    const bulk = screen.getByLabelText(label('fsetBulkMultiple', 'VIL100')) as HTMLInputElement;
-    expect(safety.value).toBe('');
-    expect(safety.placeholder).toBe('0');
-    expect((screen.getByLabelText(label('fsetBagSize', 'VIL100')) as HTMLInputElement).placeholder).toBe('50');
-    expect(bulk.value).toBe('6000');
-    expect(bulk.placeholder).toBe('3000');
-    expect(screen.getByLabelText(label('fsetTruckTarget', 'VIL100'))).toBeTruthy();
-    expect(screen.getByLabelText(label('fsetProductionWeekday', 'VIL100'))).toBeTruthy();
-    expect(screen.queryByLabelText(/lead/i)).toBeNull();
-  });
-
-  it('saves a farm override through PUT /feed-settings/farm, sending null for a cleared field so the farm inherits again', async () => {
-    render(<FeedPlanningPanel />);
-    await screen.findByRole('table', { name: 'Silo Feed Setup by farm and silo' });
-    await screen.findByLabelText(label('fsetSafetyStock', 'Colcom'));
-    expand('VIL100');
-    const save = screen.getByRole('button', { name: label('fsetSave', 'VIL100') }) as HTMLButtonElement;
-    expect(save.disabled).toBe(true);
-    fireEvent.change(screen.getByLabelText(label('fsetSafetyStock', 'VIL100')), { target: { value: '300' } });
-    fireEvent.change(screen.getByLabelText(label('fsetBulkMultiple', 'VIL100')), { target: { value: '' } });
-    fireEvent.change(screen.getByLabelText(label('fsetProductionWeekday', 'VIL100')), { target: { value: '3' } });
-    fireEvent.click(save);
-    await waitFor(() => expect(put).toHaveBeenCalledWith('/feed-settings/farm', {
-      companyId: 'co-1', farmId: 'f-vil', safetyStockKg: 300, bagSizeKg: null, bulkMultipleKg: null, truckTargetKg: null, productionWeekday: 3,
-    }));
-  });
-});
-
 describe('Silo Feed Setup — silos grouped by farm', () => {
   it('renders farms as collapsed parents with no farm-setting inputs until one is expanded, and never a lead-time input', async () => {
     render(<FeedPlanningPanel />);
@@ -96,6 +43,7 @@ describe('Silo Feed Setup — silos grouped by farm', () => {
     expect(get).toHaveBeenCalledWith('/feed-forecast/farm-settings');
     expect(within(table).getAllByRole('columnheader')).toHaveLength(1);
     expect(toggle('VIL100').getAttribute('aria-expanded')).toBe('false');
+    expect(get).not.toHaveBeenCalledWith('/feed-settings?companyId=co-1');
     for (const key of ['fpLeadTime', 'fpBulkMultiple', 'fpBagSize', 'fpTruckTarget', 'fpProductionDay', 'LeadTime']) {
       expect(screen.queryByLabelText(new RegExp(key))).toBeNull();
     }

@@ -31,37 +31,12 @@ export const FEED_PLANNING_LAYOUT = {
   siloTotalPx: SILO_PX.reduce((a, b) => a + b, 0) + SILO_PX.length * CELL_PADDING_PX,
 } as const;
 
-/** What a farm may override and the company sets (GET/PUT /feed-settings). */
-type LogisticsKey = "safetyStockKg" | "bagSizeKg" | "bulkMultipleKg" | "truckTargetKg" | "productionWeekday";
-type LogisticsDraft = Record<LogisticsKey, string>;
-type CompanySettings = Record<LogisticsKey, number | null>;
-
-// labelKey is the accessible name of an input ("... for {{name}}"); colKey is the visible caption.
-const LOGISTICS_FIELDS: { key: LogisticsKey; labelKey: string; colKey: string; widthPx: number }[] = [
-  { key: "safetyStockKg", labelKey: "fsetSafetyStock", colKey: "fsetSafetyStockCol", widthPx: 90 },
-  { key: "bagSizeKg", labelKey: "fsetBagSize", colKey: "fsetBagSizeCol", widthPx: 90 },
-  { key: "bulkMultipleKg", labelKey: "fsetBulkMultiple", colKey: "fsetBulkMultipleCol", widthPx: 90 },
-  { key: "truckTargetKg", labelKey: "fsetTruckTarget", colKey: "fsetTruckTargetCol", widthPx: 90 },
-];
-const WEEKDAYS = [0, 1, 2, 3, 4, 5, 6];
-
-const logisticsDraftOf = (values: Partial<Record<LogisticsKey, number | null>> | undefined): LogisticsDraft => ({
-  safetyStockKg: values?.safetyStockKg?.toString() ?? "",
-  bagSizeKg: values?.bagSizeKg?.toString() ?? "",
-  bulkMultipleKg: values?.bulkMultipleKg?.toString() ?? "",
-  truckTargetKg: values?.truckTargetKg?.toString() ?? "",
-  productionWeekday: values?.productionWeekday?.toString() ?? "",
-});
-const numberOrNull = (raw: string) => (raw.trim() === "" ? null : Number(raw));
-
 export interface FeedPlanningFarm {
   farmId: string;
   code: string;
   name: string;
   companyId: string;
   companyName: string | null;
-  /** The farm's override row in Feed Planning Settings; null = the farm inherits the company value. */
-  settings?: Partial<Record<LogisticsKey, number | null>>;
   /** D41: the farm's silos, whose levels are edited here too. */
   silos?: FeedPlanningSilo[];
 }
@@ -115,7 +90,6 @@ const siloPayloadOf = (draft: SiloDraft): Record<SiloKey, number | null> & { fee
 // wider than their inputs, and so the table wider than its box.
 const TH = "px-1.5 py-1.5 align-bottom text-[10px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]";
 const TD = "px-1.5 py-1.5 text-xs text-[var(--text-primary)]";
-const weekdayName = (day: number) => new Date(Date.UTC(2024, 0, 7 + day)).toLocaleDateString("en-US", { weekday: "long", timeZone: "UTC" });
 const inputStyle = { backgroundColor: "var(--input-bg)", color: "var(--input-text)", borderColor: "var(--input-border)" };
 
 export function FeedPlanningPanel() {
@@ -130,12 +104,6 @@ export function FeedPlanningPanel() {
   const [siloSaved, setSiloSaved] = useState<string | null>(null);
   const [expandedFarms, setExpandedFarms] = useState<Record<string, boolean>>({});
   const [attempt, setAttempt] = useState(0);
-  // Feed Planning Settings: the company's effective values, and one draft per company / farm override.
-  const [companySettings, setCompanySettings] = useState<Record<string, CompanySettings>>({});
-  const [companyDrafts, setCompanyDrafts] = useState<Record<string, LogisticsDraft>>({});
-  const [farmDrafts, setFarmDrafts] = useState<Record<string, LogisticsDraft>>({});
-  const [settingsSaving, setSettingsSaving] = useState<string | null>(null);
-  const [settingsSaved, setSettingsSaved] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -149,29 +117,6 @@ export function FeedPlanningPanel() {
         const list: FeedPlanningFarm[] = Array.isArray(raw) ? raw : [];
         setFarms(list);
         setSiloDrafts(Object.fromEntries(list.flatMap((farm) => (farm.silos ?? []).map((silo) => [silo.locationId, siloDraftOf(silo)]))));
-        setFarmDrafts(Object.fromEntries(list.map((farm) => [farm.farmId, logisticsDraftOf(farm.settings)])));
-        // One read of the company's effective settings per company the farms belong to.
-        const companyIds = Array.from(new Set(list.map((farm) => farm.companyId).filter(Boolean)));
-        companyIds.forEach((companyId) => {
-          api
-            .get(`/feed-settings?companyId=${companyId}`)
-            .then((settingsRes: any) => {
-              if (!alive) return;
-              const data = settingsRes?.data ?? settingsRes;
-              const values: CompanySettings = {
-                safetyStockKg: data?.safetyStockKg ?? 0,
-                bagSizeKg: data?.bagSizeKg ?? null,
-                bulkMultipleKg: data?.bulkMultipleKg ?? null,
-                truckTargetKg: data?.truckTargetKg ?? null,
-                productionWeekday: data?.productionWeekday ?? null,
-              };
-              setCompanySettings((cur) => ({ ...cur, [companyId]: values }));
-              setCompanyDrafts((cur) => ({ ...cur, [companyId]: logisticsDraftOf(values) }));
-            })
-            .catch(() => {
-              if (alive) setRowError({ farmId: companyId, message: t("fpLoadFailed") });
-            });
-        });
       })
       .catch(() => {
         if (alive) setFailed(true);
@@ -220,68 +165,6 @@ export function FeedPlanningPanel() {
     }
   };
 
-  const companies = useMemo(() => {
-    const seen = new Map<string, string>();
-    farms.forEach((farm) => { if (farm.companyId && !seen.has(farm.companyId)) seen.set(farm.companyId, farm.companyName ?? farm.companyId); });
-    return Array.from(seen, ([companyId, name]) => ({ companyId, name }));
-  }, [farms]);
-
-  const companyChanged = (companyId: string) => {
-    const draft = companyDrafts[companyId];
-    const current = companySettings[companyId];
-    return !!draft && !!current && (draft.safetyStockKg !== (current.safetyStockKg?.toString() ?? "") || draft.bagSizeKg !== (current.bagSizeKg?.toString() ?? ""));
-  };
-  const farmChanged = (farm: FeedPlanningFarm) => JSON.stringify(farmDrafts[farm.farmId]) !== JSON.stringify(logisticsDraftOf(farm.settings));
-
-  /** Company Safety Stock KG and Bag Size KG, through PUT /feed-settings (a blank safety stock is 0). */
-  const saveCompany = async (companyId: string) => {
-    const draft = companyDrafts[companyId];
-    setSettingsSaving(companyId);
-    setRowError(null);
-    setSettingsSaved(null);
-    try {
-      const body = { companyId, safetyStockKg: numberOrNull(draft.safetyStockKg) ?? 0, bagSizeKg: numberOrNull(draft.bagSizeKg) };
-      await api.put("/feed-settings", body);
-      const next = { ...companySettings[companyId], safetyStockKg: body.safetyStockKg, bagSizeKg: body.bagSizeKg };
-      setCompanySettings((cur) => ({ ...cur, [companyId]: next }));
-      setCompanyDrafts((cur) => ({ ...cur, [companyId]: logisticsDraftOf(next) }));
-      setSettingsSaved(companyId);
-    } catch (err: any) {
-      setRowError({ farmId: companyId, message: err?.message || t("fpSaveFailed") });
-    } finally {
-      setSettingsSaving(null);
-    }
-  };
-
-  /** A farm's override row, through PUT /feed-settings/farm: a blank field is sent as null, which clears the override. */
-  const saveFarmOverride = async (farm: FeedPlanningFarm) => {
-    const draft = farmDrafts[farm.farmId];
-    setSettingsSaving(farm.farmId);
-    setRowError(null);
-    setSettingsSaved(null);
-    try {
-      const body = {
-        companyId: farm.companyId,
-        farmId: farm.farmId,
-        safetyStockKg: numberOrNull(draft.safetyStockKg),
-        bagSizeKg: numberOrNull(draft.bagSizeKg),
-        bulkMultipleKg: numberOrNull(draft.bulkMultipleKg),
-        truckTargetKg: numberOrNull(draft.truckTargetKg),
-        productionWeekday: numberOrNull(draft.productionWeekday),
-      };
-      await api.put("/feed-settings/farm", body);
-      setFarms((cur) => cur.map((f) => (f.farmId !== farm.farmId ? f : {
-        ...f,
-        settings: { safetyStockKg: body.safetyStockKg, bagSizeKg: body.bagSizeKg, bulkMultipleKg: body.bulkMultipleKg, truckTargetKg: body.truckTargetKg, productionWeekday: body.productionWeekday },
-      })));
-      setSettingsSaved(farm.farmId);
-    } catch (err: any) {
-      setRowError({ farmId: farm.farmId, message: err?.message || t("fpSaveFailed") });
-    } finally {
-      setSettingsSaving(null);
-    }
-  };
-
   if (loading) {
     return (
       <p className="flex items-center gap-2 text-xs text-[var(--text-secondary)]">
@@ -302,27 +185,6 @@ export function FeedPlanningPanel() {
   return (
     <div className="space-y-3">
       {rowError && <InlineAlert>{rowError.message}</InlineAlert>}
-      {companies.map(({ companyId, name }) => {
-        const draft = companyDrafts[companyId];
-        if (!draft) return null;
-        return (
-          <section key={companyId} aria-label={t("fsetCompanySection", { name })} className="flex flex-wrap items-end gap-3 rounded-md border border-[var(--border)] p-2">
-            <h3 className="w-full text-xs font-semibold text-[var(--text-primary)]">{t("fsetCompanyHeading", { name })}</h3>
-            {(["safetyStockKg", "bagSizeKg"] as const).map((key) => {
-              const field = LOGISTICS_FIELDS.find((f) => f.key === key)!;
-              return (
-                <label key={key} className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
-                  <span className="block">{t(field.colKey as any)}</span>
-                  <input type="number" aria-label={t(field.labelKey as any, { name })} className="nf-input-sm mt-1 text-right tabular-nums" style={{ ...inputStyle, width: field.widthPx }} min={0} step="1" value={draft[key]} onChange={(e) => setCompanyDrafts((cur) => ({ ...cur, [companyId]: { ...cur[companyId], [key]: e.target.value } }))} />
-                </label>
-              );
-            })}
-            <Button size="sm" variant="outline" className="h-7" aria-label={t("fsetSave", { name })} disabled={!companyChanged(companyId) || settingsSaving === companyId} onClick={() => saveCompany(companyId)}>
-              {settingsSaved === companyId && !companyChanged(companyId) ? <Check className="h-3.5 w-3.5" /> : <Save className="h-3.5 w-3.5" />}
-            </Button>
-          </section>
-        );
-      })}
       {farms.length === 0 ? (
         <p className="text-xs text-[var(--text-secondary)]">{t("fpNoFarms")}</p>
       ) : (
@@ -356,41 +218,6 @@ export function FeedPlanningPanel() {
                   {expanded && (
                     <tr id={detailId}>
                       <td className="bg-[var(--surface-subtle)] p-2 pl-6">
-                        <section aria-label={t("fsetFarmSection", { name: farm.code })} className="mb-2 flex flex-wrap items-end gap-3">
-                          <h4 className="w-full text-xs font-semibold text-[var(--text-primary)]">{t("fsetFarmHeading", { name: farm.code })}</h4>
-                          {LOGISTICS_FIELDS.map((field) => (
-                            <label key={field.key} className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
-                              <span className="block">{t(field.colKey as any)}</span>
-                              <input
-                                type="number"
-                                aria-label={t(field.labelKey as any, { name: farm.code })}
-                                className="nf-input-sm mt-1 text-right tabular-nums"
-                                style={{ ...inputStyle, width: field.widthPx }}
-                                min={0}
-                                step="1"
-                                placeholder={companySettings[farm.companyId]?.[field.key]?.toString() ?? ""}
-                                value={farmDrafts[farm.farmId]?.[field.key] ?? ""}
-                                onChange={(e) => setFarmDrafts((cur) => ({ ...cur, [farm.farmId]: { ...cur[farm.farmId], [field.key]: e.target.value } }))}
-                              />
-                            </label>
-                          ))}
-                          <label className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
-                            <span className="block">{t("fsetProductionWeekdayCol")}</span>
-                            <select
-                              aria-label={t("fsetProductionWeekday", { name: farm.code })}
-                              className="nf-input-sm mt-1"
-                              style={{ ...inputStyle, width: 110 }}
-                              value={farmDrafts[farm.farmId]?.productionWeekday ?? ""}
-                              onChange={(e) => setFarmDrafts((cur) => ({ ...cur, [farm.farmId]: { ...cur[farm.farmId], productionWeekday: e.target.value } }))}
-                            >
-                              <option value="">{t("fsetInheritCompany")}</option>
-                              {WEEKDAYS.map((day) => <option key={day} value={day}>{weekdayName(day)}</option>)}
-                            </select>
-                          </label>
-                          <Button size="sm" variant="outline" className="h-7" aria-label={t("fsetSave", { name: farm.code })} disabled={!farmChanged(farm) || settingsSaving === farm.farmId} onClick={() => saveFarmOverride(farm)}>
-                            {settingsSaved === farm.farmId && !farmChanged(farm) ? <Check className="h-3.5 w-3.5" /> : <Save className="h-3.5 w-3.5" />}
-                          </Button>
-                        </section>
                         <section aria-label={t("fpSiloSection", { farm: farm.code })} className="space-y-1.5">
                           {(farm.silos ?? []).length === 0 ? (
                             <p className="text-xs text-[var(--text-secondary)]">{t("fpNoSilos", { farm: farm.code })}</p>

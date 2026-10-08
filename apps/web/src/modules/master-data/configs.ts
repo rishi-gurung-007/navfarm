@@ -1553,12 +1553,11 @@ const alertRule: MasterDataConfig = {
 // order. Business Year and Production Start Date are derived by the API
 // (Production Start = the Sunday after End), so they are table columns only
 // and never form fields. A year is drafted with "Generate July–June periods"
-// on Inventory → Feed Forecast (Reporting Period view) and edited from
-// Settings → Reporting Periods. It still uses the shared master-data engine;
-// only its navigation reflects that it is a company calendar, not farm data.
+// on Inventory → Feed Forecast (Reporting Period view) and edited from its
+// primary Farm Operations master page. It still uses the shared master-data engine.
 const reportingPeriod: MasterDataConfig = {
   key: "reporting-period", label: "Reporting Periods", singular: "Reporting Period", apiBase: "/reporting-period", idKey: "period_id",
-  group: "Settings", isPrimary: false, businessAdminOnly: true,
+  group: "Farm Operations", isPrimary: true, businessAdminOnly: true,
   draftLifecycle: {
     activatePath: "activate",
     approvePermission: { moduleCode: "MASTER_DATA", resource: "REPORTING_PERIOD" },
@@ -2126,7 +2125,7 @@ export const MASTER_DATA_GROUPS = ["Farm Operations", "Production", "Inventory",
  * by module. Masters not named here still appear; they're appended after, in
  * their existing relative order, so this only pins the front of the list.
  */
-export const MASTER_DATA_NAV_ORDER: string[] = ["location", "number-series", "item", "stage", "breed", "animal", "activity", "alert-rule"];
+export const MASTER_DATA_NAV_ORDER: string[] = ["location", "number-series", "item", "stage", "breed", "animal", "activity", "reporting-period", "alert-rule"];
 
 export function getConfig(key: string): MasterDataConfig | undefined {
   if (key === "no-series") return MASTER_DATA_CONFIGS.find((c) => c.key === "number-series");
