@@ -7,6 +7,7 @@ import { FarmScoped } from '../../../common/farm-scope';
 import { FeedRequisitionService } from './feed-requisition.service';
 import {
   AutoDraftFeedRequisitionDto, CreateManualFeedRequisitionDto, QueryFeedRequisitionDto, UpdateFeedRequisitionDto,
+  FeedRequisitionReceiptDto, FeedRequisitionShipmentDto,
 } from './dto/feed-requisition.dto';
 
 // Feed requisitions ride the Procurement Requisition grant: drafted and
@@ -75,5 +76,32 @@ export class FeedRequisitionController {
   async submit(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateFeedRequisitionDto, @Req() req: any) {
     const data = await this.feedRequisitions.submit(id, dto ?? {}, req.user?.tenantId || req['tenantId'], req.user);
     return { success: true, message: 'Feed requisition submitted for approval.', data };
+  }
+
+  @Post(':id/release')
+  @HttpCode(200)
+  @RequirePermission('PROCUREMENT', 'REQUISITION', 'approve')
+  @ApiOperation({ summary: 'Release an approved feed requisition into its mill BIN to farm SILO transfers' })
+  async release(@Param('id', ParseUUIDPipe) id: string, @Req() req: any) {
+    const data = await this.feedRequisitions.release(id, req.user?.tenantId || req['tenantId'], req.user);
+    return { success: true, message: 'Feed requisition released.', data };
+  }
+
+  @Post(':id/shipments')
+  @HttpCode(200)
+  @RequirePermission('INVENTORY', 'STOCK_TRANSFER', 'edit')
+  @ApiOperation({ summary: 'Post a shipment against one transfer created by this feed requisition' })
+  async shipment(@Param('id', ParseUUIDPipe) id: string, @Body() dto: FeedRequisitionShipmentDto, @Req() req: any) {
+    const data = await this.feedRequisitions.shipment(id, dto, req.user?.tenantId || req['tenantId'], req.user);
+    return { success: true, message: 'Feed transfer shipment posted.', data };
+  }
+
+  @Post(':id/receipts')
+  @HttpCode(200)
+  @RequirePermission('PROCUREMENT', 'REQUISITION', 'view')
+  @ApiOperation({ summary: 'Post a receipt against a shipment belonging to this feed requisition' })
+  async receipt(@Param('id', ParseUUIDPipe) id: string, @Body() dto: FeedRequisitionReceiptDto, @Req() req: any) {
+    const data = await this.feedRequisitions.receipt(id, dto, req.user?.tenantId || req['tenantId'], req.user);
+    return { success: true, message: 'Feed transfer receipt posted.', data };
   }
 }

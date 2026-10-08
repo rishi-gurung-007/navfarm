@@ -55,3 +55,19 @@ export class UpdateFeedRequisitionDto {
   lines?: FeedLineEditInput[];
 }
 
+export class FeedRequisitionEventLineDto {
+  @ApiProperty() @IsUUID() requisition_line_id: string;
+  @ApiProperty() @Type(() => Number) @IsNumber() @Min(0.001) quantity: number;
+}
+
+export class FeedRequisitionShipmentDto {
+  @ApiProperty() @IsUUID() transfer_id: string;
+  @ApiProperty() @IsDateString() posting_date: string;
+  @ApiProperty({ type: [FeedRequisitionEventLineDto] })
+  @IsArray() @ArrayMinSize(1) @ValidateNested({ each: true }) @Type(() => FeedRequisitionEventLineDto)
+  lines: FeedRequisitionEventLineDto[];
+}
+
+export class FeedRequisitionReceiptDto extends FeedRequisitionShipmentDto {
+  @ApiProperty() @IsUUID() shipment_id: string;
+}

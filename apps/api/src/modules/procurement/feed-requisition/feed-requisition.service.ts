@@ -45,7 +45,7 @@ import {
 } from './feed-requisition.rules';
 import {
   AutoDraftFeedRequisitionDto, CreateManualFeedRequisitionDto, FeedLineEditInput, QueryFeedRequisitionDto,
-  UpdateFeedRequisitionDto,
+  UpdateFeedRequisitionDto, FeedRequisitionReceiptDto, FeedRequisitionShipmentDto,
 } from './dto/feed-requisition.dto';
 import { groupFeedTransferLines } from './feed-requisition-transfer.rules';
 
@@ -965,7 +965,7 @@ export class FeedRequisitionService implements OnModuleInit {
    */
   async findOne(requisitionId: string, tenantId: string, user: UserCtx) {
     const { farmId, companyId } = await this.resolveOwnFarm(requisitionId, tenantId, user);
-    return this.forecast.withFarmScope(farmId, companyId, () => this.readView(requisitionId, tenantId));
+    return this.forecast.withFarmScope(farmId, companyId, () => this.readView(requisitionId, tenantId, user));
   }
 
   /**
@@ -1129,7 +1129,101 @@ export class FeedRequisitionService implements OnModuleInit {
           updated_by: user.userId ?? null,
         }).where(eq(schema.requisition.requisition_id, requisitionId));
       });
-      return this.readView(requisitionId, tenantId);
+      return this.readView(requisitionId, tenantId, user);
+    });
+  }
+
+  private async assertMayShip(user: UserCtx) {
+    const may = await userHasPermission(this.db, user, { moduleCode: 'INVENTORY', resource: 'STOCK_TRANSFER', action: 'edit' });
+    if (!may) throw new ForbiddenException('You are not allowed to post transfer shipments.');
+  }
+
+  private async linkedTransferForExecution(requisitionId: string, transferId: string, tenantId: string) {
+    const rows = await this.db
+      .select({
+        transfer_id: schema.stockTransfer.transfer_id,
+        company_id: schema.stockTransfer.company_id,
+        from_warehouse_id: schema.stockTransfer.from_warehouse_id,
+        to_warehouse_id: schema.stockTransfer.to_warehouse_id,
+        destination_farm_id: schema.locationMaster.farm_id,
+        destination_parent_id: schema.locationMaster.parent_location_id,
+        transfer_line_id: schema.stockTransferLine.line_id,
+        requisition_line_id: schema.stockTransferLine.requisition_line_id,
+      })
+      .from(schema.feedRequisitionTransfer)
+      .innerJoin(schema.stockTransfer, eq(schema.stockTransfer.transfer_id, schema.feedRequisitionTransfer.transfer_id))
+      .innerJoin(schema.stockTransferLine, eq(schema.stockTransferLine.transfer_id, schema.stockTransfer.transfer_id))
+      .leftJoin(schema.locationMaster, eq(schema.locationMaster.location_id, schema.stockTransfer.to_warehouse_id))
+      .where(and(
+        eq(schema.feedRequisitionTransfer.tenant_id, tenantId),
+        eq(schema.feedRequisitionTransfer.requisition_id, requisitionId),
+        eq(schema.feedRequisitionTransfer.transfer_id, transferId),
+        eq(schema.stockTransfer.tenant_id, tenantId),
+        isNull(schema.stockTransfer.deleted_at),
+      ));
+    if (!rows.length) {
+      throw new NotFoundException(`Transfer '${transferId}' is not linked to this feed requisition.`);
+    }
+    const head = rows[0];
+    return {
+      transfer: {
+        transfer_id: head.transfer_id,
+        company_id: head.company_id,
+        from_warehouse_id: head.from_warehouse_id,
+        to_warehouse_id: head.to_warehouse_id,
+        destination_farm_id: head.destination_farm_id,
+        destination_parent_id: head.destination_parent_id,
+      },
+      lines: rows.map((entry) => ({
+        transfer_line_id: entry.transfer_line_id,
+        requisition_line_id: entry.requisition_line_id,
+      })),
+    };
+  }
+
+  private mapEventLines(
+    transferId: string,
+    available: Array<{ transfer_line_id: string; requisition_line_id: string | null }>,
+    requested: Array<{ requisition_line_id: string; quantity: number }>,
+  ) {
+    const transferLineOf = new Map(available.map((line) => [line.requisition_line_id, line.transfer_line_id]));
+    return requested.map((line) => {
+      const transferLineId = transferLineOf.get(line.requisition_line_id);
+      if (!transferLineId) {
+        throw new BadRequestException(`Requisition line '${line.requisition_line_id}' is not part of transfer ${transferId}.`);
+      }
+      return { line_id: transferLineId, quantity: line.quantity };
+    });
+  }
+
+  async shipment(requisitionId: string, dto: FeedRequisitionShipmentDto, tenantId: string, user: UserCtx) {
+    await this.assertMayShip(user);
+    const { farmId, companyId } = await this.resolveOwnFarm(requisitionId, tenantId, user);
+    return this.forecast.withFarmScope(farmId, companyId, async () => {
+      if (!this.stockTransfers) throw new InternalServerErrorException('Stock transfer service is unavailable.');
+      const linked = await this.linkedTransferForExecution(requisitionId, dto.transfer_id, tenantId);
+      await this.stockTransfers.postShipment(dto.transfer_id, {
+        posting_date: dto.posting_date,
+        lines: this.mapEventLines(dto.transfer_id, linked.lines, dto.lines),
+      }, tenantId, user, true);
+      return this.readView(requisitionId, tenantId, user);
+    });
+  }
+
+  async receipt(requisitionId: string, dto: FeedRequisitionReceiptDto, tenantId: string, user: UserCtx) {
+    const { farmId, companyId } = await this.resolveOwnFarm(requisitionId, tenantId, user);
+    return this.forecast.withFarmScope(farmId, companyId, async () => {
+      if (!this.stockTransfers) throw new InternalServerErrorException('Stock transfer service is unavailable.');
+      const linked = await this.linkedTransferForExecution(requisitionId, dto.transfer_id, tenantId);
+      if (linked.transfer.destination_farm_id !== farmId && linked.transfer.destination_parent_id !== farmId) {
+        throw new ForbiddenException(`Transfer ${dto.transfer_id} destination is outside requisition farm ${farmId}.`);
+      }
+      await this.stockTransfers.postReceipt(dto.transfer_id, {
+        shipment_id: dto.shipment_id,
+        posting_date: dto.posting_date,
+        lines: this.mapEventLines(dto.transfer_id, linked.lines, dto.lines),
+      }, tenantId, user, true);
+      return this.readView(requisitionId, tenantId, user);
     });
   }
 
@@ -1553,7 +1647,104 @@ export class FeedRequisitionService implements OnModuleInit {
    * The top-level farm_total_requested_kg / truck_target_kg / truck_trips stay
    * for callers written before the header existed.
    */
-  private async readView(requisitionId: string, tenantId: string) {
+  private async readTransferViews(requisitionId: string, tenantId: string) {
+    const transfers = await this.db
+      .select({
+        transfer_id: schema.stockTransfer.transfer_id,
+        transfer_no: schema.stockTransfer.transfer_no,
+        status: schema.stockTransfer.status,
+        posting_date: schema.stockTransfer.posting_date,
+        from_warehouse_id: schema.stockTransfer.from_warehouse_id,
+        to_warehouse_id: schema.stockTransfer.to_warehouse_id,
+        bin_assignment_id: schema.feedRequisitionTransfer.bin_assignment_id,
+      })
+      .from(schema.feedRequisitionTransfer)
+      .innerJoin(schema.stockTransfer, eq(schema.stockTransfer.transfer_id, schema.feedRequisitionTransfer.transfer_id))
+      .where(and(
+        eq(schema.feedRequisitionTransfer.tenant_id, tenantId),
+        eq(schema.feedRequisitionTransfer.requisition_id, requisitionId),
+        isNull(schema.stockTransfer.deleted_at),
+      ));
+    const transferIds = transfers.map((transfer) => transfer.transfer_id);
+    if (!transferIds.length) return [];
+
+    const transferLines = await this.db
+      .select({
+        transfer_line_id: schema.stockTransferLine.line_id,
+        transfer_id: schema.stockTransferLine.transfer_id,
+        requisition_line_id: schema.stockTransferLine.requisition_line_id,
+        item_id: schema.stockTransferLine.item_id,
+        item_code: schema.itemMaster.item_code,
+        item_name: schema.itemMaster.item_name,
+        quantity: schema.stockTransferLine.quantity,
+        uom: schema.stockTransferLine.uom,
+      })
+      .from(schema.stockTransferLine)
+      .leftJoin(schema.itemMaster, eq(schema.itemMaster.item_id, schema.stockTransferLine.item_id))
+      .where(inArray(schema.stockTransferLine.transfer_id, transferIds));
+    const lineIds = transferLines.map((line) => line.transfer_line_id);
+    const shipped = lineIds.length ? await this.db
+      .select({ line_id: schema.transferShipmentLine.line_id, quantity: sql<string>`SUM(${schema.transferShipmentLine.quantity})` })
+      .from(schema.transferShipmentLine)
+      .where(inArray(schema.transferShipmentLine.line_id, lineIds))
+      .groupBy(schema.transferShipmentLine.line_id) : [];
+    const received = lineIds.length ? await this.db
+      .select({ line_id: schema.transferReceiptLine.line_id, quantity: sql<string>`SUM(${schema.transferReceiptLine.quantity})` })
+      .from(schema.transferReceiptLine)
+      .where(inArray(schema.transferReceiptLine.line_id, lineIds))
+      .groupBy(schema.transferReceiptLine.line_id) : [];
+    const shippedByLine = new Map(shipped.map((entry) => [entry.line_id, Number(entry.quantity)]));
+    const receivedByLine = new Map(received.map((entry) => [entry.line_id, Number(entry.quantity)]));
+
+    const shipments = await this.db
+      .select({
+        shipment_id: schema.transferShipment.shipment_id,
+        transfer_id: schema.transferShipment.transfer_id,
+        shipment_no: schema.transferShipment.shipment_no,
+        shipment_date: schema.transferShipment.shipment_date,
+      })
+      .from(schema.transferShipment)
+      .where(and(inArray(schema.transferShipment.transfer_id, transferIds), isNull(schema.transferShipment.deleted_at)));
+    const shipmentIds = shipments.map((shipment) => shipment.shipment_id);
+    const shipmentLines = shipmentIds.length ? await this.db
+      .select({ shipment_id: schema.transferShipmentLine.shipment_id, line_id: schema.transferShipmentLine.line_id, quantity: schema.transferShipmentLine.quantity })
+      .from(schema.transferShipmentLine)
+      .where(inArray(schema.transferShipmentLine.shipment_id, shipmentIds)) : [];
+    const receiptByShipmentLine = shipmentIds.length ? await this.db
+      .select({ shipment_id: schema.transferReceipt.shipment_id, line_id: schema.transferReceiptLine.line_id, quantity: sql<string>`SUM(${schema.transferReceiptLine.quantity})` })
+      .from(schema.transferReceiptLine)
+      .innerJoin(schema.transferReceipt, eq(schema.transferReceipt.receipt_id, schema.transferReceiptLine.receipt_id))
+      .where(and(inArray(schema.transferReceipt.shipment_id, shipmentIds), isNull(schema.transferReceipt.deleted_at)))
+      .groupBy(schema.transferReceipt.shipment_id, schema.transferReceiptLine.line_id) : [];
+    const receivedForShipment = new Map(receiptByShipmentLine.map((entry) => [`${entry.shipment_id}:${entry.line_id}`, Number(entry.quantity)]));
+
+    return transfers.map((transfer) => {
+      const lines = transferLines.filter((line) => line.transfer_id === transfer.transfer_id).map((line) => {
+        const ordered = Number(line.quantity);
+        const qtyShipped = shippedByLine.get(line.transfer_line_id) ?? 0;
+        const qtyReceived = receivedByLine.get(line.transfer_line_id) ?? 0;
+        return {
+          ...line,
+          quantity: ordered,
+          qty_shipped: qtyShipped,
+          qty_received: qtyReceived,
+          balance_to_ship: Math.max(0, ordered - qtyShipped),
+          remaining_to_receive: Math.max(0, qtyShipped - qtyReceived),
+        };
+      });
+      const openShipments = shipments.filter((shipment) => shipment.transfer_id === transfer.transfer_id).map((shipment) => ({
+        ...shipment,
+        lines: shipmentLines.filter((line) => line.shipment_id === shipment.shipment_id).map((line) => {
+          const shippedQty = Number(line.quantity);
+          const receivedQty = receivedForShipment.get(`${shipment.shipment_id}:${line.line_id}`) ?? 0;
+          return { line_id: line.line_id, quantity: shippedQty, qty_received: receivedQty, remaining_to_receive: Math.max(0, shippedQty - receivedQty) };
+        }).filter((line) => line.remaining_to_receive > 0),
+      })).filter((shipment) => shipment.lines.length > 0);
+      return { ...transfer, lines, open_shipments: openShipments };
+    });
+  }
+
+  private async readView(requisitionId: string, tenantId: string, _user?: UserCtx) {
     const [row] = await this.db
       .select({
         req: schema.requisition,
@@ -1654,8 +1845,28 @@ export class FeedRequisitionService implements OnModuleInit {
       : DEFAULT_FEED_SETTINGS;
     const truckTarget = settings.truckTargetKg;
     const trips = farmTotal > 0 ? Math.ceil(farmTotal / truckTarget) : 0;
+    const approvalStatus = row.req.approval_status ?? (row.req.status === 'APPROVED' ? 'APPROVED' : row.req.status === 'REJECTED' ? 'REJECTED' : row.req.status === 'PENDING_APPROVAL' ? 'PENDING_APPROVAL' : 'OPEN');
+    const documentStatus = row.req.document_status ?? 'OPEN';
+    const fulfilmentStatus = row.req.fulfilment_status ?? 'NOT_APPLICABLE';
+    const transfers = documentStatus === 'RELEASED' || fulfilmentStatus !== 'NOT_APPLICABLE'
+      ? await this.readTransferViews(requisitionId, tenantId)
+      : [];
+    const hasShipBalance = transfers.some((transfer) => transfer.lines.some((line) => line.balance_to_ship > 0));
+    const hasReceiptBalance = transfers.some((transfer) => transfer.open_shipments.length > 0);
+    const releaseEnabled = approvalStatus === 'APPROVED' && documentStatus === 'OPEN';
+    const shipmentEnabled = documentStatus === 'RELEASED' && hasShipBalance;
+    const receiptEnabled = documentStatus === 'RELEASED' && hasReceiptBalance;
     return {
       ...row.req,
+      approval_status: approvalStatus,
+      document_status: documentStatus,
+      fulfilment_status: fulfilmentStatus,
+      actions: {
+        release: { enabled: releaseEnabled, reason: releaseEnabled ? null : approvalStatus !== 'APPROVED' ? 'Approval is required before Release.' : 'This requisition is already released.' },
+        shipment: { enabled: shipmentEnabled, reason: shipmentEnabled ? null : documentStatus !== 'RELEASED' ? 'Release the requisition before Transfer Shipment.' : 'There is no quantity left to ship.' },
+        receipt: { enabled: receiptEnabled, reason: receiptEnabled ? null : documentStatus !== 'RELEASED' ? 'Release the requisition before Transfer Receipt.' : 'There is no shipped quantity waiting for receipt.' },
+      },
+      transfers,
       farm_code: row.farm_code,
       header: {
         farm_code: row.farm_code ?? null,

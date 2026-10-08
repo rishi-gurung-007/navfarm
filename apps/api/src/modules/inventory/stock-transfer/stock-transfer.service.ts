@@ -216,8 +216,9 @@ export class StockTransferService {
    * draft's quantities and post it, draining the source farm's warehouse. So
    * farm, LOB and company sit on from_warehouse_id only.
    */
-  private async loadForMutation(id: string, tenantId: string) {
+  private async loadForMutation(id: string, tenantId: string, requisitionExecution = false) {
     const scope = farmScope(this.cls);
+    const locationScope = requisitionExecution ? [] : locationReferenceScopeConditions(scope, schema.stockTransfer.from_warehouse_id);
     const [transfer] = await this.db
       .select()
       .from(schema.stockTransfer)
@@ -225,7 +226,7 @@ export class StockTransferService {
         eq(schema.stockTransfer.transfer_id, id),
         eq(schema.stockTransfer.tenant_id, tenantId),
         isNull(schema.stockTransfer.deleted_at),
-        ...locationReferenceScopeConditions(scope, schema.stockTransfer.from_warehouse_id),
+        ...locationScope,
         ...restrictedScopeConditions(scope, { companyId: schema.stockTransfer.company_id }),
       ))
       .for('update');
@@ -681,14 +682,14 @@ export class StockTransferService {
    * the events carry identity, the order line stays the contract. Lines with
    * no event in this call are simply not shipped yet — partial by design.
    */
-  async postShipment(id: string, dto: PostShipmentDto, tenantId: string, userPayload?: any) {
+  async postShipment(id: string, dto: PostShipmentDto, tenantId: string, userPayload?: any, requisitionExecution = false) {
     const result = await withTenantTransaction(this.cls, async () => {
-      const transfer = await this.loadForMutation(id, tenantId);
+      const transfer = await this.loadForMutation(id, tenantId, requisitionExecution);
       this.assertOpen(transfer);
       if (transfer.from_warehouse_id === transfer.to_warehouse_id) {
         throw new BadRequestException('A transfer needs two different warehouses.');
       }
-      await this.assertWarehouses(transfer.from_warehouse_id, transfer.to_warehouse_id);
+      if (!requisitionExecution) await this.assertWarehouses(transfer.from_warehouse_id, transfer.to_warehouse_id);
       await this.assertSiloDestination(transfer, transfer.lines, tenantId);
 
       this.assertDistinctLines(dto.lines, 'shipment');
@@ -809,11 +810,11 @@ export class StockTransferService {
    * event, never re-typed. The receipt that closes a shipment line takes the
    * line's remaining shipped value, so Inventory in Transit nets to zero.
    */
-  async postReceipt(id: string, dto: PostReceiptDto, tenantId: string, userPayload?: any) {
+  async postReceipt(id: string, dto: PostReceiptDto, tenantId: string, userPayload?: any, requisitionExecution = false) {
     return withTenantTransaction(this.cls, async () => {
-      const transfer = await this.loadForMutation(id, tenantId);
+      const transfer = await this.loadForMutation(id, tenantId, requisitionExecution);
       this.assertOpen(transfer);
-      await this.assertWarehouses(transfer.from_warehouse_id, transfer.to_warehouse_id);
+      if (!requisitionExecution) await this.assertWarehouses(transfer.from_warehouse_id, transfer.to_warehouse_id);
 
       const [shipment] = await this.db.select().from(schema.transferShipment)
         .where(and(
