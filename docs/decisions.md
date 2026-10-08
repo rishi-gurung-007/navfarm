@@ -2832,3 +2832,47 @@ through every later visible date instead of showing blank cells.
 This refines the 5 Oct 45-day rule: 45 days limits displayed date columns and
 user-selected ranges; it does not limit the background search for First
 Shortage Date.
+
+## 2026-10-08 — Feed Forecast pages, saved calculations and planned incoming stock
+
+Rishi approved the following final page and calculation boundaries:
+
+1. **Feed Plan is an operational tab inside Feed Forecast**, not a Company
+   Settings page. **Feed Planning** remains configuration under Company
+   Settings → Feed. The Feed Forecast tabs are Dashboard, Calculation, Feed
+   Plan, Feed Requisitions and Stock Take & Reconciliation.
+2. Bulk Truck Target KG and Bulk Order Multiple use the existing company Feed
+   Planning values with nullable overrides for each Farm. Clearing a Farm
+   override restores inheritance. Existing master fields and persisted master
+   columns must not be removed, hidden, renamed or repurposed; implementation
+   may add only fields proven necessary.
+3. Reporting Period is primary master data under Farm Operations, not a
+   Settings page. Its complete existing field and draft/activation contract is
+   preserved when its navigation moves.
+4. Calculation starts empty. Filters do not calculate automatically; the user
+   explicitly selects the required Farm/date filters and presses Calculate.
+   Saving preserves the exact displayed calculation and its effective settings.
+   At most one current saved calculation exists per Farm.
+5. **Delete calculation** archives the saved run and preserves its evidence,
+   lines and any linked requisition. Archiving permits a replacement current
+   calculation; it does not physically delete either record.
+6. A feed requisition can be previewed and created from the exact current saved
+   calculation from both Calculation and Feed Requisitions. The user may edit
+   the permitted request fields before creation. One saved run creates at most
+   one requisition, and once linked the UI offers View Requisition instead of a
+   second creation.
+7. An approved, unlinked feed requisition is planned incoming stock on its
+   delivery date. If overdue at the forecast stock date it is added on that
+   stock date and labelled overdue. Once any explicit feed-transfer link exists,
+   the requisition quantity is no longer counted as planned incoming; the open
+   transfer balance replaces it. Posted receipt ledger movement remains a
+   separate confirmed source. These sources must never be double counted.
+8. Forecast roll-forward applies the separately labelled incoming quantities
+   on their effective date before consumption, so the following day opens with
+   the prior closing balance. Unavailable user-facing values use explanatory
+   text rather than `NaN`, a hyphen or an em dash.
+
+This supersedes earlier statements that Calculation is review-only, that feed
+workflow stops at approval, or that Feed Planning belongs in Inventory Setup.
+Mill Consolidation, Loading Instruction and a dedicated Feed Transfer Order
+Receipt page remain deferred.
