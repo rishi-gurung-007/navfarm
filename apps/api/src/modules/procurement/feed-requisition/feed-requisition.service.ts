@@ -11,7 +11,7 @@
  * RequisitionModule is mounted since Part E Task 13 (C2 lifted) but refuses
  * every mutation on a FEED row; nothing here imports it.
  */
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, InternalServerErrorException, NotFoundException, OnModuleInit } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, InternalServerErrorException, NotFoundException, OnModuleInit, Optional } from '@nestjs/common';
 import { and, desc, eq, inArray, isNull, like, notInArray, sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import { MySql2Database } from 'drizzle-orm/mysql2';
@@ -35,6 +35,7 @@ import { InventoryLedgerService } from '../../inventory/inventory-ledger/invento
 import { ApprovalService } from '../../production/approval/approval.service';
 import type { ApprovalRequestRow } from '../../production/approval/approval.service';
 import { FeedSettingsService } from '../../inventory/feed-settings/feed-settings.service';
+import { StockTransferService } from '../../inventory/stock-transfer/stock-transfer.service';
 import { toFarmFeedSettings } from '../../inventory/feed-settings/feed-settings.rules';
 import { maySelfApprove } from '../requisition/requisition.rules';
 import {
@@ -46,6 +47,7 @@ import {
   AutoDraftFeedRequisitionDto, CreateManualFeedRequisitionDto, FeedLineEditInput, QueryFeedRequisitionDto,
   UpdateFeedRequisitionDto,
 } from './dto/feed-requisition.dto';
+import { groupFeedTransferLines } from './feed-requisition-transfer.rules';
 
 /** The caller as the JWT carries it. userType is required by resolveFarm, which fails closed without it. */
 export type UserCtx = { userId?: string; userType?: string; email?: string };
@@ -130,6 +132,7 @@ export class FeedRequisitionService implements OnModuleInit {
     // Task 5: the farm's draft-rounding settings (bulk multiple, bag size, truck target, production weekday,
     // safety stock) come from Feed Planning Settings now, not location_master's own feed_* columns.
     private readonly feedSettings: FeedSettingsService,
+    @Optional() private readonly stockTransfers?: StockTransferService,
   ) {}
 
   private get db(): MySql2Database<typeof schema> {
@@ -963,6 +966,171 @@ export class FeedRequisitionService implements OnModuleInit {
   async findOne(requisitionId: string, tenantId: string, user: UserCtx) {
     const { farmId, companyId } = await this.resolveOwnFarm(requisitionId, tenantId, user);
     return this.forecast.withFarmScope(farmId, companyId, () => this.readView(requisitionId, tenantId));
+  }
+
+  /**
+   * Turn an approved feed requisition into one or more mill-BIN → farm-SILO
+   * stock transfers. The requisition row lock serializes concurrent Release
+   * clicks and the surrounding tenant transaction owns every transfer link.
+   */
+  async release(requisitionId: string, tenantId: string, user: UserCtx) {
+    await this.assertMayDecide(user);
+    const { farmId, companyId } = await this.resolveOwnFarm(requisitionId, tenantId, user);
+    return this.forecast.withFarmScope(farmId, companyId, async () => {
+      await withTenantTransaction(this.cls, async () => {
+        const [row] = await this.db
+          .select()
+          .from(schema.requisition)
+          .where(and(
+            eq(schema.requisition.requisition_id, requisitionId),
+            eq(schema.requisition.tenant_id, tenantId),
+            eq(schema.requisition.company_id, companyId),
+            eq(schema.requisition.farm_id, farmId),
+            eq(schema.requisition.doc_type, FEED_DOC_TYPE),
+            isNull(schema.requisition.deleted_at),
+            ...this.scopeConditions(),
+          ))
+          .limit(1)
+          .for('update');
+        if (!row) throw new NotFoundException(`Requisition '${requisitionId}' not found.`);
+        if ((row.document_status ?? '') === 'RELEASED') return;
+        if ((row.approval_status ?? row.status) !== 'APPROVED' || (row.document_status ?? 'OPEN') !== 'OPEN') {
+          throw new BadRequestException(`Feed requisition ${row.req_no} must be Approved and Open before Release.`);
+        }
+        if (!row.production_date) {
+          throw new BadRequestException(`Feed requisition ${row.req_no} has no production date and cannot be released.`);
+        }
+        if (!this.stockTransfers) throw new InternalServerErrorException('Stock transfer service is unavailable.');
+
+        const existingLinks = await this.db
+          .select({ transfer_id: schema.feedRequisitionTransfer.transfer_id })
+          .from(schema.feedRequisitionTransfer)
+          .where(and(
+            eq(schema.feedRequisitionTransfer.tenant_id, tenantId),
+            eq(schema.feedRequisitionTransfer.requisition_id, requisitionId),
+          ));
+        if (existingLinks.length) {
+          throw new ConflictException(`Feed requisition ${row.req_no} already has released transfers.`);
+        }
+
+        const lines = await this.db
+          .select({
+            line_id: schema.requisitionLine.line_id,
+            item_id: schema.requisitionLine.item_id,
+            item_code: schema.itemMaster.item_code,
+            destination_location_id: schema.requisitionLine.destination_location_id,
+            quantity: schema.requisitionLine.quantity,
+          })
+          .from(schema.requisitionLine)
+          .leftJoin(schema.itemMaster, eq(schema.itemMaster.item_id, schema.requisitionLine.item_id))
+          .where(eq(schema.requisitionLine.requisition_id, requisitionId));
+        if (!lines.length) throw new BadRequestException(`Feed requisition ${row.req_no} has no lines to release.`);
+        for (const line of lines) {
+          if (!line.item_id || !line.destination_location_id) {
+            throw new BadRequestException(`Feed requisition line ${line.line_id} needs both a feed item and destination SILO.`);
+          }
+        }
+
+        const itemIds = [...new Set(lines.map((line) => line.item_id!))];
+        const assignments = await this.db
+          .select({
+            assignment_id: schema.binDietAssignment.assignment_id,
+            feed_item_id: schema.binDietAssignment.feed_item_id,
+            production_date: schema.binDietAssignment.production_date,
+            bin_location_id: schema.binDietAssignment.bin_location_id,
+            production_slot_id: schema.binDietAssignment.production_slot_id,
+          })
+          .from(schema.binDietAssignment)
+          .where(and(
+            eq(schema.binDietAssignment.tenant_id, tenantId),
+            eq(schema.binDietAssignment.company_id, companyId),
+            eq(schema.binDietAssignment.production_date, row.production_date),
+            inArray(schema.binDietAssignment.feed_item_id, itemIds),
+            eq(schema.binDietAssignment.is_active, true),
+            eq(schema.binDietAssignment.status, 'ACTIVE'),
+            isNull(schema.binDietAssignment.deleted_at),
+          ));
+
+        const destinationIds = [...new Set(lines.map((line) => line.destination_location_id!))];
+        const destinations = await this.db
+          .select({
+            location_id: schema.locationMaster.location_id,
+            location_type: schema.locationMaster.location_type,
+            parent_location_id: schema.locationMaster.parent_location_id,
+            farm_id: schema.locationMaster.farm_id,
+            is_active: schema.locationMaster.is_active,
+            status: schema.locationMaster.status,
+            deleted_at: schema.locationMaster.deleted_at,
+          })
+          .from(schema.locationMaster)
+          .where(and(
+            eq(schema.locationMaster.tenant_id, tenantId),
+            eq(schema.locationMaster.company_id, companyId),
+            inArray(schema.locationMaster.location_id, destinationIds),
+          ));
+        const validDestinations = new Set(destinations.filter((destination) =>
+          destination.location_type === 'SILO'
+          && destination.is_active === true
+          && destination.status === 'ACTIVE'
+          && !destination.deleted_at
+          && (destination.farm_id === farmId || destination.parent_location_id === farmId),
+        ).map((destination) => destination.location_id));
+        const invalidDestination = destinationIds.find((id) => !validDestinations.has(id));
+        if (invalidDestination) {
+          throw new BadRequestException(`Feed requisition destination ${invalidDestination} must be an active SILO on farm ${farmId}.`);
+        }
+
+        const plans = groupFeedTransferLines(
+          lines.map((line) => ({
+            lineId: line.line_id,
+            itemId: line.item_id!,
+            itemLabel: line.item_code ?? line.item_id!,
+            destinationLocationId: line.destination_location_id!,
+            quantityKg: Number(line.quantity),
+          })),
+          assignments.map((assignment) => ({
+            assignmentId: assignment.assignment_id,
+            itemId: assignment.feed_item_id,
+            productionDate: assignment.production_date,
+            binLocationId: assignment.bin_location_id,
+            productionSlotId: assignment.production_slot_id,
+          })),
+          row.production_date,
+        );
+
+        for (const plan of plans) {
+          const transfer = await this.stockTransfers.createForFeedRelease({
+            company_id: companyId,
+            from_warehouse_id: plan.sourceLocationId,
+            to_warehouse_id: plan.destinationLocationId,
+            posting_date: row.production_date,
+            remarks: `Feed requisition ${row.req_no}`,
+            lines: plan.lines.map((line) => ({
+              item_id: line.itemId,
+              quantity: line.quantityKg,
+              uom: 'KG',
+              requisition_line_id: line.requisitionLineId,
+            })),
+          }, tenantId, user);
+          await this.db.insert(schema.feedRequisitionTransfer).values({
+            link_id: randomUUID(),
+            tenant_id: tenantId,
+            requisition_id: requisitionId,
+            transfer_id: transfer.transfer_id,
+            bin_assignment_id: plan.assignmentId,
+            created_by: user.userId ?? null,
+          });
+        }
+        await this.db.update(schema.requisition).set({
+          document_status: 'RELEASED',
+          fulfilment_status: 'TRANSFER_OPEN',
+          released_by: user.userId ?? null,
+          released_at: nowTs(),
+          updated_by: user.userId ?? null,
+        }).where(eq(schema.requisition.requisition_id, requisitionId));
+      });
+      return this.readView(requisitionId, tenantId);
+    });
   }
 
   /** For every by-id path (findOne, update, approve, reject): the row's farm and company, once the caller is proven to see them. */

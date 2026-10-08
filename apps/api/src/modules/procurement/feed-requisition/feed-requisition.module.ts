@@ -5,6 +5,7 @@ import { FeedAlertModule } from '../../inventory/feed-alert/feed-alert.module';
 import { SiloFeedModule } from '../../inventory/silo-feed/silo-feed.module';
 import { InventoryLedgerModule } from '../../inventory/inventory-ledger/inventory-ledger.module';
 import { FeedSettingsModule } from '../../inventory/feed-settings/feed-settings.module';
+import { StockTransferModule } from '../../inventory/stock-transfer/stock-transfer.module';
 import { FeedRequisitionController } from './feed-requisition.controller';
 import { FeedRequisitionService } from './feed-requisition.service';
 
@@ -13,7 +14,7 @@ import { FeedRequisitionService } from './feed-requisition.service';
 // is now registered in app.module, and every generic mutation refuses a FEED row,
 // so this module still does not import it and nothing feed goes through it.
 @Module({
-  imports: [ApprovalModule, FeedForecastModule, FeedAlertModule, SiloFeedModule, InventoryLedgerModule, FeedSettingsModule],
+  imports: [ApprovalModule, FeedForecastModule, FeedAlertModule, SiloFeedModule, InventoryLedgerModule, FeedSettingsModule, StockTransferModule],
   controllers: [FeedRequisitionController],
   providers: [FeedRequisitionService],
 })
