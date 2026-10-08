@@ -4502,6 +4502,27 @@ export const requisition = mysqlTable('requisition', {
   }).onDelete('set null'),
 }));
 
+/**
+ * A feed requisition may release into several transfers when its lines use
+ * different mill BIN assignments or destination SILOs. Common requisitions
+ * retain requisition.linked_transfer_id; this table is feed-only evidence of
+ * the one-to-many release decision.
+ */
+export const feedRequisitionTransfer = mysqlTable('feed_requisition_transfer', {
+  link_id: varchar('link_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+  requisition_id: varchar('requisition_id', { length: 36 }).notNull().references(() => requisition.requisition_id, { onDelete: 'cascade' }),
+  transfer_id: varchar('transfer_id', { length: 36 }).notNull().references(() => stockTransfer.transfer_id, { onDelete: 'restrict' }),
+  bin_assignment_id: varchar('bin_assignment_id', { length: 36 }).notNull().references(() => binDietAssignment.assignment_id, { onDelete: 'restrict' }),
+  created_by: varchar('created_by', { length: 36 }),
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+}, (table) => ({
+  transferUnique: uniqueIndex('uq_feed_req_transfer_transfer').on(table.transfer_id),
+  pairUnique: uniqueIndex('uq_feed_req_transfer_pair').on(table.requisition_id, table.transfer_id),
+  tenantRequisitionIndex: index('idx_feed_req_transfer_tenant_requisition').on(table.tenant_id, table.requisition_id),
+  assignmentIndex: index('idx_feed_req_transfer_assignment').on(table.bin_assignment_id),
+}));
+
 export const requisitionLine = mysqlTable('requisition_line', {
   line_id: varchar('line_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
   requisition_id: varchar('requisition_id', { length: 36 }).notNull().references(() => requisition.requisition_id, { onDelete: 'cascade' }),
@@ -4556,6 +4577,8 @@ export const requisitionLine = mysqlTable('requisition_line', {
   // transfer's lines at release; a tracked line refuses shipment without it.
   lot_no: varchar('lot_no', { length: 50 }),
   serial_no: varchar('serial_no', { length: 100 }),
+  // Feed requisitions alone may carry a controlled exception/override reason.
+  reason_id: varchar('reason_id', { length: 36 }).references(() => reasonMaster.reason_id, { onDelete: 'restrict' }),
   created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
 });
 
