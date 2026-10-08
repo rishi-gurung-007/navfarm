@@ -103,7 +103,7 @@ describe('FeedForecastPanel — admin', () => {
     render(<FeedForecastPanel />);
     const table = await screen.findByRole('table', { name: 'ffGridLabel' });
     // Both fixture rows fall on 25/09/26, so there is one date column.
-    expect(within(table).getAllByRole('columnheader')).toHaveLength(14 + 1);
+    expect(within(table).getAllByRole('columnheader')).toHaveLength(17 + 1);
   });
 
   it("shares the window on screen with the Feed Requisition tab's Draft from forecast (Feed Forecast row 8)", async () => {

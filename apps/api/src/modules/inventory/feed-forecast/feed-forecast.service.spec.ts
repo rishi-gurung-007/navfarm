@@ -547,9 +547,6 @@ describe('FeedSettingsService.resolveForFeedPlanning — feed settings are read 
     await cls.run(async () => {
       cls.set(FARM_SCOPE_KEY, RESTRICTED_SCOPE);
       const feedSettings = new FeedSettingsService(cls);
-      const service = new FeedForecastService(
-        cls, {} as any, { log: jest.fn() } as any, { currentItems: jest.fn(async () => new Map()) } as any, feedSettings,
-      );
 
       const result = await feedSettings.resolveForFeedPlanning('co-1', 'farm-null-lob');
 
@@ -858,7 +855,7 @@ describe('loadDraftTransfers — D19 booked transfers (Q2, Ruling M2; Part E Tas
     return { db: { select: () => chain() }, wheres };
   }
   const render = (w: unknown) => new MySqlDialect().sqlToQuery(w as any);
-  const load = async (db: unknown, ids: string[], lobId: string | null = null, restricted = false) => {
+  const load = async (db: object, ids: string[], lobId: string | null = null, restricted = false) => {
     const cls = transactionCls(db);
     useFarmScope(cls, { farmId: 'farm-A', restricted, companyId: 'comp-1', lobId });
     return (new FeedForecastService(cls, {} as any, { log: jest.fn() } as any, { currentItems: jest.fn(async () => new Map()) } as any, FEED_SETTINGS_STUB) as any)
@@ -1273,7 +1270,7 @@ describe('stageBlocksFor — current / next stage block (field spec supporting b
   ]);
   const sheds = new Map([['h3', 'GRS/SHED-003']]);
   const batch = (stageId: string, stageCode: string, start: string) => ({
-    batchId: 'b', batchNo: 'WG-2026-38', breedId: 'l', shedId: 'h3', heads: 1000,
+    batchId: 'b', realBatchId: 'b' as any, batchNo: 'WG-2026-38', breedId: 'l', shedId: 'h3', heads: 1000,
     segments: [{ stageId, stageCode, start, end: null, projected: false }],
   });
 

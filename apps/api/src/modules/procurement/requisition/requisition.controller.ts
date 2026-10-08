@@ -19,10 +19,10 @@ export class RequisitionController {
   @Get()
   @RequirePermission('PROCUREMENT', 'REQUISITION', 'view')
   @ApiOperation({ summary: 'Requisitions visible in the active scope, newest first' })
-  async findAll(@Req() req: any, @Query('company_id') companyId?: string, @Query('status') status?: string, @Query('doc_type') docType?: string, @Query('waiting_for_me') waitingForMe?: string, @Query('kind') kind?: string) {
+  async findAll(@Req() req: any, @Query('company_id') companyId?: string, @Query('farm_id') farmId?: string, @Query('status') status?: string, @Query('doc_type') docType?: string, @Query('waiting_for_me') waitingForMe?: string, @Query('kind') kind?: string) {
     const tenantId = req.user?.tenantId || req['tenantId'];
     const data = await this.requisitions.findAll(
-      { company_id: companyId, status, doc_type: docType, waiting_for_me: waitingForMe === '1' || waitingForMe === 'true', kind: kind as 'common' | undefined },
+      { company_id: companyId, farm_id: farmId, status, doc_type: docType, waiting_for_me: waitingForMe === '1' || waitingForMe === 'true', kind: kind as 'common' | undefined },
       tenantId,
       // WP1b: the hub's waiting filter and the admin's farm-wide list need the
       // caller's type; the predicate itself lives in ApprovalService.

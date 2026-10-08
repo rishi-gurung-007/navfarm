@@ -20,7 +20,7 @@
  * requisition.rules.ts projects the states from it on read.
  */
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { and, desc, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
@@ -94,6 +94,18 @@ export class RequisitionService {
     const tenantDb = this.cls.get<MySql2Database<typeof schema>>('tenantDb');
     if (!tenantDb) throw new Error('Tenant database connection context not established.');
     return tenantDb;
+  }
+
+  /**
+   * `FEED` predates the unified document and remains a safe persistence
+   * discriminator while the feed workflow is migrated. It is not a fourth
+   * user-facing requisition type: feed is Item, and `source` says how it was
+   * created. `requisition_kind` lets clients select the richer feed document
+   * without exposing the storage discriminator as a business type.
+   */
+  private publicDocument<T extends { doc_type: string }>(row: T): T & { doc_type: string; requisition_kind: 'FEED' | 'COMMON' } {
+    const feed = row.doc_type === 'FEED';
+    return { ...row, doc_type: feed ? 'ITEM' : row.doc_type, requisition_kind: feed ? 'FEED' : 'COMMON' };
   }
 
   /**
@@ -467,7 +479,7 @@ export class RequisitionService {
   /** Location types a common requisition may move between — ours (no document lists them). */
   private static readonly REQUISITION_LOCATION_TYPES = ['FARM', 'STORE', 'SHED', 'SILO'];
 
-  async options(query: { company_id: string; farm_id?: string }, tenantId: string, userPayload?: { userId?: string }) {
+  async options(query: { company_id: string; farm_id?: string }, tenantId: string, userPayload?: { userId?: string; userType?: string; email?: string }) {
     assertCompanyInScope(farmScope(this.cls), query.company_id);
     const scopeFarm = farmScope(this.cls).farmId ?? query.farm_id ?? null;
     const itemRows = await this.db
@@ -508,16 +520,31 @@ export class RequisitionService {
     // WP1c: the dialog disables the Direct Transfer checkbox without the
     // caller's own User Setup right — the same flag create/update enforce.
     let mayDirectTransfer = false;
+    let requester: { user_id: string; login: string | null; name: string | null; department_id: string | null; department_name: string | null } | null = null;
     if (userPayload?.userId) {
       const [caller] = await this.db
-        .select({ direct_transfer_allowed: schema.userMaster.direct_transfer_allowed })
+        .select({
+          email: schema.userMaster.email,
+          full_name: schema.userMaster.full_name,
+          department_id: schema.userMaster.department_id,
+          direct_transfer_allowed: schema.userMaster.direct_transfer_allowed,
+        })
         .from(schema.userMaster)
         .where(eq(schema.userMaster.user_id, userPayload.userId))
         .limit(1);
       mayDirectTransfer = Boolean(caller?.direct_transfer_allowed);
+      if (caller) {
+        requester = {
+          user_id: userPayload.userId,
+          login: caller.email ?? null,
+          name: caller.full_name ?? null,
+          department_id: caller.department_id ?? null,
+          department_name: departments.find((d) => d.cost_center_id === caller.department_id)?.cost_center_name ?? null,
+        };
+      }
     }
     // No resources: no line may name one (Rishi, 5 Oct — Service lines are Description + Qty only).
-    return { items, locations, departments, may_direct_transfer: mayDirectTransfer };
+    return { items, locations, departments, may_direct_transfer: mayDirectTransfer, requester };
   }
 
   /**
@@ -646,7 +673,7 @@ export class RequisitionService {
           .then(() => true, (err) => { if (err instanceof ForbiddenException) return false; throw err; });
       }
     }
-    return {
+    return this.publicDocument({
       ...row,
       may_release: mayRelease,
       may_receive: mayReceive,
@@ -680,22 +707,19 @@ export class RequisitionService {
           remaining_to_receive: balances.remaining_to_receive,
         };
       }),
-    };
+    });
   }
 
   async findAll(
-    query: { company_id?: string; status?: string; doc_type?: string; waiting_for_me?: boolean; kind?: 'common' },
+    query: { company_id?: string; farm_id?: string; status?: string; doc_type?: string; waiting_for_me?: boolean; kind?: 'common' },
     tenantId: string,
     opts: { waitingForMe?: boolean; userType?: string; userId?: string } = {},
   ) {
-    // WP1g (decisions.md 2026-10-05): `kind=common` is the Requisition page's
-    // list — ITEM / FA / SERVICE. FEED is excluded by the query, not hidden by
-    // the page; feed requisitions are listed by /feed-requisition.
+    // Rishi, 7 Oct: this is the one Requisition list. Stored FEED rows are
+    // included and projected to public type ITEM; Feed Forecast keeps a
+    // contextual filtered view of the same records.
     if (query.kind !== undefined && query.kind !== 'common') {
       throw new BadRequestException('kind must be common.');
-    }
-    if (query.kind === 'common' && query.doc_type === 'FEED') {
-      throw new BadRequestException('The common requisition list does not include FEED; feed requisitions are on Feed Forecast.');
     }
     if (query.doc_type && !(COMMON_LIST_DOC_TYPES as readonly string[]).includes(query.doc_type)) {
       throw new BadRequestException(`doc_type must be one of ${COMMON_LIST_DOC_TYPES.join(', ')}.`);
@@ -731,9 +755,13 @@ export class RequisitionService {
         AND ${and(...this.approvals.requisitionRequestConditions(opts.userType))})`);
     }
     if (query.company_id) conditions.push(eq(schema.requisition.company_id, query.company_id));
+    if (query.farm_id) conditions.push(eq(schema.requisition.farm_id, query.farm_id));
     if (query.status) conditions.push(eq(schema.requisition.status, query.status));
-    if (query.doc_type) conditions.push(eq(schema.requisition.doc_type, query.doc_type));
-    if (query.kind === 'common') conditions.push(ne(schema.requisition.doc_type, 'FEED'));
+    if (query.doc_type === 'ITEM') {
+      conditions.push(or(eq(schema.requisition.doc_type, 'ITEM'), eq(schema.requisition.doc_type, 'FEED'))!);
+    } else if (query.doc_type) {
+      conditions.push(eq(schema.requisition.doc_type, query.doc_type));
+    }
     const rows = await this.db
       .select({
         requisition_id: schema.requisition.requisition_id,
@@ -761,7 +789,7 @@ export class RequisitionService {
       .orderBy(desc(schema.requisition.created_at))
       .limit(200);
     // List responses carry the projected states beside the legacy status too.
-    return rows.map((row) => ({ ...row, ...projectRequisitionStates(row) }));
+    return rows.map((row) => this.publicDocument({ ...row, ...projectRequisitionStates(row) }));
   }
 
   /**
@@ -833,8 +861,8 @@ export class RequisitionService {
 
   /**
    * 2. D25 (Rishi, 1 Oct): a person may not approve a manual requisition they
-   * created (isSelfApproval); decisions.md 2026-10-04 exempts exactly
-   * TENANT_ADMIN and COMPANY_ADMIN (maySelfApprove) — every other type,
+   * created (isSelfApproval); decisions.md 2026-10-07 exempts exactly
+   * TENANT_ADMIN, COMPANY_ADMIN and OPERATIONAL_ADMIN (maySelfApprove) — every other type,
    * including SYSTEM_ADMIN (not yet decided), is still refused.
    */
   private isOwnRequisitionRefused(
@@ -1062,7 +1090,7 @@ export class RequisitionService {
     tenantId: string,
     side: 'FROM' | 'TO',
     kind: 'Transfer Shipment' | 'Transfer Receipt' | 'Item Tracking',
-    userPayload?: { userId?: string },
+    userPayload?: { userId?: string; userType?: string; email?: string },
   ): Promise<void> {
     const locationId = side === 'FROM' ? row.from_location_id : row.to_location_id;
     if (!locationId) return;
@@ -1081,7 +1109,7 @@ export class RequisitionService {
     assertPostingDepartment(side, kind, { userDepartmentId: user?.department_id ?? null, locationDepartmentId: location?.department_id ?? null });
   }
 
-  async ship(requisitionId: string, dto: RequisitionShipmentDto, tenantId: string, userPayload?: { userId?: string }) {
+  async ship(requisitionId: string, dto: RequisitionShipmentDto, tenantId: string, userPayload?: { userId?: string; userType?: string; email?: string }) {
     const { row, transferId, transferLines } = await this.releasedStore(requisitionId, tenantId);
     await this.assertPostingDepartmentFor(row, tenantId, 'FROM', 'Transfer Shipment', userPayload);
     // WP1c (Rishi's 4 Oct list): "If Direct Transfer = True: Shipment +
@@ -1102,7 +1130,7 @@ export class RequisitionService {
    * sub-location. The route itself asks only the requisition's view grant —
    * the requester needs no separate receive permission.
    */
-  async receive(requisitionId: string, dto: RequisitionReceiptDto, tenantId: string, userPayload?: { userId?: string }) {
+  async receive(requisitionId: string, dto: RequisitionReceiptDto, tenantId: string, userPayload?: { userId?: string; userType?: string; email?: string }) {
     const { row, transferId, transferLines } = await this.releasedStore(requisitionId, tenantId);
     assertReceiptByRequester(row, userPayload?.userId);
     await this.assertPostingDepartmentFor(row, tenantId, 'TO', 'Transfer Receipt', userPayload);
@@ -1266,8 +1294,8 @@ export class RequisitionService {
     // D25 (Rishi, 1 Oct): a person may not approve a requisition they created.
     // The shared isSelfApproval rule applies: a manual or legacy-sourceless
     // draft is refused to its creator; only an AUTO_FORECAST draft is exempt.
-    // decisions.md 2026-10-04 supersedes this for exactly TENANT_ADMIN and
-    // COMPANY_ADMIN (maySelfApprove) — every other type, including
+    // decisions.md 2026-10-07 supersedes this for TENANT_ADMIN, COMPANY_ADMIN
+    // and OPERATIONAL_ADMIN (maySelfApprove) — every other type, including
     // SYSTEM_ADMIN (not yet decided), is still refused. Same gate as the
     // direct decide() above, so the Approvals-inbox path and the direct
     // /requisition/:id/approve path agree.

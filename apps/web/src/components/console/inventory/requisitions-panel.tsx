@@ -29,12 +29,12 @@ import { ScrollTable } from "@/components/ui/scroll-table";
 import { useLanguage } from "@/hooks/useLanguage";
 import { cn } from "@/lib/utils";
 import { formatDateShort } from "@/utils/date-short";
-import { addDaysIso, defaultWindowEnd, todayIso, unwrap } from "./feed-format";
-import { getForecastWindow } from "./feed-forecast-window";
+import { unwrap } from "./feed-format";
 import { FeedFarmSelect, feedFarmLabel } from "./feed-farm-select";
 import { RequisitionDecision, decisionTargetOf } from "../requisitions/requisition-decision";
 import { PRIORITY_LABEL, REQ_STATUS_LABEL, REQ_TYPE_LABEL, labelOf, variantOf } from "./requisition-labels";
 import { FeedRequisitionDetail } from "./feed-requisition-detail";
+import { FeedRequisitionFromRunDialog } from "./feed-requisition-from-run-dialog";
 import { RequisitionNewDialog } from "./requisition-new-dialog";
 import { useFeedFarm } from "./use-feed-farm";
 import type { RequisitionView } from "./feed-requisition-document";
@@ -95,6 +95,8 @@ export function FeedRequisitionPanel() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [creating, setCreating] = useState(false);
+  const [fromRunOpen, setFromRunOpen] = useState(false);
+  const [savedRun, setSavedRun] = useState<{ id: string; existingRequisitionId: string | null } | null>(null);
 
   // The API's response always carries farm_id (readView spreads ...row.req); the
   // farm selector's current farm is only a fallback for a response that somehow
@@ -124,6 +126,27 @@ export function FeedRequisitionPanel() {
   useEffect(() => {
     loadList();
   }, [loadList]);
+
+  useEffect(() => {
+    if (!farmId) {
+      setSavedRun(null);
+      return;
+    }
+    let alive = true;
+    api.get(`/feed-forecast/runs/current?${new URLSearchParams({ farmId }).toString()}`)
+      .then(async (response) => {
+        const run = unwrap<{ run_id?: string; runId?: string } | null>(response);
+        const id = run?.run_id ?? run?.runId;
+        if (!id) {
+          if (alive) setSavedRun(null);
+          return;
+        }
+        const preview = unwrap<{ existingRequisitionId: string | null }>(await api.get(`/feed-requisition/from-run/${id}/preview`));
+        if (alive) setSavedRun({ id, existingRequisitionId: preview.existingRequisitionId ?? null });
+      })
+      .catch(() => { if (alive) setSavedRun(null); });
+    return () => { alive = false; };
+  }, [farmId, rows]);
 
   // Opened by link: /inventory/feed-forecast?tab=feed-requisition&id=<requisition> (the Requisition page and the inbox send feed ids here).
   useEffect(() => {
@@ -155,26 +178,6 @@ export function FeedRequisitionPanel() {
 
   const openRequisition = (id: string) => run(async () => show(unwrap<RequisitionView>(await api.get(`/feed-requisition/${id}`))));
 
-  // Feed Forecast row 8 / Step 9: draft for the window the Forecast tab is showing, else the 7-day default.
-  const draftFromForecast = () =>
-    run(async () => {
-      // The draft always starts at the farm's today, and the API refuses a `to` before it — or more than 45
-      // days after it (autoDraft's own MAX_SPAN_DAYS bound): a window that has already ended on the Forecast
-      // tab falls back to the default, and one forward-dated past the bound clamps to it (M3), rather than
-      // posting a date that 400s either way.
-      const today = todayIso();
-      const shared = getForecastWindow(farmId)?.to;
-      const maxTo = addDaysIso(today, 45);
-      const to = shared && shared >= today ? (shared > maxTo ? maxTo : shared) : defaultWindowEnd(today);
-      const result = unwrap<{ requisition: RequisitionView | null }>(await api.post("/feed-requisition/auto-draft", { farmId, to }));
-      const through = formatDateShort(to);
-      if (result.requisition) {
-        show(result.requisition);
-        setNotice(tRef.current("rqDraftedThrough", { to: through }));
-      } else setNotice(tRef.current("rqNothingToOrder", { to: through }));
-      await loadList();
-    });
-
   const fixedLabel = farm.isFixed
     ? farm.fixedFarm?.location_code
       ? feedFarmLabel({ code: farm.fixedFarm.location_code, name: farm.fixedFarm.location_name ?? "" })
@@ -201,7 +204,11 @@ export function FeedRequisitionPanel() {
         </div>
         <div className="flex flex-wrap gap-2">
           <Button size="sm" variant="outline" onClick={() => setCreating(true)} disabled={!farmId || busy}>{t("rqNew")}</Button>
-          <Button size="sm" onClick={draftFromForecast} disabled={!farmId || busy}>{t("rqDraftFromForecast")}</Button>
+          {savedRun && (
+            <Button size="sm" onClick={() => setFromRunOpen(true)} disabled={!farmId || busy}>
+              {t(savedRun.existingRequisitionId ? "rqViewRequisition" : "rqCreateFromSaved")}
+            </Button>
+          )}
         </div>
       </div>
 
@@ -279,6 +286,17 @@ export function FeedRequisitionPanel() {
           }}
         />
       )}
+      <FeedRequisitionFromRunDialog
+        open={fromRunOpen}
+        runId={savedRun?.id ?? null}
+        onClose={() => setFromRunOpen(false)}
+        onView={(view) => {
+          setFromRunOpen(false);
+          show(view);
+          setNotice(tRef.current("rqCreated"));
+          loadList();
+        }}
+      />
     </div>
   );
 }

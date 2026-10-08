@@ -32,6 +32,9 @@ export interface ReportRow {
   currentInventoryKg: number;
   openingSystemBalanceKg: number;
   confirmedReceiptsKg: number;
+  openTransferMovementKg?: number;
+  plannedIncomingKg?: number;
+  incomingReferences?: Array<{ kind: string; referenceId?: string; referenceNo?: string; overdue?: boolean }>;
   heads: number;
   feedRateKg: number;
   perDayIntakeKg: number;
@@ -61,6 +64,9 @@ export interface SourceBalancePoint {
   currentItemName: string | null;
   openingSystemBalanceKg: number;
   confirmedReceiptKg: number;
+  openTransferMovementKg?: number;
+  plannedIncomingKg?: number;
+  incomingReferences?: Array<{ kind: string; referenceId?: string; referenceNo?: string; overdue?: boolean }>;
   dailyUseKg: number;
   projectedClosingBalanceKg: number;
   recommendedQtyKg: number;
@@ -73,7 +79,7 @@ type Translate = (key: any, vars?: any) => string;
 
 export const GRID_COLUMNS = [
   "ffColBatch", "ffColHouse", "ffColSiloCode", "ffColSiloName", "ffColRequiredFeedItem", "ffColCurrentSiloItem",
-  "ffColHeadCount", "ffColFeedRate", "ffColOpeningSystemBalance", "ffColConfirmedReceipts", "ffColDailyUse",
+  "ffColHeadCount", "ffColFeedRate", "ffColOpeningSystemBalance", "ffColConfirmedReceipts", "ffColOpenTransfers", "ffColPlannedFeedAdded", "ffColPlannedFeedReference", "ffColDailyUse",
   "ffColFirstShortage", "ffColRecommendedQty", "ffColDeliveryDate",
 ] as const;
 
@@ -122,30 +128,67 @@ function forecastLineKey(row: ReportRow): string {
  */
 function collapseForecastLines(rows: ReportRow[]): ReportRow[] {
   const lines = new Map<string, ReportRow>();
-  for (const row of [...rows].sort((left, right) => left.date.localeCompare(right.date))) {
+
+  for (
+    const row of [...rows].sort((left, right) =>
+      left.date.localeCompare(right.date),
+    )
+  ) {
     const key = forecastLineKey(row);
     const line = lines.get(key);
+
     if (!line) {
+      // First chronological row becomes the base line.
+      // Its runDownDate and deliveryDate are based on the
+      // displayed Opening Balance + Daily Use.
       lines.set(key, { ...row, key });
       continue;
     }
-    line.dateTo = row.dateTo > line.dateTo ? row.dateTo : line.dateTo;
+
+    line.dateTo =
+      row.dateTo > line.dateTo
+        ? row.dateTo
+        : line.dateTo;
+
     line.days += row.days;
     line.intakeKg += row.intakeKg;
     line.confirmedReceiptsKg += row.confirmedReceiptsKg;
-    line.recommendedQtyKg = Math.max(line.recommendedQtyKg, row.recommendedQtyKg);
-    line.sharedBatchCount = Math.max(line.sharedBatchCount, row.sharedBatchCount);
-    line.indicative = line.indicative || row.indicative;
-    if (row.firstShortageDate && (!line.firstShortageDate || row.firstShortageDate < line.firstShortageDate)) {
-      line.firstShortageDate = row.firstShortageDate;
+    line.openTransferMovementKg = (line.openTransferMovementKg ?? 0) + (row.openTransferMovementKg ?? 0);
+    line.plannedIncomingKg = (line.plannedIncomingKg ?? 0) + (row.plannedIncomingKg ?? 0);
+    line.incomingReferences = [...(line.incomingReferences ?? []), ...(row.incomingReferences ?? [])];
+
+    line.recommendedQtyKg = Math.max(
+      line.recommendedQtyKg,
+      row.recommendedQtyKg,
+    );
+
+    line.sharedBatchCount = Math.max(
+      line.sharedBatchCount,
+      row.sharedBatchCount,
+    );
+
+    line.indicative =
+      line.indicative || row.indicative;
+
+    // Keep earliest physical shortage evidence if needed internally.
+    if (
+      row.firstShortageDate &&
+      (!line.firstShortageDate ||
+        row.firstShortageDate < line.firstShortageDate)
+    ) {
+      line.firstShortageDate =
+        row.firstShortageDate;
     }
+
     if (row.deliveryDate && (!line.deliveryDate || row.deliveryDate < line.deliveryDate)) {
       line.deliveryDate = row.deliveryDate;
     }
+
     if (row.runDownDate && (!line.runDownDate || row.runDownDate < line.runDownDate)) {
       line.runDownDate = row.runDownDate;
     }
   }
+
   return [...lines.values()];
 }
 
@@ -169,61 +212,110 @@ export function pivotForecastRows(
   view?: string,
   from?: string,
 ): { pivoted: PivotedFeedRow[]; columns: ColumnSlot[] } {
-  const baseFrom = from || sourceBalances[0]?.date || rows[0]?.date || "";
-  const pointsBySource = new Map<string, SourceBalancePoint[]>();
-  for (const point of [...sourceBalances].sort((left, right) => left.date.localeCompare(right.date))) {
-    const key = sourceKey(point.locationId, point.sourceCode, point.itemId);
-    pointsBySource.set(key, [...(pointsBySource.get(key) ?? []), point]);
+  const baseFrom =
+    from ||
+    sourceBalances[0]?.date ||
+    rows[0]?.date ||
+    "";
+
+  const pointsBySource =
+    new Map<string, SourceBalancePoint[]>();
+
+  for (
+    const point of [...sourceBalances].sort(
+      (left, right) =>
+        left.date.localeCompare(right.date),
+    )
+  ) {
+    const key = sourceKey(
+      point.locationId,
+      point.sourceCode,
+      point.itemId,
+    );
+
+    pointsBySource.set(
+      key,
+      [
+        ...(pointsBySource.get(key) ?? []),
+        point,
+      ],
+    );
   }
 
   const slots = new Map<string, ColumnSlot>();
-  const pivoted = collapseForecastLines(rows).map((row) => {
-    const closingBySlot: Record<string, number> = {};
-    const points = pointsBySource.get(sourceKey(row.sourceLocationId, row.sourceCode, row.itemId)) ?? [];
-    if (points.length) {
-      for (const point of points) {
-        // Only include balance points within this row's own date range — a
-        // shared silo has points for other rows' dates too, and those must not
-        // appear on this row's projected closing columns (FF2).
-        if (point.date < row.date || point.date > row.dateTo) continue;
-        const slot = slotFor(point.date, view, baseFrom);
+
+  const pivoted =
+    collapseForecastLines(rows).map((row) => {
+      const closingBySlot:
+        Record<string, number> = {};
+
+      const points =
+        pointsBySource.get(
+          sourceKey(
+            row.sourceLocationId,
+            row.sourceCode,
+            row.itemId,
+          ),
+        ) ?? [];
+
+      if (points.length) {
+        for (const point of points) {
+          // A source balance is physical and shared, but a calculation line
+          // displays it only while that batch/stage/item has applicable demand.
+          if (point.date < row.date || point.date > row.dateTo) continue;
+
+          const slot = slotFor(
+            point.date,
+            view,
+            baseFrom,
+          );
+
+          slots.set(slot.key, slot);
+
+          // For WEEKLY, chronological traversal means
+          // the final day in the week becomes the
+          // displayed weekly closing balance.
+          closingBySlot[slot.key] = point.projectedClosingBalanceKg;
+        }
+      } else {
+        const slot = slotFor(
+          row.dateTo || row.date,
+          view,
+          baseFrom,
+        );
+
         slots.set(slot.key, slot);
-        // Chronological traversal means the last point in a weekly bucket is
-        // its closing balance, including zero in the run-down bucket.
-        closingBySlot[slot.key] = point.projectedClosingBalanceKg;
+
+        closingBySlot[slot.key] =
+          row.projectedClosingBalanceKg;
       }
-    } else {
-      const slot = slotFor(row.dateTo || row.date, view, baseFrom);
-      slots.set(slot.key, slot);
-      closingBySlot[slot.key] = row.projectedClosingBalanceKg;
-    }
-    // FF2: firstShortageDate and deliveryDate must fall within this row's own
-    // date range. The API stamps them from the silo-level shortageDate onto
-    // every row for that silo; the grid must clear them when the shortage date
-    // is outside this particular row's window.
-    const inWindow = (date: string | null) => !!date && date >= row.date && date <= row.dateTo;
-    return {
-      ...row,
-      closingBySlot,
-      firstShortageDate: inWindow(row.firstShortageDate) ? row.firstShortageDate : null,
-      deliveryDate: inWindow(row.firstShortageDate) ? row.deliveryDate : null,
-    };
-  });
+
+      const inWindow = (date: string | null) =>
+        !!date && date >= row.date && date <= row.dateTo;
+
+      return {
+        ...row,
+        closingBySlot,
+        firstShortageDate: inWindow(row.firstShortageDate) ? row.firstShortageDate : null,
+        deliveryDate: inWindow(row.firstShortageDate) ? row.deliveryDate : null,
+      };
+    });
 
   return {
     pivoted,
-    columns: [...slots.values()].sort((left, right) => left.dateStart.localeCompare(right.dateStart)),
+    columns: [...slots.values()].sort(
+      (left, right) =>
+        left.dateStart.localeCompare(
+          right.dateStart,
+        ),
+    ),
   };
 }
 
 export function fmtKg(value: number | null | undefined): string {
   if (value === null || value === undefined) return "";
+  if (!Number.isFinite(value)) return "Not available";
   return value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-
-function itemLabel(no: string | null | undefined, name: string | null | undefined): string {
-  if (no && name) return `${no} — ${name}`;
-  return no || name || "";
 }
 
 const BATCH_COL = { "--sticky-left": "0px" } as CSSProperties;
@@ -268,6 +360,9 @@ export function FeedForecastGrid({
           <th scope="col" className={cn(TH, NUM)}>{t("ffColFeedRate")}</th>
           <th scope="col" className={cn(TH, NUM)}>{t("ffColOpeningSystemBalance")}</th>
           <th scope="col" className={cn(TH, NUM)}>{t("ffColConfirmedReceipts")}</th>
+          <th scope="col" className={cn(TH, NUM)}>{t("ffColOpenTransfers")}</th>
+          <th scope="col" className={cn(TH, NUM)}>{t("ffColPlannedFeedAdded")}</th>
+          <th scope="col" className={TH}>{t("ffColPlannedFeedReference")}</th>
           <th scope="col" className={cn(TH, NUM)}>{t("ffColDailyUse")}</th>
           {columns.map((column) => <th key={column.key} scope="col" className={cn(TH, NUM, "min-w-[8rem] bg-[var(--table-header-alt)]")} title={t("ffProjectedClosingOn", { date: column.label })}>{column.label}</th>)}
           <th scope="col" className={TH}>{t("ffColFirstShortage")}</th>
@@ -284,22 +379,25 @@ export function FeedForecastGrid({
           <tr key={row.key} data-group-alt={index % 2 ? "true" : undefined} className={index % 2 ? "bg-[var(--table-row-alt)]" : undefined}>
             <td data-sticky-col="true" style={BATCH_COL} className={cn(TD, "w-[12.5rem] max-w-[12.5rem] truncate font-medium")}>{row.batchNo}</td>
             <td data-sticky-col="last" style={HOUSE_COL} className={cn(TD, MUTED)}>{row.shedCode}</td>
-            <td className={cn(TD, MUTED)}>{row.sourceCode ?? ""}</td>
-            <td className={cn(TD, MUTED)}>{row.sourceName ?? ""}</td>
-            <td className={TD}>{itemLabel(row.itemNo, row.itemName)}</td>
-            <td className={TD}>{itemLabel(row.currentItemNo, row.currentItemName)}</td>
+            <td className={cn(TD, MUTED)}>{row.sourceCode ?? t("ffNoSource")}</td>
+            <td className={cn(TD, MUTED)}>{row.sourceName ?? t("ffNoSourceName")}</td>
+            <td className={TD}>{row.itemName ?? ""}</td>
+            <td className={TD}>{row.currentItemName ?? t("ffNoCurrentSiloItem")}</td>
             <td className={cn(TD, NUM)}>{row.heads.toLocaleString("en-US")}</td>
             <td className={cn(TD, NUM)}>{fmtKg(row.feedRateKg)}</td>
             <td className={cn(TD, NUM)}>{fmtKg(row.openingSystemBalanceKg)}</td>
             <td className={cn(TD, NUM)}>{fmtKg(row.confirmedReceiptsKg)}</td>
+            <td className={cn(TD, NUM)}>{fmtKg(row.openTransferMovementKg ?? 0)}</td>
+            <td className={cn(TD, NUM)}>{fmtKg(row.plannedIncomingKg ?? 0)}</td>
+            <td className={TD}>{(row.incomingReferences ?? []).filter((reference) => reference.kind === "PLANNED_REQUISITION").map((reference) => reference.referenceNo).filter(Boolean).join(", ") || t("ffNoPlannedFeed")}</td>
             <td className={cn(TD, NUM)}>{fmtKg(row.dailyUseKg)}</td>
             {columns.map((column) => {
               const value = row.closingBySlot[column.key];
               return <td key={column.key} className={cn(TD, NUM, value === 0 && "font-medium text-[var(--danger)]")}>{fmtKg(value)}</td>;
             })}
-            <td className={cn(TD, row.firstShortageDate && "font-semibold text-[var(--danger)]")}>{row.firstShortageDate ? formatDateShort(row.firstShortageDate) : ""}</td>
+            <td className={cn(TD, row.firstShortageDate && "font-semibold text-[var(--danger)]")}>{row.firstShortageDate ? formatDateShort(row.firstShortageDate) : t("ffNoShortageProjected")}</td>
             <td className={cn(TD, NUM)}>{fmtKg(row.recommendedQtyKg)}</td>
-            <td className={TD}>{row.deliveryDate ? formatDateShort(row.deliveryDate) : ""}</td>
+            <td className={TD}>{row.deliveryDate ? formatDateShort(row.deliveryDate) : t("ffNoDeliveryRequired")}</td>
           </tr>
         ))}
       </tbody>

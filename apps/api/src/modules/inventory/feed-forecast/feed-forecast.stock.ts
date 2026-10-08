@@ -65,7 +65,10 @@ export function stockAsOf(args: {
     const k = `${r.warehouse_id}|${r.item_id}`;
     openingKg.set(k, (openingKg.get(k) ?? 0) + r.qty);
   }
-  const flows = [...args.movements, ...args.drafts]
+  const flows = [
+    ...args.movements.map((movement) => ({ ...movement, kind: 'CONFIRMED_LEDGER' as const })),
+    ...args.drafts.map((movement) => ({ ...movement, kind: 'OPEN_TRANSFER' as const })),
+  ]
     .filter((r) => r.uom === 'KG' && Math.abs(r.qty) >= EPS)
     .sort((a, b) => (a.posting_date < b.posting_date ? -1 : a.posting_date > b.posting_date ? 1 : 0));
 
@@ -106,7 +109,7 @@ export function stockAsOf(args: {
     } else if (!isStoreFeed(f)) {
       continue;
     }
-    incoming.push({ locationId: f.warehouse_id, itemId: f.item_id, date: f.posting_date, kg: f.qty });
+    incoming.push({ locationId: f.warehouse_id, itemId: f.item_id, date: f.posting_date, kg: f.qty, kind: f.kind });
   }
   return { silos, store, incoming };
 }

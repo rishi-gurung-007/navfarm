@@ -177,3 +177,14 @@
 - [ ] **Step 4: Drive the running app on 3002/2877** through Approved → Release → partial Shipment → partial/final Receipt with at least two transfer groups. Confirm buttons/states, semantic field values and error recovery visually.
 - [ ] **Step 5: Query MySQL after each write** for requisition states, feed-transfer links, stock transfer lines, shipment/receipt events, inventory ledger quantity/rate/amount and final `RECEIVED` fulfilment.
 - [ ] **Step 6: Run the verification-before-completion skill, record results in this plan, and commit only the files owned by this implementation.**
+
+## Verification carry-forward — 2026-10-08
+
+The transfer implementation remains covered by the final branch-wide gates:
+API **198 suites / 2,549 tests**, Web **98 suites / 727 tests**, all three
+typechecks and the production Web build passed. Migrations 0152 and 0153 were
+applied to both local tenant databases after backup and read-only inspection;
+the feed-requisition transfer table, foreign/unique indexes and saved-run
+archive/uniqueness indexes were verified directly in MySQL. The new Feed Plan
+reads the same canonical requisition line, linked transfer, shipment and receipt
+tables, so it does not introduce a second fulfilment state or posting path.

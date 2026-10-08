@@ -33,6 +33,20 @@ export class CreateManualFeedRequisitionDto {
   lines: ManualFeedLineInput[];
 }
 
+export class FeedRequisitionFromRunLineDto {
+  @ApiProperty() @IsUUID() destination_location_id: string;
+  @ApiProperty() @IsUUID() item_id: string;
+  @ApiProperty() @Type(() => Number) @IsNumber() @Min(0.001) quantity_kg: number;
+  @ApiProperty() @IsDateString() proposed_delivery_date: string;
+}
+
+export class CreateFeedRequisitionFromRunDto {
+  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(2000) remarks?: string;
+  @ApiProperty({ type: [FeedRequisitionFromRunLineDto] })
+  @IsArray() @ArrayMinSize(1) @ValidateNested({ each: true }) @Type(() => FeedRequisitionFromRunLineDto)
+  lines: FeedRequisitionFromRunLineDto[];
+}
+
 /**
  * Requisition §2 rows 53 and 56: the farm may change Requested Qty and Proposed
  * Delivery Date; rows 43/55 and 45 (Task 9): the destination silo and the feed

@@ -13,7 +13,7 @@ const workedExample: ForecastInput = {
   items: { r1: 'Weaner Diet R1', r2: 'Weaner Diet R2' },
   itemCodes: { r1: 'FEED-R1', r2: 'FEED-R2' },
   batches: [{
-    batchId: 'b', batchNo: 'WG-2026-38', breedId: 'l', shedId: 'h3', heads: 1000,
+    batchId: 'b', realBatchId: 'b' as any, batchNo: 'WG-2026-38', breedId: 'l', shedId: 'h3', heads: 1000,
     segments: [{ stageId: 'wean', stageCode: 'WEANER', start: '2026-08-30', end: null, projected: false }],
   }],
   feedRows: [
@@ -48,6 +48,15 @@ describe('groupRows — Step 6 "Build dated forecast"', () => {
       dailyUseKg: 6000,
       projectedClosingBalanceKg: 0,
     });
+  });
+
+  it('puts shortage and delivery dates only on the line whose date range contains the shortage', () => {
+    const rows = groupRows(daily, 'DAILY', '2026-09-23');
+    const shortageDay = rows.find((row) => row.date === '2026-09-23' && row.itemNo === 'FEED-R1')!;
+    const laterDay = rows.find((row) => row.date === '2026-09-24' && row.itemNo === 'FEED-R1')!;
+
+    expect(shortageDay).toMatchObject({ firstShortageDate: '2026-09-23', deliveryDate: '2026-09-21' });
+    expect(laterDay).toMatchObject({ firstShortageDate: null, deliveryDate: null });
   });
 
   it('WEEKLY: R1 3 days × 2,000 = 6,000 kg and R2 4 days × 2,500 = 10,000 kg, as two rows', () => {

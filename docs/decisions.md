@@ -2833,6 +2833,303 @@ This refines the 5 Oct 45-day rule: 45 days limits displayed date columns and
 user-selected ranges; it does not limit the background search for First
 Shortage Date.
 
+## 2026-10-06 — Feed Forecast dates and balances are scoped to each calculation line
+
+Rishi confirmed that each Calculation row may have its own First Shortage Date
+and Delivery Date. The physical Silo + Feed Item balance remains one canonical,
+shared stock projection, but a Batch + Stage + Feed Item row displays that
+balance only during the dates for which that row has applicable feed demand.
+It must not inherit a flat balance tail, First Shortage Date or Delivery Date
+from another lifecycle row merely because both rows draw from the same Silo and
+Feed Item.
+
+First Shortage Date is shown on a calculation line only when the shared source
+shortage occurs inside that line's applicable demand period. Delivery Date is
+then exactly two calendar days earlier. If the lifecycle plan has no applicable
+feed row for the next stage, the system reports that configuration gap instead
+of inventing a feed rate, continuing the previous stage's consumption, or
+showing a speculative shortage/delivery date.
+
+Rishi also authorised applying the already-reviewed additive MILL/BIN tenant
+migration directly to the local development databases without taking a backup.
+This local-only instruction does not change the backup requirement for shared,
+RDP, test or production data. The migration adds schema support only; it must
+not create invented MILL, BIN, production-slot or diet-assignment rows.
+
+## 2026-10-06 — Master Data Edit Field Parity
+
+Rishi ruled that only the fields shown during creation of a record (such as
+a Location based on its Location Type) should be shown or asked when editing.
+Edit cards must not display irrelevant conditional fields (e.g. MILL, BIN or
+SILO fields when editing a FARM). `MasterDataTable` evaluates `isFieldVisible`
+on edit against the record's current values so that edit forms match the exact
+type-specific field set of create forms.
+
+## 2026-10-07 — Feed requisition Type, Source and document boundary
+
+Rishi clarified the Feed Requisition fields after reviewing the workbook and
+the running Inventory Setup screen:
+
+1. **Feed is an Item requisition.** The user-facing Requisition Type remains
+   `ITEM`; `FEED_FORECAST` and `MANUAL` are not requisition types.
+2. **Source records how the requisition was created.** It is read-only and is
+   one of `MANUAL_ENTRY`, `AUTO_FORECAST`, `STOCK_TAKE_TRIGGERED` or
+   `DIET_CHANGE_UPCOMING`. Event-created rows retain their source evidence.
+3. **Every feed source carries the same four required line values:** Destination
+   Silo, Feed Item, Requested Qty and Proposed Delivery Date. A manual user
+   enters them; a forecast, stock-take or diet-change event supplies them.
+4. **One header represents one farm/submission cycle and contains multiple
+   silo/item/date lines.** A scheduled rerun updates the matching open draft
+   rather than creating duplicates.
+5. **Configuration is consumed, not re-entered, on the requisition.** Effective
+   bag size, bulk multiple, truck target, production schedule, silo feed type,
+   capacity and thresholds come from Inventory Setup. Farm total is the sum of
+   requested BULK line quantities; target trips are its ceiling division by the
+   effective truck target. The target is not a cap.
+6. `Current Silo Feed Item No.` stays removed. `Destination Silo` is the one
+   editable silo column. Recommended Qty remains the read-only system evidence;
+   Requested Qty is the editable farm value. Header Required Delivery Date is
+   the earliest line Proposed Delivery Date.
+
+This ruling supersedes the workbook row that labels `FEED_FORECAST`/`MANUAL`
+as Requisition Type and resolves the workbook's contradictory one-silo header
+against its multi-line sub-form. The present implementation scope ends at the
+requisition document and approval. Feed Forecast Dashboard/Calculation are
+review-only afterward; loading, consolidation, dispatch, receipt and BC work
+remain separate unless Rishi brings them into scope.
+
+## 2026-10-07 — Requisition form contract and feed-line Reason Master
+
+Rishi approved the following correction to the common and feed requisition forms:
+
+1. The common requisition header follows his supplied field list: Requisition No., Date, Main/Farm Location,
+   requester login/name/department, Sender Department, Type, Open/Released Status, Purpose, conditional From/To
+   Sub-Locations, Direct Transfer and Remarks. The requester values come from the authenticated user and User Setup;
+   they are never typed by the requester.
+2. The common line table follows his supplied line list. Item lines select Item No. and derive Item Description;
+   Fixed Asset and Service lines enter Description and Qty only. Header locations flow to the read-only line locations;
+   shipped/received quantities and balances are posting results. Item Tracking remains a line action.
+3. Feed alone carries a line Reason. It is selected through the shared searchable control from active, company-scoped
+   Reason Master rows. It is required when the chosen feed item is an exception to the lifecycle requirement and is
+   otherwise optional. New rows store the Reason Master identity; legacy free-text exception reasons remain readable.
+4. Master-backed line and header selectors use the shared searchable custom dropdown. Add Line sits in the Lines title
+   row, and empty dependent values use explanatory text rather than a dash.
+5. Before an unsaved common requisition is saved, the user can return to the requisition type/purpose picker. Entered
+   draft data is not silently discarded.
+6. Requisition actions use the authenticated user's identity and User Setup department. Purchase release may record
+   the real pending integration state, but must not claim a Business Central PO exists while BC remains disconnected.
+7. New common requisitions use **Create** in the dialog footer. Before creation, **Back** is shown in the dialog header
+   and returns to the type/purpose picker. Once saved, the document workflow actions (Save, Submit, Reopen, Release,
+   Transfer Shipment and Transfer Receipt when applicable) are shown in the dialog header; shipment and receipt entry
+   panels remain in the document body. Common and feed line-table cells are vertically centred.
+8. A Feed form opened from the common requisition picker also keeps **Back** in the dialog header; the Feed Forecast
+   page's Feed-only form does not show a redundant Back control. Common requisition workflow buttons remain visible in
+   the header while unavailable and are disabled until document state and permissions allow them. Store documents show
+   Release, Transfer Shipment and Transfer Receipt; Purchase documents show Release. An item that needs no lot/serial
+   tracking leaves the line action area empty instead of displaying “Not tracked”; tracked items retain their assignment
+   action and shipment validation.
+
+## 2026-10-07 — Common requisitions in Approvals and scoped admin self-approval
+
+Rishi decided that a common requisition awaiting approval must be actionable
+from both the Requisition page and the Approvals inbox. The Approvals Pending,
+Approved and Rejected tables therefore include `REQUISITION` requests and show
+the same shared, read-only common requisition document for Item, Fixed Asset
+and Service. Feed requisitions remain on the Feed Forecast requisition surface.
+
+Because the real common requisition rows are now present in the Approvals
+table, the separate “Requisitions waiting for approval / Open Requisitions”
+card and the Approvals page “New Request” button are removed. Requisitions are
+created from Requisition, not from a generic approval-request form.
+
+Tenant Admin, Company Admin and Operational Admin may approve a common or feed
+requisition they created themselves, provided they have the requisition approve
+permission. This does not widen scope: only Tenant Admin and Company Admin keep
+the existing cross-farm requisition visibility; Operational Admin remains
+restricted by their normal operational/farm scope. System Admin self-approval
+is still not authorised by this decision.
+
+## 2026-10-07 — Purchase-only FA/Service and Tenant Admin approval authority
+
+Rishi confirmed that Fixed Asset and Service requisitions remain Purchase-only.
+Their lines therefore remain Description + Qty; Store-only From/To locations,
+shipment/receipt quantities, Direct Transfer and Item Tracking are not shown on
+those documents.
+
+Rishi also clarified that a Tenant Admin may approve any supported approval
+document within their tenant, including a physical count they submitted. The
+Tenant Admin exemption therefore applies to the physical-count maker/checker
+guard as well as requisitions. Permission, tenant/company scope and approval
+audit recording remain enforced.
+
+## 2026-10-07 — Exact common requisition form contract
+
+Rishi confirmed that every non-feed requisition uses one exact shared form
+contract. The header contains only Requisition No., Requisition Date, Main /
+Farm Location, Requester User ID, Requester Name, Requester Department, Sender
+Department, Requisition Type, Status, Purpose, the Store-only From and To
+Sub-Locations and Direct Transfer, and Remarks. Approval, fulfilment,
+integration, approver/releaser audit values and linked document references are
+workflow information, not additional common-requisition form fields.
+
+Item Purchase lines contain Line No., Item No., Item Description and Qty. Item
+Store lines add From Location, To Location, Qty to Ship, Qty Shipped, Qty to
+Receive, Qty Received, Remaining to Receive and Balance to Ship. Fixed Asset
+and Service remain Purchase-only and their lines contain Line No., Fixed Asset
+or Service Description and Qty. Approval, rejection, release, transfer and item
+tracking remain actions around this exact field contract and continue using the
+existing shared server workflows.
+
+## 2026-10-07 — Requisition approval actions use the dialog footer
+
+Rishi confirmed that requisition approval controls must not scroll inside the
+document body. In both common and feed requisition dialogs, approval remarks or
+the rejection reason remain immediately above the action area, while Reject /
+Approve and Cancel / Confirm Reject render in the dialog's fixed footer. The
+same shared decision component supplies both requisition surfaces.
+
+## 2026-10-07 — Feed draft actions use the dialog footer
+
+Rishi confirmed that Save and Submit for approval on an editable feed
+requisition belong in the dialog's fixed footer, not at the bottom of the
+scrollable document body. Their existing validation, disabled states and API
+behaviour remain unchanged.
+
+## 2026-10-07 — Stable visible schema for every common requisition
+
+Rishi clarified that every non-feed requisition must visibly retain the full
+common header and line schema, even when a field does not apply to that
+requisition's type or purpose. This supersedes only the display/visibility
+parts of the earlier “Purchase-only FA/Service” and “Exact common requisition
+form contract” decisions; their Store/Purchase semantics and payload rules do
+not change.
+
+The header always shows Requisition No., Requisition Date, Main / Farm
+Location, Requester User ID, Requester Name, Requester Department, Sender
+Department, Requisition Type, Status, Purpose, From Sub-Location, To
+Sub-Location, Direct Transfer and Remarks. Purchase documents show the three
+Store-only fields as read-only “Not applicable”.
+
+Every line table always shows Line No., Item No., Item Description, Fixed Asset
+or Service Description, Qty, From Location, To Location, Qty to Ship, Qty
+Shipped, Qty to Receive, Qty Received, Remaining to Receive and Balance to
+Ship. Item lines show “Not applicable” for the Fixed Asset or Service
+Description; Fixed Asset and Service lines show “Not applicable” for Item No.
+and Item Description. All transfer columns on Purchase lines show “Not
+applicable”. Store values retain their existing derived/posting behaviour.
+Feed requisitions remain separate and unchanged.
+
+## 2026-10-07 — Selected dropdown values follow the field meaning
+
+Rishi confirmed that searchable selectors may show multiple columns while
+open, but the closed field must show only the value promised by its label or
+table column. A Code or No. field shows only the code/number; a Description
+field shows only the description; and a generic entity field such as Item
+shows the entity name. Search continues to match the complete code-and-name
+option, and the selected record ID and API payload remain unchanged.
+
+## 2026-10-07 — Feed requisitions are decided in their document dialog
+
+Rishi confirmed that a pending feed requisition must not show an “Open in
+Approvals” link inside its document dialog. Authorized users can already
+approve or reject the requisition there using the fixed-footer actions, while
+the Approvals page remains an independent approval inbox. The document keeps
+the “Waiting for approval” state message; users without approval authority see
+that state without a redundant navigation prompt.
+
+## 2026-10-07 — Feed Forecast Calculation columns show one semantic value
+
+Rishi confirmed that the Feed Forecast Calculation grid follows the same
+field-meaning rule as selected dropdown values. A column labelled Code or No.
+shows only the code/number. A Name column shows only the name, and a generic
+entity column such as Required Feed Item or Current Silo Item shows only that
+entity's name. The grid does not join code and name into one displayed value.
+Where the available Calculation value is an identifier, its header must say so
+(Batch No. and House Code).
+
+## 2026-10-08 — Common and feed draft actions use the dialog footer
+
+Rishi clarified that **Save** and **Submit for approval** belong in the fixed
+dialog footer for both common and feed requisitions. This supersedes the
+2026-10-04 placement of common Save and Submit in the dialog header. Later
+common-requisition workflow controls such as Reopen, Release, Link PO,
+Transfer Shipment and Transfer Receipt remain in the dialog header, while
+Approve / Reject retain their existing fixed-footer placement. Button
+permissions, validation, disabled states and API behaviour do not change.
+
+## 2026-10-08 — Feed Forecast unavailable values use explanatory text
+
+Rishi confirmed that the Feed Forecast must not expose technical or ambiguous
+empty values such as `NaN`, `-` or an em dash. On the affected Calculation and
+Dashboard fields, data that cannot be calculated is displayed as **Not
+available**. A missing shortage date is displayed as **No shortage projected**,
+and a delivery date that does not apply is displayed as **No delivery
+required**. Stored values and calculation rules are unchanged; this is the
+user-facing representation of unavailable results.
+
+## 2026-10-08 — Final common requisition field and workflow contract
+
+Rishi confirmed the final boundary after reviewing the common and feed dialogs:
+
+1. Feed requisitions remain a separate document with the workbook-specific
+   header and line fields. This decision does not change the feed form or bring
+   mill consolidation, dispatch or feed Transfer Order receipt into scope.
+2. Every non-feed requisition visibly retains the complete common header and
+   13-column line schema recorded on 7 Oct. Applicability changes the displayed
+   value, not the column set: fields outside the selected type or purpose show
+   read-only **Not applicable**.
+3. Draft **Save** and **Submit for approval** remain in the fixed dialog footer.
+   Approval **Reject / Approve** also remains in the fixed footer. Later workflow
+   controls remain in the dialog header and stay visible but disabled until the
+   document state and caller authority allow them.
+4. Purchase and Store keep different fulfilment paths. Purchase uses **Release**
+   followed by **Link PO**; release records the truthful pending Business Central
+   integration state and does not create an internal transfer. Store uses
+   **Release → Transfer Shipment → Transfer Receipt** and never syncs to BC.
+5. Transfer Shipment is posted by a user whose User Setup department matches
+   the From Sub-Location dimension. Transfer Receipt is posted by the original
+   requester and their User Setup department must match the To Sub-Location
+   dimension. There is no administrator bypass for either posting check.
+6. Direct Transfer remains a User Setup right and posts shipment plus receipt
+   together. Item Tracking remains an Item-line action; tracked lots or serials
+   are mandatory before shipment and receipt inherits the shipment tracking.
+7. Store shipment and receipt continue through the shared stock-transfer posting
+   path so Item Ledger and Value Entry are written once. In NAVFarm's current
+   schema these are one `inventory_ledger` record per posting leg: quantity is
+   the item entry and `rate` / `amount` are its value-entry data; there is no
+   separate `value_entry` table. The linked requisition's line quantities and
+   Fulfilment state update after every posting and finish at **Received** only
+   when all quantities due for receipt have been received.
+
+This supersedes any reading that all common purposes share the same posting
+path: they share the same visible field contract, while Purpose decides whether
+the operational path is Purchase/BC or Store/internal transfer.
+
+## 2026-10-08 — Feed requisitions continue through in-house transfer fulfilment
+
+Rishi decided that an approved feed requisition no longer stops at Approved.
+Its dialog always shows **Release**, **Transfer Shipment** and **Transfer
+Receipt** in the header, disabled when state or authority does not permit the
+action. Draft Save / Submit and approval Reject / Approve remain in the fixed
+footer.
+
+Release resolves each feed line to its active mill BIN assignment for the
+requisition production date. Because one feed requisition may use different
+source BINs or destination SILOs, it creates and explicitly links separate
+stock transfers per source-assignment/destination pair. Shipment and receipt
+use the shared stock-transfer posting path, and Fulfilment aggregates posted
+quantities across every linked transfer until the requisition is Received.
+Mill Consolidation remains out of scope and no Business Central integration is
+claimed. This supersedes earlier feed decisions that stopped workflow at farm
+approval or left feed transfer receipt for a later phase.
+
+Rishi also reconfirmed the semantic display rule for the feed document. Silo
+Code and Feed Item No. show only their code/number, Feed Item Description shows
+only its description, and the forecast Reason is a separate field/column rather
+than a combined second line beneath the description. Search results may expose
+code and name/description in separate columns without joining them in the
+selected value.
+
 ## 2026-10-08 — Feed Forecast pages, saved calculations and planned incoming stock
 
 Rishi approved the following final page and calculation boundaries:

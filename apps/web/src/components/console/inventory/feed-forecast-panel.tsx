@@ -14,6 +14,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/services/api-client";
 import { InlineAlert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Dialog } from "@/components/ui/dialog";
 import { EmptyState, LoadingState } from "@/components/ui/states";
 import { getActiveWorkspaceScope, getStoredUser, hasPermission } from "@/hooks/useAuth";
 import { useLanguage } from "@/hooks/useLanguage";
@@ -24,6 +25,9 @@ import { FeedForecastNotes, type ForecastFlag } from "./feed-forecast-notes";
 import { businessYearStartOf, forecastQueryString, FORECAST_VIEWS, ForecastView } from "./feed-forecast-query";
 import { FeedFarmSelect, feedFarmLabel } from "./feed-farm-select";
 import { FeedForecastRunHistory } from "./feed-forecast-run-history";
+import { FeedRequisitionDetail } from "./feed-requisition-detail";
+import { FeedRequisitionFromRunDialog } from "./feed-requisition-from-run-dialog";
+import type { RequisitionView } from "./feed-requisition-document";
 import { setForecastWindow } from "./feed-forecast-window";
 import {
   FeedForecastProvider,
@@ -64,6 +68,8 @@ interface CurrentForecastRun {
   run_code?: string;
   runCode?: string;
   version: number;
+  existingRequisitionId?: string | null;
+  canCreateRequisition?: boolean;
   output_snapshot?: { display?: SavedForecastDisplay };
 }
 
@@ -128,6 +134,8 @@ function FeedForecastPanelContent() {
   const [runMessage, setRunMessage] = useState("");
   const [runError, setRunError] = useState("");
   const [runHistoryReload, setRunHistoryReload] = useState(0);
+  const [fromRunOpen, setFromRunOpen] = useState(false);
+  const [createdRequisition, setCreatedRequisition] = useState<RequisitionView | null>(null);
 
   useEffect(() => setFilters(EMPTY_FILTERS), [farmId]);
 
@@ -170,7 +178,7 @@ function FeedForecastPanelContent() {
     setError("");
     api
       .get(`/feed-forecast/runs/current?${new URLSearchParams({ farmId }).toString()}`)
-      .then((response) => {
+      .then(async (response) => {
         if (cancelled) return;
         const run = (response && typeof response === "object" && "data" in response ? response.data : response) as CurrentForecastRun | null;
         const display = run?.output_snapshot?.display;
@@ -192,7 +200,21 @@ function FeedForecastPanelContent() {
           sourceBalances: Array.isArray(display.sourceBalances) ? display.sourceBalances : [],
           flags: Array.isArray(display.flags) ? display.flags : [],
         } as ForecastData;
-        setCurrentRun(run);
+        const runId = run.run_id ?? run.runId;
+        let existingRequisitionId: string | null = null;
+        let canCreateRequisition = false;
+        if (runId) {
+          try {
+            const preview = unwrap<{ existingRequisitionId?: string | null; lines?: unknown[] }>(await api.get(`/feed-requisition/from-run/${runId}/preview`));
+            existingRequisitionId = preview.existingRequisitionId ?? null;
+            canCreateRequisition = !!existingRequisitionId || (Array.isArray(preview.lines) && preview.lines.length > 0);
+          } catch {
+            // A saved calculation with no material shortage remains viewable,
+            // but it must not offer a requisition that the API will refuse.
+          }
+        }
+        if (cancelled) return;
+        setCurrentRun({ ...run, existingRequisitionId, canCreateRequisition });
         setCalculationState("SAVED");
         setData(resolved);
         hydrateWindow({
@@ -260,7 +282,19 @@ function FeedForecastPanelContent() {
         ...(view === "PERIOD" && (periodId || data.period?.periodId) ? { periodId: periodId || data.period!.periodId } : {}),
       });
       const saved = unwrap<{ runCode: string; version: number }>(response);
-      setCurrentRun(saved);
+      let canCreateRequisition = false;
+      let existingRequisitionId: string | null = null;
+      const savedRunId = (saved as CurrentForecastRun).run_id ?? (saved as CurrentForecastRun).runId;
+      if (savedRunId) {
+        try {
+          const preview = unwrap<{ existingRequisitionId?: string | null; lines?: unknown[] }>(await api.get(`/feed-requisition/from-run/${savedRunId}/preview`));
+          existingRequisitionId = preview.existingRequisitionId ?? null;
+          canCreateRequisition = !!existingRequisitionId || (Array.isArray(preview.lines) && preview.lines.length > 0);
+        } catch {
+          canCreateRequisition = false;
+        }
+      }
+      setCurrentRun({ ...saved, existingRequisitionId, canCreateRequisition });
       setCalculationState("SAVED");
       setRunMessage(tRef.current("ffRunSaved", { code: saved.runCode, version: saved.version }));
       setRunHistoryReload((value) => value + 1);
@@ -471,7 +505,14 @@ function FeedForecastPanelContent() {
                 </Button>
               )}
               {canSaveRun && calculationState === "SAVED" && (
-                <Button size="sm" variant="outline" onClick={deleteCalculation}>{t("ffDeleteCalculation")}</Button>
+                <>
+                  {(currentRun?.existingRequisitionId || currentRun?.canCreateRequisition) && (
+                    <Button size="sm" onClick={() => setFromRunOpen(true)}>
+                      {t(currentRun?.existingRequisitionId ? "rqViewRequisition" : "rqCreateFromSaved")}
+                    </Button>
+                  )}
+                  <Button size="sm" variant="outline" onClick={deleteCalculation}>{t("ffDeleteCalculation")}</Button>
+                </>
               )}
             </div>
           </div>
@@ -482,6 +523,21 @@ function FeedForecastPanelContent() {
             </>
           ) : loading ? <LoadingState label={t("ffLoading")} /> : <EmptyState title={t("ffCalculatePrompt")} />}
           {!!farmId && <FeedForecastRunHistory farmId={farmId} reloadToken={runHistoryReload} />}
+          <FeedRequisitionFromRunDialog
+            open={fromRunOpen}
+            runId={currentRun?.run_id ?? currentRun?.runId ?? null}
+            onClose={() => setFromRunOpen(false)}
+            onView={(view) => {
+              setFromRunOpen(false);
+              setCreatedRequisition(view);
+              setCurrentRun((run) => run ? { ...run, existingRequisitionId: view.requisition_id } : run);
+            }}
+          />
+          {createdRequisition && (
+            <Dialog open onClose={() => setCreatedRequisition(null)} title={createdRequisition.req_no}>
+              <FeedRequisitionDetail embedded view={createdRequisition} onView={setCreatedRequisition} onBack={() => setCreatedRequisition(null)} />
+            </Dialog>
+          )}
         </>
       )}
     </div>

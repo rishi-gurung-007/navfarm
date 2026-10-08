@@ -23,7 +23,7 @@ import { userHasPermission } from '../../../common/permissions';
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { isDuplicateEntry } from '../../../common/filters/http-exception.filter';
 import { draftForecastRange, FeedForecastService, MAX_SPAN_DAYS, type FeedForecastResponse } from '../../inventory/feed-forecast/feed-forecast.service';
-import { utcTimestamp, type ForecastSource } from '../../inventory/feed-forecast/feed-forecast.engine';
+import { addDays, utcTimestamp, type ForecastSource } from '../../inventory/feed-forecast/feed-forecast.engine';
 import {
   buildOutputSnapshot, buildRunLineSnapshots, FORECAST_RUN_OUTPUT_HASH_VERSION,
   type ForecastRunLineSnapshot, type ForecastRunOutputSnapshot,
@@ -44,7 +44,7 @@ import {
   productionCycle, recommendLines, requiredItemForManualLine, requisitionPriority, runKeyFor, serverToday, wasEdited,
 } from './feed-requisition.rules';
 import {
-  AutoDraftFeedRequisitionDto, CreateManualFeedRequisitionDto, FeedLineEditInput, QueryFeedRequisitionDto,
+  AutoDraftFeedRequisitionDto, CreateFeedRequisitionFromRunDto, CreateManualFeedRequisitionDto, FeedLineEditInput, QueryFeedRequisitionDto,
   UpdateFeedRequisitionDto, FeedRequisitionReceiptDto, FeedRequisitionShipmentDto,
 } from './dto/feed-requisition.dto';
 import { groupFeedTransferLines } from './feed-requisition-transfer.rules';
@@ -504,6 +504,136 @@ export class FeedRequisitionService implements OnModuleInit {
     return balances;
   }
 
+  private async savedRunDraft(runId: string, tenantId: string, user: UserCtx) {
+    const [run] = await this.db.select().from(schema.feedForecastRun).where(and(
+      eq(schema.feedForecastRun.run_id, runId),
+      eq(schema.feedForecastRun.tenant_id, tenantId),
+    )).limit(1);
+    if (!run) throw new NotFoundException('Saved feed forecast calculation not found.');
+    const { farmId, companyId } = await this.forecast.resolveFarm(run.farm_id, tenantId, user?.userType);
+    return this.forecast.withFarmScope(farmId, companyId, async () => {
+      const runLines = await this.db.select({
+        run_line_id: schema.feedForecastRunLine.run_line_id,
+        destination_location_id: schema.feedForecastRunLine.destination_location_id,
+        item_id: schema.feedForecastRunLine.required_item_id,
+        recommended_qty_kg: schema.feedForecastRunLine.recommended_qty_kg,
+        shortage_date: schema.feedForecastRunLine.shortage_date,
+      }).from(schema.feedForecastRunLine).where(eq(schema.feedForecastRunLine.run_id, runId));
+      const material = runLines.filter((line) => line.destination_location_id && Number(line.recommended_qty_kg) > 0);
+      if (!material.length) throw new BadRequestException('This saved calculation has no feed shortage to requisition.');
+      const itemIds = [...new Set(material.map((line) => line.item_id))];
+      const destinationIds = [...new Set(material.map((line) => line.destination_location_id!))];
+      const [items, destinations, existing] = await Promise.all([
+        this.db.select({ item_id: schema.itemMaster.item_id, item_code: schema.itemMaster.item_code, item_name: schema.itemMaster.item_name })
+          .from(schema.itemMaster).where(inArray(schema.itemMaster.item_id, itemIds)),
+        this.db.select({ location_id: schema.locationMaster.location_id, location_code: schema.locationMaster.location_code, location_name: schema.locationMaster.location_name, location_type: schema.locationMaster.location_type, feed_in_bags: schema.locationMaster.feed_in_bags })
+          .from(schema.locationMaster).where(and(eq(schema.locationMaster.tenant_id, tenantId), inArray(schema.locationMaster.location_id, destinationIds))),
+        this.db.select({ requisition_id: schema.requisition.requisition_id }).from(schema.requisition).where(and(
+          eq(schema.requisition.tenant_id, tenantId), eq(schema.requisition.feed_forecast_run_id, runId), isNull(schema.requisition.deleted_at),
+        )).limit(1),
+      ]);
+      const itemOf = new Map(items.map((item) => [item.item_id, item]));
+      const destinationOf = new Map(destinations.map((destination) => [destination.location_id, destination]));
+      const grouped = new Map<string, typeof material>();
+      for (const line of material) {
+        const key = lineKey(line.destination_location_id!, line.item_id);
+        grouped.set(key, [...(grouped.get(key) ?? []), line]);
+      }
+      const config = run.config_snapshot as { values?: { requisitionDraftSettings?: Partial<FarmFeedSettings> } } | null;
+      return {
+        runId: run.run_id,
+        runCode: run.run_code,
+        planningDate: run.planning_date,
+        farmId,
+        existingRequisitionId: existing[0]?.requisition_id ?? null,
+        settings: config?.values?.requisitionDraftSettings ?? null,
+        lines: [...grouped.values()].map((lines) => {
+          const first = lines[0];
+          const item = itemOf.get(first.item_id);
+          const destination = destinationOf.get(first.destination_location_id!);
+          const shortage = lines.map((line) => line.shortage_date).filter((date): date is string => !!date).sort()[0] ?? run.to_date;
+          const quantity = Math.max(...lines.map((line) => Number(line.recommended_qty_kg)));
+          return {
+            destination_location_id: first.destination_location_id!,
+            destination_code: destination?.location_code ?? '',
+            destination_name: destination?.location_name ?? '',
+            item_id: first.item_id,
+            item_code: item?.item_code ?? '',
+            item_name: item?.item_name ?? '',
+            recommended_qty_kg: quantity,
+            quantity_kg: quantity,
+            proposed_delivery_date: addDays(shortage, -2),
+            feed_type: destination?.location_type === 'STORE' || destination?.feed_in_bags ? 'BAGGED' : 'BULK',
+            source_type: destination?.location_type === 'STORE' ? 'STORE' : 'SILO',
+            run_line_ids: lines.map((line) => line.run_line_id),
+          };
+        }),
+      };
+    });
+  }
+
+  async previewFromRun(runId: string, tenantId: string, user: UserCtx) {
+    return this.savedRunDraft(runId, tenantId, user);
+  }
+
+  async createFromRun(runId: string, dto: CreateFeedRequisitionFromRunDto, tenantId: string, user: UserCtx) {
+    const preview = await this.savedRunDraft(runId, tenantId, user);
+    if (preview.existingRequisitionId) throw new ConflictException('This saved calculation already has a feed requisition.');
+    const expected = new Map(preview.lines.map((line) => [lineKey(line.destination_location_id, line.item_id), line]));
+    if (dto.lines.length !== expected.size) throw new BadRequestException('The requisition lines must match the saved calculation.');
+    for (const line of dto.lines) {
+      if (!expected.has(lineKey(line.destination_location_id, line.item_id))) {
+        throw new BadRequestException('A requisition destination or feed item does not belong to the saved calculation.');
+      }
+    }
+    const { companyId } = await this.forecast.resolveFarm(preview.farmId, tenantId, user?.userType);
+    const farm = await this.loadFarm(preview.farmId, companyId, tenantId);
+    const clock = await this.forecast.farmToday(companyId, tenantId);
+    const settings = { ...DEFAULT_FEED_SETTINGS, ...(preview.settings ?? {}) };
+    const cycle = productionCycle(preview.planningDate, settings.productionWeekday);
+    let requisitionId = '';
+    try {
+      requisitionId = await withTenantTransaction(this.cls, async () => {
+        await this.lockFarm(preview.farmId, tenantId);
+        const [lockedRun] = await this.db.select({ run_id: schema.feedForecastRun.run_id }).from(schema.feedForecastRun).where(and(
+          eq(schema.feedForecastRun.run_id, runId), eq(schema.feedForecastRun.tenant_id, tenantId),
+        )).limit(1).for('update');
+        if (!lockedRun) throw new NotFoundException('Saved feed forecast calculation not found.');
+        const [duplicate] = await this.db.select({ requisition_id: schema.requisition.requisition_id }).from(schema.requisition).where(and(
+          eq(schema.requisition.tenant_id, tenantId), eq(schema.requisition.feed_forecast_run_id, runId), isNull(schema.requisition.deleted_at),
+        )).limit(1).for('update');
+        if (duplicate) throw new ConflictException('This saved calculation already has a feed requisition.');
+        const id = randomUUID();
+        await this.db.insert(schema.requisition).values({
+          requisition_id: id, tenant_id: tenantId, company_id: companyId, farm_id: preview.farmId,
+          req_no: await this.nextReqNo(farm.code, tenantId, clock.today), doc_type: FEED_DOC_TYPE,
+          status: 'DRAFT', approval_status: 'OPEN', document_status: 'OPEN', fulfilment_status: 'NOT_APPLICABLE',
+          requisition_type: 'FEED_FORECAST', source: 'AUTO_FORECAST', purpose: 'INTERNAL_TRANSFER', supply_source: 'MILL',
+          feed_forecast_run_id: runId, forecast_run_key: preview.runCode, requisition_date: clock.today,
+          required_date: dto.lines.map((line) => line.proposed_delivery_date).sort()[0],
+          production_date: cycle.productionDate, submission_deadline: cycle.submissionDeadline,
+          remarks: dto.remarks?.trim() || null, created_by: user?.userId ?? null, updated_by: user?.userId ?? null,
+        });
+        await this.db.insert(schema.requisitionLine).values(dto.lines.map((line, index) => {
+          const source = expected.get(lineKey(line.destination_location_id, line.item_id))!;
+          return {
+            line_id: randomUUID(), requisition_id: id, line_seq: (index + 1) * 10000,
+            item_id: line.item_id, description: source.item_name.slice(0, 200), quantity: String(line.quantity_kg), uom: 'KG',
+            destination_location_id: line.destination_location_id, source_type: source.source_type, feed_type: source.feed_type,
+            recommended_qty_kg: String(source.recommended_qty_kg), recommended_delivery_date: source.proposed_delivery_date,
+            proposed_delivery_date: line.proposed_delivery_date, quantity_edited: Math.abs(line.quantity_kg - source.recommended_qty_kg) > 1e-6,
+            bag_count: bagCountFor(line.quantity_kg, source.feed_type as FeedType, settings), feed_forecast_run_line_ids: source.run_line_ids,
+          };
+        }));
+        return id;
+      });
+    } catch (error) {
+      if (isDuplicateEntry(error)) throw new ConflictException('This saved calculation already has a feed requisition.');
+      throw error;
+    }
+    return this.forecast.withFarmScope(preview.farmId, companyId, () => this.readView(requisitionId, tenantId, user));
+  }
+
   async autoDraft(dto: AutoDraftFeedRequisitionDto, tenantId: string, user: UserCtx) {
     const { farmId, companyId } = await this.forecast.resolveFarm(dto.farmId, tenantId, user?.userType);
     // D16: the forecast plans from today in the farm's time zone, so `to` is held to the same day —
@@ -847,7 +977,27 @@ export class FeedRequisitionService implements OnModuleInit {
         if (problems.length) throw new BadRequestException(problems.map((p) => `Line ${i + 1}: ${p}`).join(' '));
         if (requiredItemId !== null && requiredItemId !== line.item_id) exceptionOf.set(i, reasonOf.get(i)?.label ?? line.exception_reason!.trim());
       });
+      // A manual request has the same evidence columns as an event-created
+      // request. The four entered values remain authoritative, while the
+      // current forecast supplies a read-only snapshot wherever the selected
+      // destination/item has calculable demand.
+      const currentBalanceKg = await this.currentBalances(demand.sources, companyId, tenantId);
+      const selectedKeys = new Set(dto.lines.map((line) => lineKey(line.destination_location_id, line.item_id)));
+      const manualEvidence = recommendLines({
+        planningDate: demand.planningDate,
+        to: demand.to,
+        sources: demand.sources,
+        destinations,
+        settings: farm.settings,
+        currentBalanceKg,
+        includeZeroNeed: true,
+      }).filter((line) => selectedKeys.has(line.key));
+      const evidenceOf = new Map(manualEvidence.map((line) => [line.key, line]));
       const cycle = productionCycle(manualToday, farm.settings.productionWeekday);
+      const [requester] = user?.userId
+        ? await this.db.select({ full_name: schema.userMaster.full_name, department_id: schema.userMaster.department_id })
+          .from(schema.userMaster).where(and(eq(schema.userMaster.user_id, user.userId), eq(schema.userMaster.tenant_id, tenantId))).limit(1)
+        : [];
       return this.numbered(() => withTenantTransaction(this.cls, async () => {
         await this.lockFarm(farmId, tenantId);
         await this.supersedeCoverage(dto.lines, destinations, nameOf, farmId, tenantId, cycle.submissionDeadline, user);
@@ -864,18 +1014,24 @@ export class FeedRequisitionService implements OnModuleInit {
           source: 'MANUAL_ENTRY',
           purpose: 'INTERNAL_TRANSFER',
           supply_source: 'MILL',
+          priority: requisitionPriority(demand.planningDate, manualEvidence),
           remarks: dto.remarks?.trim() || null,
           requisition_date: manualToday, // Req. §1 row 6
           required_date: dto.lines.map((l) => l.proposed_delivery_date).sort()[0],
           production_date: cycle.productionDate,
           submission_deadline: cycle.submissionDeadline,
+          requester_user_id: user?.userId ?? null,
+          requester_name: requester?.full_name ?? null,
+          requester_department_id: requester?.department_id ?? null,
           created_by: user?.userId ?? null,
           updated_by: user?.userId ?? null,
         });
         await this.db.insert(schema.requisitionLine).values(dto.lines.map((line, i) => {
           const dest = destinations.get(line.destination_location_id)!;
           const feedType: FeedType = feedTypeOf(dest);
+          const evidence = evidenceOf.get(lineKey(line.destination_location_id, line.item_id));
           return {
+            ...(evidence ? this.lineValues(evidence) : {}),
             requisition_id: id,
             // Requisition §1 row 42: the same NAV-style 10000-step convention the auto-drafted lines use.
             line_seq: (i + 1) * 10000,
@@ -892,6 +1048,7 @@ export class FeedRequisitionService implements OnModuleInit {
             feed_type: feedType,
             bag_count: bagCountFor(line.quantity_kg, feedType, farm.settings),
             proposed_delivery_date: line.proposed_delivery_date,
+            quantity_edited: true,
           };
         }));
         return id;
@@ -1615,7 +1772,7 @@ export class FeedRequisitionService implements OnModuleInit {
     // a Farm Manager *may* approve a system-generated forecast draft for their
     // farm, which is the path an auto-drafted cycle takes. So the refusal keys
     // on how the document was raised, not on the user type. decisions.md
-    // 2026-10-04 supersedes this for exactly TENANT_ADMIN and COMPANY_ADMIN
+    // 2026-10-07 supersedes this for TENANT_ADMIN, COMPANY_ADMIN and OPERATIONAL_ADMIN
     // (maySelfApprove, shared with the common requisition's two enforcement
     // points) — every other type, including SYSTEM_ADMIN (not yet decided),
     // is still refused. This check stays its own inline test rather than

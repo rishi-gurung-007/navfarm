@@ -60,6 +60,15 @@ export class FeedForecastController {
     return { success: true, message: 'Current feed forecast run retrieved successfully.', data };
   }
 
+  @Get('feed-plan')
+  @RequirePermission('INVENTORY', 'LEDGER', 'view')
+  @ApiOperation({ summary: 'Saved feed plan with requisition and transfer fulfilment for one farm' })
+  async feedPlan(@Query('farmId') farmId: string | undefined, @Query('from') from: string | undefined, @Query('to') to: string | undefined, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const data = await this.feedForecastService.feedPlan(farmId, tenantId, req.user?.userType, from, to);
+    return { success: true, message: 'Feed plan retrieved successfully.', data };
+  }
+
   @Get('runs/:id')
   @RequirePermission('INVENTORY', 'LEDGER', 'view')
   @ApiOperation({ summary: 'One immutable feed forecast run and its dated lines' })

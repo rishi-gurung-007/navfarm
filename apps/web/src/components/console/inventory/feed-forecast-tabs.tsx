@@ -21,16 +21,18 @@ import { useLanguage } from "@/hooks/useLanguage";
 import type { TranslationKeys } from "@/utils/translations";
 import FeedSiloDashboard from "./feed-silo-dashboard";
 import FeedForecastPanel from "./feed-forecast-panel";
+import FeedPlanPanel from "./feed-plan-panel";
 import { FeedRequisitionPanel } from "./requisitions-panel";
 import FeedStockCountPanel from "./feed-stock-count-panel";
 import { FeedForecastProvider } from "./feed-forecast-context";
 
-export const FEED_FORECAST_TABS = ["dashboard", "forecast", "feed-requisition", "physical-count"] as const;
+export const FEED_FORECAST_TABS = ["dashboard", "forecast", "feed-plan", "feed-requisition", "physical-count"] as const;
 export type FeedForecastTab = (typeof FEED_FORECAST_TABS)[number];
 
 const TAB_LABEL: Record<FeedForecastTab, TranslationKeys> = {
   dashboard: "fftTabDashboard",
   forecast: "fftTabForecast",
+  "feed-plan": "fftTabFeedPlan",
   "feed-requisition": "fftTabFeedRequisition",
   "physical-count": "fftTabPhysicalCount",
 };
@@ -50,6 +52,7 @@ export function feedForecastTabQuery(tab: FeedForecastTab): string {
 const PANELS: Record<FeedForecastTab, () => ReactNode> = {
   dashboard: () => <FeedSiloDashboard />,
   forecast: () => <FeedForecastPanel />,
+  "feed-plan": () => <FeedPlanPanel />,
   "feed-requisition": () => <FeedRequisitionPanel />,
   "physical-count": () => <FeedStockCountPanel />,
 };

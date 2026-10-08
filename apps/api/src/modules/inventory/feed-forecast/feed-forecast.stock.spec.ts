@@ -32,7 +32,7 @@ describe('stockAsOf — silo and store stock for the forecast (Q2, Q6)', () => {
       drafts: [{ warehouse_id: 's2', item_id: 'r2', item_code: 'FEED-R2', uom: 'KG', posting_date: '2026-09-28', qty: 6000 }],
     });
     expect(out.silos[1]).toMatchObject({ itemId: 'r2', balanceKg: 0 });
-    expect(out.incoming).toEqual([{ locationId: 's2', itemId: 'r2', date: '2026-09-28', kg: 6000 }]);
+    expect(out.incoming).toEqual([{ locationId: 's2', itemId: 'r2', date: '2026-09-28', kg: 6000, kind: 'OPEN_TRANSFER' }]);
   });
 
   it('keeps posted movements and drafts, signed, and drops a silo movement of another item', () => {
@@ -47,9 +47,9 @@ describe('stockAsOf — silo and store stock for the forecast (Q2, Q6)', () => {
       drafts: [{ warehouse_id: 'st', item_id: 'r1', item_code: 'FEED-R1', uom: 'KG', posting_date: '2026-09-29', qty: -1000 }],
     });
     expect(out.incoming).toEqual([
-      { locationId: 's1', itemId: 'r1', date: '2026-09-26', kg: 3000 },
-      { locationId: 'st', itemId: 'r2', date: '2026-09-27', kg: -200 },
-      { locationId: 'st', itemId: 'r1', date: '2026-09-29', kg: -1000 },
+      { locationId: 's1', itemId: 'r1', date: '2026-09-26', kg: 3000, kind: 'CONFIRMED_LEDGER' },
+      { locationId: 'st', itemId: 'r2', date: '2026-09-27', kg: -200, kind: 'CONFIRMED_LEDGER' },
+      { locationId: 'st', itemId: 'r1', date: '2026-09-29', kg: -1000, kind: 'OPEN_TRANSFER' },
     ]);
   });
 

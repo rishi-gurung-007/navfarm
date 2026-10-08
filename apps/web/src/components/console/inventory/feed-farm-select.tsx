@@ -21,6 +21,7 @@ export function FeedFarmSelect({
   farmId,
   onChange,
   fixedLabel,
+  allLabel,
 }: {
   id: string;
   label: string;
@@ -28,6 +29,7 @@ export function FeedFarmSelect({
   farmId: string | null;
   onChange: (farmId: string) => void;
   fixedLabel?: string | null;
+  allLabel?: string;
 }) {
   if (fixedLabel !== undefined) {
     return (
@@ -47,6 +49,7 @@ export function FeedFarmSelect({
   return (
     <Field label={label} htmlFor={id}>
       <select id={id} className="nf-input-sm nf-select w-full min-w-[11rem]" style={inputStyle} value={farmId ?? ""} onChange={(e) => onChange(e.target.value)}>
+        {allLabel !== undefined && <option value="">{allLabel}</option>}
         {byCompany.size > 1
           ? [...byCompany].map(([company, farmsOf]) => (
               <optgroup key={company} label={company || "—"}>{farmsOf.map(option)}</optgroup>

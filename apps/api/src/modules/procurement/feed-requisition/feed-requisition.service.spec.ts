@@ -99,6 +99,7 @@ const source = (over: Partial<ForecastSource> = {}): ForecastSource => ({
   balanceKg: 1500, planningDayDemandKg: 2000, firstDemandDate: '2026-09-23', firstDayDemandKg: 2000, walkDemandKg: 6000,
   daysLeft: 0, runDownDate: '2026-09-23', isNextDiet: false, noSiloHoldsItem: false, lifecycleIds: ['row-r1'],
   thresholdKg: 0, incomingKg: 0, shortfallKg: 4500, safetyStockKg: 0, deliveryDayOpeningKg: 1500, ...over,
+  currentDietDaysRemaining: over.currentDietDaysRemaining === undefined ? 3 : over.currentDietDaysRemaining,
 });
 // Settings (bulk multiple, bag size, truck target, production weekday) come from FeedSettingsService now
 // (Task 5) — location_master no longer supplies them, so the farm row carries only what loadFarm still reads.
@@ -110,16 +111,17 @@ const forecastDaily = (over: Record<string, unknown> = {}) => ({
   // ANIMAL_WISE/REGISTERED stage group); realBatchId is the genuine batch_header PK
   // every writer must persist. Equal here by default — a dedicated test below makes
   // them differ to prove the real id, not the composite, is what gets written.
-  date: serverToday(), batchId: 'batch-1', realBatchId: 'batch-1', stageId: null, groupStageId: null, batchNo: 'BATCH-1', shedId: 'shed-1', shedCode: 'SHED-1', stageCode: 'WEANER',
+  date: serverToday(), batchId: 'batch-1', stageId: null, groupStageId: null, batchNo: 'BATCH-1', shedId: 'shed-1', shedCode: 'SHED-1', stageCode: 'WEANER',
   destinationLocationId: 'silo-1', itemId: 'item-r1', itemNo: 'R1', itemName: 'Weaner Diet R1', currentItemId: 'item-r1',
   heads: 1000, feedRateKg: 2, openingStockKg: 1500, confirmedReceiptKg: 0, demandKg: 2000,
   projectedClosingKg: 0, runDownDate: serverToday(), shortageDate: serverToday(), recommendedQtyKg: 4500,
   lifecycleId: 'row-r1', sourceType: 'SILO', sourceCode: 'GRS/SILO-001',
   perDayIntakeKg: 2000, daysOfStock: 0, sharedBatchCount: 1, indicative: false,
   ...over,
+  realBatchId: (over.realBatchId ?? 'batch-1') as any,
 });
 
-const OUTPUT_HASH_VERSION = 'forecast-run-lines:v2';
+const OUTPUT_HASH_VERSION = 'forecast-run-display:v3';
 const canonical = (value: unknown): unknown => Array.isArray(value)
   ? value.map(canonical)
   : value && typeof value === 'object'
@@ -968,6 +970,8 @@ describe('FeedRequisitionService.createManual — row 9 across the cycle, number
     [schema.itemMaster, [[ITEM]]],
     [schema.requisition, [cycle, [], [{ req: { requisition_id: 'new' }, farm_code: 'GRS', truck_target_kg: 30000 }]]],
     [schema.requisitionLine, [lines, []]],
+    [schema.reasonMaster, [[{ reason_id: 'reason-1', reason_code: 'REQ-01', reason_name: 'Diet exception', is_active: true }]]],
+    [schema.userMaster, [[{ user_id: 'u-1', full_name: 'Requesting User', department_id: 'dept-1' }]]],
   ]);
   const line = (over: object) => ({ line_id: 'AL1', requisition_id: 'auto-1', dest: 'silo-1', item: 'item-r1', quantity: '6000.0000', recommended: '6000.0000', edited: false, ...over });
   const run = (service: FeedRequisitionService) => service.createManual({ lines: [manualLine] } as any, 'tenant-1', { userId: 'u-1', userType: 'COMPANY_ADMIN' });
@@ -994,6 +998,29 @@ describe('FeedRequisitionService.createManual — row 9 across the cycle, number
     forecast.farmToday.mockResolvedValueOnce({ today: '2026-09-26', timeZone: 'Africa/Harare' });
     await run(service);
     expect(forecast.farmToday).toHaveBeenCalledWith('co-1', 'tenant-1');
+  });
+
+  it('snapshots forecast evidence on a manually created line while keeping the four user inputs authoritative', async () => {
+    const { service, log } = setup([source()], queuesWith([], []));
+    await run(service);
+    const header = log.find((e) => e.op === 'insert' && e.table === schema.requisition)!;
+    expect(header.values).toMatchObject({
+      doc_type: 'FEED', source: 'MANUAL_ENTRY', priority: 'CRITICAL_FIRST_PRIORITY',
+      requester_user_id: 'u-1', requester_name: 'Requesting User', requester_department_id: 'dept-1',
+    });
+    const inserted = log.find((e) => e.op === 'insert' && e.table === schema.requisitionLine)!;
+    expect(inserted.values[0]).toMatchObject({
+      destination_location_id: 'silo-1', item_id: 'item-r1', quantity: '3000', proposed_delivery_date: '2026-09-30',
+      system_balance_kg: '1500', daily_requirement_kg: '2000', days_remaining: '0', lifecycle_ref_id: 'row-r1',
+      unrounded_need_kg: '4500', recommended_qty_kg: '6000', is_next_diet: false,
+    });
+  });
+
+  it('stores the active company Reason Master identity on a manual feed line', async () => {
+    const { service, log } = setup([source()], queuesWith([], []));
+    await service.createManual({ lines: [{ ...manualLine, reason_id: 'reason-1' }] } as any, 'tenant-1', { userId: 'u-1', userType: 'COMPANY_ADMIN' });
+    const inserted = log.find((e) => e.op === 'insert' && e.table === schema.requisitionLine)!;
+    expect(inserted.values[0]).toMatchObject({ reason_id: 'reason-1' });
   });
 
   it('numbers into the new year when the farm zone has already turned (31 Dec 23:00 UTC, Africa/Harare) (D16)', async () => {

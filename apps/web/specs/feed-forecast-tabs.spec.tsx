@@ -44,6 +44,10 @@ jest.mock('../src/components/console/inventory/requisitions-panel', () => ({
   FeedRequisitionPanel: () => <div data-testid="panel-requisition" />,
   default: () => <div data-testid="panel-requisition" />,
 }));
+jest.mock('../src/components/console/inventory/feed-plan-panel', () => ({
+  __esModule: true,
+  default: () => <div data-testid="panel-feed-plan" />,
+}));
 jest.mock('../src/components/console/inventory/feed-stock-count-panel', () => {
   const { useEffect } = jest.requireActual('react');
   return {
@@ -83,9 +87,10 @@ const displayOf = (tab: string) => document.querySelector(`[data-feed-tab="${tab
 
 describe('Feed Forecast tab selection is carried by the URL', () => {
   it('reads each supported tab and falls back to the forecast for anything else', () => {
-    expect(FEED_FORECAST_TABS).toEqual(['dashboard', 'forecast', 'feed-requisition', 'physical-count']);
+    expect(FEED_FORECAST_TABS).toEqual(['dashboard', 'forecast', 'feed-plan', 'feed-requisition', 'physical-count']);
     expect(readFeedForecastTab('dashboard')).toBe('dashboard');
     expect(readFeedForecastTab('forecast')).toBe('forecast');
+    expect(readFeedForecastTab('feed-plan')).toBe('feed-plan');
     expect(readFeedForecastTab('feed-requisition')).toBe('feed-requisition');
     expect(readFeedForecastTab('physical-count')).toBe('physical-count');
     expect(readFeedForecastTab(null)).toBe('forecast');
@@ -107,11 +112,11 @@ describe('FeedForecastTabs', () => {
     mockCountMounts = 0;
   });
 
-  it('shows all four tabs and marks the selected one', () => {
+  it('shows all five tabs and marks the selected one', () => {
     render(<FeedForecastTabs tab="forecast" onTabChange={() => undefined} />);
     const list = screen.getByRole('tablist');
     expect(Array.from(list.querySelectorAll('[role="tab"]')).map((node) => node.textContent))
-      .toEqual(['fftTabDashboard', 'fftTabForecast', 'fftTabFeedRequisition', 'fftTabPhysicalCount']);
+      .toEqual(['fftTabDashboard', 'fftTabForecast', 'fftTabFeedPlan', 'fftTabFeedRequisition', 'fftTabPhysicalCount']);
     expect(screen.getByRole('tab', { name: 'fftTabForecast' }).getAttribute('aria-selected')).toBe('true');
     expect(screen.getByRole('tab', { name: 'fftTabPhysicalCount' }).getAttribute('aria-selected')).toBe('false');
   });
@@ -188,10 +193,10 @@ describe('the feed screens read the shared farm selection', () => {
  */
 describe("WP1d — Feed Forecast tab names follow the workbook", () => {
   it("names the four tabs as Rishi ruled, in order, without renaming any route key", () => {
-    expect(FEED_FORECAST_TABS).toEqual(["dashboard", "forecast", "feed-requisition", "physical-count"]);
+    expect(FEED_FORECAST_TABS).toEqual(["dashboard", "forecast", "feed-plan", "feed-requisition", "physical-count"]);
     const en = (require("../src/utils/translations") as any).translations.en;
     expect([
-      en.fftTabDashboard, en.fftTabForecast, en.fftTabFeedRequisition, en.fftTabPhysicalCount,
-    ]).toEqual(["Dashboard", "Calculation", "Requisition", "Physical Stock Count"]);
+      en.fftTabDashboard, en.fftTabForecast, en.fftTabFeedPlan, en.fftTabFeedRequisition, en.fftTabPhysicalCount,
+    ]).toEqual(["Dashboard", "Calculation", "Feed Plan", "Requisition", "Physical Stock Count"]);
   });
 });

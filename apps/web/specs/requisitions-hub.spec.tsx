@@ -20,7 +20,7 @@ jest.mock("../src/hooks/useAuth", () => ({
 }));
 jest.mock("../src/utils/date-short", () => ({ formatDateShort: (v: string | null) => v ?? "" }));
 jest.mock("../src/components/console/inventory/use-feed-farm", () => ({
-  useFeedFarm: () => ({ farmId: null, setFarmId: jest.fn(), farms: [], loaded: true, failed: false, isFixed: false, fixedFarm: null }),
+  useFeedFarm: () => ({ farmId: null, setFarmId: jest.fn(), farms: [{ farmId: "f1", code: "VIL100", name: "Village Farm", companyId: "co-1" }], loaded: true, failed: false, isFixed: false, fixedFarm: null }),
 }));
 
 const get = api.get as jest.Mock;
@@ -31,13 +31,31 @@ const row = (id: string, doc_type: string, purpose: string | null, extra: Record
   fulfilment_status: "NOT_APPLICABLE", integration_status: "NOT_APPLICABLE", approval_request_id: null, line_count: 2, ...extra,
 });
 
-// The API's kind=common list never returns FEED (WP1g); the one FEED fixture row is
-// what GET /requisition/:id answers for a feed id someone follows a link to.
-const FEED_ROW = row("req-feed", "FEED", "INTERNAL_TRANSFER", { status: "PENDING_APPROVAL", approval_status: "PENDING_APPROVAL" });
+const FEED_ROW = row("req-feed", "ITEM", "INTERNAL_TRANSFER", {
+  requisition_kind: "FEED", source: "AUTO_FORECAST", status: "PENDING_APPROVAL", approval_status: "PENDING_APPROVAL",
+});
+const FEED_VIEW = {
+  ...FEED_ROW,
+  req_no: "NO-req-feed",
+  requisition_type: "FEED_FORECAST",
+  supply_source: "MILL",
+  priority: "INFO",
+  submission_deadline: "2026-10-08",
+  remarks: null,
+  approved_at: null,
+  header: {
+    farm_code: "VIL100", farm_name: "Village Farm", requisition_date: "2026-10-01",
+    is_next_diet_requisition: false, farm_total_requested_kg: 0, truck_target_kg: 30000,
+    bulk_multiple_kg: 3000, bag_size_kg: 50, trips: 0, required_delivery_date: null,
+    approved_by_name: null, linked_transfer_no: null, forecast_run_no: null,
+  },
+  lines: [],
+};
 const ROWS = [
+  FEED_ROW,
   row("req-item", "ITEM", "STORE"),
   row("req-fa", "FA", "PURCHASE"),
-  row("req-svc", "SERVICE", "PURCHASE", { line_count: 3 }),
+  row("req-svc", "SERVICE", "PURCHASE", { farm_code: null, requisition_date: null, required_date: null, line_count: 3 }),
 ];
 
 const itemLine = (n: number) => ({
@@ -61,7 +79,8 @@ beforeEach(() => {
   window.history.replaceState({}, "", "/requisitions");
   get.mockImplementation(async (url: string) => {
     if (url.startsWith("/requisition/options")) return { data: options };
-    if (url === "/requisition/req-feed") return { data: { ...FEED_ROW, lines: [] } };
+    if (url === "/requisition/req-feed") return { data: FEED_ROW };
+    if (url === "/feed-requisition/req-feed") return { data: FEED_VIEW };
     if (url === "/requisition/req-item") return { data: itemView };
     if (url.startsWith("/requisition")) {
       const type = new URLSearchParams(url.split("?")[1] ?? "").get("doc_type");
@@ -73,34 +92,53 @@ beforeEach(() => {
 
 const listUrls = () => get.mock.calls.map((c) => String(c[0])).filter((u) => /^\/requisition(\?|$)/.test(u));
 
-describe("RequisitionsHub — Approvals → Requisitions lists and creates every type (spec §6a)", () => {
-  it("lists the common kinds from GET /requisition?kind=common — never asks for FEED", async () => {
+describe("RequisitionsHub — one list and creation surface for every requisition", () => {
+  it("lists feed requests in the common list as Item requisitions", async () => {
     render(<RequisitionsHub />);
     const table = await screen.findByRole("table");
-    for (const label of ["reqDocItem", "reqDocFa", "reqDocService"]) {
-      expect(within(table).getByText(label)).toBeTruthy();
-    }
+    expect(within(table).getAllByText("reqDocItem")).toHaveLength(2);
+    for (const label of ["reqDocFa", "reqDocService"]) expect(within(table).getByText(label)).toBeTruthy();
+    expect(within(table).getByText("NO-req-feed")).toBeTruthy();
     expect(within(table).queryByText("reqDocFeed")).toBeNull();
     expect(within(table).getByText("NO-req-svc")).toBeTruthy();
     expect(listUrls()[0]).toMatch(/^\/requisition\?/);
-    expect(listUrls().every((u) => u.includes("kind=common"))).toBe(true);
+    expect(listUrls().every((u) => !u.includes("kind=common"))).toBe(true);
   });
 
-  it("the Type filter offers Item, Fixed Asset and Service only — no Feed", async () => {
+  it("uses human empty-state labels for an unselected farm and missing dates", async () => {
+    render(<RequisitionsHub />);
+    const table = await screen.findByRole("table");
+    const serviceRow = within(table).getByText("NO-req-svc").closest("tr") as HTMLElement;
+    expect(within(serviceRow).getByText("rhFarmNotSelected")).toBeTruthy();
+    expect(within(serviceRow).getByText("rhNoRequisitionDate")).toBeTruthy();
+    expect(within(serviceRow).getByText("rhNoRequiredDate")).toBeTruthy();
+    expect(serviceRow.textContent).not.toContain("—");
+  });
+
+  it("the Type filter remains Item, Fixed Asset and Service", async () => {
     render(<RequisitionsHub />);
     await screen.findByRole("table");
     const options = within(screen.getByLabelText("rhType")).getAllByRole("option").map((o) => (o as HTMLOptionElement).value);
     expect(options).toEqual(["", "ITEM", "FA", "SERVICE"]);
     fireEvent.change(screen.getByLabelText("rhType"), { target: { value: "ITEM" } });
-    await waitFor(() => expect(listUrls().some((u) => u.includes("kind=common") && u.includes("doc_type=ITEM"))).toBe(true));
+    await waitFor(() => expect(listUrls().some((u) => !u.includes("kind=common") && u.includes("doc_type=ITEM"))).toBe(true));
   });
 
-  it("a feed id followed by link is sent to Feed Forecast -> Requisition, never opened here", async () => {
+  it("offers All Farms and filters the canonical list by the selected farm", async () => {
+    render(<RequisitionsHub />);
+    await screen.findByRole("table");
+    const farm = screen.getByLabelText("rhFarm");
+    expect(within(farm).getByRole("option", { name: "rhAllFarms" })).toBeTruthy();
+    fireEvent.change(farm, { target: { value: "f1" } });
+    await waitFor(() => expect(listUrls().some((url) => url.includes("farm_id=f1"))).toBe(true));
+  });
+
+  it("a feed id followed by link opens the feed document in the common Requisition dialog", async () => {
     window.history.replaceState({}, "", "/requisitions?id=req-feed");
     render(<RequisitionsHub />);
-    await waitFor(() => expect(routerReplace).toHaveBeenCalledWith("/inventory/feed-forecast?tab=feed-requisition&id=req-feed"));
-    expect(get).not.toHaveBeenCalledWith("/feed-requisition/req-feed");
-    expect(screen.queryByText("crqHeaderTitle")).toBeNull();
+    await waitFor(() => expect(get).toHaveBeenCalledWith("/feed-requisition/req-feed"));
+    expect(routerReplace).not.toHaveBeenCalled();
+    expect(await screen.findByRole("dialog")).toBeTruthy();
   });
 
   it("choosing Type ITEM re-requests the list filtered to ITEM", async () => {
@@ -115,7 +153,8 @@ describe("RequisitionsHub — Approvals → Requisitions lists and creates every
     render(<RequisitionsHub />);
     fireEvent.click(await screen.findByText("NO-req-item"));
     await waitFor(() => expect(get).toHaveBeenCalledWith("/requisition/req-item"));
-    expect(await screen.findByText("crqHeaderTitle")).toBeTruthy();
+    expect(await screen.findByText("crqReqNo")).toBeTruthy();
+    expect(screen.queryByText("crqHeaderTitle")).toBeNull();
     expect(get).not.toHaveBeenCalledWith("/feed-requisition/req-item");
   });
 
@@ -127,7 +166,8 @@ describe("RequisitionsHub — Approvals → Requisitions lists and creates every
     render(<RequisitionsHub />);
     fireEvent.click(await screen.findByText("NO-req-item"));
     const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByText("crqHeaderTitle")).toBeTruthy();
+    expect(within(dialog).getByText("crqReqNo")).toBeTruthy();
+    expect(within(dialog).queryByText("crqHeaderTitle")).toBeNull();
     expect(screen.queryByRole("button", { name: "crqBack" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "close" }));
     expect(screen.queryByRole("dialog")).toBeNull();
@@ -141,10 +181,9 @@ describe("RequisitionsHub — Approvals → Requisitions lists and creates every
     for (const kind of ["rqNewPurposeItem", "rqNewPurposeFa", "rqNewPurposeService"]) {
       expect(screen.getByRole("button", { name: kind })).toBeTruthy();
     }
-    // Feed requisitions are raised on Feed Forecast -> Requisition only (WP1g).
-    expect(screen.queryByRole("button", { name: "rqNewPurposeFeed" })).toBeNull();
+    expect(screen.getByRole("button", { name: "rqNewPurposeFeed" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "rqNewPurposeFa" }));
-    expect(await screen.findByText("crqHeaderTitle")).toBeTruthy();
+    expect(await screen.findByText("crqReqNo")).toBeTruthy();
     // Task 18: a brand-new, unsaved common requisition has no req_no yet; the
     // dialog falls back to a "new requisition" title rather than a blank one.
     expect(within(screen.getByRole("dialog")).getByText("crqNewTitleFa")).toBeTruthy();
@@ -154,6 +193,49 @@ describe("RequisitionsHub — Approvals → Requisitions lists and creates every
     expect(shown("reqPurposePurchase")).toHaveLength(1);
     expect(api.post).not.toHaveBeenCalled();
     await waitFor(() => expect(get).toHaveBeenCalledWith("/requisition/options?company_id=co-1"));
+    fireEvent.click(screen.getByRole("button", { name: "crqBack" }));
+    expect(screen.getByText("rqNewPurposePrompt")).toBeTruthy();
+  });
+
+  it("puts Back in the new common dialog header and Create in its footer", async () => {
+    render(<RequisitionsHub />);
+    await screen.findByRole("table");
+    fireEvent.click(screen.getByRole("button", { name: "rhNew" }));
+    fireEvent.click(screen.getByRole("button", { name: "rqNewPurposeFa" }));
+    const dialog = await screen.findByRole("dialog");
+    const header = dialog.querySelector("header") as HTMLElement;
+    const footer = dialog.querySelector("footer") as HTMLElement;
+    expect(within(header).getByRole("button", { name: "crqBack" })).toBeTruthy();
+    expect(within(footer).getByRole("button", { name: "crqCreate" })).toBeTruthy();
+    expect(within(dialog).queryByRole("button", { name: "crqSave" })).toBeNull();
+  });
+
+  it("keeps the common Store workflow buttons visible in the header and disabled until the document reaches their state", async () => {
+    render(<RequisitionsHub />);
+    await screen.findByRole("table");
+    fireEvent.click(screen.getByRole("button", { name: "rhNew" }));
+    fireEvent.click(screen.getByRole("button", { name: "rqNewPurposeItem" }));
+    fireEvent.click(screen.getByRole("button", { name: "rqNewItemStore" }));
+    const dialog = await screen.findByRole("dialog");
+    const header = dialog.querySelector("header") as HTMLElement;
+    for (const name of ["crqRelease", "crqShip", "crqReceive"]) {
+      expect((within(header).getByRole("button", { name }) as HTMLButtonElement).disabled).toBe(true);
+    }
+  });
+
+  it("puts common Save and Submit in the footer while workflow actions stay in the header", async () => {
+    render(<RequisitionsHub />);
+    fireEvent.click(await screen.findByText("NO-req-item"));
+    const dialog = await screen.findByRole("dialog");
+    const header = dialog.querySelector("header") as HTMLElement;
+    const footer = dialog.querySelector("footer") as HTMLElement;
+    expect(within(footer).getByRole("button", { name: "crqSave" })).toBeTruthy();
+    expect(within(footer).getByRole("button", { name: "crqSubmit" })).toBeTruthy();
+    expect(within(header).queryByRole("button", { name: "crqSave" })).toBeNull();
+    expect(within(header).queryByRole("button", { name: "crqSubmit" })).toBeNull();
+    expect((within(header).getByRole("button", { name: "crqRelease" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((within(header).getByRole("button", { name: "crqShip" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((within(header).getByRole("button", { name: "crqReceive" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   // Rishi 4 Oct: the common New dialog's title names the kind.
@@ -254,7 +336,10 @@ describe("RequisitionsHub — Waiting for my approval filter and Approve/Reject 
     render(<RequisitionsHub />);
     fireEvent.click(await screen.findByLabelText("rhWaitingForMe"));
     fireEvent.click(await screen.findByText("NO-req-wait-fa"));
-    await screen.findByRole("dialog");
+    const dialog = await screen.findByRole("dialog");
+    const footer = dialog.querySelector("footer") as HTMLElement;
+    expect(within(footer).getByRole("button", { name: "rhReject" })).toBeTruthy();
+    expect(within(footer).getByRole("button", { name: "rhApprove" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "rhApprove" }));
     await waitFor(() => expect(api.post).toHaveBeenCalledWith("/approval/ar-req-wait-fa/approve", {}));
     expect(await screen.findByRole("table")).toBeTruthy();
@@ -267,7 +352,8 @@ describe("RequisitionsHub — Waiting for my approval filter and Approve/Reject 
     await screen.findByRole("dialog");
     fireEvent.click(screen.getByRole("button", { name: "rhReject" }));
     fireEvent.change(await screen.findByLabelText("rhRejectionReason"), { target: { value: "Not this cycle" } });
-    fireEvent.click(screen.getByRole("button", { name: "rhRejectConfirm" }));
+    const footer = screen.getByRole("dialog").querySelector("footer") as HTMLElement;
+    fireEvent.click(within(footer).getByRole("button", { name: "rhRejectConfirm" }));
     await waitFor(() => expect(api.post).toHaveBeenCalledWith("/approval/ar-req-wait-item/reject", { rejection_reason: "Not this cycle" }));
   });
 

@@ -3,14 +3,13 @@
 /**
  * Requisition — its own top-level menu item (/requisitions; Rishi 5 Oct,
  * docs/decisions.md "Requisition is its own menu item"). It lists and creates
- * the COMMON kinds only: Item, Fixed Asset and Service. Feed requisitions live
- * on Inventory -> Feed Forecast -> Requisition and are never listed, opened or
- * created here: the list asks GET /requisition?kind=common, which excludes FEED
- * in the query itself, and the New dialog does not offer Feed.
+ * Item, Fixed Asset and Service. Feed requisitions are Item requests with a
+ * feed source/context: they are listed, opened and created here as well as in
+ * the Feed Forecast contextual view.
  *
  * `?id=` (the inbox's link, and the old /inventory/requisitions?id= redirect)
- * is read once: GET /requisition/:id says the kind. A FEED id is sent on to its
- * Feed Forecast tab; anything else opens the common document
+ * is read once: GET /requisition/:id says the kind. A stored FEED id opens the
+ * richer feed document in this dialog; anything else opens the common document
  * (CommonRequisitionDetail) from /requisition/:id.
  *
  * Approve / Reject (RequisitionDecision, shared with the Feed Forecast tab)
@@ -21,8 +20,7 @@
  * spread, which would wipe unsaved edits on every re-render of this hub.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
-import { Inbox, Loader2 } from "lucide-react";
+import { ArrowLeft, Inbox, Loader2 } from "lucide-react";
 import { api } from "@/services/api-client";
 import { InlineAlert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -36,8 +34,13 @@ import { cn } from "@/lib/utils";
 import { formatDateShort } from "@/utils/date-short";
 import { todayIso, unwrap } from "../inventory/feed-format";
 import { RequisitionNewDialog } from "../inventory/requisition-new-dialog";
+import { FeedRequisitionDetail } from "../inventory/feed-requisition-detail";
+import { FeedRequisitionFromRunDialog } from "../inventory/feed-requisition-from-run-dialog";
+import { FeedFarmSelect } from "../inventory/feed-farm-select";
+import { useFeedFarm } from "../inventory/use-feed-farm";
+import type { RequisitionView as FeedRequisitionView } from "../inventory/feed-requisition-document";
 import {
-  APPROVAL_STATE_LABEL, COMMON_PURPOSE_LABEL, DOC_TYPE_LABEL, DOCUMENT_STATE_LABEL, FULFILMENT_STATE_LABEL, REQ_STATUS_LABEL,
+  APPROVAL_STATE_LABEL, COMMON_PURPOSE_LABEL, DOC_TYPE_LABEL, DOCUMENT_STATE_LABEL, FULFILMENT_STATE_LABEL, REQ_STATUS_LABEL, SOURCE_LABEL,
   labelOf, variantOf,
 } from "../inventory/requisition-labels";
 import { CommonRequisitionDetail } from "./common-requisition-detail";
@@ -58,6 +61,8 @@ interface HubRow {
   fulfilment_status: string | null;
   approval_request_id: string | null;
   line_count: number;
+  requisition_kind?: "FEED" | "COMMON";
+  source?: string | null;
 }
 
 /** Rishi 4 Oct: a brand-new common requisition's dialog title names its kind (and, for Item, Store or Purchase). */
@@ -72,11 +77,11 @@ type Open = CommonRequisitionView | null;
 /** The open row's decision surface, carried from the list row (WP1b). */
 type Decision = RequisitionDecisionTarget | null;
 
-/** Common kinds only (WP1g); Feed is raised and decided on Feed Forecast -> Requisition. */
+/** Public business types; the Feed creation route is offered separately as an Item request. */
 const TYPES = ["ITEM", "FA", "SERVICE"] as const;
 const STATUSES = ["DRAFT", "AUTO_DRAFT", "PENDING_APPROVAL", "APPROVED", "REJECTED"];
 const COLUMNS = [
-  "rhColReqNo", "rhColType", "rhColPurpose", "rhColFarm", "rhColDate", "rhColRequired",
+  "rhColReqNo", "rhColType", "rqdSource", "rhColPurpose", "rhColFarm", "rhColDate", "rhColRequired",
   "rhColApproval", "rhColDocument", "rhColFulfilment", "rhColLines",
 ] as const;
 
@@ -87,11 +92,12 @@ const SMALL_BADGE = "px-1.5 py-0 text-[10px]";
 
 export function RequisitionsHub() {
   const { t } = useLanguage();
-  const router = useRouter();
   const tRef = useRef(t);
   tRef.current = t;
 
   const companyId = getActiveCompanyId();
+  const farms = useFeedFarm();
+  const [farmId, setFarmId] = useState("");
   const [type, setType] = useState("");
   const [status, setStatus] = useState("");
   const [waiting, setWaiting] = useState(false);
@@ -102,19 +108,27 @@ export function RequisitionsHub() {
   const [needsCompany, setNeedsCompany] = useState(false);
   const [creating, setCreating] = useState(false);
   const [open, setOpen] = useState<Open>(null);
+  const [openFeed, setOpenFeed] = useState<FeedRequisitionView | null>(null);
   // WP1b: deciding happens in the dialog, through the SAME /approval endpoints
   // the inbox uses — one decide path, one set of checks.
   const [decision, setDecision] = useState<Decision>(null);
+  const [savedRun, setSavedRun] = useState<{ id: string; existingRequisitionId: string | null } | null>(null);
+  const [fromRunOpen, setFromRunOpen] = useState(false);
+
+  useEffect(() => {
+    if (farms.isFixed && farms.farmId) setFarmId(farms.farmId);
+  }, [farms.isFixed, farms.farmId]);
 
   const loadList = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      const params = new URLSearchParams({ kind: "common" });
+      const params = new URLSearchParams();
       if (type) params.set("doc_type", type);
       if (status) params.set("status", status);
       if (waiting) params.set("waiting_for_me", "1");
       if (companyId) params.set("company_id", companyId);
+      if (farmId) params.set("farm_id", farmId);
       const list = unwrap<HubRow[]>(await api.get(`/requisition?${params.toString()}`));
       setRows(Array.isArray(list) ? list : []);
     } catch (err: any) {
@@ -122,25 +136,46 @@ export function RequisitionsHub() {
     } finally {
       setLoading(false);
     }
-  }, [type, status, waiting, companyId]);
+  }, [type, status, waiting, companyId, farmId]);
 
   useEffect(() => {
     loadList();
   }, [loadList]);
 
-  /** A feed requisition is read and decided on its Feed Forecast tab, not here. */
-  const goToFeedTab = (id: string) => router.replace(`/inventory/feed-forecast?tab=feed-requisition&id=${encodeURIComponent(id)}`);
+  useEffect(() => {
+    if (!farmId) {
+      setSavedRun(null);
+      return;
+    }
+    let alive = true;
+    api.get(`/feed-forecast/runs/current?${new URLSearchParams({ farmId }).toString()}`)
+      .then(async (response) => {
+        const run = unwrap<{ run_id?: string; runId?: string } | null>(response);
+        const id = run?.run_id ?? run?.runId;
+        if (!id) return alive && setSavedRun(null);
+        const preview = unwrap<{ existingRequisitionId?: string | null }>(await api.get(`/feed-requisition/from-run/${id}/preview`));
+        if (alive) setSavedRun({ id, existingRequisitionId: preview.existingRequisitionId ?? null });
+      })
+      .catch(() => { if (alive) setSavedRun(null); });
+    return () => { alive = false; };
+  }, [farmId, rows]);
 
   const openRow = async (id: string) => {
     setError("");
     setNotice("");
     setNeedsCompany(false);
     try {
-      // GET /requisition/:id answers for every kind, FEED included (read-only).
-      const view = unwrap<CommonRequisitionView | { doc_type: "FEED" }>(await api.get(`/requisition/${id}`));
-      if (view?.doc_type === "FEED") return goToFeedTab(id);
+      // The common read identifies the richer feed document without exposing
+      // stored FEED as a fourth user-facing requisition type.
+      const view = unwrap<CommonRequisitionView & { requisition_kind?: "FEED" | "COMMON" }>(await api.get(`/requisition/${id}`));
       const source = rows.find((r) => r.requisition_id === id);
       setDecision(decisionTargetOf(source));
+      if (view?.requisition_kind === "FEED") {
+        setOpenFeed(unwrap<FeedRequisitionView>(await api.get(`/feed-requisition/${id}`)));
+        setOpen(null);
+        return;
+      }
+      setOpenFeed(null);
       setOpen(view as CommonRequisitionView);
     } catch (err: any) {
       setError(err?.message || tRef.current("rqLoadFailed"));
@@ -179,6 +214,14 @@ export function RequisitionsHub() {
               {STATUSES.map((s) => <option key={s} value={s}>{labelOf(REQ_STATUS_LABEL, s, t)}</option>)}
             </select>
           </Field>
+          <FeedFarmSelect
+            id="rh-farm"
+            label={t("rhFarm")}
+            farms={farms.farms}
+            farmId={farmId}
+            onChange={(id) => { setFarmId(id); setOpen(null); }}
+            allLabel={t("rhAllFarms")}
+          />
           {/* WP1b (decisions.md "one Requisitions page"): rows whose open
               approval request the current user may decide — the same predicate
               the Approvals inbox applies, via the API's waiting_for_me filter. */}
@@ -188,14 +231,41 @@ export function RequisitionsHub() {
             {t("rhWaitingForMe")}
           </label>
         </div>
-        <Button size="sm" onClick={() => { setNeedsCompany(false); setCreating(true); }}>{t("rhNew")}</Button>
+        <div className="flex flex-wrap gap-2">
+          {savedRun && (
+            <Button size="sm" variant="outline" onClick={() => setFromRunOpen(true)}>
+              {t(savedRun.existingRequisitionId ? "rqViewRequisition" : "rqCreateFromSaved")}
+            </Button>
+          )}
+          <Button size="sm" onClick={() => { setNeedsCompany(false); setCreating(true); }}>{t("rhNew")}</Button>
+        </div>
       </div>
 
       {error && <InlineAlert>{error}</InlineAlert>}
       {notice && <InlineAlert variant="success">{notice}</InlineAlert>}
       {needsCompany && <InlineAlert variant="warning">{t("rhNeedsCompany")}</InlineAlert>}
 
-      {open ? (
+      {openFeed ? (
+        <Dialog open onClose={() => { setOpenFeed(null); setDecision(null); }} title={openFeed.req_no}>
+          <FeedRequisitionDetail
+            embedded
+            view={openFeed}
+            onView={(next) => { setOpenFeed(next); loadList(); }}
+            onBack={() => setOpenFeed(null)}
+          />
+          {decision && (
+            <RequisitionDecision
+              target={decision}
+              onDecided={async (message) => {
+                setOpenFeed(null);
+                setDecision(null);
+                await loadList();
+                setNotice(message);
+              }}
+            />
+          )}
+        </Dialog>
+      ) : open ? (
         // Task 18 (decisions 2026-10-04): both kinds open in one dialog
         // shell — the dialog supplies the title and close control that each
         // detail's own strip would otherwise duplicate (`embedded`, piece 1).
@@ -205,6 +275,11 @@ export function RequisitionsHub() {
           open
           onClose={() => setOpen(null)}
           title={open.req_no || t(newCommonTitleKey(open))}
+          headerLeading={!open.requisition_id ? (
+            <Button size="sm" variant="ghost" onClick={() => { setOpen(null); setCreating(true); }}>
+              <ArrowLeft className="h-3.5 w-3.5" /> {t("crqBack")}
+            </Button>
+          ) : undefined}
         >
           <CommonRequisitionDetail
             embedded
@@ -240,10 +315,11 @@ export function RequisitionsHub() {
               <tr key={r.requisition_id} className="cursor-pointer" onClick={() => openRow(r.requisition_id)}>
                 <td className={cn(TD, "font-medium")}>{r.req_no}</td>
                 <td className={TD}>{labelOf(DOC_TYPE_LABEL, r.doc_type, t)}</td>
+                <td className={TD}>{labelOf(SOURCE_LABEL, r.source ?? "MANUAL_ENTRY", t)}</td>
                 <td className={TD}>{labelOf(COMMON_PURPOSE_LABEL, r.purpose, t)}</td>
-                <td className={TD}>{r.farm_code ?? "—"}</td>
-                <td className={TD}>{formatDateShort(r.requisition_date)}</td>
-                <td className={TD}>{formatDateShort(r.required_date)}</td>
+                <td className={TD}>{r.farm_code ?? t("rhFarmNotSelected")}</td>
+                <td className={TD}>{r.requisition_date ? formatDateShort(r.requisition_date) : t("rhNoRequisitionDate")}</td>
+                <td className={TD}>{r.required_date ? formatDateShort(r.required_date) : t("rhNoRequiredDate")}</td>
                 <td className={TD}><Badge variant={variantOf(APPROVAL_STATE_LABEL, r.approval_status)} className={SMALL_BADGE}>{labelOf(APPROVAL_STATE_LABEL, r.approval_status, t)}</Badge></td>
                 <td className={TD}><Badge variant={variantOf(DOCUMENT_STATE_LABEL, r.document_status)} className={SMALL_BADGE}>{labelOf(DOCUMENT_STATE_LABEL, r.document_status, t)}</Badge></td>
                 <td className={TD}><Badge variant={variantOf(FULFILMENT_STATE_LABEL, r.fulfilment_status)} className={SMALL_BADGE}>{labelOf(FULFILMENT_STATE_LABEL, r.fulfilment_status, t)}</Badge></td>
@@ -256,10 +332,15 @@ export function RequisitionsHub() {
 
       <RequisitionNewDialog
         open={creating}
-        types={[...TYPES]}
+        farmId={farmId || undefined}
+        types={["FEED", ...TYPES]}
         onClose={() => setCreating(false)}
-        // Feed is not offered here (types above), so the feed create path never fires.
-        onCreated={() => setCreating(false)}
+        onCreated={(view) => {
+          setCreating(false);
+          setDecision(null);
+          setOpenFeed(view);
+          loadList();
+        }}
         onCommon={({ docType, purpose }) => {
           setCreating(false);
           // A common requisition belongs to one company; the tenant-wide workspace has none to give it.
@@ -269,7 +350,23 @@ export function RequisitionsHub() {
           }
           setNotice("");
           setDecision(null);
-          setOpen(emptyCommonRequisition(companyId, docType, purpose, todayIso(), getStoredUser()?.email ?? null));
+          const user = getStoredUser();
+          const draft = emptyCommonRequisition(companyId, docType, purpose, todayIso(), user?.email ?? null);
+          draft.requester_user_id = user?.userId ?? null;
+          draft.requester_name = user?.fullName ?? null;
+          setOpen(draft);
+        }}
+      />
+      <FeedRequisitionFromRunDialog
+        open={fromRunOpen}
+        runId={savedRun?.id ?? null}
+        onClose={() => setFromRunOpen(false)}
+        onView={(view) => {
+          setFromRunOpen(false);
+          setOpen(null);
+          setOpenFeed(view);
+          setSavedRun((run) => run ? { ...run, existingRequisitionId: view.requisition_id } : run);
+          loadList();
         }}
       />
     </div>

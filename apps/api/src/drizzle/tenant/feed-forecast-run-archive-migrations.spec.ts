@@ -14,12 +14,14 @@ describe("Tenant migration 0153 — current feed forecast run lifecycle", () => 
     });
   });
 
-  it("only adds archive evidence, its lookup index and one-run-per-requisition uniqueness", () => {
+  it("adds archive evidence, archives legacy snapshots, and adds the lookup and one-run-per-requisition indexes", () => {
     const sql = read();
     expect(sql).toContain("ADD `archived_at` timestamp NULL");
     expect(sql).toContain("ADD `archived_by` varchar(36) NULL");
     expect(sql).toContain("idx_feed_forecast_run_tenant_farm_archive");
     expect(sql).toContain("CREATE UNIQUE INDEX `uq_requisition_feed_forecast_run`");
+    expect(sql).toContain("JSON_CONTAINS_PATH(`output_snapshot`, 'one', '$.display') = 0");
+    expect(sql).toContain("SET `archived_at` = COALESCE(`created_at`, CURRENT_TIMESTAMP)");
     expect(sql).not.toMatch(/\b(DROP|TRUNCATE|DELETE\s+FROM|RENAME)\b/i);
     expect(sql).not.toMatch(/ALTER TABLE `(location_master|reporting_period)`/i);
   });

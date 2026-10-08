@@ -2,9 +2,7 @@ import React from 'react';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import RequisitionsPanel, { needsRemarks, remarksRequiredMessage } from '../src/components/console/inventory/requisitions-panel';
 import { api } from '../src/services/api-client';
-import { resetForecastWindow, setForecastWindow } from '../src/components/console/inventory/feed-forecast-window';
-import { addDaysIso, defaultWindowEnd, todayIso } from '../src/components/console/inventory/feed-format';
-import { formatDateShort } from '../src/utils/date-short';
+import { invalidateReasonsCache } from '../src/hooks/useReasons';
 
 jest.mock('../src/services/api-client', () => ({ api: { get: jest.fn(), post: jest.fn(), put: jest.fn() } }));
 jest.mock('../src/hooks/useLanguage', () => {
@@ -24,6 +22,19 @@ jest.mock('../src/components/console/inventory/use-feed-farm', () => ({ useFeedF
 const get = api.get as jest.Mock;
 const post = api.post as jest.Mock;
 const put = api.put as jest.Mock;
+
+async function pickSearchable(label: string, optionName: string | RegExp) {
+  const trigger = await screen.findByRole('button', { name: label });
+  await waitFor(() => expect((trigger as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.click(trigger);
+  fireEvent.click(await screen.findByRole('option', { name: optionName }));
+}
+
+async function createFromSavedCalculation() {
+  fireEvent.click(await screen.findByRole('button', { name: 'rqCreateFromSaved' }));
+  const dialog = await screen.findByRole('dialog');
+  fireEvent.click(within(dialog).getByRole('button', { name: 'rqCreateFromSaved' }));
+}
 
 const listRow = {
   requisition_id: 'req-1', req_no: 'REQ-VIL100-2026-00004', requisition_type: 'FEED_FORECAST', status: 'AUTO_DRAFT', priority: 'CRITICAL',
@@ -54,15 +65,24 @@ const view = {
       unrounded_need_kg: '9000.0000', recommended_qty_kg: '9000.0000', quantity: '9000.0000', bag_count: null, proposed_delivery_date: '2099-09-26', needs_silo_changeover: false },
   ],
 };
+const runPreview = {
+  runId: 'run-1', runCode: 'FFR-VIL100-00001', farmId: 'farm-vil', existingRequisitionId: null,
+  lines: [{ destination_location_id: 'silo-1', destination_code: 'VIL100/SILO-001', destination_name: 'Silo 1', item_id: 'r1', item_code: 'FEED-R1', item_name: 'Weaner Diet R1', recommended_qty_kg: 6000, quantity_kg: 6000, proposed_delivery_date: '2099-09-23' }],
+};
 
 beforeEach(() => {
   jest.clearAllMocks();
-  resetForecastWindow();
+  invalidateReasonsCache();
   window.history.replaceState(null, '', '/inventory/requisitions');
   mockFarm = { farmId: 'farm-vil', setFarmId: jest.fn(), farms: [{ farmId: 'farm-vil', code: 'VIL100', name: 'Villa Franca', companyId: 'co', companyName: 'T' }], loaded: true, failed: false, isFixed: false, fixedFarm: null };
-  get.mockImplementation(async (url: string) => (url.startsWith('/feed-requisition/') ? { data: view } : { data: [listRow] }));
+  get.mockImplementation(async (url: string) => {
+    if (url.startsWith('/reason')) return { data: [{ reason_id: 'reason-1', reason_code: 'REQ-01', reason_name: 'Diet exception', category: 'REQUISITION', is_active: true }] };
+    if (url.startsWith('/feed-forecast/runs/current')) return { data: { runId: 'run-1' } };
+    if (url === '/feed-requisition/from-run/run-1/preview') return { data: runPreview };
+    return url.startsWith('/feed-requisition/') ? { data: view } : { data: [listRow] };
+  });
   post.mockImplementation(async (url: string) =>
-    url === '/feed-requisition/auto-draft' ? { data: { requisitionId: 'req-1', requisition: view } } : { data: { ...view, status: 'PENDING_APPROVAL', approval_request_id: 'ar-1' } });
+    url === '/feed-requisition/from-run/run-1' ? { data: view } : { data: { ...view, status: 'PENDING_APPROVAL', approval_request_id: 'ar-1' } });
   put.mockResolvedValue({ data: view });
 });
 
@@ -117,35 +137,12 @@ describe('needsRemarks — checkpoint 18', () => {
 });
 
 describe('RequisitionsPanel (D26)', () => {
-  it("drafts for the Forecast tab's selected window and names it in the notice (Feed Forecast row 8, Step 9)", async () => {
-    const to = addDaysIso(todayIso(), 20);
-    setForecastWindow({ farmId: 'farm-vil', from: todayIso(), to });
-    post.mockImplementation(async () => ({ data: { requisitionId: null, requisition: null } }));
+  it("creates from the farm's current saved calculation", async () => {
     render(<RequisitionsPanel />);
-    fireEvent.click(await screen.findByRole('button', { name: 'rqDraftFromForecast' }));
-    await waitFor(() => expect(post).toHaveBeenCalledWith('/feed-requisition/auto-draft', { farmId: 'farm-vil', to }));
-    expect(await screen.findByText(`rqNothingToOrder:{"to":"${formatDateShort(to)}"}`)).toBeTruthy();
-  });
-
-  it("falls back to the default window when the shared `to` is already past, rather than posting a date the API refuses", async () => {
-    setForecastWindow({ farmId: 'farm-vil', from: '2020-01-01', to: '2020-01-07' });
-    render(<RequisitionsPanel />);
-    fireEvent.click(await screen.findByRole('button', { name: 'rqDraftFromForecast' }));
-    await waitFor(() => expect(post).toHaveBeenCalledWith('/feed-requisition/auto-draft', { farmId: 'farm-vil', to: defaultWindowEnd(todayIso()) }));
-  });
-
-  it("clamps a forward-dated shared `to` to 45 days ahead, rather than posting a date autoDraft's own bound refuses (M3)", async () => {
-    setForecastWindow({ farmId: 'farm-vil', from: todayIso(), to: addDaysIso(todayIso(), 60) });
-    render(<RequisitionsPanel />);
-    fireEvent.click(await screen.findByRole('button', { name: 'rqDraftFromForecast' }));
-    await waitFor(() => expect(post).toHaveBeenCalledWith('/feed-requisition/auto-draft', { farmId: 'farm-vil', to: addDaysIso(todayIso(), 45) }));
-  });
-
-  it("ignores another farm's window", async () => {
-    setForecastWindow({ farmId: 'farm-other', from: '2099-09-20', to: '2099-10-18' });
-    render(<RequisitionsPanel />);
-    fireEvent.click(await screen.findByRole('button', { name: 'rqDraftFromForecast' }));
-    await waitFor(() => expect(post).toHaveBeenCalledWith('/feed-requisition/auto-draft', { farmId: 'farm-vil', to: defaultWindowEnd(todayIso()) }));
+    await createFromSavedCalculation();
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/feed-requisition/from-run/run-1', {
+      lines: [{ destination_location_id: 'silo-1', item_id: 'r1', quantity_kg: 6000, proposed_delivery_date: '2099-09-23' }],
+    }));
   });
 
   it("lists the farm's requisitions with labels, not codes, and DD/MM/YY dates (A8, A9)", async () => {
@@ -165,25 +162,26 @@ describe('RequisitionsPanel (D26)', () => {
     await waitFor(() => expect(get).toHaveBeenCalledWith('/feed-requisition?farmId=farm-vil&status=PENDING_APPROVAL'));
   });
 
-  it('drafts from the forecast and opens it with Save and Submit for approval, and no approve or reject (D25)', async () => {
+  it('creates from the saved calculation and opens it with Save and Submit for approval, and no approve or reject (D25)', async () => {
     render(<RequisitionsPanel />);
-    fireEvent.click(await screen.findByRole('button', { name: 'rqDraftFromForecast' }));
+    await createFromSavedCalculation();
     await screen.findByText('REQ-VIL100-2026-00004', { selector: 'h2' });
-    expect(post).toHaveBeenCalledWith('/feed-requisition/auto-draft', { farmId: 'farm-vil', to: defaultWindowEnd(todayIso()) });
+    expect(post).toHaveBeenCalledWith('/feed-requisition/from-run/run-1', expect.any(Object));
     expect(screen.getByRole('button', { name: 'rqSubmit' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: /approve|reject/i })).toBeNull();
     // Task 9: the workbook header form, then the 15-column lines sub-form, with line 20000's batch/house breakdown nested beneath it.
-    expect(screen.getByText('rqdHeaderTitle')).toBeTruthy();
+    expect(screen.queryByText('rqdHeaderTitle')).toBeNull();
+    expect(screen.getByText('rqdReqNo')).toBeTruthy();
     const lines = screen.getByRole('table', { name: 'rqLinesLabel' });
     expect(within(lines).getAllByTestId('rqd-line-no').map((c) => c.textContent)).toEqual(['10000', '20000']);
-    expect(within(lines.querySelector('thead') as HTMLElement).getAllByRole('columnheader')).toHaveLength(15);
+    expect(within(lines.querySelector('thead') as HTMLElement).getAllByRole('columnheader')).toHaveLength(16);
     expect(within(lines).getAllByText('reqFeedBulk')).toHaveLength(2);
     expect(screen.getByRole('table', { name: 'rqdBreakdownLabel:{"line":20000}' })).toBeTruthy();
   });
 
   it('asks for remarks when a quantity moves more than 20 %, and submits with them', async () => {
     render(<RequisitionsPanel />);
-    fireEvent.click(await screen.findByRole('button', { name: 'rqDraftFromForecast' }));
+    fireEvent.click(await screen.findByText('REQ-VIL100-2026-00004'));
     await screen.findByText('REQ-VIL100-2026-00004', { selector: 'h2' });
     fireEvent.change(screen.getByLabelText('rqdRequestedFor:{"line":10000}'), { target: { value: '9000' } });
     // 9d F2: the error names the cause and the line it is on, not a fixed list of two causes.
@@ -194,7 +192,8 @@ describe('RequisitionsPanel (D26)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'rqSubmit' }));
     await waitFor(() => expect(post).toHaveBeenCalledWith('/feed-requisition/req-1/submit', { remarks: 'Extra pigs arriving', lines: [{ line_id: 'L1', quantity_kg: 9000 }] }));
     expect(await screen.findByText('rqSubmitted')).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'rqOpenApproval' }).getAttribute('href')).toBe('/approvals/pending?request=ar-1');
+    expect(screen.getByText('rqWaiting')).toBeTruthy();
+    expect(screen.queryByRole('link', { name: 'rqOpenApproval' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'rqSubmit' })).toBeNull();
   });
 
@@ -202,9 +201,9 @@ describe('RequisitionsPanel (D26)', () => {
     const movedView = { ...view, lines: [{ ...view.lines[0], recommended_delivery_date: '2099-09-23' }, view.lines[1]] };
     get.mockImplementation(async (url: string) => (url.startsWith('/feed-requisition/') ? { data: movedView } : { data: [listRow] }));
     post.mockImplementation(async (url: string) =>
-      url === '/feed-requisition/auto-draft' ? { data: { requisitionId: 'req-1', requisition: movedView } } : { data: { ...movedView, status: 'PENDING_APPROVAL', approval_request_id: 'ar-1' } });
+      url === '/feed-requisition/from-run/run-1' ? { data: movedView } : { data: { ...movedView, status: 'PENDING_APPROVAL', approval_request_id: 'ar-1' } });
     render(<RequisitionsPanel />);
-    fireEvent.click(await screen.findByRole('button', { name: 'rqDraftFromForecast' }));
+    fireEvent.click(await screen.findByText('REQ-VIL100-2026-00004'));
     await screen.findByText('REQ-VIL100-2026-00004', { selector: 'h2' });
     expect(screen.queryByText(/rqRemarksRequired/)).toBeNull();
     fireEvent.change(screen.getByLabelText('rqdDeliveryFor:{"line":10000}'), { target: { value: '2099-09-30' } });
@@ -223,9 +222,9 @@ describe('RequisitionsPanel (D26)', () => {
     const exceptionedView = { ...view, lines: [{ ...view.lines[0], item_id: 'r3', item_code: 'FEED-R3', exception_reason: 'Vet instruction' }, view.lines[1]] };
     get.mockImplementation(async (url: string) => (url.startsWith('/feed-requisition/') ? { data: exceptionedView } : { data: [listRow] }));
     post.mockImplementation(async (url: string) =>
-      url === '/feed-requisition/auto-draft' ? { data: { requisitionId: 'req-1', requisition: exceptionedView } } : { data: { ...exceptionedView, status: 'PENDING_APPROVAL', approval_request_id: 'ar-1' } });
+      url === '/feed-requisition/from-run/run-1' ? { data: exceptionedView } : { data: { ...exceptionedView, status: 'PENDING_APPROVAL', approval_request_id: 'ar-1' } });
     render(<RequisitionsPanel />);
-    fireEvent.click(await screen.findByRole('button', { name: 'rqDraftFromForecast' }));
+    fireEvent.click(await screen.findByText('REQ-VIL100-2026-00004'));
     await screen.findByText('REQ-VIL100-2026-00004', { selector: 'h2' });
     // 9d F2: the item exception is named (Req. row 13).
     expect(screen.getByText(/rqRemarksWhyException/)).toBeTruthy();
@@ -236,7 +235,7 @@ describe('RequisitionsPanel (D26)', () => {
 
   it('saves an edited delivery date', async () => {
     render(<RequisitionsPanel />);
-    fireEvent.click(await screen.findByRole('button', { name: 'rqDraftFromForecast' }));
+    fireEvent.click(await screen.findByText('REQ-VIL100-2026-00004'));
     await screen.findByText('REQ-VIL100-2026-00004', { selector: 'h2' });
     fireEvent.change(screen.getByLabelText('rqdDeliveryFor:{"line":10000}'), { target: { value: '2099-09-30' } });
     fireEvent.click(screen.getByRole('button', { name: 'rqSave' }));
@@ -248,18 +247,20 @@ describe('RequisitionsPanel (D26)', () => {
       destinations: [{ location_id: 'silo-1', location_code: 'VIL100/SILO-001', location_type: 'SILO' }, { location_id: 'silo-3', location_code: 'VIL100/SILO-003', location_type: 'SILO' }],
       items: [{ item_id: 'r1', item_code: 'FEED-R1', item_name: 'Weaner Diet R1' }, { item_id: 'r2', item_code: 'FEED-R2', item_name: 'Weaner Diet R2' }],
     };
-    get.mockImplementation(async (url: string) =>
-      url.startsWith('/feed-requisition/options') ? { data: options } : url.startsWith('/feed-requisition/') ? { data: view } : { data: [listRow] });
+    get.mockImplementation(async (url: string) => {
+      if (url.startsWith('/reason')) return { data: [{ reason_id: 'reason-1', reason_code: 'REQ-01', reason_name: 'Diet exception', category: 'REQUISITION', is_active: true }] };
+      return url.startsWith('/feed-requisition/options') ? { data: options } : url.startsWith('/feed-requisition/') ? { data: view } : { data: [listRow] };
+    });
     render(<RequisitionsPanel />);
-    fireEvent.click(await screen.findByRole('button', { name: 'rqDraftFromForecast' }));
+    fireEvent.click(await screen.findByText('REQ-VIL100-2026-00004'));
     await screen.findByText('REQ-VIL100-2026-00004', { selector: 'h2' });
     expect(get).toHaveBeenCalledWith('/feed-requisition/options?farmId=farm-vil');
-    fireEvent.change(await screen.findByLabelText('rqdSiloFor:{"line":10000}'), { target: { value: 'silo-3' } });
-    fireEvent.change(screen.getByLabelText('rqdItemFor:{"line":10000}'), { target: { value: 'r2' } });
-    fireEvent.change(screen.getByLabelText('rqdExceptionFor:{"line":10000}'), { target: { value: 'Vet instruction' } });
+    await pickSearchable('rqdSiloFor:{"line":10000}', /VIL100\/SILO-003/);
+    await pickSearchable('rqdItemFor:{"line":10000}', 'FEED-R2 — Weaner Diet R2');
+    await pickSearchable('rqdExceptionFor:{"line":10000}', 'REQ-01 — Diet exception');
     fireEvent.click(screen.getByRole('button', { name: 'rqSave' }));
     await waitFor(() => expect(put).toHaveBeenCalledWith('/feed-requisition/req-1', {
-      remarks: '', lines: [{ line_id: 'L1', destination_location_id: 'silo-3', item_id: 'r2', exception_reason: 'Vet instruction' }],
+      remarks: '', lines: [{ line_id: 'L1', destination_location_id: 'silo-3', item_id: 'r2', reason_id: 'reason-1' }],
     }));
   });
 
@@ -268,16 +269,18 @@ describe('RequisitionsPanel (D26)', () => {
       destinations: [{ location_id: 'silo-1', location_code: 'VIL100/SILO-001', location_type: 'SILO' }],
       items: [{ item_id: 'r1', item_code: 'FEED-R1', item_name: 'Weaner Diet R1' }, { item_id: 'r3', item_code: 'FEED-R3', item_name: 'Weaner Diet R3' }],
     };
-    get.mockImplementation(async (url: string) =>
-      url.startsWith('/feed-requisition/options') ? { data: options } : url.startsWith('/feed-requisition/') ? { data: view } : { data: [listRow] });
+    get.mockImplementation(async (url: string) => {
+      if (url.startsWith('/reason')) return { data: [{ reason_id: 'reason-1', reason_code: 'REQ-01', reason_name: 'Diet exception', category: 'REQUISITION', is_active: true }] };
+      return url.startsWith('/feed-requisition/options') ? { data: options } : url.startsWith('/feed-requisition/') ? { data: view } : { data: [listRow] };
+    });
     render(<RequisitionsPanel />);
-    fireEvent.click(await screen.findByRole('button', { name: 'rqDraftFromForecast' }));
+    fireEvent.click(await screen.findByText('REQ-VIL100-2026-00004'));
     await screen.findByText('REQ-VIL100-2026-00004', { selector: 'h2' });
     // Before the edit: line 10000's item_id ('r1') matches its required_item_id, no exception.
     expect((screen.getByRole('button', { name: 'rqSubmit' }) as HTMLButtonElement).disabled).toBe(false);
     // The API decides itemException AFTER applying edits (feed-requisition.service.ts ~1105-1119),
     // so the pre-click warning must react to this unsaved edit, not wait for a Save round-trip.
-    fireEvent.change(await screen.findByLabelText('rqdItemFor:{"line":10000}'), { target: { value: 'r3' } });
+    await pickSearchable('rqdItemFor:{"line":10000}', 'FEED-R3 — Weaner Diet R3');
     expect(screen.getByText(/rqRemarksWhyException/)).toBeTruthy();
     expect((screen.getByRole('button', { name: 'rqSubmit' }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.change(screen.getByLabelText('rqdRemarks'), { target: { value: 'Vet instruction on record' } });
@@ -306,13 +309,18 @@ describe('RequisitionsPanel (D26)', () => {
   // — must show it in an actual dialog (role="dialog"), not inline in place
   // of the list; closing it (the dialog's own close control) returns to the
   // list without a page navigation.
-  it('opens an existing requisition in a dialog, and closing it returns to the list (Task 18)', async () => {
+  it('opens an existing requisition with Save and Submit in the dialog footer, and closing it returns to the list (Task 18)', async () => {
     render(<RequisitionsPanel />);
-    fireEvent.click(await screen.findByRole('button', { name: 'rqDraftFromForecast' }));
+    await createFromSavedCalculation();
     await screen.findByText('REQ-VIL100-2026-00004', { selector: 'h2' });
     const dialog = screen.getByRole('dialog');
+    const header = dialog.querySelector('header') as HTMLElement;
+    const footer = dialog.querySelector('footer') as HTMLElement;
     expect(within(dialog).getByText('REQ-VIL100-2026-00004', { selector: 'h2' })).toBeTruthy();
-    expect(within(dialog).getByRole('button', { name: 'rqSubmit' })).toBeTruthy();
+    expect(within(footer).getByRole('button', { name: 'rqSave' })).toBeTruthy();
+    expect(within(footer).getByRole('button', { name: 'rqSubmit' })).toBeTruthy();
+    expect(within(header).queryByRole('button', { name: 'rqSave' })).toBeNull();
+    expect(within(header).queryByRole('button', { name: 'rqSubmit' })).toBeNull();
     // The dialog wrap supplies its own Back/title strip; the detail's own must not double up.
     expect(screen.queryByRole('button', { name: 'rqBack' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'close' }));
@@ -339,7 +347,10 @@ describe('Feed Forecast → Requisition — Approve / Reject (WP1g)', () => {
   };
 
   it('a pending requisition offers Approve, which posts to /approval/:id/approve and closes the dialog', async () => {
-    await openPending();
+    const dialog = await openPending();
+    const footer = dialog.querySelector('footer') as HTMLElement;
+    expect(within(footer).getByRole('button', { name: 'rhReject' })).toBeTruthy();
+    expect(within(footer).getByRole('button', { name: 'rhApprove' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'rhApprove' }));
     await waitFor(() => expect(post).toHaveBeenCalledWith('/approval/ar-1/approve', {}));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
@@ -357,7 +368,8 @@ describe('Feed Forecast → Requisition — Approve / Reject (WP1g)', () => {
     await openPending();
     fireEvent.click(screen.getByRole('button', { name: 'rhReject' }));
     fireEvent.change(await screen.findByLabelText('rhRejectionReason'), { target: { value: 'Not this cycle' } });
-    fireEvent.click(screen.getByRole('button', { name: 'rhRejectConfirm' }));
+    const footer = screen.getByRole('dialog').querySelector('footer') as HTMLElement;
+    fireEvent.click(within(footer).getByRole('button', { name: 'rhRejectConfirm' }));
     await waitFor(() => expect(post).toHaveBeenCalledWith('/approval/ar-1/reject', { rejection_reason: 'Not this cycle' }));
   });
 

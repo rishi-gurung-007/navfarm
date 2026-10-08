@@ -250,3 +250,33 @@
 - [ ] **Step 6: Query MySQL after every write** for settings, saved/archived runs, run lines/snapshots, requisition linkage, feed-transfer linkage, shipment/receipt events, inventory ledger and final fulfilment.
 - [ ] **Step 7: Confirm every pre-existing master field still appears and persists**, including Location silo fields and all Reporting Period fields.
 - [ ] **Step 8: Run the verification-before-completion skill**, record exact evidence in both plans, and commit only reviewed implementation hunks.
+
+## Implementation and verification evidence — 2026-10-08
+
+- Tasks 1–8 are implemented. The final UI has Dashboard, Calculation, Feed
+  Plan, Requisition and Physical Stock Count; the main Requisition list no
+  longer sends `kind=common` and offers All Farms/Farm filtering.
+- The saved-run requisition dialog is shared by Calculation, Feed Requisition
+  and the main Requisition hub. A no-shortage preview hides the create action;
+  an existing link changes it to View Requisition.
+- Migration 0153 now archives legacy v1/v2 snapshots during upgrade. They are
+  retained as history but cannot masquerade as a current v3 display snapshot.
+  Before local application, both tenant databases were backed up to
+  `/tmp/navfarm-feed-migrations.vuqx5R/tenants-before-0152-0153.sql` (SHA-256
+  `b0ac1756193d93779d69140ead03979947e2f067bd18dbc23c018e7bce761d88`).
+  The repository runner has no verify-only mode, so SQL, referenced tables and
+  saved-run uniqueness were inspected read-only first; then migrations 0152
+  and 0153 were applied to `nf_system` and `nf_devco`. Both journals report
+  153 and the archive/link/uniqueness indexes were queried from
+  `information_schema` afterward.
+- Running-app proof used headless Playwright against ports 3002/2877 because
+  the computer-use browser surface was unavailable. It verified the five tabs,
+  Feed Plan empty state, canonical Requisition request without `kind=common`,
+  All Farms plus Farm options, explicit Calculate → Save, refresh, Delete
+  archive, and replacement Save. MySQL showed AI100 v3 archived and replacement
+  v4 current, both `forecast-run-display:v3`, while legacy v2 rows stayed
+  archived. The live Feed Plan and from-run preview endpoints also returned
+  through the running API.
+- Final fresh gates: API **198 suites / 2,549 tests passed**; Web **98 suites /
+  727 tests passed**; API, Web and Web-E2E typechecks passed; the Web production
+  build completed all 76 routes; `git diff --check` produced no errors.

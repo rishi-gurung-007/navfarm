@@ -7,7 +7,7 @@ import { FarmScoped } from '../../../common/farm-scope';
 import { FeedRequisitionService } from './feed-requisition.service';
 import {
   AutoDraftFeedRequisitionDto, CreateManualFeedRequisitionDto, QueryFeedRequisitionDto, UpdateFeedRequisitionDto,
-  FeedRequisitionReceiptDto, FeedRequisitionShipmentDto,
+  CreateFeedRequisitionFromRunDto, FeedRequisitionReceiptDto, FeedRequisitionShipmentDto,
 } from './dto/feed-requisition.dto';
 
 // Feed requisitions ride the Procurement Requisition grant: drafted and
@@ -51,6 +51,22 @@ export class FeedRequisitionController {
   async create(@Body() dto: CreateManualFeedRequisitionDto, @Req() req: any) {
     const data = await this.feedRequisitions.createManual(dto, req.user?.tenantId || req['tenantId'], req.user);
     return { success: true, message: 'Feed requisition created.', data };
+  }
+
+  @Get('from-run/:runId/preview')
+  @RequirePermission('PROCUREMENT', 'REQUISITION', 'view')
+  @ApiOperation({ summary: 'Preview an editable feed requisition from one exact saved calculation' })
+  async previewFromRun(@Param('runId', ParseUUIDPipe) runId: string, @Req() req: any) {
+    const data = await this.feedRequisitions.previewFromRun(runId, req.user?.tenantId || req['tenantId'], req.user);
+    return { success: true, message: 'Feed requisition preview retrieved.', data };
+  }
+
+  @Post('from-run/:runId')
+  @RequirePermission('PROCUREMENT', 'REQUISITION', 'create')
+  @ApiOperation({ summary: 'Create one editable feed requisition from one exact saved calculation' })
+  async createFromRun(@Param('runId', ParseUUIDPipe) runId: string, @Body() dto: CreateFeedRequisitionFromRunDto, @Req() req: any) {
+    const data = await this.feedRequisitions.createFromRun(runId, dto, req.user?.tenantId || req['tenantId'], req.user);
+    return { success: true, message: 'Feed requisition created from saved calculation.', data };
   }
 
   @Get(':id')

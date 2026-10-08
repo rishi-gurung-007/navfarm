@@ -20,7 +20,7 @@ function oneSilo(over: Partial<ForecastInput> = {}, silo: Partial<ForecastInput[
     store: null,
     items: { r1: 'Grower Diet' },
     batches: [{
-      batchId: 'b1', batchNo: 'GR-2026-01', breedId: 'l', shedId: 'h1', heads: 100,
+      batchId: 'b1', realBatchId: 'b1' as any, batchNo: 'GR-2026-01', breedId: 'l', shedId: 'h1', heads: 100,
       segments: [{ stageId: 'grower', stageCode: 'GROWER', start: '2026-09-01', end: null, projected: false }],
     }],
     feedRows: [row()],
@@ -169,7 +169,7 @@ describe('buildFeedForecast — run-down horizon past the range (Q12)', () => {
 
   it('flags a projected stage change only when it falls inside from..to', () => {
     const batch = (start: string): ForecastInput['batches'][number] => ({
-      batchId: 'b1', batchNo: 'GR-2026-01', breedId: 'l', shedId: 'h1', heads: 100,
+      batchId: 'b1', realBatchId: 'b1' as any, batchNo: 'GR-2026-01', breedId: 'l', shedId: 'h1', heads: 100,
       segments: [
         { stageId: 'grower', stageCode: 'GROWER', start: '2026-09-01', end: '2026-10-04', projected: false },
         { stageId: 'finisher', stageCode: 'FINISHER', start, end: null, projected: true },
@@ -196,7 +196,7 @@ describe('buildFeedForecast — D19 walk edge cases (Plan R review of Task 2)', 
     const input = oneSilo(
       {
         batches: [{
-          batchId: 'b1', batchNo: 'GR-2026-01', breedId: 'l', shedId: 'h1', heads: 100,
+          batchId: 'b1', realBatchId: 'b1' as any, batchNo: 'GR-2026-01', breedId: 'l', shedId: 'h1', heads: 100,
           segments: [{ stageId: 'grower', stageCode: 'GROWER', start: '2026-09-01', end: '2026-09-24', projected: false }],
         }],
         incoming: [{ locationId: 's1', itemId: 'r1', date: '2026-09-25', kg: -700 }],
@@ -211,7 +211,7 @@ describe('buildFeedForecast — D19 walk edge cases (Plan R review of Task 2)', 
   it('flags a projected stage change that falls inside from..to', () => {
     const input = oneSilo({
       batches: [{
-        batchId: 'b1', batchNo: 'GR-2026-01', breedId: 'l', shedId: 'h1', heads: 100,
+        batchId: 'b1', realBatchId: 'b1' as any, batchNo: 'GR-2026-01', breedId: 'l', shedId: 'h1', heads: 100,
         segments: [
           { stageId: 'grower', stageCode: 'GROWER', start: '2026-09-01', end: '2026-09-26', projected: false },
           { stageId: 'finisher', stageCode: 'FINISHER', start: '2026-09-27', end: null, projected: true },
