@@ -113,6 +113,63 @@ export interface FeedRequisitionDocumentView {
   approved_at: string | null;
   header: FeedRequisitionHeader;
   lines: FeedRequisitionLine[];
+  approval_status?: string;
+  document_status?: string;
+  fulfilment_status?: string;
+  actions?: FeedRequisitionWorkflowActions;
+  transfers?: FeedRequisitionTransfer[];
+}
+
+export interface FeedWorkflowAction {
+  enabled: boolean;
+  reason: string | null;
+}
+
+export interface FeedRequisitionWorkflowActions {
+  release: FeedWorkflowAction;
+  shipment: FeedWorkflowAction;
+  receipt: FeedWorkflowAction;
+}
+
+export interface FeedRequisitionTransferLine {
+  transfer_line_id: string;
+  requisition_line_id: string | null;
+  item_id: string | null;
+  item_code?: string | null;
+  item_name?: string | null;
+  quantity: number;
+  uom: string;
+  qty_shipped: number;
+  qty_received: number;
+  balance_to_ship: number;
+  remaining_to_receive: number;
+}
+
+export interface FeedRequisitionOpenShipmentLine {
+  line_id: string;
+  requisition_line_id: string | null;
+  quantity: number;
+  qty_received: number;
+  remaining_to_receive: number;
+}
+
+export interface FeedRequisitionOpenShipment {
+  shipment_id: string;
+  shipment_no: string;
+  shipment_date: string;
+  lines: FeedRequisitionOpenShipmentLine[];
+}
+
+export interface FeedRequisitionTransfer {
+  transfer_id: string;
+  transfer_no: string;
+  status: string;
+  posting_date: string;
+  from_warehouse_id: string;
+  to_warehouse_id: string;
+  bin_assignment_id: string;
+  lines: FeedRequisitionTransferLine[];
+  open_shipments: FeedRequisitionOpenShipment[];
 }
 
 /** What the farm changed on one line, before Save or Submit. */

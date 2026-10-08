@@ -101,7 +101,10 @@ describe('FeedRequisitionService transfer execution', () => {
     const transfers = await (service as any).readTransferViews('req-1', 'tenant-1');
 
     expect(transfers[0].lines[0]).toEqual(expect.objectContaining({ qty_shipped: 6, qty_received: 2, balance_to_ship: 4, remaining_to_receive: 4 }));
-    expect(transfers[0].open_shipments[0].lines[0]).toEqual(expect.objectContaining({ remaining_to_receive: 4 }));
+    expect(transfers[0].open_shipments[0].lines[0]).toEqual(expect.objectContaining({
+      requisition_line_id: 'rl-1',
+      remaining_to_receive: 4,
+    }));
     expect(transfers[1].lines[0]).toEqual(expect.objectContaining({ qty_shipped: 0, qty_received: 0, balance_to_ship: 20 }));
   });
 });

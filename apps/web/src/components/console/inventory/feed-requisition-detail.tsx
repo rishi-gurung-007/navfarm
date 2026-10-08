@@ -5,7 +5,7 @@
  * FeedRequisitionPanel without behaviour change). Owns the edits, remarks and
  * silo/item options (GET /feed-requisition/options?farmId=<view.farm_id>),
  * Save (PUT /feed-requisition/:id), Submit (POST /feed-requisition/:id/submit)
- * and the approval link — everything the workbook document
+ * and the submitted-state message — everything the workbook document
  * (FeedRequisitionDocument) needs around it.
  *
  * Presentational the same way FeedRequisitionDocument is, one level up: the
@@ -20,6 +20,8 @@ import { ArrowLeft } from "lucide-react";
 import { api } from "@/services/api-client";
 import { InlineAlert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { DialogFooterActions, DialogHeaderActions } from "@/components/ui/dialog";
+import { Field } from "@/components/ui/field";
 import { useLanguage } from "@/hooks/useLanguage";
 import { todayIso, unwrap } from "./feed-format";
 import {
@@ -30,13 +32,6 @@ import {
 /** D25: what the farm may still change — mirrors isEditableFeedRequisition in the API. */
 export const isEditable = (v: { status: string; approval_request_id: string | null }) =>
   v.status === "AUTO_DRAFT" || v.status === "DRAFT" || (v.status === "PENDING_APPROVAL" && !v.approval_request_id);
-
-/** The inbox tab a submitted requisition's approval sits in. */
-export function approvalHref(v: { status: string; approval_request_id: string | null }): string | null {
-  if (!v.approval_request_id) return null;
-  const tab = v.status === "APPROVED" ? "approved" : v.status === "REJECTED" ? "rejected" : "pending";
-  return `/approvals/${tab}?request=${v.approval_request_id}`;
-}
 
 const num = (v: string | number | null | undefined) => (v === null || v === undefined || v === "" ? null : Number(v));
 
@@ -68,6 +63,12 @@ export function FeedRequisitionDetail({
   const [remarks, setRemarks] = useState(view.remarks ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [panel, setPanel] = useState<"ship" | "receive" | null>(null);
+  const [postingDate, setPostingDate] = useState(todayIso());
+  const [transferId, setTransferId] = useState("");
+  const [shipmentId, setShipmentId] = useState("");
+  const [shipQty, setShipQty] = useState<Record<string, string>>({});
+  const [receiveQty, setReceiveQty] = useState<Record<string, string>>({});
 
   const run = async (work: () => Promise<void>) => {
     setBusy(true);
@@ -89,7 +90,7 @@ export function FeedRequisitionDetail({
       ...(edit.date !== undefined ? { proposed_delivery_date: edit.date } : {}),
       ...(edit.destinationId !== undefined ? { destination_location_id: edit.destinationId } : {}),
       ...(edit.itemId !== undefined ? { item_id: edit.itemId } : {}),
-      ...(edit.exceptionReason !== undefined ? { exception_reason: edit.exceptionReason } : {}),
+      ...(edit.reasonId !== undefined ? { reason_id: edit.reasonId } : {}),
     }));
 
   const editable = isEditable(view);
@@ -112,8 +113,6 @@ export function FeedRequisitionDetail({
     })
     : null;
   const remarksMissing = remarksError !== null;
-  const href = approvalHref(view);
-
   // The silos and feed items a line may be moved to — only needed while the document is editable.
   useEffect(() => {
     setOptions(null);
@@ -147,6 +146,100 @@ export function FeedRequisitionDetail({
       onView(result, tRef.current("rqSubmitted"));
     });
 
+  const actions = view.actions ?? {
+    release: { enabled: false, reason: t("rqActionUnavailable") },
+    shipment: { enabled: false, reason: t("rqActionUnavailable") },
+    receipt: { enabled: false, reason: t("rqActionUnavailable") },
+  };
+  const transfers = view.transfers ?? [];
+  const chosenTransfer = transfers.find((transfer) => transfer.transfer_id === transferId) ?? null;
+  const chosenShipment = chosenTransfer?.open_shipments.find((shipment) => shipment.shipment_id === shipmentId) ?? null;
+  const entered = (value: string | undefined) => {
+    if (!value?.trim()) return null;
+    const quantity = Number(value);
+    return Number.isFinite(quantity) ? quantity : null;
+  };
+  const withinCap = (value: string | undefined, cap: number) => {
+    const quantity = entered(value);
+    return quantity === null || (quantity > 0 && quantity <= cap);
+  };
+  const shipLines = (chosenTransfer?.lines ?? []).filter((line) => !!line.requisition_line_id && line.balance_to_ship > 1e-9);
+  const shipBody = shipLines.flatMap((line) => {
+    const quantity = entered(shipQty[line.requisition_line_id!]);
+    return quantity !== null && quantity > 0 ? [{ requisition_line_id: line.requisition_line_id!, quantity }] : [];
+  });
+  const shipValid = !!chosenTransfer
+    && shipLines.every((line) => withinCap(shipQty[line.requisition_line_id!], line.balance_to_ship))
+    && shipBody.length > 0;
+  const receiveLines = (chosenShipment?.lines ?? []).filter((line) => !!line.requisition_line_id && line.remaining_to_receive > 1e-9);
+  const receiveBody = receiveLines.flatMap((line) => {
+    const quantity = entered(receiveQty[line.requisition_line_id!]);
+    return quantity !== null && quantity > 0 ? [{ requisition_line_id: line.requisition_line_id!, quantity }] : [];
+  });
+  const receiveValid = !!chosenTransfer && !!chosenShipment
+    && receiveLines.every((line) => withinCap(receiveQty[line.requisition_line_id!], line.remaining_to_receive))
+    && receiveBody.length > 0;
+  const lineNumber = (requisitionLineId: string, fallback: number) =>
+    lines.find((line) => line.line_id === requisitionLineId)?.line_seq ?? fallback;
+
+  const release = () => run(async () => {
+    const result = unwrap<RequisitionView>(await api.post(`/feed-requisition/${view.requisition_id}/release`, {}));
+    onView(result, tRef.current("rqReleased"));
+  });
+  const postShipment = () => run(async () => {
+    const result = unwrap<RequisitionView>(await api.post(`/feed-requisition/${view.requisition_id}/shipments`, {
+      transfer_id: transferId, posting_date: postingDate, lines: shipBody,
+    }));
+    setShipQty({});
+    onView(result, tRef.current("crqShipped"));
+  });
+  const postReceipt = () => run(async () => {
+    const result = unwrap<RequisitionView>(await api.post(`/feed-requisition/${view.requisition_id}/receipts`, {
+      transfer_id: transferId, shipment_id: shipmentId, posting_date: postingDate, lines: receiveBody,
+    }));
+    setReceiveQty({});
+    onView(result, tRef.current("crqReceived"));
+  });
+
+  const chooseTransfer = (value: string) => {
+    setTransferId(value);
+    setShipmentId("");
+    setShipQty({});
+    setReceiveQty({});
+  };
+
+  const actionBar = (
+    <div className="flex flex-wrap items-center gap-2">
+      <Button size="sm" onClick={release} disabled={busy || !actions.release.enabled} title={actions.release.reason ?? undefined}>
+        {t("crqRelease")}
+      </Button>
+      <Button size="sm" variant="outline" onClick={() => setPanel(panel === "ship" ? null : "ship")}
+        disabled={busy || !actions.shipment.enabled} title={actions.shipment.reason ?? undefined}>
+        {t("crqShip")}
+      </Button>
+      <Button size="sm" variant="outline" onClick={() => setPanel(panel === "receive" ? null : "receive")}
+        disabled={busy || !actions.receipt.enabled} title={actions.receipt.reason ?? undefined}>
+        {t("crqReceive")}
+      </Button>
+    </div>
+  );
+
+  const transferField = (
+    <Field className="w-48" label={t("rqTransfer")} htmlFor={`feed-${panel}-transfer`}>
+      <select id={`feed-${panel}-transfer`} className="nf-input-sm nf-select" value={transferId} onChange={(event) => chooseTransfer(event.target.value)}>
+        <option value="">{t("crqChoose")}</option>
+        {transfers.map((transfer) => <option key={transfer.transfer_id} value={transfer.transfer_id}>{transfer.transfer_no}</option>)}
+      </select>
+    </Field>
+  );
+
+  const dateField = (
+    <Field className="w-40" label={t("crqPostingDate")} htmlFor={`feed-${panel}-posting-date`}>
+      <input id={`feed-${panel}-posting-date`} type="date" className="nf-input-sm" value={postingDate}
+        onChange={(event) => setPostingDate(event.target.value)} />
+    </Field>
+  );
+
   return (
     <>
       {!embedded && (
@@ -155,6 +248,7 @@ export function FeedRequisitionDetail({
           <h2 className="text-base font-semibold" style={{ color: "var(--text-primary)" }}>{view.req_no}</h2>
         </div>
       )}
+      <DialogHeaderActions>{actionBar}</DialogHeaderActions>
       {error && <InlineAlert>{error}</InlineAlert>}
       <div className="min-h-0 flex-1 overflow-auto">
         <FeedRequisitionDocument
@@ -169,19 +263,57 @@ export function FeedRequisitionDetail({
           options={options}
         />
       </div>
-      <div className="flex shrink-0 flex-col gap-2">
-        {editable ? (
-          <div className="flex flex-wrap gap-2">
-            <Button size="sm" variant="outline" onClick={save} disabled={busy}>{t("rqSave")}</Button>
-            <Button size="sm" onClick={submit} disabled={busy || remarksMissing}>{t("rqSubmit")}</Button>
-          </div>
-        ) : href ? (
-          <p className="text-xs" style={{ color: "var(--text-secondary)" }}>
-            {view.status === "PENDING_APPROVAL" && <span className="mr-2">{t("rqWaiting")}</span>}
-            <a href={href} className="font-semibold underline underline-offset-2" style={{ color: "var(--accent)" }}>{t("rqOpenApproval")}</a>
-          </p>
-        ) : null}
-      </div>
+      {panel === "ship" && actions.shipment.enabled && (
+        <div className="flex shrink-0 flex-wrap items-end gap-3 pt-3">
+          {dateField}
+          {transferField}
+          {shipLines.map((line, index) => {
+            const key = line.requisition_line_id!;
+            return (
+              <Field key={key} className="w-40" label={t("crqShipQtyFor", { line: lineNumber(key, index + 1) })} htmlFor={`feed-ship-${key}`}>
+                <input id={`feed-ship-${key}`} type="number" min={0} max={line.balance_to_ship} className="nf-input-sm text-right"
+                  value={shipQty[key] ?? ""} onChange={(event) => setShipQty((current) => ({ ...current, [key]: event.target.value }))} />
+              </Field>
+            );
+          })}
+          <Button size="sm" onClick={postShipment} disabled={busy || !shipValid}>{t("crqPostShipment")}</Button>
+        </div>
+      )}
+      {panel === "receive" && actions.receipt.enabled && (
+        <div className="flex shrink-0 flex-wrap items-end gap-3 pt-3">
+          {dateField}
+          {transferField}
+          <Field className="w-48" label={t("crqShipment")} htmlFor="feed-shipment">
+            <select id="feed-shipment" className="nf-input-sm nf-select" value={shipmentId}
+              onChange={(event) => { setShipmentId(event.target.value); setReceiveQty({}); }} disabled={!chosenTransfer}>
+              <option value="">{t("crqChoose")}</option>
+              {(chosenTransfer?.open_shipments ?? []).map((shipment) => (
+                <option key={shipment.shipment_id} value={shipment.shipment_id}>{shipment.shipment_no}</option>
+              ))}
+            </select>
+          </Field>
+          {receiveLines.map((line, index) => {
+            const key = line.requisition_line_id!;
+            return (
+              <Field key={key} className="w-40" label={t("crqReceiveQtyFor", { line: lineNumber(key, index + 1) })} htmlFor={`feed-receive-${key}`}>
+                <input id={`feed-receive-${key}`} type="number" min={0} max={line.remaining_to_receive} className="nf-input-sm text-right"
+                  value={receiveQty[key] ?? ""} onChange={(event) => setReceiveQty((current) => ({ ...current, [key]: event.target.value }))} />
+              </Field>
+            );
+          })}
+          <Button size="sm" onClick={postReceipt} disabled={busy || !receiveValid}>{t("crqPostReceipt")}</Button>
+        </div>
+      )}
+      {editable ? (
+        <DialogFooterActions>
+          <Button size="sm" variant="outline" onClick={save} disabled={busy}>{t("rqSave")}</Button>
+          <Button size="sm" onClick={submit} disabled={busy || remarksMissing}>{t("rqSubmit")}</Button>
+        </DialogFooterActions>
+      ) : view.status === "PENDING_APPROVAL" ? (
+        <p className="shrink-0 text-xs" style={{ color: "var(--text-secondary)" }}>
+          {t("rqWaiting")}
+        </p>
+      ) : null}
     </>
   );
 }

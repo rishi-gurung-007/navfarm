@@ -1768,7 +1768,14 @@ export class FeedRequisitionService implements OnModuleInit {
         lines: shipmentLines.filter((line) => line.shipment_id === shipment.shipment_id).map((line) => {
           const shippedQty = Number(line.quantity);
           const receivedQty = receivedForShipment.get(`${shipment.shipment_id}:${line.line_id}`) ?? 0;
-          return { line_id: line.line_id, quantity: shippedQty, qty_received: receivedQty, remaining_to_receive: Math.max(0, shippedQty - receivedQty) };
+          const transferLine = transferLines.find((entry) => entry.transfer_line_id === line.line_id);
+          return {
+            line_id: line.line_id,
+            requisition_line_id: transferLine?.requisition_line_id ?? null,
+            quantity: shippedQty,
+            qty_received: receivedQty,
+            remaining_to_receive: Math.max(0, shippedQty - receivedQty),
+          };
         }).filter((line) => line.remaining_to_receive > 0),
       })).filter((shipment) => shipment.lines.length > 0);
       return { ...transfer, lines, open_shipments: openShipments };
