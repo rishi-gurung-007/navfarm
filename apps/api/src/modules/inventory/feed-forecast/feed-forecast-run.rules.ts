@@ -105,6 +105,12 @@ export interface ForecastRunDisplaySnapshot {
   rows: unknown[];
   sourceBalances: unknown[];
   daily: unknown[];
+  today?: string;
+  timeZone?: string | null;
+  forecastFrom?: string | null;
+  horizonTo?: string;
+  period?: unknown;
+  flags?: unknown[];
 }
 
 export interface ForecastRunOutputSnapshot {

@@ -29,6 +29,12 @@ type PersistableRunOutput = Pick<FeedForecastResponse, 'farm' | 'planningDate' |
   settings: unknown;
   rows: unknown[];
   sourceBalances: unknown[];
+  today?: string;
+  timeZone?: string | null;
+  forecastFrom?: string | null;
+  horizonTo?: string;
+  period?: unknown;
+  flags?: unknown[];
 };
 
 @Injectable()
@@ -155,6 +161,12 @@ export class FeedForecastRunService {
         rows: output.rows,
         sourceBalances: output.sourceBalances,
         daily: output.daily,
+        today: output.today,
+        timeZone: output.timeZone,
+        forecastFrom: output.forecastFrom,
+        horizonTo: output.horizonTo,
+        period: output.period,
+        flags: output.flags,
       });
 
       await this.db.insert(schema.feedForecastRun).values({

@@ -56,6 +56,27 @@ interface ForecastData {
   flags: ForecastFlag[];
 }
 
+type CalculationState = "EMPTY" | "CALCULATED" | "SAVED";
+
+interface CurrentForecastRun {
+  run_id?: string;
+  runId?: string;
+  run_code?: string;
+  runCode?: string;
+  version: number;
+  output_snapshot?: { display?: SavedForecastDisplay };
+}
+
+type SavedForecastDisplay = Partial<ForecastData> & {
+  filters?: {
+    planningDate: string;
+    from: string;
+    to: string;
+    view: ForecastView;
+    periodId: string | null;
+  };
+};
+
 interface ResultFilters {
   shedId: string;
   siloId: string;
@@ -98,6 +119,8 @@ function FeedForecastPanelContent() {
   const [generating, setGenerating] = useState(false);
   const [generateError, setGenerateError] = useState("");
   const [data, setData] = useState<ForecastData | null>(null);
+  const [calculationState, setCalculationState] = useState<CalculationState>("EMPTY");
+  const [currentRun, setCurrentRun] = useState<CurrentForecastRun | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [filters, setFilters] = useState<ResultFilters>(EMPTY_FILTERS);
@@ -105,7 +128,6 @@ function FeedForecastPanelContent() {
   const [runMessage, setRunMessage] = useState("");
   const [runError, setRunError] = useState("");
   const [runHistoryReload, setRunHistoryReload] = useState(0);
-  const resolvedSelectionRef = useRef("");
 
   useEffect(() => setFilters(EMPTY_FILTERS), [farmId]);
 
@@ -138,30 +160,40 @@ function FeedForecastPanelContent() {
   useEffect(() => {
     if (!farmId) {
       setData(null);
+      setCurrentRun(null);
+      setCalculationState("EMPTY");
       setError("");
-      resolvedSelectionRef.current = "";
       return;
     }
-    const selectionKey = JSON.stringify([reload, farmId, view, planningDate, dateFrom, dateTo, periodId]);
-    if (resolvedSelectionRef.current === selectionKey) return;
-
     let cancelled = false;
     setLoading(true);
     setError("");
     api
-      .get(`/feed-forecast?${forecastQueryString({ farmId, view, planningDate, from: dateFrom, to: dateTo, periodId })}`)
-      .then((res) => {
+      .get(`/feed-forecast/runs/current?${new URLSearchParams({ farmId }).toString()}`)
+      .then((response) => {
         if (cancelled) return;
-        const resolved = unwrap<ForecastData>(res);
-        resolvedSelectionRef.current = JSON.stringify([
-          reload,
-          farmId,
-          resolved.view,
-          resolved.planningDate,
-          resolved.from,
-          resolved.to,
-          resolved.period?.periodId ?? "",
-        ]);
+        const run = (response && typeof response === "object" && "data" in response ? response.data : response) as CurrentForecastRun | null;
+        const display = run?.output_snapshot?.display;
+        const filters = display?.filters;
+        if (!run || !display || !filters) {
+          setCurrentRun(null);
+          setCalculationState("EMPTY");
+          setData(null);
+          return;
+        }
+        const resolved = {
+          ...display,
+          planningDate: filters.planningDate,
+          from: filters.from,
+          to: filters.to,
+          view: filters.view,
+          period: display.period ?? null,
+          rows: Array.isArray(display.rows) ? display.rows : [],
+          sourceBalances: Array.isArray(display.sourceBalances) ? display.sourceBalances : [],
+          flags: Array.isArray(display.flags) ? display.flags : [],
+        } as ForecastData;
+        setCurrentRun(run);
+        setCalculationState("SAVED");
         setData(resolved);
         hydrateWindow({
           planningDate: resolved.planningDate,
@@ -175,6 +207,8 @@ function FeedForecastPanelContent() {
         if (cancelled) return;
         setError(err?.message || tRef.current("ffFailedToLoad"));
         setData(null);
+        setCurrentRun(null);
+        setCalculationState("EMPTY");
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -182,7 +216,7 @@ function FeedForecastPanelContent() {
     return () => {
       cancelled = true;
     };
-  }, [dateFrom, dateTo, farmId, hydrateWindow, periodId, planningDate, reload, view]);
+  }, [farmId, hydrateWindow]);
 
   // Share the window on screen with the Feed Requisition tab's "Draft from forecast".
   useEffect(() => {
@@ -226,12 +260,55 @@ function FeedForecastPanelContent() {
         ...(view === "PERIOD" && (periodId || data.period?.periodId) ? { periodId: periodId || data.period!.periodId } : {}),
       });
       const saved = unwrap<{ runCode: string; version: number }>(response);
+      setCurrentRun(saved);
+      setCalculationState("SAVED");
       setRunMessage(tRef.current("ffRunSaved", { code: saved.runCode, version: saved.version }));
       setRunHistoryReload((value) => value + 1);
     } catch (err: any) {
       setRunError(err?.message || tRef.current("ffSaveRunFailed"));
     } finally {
       setSavingRun(false);
+    }
+  }
+
+  async function calculate() {
+    if (!farmId || currentRun) return;
+    setLoading(true);
+    setError("");
+    setRunMessage("");
+    setRunError("");
+    try {
+      const response = await api.get(`/feed-forecast?${forecastQueryString({ farmId, view, planningDate, from: dateFrom, to: dateTo, periodId })}`);
+      const resolved = unwrap<ForecastData>(response);
+      setData(resolved);
+      setCalculationState("CALCULATED");
+      hydrateWindow({
+        planningDate: resolved.planningDate,
+        view: resolved.view,
+        from: resolved.from,
+        to: resolved.to,
+        periodId: resolved.period?.periodId ?? "",
+      });
+    } catch (err: any) {
+      setError(err?.message || tRef.current("ffFailedToLoad"));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function deleteCalculation() {
+    const runId = currentRun?.run_id ?? currentRun?.runId;
+    if (!runId) return;
+    setRunError("");
+    try {
+      await api.delete(`/feed-forecast/runs/${runId}`);
+      setCurrentRun(null);
+      setData(null);
+      setCalculationState("EMPTY");
+      setRunMessage(tRef.current("ffCalculationDeleted"));
+      setRunHistoryReload((value) => value + 1);
+    } catch (err: any) {
+      setRunError(err?.message || tRef.current("ffDeleteCalculationFailed"));
     }
   }
 
@@ -383,15 +460,27 @@ function FeedForecastPanelContent() {
             <div className="flex items-center gap-2">
               {runMessage && <span className="text-xs text-[var(--success)]">{runMessage}</span>}
               {runError && <span className="text-xs text-[var(--danger)]">{runError}</span>}
-              {canSaveRun && (
+              {calculationState === "EMPTY" && (
+                <Button size="sm" onClick={calculate} disabled={!farmId || loading || (view === "PERIOD" && !periodId)}>
+                  {loading ? t("ffCalculating") : t("ffCalculate")}
+                </Button>
+              )}
+              {canSaveRun && calculationState === "CALCULATED" && (
                 <Button size="sm" onClick={saveRun} disabled={!data || loading || savingRun}>
                   {savingRun ? t("ffSavingRun") : t("ffSaveRun")}
                 </Button>
               )}
+              {canSaveRun && calculationState === "SAVED" && (
+                <Button size="sm" variant="outline" onClick={deleteCalculation}>{t("ffDeleteCalculation")}</Button>
+              )}
             </div>
           </div>
-          <FeedForecastGrid rows={filteredRows} sourceBalances={filteredSourceBalances} view={view} from={shownFrom} loading={loading} t={t} />
-          <FeedForecastNotes flags={flags} t={t} />
+          {data ? (
+            <>
+              <FeedForecastGrid rows={filteredRows} sourceBalances={filteredSourceBalances} view={data.view} from={data.from} loading={loading} t={t} />
+              <FeedForecastNotes flags={flags} t={t} />
+            </>
+          ) : loading ? <LoadingState label={t("ffLoading")} /> : <EmptyState title={t("ffCalculatePrompt")} />}
           {!!farmId && <FeedForecastRunHistory farmId={farmId} reloadToken={runHistoryReload} />}
         </>
       )}
