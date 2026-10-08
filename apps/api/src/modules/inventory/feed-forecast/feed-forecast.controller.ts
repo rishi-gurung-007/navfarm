@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { FeedForecastService } from './feed-forecast.service';
 import { QueryFeedForecastDto, QueryFeedForecastRunsDto, QueryFeedPeriodsDto, QuerySiloStatusDto, UpdateSiloPlanningDto } from './dto/feed-forecast.dto';
@@ -51,6 +51,15 @@ export class FeedForecastController {
     return { success: true, message: 'Feed forecast runs retrieved successfully.', data };
   }
 
+  @Get('runs/current')
+  @RequirePermission('INVENTORY', 'LEDGER', 'view')
+  @ApiOperation({ summary: 'The saved, non-archived feed forecast calculation for one farm' })
+  async currentRun(@Query() query: QueryFeedForecastRunsDto, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const data = await this.feedForecastService.currentRun(query.farmId, tenantId, req.user?.userType);
+    return { success: true, message: 'Current feed forecast run retrieved successfully.', data };
+  }
+
   @Get('runs/:id')
   @RequirePermission('INVENTORY', 'LEDGER', 'view')
   @ApiOperation({ summary: 'One immutable feed forecast run and its dated lines' })
@@ -58,6 +67,15 @@ export class FeedForecastController {
     const tenantId = req.user?.tenantId || req['tenantId'];
     const data = await this.feedForecastService.findRun(id, tenantId);
     return { success: true, message: 'Feed forecast run retrieved successfully.', data };
+  }
+
+  @Delete('runs/:id')
+  @RequirePermission('INVENTORY', 'LEDGER', 'create')
+  @ApiOperation({ summary: 'Archive the current calculation so the farm can calculate again' })
+  async archiveRun(@Param('id', ParseUUIDPipe) id: string, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const data = await this.feedForecastService.archiveRun(id, tenantId, req.user);
+    return { success: true, message: 'Feed forecast calculation archived.', data };
   }
 
   /**

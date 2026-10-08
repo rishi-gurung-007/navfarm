@@ -42,6 +42,18 @@ describe('FeedForecastController run persistence boundary', () => {
     expect(service.findRun).toHaveBeenCalledWith('f4cf8276-17ed-4b46-95df-5234dfb2b48a', 'tenant-1');
   });
 
+  it('reads and archives the current farm calculation through explicit routes', async () => {
+    const service = {
+      currentRun: jest.fn(async () => ({ run_id: 'run-1' })),
+      archiveRun: jest.fn(async () => ({ run_id: 'run-1', archived_at: true })),
+    } as any;
+    const controller = new FeedForecastController(service);
+    await expect(controller.currentRun({ farmId: 'farm-1' }, req)).resolves.toMatchObject({ data: { run_id: 'run-1' } });
+    await expect(controller.archiveRun('f4cf8276-17ed-4b46-95df-5234dfb2b48a', req)).resolves.toMatchObject({ data: { archived_at: true } });
+    expect(service.currentRun).toHaveBeenCalledWith('farm-1', 'tenant-1', 'FARM_MANAGER');
+    expect(service.archiveRun).toHaveBeenCalledWith('f4cf8276-17ed-4b46-95df-5234dfb2b48a', 'tenant-1', req.user);
+  });
+
   it('keeps run visibility separate from Save Run action authority', () => {
     const prototype = FeedForecastController.prototype;
     expect(Reflect.getMetadata(REQUIRE_PERMISSION_KEY, prototype.runs)).toEqual({
@@ -51,6 +63,12 @@ describe('FeedForecastController run persistence boundary', () => {
       moduleCode: 'INVENTORY', resource: 'LEDGER', action: 'view',
     });
     expect(Reflect.getMetadata(REQUIRE_PERMISSION_KEY, prototype.saveRun)).toEqual({
+      moduleCode: 'INVENTORY', resource: 'LEDGER', action: 'create',
+    });
+    expect(Reflect.getMetadata(REQUIRE_PERMISSION_KEY, prototype.currentRun)).toEqual({
+      moduleCode: 'INVENTORY', resource: 'LEDGER', action: 'view',
+    });
+    expect(Reflect.getMetadata(REQUIRE_PERMISSION_KEY, prototype.archiveRun)).toEqual({
       moduleCode: 'INVENTORY', resource: 'LEDGER', action: 'create',
     });
   });

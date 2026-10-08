@@ -1,4 +1,4 @@
-import { ForbiddenException, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { getTableConfig, MySqlDialect } from 'drizzle-orm/mysql-core';
 import { FARM_SCOPE_KEY, type FarmScope } from '../../../common/farm-scope';
 import * as schema from '../../../core/database/schema';
@@ -27,6 +27,15 @@ function setup(queues: Map<unknown, unknown[][]>, scope: FarmScope = { farmId: n
     insert: jest.fn((table: unknown) => ({
       values: jest.fn(async (values: unknown) => log.push({ op: 'insert', table, values, inTx: cls.get('tenantPostingTransaction') === true })),
     })),
+    update: jest.fn((table: unknown) => {
+      const entry: Entry = { op: 'update', table, inTx: cls?.get('tenantPostingTransaction') === true };
+      log.push(entry);
+      const chain: any = {
+        set: (values: unknown) => { entry.values = values; return chain; },
+        where: (condition: unknown) => { entry.where = condition; return Promise.resolve(); },
+      };
+      return chain;
+    }),
   };
   const cls = transactionCls(db);
   const get = cls.get.bind(cls);
@@ -92,7 +101,7 @@ function concurrentSetup(transactionFarms: string[]) {
             if (table === schema.feedForecastRun && fields && 'run_code' in fields) return codes.map((run_code) => ({ run_code }));
             if (table === schema.feedForecastRun) {
               const version = latestByFarm.get(farmId);
-              return version === undefined ? [] : [{ version }];
+              return version === undefined ? [] : [{ version, archived_at: null }];
             }
             return [];
           };
@@ -198,9 +207,14 @@ describe('FeedForecastRunService', () => {
       period_id: null, source_cutoff_at: '2026-10-01 08:00:00', created_by: 'user-1',
       config_snapshot: expect.objectContaining({ hash: expect.stringMatching(/^[a-f0-9]{64}$/) }),
       source_snapshot: output.sourceSnapshot,
-      output_snapshot: {
-        version: 'forecast-run-lines:v2', hash: expect.stringMatching(/^[a-f0-9]{64}$/), lineCount: 1,
-      },
+      output_snapshot: expect.objectContaining({
+        version: 'forecast-run-display:v3', hash: expect.stringMatching(/^[a-f0-9]{64}$/), lineCount: 1,
+        display: expect.objectContaining({
+          filters: { planningDate: '2026-10-01', from: '2026-10-01', to: '2026-10-07', view: 'CUSTOM', periodId: null },
+          farm: output.farm,
+          daily: output.daily,
+        }),
+      }),
     });
     expect(log.find((entry) => entry.op === 'insert' && entry.table === schema.feedForecastRunLine)?.values)
       .toEqual([expect.objectContaining({ forecast_date: '2026-10-01', batch_id: 'batch-1', shed_id: 'shed-1', destination_location_id: 'silo-1' })]);
@@ -271,18 +285,31 @@ describe('FeedForecastRunService', () => {
       .resolves.toMatchObject({ runCode: 'RUN-FARM-1-20261001-001', version: 1 });
   });
 
-  it('allocates distinct sequential versions when two saves overlap for the same farm', async () => {
+  it('allows only one current saved calculation when two saves overlap for the same farm', async () => {
     const { service, persisted, stats } = concurrentSetup(['farm-1', 'farm-1']);
 
-    const [first, second] = await Promise.all([
+    const results = await Promise.allSettled([
       service.createRun(input, output as any, { userId: 'user-1' }),
       service.createRun(input, output as any, { userId: 'user-2' }),
     ]);
 
-    expect([first.version, second.version].sort()).toEqual([1, 2]);
-    expect(new Set([first.runCode, second.runCode]).size).toBe(2);
-    expect(persisted.map((entry) => entry.version)).toEqual([1, 2]);
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter((result) => result.status === 'rejected')[0]).toMatchObject({ reason: expect.any(ConflictException) });
+    expect(persisted.map((entry) => entry.version)).toEqual([1]);
     expect(stats()).toEqual({ entered: 2, firstInsertEnteredCount: 2, maxActiveFarmLocks: 1 });
+  });
+
+  it('refuses a new save while the latest farm calculation is current', async () => {
+    const queues = new Map<unknown, unknown[][]>([
+      [schema.locationMaster, [[{ location_id: 'farm-1', company_id: 'company-1', lob_id: 'lob-piggery' }]]],
+      [schema.feedForecastRun, [[{ version: 4, archived_at: null }]]],
+    ]);
+    const { service, log } = setup(queues);
+
+    await expect(service.createRun(input, output as any, { userId: 'user-1' })).rejects.toThrow(
+      'Archive the current feed forecast calculation before saving a new one.',
+    );
+    expect(log.some((entry) => entry.op === 'insert')).toBe(false);
   });
 
   it('allows different farms to save concurrently with independent version one streams', async () => {
@@ -359,6 +386,30 @@ describe('FeedForecastRunService', () => {
     const { service, log } = setup(new Map(), { farmId: 'farm-1', companyId: 'company-1', lobId: 'lob-piggery', restricted: true });
     await expect(service.findAll('farm-2', 'company-1', 'tenant-1')).rejects.toBeInstanceOf(ForbiddenException);
     expect(log.some((entry) => entry.table === schema.feedForecastRun)).toBe(false);
+  });
+
+  it('returns only the non-archived current calculation for the farm', async () => {
+    const current = { run_id: 'run-1', tenant_id: 'tenant-1', company_id: 'company-1', farm_id: 'farm-1', archived_at: null };
+    const queues = new Map<unknown, unknown[][]>([
+      [schema.locationMaster, [[{ location_id: 'farm-1', company_id: 'company-1', lob_id: 'lob-piggery' }]]],
+      [schema.feedForecastRun, [[current]]],
+    ]);
+    const { service } = setup(queues);
+    await expect(service.findCurrent('farm-1', 'company-1', 'tenant-1')).resolves.toEqual(current);
+  });
+
+  it('archives a current calculation without deleting its audit evidence', async () => {
+    const current = { run_id: 'run-1', tenant_id: 'tenant-1', company_id: 'company-1', farm_id: 'farm-1', archived_at: null };
+    const queues = new Map<unknown, unknown[][]>([
+      [schema.feedForecastRun, [[current]]],
+      [schema.locationMaster, [[{ location_id: 'farm-1', company_id: 'company-1', lob_id: 'lob-piggery' }]]],
+    ]);
+    const { service, log } = setup(queues);
+    await expect(service.archiveRun('run-1', 'tenant-1', { userId: 'user-1' })).resolves.toMatchObject({
+      run_id: 'run-1', archived_at: true, archived_by: 'user-1',
+    });
+    expect(log.find((entry) => entry.op === 'update')).toMatchObject({ table: schema.feedForecastRun, values: { archived_by: 'user-1' } });
+    expect(log.some((entry) => entry.op === 'delete')).toBe(false);
   });
 
   it('enforces tenant/company/LOB/farm scope on detail', async () => {

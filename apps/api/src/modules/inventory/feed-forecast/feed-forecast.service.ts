@@ -757,6 +757,17 @@ export class FeedForecastService {
     return this.runService.findOne(runId, tenantId);
   }
 
+  async currentRun(queryFarmId: string | undefined, tenantId: string, userType?: string) {
+    if (!this.runService) throw new Error('Feed forecast run service is not configured.');
+    const { farmId, companyId } = await this.resolveFarm(queryFarmId, tenantId, userType);
+    return this.runService.findCurrent(farmId, companyId, tenantId);
+  }
+
+  async archiveRun(runId: string, tenantId: string, actor?: { userId?: string; userType?: string }) {
+    if (!this.runService) throw new Error('Feed forecast run service is not configured.');
+    return this.runService.archiveRun(runId, tenantId, actor);
+  }
+
   /**
    * GET /feed-forecast/periods: the periods the Reporting Period view may use,
    * for the caller's farm (D13, D20). Through resolveFarm, so a farm login gets

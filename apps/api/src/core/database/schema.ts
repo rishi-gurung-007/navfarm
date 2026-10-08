@@ -339,14 +339,17 @@ export const feedForecastRun = mysqlTable('feed_forecast_run', {
   period_id: varchar('period_id', { length: 36 }).references((): AnyMySqlColumn => reportingPeriod.period_id, { onDelete: 'restrict' }),
   source_cutoff_at: timestamp('source_cutoff_at', { mode: 'string' }).notNull(),
   source_snapshot: json('source_snapshot').$type<{ version: string; hash: string; values: unknown }>().notNull(),
-  output_snapshot: json('output_snapshot').$type<{ version: string; hash: string; lineCount: number }>().notNull(),
+  output_snapshot: json('output_snapshot').$type<{ version: string; hash: string; lineCount: number; display?: unknown }>().notNull(),
   config_snapshot: json('config_snapshot').$type<{ version: string; hash: string; values: unknown }>().notNull(),
   created_by: varchar('created_by', { length: 36 }).notNull(),
   created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+  archived_at: timestamp('archived_at', { mode: 'string' }),
+  archived_by: varchar('archived_by', { length: 36 }),
 }, (table) => ({
   farmVersionUnique: uniqueIndex('uq_feed_forecast_run_farm_version').on(table.farm_id, table.version),
   companyCodeUnique: uniqueIndex('uq_feed_forecast_run_company_code').on(table.company_id, table.run_code),
   tenantFarmIndex: index('idx_feed_forecast_run_tenant_farm').on(table.tenant_id, table.farm_id),
+  tenantFarmArchiveIndex: index('idx_feed_forecast_run_tenant_farm_archive').on(table.tenant_id, table.farm_id, table.archived_at),
 }));
 
 export const feedForecastRunLine = mysqlTable('feed_forecast_run_line', {
@@ -4495,6 +4498,7 @@ export const requisition = mysqlTable('requisition', {
   updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().onUpdateNow().notNull(),
   deleted_at: timestamp('deleted_at', { mode: 'string' }),
 }, (table) => ({
+  feedForecastRunUnique: uniqueIndex('uq_requisition_feed_forecast_run').on(table.feed_forecast_run_id),
   linkedTransferFk: foreignKey({
     columns: [table.linked_transfer_id],
     foreignColumns: [stockTransfer.transfer_id],

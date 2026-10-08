@@ -83,6 +83,23 @@ describe('feed forecast run snapshot rules', () => {
     expect(first).not.toHaveProperty('createdAt');
   });
 
+  it('detaches the exact display result so the current calculation can be shown without recalculating', () => {
+    const display = {
+      filters: { planningDate: '2026-10-01', from: '2026-10-01', to: '2026-10-07', view: 'CUSTOM', periodId: null },
+      farm: { id: 'farm-1', code: 'F1', name: 'Farm One' },
+      settings: { bulkMultipleKg: 3000 },
+      rows: [{ batchNo: 'B-1' }],
+      sourceBalances: [{ date: '2026-10-01', closingKg: 500 }],
+      daily: [{ date: '2026-10-01', projectedClosingKg: 500 }],
+    };
+    const snapshot = buildOutputSnapshot([], display);
+    display.rows[0].batchNo = 'changed';
+    expect(snapshot.display).toEqual(expect.objectContaining({
+      rows: [{ batchNo: 'B-1' }],
+      daily: [{ date: '2026-10-01', projectedClosingKg: 500 }],
+    }));
+  });
+
   it('uses the documented technical run code fallback without inventing a client number series', () => {
     expect(technicalRunCode('farm-uuid', 12)).toBe('FFR-farm-uuid-000012');
   });

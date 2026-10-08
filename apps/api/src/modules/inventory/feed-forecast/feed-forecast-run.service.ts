@@ -1,5 +1,5 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
-import { and, desc, eq, isNull, like, or } from 'drizzle-orm';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { and, desc, eq, isNull, like, or, sql } from 'drizzle-orm';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { randomUUID } from 'node:crypto';
 import { ClsService } from 'nestjs-cls';
@@ -25,6 +25,11 @@ export interface CreateFeedForecastRunInput {
 }
 
 type Actor = { userId?: string; userType?: string } | undefined;
+type PersistableRunOutput = Pick<FeedForecastResponse, 'farm' | 'planningDate' | 'from' | 'to' | 'daily' | 'sourceSnapshot'> & {
+  settings: unknown;
+  rows: unknown[];
+  sourceBalances: unknown[];
+};
 
 @Injectable()
 export class FeedForecastRunService {
@@ -73,7 +78,7 @@ export class FeedForecastRunService {
 
   async createRun(
     input: CreateFeedForecastRunInput,
-    output: Pick<FeedForecastResponse, 'farm' | 'planningDate' | 'from' | 'to' | 'daily' | 'sourceSnapshot'>,
+    output: PersistableRunOutput,
     actor?: Actor,
   ) {
     if (!actor?.userId) throw new UnauthorizedException('An authenticated creator is required to save a forecast run.');
@@ -105,7 +110,10 @@ export class FeedForecastRunService {
           productionWeekday: logistics.productionWeekday,
         },
       });
-      const [latest] = await this.db.select({ version: schema.feedForecastRun.version })
+      const [latest] = await this.db.select({
+        version: schema.feedForecastRun.version,
+        archived_at: schema.feedForecastRun.archived_at,
+      })
         .from(schema.feedForecastRun)
         .where(and(
           eq(schema.feedForecastRun.tenant_id, input.tenantId),
@@ -115,6 +123,9 @@ export class FeedForecastRunService {
         .orderBy(desc(schema.feedForecastRun.version))
         .limit(1)
         .for('update');
+      if (latest?.archived_at === null) {
+        throw new ConflictException('Archive the current feed forecast calculation before saving a new one.');
+      }
       const version = (latest?.version ?? 0) + 1;
       const runId = randomUUID();
       // Engine §5 row 68: RUN-<FarmCode>-<YYYYMMDD>-<NNN per farm per day>. Read under the farm lock taken above,
@@ -131,7 +142,20 @@ export class FeedForecastRunService {
         .for('update');
       const runCode = runCodeFor(output.farm.code, input.planningDate, sameDay.map((row) => row.run_code));
       const lines = buildRunLineSnapshots(output);
-      const outputSnapshot = buildOutputSnapshot(lines);
+      const outputSnapshot = buildOutputSnapshot(lines, {
+        filters: {
+          planningDate: input.planningDate,
+          from: input.from,
+          to: input.to,
+          view: input.view,
+          periodId: input.periodId,
+        },
+        farm: output.farm,
+        settings: output.settings,
+        rows: output.rows,
+        sourceBalances: output.sourceBalances,
+        daily: output.daily,
+      });
 
       await this.db.insert(schema.feedForecastRun).values({
         run_id: runId, run_code: runCode, tenant_id: input.tenantId, company_id: input.companyId, farm_id: input.farmId,
@@ -165,6 +189,42 @@ export class FeedForecastRunService {
       eq(schema.feedForecastRun.company_id, companyId),
       eq(schema.feedForecastRun.farm_id, farmId),
     )).orderBy(desc(schema.feedForecastRun.version));
+  }
+
+  async findCurrent(farmId: string, companyId: string, tenantId: string) {
+    await this.loadFarm(farmId, companyId, tenantId);
+    const [run] = await this.db.select().from(schema.feedForecastRun).where(and(
+      eq(schema.feedForecastRun.tenant_id, tenantId),
+      eq(schema.feedForecastRun.company_id, companyId),
+      eq(schema.feedForecastRun.farm_id, farmId),
+      isNull(schema.feedForecastRun.archived_at),
+    )).orderBy(desc(schema.feedForecastRun.version)).limit(1);
+    return run ?? null;
+  }
+
+  async archiveRun(runId: string, tenantId: string, actor?: Actor) {
+    if (!actor?.userId) throw new UnauthorizedException('An authenticated user is required to archive a forecast run.');
+    const [run] = await this.db.select().from(schema.feedForecastRun).where(and(
+      eq(schema.feedForecastRun.run_id, runId),
+      eq(schema.feedForecastRun.tenant_id, tenantId),
+    )).limit(1);
+    if (!run) throw new NotFoundException('Feed forecast run not found.');
+    try {
+      await this.loadFarm(run.farm_id, run.company_id, tenantId);
+    } catch (error) {
+      if (error instanceof ForbiddenException || error instanceof NotFoundException) throw new NotFoundException('Feed forecast run not found.');
+      throw error;
+    }
+    if (run.archived_at) return run;
+    await this.db.update(schema.feedForecastRun).set({
+      archived_at: sql`CURRENT_TIMESTAMP`,
+      archived_by: actor.userId,
+    }).where(and(
+      eq(schema.feedForecastRun.run_id, runId),
+      eq(schema.feedForecastRun.tenant_id, tenantId),
+      isNull(schema.feedForecastRun.archived_at),
+    ));
+    return { ...run, archived_at: true, archived_by: actor.userId };
   }
 
   async findOne(runId: string, tenantId: string) {

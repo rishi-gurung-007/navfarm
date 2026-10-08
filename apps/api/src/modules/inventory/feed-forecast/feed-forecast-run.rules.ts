@@ -90,15 +90,34 @@ export interface ForecastRunLineSnapshot {
  * matchingRun) now answers null for it — detaching its provenance, correctly,
  * rather than silently matching a line shape it no longer produces.
  */
-export const FORECAST_RUN_OUTPUT_HASH_VERSION = 'forecast-run-lines:v2';
+export const FORECAST_RUN_OUTPUT_HASH_VERSION = 'forecast-run-display:v3';
+
+export interface ForecastRunDisplaySnapshot {
+  filters: {
+    planningDate: string;
+    from: string;
+    to: string;
+    view: string;
+    periodId: string | null;
+  };
+  farm: unknown;
+  settings: unknown;
+  rows: unknown[];
+  sourceBalances: unknown[];
+  daily: unknown[];
+}
 
 export interface ForecastRunOutputSnapshot {
   version: typeof FORECAST_RUN_OUTPUT_HASH_VERSION;
   hash: string;
   lineCount: number;
+  display?: ForecastRunDisplaySnapshot;
 }
 
-export function buildOutputSnapshot(lines: ForecastRunLineSnapshot[]): ForecastRunOutputSnapshot {
+export function buildOutputSnapshot(
+  lines: ForecastRunLineSnapshot[],
+  display?: ForecastRunDisplaySnapshot,
+): ForecastRunOutputSnapshot {
   const material = lines
     .map((line) => canonical(detached(line)))
     .sort((left, right) => {
@@ -109,7 +128,12 @@ export function buildOutputSnapshot(lines: ForecastRunLineSnapshot[]): ForecastR
   const hash = createHash('sha256')
     .update(`${FORECAST_RUN_OUTPUT_HASH_VERSION}\n${JSON.stringify(material)}`)
     .digest('hex');
-  return { version: FORECAST_RUN_OUTPUT_HASH_VERSION, hash, lineCount: material.length };
+  return {
+    version: FORECAST_RUN_OUTPUT_HASH_VERSION,
+    hash,
+    lineCount: material.length,
+    ...(display === undefined ? {} : { display: detached(display) }),
+  };
 }
 
 interface ForecastRunLineInput {
